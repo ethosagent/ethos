@@ -25,15 +25,7 @@ import {
 import { startDeviceCodeFlow } from './device-code';
 import { startLoopbackServer } from './loopback-server';
 import type { DefaultOAuthRegistry } from './registry';
-import type { OAuthTokenStore } from './token-store';
-
-interface CredentialMeta {
-  tokenEndpoint: string;
-  revocationEndpoint?: string;
-  clientId: string;
-  clientSecret?: string;
-  clientAuth?: string;
-}
+import type { CredentialMeta, OAuthTokenStore } from './token-store';
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -98,7 +90,7 @@ export class DefaultOAuthService implements OAuthService {
     if (!tokens) return;
 
     const key = this.refKey(ref);
-    const credMeta = this.meta.get(key);
+    const credMeta = this.meta.get(key) ?? (await this.tokenStore.getMeta(ref));
 
     if (credMeta?.revocationEndpoint) {
       try {
@@ -117,6 +109,7 @@ export class DefaultOAuthService implements OAuthService {
     }
 
     await this.tokenStore.delete(ref);
+    await this.tokenStore.deleteMeta(ref);
     this.meta.delete(key);
   }
 
@@ -211,6 +204,16 @@ export class DefaultOAuthService implements OAuthService {
       path: redirect.mode === 'loopback' ? redirect.path : undefined,
     });
 
+    if (opts?.signal) {
+      opts.signal.addEventListener(
+        'abort',
+        () => {
+          server.close();
+        },
+        { once: true },
+      );
+    }
+
     try {
       if (profile.registration?.kind === 'dcr' && !clientId) {
         const regEndpoint = profile.registration.endpoint ?? endpoints.registrationEndpoint;
@@ -274,14 +277,16 @@ export class DefaultOAuthService implements OAuthService {
 
       server.close();
 
-      await this.tokenStore.set(ref, tokens);
-      this.meta.set(this.refKey(ref), {
+      const meta: CredentialMeta = {
         tokenEndpoint: endpoints.tokenEndpoint,
         revocationEndpoint: endpoints.revocationEndpoint,
         clientId,
         clientSecret,
         clientAuth: profile.clientAuth,
-      });
+      };
+      await this.tokenStore.set(ref, tokens);
+      await this.tokenStore.setMeta(ref, meta);
+      this.meta.set(this.refKey(ref), meta);
     } finally {
       server.close();
     }
@@ -320,13 +325,15 @@ export class DefaultOAuthService implements OAuthService {
 
     const tokens = await result.tokens;
 
-    await this.tokenStore.set(ref, tokens);
-    this.meta.set(this.refKey(ref), {
+    const meta: CredentialMeta = {
       tokenEndpoint: endpoints.tokenEndpoint,
       revocationEndpoint: endpoints.revocationEndpoint,
       clientId,
       clientAuth: profile.clientAuth,
-    });
+    };
+    await this.tokenStore.set(ref, tokens);
+    await this.tokenStore.setMeta(ref, meta);
+    this.meta.set(this.refKey(ref), meta);
   }
 
   private async authorizeClientCredentials(
@@ -353,13 +360,15 @@ export class DefaultOAuthService implements OAuthService {
     const data: unknown = await res.json();
     const tokens = parseTokenResponse(data);
 
-    await this.tokenStore.set(ref, tokens);
-    this.meta.set(this.refKey(ref), {
+    const meta: CredentialMeta = {
       tokenEndpoint: endpoints.tokenEndpoint,
       revocationEndpoint: endpoints.revocationEndpoint,
       clientId,
       clientAuth: profile.clientAuth,
-    });
+    };
+    await this.tokenStore.set(ref, tokens);
+    await this.tokenStore.setMeta(ref, meta);
+    this.meta.set(this.refKey(ref), meta);
   }
 
   private async authorizeCustom(profile: OAuthProviderProfile, ref: CredentialRef): Promise<void> {
@@ -375,20 +384,27 @@ export class DefaultOAuthService implements OAuthService {
     const clientSecret: string | undefined = undefined;
     const tokens = await provider.exchange({ code: '' }, { clientId, clientSecret });
 
-    await this.tokenStore.set(ref, tokens);
-    this.meta.set(this.refKey(ref), {
+    const meta: CredentialMeta = {
       tokenEndpoint: profile.tokenEndpoint ?? '',
       revocationEndpoint: profile.revocationEndpoint,
       clientId,
       clientSecret,
-    });
+    };
+    await this.tokenStore.set(ref, tokens);
+    await this.tokenStore.setMeta(ref, meta);
+    this.meta.set(this.refKey(ref), meta);
   }
 
   private async doRefresh(ref: CredentialRef, tokens: TokenSet): Promise<string> {
     const key = this.refKey(ref);
-    const credMeta = this.meta.get(key);
+    let credMeta = this.meta.get(key);
     if (!credMeta) {
-      throw new Error('No credential metadata — call authorize() first');
+      const stored = await this.tokenStore.getMeta(ref);
+      if (!stored) {
+        throw new Error('No credential metadata — call authorize() first');
+      }
+      credMeta = stored;
+      this.meta.set(key, credMeta);
     }
 
     const { body, headers } = buildRefreshParams({

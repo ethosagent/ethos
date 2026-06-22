@@ -1,6 +1,7 @@
 import type { CredentialRef, TokenSet } from '@ethosagent/oauth-core';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { CredentialMeta } from '../token-store';
 import { OAuthTokenStore } from '../token-store';
 
 const TOKENS: TokenSet = {
@@ -98,5 +99,45 @@ describe('OAuthTokenStore', () => {
     const path = '/tokens/alice/oauth/github/work.json';
     const mode = storage.getMode(path);
     expect(mode).toBe(0o600);
+  });
+
+  describe('credential metadata', () => {
+    const META: CredentialMeta = {
+      tokenEndpoint: 'https://auth.example.com/token',
+      revocationEndpoint: 'https://auth.example.com/revoke',
+      clientId: 'client-123',
+      clientSecret: 'secret-456',
+      clientAuth: 'client_secret_post',
+    };
+
+    it('getMeta() returns null for missing metadata', async () => {
+      const result = await store.getMeta(REF);
+      expect(result).toBeNull();
+    });
+
+    it('setMeta() then getMeta() round-trips CredentialMeta', async () => {
+      await store.setMeta(REF, META);
+      const result = await store.getMeta(REF);
+      expect(result).toEqual(META);
+    });
+
+    it('deleteMeta() removes the metadata', async () => {
+      await store.setMeta(REF, META);
+      await store.deleteMeta(REF);
+      const result = await store.getMeta(REF);
+      expect(result).toBeNull();
+    });
+
+    it('stores metadata in a .meta.json file', async () => {
+      await store.setMeta(REF, META);
+      const exists = await storage.exists('/tokens/alice/oauth/github/work.meta.json');
+      expect(exists).toBe(true);
+    });
+
+    it('writes meta files with mode 0o600', async () => {
+      await store.setMeta(REF, META);
+      const mode = storage.getMode('/tokens/alice/oauth/github/work.meta.json');
+      expect(mode).toBe(0o600);
+    });
   });
 });

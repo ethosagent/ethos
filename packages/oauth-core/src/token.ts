@@ -117,10 +117,21 @@ function applyClientAuth(
 ): void {
   if (!clientSecret || clientAuth === 'none') return;
 
-  if (clientAuth === 'client_secret_basic') {
-    const encoded = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-    headers.Authorization = `Basic ${encoded}`;
-  } else {
-    body.set('client_secret', clientSecret);
+  switch (clientAuth) {
+    case 'client_secret_basic': {
+      const encoded = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+      headers.Authorization = `Basic ${encoded}`;
+      break;
+    }
+    case 'client_secret_post':
+    case undefined:
+      body.set('client_secret', clientSecret);
+      break;
+    case 'private_key_jwt':
+      throw new Error('private_key_jwt auth is not yet implemented');
+    case 'mtls':
+      throw new Error('mtls auth is not yet implemented');
+    default:
+      throw new Error(`Unknown client auth method: ${clientAuth}`);
   }
 }

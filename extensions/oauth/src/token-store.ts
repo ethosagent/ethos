@@ -9,6 +9,14 @@ function assertSafeSegment(value: string, label: string): void {
   }
 }
 
+export interface CredentialMeta {
+  tokenEndpoint: string;
+  revocationEndpoint?: string;
+  clientId: string;
+  clientSecret?: string;
+  clientAuth?: string;
+}
+
 export class OAuthTokenStore {
   constructor(
     private readonly storage: Storage,
@@ -37,6 +45,28 @@ export class OAuthTokenStore {
     }
   }
 
+  async getMeta(ref: CredentialRef): Promise<CredentialMeta | null> {
+    const path = this.metaPath(ref);
+    const raw = await this.storage.read(path);
+    if (raw === null) return null;
+    return JSON.parse(raw) as CredentialMeta;
+  }
+
+  async setMeta(ref: CredentialRef, meta: CredentialMeta): Promise<void> {
+    const path = this.metaPath(ref);
+    const dir = path.slice(0, path.lastIndexOf('/'));
+    await this.storage.mkdir(dir);
+    await this.storage.writeAtomic(path, JSON.stringify(meta), { mode: 0o600 });
+  }
+
+  async deleteMeta(ref: CredentialRef): Promise<void> {
+    const path = this.metaPath(ref);
+    const exists = await this.storage.exists(path);
+    if (exists) {
+      await this.storage.remove(path);
+    }
+  }
+
   async status(
     ref: CredentialRef,
   ): Promise<{ present: boolean; expiresAt?: string; scopes?: string[] }> {
@@ -55,5 +85,13 @@ export class OAuthTokenStore {
     const profile = ref.profile ?? 'default';
     assertSafeSegment(profile, 'profile');
     return `${this.basePath}/${ref.personalityId}/oauth/${ref.providerId}/${profile}.json`;
+  }
+
+  private metaPath(ref: CredentialRef): string {
+    assertSafeSegment(ref.personalityId, 'personalityId');
+    assertSafeSegment(ref.providerId, 'providerId');
+    const profile = ref.profile ?? 'default';
+    assertSafeSegment(profile, 'profile');
+    return `${this.basePath}/${ref.personalityId}/oauth/${ref.providerId}/${profile}.meta.json`;
   }
 }

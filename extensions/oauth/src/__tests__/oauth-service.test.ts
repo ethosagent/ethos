@@ -198,4 +198,59 @@ describe('DefaultOAuthService', () => {
     const result = await service.status(REF);
     expect(result.present).toBe(true);
   });
+
+  it('getAccessToken() refreshes after simulated restart (meta loaded from store)', async () => {
+    fetcher.mockResolvedValueOnce(
+      jsonResponse({ access_token: 'at_initial', token_type: 'bearer', expires_in: 3600 }),
+    );
+    await service.authorize(CC_PROFILE, REF);
+
+    // Simulate a process restart: new service instance with the same token store
+    const service2 = new DefaultOAuthService(
+      tokenStore,
+      registry,
+      fetcher as unknown as (url: string, init: RequestInit) => Promise<Response>,
+    );
+
+    // Write an expired token so refresh is triggered
+    await tokenStore.set(REF, {
+      access_token: 'at_expired',
+      refresh_token: 'rt_123',
+      expires_at: '2020-01-01T00:00:00Z',
+    });
+
+    fetcher.mockResolvedValueOnce(
+      jsonResponse({ access_token: 'at_refreshed_post_restart', token_type: 'bearer' }),
+    );
+
+    const token = await service2.getAccessToken(REF);
+    expect(token).toBe('at_refreshed_post_restart');
+  });
+
+  it('revoke() works after simulated restart (meta loaded from store)', async () => {
+    const profileWithRevocation: OAuthProviderProfile = {
+      ...CC_PROFILE,
+      id: 'test-revoke2',
+      revocationEndpoint: 'https://auth.example.com/revoke',
+    };
+    const revRef: CredentialRef = { providerId: 'test-revoke2', personalityId: 'alice' };
+
+    fetcher.mockResolvedValueOnce(
+      jsonResponse({ access_token: 'at_rev', token_type: 'bearer', expires_in: 3600 }),
+    );
+    await service.authorize(profileWithRevocation, revRef);
+
+    // Simulate a process restart: new service instance
+    const service2 = new DefaultOAuthService(
+      tokenStore,
+      registry,
+      fetcher as unknown as (url: string, init: RequestInit) => Promise<Response>,
+    );
+
+    fetcher.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    await service2.revoke(revRef);
+
+    const revocationCall = fetcher.mock.calls[1];
+    expect(revocationCall[0]).toBe('https://auth.example.com/revoke');
+  });
 });

@@ -101,6 +101,45 @@ describe('buildTokenExchangeParams', () => {
     expect(body.get('client_secret')).toBe('my-secret');
     expect(headers.Authorization).toBeUndefined();
   });
+
+  it('throws for private_key_jwt auth', () => {
+    expect(() =>
+      buildTokenExchangeParams({
+        code: 'auth-code',
+        redirectUri: 'http://127.0.0.1:3000/callback',
+        clientId: 'my-client',
+        codeVerifier: 'my-verifier',
+        clientSecret: 'my-secret',
+        clientAuth: 'private_key_jwt',
+      }),
+    ).toThrow('private_key_jwt auth is not yet implemented');
+  });
+
+  it('throws for mtls auth', () => {
+    expect(() =>
+      buildTokenExchangeParams({
+        code: 'auth-code',
+        redirectUri: 'http://127.0.0.1:3000/callback',
+        clientId: 'my-client',
+        codeVerifier: 'my-verifier',
+        clientSecret: 'my-secret',
+        clientAuth: 'mtls',
+      }),
+    ).toThrow('mtls auth is not yet implemented');
+  });
+
+  it('throws for unknown auth method', () => {
+    expect(() =>
+      buildTokenExchangeParams({
+        code: 'auth-code',
+        redirectUri: 'http://127.0.0.1:3000/callback',
+        clientId: 'my-client',
+        codeVerifier: 'my-verifier',
+        clientSecret: 'my-secret',
+        clientAuth: 'invented_method',
+      }),
+    ).toThrow('Unknown client auth method: invented_method');
+  });
 });
 
 describe('buildRefreshParams', () => {
