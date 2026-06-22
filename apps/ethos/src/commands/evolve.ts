@@ -182,11 +182,18 @@ async function runEvolveRun(args: string[], config: EthosConfig, dir: string): P
   }
 }
 
+const ROLE_MAP: Record<string, 'user' | 'assistant' | 'tool'> = {
+  user: 'user',
+  assistant: 'assistant',
+  tool_result: 'tool',
+  user_steer: 'user',
+};
+
 /**
  * Export messages from the session SQLite DB into an eval JSONL file.
  * Returns true if at least one record was written.
  */
-async function exportSessionsToEval(dbPath: string, outPath: string): Promise<boolean> {
+export async function exportSessionsToEval(dbPath: string, outPath: string): Promise<boolean> {
   // Dynamic import keeps better-sqlite3 out of the require graph for codepaths
   // that don't use `evolve run`.
   const { default: Database } = await import('better-sqlite3');
@@ -213,6 +220,8 @@ async function exportSessionsToEval(dbPath: string, outPath: string): Promise<bo
     const lines: string[] = [];
     const seenSessions = new Map<string, number>();
     for (const row of rows) {
+      const mappedRole = ROLE_MAP[row.role];
+      if (!mappedRole || typeof row.content !== 'string') continue;
       let taskIdx = seenSessions.get(row.session_key);
       if (taskIdx === undefined) {
         taskIdx = seenSessions.size;
@@ -222,11 +231,13 @@ async function exportSessionsToEval(dbPath: string, outPath: string): Promise<bo
         schema_version: '1.0',
         task_id: `session-${taskIdx}`,
         turn: 0,
-        role: row.role as 'user' | 'assistant' | 'tool',
+        role: mappedRole,
         content: row.content,
       };
       lines.push(JSON.stringify(record));
     }
+
+    if (lines.length === 0) return false;
 
     const { writeFile } = await import('node:fs/promises');
     await writeFile(outPath, `${lines.join('\n')}\n`, 'utf-8');

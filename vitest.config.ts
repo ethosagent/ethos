@@ -13,6 +13,7 @@ const srcAliases = {
   '@ethosagent/plugin-contract': resolve('./packages/plugin-contract/src'),
   '@ethosagent/batch-runner': resolve('./extensions/batch-runner/src'),
   '@ethosagent/eval-harness': resolve('./extensions/eval-harness/src'),
+  '@ethosagent/skill-evolver': resolve('./extensions/skill-evolver/src'),
   '@ethosagent/memory-vector': resolve('./extensions/memory-vector/src'),
   '@ethosagent/safety-scanner': resolve('./packages/safety/scanner/src'),
   '@ethosagent/safety-injection': resolve('./packages/safety/injection/src'),
