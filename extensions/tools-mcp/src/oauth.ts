@@ -2,12 +2,12 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { validateUrl as validateSsrfUrl } from '@ethosagent/core';
 import {
-  buildAuthorizationUrl as coreAuthUrl,
   buildOAuthMetadataUrl,
   buildProtectedResourceMetadataUrl,
   buildRefreshParams,
   buildRevocationParams,
   buildTokenExchangeParams,
+  buildAuthorizationUrl as coreAuthUrl,
   generateCodeChallenge,
   generateCodeVerifier,
   parseOAuthServerMetadata,
