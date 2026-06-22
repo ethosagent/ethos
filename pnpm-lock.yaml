@@ -959,6 +959,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/oauth:
+    dependencies:
+      '@ethosagent/oauth-core':
+        specifier: workspace:*
+        version: link:../../packages/oauth-core
+      '@ethosagent/storage-crypto':
+        specifier: workspace:*
+        version: link:../storage-crypto
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/observability-sqlite:
     dependencies:
       '@ethosagent/safety-redact':
