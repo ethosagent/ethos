@@ -1511,6 +1511,12 @@ importers:
         specifier: workspace:*
         version: link:../types
 
+  packages/oauth-core:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../types
+
   packages/plugin-contract:
     dependencies:
       '@ethosagent/types':
