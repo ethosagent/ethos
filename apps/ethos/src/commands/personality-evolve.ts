@@ -73,7 +73,7 @@ export async function gatherRecentUserPrompts(
     const msgs = await store.getMessages(s.id, { limit: 20 });
     for (let i = 0; i < msgs.length; i++) {
       const m = msgs[i];
-      if (!m || m.role !== 'user') continue;
+      if (m?.role !== 'user') continue;
       if (prompts.length >= MAX_PROMPTS) break;
       prompts.push({ id: m.id || `${s.id}:${i}`, prompt: m.content });
       timestamps.push(m.timestamp.getTime());
