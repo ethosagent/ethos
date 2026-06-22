@@ -9,4 +9,6 @@ export {
   type LoopbackServerResult,
   startLoopbackServer,
 } from './loopback-server';
+export { DefaultOAuthService } from './oauth-service';
+export { DefaultOAuthRegistry } from './registry';
 export { OAuthTokenStore } from './token-store';
