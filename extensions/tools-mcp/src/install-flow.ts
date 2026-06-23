@@ -486,6 +486,9 @@ export class McpInstallFlow {
     // duplicates) and instead evict the stale per-personality client so the next
     // getToolsForPersonality call reconnects with the fresh token.
     if (session.reauth) {
+      // Ensure config is registered (may not be if this session just booted)
+      const serverConfig = buildPersistedConfigFromSession(session);
+      this.mcpManager.registerConfig(serverConfig);
       await this.mcpManager.reconnectPersonality(session.serverName, session.personalityId ?? '');
     } else if (session.personalityId) {
       // OAuth + personality: tokens are stored personality-scoped, so

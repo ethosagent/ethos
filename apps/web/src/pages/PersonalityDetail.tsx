@@ -224,17 +224,13 @@ function McpSection({
     }, 2000);
   }, [stopPolling, personalityId, qc, notification]);
 
-  // Listen for postMessage from OAuth popup
+  // Listen for BroadcastChannel from OAuth popup
   useEffect(() => {
     if (!oauthServer) return;
 
-    function handleMessage(event: MessageEvent) {
-      try {
-        const h = new URL(event.origin).hostname;
-        if (h !== 'localhost' && h !== '127.0.0.1') return;
-      } catch {
-        return;
-      }
+    const channel = new BroadcastChannel('ethos:mcp_oauth');
+
+    channel.onmessage = (event: MessageEvent) => {
       const msg = event.data as Record<string, unknown> | null;
       if (!msg || typeof msg !== 'object') return;
 
@@ -255,10 +251,9 @@ function McpSection({
           description: detail ?? code ?? 'OAuth failed',
         });
       }
-    }
+    };
 
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+    return () => channel.close();
   }, [oauthServer, oauthState, stopPolling, personalityId, qc, notification]);
 
   // Cleanup polling on unmount
