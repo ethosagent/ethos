@@ -11,6 +11,11 @@ import { ethosDir } from '../config';
 import { resolveAtRefs } from '../lib/at-refs';
 import { makeCompleter } from '../lib/autocomplete';
 import { formatClarifyPrompt, parseClarifyAnswer } from '../lib/clarify-prompt';
+import {
+  type CommandMeta,
+  refreshCommandIfStale,
+  scanCommandsIntoRegistry,
+} from '../lib/command-loader';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { formatRecap } from '../lib/recap';
@@ -202,6 +207,15 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     registry,
     skillCache,
   );
+
+  // FW-§9.4 — scan file-drop command directories into the registry.
+  const commandCache = new Map<string, CommandMeta>();
+  const commandDirs: { path: string; scope: import('../lib/command-loader').CommandScope }[] = [
+    { path: join(ethosDir(), 'commands'), scope: 'global' },
+    { path: join(ethosDir(), 'personalities', personalityId, 'commands'), scope: 'personality' },
+    { path: join(process.cwd(), '.ethos', 'commands'), scope: 'project' },
+  ];
+  await scanCommandsIntoRegistry(storage, commandDirs, registry, commandCache);
 
   // FW-16 — register user-defined quick commands.
   const quickCommands: Record<string, QuickCommandConfig> = config.quick_commands ?? {};
@@ -428,6 +442,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // FW-15/16 — build the slash handler context (skill cache + quick commands).
   const slashCtx: SlashHandlerContext = {
     skillCache,
+    commandCache,
     storage,
     quickCommands,
     isQuickConsentGiven: () => quickConsentGiven,
@@ -904,6 +919,7 @@ async function runSingleQuery(
 
 interface SlashHandlerContext {
   skillCache: Map<string, SkillMeta>;
+  commandCache: Map<string, CommandMeta>;
   storage: Storage;
   quickCommands: Record<string, QuickCommandConfig>;
   isQuickConsentGiven: () => boolean;
@@ -1371,6 +1387,15 @@ async function handleSlashCommand(
           state.pendingTurn = arg
             ? `[Skill: ${name}]\n\n${meta.content}\n\n${arg}`
             : `[Skill: ${name}]\n\n${meta.content}`;
+        }
+        break;
+      }
+      if (cmd?.prefix === '[command]') {
+        const meta = await refreshCommandIfStale(ctx.storage, name, ctx.commandCache);
+        if (meta) {
+          state.pendingTurn = arg
+            ? `[Command: ${name}]\n\n${meta.definition.prompt}\n\n${arg}`
+            : `[Command: ${name}]\n\n${meta.definition.prompt}`;
         }
         break;
       }

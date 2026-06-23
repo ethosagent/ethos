@@ -34,12 +34,12 @@ describe('SlashCommandRegistry ↔ wiring threading (G3)', () => {
       handler: async () => 'ok',
     });
 
-    const cmd = registry.get('mycmd');
+    const cmd = registry.get('my-plugin:mycmd');
     expect(cmd).toBeDefined();
     expect(cmd?.description).toBe('Does plugin things');
     expect(cmd?.prefix).toBe('[plugin:my-plugin]');
-    // Visible to autocomplete's prefix filter.
-    expect(registry.filter('myc').map((c) => c.name)).toContain('mycmd');
+    // Visible to autocomplete's prefix filter (namespaced).
+    expect(registry.filter('my-plugin:myc').map((c) => c.name)).toContain('my-plugin:mycmd');
   });
 });
 

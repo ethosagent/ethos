@@ -48,6 +48,7 @@ export interface LoadPluginsDeps {
   skillPool: Map<string, Skill>;
   buildCompressionSummarizer: () => import('@ethosagent/core').SummarizerFn | undefined;
   slashRegistry?: WiringSlashRegistry;
+  cliSubcommandRegistry?: import('@ethosagent/plugin-sdk').PluginRegistries['cliSubcommandRegistry'];
 }
 
 /**
@@ -117,6 +118,7 @@ export async function loadPlugins(
     pluginPages: new Map(),
     renderers: new Map(),
     slashRegistry: deps.slashRegistry,
+    cliSubcommandRegistry: deps.cliSubcommandRegistry,
     // v2.2 — llmFactory is set after LLM resolution (below). Monitors only
     // start after full wiring, so lazy assignment is safe.
   };

@@ -58,6 +58,7 @@ import { runUpgrade } from './commands/upgrade';
 import { ethosDir, readConfig } from './config';
 import { appendErrorLog } from './error-log';
 import { writeJson } from './json-output';
+import { CliSubcommandRegistry } from './lib/cli-subcommand-registry';
 import { loadRequiredConfig } from './managed-mode';
 import { getSecretsResolver, getStorage } from './wiring';
 
@@ -761,12 +762,25 @@ try {
     }
 
     default: {
-      const pluginCmd = await tryPluginCliSubcommand(effectiveCommand, args.slice(1));
-      if (!pluginCmd) {
+      const registry = await getBootCliRegistry();
+      const entry = registry.get(effectiveCommand);
+      if (!entry?.handler) {
         console.log(`Unknown command: ${command}`);
         console.log(USAGE);
         process.exit(1);
       }
+      const exitCode = await entry.handler({
+        argv: args.slice(1),
+        cwd: process.cwd(),
+        stdout: (s) => {
+          process.stdout.write(s);
+        },
+        stderr: (s) => {
+          process.stderr.write(s);
+        },
+        storage: getStorage(),
+      });
+      if (exitCode !== 0) process.exit(exitCode);
       break;
     }
   }
@@ -1189,32 +1203,31 @@ function parseCliFlags(argv: string[]): Record<string, string> {
   return out;
 }
 
-async function tryPluginCliSubcommand(cmd: string, argv: string[]): Promise<boolean> {
-  try {
-    const { PluginLoader } = await import('@ethosagent/plugin-loader');
-    const {
-      DefaultHookRegistry,
-      DefaultLLMProviderRegistry,
-      DefaultMemoryProviderRegistry,
-      DefaultPersonalityRegistry,
-      DefaultToolRegistry,
-    } = await import('@ethosagent/core');
-    const registries: import('@ethosagent/plugin-sdk').PluginRegistries = {
-      tools: new DefaultToolRegistry(),
-      hooks: new DefaultHookRegistry(),
-      injectors: [],
-      injectorPluginIds: new Map(),
-      personalities: new DefaultPersonalityRegistry(),
-      llmProviders: new DefaultLLMProviderRegistry(),
-      memoryProviders: new DefaultMemoryProviderRegistry(),
-    };
-    const loader = new PluginLoader(registries, { storage: getStorage() });
-    await loader.loadAll();
-    const handler = loader.getCliSubcommandHandler(cmd);
-    if (!handler) return false;
-    await handler(argv);
-    return true;
-  } catch {
-    return false;
-  }
+let _bootCliRegistry: CliSubcommandRegistry | null = null;
+
+async function getBootCliRegistry(): Promise<CliSubcommandRegistry> {
+  if (_bootCliRegistry) return _bootCliRegistry;
+  const { PluginLoader } = await import('@ethosagent/plugin-loader');
+  const {
+    DefaultHookRegistry,
+    DefaultLLMProviderRegistry,
+    DefaultMemoryProviderRegistry,
+    DefaultPersonalityRegistry,
+    DefaultToolRegistry,
+  } = await import('@ethosagent/core');
+  const registry = new CliSubcommandRegistry();
+  const registries: import('@ethosagent/plugin-sdk').PluginRegistries = {
+    tools: new DefaultToolRegistry(),
+    hooks: new DefaultHookRegistry(),
+    injectors: [],
+    injectorPluginIds: new Map(),
+    personalities: new DefaultPersonalityRegistry(),
+    llmProviders: new DefaultLLMProviderRegistry(),
+    memoryProviders: new DefaultMemoryProviderRegistry(),
+    cliSubcommandRegistry: registry,
+  };
+  const loader = new PluginLoader(registries, { storage: getStorage() });
+  await loader.loadAll();
+  _bootCliRegistry = registry;
+  return registry;
 }

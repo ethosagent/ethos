@@ -1,4 +1,6 @@
 import type {
+  CliSubcommandContext,
+  CommandDefinition,
   ContextEngine,
   ContextEngineRegistry,
   ContextInjector,
@@ -29,6 +31,20 @@ import type {
 } from '@ethosagent/types';
 import type { DiagnosticStore } from './diagnostic-store';
 import { PluginMonitorRunner } from './monitor-runner';
+
+/**
+ * Intersect a command's allowedTools with the personality toolset.
+ * Returns the narrower set — tools allowed by both.
+ */
+export function intersectToolGrants(
+  commandTools: string[] | undefined,
+  personalityToolset: string[] | undefined,
+): string[] | undefined {
+  if (!commandTools) return personalityToolset;
+  if (!personalityToolset) return commandTools;
+  const allowed = new Set(personalityToolset);
+  return commandTools.filter((t) => allowed.has(t));
+}
 
 // ---------------------------------------------------------------------------
 // CredentialStorage — Storage + synchronous existence check
@@ -242,8 +258,14 @@ export interface EthosPluginApi {
   registerCliSubcommand(cmd: {
     name: string;
     description: string;
-    handler: (argv: string[]) => Promise<void>;
+    handler: (ctx: CliSubcommandContext) => Promise<number>;
   }): void;
+
+  /** Register a command via the unified CommandDefinition.
+   *  Exactly one of `prompt` or `run` must be set.
+   *  - `prompt` → registers as a slash command (prompt-mediated).
+   *  - `run` → registers as both a slash command and a CLI subcommand (code handler). */
+  registerCommand(def: CommandDefinition): void;
 
   /** Diagnostics emitter for structured logging and metrics (v2.2). */
   readonly diagnostics: DiagnosticsEmitter;
@@ -313,6 +335,30 @@ export interface PluginRegistries {
     register(cmd: { name: string; description: string; usage: string; prefix?: string }): void;
     get(name: string): { description?: string; usage?: string } | undefined;
   };
+  /** v3 — CLI subcommand registry. When present, plugins can register
+   *  subcommands that extend `ethos <name>`. */
+  cliSubcommandRegistry?: {
+    register(cmd: {
+      name: string;
+      description: string;
+      handler?: (ctx: CliSubcommandContext) => Promise<number>;
+      pluginId?: string;
+    }): void;
+    get(name: string):
+      | {
+          name: string;
+          description: string;
+          handler?: (ctx: CliSubcommandContext) => Promise<number>;
+          pluginId?: string;
+        }
+      | undefined;
+    getAll(): {
+      name: string;
+      description: string;
+      handler?: (ctx: CliSubcommandContext) => Promise<number>;
+      pluginId?: string;
+    }[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -350,9 +396,10 @@ export class PluginApiImpl implements EthosPluginApi {
     {
       name: string;
       description: string;
-      handler: (argv: string[]) => Promise<void>;
+      handler: (ctx: CliSubcommandContext) => Promise<number>;
     }
   >();
+  private readonly commandDefinitions = new Map<string, CommandDefinition>();
   private oauthConfig?: OAuthConfig;
 
   constructor(
@@ -683,9 +730,10 @@ export class PluginApiImpl implements EthosPluginApi {
     handler: (args: string, ctx: SlashCommandContext) => Promise<string>;
   }): void {
     const lower = cmd.name.toLowerCase();
+    const namespacedName = `${this.pluginId}:${lower}`;
     this.slashHandlers.set(lower, { ...cmd, name: lower });
     this.registries.slashRegistry?.register({
-      name: lower,
+      name: namespacedName,
       description: cmd.description,
       usage: cmd.usage,
       prefix: `[plugin:${this.pluginId}]`,
@@ -695,7 +743,14 @@ export class PluginApiImpl implements EthosPluginApi {
   getSlashHandler(
     name: string,
   ): ((args: string, ctx: SlashCommandContext) => Promise<string>) | undefined {
-    return this.slashHandlers.get(name.toLowerCase())?.handler;
+    const lower = name.toLowerCase();
+    const handler = this.slashHandlers.get(lower);
+    if (handler) return handler.handler;
+    const colonIdx = lower.indexOf(':');
+    if (colonIdx >= 0) {
+      return this.slashHandlers.get(lower.slice(colonIdx + 1))?.handler;
+    }
+    return undefined;
   }
 
   getAllSlashCommands(): { name: string; description: string; usage: string }[] {
@@ -709,14 +764,30 @@ export class PluginApiImpl implements EthosPluginApi {
   registerCliSubcommand(cmd: {
     name: string;
     description: string;
-    handler: (argv: string[]) => Promise<void>;
+    handler: (ctx: CliSubcommandContext) => Promise<number>;
   }): void {
     const lower = cmd.name.toLowerCase();
+    const namespacedName = `${this.pluginId}:${lower}`;
     this.cliSubcommandHandlers.set(lower, { ...cmd, name: lower });
+    this.registries.cliSubcommandRegistry?.register({
+      name: namespacedName,
+      description: cmd.description,
+      handler: cmd.handler,
+      pluginId: this.pluginId,
+    });
   }
 
-  getCliSubcommandHandler(name: string): ((argv: string[]) => Promise<void>) | undefined {
-    return this.cliSubcommandHandlers.get(name.toLowerCase())?.handler;
+  getCliSubcommandHandler(
+    name: string,
+  ): ((ctx: CliSubcommandContext) => Promise<number>) | undefined {
+    const lower = name.toLowerCase();
+    const handler = this.cliSubcommandHandlers.get(lower);
+    if (handler) return handler.handler;
+    const colonIdx = lower.indexOf(':');
+    if (colonIdx >= 0) {
+      return this.cliSubcommandHandlers.get(lower.slice(colonIdx + 1))?.handler;
+    }
+    return undefined;
   }
 
   getAllCliSubcommands(): { name: string; description: string }[] {
@@ -724,6 +795,99 @@ export class PluginApiImpl implements EthosPluginApi {
       name,
       description,
     }));
+  }
+
+  registerCommand(def: CommandDefinition): void {
+    const hasPrompt = typeof def.prompt === 'string';
+    const hasRun = typeof def.run === 'function';
+    if (hasPrompt === hasRun) {
+      throw new Error(`CommandDefinition "${def.name}" must have exactly one of prompt or run`);
+    }
+
+    this.commandDefinitions.set(def.name.toLowerCase(), def);
+
+    if (hasPrompt) {
+      // Prompt-mediated → slash command only
+      this.registerSlashCommand({
+        name: def.name,
+        description: def.description,
+        usage: def.argumentHint ? `/${def.name} ${def.argumentHint}` : `/${def.name}`,
+        handler: async (args) => {
+          // Substitute $ARGUMENTS in the prompt
+          let body = def.prompt ?? '';
+          body = body.replace(/\$ARGUMENTS/g, args);
+          const parts = args.split(/\s+/).filter(Boolean);
+          for (let i = 0; i < parts.length; i++) {
+            body = body.replace(new RegExp(`\\$${i + 1}`, 'g'), parts[i] ?? '');
+          }
+          return body;
+        },
+      });
+    } else {
+      // Code handler → slash + CLI
+      const run = def.run;
+      if (!run) return;
+
+      this.registerSlashCommand({
+        name: def.name,
+        description: def.description,
+        usage: def.argumentHint ? `/${def.name} ${def.argumentHint}` : `/${def.name}`,
+        handler: async (args, ctx) => {
+          const parts = args.split(/\s+/).filter(Boolean);
+          const named: Record<string, string> = {};
+          const positional: string[] = [];
+          for (const part of parts) {
+            if (part.startsWith('--') && part.includes('=')) {
+              const eqIdx = part.indexOf('=');
+              named[part.slice(2, eqIdx)] = part.slice(eqIdx + 1);
+            } else {
+              positional.push(part);
+            }
+          }
+          const result = await run({
+            args: { raw: args, positional, named },
+            personalityId: ctx.personalityId,
+            sessionId: ctx.sessionId,
+            emit: (text) => {
+              ctx.send(text);
+            },
+            storage: ctx.storage,
+            tools: ctx.toolRegistry,
+          });
+          return result.output ?? '';
+        },
+      });
+
+      this.registerCliSubcommand({
+        name: def.name,
+        description: def.description,
+        handler: async (ctx) => {
+          const named: Record<string, string> = {};
+          const positional: string[] = [];
+          for (const arg of ctx.argv) {
+            if (arg.startsWith('--') && arg.includes('=')) {
+              const eqIdx = arg.indexOf('=');
+              named[arg.slice(2, eqIdx)] = arg.slice(eqIdx + 1);
+            } else {
+              positional.push(arg);
+            }
+          }
+          const result = await run({
+            args: { raw: ctx.argv.join(' '), positional, named },
+            sessionId: '',
+            emit: (text) => {
+              ctx.stdout(text);
+            },
+            storage: ctx.storage,
+          });
+          return result.exitCode;
+        },
+      });
+    }
+  }
+
+  getCommandDefinitions(): CommandDefinition[] {
+    return [...this.commandDefinitions.values()];
   }
 
   getHealthChecks(): PluginHealthCheck[] {
@@ -819,6 +983,9 @@ export class PluginApiImpl implements EthosPluginApi {
 // ---------------------------------------------------------------------------
 
 export type {
+  CliSubcommandContext,
+  CommandContext,
+  CommandDefinition,
   ContextInjector,
   DiagnosticsEmitter,
   InjectionResult,

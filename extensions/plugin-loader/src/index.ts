@@ -506,7 +506,9 @@ export class PluginLoader {
     return result;
   }
 
-  getCliSubcommandHandler(name: string): ((argv: string[]) => Promise<void>) | undefined {
+  getCliSubcommandHandler(
+    name: string,
+  ): ((ctx: import('@ethosagent/types').CliSubcommandContext) => Promise<number>) | undefined {
     for (const api of this.apis.values()) {
       const handler = api.getCliSubcommandHandler(name);
       if (handler) return handler;
