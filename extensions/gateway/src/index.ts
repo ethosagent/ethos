@@ -562,15 +562,19 @@ export class Gateway {
         const ctx: ChannelContext = {
           botKey: adapterBotKey,
           onMessage: async (msg: InboundMessage) => {
-            const stamped = msg.botKey ? msg : { ...msg, botKey: adapterBotKey };
+            const stamped = msg.botKey !== undefined ? msg : { ...msg, botKey: adapterBotKey };
             await this.handleMessage(stamped, adapter);
           },
           logger: noopLogger,
         };
         if (adapter.startWithContext) {
-          void adapter.startWithContext(ctx);
+          adapter.startWithContext(ctx).catch(() => {});
         } else {
-          void adapter.start();
+          adapter.onMessage((msg: InboundMessage) => {
+            const stamped = msg.botKey !== undefined ? msg : { ...msg, botKey: adapterBotKey };
+            void this.handleMessage(stamped, adapter);
+          });
+          adapter.start().catch(() => {});
         }
         this.adapterRegistry.set(name, adapter);
       }

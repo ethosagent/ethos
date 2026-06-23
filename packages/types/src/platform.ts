@@ -108,6 +108,7 @@ export interface PlatformAdapter {
   readonly canReact: boolean;
   readonly canSendFiles: boolean;
   readonly maxMessageLength: number;
+  /** @deprecated v1 — use `caps` (ChannelCapabilities) for new adapters. */
   readonly capabilities?: AdapterCapabilities;
   readonly caps?: ChannelCapabilities;
   startWithContext?(ctx: ChannelContext): Promise<void>;
