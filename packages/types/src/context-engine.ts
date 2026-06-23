@@ -12,6 +12,26 @@
 import type { Message } from './llm';
 import type { PersonalityConfig } from './personality';
 
+// ---------------------------------------------------------------------------
+// Capability handles — injected by the framework, consumed by engines
+// ---------------------------------------------------------------------------
+
+/** Thin LLM handle for engines that need summarization or extraction. */
+export interface ContextEngineLLMHandle {
+  summarize(messages: Message[], targetTokens: number): Promise<string>;
+}
+
+/** Persistent key/value store for context that moves outside the window. */
+export interface ContextEngineStore {
+  read(key: string): Promise<string | null>;
+  write(key: string, value: string): Promise<void>;
+  list(): Promise<string[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Input types
+// ---------------------------------------------------------------------------
+
 export interface ContextEngineCompactInput {
   /** Full message history to compact. */
   messages: Message[];
@@ -23,12 +43,50 @@ export interface ContextEngineCompactInput {
   personality: PersonalityConfig;
   /** Free-form session metadata (sessionId, sessionKey, turn count, etc.). */
   sessionMetadata: ContextEngineSessionMetadata;
+
+  /** LLM handle for summarization / extraction (provided when available). */
+  llm?: ContextEngineLLMHandle;
+  /** Embedding function for vector / semantic recall engines. */
+  embed?: (text: string) => Promise<number[]>;
+  /** Persistent store for context paged out beyond the window. */
+  store?: ContextEngineStore;
+  /** Importance scorer — higher values mean the message is harder to evict. */
+  score?: (message: Message) => number;
+  /** User-supplied hint from `/compact <text>`. */
+  instructions?: string;
+  /** Cancellation signal for expensive multi-pass compaction. */
+  signal?: AbortSignal;
+  /** Framework-owned, model-pinned token counter. */
+  countTokens?: (messages: Message[]) => Promise<number>;
 }
 
 export interface ContextEngineSessionMetadata {
   sessionId: string;
   sessionKey: string;
   turnNumber: number;
+}
+
+// ---------------------------------------------------------------------------
+// Output types
+// ---------------------------------------------------------------------------
+
+/** Audit entry for a message removed during compaction. */
+export interface ContextEngineRemovedEntry {
+  index: number;
+  reason: 'trimmed' | 'summarized' | 'paged_out';
+}
+
+/** A summary synthesized from a contiguous range of original messages. */
+export interface ContextEngineSummaryEntry {
+  text: string;
+  /** [startIndex, endIndex) in the original messages array. */
+  sourceRange: [number, number];
+}
+
+/** Record of a key written to the external store during compaction. */
+export interface ContextEngineExternalWrite {
+  key: string;
+  tokenCount: number;
 }
 
 export interface ContextEngineCompactOutput {
@@ -50,12 +108,34 @@ export interface ContextEngineCompactOutput {
    * leave this unset.
    */
   cacheBreakpoints?: number[];
+  /** Audit trail of messages removed during compaction. */
+  removed?: ContextEngineRemovedEntry[];
+  /** Summaries synthesized from contiguous message ranges. */
+  summaries?: ContextEngineSummaryEntry[];
+  /** Keys written to the external store during this compaction pass. */
+  externalWrites?: ContextEngineExternalWrite[];
+  /** Monotonic "kept boundary" index — the framework advances it, never moves backward. */
+  cacheAnchor?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Engine interface
+// ---------------------------------------------------------------------------
 
 export interface ContextEngine {
   readonly name: string;
   compact(opts: ContextEngineCompactInput): Promise<ContextEngineCompactOutput>;
+  /**
+   * Optional engine-owned trigger. When present, the framework calls this
+   * before the default 80% pressure gate. An engine can choose to act
+   * earlier (never later — the framework's gate is the floor).
+   */
+  shouldCompact?(input: ContextEngineCompactInput): boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Registry
+// ---------------------------------------------------------------------------
 
 export interface ContextEngineRegistry {
   /** Register an engine factory. Plugin-author entry point. */

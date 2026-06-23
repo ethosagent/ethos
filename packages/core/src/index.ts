@@ -22,6 +22,7 @@ export {
   ClarifyTimedOutNoDefaultError,
 } from './clarify/clarify-bridge';
 export { FileClarifyStore } from './clarify/file-clarify-store';
+export { type ConformanceResult, validateContextEngine } from './context-engines/conformance';
 export { DropOldestEngine } from './context-engines/drop-oldest';
 export { ReferencePreservingEngine } from './context-engines/reference-preserving';
 export {
@@ -29,6 +30,7 @@ export {
   type DefaultContextEngineRegistryOptions,
 } from './context-engines/registry';
 export { SemanticSummaryEngine, type SummarizerFn } from './context-engines/semantic-summary';
+export { TieredSummaryEngine } from './context-engines/tiered-summary';
 export {
   estimateMessagesTokens,
   estimateMessageTokens,

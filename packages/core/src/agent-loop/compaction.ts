@@ -1,9 +1,12 @@
 import type {
+  ContextEngineLLMHandle,
   ContextEngineRegistry,
+  ContextEngineStore,
   LLMProvider,
   Message,
   PersonalityConfig,
   SessionStore,
+  Storage,
 } from '@ethosagent/types';
 import { estimateMessagesTokens, estimateTokens } from '../context-engines/token-estimator';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
@@ -13,6 +16,13 @@ export interface CompactionDeps {
   contextEngines: ContextEngineRegistry;
   session: SessionStore;
   observability?: AgentLoopObservability;
+  /** Context-engine LLM handle — preferred over engine-constructor injection. */
+  llmHandle?: ContextEngineLLMHandle;
+  /** Raw storage + dataDir for building a per-personality ContextEngineStore. */
+  storage?: Storage;
+  dataDir?: string;
+  /** Framework-owned, model-pinned token counter. */
+  countTokens?: (messages: Message[]) => Promise<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,6 +72,20 @@ export async function maybeCompact(
   const engineName = personality.context_engine ?? 'drop_oldest';
   const engine = deps.contextEngines.get(engineName) ?? deps.contextEngines.get('drop_oldest');
   if (!engine) return { messages };
+
+  // Build a per-personality ContextEngineStore when raw storage is available.
+  let store: ContextEngineStore | undefined;
+  const stStorage = deps.storage;
+  const stDataDir = deps.dataDir;
+  if (stStorage && stDataDir) {
+    const basePath = `${stDataDir}/compaction/${personality.id}`;
+    store = {
+      read: (key) => stStorage.read(`${basePath}/${key}`),
+      write: (key, value) => stStorage.write(`${basePath}/${key}`, value),
+      list: () => stStorage.list(basePath),
+    };
+  }
+
   try {
     const startedAt = Date.now();
     const result = await engine.compact({
@@ -70,6 +94,9 @@ export async function maybeCompact(
       targetTokens: target,
       personality,
       sessionMetadata,
+      ...(deps.llmHandle ? { llm: deps.llmHandle } : {}),
+      ...(store ? { store } : {}),
+      ...(deps.countTokens ? { countTokens: deps.countTokens } : {}),
     });
     const durationMs = Date.now() - startedAt;
     deps.observability?.recordCompaction({

@@ -161,10 +161,10 @@ describe('ReferencePreservingEngine', () => {
 });
 
 describe('DefaultContextEngineRegistry', () => {
-  it('ships drop_oldest, semantic_summary, reference_preserving by default', () => {
+  it('ships drop_oldest, semantic_summary, reference_preserving, tiered_summary by default', () => {
     const reg = new DefaultContextEngineRegistry();
     expect(reg.names().sort()).toEqual(
-      ['drop_oldest', 'reference_preserving', 'semantic_summary'].sort(),
+      ['drop_oldest', 'reference_preserving', 'semantic_summary', 'tiered_summary'].sort(),
     );
   });
 

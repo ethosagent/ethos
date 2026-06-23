@@ -47,6 +47,7 @@ export async function buildAgentLoop(
     injectorPluginIds,
     contextEngines,
     notificationRouter,
+    llmHandle,
   } = pluginsResult;
 
   const NOOP_SECRETS = {
@@ -348,6 +349,7 @@ export async function buildAgentLoop(
     memoryProviders: memoryProviderMap,
     safety,
     contextEngines,
+    ...(llmHandle ? { llmHandle } : {}),
     clarifyBridge: infra.clarifyBridge,
     ...(config.teamName ? { teamId: config.teamName } : {}),
     ...(opts.observability ? { observability: opts.observability } : {}),

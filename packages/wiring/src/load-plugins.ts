@@ -10,6 +10,7 @@ import {
 import { UniversalScanner } from '@ethosagent/skills';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type {
+  ContextEngineLLMHandle,
   ContextInjector,
   HookRegistry,
   LLMProviderRegistry,
@@ -34,6 +35,8 @@ export interface LoadPluginsResult {
   pluginEvaluators: PostTurnEvaluator[];
   pluginRoutes: PluginRouteEntry[];
   contextEngines: import('@ethosagent/core').DefaultContextEngineRegistry;
+  /** LLM handle for context engines — wraps the compression summarizer. */
+  llmHandle?: ContextEngineLLMHandle;
 }
 
 export interface LoadPluginsDeps {
@@ -142,6 +145,10 @@ export async function loadPlugins(
     for (const [k, v] of pluginSkillPool) skillPool.set(k, v);
   }
 
+  // Build the ContextEngineLLMHandle from the compression summarizer so the
+  // AgentLoop can thread it to engines via CompactInput.llm.
+  const llmHandle: ContextEngineLLMHandle | undefined = summarize ? { summarize } : undefined;
+
   return {
     pluginLoader,
     pluginRegistries,
@@ -152,5 +159,6 @@ export async function loadPlugins(
     pluginEvaluators,
     pluginRoutes,
     contextEngines,
+    llmHandle,
   };
 }

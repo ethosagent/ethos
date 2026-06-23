@@ -1,5 +1,6 @@
 import type {
   AgentSafety,
+  ContextEngineLLMHandle,
   ContextEngineRegistry,
   ContextInjector,
   HookRegistry,
@@ -53,6 +54,8 @@ export interface LoopDeps {
   dataDir?: string;
   observability?: AgentLoopObservability;
   contextEngines: ContextEngineRegistry;
+  /** Context-engine LLM handle — preferred over engine-constructor injection. */
+  llmHandle?: ContextEngineLLMHandle;
   clarifyBridge?: ClarifyBridge;
   requestDumpStore?: RequestDumpStore;
   teamId?: string;

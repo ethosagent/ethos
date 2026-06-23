@@ -5,6 +5,7 @@ import type { ContextEngine, ContextEngineRegistry } from '@ethosagent/types';
 import { DropOldestEngine } from './drop-oldest';
 import { ReferencePreservingEngine } from './reference-preserving';
 import { SemanticSummaryEngine, type SummarizerFn } from './semantic-summary';
+import { TieredSummaryEngine } from './tiered-summary';
 
 export interface DefaultContextEngineRegistryOptions {
   /** Optional summarizer wired into the SemanticSummaryEngine. Without it
@@ -23,6 +24,7 @@ export class DefaultContextEngineRegistry implements ContextEngineRegistry {
         : new SemanticSummaryEngine(),
     );
     this.register(new ReferencePreservingEngine());
+    this.register(new TieredSummaryEngine());
   }
 
   register(engine: ContextEngine): void {
