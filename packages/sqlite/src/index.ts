@@ -25,9 +25,10 @@ class Statement {
 
   // biome-ignore lint/suspicious/noExplicitAny: accepts both positional and named params
   run(...params: any[]): RunResult {
-    const r = params.length === 1 && isNamedParams(params[0])
-      ? this.inner.run(params[0])
-      : this.inner.run(...params);
+    const r =
+      params.length === 1 && isNamedParams(params[0])
+        ? this.inner.run(params[0])
+        : this.inner.run(...params);
     return {
       changes: Number(r.changes),
       lastInsertRowid: Number(r.lastInsertRowid),
@@ -36,17 +37,19 @@ class Statement {
 
   // biome-ignore lint/suspicious/noExplicitAny: accepts both positional and named params
   get(...params: any[]): any {
-    const r = params.length === 1 && isNamedParams(params[0])
-      ? this.inner.get(params[0])
-      : this.inner.get(...params);
+    const r =
+      params.length === 1 && isNamedParams(params[0])
+        ? this.inner.get(params[0])
+        : this.inner.get(...params);
     return r;
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: accepts both positional and named params
   all(...params: any[]): any[] {
-    const r = params.length === 1 && isNamedParams(params[0])
-      ? this.inner.all(params[0])
-      : this.inner.all(...params);
+    const r =
+      params.length === 1 && isNamedParams(params[0])
+        ? this.inner.all(params[0])
+        : this.inner.all(...params);
     return r;
   }
 
@@ -96,7 +99,9 @@ class _Database {
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: must accept any function signature for better-sqlite3 compat
-  transaction<T extends (...args: any[]) => any>(fn: T): T & { deferred: T; immediate: T; exclusive: T } {
+  transaction<T extends (...args: any[]) => any>(
+    fn: T,
+  ): T & { deferred: T; immediate: T; exclusive: T } {
     const self = this;
     const makeWrapper = (beginCmd: string) => {
       // biome-ignore lint/suspicious/noExplicitAny: wrapper must match any function signature
@@ -142,7 +147,6 @@ class _Database {
   }
 }
 
-// biome-ignore lint/suspicious/noRedeclare: namespace merge for better-sqlite3 Database.Database type compat
 namespace _Database {
   export type Database = _Database;
 }

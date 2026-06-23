@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import Database from '@ethosagent/sqlite';
 import type {
   CompressionEvent,
   KeyValueStore,
@@ -9,7 +10,6 @@ import type {
   SessionUsage,
   StoredMessage,
 } from '@ethosagent/types';
-import Database from '@ethosagent/sqlite';
 import { SqliteKeyValueStore } from './kv-store';
 
 export {

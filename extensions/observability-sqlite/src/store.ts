@@ -1,5 +1,5 @@
-import type { ObsEvent, ObservabilityStore, Snapshot, Span, Trace } from '@ethosagent/types';
 import Database from '@ethosagent/sqlite';
+import type { ObsEvent, ObservabilityStore, Snapshot, Span, Trace } from '@ethosagent/types';
 import { redactJson, redactString } from './redact';
 
 // ---------------------------------------------------------------------------

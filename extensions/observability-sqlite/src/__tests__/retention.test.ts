@@ -1,8 +1,8 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from '@ethosagent/sqlite';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { RETENTION_DEFAULTS } from '@ethosagent/types';
-import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BlobStore } from '../blob-store';
 import { mergeRetentionConfig, parseDuration, pruneObservability } from '../retention';

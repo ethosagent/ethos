@@ -11,6 +11,7 @@ import {
 } from '@ethosagent/safety-channel';
 import { shortPatternCheck, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactPii } from '@ethosagent/safety-redact';
+import type Database from '@ethosagent/sqlite';
 import type {
   AttachmentCache,
   ClarifyResponse,
@@ -18,7 +19,6 @@ import type {
   PlatformAdapter,
   SteerSink,
 } from '@ethosagent/types';
-import type Database from '@ethosagent/sqlite';
 import { MessageDedupCache } from './dedup';
 
 export { MessageDedupCache } from './dedup';

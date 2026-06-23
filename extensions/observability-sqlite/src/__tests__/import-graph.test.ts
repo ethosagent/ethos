@@ -13,7 +13,11 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 const LIB_ROOT = join(REPO_ROOT, 'extensions', 'observability-sqlite', 'src');
 
-const ALLOWED_WORKSPACE = new Set(['@ethosagent/types', '@ethosagent/safety-redact', '@ethosagent/sqlite']);
+const ALLOWED_WORKSPACE = new Set([
+  '@ethosagent/types',
+  '@ethosagent/safety-redact',
+  '@ethosagent/sqlite',
+]);
 const WORKSPACE_RE = /from\s+['"](@ethosagent\/[^'"\s]+)['"]/g;
 
 function* walkLibrarySources(dir: string): Generator<string> {

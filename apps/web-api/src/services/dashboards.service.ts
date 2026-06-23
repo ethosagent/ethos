@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { loadWidgetTemplates } from '@ethosagent/plugin-loader';
-import type { WidgetTemplate } from '@ethosagent/types';
 import Database from '@ethosagent/sqlite';
+import type { WidgetTemplate } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Types

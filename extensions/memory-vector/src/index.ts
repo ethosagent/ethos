@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import Database from '@ethosagent/sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   ListOpts,
@@ -12,7 +13,6 @@ import type {
   SearchOpts,
   Storage,
 } from '@ethosagent/types';
-import Database from '@ethosagent/sqlite';
 
 // ---------------------------------------------------------------------------
 // Constants
