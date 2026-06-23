@@ -108,8 +108,12 @@ function scriptHappyTokenExchange(script: StubFetchScript): void {
 
 class StubMcpManager {
   readonly added: McpServerConfig[] = [];
+  readonly registered: McpServerConfig[] = [];
+  readonly reconnectCalls: { serverName: string; personalityId: string }[] = [];
   /** If set, the NEXT addServer call rejects with this error. */
   failNext?: Error;
+  /** If set, the NEXT reconnectPersonality call rejects with this error. */
+  failNextReconnect?: Error;
   /** Override the listServers return value. */
   serversToList: McpServerInfo[] = [];
 
@@ -130,6 +134,19 @@ class StubMcpManager {
         ...(config.created_via !== undefined ? { created_via: config.created_via } : {}),
       },
     ];
+  }
+
+  registerConfig(config: McpServerConfig): void {
+    this.registered.push(config);
+  }
+
+  async reconnectPersonality(serverName: string, personalityId: string): Promise<void> {
+    this.reconnectCalls.push({ serverName, personalityId });
+    if (this.failNextReconnect) {
+      const err = this.failNextReconnect;
+      this.failNextReconnect = undefined;
+      throw err;
+    }
   }
 
   listServers(): McpServerInfo[] {
@@ -409,8 +426,8 @@ describe('McpInstallFlow.complete', () => {
     const result = await flow.complete({ code: 'auth-code-123', state });
 
     expect(result.serverName).toBe(serverName);
-    expect(manager.added).toHaveLength(1);
-    expect(manager.added[0]).toMatchObject({
+    expect(manager.registered).toHaveLength(1);
+    expect(manager.registered[0]).toMatchObject({
       name: 'linear',
       transport: 'streamable-http',
       url: MCP_URL,
@@ -500,7 +517,7 @@ describe('McpInstallFlow.complete', () => {
     expect(await failingSecrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBeNull();
   });
 
-  it('rolls back tokens + placeholder when mcpManager.addServer fails', async () => {
+  it('personality path: reconnect failure is non-fatal — tokens and config are preserved', async () => {
     const { flow, manager, jsonStore, secrets, script } = await makeHarness();
     scriptHappyDiscoveryAndDcr(script);
     const { state, serverName } = await flow.start({
@@ -509,15 +526,43 @@ describe('McpInstallFlow.complete', () => {
     });
 
     scriptHappyTokenExchange(script);
+    manager.failNextReconnect = new Error('mcp connect failed');
+
+    // Should NOT throw — reconnect failure is non-fatal for personality path.
+    const result = await flow.complete({ code: 'auth-code', state });
+    expect(result.serverName).toBe(serverName);
+
+    // Config was registered (not added via addServer).
+    expect(manager.added).toHaveLength(0);
+    expect(manager.registered).toHaveLength(1);
+    expect(manager.reconnectCalls).toHaveLength(1);
+
+    // Tokens are preserved.
+    const prefix = `personalities/${PERSONALITY_ID}`;
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBe(TOKEN_OK.access_token);
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/refresh_token`)).toBe(TOKEN_OK.refresh_token);
+
+    // mcp.json config is preserved.
+    expect(await jsonStore.get(serverName)).not.toBeNull();
+    expect(flow.getStatus(state)).toBe('connected');
+  });
+
+  it('non-personality path: rolls back tokens + placeholder when addServer fails', async () => {
+    const { flow, manager, jsonStore, secrets, script } = await makeHarness();
+    scriptHappyDiscoveryAndDcr(script);
+    // No personalityId — uses the global-secrets addServer path.
+    const { state, serverName } = await flow.start({ mcpUrl: MCP_URL });
+
+    scriptHappyTokenExchange(script);
     manager.failNext = new Error('mcp connect failed');
 
     await expect(flow.complete({ code: 'auth-code', state })).rejects.toThrow(/mcp connect failed/);
 
     expect(manager.added).toHaveLength(0);
     expect(await jsonStore.get(serverName)).toBeNull();
-    const prefix = `personalities/${PERSONALITY_ID}`;
-    expect(await secrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBeNull();
-    expect(await secrets.get(`${prefix}/mcp/${serverName}/refresh_token`)).toBeNull();
+    // Global path: tokens stored without personality prefix.
+    expect(await secrets.get(`mcp/${serverName}/access_token`)).toBeNull();
+    expect(await secrets.get(`mcp/${serverName}/refresh_token`)).toBeNull();
   });
 
   it('exchanges the code against the per-flow redirectUri persisted on the session', async () => {

@@ -1080,6 +1080,21 @@ export class McpManager {
   }
 
   /**
+   * Register a server config without connecting. Used by the install flow
+   * for OAuth+personality installs: the token is stored personality-scoped,
+   * so `addServer` (which connects with global secrets) would fail with
+   * MissingToken. Instead, the flow registers the config here and lets
+   * `getToolsForPersonality` handle the lazy connection with personality-
+   * scoped secrets.
+   */
+  registerConfig(config: McpServerConfig): void {
+    if (this._configs.some((c) => c.name === config.name)) {
+      return; // Already registered (e.g. re-auth path).
+    }
+    this._configs = [...this._configs, config];
+  }
+
+  /**
    * Connect a new MCP server at runtime and surface its tools to the
    * consumer's `ToolRegistry` via the `onToolsChanged` callback.
    *

@@ -487,8 +487,21 @@ export class McpInstallFlow {
     // getToolsForPersonality call reconnects with the fresh token.
     if (session.reauth) {
       await this.mcpManager.reconnectPersonality(session.serverName, session.personalityId ?? '');
+    } else if (session.personalityId) {
+      // OAuth + personality: tokens are stored personality-scoped, so
+      // addServer (which connects with global secrets) would fail with
+      // MissingToken. Register the config without connecting and kick a
+      // lazy reconnect that uses personality-scoped secrets.
+      const serverConfig = buildPersistedConfigFromSession(session);
+      this.mcpManager.registerConfig(serverConfig);
+      try {
+        await this.mcpManager.reconnectPersonality(session.serverName, session.personalityId);
+      } catch {
+        // Non-fatal: the config is persisted in mcp.json and registered
+        // in the manager. The next getToolsForPersonality call will retry.
+      }
     } else {
-      // New server: all-or-nothing. If connect or listTools fails, roll back tokens + placeholder.
+      // No personality — addServer connects with global secrets.
       try {
         const serverConfig = buildPersistedConfigFromSession(session);
         await this.mcpManager.addServer(serverConfig);
