@@ -202,17 +202,23 @@ function McpSection({
         const result = await rpc.mcp.status();
         if (result.status === 'connected') {
           stopPolling();
+          popupRef.current?.close();
+          popupRef.current = null;
           setOauthServer(null);
           setOauthState('');
           qc.invalidateQueries({ queryKey: ['mcp', 'personalityServers', personalityId] });
           notification.success({ message: 'Authentication successful', placement: 'topRight' });
         } else if (result.status === 'error') {
           stopPolling();
+          popupRef.current?.close();
+          popupRef.current = null;
           setOauthServer(null);
           notification.error({ message: 'Authentication failed', description: result.error });
         } else if (result.status === 'expired') {
           if (Date.now() - pollingStartRef.current >= 5 * 60 * 1000) {
             stopPolling();
+            popupRef.current?.close();
+            popupRef.current = null;
             setOauthServer(null);
             setOauthState('');
             notification.error({ message: 'Authorization session expired' });
@@ -236,12 +242,16 @@ function McpSection({
 
       if (msg.type === 'ethos:mcp_oauth_success' && msg.state === oauthState) {
         stopPolling();
+        popupRef.current?.close();
+        popupRef.current = null;
         setOauthServer(null);
         setOauthState('');
         qc.invalidateQueries({ queryKey: ['mcp', 'personalityServers', personalityId] });
         notification.success({ message: 'Authentication successful', placement: 'topRight' });
       } else if (msg.type === 'ethos:mcp_oauth_error' && msg.state === oauthState) {
         stopPolling();
+        popupRef.current?.close();
+        popupRef.current = null;
         setOauthServer(null);
         setOauthState('');
         const detail = typeof msg.detail === 'string' ? msg.detail : undefined;
