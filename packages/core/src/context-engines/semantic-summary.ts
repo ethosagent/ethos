@@ -58,8 +58,9 @@ export class SemanticSummaryEngine implements ContextEngine {
     }
 
     let summaryText: string;
-    if (this.summarize) {
-      summaryText = await this.summarize(middle, summaryTarget);
+    const summarizer = opts.llm?.summarize ?? this.summarize;
+    if (summarizer) {
+      summaryText = await summarizer(middle, summaryTarget);
     } else {
       // Fallback: synthesise a deterministic placeholder. Loses information
       // but preserves history shape so downstream replay still works.

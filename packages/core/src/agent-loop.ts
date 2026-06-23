@@ -1,6 +1,7 @@
 import type {
   AgentEvent,
   AgentSafety,
+  ContextEngineLLMHandle,
   ContextEngineRegistry,
   ContextInjector,
   DryRunToolPlan,
@@ -109,6 +110,12 @@ export interface AgentLoopConfig {
    * `drop_oldest` with a one-line warning.
    */
   contextEngines?: ContextEngineRegistry;
+  /**
+   * Context-engine LLM handle. When set, context engines receive it as
+   * `opts.llm` on every `compact()` call — preferred over the summarizer
+   * injected at engine construction time.
+   */
+  llmHandle?: ContextEngineLLMHandle;
   /**
    * Bridge for the `clarify` tool — the agent asks the user a structured
    * question mid-turn and waits. Optional: when unset, the `clarify` tool
@@ -276,6 +283,8 @@ export class AgentLoop {
   private readonly requestDumpStore?: import('@ethosagent/types').RequestDumpStore;
   /** Phase 3 — team id stamped onto ToolContext when loop runs inside a team. */
   private readonly teamId?: string;
+  /** Context-engine LLM handle — preferred over engine-constructor injection. */
+  private readonly llmHandle?: ContextEngineLLMHandle;
   /** Per-personality MCP tool policy from mcp.yaml (NOT on PersonalityConfig). */
   private readonly mcpPolicy?: import('@ethosagent/types').McpPolicy;
   /** v2.2 — Callback to emit per-tool invocation metrics to the diagnostic store. */
@@ -323,6 +332,7 @@ export class AgentLoop {
     if (config.credentialCheck) this.credentialCheck = config.credentialCheck;
     this.safety = config.safety;
     this.contextEngines = config.contextEngines ?? new DefaultContextEngineRegistry();
+    if (config.llmHandle) this.llmHandle = config.llmHandle;
   }
 
   /**
@@ -388,6 +398,7 @@ export class AgentLoop {
       dataDir: this.dataDir,
       observability: this.observability,
       contextEngines: this.contextEngines,
+      llmHandle: this.llmHandle,
       clarifyBridge: this.clarifyBridge,
       requestDumpStore: this.requestDumpStore,
       teamId: this.teamId,
