@@ -2,6 +2,7 @@
 // All packages import from here. No runtime code.
 
 export * from './agent-event';
+export * from './channel-conformance';
 export * from './clarify';
 export * from './constitution';
 export * from './context-engine';
