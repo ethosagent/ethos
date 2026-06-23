@@ -506,6 +506,10 @@ export class PluginLoader {
     return result;
   }
 
+  getPlatformAdapters(): Map<string, import('@ethosagent/types').PlatformAdapterFactory> {
+    return this.registries.platformAdapters ?? new Map();
+  }
+
   getCliSubcommandHandler(name: string): ((argv: string[]) => Promise<void>) | undefined {
     for (const api of this.apis.values()) {
       const handler = api.getCliSubcommandHandler(name);
