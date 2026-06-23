@@ -145,6 +145,8 @@ interface ChatState {
   pendingTierOverride?: 'trivial' | 'default' | 'deep';
   /** Dry-run mode — tools are planned but not executed. */
   dryRun: boolean;
+  /** Pending toolset narrowing for the next command-triggered turn. */
+  pendingToolsetNarrow?: string[];
 }
 
 interface RunChatOptions {
@@ -673,6 +675,8 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
   try {
     const tierOverride = state.pendingTierOverride;
     state.pendingTierOverride = undefined;
+    const toolsetNarrow = state.pendingToolsetNarrow;
+    state.pendingToolsetNarrow = undefined;
     for await (const event of loop.run(input, {
       sessionKey: state.sessionKey,
       personalityId: state.personalityId,
@@ -680,6 +684,7 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       ...(state.busyMode === 'steer' ? { steerSink: state.steerSink } : {}),
       ...(turnAttachments ? { attachments: turnAttachments } : {}),
       ...(tierOverride ? { tierOverride } : {}),
+      ...(toolsetNarrow ? { toolsetNarrow } : {}),
       ...(state.dryRun ? { dryRun: true } : {}),
     })) {
       // Track iteration count — proxy by counting `run_start`+tool_start sequences.
@@ -1396,6 +1401,9 @@ async function handleSlashCommand(
           state.pendingTurn = arg
             ? `[Command: ${name}]\n\n${meta.definition.prompt}\n\n${arg}`
             : `[Command: ${name}]\n\n${meta.definition.prompt}`;
+          if (meta.definition.allowedTools?.length) {
+            state.pendingToolsetNarrow = meta.definition.allowedTools;
+          }
         }
         break;
       }
