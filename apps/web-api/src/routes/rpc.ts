@@ -86,7 +86,8 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
     // when the origin can't be trusted (non-loopback, non-private,
     // non-allowlisted); McpService falls back to the constructor default
     // in that case.
-    const mcpRequestOrigin = deriveMcpRequestOrigin(c.req.raw, opts.webBaseUrl);
+    const rawOrigin = deriveMcpRequestOrigin(c.req.raw, opts.webBaseUrl);
+    const mcpRequestOrigin = rawOrigin ? `${rawOrigin}/oauth/callback` : undefined;
 
     // Parse the pending cookie: `<state>.<personalityId>`. The cookie was
     // set by mcp.start and carries both values so complete/status can
