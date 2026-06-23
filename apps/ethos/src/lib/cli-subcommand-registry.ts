@@ -24,6 +24,7 @@ export const builtInCliNames = new Set([
   'evolve',
   'plugin',
   'skills',
+  'commands',
   'keys',
   'secrets',
   'api-key',

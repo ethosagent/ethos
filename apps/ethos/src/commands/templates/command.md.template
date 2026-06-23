@@ -1,0 +1,8 @@
+---
+description: Describe what this command does
+argument-hint: <arg>
+allowed-tools: []
+---
+
+Your command prompt here. Use $ARGUMENTS for the full argument string,
+or $1, $2, etc. for positional arguments.
