@@ -539,8 +539,12 @@ describe('McpInstallFlow.complete', () => {
 
     // Tokens are preserved.
     const prefix = `personalities/${PERSONALITY_ID}`;
-    expect(await secrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBe(TOKEN_OK.access_token);
-    expect(await secrets.get(`${prefix}/mcp/${serverName}/refresh_token`)).toBe(TOKEN_OK.refresh_token);
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/access_token`)).toBe(
+      TOKEN_OK.access_token,
+    );
+    expect(await secrets.get(`${prefix}/mcp/${serverName}/refresh_token`)).toBe(
+      TOKEN_OK.refresh_token,
+    );
 
     // mcp.json config is preserved.
     expect(await jsonStore.get(serverName)).not.toBeNull();
