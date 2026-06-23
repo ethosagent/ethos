@@ -295,15 +295,21 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 <script>
 (function(){
   var msg = ${msgJson};
+  // BroadcastChannel — works even when window.opener is null (cross-origin popup)
+  try {
+    var ch = new BroadcastChannel('ethos:mcp_oauth');
+    ch.postMessage(msg);
+    ch.close();
+  } catch(e) {}
+  // Legacy fallback
   if (window.opener) {
     try { window.opener.postMessage(msg, '*'); } catch(e) {}
-    setTimeout(function(){ window.close(); }, 500);
-  } else {
-    window.location.replace('/');
   }
+  // Always close popup (no-op if not a popup)
+  setTimeout(function(){ window.close(); }, 1000);
 })();
 </script>
-<p>Completing authorization&hellip;</p>
+<p>Authorization complete &mdash; this window will close automatically.</p>
 </body></html>`;
 
     return c.html(html);
