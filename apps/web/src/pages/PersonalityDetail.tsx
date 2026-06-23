@@ -5,6 +5,7 @@ import {
   Button,
   Input,
   Modal,
+  Popconfirm,
   Result,
   Spin,
   Switch,
@@ -117,6 +118,25 @@ function McpSection({
     },
     onError: (err) =>
       notification.error({ message: 'Save failed', description: (err as Error).message }),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (serverName: string) => {
+      const filtered = servers.filter((s) => s.name !== serverName).map((s) => s.name);
+      return rpc.personalities.update({ id: personalityId, mcp_servers: filtered });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['personalities', 'get', personalityId] });
+      qc.invalidateQueries({ queryKey: ['mcp', 'personalityServers', personalityId] });
+      qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', personalityId] });
+      qc.invalidateQueries({ queryKey: ['personalities', 'list'] });
+      notification.success({ message: 'Server removed', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Failed to remove server',
+        description: (err as Error).message,
+      }),
   });
 
   const reconnectMut = useMutation({
@@ -413,6 +433,18 @@ function McpSection({
                   Token expired
                 </Tag>
               )}
+              <div style={{ flex: 1 }} />
+              <Popconfirm
+                title={`Remove ${server.name}?`}
+                description="This server will be disconnected from this personality."
+                onConfirm={() => removeMut.mutate(server.name)}
+                okText="Remove"
+                okButtonProps={{ danger: true }}
+              >
+                <Button size="small" danger loading={removeMut.isPending}>
+                  Remove
+                </Button>
+              </Popconfirm>
             </div>
 
             {server.auth_status === 'missing' && server.auth_type === 'bearer' ? (
