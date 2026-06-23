@@ -37,7 +37,21 @@ export function OAuthCallback() {
         ? `${payload.error}: ${payload.error_description}`
         : payload.error;
 
-      // Notify opener if in popup mode
+      // Notify opener via BroadcastChannel (works across cross-origin popup navigations)
+      try {
+        const bc = new BroadcastChannel('ethos:mcp_oauth');
+        bc.postMessage({
+          type: 'ethos:mcp_oauth_error',
+          state: payload.state,
+          code: payload.error,
+          detail,
+        });
+        bc.close();
+      } catch {
+        /* BroadcastChannel not supported */
+      }
+
+      // Legacy fallback
       if (window.opener) {
         try {
           window.opener.postMessage(
@@ -76,20 +90,33 @@ export function OAuthCallback() {
         setServerName(name);
         setStatus('success');
 
-        // Notify opener (popup mode)
+        // Notify opener via BroadcastChannel (works across cross-origin popup navigations)
+        try {
+          const bc = new BroadcastChannel('ethos:mcp_oauth');
+          bc.postMessage({
+            type: 'ethos:mcp_oauth_success',
+            state: payload.state,
+            serverName: name,
+          });
+          bc.close();
+        } catch {
+          /* BroadcastChannel not supported */
+        }
+
+        // Legacy fallback
         if (window.opener) {
           try {
             window.opener.postMessage(
               { type: 'ethos:mcp_oauth_success', state: payload.state, serverName: name },
               window.location.origin,
             );
-            // Self-close popup after short delay
-            setTimeout(() => window.close(), 1500);
-            return;
           } catch {
             /* opener may be closed */
           }
         }
+
+        // Always try to self-close (works for popups, no-op for tabs)
+        setTimeout(() => window.close(), 1500);
 
         // Same-tab fallback: navigate back to originating page
         const returnPath = sessionStorage.getItem('ethos:mcp_oauth_return');
@@ -101,6 +128,23 @@ export function OAuthCallback() {
         );
       })
       .catch((err: unknown) => {
+        const detail = err instanceof Error ? err.message : String(err);
+
+        // Notify opener via BroadcastChannel
+        try {
+          const bc = new BroadcastChannel('ethos:mcp_oauth');
+          bc.postMessage({
+            type: 'ethos:mcp_oauth_error',
+            state: payload.state,
+            code: 'complete_failed',
+            detail,
+          });
+          bc.close();
+        } catch {
+          /* BroadcastChannel not supported */
+        }
+
+        // Legacy fallback
         if (window.opener) {
           try {
             window.opener.postMessage(
@@ -108,7 +152,7 @@ export function OAuthCallback() {
                 type: 'ethos:mcp_oauth_error',
                 state: payload.state,
                 code: 'complete_failed',
-                detail: err instanceof Error ? err.message : String(err),
+                detail,
               },
               window.location.origin,
             );
@@ -116,8 +160,9 @@ export function OAuthCallback() {
             /* opener may be closed */
           }
         }
+
         setStatus('error');
-        setErrorMsg(err instanceof Error ? err.message : String(err));
+        setErrorMsg(detail);
       });
   }, [navigate]);
 
@@ -154,7 +199,7 @@ export function OAuthCallback() {
         <Alert
           type="success"
           message={`Connected to ${serverName}`}
-          description={window.opener ? 'You may close this window.' : 'Redirecting...'}
+          description="This window will close automatically."
         />
       </div>
     );

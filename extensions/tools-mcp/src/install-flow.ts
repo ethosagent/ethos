@@ -322,6 +322,8 @@ export class McpInstallFlow {
     // code-exchange call — those three MUST all match per OAuth.
     const redirectUri = opts.redirectUri ?? this.redirectUri;
 
+    const scopes = metadata.scopes_supported;
+
     // DCR — propagates ConfidentialClientUnsupported when the server returns
     // a client_secret. No rollback needed — nothing has been written yet.
     const dcrResult: DcrResponse = await registerOAuthClient(registrationEndpoint, {
@@ -333,6 +335,7 @@ export class McpInstallFlow {
         'refresh_token',
       ],
       response_types: ['code'] as ['code'],
+      scope: scopes && scopes.length > 0 ? scopes.join(' ') : undefined,
     });
 
     const codeVerifier = generateCodeVerifier();
@@ -347,7 +350,6 @@ export class McpInstallFlow {
     if (metadata.revocation_endpoint) {
       oauthConfig.revocation_endpoint = metadata.revocation_endpoint;
     }
-    const scopes = metadata.scopes_supported;
     if (scopes && scopes.length > 0) {
       oauthConfig.scopes = scopes;
     }

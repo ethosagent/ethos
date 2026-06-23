@@ -85,17 +85,13 @@ export function ConnectMcpModal({
     }, 2000);
   }, [stopPolling, finishConnect]);
 
-  // Listen for postMessage from OAuth popup
+  // Listen for BroadcastChannel message from OAuth callback
   useEffect(() => {
     if (step !== 'oauth') return;
 
-    function handleMessage(event: MessageEvent) {
-      try {
-        const h = new URL(event.origin).hostname;
-        if (h !== 'localhost' && h !== '127.0.0.1') return;
-      } catch {
-        return;
-      }
+    const channel = new BroadcastChannel('ethos:mcp_oauth');
+
+    channel.onmessage = (event: MessageEvent) => {
       const msg = event.data as Record<string, unknown> | null;
       if (!msg || typeof msg !== 'object') return;
 
@@ -109,10 +105,9 @@ export function ConnectMcpModal({
         setErrorMsg(detail ?? code ?? 'OAuth failed');
         setStep('select');
       }
-    }
+    };
 
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+    return () => channel.close();
   }, [step, oauthState, stopPolling, finishConnect]);
 
   // Cleanup polling on unmount
