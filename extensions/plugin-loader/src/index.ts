@@ -451,7 +451,7 @@ export class PluginLoader {
         pluginId: entry.id,
       });
 
-      // Rebuild native addons (e.g. better-sqlite3) — safe: only recompiles C++,
+      // Rebuild native addons (e.g. argon2) — safe: only recompiles C++,
       // does not run arbitrary lifecycle scripts.
       try {
         execSync(`npm rebuild --prefix "${pluginsDir}"`, { stdio: 'pipe', timeout: 60_000 });

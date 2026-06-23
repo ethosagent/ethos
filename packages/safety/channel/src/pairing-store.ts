@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type Database from '@ethosagent/sqlite';
 
 // ---------------------------------------------------------------------------
 // Pairing store — one-time pairing codes for DM allowlist gating

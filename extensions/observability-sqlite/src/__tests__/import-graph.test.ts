@@ -1,6 +1,6 @@
-// Mechanical CI gate: the library may only depend on `@ethosagent/types`
-// and `@ethosagent/safety-redact` (zero-dep safety primitives) from the
-// workspace. Any other `@ethosagent/*` import would couple it to
+// Mechanical CI gate: the library may only depend on `@ethosagent/types`,
+// `@ethosagent/safety-redact` (zero-dep safety primitives), and
+// `@ethosagent/sqlite` (native SQLite shim) from the workspace. Any other `@ethosagent/*` import would couple it to
 // ethos-specific code and break the extractability promise.
 //
 // Implemented in pure Node so the test runs anywhere vitest does — no
@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 const LIB_ROOT = join(REPO_ROOT, 'extensions', 'observability-sqlite', 'src');
 
-const ALLOWED_WORKSPACE = new Set(['@ethosagent/types', '@ethosagent/safety-redact']);
+const ALLOWED_WORKSPACE = new Set(['@ethosagent/types', '@ethosagent/safety-redact', '@ethosagent/sqlite']);
 const WORKSPACE_RE = /from\s+['"](@ethosagent\/[^'"\s]+)['"]/g;
 
 function* walkLibrarySources(dir: string): Generator<string> {

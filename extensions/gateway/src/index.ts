@@ -18,7 +18,7 @@ import type {
   PlatformAdapter,
   SteerSink,
 } from '@ethosagent/types';
-import type Database from 'better-sqlite3';
+import type Database from '@ethosagent/sqlite';
 import { MessageDedupCache } from './dedup';
 
 export { MessageDedupCache } from './dedup';

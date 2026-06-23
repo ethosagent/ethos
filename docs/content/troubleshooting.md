@@ -44,15 +44,9 @@ Cause · The config file parses as YAML but is missing one of `provider`, `model
 
 Fix · Re-run `ethos setup` — answers default to the current config — or edit the file by hand and re-run.
 
-### `better-sqlite3` fails to install {#better-sqlite3-install}
+### SQLite {#sqlite}
 
-Cause · The native module did not find a prebuild for your platform and could not compile from source.
-
-Fix ·
-1. Install build tools. On macOS: `xcode-select --install`. On Debian or Ubuntu: `sudo apt-get install build-essential python3`.
-2. Reinstall: `pnpm install --force`.
-
-Prevent · Keep `better-sqlite3` and `esbuild` in `pnpm.onlyBuiltDependencies` so pnpm's security sandbox allows their install scripts.
+Ethos uses Node 24's built-in `node:sqlite` module (wrapped by `@ethosagent/sqlite`). There is no native compilation step — if Node 24 runs, SQLite works. If you see SQLite-related errors, confirm your Node version is 24 or later (`node --version`).
 
 ## Provider and API keys {#provider-and-api-keys}
 

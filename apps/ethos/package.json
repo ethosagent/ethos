@@ -59,6 +59,7 @@
   "dependencies": {
     "@ethosagent/core": "workspace:*",
     "@ethosagent/digest": "workspace:*",
+    "@ethosagent/sqlite": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@anthropic-ai/sdk": "^0.96.0",
     "@aws-sdk/client-secrets-manager": "^3.800.0",
@@ -68,8 +69,6 @@
     "@orpc/openapi": "^1.14.0",
     "@orpc/server": "^1.14.0",
     "argon2": "^0.43.0",
-    "@types/better-sqlite3": "^7.6.12",
-    "better-sqlite3": "^12.9.0",
     "croner": "^9.0.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.12.15",

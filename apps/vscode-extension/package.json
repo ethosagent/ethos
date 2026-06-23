@@ -68,8 +68,8 @@
     }
   },
   "scripts": {
-    "build": "tsup src/extension.ts --format cjs --external vscode --external better-sqlite3 --external playwright --no-dts --outDir dist",
-    "watch": "tsup src/extension.ts --format cjs --external vscode --external better-sqlite3 --external playwright --no-dts --outDir dist --watch"
+    "build": "tsup src/extension.ts --format cjs --external vscode --external playwright --no-dts --outDir dist",
+    "watch": "tsup src/extension.ts --format cjs --external vscode --external playwright --no-dts --outDir dist --watch"
   },
   "dependencies": {},
   "devDependencies": {

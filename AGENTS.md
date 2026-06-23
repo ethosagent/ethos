@@ -85,7 +85,7 @@ Package manager	pnpm workspaces
 Lint / format	Biome 2 (single quotes, 2-space indent, 100-char line width)
 Tests	vitest 4
 LLM	@anthropic-ai/sdk, openai
-SQLite	better-sqlite3 (WAL + FTS5)
+SQLite	@ethosagent/sqlite (node:sqlite shim, WAL + FTS5)
 Monorepo layout
 packages/
   types/            @ethosagent/types     zero-dep interface contracts
@@ -168,7 +168,7 @@ InMemoryStorage	@ethosagent/storage-fs	Tests — populate fixtures via write(), 
 ScopedStorage	@ethosagent/storage-fs	Decorator — enforces a per-personality read/write path allowlist
 Allowed exceptions (these stay raw node:fs):
 
-extensions/session-sqlite/, extensions/memory-vector/ — SQLite via better-sqlite3 opens raw paths and manages WAL/SHM natively
+extensions/session-sqlite/, extensions/memory-vector/ — SQLite via @ethosagent/sqlite opens raw paths and manages WAL/SHM natively
 apps/ethos/src/error-log.ts — sync crash logger; must flush before process exit
 apps/ethos/tsup.config.ts and other build-time tooling
 extensions/skills/src/skill-compat.ts statSync — walks $PATH, not ~/.ethos/
@@ -287,7 +287,7 @@ All imports are extensionless — import './foo' not import './foo.ts' or import
 Workspace package.json exports point to ./src/index.ts — so Node 24 can run them directly in dev without a build step.
 biome check --write . auto-fixes import order, formatting, and safe lint issues. Run it before committing.
 STRICT SQLite tables — both sessions and messages use STRICT mode. All column types must match exactly.
-better-sqlite3 is synchronous — all SessionStore methods wrap it in async but never actually await I/O. Keep query logic tight; no async operations inside the synchronous db.prepare().run() calls.
+@ethosagent/sqlite (node:sqlite shim) is synchronous — all SessionStore methods wrap it in async but never actually await I/O. Keep query logic tight; no async operations inside the synchronous db.prepare().run() calls.
 Personality toolset is enforced — DefaultToolRegistry.toDefinitions(allowedTools) filters what the LLM sees, and executeParallel rejects calls outside the allowlist (tool-registry.ts:57). AgentLoop reads personality.toolset and passes it through (agent-loop.ts:140,265,396). Disallowed tools get a tool_result with is_error: true to keep the Anthropic message contract intact.
 Running the project
 make prepare        # pnpm install
@@ -331,8 +331,8 @@ The thinking and betas fields for extended thinking are not in the SDK's Message
 OpenAI tool call streaming: index-keyed, not ID-keyed
 OpenAI streams tool calls as deltas on choices[0].delta.tool_calls[index]. The first delta for a given index has the id and name; subsequent deltas only have arguments. Build a Map<number, { id, name, args }> keyed by index. Don't try to key by id — it arrives late and is sometimes empty on early deltas.
 
-better-sqlite3 needs pnpm.onlyBuiltDependencies
-better-sqlite3 is a native module that compiles from source when no prebuild matches. It's listed in pnpm.onlyBuiltDependencies in the root package.json. Without this, pnpm's security sandbox blocks the install script and the package silently fails to compile. Also add esbuild to the same list.
+SQLite — @ethosagent/sqlite wraps node:sqlite
+@ethosagent/sqlite wraps Node 24's built-in node:sqlite (DatabaseSync) with a synchronous API. No native dependencies — no prebuild downloads, no C++ compilation needed. Import: `import Database from '@ethosagent/sqlite'`.
 
 openai package has a zod v3 peer dep — intentionally ignored
 openai@4.87+ lists zod@^3 as a peer dependency. Ethos uses zod@4. The zod dep is only used by openai for its structured outputs / .parse() features, which we don't use. It's suppressed via pnpm.peerDependencyRules.ignoreMissing: ["zod"] in the root package.json. Don't remove this or pnpm will emit peer conflict warnings on every install.

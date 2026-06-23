@@ -40,7 +40,7 @@ const bundleWorkspacePackages = {
   // ours rather than replacing it. A bare `'electron'` string in `external`
   // short-circuits rollup's resolution — our resolveId('electron') never fires,
   // so the createRequire shim below is bypassed and a raw `import … from
-  // "electron"` (which Electron 33's ESM linker chokes on) lands in the bundle.
+  // "electron"` (which Electron's ESM linker chokes on) lands in the bundle.
   // Strip the literal once the config is resolved so the shim takes effect.
   // electron/* subpaths and node builtins stay external (handled in resolveId).
   configResolved(config: { build: { rollupOptions: { external?: unknown } } }) {
@@ -55,8 +55,7 @@ const bundleWorkspacePackages = {
     if (src !== undefined) return { id: src, external: false };
 
     // Native modules resolve to CJS — load via runtime createRequire shims
-    // (static ESM import of a CJS module crashes Electron 33's ESM linker).
-    if (id === 'better-sqlite3') return '\0req:better-sqlite3';
+    // (static ESM import of a CJS module crashes Electron's ESM linker).
     if (id === 'argon2') return '\0req:argon2';
 
     // Node built-ins stay external.

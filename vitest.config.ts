@@ -6,6 +6,7 @@ import { defineConfig } from 'vitest/config';
 const srcAliases = {
   '@ethosagent/types': resolve('./packages/types/src'),
   '@ethosagent/storage-fs': resolve('./packages/storage-fs/src'),
+  '@ethosagent/sqlite': resolve('./packages/sqlite/src'),
   '@ethosagent/core': resolve('./packages/core/src'),
   '@ethosagent/plugin-sdk': resolve('./packages/plugin-sdk/src'),
   '@ethosagent/plugin-sdk/tool-helpers': resolve('./packages/plugin-sdk/src/tool-helpers.ts'),

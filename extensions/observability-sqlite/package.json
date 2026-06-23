@@ -16,13 +16,12 @@
   },
   "dependencies": {
     "@ethosagent/safety-redact": "workspace:*",
+    "@ethosagent/sqlite": "workspace:*",
     "@ethosagent/types": "workspace:*",
-    "better-sqlite3": "^12.9.0",
     "croner": "^9.0.0"
   },
   "devDependencies": {
     "@ethosagent/storage-fs": "workspace:*",
-    "@types/better-sqlite3": "^7.6.12",
     "vitest": "^4.1.5"
   }
 }

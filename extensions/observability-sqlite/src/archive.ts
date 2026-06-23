@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { Storage } from '@ethosagent/types';
-import BetterSqlite3 from 'better-sqlite3';
+import BetterSqlite3 from '@ethosagent/sqlite';
 import { createTarGz, readTarGz } from './tar-bundle';
 
 export interface ArchiveResult {

@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 
 export interface CachedResponse {
   status: number;

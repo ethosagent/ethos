@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 
 // SqliteApiKeyStore — bearer-token store backing /v1/* on the OpenAI-compat
 // surface. Lives alongside SQLiteSessionStore so a single sessions.db file

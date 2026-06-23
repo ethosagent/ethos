@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { EthosConfig } from '../config';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';

@@ -9,7 +9,7 @@ Concrete implementations of the contracts in `@ethosagent/types`. Core (`package
 - [llm-openai-compat](./llm-openai-compat) — Any OpenAI-compatible endpoint (OpenAI, OpenRouter, Ollama, Gemini compat shim, DeepSeek, …).
 
 ### Session + memory
-- [session-sqlite](./session-sqlite) — `SessionStore` on `better-sqlite3` (WAL + FTS5).
+- [session-sqlite](./session-sqlite) — `SessionStore` on `@ethosagent/sqlite` (WAL + FTS5).
 - [memory-markdown](./memory-markdown) — `MemoryProvider` over flat `MEMORY.md` / `USER.md`.
 - [memory-vector](./memory-vector) — `MemoryProvider` over chunked SQLite + local 384-dim embeddings.
 
@@ -154,7 +154,7 @@ Examples of what belongs here:
 - Bugs that are known and intentional, or known and unfixed.
 - Cross-package coupling that isn't obvious from imports
   (e.g. "`pending/` is skipped by `@ethosagent/skills` so drafts here are inert").
-- Gotchas in dependencies (e.g. `better-sqlite3` needs `pnpm.onlyBuiltDependencies`).
+- Gotchas in dependencies (e.g. `@ethosagent/sqlite` wraps `node:sqlite` — no native build step).
 
 Skip the section only if there really are none.
 

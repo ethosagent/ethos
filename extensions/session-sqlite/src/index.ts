@@ -9,7 +9,7 @@ import type {
   SessionUsage,
   StoredMessage,
 } from '@ethosagent/types';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { SqliteKeyValueStore } from './kv-store';
 
 export {

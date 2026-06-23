@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DashboardStore } from '../dashboard-store';
 

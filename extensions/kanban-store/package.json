@@ -14,10 +14,7 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
-    "@ethosagent/types": "workspace:*",
-    "better-sqlite3": "^12.9.0"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12"
+    "@ethosagent/sqlite": "workspace:*",
+    "@ethosagent/types": "workspace:*"
   }
 }

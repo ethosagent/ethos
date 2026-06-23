@@ -39,7 +39,7 @@ A dashboard does not write messages directly. Messages are created by the agent 
 
 ### 4. SQLite session store — the persistence layer
 
-`SQLiteSessionStore` in `@ethosagent/session-sqlite` is the backing store for sessions and messages. It uses `better-sqlite3` with STRICT tables, WAL journaling, and FTS5 for search.
+`SQLiteSessionStore` in `@ethosagent/session-sqlite` is the backing store for sessions and messages. It uses `@ethosagent/sqlite` (a shim over Node 24's built-in `node:sqlite`) with STRICT tables, WAL journaling, and FTS5 for search.
 
 The SDK does not expose the store directly. The `sessions` namespace provides list/get/fork/delete/update operations that go through the web API service layer, which in turn calls the store. A dashboard never connects to the SQLite file.
 

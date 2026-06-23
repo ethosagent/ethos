@@ -277,7 +277,7 @@ describe('VectorMemoryProvider', () => {
       // Close the auto-opened db so we can seed the legacy table cleanly.
       provider.close();
       const dbPath = join(testDir, 'memory.db');
-      const { default: Database } = await import('better-sqlite3');
+      const { default: Database } = await import('@ethosagent/sqlite');
       const legacyDb = new Database(dbPath);
       legacyDb.exec(`
         CREATE TABLE memory_chunks (
@@ -309,7 +309,7 @@ describe('VectorMemoryProvider', () => {
       expect(refs.map((r) => r.key).sort()).toEqual(['legacy-memory-1', 'legacy-user-2']);
 
       // Legacy table must be gone after a successful migration.
-      const tableCheck = await import('better-sqlite3').then(({ default: Db }) => {
+      const tableCheck = await import('@ethosagent/sqlite').then(({ default: Db }) => {
         const probe = new Db(dbPath, { readonly: true });
         const row = probe
           .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_chunks'")

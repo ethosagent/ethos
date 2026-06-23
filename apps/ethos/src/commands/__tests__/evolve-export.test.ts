@@ -7,7 +7,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseEvalJsonl } from '@ethosagent/skill-evolver';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { exportSessionsToEval } from '../evolve';
 

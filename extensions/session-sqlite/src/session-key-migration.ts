@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 
 // Multi-bot routing session-key migration. INTERNAL — this is a one-shot
 // operational repair tool for the multi-bot routing transition, not a
@@ -14,7 +14,7 @@ import Database from 'better-sqlite3';
 // `sessions.db` must be rewritten once after upgrade.
 //
 // This module owns the SQLite-side work. Schema-level UPDATEs and raw
-// `node:fs` / `better-sqlite3` access are permitted here (the scanner
+// `node:fs` / `@ethosagent/sqlite` access are permitted here (the scanner
 // allowlist covers `extensions/session-sqlite/`). Callers in apps/
 // handle marker-file bookkeeping via the Storage contract and orchestrate
 // when to run.
@@ -98,7 +98,7 @@ export function decideMigration(
  * routing migration era is over.
  *
  * Rewrite legacy session keys to the multi-bot lane format. Synchronous
- * because better-sqlite3 is synchronous; safe to call once at boot
+ * because @ethosagent/sqlite is synchronous; safe to call once at boot
  * before the SessionStore opens its own connection.
  *
  * Collision preflight: builds the full rewrite plan in memory before

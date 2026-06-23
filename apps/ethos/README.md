@@ -40,13 +40,10 @@ doctor` reports which platform SDKs are present.
 #### Known install warning
 
 You may see a `npm warn deprecated prebuild-install@7.1.3` line during
-install. This comes from `better-sqlite3`'s native-module build chain
-(and, on the default install, `sharp` via the optional ML toolkit) —
-both upstream libraries still rely on it. `prebuild-install` is
-deprecated but functional; install succeeds and Ethos works normally.
-Using `--omit=optional` removes the `sharp` half of the warning;
-removing the `better-sqlite3` half requires upstream changes we don't
-control. Tracked upstream; no action needed on your side.
+install. This comes from `sharp` (via the optional ML toolkit) which
+still relies on it. `prebuild-install` is deprecated but functional;
+install succeeds and Ethos works normally. Using `--omit=optional`
+removes the warning entirely.
 
 ### From source
 

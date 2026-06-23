@@ -1,7 +1,7 @@
 import type { ChannelPlatformConfig } from '@ethosagent/safety-channel';
 import { checkMessage, initPairingDb } from '@ethosagent/safety-channel';
 import type { InboundMessage } from '@ethosagent/types';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const PLATFORMS = ['telegram', 'discord', 'slack', 'email'] as const;

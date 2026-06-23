@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearOwnerPause,

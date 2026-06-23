@@ -20,9 +20,9 @@
 set -euo pipefail
 
 # --- 1. Node 24 + build tools ------------------------------------------------
-# better-sqlite3 ships prebuilt binaries for common platforms; on a mismatch
-# (rare ABI, fresh Node release) it compiles from source via node-gyp, which
-# needs gcc + make + python3. Installing them up front avoids the surprise.
+# Node 24 includes SQLite via node:sqlite — no native compilation needed.
+# argon2 ships prebuilt binaries for common platforms; on a mismatch it
+# compiles from source via node-gyp, which needs gcc + make + python3.
 curl -fsSL https://rpm.nodesource.com/setup_24.x | bash -
 dnf install -y nodejs git
 dnf groupinstall -y "Development Tools"

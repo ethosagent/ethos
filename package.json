@@ -49,7 +49,6 @@
     "onlyBuiltDependencies": [
       "@discordjs/opus",
       "argon2",
-      "better-sqlite3",
       "electron",
       "esbuild",
       "playwright"

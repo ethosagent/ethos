@@ -13,7 +13,7 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 // @ethosagent/core and @ethosagent/types are published separately for plugin
 // authors and remain real deps in package.json — npm installs them.
 //
-// Every other npm dep (anthropic, openai, ink, react, better-sqlite3, etc.) is
+// Every other npm dep (anthropic, openai, ink, react, etc.) is
 // listed in package.json `dependencies` / `optionalDependencies` and resolved
 // from node_modules at runtime — bundling them would explode the dist size and
 // break native modules.

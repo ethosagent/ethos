@@ -1,5 +1,5 @@
 {
-  "name": "@ethosagent/memory-vector",
+  "name": "@ethosagent/sqlite",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,10 +13,5 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts"
   },
-  "dependencies": {
-    "@ethosagent/sqlite": "workspace:*",
-    "@ethosagent/storage-fs": "workspace:*",
-    "@ethosagent/types": "workspace:*",
-    "@xenova/transformers": "^2.17.2"
-  }
+  "dependencies": {}
 }

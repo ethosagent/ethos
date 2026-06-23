@@ -194,9 +194,9 @@ const ROLE_MAP: Record<string, 'user' | 'assistant' | 'tool'> = {
  * Returns true if at least one record was written.
  */
 export async function exportSessionsToEval(dbPath: string, outPath: string): Promise<boolean> {
-  // Dynamic import keeps better-sqlite3 out of the require graph for codepaths
+  // Dynamic import keeps SQLite out of the require graph for codepaths
   // that don't use `evolve run`.
-  const { default: Database } = await import('better-sqlite3');
+  const { default: Database } = await import('@ethosagent/sqlite');
   const db = new Database(dbPath, { readonly: true });
 
   try {

@@ -106,7 +106,7 @@ export async function refreshSinglePanel(
   // SQL refresh
   if (panel.queryType === 'sql' && sqlQuery && panel.pluginId && panel.dataSourceId) {
     try {
-      const { default: Database } = await import('better-sqlite3');
+      const { default: Database } = await import('@ethosagent/sqlite');
       const pluginLoader = deps.pluginLoader;
       if (!pluginLoader) throw new Error('Plugin loader not configured');
       const dbPath = pluginLoader.getDataSourcePath(panel.pluginId, panel.dataSourceId);

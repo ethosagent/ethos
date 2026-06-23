@@ -1,6 +1,6 @@
 # @ethosagent/session-sqlite
 
-`SessionStore` implementation backed by `better-sqlite3` in WAL mode, with FTS5 full-text search over message content.
+`SessionStore` implementation backed by `@ethosagent/sqlite` (`node:sqlite`) in WAL mode, with FTS5 full-text search over message content.
 
 ## Why this exists
 
@@ -27,8 +27,8 @@ The CLI session-key convention `cli:<cwd-basename>` is enforced by callers, not 
 - `rowid` is a SQLite pseudo-column and is *not* included by `SELECT *`. Subqueries that need it for outer ordering must alias it explicitly (`rowid AS _row`) or you'll get `SqliteError: no such column: rowid`.
 - Always tie-break by `rowid` when sorting by `timestamp` — millisecond-resolution timestamps collide easily.
 - Both tables are `STRICT`. Pass numbers as numbers, strings as strings; SQLite will throw rather than coerce.
-- `better-sqlite3` is synchronous. Every `async` method here returns immediately after the sync call. Don't introduce real awaits inside `db.prepare().run()` — it'll only add overhead.
-- `better-sqlite3` is a native module. It must appear in `pnpm.onlyBuiltDependencies` at the workspace root, otherwise pnpm's install sandbox blocks the build script silently.
+- `@ethosagent/sqlite` is synchronous. Every `async` method here returns immediately after the sync call. Don't introduce real awaits inside `db.prepare().run()` — it'll only add overhead.
+- `@ethosagent/sqlite` wraps Node 24's built-in `node:sqlite` — no native compilation or `pnpm.onlyBuiltDependencies` entry needed.
 - `escapeFtsQuery` quotes the entire input as one phrase. Multi-term `OR`/`NEAR`/`*` operators won't work — that's deliberate to avoid injection.
 - `pruneOldSessions` cascades to messages via `ON DELETE CASCADE`. The triggers handle FTS cleanup automatically through `messages_ad`.
 - `tool_calls` are stored as JSON-stringified text inside a `STRICT` column — keep that contract when adding fields.

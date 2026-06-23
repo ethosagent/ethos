@@ -20,7 +20,7 @@
 //   - Spin up a full AgentLoop turn cycle. The plan explicitly says request
 //     block shapes + usage aggregation, not a full chat session simulation.
 //   - Exercise the real auxiliary-provider wiring in packages/wiring — that
-//     would pull better-sqlite3 / Docker / MCP into a tool-extension test.
+//     would pull SQLite / Docker / MCP into a tool-extension test.
 //     The wiring path itself is a 30-line lambda over the same factory
 //     signature this test stubs.
 

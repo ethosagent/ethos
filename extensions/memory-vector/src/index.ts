@@ -12,7 +12,7 @@ import type {
   SearchOpts,
   Storage,
 } from '@ethosagent/types';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -81,7 +81,7 @@ export interface VectorMemoryConfig {
   embedFn?: (text: string) => Promise<Float32Array>;
   /**
    * Storage backend for the markdown side (migrateFromMarkdown, exportAll
-   * output). The SQLite side stays raw — better-sqlite3 opens memory.db
+   * output). The SQLite side stays raw — @ethosagent/sqlite opens memory.db
    * directly per the storage-abstraction plan's SQLite carve-out.
    */
   storage?: Storage;

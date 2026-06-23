@@ -160,7 +160,7 @@ let evolverCronStop: (() => void) | undefined;
  *
  * The execution callback lives here (app layer) so the extension stays pure
  * and never references CLI command strings. `runEvolveRun` is imported lazily
- * to avoid pulling better-sqlite3 and the LLM into startup.
+ * to avoid pulling SQLite and the LLM into startup.
  */
 export async function startEvolverCron(schedule: string, config: EthosConfig): Promise<() => void> {
   if (!evolverCronStop) {

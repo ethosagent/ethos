@@ -1,5 +1,5 @@
 import type { RetentionConfig } from '@ethosagent/types';
-import BetterSqlite3 from 'better-sqlite3';
+import BetterSqlite3 from '@ethosagent/sqlite';
 
 /** Parse a duration string to milliseconds, or null for 'forever'. */
 export function parseDuration(s: string): number | null {
@@ -262,7 +262,7 @@ export function pruneObservability(
 
 /**
  * Convenience wrapper: open a SQLite database by path, prune it, then close.
- * Lets callers (e.g. the CLI `data prune` command) avoid importing better-sqlite3
+ * Lets callers (e.g. the CLI `data prune` command) avoid importing @ethosagent/sqlite
  * directly when they only have a file path.
  */
 export function pruneObservabilityByPath(

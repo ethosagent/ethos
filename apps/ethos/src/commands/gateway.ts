@@ -29,7 +29,7 @@ import {
   IdentityMap,
   type MessagingSendFn,
 } from '@ethosagent/wiring';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { Cron } from 'croner';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {

@@ -10,7 +10,7 @@ import type {
   GoalStatus,
   GoalStore,
 } from '@ethosagent/types';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 
 // ---------------------------------------------------------------------------
 // Schema

@@ -54,7 +54,7 @@ To pass parameters, use the scriptblock form:
 1. Downloads the latest portable Node 24 from nodejs.org into `%LOCALAPPDATA%\ethos\node` — queries the release index dynamically, no hardcoded version.
 2. Installs pnpm using the portable npm (`npm install -g pnpm`).
 3. Downloads the Ethos source as a ZIP archive from GitHub — no git required.
-4. Runs `pnpm install` to fetch dependencies. Native modules (`better-sqlite3`) download prebuilt binaries for your Node version automatically.
+4. Runs `pnpm install` to fetch dependencies.
 5. Runs `pnpm build` to compile the TypeScript source. This takes 2–5 minutes on first install.
 6. Writes `ethos.cmd` and `ethos-update.cmd` shims to `%LOCALAPPDATA%\ethos\bin`.
 7. Adds the bin directory to your User PATH.

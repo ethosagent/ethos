@@ -67,7 +67,7 @@ Everything that flows through the Storage interface:
 
 ## What is NOT encrypted
 
-`sessions.db`, `kanban.db`, and memory-vector index files use `better-sqlite3` with raw file paths that bypass the Storage interface. These are explicitly not covered.
+`sessions.db`, `kanban.db`, and memory-vector index files use `@ethosagent/sqlite` with raw file paths that bypass the Storage interface. These are explicitly not covered.
 
 Encrypting SQLite at rest requires [SQLCipher](https://www.zetetic.net/sqlcipher/), which is a separate project and not bundled with Ethos. If you need encrypted SQLite, evaluate SQLCipher independently.
 

@@ -532,9 +532,9 @@ describe('SQLiteSessionStore — resume lookup', () => {
 });
 
 describe('SQLiteSessionStore migration idempotency', () => {
-  it('opening the same db twice does not throw and trace_id column exists exactly once', () => {
-    const { join } = require('node:path');
-    const { tmpdir } = require('node:os');
+  it('opening the same db twice does not throw and trace_id column exists exactly once', async () => {
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
     const dbPath = join(tmpdir(), `session-migration-test-${Date.now()}.db`);
 
     // First open — creates schema + runs migration
@@ -548,7 +548,7 @@ describe('SQLiteSessionStore migration idempotency', () => {
     }).not.toThrow();
 
     // Confirm the column exists exactly once in the schema
-    const Database = require('better-sqlite3');
+    const Database = (await import('@ethosagent/sqlite')).default;
     const db = new Database(dbPath);
     const cols = db.pragma('table_info(messages)') as Array<{ name: string }>;
     db.close();

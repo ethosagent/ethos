@@ -1,10 +1,10 @@
 import type { ObsEvent, ObservabilityStore, Snapshot, Span, Trace } from '@ethosagent/types';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { redactJson, redactString } from './redact';
 
 // ---------------------------------------------------------------------------
 // SQLiteObservabilityStore
-// Implements ObservabilityStore using better-sqlite3 (synchronous).
+// Implements ObservabilityStore using @ethosagent/sqlite (synchronous).
 // STRICT tables throughout. All methods are synchronous inside.
 // ---------------------------------------------------------------------------
 

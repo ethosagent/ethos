@@ -321,8 +321,6 @@ mkdir -p ~/.ethos/plugins/my-notes/src
 cd ~/.ethos/plugins/my-notes
 pnpm init
 pnpm add -D typescript @ethosagent/plugin-sdk @ethosagent/types
-pnpm add better-sqlite3
-pnpm add -D @types/better-sqlite3
 ```
 
 Edit `package.json` to include the `ethos` block. The `pluginContractMajor` must be `2` — the loader rejects mismatches.
@@ -358,7 +356,7 @@ The resulting directory tree:
 Create `src/index.ts`. This plugin stores project notes in a local SQLite database, exposes slash commands for quick capture, a tool so the agent can search notes during conversation, a data source for dashboard queries, and a health check.
 
 ```ts title="src/index.ts"
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { EthosPlugin, EthosPluginApi } from '@ethosagent/plugin-sdk';

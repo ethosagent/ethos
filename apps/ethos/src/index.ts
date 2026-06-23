@@ -1,3 +1,12 @@
+const _nodeMajor = Number(process.versions.node.split('.')[0]);
+if (_nodeMajor < 24) {
+  process.stderr.write(
+    `Ethos requires Node 24 or later (current: ${process.version}).\n` +
+      'Install it with: nvm install 24 && nvm alias default 24\n',
+  );
+  process.exit(1);
+}
+
 // Shebang `#!/usr/bin/env node` is added by tsup via banner config at build time.
 // Don't put it here - tsx in dev mode doesn't need it and source-level shebangs
 // in TypeScript trip on tsup's bundler.

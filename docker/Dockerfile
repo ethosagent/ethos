@@ -1,4 +1,4 @@
-# Stage 1: install — build tools for native modules (better-sqlite3)
+# Stage 1: install — build tools for native modules (argon2)
 FROM node:24-slim AS install
 
 RUN apt-get update \

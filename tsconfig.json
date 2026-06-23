@@ -7,6 +7,7 @@
       "@ethosagent/types": ["./packages/types/src"],
       "@ethosagent/oauth-core": ["./packages/oauth-core/src"],
       "@ethosagent/storage-fs": ["./packages/storage-fs/src"],
+      "@ethosagent/sqlite": ["./packages/sqlite/src"],
       "@ethosagent/logger": ["./packages/logger/src"],
       "@ethosagent/core": ["./packages/core/src"],
       "@ethosagent/llm-anthropic": ["./extensions/llm-anthropic/src"],

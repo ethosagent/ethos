@@ -162,10 +162,10 @@ export class ObservabilityService implements ObservabilityWriter {
 
   /**
    * Flush all pending writes.
-   * Currently a no-op (all writes are synchronous via better-sqlite3).
+   * Currently a no-op (all writes are synchronous via @ethosagent/sqlite).
    * Reserved as a hook for future batching.
    */
   flush(): void {
-    // No-op in Wave A — better-sqlite3 is synchronous.
+    // No-op in Wave A — @ethosagent/sqlite is synchronous.
   }
 }

@@ -9,7 +9,7 @@ import type { Storage } from '@ethosagent/types';
  * hex characters of the SHA-256 of the uncompressed content.
  *
  * The only exception for node:fs usage (allowed per CLAUDE.md):
- *   SQLite DB files via better-sqlite3 — blob-store uses Storage for all I/O.
+ *   SQLite DB files via @ethosagent/sqlite — blob-store uses Storage for all I/O.
  */
 export class BlobStore {
   constructor(

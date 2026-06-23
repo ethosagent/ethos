@@ -24,7 +24,7 @@
 //   packages/storage-fs/         The Storage implementation itself. Obviously must
 //                                 use node:fs — it IS the fs adapter.
 //
-//   extensions/session-sqlite/   better-sqlite3 opens raw paths. WAL, FTS5, and
+//   extensions/session-sqlite/   @ethosagent/sqlite opens raw paths. WAL, FTS5, and
 //   extensions/memory-vector/    atomic transactions don't fit a generic Storage
 //                                 interface without losing ACID guarantees.
 //

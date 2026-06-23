@@ -9,7 +9,7 @@
 // gateway first" rather than silently no-oping.
 //
 // **CLAUDE.md Storage-abstraction exception (parallel to
-// session-sqlite / memory-vector):** better-sqlite3 opens raw paths
+// session-sqlite / memory-vector):** @ethosagent/sqlite opens raw paths
 // and manages WAL/SHM natively, so it cannot be wrapped in the
 // Storage interface used by markdown / config reads. The pairing
 // store therefore reads `~/.ethos/pairing.db` via `node:fs.existsSync`
@@ -25,7 +25,7 @@ import {
   initPairingDb,
   revokeApproval,
 } from '@ethosagent/safety-channel';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 import { ethosDir } from '../config';
 
 const SUPPORTED_PLATFORMS = ['telegram', 'discord', 'slack', 'whatsapp', 'email'];

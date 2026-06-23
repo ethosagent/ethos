@@ -2,7 +2,6 @@ NVM_INSTALLED    := $(shell test -f "$(HOME)/.nvm/nvm.sh"; echo $$?)
 NODE_VERSION     := $(shell cat .nvmrc 2>/dev/null || echo 22)
 PNPM_VERSION     := 10.33.0
 ELECTRON_VERSION := $(shell ls node_modules/.pnpm/ 2>/dev/null | grep '^electron@[0-9]' | head -1 | sed 's/electron@//;s/_.*//')
-BETTER_SQLITE3   := $(shell ls -d node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 2>/dev/null | head -1)
 
 # Source nvm and select the project's node version automatically. Every
 # target that runs node/pnpm prefixes its command with $(NVM_EXEC), so
@@ -30,13 +29,11 @@ help:
 	@echo "  setup-pnpm         - Install pnpm globally"
 	@echo "  setup-gstack       - Install/update gstack Claude Code skills"
 	@echo "  prepare            - pnpm install (frozen lockfile)"
-	@echo "  sqlite-for-node    - Swap better-sqlite3 to Node ABI (use before web-dev / pnpm dev)"
-	@echo "  sqlite-for-electron- Swap better-sqlite3 to Electron ABI (use before desktop pnpm dev)"
 	@echo ""
 	@echo "Development"
 	@echo "  dev                - Start ethos in interactive chat mode (TUI when TTY)"
 	@echo "  tui                - Alias for dev (explicit TUI entry point)"
-	@echo "  desktop-dev        - Electron dev (swaps SQLite to Electron ABI automatically)"
+	@echo "  desktop-dev        - Electron dev"
 	@echo "  desktop-build      - Build + package macOS app to apps/desktop/dist-electron/"
 	@echo "  web-dev               - Web UI dev: Vite HMR :5173 + ethos serve :3000 (recommended for active development)"
 	@echo "  web-build             - Build the SPA to apps/web/dist"
@@ -126,39 +123,20 @@ setup-pnpm:
 prepare:
 	@echo "Installing dependencies..."
 	@$(NVM_EXEC) pnpm install --frozen-lockfile
-	@echo "Rebuilding native modules for current Node version..."
-	@$(NVM_EXEC) npm rebuild better-sqlite3
 	@echo "Installing git hooks via lefthook..."
 	@$(NVM_EXEC) pnpm dlx lefthook install >/dev/null 2>&1 || echo "  (lefthook install skipped; not in a git repo)"
 	@echo "Dependencies installed."
 
-# better-sqlite3 ships one binary in the pnpm virtual store shared by both
-# the CLI (plain Node) and the desktop app (Electron). Their ABIs differ, so
-# you need to swap the binary when switching between the two workflows.
-#
-#   make sqlite-for-node      — after working on desktop, before make web-dev / pnpm dev
-#   make sqlite-for-electron  — before pnpm dev in apps/desktop
-#
-sqlite-for-node:
-	@echo "Rebuilding better-sqlite3 for Node $(NODE_VERSION) (ABI for CLI / web-dev)..."
-	@$(NVM_EXEC) cd $(BETTER_SQLITE3) && npx prebuild-install --force 2>/dev/null
-	@echo "Done — run 'make web-dev' or 'pnpm dev' as normal."
-
-sqlite-for-electron:
-	@echo "Rebuilding better-sqlite3 for Electron $(ELECTRON_VERSION) (ABI for desktop dev)..."
-	@$(NVM_EXEC) cd $(BETTER_SQLITE3) && npx prebuild-install --runtime electron --target $(ELECTRON_VERSION) --arch arm64 --force 2>/dev/null
-	@echo "Done — run 'pnpm dev' inside apps/desktop."
-
 # ---------- desktop ----------
 
-desktop-dev: sqlite-for-electron web-build
+desktop-dev: web-build
 	@echo "Starting Electron dev (renderer at http://localhost:5173/)..."
 	@$(NVM_EXEC) pnpm --filter @ethosagent/desktop dev
 
 # Builds the Vite bundles then packages a macOS .app + .zip via electron-builder.
 # Skips code signing for local builds (set CSC_* env vars to enable signing).
 # After the build: open apps/desktop/dist-electron/mac-arm64/Ethos.app
-desktop-build: sqlite-for-electron
+desktop-build:
 	@echo "Building desktop app..."
 	@CSC_IDENTITY_AUTO_DISCOVERY=false $(NVM_EXEC) pnpm --filter @ethosagent/desktop build
 	@echo "Packaging macOS app..."

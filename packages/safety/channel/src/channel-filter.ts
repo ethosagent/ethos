@@ -1,5 +1,5 @@
 import type { InboundMessage } from '@ethosagent/types';
-import type Database from 'better-sqlite3';
+import type Database from '@ethosagent/sqlite';
 import { generateCode } from './pairing-store';
 
 // ---------------------------------------------------------------------------

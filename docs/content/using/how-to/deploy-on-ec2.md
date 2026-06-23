@@ -61,7 +61,7 @@ curl -O https://ethosagent.ai/ec2-bootstrap.sh
 # review, then paste into User data
 ```
 
-It installs Node 24, build tools (for `better-sqlite3`'s native compile path), creates the `ethos` service user, mounts state at `/var/lib/ethos`, installs `@ethosagent/cli`, and drops in a systemd unit. The unit is **not enabled yet** — you run `ethos setup` first, then enable.
+It installs Node 24, creates the `ethos` service user, mounts state at `/var/lib/ethos`, installs `@ethosagent/cli`, and drops in a systemd unit. The unit is **not enabled yet** — you run `ethos setup` first, then enable.
 
 ### 3. Mount the EBS state volume
 
@@ -223,7 +223,7 @@ Operator's laptop story: `ethos chat` on your laptop uses its own `~/.ethos/` (t
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Bootstrap script failed with `gyp ERR! build error` | `better-sqlite3` native compile, missing build deps | Already covered by the canonical script (`dnf groupinstall "Development Tools"`); if you wrote your own bootstrap, add it |
+| Bootstrap script failed with `gyp ERR! build error` | A native dependency failed to compile | Install build tools: `dnf groupinstall "Development Tools"` (AL2023) or `sudo apt-get install build-essential` (Debian/Ubuntu), then re-run `pnpm install` |
 | `ethos: command not found` after `sudo -iu ethos` | PATH not picked up from `.bashrc` | Run `source ~/.bashrc` once, or use the absolute path: `/home/ethos/.npm-global/bin/ethos setup` |
 | `systemctl status ethos` shows `failed` with `Run ethos setup first` | The unit started before tokens were configured | `sudo -iu ethos && ethos setup`, then `sudo systemctl restart ethos` |
 | SSM session won't start | Missing IAM role / SSM agent not running | Confirm `AmazonSSMManagedInstanceCore` is attached; on AL2023 SSM is preinstalled. On Ubuntu, `sudo snap install amazon-ssm-agent --classic`. |

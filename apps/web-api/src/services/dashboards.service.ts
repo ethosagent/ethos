@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { loadWidgetTemplates } from '@ethosagent/plugin-loader';
 import type { WidgetTemplate } from '@ethosagent/types';
-import Database from 'better-sqlite3';
+import Database from '@ethosagent/sqlite';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1018,7 +1018,7 @@ export async function runPluginQuery(
     }
   }
 
-  const { default: Database } = await import('better-sqlite3');
+  const { default: Database } = await import('@ethosagent/sqlite');
   const db = new Database(dbPath, { readonly: true });
   try {
     const stmt = db.prepare(sql);

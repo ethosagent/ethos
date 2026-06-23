@@ -38,9 +38,9 @@ cd ethos
 make prepare
 ```
 
-`make prepare` runs `pnpm install --frozen-lockfile`, rebuilds `better-sqlite3` against the installed Node version, and installs the git hooks via lefthook. It is idempotent — re-run it any time you switch branches.
+`make prepare` runs `pnpm install --frozen-lockfile` and installs the git hooks via lefthook. It is idempotent — re-run it any time you switch branches.
 
-If the install fails on `better-sqlite3`, the most common cause is a Node version mismatch (`pnpm` ignored the `.nvmrc`). Run `nvm use` first, then `make prepare` again.
+If the install fails, the most common cause is a Node version mismatch (`pnpm` ignored the `.nvmrc`). Run `nvm use` first, then `make prepare` again.
 
 When it finishes, you should see five workspace packages and dozens of extensions resolved:
 
@@ -253,7 +253,7 @@ The same script is wrapped by `make check`. Use whichever you prefer; CI invokes
 
 ## What you learned
 
-- The repo is a pnpm workspace; `make prepare` installs everything and rebuilds `better-sqlite3` against your Node version.
+- The repo is a pnpm workspace; `make prepare` installs dependencies and sets up git hooks.
 - `pnpm dev` runs `tsx apps/ethos/src/index.ts` — no build step, edits are live on next process start.
 - `pnpm check` runs typecheck + lint + tests; the same script is what CI runs.
 - A tool is an object implementing `Tool<TArgs>` from `@ethosagent/types`: `name`, `description`, `schema`, `execute`, optional `maxResultChars` and `isAvailable`.

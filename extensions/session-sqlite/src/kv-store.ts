@@ -1,5 +1,5 @@
 import type { KeyValueStore } from '@ethosagent/types';
-import type Database from 'better-sqlite3';
+import type Database from '@ethosagent/sqlite';
 
 export class SqliteKeyValueStore implements KeyValueStore {
   constructor(
