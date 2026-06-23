@@ -4,6 +4,7 @@ import type {
   FailoverReason,
   LLMProvider,
   Message,
+  ProviderCapabilities,
   ToolDefinitionLite,
 } from '@ethosagent/types';
 
@@ -131,6 +132,10 @@ export class ChainedProvider implements LLMProvider {
 
   get supportsThinking(): boolean {
     return this.activeEntry()?.provider.supportsThinking ?? false;
+  }
+
+  get capabilities(): ProviderCapabilities | undefined {
+    return this.activeEntry()?.provider.capabilities;
   }
 
   async *complete(

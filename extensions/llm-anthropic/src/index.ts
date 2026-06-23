@@ -7,6 +7,7 @@ import type {
   LLMProvider,
   Message,
   MessageContent,
+  ProviderCapabilities,
   ToolDefinitionLite,
 } from '@ethosagent/types';
 import { type AnthropicStreamParams, streamAnthropicMessages } from './transport';
@@ -194,6 +195,22 @@ export class AnthropicProvider implements LLMProvider {
   readonly supportsVision = { images: true, documents: true };
   readonly supportsCacheBreakpoints = true;
   readonly supportsTokenCounting: 'real' | 'estimated' = 'real';
+
+  get capabilities(): ProviderCapabilities {
+    return {
+      streaming: true,
+      toolCalling: true,
+      parallelToolCalls: true,
+      visionImages: true,
+      visionDocuments: true,
+      thinking: this.supportsThinking,
+      promptCaching: true,
+      cacheBreakpoints: true,
+      systemPromptStyle: 'top-level',
+      tokenCounting: 'real',
+      contractVersion: 1,
+    };
+  }
 
   private readonly client: Anthropic;
 

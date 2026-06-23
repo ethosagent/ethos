@@ -19,10 +19,6 @@ import {
 import { DockerExecutionBackend } from '@ethosagent/execution-docker';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { SshExecutionBackend } from '@ethosagent/execution-ssh';
-import { AnthropicProvider } from '@ethosagent/llm-anthropic';
-import { AzureOpenAIProvider } from '@ethosagent/llm-azure';
-import { CodexProvider, ensureValidToken } from '@ethosagent/llm-codex';
-import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
 import { compose as composeMemory } from '@ethosagent/memory-markdown/compose';
 import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import type { PersonalityCompose } from '@ethosagent/personalities/compose';
@@ -38,19 +34,13 @@ import type {
   ConstitutionEnforcement,
   ExecutionBackendRegistry,
   HookRegistry,
-  LLMProviderFactoryContext,
   LLMProviderRegistry,
   MemoryProviderRegistry,
   PersonalityConfig,
 } from '@ethosagent/types';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
+import { registerBuiltinProviders } from './register-builtin-providers';
 import type { WiringContext } from './types';
-
-// Default Azure REST API version. Picked to match the model lineup in model-catalog.ts.
-// Older stable api-versions (2024-10-21 and earlier) don't know about the `file` content
-// part required for PDF input through Chat Completions. Users override per-deployment via
-// `apiVersion` in ~/.ethos/config.yaml.
-const AZURE_DEFAULT_API_VERSION = '2024-12-01-preview';
 
 export interface InfrastructureResult {
   llmProviders: LLMProviderRegistry;
@@ -101,50 +91,7 @@ export async function buildInfrastructure(
   // SecretsResolver first (ref: `providers/<name>/apiKey`), falling back to
   // the raw config value for backward compatibility.
   const llmProviders = new DefaultLLMProviderRegistry();
-  llmProviders.register('anthropic', async ({ config: cfg, secrets }) => {
-    const apiKey = (await secrets.get('providers/anthropic/apiKey')) ?? (cfg.apiKey as string);
-    return new AnthropicProvider({ apiKey, model: cfg.model as string });
-  });
-  llmProviders.register('azure', async ({ config: cfg, secrets }) => {
-    if (!cfg.baseUrl) {
-      throw new Error(
-        'Azure provider requires `baseUrl` set to the resource endpoint ' +
-          '(e.g. https://my-resource.openai.azure.com).',
-      );
-    }
-    const apiKey = (await secrets.get('providers/azure/apiKey')) ?? (cfg.apiKey as string);
-    return new AzureOpenAIProvider({
-      name: 'azure',
-      model: cfg.model as string,
-      apiKey,
-      endpoint: cfg.baseUrl as string,
-      apiVersion: (cfg.apiVersion as string) ?? AZURE_DEFAULT_API_VERSION,
-    });
-  });
-  llmProviders.register('codex', async ({ config: cfg }) => {
-    return new CodexProvider({
-      model: cfg.model as string,
-      getAccessToken: async () => {
-        const creds = await ensureValidToken(globalThis.fetch);
-        return creds.accessToken;
-      },
-    });
-  });
-  const openaiCompatFactory = async ({ config: cfg, secrets }: LLMProviderFactoryContext) => {
-    const providerName = (cfg.provider as string) ?? 'openai-compat';
-    const apiKey =
-      (await secrets.get(`providers/${providerName}/apiKey`)) ?? (cfg.apiKey as string);
-    return new OpenAICompatProvider({
-      name: providerName,
-      model: cfg.model as string,
-      apiKey,
-      baseUrl: (cfg.baseUrl as string) ?? 'https://openrouter.ai/api/v1',
-    });
-  };
-  llmProviders.register('openai-compat', openaiCompatFactory);
-  for (const id of ['openai', 'openrouter', 'gemini', 'groq', 'deepseek', 'ollama']) {
-    llmProviders.register(id, openaiCompatFactory);
-  }
+  registerBuiltinProviders(llmProviders);
 
   // Execution backend registry — built-ins registered here.
   // backends resolved on demand in Lane B/c

@@ -896,6 +896,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/llm-gemini:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/llm-openai-compat:
     dependencies:
       '@ethosagent/types':
@@ -1649,9 +1655,15 @@ importers:
       '@ethosagent/llm-azure':
         specifier: workspace:*
         version: link:../../extensions/llm-azure
+      '@ethosagent/llm-bedrock':
+        specifier: workspace:*
+        version: link:../../extensions/llm-bedrock
       '@ethosagent/llm-codex':
         specifier: workspace:*
         version: link:../../extensions/llm-codex
+      '@ethosagent/llm-gemini-native':
+        specifier: workspace:*
+        version: link:../../extensions/llm-gemini
       '@ethosagent/llm-openai-compat':
         specifier: workspace:*
         version: link:../../extensions/llm-openai-compat

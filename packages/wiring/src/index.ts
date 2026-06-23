@@ -1,12 +1,14 @@
 import { join } from 'node:path';
-import { type AgentLoop, ChainedProvider, type SummarizerFn, validateUrl } from '@ethosagent/core';
+import {
+  type AgentLoop,
+  ChainedProvider,
+  DefaultLLMProviderRegistry,
+  type SummarizerFn,
+} from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { TrustPolicy } from '@ethosagent/kanban-store';
-import { AnthropicProvider, AuthRotatingProvider } from '@ethosagent/llm-anthropic';
-import { AzureOpenAIProvider } from '@ethosagent/llm-azure';
-import { CodexProvider, ensureValidToken } from '@ethosagent/llm-codex';
-import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
+import { AuthRotatingProvider } from '@ethosagent/llm-anthropic';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
@@ -31,6 +33,7 @@ import { buildInfrastructure } from './build-infrastructure';
 import { composeAllTools } from './compose-tools';
 import { loadPlugins } from './load-plugins';
 import type { EthosObservability } from './observability/ethos-observability';
+import { registerBuiltinProviders } from './register-builtin-providers';
 import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
 
 // ---------------------------------------------------------------------------
@@ -236,63 +239,6 @@ export interface CreateAgentLoopOptions {
 
 export { resolveKanbanDbPath } from './kanban-path';
 
-// Default Azure REST API version. Picked to match the model lineup in
-// `model-catalog.ts` — older stable api-versions (2024-10-21 and earlier)
-// don't know about the `file` content part required for PDF input through
-// Chat Completions, so requests against gpt-5.4 / Claude-on-Azure with a
-// PDF attachment fail with a 500. Preview suffix is intentional: stable
-// GA api-versions lag the model-feature surface by ~6 months. Users
-// override per-deployment via `apiVersion` in ~/.ethos/config.yaml.
-const AZURE_DEFAULT_API_VERSION = '2024-12-01-preview';
-
-function createSingleProvider(cfg: {
-  provider: string;
-  model: string;
-  apiKey: string;
-  baseUrl?: string;
-  apiVersion?: string;
-}): LLMProvider {
-  // SSRF gate: validate user-supplied base URLs before handing them to SDK
-  // clients. `allowLocalhost` is true because local providers (Ollama, LM
-  // Studio) are a legitimate use case for OpenAI-compat providers.
-  if (cfg.baseUrl) {
-    validateUrl(cfg.baseUrl, { allowLocalhost: true });
-  }
-
-  if (cfg.provider === 'anthropic') {
-    return new AnthropicProvider({ apiKey: cfg.apiKey, model: cfg.model });
-  }
-  if (cfg.provider === 'azure') {
-    if (!cfg.baseUrl) {
-      throw new Error(
-        'Azure provider requires `baseUrl` set to the resource endpoint (e.g. https://my-resource.openai.azure.com).',
-      );
-    }
-    return new AzureOpenAIProvider({
-      name: cfg.provider,
-      model: cfg.model,
-      apiKey: cfg.apiKey,
-      endpoint: cfg.baseUrl,
-      apiVersion: cfg.apiVersion ?? AZURE_DEFAULT_API_VERSION,
-    });
-  }
-  if (cfg.provider === 'codex') {
-    return new CodexProvider({
-      model: cfg.model,
-      getAccessToken: async () => {
-        const creds = await ensureValidToken(globalThis.fetch);
-        return creds.accessToken;
-      },
-    });
-  }
-  return new OpenAICompatProvider({
-    name: cfg.provider,
-    model: cfg.model,
-    apiKey: cfg.apiKey,
-    baseUrl: cfg.baseUrl ?? 'https://openrouter.ai/api/v1',
-  });
-}
-
 // Hard ceiling on a single summarizer call. The summarizer runs on the turn's
 // critical path before the main provider call, so a hung auxiliary provider
 // would otherwise hang the whole turn. On timeout the call aborts and throws,
@@ -398,47 +344,16 @@ function buildCompressionSummarizer(
 }
 
 export async function createLLM(config: WiringConfig): Promise<LLMProvider> {
-  // Multi-provider chain: 2+ entries → ChainedProvider with automatic failover.
-  if (config.providers && config.providers.length >= 2) {
-    const instances = config.providers.map((p) =>
-      createSingleProvider({
-        provider: p.provider,
-        model: p.model ?? config.model,
-        apiKey: p.apiKey,
-        ...(p.baseUrl !== undefined ? { baseUrl: p.baseUrl } : {}),
-        ...(p.apiVersion !== undefined ? { apiVersion: p.apiVersion } : {}),
-      }),
-    );
-    return new ChainedProvider(instances);
-  }
-
-  // Anthropic rotation pool is provider-specific (rotates across API keys for
-  // the same model). Handled inline; everything else goes through
-  // `createSingleProvider` so Azure / OpenAI-compat / future providers share
-  // one construction path.
-  if (config.provider === 'anthropic') {
-    const rotation = config.rotationKeys ?? [];
-    if (rotation.length > 0) {
-      return new AuthRotatingProvider(
-        [
-          { id: 'primary', apiKey: config.apiKey, priority: 100 },
-          ...rotation.map((k, i) => ({
-            id: k.label ?? `key-${i + 1}`,
-            apiKey: k.apiKey,
-            priority: k.priority,
-          })),
-        ],
-        config.model,
-      );
-    }
-  }
-  return createSingleProvider({
-    provider: config.provider,
-    model: config.model,
-    apiKey: config.apiKey,
-    ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
-    ...(config.apiVersion !== undefined ? { apiVersion: config.apiVersion } : {}),
-  });
+  const registry = new DefaultLLMProviderRegistry();
+  registerBuiltinProviders(registry);
+  const noop: Logger = {
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    debug: () => {},
+    child: () => noop,
+  };
+  return createLLMFromRegistry(registry, config, noop);
 }
 
 /**

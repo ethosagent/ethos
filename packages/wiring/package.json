@@ -20,6 +20,10 @@
     "./types": {
       "import": "./src/types.ts",
       "types": "./src/types.ts"
+    },
+    "./conformance": {
+      "import": "./src/conformance/index.ts",
+      "types": "./src/conformance/index.ts"
     }
   },
   "scripts": {
@@ -35,7 +39,9 @@
     "@ethosagent/execution-ssh": "workspace:*",
     "@ethosagent/llm-anthropic": "workspace:*",
     "@ethosagent/llm-azure": "workspace:*",
+    "@ethosagent/llm-bedrock": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",
+    "@ethosagent/llm-gemini-native": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
     "@ethosagent/request-dump": "workspace:*",
     "@ethosagent/llm-openai-compat": "workspace:*",
