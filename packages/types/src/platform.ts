@@ -1,3 +1,5 @@
+import type { Logger } from './logger';
+
 export interface Attachment {
   type: 'image' | 'file';
   ref: string;
@@ -106,7 +108,10 @@ export interface PlatformAdapter {
   readonly canReact: boolean;
   readonly canSendFiles: boolean;
   readonly maxMessageLength: number;
+  /** @deprecated v1 — use `caps` (ChannelCapabilities) for new adapters. */
   readonly capabilities?: AdapterCapabilities;
+  readonly caps?: ChannelCapabilities;
+  startWithContext?(ctx: ChannelContext): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
   send(chatId: string, message: OutboundMessage): Promise<DeliveryResult>;
@@ -180,4 +185,49 @@ export interface AdapterCapabilities {
   roleBasedApprovals?: boolean;
   outboundFiles?: boolean;
   webhookMode?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Channel SDK — v2 adapter contract additions
+// ---------------------------------------------------------------------------
+
+export interface InboundAttachment {
+  kind: 'image' | 'file' | 'audio' | 'voice' | 'video' | 'sticker';
+  localPath: string;
+  mimeType?: string;
+}
+
+/** EXPLICIT capability descriptor. Drives graceful degradation. */
+export interface ChannelCapabilities {
+  media: { imagesIn: boolean; filesIn: boolean; imagesOut: boolean; filesOut: boolean };
+  voice: { transcribeIn: boolean; ttsOut: boolean };
+  threads: boolean;
+  reactions: { in: boolean; out: boolean };
+  edit: boolean;
+  delete: boolean;
+  typing: boolean;
+  readReceipts: boolean;
+  approvalButtons: boolean;
+  slashCommands: boolean;
+  mentions: boolean;
+  ephemeral: boolean;
+  multiAccount: boolean;
+  maxMessageLength?: number;
+  contractVersion: number;
+}
+
+/** What the gateway injects — the adapter NEVER runs the agent or derives keys. */
+export interface ChannelContext {
+  botKey: string;
+  onMessage(msg: InboundMessage): Promise<void>;
+  logger: Logger;
+}
+
+/** Declared in package.json under `ethos.channel`. */
+export interface ChannelManifest {
+  id: string;
+  label: string;
+  blurb?: string;
+  requiredAuth?: ('oauth' | 'token' | 'apiKey')[];
+  requiredEnv?: string[];
 }

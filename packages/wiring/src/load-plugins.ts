@@ -117,6 +117,7 @@ export async function loadPlugins(
     // CLI doesn't). Plugins read it via api.getBaseUrl() for OAuth callbacks
     // and webhook endpoints.
     baseUrl: config.baseUrl,
+    platformAdapters: new Map(),
     pluginPages: new Map(),
     renderers: new Map(),
     slashRegistry: deps.slashRegistry,

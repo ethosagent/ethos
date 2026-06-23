@@ -1,6 +1,6 @@
 import { BackgroundRunner } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
-import { stripAnsiEscapes } from '@ethosagent/core';
+import { deriveBotKey, stripAnsiEscapes } from '@ethosagent/core';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
 import {
   checkMessage,
@@ -14,15 +14,28 @@ import { redactPii } from '@ethosagent/safety-redact';
 import type Database from '@ethosagent/sqlite';
 import type {
   AttachmentCache,
+  ChannelContext,
   ClarifyResponse,
   InboundMessage,
+  Logger,
   PlatformAdapter,
+  PlatformAdapterFactory,
   SteerSink,
 } from '@ethosagent/types';
 import { MessageDedupCache } from './dedup';
 
 export { MessageDedupCache } from './dedup';
 export { DreamExecutor } from './dream-executor';
+
+const noopLogger: Logger = {
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+  child() {
+    return noopLogger;
+  },
+};
 
 /**
  * Minimal observability surface the gateway needs. Defined locally so this
@@ -283,6 +296,16 @@ export interface GatewayConfig {
   attachmentCache?: AttachmentCache;
   /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
   adapters?: Map<string, PlatformAdapter>;
+  /** Plugin-contributed adapter factories. The gateway instantiates and starts
+   *  each one, creating a ChannelContext that routes inbound messages through
+   *  the standard handleMessage pipeline with auto-stamped botKey. */
+  pluginAdapters?: Map<string, PlatformAdapterFactory>;
+  /** Allowlist of plugin adapter IDs that are trusted to route. Channel
+   *  adapters are high-privilege (they broker external I/O) and are
+   *  default-deny — only IDs in this list will be started. When undefined
+   *  (not set), all plugin adapters are allowed (backward compat / dev mode).
+   *  When set (even to an empty Set), only listed IDs are started. */
+  trustedChannelPlugins?: Set<string>;
   /** Resolves (platform, platformUserId) -> internal userId for per-user profiles. */
   resolveUserId?: (
     platform: string,
@@ -525,6 +548,37 @@ export class Gateway {
     this.resolveUserIdFn = config.resolveUserId;
     this.pluginLoader = config.pluginLoader;
     this.notificationRouter = config.notificationRouter;
+
+    // --- Plugin-contributed adapters (Channel SDK) ---
+    if (config.pluginAdapters) {
+      for (const [name, factory] of config.pluginAdapters) {
+        // Default-deny: only start trusted channel plugins when the allowlist is set.
+        // When trustedChannelPlugins is undefined, all plugins are allowed (backward compat).
+        if (config.trustedChannelPlugins && !config.trustedChannelPlugins.has(name)) {
+          continue;
+        }
+        const adapter = factory({});
+        const adapterBotKey = deriveBotKey(name);
+        const ctx: ChannelContext = {
+          botKey: adapterBotKey,
+          onMessage: async (msg: InboundMessage) => {
+            const stamped = msg.botKey !== undefined ? msg : { ...msg, botKey: adapterBotKey };
+            await this.handleMessage(stamped, adapter);
+          },
+          logger: noopLogger,
+        };
+        if (adapter.startWithContext) {
+          adapter.startWithContext(ctx).catch(() => {});
+        } else {
+          adapter.onMessage((msg: InboundMessage) => {
+            const stamped = msg.botKey !== undefined ? msg : { ...msg, botKey: adapterBotKey };
+            void this.handleMessage(stamped, adapter);
+          });
+          adapter.start().catch(() => {});
+        }
+        this.adapterRegistry.set(name, adapter);
+      }
+    }
 
     this.backgroundRunner = new BackgroundRunner({ maxConcurrent: 4 });
     this.backgroundRunner.onComplete((task) => {
@@ -1231,7 +1285,7 @@ export class Gateway {
       })) {
         if (event.type === 'tool_start' && this.showToolCalls) {
           const status = this.activeStatusMessages.get(laneKey);
-          if (status) {
+          if (status && status.adapter.caps?.edit !== false) {
             await status.adapter
               .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName}…`)
               .catch(() => {});
@@ -1240,7 +1294,7 @@ export class Gateway {
 
         if (event.type === 'tool_end' && this.showToolCalls) {
           const status = this.activeStatusMessages.get(laneKey);
-          if (status) {
+          if (status && status.adapter.caps?.edit !== false) {
             const dur = `${(event.durationMs / 1000).toFixed(1)}s`;
             await status.adapter
               .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName} ✓ · ${dur}`)
@@ -1270,7 +1324,7 @@ export class Gateway {
         // /stop or shutdown — caller already notified the user.
       } else if (errored) {
         const errStatus = this.activeStatusMessages.get(laneKey);
-        if (errStatus) {
+        if (errStatus && errStatus.adapter.caps?.edit !== false) {
           await errStatus.adapter
             .editMessage?.(errStatus.chatId, errStatus.messageId, '⚠ Stopped')
             .catch(() => {});
@@ -1301,7 +1355,7 @@ export class Gateway {
       this.activeSinks.delete(laneKey);
 
       const status = this.activeStatusMessages.get(laneKey);
-      if (status) {
+      if (status && status.adapter.caps?.edit !== false) {
         await status.adapter.editMessage?.(status.chatId, status.messageId, '').catch(() => {});
         this.activeStatusMessages.delete(laneKey);
       }
