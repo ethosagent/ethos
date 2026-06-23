@@ -2,7 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 type RunResult = { changes: number; lastInsertRowid: number };
 
-function isNamedParams(arg: unknown): arg is Record<string, unknown> {
+// biome-ignore lint/suspicious/noExplicitAny: type guard for named params objects
+function isNamedParams(arg: any): arg is Record<string, unknown> {
   return (
     arg !== null &&
     arg !== undefined &&
@@ -14,15 +15,18 @@ function isNamedParams(arg: unknown): arg is Record<string, unknown> {
 }
 
 class Statement {
-  private inner: ReturnType<DatabaseSync['prepare']>;
+  // biome-ignore lint/suspicious/noExplicitAny: wraps node:sqlite's variadic params
+  private inner: any;
 
-  constructor(inner: ReturnType<DatabaseSync['prepare']>) {
+  // biome-ignore lint/suspicious/noExplicitAny: wraps node:sqlite's variadic params
+  constructor(inner: any) {
     this.inner = inner;
   }
 
-  run(...params: unknown[]): RunResult {
+  // biome-ignore lint/suspicious/noExplicitAny: accepts both positional and named params
+  run(...params: any[]): RunResult {
     const r = params.length === 1 && isNamedParams(params[0])
-      ? this.inner.run(params[0] as Record<string, unknown>)
+      ? this.inner.run(params[0])
       : this.inner.run(...params);
     return {
       changes: Number(r.changes),
@@ -30,21 +34,24 @@ class Statement {
     };
   }
 
-  get(...params: unknown[]): Record<string, unknown> | undefined {
+  // biome-ignore lint/suspicious/noExplicitAny: accepts both positional and named params
+  get(...params: any[]): any {
     const r = params.length === 1 && isNamedParams(params[0])
-      ? this.inner.get(params[0] as Record<string, unknown>)
+      ? this.inner.get(params[0])
       : this.inner.get(...params);
-    return r as Record<string, unknown> | undefined;
+    return r;
   }
 
-  all(...params: unknown[]): Record<string, unknown>[] {
+  // biome-ignore lint/suspicious/noExplicitAny: accepts both positional and named params
+  all(...params: any[]): any[] {
     const r = params.length === 1 && isNamedParams(params[0])
-      ? this.inner.all(params[0] as Record<string, unknown>)
+      ? this.inner.all(params[0])
       : this.inner.all(...params);
-    return r as Record<string, unknown>[];
+    return r;
   }
 
-  *iterate(...params: unknown[]): Generator<Record<string, unknown>> {
+  // biome-ignore lint/suspicious/noExplicitAny: accepts both positional and named params
+  *iterate(...params: any[]): Generator<any> {
     const rows = this.all(...params);
     for (const row of rows) {
       yield row;
@@ -52,8 +59,9 @@ class Statement {
   }
 }
 
-class Database {
-  static Database = Database;
+class _Database {
+  // biome-ignore lint/suspicious/noExplicitAny: namespace merge for Database.Database type compat
+  static Database: any = _Database;
 
   private inner: DatabaseSync;
   private _txDepth = 0;
@@ -87,10 +95,12 @@ class Database {
     return this.prepare('PRAGMA ' + str).all();
   }
 
-  transaction<T extends (...args: unknown[]) => unknown>(fn: T): T & { deferred: T; immediate: T; exclusive: T } {
+  // biome-ignore lint/suspicious/noExplicitAny: must accept any function signature for better-sqlite3 compat
+  transaction<T extends (...args: any[]) => any>(fn: T): T & { deferred: T; immediate: T; exclusive: T } {
     const self = this;
     const makeWrapper = (beginCmd: string) => {
-      const wrapper = function (this: unknown, ...args: unknown[]) {
+      // biome-ignore lint/suspicious/noExplicitAny: wrapper must match any function signature
+      const wrapper = function (this: any, ...args: any[]) {
         if (self._txDepth === 0) {
           self._txDepth++;
           self.inner.exec(beginCmd);
@@ -132,5 +142,10 @@ class Database {
   }
 }
 
-export default Database;
-export type { Database };
+// biome-ignore lint/suspicious/noRedeclare: namespace merge for better-sqlite3 Database.Database type compat
+namespace _Database {
+  export type Database = _Database;
+}
+
+export default _Database;
+export type { _Database as Database };
