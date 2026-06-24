@@ -2,11 +2,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { meshRegistryPath, setMeshObservabilityService } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
+import type { CronJob } from '@ethosagent/cron';
 import {
   BlobStore,
   ObservabilityService,
   SQLiteObservabilityStore,
-  startPruneCron,
 } from '@ethosagent/observability-sqlite';
 import {
   EnvSecretsResolver,
@@ -18,7 +18,6 @@ import {
 import { parseTeamManifest, teamsDir } from '@ethosagent/team-supervisor';
 import type {
   LLMProvider,
-  RetentionConfig,
   SecretsResolver,
   Storage,
   TeamManifest,
@@ -91,7 +90,6 @@ async function initSecrets(): Promise<SecretsResolver> {
 
 let obsSingleton: ObservabilityService | undefined;
 let ethosObsSingleton: EthosObservability | undefined;
-let pruneStop: (() => void) | undefined;
 
 /**
  * The CLI's process-wide ObservabilityService. Creates the SQLite store and
@@ -124,70 +122,41 @@ function getEthosObservability(): EthosObservability {
 }
 
 /**
- * Start the nightly observability prune cron job (03:00 local time).
- * Idempotent — calling it more than once is safe; the second call is a no-op.
- * Returns a stop function for clean shutdown.
- */
-export function startNightlyPrune(
-  config?: RetentionConfig,
-  personalitiesConfig?: Record<string, { retention?: RetentionConfig }>,
-): () => void {
-  if (!pruneStop) {
-    const handle = startPruneCron({
-      obsDbPath: join(ethosDir(), 'observability.db'),
-      sessDbPath: join(ethosDir(), 'sessions.db'),
-      config,
-      perSubjectConfig: personalitiesConfig,
-    });
-    pruneStop = handle.stop;
-  }
-  return pruneStop;
-}
-
-/** Stop the nightly prune cron job if it was started. */
-export function stopNightlyPrune(): void {
-  if (pruneStop) {
-    pruneStop();
-    pruneStop = undefined;
-  }
-}
-
-let evolverCronStop: (() => void) | undefined;
-
-/**
- * Register the skill-evolver cron job. Idempotent — second call is a no-op.
- * Returns a stop function.
+ * Build the handler map for source:'system' cron jobs. Each handler is a
+ * closure that lazy-imports the heavy module it needs, keeping startup fast.
  *
- * The execution callback lives here (app layer) so the extension stays pure
- * and never references CLI command strings. `runEvolveRun` is imported lazily
- * to avoid pulling SQLite and the LLM into startup.
+ * NOTE: dashboard-refresh is intentionally omitted — its DashboardsService
+ * dependency lives in the web-api scope, not the CLI wiring layer. The
+ * web-api poller stays as-is; a follow-up will migrate it.
  */
-export async function startEvolverCron(schedule: string, config: EthosConfig): Promise<() => void> {
-  if (!evolverCronStop) {
-    const { registerEvolverCron } = await import('@ethosagent/skill-evolver');
-    evolverCronStop = registerEvolverCron(schedule, async () => {
-      try {
-        // Lazy import keeps the LLM wiring out of the startup bundle.
-        const { runEvolve } = await import('./commands/evolve');
-        await runEvolve(['run', '--quiet'], config);
-      } catch (err) {
-        // Cron failures must not propagate into the interactive session.
-        // Log a warning to stderr so the user can diagnose if they look.
-        process.stderr.write(
-          `[ethos evolve cron] run failed: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
-      }
-    });
-  }
-  return evolverCronStop;
-}
-
-/** Stop the evolver cron job if it was started. */
-export function stopEvolverCron(): void {
-  if (evolverCronStop) {
-    evolverCronStop();
-    evolverCronStop = undefined;
-  }
+export function buildSystemTaskHandlers(
+  config: EthosConfig,
+): Record<string, (job: CronJob) => Promise<{ output: string }>> {
+  return {
+    'observability-prune': async () => {
+      const { pruneObservabilityByPath } = await import('@ethosagent/observability-sqlite');
+      const dir = ethosDir();
+      const obsDbPath = join(dir, 'observability.db');
+      const sessDbPath = join(dir, 'sessions.db');
+      pruneObservabilityByPath(obsDbPath, config.retention ?? {}, { sessDbPath });
+      return { output: 'Observability prune completed' };
+    },
+    'nightly-pass': async () => {
+      const { runNightlyOnce } = await import('./commands/nightly');
+      await runNightlyOnce(config);
+      return { output: 'Nightly governed-learning pass completed' };
+    },
+    'weekly-digest': async () => {
+      const { runDigestOnce } = await import('./commands/digest');
+      await runDigestOnce(config, { email: !!config.weeklyDigest?.recipients?.length });
+      return { output: 'Weekly digest completed' };
+    },
+    'skill-evolver': async () => {
+      const { runEvolve } = await import('./commands/evolve');
+      await runEvolve(['run', '--quiet'], config);
+      return { output: 'Skill evolver run completed' };
+    },
+  };
 }
 
 async function withRotation(config: EthosConfig) {

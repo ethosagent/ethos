@@ -238,6 +238,8 @@ export const CronJobSchema = z.object({
   deliver: z.string().nullable(),
   status: JobStatusSchema,
   missedRunPolicy: MissedRunPolicySchema,
+  source: z.enum(['system', 'user']).default('user'),
+  systemTask: z.string().nullable().optional(),
   /** ISO-8601 of last run, or null if never run. */
   lastRunAt: z.string().nullable(),
   /** ISO-8601 of next scheduled run, or null when paused / unscheduled. */

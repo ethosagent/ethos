@@ -18,13 +18,13 @@ import {
   createSessionStore,
   IdentityMap,
 } from '@ethosagent/wiring';
-import { Cron } from 'croner';
 import { type EthosConfig, ethosDir, readConfig } from '../config';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import {
+  buildSystemTaskHandlers,
   createAgentLoop,
   createLLM,
   createTeamAgentLoop,
@@ -222,6 +222,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let cronPersonalities: Awaited<ReturnType<typeof createPersonalityRegistry>> | null = null;
   cronScheduler = new CronScheduler({
     logger: new ConsoleLogger(),
+    systemTasks: buildSystemTaskHandlers(config),
     runJob: async (job) => {
       if (!loop) {
         throw new EthosError({
@@ -248,7 +249,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       const sessionKey = webOrigin ?? `cron:${job.id}:${new Date().toISOString()}`;
       const ranAt = new Date().toISOString();
       let output = '';
-      for await (const event of loop.run(job.prompt, {
+      for await (const event of loop.run(job.prompt ?? '', {
         sessionKey,
         personalityId: pid,
         toolsetOverride,
@@ -384,64 +385,39 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // `chatService` to the value returned by createWebApi below.
   if (cronScheduler) cronScheduler.start();
 
-  // Governed-learning nightly pass (Phase 3c E). Default-off: only when an
-  // operator sets `nightlyPass.enabled: true` do we create a recurring job;
-  // the absent/disabled path adds zero timers. This is now the canonical
-  // nightly mechanism — the dormant `DreamExecutor`
-  // (extensions/gateway/src/dream-executor.ts) it supersedes is unwired and
-  // kept for one release.
-  let nightlyJob: Cron | null = null;
-  if (config.nightlyPass?.enabled) {
-    const expr = config.nightlyPass.cron ?? '0 3 * * *';
-    try {
-      const cfg = config;
-      nightlyJob = new Cron(expr, { protect: true }, async () => {
-        try {
-          // Lazy import: the nightly orchestrator pulls in the heavy
-          // skill-evolver / judge graph; only load it when a pass fires.
-          const { runNightlyOnce } = await import('./nightly');
-          await runNightlyOnce(cfg);
-        } catch (e) {
-          console.error(
-            `[serve] nightly pass failed: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
+  // Seed system cron jobs into the scheduler's persistent store. Each call
+  // is idempotent — existing jobs are returned as-is. The handlers were
+  // already registered via `systemTasks` in the scheduler config above.
+  const seedSystemJobs = async () => {
+    if (!cronScheduler) return;
+    await cronScheduler.seedSystemJob({
+      name: 'Observability Prune',
+      schedule: '0 3 * * *',
+      systemTask: 'observability-prune',
+    });
+    if (config.nightlyPass?.enabled) {
+      await cronScheduler.seedSystemJob({
+        name: 'Nightly Pass',
+        schedule: config.nightlyPass.cron ?? '0 3 * * *',
+        systemTask: 'nightly-pass',
       });
-    } catch (e) {
-      console.error(
-        `[serve] invalid nightlyPass.cron "${expr}" — nightly pass disabled: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
     }
-  }
-
-  // Weekly governed-learning digest (Phase 3e). Default-off: only when an
-  // operator sets `weeklyDigest.enabled: true` do we create a recurring job;
-  // the absent/disabled path adds zero timers.
-  let digestJob: Cron | null = null;
-  if (config.weeklyDigest?.enabled) {
-    const expr = config.weeklyDigest.cron ?? '0 9 * * 1';
-    try {
-      const cfg = config;
-      digestJob = new Cron(expr, { protect: true }, async () => {
-        try {
-          const { runDigestOnce } = await import('./digest');
-          await runDigestOnce(cfg, { email: !!cfg.weeklyDigest?.recipients?.length });
-        } catch (e) {
-          console.error(
-            `[serve] weekly digest failed: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
+    if (config.weeklyDigest?.enabled) {
+      await cronScheduler.seedSystemJob({
+        name: 'Weekly Digest',
+        schedule: config.weeklyDigest.cron ?? '0 9 * * 1',
+        systemTask: 'weekly-digest',
       });
-    } catch (e) {
-      console.error(
-        `[serve] invalid weeklyDigest.cron "${expr}" — weekly digest disabled: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
     }
-  }
+    if (config.evolverCronEnabled) {
+      await cronScheduler.seedSystemJob({
+        name: 'Skill Evolver',
+        schedule: config.evolverSchedule ?? '0 3 * * *',
+        systemTask: 'skill-evolver',
+      });
+    }
+  };
+  void seedSystemJobs();
 
   // OpenAI-compat surface (F1+F2). Shares sessions.db so `ethos api-key`
   // and `ethos serve` see the same rows.
@@ -520,8 +496,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     stopHeartbeat();
     await mesh.unregister(agentId);
     if (cronScheduler) cronScheduler.stop();
-    if (nightlyJob) nightlyJob.stop();
-    if (digestJob) digestJob.stop();
     if (webShutdown) await webShutdown();
     process.exit(0);
   };

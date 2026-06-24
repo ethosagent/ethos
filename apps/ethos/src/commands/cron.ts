@@ -50,7 +50,7 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
       const pers = personalities.get(pid);
       const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
 
-      for await (const event of loop.run(job.prompt, {
+      for await (const event of loop.run(job.prompt ?? '', {
         sessionKey,
         personalityId: pid,
         toolsetOverride,
@@ -113,8 +113,9 @@ export async function runCronCommand(
           console.log(`    Schedule    : ${j.schedule}`);
           console.log(`    Personality : ${pers}`);
           console.log(`    Next run    : ${next}`);
+          const promptPreview = j.prompt ?? (j.systemTask ? `[system: ${j.systemTask}]` : '—');
           console.log(
-            `    Prompt      : ${j.prompt.slice(0, 80)}${j.prompt.length > 80 ? '…' : ''}`,
+            `    Prompt      : ${promptPreview.slice(0, 80)}${promptPreview.length > 80 ? '…' : ''}`,
           );
           console.log();
         }
@@ -167,7 +168,9 @@ export async function runCronCommand(
         console.log(
           `  Last run    : ${j.lastRunAt ? new Date(j.lastRunAt).toLocaleString() : 'never'}`,
         );
-        console.log(`  Prompt      : ${j.prompt}`);
+        console.log(
+          `  Prompt      : ${j.prompt ?? (j.systemTask ? `[system: ${j.systemTask}]` : '—')}`,
+        );
         console.log();
       } finally {
         cleanup();
@@ -273,6 +276,13 @@ export async function runCronCommand(
       }
       const { scheduler, cleanup } = makeScheduler(config);
       try {
+        const job = await scheduler.getJob(id);
+        if (job?.source === 'system') {
+          console.log(
+            `${c.red}Cannot pause system job "${id}" — managed by operator config${c.reset}`,
+          );
+          return;
+        }
         await scheduler.pauseJob(id);
         console.log(`${c.green}✓ Paused "${id}"${c.reset}`);
       } catch (err) {
@@ -309,6 +319,13 @@ export async function runCronCommand(
       }
       const { scheduler, cleanup } = makeScheduler(config);
       try {
+        const job = await scheduler.getJob(id);
+        if (job?.source === 'system') {
+          console.log(
+            `${c.red}Cannot delete system job "${id}" — managed by operator config${c.reset}`,
+          );
+          return;
+        }
         await scheduler.deleteJob(id);
         console.log(`${c.green}✓ Deleted "${id}"${c.reset}`);
       } catch (err) {

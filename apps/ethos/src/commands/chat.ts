@@ -31,7 +31,7 @@ import {
   makeTuiSlashCommands,
 } from '../lib/tui-capabilities';
 import { isVerbosity, nextVerbosity, projectEvent, type Verbosity } from '../lib/verbosity';
-import { resolveActiveLoop, startEvolverCron, startNightlyPrune } from '../wiring';
+import { resolveActiveLoop } from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
@@ -179,15 +179,6 @@ function renderStatusBarLine(state: ChatState): void {
 // ---------------------------------------------------------------------------
 
 export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): Promise<void> {
-  startNightlyPrune(config.retention, config.personalitiesConfig);
-  if (config.evolverCronEnabled) {
-    const schedule = config.evolverSchedule ?? '0 3 * * *';
-    startEvolverCron(schedule, config).catch((err) => {
-      process.stderr.write(
-        `[ethos] evolve cron startup failed: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    });
-  }
   // FW-14 — build the shared slash command registry. FW-15 and FW-16 extend it.
   // Built BEFORE the loop so plugin loading (inside resolveActiveLoop) can
   // register plugin slash commands into it via registerSlashCommand.

@@ -7,6 +7,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Segmented,
   Select,
   Spin,
   Typography,
@@ -32,6 +33,7 @@ const PRESET_SCHEDULES: Array<{ value: string; label: string }> = [
 export function Cron() {
   const [createOpen, setCreateOpen] = useState(false);
   const [filterPersonality, setFilterPersonality] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'user' | 'system'>('user');
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['cron', 'list'],
@@ -60,40 +62,56 @@ export function Cron() {
   }
 
   const allJobs = data?.jobs ?? [];
+  const tabJobs = allJobs.filter((j) => (j.source ?? 'user') === activeTab);
   const jobs = filterPersonality
-    ? allJobs.filter((j) => j.personalityId === filterPersonality)
-    : allJobs;
+    ? tabJobs.filter((j) => j.personalityId === filterPersonality)
+    : tabJobs;
 
   return (
     <div className="cron-tab">
       <header className="cron-toolbar">
         <span className="sessions-count">
-          {jobs.length} {jobs.length === 1 ? 'job' : 'jobs'}
+          {jobs.length} {activeTab} {jobs.length === 1 ? 'job' : 'jobs'}
           {filterPersonality ? ` · ${filterPersonality}` : ''}
         </span>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Select
-            allowClear
-            placeholder="All personalities"
+          <Segmented
+            value={activeTab}
+            onChange={(v) => setActiveTab(v as 'user' | 'system')}
+            options={[
+              { label: 'User', value: 'user' },
+              { label: 'System', value: 'system' },
+            ]}
             size="small"
-            style={{ width: 180 }}
-            value={filterPersonality}
-            onChange={(v) => setFilterPersonality(v ?? null)}
-            loading={personalitiesQuery.isLoading}
-            options={(personalitiesQuery.data?.items ?? []).map((p) => ({
-              value: p.id,
-              label: p.name,
-            }))}
           />
-          <Button type="primary" onClick={() => setCreateOpen(true)}>
-            New job
-          </Button>
+          {activeTab === 'user' && (
+            <Select
+              allowClear
+              placeholder="All personalities"
+              size="small"
+              style={{ width: 180 }}
+              value={filterPersonality}
+              onChange={(v) => setFilterPersonality(v ?? null)}
+              loading={personalitiesQuery.isLoading}
+              options={(personalitiesQuery.data?.items ?? []).map((p) => ({
+                value: p.id,
+                label: p.name,
+              }))}
+            />
+          )}
+          {activeTab === 'user' && (
+            <Button type="primary" onClick={() => setCreateOpen(true)}>
+              New job
+            </Button>
+          )}
         </div>
       </header>
 
       {jobs.length === 0 ? (
         <div className="cron-card-empty">
-          No cron jobs yet. Create one to schedule a recurring agent task.
+          {activeTab === 'system'
+            ? 'No system jobs. System jobs are seeded at startup and managed by operator config.'
+            : 'No cron jobs yet. Create one to schedule a recurring agent task.'}
         </div>
       ) : (
         <div className="cron-card-list">
@@ -152,6 +170,7 @@ function CronCard({ job }: { job: CronJob }) {
     onError: (err) => surfaceError(notification, 'Delete failed', err),
   });
 
+  const isSystem = job.source === 'system';
   const isPaused = job.status === 'paused';
   const cardClass = `cron-card${isPaused ? ' cron-card--paused' : ''}`;
 
@@ -168,11 +187,23 @@ function CronCard({ job }: { job: CronJob }) {
         {/* Row 1: name + badge + run-now */}
         <div className="cron-card-top">
           <span className="cron-card-name">{job.name}</span>
-          <span
-            className={`cron-card-badge ${isPaused ? 'cron-card-badge--paused' : 'cron-card-badge--active'}`}
-          >
-            {isPaused ? 'Paused' : 'Active'}
-          </span>
+          {isSystem ? (
+            <span
+              className="cron-card-badge"
+              style={{
+                background: 'var(--color-bg-secondary, #e8e8e8)',
+                color: 'var(--color-text-secondary, #888)',
+              }}
+            >
+              System
+            </span>
+          ) : (
+            <span
+              className={`cron-card-badge ${isPaused ? 'cron-card-badge--paused' : 'cron-card-badge--active'}`}
+            >
+              {isPaused ? 'Paused' : 'Active'}
+            </span>
+          )}
           <button
             type="button"
             className="cron-run-now-btn"
@@ -191,6 +222,12 @@ function CronCard({ job }: { job: CronJob }) {
           <span>{job.schedule}</span>
           <span className="cron-card-meta-sep">&middot;</span>
           <span className="cron-card-personality">{job.personalityId}</span>
+          {job.systemTask ? (
+            <>
+              <span className="cron-card-meta-sep">&middot;</span>
+              <span>{job.systemTask}</span>
+            </>
+          ) : null}
           {job.deliver ? (
             <>
               <span className="cron-card-meta-sep">&middot;</span>
@@ -210,39 +247,41 @@ function CronCard({ job }: { job: CronJob }) {
         {/* Row 3: prompt description + hover actions */}
         <div className="cron-card-desc">
           <span className="cron-card-desc-text">{job.prompt}</span>
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: event propagation barrier */}
-          <div
-            className="cron-card-actions"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="cron-card-action-btn"
-              disabled={pause.isPending || resume.isPending}
-              onClick={() => {
-                if (isPaused) resume.mutate();
-                else pause.mutate();
-              }}
+          {!isSystem && (
+            /* biome-ignore lint/a11y/noStaticElementInteractions: event propagation barrier */
+            <div
+              className="cron-card-actions"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
             >
-              {isPaused ? 'Resume' : 'Pause'}
-            </button>
-            <Popconfirm
-              title="Delete this job?"
-              description="The schedule and run history are removed."
-              okText="Delete"
-              okButtonProps={{ danger: true, loading: remove.isPending }}
-              cancelText="Cancel"
-              onConfirm={(e) => {
-                e?.stopPropagation();
-                remove.mutate();
-              }}
-            >
-              <button type="button" className="cron-card-action-btn cron-card-action-btn--danger">
-                Delete
+              <button
+                type="button"
+                className="cron-card-action-btn"
+                disabled={pause.isPending || resume.isPending}
+                onClick={() => {
+                  if (isPaused) resume.mutate();
+                  else pause.mutate();
+                }}
+              >
+                {isPaused ? 'Resume' : 'Pause'}
               </button>
-            </Popconfirm>
-          </div>
+              <Popconfirm
+                title="Delete this job?"
+                description="The schedule and run history are removed."
+                okText="Delete"
+                okButtonProps={{ danger: true, loading: remove.isPending }}
+                cancelText="Cancel"
+                onConfirm={(e) => {
+                  e?.stopPropagation();
+                  remove.mutate();
+                }}
+              >
+                <button type="button" className="cron-card-action-btn cron-card-action-btn--danger">
+                  Delete
+                </button>
+              </Popconfirm>
+            </div>
+          )}
         </div>
       </button>
 

@@ -397,6 +397,14 @@ async function handleUpdate(
 
 async function handlePause(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  const job = await scheduler.getJob(args.id);
+  if (job?.source === 'system') {
+    return {
+      ok: false,
+      error: 'Cannot pause system job — managed by operator config',
+      code: 'input_invalid',
+    };
+  }
   try {
     await scheduler.pauseJob(args.id);
     return { ok: true, value: `✓ Paused job "${args.id}"` };
@@ -430,6 +438,14 @@ async function handleRun(scheduler: CronScheduler, args: { id?: string }): Promi
 
 async function handleRemove(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  const job = await scheduler.getJob(args.id);
+  if (job?.source === 'system') {
+    return {
+      ok: false,
+      error: 'Cannot delete system job — managed by operator config',
+      code: 'input_invalid',
+    };
+  }
   try {
     await scheduler.deleteJob(args.id);
     return { ok: true, value: `✓ Deleted job "${args.id}"` };

@@ -30,7 +30,8 @@ export interface CronJob {
   name: string;
   /** Schedule expression: 5-field cron, relative delay (30m), interval (every 2h), or ISO timestamp. */
   schedule: string;
-  prompt: string;
+  /** Prompt the agent will run. Optional for source:'system' jobs (they use systemTask handlers). */
+  prompt?: string;
   personalityId: string;
   /** Channel origin captured at create time; absent means file-only. */
   origin?: JobOrigin;
@@ -44,6 +45,11 @@ export interface CronJob {
   lastError?: string;
   /** Job ids/names whose latest output will be prepended as context at run time. */
   contextFrom?: string[];
+  /** Ownership. 'system' jobs are seeded by the framework and non-disableable.
+   *  Default 'user'. Distinct from `origin` (channel platform/chatId). */
+  source?: 'system' | 'user';
+  /** For source:'system' — the registered system-task handler name. Present iff source==='system'. */
+  systemTask?: string;
   lastRunAt?: string;
   nextRunAt?: string;
   createdAt: string;
@@ -78,6 +84,8 @@ export interface CronSchedulerConfig {
   logger?: Logger;
   /** Optional callback to deliver run output back to the originating channel. */
   deliver?: (job: CronJob, output: string) => Promise<void>;
+  /** source:'system' jobs dispatch here by systemTask name instead of runJob. */
+  systemTasks?: Record<string, (job: CronJob) => Promise<{ output: string }>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +131,7 @@ export class CronScheduler {
   private readonly storage: Storage;
   private readonly logger: Logger;
   private readonly deliver?: (job: CronJob, output: string) => Promise<void>;
+  private readonly systemTasks: Record<string, (job: CronJob) => Promise<{ output: string }>>;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: CronSchedulerConfig) {
@@ -135,6 +144,7 @@ export class CronScheduler {
     this.storage = config.storage ?? new FsStorage();
     this.logger = config.logger ?? noopLogger;
     this.deliver = config.deliver;
+    this.systemTasks = config.systemTasks ?? {};
   }
 
   // ---------------------------------------------------------------------------
@@ -170,6 +180,11 @@ export class CronScheduler {
       throw new Error(`Invalid schedule: "${params.schedule}"`);
     }
 
+    // prompt is required for user jobs but optional for system jobs
+    if (params.source !== 'system' && !params.prompt) {
+      throw new Error('prompt is required for user jobs');
+    }
+
     const now = new Date();
     const repeat: RepeatPolicy =
       params.repeat ??
@@ -178,6 +193,8 @@ export class CronScheduler {
     const job: CronJob = {
       ...params,
       id: slugify(params.name),
+      source: params.source ?? 'user',
+      systemTask: params.systemTask,
       status: 'active',
       missedRunPolicy: params.missedRunPolicy ?? 'skip',
       repeat,
@@ -215,13 +232,21 @@ export class CronScheduler {
 
   async deleteJob(id: string): Promise<void> {
     await this.withJobsLock(async (jobs) => {
-      const filtered = jobs.filter((j) => j.id !== id);
-      if (filtered.length === jobs.length) throw new Error(`Job not found: ${id}`);
-      return filtered;
+      const job = jobs.find((j) => j.id === id);
+      if (!job) throw new Error(`Job not found: ${id}`);
+      if (job.source === 'system') {
+        throw new Error(`Cannot delete system job "${id}" — managed by operator config`);
+      }
+      return jobs.filter((j) => j.id !== id);
     });
   }
 
   async pauseJob(id: string): Promise<void> {
+    const job = await this.getJob(id);
+    if (!job) throw new Error(`Job not found: ${id}`);
+    if (job.source === 'system') {
+      throw new Error(`Cannot pause system job "${id}" — managed by operator config`);
+    }
     await this.patchJob(id, { status: 'paused' });
   }
 
@@ -278,6 +303,31 @@ export class CronScheduler {
     const job = await this.getJob(id);
     if (!job) throw new Error(`Job not found: ${id}`);
     return this.executeJob(job);
+  }
+
+  /**
+   * Idempotent seeder for system-managed cron jobs. If a job with the
+   * slugified name already exists, returns it unchanged; otherwise creates
+   * a new source:'system' job with the given schedule and systemTask handler.
+   */
+  async seedSystemJob(params: {
+    name: string;
+    schedule: string;
+    systemTask: string;
+    personalityId?: string;
+  }): Promise<CronJob> {
+    const id = slugify(params.name);
+    const existing = await this.getJob(id);
+    if (existing) return existing;
+    return this.createJob({
+      name: params.name,
+      schedule: params.schedule,
+      prompt: '',
+      personalityId: params.personalityId ?? 'system',
+      source: 'system',
+      systemTask: params.systemTask,
+      missedRunPolicy: 'skip',
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -448,8 +498,43 @@ export class CronScheduler {
   // ---------------------------------------------------------------------------
 
   private async executeJob(job: CronJob): Promise<CronRunResult> {
+    // System jobs dispatch to a registered handler instead of the LLM runJob path
+    if (job.source === 'system' && job.systemTask) {
+      const handler = this.systemTasks[job.systemTask];
+      if (!handler) {
+        throw new Error(
+          `System task handler "${job.systemTask}" not registered for job "${job.id}"`,
+        );
+      }
+      const { output } = await handler(job);
+      const ranAt = new Date().toISOString();
+
+      // Persist output to the same run-history path as user jobs
+      const ts = ranAt.replace(/[:.]/g, '-').replace('Z', 'Z');
+      const outPath = join(this.outputDir, job.id, `${ts}.md`);
+      await this.storage.mkdir(dirname(outPath));
+      await this.storage.write(outPath, `# ${job.name}\n\n${output}\n`);
+
+      // Deliver to originating channel when origin is present
+      if (job.origin && this.deliver) {
+        if (!/^\s*\[SILENT\]/i.test(output)) {
+          try {
+            await this.deliver(job, output);
+          } catch (err) {
+            this.logger.error(`[cron] Delivery failed for job "${job.id}"`, {
+              component: 'cron',
+              jobId: job.id,
+              error: String(err),
+            });
+          }
+        }
+      }
+
+      return { jobId: job.id, ranAt, output, sessionKey: `cron:system:${job.id}` };
+    }
+
     const contextPrefix = await this.resolveContext(job);
-    const effectivePrompt = contextPrefix + job.prompt;
+    const effectivePrompt = contextPrefix + (job.prompt ?? '');
     const result = await this.runJob({ ...job, prompt: effectivePrompt });
 
     // Persist output to ~/.ethos/cron/output/<id>/<timestamp>.md

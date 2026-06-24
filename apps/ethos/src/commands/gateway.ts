@@ -30,7 +30,6 @@ import {
   IdentityMap,
   type MessagingSendFn,
 } from '@ethosagent/wiring';
-import { Cron } from 'croner';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {
   applyPlatformShim,
@@ -49,7 +48,13 @@ import { createHealthServer } from '../health-server';
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
 import { notifyReady, startWatchdog } from '../sd-notify';
-import { createAgentLoop, createTeamAgentLoop, getSecretsResolver, getStorage } from '../wiring';
+import {
+  buildSystemTaskHandlers,
+  createAgentLoop,
+  createTeamAgentLoop,
+  getSecretsResolver,
+  getStorage,
+} from '../wiring';
 import {
   ensureTeamSupervisors,
   stopTeamSupervisors,
@@ -342,6 +347,7 @@ export async function runGatewayStart(): Promise<void> {
     | null = null;
   const scheduler = new CronScheduler({
     logger: new ConsoleLogger(),
+    systemTasks: buildSystemTaskHandlers(config),
     deliver: async (job, output) => {
       if (cronDeliverFn) await cronDeliverFn(job, output);
     },
@@ -366,7 +372,7 @@ export async function runGatewayStart(): Promise<void> {
 
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
       let output = '';
-      for await (const event of systemLoop.run(job.prompt, {
+      for await (const event of systemLoop.run(job.prompt ?? '', {
         sessionKey,
         personalityId: pid,
         toolsetOverride,
@@ -696,62 +702,38 @@ export async function runGatewayStart(): Promise<void> {
   scheduler.start();
   console.log(`${c.dim}Cron scheduler running (checks every 60s)${c.reset}`);
 
-  // Governed-learning nightly pass (Phase 3c E). Default-off: only when an
-  // operator sets `nightlyPass.enabled: true` do we create a recurring job;
-  // the absent/disabled path adds zero timers. This is now the canonical
-  // nightly mechanism — the dormant `DreamExecutor`
-  // (extensions/gateway/src/dream-executor.ts) it supersedes is unwired and
-  // kept for one release.
-  let nightlyJob: Cron | null = null;
-  if (config.nightlyPass?.enabled) {
-    const expr = config.nightlyPass.cron ?? '0 3 * * *';
-    try {
-      nightlyJob = new Cron(expr, { protect: true }, async () => {
-        try {
-          // Lazy import: the nightly orchestrator pulls in the heavy
-          // skill-evolver / judge graph; only load it when a pass fires.
-          const { runNightlyOnce } = await import('./nightly');
-          await runNightlyOnce(config);
-        } catch (e) {
-          console.error(
-            `[gateway] nightly pass failed: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
+  // Seed system cron jobs into the scheduler's persistent store. Each call
+  // is idempotent — existing jobs are returned as-is. The handlers were
+  // already registered via `systemTasks` in the scheduler config above.
+  const seedSystemJobs = async () => {
+    await scheduler.seedSystemJob({
+      name: 'Observability Prune',
+      schedule: '0 3 * * *',
+      systemTask: 'observability-prune',
+    });
+    if (config.nightlyPass?.enabled) {
+      await scheduler.seedSystemJob({
+        name: 'Nightly Pass',
+        schedule: config.nightlyPass.cron ?? '0 3 * * *',
+        systemTask: 'nightly-pass',
       });
-    } catch (e) {
-      console.error(
-        `${c.yellow}⚠${c.reset} invalid nightlyPass.cron "${expr}" — nightly pass disabled: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
     }
-  }
-
-  // Weekly governed-learning digest (Phase 3e). Default-off: only when an
-  // operator sets `weeklyDigest.enabled: true` do we create a recurring job;
-  // the absent/disabled path adds zero timers.
-  let digestJob: Cron | null = null;
-  if (config.weeklyDigest?.enabled) {
-    const expr = config.weeklyDigest.cron ?? '0 9 * * 1';
-    try {
-      digestJob = new Cron(expr, { protect: true }, async () => {
-        try {
-          const { runDigestOnce } = await import('./digest');
-          await runDigestOnce(config, { email: !!config.weeklyDigest?.recipients?.length });
-        } catch (e) {
-          console.error(
-            `[gateway] weekly digest failed: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
+    if (config.weeklyDigest?.enabled) {
+      await scheduler.seedSystemJob({
+        name: 'Weekly Digest',
+        schedule: config.weeklyDigest.cron ?? '0 9 * * 1',
+        systemTask: 'weekly-digest',
       });
-    } catch (e) {
-      console.error(
-        `${c.yellow}⚠${c.reset} invalid weeklyDigest.cron "${expr}" — weekly digest disabled: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
     }
-  }
+    if (config.evolverCronEnabled) {
+      await scheduler.seedSystemJob({
+        name: 'Skill Evolver',
+        schedule: config.evolverSchedule ?? '0 3 * * *',
+        systemTask: 'skill-evolver',
+      });
+    }
+  };
+  void seedSystemJobs();
 
   // Start all adapters
   await Promise.all(adapters.map((a) => a.start()));
@@ -831,8 +813,6 @@ export async function runGatewayStart(): Promise<void> {
     clearInterval(pruneTimer);
     clearInterval(heartbeatTimer);
     scheduler.stop();
-    if (nightlyJob) nightlyJob.stop();
-    if (digestJob) digestJob.stop();
     await storage.remove(gatewayHealthPath()).catch(() => {});
     await gateway.shutdown({
       notify:

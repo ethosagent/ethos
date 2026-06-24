@@ -2,7 +2,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CronJob, CronRunResult } from '../index';
+import type { CronJob, CronRunResult, CronSchedulerConfig } from '../index';
 import { CronScheduler, isValidCronExpression, nextRun, nextRunAfter } from '../index';
 
 // ---------------------------------------------------------------------------
@@ -540,7 +540,7 @@ describe('CronScheduler job chaining', () => {
     const prompts: string[] = [];
     const scheduler = makeScheduler({
       runJob: async (job) => {
-        prompts.push(job.prompt);
+        prompts.push(job.prompt ?? '');
         return {
           jobId: job.id,
           ranAt: new Date().toISOString(),
@@ -581,7 +581,7 @@ describe('CronScheduler job chaining', () => {
     const prompts: string[] = [];
     const scheduler = makeScheduler({
       runJob: async (job) => {
-        prompts.push(job.prompt);
+        prompts.push(job.prompt ?? '');
         return {
           jobId: job.id,
           ranAt: new Date().toISOString(),
@@ -636,7 +636,7 @@ describe('CronScheduler job chaining', () => {
     const prompts: string[] = [];
     const scheduler = makeScheduler({
       runJob: async (job) => {
-        prompts.push(job.prompt);
+        prompts.push(job.prompt ?? '');
         return {
           jobId: job.id,
           ranAt: new Date().toISOString(),
@@ -873,5 +873,165 @@ describe('readRunOutput — path containment', () => {
     await expect(
       scheduler.readRunOutput(join(testDir, 'output', '..', 'escape.md')),
     ).rejects.toThrow('Path outside output directory');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// System jobs
+// ---------------------------------------------------------------------------
+
+describe('CronScheduler system jobs', () => {
+  function makeSystemScheduler(overrides: Partial<CronSchedulerConfig> = {}): CronScheduler {
+    return new CronScheduler({
+      cronDir: testDir,
+      runJob: async (job) => ({
+        jobId: job.id,
+        ranAt: new Date().toISOString(),
+        output: `ran: ${job.prompt ?? ''}`,
+        sessionKey: 'k',
+      }),
+      tickIntervalMs: 60_000,
+      ...overrides,
+    });
+  }
+
+  it('seedSystemJob creates a system job idempotently', async () => {
+    const scheduler = makeSystemScheduler();
+    const job1 = await scheduler.seedSystemJob({
+      name: 'Observability Prune',
+      schedule: '0 3 * * *',
+      systemTask: 'observability-prune',
+    });
+    expect(job1.source).toBe('system');
+    expect(job1.systemTask).toBe('observability-prune');
+
+    const job2 = await scheduler.seedSystemJob({
+      name: 'Observability Prune',
+      schedule: '0 3 * * *',
+      systemTask: 'observability-prune',
+    });
+    expect(job2.id).toBe(job1.id);
+
+    const jobs = await scheduler.listJobs();
+    const systemJobs = jobs.filter((j) => j.source === 'system');
+    expect(systemJobs).toHaveLength(1);
+  });
+
+  it('rejects pause for system jobs', async () => {
+    const scheduler = makeSystemScheduler();
+    const job = await scheduler.seedSystemJob({
+      name: 'Test System Job',
+      schedule: '0 3 * * *',
+      systemTask: 'test-task',
+    });
+    await expect(scheduler.pauseJob(job.id)).rejects.toThrow(/cannot pause system job/i);
+  });
+
+  it('rejects delete for system jobs', async () => {
+    const scheduler = makeSystemScheduler();
+    const job = await scheduler.seedSystemJob({
+      name: 'Test System Job',
+      schedule: '0 3 * * *',
+      systemTask: 'test-task',
+    });
+    await expect(scheduler.deleteJob(job.id)).rejects.toThrow(/cannot delete system job/i);
+  });
+
+  it('runJobNow works for system jobs', async () => {
+    let handlerCalled = false;
+    const scheduler = makeSystemScheduler({
+      systemTasks: {
+        'test-task': async () => {
+          handlerCalled = true;
+          return { output: 'system task ran' };
+        },
+      },
+    });
+    const job = await scheduler.seedSystemJob({
+      name: 'Test System Job',
+      schedule: '0 3 * * *',
+      systemTask: 'test-task',
+    });
+    const result = await scheduler.runJobNow(job.id);
+    expect(handlerCalled).toBe(true);
+    expect(result.output).toBe('system task ran');
+  });
+
+  it('tick dispatches system jobs to systemTasks handler', async () => {
+    let handlerOutput = '';
+    const scheduler = makeSystemScheduler({
+      systemTasks: {
+        'test-task': async () => {
+          handlerOutput = 'handler executed';
+          return { output: handlerOutput };
+        },
+      },
+    });
+    const job = await scheduler.seedSystemJob({
+      name: 'Due System Job',
+      schedule: '0 3 * * *',
+      systemTask: 'test-task',
+    });
+    const result = await scheduler.runJobNow(job.id);
+    expect(result.output).toBe('handler executed');
+    expect(handlerOutput).toBe('handler executed');
+  });
+
+  it('user jobs still dispatch through runJob', async () => {
+    const prompts: string[] = [];
+    const scheduler = makeSystemScheduler({
+      runJob: async (job) => {
+        prompts.push(job.prompt ?? '');
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: 'user output',
+          sessionKey: 'k',
+        };
+      },
+    });
+
+    await scheduler.createJob({
+      name: 'User Job',
+      schedule: '0 9 * * *',
+      prompt: 'do something',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    const job = await scheduler.getJob('user-job');
+    const result = await scheduler.runJobNow(job?.id ?? 'user-job');
+    expect(result.output).toBe('user output');
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('do something');
+  });
+
+  it('user jobs can be paused and deleted', async () => {
+    const scheduler = makeSystemScheduler();
+    const created = await scheduler.createJob({
+      name: 'Deletable Job',
+      schedule: '0 9 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    await scheduler.pauseJob(created.id);
+    const paused = await scheduler.getJob(created.id);
+    expect(paused?.status).toBe('paused');
+
+    await scheduler.deleteJob(created.id);
+    const deleted = await scheduler.getJob(created.id);
+    expect(deleted).toBeNull();
+  });
+
+  it('throws when system task handler is not registered', async () => {
+    const scheduler = makeSystemScheduler();
+    const job = await scheduler.seedSystemJob({
+      name: 'No Handler Job',
+      schedule: '0 3 * * *',
+      systemTask: 'nonexistent',
+    });
+    await expect(scheduler.runJobNow(job.id)).rejects.toThrow(/not registered/i);
   });
 });
