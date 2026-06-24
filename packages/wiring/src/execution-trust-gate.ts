@@ -35,6 +35,7 @@ export function guardedExecutionRegistry(
 ): ExecutionBackendRegistry {
   return {
     register: (name, factory) => inner.register(name, factory),
+    unregister: (name) => inner.unregister(name),
     resolve: async (name, ctx) => {
       if (!isExecutionBackendAllowed(name, trustedPlugins)) {
         const pluginId = name.split('/')[0] ?? '';

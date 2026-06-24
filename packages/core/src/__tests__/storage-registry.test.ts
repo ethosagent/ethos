@@ -67,4 +67,16 @@ describe('DefaultStorageRegistry', () => {
     const instance = await registry.resolve('memory', noopCtx);
     expect(registry.get('memory')).toBe(instance);
   });
+
+  it('unregister clears factory and cached instance; re-register does not throw', async () => {
+    const registry = new DefaultStorageRegistry();
+    registry.register('memory', () => new InMemoryStorage());
+    await registry.resolve('memory', noopCtx);
+    expect(registry.get('memory')).toBeDefined();
+    registry.unregister('memory');
+    expect(registry.get('memory')).toBeUndefined();
+    expect(registry.list()).not.toContain('memory');
+    expect(() => registry.register('memory', () => new InMemoryStorage())).not.toThrow();
+    expect(() => registry.unregister('absent')).not.toThrow();
+  });
 });

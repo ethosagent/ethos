@@ -1,8 +1,10 @@
 import {
+  DefaultExecutionBackendRegistry,
   DefaultHookRegistry,
   DefaultLLMProviderRegistry,
   DefaultMemoryProviderRegistry,
   DefaultPersonalityRegistry,
+  DefaultStorageRegistry,
   DefaultToolRegistry,
 } from '@ethosagent/core';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
@@ -22,6 +24,9 @@ function makeRegistries(): PluginRegistries {
     personalities: new DefaultPersonalityRegistry(),
     llmProviders: new DefaultLLMProviderRegistry(),
     memoryProviders: new DefaultMemoryProviderRegistry(),
+    storageBackends: new DefaultStorageRegistry(),
+    executionBackends: new DefaultExecutionBackendRegistry(),
+    platformAdapters: new Map<string, import('@ethosagent/types').PlatformAdapterFactory>(),
   };
 }
 
@@ -338,6 +343,18 @@ describe('PluginApiImpl.registerLLMProvider', () => {
       /cannot register LLM provider/,
     );
   });
+
+  it('cleanup unregisters the provider and re-registration does not throw', () => {
+    const registries = makeRegistries();
+    const api = new PluginApiImpl('my-plugin', registries);
+    const factory = () => mockLLM(['test']);
+    api.registerLLMProvider('custom-model', factory);
+    expect(registries.llmProviders.get('my-plugin/custom-model')).toBe(factory);
+    api.cleanup();
+    expect(registries.llmProviders.get('my-plugin/custom-model')).toBeUndefined();
+    const api2 = new PluginApiImpl('my-plugin', registries);
+    expect(() => api2.registerLLMProvider('custom-model', factory)).not.toThrow();
+  });
 });
 
 describe('PluginApiImpl.registerMemoryProvider', () => {
@@ -356,6 +373,18 @@ describe('PluginApiImpl.registerMemoryProvider', () => {
     expect(() => api.registerMemoryProvider('other/backend', factory)).toThrow(
       /cannot register memory provider/,
     );
+  });
+
+  it('cleanup unregisters the memory provider and re-registration does not throw', () => {
+    const registries = makeRegistries();
+    const api = new PluginApiImpl('mem-plugin', registries);
+    const factory = () => ({}) as unknown as import('@ethosagent/types').MemoryProvider;
+    api.registerMemoryProvider('custom-backend', factory);
+    expect(registries.memoryProviders.get('mem-plugin/custom-backend')).toBe(factory);
+    api.cleanup();
+    expect(registries.memoryProviders.get('mem-plugin/custom-backend')).toBeUndefined();
+    const api2 = new PluginApiImpl('mem-plugin', registries);
+    expect(() => api2.registerMemoryProvider('custom-backend', factory)).not.toThrow();
   });
 });
 

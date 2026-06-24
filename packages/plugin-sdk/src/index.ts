@@ -392,6 +392,11 @@ export class PluginApiImpl implements EthosPluginApi {
 
   private readonly registries: PluginRegistries;
   private readonly registeredTools: string[] = [];
+  private readonly registeredLLMProviders: string[] = [];
+  private readonly registeredMemoryProviders: string[] = [];
+  private readonly registeredStorageBackends: string[] = [];
+  private readonly registeredExecutionBackends: string[] = [];
+  private readonly registeredPlatformAdapters: string[] = [];
   private readonly registeredInjectors: ContextInjector[] = [];
   private readonly registeredPersonalities: string[] = [];
   private readonly credentialStorage: CredentialStorage | null;
@@ -484,6 +489,7 @@ export class PluginApiImpl implements EthosPluginApi {
       );
     }
     this.registries.llmProviders.register(qualifiedName, factory);
+    this.registeredLLMProviders.push(qualifiedName);
   }
 
   registerMemoryProvider(name: string, factory: MemoryProviderFactory): void {
@@ -495,6 +501,7 @@ export class PluginApiImpl implements EthosPluginApi {
       );
     }
     this.registries.memoryProviders.register(qualifiedName, factory);
+    this.registeredMemoryProviders.push(qualifiedName);
   }
 
   registerPlatformAdapter(name: string, factory: PlatformAdapterFactory): void {
@@ -511,6 +518,7 @@ export class PluginApiImpl implements EthosPluginApi {
       );
     }
     this.registries.platformAdapters.set(qualifiedName, factory);
+    this.registeredPlatformAdapters.push(qualifiedName);
   }
 
   registerStorage(name: string, factory: StorageFactory): void {
@@ -527,6 +535,7 @@ export class PluginApiImpl implements EthosPluginApi {
       );
     }
     this.registries.storageBackends.register(qualifiedName, factory);
+    this.registeredStorageBackends.push(qualifiedName);
   }
 
   registerExecutionBackend(name: string, factory: ExecutionBackendFactory): void {
@@ -543,6 +552,7 @@ export class PluginApiImpl implements EthosPluginApi {
       );
     }
     this.registries.executionBackends.register(qualifiedName, factory);
+    this.registeredExecutionBackends.push(qualifiedName);
   }
 
   // ---- Credential methods ------------------------------------------------
@@ -998,6 +1008,31 @@ export class PluginApiImpl implements EthosPluginApi {
     // Tools — remove by name
     for (const name of this.registeredTools) {
       this.registries.tools.unregister(name);
+    }
+
+    // LLM providers
+    for (const name of this.registeredLLMProviders) {
+      this.registries.llmProviders.unregister(name);
+    }
+
+    // Memory providers
+    for (const name of this.registeredMemoryProviders) {
+      this.registries.memoryProviders.unregister(name);
+    }
+
+    // Storage backends
+    for (const name of this.registeredStorageBackends) {
+      this.registries.storageBackends?.unregister(name);
+    }
+
+    // Execution backends
+    for (const name of this.registeredExecutionBackends) {
+      this.registries.executionBackends?.unregister(name);
+    }
+
+    // Platform adapters (bare Map)
+    for (const name of this.registeredPlatformAdapters) {
+      this.registries.platformAdapters?.delete(name);
     }
 
     // Injectors — remove from the shared mutable array + provenance map

@@ -10,6 +10,10 @@ export class DefaultMemoryProviderRegistry implements MemoryProviderRegistry {
     this.factories.set(name, factory);
   }
 
+  unregister(name: string): void {
+    this.factories.delete(name);
+  }
+
   get(name: string): MemoryProviderFactory | undefined {
     return this.factories.get(name);
   }

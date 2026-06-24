@@ -177,6 +177,7 @@ export type ExecutionBackendFactory = (ctx: {
 
 export interface ExecutionBackendRegistry {
   register(name: string, factory: ExecutionBackendFactory): void;
+  unregister(name: string): void;
   /** Resolve (and cache) a registered factory into a concrete backend instance. */
   resolve(
     name: string,
