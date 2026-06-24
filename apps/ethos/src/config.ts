@@ -185,6 +185,24 @@ export interface AuxiliaryVisionConfig {
 }
 
 /**
+ * tools-web — auxiliary model for web_extract summarization. Same shape as
+ * compression/vision. When set, web_extract summarizes large pages via this
+ * (typically cheap) model instead of returning truncated raw text.
+ */
+export interface AuxiliaryWebConfig {
+  model: string;
+  provider?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
+/** tools-web — web search/extract backend selection. */
+export interface WebConfig {
+  search_backend?: 'exa' | 'tavily' | 'brave';
+  extract_backend?: 'htmltext';
+}
+
+/**
  * Remote model catalog configuration. Controls how Ethos fetches and caches
  * the centralized model metadata catalog (capabilities, context windows, pricing).
  */
@@ -409,11 +427,17 @@ export interface EthosConfig {
    * tools-vision P2 — `auxiliary.vision` configures the vision-capable model
    * `vision_analyze` routes to when the personality's primary model can't
    * process images / PDFs. Same shape as `compression`.
+   *
+   * tools-web — `auxiliary.web` configures the model `web_extract` uses to
+   * summarize large pages. Same shape as `vision`.
    */
   auxiliary?: {
     compression?: AuxiliaryCompressionConfig;
     vision?: AuxiliaryVisionConfig;
+    web?: AuxiliaryWebConfig;
   };
+  /** tools-web — web_search/web_extract backend selection. */
+  web?: WebConfig;
   /**
    * Remote model catalog configuration. Controls how Ethos fetches and caches
    * the centralized model metadata catalog (capabilities, context windows, pricing).
@@ -677,6 +701,15 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (v.apiKey) lines.push(`auxiliary.vision.apiKey: ${v.apiKey}`);
     if (v.baseUrl) lines.push(`auxiliary.vision.baseUrl: ${v.baseUrl}`);
   }
+  if (config.auxiliary?.web) {
+    const w = config.auxiliary.web;
+    lines.push(`auxiliary.web.model: ${w.model}`);
+    if (w.provider) lines.push(`auxiliary.web.provider: ${w.provider}`);
+    if (w.apiKey) lines.push(`auxiliary.web.apiKey: ${w.apiKey}`);
+    if (w.baseUrl) lines.push(`auxiliary.web.baseUrl: ${w.baseUrl}`);
+  }
+  if (config.web?.search_backend) lines.push(`web.search_backend: ${config.web.search_backend}`);
+  if (config.web?.extract_backend) lines.push(`web.extract_backend: ${config.web.extract_backend}`);
   if (config.modelCatalog) {
     if (config.modelCatalog.enabled === false) lines.push('modelCatalog.enabled: false');
     if (config.modelCatalog.url) lines.push(`modelCatalog.url: ${config.modelCatalog.url}`);
@@ -799,6 +832,8 @@ function parseConfigYaml(src: string): EthosConfig {
   const backgroundKv: Record<string, string> = {};
   const auxiliaryCompressionKv: Record<string, string> = {};
   const auxiliaryVisionKv: Record<string, string> = {};
+  const auxiliaryWebKv: Record<string, string> = {};
+  const webKv: Record<string, string> = {};
   const modelCatalogKv: Record<string, string> = {};
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
   const logsRotationKv: Record<string, string> = {};
@@ -922,6 +957,18 @@ function parseConfigYaml(src: string): EthosConfig {
     const auxv = line.match(/^auxiliary\.vision\.(\w+):\s*(.+)$/);
     if (auxv) {
       auxiliaryVisionKv[auxv[1]] = auxv[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // auxiliary.web.<field>: <value>
+    const auxw = line.match(/^auxiliary\.web\.(\w+):\s*(.+)$/);
+    if (auxw) {
+      auxiliaryWebKv[auxw[1]] = auxw[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // web.<field>: <value>
+    const web = line.match(/^web\.(\w+):\s*(.+)$/);
+    if (web) {
+      webKv[web[1]] = web[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // logs.rotation.<field>: <value>
@@ -1056,6 +1103,27 @@ function parseConfigYaml(src: string): EthosConfig {
         ...(auxiliaryVisionKv.baseUrl ? { baseUrl: auxiliaryVisionKv.baseUrl } : {}),
       }
     : undefined;
+  const auxiliaryWeb: AuxiliaryWebConfig | undefined = auxiliaryWebKv.model
+    ? {
+        model: auxiliaryWebKv.model,
+        ...(auxiliaryWebKv.provider ? { provider: auxiliaryWebKv.provider } : {}),
+        ...(auxiliaryWebKv.apiKey ? { apiKey: auxiliaryWebKv.apiKey } : {}),
+        ...(auxiliaryWebKv.baseUrl ? { baseUrl: auxiliaryWebKv.baseUrl } : {}),
+      }
+    : undefined;
+  const webConfig: WebConfig | undefined =
+    webKv.search_backend || webKv.extract_backend
+      ? {
+          ...(webKv.search_backend === 'exa' ||
+          webKv.search_backend === 'tavily' ||
+          webKv.search_backend === 'brave'
+            ? { search_backend: webKv.search_backend }
+            : {}),
+          ...(webKv.extract_backend === 'htmltext'
+            ? { extract_backend: webKv.extract_backend }
+            : {}),
+        }
+      : undefined;
   const modelCatalogProviders: Record<string, { url: string }> | undefined =
     Object.keys(modelCatalogProvidersKv).length > 0
       ? Object.fromEntries(
@@ -1175,12 +1243,14 @@ function parseConfigYaml(src: string): EthosConfig {
     quick_commands,
     channelFilter,
     auxiliary:
-      auxiliaryCompression || auxiliaryVision
+      auxiliaryCompression || auxiliaryVision || auxiliaryWeb
         ? {
             ...(auxiliaryCompression ? { compression: auxiliaryCompression } : {}),
             ...(auxiliaryVision ? { vision: auxiliaryVision } : {}),
+            ...(auxiliaryWeb ? { web: auxiliaryWeb } : {}),
           }
         : undefined,
+    web: webConfig,
     modelCatalog,
     logs: logsRotation ? { rotation: logsRotation } : undefined,
     aws: awsConfig,

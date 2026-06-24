@@ -144,6 +144,19 @@ export interface WiringConfig {
     apiKey?: string;
     baseUrl?: string;
   };
+  /**
+   * tools-web — auxiliary model for web_extract summarization. Same shape as
+   * auxiliaryVision. `provider`/`apiKey`/`baseUrl` default to the primary
+   * provider's values when unset.
+   */
+  auxiliaryWeb?: {
+    model: string;
+    provider?: string;
+    apiKey?: string;
+    baseUrl?: string;
+  };
+  /** tools-web — web_search backend preference. Auto-detect from env when unset. */
+  webSearchBackend?: 'exa' | 'tavily' | 'brave';
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;

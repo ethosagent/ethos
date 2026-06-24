@@ -1,6 +1,8 @@
 import { type NetworkPolicy, safeFetch } from '@ethosagent/safety-network';
+import type { LLMProvider } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { createWebTools, webExtractTool, webSearchTool } from '../index';
+import { chunkText, summarizeBySize } from '../summarize';
 
 // ---------------------------------------------------------------------------
 // Helpers — ScopedFetch backed by the REAL safeFetch from safety-network
@@ -194,5 +196,320 @@ describe('web_extract — SSRF protection', () => {
     // definition declares the capability.
     expect(webExtractTool.capabilities.network).toBeDefined();
     expect(webExtractTool.capabilities.network?.allowedHosts).toContain('*');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-provider web_search — recording fetch asserts URL/headers/body shape
+// ---------------------------------------------------------------------------
+
+function makeRecordingFetch(responseBody: unknown, status = 200) {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetch = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    calls.push({ url: typeof url === 'string' ? url : url.toString(), init });
+    return new Response(JSON.stringify(responseBody), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  return { scopedFetch: { fetch }, calls };
+}
+
+const SEARCH_ENV_KEYS = ['ETHOS_EXA_API_KEY', 'TAVILY_API_KEY', 'BRAVE_API_KEY'] as const;
+
+function saveSearchEnv(): Record<string, string | undefined> {
+  const saved: Record<string, string | undefined> = {};
+  for (const k of SEARCH_ENV_KEYS) saved[k] = process.env[k];
+  return saved;
+}
+
+function restoreSearchEnv(saved: Record<string, string | undefined>): void {
+  for (const k of SEARCH_ENV_KEYS) {
+    const v = saved[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+}
+
+function setOnly(key: (typeof SEARCH_ENV_KEYS)[number]): void {
+  for (const k of SEARCH_ENV_KEYS) delete process.env[k];
+  process.env[key] = 'test-key';
+}
+
+type ScopedFetchLike = {
+  fetch: (url: string | URL, init?: RequestInit) => Promise<Response>;
+};
+
+function ctxWith(scopedFetch: ScopedFetchLike) {
+  return { ...ctx, scopedFetch };
+}
+
+describe('web_search — multi-provider', () => {
+  it('exa: correct URL, method, x-api-key header, body shape', async () => {
+    const saved = saveSearchEnv();
+    setOnly('ETHOS_EXA_API_KEY');
+    try {
+      const rec = makeRecordingFetch({
+        results: [
+          {
+            title: 'T',
+            url: 'https://e.com',
+            text: 'body',
+            publishedDate: '2024-01-02T00:00:00Z',
+          },
+        ],
+      });
+      const tool = createWebTools({ searchBackend: 'exa' })[0];
+      const result = await tool.execute({ query: 'cats' }, ctxWith(rec.scopedFetch));
+      expect(rec.calls[0]?.url).toBe('https://api.exa.ai/search');
+      expect(rec.calls[0]?.init?.method).toBe('POST');
+      expect(new Headers(rec.calls[0]?.init?.headers).get('x-api-key')).toBe('test-api-key');
+      const body = JSON.parse(String(rec.calls[0]?.init?.body));
+      expect(body.query).toBe('cats');
+      expect(body.numResults).toBe(5);
+      expect(body.contents).toBeDefined();
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toContain('via exa');
+        expect(result.value).toContain('T');
+        expect(result.value).toContain('https://e.com');
+      }
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('tavily: correct URL, method, body shape', async () => {
+    const saved = saveSearchEnv();
+    setOnly('TAVILY_API_KEY');
+    try {
+      const rec = makeRecordingFetch({
+        results: [
+          { title: 'TT', url: 'https://t.com', content: 'tbody', published_date: '2024-03-04' },
+        ],
+      });
+      const tool = createWebTools({ searchBackend: 'tavily' })[0];
+      const result = await tool.execute({ query: 'dogs' }, ctxWith(rec.scopedFetch));
+      expect(rec.calls[0]?.url.startsWith('https://api.tavily.com/search')).toBe(true);
+      expect(rec.calls[0]?.init?.method).toBe('POST');
+      const body = JSON.parse(String(rec.calls[0]?.init?.body));
+      expect(body.api_key).toBe('test-api-key');
+      expect(body.max_results).toBe(5);
+      expect(body.include_answer).toBe(false);
+      expect(body.search_depth).toBe('basic');
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toContain('via tavily');
+        expect(result.value).toContain('tbody');
+      }
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('brave: correct URL, GET method, X-Subscription-Token header', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({
+        web: {
+          results: [
+            { title: 'BB', url: 'https://b.com', description: 'bbody', page_age: '2024-05-06' },
+          ],
+        },
+      });
+      const tool = createWebTools({ searchBackend: 'brave' })[0];
+      const result = await tool.execute({ query: 'fish' }, ctxWith(rec.scopedFetch));
+      expect(
+        rec.calls[0]?.url.startsWith('https://api.search.brave.com/res/v1/web/search?q='),
+      ).toBe(true);
+      expect(rec.calls[0]?.init?.method).toBe('GET');
+      expect(new Headers(rec.calls[0]?.init?.headers).get('X-Subscription-Token')).toBe(
+        'test-api-key',
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toContain('via brave');
+        expect(result.value).toContain('bbody');
+      }
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('auto-detect: exa-only → exa', async () => {
+    const saved = saveSearchEnv();
+    setOnly('ETHOS_EXA_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      await createWebTools({})[0].execute({ query: 'q' }, ctxWith(rec.scopedFetch));
+      expect(rec.calls[0]?.url).toBe('https://api.exa.ai/search');
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('auto-detect: tavily-only → tavily', async () => {
+    const saved = saveSearchEnv();
+    setOnly('TAVILY_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      await createWebTools({})[0].execute({ query: 'q' }, ctxWith(rec.scopedFetch));
+      expect(rec.calls[0]?.url.startsWith('https://api.tavily.com/search')).toBe(true);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('auto-detect: brave-only → brave', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ web: { results: [] } });
+      await createWebTools({})[0].execute({ query: 'q' }, ctxWith(rec.scopedFetch));
+      expect(rec.calls[0]?.url.startsWith('https://api.search.brave.com/res/v1/web/search')).toBe(
+        true,
+      );
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('explicit override picks brave even when exa is also available', async () => {
+    const saved = saveSearchEnv();
+    for (const k of SEARCH_ENV_KEYS) delete process.env[k];
+    process.env.BRAVE_API_KEY = 'test-key';
+    process.env.ETHOS_EXA_API_KEY = 'test-key';
+    try {
+      const rec = makeRecordingFetch({ web: { results: [] } });
+      await createWebTools({ searchBackend: 'brave' })[0].execute(
+        { query: 'q' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(rec.calls[0]?.url.startsWith('https://api.search.brave.com/res/v1/web/search')).toBe(
+        true,
+      );
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('no backend available → not_available', async () => {
+    const saved = saveSearchEnv();
+    for (const k of SEARCH_ENV_KEYS) delete process.env[k];
+    try {
+      const rec = makeRecordingFetch({});
+      const result = await createWebTools({})[0].execute({ query: 'x' }, ctxWith(rec.scopedFetch));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('not_available');
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// summarize.ts — pure tier logic
+// ---------------------------------------------------------------------------
+
+describe('summarizeBySize', () => {
+  const s = async (x: string) => `SUMMARY(${x.length})`;
+
+  it('returns text as-is below 5,000 chars', async () => {
+    const raw = 'a'.repeat(4999);
+    const result = await summarizeBySize(raw, s);
+    expect('value' in result && result.value === raw).toBe(true);
+  });
+
+  it('single-pass summary at 5,000 chars', async () => {
+    const result = await summarizeBySize('a'.repeat(5000), s);
+    expect('value' in result && result.value === 'SUMMARY(5000)').toBe(true);
+  });
+
+  it('single-pass summary just below 500,000 chars', async () => {
+    const result = await summarizeBySize('a'.repeat(499999), s);
+    expect('value' in result && result.value === 'SUMMARY(499999)').toBe(true);
+  });
+
+  it('chunked into 10 at 500,000 chars', async () => {
+    const result = await summarizeBySize('a'.repeat(500000), s);
+    expect('value' in result).toBe(true);
+    if ('value' in result) expect(result.value.split('\n\n').length).toBe(10);
+  });
+
+  it('chunked into 40 just below 2,000,000 chars', async () => {
+    const result = await summarizeBySize('a'.repeat(1999999), s);
+    expect('value' in result).toBe(true);
+    if ('value' in result) expect(result.value.split('\n\n').length).toBe(40);
+  });
+
+  it('refuses at 2,000,000 chars', async () => {
+    const result = await summarizeBySize('a'.repeat(2000000), s);
+    expect('tooLarge' in result).toBe(true);
+  });
+
+  it('chunkText splits evenly', () => {
+    const chunks = chunkText('abcdef', 2);
+    expect(chunks).toHaveLength(3);
+    expect(chunks).toEqual(['ab', 'cd', 'ef']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// web_extract — size-tiered summarization
+// ---------------------------------------------------------------------------
+
+function makeHtmlRecordingFetch(html: string) {
+  const fetch = async (_url: string | URL, _init?: RequestInit): Promise<Response> =>
+    new Response(html, { status: 200, headers: { 'content-type': 'text/html' } });
+  return { fetch };
+}
+
+const fakeProvider = {
+  name: 'fake',
+  model: 'm',
+  maxContextTokens: 1000,
+  supportsCaching: false,
+  supportsThinking: false,
+  complete: async function* () {
+    yield { type: 'text_delta', text: 'EXTRACTED' };
+  },
+  countTokens: async () => 0,
+} as unknown as LLMProvider;
+
+describe('web_extract — summarization', () => {
+  it('summarizes large pages when aux model is configured', async () => {
+    const html = `<html><body>${'word '.repeat(2000)}</body></html>`;
+    const scopedFetch = makeHtmlRecordingFetch(html);
+    const tool = createWebTools({ auxModel: 'm', resolveProvider: () => fakeProvider })[1];
+    const result = await tool.execute({ url: 'https://example.com/article' }, ctxWith(scopedFetch));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toBe('[https://example.com/article]\n\nEXTRACTED');
+    }
+  });
+
+  it('returns raw truncated text when no aux model is configured', async () => {
+    const html = `<html><body>${'word '.repeat(2000)}</body></html>`;
+    const scopedFetch = makeHtmlRecordingFetch(html);
+    const tool = createWebTools({})[1];
+    const result = await tool.execute({ url: 'https://example.com/article' }, ctxWith(scopedFetch));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.startsWith('[https://example.com/article]\n\n')).toBe(true);
+      expect(result.value).not.toContain('EXTRACTED');
+    }
+  });
+
+  it('refuses pages over 2,000,000 chars', async () => {
+    const html = `<html><body>${'a'.repeat(2_000_001)}</body></html>`;
+    const scopedFetch = makeHtmlRecordingFetch(html);
+    const tool = createWebTools({ auxModel: 'm', resolveProvider: () => fakeProvider })[1];
+    const result = await tool.execute({ url: 'https://example.com/article' }, ctxWith(scopedFetch));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('execution_failed');
+      expect(result.error).toMatch(/too large/);
+    }
   });
 });

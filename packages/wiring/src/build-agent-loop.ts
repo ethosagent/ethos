@@ -5,6 +5,7 @@ import { FsStorage } from '@ethosagent/storage-fs';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
 import { createMemoryTools } from '@ethosagent/tools-memory';
 import { createVisionTools } from '@ethosagent/tools-vision';
+import { createWebTools } from '@ethosagent/tools-web';
 import type { LLMProvider, MemoryProvider, RequestDumpStore } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
@@ -152,6 +153,46 @@ export async function buildAgentLoop(
     ...(auxVisionConfig && !auxVisionCollidesWithPrimary
       ? { auxiliaryVisionModel: auxVisionConfig.model }
       : {}),
+  })) {
+    tools.register(tool);
+  }
+
+  // -------------------------------------------------------------------------
+  // Web tools (registered here because web_extract summarization needs `llm`)
+  // -------------------------------------------------------------------------
+  const auxWebConfig = config.auxiliaryWeb;
+  let auxWebProvider: LLMProvider | null = null;
+  if (auxWebConfig && auxWebConfig.model !== config.model) {
+    const auxProviderName = auxWebConfig.provider ?? config.provider;
+    const auxFactory = infra.llmProviders.get(auxProviderName);
+    if (auxFactory) {
+      auxWebProvider = await auxFactory({
+        config: {
+          provider: auxProviderName,
+          model: auxWebConfig.model,
+          apiKey: auxWebConfig.apiKey ?? config.apiKey,
+          ...((auxWebConfig.baseUrl ?? config.baseUrl)
+            ? { baseUrl: auxWebConfig.baseUrl ?? config.baseUrl }
+            : {}),
+          ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
+        },
+        secrets: config.secretsResolver ?? NOOP_SECRETS,
+        logger: log,
+      });
+    } else {
+      log.warn(
+        `auxiliary.web provider "${auxProviderName}" not registered; web_extract won't summarize`,
+      );
+    }
+  }
+  for (const tool of createWebTools({
+    ...(config.webSearchBackend ? { searchBackend: config.webSearchBackend } : {}),
+    ...(auxWebConfig ? { auxModel: auxWebConfig.model } : {}),
+    resolveProvider: (model) => {
+      if (model === config.model) return llm;
+      if (auxWebProvider && auxWebConfig && model === auxWebConfig.model) return auxWebProvider;
+      return null;
+    },
   })) {
     tools.register(tool);
   }

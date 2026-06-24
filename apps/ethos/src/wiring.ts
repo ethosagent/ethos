@@ -200,6 +200,8 @@ export async function createAgentLoop(
       ? { auxiliaryCompression: config.auxiliary.compression }
       : {}),
     ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
+    ...(config.auxiliary?.web ? { auxiliaryWeb: config.auxiliary.web } : {}),
+    ...(config.web?.search_backend ? { webSearchBackend: config.web.search_backend } : {}),
     ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
     ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
     ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),

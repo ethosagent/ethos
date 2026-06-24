@@ -59,7 +59,6 @@ import { createThinkDeeperTool } from '@ethosagent/tools-tier';
 import { compose as composeTodo } from '@ethosagent/tools-todo/compose';
 import { createTtsTools } from '@ethosagent/tools-tts';
 import { buildUiTools } from '@ethosagent/tools-ui';
-import { createWebTools } from '@ethosagent/tools-web';
 import type {
   ContextInjector,
   ExecutionBackend,
@@ -424,7 +423,6 @@ export async function composeAllTools(
     hostExecForbidden,
   }))
     tools.register(tool);
-  for (const tool of createWebTools()) tools.register(tool);
   for (const tool of buildUiTools()) tools.register(tool);
 
   // One InMemoryTodoStore per process — lifetime tied to the AgentLoop.

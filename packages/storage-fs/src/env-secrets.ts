@@ -15,6 +15,8 @@ export const ENV_TO_REF: Record<string, string> = {
   DEEPSEEK_API_KEY: 'providers/deepseek/apiKey',
   OLLAMA_HOST: 'providers/ollama/host',
   EXA_API_KEY: 'providers/exa/apiKey',
+  TAVILY_API_KEY: 'providers/tavily/apiKey',
+  BRAVE_API_KEY: 'providers/brave/apiKey',
   REPLICATE_API_TOKEN: 'providers/replicate/apiToken',
 
   TELEGRAM_BOT_TOKEN: 'channels/telegram/default/botToken',
