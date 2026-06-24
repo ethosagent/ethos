@@ -10,15 +10,9 @@ import { toResponsesInput, toResponsesTools } from './responses-adapter';
 import { type ResponsesApiBody, streamResponsesApi } from './transport';
 
 export type { CodexCredentials } from './auth';
-export {
-  ensureValidToken,
-  exchangeForTokens,
-  loadTokens,
-  pollForAuthorization,
-  requestDeviceCode,
-  saveTokens,
-} from './auth';
+export { exchangeForTokens, pollForAuthorization, requestDeviceCode } from './auth';
 export { CODEX_FALLBACK_MODELS } from './models';
+export { CodexTokenStore } from './token-store';
 export { type ResponsesApiBody, streamResponsesApi } from './transport';
 
 // ---------------------------------------------------------------------------
@@ -135,15 +129,16 @@ export class CodexProvider implements LLMProvider {
 // ---------------------------------------------------------------------------
 
 import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
-import { ensureValidToken } from './auth';
+import { CodexTokenStore } from './token-store';
 
 export const PROVIDER_CONTRACT_MAJOR = 2;
 
-export const codexFactory: LLMProviderFactory = async ({ config: cfg }) => {
+export const codexFactory: LLMProviderFactory = async ({ config: cfg, secrets }) => {
+  const store = new CodexTokenStore(secrets);
   return new CodexProvider({
     model: cfg.model as string,
     getAccessToken: async () => {
-      const creds = await ensureValidToken(globalThis.fetch);
+      const creds = await store.ensureValid(globalThis.fetch);
       return creds.accessToken;
     },
   });

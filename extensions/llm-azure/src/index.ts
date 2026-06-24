@@ -117,14 +117,20 @@ import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk'
 export const PROVIDER_CONTRACT_MAJOR = 2;
 export const AZURE_DEFAULT_API_VERSION = '2024-12-01-preview';
 
-export const azureFactory: LLMProviderFactory = async ({ config: cfg, secrets }) => {
+export const azureFactory: LLMProviderFactory = async ({ config: cfg, secrets, logger }) => {
   if (!cfg.baseUrl) {
     throw new Error(
       'Azure provider requires `baseUrl` set to the resource endpoint ' +
         '(e.g. https://my-resource.openai.azure.com).',
     );
   }
-  const apiKey = (await secrets.get('providers/azure/apiKey')) ?? (cfg.apiKey as string);
+  const secretKey = await secrets.get('providers/azure/apiKey');
+  const apiKey = secretKey ?? (cfg.apiKey as string);
+  if (secretKey === null && cfg.apiKey) {
+    logger.warn(
+      'Using plaintext apiKey from config for azure; migrate to the secret store: ethos secrets set providers/azure/apiKey <key>',
+    );
+  }
   return new AzureOpenAIProvider({
     name: 'azure',
     model: cfg.model as string,

@@ -1,7 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 export interface CodexCredentials {
   accessToken: string;
   refreshToken: string;
@@ -193,60 +190,6 @@ export async function refreshTokens(
 }
 
 // ---------------------------------------------------------------------------
-// Token persistence — ~/.ethos/secrets/codex/tokens.json
-// ---------------------------------------------------------------------------
-
-function tokensPath(): string {
-  return join(homedir(), '.ethos', 'secrets', 'codex', 'tokens.json');
-}
-
-export async function loadTokens(): Promise<CodexCredentials | null> {
-  // Try loading from our own storage first
-  try {
-    const raw = await readFile(tokensPath(), 'utf-8');
-    return JSON.parse(raw) as CodexCredentials;
-  } catch {
-    // Not found — fall through to import attempts
-  }
-
-  // Attempt import from Codex CLI (~/.codex/auth.json)
-  const codexImport = await importFromFile(join(homedir(), '.codex', 'auth.json'));
-  if (codexImport) {
-    await saveTokens(codexImport);
-    return codexImport;
-  }
-
-  // Attempt import from Hermes (~/.hermes/auth.json)
-  const hermesImport = await importFromFile(join(homedir(), '.hermes', 'auth.json'));
-  if (hermesImport) {
-    await saveTokens(hermesImport);
-    return hermesImport;
-  }
-
-  return null;
-}
-
-export async function saveTokens(credentials: CodexCredentials): Promise<void> {
-  const filePath = tokensPath();
-  const dir = join(filePath, '..');
-  await mkdir(dir, { recursive: true });
-
-  const tmpPath = join(dir, `tokens.${randomUUID()}.tmp`);
-  try {
-    await writeFile(tmpPath, JSON.stringify(credentials, null, 2), 'utf-8');
-    await rename(tmpPath, filePath);
-  } catch (err) {
-    // Clean up temp file on failure
-    try {
-      await unlink(tmpPath);
-    } catch {
-      // Ignore cleanup errors
-    }
-    throw err;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Proactive refresh — check JWT exp claim
 // ---------------------------------------------------------------------------
 
@@ -271,30 +214,11 @@ export function isTokenExpiringSoon(credentials: CodexCredentials, bufferSeconds
 }
 
 // ---------------------------------------------------------------------------
-// ensureValidToken — load, refresh if needed, save
-// ---------------------------------------------------------------------------
-
-export async function ensureValidToken(fetchFn: FetchFn): Promise<CodexCredentials> {
-  const credentials = await loadTokens();
-  if (!credentials) {
-    throw new Error('No Codex credentials found. Run the device auth flow first.');
-  }
-
-  if (!isTokenExpiringSoon(credentials)) {
-    return credentials;
-  }
-
-  const refreshed = await refreshTokens(fetchFn, credentials.refreshToken);
-  await saveTokens(refreshed);
-  return refreshed;
-}
-
-// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
 /** Import credentials from a Codex CLI or Hermes auth.json file. */
-async function importFromFile(filePath: string): Promise<CodexCredentials | null> {
+export async function importFromFile(filePath: string): Promise<CodexCredentials | null> {
   try {
     const raw = await readFile(filePath, 'utf-8');
     const json = JSON.parse(raw) as Record<string, unknown>;

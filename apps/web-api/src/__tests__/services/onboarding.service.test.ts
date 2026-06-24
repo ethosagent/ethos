@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { InMemoryStorage } from '@ethosagent/storage-fs';
+import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ConfigRepository } from '../../repositories/config.repository';
 import { OnboardingService } from '../../services/onboarding.service';
@@ -34,6 +34,7 @@ describe('OnboardingService', () => {
     return new OnboardingService({
       config,
       personalities,
+      secrets: new InMemorySecretsResolver(),
       ...(extras.fetchFn ? { fetchFn: extras.fetchFn } : {}),
       ...(extras.onSetupComplete ? { onSetupComplete: extras.onSetupComplete } : {}),
     });

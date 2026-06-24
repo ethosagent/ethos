@@ -1,5 +1,6 @@
 import { validateUrl } from '@ethosagent/core';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
+import type { SecretsResolver } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import type { OnboardingStep, ProviderId } from '@ethosagent/web-contracts';
 import type { ConfigRepository } from '../repositories/config.repository';
@@ -49,6 +50,8 @@ export interface CompleteInput {
 export interface OnboardingServiceOptions {
   config: ConfigRepository;
   personalities: FilePersonalityRegistry;
+  /** Secret store — used to check Codex OAuth tokens during validation. */
+  secrets: SecretsResolver;
   /** Inject for tests. Defaults to global `fetch`. */
   fetchFn?: typeof fetch;
   /** Fired after `complete()` durably writes config.yaml. Fire-and-forget —
@@ -82,8 +85,9 @@ export class OnboardingService {
   async validateProvider(input: ValidateProviderInput): Promise<ValidateProviderResult> {
     // Codex uses device auth — check tokens exist, return fallback models
     if (input.provider === 'codex') {
-      const { loadTokens } = await import('@ethosagent/llm-codex');
-      const tokens = await loadTokens();
+      const { CodexTokenStore } = await import('@ethosagent/llm-codex');
+      const store = new CodexTokenStore(this.opts.secrets);
+      const tokens = await store.load();
       if (!tokens) {
         return {
           ok: false,

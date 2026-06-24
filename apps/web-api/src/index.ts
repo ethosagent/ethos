@@ -281,6 +281,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const onboardingService = new OnboardingService({
     config: configRepo,
     personalities: opts.personalities,
+    secrets,
     ...(opts.onSetupComplete ? { onSetupComplete: opts.onSetupComplete } : {}),
   });
   const approvalsService = new ApprovalsService({ allowlist: allowlistRepo });
@@ -528,6 +529,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     ...(opts.listTeams ? { listTeams: opts.listTeams } : {}),
     ...(opts.webBaseUrl ? { webBaseUrl: opts.webBaseUrl } : {}),
     storage,
+    secrets,
   });
 
   // Dashboard panel cron poller — checks every 60s for panels with due cron schedules

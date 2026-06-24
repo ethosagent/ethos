@@ -2,6 +2,7 @@ import type { EventEmitter } from 'node:events';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import type { RetentionValues } from '../shared/ipc-contract';
 import { IPC_CHANNELS } from '../shared/ipc-contract';
@@ -40,6 +41,12 @@ function getEthosDir(): string {
   const saved = store.get('dataDir');
   if (saved) return saved;
   return join(app.getPath('home'), '.ethos');
+}
+
+/** File-backed secrets resolver rooted at <ethosDir>/secrets — mirrors apps/ethos/src/wiring.ts. */
+function getCodexSecrets(): FileSecretsResolver {
+  const dir = join(getEthosDir(), 'secrets');
+  return new FileSecretsResolver({ dir, storage: new FsStorage() });
 }
 
 export function registerIpcHandlers(): void {
@@ -879,8 +886,9 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS['codex:startAuth'], async () => {
     try {
-      const { requestDeviceCode, pollForAuthorization, exchangeForTokens, saveTokens } =
+      const { requestDeviceCode, pollForAuthorization, exchangeForTokens, CodexTokenStore } =
         await import('@ethosagent/llm-codex');
+      const store = new CodexTokenStore(getCodexSecrets());
       const { deviceAuthId, userCode } = await requestDeviceCode(fetch);
       // Open the auth URL in the user's default browser
       await shell.openExternal('https://auth.openai.com/codex/device');
@@ -891,7 +899,7 @@ export function registerIpcHandlers(): void {
         .then(({ authorizationCode, codeVerifier }) =>
           exchangeForTokens(fetch, authorizationCode, codeVerifier),
         )
-        .then((credentials) => saveTokens(credentials))
+        .then((credentials) => store.save(credentials))
         .then(() => {
           BrowserWindow.getAllWindows()[0]?.webContents.send('codex:authComplete', { ok: true });
         })
@@ -911,8 +919,9 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS['codex:authStatus'], async () => {
-    const { loadTokens } = await import('@ethosagent/llm-codex');
-    const tokens = await loadTokens();
+    const { CodexTokenStore } = await import('@ethosagent/llm-codex');
+    const store = new CodexTokenStore(getCodexSecrets());
+    const tokens = await store.load();
     return { authorized: !!tokens };
   });
 
