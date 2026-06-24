@@ -32,6 +32,15 @@ const srcAliases = {
   '@ethosagent/oauth': resolve('./extensions/oauth/src'),
   '@ethosagent/oauth-core': resolve('./packages/oauth-core/src'),
   '@ethosagent/storage-crypto': resolve('./extensions/storage-crypto/src'),
+  '@ethosagent/wiring': resolve('./packages/wiring/src'),
+  '@ethosagent/wiring/conformance': resolve('./packages/wiring/src/conformance/index.ts'),
+  '@ethosagent/llm-gemini-native': resolve('./extensions/llm-gemini/src'),
+  '@ethosagent/llm-anthropic': resolve('./extensions/llm-anthropic/src'),
+  '@ethosagent/llm-azure': resolve('./extensions/llm-azure/src'),
+  '@ethosagent/llm-bedrock': resolve('./extensions/llm-bedrock/src'),
+  '@ethosagent/llm-openai-compat': resolve('./extensions/llm-openai-compat/src'),
+  '@ethosagent/llm-codex': resolve('./extensions/llm-codex/src'),
+  '@ethosagent/logger': resolve('./packages/logger/src'),
 };
 
 export default defineConfig({

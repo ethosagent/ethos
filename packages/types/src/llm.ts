@@ -15,7 +15,8 @@ export type CompletionChunk =
   | { type: 'tool_use_delta'; toolCallId: string; partialJson: string }
   | { type: 'tool_use_end'; toolCallId: string; inputJson: string }
   | { type: 'usage'; usage: TokenUsage; metadata?: Record<string, unknown> }
-  | { type: 'done'; finishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' };
+  | { type: 'done'; finishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' }
+  | { type: 'warning'; message: string };
 
 export interface Message {
   role: 'user' | 'assistant';
@@ -56,6 +57,30 @@ export interface CompletionOptions {
    * limit and drop the rest. Providers without prompt caching ignore the field.
    */
   cacheBreakpoints?: number[];
+  /** Namespaced escape hatch for provider-specific options. Keys are provider
+   *  names (e.g. `anthropic`, `openai`), values are provider-specific option
+   *  bags. Example: `{ anthropic: { thinkingBudget: 10000 } }`. */
+  providerOptions?: Record<string, Record<string, unknown>>;
+}
+
+export interface ProviderCapabilities {
+  streaming: boolean;
+  toolCalling: boolean;
+  parallelToolCalls?: boolean;
+  visionImages?: boolean;
+  visionDocuments?: boolean;
+  audioIn?: boolean;
+  structuredOutput?: boolean;
+  thinking?: boolean;
+  promptCaching?: boolean;
+  cacheBreakpoints?: boolean;
+  systemPromptStyle?: 'top-level' | 'system-role' | 'developer-role' | 'fold-into-first-user';
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+  stopSequences?: boolean;
+  logprobs?: boolean;
+  tokenCounting?: 'real' | 'estimated' | false;
+  contractVersion?: number;
 }
 
 export interface LLMProvider {
@@ -70,6 +95,7 @@ export interface LLMProvider {
   };
   supportsCacheBreakpoints?: boolean;
   supportsTokenCounting?: 'real' | 'estimated';
+  capabilities?: ProviderCapabilities;
   complete(
     messages: Message[],
     tools: ToolDefinitionLite[],
@@ -120,4 +146,66 @@ export interface LLMProviderRegistry {
   register(name: string, factory: LLMProviderFactory): void;
   get(name: string): LLMProviderFactory | undefined;
   list(): string[];
+}
+
+// ---------------------------------------------------------------------------
+// Config-only provider manifest — Tier 1 (zero-code) authoring
+// ---------------------------------------------------------------------------
+
+export interface ConfigOnlyProviderManifest {
+  id: string;
+  name: string;
+  transport: 'openai-chat-completions';
+  baseUrl: string;
+  auth: {
+    location: 'header' | 'query';
+    name: string;
+    scheme?: 'bearer' | 'raw';
+    secretRef: string;
+  };
+  capabilities: ProviderCapabilities;
+  defaultModel?: string;
+  models?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Auth descriptors — pluggable authentication for LLM providers
+// ---------------------------------------------------------------------------
+
+export type AuthLocation = 'header' | 'query';
+
+export interface StaticAuthDescriptor {
+  type: 'static';
+  location: AuthLocation;
+  name: string;
+  scheme?: 'bearer' | 'raw';
+}
+
+export interface SignerAuthDescriptor {
+  type: 'signer';
+  signerId: string;
+}
+
+export interface GcpOAuthDescriptor {
+  type: 'gcp-oauth';
+  projectId: string;
+  region: string;
+}
+
+export type AuthDescriptor = StaticAuthDescriptor | SignerAuthDescriptor | GcpOAuthDescriptor;
+
+export interface AuthSigner {
+  sign(request: AuthSignRequest): Promise<AuthSignResult>;
+}
+
+export interface AuthSignRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+export interface AuthSignResult {
+  headers: Record<string, string>;
+  url?: string;
 }

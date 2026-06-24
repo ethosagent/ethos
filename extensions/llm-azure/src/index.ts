@@ -7,6 +7,7 @@ import type {
   CompletionOptions,
   LLMProvider,
   Message,
+  ProviderCapabilities,
   ToolDefinitionLite,
 } from '@ethosagent/types';
 import { AzureOpenAI } from 'openai';
@@ -57,6 +58,20 @@ export class AzureOpenAIProvider implements LLMProvider {
   readonly supportsVision = { images: true, documents: false };
   readonly supportsCacheBreakpoints = false;
   readonly supportsTokenCounting: 'real' | 'estimated' = 'estimated';
+
+  get capabilities(): ProviderCapabilities {
+    return {
+      streaming: true,
+      toolCalling: true,
+      parallelToolCalls: true,
+      visionImages: true,
+      thinking: false,
+      promptCaching: false,
+      systemPromptStyle: 'system-role',
+      tokenCounting: 'estimated',
+      contractVersion: 1,
+    };
+  }
 
   private readonly client: AzureOpenAI;
 
