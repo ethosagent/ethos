@@ -10,9 +10,6 @@ export const goalsRouter = {
   ),
   cancel: os.goals.cancel.handler(({ input, context }) => context.goals.cancel(input.id)),
   resume: os.goals.resume.handler(({ input, context }) => context.goals.resume(input.id)),
-  classify: os.goals.classify.handler(({ input, context }) =>
-    context.goals.classify(input.message),
-  ),
   create: os.goals.create.handler(({ input, context }) => context.goals.create(input)),
   toolResult: os.goals.toolResult.handler(({ input, context }) =>
     context.goals.toolResult(input.goalId, input.toolCallId),

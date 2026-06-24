@@ -13,7 +13,6 @@ import type {
 import { isConverged, judge } from './judge';
 import { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
-export { type ClassificationResult, classifyGoal, prefilterGoal } from './intake-classifier';
 export { isConverged, judge } from './judge';
 export { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 

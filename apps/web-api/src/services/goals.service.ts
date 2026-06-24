@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { classifyGoal, GoalRunner } from '@ethosagent/goal-runner';
+import { GoalRunner } from '@ethosagent/goal-runner';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import type { AcceptanceSpec, Goal, GoalAttempt, GoalEvent, SessionStore } from '@ethosagent/types';
 
@@ -171,9 +171,5 @@ export class GoalsService {
     }
 
     return { found: false };
-  }
-
-  async classify(message: string) {
-    return classifyGoal(message);
   }
 }
