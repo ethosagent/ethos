@@ -172,7 +172,7 @@ export function Chat() {
 
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
 
-  const { intakeOpen, setIntakeOpen, detectedMessage, restatedGoal, detectGoal, openIntake } =
+  const { intakeOpen, setIntakeOpen, detectedMessage, restatedGoal, openIntake } =
     useGoalDetection();
 
   const handleAttach = useCallback(async (files: File[]) => {
@@ -205,10 +205,6 @@ export function Chat() {
       const ok = await steerMessage(text);
       if (ok) return;
     }
-    // Try goal detection before sending as a normal message
-    const detected = await detectGoal(text);
-    if (detected) return;
-
     const atts = pendingAttachments.filter((a) => a.state === 'ready');
     await sendMessage(text, atts.length > 0 ? atts : undefined);
     for (const a of pendingAttachments) {
