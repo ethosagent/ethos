@@ -129,3 +129,26 @@ export class CodexProvider implements LLMProvider {
     return Math.ceil(chars / 4);
   }
 }
+
+// ---------------------------------------------------------------------------
+// First-party plugin activation (§9.2 — dogfooding the plugin SDK)
+// ---------------------------------------------------------------------------
+
+import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
+import { ensureValidToken } from './auth';
+
+export const PROVIDER_CONTRACT_MAJOR = 2;
+
+export const codexFactory: LLMProviderFactory = async ({ config: cfg }) => {
+  return new CodexProvider({
+    model: cfg.model as string,
+    getAccessToken: async () => {
+      const creds = await ensureValidToken(globalThis.fetch);
+      return creds.accessToken;
+    },
+  });
+};
+
+export function activate(api: EthosPluginApi): void {
+  api.registerLLMProvider('codex', codexFactory);
+}

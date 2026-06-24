@@ -372,3 +372,20 @@ export class AuthRotatingProvider implements LLMProvider {
     return this.providers[this.current]?.countTokens(messages) ?? Promise.resolve(0);
   }
 }
+
+// ---------------------------------------------------------------------------
+// First-party plugin activation (§9.2 — dogfooding the plugin SDK)
+// ---------------------------------------------------------------------------
+
+import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
+
+export const PROVIDER_CONTRACT_MAJOR = 2;
+
+export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secrets }) => {
+  const apiKey = (await secrets.get('providers/anthropic/apiKey')) ?? (cfg.apiKey as string);
+  return new AnthropicProvider({ apiKey, model: cfg.model as string });
+};
+
+export function activate(api: EthosPluginApi): void {
+  api.registerLLMProvider('anthropic', anthropicFactory);
+}

@@ -328,3 +328,46 @@ export class OpenAICompatProvider implements LLMProvider {
     return Math.ceil(chars / 4);
   }
 }
+
+// ---------------------------------------------------------------------------
+// First-party plugin activation (§9.2 — dogfooding the plugin SDK)
+// ---------------------------------------------------------------------------
+
+import type {
+  EthosPluginApi,
+  LLMProviderFactory,
+  LLMProviderFactoryContext,
+} from '@ethosagent/plugin-sdk';
+
+export const PROVIDER_CONTRACT_MAJOR = 2;
+
+export const openaiCompatFactory: LLMProviderFactory = async ({
+  config: cfg,
+  secrets,
+}: LLMProviderFactoryContext) => {
+  const providerName = (cfg.provider as string) ?? 'openai-compat';
+  const baseUrl = (cfg.baseUrl as string) ?? 'https://openrouter.ai/api/v1';
+  const apiKey = (await secrets.get(`providers/${providerName}/apiKey`)) ?? (cfg.apiKey as string);
+  return new OpenAICompatProvider({
+    name: providerName,
+    model: cfg.model as string,
+    apiKey,
+    baseUrl,
+  });
+};
+
+export const OPENAI_COMPAT_ALIASES = [
+  'openai',
+  'openrouter',
+  'gemini',
+  'groq',
+  'deepseek',
+  'ollama',
+] as const;
+
+export function activate(api: EthosPluginApi): void {
+  api.registerLLMProvider('openai-compat', openaiCompatFactory);
+  for (const id of OPENAI_COMPAT_ALIASES) {
+    api.registerLLMProvider(id, openaiCompatFactory);
+  }
+}

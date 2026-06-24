@@ -107,3 +107,33 @@ export class AzureOpenAIProvider implements LLMProvider {
     return Math.ceil(chars / 4);
   }
 }
+
+// ---------------------------------------------------------------------------
+// First-party plugin activation (§9.2 — dogfooding the plugin SDK)
+// ---------------------------------------------------------------------------
+
+import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
+
+export const PROVIDER_CONTRACT_MAJOR = 2;
+export const AZURE_DEFAULT_API_VERSION = '2024-12-01-preview';
+
+export const azureFactory: LLMProviderFactory = async ({ config: cfg, secrets }) => {
+  if (!cfg.baseUrl) {
+    throw new Error(
+      'Azure provider requires `baseUrl` set to the resource endpoint ' +
+        '(e.g. https://my-resource.openai.azure.com).',
+    );
+  }
+  const apiKey = (await secrets.get('providers/azure/apiKey')) ?? (cfg.apiKey as string);
+  return new AzureOpenAIProvider({
+    name: 'azure',
+    model: cfg.model as string,
+    apiKey,
+    endpoint: cfg.baseUrl as string,
+    apiVersion: (cfg.apiVersion as string) ?? AZURE_DEFAULT_API_VERSION,
+  });
+};
+
+export function activate(api: EthosPluginApi): void {
+  api.registerLLMProvider('azure', azureFactory);
+}

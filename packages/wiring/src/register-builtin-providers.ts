@@ -1,62 +1,79 @@
 import { validateUrl } from '@ethosagent/core';
-import { AnthropicProvider } from '@ethosagent/llm-anthropic';
-import { AzureOpenAIProvider } from '@ethosagent/llm-azure';
-import { CodexProvider, ensureValidToken } from '@ethosagent/llm-codex';
-import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
+import { anthropicFactory } from '@ethosagent/llm-anthropic';
+import { azureFactory } from '@ethosagent/llm-azure';
+import { codexFactory } from '@ethosagent/llm-codex';
+import { OPENAI_COMPAT_ALIASES, openaiCompatFactory } from '@ethosagent/llm-openai-compat';
 import type {
   ConfigOnlyProviderManifest,
-  LLMProviderFactoryContext,
+  LLMProviderFactory,
   LLMProviderRegistry,
 } from '@ethosagent/types';
 import { createConfigOnlyFactory } from './config-only-provider';
 import { BUILTIN_CONFIG_PROVIDERS } from './provider-manifests';
 
-// Default Azure REST API version. Picked to match the model lineup in model-catalog.ts.
-// Older stable api-versions (2024-10-21 and earlier) don't know about the `file` content
-// part required for PDF input through Chat Completions. Users override per-deployment via
-// `apiVersion` in ~/.ethos/config.yaml.
-export const AZURE_DEFAULT_API_VERSION = '2024-12-01-preview';
+// Re-export so existing importers (if any) still find it at this path.
+export { AZURE_DEFAULT_API_VERSION } from '@ethosagent/llm-azure';
 
 /**
- * Register the built-in LLM providers (anthropic, azure, codex, openai-compat
- * and all its aliases) on the given registry. Called by both `buildInfrastructure`
- * (full agent-loop wiring) and the standalone `createLLM` helper so every
- * dispatch path shares one set of factories.
+ * Register ALL built-in LLM providers on the given registry.
+ *
+ * Used by the standalone `createLLM` helper (no plugin infrastructure).
+ * The `buildInfrastructure` path uses `activateFirstPartyPlugins` +
+ * `registerRemainingBuiltinProviders` instead.
  */
 export function registerBuiltinProviders(registry: LLMProviderRegistry): void {
-  registry.register('anthropic', async ({ config: cfg, secrets }) => {
-    const apiKey = (await secrets.get('providers/anthropic/apiKey')) ?? (cfg.apiKey as string);
-    return new AnthropicProvider({ apiKey, model: cfg.model as string });
-  });
-  registry.register('azure', async ({ config: cfg, secrets }) => {
-    if (!cfg.baseUrl) {
-      throw new Error(
-        'Azure provider requires `baseUrl` set to the resource endpoint ' +
-          '(e.g. https://my-resource.openai.azure.com).',
-      );
+  // --- Migrated providers (factories imported from extensions) ---------------
+  registry.register('anthropic', anthropicFactory);
+
+  // Azure: wrap with SSRF gate
+  const validatedAzure: LLMProviderFactory = async (ctx) => {
+    if (ctx.config.baseUrl) {
+      validateUrl(ctx.config.baseUrl as string, { allowLocalhost: true });
     }
-    // SSRF gate: validate user-supplied base URLs before handing them to SDK
-    // clients. `allowLocalhost` is true because local providers are a
-    // legitimate use case.
-    validateUrl(cfg.baseUrl as string, { allowLocalhost: true });
-    const apiKey = (await secrets.get('providers/azure/apiKey')) ?? (cfg.apiKey as string);
-    return new AzureOpenAIProvider({
-      name: 'azure',
-      model: cfg.model as string,
-      apiKey,
-      endpoint: cfg.baseUrl as string,
-      apiVersion: (cfg.apiVersion as string) ?? AZURE_DEFAULT_API_VERSION,
-    });
-  });
-  registry.register('codex', async ({ config: cfg }) => {
-    return new CodexProvider({
-      model: cfg.model as string,
-      getAccessToken: async () => {
-        const creds = await ensureValidToken(globalThis.fetch);
-        return creds.accessToken;
-      },
-    });
-  });
+    return azureFactory(ctx);
+  };
+  registry.register('azure', validatedAzure);
+
+  registry.register('codex', codexFactory);
+
+  // OpenAI-compat: wrap with SSRF gate
+  const validatedOpenaiCompat: LLMProviderFactory = async (ctx) => {
+    if (ctx.config.baseUrl) {
+      validateUrl(ctx.config.baseUrl as string, { allowLocalhost: true });
+    }
+    return openaiCompatFactory(ctx);
+  };
+  registry.register('openai-compat', validatedOpenaiCompat);
+  for (const id of OPENAI_COMPAT_ALIASES) {
+    registry.register(id, validatedOpenaiCompat);
+  }
+
+  // --- Not-yet-migrated providers -------------------------------------------
+  registerDynamicProviders(registry);
+
+  // Config-only providers from built-in manifests
+  for (const manifest of BUILTIN_CONFIG_PROVIDERS) {
+    registerConfigOnlyProvider(registry, manifest);
+  }
+}
+
+/**
+ * Register built-in providers NOT yet migrated to the plugin SDK.
+ * Called by `buildInfrastructure` after `activateFirstPartyPlugins` handles
+ * the four migrated providers (anthropic, openai-compat, azure, codex).
+ */
+export function registerRemainingBuiltinProviders(registry: LLMProviderRegistry): void {
+  registerDynamicProviders(registry);
+
+  for (const manifest of BUILTIN_CONFIG_PROVIDERS) {
+    registerConfigOnlyProvider(registry, manifest);
+  }
+}
+
+/**
+ * Bedrock + gemini-native — dynamically imported, not yet migrated to plugin SDK.
+ */
+function registerDynamicProviders(registry: LLMProviderRegistry): void {
   registry.register('bedrock', async ({ config: cfg, secrets }) => {
     const { BedrockProvider } = await import('@ethosagent/llm-bedrock');
     const region = (cfg.region as string) ?? 'us-east-1';
@@ -76,6 +93,7 @@ export function registerBuiltinProviders(registry: LLMProviderRegistry): void {
       sigv4: { region, accessKeyId, secretAccessKey, sessionToken },
     });
   });
+
   registry.register('gemini-native', async ({ config: cfg, secrets }) => {
     const { GeminiNativeProvider } = await import('@ethosagent/llm-gemini-native');
     const apiKey = (await secrets.get('providers/gemini-native/apiKey')) ?? (cfg.apiKey as string);
@@ -88,29 +106,6 @@ export function registerBuiltinProviders(registry: LLMProviderRegistry): void {
       baseUrl: cfg.baseUrl as string | undefined,
     });
   });
-  const openaiCompatFactory = async ({ config: cfg, secrets }: LLMProviderFactoryContext) => {
-    const providerName = (cfg.provider as string) ?? 'openai-compat';
-    // SSRF gate
-    const baseUrl = (cfg.baseUrl as string) ?? 'https://openrouter.ai/api/v1';
-    validateUrl(baseUrl, { allowLocalhost: true });
-    const apiKey =
-      (await secrets.get(`providers/${providerName}/apiKey`)) ?? (cfg.apiKey as string);
-    return new OpenAICompatProvider({
-      name: providerName,
-      model: cfg.model as string,
-      apiKey,
-      baseUrl,
-    });
-  };
-  registry.register('openai-compat', openaiCompatFactory);
-  for (const id of ['openai', 'openrouter', 'gemini', 'groq', 'deepseek', 'ollama']) {
-    registry.register(id, openaiCompatFactory);
-  }
-
-  // Config-only providers from built-in manifests
-  for (const manifest of BUILTIN_CONFIG_PROVIDERS) {
-    registerConfigOnlyProvider(registry, manifest);
-  }
 }
 
 export function registerConfigOnlyProvider(

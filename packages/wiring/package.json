@@ -50,6 +50,8 @@
     "@ethosagent/oauth": "workspace:*",
     "@ethosagent/oauth-core": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
+    "@ethosagent/plugin-contract": "workspace:*",
+    "@ethosagent/plugin-sdk": "workspace:*",
     "@ethosagent/platform-discord": "workspace:*",
     "@ethosagent/platform-email": "workspace:*",
     "@ethosagent/platform-slack": "workspace:*",

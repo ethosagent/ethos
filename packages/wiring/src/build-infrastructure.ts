@@ -20,6 +20,22 @@ import {
 import { DockerExecutionBackend } from '@ethosagent/execution-docker';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { SshExecutionBackend } from '@ethosagent/execution-ssh';
+import {
+  PROVIDER_CONTRACT_MAJOR as ANTHROPIC_CONTRACT,
+  activate as activateAnthropic,
+} from '@ethosagent/llm-anthropic';
+import {
+  PROVIDER_CONTRACT_MAJOR as AZURE_CONTRACT,
+  activate as activateAzure,
+} from '@ethosagent/llm-azure';
+import {
+  activate as activateCodex,
+  PROVIDER_CONTRACT_MAJOR as CODEX_CONTRACT,
+} from '@ethosagent/llm-codex';
+import {
+  activate as activateOpenaiCompat,
+  PROVIDER_CONTRACT_MAJOR as OPENAI_COMPAT_CONTRACT,
+} from '@ethosagent/llm-openai-compat';
 import { compose as composeMemory } from '@ethosagent/memory-markdown/compose';
 import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import type { PersonalityCompose } from '@ethosagent/personalities/compose';
@@ -40,8 +56,9 @@ import type {
   PersonalityConfig,
   StorageRegistry,
 } from '@ethosagent/types';
+import { activateFirstPartyPlugins } from './activate-first-party';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
-import { registerBuiltinProviders } from './register-builtin-providers';
+import { registerRemainingBuiltinProviders } from './register-builtin-providers';
 import type { WiringContext } from './types';
 
 export interface InfrastructureResult {
@@ -94,7 +111,33 @@ export async function buildInfrastructure(
   // SecretsResolver first (ref: `providers/<name>/apiKey`), falling back to
   // the raw config value for backward compatibility.
   const llmProviders = new DefaultLLMProviderRegistry();
-  registerBuiltinProviders(llmProviders);
+  await activateFirstPartyPlugins(
+    [
+      {
+        id: '@ethosagent/llm-anthropic',
+        activate: activateAnthropic,
+        contractMajor: ANTHROPIC_CONTRACT,
+      },
+      {
+        id: '@ethosagent/llm-openai-compat',
+        activate: activateOpenaiCompat,
+        contractMajor: OPENAI_COMPAT_CONTRACT,
+      },
+      {
+        id: '@ethosagent/llm-azure',
+        activate: activateAzure,
+        contractMajor: AZURE_CONTRACT,
+      },
+      {
+        id: '@ethosagent/llm-codex',
+        activate: activateCodex,
+        contractMajor: CODEX_CONTRACT,
+      },
+    ],
+    llmProviders,
+    log,
+  );
+  registerRemainingBuiltinProviders(llmProviders);
 
   // Execution backend registry — built-ins registered here.
   // backends resolved on demand in Lane B/c

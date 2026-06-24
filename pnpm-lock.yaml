@@ -877,6 +877,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.96.0
         version: 0.96.0(zod@4.4.3)
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -886,6 +889,9 @@ importers:
       '@ethosagent/llm-openai-compat':
         specifier: workspace:*
         version: link:../llm-openai-compat
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -904,6 +910,9 @@ importers:
       '@ethosagent/oauth-core':
         specifier: workspace:*
         version: link:../../packages/oauth-core
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -916,6 +925,9 @@ importers:
 
   extensions/llm-openai-compat:
     dependencies:
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1728,9 +1740,15 @@ importers:
       '@ethosagent/platform-telegram':
         specifier: workspace:*
         version: link:../../extensions/platform-telegram
+      '@ethosagent/plugin-contract':
+        specifier: workspace:*
+        version: link:../plugin-contract
       '@ethosagent/plugin-loader':
         specifier: workspace:*
         version: link:../../extensions/plugin-loader
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
       '@ethosagent/request-dump':
         specifier: workspace:*
         version: link:../../extensions/request-dump
