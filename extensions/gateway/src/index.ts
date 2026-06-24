@@ -723,15 +723,31 @@ export class Gateway {
 
     // Resolve which bot this message is for. `message.botKey` wins when
     // adapters populate it; single-bot deployments fall back to the
-    // synthesized default. Multi-bot deployments with a missing botKey
-    // are a configuration error — log and drop rather than silently
-    // route to a wrong personality.
-    const botKey = message.botKey ?? this.defaultBotKey ?? '';
-    const bot = botKey ? this.bots.get(botKey) : undefined;
-    if (!bot) {
+    // synthesized default. Multi-bot deployments with an unknown botKey
+    // gracefully degrade to the default bot (if one exists) so messages
+    // are not silently dropped; an observability event still fires.
+    let botKey = message.botKey ?? this.defaultBotKey ?? '';
+    let bot = botKey ? this.bots.get(botKey) : undefined;
+    if (!bot && this.defaultBotKey) {
+      // Graceful fallback: unknown botKey degrades to the default bot
+      // rather than silently dropping. Multi-bot deployments still get
+      // an observability event so operators can fix the adapter config.
       this.observability?.recordSafetyBlock({
         code: 'gateway.unknown_botKey',
-        details: { platform: message.platform, chatId: message.chatId, botKey: message.botKey },
+        details: {
+          platform: message.platform,
+          chatId: message.chatId,
+          botKey: message.botKey,
+          fallback: this.defaultBotKey,
+        },
+      });
+      botKey = this.defaultBotKey;
+      bot = this.bots.get(botKey);
+    }
+    if (!bot) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.no_bot_available',
+        details: { platform: message.platform, chatId: message.chatId, botKey },
       });
       return;
     }

@@ -422,6 +422,20 @@ export async function runGatewayStart(): Promise<void> {
   } = await createAgentLoop(config, { cronScheduler: scheduler });
   systemLoop = systemLoopReady;
 
+  // Resolve the active personality's plugin allowlist for the trust gate.
+  // If the personality declares `plugins:`, only those are trusted; if it
+  // doesn't (or the personality can't be loaded), all plugins are allowed
+  // (backward compat — trustedChannelPlugins stays undefined).
+  const personalityPluginRegistry = await createPersonalityRegistry({
+    storage,
+    userPersonalitiesDir: join(ethosDir(), 'personalities'),
+  });
+  await personalityPluginRegistry.loadFromDirectory(join(ethosDir(), 'personalities'));
+  const activePersonality = personalityPluginRegistry.get(config.personality);
+  const trustedChannelPlugins = activePersonality?.plugins?.length
+    ? new Set(activePersonality.plugins)
+    : undefined;
+
   // Gap 10 — every loop (per-bot + system) owns its own NotificationRouter,
   // and `process_complete` hooks fire on the owning loop's instance. The
   // Gateway holds a single router reference, so fan registrations out to all
@@ -598,6 +612,7 @@ export async function runGatewayStart(): Promise<void> {
           showToolCalls: process.env.ETHOS_CHANNEL_TOOL_CALLS !== 'false',
           pluginLoader,
           pluginAdapters: pluginLoader.getPlatformAdapters(),
+          trustedChannelPlugins,
           notificationRouter: gatewayNotificationRouter,
           ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
           ...(pairingDb ? { pairingDb } : {}),
@@ -610,6 +625,7 @@ export async function runGatewayStart(): Promise<void> {
           showToolCalls: process.env.ETHOS_CHANNEL_TOOL_CALLS !== 'false',
           pluginLoader,
           pluginAdapters: pluginLoader.getPlatformAdapters(),
+          trustedChannelPlugins,
           notificationRouter: gatewayNotificationRouter,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
