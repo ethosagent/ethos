@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Database from '@ethosagent/sqlite';
+import { afterEach, describe, expect, it } from 'vitest';
 
 function makeTmpDir() {
   return mkdtempSync(join(tmpdir(), 'sqlite-test-'));
@@ -341,7 +341,7 @@ describe('STRICT tables', () => {
     db.exec('CREATE TABLE strict_t (id INTEGER PRIMARY KEY, val TEXT) STRICT');
     db.prepare('INSERT INTO strict_t (id, val) VALUES (?, ?)').run(1, 'valid');
     expect(() =>
-      db.prepare('INSERT INTO strict_t (id, val) VALUES (?, ?)').run('not_an_int', 'oops')
+      db.prepare('INSERT INTO strict_t (id, val) VALUES (?, ?)').run('not_an_int', 'oops'),
     ).toThrow();
     db.close();
   });

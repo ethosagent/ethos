@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import Database from '@ethosagent/sqlite';
 import type {
   CreateGoalInput,
   Goal,
@@ -10,7 +11,6 @@ import type {
   GoalStatus,
   GoalStore,
 } from '@ethosagent/types';
-import Database from '@ethosagent/sqlite';
 
 // ---------------------------------------------------------------------------
 // Schema

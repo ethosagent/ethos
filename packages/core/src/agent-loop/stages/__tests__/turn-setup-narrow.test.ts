@@ -12,8 +12,8 @@ function computeAllowedTools(
   const baseToolset = toolsetOverride ?? personalityToolset ?? undefined;
   const narrow = toolsetNarrow;
   return narrow && baseToolset
-    ? baseToolset.filter(t => narrow.includes(t))
-    : narrow ?? baseToolset;
+    ? baseToolset.filter((t) => narrow.includes(t))
+    : (narrow ?? baseToolset);
 }
 
 describe('toolsetNarrow intersection', () => {

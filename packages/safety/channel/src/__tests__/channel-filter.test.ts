@@ -1,5 +1,5 @@
-import type { InboundMessage } from '@ethosagent/types';
 import Database from '@ethosagent/sqlite';
+import type { InboundMessage } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChannelPlatformConfig } from '../channel-filter';
 import { checkMessage, isSenderAllowed } from '../channel-filter';

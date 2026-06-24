@@ -1,5 +1,5 @@
-import type { RetentionConfig } from '@ethosagent/types';
 import BetterSqlite3 from '@ethosagent/sqlite';
+import type { RetentionConfig } from '@ethosagent/types';
 
 /** Parse a duration string to milliseconds, or null for 'forever'. */
 export function parseDuration(s: string): number | null {

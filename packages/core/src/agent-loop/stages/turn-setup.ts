@@ -112,9 +112,8 @@ export async function* setupTurn(
   // Allowed tool names for this personality (undefined = no restriction)
   const baseToolset = opts.toolsetOverride ?? personality.toolset ?? undefined;
   const narrow = opts.toolsetNarrow;
-  const allowedTools = narrow && baseToolset
-    ? baseToolset.filter(t => narrow.includes(t))
-    : narrow ?? baseToolset;
+  const allowedTools =
+    narrow && baseToolset ? baseToolset.filter((t) => narrow.includes(t)) : (narrow ?? baseToolset);
   // Per-personality plugin + MCP gate (default-deny: missing field = no access)
   const allowedPlugins = personality.plugins ?? [];
 

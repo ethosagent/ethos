@@ -9,6 +9,7 @@ import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry, firstParagraph } from '@ethosagent/personalities';
 import { initPairingDb } from '@ethosagent/safety-channel';
 import { bundledSkillsSource, createInjectors } from '@ethosagent/skills';
+import Database from '@ethosagent/sqlite';
 import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
 // Platform adapters are loaded LAZILY in runGatewayStart() — see plan/IMPROVEMENT.md P0-3.
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
@@ -29,7 +30,6 @@ import {
   IdentityMap,
   type MessagingSendFn,
 } from '@ethosagent/wiring';
-import Database from '@ethosagent/sqlite';
 import { Cron } from 'croner';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import {
