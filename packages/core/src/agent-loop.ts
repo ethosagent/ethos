@@ -130,6 +130,8 @@ export interface AgentLoopConfig {
    * AgentLoop can build per-tool MCP allowlists in filterOpts.
    */
   mcpPolicy?: import('@ethosagent/types').McpPolicy;
+  /** Optional document extractor registry for extracting text from uploaded files. */
+  documentExtractors?: import('@ethosagent/types').DocumentExtractorRegistry;
   /**
    * Optional request dump store. When provided, AgentLoop appends a full
    * record of each LLM request/response for offline analysis and debugging.
@@ -295,6 +297,7 @@ export class AgentLoop {
   private readonly llmHandle?: ContextEngineLLMHandle;
   /** Per-personality MCP tool policy from mcp.yaml (NOT on PersonalityConfig). */
   private readonly mcpPolicy?: import('@ethosagent/types').McpPolicy;
+  private readonly documentExtractors?: import('@ethosagent/types').DocumentExtractorRegistry;
   /** v2.2 — Callback to emit per-tool invocation metrics to the diagnostic store. */
   private readonly onToolMetric?: AgentLoopConfig['onToolMetric'];
   /** v2.2 — Pre-turn credential check callback. */
@@ -337,6 +340,7 @@ export class AgentLoop {
     if (config.clarifyBridge) this.clarifyBridge = config.clarifyBridge;
     if (config.requestDumpStore) this.requestDumpStore = config.requestDumpStore;
     if (config.mcpPolicy) this.mcpPolicy = config.mcpPolicy;
+    if (config.documentExtractors) this.documentExtractors = config.documentExtractors;
     if (config.onToolMetric) this.onToolMetric = config.onToolMetric;
     if (config.credentialCheck) this.credentialCheck = config.credentialCheck;
     this.safety = config.safety;
@@ -418,6 +422,7 @@ export class AgentLoop {
       sessionCosts: this.sessionCosts,
       sessionReadMtimes: this.sessionReadMtimes,
       contextStore: this.contextStore,
+      documentExtractors: this.documentExtractors,
     };
   }
 

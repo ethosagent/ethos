@@ -9,7 +9,7 @@ export { type BedrockTransportConfig, streamBedrockConverse } from './transport'
 import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
 import { BedrockProvider } from './provider';
 
-export const PROVIDER_CONTRACT_MAJOR = 2;
+export const PROVIDER_CONTRACT_MAJOR = 3;
 
 export const bedrockFactory: LLMProviderFactory = async ({ config: cfg, secrets }) => {
   const region = (cfg.region as string) ?? 'us-east-1';

@@ -131,7 +131,7 @@ export class CodexProvider implements LLMProvider {
 import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
 import { CodexTokenStore } from './token-store';
 
-export const PROVIDER_CONTRACT_MAJOR = 2;
+export const PROVIDER_CONTRACT_MAJOR = 3;
 
 export const codexFactory: LLMProviderFactory = async ({ config: cfg, secrets }) => {
   const store = new CodexTokenStore(secrets);

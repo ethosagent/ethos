@@ -339,7 +339,7 @@ import type {
   LLMProviderFactoryContext,
 } from '@ethosagent/plugin-sdk';
 
-export const PROVIDER_CONTRACT_MAJOR = 2;
+export const PROVIDER_CONTRACT_MAJOR = 3;
 
 export const openaiCompatFactory: LLMProviderFactory = async ({
   config: cfg,

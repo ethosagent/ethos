@@ -286,6 +286,8 @@ export interface EthosPluginApi {
 
   /** Diagnostics emitter for structured logging and metrics (v2.2). */
   readonly diagnostics: DiagnosticsEmitter;
+  /** Register a document extractor for text extraction from uploaded files. */
+  registerDocumentExtractor(extractor: import('@ethosagent/types').DocumentExtractor): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +383,9 @@ export interface PluginRegistries {
       pluginId?: string;
     }[];
   };
+  /** v3 -- Document extractor registry. When present, plugins can register
+   *  custom extractors for document text extraction. */
+  documentExtractors?: import('@ethosagent/types').DocumentExtractorRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +558,15 @@ export class PluginApiImpl implements EthosPluginApi {
     }
     this.registries.executionBackends.register(qualifiedName, factory);
     this.registeredExecutionBackends.push(qualifiedName);
+  }
+
+  registerDocumentExtractor(extractor: import('@ethosagent/types').DocumentExtractor): void {
+    if (!this.registries.documentExtractors) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerDocumentExtractor but the host wiring did not expose a DocumentExtractorRegistry.`,
+      );
+    }
+    this.registries.documentExtractors.register(extractor);
   }
 
   // ---- Credential methods ------------------------------------------------

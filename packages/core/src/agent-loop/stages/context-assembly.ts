@@ -1,7 +1,11 @@
 import type { AgentEvent, Attachment, MemoryContext, PromptContext } from '@ethosagent/types';
 import { buildAttachmentAnnotation } from '../../attachment-annotation';
 import { classifyAttachment, unsupportedTypeError } from '../../attachment-classifier';
-import { formatInlinedAttachment, resolveTextAttachment } from '../../attachment-text-resolver';
+import {
+  formatInlinedAttachment,
+  resolveTextAttachment,
+  sanitizeFilename,
+} from '../../attachment-text-resolver';
 import { maybeCompact } from '../compaction';
 import { dedupHistory, toLLMMessages } from '../history';
 import type { AssembledContext, LoopDeps, TurnSetup } from '../turn-context';
@@ -80,10 +84,45 @@ export async function* assembleContext(
         }
         break;
       }
-      case 'extract':
-        // Class B-extract -- stub for PR2, annotate so LLM knows it's there
-        annotatedAttachments.push(att);
+      case 'extract': {
+        const registry = deps.documentExtractors;
+        const extractor = registry?.for(att.mimeType.toLowerCase());
+        if (!extractor) {
+          annotatedAttachments.push(att);
+          break;
+        }
+        try {
+          let fileBytes: Uint8Array;
+          if (att.url.startsWith('file://') && deps.attachmentCache && deps.storage) {
+            const localPath = deps.attachmentCache.resolveLocalPath(att.url);
+            const raw = await deps.storage.readBytes(localPath);
+            if (!raw) throw new Error('File not found');
+            fileBytes = raw;
+          } else if (att.url.startsWith('data:')) {
+            const commaIdx = att.url.indexOf(',');
+            if (commaIdx < 0) throw new Error('Invalid data: URL');
+            fileBytes = Uint8Array.from(Buffer.from(att.url.slice(commaIdx + 1), 'base64'));
+          } else {
+            throw new Error('Unsupported URL scheme');
+          }
+          if (extractor.maxInputBytes && fileBytes.length > extractor.maxInputBytes) {
+            attachmentErrors.push(
+              `"${att.filename ?? att.mimeType}" is too large for extraction (${(fileBytes.length / (1024 * 1024)).toFixed(1)} MB, max ${(extractor.maxInputBytes / (1024 * 1024)).toFixed(0)} MB)`,
+            );
+            break;
+          }
+          const extracted = await extractor.extract(fileBytes, att.mimeType);
+          const sanitized = deps.safety.injection.sanitize(extracted.text);
+          const name = sanitizeFilename(att.filename ?? 'unnamed');
+          const truncNote = extracted.truncatedFromChars
+            ? ` [truncated to ${sanitized.length.toLocaleString()} chars from ${extracted.truncatedFromChars.toLocaleString()}]`
+            : '';
+          inlineBlocks.push(`=== file: ${name}${truncNote} ===\n${sanitized}\n=== end file ===`);
+        } catch {
+          attachmentErrors.push(`Failed to extract text from "${att.filename ?? att.mimeType}"`);
+        }
         break;
+      }
       case 'unsupported':
         attachmentErrors.push(unsupportedTypeError(att.mimeType, att.filename));
         break;

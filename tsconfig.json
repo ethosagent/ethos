@@ -133,6 +133,7 @@
       "@ethosagent/design-tokens/chalk": ["./packages/design-tokens/src/chalk"],
       "@ethosagent/design-tokens/inline-css": ["./packages/design-tokens/src/inline-css"],
       "@ethosagent/design-tokens/vscode": ["./packages/design-tokens/src/vscode"],
+      "@ethosagent/document-extractors": ["./extensions/document-extractors/src"],
       "@ethosagent/web-api": ["./apps/web-api/src"],
       "@ethosagent/mcp-server": ["./apps/mcp-server/src"],
       "@ethosagent/tools-image": ["./extensions/tools-image/src"],

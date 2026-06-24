@@ -15,7 +15,7 @@
 // Deprecation policy is no-overlap: a major bump drops support for the prior
 // major in the same release. See `MIGRATIONS.md` header.
 
-export const PLUGIN_CONTRACT_MAJOR = 2;
+export const PLUGIN_CONTRACT_MAJOR = 3;
 
 export interface ContractCompatResult {
   ok: boolean;

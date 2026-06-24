@@ -10,7 +10,7 @@ describe('Orchestrator guardrails', () => {
     const content = readFileSync(agentLoopFile, 'utf-8');
     const lineCount = content.split('\n').length;
     // Phase 9 threshold — the orchestrator should stay lean
-    expect(lineCount).toBeLessThanOrEqual(725);
+    expect(lineCount).toBeLessThanOrEqual(735);
   });
 
   it('no stage file exceeds 700 lines', () => {

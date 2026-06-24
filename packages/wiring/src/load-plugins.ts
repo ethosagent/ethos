@@ -38,6 +38,7 @@ export interface LoadPluginsResult {
   contextEngines: import('@ethosagent/core').DefaultContextEngineRegistry;
   /** LLM handle for context engines — wraps the compression summarizer. */
   llmHandle?: ContextEngineLLMHandle;
+  documentExtractors: import('@ethosagent/core').DefaultDocumentExtractorRegistry;
 }
 
 export interface LoadPluginsDeps {
@@ -86,9 +87,12 @@ export async function loadPlugins(
   // `EthosPluginApi.registerContextEngine`. context_compression F1 — when an
   // auxiliary compression model is configured, `semantic_summary` gets a real
   // LLM summarizer instead of the placeholder.
-  const { DefaultContextEngineRegistry } = await import('@ethosagent/core');
+  const { DefaultContextEngineRegistry, DefaultDocumentExtractorRegistry } = await import(
+    '@ethosagent/core'
+  );
   const summarize = buildCompressionSummarizer();
   const contextEngines = new DefaultContextEngineRegistry(summarize ? { summarize } : {});
+  const documentExtractors = new DefaultDocumentExtractorRegistry();
 
   // Discover and activate installed plugins. Plugins register tools/hooks/
   // injectors into the same registries the AgentLoop uses; the personality
@@ -129,6 +133,7 @@ export async function loadPlugins(
     renderers: new Map(),
     slashRegistry: deps.slashRegistry,
     cliSubcommandRegistry: deps.cliSubcommandRegistry,
+    documentExtractors,
     // v2.2 — llmFactory is set after LLM resolution (below). Monitors only
     // start after full wiring, so lazy assignment is safe.
   };
@@ -169,5 +174,6 @@ export async function loadPlugins(
     pluginRoutes,
     contextEngines,
     llmHandle,
+    documentExtractors,
   };
 }

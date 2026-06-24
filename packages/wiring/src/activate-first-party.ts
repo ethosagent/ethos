@@ -93,6 +93,7 @@ function createFirstPartyApi(pluginId: string, llmProviders: LLMProviderRegistry
     registerSlashCommand: notSupported('registerSlashCommand'),
     registerCliSubcommand: notSupported('registerCliSubcommand'),
     registerCommand: notSupported('registerCommand'),
+    registerDocumentExtractor: notSupported('registerDocumentExtractor'),
     diagnostics: {
       debug: () => {},
       info: () => {},

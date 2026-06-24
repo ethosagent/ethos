@@ -8,6 +8,7 @@ export * from './command';
 export * from './constitution';
 export * from './context-engine';
 export * from './diagnostics';
+export * from './document-extractor';
 export * from './errors';
 export * from './evaluator';
 export * from './execution';

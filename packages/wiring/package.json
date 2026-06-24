@@ -32,6 +32,7 @@
   "dependencies": {
     "@ethosagent/constitution": "workspace:*",
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/document-extractors": "workspace:*",
     "@ethosagent/safety-network": "workspace:*",
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/execution-docker": "workspace:*",

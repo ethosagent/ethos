@@ -1,0 +1,21 @@
+{
+  "name": "@ethosagent/document-extractors",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "production": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*",
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@types/pdf-parse": "^1.1.5"
+  }
+}

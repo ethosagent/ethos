@@ -58,10 +58,22 @@ export async function resolveTextAttachment(
 }
 
 /**
+ * Sanitize a filename for safe inclusion in prompt delimiters.
+ * Collapses control characters, removes newlines, and truncates.
+ */
+export function sanitizeFilename(name: string): string {
+  return name
+    .replace(/[\r\n]/g, ' ') // no newlines
+    .replace(/[^\x20-\x7E]/g, '_') // only printable ASCII
+    .replace(/={3,}/g, '==') // break delimiter-like sequences
+    .slice(0, 200); // cap length
+}
+
+/**
  * Format an inlined text attachment as a delimited block.
  */
 export function formatInlinedAttachment(resolved: ResolvedTextAttachment): string {
-  const name = resolved.attachment.filename ?? 'unnamed';
+  const name = sanitizeFilename(resolved.attachment.filename ?? 'unnamed');
   const truncNote = resolved.truncatedFromChars
     ? ` [truncated to ${resolved.text.length.toLocaleString()} chars from ${resolved.truncatedFromChars.toLocaleString()}]`
     : '';

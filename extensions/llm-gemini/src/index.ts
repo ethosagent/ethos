@@ -78,7 +78,7 @@ export class GeminiNativeProvider implements LLMProvider {
 
 import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
 
-export const PROVIDER_CONTRACT_MAJOR = 2;
+export const PROVIDER_CONTRACT_MAJOR = 3;
 
 export const geminiNativeFactory: LLMProviderFactory = async ({ config: cfg, secrets, logger }) => {
   const secretKey = await secrets.get('providers/gemini-native/apiKey');

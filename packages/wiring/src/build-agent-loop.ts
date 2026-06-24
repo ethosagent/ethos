@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { AgentLoop, EagerPrefetchPolicy, SimpleCompletionImpl } from '@ethosagent/core';
+import { registerBuiltinExtractors } from '@ethosagent/document-extractors';
 import { GoalRunner } from '@ethosagent/goal-runner';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createDelegationTools } from '@ethosagent/tools-delegation';
@@ -49,6 +50,7 @@ export async function buildAgentLoop(
     contextEngines,
     notificationRouter,
     llmHandle,
+    documentExtractors,
   } = pluginsResult;
 
   const NOOP_SECRETS = {
@@ -367,6 +369,8 @@ export async function buildAgentLoop(
     }
   }
 
+  registerBuiltinExtractors(documentExtractors);
+
   // -------------------------------------------------------------------------
   // AgentLoop construction
   // -------------------------------------------------------------------------
@@ -390,6 +394,7 @@ export async function buildAgentLoop(
     modelRouting: config.modelRouting,
     memoryProviders: memoryProviderMap,
     safety,
+    documentExtractors,
     contextEngines,
     ...(llmHandle ? { llmHandle } : {}),
     clarifyBridge: infra.clarifyBridge,

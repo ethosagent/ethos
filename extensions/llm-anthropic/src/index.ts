@@ -379,7 +379,7 @@ export class AuthRotatingProvider implements LLMProvider {
 
 import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
 
-export const PROVIDER_CONTRACT_MAJOR = 2;
+export const PROVIDER_CONTRACT_MAJOR = 3;
 
 export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secrets, logger }) => {
   const secretKey = await secrets.get('providers/anthropic/apiKey');

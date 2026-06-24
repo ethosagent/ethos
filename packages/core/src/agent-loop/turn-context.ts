@@ -83,6 +83,7 @@ export interface LoopDeps {
   sessionCosts: Map<string, number>;
   sessionReadMtimes: Map<string, Map<string, { mtimeMs: number; readAtTurn: number }>>;
   contextStore: ContextStore;
+  documentExtractors?: import('@ethosagent/types').DocumentExtractorRegistry;
 }
 
 // ---------------------------------------------------------------------------

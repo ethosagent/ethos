@@ -114,7 +114,7 @@ export class AzureOpenAIProvider implements LLMProvider {
 
 import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
 
-export const PROVIDER_CONTRACT_MAJOR = 2;
+export const PROVIDER_CONTRACT_MAJOR = 3;
 export const AZURE_DEFAULT_API_VERSION = '2024-12-01-preview';
 
 export const azureFactory: LLMProviderFactory = async ({ config: cfg, secrets, logger }) => {

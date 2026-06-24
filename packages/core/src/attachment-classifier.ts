@@ -10,6 +10,7 @@ const NATIVE_MIMES = new Set([
   'image/webp',
   'application/pdf',
 ]);
+const PDF_NATIVE_MAX_BYTES = 32 * 1024 * 1024;
 
 // MIME types for text-native files (Class B-text) - decode UTF-8 and inline
 const TEXT_MIMES_PREFIX = 'text/';
@@ -139,7 +140,12 @@ export function classifyAttachment(att: Attachment): AttachmentClass {
   const mime = att.mimeType.toLowerCase();
   const ext = extensionOf(att.filename);
 
-  if (NATIVE_MIMES.has(mime)) return 'native';
+  if (NATIVE_MIMES.has(mime)) {
+    if (mime === 'application/pdf' && att.sizeBytes && att.sizeBytes > PDF_NATIVE_MAX_BYTES) {
+      return 'extract';
+    }
+    return 'native';
+  }
 
   if (
     mime.startsWith(TEXT_MIMES_PREFIX) ||
