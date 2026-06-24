@@ -1152,6 +1152,26 @@ export class Gateway {
       }
     }
 
+    // --- /learn command ---
+    if (!cmdType && /^\/learn(?:\s|$)/i.test(text)) {
+      const { parseLearnArgs, buildLearnPrompt } = await import('@ethosagent/core');
+      const learnText = text.slice('/learn'.length).trim();
+      const parsed = parseLearnArgs(learnText);
+      const personalityId = this.activePersonalityFor(laneKey, bot);
+      const learnSessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+      const prompt = buildLearnPrompt({
+        hint: parsed.hint,
+        description: parsed.description,
+        personalityId,
+        sessionKey: learnSessionKey,
+        surface: 'gateway',
+      });
+      await lane.enqueue((signal) =>
+        this.runTurn(laneKey, lane, bot, message, adapter, prompt, threadId, signal),
+      );
+      return;
+    }
+
     // --- Plugin slash commands ---
     if (!cmdType && text.startsWith('/')) {
       const cmdName = text.split(/\s+/)[0]?.slice(1).toLowerCase();

@@ -92,6 +92,11 @@ export const builtInCommands: SlashCommand[] = [
     description: 'List available commands',
     usage: '/commands',
   },
+  {
+    name: 'learn',
+    description: 'Capture knowledge as memory or skill',
+    usage: '/learn [remember:|skill:] <description>',
+  },
   { name: 'undo', description: 'Undo last N turns (default 1)', usage: '/undo [N]' },
   { name: 'exit', description: 'Quit ethos', usage: '/exit' },
   { name: 'quit', description: 'Alias for /exit', usage: '/quit' },

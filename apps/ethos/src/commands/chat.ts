@@ -1371,6 +1371,19 @@ async function handleSlashCommand(
       handleBackgroundCommand(arg, state, loop);
       break;
 
+    case 'learn': {
+      const { parseLearnArgs, buildLearnPrompt } = await import('@ethosagent/core');
+      const parsed = parseLearnArgs(arg);
+      state.pendingTurn = buildLearnPrompt({
+        hint: parsed.hint,
+        description: parsed.description,
+        personalityId: state.personalityId,
+        sessionKey: state.sessionKey,
+        surface: 'cli',
+      });
+      break;
+    }
+
     default: {
       const cmd = registry.get(name);
       if (cmd?.prefix === '[skill]') {

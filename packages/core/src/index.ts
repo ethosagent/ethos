@@ -50,6 +50,8 @@ export {
 export type { SessionLifecycleEvent, SessionManagerOptions } from './execution/session-manager';
 export { SessionManager } from './execution/session-manager';
 export { DefaultHookRegistry } from './hook-registry';
+export type { LearnRequest } from './learn';
+export { buildLearnPrompt, parseLearnArgs } from './learn';
 export type { LocalToolTransportLiveCtx } from './local-tool-transport';
 export { LocalToolTransport } from './local-tool-transport';
 export {

@@ -33,6 +33,7 @@ import { runEvolve } from './commands/evolve';
 import { runFallback } from './commands/fallback';
 import { runGatewayStart } from './commands/gateway';
 import { runKeys } from './commands/keys';
+import { runLearn } from './commands/learn';
 import { runLogs } from './commands/logs';
 import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
@@ -69,7 +70,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | learn | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -547,6 +548,11 @@ try {
     case 'evolve': {
       const config = await loadRequiredConfig();
       await runEvolve(args.slice(1), config);
+      break;
+    }
+
+    case 'learn': {
+      await runLearn(args.slice(1));
       break;
     }
 

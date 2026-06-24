@@ -961,6 +961,34 @@ export function App({
         ]);
         break;
       }
+      case 'learn': {
+        const { parseLearnArgs, buildLearnPrompt } = await import('@ethosagent/core');
+        const parsed = parseLearnArgs(args.join(' '));
+        const prompt = buildLearnPrompt({
+          hint: parsed.hint,
+          description: parsed.description,
+          personalityId: personality,
+          sessionKey,
+          surface: 'cli',
+        });
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'user',
+            text: `/learn${args.length > 0 ? ` ${args.join(' ')}` : ''}`,
+          },
+        ]);
+        pushTimeline('info', 'user: /learn');
+        setCompletedTools([]);
+        setRunning(true);
+        turnStartRef.current = Date.now();
+        firstTextDeltaAtRef.current = null;
+        turnToolDurationsRef.current = [];
+        turnUsageRef.current = null;
+        bridge.send(prompt, { sessionKey, personalityId: personality });
+        break;
+      }
       case 'exit':
       case 'quit':
         exit();
