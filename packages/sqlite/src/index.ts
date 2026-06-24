@@ -1,4 +1,12 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync as DatabaseSyncClass } from 'node:sqlite';
+
+// `node:sqlite` is a Node built-in. Resolve it via `process.getBuiltinModule`
+// instead of a static `import ... from 'node:sqlite'` so the bundler cannot
+// strip the `node:` prefix: esbuild rewrote it to a bare `sqlite` specifier in
+// the published CLI bundle, breaking `ethos serve` with ERR_MODULE_NOT_FOUND.
+// The `import type` above is erased at build time, so no runtime import remains.
+const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
+type DatabaseSync = DatabaseSyncClass;
 
 type RunResult = { changes: number; lastInsertRowid: number };
 
