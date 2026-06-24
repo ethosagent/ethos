@@ -237,6 +237,13 @@ export interface RunOptions {
    * the `cron` tool from cron-spawned sessions (recursion guard).
    */
   toolsetOverride?: string[];
+  /**
+   * Narrow (intersect) the personality toolset for this run. Used by commands
+   * that declare `allowedTools` — the effective toolset is the intersection of
+   * `toolsetNarrow` and the personality's toolset, ensuring a command can never
+   * escalate beyond the personality allowlist.
+   */
+  toolsetNarrow?: string[];
   /** Override the per-turn tool-call cap for this run only (goal runs raise it; default applies when absent). */
   maxToolCallsPerTurn?: number;
   /** When true, bypass safety-watcher halts for this run (opt-in, dangerous; caps still apply). */

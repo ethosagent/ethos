@@ -33,3 +33,11 @@ export interface SlashCommandContext {
   toolRegistry?: import('./tool').ToolRegistry;
   storage?: import('./storage').Storage;
 }
+
+export interface CliSubcommandContext {
+  argv: string[];
+  cwd: string;
+  stdout: (s: string) => void;
+  stderr: (s: string) => void;
+  storage?: import('./storage').Storage;
+}

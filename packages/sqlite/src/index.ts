@@ -92,10 +92,10 @@ class _Database {
 
   pragma(str: string, _opts?: Record<string, unknown>): unknown {
     if (str.includes('=')) {
-      this.inner.exec('PRAGMA ' + str);
+      this.inner.exec(`PRAGMA ${str}`);
       return undefined;
     }
-    return this.prepare('PRAGMA ' + str).all();
+    return this.prepare(`PRAGMA ${str}`).all();
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: must accept any function signature for better-sqlite3 compat

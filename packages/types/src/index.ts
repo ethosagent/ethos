@@ -4,6 +4,7 @@
 export * from './agent-event';
 export * from './channel-conformance';
 export * from './clarify';
+export * from './command';
 export * from './constitution';
 export * from './context-engine';
 export * from './diagnostics';

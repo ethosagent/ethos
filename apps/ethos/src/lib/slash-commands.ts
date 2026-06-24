@@ -13,8 +13,15 @@ export interface SlashCommand {
 
 export class SlashCommandRegistry {
   private readonly commands = new Map<string, SlashCommand>();
+  private readonly builtIns = new Set<string>();
+
+  registerBuiltIn(cmd: SlashCommand): void {
+    this.builtIns.add(cmd.name);
+    this.commands.set(cmd.name, cmd);
+  }
 
   register(cmd: SlashCommand): void {
+    if (this.builtIns.has(cmd.name)) return;
     this.commands.set(cmd.name, cmd);
   }
 
@@ -80,6 +87,11 @@ export const builtInCommands: SlashCommand[] = [
     description: 'List approved senders and pairing codes',
     usage: '/communications',
   },
+  {
+    name: 'commands',
+    description: 'List available commands',
+    usage: '/commands',
+  },
   { name: 'undo', description: 'Undo last N turns (default 1)', usage: '/undo [N]' },
   { name: 'exit', description: 'Quit ethos', usage: '/exit' },
   { name: 'quit', description: 'Alias for /exit', usage: '/quit' },
@@ -88,7 +100,7 @@ export const builtInCommands: SlashCommand[] = [
 export function buildBaseRegistry(): SlashCommandRegistry {
   const registry = new SlashCommandRegistry();
   for (const cmd of builtInCommands) {
-    registry.register(cmd);
+    registry.registerBuiltIn(cmd);
   }
   return registry;
 }

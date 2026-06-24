@@ -14,6 +14,7 @@ import type { TeamRole } from '@ethosagent/tools-kanban';
 import type { McpManager } from '@ethosagent/tools-mcp';
 import type { MessagingSendFn } from '@ethosagent/tools-messaging';
 import type {
+  CliSubcommandContext,
   GlobalMemoryStore,
   LLMProvider,
   Logger,
@@ -176,6 +177,29 @@ export interface WiringSlashRegistry {
   get(name: string): { description?: string; usage?: string } | undefined;
 }
 
+export interface WiringCliSubcommandRegistry {
+  register(cmd: {
+    name: string;
+    description: string;
+    handler?: (ctx: CliSubcommandContext) => Promise<number>;
+    pluginId?: string;
+  }): void;
+  get(name: string):
+    | {
+        name: string;
+        description: string;
+        handler?: (ctx: CliSubcommandContext) => Promise<number>;
+        pluginId?: string;
+      }
+    | undefined;
+  getAll(): {
+    name: string;
+    description: string;
+    handler?: (ctx: CliSubcommandContext) => Promise<number>;
+    pluginId?: string;
+  }[];
+}
+
 export interface CreateAgentLoopOptions {
   /** Root data directory (typically `~/.ethos`). Sessions DB, memory, and
    *  user personalities all resolve under this path. */
@@ -228,6 +252,13 @@ export interface CreateAgentLoopOptions {
    * no slash command UI (web, ACP).
    */
   slashRegistry?: WiringSlashRegistry;
+  /**
+   * App-layer CLI subcommand registry. When provided, plugins that call
+   * `registerCliSubcommand` during loading land their commands here so the
+   * CLI's `--help` and boot dispatch can surface them. Omit for surfaces
+   * with no CLI subcommand UI (web, ACP).
+   */
+  cliSubcommandRegistry?: WiringCliSubcommandRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +645,7 @@ export async function createAgentLoop(
         ? buildCompressionSummarizer(infra.llmProviders, config, opts.observability, log)
         : undefined,
     ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
+    ...(opts.cliSubcommandRegistry ? { cliSubcommandRegistry: opts.cliSubcommandRegistry } : {}),
   });
 
   // -------------------------------------------------------------------------
