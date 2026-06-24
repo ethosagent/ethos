@@ -163,6 +163,9 @@ export interface WiringConfig {
     ttlHours?: number;
     providers?: Record<string, { url: string }>;
   };
+  /** Callback for OAuth authorization user prompts (open-url, device-code).
+   *  Surfaces (CLI/TUI/web) provide an implementation that shows the prompt. */
+  onUserPrompt?: (prompt: import('@ethosagent/oauth-core').UserPrompt) => void;
   /** Whether to auto-install plugins from plugins.lock on personality load. */
   pluginsAutoInstall?: boolean;
 }
@@ -388,6 +391,19 @@ export async function createLLM(config: WiringConfig): Promise<LLMProvider> {
 }
 
 /**
+ * §4.B trust gate — default-deny for plugin-contributed LLM providers.
+ * Built-in providers (no `/` in name) are always allowed.
+ * Plugin providers (`pluginId/name`) require `pluginId` in the allowlist.
+ * When `allowedPlugins` is undefined, all providers are allowed (backward compat).
+ */
+export function isProviderAllowed(providerName: string, allowedPlugins?: string[]): boolean {
+  if (!allowedPlugins) return true;
+  if (!providerName.includes('/')) return true;
+  const pluginId = providerName.split('/')[0] ?? '';
+  return allowedPlugins.includes(pluginId);
+}
+
+/**
  * Registry-aware LLM creation — used internally by `createAgentLoop` after
  * plugins have loaded. Falls through to the registry for each provider name,
  * so plugin-contributed providers participate in chained failover.
@@ -396,6 +412,7 @@ async function createLLMFromRegistry(
   registry: import('@ethosagent/types').LLMProviderRegistry,
   config: WiringConfig,
   log: Logger,
+  allowedPlugins?: string[],
 ): Promise<LLMProvider> {
   const secrets: import('@ethosagent/types').SecretsResolver = {
     get: async () => null,
@@ -411,6 +428,17 @@ async function createLLMFromRegistry(
     baseUrl?: string;
     apiVersion?: string;
   }): Promise<LLMProvider> => {
+    // §4.B trust gate: plugin-contributed providers (pluginId/name) require
+    // the plugin to be in the personality's allowed-plugins list.
+    if (!isProviderAllowed(cfg.provider, allowedPlugins)) {
+      const pluginId = cfg.provider.split('/')[0] ?? '';
+      throw new Error(
+        `LLM provider "${cfg.provider}" is from plugin "${pluginId}" which is not in ` +
+          `the personality's allowed plugins list. Add "${pluginId}" to personality.plugins ` +
+          `to use this provider.`,
+      );
+    }
+
     const factory = registry.get(cfg.provider);
     if (!factory) {
       throw new Error(
@@ -568,7 +596,12 @@ export async function createAgentLoop(
   // available for config-level selection.
   // -------------------------------------------------------------------------
 
-  const llm = await createLLMFromRegistry(infra.llmProviders, config, log);
+  const llm = await createLLMFromRegistry(
+    infra.llmProviders,
+    config,
+    log,
+    infra.activePerson.plugins,
+  );
 
   // -------------------------------------------------------------------------
   // Final assembly: memory, vision, improvement fork, safety, AgentLoop.
@@ -657,3 +690,9 @@ export {
   type ResolveExecutionPostureInput,
   resolveExecutionPosture,
 } from './resolve-execution-posture';
+
+// ---------------------------------------------------------------------------
+// OAuth service factory
+// ---------------------------------------------------------------------------
+
+export { createOAuthService } from './oauth-factory';

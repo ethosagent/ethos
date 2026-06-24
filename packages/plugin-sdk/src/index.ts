@@ -218,6 +218,10 @@ export interface EthosPluginApi {
 
   /** Register an OAuth config for this plugin (v2.2 implementation). */
   registerOAuth(config: OAuthConfig): void;
+  /** Register an OAuth provider profile (v2.3). */
+  registerOAuthProfile(profile: import('@ethosagent/oauth-core').OAuthProviderProfile): void;
+  /** Register a custom OAuth flow provider (v2.3). */
+  registerCustomOAuthFlow(provider: import('@ethosagent/oauth-core').CustomFlowProvider): void;
 
   /** Return the host's base URL, if configured. */
   getBaseUrl(): string | undefined;
@@ -313,6 +317,9 @@ export interface PluginRegistries {
   /** v2 — OAuth coordinator. When present, plugins can register OAuth
    *  configs and the host will drive the auth flow. */
   oauthCoordinator?: OAuthCoordinator;
+  /** v2.3 — OAuth provider registry. When present, plugins can register
+   *  provider profiles and custom flows. */
+  oauthRegistry?: import('@ethosagent/oauth-core').OAuthRegistry;
   /** v2 — Host base URL for building callback URLs, webhook endpoints, etc. */
   baseUrl?: string;
   /** v2.2 — Notification router for monitor → surface delivery. */
@@ -581,6 +588,24 @@ export class PluginApiImpl implements EthosPluginApi {
 
   registerOAuth(config: OAuthConfig): void {
     this.oauthConfig = config;
+  }
+
+  registerOAuthProfile(profile: import('@ethosagent/oauth-core').OAuthProviderProfile): void {
+    if (!this.registries.oauthRegistry) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerOAuthProfile but the host wiring did not expose an OAuthRegistry.`,
+      );
+    }
+    this.registries.oauthRegistry.registerProfile(profile);
+  }
+
+  registerCustomOAuthFlow(provider: import('@ethosagent/oauth-core').CustomFlowProvider): void {
+    if (!this.registries.oauthRegistry) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerCustomOAuthFlow but the host wiring did not expose an OAuthRegistry.`,
+      );
+    }
+    this.registries.oauthRegistry.registerCustomFlow(provider);
   }
 
   getBaseUrl(): string | undefined {

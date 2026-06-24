@@ -47,6 +47,8 @@
     "@ethosagent/llm-openai-compat": "workspace:*",
     "@ethosagent/memory-markdown": "workspace:*",
     "@ethosagent/memory-vector": "workspace:*",
+    "@ethosagent/oauth": "workspace:*",
+    "@ethosagent/oauth-core": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
     "@ethosagent/platform-discord": "workspace:*",
     "@ethosagent/platform-email": "workspace:*",
