@@ -28,6 +28,12 @@ describe('first-party plugin activation', () => {
     const { activate: activateCodex, PROVIDER_CONTRACT_MAJOR: cc } = await import(
       '@ethosagent/llm-codex'
     );
+    const { activate: activateBedrock, PROVIDER_CONTRACT_MAJOR: bc } = await import(
+      '@ethosagent/llm-bedrock'
+    );
+    const { activate: activateGeminiNative, PROVIDER_CONTRACT_MAJOR: gc } = await import(
+      '@ethosagent/llm-gemini-native'
+    );
 
     // Path A: direct registration (standalone createLLM)
     const directRegistry = new DefaultLLMProviderRegistry();
@@ -57,6 +63,16 @@ describe('first-party plugin activation', () => {
           id: '@ethosagent/llm-codex',
           activate: activateCodex,
           contractMajor: cc,
+        },
+        {
+          id: '@ethosagent/llm-bedrock',
+          activate: activateBedrock,
+          contractMajor: bc,
+        },
+        {
+          id: '@ethosagent/llm-gemini-native',
+          activate: activateGeminiNative,
+          contractMajor: gc,
         },
       ],
       pluginRegistry,

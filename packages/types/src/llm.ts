@@ -144,6 +144,7 @@ export type LLMProviderFactory = (
 
 export interface LLMProviderRegistry {
   register(name: string, factory: LLMProviderFactory): void;
+  unregister(name: string): void;
   get(name: string): LLMProviderFactory | undefined;
   list(): string[];
 }

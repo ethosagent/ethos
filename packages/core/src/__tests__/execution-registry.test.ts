@@ -72,6 +72,18 @@ describe('DefaultExecutionBackendRegistry', () => {
     expect(reg.get('a')).toBeUndefined();
   });
 
+  it('unregister removes the factory; re-register does not throw; idempotent on absent', async () => {
+    const reg = new DefaultExecutionBackendRegistry();
+    reg.register('a', () => fakeBackend('a'));
+    await reg.resolve('a', ctx);
+    expect(reg.get('a')).toBeDefined();
+    reg.unregister('a');
+    expect(reg.get('a')).toBeUndefined();
+    expect(reg.list()).not.toContain('a');
+    expect(() => reg.register('a', () => fakeBackend('a'))).not.toThrow();
+    expect(() => reg.unregister('does-not-exist')).not.toThrow();
+  });
+
   it('resolving twice returns the same cached instance and does not re-invoke the factory', async () => {
     const reg = new DefaultExecutionBackendRegistry();
     let calls = 0;

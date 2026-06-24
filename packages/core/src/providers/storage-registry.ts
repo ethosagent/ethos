@@ -17,6 +17,11 @@ export class DefaultStorageRegistry implements StorageRegistry {
     this.factories.set(name, factory);
   }
 
+  unregister(name: string): void {
+    this.factories.delete(name);
+    this.instances.delete(name);
+  }
+
   async resolve(
     name: string,
     ctx: { config: Record<string, unknown>; secrets: SecretsResolver; logger: Logger },

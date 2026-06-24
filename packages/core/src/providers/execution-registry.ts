@@ -26,6 +26,11 @@ export class DefaultExecutionBackendRegistry implements ExecutionBackendRegistry
     this.factories.set(name, factory);
   }
 
+  unregister(name: string): void {
+    this.factories.delete(name);
+    this.instances.delete(name);
+  }
+
   async resolve(
     name: string,
     ctx: { config: ExecutionBackendConfig; secrets: SecretsResolver; logger: Logger },

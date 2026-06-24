@@ -85,6 +85,7 @@ export type MemoryProviderFactory = (
 
 export interface MemoryProviderRegistry {
   register(name: string, factory: MemoryProviderFactory): void;
+  unregister(name: string): void;
   get(name: string): MemoryProviderFactory | undefined;
   list(): string[];
 }

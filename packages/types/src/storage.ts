@@ -156,6 +156,7 @@ export type StorageFactory = (ctx: {
 
 export interface StorageRegistry {
   register(name: string, factory: StorageFactory): void;
+  unregister(name: string): void;
   resolve(
     name: string,
     ctx: {

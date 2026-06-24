@@ -11,9 +11,11 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts"
+    "build": "tsup src/index.ts --format esm --dts",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@ethosagent/plugin-sdk": "workspace:*",
     "@ethosagent/types": "workspace:*"
   }
 }

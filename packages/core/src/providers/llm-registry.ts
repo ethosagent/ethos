@@ -10,6 +10,10 @@ export class DefaultLLMProviderRegistry implements LLMProviderRegistry {
     this.factories.set(name, factory);
   }
 
+  unregister(name: string): void {
+    this.factories.delete(name);
+  }
+
   get(name: string): LLMProviderFactory | undefined {
     return this.factories.get(name);
   }

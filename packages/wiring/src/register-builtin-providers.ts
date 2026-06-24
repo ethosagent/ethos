@@ -1,7 +1,9 @@
 import { validateUrl } from '@ethosagent/core';
 import { anthropicFactory } from '@ethosagent/llm-anthropic';
 import { azureFactory } from '@ethosagent/llm-azure';
+import { bedrockFactory } from '@ethosagent/llm-bedrock';
 import { codexFactory } from '@ethosagent/llm-codex';
+import { geminiNativeFactory } from '@ethosagent/llm-gemini-native';
 import { OPENAI_COMPAT_ALIASES, openaiCompatFactory } from '@ethosagent/llm-openai-compat';
 import type {
   ConfigOnlyProviderManifest,
@@ -48,8 +50,17 @@ export function registerBuiltinProviders(registry: LLMProviderRegistry): void {
     registry.register(id, validatedOpenaiCompat);
   }
 
-  // --- Not-yet-migrated providers -------------------------------------------
-  registerDynamicProviders(registry);
+  // --- Migrated providers without an activate-path in createLLM ----------
+  registry.register('bedrock', bedrockFactory);
+
+  // Gemini-native: wrap with SSRF gate (has configurable baseUrl)
+  const validatedGeminiNative: LLMProviderFactory = async (ctx) => {
+    if (ctx.config.baseUrl) {
+      validateUrl(ctx.config.baseUrl as string, { allowLocalhost: true });
+    }
+    return geminiNativeFactory(ctx);
+  };
+  registry.register('gemini-native', validatedGeminiNative);
 
   // Config-only providers from built-in manifests
   for (const manifest of BUILTIN_CONFIG_PROVIDERS) {
@@ -63,49 +74,9 @@ export function registerBuiltinProviders(registry: LLMProviderRegistry): void {
  * the four migrated providers (anthropic, openai-compat, azure, codex).
  */
 export function registerRemainingBuiltinProviders(registry: LLMProviderRegistry): void {
-  registerDynamicProviders(registry);
-
   for (const manifest of BUILTIN_CONFIG_PROVIDERS) {
     registerConfigOnlyProvider(registry, manifest);
   }
-}
-
-/**
- * Bedrock + gemini-native — dynamically imported, not yet migrated to plugin SDK.
- */
-function registerDynamicProviders(registry: LLMProviderRegistry): void {
-  registry.register('bedrock', async ({ config: cfg, secrets }) => {
-    const { BedrockProvider } = await import('@ethosagent/llm-bedrock');
-    const region = (cfg.region as string) ?? 'us-east-1';
-    const accessKeyId =
-      (await secrets.get('providers/bedrock/accessKeyId')) ?? (cfg.accessKeyId as string);
-    const secretAccessKey =
-      (await secrets.get('providers/bedrock/secretAccessKey')) ?? (cfg.secretAccessKey as string);
-    const sessionToken =
-      (await secrets.get('providers/bedrock/sessionToken')) ??
-      (cfg.sessionToken as string | undefined);
-    if (!accessKeyId || !secretAccessKey) {
-      throw new Error('Bedrock provider requires accessKeyId and secretAccessKey credentials');
-    }
-    return new BedrockProvider({
-      region,
-      modelId: cfg.model as string,
-      sigv4: { region, accessKeyId, secretAccessKey, sessionToken },
-    });
-  });
-
-  registry.register('gemini-native', async ({ config: cfg, secrets }) => {
-    const { GeminiNativeProvider } = await import('@ethosagent/llm-gemini-native');
-    const apiKey = (await secrets.get('providers/gemini-native/apiKey')) ?? (cfg.apiKey as string);
-    if (!apiKey) {
-      throw new Error('Gemini native provider requires an API key');
-    }
-    return new GeminiNativeProvider({
-      apiKey,
-      model: cfg.model as string,
-      baseUrl: cfg.baseUrl as string | undefined,
-    });
-  });
 }
 
 export function registerConfigOnlyProvider(
