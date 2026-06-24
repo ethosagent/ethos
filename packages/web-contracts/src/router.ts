@@ -1758,13 +1758,6 @@ const GoalCancelOutput = z.object({ ok: z.boolean() });
 const GoalResumeInput = z.object({ id: z.string().min(1) });
 const GoalResumeOutput = z.object({ ok: z.boolean() });
 
-const GoalClassifyInput = z.object({ message: z.string().min(1) });
-const GoalClassifyOutput = z.object({
-  isGoal: z.boolean(),
-  confidence: z.number(),
-  restatedGoal: z.string().optional(),
-});
-
 const GoalCreateInput = z.object({
   personalityId: z.string().min(1),
   goalText: z.string().min(1),
@@ -1803,7 +1796,6 @@ const goals = {
   steer: oc.input(GoalSteerInput).output(GoalSteerOutput),
   cancel: oc.input(GoalCancelInput).output(GoalCancelOutput),
   resume: oc.input(GoalResumeInput).output(GoalResumeOutput),
-  classify: oc.input(GoalClassifyInput).output(GoalClassifyOutput),
   create: oc.input(GoalCreateInput).output(GoalCreateOutput),
   toolResult: oc.input(GoalToolResultInput).output(GoalToolResultOutput),
 };
