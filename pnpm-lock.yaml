@@ -901,6 +901,9 @@ importers:
 
   extensions/llm-bedrock:
     dependencies:
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -919,6 +922,9 @@ importers:
 
   extensions/llm-gemini:
     dependencies:
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

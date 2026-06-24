@@ -29,9 +29,17 @@ import {
   activate as activateAzure,
 } from '@ethosagent/llm-azure';
 import {
+  activate as activateBedrock,
+  PROVIDER_CONTRACT_MAJOR as BEDROCK_CONTRACT,
+} from '@ethosagent/llm-bedrock';
+import {
   activate as activateCodex,
   PROVIDER_CONTRACT_MAJOR as CODEX_CONTRACT,
 } from '@ethosagent/llm-codex';
+import {
+  activate as activateGeminiNative,
+  PROVIDER_CONTRACT_MAJOR as GEMINI_NATIVE_CONTRACT,
+} from '@ethosagent/llm-gemini-native';
 import {
   activate as activateOpenaiCompat,
   PROVIDER_CONTRACT_MAJOR as OPENAI_COMPAT_CONTRACT,
@@ -132,6 +140,16 @@ export async function buildInfrastructure(
         id: '@ethosagent/llm-codex',
         activate: activateCodex,
         contractMajor: CODEX_CONTRACT,
+      },
+      {
+        id: '@ethosagent/llm-bedrock',
+        activate: activateBedrock,
+        contractMajor: BEDROCK_CONTRACT,
+      },
+      {
+        id: '@ethosagent/llm-gemini-native',
+        activate: activateGeminiNative,
+        contractMajor: GEMINI_NATIVE_CONTRACT,
       },
     ],
     llmProviders,

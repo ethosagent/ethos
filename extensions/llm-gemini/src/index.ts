@@ -71,3 +71,27 @@ export class GeminiNativeProvider implements LLMProvider {
     return 0;
   }
 }
+
+// ---------------------------------------------------------------------------
+// First-party plugin activation
+// ---------------------------------------------------------------------------
+
+import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk';
+
+export const PROVIDER_CONTRACT_MAJOR = 2;
+
+export const geminiNativeFactory: LLMProviderFactory = async ({ config: cfg, secrets }) => {
+  const apiKey = (await secrets.get('providers/gemini-native/apiKey')) ?? (cfg.apiKey as string);
+  if (!apiKey) {
+    throw new Error('Gemini native provider requires an API key');
+  }
+  return new GeminiNativeProvider({
+    apiKey,
+    model: cfg.model as string,
+    baseUrl: cfg.baseUrl as string | undefined,
+  });
+};
+
+export function activate(api: EthosPluginApi): void {
+  api.registerLLMProvider('gemini-native', geminiNativeFactory);
+}
