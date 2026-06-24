@@ -6,7 +6,6 @@ describe('createOAuthService', () => {
   it('creates service with plaintext storage when no passphrase', () => {
     const storage = new InMemoryStorage();
     const { service, registry } = createOAuthService({
-      personalityId: 'test',
       storage,
     });
     expect(service).toBeDefined();
@@ -16,7 +15,6 @@ describe('createOAuthService', () => {
   it('creates service with encrypted storage when passphrase provided', () => {
     const storage = new InMemoryStorage();
     const { service, registry } = createOAuthService({
-      personalityId: 'test',
       storage,
       passphrase: 'test-key',
     });

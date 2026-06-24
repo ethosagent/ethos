@@ -12,11 +12,10 @@ import type { Storage } from '@ethosagent/types';
  * NOTE: enabling encryption on an existing installation will invalidate
  * previously-stored plaintext tokens. Users must re-authorize.
  */
-export function createOAuthService(opts: {
-  personalityId: string;
-  storage: Storage;
-  passphrase?: string;
-}): { service: DefaultOAuthService; registry: DefaultOAuthRegistry } {
+export function createOAuthService(opts: { storage: Storage; passphrase?: string }): {
+  service: DefaultOAuthService;
+  registry: DefaultOAuthRegistry;
+} {
   const tokenStorage = opts.passphrase
     ? createCryptoStorage(opts.storage, opts.passphrase)
     : opts.storage;

@@ -439,5 +439,6 @@ export async function buildAgentLoop(
     notificationRouter,
     pluginLoader,
     goalRunner,
+    activePersonality: activePerson,
   };
 }

@@ -554,8 +554,11 @@ export class Gateway {
       for (const [name, factory] of config.pluginAdapters) {
         // Default-deny: only start trusted channel plugins when the allowlist is set.
         // When trustedChannelPlugins is undefined, all plugins are allowed (backward compat).
-        if (config.trustedChannelPlugins && !config.trustedChannelPlugins.has(name)) {
-          continue;
+        if (config.trustedChannelPlugins) {
+          const pluginId = name.includes('/') ? (name.split('/')[0] ?? '') : name;
+          if (!config.trustedChannelPlugins.has(pluginId)) {
+            continue;
+          }
         }
         const adapter = factory({});
         const adapterBotKey = deriveBotKey(name);

@@ -488,7 +488,14 @@ export class PluginApiImpl implements EthosPluginApi {
         `Plugin "${this.pluginId}" called registerPlatformAdapter but the host wiring did not expose an adapter registry.`,
       );
     }
-    this.registries.platformAdapters.set(name, factory);
+    const qualifiedName = name.includes('/') ? name : `${this.pluginId}/${name}`;
+    if (name.includes('/') && !name.startsWith(`${this.pluginId}/`)) {
+      throw new Error(
+        `Plugin "${this.pluginId}" cannot register platform adapter "${name}": ` +
+          `namespaced names must start with the plugin id ("${this.pluginId}/").`,
+      );
+    }
+    this.registries.platformAdapters.set(qualifiedName, factory);
   }
 
   // ---- Credential methods ------------------------------------------------

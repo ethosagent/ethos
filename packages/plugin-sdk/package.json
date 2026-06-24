@@ -32,5 +32,8 @@
   "dependencies": {
     "@ethosagent/core": "workspace:*",
     "@ethosagent/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@ethosagent/oauth-core": "workspace:*"
   }
 }

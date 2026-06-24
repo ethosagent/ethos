@@ -419,20 +419,15 @@ export async function runGatewayStart(): Promise<void> {
     setMessagingSend: setSystemMessagingSend,
     pluginLoader,
     notificationRouter: systemNotificationRouter,
+    activePersonality,
   } = await createAgentLoop(config, { cronScheduler: scheduler });
   systemLoop = systemLoopReady;
 
   // Resolve the active personality's plugin allowlist for the trust gate.
   // If the personality declares `plugins:`, only those are trusted; if it
-  // doesn't (or the personality can't be loaded), all plugins are allowed
-  // (backward compat — trustedChannelPlugins stays undefined).
-  const personalityPluginRegistry = await createPersonalityRegistry({
-    storage,
-    userPersonalitiesDir: join(ethosDir(), 'personalities'),
-  });
-  await personalityPluginRegistry.loadFromDirectory(join(ethosDir(), 'personalities'));
-  const activePersonality = personalityPluginRegistry.get(config.personality);
-  const trustedChannelPlugins = activePersonality?.plugins?.length
+  // doesn't, all plugins are allowed (backward compat — trustedChannelPlugins
+  // stays undefined).
+  const trustedChannelPlugins = activePersonality?.plugins
     ? new Set(activePersonality.plugins)
     : undefined;
 

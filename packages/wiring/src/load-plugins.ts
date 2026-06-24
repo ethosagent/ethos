@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { DefaultNotificationRouter } from '@ethosagent/core';
+import { DefaultOAuthRegistry } from '@ethosagent/oauth';
 import { PluginLoader } from '@ethosagent/plugin-loader';
 import {
   DiagnosticStore,
@@ -112,6 +113,7 @@ export async function loadPlugins(
     routes: pluginRoutes,
     eventBus: pluginEventBus,
     oauthCoordinator,
+    oauthRegistry: new DefaultOAuthRegistry(),
     notificationRouter,
     diagnostics: pluginDiagnostics,
     // v2.2 — baseUrl provided by host at runtime (Desktop/Web-API set this;

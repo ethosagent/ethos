@@ -892,6 +892,9 @@ importers:
 
   extensions/llm-codex:
     dependencies:
+      '@ethosagent/oauth-core':
+        specifier: workspace:*
+        version: link:../../packages/oauth-core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1527,6 +1530,10 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types
+    devDependencies:
+      '@ethosagent/oauth-core':
+        specifier: workspace:*
+        version: link:../oauth-core
 
   packages/safety/channel:
     dependencies:
@@ -1676,6 +1683,12 @@ importers:
       '@ethosagent/memory-vector':
         specifier: workspace:*
         version: link:../../extensions/memory-vector
+      '@ethosagent/oauth':
+        specifier: workspace:*
+        version: link:../../extensions/oauth
+      '@ethosagent/oauth-core':
+        specifier: workspace:*
+        version: link:../oauth-core
       '@ethosagent/observability-sqlite':
         specifier: workspace:*
         version: link:../../extensions/observability-sqlite

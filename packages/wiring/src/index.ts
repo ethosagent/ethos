@@ -546,6 +546,9 @@ export interface CreateAgentLoopResult {
   /** Loop-bearing goal runner — always present (backed by the shared goals.db).
    *  Shared with the web-api GoalsService so web-created goals execute on the same runner+store. */
   goalRunner: GoalRunner;
+  /** The resolved active personality for this loop. Exposed so gateway.ts can
+   *  read the plugins allowlist without duplicating the personality load. */
+  activePersonality: import('@ethosagent/types').PersonalityConfig;
 }
 
 export async function createAgentLoop(

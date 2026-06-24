@@ -62,7 +62,7 @@ function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
 function makeBots(loop: ReturnType<typeof stubLoop>, botKey?: string) {
   return [
     {
-      botKey: botKey ?? deriveBotKey('my-channel'),
+      botKey: botKey ?? deriveBotKey('test-plugin/my-channel'),
       loop: loop as unknown as AgentLoop,
       binding: { type: 'personality' as const, name: 'default' },
     },
@@ -80,7 +80,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
     const loop = stubLoop();
     const gw = new Gateway({
       bots: makeBots(loop),
-      pluginAdapters: new Map([['my-channel', factory]]),
+      pluginAdapters: new Map([['test-plugin/my-channel', factory]]),
       clarifySweepIntervalMs: 0,
     });
 
@@ -91,7 +91,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
     expect(pluginAdapter.start).not.toHaveBeenCalled();
 
     // Adapter registered for outbound sends
-    const result = await gw.sendTo('my-channel', 'some-chat', 'hello');
+    const result = await gw.sendTo('test-plugin/my-channel', 'some-chat', 'hello');
     expect(result.ok).toBe(true);
     expect(pluginAdapter.send).toHaveBeenCalledWith(
       'some-chat',
@@ -106,7 +106,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
     const loop = stubLoop();
     new Gateway({
       bots: makeBots(loop),
-      pluginAdapters: new Map([['legacy-channel', factory]]),
+      pluginAdapters: new Map([['test-plugin/legacy-channel', factory]]),
       clarifySweepIntervalMs: 0,
     });
 
@@ -123,7 +123,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
     });
     const factory: PlatformAdapterFactory = vi.fn(() => pluginAdapter);
 
-    const botKey = deriveBotKey('my-channel');
+    const botKey = deriveBotKey('test-plugin/my-channel');
     const loop = stubLoop();
     new Gateway({
       bots: [
@@ -133,7 +133,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
           binding: { type: 'personality' as const, name: 'default' },
         },
       ],
-      pluginAdapters: new Map([['my-channel', factory]]),
+      pluginAdapters: new Map([['test-plugin/my-channel', factory]]),
       clarifySweepIntervalMs: 0,
     });
 
@@ -159,7 +159,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
     });
     const factory: PlatformAdapterFactory = vi.fn(() => pluginAdapter);
 
-    const botKey = deriveBotKey('my-channel');
+    const botKey = deriveBotKey('test-plugin/my-channel');
     const loop = stubLoop();
     new Gateway({
       bots: [
@@ -169,7 +169,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
           binding: { type: 'personality' as const, name: 'default' },
         },
       ],
-      pluginAdapters: new Map([['my-channel', factory]]),
+      pluginAdapters: new Map([['test-plugin/my-channel', factory]]),
       clarifySweepIntervalMs: 0,
     });
 
@@ -216,7 +216,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
     const loop = stubLoop();
     new Gateway({
       bots: makeBots(loop),
-      pluginAdapters: new Map([['untrusted-channel', factory]]),
+      pluginAdapters: new Map([['untrusted-plugin/untrusted-channel', factory]]),
       trustedChannelPlugins: new Set(['some-other-plugin']),
       clarifySweepIntervalMs: 0,
     });
@@ -232,7 +232,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
     const loop = stubLoop();
     new Gateway({
       bots: makeBots(loop),
-      pluginAdapters: new Map([['any-channel', factory]]),
+      pluginAdapters: new Map([['test-plugin/any-channel', factory]]),
       // trustedChannelPlugins NOT set — all plugins allowed
       clarifySweepIntervalMs: 0,
     });

@@ -62,7 +62,7 @@ function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
 function makeBots(loop: ReturnType<typeof stubLoop>, botKey?: string) {
   return [
     {
-      botKey: botKey ?? deriveBotKey('my-channel'),
+      botKey: botKey ?? deriveBotKey('test-plugin/my-channel'),
       loop: loop as unknown as AgentLoop,
       binding: { type: 'personality' as const, name: 'default' },
     },
@@ -82,7 +82,7 @@ describe('Channel SDK conformance (§4.A)', () => {
     const factory: PlatformAdapterFactory = vi.fn(() => pluginAdapter);
 
     // 2. Pass it as pluginAdapters to new Gateway()
-    const botKey = deriveBotKey('rehomed-telegram');
+    const botKey = deriveBotKey('test-plugin/rehomed-telegram');
     const loop = stubLoop();
     const _gw = new Gateway({
       bots: [
@@ -92,7 +92,7 @@ describe('Channel SDK conformance (§4.A)', () => {
           binding: { type: 'personality' as const, name: 'default' },
         },
       ],
-      pluginAdapters: new Map([['rehomed-telegram', factory]]),
+      pluginAdapters: new Map([['test-plugin/rehomed-telegram', factory]]),
       clarifySweepIntervalMs: 0,
     });
 
@@ -121,7 +121,7 @@ describe('Channel SDK conformance (§4.A)', () => {
     const loop = stubLoop();
     new Gateway({
       bots: makeBots(loop),
-      pluginAdapters: new Map([['gated-channel', factory]]),
+      pluginAdapters: new Map([['gated-plugin/gated-channel', factory]]),
       trustedChannelPlugins: new Set(['other-plugin']),
       clarifySweepIntervalMs: 0,
     });
@@ -143,7 +143,7 @@ describe('Channel SDK conformance (§4.A)', () => {
     });
     const factory: PlatformAdapterFactory = vi.fn(() => pluginAdapter);
 
-    const defaultBotKey = deriveBotKey('fallback-channel');
+    const defaultBotKey = deriveBotKey('test-plugin/fallback-channel');
     const loop = stubLoop();
     new Gateway({
       bots: [
@@ -153,7 +153,7 @@ describe('Channel SDK conformance (§4.A)', () => {
           binding: { type: 'personality' as const, name: 'default' },
         },
       ],
-      pluginAdapters: new Map([['fallback-channel', factory]]),
+      pluginAdapters: new Map([['test-plugin/fallback-channel', factory]]),
       clarifySweepIntervalMs: 0,
     });
 
