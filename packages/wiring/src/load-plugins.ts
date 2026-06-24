@@ -47,6 +47,8 @@ export interface LoadPluginsDeps {
   personalities: InfrastructureResult['personalities'];
   llmProviders: LLMProviderRegistry;
   memoryProviders: MemoryProviderRegistry;
+  storageBackends?: import('@ethosagent/types').StorageRegistry;
+  executionBackends?: import('@ethosagent/types').ExecutionBackendRegistry;
   activePerson: PersonalityConfig;
   skillScanner: UniversalScanner;
   skillPool: Map<string, Skill>;
@@ -108,6 +110,8 @@ export async function loadPlugins(
     contextEngines,
     llmProviders,
     memoryProviders,
+    storageBackends: deps.storageBackends,
+    executionBackends: deps.executionBackends,
     filters: pluginFilters,
     evaluators: pluginEvaluators,
     routes: pluginRoutes,

@@ -1,5 +1,6 @@
 import type { Constitution } from './constitution';
 import type { PersonalityConfig } from './personality';
+import type { SandboxAttestation } from './sandbox';
 
 export type ExecChunk =
   | { stream: 'stdout' | 'stderr'; data: string }
@@ -136,6 +137,11 @@ export interface ExecutionBackend {
   spawnSession(personalityId: string): ExecSession;
   mountsFor(p: PersonalityConfig): MountSpec[];
   dispose(): Promise<void>;
+  /** Return this backend's sandbox capability attestation.
+   *  Optional — backends that don't implement it are treated as "no attestation"
+   *  (classifier stays on). The framework keys the classifier-skip on
+   *  `isStrictAttestation(attest())`, NEVER the backend name string (S2). */
+  attest?(): SandboxAttestation;
 }
 
 export interface ExecutionBackendConfig {

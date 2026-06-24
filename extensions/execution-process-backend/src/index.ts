@@ -1,37 +1,18 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import type { EthosPlugin, EthosPluginApi, ExecutionBackendFactory } from '@ethosagent/plugin-sdk';
 import type {
   ExecChunk,
   ExecOpts,
   ExecSession,
   ExecutionBackend,
-  ExecutionBackendConfig,
-  Logger,
   MountSpec,
   PersonalityConfig,
   SandboxAttestation,
-  SecretsResolver,
 } from '@ethosagent/types';
-
-export class ExecAbortedError extends Error {
-  readonly code = 'EXEC_ABORTED';
-  constructor(message = 'Execution aborted') {
-    super(message);
-    this.name = 'ExecAbortedError';
-  }
-}
-
-export class ExecTimeoutError extends Error {
-  readonly code = 'EXEC_TIMEOUT';
-  constructor(message = 'Execution timed out') {
-    super(message);
-    this.name = 'ExecTimeoutError';
-  }
-}
 
 /**
  * Queue-backed async generator that streams interleaved stdout/stderr chunks
- * from a spawned child process. Self-contained per backend (duplicated, not
- * shared) so each execution package has zero cross-package coupling.
+ * from a spawned child process.
  */
 async function* streamChild(child: ChildProcess, opts: ExecOpts): AsyncIterable<ExecChunk> {
   const chunks: ExecChunk[] = [];
@@ -61,7 +42,7 @@ async function* streamChild(child: ChildProcess, opts: ExecOpts): AsyncIterable<
 
   const timeoutMs = opts.timeoutMs ?? 30000;
   const timer = setTimeout(() => {
-    error = new ExecTimeoutError();
+    error = new Error('Execution timed out');
     child.kill();
     done = true;
     resolveNext?.();
@@ -70,13 +51,13 @@ async function* streamChild(child: ChildProcess, opts: ExecOpts): AsyncIterable<
   const signal = opts.signal;
   if (signal) {
     if (signal.aborted) {
-      error = new ExecAbortedError();
+      error = new Error('Execution aborted');
       done = true;
     } else {
       signal.addEventListener(
         'abort',
         () => {
-          error = new ExecAbortedError();
+          error = new Error('Execution aborted');
           child.kill();
           done = true;
           resolveNext?.();
@@ -101,8 +82,6 @@ async function* streamChild(child: ChildProcess, opts: ExecOpts): AsyncIterable<
           const c = chunks.shift();
           if (c) yield c;
         }
-        // Terminal exit chunk (Lane C2). `null` (killed by signal with no code)
-        // maps to -1 so a non-zero exit is always observable downstream.
         yield { stream: 'exit', code: exitCode ?? -1 };
         break;
       }
@@ -115,47 +94,49 @@ async function* streamChild(child: ChildProcess, opts: ExecOpts): AsyncIterable<
   }
 }
 
-function spawnLocal(cmd: string, opts: ExecOpts): ChildProcess {
-  return spawn('bash', ['-c', cmd], {
-    cwd: opts.cwd,
-    env: { ...process.env, ...opts.env },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-}
+/**
+ * Process execution backend — spawns child processes directly on the host.
+ * NOT sandboxed. Honest attestation: all confinement booleans are false except
+ * noDockerSocket (no docker socket is involved in process spawning).
+ *
+ * This is a reference plugin backend that proves the ExecutionBackend plugin
+ * seam works end-to-end via `registerExecutionBackend`.
+ */
+class ProcessExecutionBackend implements ExecutionBackend {
+  readonly name: string;
 
-export class LocalExecutionBackend implements ExecutionBackend {
-  readonly name = 'local';
-
-  // Constructor accepts (and ignores) ctx so the wiring factory
-  // `(ctx) => new LocalExecutionBackend(ctx)` typechecks against
-  // ExecutionBackendFactory. Local execution needs no config/secrets/logger.
-  // biome-ignore lint/complexity/noUselessConstructor: must accept ctx to satisfy the factory contract
-  constructor(_ctx: { config: ExecutionBackendConfig; secrets: SecretsResolver; logger: Logger }) {}
+  constructor(name: string) {
+    this.name = name;
+  }
 
   isAvailable(): Promise<boolean> {
     return Promise.resolve(true);
   }
 
   exec(cmd: string, opts: ExecOpts): AsyncIterable<ExecChunk> {
-    return streamChild(spawnLocal(cmd, opts), opts);
+    const child = spawn('bash', ['-c', cmd], {
+      cwd: opts.cwd,
+      env: { ...process.env, ...opts.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return streamChild(child, opts);
   }
 
   spawnSession(personalityId: string): ExecSession {
     return {
       personalityId,
-      exec: (cmd: string, opts: ExecOpts = {}) => streamChild(spawnLocal(cmd, opts), opts),
+      exec: (cmd: string, opts: ExecOpts = {}) => this.exec(cmd, opts),
       dispose: () => Promise.resolve(),
     };
   }
 
   mountsFor(_p: PersonalityConfig): MountSpec[] {
-    // Lane B (component d): real mount derivation
+    // Process backend runs on the host — no mount confinement.
     return [];
   }
 
   attest(): SandboxAttestation {
-    // Local execution is NOT sandboxed — all confinement booleans are false
-    // except noDockerSocket (the local backend doesn't mount docker.sock).
+    // Honest partial attestation — process execution is NOT sandboxed.
     return {
       readonlyRootFs: false,
       noHostMounts: false,
@@ -173,3 +154,19 @@ export class LocalExecutionBackend implements ExecutionBackend {
     return Promise.resolve();
   }
 }
+
+const factory: ExecutionBackendFactory = ({
+  config: _config,
+  secrets: _secrets,
+  logger: _logger,
+}) => {
+  return new ProcessExecutionBackend('process');
+};
+
+const plugin: EthosPlugin = {
+  activate(api: EthosPluginApi) {
+    api.registerExecutionBackend('process', factory);
+  },
+};
+
+export default plugin;

@@ -28,6 +28,7 @@ const srcAliases = {
   '@ethosagent/plugin-loader': resolve('./extensions/plugin-loader/src'),
   '@ethosagent/execution-local': resolve('./extensions/execution-local/src'),
   '@ethosagent/execution-docker': resolve('./extensions/execution-docker/src'),
+  '@ethosagent/execution-process-backend': resolve('./extensions/execution-process-backend/src'),
   '@ethosagent/execution-ssh': resolve('./extensions/execution-ssh/src'),
   '@ethosagent/oauth': resolve('./extensions/oauth/src'),
   '@ethosagent/oauth-core': resolve('./packages/oauth-core/src'),

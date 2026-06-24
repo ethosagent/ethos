@@ -12,6 +12,7 @@ import {
   DefaultHookRegistry,
   DefaultLLMProviderRegistry,
   DefaultMemoryProviderRegistry,
+  DefaultStorageRegistry,
   DefaultToolRegistry,
   DefaultToolResultReducerRegistry,
   FileClarifyStore,
@@ -37,6 +38,7 @@ import type {
   LLMProviderRegistry,
   MemoryProviderRegistry,
   PersonalityConfig,
+  StorageRegistry,
 } from '@ethosagent/types';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
 import { registerBuiltinProviders } from './register-builtin-providers';
@@ -46,6 +48,7 @@ export interface InfrastructureResult {
   llmProviders: LLMProviderRegistry;
   executionBackends: ExecutionBackendRegistry;
   memoryProviders: MemoryProviderRegistry;
+  storageBackends: StorageRegistry;
   personalities: PersonalityCompose['personalities'];
   activePerson: PersonalityConfig;
   sandbox: DockerSandbox;
@@ -110,6 +113,11 @@ export async function buildInfrastructure(
   memoryProviders.register('vector', ({ dataDir: dir }) => {
     return new VectorMemoryProvider({ dir });
   });
+
+  // Storage backend registry — built-ins registered here; plugins add more
+  // via registerStorage.
+  const storageBackends = new DefaultStorageRegistry();
+  storageBackends.register('fs', () => new FsStorage());
 
   // -------------------------------------------------------------------------
   // Personalities
@@ -196,7 +204,16 @@ export async function buildInfrastructure(
       }
       throw new Error(`Secret ${ref} not found`);
     },
-    storage: new FsStorage(),
+    storage: await storageBackends.resolve(config.storage?.backend ?? 'fs', {
+      config: config.storage ?? {},
+      secrets: config.secretsResolver ?? {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => {},
+        list: async () => [],
+      },
+      logger: log,
+    }),
     personalityFsReach: {
       read: effectiveActivePerson.fs_reach?.read ?? [],
       write: effectiveActivePerson.fs_reach?.write ?? [],
@@ -229,6 +246,7 @@ export async function buildInfrastructure(
     llmProviders,
     executionBackends,
     memoryProviders,
+    storageBackends,
     personalities,
     activePerson: effectiveActivePerson,
     sandbox,

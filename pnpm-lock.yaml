@@ -802,6 +802,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/execution-process-backend:
+    dependencies:
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/execution-ssh:
     dependencies:
       '@ethosagent/types':
@@ -1195,6 +1204,18 @@ importers:
       argon2:
         specifier: ^0.43.0
         version: 0.43.1
+
+  extensions/storage-memory-backend:
+    dependencies:
+      '@ethosagent/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
 
   extensions/team-supervisor:
     dependencies:

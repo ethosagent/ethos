@@ -5,6 +5,8 @@ import type {
   ContextEngineRegistry,
   ContextInjector,
   DiagnosticsEmitter,
+  ExecutionBackendFactory,
+  ExecutionBackendRegistry,
   HookRegistry,
   LLMProviderFactory,
   LLMProviderRegistry,
@@ -24,6 +26,8 @@ import type {
   PostTurnEvaluator,
   SlashCommandContext,
   Storage,
+  StorageFactory,
+  StorageRegistry,
   Tool,
   ToolInvocationFilter,
   ToolRegistry,
@@ -179,6 +183,15 @@ export interface EthosPluginApi {
    *  `memory.provider: <name>` in their config.yaml. */
   registerMemoryProvider(name: string, factory: MemoryProviderFactory): void;
 
+  /** Register a named storage backend factory. Deployments select it via
+   *  `config.storage.backend: <name>`. */
+  registerStorage(name: string, factory: StorageFactory): void;
+
+  /** Register a named execution backend factory. Personalities select it via
+   *  their `execution:` posture. HIGHEST-privilege class — runs model-directed
+   *  code. Subject to trusted-plugin allowlist in the wiring layer. */
+  registerExecutionBackend(name: string, factory: ExecutionBackendFactory): void;
+
   /** Register a platform adapter factory. Teams opt in via `channels:` block
    *  in their manifest. */
   registerPlatformAdapter(name: string, factory: PlatformAdapterFactory): void;
@@ -300,6 +313,8 @@ export interface PluginRegistries {
   /** Memory provider registry. Plugins contribute custom backends via
    *  `registerMemoryProvider`. Required in v2 hosts. */
   memoryProviders: MemoryProviderRegistry;
+  storageBackends?: StorageRegistry;
+  executionBackends?: ExecutionBackendRegistry;
   /** Platform adapter registry. Maps adapter names to factories. */
   platformAdapters?: Map<string, PlatformAdapterFactory>;
   /** v2 — Tool invocation filters. Plugins register filters that can
@@ -496,6 +511,38 @@ export class PluginApiImpl implements EthosPluginApi {
       );
     }
     this.registries.platformAdapters.set(qualifiedName, factory);
+  }
+
+  registerStorage(name: string, factory: StorageFactory): void {
+    if (!this.registries.storageBackends) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerStorage but the host wiring did not expose a StorageRegistry.`,
+      );
+    }
+    const qualifiedName = name.includes('/') ? name : `${this.pluginId}/${name}`;
+    if (name.includes('/') && !name.startsWith(`${this.pluginId}/`)) {
+      throw new Error(
+        `Plugin "${this.pluginId}" cannot register storage backend "${name}": ` +
+          `namespaced names must start with the plugin id ("${this.pluginId}/").`,
+      );
+    }
+    this.registries.storageBackends.register(qualifiedName, factory);
+  }
+
+  registerExecutionBackend(name: string, factory: ExecutionBackendFactory): void {
+    if (!this.registries.executionBackends) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerExecutionBackend but the host wiring did not expose an ExecutionBackendRegistry.`,
+      );
+    }
+    const qualifiedName = name.includes('/') ? name : `${this.pluginId}/${name}`;
+    if (name.includes('/') && !name.startsWith(`${this.pluginId}/`)) {
+      throw new Error(
+        `Plugin "${this.pluginId}" cannot register execution backend "${name}": ` +
+          `namespaced names must start with the plugin id ("${this.pluginId}/").`,
+      );
+    }
+    this.registries.executionBackends.register(qualifiedName, factory);
   }
 
   // ---- Credential methods ------------------------------------------------
@@ -1020,6 +1067,8 @@ export type {
   CommandDefinition,
   ContextInjector,
   DiagnosticsEmitter,
+  ExecutionBackendFactory,
+  ExecutionBackendRegistry,
   InjectionResult,
   LLMProviderFactory,
   LLMProviderFactoryContext,
@@ -1038,6 +1087,8 @@ export type {
   PromptContext,
   SlashCommandContext,
   Storage,
+  StorageFactory,
+  StorageRegistry,
   Tool,
   ToolContext,
   ToolInvocationFilter,

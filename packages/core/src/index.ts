@@ -43,6 +43,10 @@ export { makeTestToolContext } from './defaults/in-memory-tool-context';
 export { NoopMemoryProvider } from './defaults/noop-memory';
 export { DefaultPersonalityRegistry } from './defaults/noop-personality';
 export { redactArgs, synthesizeDryRunCapResult, synthesizeDryRunResult } from './dry-run';
+export {
+  type ExecutionConformanceResult,
+  runExecutionConformance,
+} from './execution/conformance';
 export type { SessionLifecycleEvent, SessionManagerOptions } from './execution/session-manager';
 export { SessionManager } from './execution/session-manager';
 export { DefaultHookRegistry } from './hook-registry';
@@ -64,6 +68,7 @@ export { ChainedProvider } from './providers/chained-provider';
 export { DefaultExecutionBackendRegistry } from './providers/execution-registry';
 export { DefaultLLMProviderRegistry } from './providers/llm-registry';
 export { DefaultMemoryProviderRegistry } from './providers/memory-registry';
+export { DefaultStorageRegistry } from './providers/storage-registry';
 export { InMemoryRequestDumpStore } from './request-dump-store';
 export { stripAnsiEscapes } from './sanitize-output';
 export type { SafeFetchFn, SecretsBackend } from './scoped';

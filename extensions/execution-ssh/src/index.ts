@@ -8,6 +8,7 @@ import type {
   Logger,
   MountSpec,
   PersonalityConfig,
+  SandboxAttestation,
   SecretsResolver,
 } from '@ethosagent/types';
 
@@ -179,6 +180,24 @@ export class SshExecutionBackend implements ExecutionBackend {
     // ssh "mounts" are remote paths, NOT mount-confined. Lane B may revisit;
     // this backend is not part of the Phase-2a containment claim (review A3).
     return [];
+  }
+
+  attest(): SandboxAttestation {
+    // SSH is remote-host trust, NOT mount-confined (review A3).
+    // Commands run on a remote host's real filesystem with no per-personality
+    // mount allowlist. Only noDockerSocket is true — the remote host's docker
+    // socket is not mounted via SSH.
+    return {
+      readonlyRootFs: false,
+      noHostMounts: false,
+      egressControlled: false,
+      noDockerSocket: true,
+      nonRoot: false,
+      noPrivileged: false,
+      noCapAdd: false,
+      capDropAll: false,
+      noNewPrivs: false,
+    };
   }
 
   dispose(): Promise<void> {

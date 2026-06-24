@@ -147,3 +147,23 @@ export class BoundaryError extends Error {
     this.path = path;
   }
 }
+
+export type StorageFactory = (ctx: {
+  config: Record<string, unknown>;
+  secrets: import('./secrets').SecretsResolver;
+  logger: import('./logger').Logger;
+}) => Storage | Promise<Storage>;
+
+export interface StorageRegistry {
+  register(name: string, factory: StorageFactory): void;
+  resolve(
+    name: string,
+    ctx: {
+      config: Record<string, unknown>;
+      secrets: import('./secrets').SecretsResolver;
+      logger: import('./logger').Logger;
+    },
+  ): Promise<Storage>;
+  get(name: string): Storage | undefined;
+  list(): string[];
+}

@@ -150,6 +150,7 @@ export interface WiringConfig {
   /** Storage-layer settings. When `encryption` is true, the primary FsStorage
    *  is wrapped in CryptoStorage using ETHOS_STORAGE_KEY. */
   storage?: {
+    backend?: string;
     encryption?: boolean;
   };
   /**
@@ -583,6 +584,8 @@ export async function createAgentLoop(
     personalities: infra.personalities,
     llmProviders: infra.llmProviders,
     memoryProviders: infra.memoryProviders,
+    storageBackends: infra.storageBackends,
+    executionBackends: infra.executionBackends,
     activePerson: infra.activePerson,
     skillScanner,
     skillPool,

@@ -15,6 +15,7 @@ import type {
   Logger,
   MountSpec,
   PersonalityConfig,
+  SandboxAttestation,
   SecretsResolver,
 } from '@ethosagent/types';
 
@@ -849,6 +850,24 @@ export class DockerExecutionBackend implements ExecutionBackend {
     for (const path of writePaths) add(path, 'rw');
     for (const path of readPaths) add(path, 'ro');
     return [...byPath.values()];
+  }
+
+  attest(): SandboxAttestation {
+    // Derive attestation from the backend's actual Docker configuration.
+    // buildDockerArgs always applies: --cap-drop ALL, --security-opt no-new-privileges,
+    // non-root user (when uid/gid >= 0). Whether that earns a strict attestation
+    // depends on what's in config — if images are pinned, no host docker socket, etc.
+    return {
+      readonlyRootFs: false, // Docker run does NOT set --read-only by default
+      noHostMounts: false, // mountsFor derives host bind mounts from fs_reach
+      egressControlled: false, // network mode may be 'bridge' (open) depending on personality
+      noDockerSocket: true, // FORBIDDEN_MOUNT_ROOTS blocks /var/run/docker.sock
+      nonRoot: true, // buildDockerArgs sets --user uid:gid when >= 0
+      noPrivileged: true, // buildDockerArgs never adds --privileged
+      noCapAdd: true, // buildDockerArgs never adds --cap-add
+      capDropAll: true, // buildDockerArgs always sets --cap-drop ALL
+      noNewPrivs: true, // buildDockerArgs always sets --security-opt no-new-privileges
+    };
   }
 
   dispose(): Promise<void> {
