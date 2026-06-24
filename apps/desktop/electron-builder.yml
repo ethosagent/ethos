@@ -23,7 +23,6 @@ mac:
 win:
   icon: build/icon.ico
   target: nsis
-  signingHashAlgorithms: [sha256]
 linux:
   icon: build/icon.png
   target: AppImage
