@@ -381,8 +381,14 @@ import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk'
 
 export const PROVIDER_CONTRACT_MAJOR = 2;
 
-export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secrets }) => {
-  const apiKey = (await secrets.get('providers/anthropic/apiKey')) ?? (cfg.apiKey as string);
+export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secrets, logger }) => {
+  const secretKey = await secrets.get('providers/anthropic/apiKey');
+  const apiKey = secretKey ?? (cfg.apiKey as string);
+  if (secretKey === null && cfg.apiKey) {
+    logger.warn(
+      'Using plaintext apiKey from config for anthropic; migrate to the secret store: ethos secrets set providers/anthropic/apiKey <key>',
+    );
+  }
   return new AnthropicProvider({ apiKey, model: cfg.model as string });
 };
 

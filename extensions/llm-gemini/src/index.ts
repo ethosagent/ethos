@@ -80,8 +80,14 @@ import type { EthosPluginApi, LLMProviderFactory } from '@ethosagent/plugin-sdk'
 
 export const PROVIDER_CONTRACT_MAJOR = 2;
 
-export const geminiNativeFactory: LLMProviderFactory = async ({ config: cfg, secrets }) => {
-  const apiKey = (await secrets.get('providers/gemini-native/apiKey')) ?? (cfg.apiKey as string);
+export const geminiNativeFactory: LLMProviderFactory = async ({ config: cfg, secrets, logger }) => {
+  const secretKey = await secrets.get('providers/gemini-native/apiKey');
+  const apiKey = secretKey ?? (cfg.apiKey as string);
+  if (secretKey === null && cfg.apiKey) {
+    logger.warn(
+      'Using plaintext apiKey from config for gemini-native; migrate to the secret store: ethos secrets set providers/gemini-native/apiKey <key>',
+    );
+  }
   if (!apiKey) {
     throw new Error('Gemini native provider requires an API key');
   }

@@ -1,4 +1,5 @@
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
+import { InMemorySecretsResolver } from '@ethosagent/storage-fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConfigRepository } from '../../repositories/config.repository';
 import { OnboardingService } from '../onboarding.service';
@@ -21,6 +22,7 @@ function makeService(fetchFn: typeof fetch) {
   return new OnboardingService({
     config: { read: async () => null, update: async () => {} } as unknown as ConfigRepository,
     personalities: { get: () => null } as unknown as FilePersonalityRegistry,
+    secrets: new InMemorySecretsResolver(),
     fetchFn,
   });
 }

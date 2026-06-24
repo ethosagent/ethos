@@ -352,6 +352,9 @@ importers:
       '@ethosagent/llm-codex':
         specifier: workspace:*
         version: link:../../extensions/llm-codex
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -883,6 +886,10 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
 
   extensions/llm-azure:
     dependencies:
@@ -919,6 +926,10 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
 
   extensions/llm-gemini:
     dependencies:

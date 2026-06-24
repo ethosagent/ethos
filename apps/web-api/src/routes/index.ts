@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Storage } from '@ethosagent/types';
+import type { SecretsResolver, Storage } from '@ethosagent/types';
 import { Hono } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
@@ -54,6 +54,8 @@ export interface CreateRoutesOptions {
   webBaseUrl?: string;
   /** Storage abstraction for reading ~/.ethos/ files (gateway heartbeat). */
   storage?: Storage;
+  /** Secret store — used to persist Codex OAuth tokens from the device-auth flow. */
+  secrets: SecretsResolver;
 }
 
 export interface ServiceContainer {
@@ -178,7 +180,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 
   // Codex device auth — unauthenticated (user may not be onboarded yet).
   // The flow is safe to expose: it requires explicit user action in the browser.
-  app.route('/auth/codex', codexAuthRoutes());
+  app.route('/auth/codex', codexAuthRoutes({ secrets: opts.secrets }));
 
   // RPC + SSE auth: dual-auth (cookie OR bearer) when an api-key store
   // is wired; cookie-only otherwise (backward-compatible default).

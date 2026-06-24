@@ -344,10 +344,17 @@ export const PROVIDER_CONTRACT_MAJOR = 2;
 export const openaiCompatFactory: LLMProviderFactory = async ({
   config: cfg,
   secrets,
+  logger,
 }: LLMProviderFactoryContext) => {
   const providerName = (cfg.provider as string) ?? 'openai-compat';
   const baseUrl = (cfg.baseUrl as string) ?? 'https://openrouter.ai/api/v1';
-  const apiKey = (await secrets.get(`providers/${providerName}/apiKey`)) ?? (cfg.apiKey as string);
+  const secretKey = await secrets.get(`providers/${providerName}/apiKey`);
+  const apiKey = secretKey ?? (cfg.apiKey as string);
+  if (secretKey === null && cfg.apiKey) {
+    logger.warn(
+      `Using plaintext apiKey from config for ${providerName}; migrate to the secret store: ethos secrets set providers/${providerName}/apiKey <key>`,
+    );
+  }
   return new OpenAICompatProvider({
     name: providerName,
     model: cfg.model as string,

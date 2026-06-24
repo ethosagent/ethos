@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import {
+  CodexTokenStore,
   exchangeForTokens,
   pollForAuthorization,
   requestDeviceCode,
-  saveTokens,
 } from '@ethosagent/llm-codex';
+import type { SecretsResolver } from '@ethosagent/types';
 import { Hono } from 'hono';
 
 interface PendingAuth {
@@ -16,8 +17,9 @@ interface PendingAuth {
 // In-memory store keyed by sessionToken. Tokens expire after 20 minutes.
 const pending = new Map<string, PendingAuth>();
 
-export function codexAuthRoutes() {
+export function codexAuthRoutes(opts: { secrets: SecretsResolver }) {
   const app = new Hono();
+  const store = new CodexTokenStore(opts.secrets);
 
   // POST /device-code → request a device code, start background polling
   app.post('/device-code', async (c) => {
@@ -34,7 +36,7 @@ export function codexAuthRoutes() {
         .then(({ authorizationCode, codeVerifier }) =>
           exchangeForTokens(fetch, authorizationCode, codeVerifier),
         )
-        .then((credentials) => saveTokens(credentials))
+        .then((credentials) => store.save(credentials))
         .then(() => {
           const e = pending.get(sessionToken);
           if (e) e.authorized = true;

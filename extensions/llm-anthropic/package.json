@@ -17,5 +17,8 @@
     "@anthropic-ai/sdk": "^0.96.0",
     "@ethosagent/plugin-sdk": "workspace:*",
     "@ethosagent/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@ethosagent/storage-fs": "workspace:*"
   }
 }

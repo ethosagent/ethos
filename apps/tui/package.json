@@ -12,6 +12,7 @@
     "@ethosagent/llm-codex": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/design-tokens": "workspace:*",
+    "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/web-contracts": "workspace:*",
     "@ethosagent/wiring": "workspace:*",

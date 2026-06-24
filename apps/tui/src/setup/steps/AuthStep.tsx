@@ -1,9 +1,12 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
+  CodexTokenStore,
   exchangeForTokens,
   pollForAuthorization,
   requestDeviceCode,
-  saveTokens,
 } from '@ethosagent/llm-codex';
+import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import { PROVIDER_CATALOG } from '@ethosagent/wiring/provider-catalog';
 import { Box, Text, useInput } from 'ink';
 import { useEffect, useRef, useState } from 'react';
@@ -51,7 +54,11 @@ function DeviceAuthFlow() {
           authorizationCode,
           codeVerifier,
         );
-        await saveTokens(credentials);
+        const secrets = new FileSecretsResolver({
+          dir: join(homedir(), '.ethos', 'secrets'),
+          storage: new FsStorage(),
+        });
+        await new CodexTokenStore(secrets).save(credentials);
 
         setPhase('success');
         dispatch({ type: 'next', patch: { apiKey: '' } });
