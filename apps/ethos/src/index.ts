@@ -358,9 +358,83 @@ try {
       } else if (sub === 'import') {
         const { runPersonalityImport } = await import('./commands/personality-export');
         await runPersonalityImport(args.slice(2));
+      } else if (sub === 'fork') {
+        const srcId = args[2];
+        const dstId = args[3] ?? (srcId ? `${srcId}-fork` : undefined);
+        if (!srcId || !dstId) {
+          console.log('Usage: ethos personality fork <id> [<new-id>]');
+          break;
+        }
+        const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+        const storage = getStorage();
+        const reg = await createPersonalityRegistry({
+          storage,
+          userPersonalitiesDir: ethosDir(),
+        });
+        await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
+        const created = await reg.duplicate(srcId, dstId);
+        // Prepend fork provenance to SOUL.md
+        const soulPath = join(ethosDir(), 'personalities', dstId, 'SOUL.md');
+        const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
+        if (existsSync(soulPath)) {
+          const existing = readFileSync(soulPath, 'utf8');
+          writeFileSync(
+            soulPath,
+            `<!-- forked from: ${srcId} at ${new Date().toISOString()} -->\n${existing}`,
+          );
+        }
+        console.log(
+          `✓ Forked "${srcId}" → "${created.config.id}" at ~/.ethos/personalities/${created.config.id}`,
+        );
+      } else if (sub === 'retire') {
+        const retireId = args[2];
+        if (!retireId) {
+          console.log('Usage: ethos personality retire <id>');
+          break;
+        }
+        // Validate personality ID — reject path traversal
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(retireId)) {
+          console.error(
+            `Invalid personality ID "${retireId}" — must be alphanumeric with hyphens/underscores.`,
+          );
+          process.exitCode = 1;
+          break;
+        }
+        const pDir = join(ethosDir(), 'personalities', retireId);
+        const resolvedPDir = (await import('node:path')).resolve(pDir);
+        const personalitiesBase = (await import('node:path')).resolve(
+          join(ethosDir(), 'personalities'),
+        );
+        if (!resolvedPDir.startsWith(`${personalitiesBase}/`)) {
+          console.error('Invalid personality path.');
+          process.exitCode = 1;
+          break;
+        }
+        const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
+        if (!existsSync(pDir)) {
+          console.error(`Personality "${retireId}" not found.`);
+          process.exitCode = 1;
+          break;
+        }
+        // Mark config.yaml
+        const cfgPath = join(pDir, 'config.yaml');
+        if (existsSync(cfgPath)) {
+          let cfg = readFileSync(cfgPath, 'utf8');
+          if (!cfg.includes('retired:')) {
+            cfg += '\nretired: true\n';
+          }
+          writeFileSync(cfgPath, cfg);
+        }
+        // Append retirement notice to SOUL.md
+        const soulPath = join(pDir, 'SOUL.md');
+        if (existsSync(soulPath)) {
+          const soul = readFileSync(soulPath, 'utf8');
+          writeFileSync(soulPath, `${soul}\n<!-- retired at ${new Date().toISOString()} -->\n`);
+        }
+        console.log(`✓ Personality "${retireId}" retired. History preserved.`);
       } else {
         console.log(
-          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | evolve <id> | revert <id> | judge <id> | set <id> | duplicate <src> <dst> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
+          'Usage: ethos personality [list | create [name] [--blank | --from <id>] | show <id> | diff <a> <b> | evolve <id> | revert <id> | judge <id> | set <id> | duplicate <src> <dst> | fork <id> [<new-id>] | retire <id> | export <id> [--output <path>] | import <file> [--force] [--secrets <manifest>] | mcp <id> [--attach <name> [--token-stdin] | --detach <name> | --token-stdin <server>] | plugins <id> [--attach <plugin-id> | --detach <plugin-id>]]',
         );
       }
       break;
@@ -1111,6 +1185,8 @@ export function unifiedDiff(a: string, b: string, labelA: string, labelB: string
 
 // `ethos personality diff <a> <b>` — render both character sheets and print
 // a unified diff so you can see what changed between two personalities.
+// TODO(phase-5d): extend with version-ref args (<a>[@ref] <b>[@ref])
+// when a personality version store is available (deferred — depends on Phase 3 amendment history).
 async function runPersonalityDiff(argv: string[]): Promise<void> {
   const [idA, idB] = argv;
   if (!idA || !idB) {

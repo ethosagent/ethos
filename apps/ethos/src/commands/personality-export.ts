@@ -1,14 +1,17 @@
 // ethos personality export <id> — produce a shareable tar.gz of one personality
 //
 // Exports SOUL.md, config.yaml, toolset.yaml, skills/**, and non-secret MCP
-// config. Strips secrets (tokens, keys) and personal state (MEMORY.md, USER.md,
+// config. Strips secrets (tokens, keys) and personal state (USER.md,
 // kanban.db, dream-state.json). Generates a secrets.manifest.yaml so the
 // recipient knows which credentials to fill in.
+//
+// Phase 5: adds BundleManifest (ETHOS.md), ExportStamp, --with-memory flag.
 
-import { randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
+import type { BundleManifest, ExportStamp } from '@ethosagent/types';
 import { ethosDir } from '../config';
 import { getStorage } from '../wiring';
 import { type Entry, writeTarGz } from './backup';
@@ -86,7 +89,9 @@ const SECRET_FIELD_DISPLAY: Record<string, { key: string; description: string; f
 // Case-insensitive substrings that flag a config field as a secret reference
 const SECRET_FIELD_PATTERNS = ['token', 'key', 'secret'];
 
-const USAGE = 'Usage: ethos personality export <id> [--output <path>]';
+const USAGE = 'Usage: ethos personality export <id> [--output <path>] [--with-memory]';
+
+const ETHOS_EXPORT_KEY = 'ethos-personality-export-v1';
 
 function timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -369,21 +374,358 @@ function buildPluginsManifest(personalityDir: string, dataDir: string): string |
 }
 
 // ---------------------------------------------------------------------------
+// MCP server config parsing (simple key: value YAML)
+// ---------------------------------------------------------------------------
+
+interface McpServerInfo {
+  name: string;
+  url: string;
+  transport: string;
+  authType: 'none' | 'oauth2' | 'bearer';
+  tools: string[];
+}
+
+function parseMcpServerConfig(
+  personalityDir: string,
+  serverName: string,
+  toolset: string[],
+): McpServerInfo {
+  const info: McpServerInfo = {
+    name: serverName,
+    url: '',
+    transport: '',
+    authType: 'none',
+    tools: [],
+  };
+
+  // Extract tools prefixed with mcp__<serverName>__
+  const prefix = `mcp__${serverName}__`;
+  info.tools = toolset.filter((t) => t.startsWith(prefix));
+
+  const configPath = join(personalityDir, 'mcp', serverName, 'config.yaml');
+  if (!existsSync(configPath)) return info;
+
+  const content = readFileSync(configPath, 'utf8');
+  for (const line of content.split('\n')) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx < 0) continue;
+    const key = line.slice(0, colonIdx).trim().toLowerCase();
+    const value = line.slice(colonIdx + 1).trim();
+
+    if (key === 'url') {
+      info.url = value;
+    } else if (key === 'transport') {
+      info.transport = value;
+    } else if (key === 'auth' || key === 'auth_type' || key === 'authtype') {
+      const lower = value.toLowerCase();
+      if (lower.includes('oauth')) {
+        info.authType = 'oauth2';
+      } else if (lower.includes('bearer')) {
+        info.authType = 'bearer';
+      }
+    }
+  }
+
+  // Detect auth type from token file presence if not already set
+  if (info.authType === 'none') {
+    const serverDir = join(personalityDir, 'mcp', serverName);
+    if (existsSync(serverDir)) {
+      try {
+        const files = readdirSync(serverDir);
+        if (files.some((f) => MCP_TOKEN_FILENAMES.has(f))) {
+          info.authType = 'oauth2';
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return info;
+}
+
+// ---------------------------------------------------------------------------
+// Plugin resolution for manifest
+// ---------------------------------------------------------------------------
+
+interface PluginInfo {
+  id: string;
+  version: string;
+  source: string;
+  tools: string[];
+  skills: string[];
+  credentials: string[];
+}
+
+/** Built-in tool names that are never attributed to plugins. */
+const BUILTIN_TOOLS = new Set([
+  'read_file',
+  'write_file',
+  'patch_file',
+  'list_files',
+  'run_bash',
+  'run_code',
+  'web_search',
+  'web_extract',
+  'browse_url',
+  'memory_read',
+  'memory_write',
+  'session_search',
+  'team_memory_read',
+  'team_memory_write',
+  'team_memory_search',
+  'kanban_show',
+  'kanban_plan',
+  'kanban_begin',
+  'kanban_complete',
+  'kanban_blocked',
+  'think',
+]);
+
+function resolvePlugins(pluginIds: string[], toolset: string[], dataDir: string): PluginInfo[] {
+  const pluginsNodeModules = join(dataDir, 'plugins', 'node_modules');
+  const result: PluginInfo[] = [];
+
+  // Collect all mcp-prefixed tools so we can exclude them from plugin attribution
+  const mcpTools = new Set(toolset.filter((t) => t.startsWith('mcp__')));
+
+  for (const pluginId of pluginIds) {
+    const info: PluginInfo = {
+      id: pluginId,
+      version: 'unknown',
+      source: pluginId,
+      tools: [],
+      skills: [],
+      credentials: [],
+    };
+
+    if (existsSync(pluginsNodeModules)) {
+      const pkgJson = findPluginPackageJson(pluginsNodeModules, pluginId);
+      if (pkgJson) {
+        info.version = pkgJson.version ?? 'unknown';
+        info.source = pkgJson.name ?? pluginId;
+        if (pkgJson.ethos?.credentials) {
+          // Key names only — never values
+          info.credentials = pkgJson.ethos.credentials.map((c) => c.key);
+        }
+        if (pkgJson.ethos?.skills_dir) {
+          info.skills = [pkgJson.ethos.skills_dir];
+        }
+      }
+    }
+
+    // Attribute non-builtin, non-mcp tools to this plugin
+    // Convention: tools not prefixed with mcp__ and not in the builtin set
+    // In practice we can't perfectly attribute without plugin metadata,
+    // so we include tools that aren't builtin or mcp-prefixed
+    result.push(info);
+  }
+
+  // Attribute remaining tools (not builtin, not mcp) across plugins
+  // This is best-effort — without plugin tool manifests, we list them on the first plugin
+  const unattributed = toolset.filter((t) => !BUILTIN_TOOLS.has(t) && !mcpTools.has(t));
+  if (unattributed.length > 0 && result.length > 0) {
+    const first = result[0];
+    if (first) {
+      first.tools = unattributed;
+    }
+  }
+
+  return result;
+}
+
+interface PluginPackageJson {
+  name?: string;
+  version?: string;
+  ethos?: {
+    id?: string;
+    credentials?: Array<{ key: string }>;
+    skills_dir?: string;
+  };
+}
+
+function findPluginPackageJson(nodeModulesDir: string, pluginId: string): PluginPackageJson | null {
+  if (!existsSync(nodeModulesDir)) return null;
+
+  function scanDir(dir: string): PluginPackageJson | null {
+    for (const entry of readdirSync(dir)) {
+      const entryPath = join(dir, entry);
+      const st = lstatSync(entryPath);
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory() && entry.startsWith('@')) {
+        const found = scanDir(entryPath);
+        if (found) return found;
+        continue;
+      }
+      if (!st.isDirectory()) continue;
+      const pkgJsonPath = join(entryPath, 'package.json');
+      if (!existsSync(pkgJsonPath)) continue;
+      try {
+        const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as PluginPackageJson;
+        if (pkgJson.ethos?.id === pluginId) return pkgJson;
+      } catch {
+        // skip
+      }
+    }
+    return null;
+  }
+
+  return scanDir(nodeModulesDir);
+}
+
+// ---------------------------------------------------------------------------
+// SHA-256 helpers
+// ---------------------------------------------------------------------------
+
+function sha256(data: Buffer | string): string {
+  return createHash('sha256').update(data).digest('hex');
+}
+
+// ---------------------------------------------------------------------------
+// Bundle manifest builder
+// ---------------------------------------------------------------------------
+
+function readVersionFromConfig(personalityDir: string): string {
+  const configPath = join(personalityDir, 'config.yaml');
+  if (!existsSync(configPath)) return '1.0.0';
+
+  const content = readFileSync(configPath, 'utf8');
+  for (const line of content.split('\n')) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx < 0) continue;
+    const key = line.slice(0, colonIdx).trim();
+    if (key === 'version') {
+      return line.slice(colonIdx + 1).trim() || '1.0.0';
+    }
+  }
+  return '1.0.0';
+}
+
+function buildBundleManifest(
+  id: string,
+  personalityDir: string,
+  dataDir: string,
+  entries: Entry[],
+  personality: {
+    toolset?: string[];
+    fs_reach?: { read?: string[]; write?: string[] };
+    budgetCapUsd?: number;
+    mcp_servers?: string[];
+    plugins?: string[];
+  },
+  withMemory: boolean,
+): BundleManifest {
+  const toolset = personality.toolset ?? [];
+  const fsReach = {
+    read: personality.fs_reach?.read ?? [],
+    write: personality.fs_reach?.write ?? [],
+  };
+
+  // MCP servers
+  const mcpServers: BundleManifest['mcpServers'] = [];
+  if (personality.mcp_servers) {
+    for (const serverName of personality.mcp_servers) {
+      const info = parseMcpServerConfig(personalityDir, serverName, toolset);
+      mcpServers.push({
+        name: info.name,
+        url: info.url,
+        transport: info.transport,
+        ...(info.authType !== 'none' ? { authType: info.authType } : {}),
+        tools: info.tools,
+      });
+    }
+  }
+
+  // Plugins
+  const pluginsList: BundleManifest['plugins'] = [];
+  if (personality.plugins && personality.plugins.length > 0) {
+    const resolved = resolvePlugins(personality.plugins, toolset, dataDir);
+    for (const p of resolved) {
+      pluginsList.push({
+        id: p.id,
+        version: p.version,
+        source: p.source,
+        tools: p.tools,
+        skills: p.skills,
+        ...(p.credentials.length > 0 ? { credentials: p.credentials } : {}),
+      });
+    }
+  }
+
+  // Memory
+  const memoryPath = join(personalityDir, 'MEMORY.md');
+  const memorySection =
+    withMemory && existsSync(memoryPath) ? { included: ['MEMORY.md'] as 'MEMORY.md'[] } : undefined;
+
+  // Files — compute SHA-256 for each entry, sorted for deterministic hashing
+  const files = entries
+    .map((e) => ({
+      relPath: e.relPath,
+      sha256: sha256(e.content),
+    }))
+    .sort((a, b) => a.relPath.localeCompare(b.relPath));
+
+  // Bundle SHA-256 — over canonical sorted JSON of files array
+  const bundleSha256 = sha256(JSON.stringify(files));
+
+  // Export stamp
+  const stamp: ExportStamp = {
+    publisher: 'ethos',
+    exportedBy: 'ethos-personality-export',
+    bundleSha256,
+    stamp: createHmac('sha256', ETHOS_EXPORT_KEY).update(bundleSha256).digest('hex'),
+  };
+
+  const version = readVersionFromConfig(personalityDir);
+
+  const declared: BundleManifest['declared'] = {
+    fsReach,
+    toolset,
+  };
+  if (personality.budgetCapUsd !== undefined) {
+    declared.budgetCapUsd = personality.budgetCapUsd;
+  }
+
+  const manifest: BundleManifest = {
+    schema: 'ethos.personality-bundle/v1',
+    personalityId: id,
+    version,
+    publisher: 'ethos',
+    createdAt: new Date().toISOString(),
+    declared,
+    mcpServers,
+    plugins: pluginsList,
+    files,
+    bundleSha256,
+    export: stamp,
+  };
+
+  if (memorySection) {
+    manifest.memory = memorySection;
+  }
+
+  return manifest;
+}
+
+// ---------------------------------------------------------------------------
 // CLI entry point
 // ---------------------------------------------------------------------------
 
 export { runPersonalityImport } from './backup';
 
 export async function runPersonalityExport(argv: string[]): Promise<void> {
-  // Parse args: first positional = id, --output <path>
+  // Parse args: first positional = id, --output <path>, --with-memory
   let id: string | undefined;
   let outputPath: string | undefined;
+  let withMemory = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--output' && argv[i + 1]) {
       outputPath = argv[i + 1];
       i++;
+    } else if (arg === '--with-memory') {
+      withMemory = true;
     } else if (arg && !arg.startsWith('-') && !id) {
       id = arg;
     }
@@ -427,6 +769,15 @@ export async function runPersonalityExport(argv: string[]): Promise<void> {
   // Collect files
   const entries = collectPersonalityEntries(personalityDir, id);
 
+  // Include MEMORY.md if --with-memory (never USER.md)
+  if (withMemory) {
+    const memoryFilePath = join(personalityDir, 'MEMORY.md');
+    if (existsSync(memoryFilePath)) {
+      const prefix = join('personalities', id);
+      entries.push({ relPath: join(prefix, 'MEMORY.md'), content: readFileSync(memoryFilePath) });
+    }
+  }
+
   // Generate secrets manifest
   const manifest = buildSecretsManifest(id, personalityDir);
   if (manifest) {
@@ -449,6 +800,22 @@ export async function runPersonalityExport(argv: string[]): Promise<void> {
     console.log(`Nothing to export for personality "${id}".`);
     return;
   }
+
+  // Build bundle manifest (ETHOS.md)
+  const bundleManifest = buildBundleManifest(
+    id,
+    personalityDir,
+    dataDir,
+    entries,
+    personality,
+    withMemory,
+  );
+
+  // Add ETHOS.md (JSON) to the archive
+  entries.push({
+    relPath: 'ETHOS.md',
+    content: Buffer.from(JSON.stringify(bundleManifest, null, 2), 'utf8'),
+  });
 
   // Write archive
   const outPath =

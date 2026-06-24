@@ -48,3 +48,43 @@ export type {
   ToolResultReducer,
   ToolResultReducerRegistry,
 } from './tool-reducer';
+
+// Phase 5 — Personality export/import portable bundles
+export interface ExportStamp {
+  publisher: 'ethos';
+  exportedBy: 'ethos-personality-export';
+  bundleSha256: string;
+  stamp: string;
+}
+
+export interface BundleManifest {
+  schema: 'ethos.personality-bundle/v1';
+  personalityId: string;
+  version: string;
+  publisher: 'ethos';
+  createdAt: string;
+  declared: {
+    fsReach: { read: string[]; write: string[] };
+    toolset: string[];
+    budgetCapUsd?: number;
+  };
+  mcpServers: Array<{
+    name: string;
+    url: string;
+    transport: string;
+    authType?: 'none' | 'oauth2' | 'bearer';
+    tools: string[];
+  }>;
+  plugins: Array<{
+    id: string;
+    version: string;
+    source: string;
+    tools: string[];
+    skills: string[];
+    credentials?: string[];
+  }>;
+  memory?: { included: 'MEMORY.md'[] };
+  files: Array<{ relPath: string; sha256: string }>;
+  bundleSha256: string;
+  export: ExportStamp;
+}

@@ -3,7 +3,8 @@
 // backup: tar.gz of config.yaml, MEMORY.md, USER.md, cron/jobs.json, personalities/
 // import: extract and merge into ~/.ethos/
 
-import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import {
   createReadStream,
   createWriteStream,
@@ -15,10 +16,11 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
-import { EthosError } from '@ethosagent/types';
+import { type BundleManifest, EthosError } from '@ethosagent/types';
 import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
 import { getSecretsResolver } from '../wiring';
@@ -615,14 +617,69 @@ async function injectSecrets(secretsPath: string): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers for manifest-aware personality import
+// ---------------------------------------------------------------------------
+
+function semverGte(a: string, b: string): boolean {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  if (pa.some(Number.isNaN) || pb.some(Number.isNaN)) return false;
+  for (let i = 0; i < 3; i++) {
+    const va = pa[i] ?? 0;
+    const vb = pb[i] ?? 0;
+    if (va > vb) return true;
+    if (va < vb) return false;
+  }
+  return true;
+}
+
+function updateConfigLine(configPath: string, key: string, newValues: string[]): void {
+  if (newValues.length === 0) return;
+  let lines: string[] = [];
+  if (existsSync(configPath)) {
+    lines = readFileSync(configPath, 'utf8').split('\n');
+  }
+  const idx = lines.findIndex((l) => l.startsWith(`${key}:`));
+  if (idx >= 0) {
+    const existing = lines[idx]?.split(':').slice(1).join(':').trim() ?? '';
+    const existingNames = existing ? existing.split(/\s+/) : [];
+    const toAdd = newValues.filter((n) => !existingNames.includes(n));
+    if (toAdd.length > 0) {
+      lines[idx] = `${key}: ${[...existingNames, ...toAdd].join(' ')}`;
+    }
+  } else {
+    lines.push(`${key}: ${newValues.join(' ')}`);
+  }
+  writeFileSync(configPath, lines.join('\n'));
+}
+
+// ---------------------------------------------------------------------------
 // Personality import (G5+G6) — ethos personality import <file> [--force] [--secrets <manifest>]
 // ---------------------------------------------------------------------------
 
 const USAGE_PERSONALITY_IMPORT =
-  'Usage: ethos personality import <file-or-dir> [--force] [--secrets <manifest>]';
+  'Usage: ethos personality import <file-or-dir> [--force] [--secrets <manifest>] [--no-memory]';
+
+function isValidManifest(m: unknown): m is BundleManifest {
+  if (!m || typeof m !== 'object') return false;
+  const obj = m as Record<string, unknown>;
+  if (obj.schema !== 'ethos.personality-bundle/v1') return false;
+  if (typeof obj.personalityId !== 'string') return false;
+  if (typeof obj.version !== 'string') return false;
+  if (typeof obj.bundleSha256 !== 'string') return false;
+  if (!obj.declared || typeof obj.declared !== 'object') return false;
+  const declared = obj.declared as Record<string, unknown>;
+  if (!declared.fsReach || typeof declared.fsReach !== 'object') return false;
+  if (!Array.isArray(declared.toolset)) return false;
+  if (!Array.isArray(obj.mcpServers)) return false;
+  if (!Array.isArray(obj.plugins)) return false;
+  if (!Array.isArray(obj.files)) return false;
+  return true;
+}
 
 export async function runPersonalityImport(argv: string[]): Promise<void> {
   const force = argv.includes('--force');
+  const noMemory = argv.includes('--no-memory');
   const secretsIdx = argv.indexOf('--secrets');
   const secretsPath = secretsIdx >= 0 ? argv[secretsIdx + 1] : undefined;
 
@@ -634,7 +691,11 @@ export async function runPersonalityImport(argv: string[]): Promise<void> {
   }
 
   const positional = argv.filter(
-    (a, i) => a !== '--force' && a !== '--secrets' && !(i > 0 && argv[i - 1] === '--secrets'),
+    (a, i) =>
+      a !== '--force' &&
+      a !== '--no-memory' &&
+      a !== '--secrets' &&
+      !(i > 0 && argv[i - 1] === '--secrets'),
   );
 
   const srcPath = positional[0];
@@ -671,107 +732,516 @@ export async function runPersonalityImport(argv: string[]): Promise<void> {
     return;
   }
 
-  const first = entries[0];
-  if (!first) {
-    console.error('Archive is empty — nothing to import.');
-    process.exitCode = 1;
-    return;
-  }
-  const segments = first[0].split('/');
-  const personalitiesIdx = segments.indexOf('personalities');
-  if (personalitiesIdx < 0 || !segments[personalitiesIdx + 1]) {
-    throw new EthosError({
-      code: 'IMPORT_BLOCKED',
-      cause: 'Cannot determine personality ID — expected paths under personalities/<id>/',
-      action: 'Ensure the archive contains files under a personalities/<id>/ directory.',
-    });
-  }
-  const personalityId = segments[personalitiesIdx + 1];
+  // Check for ETHOS.md manifest (manifest-aware vs legacy)
+  const ethosEntry = entries.find(([name]) => name === 'ETHOS.md');
 
-  // Validate personality ID — reject traversal characters
-  if (!VALID_ID_RE.test(personalityId)) {
-    throw new EthosError({
-      code: 'IMPORT_BLOCKED',
-      cause: `Invalid personality ID "${personalityId}" — must be alphanumeric with hyphens/underscores.`,
-      action: 'Ensure the archive paths use a valid personality ID.',
-    });
-  }
-
-  const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-  const dataDir = ethosDir();
-  const storage = (await import('@ethosagent/storage-fs')).FsStorage
-    ? new (await import('@ethosagent/storage-fs')).FsStorage()
-    : undefined;
-  const reg = await createPersonalityRegistry(storage);
-  await reg.loadFromDirectory(join(dataDir, 'personalities'));
-  const existing = reg.get(personalityId);
-
-  if (existing && !force && process.env.ETHOS_MANAGED !== '1') {
-    const readline = await import('node:readline');
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const overwrite = await new Promise<boolean>((res) => {
-      rl.question(`Personality "${personalityId}" already exists. Overwrite? [y/N] `, (answer) => {
-        rl.close();
-        res(answer.toLowerCase() === 'y');
+  if (ethosEntry) {
+    // -----------------------------------------------------------------------
+    // Manifest-aware import path
+    // -----------------------------------------------------------------------
+    let manifest: BundleManifest;
+    try {
+      manifest = JSON.parse(ethosEntry[1].toString('utf8')) as BundleManifest;
+    } catch {
+      throw new EthosError({
+        code: 'IMPORT_BLOCKED',
+        cause: 'ETHOS.md is not valid JSON — cannot parse bundle manifest.',
+        action: 'Ensure the archive contains a valid ETHOS.md bundle manifest.',
       });
-    });
-    if (!overwrite) {
-      console.log('Cancelled.');
-      return;
     }
-  }
 
-  // Write files — restrict to personalities/<id>/ only
-  const personalityBase = resolve(join(dataDir, 'personalities', personalityId)) + sep;
-  let skippedCount = 0;
-  for (const [relPath, content] of entries) {
-    // Allow top-level manifest files (secrets.manifest.yaml) outside personality dir
-    if (relPath === 'secrets.manifest.yaml') continue;
-    const dest = join(dataDir, relPath);
-    const resolvedDest = resolve(dest);
-    if (!resolvedDest.startsWith(personalityBase)) {
-      skippedCount++;
-      continue;
+    if (!isValidManifest(manifest)) {
+      throw new EthosError({
+        code: 'IMPORT_BLOCKED',
+        cause: 'ETHOS.md does not match expected BundleManifest shape.',
+        action: 'Ensure the archive contains a valid ETHOS.md bundle manifest.',
+      });
     }
-    mkdirSync(join(dataDir, relPath, '..'), { recursive: true });
-    writeFileSync(dest, content);
-  }
 
-  if (skippedCount > 0) {
-    console.warn(
-      `  ⚠ ${skippedCount} archive entry/entries outside personalities/${personalityId}/ were skipped.`,
-    );
-  }
+    const personalityId = manifest.personalityId;
 
-  if (secretsPath) {
-    const count = await injectSecrets(secretsPath);
-    console.log(`✓ Injected ${count} secret(s)`);
-  }
+    // Validate personality ID
+    if (!VALID_ID_RE.test(personalityId)) {
+      throw new EthosError({
+        code: 'IMPORT_BLOCKED',
+        cause: `Invalid personality ID "${personalityId}" — must be alphanumeric with hyphens/underscores.`,
+        action: 'Ensure the bundle manifest uses a valid personality ID.',
+      });
+    }
 
-  // Display secrets manifest from the archive (if present)
-  const manifestEntry = entries.find(([name]) => name === 'secrets.manifest.yaml');
-  if (manifestEntry) {
-    const manifestContent = manifestEntry[1].toString('utf8');
-    const hints = parseManifestHints(manifestContent);
-    console.log(`✓ Personality "${personalityId}" imported.`);
-    if (hints.length > 0) {
+    // Verify bundle integrity
+    const computedHash = createHash('sha256').update(JSON.stringify(manifest.files)).digest('hex');
+    if (computedHash !== manifest.bundleSha256) {
+      throw new EthosError({
+        code: 'IMPORT_BLOCKED',
+        cause: 'Bundle integrity check failed — file hashes do not match bundleSha256.',
+        action: 'The archive may have been tampered with. Re-export from the source.',
+      });
+    }
+
+    // Verify individual file contents against manifest hashes
+    for (const fileEntry of manifest.files) {
+      const archiveEntry = entries.find(([p]) => p === fileEntry.relPath);
+      if (!archiveEntry) {
+        throw new EthosError({
+          code: 'IMPORT_BLOCKED',
+          cause: `Manifest declares file "${fileEntry.relPath}" but it is missing from the archive.`,
+          action: 'The archive may be corrupted. Re-export the personality.',
+        });
+      }
+      const actualHash = createHash('sha256').update(archiveEntry[1]).digest('hex');
+      if (actualHash !== fileEntry.sha256) {
+        throw new EthosError({
+          code: 'IMPORT_BLOCKED',
+          cause: `File "${fileEntry.relPath}" content does not match manifest hash.`,
+          action: 'The archive may be corrupted or tampered with. Re-export the personality.',
+        });
+      }
+    }
+
+    // Verify export stamp (flag only, do not block)
+    const expectedStamp = createHmac('sha256', 'ethos-personality-export-v1')
+      .update(manifest.bundleSha256)
+      .digest('hex');
+    const unstamped = !manifest.export.stamp || manifest.export.stamp !== expectedStamp;
+
+    // Check for existing personality
+    const dataDir = ethosDir();
+    const existingDir = join(dataDir, 'personalities', personalityId);
+    if (existsSync(existingDir) && !force && process.env.ETHOS_MANAGED !== '1') {
+      const readline = await import('node:readline');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const overwrite = await new Promise<boolean>((res) => {
+        rl.question(
+          `Personality "${personalityId}" already exists. Overwrite? [y/N] `,
+          (answer) => {
+            rl.close();
+            res(answer.toLowerCase() === 'y');
+          },
+        );
+      });
+      if (!overwrite) {
+        console.log('Cancelled.');
+        return;
+      }
+    }
+
+    // Trust prompt (unless --force or ETHOS_MANAGED=1)
+    if (!force && process.env.ETHOS_MANAGED !== '1') {
       console.log('');
-      console.log(`  ${hints.length} secret(s) required before use:`);
-      for (let i = 0; i < hints.length; i++) {
-        const hint = hints[i];
-        if (!hint) continue;
-        const num = i + 1;
-        if (hint.type === 'global') {
-          console.log(`     ${num}. ${hint.label.padEnd(24)}→  ${hint.fillWith}`);
-        } else {
-          console.log(`     ${num}. MCP: ${hint.label.padEnd(20)}→  ${hint.fillWith}`);
-        }
+      console.log('  Personality import summary:');
+      console.log(`    ID:          ${personalityId}`);
+      console.log(`    Version:     ${manifest.version}`);
+      console.log(
+        `    fs_reach:    read ${manifest.declared.fsReach.read.length} path(s), write ${manifest.declared.fsReach.write.length} path(s)`,
+      );
+      console.log(`    Toolset:     ${manifest.declared.toolset.length} tool(s)`);
+      if (manifest.mcpServers.length > 0) {
+        const mcpNames = manifest.mcpServers.map((s) => s.name).join(', ');
+        console.log(`    MCP servers: ${mcpNames}`);
+      }
+      if (manifest.plugins.length > 0) {
+        const pluginNames = manifest.plugins.map((p) => p.id).join(', ');
+        console.log(`    Plugins:     ${pluginNames}`);
+      }
+      if (manifest.memory) {
+        console.log(`    Memory:      ${manifest.memory.included.join(', ')}`);
+      } else {
+        console.log('    Memory:      none');
+      }
+      if (unstamped) {
+        console.log('    WARNING:     Bundle is NOT stamped by an official ethos export.');
       }
       console.log('');
-      console.log(`  Run: ethos personality doctor ${personalityId}  to verify when ready.`);
+
+      const readline = await import('node:readline');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const proceed = await new Promise<boolean>((res) => {
+        rl.question('  Continue? [y/N] ', (answer) => {
+          rl.close();
+          res(answer.toLowerCase() === 'y');
+        });
+      });
+      if (!proceed) {
+        console.log('Cancelled.');
+        return;
+      }
     }
-  } else {
-    console.log(`✓ Personality "${personalityId}" imported.`);
+
+    // Write personality files
+    const personalityBase = resolve(join(dataDir, 'personalities', personalityId)) + sep;
+    // Build verified file allowlist from manifest
+    const verifiedFiles = new Map<string, string>();
+    for (const f of manifest.files) {
+      verifiedFiles.set(f.relPath, f.sha256);
+    }
+
+    // Check for duplicate archive entries
+    const seenPaths = new Set<string>();
+    for (const [relPath] of entries) {
+      if (seenPaths.has(relPath)) {
+        throw new EthosError({
+          code: 'IMPORT_BLOCKED',
+          cause: `Duplicate archive entry "${relPath}" — possible tampering.`,
+          action: 'Re-export the personality from the source.',
+        });
+      }
+      seenPaths.add(relPath);
+    }
+
+    const skipFiles = new Set(['ETHOS.md', 'secrets.manifest.yaml', 'plugins.manifest.yaml']);
+    let writtenCount = 0;
+    let skippedCount = 0;
+
+    for (const [relPath, content] of entries) {
+      const fileName = relPath.split('/').pop() ?? '';
+
+      // Skip special files
+      if (skipFiles.has(relPath) || skipFiles.has(fileName)) continue;
+      // Never write USER.md
+      if (fileName === 'USER.md') continue;
+      // Skip MEMORY.md if --no-memory
+      if (fileName === 'MEMORY.md' && noMemory) continue;
+
+      // Only write files that are in the manifest and verified
+      if (!verifiedFiles.has(relPath)) {
+        skippedCount++;
+        continue;
+      }
+
+      const dest = join(dataDir, relPath);
+      const resolvedDest = resolve(dest);
+      if (!resolvedDest.startsWith(personalityBase)) {
+        skippedCount++;
+        continue;
+      }
+      mkdirSync(join(resolvedDest, '..'), { recursive: true });
+      writeFileSync(dest, content);
+      writtenCount++;
+    }
+
+    if (skippedCount > 0) {
+      console.warn(
+        `  Warning: ${skippedCount} archive entry/entries outside personalities/${personalityId}/ were skipped.`,
+      );
+    }
+
+    // MCP server handling
+    const mcpJsonPath = join(homedir(), '.ethos', 'mcp.json');
+    const configYamlPath = join(dataDir, 'personalities', personalityId, 'config.yaml');
+    const mcpToEnable: string[] = [];
+    const credentialWarnings: string[] = [];
+
+    if (manifest.mcpServers.length > 0) {
+      let mcpArr: Array<Record<string, unknown>> = [];
+      if (existsSync(mcpJsonPath)) {
+        try {
+          const parsed = JSON.parse(readFileSync(mcpJsonPath, 'utf8'));
+          if (!Array.isArray(parsed)) {
+            throw new EthosError({
+              code: 'IMPORT_BLOCKED',
+              cause:
+                'Global MCP config (~/.ethos/mcp.json) is malformed — cannot safely modify it.',
+              action: 'Fix or remove ~/.ethos/mcp.json before importing.',
+            });
+          }
+          mcpArr = parsed as Array<Record<string, unknown>>;
+        } catch (err) {
+          if (err instanceof EthosError) throw err;
+          throw new EthosError({
+            code: 'IMPORT_BLOCKED',
+            cause: 'Global MCP config (~/.ethos/mcp.json) is malformed — cannot safely modify it.',
+            action: 'Fix or remove ~/.ethos/mcp.json before importing.',
+          });
+        }
+      }
+
+      for (const server of manifest.mcpServers) {
+        const existingServer = mcpArr.find(
+          (s) =>
+            typeof s === 'object' &&
+            s !== null &&
+            (s as Record<string, unknown>).name === server.name,
+        );
+        if (existingServer) {
+          // Clash — reuse existing, skip global install
+          console.log(`  MCP "${server.name}": already installed, using existing.`);
+        } else {
+          // New server — append to mcp.json
+          mcpArr.push({
+            name: server.name,
+            url: server.url,
+            transport: server.transport,
+          });
+          console.log(`  MCP "${server.name}": added to mcp.json.`);
+        }
+        mcpToEnable.push(server.name);
+
+        // Flag credential-requiring servers
+        if (server.authType === 'bearer' || server.authType === 'oauth2') {
+          credentialWarnings.push(`MCP "${server.name}" requires ${server.authType} credentials.`);
+        }
+      }
+
+      mkdirSync(join(homedir(), '.ethos'), { recursive: true });
+      writeFileSync(mcpJsonPath, JSON.stringify(mcpArr, null, 2));
+
+      // Enable MCP servers at personality level
+      updateConfigLine(configYamlPath, 'mcp_servers', mcpToEnable);
+    }
+
+    // Plugin handling
+    const pluginsToAttach: string[] = [];
+    const SAFE_PKG_RE = /^[@a-zA-Z0-9._/-]+$/;
+
+    if (manifest.plugins.length > 0) {
+      const pluginsDir = join(homedir(), '.ethos', 'plugins');
+      mkdirSync(pluginsDir, { recursive: true });
+      const nodeModulesDir = join(pluginsDir, 'node_modules');
+
+      for (const plugin of manifest.plugins) {
+        pluginsToAttach.push(plugin.id);
+
+        // Validate plugin source/version before any install attempt
+        if (!SAFE_PKG_RE.test(plugin.source) || !SAFE_PKG_RE.test(plugin.version)) {
+          console.warn(`  ⚠ Plugin "${plugin.id}" has unsafe source/version — skipping install.`);
+          continue;
+        }
+
+        const pluginDir = join(nodeModulesDir, plugin.id);
+        const isInstalled = existsSync(pluginDir);
+
+        if (!isInstalled) {
+          // Always prompt before installing plugins (even with --force)
+          if (process.env.ETHOS_MANAGED !== '1') {
+            const readline = await import('node:readline');
+            const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+            const answer = await new Promise<string>((res) => {
+              rl.question(
+                `Install plugin "${plugin.id}" (${plugin.source}@${plugin.version})? [Y/n] `,
+                (a) => {
+                  rl.close();
+                  res(a);
+                },
+              );
+            });
+            if (answer.toLowerCase() === 'n') {
+              console.log(`  Skipped plugin "${plugin.id}".`);
+              continue;
+            }
+          }
+          // Not installed — install it
+          try {
+            execFileSync(
+              'npm',
+              [
+                'install',
+                '--prefix',
+                pluginsDir,
+                '--ignore-scripts',
+                '--no-audit',
+                `${plugin.source}@${plugin.version}`,
+              ],
+              { stdio: 'pipe', timeout: 60000 },
+            );
+            console.log(`  Plugin "${plugin.id}": installed ${plugin.version}.`);
+          } catch {
+            console.warn(`  Plugin "${plugin.id}": install failed — install manually.`);
+          }
+        } else {
+          // Installed — check version
+          let installedVersion = '0.0.0';
+          const pkgJsonPath = join(pluginDir, 'package.json');
+          if (existsSync(pkgJsonPath)) {
+            try {
+              const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as Record<
+                string,
+                unknown
+              >;
+              if (typeof pkgJson.version === 'string') {
+                installedVersion = pkgJson.version;
+              }
+            } catch {
+              // ignore parse errors
+            }
+          }
+
+          if (semverGte(installedVersion, plugin.version)) {
+            console.log(
+              `  Plugin "${plugin.id}": installed ${installedVersion} >= bundle ${plugin.version}, reusing.`,
+            );
+          } else {
+            // Installed but older — prompt unless force
+            if (force) {
+              try {
+                execFileSync(
+                  'npm',
+                  [
+                    'install',
+                    '--prefix',
+                    pluginsDir,
+                    '--ignore-scripts',
+                    '--no-audit',
+                    `${plugin.source}@${plugin.version}`,
+                  ],
+                  { stdio: 'pipe', timeout: 60000 },
+                );
+                console.log(
+                  `  Plugin "${plugin.id}": updated ${installedVersion} → ${plugin.version}.`,
+                );
+              } catch {
+                console.warn(`  Plugin "${plugin.id}": update failed — update manually.`);
+              }
+            } else {
+              console.log(
+                `  Plugin "${plugin.id}": installed ${installedVersion} < bundle ${plugin.version}. Keeping existing.`,
+              );
+            }
+          }
+        }
+
+        // Flag credential-declaring plugins
+        const creds = plugin.credentials;
+        if (creds && creds.length > 0) {
+          credentialWarnings.push(
+            `Plugin "${plugin.id}" declares credentials: ${creds.join(', ')}.`,
+          );
+        }
+      }
+
+      // Attach plugins at personality level
+      updateConfigLine(configYamlPath, 'plugins', pluginsToAttach);
+    }
+
+    // Handle --secrets
+    if (secretsPath) {
+      const count = await injectSecrets(secretsPath);
+      console.log(`  Injected ${count} secret(s).`);
+    }
+
+    // Final summary
+    console.log(`✓ Personality "${personalityId}" imported (${writtenCount} file(s) written).`);
+    if (credentialWarnings.length > 0) {
+      console.log('');
+      console.log('  Credentials needed:');
+      for (const warn of credentialWarnings) {
+        console.log(`    - ${warn}`);
+      }
+    }
     console.log(`  Run: ethos personality doctor ${personalityId}  to verify.`);
+  } else {
+    // -----------------------------------------------------------------------
+    // Legacy fallback — no ETHOS.md manifest
+    // -----------------------------------------------------------------------
+    const first = entries[0];
+    if (!first) {
+      console.error('Archive is empty — nothing to import.');
+      process.exitCode = 1;
+      return;
+    }
+    const segments = first[0].split('/');
+    const personalitiesIdx = segments.indexOf('personalities');
+    if (personalitiesIdx < 0 || !segments[personalitiesIdx + 1]) {
+      throw new EthosError({
+        code: 'IMPORT_BLOCKED',
+        cause: 'Cannot determine personality ID — expected paths under personalities/<id>/',
+        action: 'Ensure the archive contains files under a personalities/<id>/ directory.',
+      });
+    }
+    const personalityId = segments[personalitiesIdx + 1];
+
+    // Validate personality ID — reject traversal characters
+    if (!VALID_ID_RE.test(personalityId)) {
+      throw new EthosError({
+        code: 'IMPORT_BLOCKED',
+        cause: `Invalid personality ID "${personalityId}" — must be alphanumeric with hyphens/underscores.`,
+        action: 'Ensure the archive paths use a valid personality ID.',
+      });
+    }
+
+    const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+    const dataDir = ethosDir();
+    const storage = (await import('@ethosagent/storage-fs')).FsStorage
+      ? new (await import('@ethosagent/storage-fs')).FsStorage()
+      : undefined;
+    const reg = await createPersonalityRegistry(storage);
+    await reg.loadFromDirectory(join(dataDir, 'personalities'));
+    const existing = reg.get(personalityId);
+
+    if (existing && !force && process.env.ETHOS_MANAGED !== '1') {
+      const readline = await import('node:readline');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const overwrite = await new Promise<boolean>((res) => {
+        rl.question(
+          `Personality "${personalityId}" already exists. Overwrite? [y/N] `,
+          (answer) => {
+            rl.close();
+            res(answer.toLowerCase() === 'y');
+          },
+        );
+      });
+      if (!overwrite) {
+        console.log('Cancelled.');
+        return;
+      }
+    }
+
+    // Write files — restrict to personalities/<id>/ only
+    const personalityBase = resolve(join(dataDir, 'personalities', personalityId)) + sep;
+    let skippedCount = 0;
+    for (const [relPath, content] of entries) {
+      // Skip top-level manifest files and USER.md
+      if (relPath === 'secrets.manifest.yaml') continue;
+      if (relPath.endsWith('/USER.md') || relPath === 'USER.md') continue;
+      // Skip MEMORY.md when --no-memory
+      if (noMemory && (relPath.endsWith('/MEMORY.md') || relPath === 'MEMORY.md')) continue;
+
+      const dest = join(dataDir, relPath);
+      const resolvedDest = resolve(dest);
+      if (!resolvedDest.startsWith(personalityBase)) {
+        skippedCount++;
+        continue;
+      }
+      mkdirSync(join(dataDir, relPath, '..'), { recursive: true });
+      writeFileSync(dest, content);
+    }
+
+    if (skippedCount > 0) {
+      console.warn(
+        `  Warning: ${skippedCount} archive entry/entries outside personalities/${personalityId}/ were skipped.`,
+      );
+    }
+
+    if (secretsPath) {
+      const count = await injectSecrets(secretsPath);
+      console.log(`✓ Injected ${count} secret(s)`);
+    }
+
+    // Display secrets manifest from the archive (if present)
+    const manifestEntry = entries.find(([name]) => name === 'secrets.manifest.yaml');
+    if (manifestEntry) {
+      const manifestContent = manifestEntry[1].toString('utf8');
+      const hints = parseManifestHints(manifestContent);
+      console.log(`✓ Personality "${personalityId}" imported.`);
+      if (hints.length > 0) {
+        console.log('');
+        console.log(`  ${hints.length} secret(s) required before use:`);
+        for (let i = 0; i < hints.length; i++) {
+          const hint = hints[i];
+          if (!hint) continue;
+          const num = i + 1;
+          if (hint.type === 'global') {
+            console.log(`     ${num}. ${hint.label.padEnd(24)}→  ${hint.fillWith}`);
+          } else {
+            console.log(`     ${num}. MCP: ${hint.label.padEnd(20)}→  ${hint.fillWith}`);
+          }
+        }
+        console.log('');
+        console.log(`  Run: ethos personality doctor ${personalityId}  to verify when ready.`);
+      }
+    } else {
+      console.log(`✓ Personality "${personalityId}" imported.`);
+      console.log(`  Run: ethos personality doctor ${personalityId}  to verify.`);
+    }
   }
 }
