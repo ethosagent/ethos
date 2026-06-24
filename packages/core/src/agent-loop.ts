@@ -238,10 +238,8 @@ export interface RunOptions {
    */
   toolsetOverride?: string[];
   /**
-   * Narrow (intersect) the personality toolset for this run. Used by commands
-   * that declare `allowedTools` — the effective toolset is the intersection of
-   * `toolsetNarrow` and the personality's toolset, ensuring a command can never
-   * escalate beyond the personality allowlist.
+   * Narrow (intersect) the personality toolset for this run — a command's
+   * declared `allowedTools` can never escalate beyond the personality allowlist.
    */
   toolsetNarrow?: string[];
   /** Override the per-turn tool-call cap for this run only (goal runs raise it; default applies when absent). */
