@@ -7,5 +7,6 @@ export const chatSend = os.chat.send.handler(({ input, context }) =>
     text: input.text,
     ...(input.personalityId ? { personalityId: input.personalityId } : {}),
     ...(input.dryRun ? { dryRun: true } : {}),
+    ...(input.attachments?.length ? { attachments: input.attachments } : {}),
   }),
 );

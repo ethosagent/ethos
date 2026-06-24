@@ -385,6 +385,7 @@ export async function buildAgentLoop(
     injectorPluginIds,
     hooks,
     storage: new FsStorage(),
+    attachmentCache: infra.capabilityBackends.attachmentCache,
     dataDir,
     modelRouting: config.modelRouting,
     memoryProviders: memoryProviderMap,

@@ -78,6 +78,8 @@ export interface AgentLoopConfig {
    * behavior — existing CLI/TUI tests don't need a storage instance).
    */
   storage?: Storage;
+  /** Optional attachment cache for text-file inlining at context assembly. */
+  attachmentCache?: import('@ethosagent/types').AttachmentCache;
   /**
    * Absolute path to ~/.ethos/ used for `${ETHOS_HOME}` substitution in
    * `fs_reach` paths. Defaults to `${HOME}/.ethos`. Required only when
@@ -279,6 +281,7 @@ export class AgentLoop {
     (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
   >;
   private readonly storage?: Storage;
+  private readonly attachmentCache?: import('@ethosagent/types').AttachmentCache;
   private readonly dataDir?: string;
   private readonly observability?: AgentLoopObservability;
   private readonly contextEngines: ContextEngineRegistry;
@@ -327,6 +330,7 @@ export class AgentLoop {
     this.modelRouting = config.modelRouting ?? {};
     this.memoryProviders = config.memoryProviders ?? new Map();
     if (config.storage) this.storage = config.storage;
+    if (config.attachmentCache) this.attachmentCache = config.attachmentCache;
     if (config.dataDir) this.dataDir = config.dataDir;
     if (config.observability) this.observability = config.observability;
     if (config.teamId) this.teamId = config.teamId;
@@ -400,6 +404,7 @@ export class AgentLoop {
       modelRouting: this.modelRouting,
       memoryProviders: this.memoryProviders,
       storage: this.storage,
+      attachmentCache: this.attachmentCache,
       dataDir: this.dataDir,
       observability: this.observability,
       contextEngines: this.contextEngines,

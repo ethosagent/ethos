@@ -51,6 +51,7 @@ export interface LoopDeps {
     (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
   >;
   storage?: Storage;
+  attachmentCache?: import('@ethosagent/types').AttachmentCache;
   dataDir?: string;
   observability?: AgentLoopObservability;
   contextEngines: ContextEngineRegistry;

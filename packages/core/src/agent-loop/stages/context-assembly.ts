@@ -1,5 +1,7 @@
 import type { AgentEvent, Attachment, MemoryContext, PromptContext } from '@ethosagent/types';
 import { buildAttachmentAnnotation } from '../../attachment-annotation';
+import { classifyAttachment, unsupportedTypeError } from '../../attachment-classifier';
+import { formatInlinedAttachment, resolveTextAttachment } from '../../attachment-text-resolver';
 import { maybeCompact } from '../compaction';
 import { dedupHistory, toLLMMessages } from '../history';
 import type { AssembledContext, LoopDeps, TurnSetup } from '../turn-context';
@@ -46,8 +48,70 @@ export async function* assembleContext(
   // which files/images the user attached. Persisted with the message so
   // replay is faithful (plan risk #10).
   const piiConfig = personality.safety?.piiRedaction;
-  const attachmentAnnotation = buildAttachmentAnnotation(opts.attachments ?? []);
-  const rawAnnotatedText = attachmentAnnotation ? `${attachmentAnnotation}\n${text}` : text;
+
+  // Classify and resolve text attachments
+  const rawAttachments = opts.attachments ?? [];
+  const inlineBlocks: string[] = [];
+  const annotatedAttachments: Attachment[] = [];
+  const attachmentErrors: string[] = [];
+
+  for (const att of rawAttachments) {
+    const cls = classifyAttachment(att);
+    switch (cls) {
+      case 'native':
+        // Class A -- keep for annotation, existing vision path handles these
+        annotatedAttachments.push(att);
+        break;
+      case 'text': {
+        // Class B-text -- read, decode, inline
+        try {
+          const resolved = await resolveTextAttachment(att, deps.storage, deps.attachmentCache);
+          // S6 -- inbound injection scan on inlined text
+          const sanitized = deps.safety.injection.sanitize(resolved.text);
+          const formatted = formatInlinedAttachment({
+            ...resolved,
+            text: sanitized,
+          });
+          inlineBlocks.push(formatted);
+        } catch {
+          attachmentErrors.push(
+            `Failed to read "${att.filename ?? att.mimeType}": file could not be decoded as text`,
+          );
+        }
+        break;
+      }
+      case 'extract':
+        // Class B-extract -- stub for PR2, annotate so LLM knows it's there
+        annotatedAttachments.push(att);
+        break;
+      case 'unsupported':
+        attachmentErrors.push(unsupportedTypeError(att.mimeType, att.filename));
+        break;
+    }
+  }
+
+  // Build annotation only for Class A + Class B-extract attachments
+  const attachmentAnnotation = buildAttachmentAnnotation(annotatedAttachments);
+
+  // Build inline prefix: errors first (so user sees them), then inlined file content
+  // Aggregate inline budget — cap total inlined text to prevent prompt explosion
+  const INLINE_BUDGET_CHARS = 100_000;
+  let totalInlinedChars = 0;
+  const budgetedBlocks: string[] = [];
+  for (const block of inlineBlocks) {
+    totalInlinedChars += block.length;
+    if (totalInlinedChars > INLINE_BUDGET_CHARS) {
+      const remaining = inlineBlocks.length - budgetedBlocks.length;
+      budgetedBlocks.push(`[${remaining} more file(s) omitted — inline budget exceeded]`);
+      break;
+    }
+    budgetedBlocks.push(block);
+  }
+
+  const inlinePrefix = [...attachmentErrors, ...budgetedBlocks].join('\n\n');
+
+  const fullPrefix = [attachmentAnnotation, inlinePrefix].filter(Boolean).join('\n\n');
+  const rawAnnotatedText = fullPrefix ? `${fullPrefix}\n\n${text}` : text;
   const annotatedText = piiConfig?.enabled
     ? deps.safety.redaction.redactPii(rawAnnotatedText, piiConfig.extraPatterns)
     : rawAnnotatedText;

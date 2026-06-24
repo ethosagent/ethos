@@ -117,6 +117,8 @@ export interface CreateWebApiOptions {
    * (currently the MCP-config side of plugins.list). Defaults to FsStorage.
    */
   storage?: Storage;
+  /** Optional attachment cache for persisting inbound file attachments to disk. */
+  attachmentCache?: import('@ethosagent/types').AttachmentCache;
   /**
    * Secret-backed file resolver under `<dataDir>/secrets/`. Used by the
    * Communications tab to write Telegram / Slack / Discord / email
@@ -374,6 +376,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     onForget: (sessionId) => approvalsService.cancelForSession(sessionId),
     ...(opts.titleFn ? { titleFn: opts.titleFn } : {}),
     systemBus,
+    ...(opts.attachmentCache ? { attachmentCache: opts.attachmentCache } : {}),
   });
   buffer.onReap = (sessionId) => {
     chatService.forget(sessionId);

@@ -53,6 +53,8 @@ export interface ChatServiceOptions {
   titleFn?: (systemPrompt: string, userMessage: string) => Promise<string>;
   /** System-level event bus for broadcasting real-time events. When provided, a `session.titled` event is emitted after auto-titling. */
   systemBus?: SystemEventBus;
+  /** Optional attachment cache for persisting inbound attachments. */
+  attachmentCache?: import('@ethosagent/types').AttachmentCache;
 }
 
 export interface ChatSendInput {
@@ -62,6 +64,12 @@ export interface ChatSendInput {
   personalityId?: string;
   userId?: string;
   dryRun?: boolean;
+  attachments?: Array<{
+    type: 'image' | 'file';
+    data: string;
+    mimeType: string;
+    name?: string;
+  }>;
 }
 
 export interface ChatSendOutput {
@@ -105,6 +113,56 @@ export class ChatService {
     }
 
     const bridge = this.getOrCreateBridge(session.id);
+
+    const MAX_ATTACHMENTS = 10;
+    const MAX_TOTAL_BYTES = 10 * 1024 * 1024; // 10 MB
+
+    let loopAttachments: import('@ethosagent/types').Attachment[] | undefined;
+    if (input.attachments?.length) {
+      if (input.attachments.length > MAX_ATTACHMENTS) {
+        throw new EthosError({
+          code: 'INVALID_INPUT',
+          cause: `Too many attachments: ${input.attachments.length} (max ${MAX_ATTACHMENTS})`,
+          action: 'Reduce the number of attachments.',
+        });
+      }
+      if (!this.opts.attachmentCache) {
+        throw new EthosError({
+          code: 'NOT_CONFIGURED',
+          cause: 'File attachments are not available — attachment cache is not configured',
+          action: 'Configure the attachment cache in the server options.',
+        });
+      }
+      const messageId = randomUUID();
+      loopAttachments = [];
+      let totalBytes = 0;
+      for (const raw of input.attachments) {
+        const bytes = Uint8Array.from(Buffer.from(raw.data, 'base64'));
+        totalBytes += bytes.length;
+        if (totalBytes > MAX_TOTAL_BYTES) {
+          throw new EthosError({
+            code: 'INVALID_INPUT',
+            cause: `Total attachment size exceeds ${MAX_TOTAL_BYTES / (1024 * 1024)} MB`,
+            action: 'Reduce attachment sizes or count.',
+          });
+        }
+        const url = await this.opts.attachmentCache.write(bytes, {
+          sessionKey: session.key,
+          messageId,
+          filename: raw.name ?? 'attachment',
+          mime: raw.mimeType,
+        });
+        loopAttachments.push({
+          type: raw.type,
+          ref: url,
+          url,
+          mimeType: raw.mimeType,
+          filename: raw.name,
+          sizeBytes: bytes.length,
+        });
+      }
+    }
+
     const turnId = randomUUID();
 
     // Fire and forget — the bridge streams events through our subscription
@@ -116,6 +174,7 @@ export class ChatService {
         ...(input.personalityId ? { personalityId: input.personalityId } : {}),
         ...(input.userId ? { userId: input.userId } : {}),
         ...(input.dryRun ? { dryRun: true } : {}),
+        ...(loopAttachments?.length ? { attachments: loopAttachments } : {}),
       })
       .catch((err) => {
         // bridge.send doesn't reject for in-flight failures (those land as
