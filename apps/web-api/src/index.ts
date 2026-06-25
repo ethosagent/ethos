@@ -305,7 +305,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     memory: memoryProvider,
     identityMap: opts.identityMap,
   });
-  const kanbanService = new KanbanService();
+  const kanbanService = new KanbanService({ mesh });
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
   const digestService = new DigestService({
     storage,

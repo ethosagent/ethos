@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { AgentMesh } from '@ethosagent/agent-mesh';
 import {
   KanbanStore,
   type Task,
@@ -37,13 +38,17 @@ const RECENT_EVENTS_CAP = 100;
 export interface KanbanServiceOptions {
   /** Override the teams directory (testing). Defaults to `~/.ethos/teams`. */
   teamsDir?: string;
+  /** Mesh for agent discovery (listAgents, /notify on assign). */
+  mesh?: AgentMesh;
 }
 
 export class KanbanService {
   private readonly rootDir: string;
+  private readonly mesh: AgentMesh | undefined;
 
   constructor(opts: KanbanServiceOptions = {}) {
     this.rootDir = opts.teamsDir ?? teamsDir();
+    this.mesh = opts.mesh;
   }
 
   /** Enumerate teams from the manifests on disk; merge in runtime status. */
@@ -181,6 +186,103 @@ export class KanbanService {
       return { task: toWireTask(updated) };
     } finally {
       store.close();
+    }
+  }
+
+  /** Create a task on a team board. */
+  async createTask(opts: {
+    team: string;
+    title: string;
+    body?: string;
+    priority?: number;
+    assignee?: string;
+    acceptanceCriteria?: string;
+    actor: string;
+  }): Promise<{ task: KanbanTask }> {
+    assertSafeTeamName(opts.team);
+    const boardPath = join(this.rootDir, opts.team, 'board.db');
+    const store = new KanbanStore(boardPath, { teamId: opts.team });
+    try {
+      const task = store.createTask({
+        title: opts.title,
+        body: opts.body,
+        priority: opts.priority,
+        assignee: opts.assignee,
+        acceptanceCriteria: opts.acceptanceCriteria,
+        actor: opts.actor,
+      });
+      return { task: toWireTask(task) };
+    } finally {
+      store.close();
+    }
+  }
+
+  /** List agents subscribed to a team board via the mesh registry. */
+  async listAgents(opts: { team: string }): Promise<{
+    agents: Array<{
+      personalityId: string;
+      displayName: string;
+      agentId: string;
+      online: boolean;
+    }>;
+  }> {
+    assertSafeTeamName(opts.team);
+    if (!this.mesh) return { agents: [] };
+
+    const entries = await this.mesh.list();
+    const agents = entries
+      .filter((e) => e.boardSubscriptions?.includes(opts.team))
+      .map((e) => ({
+        personalityId: e.personalityId ?? e.agentId,
+        displayName: e.displayName ?? e.agentId,
+        agentId: e.agentId,
+        online: Date.now() - e.lastHeartbeatAt < 30_000,
+      }));
+
+    return { agents };
+  }
+
+  /** Assign a task and fire /notify to the assignee via mesh. */
+  async assign(opts: {
+    team: string;
+    taskId: string;
+    assignee: string;
+    actor: string;
+  }): Promise<{ task: KanbanTask }> {
+    assertSafeTeamName(opts.team);
+    const boardPath = join(this.rootDir, opts.team, 'board.db');
+    const store = new KanbanStore(boardPath, { teamId: opts.team });
+    try {
+      const task = store.assign(opts.taskId, opts.assignee, opts.actor);
+
+      // Fire /notify to the assignee via mesh — non-fatal on failure.
+      if (this.mesh && task.status === 'ready') {
+        void this.notifyAssignee(opts.assignee, task.id).catch(() => {});
+      }
+
+      return { task: toWireTask(task) };
+    } finally {
+      store.close();
+    }
+  }
+
+  private async notifyAssignee(personalityId: string, taskId: string): Promise<void> {
+    if (!this.mesh) return;
+    const entries = await this.mesh.findByPersonality(personalityId);
+    const entry = entries[0];
+    if (!entry) return;
+
+    try {
+      const res = await fetch(`http://${entry.host}:${entry.port}/notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'kanban', ref: taskId }),
+      });
+      if (!res.ok) {
+        // Notification failure is non-fatal — poll loop reconciles.
+      }
+    } catch {
+      // Network failure is non-fatal.
     }
   }
 }
