@@ -63,25 +63,28 @@ export class KanbanService {
 
   /** Enumerate teams from the manifests on disk; merge in runtime status. */
   async list(): Promise<{ teams: KanbanTeamSummary[] }> {
-    if (!existsSync(this.rootDir)) return { teams: [] };
-
-    const entries = readdirSync(this.rootDir, { withFileTypes: true });
-    const manifestFiles = entries
-      .filter((e) => e.isFile() && e.name.endsWith('.yaml'))
-      .map((e) => e.name.replace(/\.yaml$/, ''));
-
     const teams: KanbanTeamSummary[] = [];
-    for (const name of manifestFiles) {
-      const manifestPath = join(this.rootDir, `${name}.yaml`);
-      try {
-        const src = await readFile(manifestPath, 'utf-8');
-        const manifest = parseTeamManifest(src);
-        const runtime = readRuntimeFrom(this.rootDir, name);
-        teams.push(toTeamSummary(name, manifest.description, manifest, runtime, this.rootDir));
-      } catch {
-        // Malformed manifest — skip rather than poison the list.
+
+    // Enumerate team boards from manifests on disk
+    if (existsSync(this.rootDir)) {
+      const entries = readdirSync(this.rootDir, { withFileTypes: true });
+      const manifestFiles = entries
+        .filter((e) => e.isFile() && e.name.endsWith('.yaml'))
+        .map((e) => e.name.replace(/\.yaml$/, ''));
+
+      for (const name of manifestFiles) {
+        const manifestPath = join(this.rootDir, `${name}.yaml`);
+        try {
+          const src = await readFile(manifestPath, 'utf-8');
+          const manifest = parseTeamManifest(src);
+          const runtime = readRuntimeFrom(this.rootDir, name);
+          teams.push(toTeamSummary(name, manifest.description, manifest, runtime, this.rootDir));
+        } catch {
+          // Malformed manifest — skip rather than poison the list.
+        }
       }
     }
+
     // Always include the global board so the UI is usable before the first task.
     const globalBoardPath = join(this.rootDir, '..', 'board.db');
     const globalModifiedAt = existsSync(globalBoardPath)
@@ -96,6 +99,7 @@ export class KanbanService {
       runningCount: 0,
       boardModifiedAt: globalModifiedAt,
     });
+
     return { teams };
   }
 
