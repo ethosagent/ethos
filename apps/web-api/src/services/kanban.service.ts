@@ -35,6 +35,16 @@ import type {
 
 const RECENT_EVENTS_CAP = 100;
 
+const GLOBAL_BOARD_NAME = 'global';
+
+function resolveBoard(rootDir: string, team: string): string {
+  if (team === GLOBAL_BOARD_NAME) {
+    // Global board lives at ~/.ethos/board.db, one level above the teams dir
+    return join(rootDir, '..', 'board.db');
+  }
+  return join(rootDir, team, 'board.db');
+}
+
 export interface KanbanServiceOptions {
   /** Override the teams directory (testing). Defaults to `~/.ethos/teams`. */
   teamsDir?: string;
@@ -72,11 +82,26 @@ export class KanbanService {
         // Malformed manifest — skip rather than poison the list.
       }
     }
+    // Include the global board if it exists
+    const globalBoardPath = join(this.rootDir, '..', 'board.db');
+    if (existsSync(globalBoardPath)) {
+      const globalModifiedAt = new Date(statSync(globalBoardPath).mtimeMs).toISOString();
+      teams.unshift({
+        name: GLOBAL_BOARD_NAME,
+        description: 'Global kanban board',
+        dispatchMode: 'self-routing',
+        health: 'running',
+        memberCount: 0,
+        runningCount: 0,
+        boardModifiedAt: globalModifiedAt,
+      });
+    }
     return { teams };
   }
 
   /** Open the team board read-only, return a snapshot. */
   async getBoard(team: string): Promise<{ board: KanbanBoardSnapshot }> {
+    if (team === GLOBAL_BOARD_NAME) return this.getGlobalBoard();
     assertSafeTeamName(team);
     const manifestPath = join(this.rootDir, `${team}.yaml`);
     if (!existsSync(manifestPath)) {
@@ -159,6 +184,72 @@ export class KanbanService {
     }
   }
 
+  private async getGlobalBoard(): Promise<{ board: KanbanBoardSnapshot }> {
+    const boardPath = join(this.rootDir, '..', 'board.db');
+    const summary: KanbanTeamSummary = {
+      name: GLOBAL_BOARD_NAME,
+      description: 'Global kanban board',
+      dispatchMode: 'self-routing',
+      health: 'running',
+      memberCount: 0,
+      runningCount: 0,
+      boardModifiedAt: existsSync(boardPath)
+        ? new Date(statSync(boardPath).mtimeMs).toISOString()
+        : null,
+    };
+
+    if (!existsSync(boardPath)) {
+      return {
+        board: { team: summary, tasks: [], links: [], recentEvents: [], memberStats: [] },
+      };
+    }
+
+    const store = new KanbanStore(boardPath);
+    try {
+      const tasks = store.listTasks({ limit: 1000 }).map(toWireTask);
+      const linkRows = (
+        store as unknown as { db: { prepare: (s: string) => { all: () => unknown[] } } }
+      ).db
+        .prepare('SELECT parent_id, child_id FROM task_links')
+        .all() as Array<{ parent_id: string; child_id: string }>;
+      const links: KanbanLink[] = linkRows.map((r) => ({
+        parentId: r.parent_id,
+        childId: r.child_id,
+      }));
+      const eventRows = (
+        store as unknown as { db: { prepare: (s: string) => { all: (n: number) => unknown[] } } }
+      ).db
+        .prepare(
+          'SELECT id, task_id, kind, actor, data_json, created_at FROM task_events ORDER BY id DESC LIMIT ?',
+        )
+        .all(RECENT_EVENTS_CAP) as Array<{
+        id: number;
+        task_id: string;
+        kind: string;
+        actor: string;
+        data_json: string;
+        created_at: number;
+      }>;
+      const recentEvents: KanbanEvent[] = eventRows.reverse().map((r) => ({
+        id: r.id,
+        taskId: r.task_id,
+        kind: r.kind as KanbanEvent['kind'],
+        actor: r.actor,
+        data: JSON.parse(r.data_json) as Record<string, unknown>,
+        createdAt: new Date(r.created_at).toISOString(),
+      }));
+      const memberStats: KanbanMemberStats[] = [...store.getMemberStats().values()].map(
+        toWireMemberStats,
+      );
+
+      return {
+        board: { team: summary, tasks, links, recentEvents, memberStats },
+      };
+    } finally {
+      store.close();
+    }
+  }
+
   /**
    * Human-initiated status update. Threads `human:<sessionLabel>` as the actor
    * so the audit trail clearly separates UI edits from agent actions. Honors
@@ -171,8 +262,8 @@ export class KanbanService {
     reason?: string;
     actor: string;
   }): Promise<{ task: KanbanTask }> {
-    assertSafeTeamName(opts.team);
-    const boardPath = join(this.rootDir, opts.team, 'board.db');
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
     if (!existsSync(boardPath)) {
       throw new Error(`team board not found: ${opts.team}`);
     }
@@ -199,8 +290,8 @@ export class KanbanService {
     acceptanceCriteria?: string;
     actor: string;
   }): Promise<{ task: KanbanTask }> {
-    assertSafeTeamName(opts.team);
-    const boardPath = join(this.rootDir, opts.team, 'board.db');
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
     const store = new KanbanStore(boardPath, { teamId: opts.team });
     try {
       const task = store.createTask({
@@ -226,7 +317,7 @@ export class KanbanService {
       online: boolean;
     }>;
   }> {
-    assertSafeTeamName(opts.team);
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
     if (!this.mesh) return { agents: [] };
 
     const entries = await this.mesh.list();
@@ -249,8 +340,8 @@ export class KanbanService {
     assignee: string;
     actor: string;
   }): Promise<{ task: KanbanTask }> {
-    assertSafeTeamName(opts.team);
-    const boardPath = join(this.rootDir, opts.team, 'board.db');
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
     const store = new KanbanStore(boardPath, { teamId: opts.team });
     try {
       const task = store.assign(opts.taskId, opts.assignee, opts.actor);

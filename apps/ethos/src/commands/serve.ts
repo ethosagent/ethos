@@ -383,7 +383,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     activeSessions: 0,
     personalityId: activePersonality,
     displayName: personalityConfig?.name ?? activePersonality,
-    boardSubscriptions: teamFlag ? [teamFlag] : [],
+    boardSubscriptions: teamFlag ? [teamFlag] : ['global'],
   });
   const stopHeartbeat = mesh.startHeartbeat(agentId, () => acpServer.activeSessionCount);
 
@@ -397,10 +397,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
 
   // Kanban poll loop — reconcile-on-wake for missed /notify calls.
   let stopPollLoop: (() => void) | null = null;
-  const kanbanPollEnabled = config.kanbanPoll?.enabled || !!teamFlag;
+  const kanbanPollEnabled = config.kanbanPoll?.enabled !== false; // enabled by default
   if (kanbanPollEnabled) {
     const boardPath =
-      config.kanbanPoll?.boardPath ?? (teamFlag ? join(dir, 'teams', teamFlag, 'board.db') : null);
+      config.kanbanPoll?.boardPath
+      ?? (teamFlag ? join(dir, 'teams', teamFlag, 'board.db') : join(dir, 'board.db'));
 
     if (boardPath) {
       const lane = new SessionLane();
