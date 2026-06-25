@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
-import { Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
+import { createCapturingAdapter, Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { registerGoalNotifications } from '@ethosagent/goal-runner';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry, firstParagraph } from '@ethosagent/personalities';
@@ -48,6 +48,7 @@ import { createHealthServer } from '../health-server';
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
 import { notifyReady, startWatchdog } from '../sd-notify';
+import { createWebhookServer } from '../webhook-server';
 import {
   buildSystemTaskHandlers,
   createAgentLoop,
@@ -784,6 +785,25 @@ export async function runGatewayStart(): Promise<void> {
   });
   console.log(`  health: http://${healthHost}:${healthPort}/healthz`);
 
+  // Inbound webhooks — opt-in: only listen when at least one hook is configured.
+  const webhookPort = Number(process.env.ETHOS_WEBHOOK_PORT) || 3003;
+  const webhookHost = process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
+  const webhookServer =
+    config.webhooks && Object.keys(config.webhooks).length > 0
+      ? createWebhookServer(
+          webhookPort,
+          webhookHost,
+          gateway,
+          config.webhooks,
+          createCapturingAdapter,
+        )
+      : undefined;
+  if (webhookServer && config.webhooks) {
+    for (const hookId of Object.keys(config.webhooks)) {
+      console.log(`  webhook: http://${webhookHost}:${webhookPort}/webhook/${hookId}`);
+    }
+  }
+
   console.log(`${c.dim}Listening for messages. Press Ctrl+C to stop.${c.reset}\n`);
   let heartbeatInFlight = false;
   const writeHeartbeat = async () => {
@@ -810,6 +830,7 @@ export async function runGatewayStart(): Promise<void> {
     console.log(`\n${c.dim}Shutting down...${c.reset}`);
     if (stopWatchdog) stopWatchdog();
     healthServer.close();
+    webhookServer?.close();
     clearInterval(pruneTimer);
     clearInterval(heartbeatTimer);
     scheduler.stop();
@@ -921,6 +942,22 @@ async function buildGatewayBots(
       routers.push(result.notificationRouter);
     }
     out.push({ botKey, loop, binding: { ...bind }, piiRedaction: waCfg.piiRedaction });
+  }
+  // Inbound webhooks — each hookId becomes a first-class personality-bound bot
+  // so POST /webhook/<hookId> drives the same gateway/session machinery as a
+  // channel bot. botKey matches what the webhook server stamps on inbounds.
+  for (const [hookId, hook] of Object.entries(config.webhooks ?? {})) {
+    const result = await createAgentLoop(
+      { ...config, personality: hook.personalityId },
+      { cronScheduler: scheduler },
+    );
+    out.push({
+      botKey: `webhook:${hookId}`,
+      loop: result.loop,
+      binding: { type: 'personality', name: hook.personalityId },
+    });
+    setters.push(result.setMessagingSend);
+    routers.push(result.notificationRouter);
   }
   return { bots: out, messagingSetters: setters, notificationRouters: routers };
 }

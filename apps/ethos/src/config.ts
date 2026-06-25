@@ -439,6 +439,14 @@ export interface EthosConfig {
   /** tools-web — web_search/web_extract backend selection. */
   web?: WebConfig;
   /**
+   * Inbound webhooks. Each hookId maps to a personality + a bearer secret.
+   * Exposes POST /webhook/<hookId> on the gateway when non-empty.
+   *   webhooks.<hookId>.personalityId: researcher
+   *   webhooks.<hookId>.secret: <bearer-secret>
+   *   webhooks.<hookId>.sessionKey: <optional-stable-session-key>
+   */
+  webhooks?: Record<string, { personalityId: string; secret: string; sessionKey?: string }>;
+  /**
    * Remote model catalog configuration. Controls how Ethos fetches and caches
    * the centralized model metadata catalog (capabilities, context windows, pricing).
    * Config keys:
@@ -710,6 +718,13 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   }
   if (config.web?.search_backend) lines.push(`web.search_backend: ${config.web.search_backend}`);
   if (config.web?.extract_backend) lines.push(`web.extract_backend: ${config.web.extract_backend}`);
+  if (config.webhooks) {
+    for (const [hookId, hook] of Object.entries(config.webhooks)) {
+      lines.push(`webhooks.${hookId}.personalityId: ${hook.personalityId}`);
+      lines.push(`webhooks.${hookId}.secret: ${hook.secret}`);
+      if (hook.sessionKey) lines.push(`webhooks.${hookId}.sessionKey: ${hook.sessionKey}`);
+    }
+  }
   if (config.modelCatalog) {
     if (config.modelCatalog.enabled === false) lines.push('modelCatalog.enabled: false');
     if (config.modelCatalog.url) lines.push(`modelCatalog.url: ${config.modelCatalog.url}`);
@@ -844,6 +859,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const slackAppsKv: Record<number, Record<string, string>> = {};
   const whatsappKv: Record<number, Record<string, string>> = {};
   const teamsKv: Record<string, Record<string, string>> = {};
+  const webhooksKv: Record<string, Record<string, string>> = {};
   // FW-16 — quick_commands.<name>.<field>: <value>
   const qcKv: Record<string, Record<string, string>> = {};
   // Chapter 1 safety: channel_filter.<platform>.<field>: <value>
@@ -903,6 +919,14 @@ function parseConfigYaml(src: string): EthosConfig {
       const name = tcfg[1];
       teamsKv[name] ??= {};
       teamsKv[name][tcfg[2]] = tcfg[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // webhooks.<hookId>.<field>: <value>
+    const whook = line.match(/^webhooks\.([^.]+)\.(\S+):\s*(.+)$/);
+    if (whook) {
+      const hookId = whook[1];
+      webhooksKv[hookId] ??= {};
+      webhooksKv[hookId][whook[2]] = whook[3].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // providers.<index>.<field>: <value>
@@ -1181,9 +1205,15 @@ function parseConfigYaml(src: string): EthosConfig {
   const slackResult = buildSlackApps(slackAppsKv);
   const whatsappResult = buildWhatsApps(whatsappKv);
   const teams = buildTeamsConfig(teamsKv);
+  const webhooksResult = buildWebhooks(webhooksKv);
   const quick_commands = buildQuickCommands(qcKv);
   const channelFilter = buildChannelFilter(channelFilterKv);
-  const parseErrors = [...telegramResult.errors, ...slackResult.errors, ...whatsappResult.errors];
+  const parseErrors = [
+    ...telegramResult.errors,
+    ...slackResult.errors,
+    ...whatsappResult.errors,
+    ...webhooksResult.errors,
+  ];
 
   const pluginsAutoInstall: boolean | undefined =
     kv['plugins.auto_install'] === 'true'
@@ -1251,6 +1281,7 @@ function parseConfigYaml(src: string): EthosConfig {
           }
         : undefined,
     web: webConfig,
+    webhooks: webhooksResult.webhooks,
     modelCatalog,
     logs: logsRotation ? { rotation: logsRotation } : undefined,
     aws: awsConfig,
@@ -1603,6 +1634,37 @@ function buildTeamsConfig(
     out[name] = cfg;
   }
   return out;
+}
+
+function buildWebhooks(kv: Record<string, Record<string, string>>): {
+  webhooks:
+    | Record<string, { personalityId: string; secret: string; sessionKey?: string }>
+    | undefined;
+  errors: string[];
+} {
+  const ids = Object.keys(kv);
+  if (ids.length === 0) return { webhooks: undefined, errors: [] };
+  const webhooks: Record<string, { personalityId: string; secret: string; sessionKey?: string }> =
+    {};
+  const errors: string[] = [];
+  for (const hookId of ids) {
+    const entry = kv[hookId];
+    if (!entry) continue;
+    if (!entry.personalityId) {
+      errors.push(`webhooks.${hookId}: missing required field 'personalityId'.`);
+      continue;
+    }
+    if (!entry.secret) {
+      errors.push(`webhooks.${hookId}: missing required field 'secret'.`);
+      continue;
+    }
+    webhooks[hookId] = {
+      personalityId: entry.personalityId,
+      secret: entry.secret,
+      ...(entry.sessionKey ? { sessionKey: entry.sessionKey } : {}),
+    };
+  }
+  return { webhooks: Object.keys(webhooks).length > 0 ? webhooks : undefined, errors };
 }
 
 /**

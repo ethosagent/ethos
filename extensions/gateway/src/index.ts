@@ -26,6 +26,7 @@ import { MessageDedupCache } from './dedup';
 
 export { MessageDedupCache } from './dedup';
 export { DreamExecutor } from './dream-executor';
+export { type CapturingAdapter, createCapturingAdapter } from './webhook-adapter';
 
 const noopLogger: Logger = {
   debug() {},
