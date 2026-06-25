@@ -82,20 +82,20 @@ export class KanbanService {
         // Malformed manifest — skip rather than poison the list.
       }
     }
-    // Include the global board if it exists
+    // Always include the global board so the UI is usable before the first task.
     const globalBoardPath = join(this.rootDir, '..', 'board.db');
-    if (existsSync(globalBoardPath)) {
-      const globalModifiedAt = new Date(statSync(globalBoardPath).mtimeMs).toISOString();
-      teams.unshift({
-        name: GLOBAL_BOARD_NAME,
-        description: 'Global kanban board',
-        dispatchMode: 'self-routing',
-        health: 'running',
-        memberCount: 0,
-        runningCount: 0,
-        boardModifiedAt: globalModifiedAt,
-      });
-    }
+    const globalModifiedAt = existsSync(globalBoardPath)
+      ? new Date(statSync(globalBoardPath).mtimeMs).toISOString()
+      : null;
+    teams.unshift({
+      name: GLOBAL_BOARD_NAME,
+      description: 'Global kanban board',
+      dispatchMode: 'self-routing',
+      health: 'running',
+      memberCount: 0,
+      runningCount: 0,
+      boardModifiedAt: globalModifiedAt,
+    });
     return { teams };
   }
 

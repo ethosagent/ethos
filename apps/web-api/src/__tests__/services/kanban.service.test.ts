@@ -35,9 +35,11 @@ describe('KanbanService', () => {
   // list
   // ---------------------------------------------------------------------------
 
-  it('list returns an empty array when no teams exist', async () => {
+  it('list returns the global board even when no teams exist', async () => {
     const { teams } = await service.list();
-    expect(teams).toEqual([]);
+    expect(teams).toHaveLength(1);
+    expect(teams[0]?.name).toBe('global');
+    expect(teams[0]?.boardModifiedAt).toBeNull();
   });
 
   it('list returns parsed teams from manifests on disk', async () => {
@@ -57,12 +59,14 @@ members:
     );
 
     const { teams } = await service.list();
-    expect(teams).toHaveLength(1);
-    expect(teams[0]?.name).toBe('analytics');
-    expect(teams[0]?.dispatchMode).toBe('coordinator');
-    expect(teams[0]?.memberCount).toBe(2);
-    expect(teams[0]?.health).toBe('stopped'); // no runtime file
-    expect(teams[0]?.boardModifiedAt).toBeNull();
+    expect(teams).toHaveLength(2);
+    expect(teams[0]?.name).toBe('global');
+    const analytics = teams[1];
+    expect(analytics?.name).toBe('analytics');
+    expect(analytics?.dispatchMode).toBe('coordinator');
+    expect(analytics?.memberCount).toBe(2);
+    expect(analytics?.health).toBe('stopped'); // no runtime file
+    expect(analytics?.boardModifiedAt).toBeNull();
   });
 
   it('list skips malformed manifests instead of throwing', async () => {
@@ -79,7 +83,7 @@ members:
     writeManifest('bad', 'this: is: not: valid: yaml:::');
 
     const { teams } = await service.list();
-    expect(teams.map((t) => t.name)).toEqual(['good']);
+    expect(teams.map((t) => t.name)).toEqual(['global', 'good']);
   });
 
   it('list reports boardModifiedAt when a board.db exists', async () => {
@@ -98,9 +102,11 @@ members:
     store.close();
 
     const { teams } = await service.list();
-    expect(teams[0]?.boardModifiedAt).not.toBeNull();
+    // teams[0] is the global board; the analytics board with board.db is teams[1].
+    const analytics = teams.find((t) => t.name === 'analytics');
+    expect(analytics?.boardModifiedAt).not.toBeNull();
     // ISO-8601 sanity check.
-    expect(() => new Date(teams[0]?.boardModifiedAt ?? '')).not.toThrow();
+    expect(() => new Date(analytics?.boardModifiedAt ?? '')).not.toThrow();
   });
 
   // ---------------------------------------------------------------------------
