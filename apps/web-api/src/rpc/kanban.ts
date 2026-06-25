@@ -27,9 +27,26 @@ export const kanbanRouter = {
     }),
   ),
 
-  listAgents: os.kanban.listAgents.handler(({ input, context }) =>
-    context.kanban.listAgents({ team: input.team }),
-  ),
+  listAgents: os.kanban.listAgents.handler(async ({ input, context }) => {
+    // Get online agents from mesh
+    const meshResult = await context.kanban.listAgents({ team: input.team });
+    const onlineIds = new Set(meshResult.agents.map((a) => a.personalityId));
+
+    // Get all personalities from disk
+    const allPersonalities = context.personalities.list().items;
+
+    // Add offline personalities that aren't already in the mesh list
+    const offlineAgents = allPersonalities
+      .filter((p) => !onlineIds.has(p.id))
+      .map((p) => ({
+        personalityId: p.id,
+        displayName: p.name,
+        agentId: p.id,
+        online: false,
+      }));
+
+    return { agents: [...meshResult.agents, ...offlineAgents] };
+  }),
 
   assign: os.kanban.assign.handler(({ input, context }) =>
     context.kanban.assign({
