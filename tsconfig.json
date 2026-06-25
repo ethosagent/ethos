@@ -127,6 +127,7 @@
       "@ethosagent/tui/setup": ["./apps/tui/src/setup/index"],
       "@ethosagent/web-contracts": ["./packages/web-contracts/src"],
       "@ethosagent/sdk": ["./packages/sdk/src"],
+      "@ethosagent/session-lane": ["./packages/session-lane/src"],
       "@ethosagent/design-tokens": ["./packages/design-tokens/src"],
       "@ethosagent/ui-components": ["./packages/ui-components/src"],
       "@ethosagent/design-tokens/antd": ["./packages/design-tokens/src/antd"],

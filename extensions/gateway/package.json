@@ -19,6 +19,7 @@
     "@ethosagent/safety-channel": "workspace:*",
     "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/safety-redact": "workspace:*",
+    "@ethosagent/session-lane": "workspace:*",
     "@ethosagent/sqlite": "workspace:*"
   }
 }

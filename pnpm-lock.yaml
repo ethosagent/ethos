@@ -856,6 +856,9 @@ importers:
       '@ethosagent/safety-redact':
         specifier: workspace:*
         version: link:../../packages/safety/redact
+      '@ethosagent/session-lane':
+        specifier: workspace:*
+        version: link:../../packages/session-lane
       '@ethosagent/sqlite':
         specifier: workspace:*
         version: link:../../packages/sqlite
@@ -1654,6 +1657,8 @@ importers:
       '@orpc/contract':
         specifier: ^1.14.3
         version: 1.14.4
+
+  packages/session-lane: {}
 
   packages/sqlite: {}
 
