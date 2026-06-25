@@ -1,7 +1,7 @@
+import type { AgentMesh } from '@ethosagent/agent-mesh';
 import type { KanbanStore, Task } from '@ethosagent/kanban-store';
 import { autonomyTier, type TrustPolicy, tierMaxRetries } from '@ethosagent/kanban-store';
 import type { MemberRuntime } from './runtime';
-import type { AgentMesh } from '@ethosagent/agent-mesh';
 
 // ---------------------------------------------------------------------------
 // Public contract
