@@ -96,4 +96,59 @@ describe('AgentMesh', () => {
     expect(await mesh.list()).toHaveLength(0);
     expect(await mesh.route('code')).toBeNull();
   });
+
+  it('registers with personalityId, displayName, and boardSubscriptions', async () => {
+    const mesh = makeMesh();
+    await mesh.register(
+      entry({
+        personalityId: 'engineer',
+        displayName: 'Engineer',
+        boardSubscriptions: ['backend'],
+      }),
+    );
+    const list = await mesh.list();
+    expect(list).toHaveLength(1);
+    expect(list[0].personalityId).toBe('engineer');
+    expect(list[0].displayName).toBe('Engineer');
+    expect(list[0].boardSubscriptions).toEqual(['backend']);
+  });
+
+  it('registers without new fields (backward compat)', async () => {
+    const mesh = makeMesh();
+    await mesh.register(entry());
+    const list = await mesh.list();
+    expect(list).toHaveLength(1);
+    expect(list[0].personalityId).toBeUndefined();
+    expect(list[0].displayName).toBeUndefined();
+    expect(list[0].boardSubscriptions).toBeUndefined();
+  });
+
+  it('findByPersonality returns matching entries', async () => {
+    const mesh = makeMesh();
+    await mesh.register(entry({ agentId: 'a1', personalityId: 'engineer', port: 3001 }));
+    await mesh.register(entry({ agentId: 'a2', personalityId: 'trader', port: 3002 }));
+    await mesh.register(entry({ agentId: 'a3', personalityId: 'engineer', port: 3003 }));
+    const results = await mesh.findByPersonality('engineer');
+    expect(results).toHaveLength(2);
+    expect(results.map((e) => e.agentId).sort()).toEqual(['a1', 'a3']);
+  });
+
+  it('findByPersonality returns empty for nonexistent personality', async () => {
+    const mesh = makeMesh();
+    await mesh.register(entry({ personalityId: 'engineer' }));
+    expect(await mesh.findByPersonality('nonexistent')).toEqual([]);
+  });
+
+  it('findByPersonality excludes stale entries', async () => {
+    const mesh = makeMesh();
+    await mesh.register(entry({ personalityId: 'engineer' }));
+
+    const path = (mesh as unknown as { path: string }).path;
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const data = JSON.parse(await readFile(path, 'utf8'));
+    data[0].lastHeartbeatAt = Date.now() - 31_000;
+    await writeFile(path, JSON.stringify(data));
+
+    expect(await mesh.findByPersonality('engineer')).toEqual([]);
+  });
 });

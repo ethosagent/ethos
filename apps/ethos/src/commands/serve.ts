@@ -379,6 +379,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     host: 'localhost',
     port: acpPort,
     activeSessions: 0,
+    personalityId: activePersonality,
+    displayName: personalityConfig?.name ?? activePersonality,
+    boardSubscriptions: teamFlag ? [teamFlag] : [],
   });
   const stopHeartbeat = mesh.startHeartbeat(agentId, () => acpServer.activeSessionCount);
 

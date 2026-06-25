@@ -14,6 +14,12 @@ export interface MeshEntry {
   registeredAt: number;
   lastHeartbeatAt: number;
   activeSessions: number;
+  /** Personality directory name — internal addressing key for /notify routing. */
+  personalityId?: string;
+  /** Human-facing label (e.g. "Engineer", "Swing Trader"). */
+  displayName?: string;
+  /** Board/team subscriptions — which boards this agent watches. */
+  boardSubscriptions?: string[];
 }
 
 const STALE_MS = 30_000;
@@ -179,6 +185,14 @@ export class AgentMesh {
     const now = Date.now();
     const entries = await this.read();
     return entries.filter((e) => now - e.lastHeartbeatAt < STALE_MS);
+  }
+
+  async findByPersonality(personalityId: string): Promise<MeshEntry[]> {
+    const now = Date.now();
+    const entries = await this.read();
+    return entries.filter(
+      (e) => now - e.lastHeartbeatAt < STALE_MS && e.personalityId === personalityId,
+    );
   }
 
   // Starts a 10-second heartbeat. Returns a cleanup function. The async
