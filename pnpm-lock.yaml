@@ -246,6 +246,9 @@ importers:
       '@ethosagent/goal-store':
         specifier: workspace:*
         version: link:../../extensions/goal-store
+      '@ethosagent/kanban-store':
+        specifier: workspace:*
+        version: link:../../extensions/kanban-store
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../../packages/logger
@@ -279,6 +282,9 @@ importers:
       '@ethosagent/secrets-aws':
         specifier: workspace:*
         version: link:../../extensions/secrets-aws
+      '@ethosagent/session-lane':
+        specifier: workspace:*
+        version: link:../../packages/session-lane
       '@ethosagent/session-sqlite':
         specifier: workspace:*
         version: link:../../extensions/session-sqlite
