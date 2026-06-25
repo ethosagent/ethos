@@ -8,6 +8,7 @@ import type { Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import type { AgentMesh, MeshEntry } from '@ethosagent/agent-mesh';
+import { SessionLane } from '@ethosagent/session-lane';
 import type { McpServerConfig, McpSessionView } from '@ethosagent/tools-mcp';
 import type { SessionStore } from '@ethosagent/types';
 import { type WebSocket, WebSocketServer } from 'ws';
@@ -92,6 +93,7 @@ export class AcpServer {
 
   /** Bearer token required for all authenticated endpoints. */
   private readonly _authToken: string;
+  private readonly lane = new SessionLane();
 
   constructor(config: {
     runner: AgentRunner;
@@ -233,6 +235,33 @@ export class AcpServer {
       return;
     }
 
+    if (req.method === 'POST' && req.url === '/notify') {
+      const body = await readBody(req);
+      let parsed: { kind?: unknown; ref?: unknown };
+      try {
+        parsed = JSON.parse(body) as { kind?: unknown; ref?: unknown };
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        return;
+      }
+      if (!parsed.kind || typeof parsed.kind !== 'string') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'kind is required and must be a non-empty string' }));
+        return;
+      }
+      const kind = parsed.kind;
+      const ref = typeof parsed.ref === 'string' ? parsed.ref : undefined;
+      const prompt = renderNotifyPrompt(kind, ref);
+      const sessionKey = `notify:${kind}:${Date.now()}`;
+      void this.lane.enqueue(async (_signal) => {
+        await this.runBlocking(prompt, sessionKey).catch(() => {});
+      });
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, queued: this.lane.length }));
+      return;
+    }
+
     if (req.method !== 'POST' || req.url !== '/rpc') {
       res.writeHead(404);
       res.end();
@@ -340,6 +369,19 @@ export class AcpServer {
             id,
             result: { agents: this.mesh ? await this.mesh.list() : [] },
           };
+
+        case 'notify': {
+          const p = req.params as { kind: string; ref?: string };
+          if (!p.kind || typeof p.kind !== 'string') {
+            return { jsonrpc: '2.0', id, error: { code: -32602, message: 'kind is required' } };
+          }
+          const prompt = renderNotifyPrompt(p.kind, p.ref);
+          const sessionKey = `notify:${p.kind}:${Date.now()}`;
+          void this.lane.enqueue(async (_signal) => {
+            await this.runBlocking(prompt, sessionKey).catch(() => {});
+          });
+          return { jsonrpc: '2.0', id, result: { ok: true, queued: this.lane.length } };
+        }
 
         default:
           return {
@@ -497,6 +539,21 @@ export class AcpServer {
         case 'mesh.status':
           sendResult({ agents: this.mesh ? await this.mesh.list() : [] });
           break;
+
+        case 'notify': {
+          const p = req.params as { kind: string; ref?: string };
+          if (!p.kind || typeof p.kind !== 'string') {
+            sendError(-32602, 'kind is required');
+            return;
+          }
+          const prompt = renderNotifyPrompt(p.kind, p.ref);
+          const sessionKey = `notify:${p.kind}:${Date.now()}`;
+          void this.lane.enqueue(async (_signal) => {
+            await this.runBlocking(prompt, sessionKey).catch(() => {});
+          });
+          sendResult({ ok: true, queued: this.lane.length });
+          break;
+        }
 
         default:
           sendError(-32601, `Method not found: ${req.method}`);
@@ -663,4 +720,11 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+function renderNotifyPrompt(kind: string, ref?: string): string {
+  const parts = [`You have been notified: kind=${kind}`];
+  if (ref) parts.push(`ref=${ref}`);
+  parts.push('Use your tools to check the relevant state and act on this notification.');
+  return parts.join('. ');
 }
