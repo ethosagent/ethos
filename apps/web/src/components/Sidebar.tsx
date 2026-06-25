@@ -179,6 +179,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                   label="Teams"
                   active={pathname === '/teams' || pathname.startsWith('/teams/')}
                 />
+                <NavRow
+                  path="/kanban"
+                  icon="📋"
+                  label="Kanban"
+                  active={pathname === '/kanban'}
+                />
                 {config?.adminEnabled && (
                   <NavRow path="/admin" icon="🛡️" label="Admin" active={pathname === '/admin'} />
                 )}
