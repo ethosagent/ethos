@@ -1,6 +1,7 @@
 import type { KanbanStore, Task } from '@ethosagent/kanban-store';
 import { autonomyTier, type TrustPolicy, tierMaxRetries } from '@ethosagent/kanban-store';
 import type { MemberRuntime } from './runtime';
+import type { AgentMesh } from '@ethosagent/agent-mesh';
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -35,6 +36,8 @@ export type DispatchCall = (args: {
 export interface DispatcherOptions {
   board: KanbanStore;
   supervisor: SupervisorState;
+  /** AgentMesh for address resolution. Falls back to supervisor.portOf() when absent. */
+  mesh?: AgentMesh;
   /** Dispatch transport. Defaults to {@link defaultDispatchCall}. */
   dispatch?: DispatchCall;
   /**
@@ -105,6 +108,7 @@ const DISPATCH_HOST = 'localhost';
 export class Dispatcher {
   private readonly board: KanbanStore;
   private readonly supervisor: SupervisorState;
+  private readonly mesh: AgentMesh | null;
   private readonly dispatch: DispatchCall;
   private readonly staleMs: number;
   private readonly pollMs: number;
@@ -122,6 +126,7 @@ export class Dispatcher {
   constructor(opts: DispatcherOptions) {
     this.board = opts.board;
     this.supervisor = opts.supervisor;
+    this.mesh = opts.mesh ?? null;
     this.dispatch = opts.dispatch ?? defaultDispatchCall;
     this.staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
     this.pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
@@ -213,9 +218,23 @@ export class Dispatcher {
       if (this.inflight.has(task.id)) continue; // already in-flight from a prior tick
       const assignee = task.assignee;
       if (assignee === null) continue;
-      const port = this.supervisor.portOf(assignee);
-      const status = this.supervisor.statusOf(assignee);
-      if (port === null || status !== 'running') continue;
+      let dispatchHost = DISPATCH_HOST;
+      let dispatchPort: number | null = null;
+
+      if (this.mesh) {
+        const entries = await this.mesh.findByPersonality(assignee);
+        const entry = entries[0];
+        if (entry) {
+          dispatchHost = entry.host;
+          dispatchPort = entry.port;
+        }
+      } else {
+        const status = this.supervisor.statusOf(assignee);
+        if (status !== 'running') continue;
+        dispatchPort = this.supervisor.portOf(assignee);
+      }
+
+      if (dispatchPort === null) continue;
 
       // Tier-based retry budget: when no explicit max_retries is set and a
       // trust_policy is configured, compute effective budget from the assignee's
@@ -251,7 +270,7 @@ export class Dispatcher {
 
       const controller = new AbortController();
       this.inflight.set(task.id, controller);
-      void this.fireDispatch(task, assignee, port, controller).finally(() => {
+      void this.fireDispatch(task, assignee, dispatchHost, dispatchPort, controller).finally(() => {
         this.inflight.delete(task.id);
       });
     }
@@ -340,6 +359,7 @@ export class Dispatcher {
   private async fireDispatch(
     task: Task,
     assignee: string,
+    host: string,
     port: number,
     controller: AbortController,
   ): Promise<void> {
@@ -354,7 +374,7 @@ export class Dispatcher {
 
     try {
       await this.dispatch({
-        host: DISPATCH_HOST,
+        host,
         port,
         prompt,
         personalityId: assignee,
@@ -413,61 +433,29 @@ function renderTaskPrompt(task: Task): string {
 }
 
 // ---------------------------------------------------------------------------
-// Default HTTP transport — mirrors callMeshAgent in tools-delegation
+// Default HTTP transport — doorbell POST to /notify
 // ---------------------------------------------------------------------------
 
 export const defaultDispatchCall: DispatchCall = async ({
   host,
   port,
   prompt,
-  personalityId,
+  personalityId: _personalityId,
   signal,
 }) => {
-  const base = `http://${host}:${port}/rpc`;
-
-  const sessionRes = await fetch(base, {
+  const url = `http://${host}:${port}/notify`;
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'new_session',
-      params: { personalityId },
-    }),
+    body: JSON.stringify({ kind: 'kanban', ref: prompt }),
     signal,
   });
-  if (!sessionRes.ok) {
-    throw new Error(`new_session failed: HTTP ${sessionRes.status} ${sessionRes.statusText}`);
+  if (!res.ok) {
+    throw new Error(`/notify failed: HTTP ${res.status} ${res.statusText}`);
   }
-  const sessionData = (await sessionRes.json()) as {
-    result?: { sessionKey?: string };
-    error?: unknown;
-  };
-  if (sessionData.error) {
-    throw new Error(`new_session RPC error: ${JSON.stringify(sessionData.error)}`);
+  const data = (await res.json()) as { ok?: boolean; error?: string };
+  if (!data.ok) {
+    throw new Error(`/notify error: ${data.error ?? 'unknown'}`);
   }
-  const sessionKey = sessionData.result?.sessionKey;
-  if (typeof sessionKey !== 'string') {
-    throw new Error('new_session returned no sessionKey');
-  }
-
-  const promptRes = await fetch(base, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'prompt',
-      params: { sessionKey, prompt },
-    }),
-    signal,
-  });
-  if (!promptRes.ok) {
-    throw new Error(`prompt failed: HTTP ${promptRes.status} ${promptRes.statusText}`);
-  }
-  const promptData = (await promptRes.json()) as { result?: { text?: string }; error?: unknown };
-  if (promptData.error) {
-    throw new Error(`dispatch RPC error: ${JSON.stringify(promptData.error)}`);
-  }
-  return promptData.result?.text ?? '';
+  return 'notified';
 };

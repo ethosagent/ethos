@@ -58,6 +58,9 @@ importers:
       '@ethosagent/agent-mesh':
         specifier: workspace:*
         version: link:../../extensions/agent-mesh
+      '@ethosagent/session-lane':
+        specifier: workspace:*
+        version: link:../../packages/session-lane
       '@ethosagent/tools-mcp':
         specifier: workspace:*
         version: link:../../extensions/tools-mcp
@@ -1270,6 +1273,9 @@ importers:
 
   extensions/team-supervisor:
     dependencies:
+      '@ethosagent/agent-mesh':
+        specifier: workspace:*
+        version: link:../agent-mesh
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../kanban-store
