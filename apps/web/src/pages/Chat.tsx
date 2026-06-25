@@ -16,7 +16,7 @@ import { useSessionGet } from '../features/sessions/api/queries';
 import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
-import { type AttachmentPreview, fileToPreview } from '../lib/attachments';
+import { type AttachmentPreview, placeholderPreview, readPreviewData } from '../lib/attachments';
 import { clearLastSessionId, getLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { personalityTheme } from '../lib/theme';
 import { rpc } from '../rpc';
@@ -175,9 +175,22 @@ export function Chat() {
   const { intakeOpen, setIntakeOpen, detectedMessage, restatedGoal, openIntake } =
     useGoalDetection();
 
-  const handleAttach = useCallback(async (files: File[]) => {
-    const previews = await Promise.all(files.map(fileToPreview));
-    setPendingAttachments((prev) => [...prev, ...previews]);
+  const handleAttach = useCallback((files: File[]) => {
+    const placeholders = files.map((file) => ({ file, preview: placeholderPreview(file) }));
+    setPendingAttachments((prev) => [...prev, ...placeholders.map((p) => p.preview)]);
+    for (const { file, preview } of placeholders) {
+      readPreviewData(file)
+        .then((data) => {
+          setPendingAttachments((prev) =>
+            prev.map((a) => (a.localId === preview.localId ? { ...a, state: 'ready', data } : a)),
+          );
+        })
+        .catch(() => {
+          setPendingAttachments((prev) =>
+            prev.map((a) => (a.localId === preview.localId ? { ...a, state: 'error' } : a)),
+          );
+        });
+    }
   }, []);
 
   const handleRemoveAttachment = useCallback((localId: string) => {

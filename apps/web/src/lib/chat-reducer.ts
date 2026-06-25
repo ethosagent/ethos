@@ -4,6 +4,7 @@ import type {
   SseEvent,
   StoredMessage,
 } from '@ethosagent/web-contracts';
+import type { MessageAttachment } from './attachments';
 
 // Pure reducer that maps SSE events → ChatState. Extracted from the
 // `useChat` hook so we can test the state machine in isolation, without
@@ -23,6 +24,9 @@ export interface UserMessage {
   /** Wall-clock when the user pressed Send. */
   timestamp: number;
   isSteer?: boolean;
+  /** Optimistically-rendered attachments shown as chips in the user bubble.
+   *  Carries no base64 data — render-only metadata. */
+  attachments?: MessageAttachment[];
 }
 
 export interface TextBlock {
@@ -130,7 +134,13 @@ export const initialChatState: ChatState = {
  * Send) and lifecycle events (history loaded, error cleared).
  */
 export type ChatAction =
-  | { type: 'submit-user-message'; id: string; text: string; timestamp: number }
+  | {
+      type: 'submit-user-message';
+      id: string;
+      text: string;
+      timestamp: number;
+      attachments?: MessageAttachment[];
+    }
   | { type: 'steer-user-message'; id: string; text: string; timestamp: number }
   | { type: 'history-loaded'; messages: StoredMessage[] }
   | { type: 'send-failed'; userMessageId: string; error: string }
@@ -415,6 +425,7 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
         role: 'user',
         content: action.text,
         timestamp: action.timestamp,
+        ...(action.attachments?.length ? { attachments: action.attachments } : {}),
       };
       return {
         ...state,

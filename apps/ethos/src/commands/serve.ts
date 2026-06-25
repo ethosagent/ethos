@@ -8,7 +8,7 @@ import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
-import { FsStorage } from '@ethosagent/storage-fs';
+import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import type { McpManager } from '@ethosagent/tools-mcp';
 import { EthosError, type ToolRegistry } from '@ethosagent/types';
 import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
@@ -19,6 +19,7 @@ import {
   IdentityMap,
 } from '@ethosagent/wiring';
 import { type EthosConfig, ethosDir, readConfig } from '../config';
+import { appendErrorLog } from '../error-log';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
@@ -45,7 +46,12 @@ const ACP_PORT_DEFAULT = 3001;
 const WEB_PORT_DEFAULT = 3000;
 const WEB_PORT_FALLBACK_ATTEMPTS = 5;
 
+// Resilience guard is installed once per process — runServe can be reached
+// twice (onboarding mode then real mode), so guard against double-registration.
+let resilienceGuardInstalled = false;
+
 export async function runServe(args: string[], config: EthosConfig | null): Promise<void> {
+  installServeResilienceGuard();
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webPort = parsePort(parseFlagValue(args, ['--web-port']), WEB_PORT_DEFAULT);
   const webHost = parseFlagValue(args, ['--web-host']) ?? process.env.ETHOS_WEB_HOST ?? '127.0.0.1';
@@ -117,8 +123,15 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     } as unknown as AgentLoop;
 
     const webDist = locateWebDist(parseFlagValue(args, ['--web-dist']));
+    const attachmentCache = new FsAttachmentCache(
+      new FsStorage(),
+      join(dir, 'cache', 'attachments'),
+    );
+    void attachmentCache.pruneOlderThan(24 * 60 * 60 * 1000).catch(() => {});
+
     const created = createWebApi({
       dataDir: dir,
+      attachmentCache,
       sessionStore: session,
       memoryProvider: createMemoryProvider({ dataDir: dir }),
       identityMap,
@@ -426,8 +439,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir: dir });
   await identityMap.resolve('desktop', 'desktop', 'Desktop');
 
+  const attachmentCache = new FsAttachmentCache(new FsStorage(), join(dir, 'cache', 'attachments'));
+  void attachmentCache.pruneOlderThan(24 * 60 * 60 * 1000).catch(() => {});
+
   const created = createWebApi({
     dataDir: dir,
+    attachmentCache,
     sessionStore: session,
     personalitiesLlm: () => createLLM(config),
     memoryProvider: createMemoryProvider({ dataDir: dir }),
@@ -503,6 +520,44 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   process.on('SIGINT', () => void cleanup());
 
   await new Promise(() => {});
+}
+
+/**
+ * Install process-level resilience handlers for the long-running web/ACP
+ * server. A stray rejected SSE write (e.g. writing to a stream the browser
+ * aborted on tab-switch) must NOT take down the server and drop every other
+ * live stream. We log-and-continue here rather than exit — this is scoped to
+ * the serve path only; one-shot CLI commands still fail loudly via the
+ * top-level handler. Idempotent via `resilienceGuardInstalled`.
+ */
+function installServeResilienceGuard(): void {
+  if (resilienceGuardInstalled) return;
+  resilienceGuardInstalled = true;
+  process.on('unhandledRejection', (reason) => {
+    const cause = reason instanceof Error ? reason.message : String(reason);
+    appendErrorLog(
+      new EthosError({
+        code: 'INTERNAL',
+        cause: `Unhandled promise rejection: ${cause}`,
+        action: 'A background promise rejected and was not awaited. The server kept running.',
+      }),
+      { command: 'serve' },
+    );
+    console.error(`[serve] unhandled rejection (kept alive): ${cause}`);
+  });
+  process.on('uncaughtException', (err) => {
+    const cause = err instanceof Error ? err.message : String(err);
+    appendErrorLog(
+      new EthosError({
+        code: 'INTERNAL',
+        cause: `Uncaught exception: ${cause}`,
+        action:
+          'An uncaught exception was trapped by the serve resilience guard. The server kept running.',
+      }),
+      { command: 'serve' },
+    );
+    console.error(`[serve] uncaught exception (kept alive): ${cause}`);
+  });
 }
 
 /**

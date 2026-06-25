@@ -2020,6 +2020,83 @@ body,
   width: 100%;
 }
 
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.message-attachment-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm, 4px);
+  overflow: hidden;
+  background: var(--ethos-bg-overlay);
+  max-width: 240px;
+}
+
+.message-attachment-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  display: block;
+}
+
+.message-attachment-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.message-attachment-name {
+  font-size: 12px;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ethos-text);
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-attachment-size {
+  font-size: 11px;
+  color: var(--ethos-text-dim);
+}
+
+.message-attachment-chip.uploading {
+  opacity: 0.7;
+}
+
+.message-attachment-chip.error {
+  outline: 1px solid var(--ethos-error);
+}
+
+.message-attachment-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  border: 1.5px solid var(--ethos-text-dim);
+  border-top-color: transparent;
+  border-radius: 9999px;
+  animation: tool-chip-spin 700ms linear infinite;
+}
+
+.message-attachment-error {
+  font-size: 11px;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ethos-error);
+  padding-right: 8px;
+  white-space: nowrap;
+}
+
 .message-assistant {
   color: var(--ethos-text);
   font-size: 14px;
@@ -2132,6 +2209,7 @@ textarea {
 
 .composer-card {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 8px;
   padding: 10px 10px 10px 16px;

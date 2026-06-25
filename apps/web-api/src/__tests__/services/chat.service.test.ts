@@ -84,7 +84,9 @@ describe('ChatService', () => {
     // here because nothing has been appended yet.)
     // Use a placeholder id; we'll switch after send returns.
     const result = await service.send({ clientId: 'tab-1', text: 'hi' });
-    const unsubscribe = service.subscribe(result.sessionId, 0, (b) => events.push(b.event));
+    const unsubscribe = service.subscribe(result.sessionId, 0, (b) => {
+      events.push(b.event);
+    });
 
     // Bridge runs async — wait a tick for it to drain stub events.
     await waitForEvent(events, (e) => e.some((x) => x.type === 'done'));
@@ -104,12 +106,16 @@ describe('ChatService', () => {
 
     // First subscribe replays everything (sinceSeq=0).
     const all: SseEvent[] = [];
-    service.subscribe(result.sessionId, 0, (b) => all.push(b.event))();
+    service.subscribe(result.sessionId, 0, (b) => {
+      all.push(b.event);
+    })();
     expect(all.length).toBe(headBefore);
 
     // Second subscribe with sinceSeq=headBefore replays nothing.
     const tail: SseEvent[] = [];
-    service.subscribe(result.sessionId, headBefore, (b) => tail.push(b.event))();
+    service.subscribe(result.sessionId, headBefore, (b) => {
+      tail.push(b.event);
+    })();
     expect(tail.length).toBe(0);
   });
 
@@ -130,8 +136,12 @@ describe('ChatService', () => {
 
     const seenA: SseEvent[] = [];
     const seenB: SseEvent[] = [];
-    const unA = service.subscribe(result.sessionId, 0, (b) => seenA.push(b.event));
-    const unB = service.subscribe(result.sessionId, 0, (b) => seenB.push(b.event));
+    const unA = service.subscribe(result.sessionId, 0, (b) => {
+      seenA.push(b.event);
+    });
+    const unB = service.subscribe(result.sessionId, 0, (b) => {
+      seenB.push(b.event);
+    });
 
     await waitForEvent(seenA, (e) => e.some((x) => x.type === 'done'));
     await waitForEvent(seenB, (e) => e.some((x) => x.type === 'done'));
@@ -150,8 +160,12 @@ describe('ChatService', () => {
 
     const seenA: SseEvent[] = [];
     const seenB: SseEvent[] = [];
-    const unA = service.subscribe(a.sessionId, 0, (e) => seenA.push(e.event));
-    const unB = service.subscribe(b.sessionId, 0, (e) => seenB.push(e.event));
+    const unA = service.subscribe(a.sessionId, 0, (e) => {
+      seenA.push(e.event);
+    });
+    const unB = service.subscribe(b.sessionId, 0, (e) => {
+      seenB.push(e.event);
+    });
 
     // Drain the bridge events first.
     await waitForEvent(seenA, (es) => es.some((x) => x.type === 'done'));
@@ -197,6 +211,55 @@ describe('ChatService', () => {
     expect(titleCalls).toBe(1);
     const updated = await sessions.get(result.sessionId);
     expect(updated?.title).toBe('Generated Title');
+  });
+
+  it('a rejecting subscriber does not crash the emitter or starve other subscribers', async () => {
+    const service = makeService();
+    const result = await service.send({ clientId: 'tab-1', text: 'hi' });
+    // Let the initial turn drain into the buffer.
+    await waitFor(() => buffer.head(result.sessionId) > 0);
+
+    // Trap any unhandled rejection that escapes during this test.
+    let unhandled: unknown = null;
+    const onUnhandled = (reason: unknown) => {
+      unhandled = reason;
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      const good: SseEvent[] = [];
+      // Bad subscriber: its onEvent rejects on every event.
+      const headNow = buffer.head(result.sessionId);
+      const unBad = service.subscribe(result.sessionId, headNow, async () => {
+        throw new Error('subscriber boom');
+      });
+      const unGood = service.subscribe(result.sessionId, headNow, (b) => {
+        good.push(b.event);
+      });
+
+      // Push a live event through the same path append/broadcast uses.
+      service.broadcast(result.sessionId, {
+        type: 'cron.fired',
+        jobId: 'boom-test',
+        ranAt: '2026-04-28T10:00:00Z',
+        outputPath: null,
+      });
+
+      await waitForEvent(good, (es) => es.some((x) => x.type === 'cron.fired'));
+
+      // The good subscriber still received the event despite the bad one rejecting.
+      expect(good.some((x) => x.type === 'cron.fired')).toBe(true);
+
+      // Flush microtasks + a macrotask so any floated rejection would surface.
+      await new Promise((r) => setImmediate(r));
+
+      expect(unhandled).toBeNull();
+
+      unBad();
+      unGood();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });
 

@@ -404,6 +404,31 @@ describe('applyAction — UI/lifecycle transitions', () => {
     expect(s.error).toBeNull();
   });
 
+  it('submit-user-message carries attachments into the user bubble', () => {
+    const s = applyAction(initialChatState, {
+      type: 'submit-user-message',
+      id: 'u2',
+      text: 'see attached',
+      timestamp: 2,
+      attachments: [
+        {
+          localId: 'a1',
+          state: 'ready',
+          type: 'file',
+          name: 'report.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 2048,
+        },
+      ],
+    });
+    const msg = s.messages[0];
+    expect(msg?.role).toBe('user');
+    if (msg?.role === 'user') {
+      expect(msg.attachments).toHaveLength(1);
+      expect(msg.attachments?.[0]?.name).toBe('report.pdf');
+    }
+  });
+
   it('history-loaded interleaves assistant rows + tool_result rows into one turn', () => {
     const stored: StoredMessage[] = [
       storedMsg({

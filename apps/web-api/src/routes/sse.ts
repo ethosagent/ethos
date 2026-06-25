@@ -30,14 +30,17 @@ export function sseRoutes(opts: SseRoutesOptions) {
 
     return streamSSE(c, async (stream) => {
       let unsubscribe: (() => void) | null = null;
+      let aborted = false;
 
       stream.onAbort(() => {
+        aborted = true;
         if (unsubscribe) unsubscribe();
       });
 
       unsubscribe = opts.chat.subscribe(sessionId, sinceSeq, async (buffered) => {
-        // Stream is closed once `onAbort` fires; writes after that no-op safely
-        // because `streamSSE` guards them.
+        // Skip once the stream is aborted (tab-switch / disconnect). Writing to
+        // an aborted stream can reject; a floated rejection here would otherwise
+        // crash the process, so any write error marks us aborted and unsubscribes.
         //
         // No `event:` field on purpose. Setting it to a non-default name makes
         // the browser's `EventSource.onmessage` skip the frame — only matching
@@ -46,10 +49,16 @@ export function sseRoutes(opts: SseRoutesOptions) {
         // discriminator `type` field), so an explicit `event:` line is redundant
         // AND breaks the default handler. Curl users still see the type via
         // `data:` content.
-        await stream.writeSSE({
-          id: String(buffered.seq),
-          data: JSON.stringify(buffered.event),
-        });
+        if (aborted) return;
+        try {
+          await stream.writeSSE({
+            id: String(buffered.seq),
+            data: JSON.stringify(buffered.event),
+          });
+        } catch {
+          aborted = true;
+          if (unsubscribe) unsubscribe();
+        }
       });
 
       // Block forever — `onAbort` is the only way out.

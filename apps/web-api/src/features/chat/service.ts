@@ -211,19 +211,19 @@ export class ChatService {
   subscribe(
     sessionId: string,
     sinceSeq: number,
-    onEvent: (e: BufferedEvent<SseEvent>) => void,
+    onEvent: (e: BufferedEvent<SseEvent>) => void | Promise<void>,
   ): () => void {
     // Tell the buffer the session is active so it cancels any pending reap.
     this.opts.buffer.touch(sessionId);
 
     // 1. Replay missed events first, in seq order.
     for (const e of this.opts.buffer.replay(sessionId, sinceSeq)) {
-      onEvent(e);
+      this.invokeSubscriber(onEvent, e);
     }
 
     // 2. Subscribe to future appends.
     const handler = (id: string, buffered: BufferedEvent<SseEvent>) => {
-      if (id === sessionId) onEvent(buffered);
+      if (id === sessionId) this.invokeSubscriber(onEvent, buffered);
     };
     this.emitter.on('appended', handler);
 
@@ -394,6 +394,19 @@ export class ChatService {
       }
     } catch {
       // Best-effort: title generation failures are non-fatal.
+    }
+  }
+
+  private invokeSubscriber(
+    onEvent: (e: BufferedEvent<SseEvent>) => void | Promise<void>,
+    e: BufferedEvent<SseEvent>,
+  ): void {
+    // A subscriber-local failure (sync throw or async rejection) must never
+    // crash the emitter or abort delivery to other subscribers.
+    try {
+      Promise.resolve(onEvent(e)).catch(() => {});
+    } catch {
+      /* sync throw contained */
     }
   }
 

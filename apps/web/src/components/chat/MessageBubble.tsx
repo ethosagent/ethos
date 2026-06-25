@@ -1,4 +1,5 @@
 import { ContentRenderer } from '@ethosagent/ui-components';
+import { formatBytes, type MessageAttachment } from '../../lib/attachments';
 import type { AssistantBlock, AssistantTurn, UserMessage } from '../../lib/chat-reducer';
 import { HtmlBlock } from './HtmlBlock';
 import { ImageBlock } from './ImageBlock';
@@ -11,10 +12,42 @@ import { ToolChip } from './ToolChip';
 //     The Linear-density pattern, not the iMessage pattern.
 
 export function UserBubble({ message }: { message: UserMessage }) {
+  const attachments = message.attachments ?? [];
   return (
     <div className="message-row message-row-user">
       {message.isSteer && <div className="message-steer-label">↗ Steering</div>}
-      <div className="message-user">{message.content}</div>
+      {message.content ? <div className="message-user">{message.content}</div> : null}
+      {attachments.length > 0 ? (
+        <div className="message-attachments">
+          {attachments.map((a) => (
+            <AttachmentChip key={a.localId} attachment={a} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AttachmentChip({ attachment }: { attachment: MessageAttachment }) {
+  const { state, type, name, sizeBytes, previewUrl } = attachment;
+  return (
+    <div className={`message-attachment-chip ${state}`}>
+      {type === 'image' && previewUrl ? (
+        <img src={previewUrl} alt={name} className="message-attachment-thumb" />
+      ) : (
+        <div className="message-attachment-meta">
+          <span className="message-attachment-name">{name}</span>
+          <span className="message-attachment-size">{formatBytes(sizeBytes)}</span>
+        </div>
+      )}
+      {state === 'uploading' ? (
+        <span className="message-attachment-spinner" role="img" aria-label="Uploading" />
+      ) : null}
+      {state === 'error' ? (
+        <span className="message-attachment-error" title="Upload failed">
+          ! failed
+        </span>
+      ) : null}
     </div>
   );
 }

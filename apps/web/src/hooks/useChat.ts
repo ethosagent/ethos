@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type { AttachmentPreview } from '../lib/attachments';
+import { type AttachmentPreview, toMessageAttachment } from '../lib/attachments';
 import {
   applyAction,
   applyEvent,
@@ -181,6 +181,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
           id: userMessageId,
           text: trimmed,
           timestamp: Date.now(),
+          ...(attachments?.length ? { attachments: attachments.map(toMessageAttachment) } : {}),
         },
       });
 

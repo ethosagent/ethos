@@ -66,7 +66,9 @@ describe('createWebApi — notification adapter (Gap 10)', () => {
 
     // ...lands in the session's SSE buffer as a `notification` event.
     const events: SseEvent[] = [];
-    const unsubscribe = chatService.subscribe(sessionId, 0, (e) => events.push(e.event));
+    const unsubscribe = chatService.subscribe(sessionId, 0, (e) => {
+      events.push(e.event);
+    });
     unsubscribe();
     expect(events).toContainEqual({
       type: 'notification',
