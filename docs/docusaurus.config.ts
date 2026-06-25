@@ -145,6 +145,12 @@ const config: Config = {
       darkTheme: prismThemes.dracula,
       additionalLanguages: ['bash', 'yaml', 'typescript'],
     },
+    algolia: {
+      appId: 'TBNLPLTG5F',
+      apiKey: '22f67c86bb52a64020f8be7e437b9ff4',
+      indexName: 'ethosagentdocs',
+      contextualSearch: true,
+    },
   } satisfies Preset.ThemeConfig,
 };
 
