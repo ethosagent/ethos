@@ -30,12 +30,10 @@ export function Kanban() {
     board && selectedTaskId ? (board.tasks.find((t) => t.id === selectedTaskId) ?? null) : null;
 
   return (
-    <div style={{ padding: 24, maxWidth: 1200 }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          Kanban
-        </Typography.Title>
-        <span style={{ flex: 1 }} />
+    <div className="cc-page">
+      <header className="cc-header">
+        <h2 className="cc-title">Kanban</h2>
+        <span className="cc-spacer" />
         {teams.length > 1 && (
           <Select
             value={activeTeam}
@@ -72,12 +70,14 @@ export function Kanban() {
       )}
 
       {board && activeTeam && (
-        <Board
-          snapshot={board}
-          teamName={activeTeam}
-          showArchived={showArchived}
-          onSelect={setSelectedTaskId}
-        />
+        <div className="cc-grid cc-grid--no-activity cc-grid--no-roster">
+          <Board
+            snapshot={board}
+            teamName={activeTeam}
+            showArchived={showArchived}
+            onSelect={setSelectedTaskId}
+          />
+        </div>
       )}
 
       {board && activeTeam && (
