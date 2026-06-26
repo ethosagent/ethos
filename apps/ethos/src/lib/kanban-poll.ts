@@ -118,7 +118,7 @@ export class KanbanPollLoop {
   }
 }
 
-const ARG_PREVIEW_CAP = 120;
+const ARG_PREVIEW_CAP = 500;
 const ERROR_CAP = 500;
 const FINAL_TEXT_CAP = 2000;
 

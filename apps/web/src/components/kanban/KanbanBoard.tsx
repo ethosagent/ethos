@@ -6,7 +6,7 @@ import type {
   KanbanTaskStatus,
 } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Descriptions, Drawer, Dropdown, Input, Typography } from 'antd';
+import { App as AntApp, Button, Descriptions, Dropdown, Input, Modal, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 import { formatMemberSuccess } from '../../lib/member-stats';
 import { rpc } from '../../rpc';
@@ -433,6 +433,7 @@ export function TaskDrawer({
   });
 
   const [commentBody, setCommentBody] = useState('');
+  const [showEvents, setShowEvents] = useState(false);
   const taskQuery = useQuery({
     queryKey: ['kanban', 'task', teamName, task?.id],
     queryFn: () => rpc.kanban.getTask({ team: teamName, taskId: task?.id ?? '' }),
@@ -474,130 +475,166 @@ export function TaskDrawer({
   }, [task, board]);
 
   return (
-    <Drawer
+    <Modal
       open={task !== null}
-      onClose={onClose}
-      width={520}
+      onCancel={onClose}
       title={task ? `${task.id} · ${task.title}` : ''}
+      footer={null}
       destroyOnClose
+      width="min(1100px, 92vw)"
+      className="cc-task-modal"
     >
       {task && (
-        <>
-          <div style={{ marginBottom: 16 }}>
-            <Dropdown
-              trigger={['click']}
-              menu={{
-                items: ALL_STATUSES.filter((s) => s !== task.status).map((s) => ({
-                  key: s,
-                  label: <span className={`cc-status-chip cc-status-${s}`}>{STATUS_LABEL[s]}</span>,
-                  onClick: () => updateMut.mutate(s),
-                })),
-              }}
-            >
-              <Button size="small">
-                <span className={`cc-status-chip cc-status-${task.status}`}>
-                  {STATUS_LABEL[task.status]}
-                </span>
-                <span style={{ marginLeft: 6 }}>▾</span>
-              </Button>
-            </Dropdown>
-          </div>
-
-          {task.body && (
-            <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
-              {task.body}
-            </Typography.Paragraph>
-          )}
-
-          <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="Assignee">
-              {task.assignee ?? <em style={{ opacity: 0.6 }}>unassigned (goal)</em>}
-            </Descriptions.Item>
-            <Descriptions.Item label="Priority">{task.priority}</Descriptions.Item>
-            <Descriptions.Item label="Workspace">{task.workspaceMode}</Descriptions.Item>
-            <Descriptions.Item label="Created">
-              {new Date(task.createdAt).toLocaleString()}
-            </Descriptions.Item>
-            <Descriptions.Item label="Updated">
-              {new Date(task.updatedAt).toLocaleString()}
-            </Descriptions.Item>
-          </Descriptions>
-
-          {parents.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <Typography.Text strong style={{ fontSize: 12 }}>
-                Parents
-              </Typography.Text>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-                {parents.map((p) => (
-                  <span key={p.id} className={`cc-status-chip cc-status-${p.status}`}>
-                    {p.title.slice(0, 30)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {children.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <Typography.Text strong style={{ fontSize: 12 }}>
-                Children
-              </Typography.Text>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-                {children.map((c) => (
-                  <span key={c.id} className={`cc-status-chip cc-status-${c.status}`}>
-                    {c.title.slice(0, 30)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <Typography.Text strong style={{ fontSize: 12 }}>
-            Recent events
-          </Typography.Text>
-          <div className="cc-activity-list" style={{ marginTop: 6 }}>
-            {events.length === 0 ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                No events for this task in the recent window.
-              </Typography.Text>
-            ) : (
-              events.map((e) => (
-                <div key={e.id} className="cc-activity-row">
-                  <span className="cc-activity-actor" style={{ color: accentFor(e.actor) }}>
-                    {e.actor}
-                  </span>
-                  <span className="cc-activity-text">{describeEvent(e).replace(/ on$/, '')}</span>
-                  <span className="cc-activity-time">{formatRelative(e.createdAt)}</span>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div style={{ marginTop: 16 }}>
-            <Typography.Text strong style={{ fontSize: 12 }}>
-              Comments
-            </Typography.Text>
-            <div className="cc-activity-list" style={{ marginTop: 6 }}>
-              {(taskQuery.data?.comments ?? []).length === 0 ? (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  No comments yet.
-                </Typography.Text>
-              ) : (
-                (taskQuery.data?.comments ?? []).map((c) => (
-                  <div key={c.id} className="cc-activity-row">
-                    <span className="cc-activity-actor" style={{ color: accentFor(c.author) }}>
-                      {c.author}
+        <div className="cc-task-modal-layout">
+          <div className="cc-task-modal-main">
+            <div className="cc-task-modal-scroll">
+              <div className="cc-task-modal-toolbar">
+                <Dropdown
+                  trigger={['click']}
+                  menu={{
+                    items: ALL_STATUSES.filter((s) => s !== task.status).map((s) => ({
+                      key: s,
+                      label: (
+                        <span className={`cc-status-chip cc-status-${s}`}>{STATUS_LABEL[s]}</span>
+                      ),
+                      onClick: () => updateMut.mutate(s),
+                    })),
+                  }}
+                >
+                  <Button size="small">
+                    <span className={`cc-status-chip cc-status-${task.status}`}>
+                      {STATUS_LABEL[task.status]}
                     </span>
-                    <span className="cc-activity-text" style={{ whiteSpace: 'pre-wrap' }}>
-                      {c.body}
-                    </span>
-                    <span className="cc-activity-time">{formatRelative(c.createdAt)}</span>
-                  </div>
-                ))
+                    <span style={{ marginLeft: 6 }}>▾</span>
+                  </Button>
+                </Dropdown>
+                <Button size="small" onClick={() => setShowEvents((v) => !v)}>
+                  {showEvents ? 'Hide events' : 'Events'}
+                </Button>
+              </div>
+
+              {task.body && (
+                <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
+                  {task.body}
+                </Typography.Paragraph>
               )}
+
+              <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
+                <Descriptions.Item label="Assignee">
+                  {task.assignee ?? <em style={{ opacity: 0.6 }}>unassigned (goal)</em>}
+                </Descriptions.Item>
+                <Descriptions.Item label="Priority">{task.priority}</Descriptions.Item>
+                <Descriptions.Item label="Workspace">{task.workspaceMode}</Descriptions.Item>
+                <Descriptions.Item label="Created">
+                  {new Date(task.createdAt).toLocaleString()}
+                </Descriptions.Item>
+                <Descriptions.Item label="Updated">
+                  {new Date(task.updatedAt).toLocaleString()}
+                </Descriptions.Item>
+              </Descriptions>
+
+              {parents.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <Typography.Text strong style={{ fontSize: 12 }}>
+                    Parents
+                  </Typography.Text>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                    {parents.map((p) => (
+                      <span key={p.id} className={`cc-status-chip cc-status-${p.status}`}>
+                        {p.title.slice(0, 30)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {children.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <Typography.Text strong style={{ fontSize: 12 }}>
+                    Children
+                  </Typography.Text>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                    {children.map((c) => (
+                      <span key={c.id} className={`cc-status-chip cc-status-${c.status}`}>
+                        {c.title.slice(0, 30)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginBottom: 16 }}>
+                <Typography.Text strong style={{ fontSize: 12 }}>
+                  Runs
+                </Typography.Text>
+                <div className="cc-activity-list" style={{ marginTop: 6 }}>
+                  {(taskQuery.data?.runs ?? []).length === 0 ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      No runs yet.
+                    </Typography.Text>
+                  ) : (
+                    (taskQuery.data?.runs ?? []).map((run) => (
+                      <div key={run.id} className="cc-activity-row">
+                        <span className="cc-activity-actor">
+                          {run.endedAt === null ? 'running' : (run.outcome ?? 'ended')}
+                        </span>
+                        <div>
+                          <Typography.Paragraph
+                            ellipsis={{
+                              rows: 2,
+                              expandable: true,
+                              symbol: 'show more',
+                              tooltip: true,
+                            }}
+                            style={{ whiteSpace: 'pre-wrap', margin: 0 }}
+                          >
+                            {run.summary ?? ''}
+                          </Typography.Paragraph>
+                        </div>
+                        <span className="cc-activity-time">{formatRelative(run.startedAt)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <Typography.Text strong style={{ fontSize: 12 }}>
+                  Comments
+                </Typography.Text>
+                <div className="cc-activity-list" style={{ marginTop: 6 }}>
+                  {(taskQuery.data?.comments ?? []).length === 0 ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      No comments yet.
+                    </Typography.Text>
+                  ) : (
+                    (taskQuery.data?.comments ?? []).map((c) => (
+                      <div key={c.id} className="cc-activity-row">
+                        <span className="cc-activity-actor" style={{ color: accentFor(c.author) }}>
+                          {c.author}
+                        </span>
+                        <div>
+                          <Typography.Paragraph
+                            ellipsis={{
+                              rows: 2,
+                              expandable: true,
+                              symbol: 'show more',
+                              tooltip: true,
+                            }}
+                            style={{ whiteSpace: 'pre-wrap', margin: 0 }}
+                          >
+                            {c.body}
+                          </Typography.Paragraph>
+                        </div>
+                        <span className="cc-activity-time">{formatRelative(c.createdAt)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+            <div className="cc-task-modal-composer">
               <Input.TextArea
                 rows={2}
                 placeholder="Add a comment…"
@@ -617,31 +654,35 @@ export function TaskDrawer({
             </div>
           </div>
 
-          <div style={{ marginTop: 16 }}>
-            <Typography.Text strong style={{ fontSize: 12 }}>
-              Runs
-            </Typography.Text>
-            <div className="cc-activity-list" style={{ marginTop: 6 }}>
-              {(taskQuery.data?.runs ?? []).length === 0 ? (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  No runs yet.
-                </Typography.Text>
-              ) : (
-                (taskQuery.data?.runs ?? []).map((run) => (
-                  <div key={run.id} className="cc-activity-row">
-                    <span className="cc-activity-actor">
-                      {run.endedAt === null ? 'running' : (run.outcome ?? 'ended')}
-                    </span>
-                    <span className="cc-activity-text">{run.summary ?? ''}</span>
-                    <span className="cc-activity-time">{formatRelative(run.startedAt)}</span>
-                  </div>
-                ))
-              )}
+          {showEvents && (
+            <div className="cc-task-modal-events">
+              <Typography.Text strong style={{ fontSize: 12 }}>
+                Recent events
+              </Typography.Text>
+              <div className="cc-activity-list" style={{ marginTop: 6 }}>
+                {events.length === 0 ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    No events for this task in the recent window.
+                  </Typography.Text>
+                ) : (
+                  events.map((e) => (
+                    <div key={e.id} className="cc-activity-row">
+                      <span className="cc-activity-actor" style={{ color: accentFor(e.actor) }}>
+                        {e.actor}
+                      </span>
+                      <span className="cc-activity-text">
+                        {describeEvent(e).replace(/ on$/, '')}
+                      </span>
+                      <span className="cc-activity-time">{formatRelative(e.createdAt)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-        </>
+          )}
+        </div>
       )}
-    </Drawer>
+    </Modal>
   );
 }
 

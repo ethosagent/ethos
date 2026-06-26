@@ -3640,6 +3640,62 @@ textarea {
   white-space: nowrap;
 }
 
+/* ── Task modal — two-pane layout, scrolling thread, pinned composer ── */
+
+.cc-task-modal .ant-modal-body {
+  height: min(80vh, 760px);
+  max-height: 80vh;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+}
+
+.cc-task-modal-layout {
+  display: flex;
+  gap: 0;
+  height: 100%;
+  width: 100%;
+}
+
+.cc-task-modal-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.cc-task-modal-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.cc-task-modal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.cc-task-modal-composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--ethos-border);
+  padding: 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cc-task-modal-events {
+  flex: 0 0 320px;
+  border-left: 1px solid var(--ethos-border);
+  overflow: auto;
+  padding: 16px 20px;
+}
+
 /* ── Roster — compact people list with idle / running dot ─────────── */
 
 .cc-roster-list {
