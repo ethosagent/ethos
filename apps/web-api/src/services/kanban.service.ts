@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { AgentMesh } from '@ethosagent/agent-mesh';
 import {
   KanbanStore,
   type Task,
@@ -34,44 +35,77 @@ import type {
 
 const RECENT_EVENTS_CAP = 100;
 
+const GLOBAL_BOARD_NAME = 'global';
+
+function resolveBoard(rootDir: string, team: string): string {
+  if (team === GLOBAL_BOARD_NAME) {
+    // Global board lives at ~/.ethos/board.db, one level above the teams dir
+    return join(rootDir, '..', 'board.db');
+  }
+  return join(rootDir, team, 'board.db');
+}
+
 export interface KanbanServiceOptions {
   /** Override the teams directory (testing). Defaults to `~/.ethos/teams`. */
   teamsDir?: string;
+  /** Mesh for agent discovery (listAgents, /notify on assign). */
+  mesh?: AgentMesh;
 }
 
 export class KanbanService {
   private readonly rootDir: string;
+  private readonly mesh: AgentMesh | undefined;
 
   constructor(opts: KanbanServiceOptions = {}) {
     this.rootDir = opts.teamsDir ?? teamsDir();
+    this.mesh = opts.mesh;
   }
 
   /** Enumerate teams from the manifests on disk; merge in runtime status. */
   async list(): Promise<{ teams: KanbanTeamSummary[] }> {
-    if (!existsSync(this.rootDir)) return { teams: [] };
-
-    const entries = readdirSync(this.rootDir, { withFileTypes: true });
-    const manifestFiles = entries
-      .filter((e) => e.isFile() && e.name.endsWith('.yaml'))
-      .map((e) => e.name.replace(/\.yaml$/, ''));
-
     const teams: KanbanTeamSummary[] = [];
-    for (const name of manifestFiles) {
-      const manifestPath = join(this.rootDir, `${name}.yaml`);
-      try {
-        const src = await readFile(manifestPath, 'utf-8');
-        const manifest = parseTeamManifest(src);
-        const runtime = readRuntimeFrom(this.rootDir, name);
-        teams.push(toTeamSummary(name, manifest.description, manifest, runtime, this.rootDir));
-      } catch {
-        // Malformed manifest — skip rather than poison the list.
+
+    // Enumerate team boards from manifests on disk
+    if (existsSync(this.rootDir)) {
+      const entries = readdirSync(this.rootDir, { withFileTypes: true });
+      const manifestFiles = entries
+        .filter((e) => e.isFile() && e.name.endsWith('.yaml'))
+        .map((e) => e.name.replace(/\.yaml$/, ''));
+
+      for (const name of manifestFiles) {
+        const manifestPath = join(this.rootDir, `${name}.yaml`);
+        try {
+          const src = await readFile(manifestPath, 'utf-8');
+          const manifest = parseTeamManifest(src);
+          const runtime = readRuntimeFrom(this.rootDir, name);
+          teams.push(toTeamSummary(name, manifest.description, manifest, runtime, this.rootDir));
+        } catch {
+          // Malformed manifest — skip rather than poison the list.
+        }
       }
     }
+
+    // Always include the global board so the UI is usable before the first task.
+    const globalBoardPath = join(this.rootDir, '..', 'board.db');
+    const globalModifiedAt = existsSync(globalBoardPath)
+      ? new Date(statSync(globalBoardPath).mtimeMs).toISOString()
+      : null;
+    teams.unshift({
+      name: GLOBAL_BOARD_NAME,
+      description: 'Global kanban board',
+      dispatchMode: 'self-routing',
+      health: 'running',
+      memberCount: 0,
+      runningCount: 0,
+      boardModifiedAt: globalModifiedAt,
+    });
+
     return { teams };
   }
 
   /** Open the team board read-only, return a snapshot. */
   async getBoard(team: string): Promise<{ board: KanbanBoardSnapshot }> {
+    if (team === GLOBAL_BOARD_NAME) return this.getGlobalBoard();
     assertSafeTeamName(team);
     const manifestPath = join(this.rootDir, `${team}.yaml`);
     if (!existsSync(manifestPath)) {
@@ -154,6 +188,72 @@ export class KanbanService {
     }
   }
 
+  private async getGlobalBoard(): Promise<{ board: KanbanBoardSnapshot }> {
+    const boardPath = join(this.rootDir, '..', 'board.db');
+    const summary: KanbanTeamSummary = {
+      name: GLOBAL_BOARD_NAME,
+      description: 'Global kanban board',
+      dispatchMode: 'self-routing',
+      health: 'running',
+      memberCount: 0,
+      runningCount: 0,
+      boardModifiedAt: existsSync(boardPath)
+        ? new Date(statSync(boardPath).mtimeMs).toISOString()
+        : null,
+    };
+
+    if (!existsSync(boardPath)) {
+      return {
+        board: { team: summary, tasks: [], links: [], recentEvents: [], memberStats: [] },
+      };
+    }
+
+    const store = new KanbanStore(boardPath);
+    try {
+      const tasks = store.listTasks({ limit: 1000 }).map(toWireTask);
+      const linkRows = (
+        store as unknown as { db: { prepare: (s: string) => { all: () => unknown[] } } }
+      ).db
+        .prepare('SELECT parent_id, child_id FROM task_links')
+        .all() as Array<{ parent_id: string; child_id: string }>;
+      const links: KanbanLink[] = linkRows.map((r) => ({
+        parentId: r.parent_id,
+        childId: r.child_id,
+      }));
+      const eventRows = (
+        store as unknown as { db: { prepare: (s: string) => { all: (n: number) => unknown[] } } }
+      ).db
+        .prepare(
+          'SELECT id, task_id, kind, actor, data_json, created_at FROM task_events ORDER BY id DESC LIMIT ?',
+        )
+        .all(RECENT_EVENTS_CAP) as Array<{
+        id: number;
+        task_id: string;
+        kind: string;
+        actor: string;
+        data_json: string;
+        created_at: number;
+      }>;
+      const recentEvents: KanbanEvent[] = eventRows.reverse().map((r) => ({
+        id: r.id,
+        taskId: r.task_id,
+        kind: r.kind as KanbanEvent['kind'],
+        actor: r.actor,
+        data: JSON.parse(r.data_json) as Record<string, unknown>,
+        createdAt: new Date(r.created_at).toISOString(),
+      }));
+      const memberStats: KanbanMemberStats[] = [...store.getMemberStats().values()].map(
+        toWireMemberStats,
+      );
+
+      return {
+        board: { team: summary, tasks, links, recentEvents, memberStats },
+      };
+    } finally {
+      store.close();
+    }
+  }
+
   /**
    * Human-initiated status update. Threads `human:<sessionLabel>` as the actor
    * so the audit trail clearly separates UI edits from agent actions. Honors
@@ -166,8 +266,8 @@ export class KanbanService {
     reason?: string;
     actor: string;
   }): Promise<{ task: KanbanTask }> {
-    assertSafeTeamName(opts.team);
-    const boardPath = join(this.rootDir, opts.team, 'board.db');
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
     if (!existsSync(boardPath)) {
       throw new Error(`team board not found: ${opts.team}`);
     }
@@ -181,6 +281,162 @@ export class KanbanService {
       return { task: toWireTask(updated) };
     } finally {
       store.close();
+    }
+  }
+
+  /** Create a task on a team board. */
+  async createTask(opts: {
+    team: string;
+    title: string;
+    body?: string;
+    priority?: number;
+    assignee?: string;
+    acceptanceCriteria?: string;
+    actor: string;
+  }): Promise<{ task: KanbanTask }> {
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
+    const store = new KanbanStore(boardPath, { teamId: opts.team });
+    try {
+      const task = store.createTask({
+        title: opts.title,
+        body: opts.body,
+        priority: opts.priority,
+        assignee: opts.assignee,
+        acceptanceCriteria: opts.acceptanceCriteria,
+        actor: opts.actor,
+      });
+      return { task: toWireTask(task) };
+    } finally {
+      store.close();
+    }
+  }
+
+  /** List agents subscribed to a team board via the mesh registry. */
+  async listAgents(opts: { team: string }): Promise<{
+    agents: Array<{
+      personalityId: string;
+      displayName: string;
+      agentId: string;
+      online: boolean;
+    }>;
+  }> {
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    if (!this.mesh) return { agents: [] };
+
+    const entries = await this.mesh.list();
+    const agents = entries
+      .filter((e) => e.boardSubscriptions?.includes(opts.team))
+      .map((e) => ({
+        personalityId: e.personalityId ?? e.agentId,
+        displayName: e.displayName ?? e.agentId,
+        agentId: e.agentId,
+        online: Date.now() - e.lastHeartbeatAt < 30_000,
+      }));
+
+    return { agents };
+  }
+
+  /** Assign a task and fire /notify to the assignee via mesh. */
+  async assign(opts: {
+    team: string;
+    taskId: string;
+    assignee: string;
+    actor: string;
+  }): Promise<{ task: KanbanTask }> {
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
+    const store = new KanbanStore(boardPath, { teamId: opts.team });
+    try {
+      const task = store.assign(opts.taskId, opts.assignee, opts.actor);
+
+      // Fire /notify to the assignee via mesh — non-fatal on failure.
+      if (this.mesh && task.status === 'ready') {
+        void this.notifyAssignee(opts.assignee, task.id, 'kanban').catch(() => {});
+      }
+
+      return { task: toWireTask(task) };
+    } finally {
+      store.close();
+    }
+  }
+
+  async getTask(opts: { team: string; taskId: string }): Promise<{
+    task: KanbanTask;
+    comments: KanbanComment[];
+    runs: KanbanRun[];
+  }> {
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
+    if (!existsSync(boardPath)) {
+      throw new Error(`team board not found: ${opts.team}`);
+    }
+    const store =
+      opts.team !== GLOBAL_BOARD_NAME
+        ? new KanbanStore(boardPath, { teamId: opts.team })
+        : new KanbanStore(boardPath);
+    try {
+      const task = store.getTask(opts.taskId);
+      if (!task) throw new Error(`task not found: ${opts.taskId}`);
+      const comments = store.listComments(opts.taskId).map(toWireComment);
+      const runs = store.listRuns(opts.taskId).map(toWireRun);
+      return { task: toWireTask(task), comments, runs };
+    } finally {
+      store.close();
+    }
+  }
+
+  async addComment(opts: { team: string; taskId: string; body: string }): Promise<{
+    comment: KanbanComment;
+  }> {
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
+    if (!existsSync(boardPath)) {
+      throw new Error(`team board not found: ${opts.team}`);
+    }
+    const store =
+      opts.team !== GLOBAL_BOARD_NAME
+        ? new KanbanStore(boardPath, { teamId: opts.team })
+        : new KanbanStore(boardPath);
+    let comment: TaskComment;
+    let assignee: string | null;
+    try {
+      comment = store.addComment(opts.taskId, 'human:control-center', opts.body);
+      assignee = store.getTask(opts.taskId)?.assignee ?? null;
+    } finally {
+      store.close();
+    }
+    // Best-effort notify recipients — the assignee plus any @-mentioned agents
+    // in the comment body. Dedupe so a mentioned assignee is only pinged once.
+    // Non-fatal on failure (network/offline agents are reconciled by the poll loop).
+    if (this.mesh) {
+      const recipients = new Set<string>();
+      if (assignee) recipients.add(assignee);
+      for (const token of parseMentions(opts.body)) recipients.add(token);
+      for (const personalityId of recipients) {
+        void this.notifyAssignee(personalityId, opts.taskId, 'kanban_comment').catch(() => {});
+      }
+    }
+    return { comment: toWireComment(comment) };
+  }
+
+  private async notifyAssignee(personalityId: string, taskId: string, kind: string): Promise<void> {
+    if (!this.mesh) return;
+    const entries = await this.mesh.findByPersonality(personalityId);
+    const entry = entries[0];
+    if (!entry) return;
+
+    try {
+      const res = await fetch(`http://${entry.host}:${entry.port}/notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, ref: taskId }),
+      });
+      if (!res.ok) {
+        // Notification failure is non-fatal — poll loop reconciles.
+      }
+    } catch {
+      // Network failure is non-fatal.
     }
   }
 }
@@ -245,6 +501,29 @@ function toWireTask(t: Task): KanbanTask {
   };
 }
 
+function toWireComment(c: TaskComment): KanbanComment {
+  return {
+    id: c.id,
+    taskId: c.taskId,
+    author: c.author,
+    body: c.body,
+    createdAt: new Date(c.createdAt).toISOString(),
+  };
+}
+
+function toWireRun(r: TaskRun): KanbanRun {
+  return {
+    id: r.id,
+    taskId: r.taskId,
+    startedAt: new Date(r.startedAt).toISOString(),
+    endedAt: r.endedAt !== null ? new Date(r.endedAt).toISOString() : null,
+    outcome: r.outcome,
+    summary: r.summary,
+    lastHeartbeatAt: new Date(r.lastHeartbeatAt).toISOString(),
+    completedBy: r.completedBy,
+  };
+}
+
 function toWireMemberStats(s: TeamMemberStats): KanbanMemberStats {
   return {
     teamId: s.teamId,
@@ -254,6 +533,18 @@ function toWireMemberStats(s: TeamMemberStats): KanbanMemberStats {
     ticketsOrphaned: s.ticketsOrphaned,
     lastUpdatedAt: new Date(s.lastUpdatedAt).toISOString(),
   };
+}
+
+// Match @-mentions of personality ids: letters, digits, hyphens, underscores.
+// e.g. "@swing-trader" -> "swing-trader". Returns the unique set of tokens.
+const MENTION_PATTERN = /@([A-Za-z0-9_-]+)/g;
+function parseMentions(body: string): string[] {
+  const out = new Set<string>();
+  for (const m of body.matchAll(MENTION_PATTERN)) {
+    const token = m[1];
+    if (token) out.add(token);
+  }
+  return [...out];
 }
 
 // Path-traversal guard. Same logic as `ethos team destroy` — refuse anything

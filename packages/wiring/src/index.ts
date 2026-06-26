@@ -81,7 +81,7 @@ export interface WiringConfig {
    * Override path to the kanban SQLite database. When unset, the path resolves
    * based on `teamName`:
    *   - `teamName` set → `${dataDir}/teams/<teamName>/board.db` (shared team board)
-   *   - `teamName` unset → `${dataDir}/personalities/<active-personality-id>/kanban.db` (solo)
+   *   - `teamName` unset → `${dataDir}/board.db` (global board)
    * `kanbanDbPath` always wins when explicitly set.
    */
   kanbanDbPath?: string;

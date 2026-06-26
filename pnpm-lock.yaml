@@ -58,6 +58,9 @@ importers:
       '@ethosagent/agent-mesh':
         specifier: workspace:*
         version: link:../../extensions/agent-mesh
+      '@ethosagent/session-lane':
+        specifier: workspace:*
+        version: link:../../packages/session-lane
       '@ethosagent/tools-mcp':
         specifier: workspace:*
         version: link:../../extensions/tools-mcp
@@ -243,6 +246,9 @@ importers:
       '@ethosagent/goal-store':
         specifier: workspace:*
         version: link:../../extensions/goal-store
+      '@ethosagent/kanban-store':
+        specifier: workspace:*
+        version: link:../../extensions/kanban-store
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../../packages/logger
@@ -276,6 +282,9 @@ importers:
       '@ethosagent/secrets-aws':
         specifier: workspace:*
         version: link:../../extensions/secrets-aws
+      '@ethosagent/session-lane':
+        specifier: workspace:*
+        version: link:../../packages/session-lane
       '@ethosagent/session-sqlite':
         specifier: workspace:*
         version: link:../../extensions/session-sqlite
@@ -856,6 +865,9 @@ importers:
       '@ethosagent/safety-redact':
         specifier: workspace:*
         version: link:../../packages/safety/redact
+      '@ethosagent/session-lane':
+        specifier: workspace:*
+        version: link:../../packages/session-lane
       '@ethosagent/sqlite':
         specifier: workspace:*
         version: link:../../packages/sqlite
@@ -1267,6 +1279,9 @@ importers:
 
   extensions/team-supervisor:
     dependencies:
+      '@ethosagent/agent-mesh':
+        specifier: workspace:*
+        version: link:../agent-mesh
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../kanban-store
@@ -1654,6 +1669,8 @@ importers:
       '@orpc/contract':
         specifier: ^1.14.3
         version: 1.14.4
+
+  packages/session-lane: {}
 
   packages/sqlite: {}
 

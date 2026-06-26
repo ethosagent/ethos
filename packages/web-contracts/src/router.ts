@@ -20,7 +20,10 @@ import {
   GoalSchema,
   GoalStatusSchema,
   IdentityMapEntrySchema,
+  KanbanAgentSchema,
   KanbanBoardSnapshotSchema,
+  KanbanCommentSchema,
+  KanbanRunSchema,
   KanbanTaskSchema,
   KanbanTaskStatusSchema,
   KanbanTeamSummarySchema,
@@ -1317,11 +1320,51 @@ const KanbanUpdateStatusInput = z.object({
 });
 const KanbanUpdateStatusOutput = z.object({ task: KanbanTaskSchema });
 
+const KanbanCreateTaskInput = z.object({
+  team: z.string().min(1),
+  title: z.string().min(1),
+  body: z.string().optional(),
+  priority: z.number().int().min(0).max(9).default(0),
+  assignee: z.string().optional(),
+  acceptanceCriteria: z.string().optional(),
+});
+const KanbanCreateTaskOutput = z.object({ task: KanbanTaskSchema });
+
+const KanbanListAgentsInput = z.object({
+  team: z.string().min(1),
+});
+const KanbanListAgentsOutput = z.object({ agents: z.array(KanbanAgentSchema) });
+
+const KanbanAssignInput = z.object({
+  team: z.string().min(1),
+  taskId: z.string().min(1),
+  assignee: z.string().min(1),
+});
+const KanbanAssignOutput = z.object({ task: KanbanTaskSchema });
+
+const KanbanGetTaskInput = z.object({ team: z.string().min(1), taskId: z.string().min(1) });
+const KanbanGetTaskOutput = z.object({
+  task: KanbanTaskSchema,
+  comments: z.array(KanbanCommentSchema),
+  runs: z.array(KanbanRunSchema),
+});
+const KanbanAddCommentInput = z.object({
+  team: z.string().min(1),
+  taskId: z.string().min(1),
+  body: z.string().min(1),
+});
+const KanbanAddCommentOutput = z.object({ comment: KanbanCommentSchema });
+
 /** @experimental */
 const kanban = {
   list: oc.output(KanbanListOutput),
   getBoard: oc.input(KanbanGetBoardInput).output(KanbanGetBoardOutput),
   updateStatus: oc.input(KanbanUpdateStatusInput).output(KanbanUpdateStatusOutput),
+  createTask: oc.input(KanbanCreateTaskInput).output(KanbanCreateTaskOutput),
+  listAgents: oc.input(KanbanListAgentsInput).output(KanbanListAgentsOutput),
+  assign: oc.input(KanbanAssignInput).output(KanbanAssignOutput),
+  getTask: oc.input(KanbanGetTaskInput).output(KanbanGetTaskOutput),
+  addComment: oc.input(KanbanAddCommentInput).output(KanbanAddCommentOutput),
 };
 
 // ---------------------------------------------------------------------------

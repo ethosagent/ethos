@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { SessionStreamBuffer } from '@ethosagent/agent-bridge';
-import { AgentMesh } from '@ethosagent/agent-mesh';
+import { AgentMesh, defaultRegistryPath } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
@@ -247,11 +247,9 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       : {}),
   });
   const evolverRepo = new EvolverRepository({ dataDir: opts.dataDir });
-  // The mesh registry lives at `<dataDir>/mesh-registry.json`. ACP servers
-  // (potentially in other processes) write heartbeats to this file; we
-  // just read it via @ethosagent/agent-mesh directly — the wire-format
-  // mapping lives in the service.
-  const mesh = new AgentMesh(join(opts.dataDir, 'mesh-registry.json'));
+  // The mesh registry lives at ~/.ethos/meshes/default/registry.json —
+  // the same path `ethos serve` writes to via meshRegistryPath('default').
+  const mesh = new AgentMesh(defaultRegistryPath());
   const memoryProvider = opts.memoryProvider;
   const storage: Storage = opts.storage ?? new FsStorage();
   const secrets: SecretsResolver =
@@ -305,7 +303,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     memory: memoryProvider,
     identityMap: opts.identityMap,
   });
-  const kanbanService = new KanbanService();
+  const kanbanService = new KanbanService({ mesh });
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
   const digestService = new DigestService({
     storage,

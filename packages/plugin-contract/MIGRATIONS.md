@@ -2,16 +2,18 @@
 
 ## Deprecation policy
 
-**No overlap window.** When `PLUGIN_CONTRACT_MAJOR` is bumped, support for the
-prior major is dropped in the same release. Rationale: the install base is small
-enough that an overlap window adds complexity without protecting users. If scale
-later demands a grace period, revisit and document that change here.
+**Overlap window.** Ethos supports every plugin major in the inclusive range
+`[MIN_SUPPORTED_PLUGIN_CONTRACT_MAJOR .. PLUGIN_CONTRACT_MAJOR]` simultaneously.
+A bump to `PLUGIN_CONTRACT_MAJOR` does not by itself drop the prior major — a
+major is only dropped when `MIN_SUPPORTED_PLUGIN_CONTRACT_MAJOR` is raised, which
+happens only on a real breaking change. This lets already-published plugins keep
+loading across an additive major bump.
 
-The rule for plugin authors is simple: when a new major is published, update
-your `package.json` → `ethos.pluginContractMajor` and apply the patch described
-in the relevant section below. If your plugin has no `pluginContractMajor`
-field, the loader allows it (backward compat for older plugins); add the field
-before publishing to ClawHub.
+The rule for plugin authors is simple: keep your `package.json` →
+`ethos.pluginContractMajor` within the supported range, and apply the patch
+described in the relevant section below when a breaking major lands. If your
+plugin has no `pluginContractMajor` field, the loader allows it (backward compat
+for older plugins); add the field before publishing to ClawHub.
 
 ---
 

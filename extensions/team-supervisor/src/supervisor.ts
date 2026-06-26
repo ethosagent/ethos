@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { noopLogger } from '@ethosagent/logger';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
@@ -368,6 +369,7 @@ export async function runSupervisor(
   // Pass the team name as `teamId` so the board records per-member outcome
   // counters (`team_member_stats`) on every terminal task transition.
   const board = new KanbanStore(boardPath, { teamId: name });
+  const mesh = new AgentMesh(meshRegistryPath(meshName));
 
   const supervisorView: SupervisorState = {
     portOf: (p) => memberMap.get(p)?.port ?? null,
@@ -377,6 +379,7 @@ export async function runSupervisor(
   const dispatcher = new Dispatcher({
     board,
     supervisor: supervisorView,
+    mesh,
     ...(manifest.kanban?.stale_ms !== undefined ? { staleMs: manifest.kanban.stale_ms } : {}),
     ...(manifest.kanban?.poll_ms !== undefined ? { pollMs: manifest.kanban.poll_ms } : {}),
     ...(manifest.kanban?.staleness_threshold_ms !== undefined

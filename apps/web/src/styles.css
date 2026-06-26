@@ -1726,6 +1726,11 @@ body,
   overflow: hidden;
 }
 
+.app-main:has(.cc-page--kanban) {
+  padding: 0;
+  overflow: hidden;
+}
+
 .app-main:has(.goal-detail-tab) {
   padding: 0;
   overflow: hidden;
@@ -3263,6 +3268,9 @@ textarea {
 .cc-grid.cc-grid--no-activity.cc-grid--no-roster {
   grid-template-columns: minmax(0, 1fr);
 }
+.cc-grid.cc-grid--help {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
 
 /* Pane shell — one of {Board, Activity, Roster} */
 .cc-panel {
@@ -3321,6 +3329,14 @@ textarea {
   flex-direction: column;
   border-right: 1px solid var(--ethos-border);
   min-height: 0;
+}
+.cc-board--fill .cc-panel-body {
+  overflow-x: auto;
+}
+.cc-board--fill .cc-column {
+  flex: 1 1 0;
+  min-width: 200px;
+  max-width: none;
 }
 .cc-column:last-child {
   border-right: none;
@@ -3622,6 +3638,65 @@ textarea {
   color: var(--ethos-text-dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* ── Task modal — two-pane layout, scrolling thread, composer atop thread ── */
+
+.cc-task-modal .ant-modal-body {
+  height: min(80vh, 760px);
+  max-height: 80vh;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+}
+
+.cc-task-modal-layout {
+  display: flex;
+  gap: 0;
+  height: 100%;
+  width: 100%;
+}
+
+.cc-task-modal-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.cc-task-modal-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.cc-task-modal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.cc-task-modal-composer {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ethos-bg-elevated);
+  border-bottom: 1px solid var(--ethos-border);
+  padding: 8px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cc-task-modal-events {
+  flex: 0 0 320px;
+  border-left: 1px solid var(--ethos-border);
+  overflow: auto;
+  padding: 16px 20px;
 }
 
 /* ── Roster — compact people list with idle / running dot ─────────── */

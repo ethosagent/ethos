@@ -516,6 +516,24 @@ export interface EthosConfig {
    *   weeklyDigest.recipients: alice@example.com, bob@example.com
    */
   weeklyDigest?: { enabled?: boolean; cron?: string; recipients?: string[] };
+  /**
+   * Kanban poll loop: periodically checks the board for tasks assigned to
+   * this agent's personalityId with status=ready, and enqueues a stimulus.
+   * Also runs board housekeeping (promote, rollup, reclaim).
+   *
+   * Config format:
+   *   kanbanPoll.enabled: true
+   *   kanbanPoll.intervalMs: 5000
+   *   kanbanPoll.boardPath: ~/.ethos/teams/myteam/board.db
+   */
+  kanbanPoll?: {
+    enabled?: boolean;
+    /** Poll interval in milliseconds. Default 5000. */
+    intervalMs?: number;
+    /** Path to the board.db file. When serve is started with --team, this
+     *  defaults to the team's board path. */
+    boardPath?: string;
+  };
 }
 
 export function ethosDir(): string {
@@ -764,6 +782,14 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (config.weeklyDigest.cron) lines.push(`weeklyDigest.cron: ${config.weeklyDigest.cron}`);
     if (config.weeklyDigest.recipients && config.weeklyDigest.recipients.length > 0)
       lines.push(`weeklyDigest.recipients: ${config.weeklyDigest.recipients.join(',')}`);
+  }
+  if (config.kanbanPoll) {
+    if (config.kanbanPoll.enabled !== undefined)
+      lines.push(`kanbanPoll.enabled: ${config.kanbanPoll.enabled}`);
+    if (config.kanbanPoll.intervalMs !== undefined)
+      lines.push(`kanbanPoll.intervalMs: ${config.kanbanPoll.intervalMs}`);
+    if (config.kanbanPoll.boardPath !== undefined)
+      lines.push(`kanbanPoll.boardPath: ${config.kanbanPoll.boardPath}`);
   }
   await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`, { mode: 0o600 });
 }
@@ -1081,6 +1107,12 @@ function parseConfigYaml(src: string): EthosConfig {
       kv[`weeklyDigest.${wd[1]}`] = wd[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // kanbanPoll.<field>: <value>
+    const kp = line.match(/^kanbanPoll\.(\w+):\s*(.+)$/);
+    if (kp) {
+      kv[`kanbanPoll.${kp[1]}`] = kp[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
@@ -1316,6 +1348,20 @@ function parseConfigYaml(src: string): EthosConfig {
                     .filter((r) => r.length > 0),
                 }
               : {}),
+          }
+        : undefined,
+    kanbanPoll:
+      kv['kanbanPoll.enabled'] !== undefined ||
+      kv['kanbanPoll.intervalMs'] !== undefined ||
+      kv['kanbanPoll.boardPath'] !== undefined
+        ? {
+            ...(kv['kanbanPoll.enabled'] !== undefined
+              ? { enabled: kv['kanbanPoll.enabled'] === 'true' }
+              : {}),
+            ...(kv['kanbanPoll.intervalMs']
+              ? { intervalMs: Number(kv['kanbanPoll.intervalMs']) }
+              : {}),
+            ...(kv['kanbanPoll.boardPath'] ? { boardPath: kv['kanbanPoll.boardPath'] } : {}),
           }
         : undefined,
   };

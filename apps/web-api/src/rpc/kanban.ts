@@ -1,11 +1,9 @@
 import { os } from './context';
 
 // Thin RPC shells for the kanban namespace. Reads (`list`, `getBoard`) pass
-// straight through; the mutation (`updateStatus`) threads an explicit actor
-// label so the audit trail can distinguish UI edits from agent calls. Mutating
-// authorization is intentionally minimal here — any signed-in operator can
-// drive the board. A future pass can layer roles onto web-side calls the same
-// way the agent-side role gate does.
+// straight through; mutations (`updateStatus`, `createTask`, `assign`) thread
+// an explicit actor label so the audit trail can distinguish UI edits from
+// agent calls. `listAgents` delegates to mesh-backed discovery.
 
 export const kanbanRouter = {
   list: os.kanban.list.handler(({ context }) => context.kanban.list()),
@@ -18,9 +16,52 @@ export const kanbanRouter = {
       taskId: input.taskId,
       status: input.status,
       ...(input.reason !== undefined ? { reason: input.reason } : {}),
-      // Audit trail tag — distinct from any agent personality id so it never
-      // collides with the role gate's assignee check.
       actor: 'human:control-center',
     }),
+  ),
+
+  createTask: os.kanban.createTask.handler(({ input, context }) =>
+    context.kanban.createTask({
+      ...input,
+      actor: 'human:control-center',
+    }),
+  ),
+
+  listAgents: os.kanban.listAgents.handler(async ({ input, context }) => {
+    // Get online agents from mesh
+    const meshResult = await context.kanban.listAgents({ team: input.team });
+    const onlineIds = new Set(meshResult.agents.map((a) => a.personalityId));
+
+    // Get all personalities from disk
+    const allPersonalities = context.personalities.list().items;
+
+    // Add offline personalities that aren't already in the mesh list
+    const offlineAgents = allPersonalities
+      .filter((p) => !onlineIds.has(p.id))
+      .map((p) => ({
+        personalityId: p.id,
+        displayName: p.name,
+        agentId: p.id,
+        online: false,
+      }));
+
+    return { agents: [...meshResult.agents, ...offlineAgents] };
+  }),
+
+  assign: os.kanban.assign.handler(({ input, context }) =>
+    context.kanban.assign({
+      team: input.team,
+      taskId: input.taskId,
+      assignee: input.assignee,
+      actor: 'human:control-center',
+    }),
+  ),
+
+  getTask: os.kanban.getTask.handler(({ input, context }) =>
+    context.kanban.getTask({ team: input.team, taskId: input.taskId }),
+  ),
+
+  addComment: os.kanban.addComment.handler(({ input, context }) =>
+    context.kanban.addComment({ team: input.team, taskId: input.taskId, body: input.body }),
   ),
 };

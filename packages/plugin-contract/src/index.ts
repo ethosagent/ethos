@@ -3,7 +3,11 @@
 // ---------------------------------------------------------------------------
 
 export type { ContractCompatResult } from './version';
-export { checkPluginContractMajor, PLUGIN_CONTRACT_MAJOR } from './version';
+export {
+  checkPluginContractMajor,
+  MIN_SUPPORTED_PLUGIN_CONTRACT_MAJOR,
+  PLUGIN_CONTRACT_MAJOR,
+} from './version';
 
 export interface CredentialDeclaration {
   key: string;

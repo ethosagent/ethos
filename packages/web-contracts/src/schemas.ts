@@ -966,6 +966,14 @@ export const KanbanBoardSnapshotSchema = z.object({
 });
 export type KanbanBoardSnapshot = z.infer<typeof KanbanBoardSnapshotSchema>;
 
+export const KanbanAgentSchema = z.object({
+  personalityId: z.string(),
+  displayName: z.string(),
+  agentId: z.string(),
+  online: z.boolean(),
+});
+export type KanbanAgent = z.infer<typeof KanbanAgentSchema>;
+
 // ---------------------------------------------------------------------------
 // API Keys — Control-Plane SDK auth
 //

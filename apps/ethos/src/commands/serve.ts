@@ -7,6 +7,7 @@ import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
+import { SessionLane } from '@ethosagent/session-lane';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import type { McpManager } from '@ethosagent/tools-mcp';
@@ -21,6 +22,7 @@ import {
 import { type EthosConfig, ethosDir, readConfig } from '../config';
 import { appendErrorLog } from '../error-log';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
+import { KanbanPollLoop, writeRunActivityComments } from '../lib/kanban-poll';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
@@ -379,6 +381,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     host: 'localhost',
     port: acpPort,
     activeSessions: 0,
+    personalityId: activePersonality,
+    displayName: personalityConfig?.name ?? activePersonality,
+    boardSubscriptions: teamFlag ? [teamFlag] : ['global'],
   });
   const stopHeartbeat = mesh.startHeartbeat(agentId, () => acpServer.activeSessionCount);
 
@@ -389,6 +394,50 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   console.log(`  mesh:         ${activeMeshName}`);
   console.log(`  capabilities: ${capabilities.length > 0 ? capabilities.join(', ') : '(none)'}`);
   console.log(`  WebSocket:    ws://localhost:${acpPort}/ws`);
+
+  // Kanban poll loop — reconcile-on-wake for missed /notify calls.
+  let stopPollLoop: (() => void) | null = null;
+  const kanbanPollEnabled = config.kanbanPoll?.enabled !== false; // enabled by default
+  if (kanbanPollEnabled) {
+    const boardPath =
+      config.kanbanPoll?.boardPath ??
+      (teamFlag ? join(dir, 'teams', teamFlag, 'board.db') : join(dir, 'board.db'));
+
+    if (boardPath) {
+      const lane = new SessionLane();
+      const pollLoop = new KanbanPollLoop({
+        boardPath,
+        personalityId: activePersonality,
+        lane,
+        runner: async (prompt, sessionKey, taskId, taskTitle) => {
+          await writeRunActivityComments(
+            boardPath,
+            taskId,
+            activePersonality,
+            loop.run(prompt, { sessionKey, personalityId: activePersonality }),
+            (err) => console.warn(`[kanban-poll] comment write failed: ${err.message}`),
+          );
+          try {
+            const s = await session.getSessionByKey(sessionKey);
+            if (s && !s.title) await session.updateSession(s.id, { title: taskTitle });
+          } catch (err) {
+            console.warn(
+              `[kanban-poll] set title failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        },
+        intervalMs: config.kanbanPoll?.intervalMs,
+        onError: (err) => {
+          console.warn(`[kanban-poll] tick error: ${err.message}`);
+        },
+      });
+      pollLoop.start();
+      stopPollLoop = () => pollLoop.stop();
+      console.log(
+        `  kanban poll:  enabled (${config.kanbanPoll?.intervalMs ?? 5000}ms, ${boardPath})`,
+      );
+    }
+  }
 
   // Web API — always mounts alongside the ACP server.
   let webShutdown: (() => Promise<void>) | null = null;
@@ -511,6 +560,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const cleanup = async () => {
     if (stopWatchdog) stopWatchdog();
     stopHeartbeat();
+    stopPollLoop?.();
     await mesh.unregister(agentId);
     if (cronScheduler) cronScheduler.stop();
     if (webShutdown) await webShutdown();

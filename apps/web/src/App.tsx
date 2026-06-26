@@ -24,6 +24,7 @@ import { DashboardView } from './pages/DashboardView';
 import { Eval } from './pages/Eval';
 import { GoalDetail } from './pages/GoalDetail';
 import { Goals } from './pages/Goals';
+import { Kanban } from './pages/Kanban';
 import { Mcp } from './pages/Mcp';
 import { Memory } from './pages/Memory';
 import { Mesh } from './pages/Mesh';
@@ -156,6 +157,7 @@ export function App() {
           <Route path="/dashboards/create" element={<CreateDashboardFlow />} />
           <Route path="/dashboards/:id" element={<DashboardView />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/kanban" element={<Kanban />} />
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/setup/provider" element={<Onboarding startAtStep="provider" />} />
           <Route path="/setup/providers" element={<Onboarding startAtStep="multi-provider" />} />
