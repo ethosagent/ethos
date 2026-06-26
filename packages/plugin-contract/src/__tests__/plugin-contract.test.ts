@@ -3,6 +3,7 @@ import type { CredentialDeclaration } from '../index';
 import {
   checkPluginContractMajor,
   isEthosPlugin,
+  MIN_SUPPORTED_PLUGIN_CONTRACT_MAJOR,
   normalizeExternalPluginCompatibility,
   PLUGIN_CONTRACT_MAJOR,
   validatePluginPackageJson,
@@ -114,6 +115,36 @@ describe('checkPluginContractMajor', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/major=1/);
     expect(result.reason).toMatch(/pluginContractMajor=2/);
+  });
+
+  it('exports a minimum supported major below the current major', () => {
+    expect(MIN_SUPPORTED_PLUGIN_CONTRACT_MAJOR).toBe(2);
+    expect(MIN_SUPPORTED_PLUGIN_CONTRACT_MAJOR).toBeLessThanOrEqual(PLUGIN_CONTRACT_MAJOR);
+  });
+
+  it('accepts an in-range older major (major-2 plugin on a major-3 build)', () => {
+    const result = checkPluginContractMajor(2, 3, 'old-plugin');
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('accepts a plugin declaring the current major', () => {
+    const result = checkPluginContractMajor(3, 3);
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a plugin below the minimum supported major', () => {
+    const result = checkPluginContractMajor(1, 3, 'too-old');
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/MIGRATIONS\.md/);
+    expect(result.reason).toMatch(/minimum/i);
+    expect(result.reason).toMatch(/2/);
+  });
+
+  it('rejects a plugin built for a future major', () => {
+    const result = checkPluginContractMajor(4, 3, 'too-new');
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBeDefined();
   });
 });
 
