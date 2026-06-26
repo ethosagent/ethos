@@ -3640,7 +3640,7 @@ textarea {
   white-space: nowrap;
 }
 
-/* ── Task modal — two-pane layout, scrolling thread, pinned composer ── */
+/* ── Task modal — two-pane layout, scrolling thread, composer atop thread ── */
 
 .cc-task-modal .ant-modal-body {
   height: min(80vh, 760px);
@@ -3681,9 +3681,12 @@ textarea {
 }
 
 .cc-task-modal-composer {
-  flex: 0 0 auto;
-  border-top: 1px solid var(--ethos-border);
-  padding: 12px 20px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ethos-bg-elevated);
+  border-bottom: 1px solid var(--ethos-border);
+  padding: 8px 0 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;

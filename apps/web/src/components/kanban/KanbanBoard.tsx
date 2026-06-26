@@ -458,6 +458,8 @@ export function TaskDrawer({
     return board.recentEvents.filter((e) => e.taskId === task.id).reverse();
   }, [task, board.recentEvents]);
 
+  const comments = [...(taskQuery.data?.comments ?? [])].reverse();
+
   const parents = useMemo(() => {
     if (!task) return [];
     return board.links
@@ -601,13 +603,31 @@ export function TaskDrawer({
                 <Typography.Text strong style={{ fontSize: 12 }}>
                   Comments
                 </Typography.Text>
+                <div className="cc-task-modal-composer">
+                  <Input.TextArea
+                    rows={2}
+                    placeholder="Add a comment…"
+                    value={commentBody}
+                    onChange={(e) => setCommentBody(e.target.value)}
+                  />
+                  <Button
+                    type="primary"
+                    size="small"
+                    loading={commentMut.isPending}
+                    disabled={commentBody.trim().length === 0 || commentMut.isPending}
+                    onClick={() => commentMut.mutate(commentBody.trim())}
+                    style={{ alignSelf: 'flex-start' }}
+                  >
+                    Comment
+                  </Button>
+                </div>
                 <div className="cc-activity-list" style={{ marginTop: 6 }}>
-                  {(taskQuery.data?.comments ?? []).length === 0 ? (
+                  {comments.length === 0 ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       No comments yet.
                     </Typography.Text>
                   ) : (
-                    (taskQuery.data?.comments ?? []).map((c) => (
+                    comments.map((c) => (
                       <div key={c.id} className="cc-activity-row">
                         <span className="cc-activity-actor" style={{ color: accentFor(c.author) }}>
                           {c.author}
@@ -630,25 +650,6 @@ export function TaskDrawer({
                   )}
                 </div>
               </div>
-            </div>
-
-            <div className="cc-task-modal-composer">
-              <Input.TextArea
-                rows={2}
-                placeholder="Add a comment…"
-                value={commentBody}
-                onChange={(e) => setCommentBody(e.target.value)}
-              />
-              <Button
-                type="primary"
-                size="small"
-                loading={commentMut.isPending}
-                disabled={commentBody.trim().length === 0 || commentMut.isPending}
-                onClick={() => commentMut.mutate(commentBody.trim())}
-                style={{ alignSelf: 'flex-start' }}
-              >
-                Comment
-              </Button>
             </div>
           </div>
 
