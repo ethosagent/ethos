@@ -584,7 +584,6 @@ export function TaskDrawer({
                               rows: 2,
                               expandable: true,
                               symbol: 'show more',
-                              tooltip: true,
                             }}
                             style={{ whiteSpace: 'pre-wrap', margin: 0 }}
                           >
@@ -619,7 +618,6 @@ export function TaskDrawer({
                               rows: 2,
                               expandable: true,
                               symbol: 'show more',
-                              tooltip: true,
                             }}
                             style={{ whiteSpace: 'pre-wrap', margin: 0 }}
                           >
