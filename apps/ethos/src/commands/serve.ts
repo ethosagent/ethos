@@ -400,8 +400,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const kanbanPollEnabled = config.kanbanPoll?.enabled !== false; // enabled by default
   if (kanbanPollEnabled) {
     const boardPath =
-      config.kanbanPoll?.boardPath
-      ?? (teamFlag ? join(dir, 'teams', teamFlag, 'board.db') : join(dir, 'board.db'));
+      config.kanbanPoll?.boardPath ??
+      (teamFlag ? join(dir, 'teams', teamFlag, 'board.db') : join(dir, 'board.db'));
 
     if (boardPath) {
       const lane = new SessionLane();

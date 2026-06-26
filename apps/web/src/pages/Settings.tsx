@@ -584,15 +584,13 @@ export function Settings() {
         </Card>
 
         {showAdvanced ? (
-          <>
-            <Card title="Model routing" size="small" style={{ marginBottom: 16 }}>
-              <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-                Per-personality model overrides. Edit ~/.ethos/config.yaml directly to add entries —
-                this surface lists the current overrides; full editing lands later.
-              </Typography.Paragraph>
-              <ModelRoutingView routing={configQuery.data?.modelRouting ?? {}} />
-            </Card>
-          </>
+          <Card title="Model routing" size="small" style={{ marginBottom: 16 }}>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+              Per-personality model overrides. Edit ~/.ethos/config.yaml directly to add entries —
+              this surface lists the current overrides; full editing lands later.
+            </Typography.Paragraph>
+            <ModelRoutingView routing={configQuery.data?.modelRouting ?? {}} />
+          </Card>
         ) : null}
 
         <Form.Item>
