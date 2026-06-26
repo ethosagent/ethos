@@ -82,12 +82,33 @@ export class KanbanPollLoop {
         .filter((t) => t.assignee === this.cfg.personalityId);
 
       for (const task of readyTasks) {
+        // Atomically claim ready -> running before dispatch. This both moves the
+        // task into progress and prevents the next tick from re-notifying it
+        // (the status filter is 'ready'). If another writer already claimed it,
+        // skip gracefully.
+        try {
+          store.updateStatus(
+            task.id,
+            'running',
+            'claimed via poll dispatch',
+            this.cfg.personalityId,
+          );
+        } catch (err) {
+          this.cfg.onError?.(err instanceof Error ? err : new Error(String(err)));
+          continue;
+        }
+
         const prompt =
-          `You have been notified: kind=kanban. ref=${task.id}. ` +
-          'Use your tools to check the relevant state and act on this notification.';
+          `You have been assigned kanban task ${task.id}: "${task.title}". ${task.body}\n` +
+          'The task is now in progress (running). Use your tools to complete the work. ' +
+          'When finished, call kanban_complete with a short summary. ' +
+          'If you are blocked, call kanban_block with the reason. ' +
+          'For long-running work, call kanban_heartbeat periodically.';
         const sessionKey = `poll:kanban:${task.id}:${Date.now()}`;
         void this.cfg.lane.enqueue(async () => {
-          await this.cfg.runner(prompt, sessionKey).catch(() => {});
+          await this.cfg.runner(prompt, sessionKey).catch((err) => {
+            this.cfg.onError?.(err instanceof Error ? err : new Error(String(err)));
+          });
         });
       }
     } finally {

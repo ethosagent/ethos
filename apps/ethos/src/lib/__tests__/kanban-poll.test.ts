@@ -35,7 +35,7 @@ describe('KanbanPollLoop', () => {
 
       const child = store.createTask({
         title: 'child',
-        assignee: 'agent-a',
+        assignee: 'agent-z',
         parents: [parent.id],
         actor: 'test',
       });
@@ -86,7 +86,8 @@ describe('KanbanPollLoop', () => {
     await vi.waitFor(() => {
       expect(runner).toHaveBeenCalledTimes(1);
     });
-    expect(runner.mock.calls[0][0]).toContain('kind=kanban');
+    expect(runner.mock.calls[0][0]).toContain('You have been assigned kanban task');
+    expect(runner.mock.calls[0][0]).toContain('kanban_complete');
   });
 
   it('tick() ignores ready tasks assigned to other personalities', async () => {
@@ -110,6 +111,58 @@ describe('KanbanPollLoop', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(runner).not.toHaveBeenCalled();
+  });
+
+  it('tick() claims a ready task to running and does not re-enqueue on a second tick', async () => {
+    let taskId = '';
+    seedStore((store) => {
+      const task = store.createTask({
+        title: 'claim-me',
+        body: 'do the thing',
+        assignee: 'agent-a',
+        actor: 'test',
+      });
+      store.updateStatus(task.id, 'ready', undefined, 'test');
+      taskId = task.id;
+      // a different personality's ready task that must be left alone
+      const other = store.createTask({ title: 'not-mine', assignee: 'agent-b', actor: 'test' });
+      store.updateStatus(other.id, 'ready', undefined, 'test');
+    });
+
+    const lane = new SessionLane();
+    const runner = vi.fn<(prompt: string, sessionKey: string) => Promise<void>>();
+    runner.mockResolvedValue(undefined);
+    const pollLoop = new KanbanPollLoop({
+      boardPath: dbPath,
+      personalityId: 'agent-a',
+      lane,
+      runner,
+    });
+
+    await pollLoop.tick();
+    await vi.waitFor(() => {
+      expect(runner).toHaveBeenCalledTimes(1);
+    });
+
+    {
+      const store = new KanbanStore(dbPath);
+      const running = store.listTasks({ status: 'running' });
+      expect(running.some((t) => t.id === taskId)).toBe(true);
+      const ready = store.listTasks({ status: 'ready' });
+      expect(ready.some((t) => t.id === taskId)).toBe(false);
+      // other personality's task untouched
+      expect(ready.some((t) => t.title === 'not-mine')).toBe(true);
+      store.close();
+    }
+
+    // Second tick must not re-enqueue (no longer ready)
+    await pollLoop.tick();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(runner).toHaveBeenCalledTimes(1);
+
+    // The new prompt is actionable
+    expect(runner.mock.calls[0][0]).toContain('You have been assigned kanban task');
+    expect(runner.mock.calls[0][0]).toContain('kanban_complete');
   });
 
   it('tick() reclaims stale running tasks', async () => {
@@ -160,7 +213,7 @@ describe('KanbanPollLoop', () => {
     seedStore((store) => {
       store.createTask({
         title: 'scheduled-task',
-        assignee: 'agent-a',
+        assignee: 'agent-z',
         scheduledFor: Date.now() - 10_000,
         actor: 'test',
       });

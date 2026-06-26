@@ -435,7 +435,7 @@ export async function composeAllTools(
   // Kanban tools — wired only when the active personality actually uses them.
   let kanbanStore: KanbanStore | null = null;
   if ((activePerson.toolset ?? []).some((name: string) => name.startsWith('kanban_'))) {
-    const kanbanDbPath = resolveKanbanDbPath(config, dataDir, activePerson.id);
+    const kanbanDbPath = resolveKanbanDbPath(config, dataDir);
     kanbanStore = new KanbanStore(kanbanDbPath);
     const store = kanbanStore;
     const kanbanOpts: {
