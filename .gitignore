@@ -29,3 +29,4 @@ apps/desktop/dist-electron/
 # (standalone .js files with no .ts counterpart are still tracked)
 src/**/*.js
 src/**/*.js.map
+.mcp.json
