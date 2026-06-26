@@ -6,9 +6,9 @@ import { os } from './context';
 // values the web Personality editor's provider Select uses), so the model
 // picker can suggest per-selected-provider models. Free text is still
 // allowed in the UI — these are suggestions, not a locked list.
-function buildManifest(): ModelCatalogManifest {
+export function groupByProvider(entries: typeof MODEL_CATALOG): ModelCatalogManifest['providers'] {
   const providers: ModelCatalogManifest['providers'] = {};
-  for (const entry of MODEL_CATALOG) {
+  for (const entry of entries) {
     const bucket = providers[entry.providerId] ?? { models: [] };
     const model: { id: string; label: string; contextWindow: number; default?: boolean } = {
       id: entry.modelId,
@@ -19,9 +19,21 @@ function buildManifest(): ModelCatalogManifest {
     bucket.models.push(model);
     providers[entry.providerId] = bucket;
   }
-  return { version: 1, updatedAt: new Date().toISOString(), providers };
+  return providers;
 }
 
+export function buildManifest(): ModelCatalogManifest {
+  return {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    providers: groupByProvider(MODEL_CATALOG),
+  };
+}
+
+// Built once at module load so the manifest (and its timestamp) is
+// process-stable; the handler returns the same object on every request.
+const MANIFEST = buildManifest();
+
 export const modelsRouter = {
-  catalog: os.models.catalog.handler(() => buildManifest()),
+  catalog: os.models.catalog.handler(() => MANIFEST),
 };

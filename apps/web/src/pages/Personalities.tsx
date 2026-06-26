@@ -1,3 +1,4 @@
+import { InfoCircleOutlined } from '@ant-design/icons';
 import type {
   McpPolicy,
   ModelTierConfigWire,
@@ -1169,7 +1170,7 @@ function WizardConfigTab({
           <span>
             Capabilities{' '}
             <Tooltip title="Tells the team what kind of work this agent does — e.g. coding, triage, release. Used when this agent collaborates with or delegates to other agents (mesh routing).">
-              <span style={{ color: 'var(--text-tertiary)', cursor: 'help' }}>ℹ</span>
+              <InfoCircleOutlined style={{ color: 'var(--text-tertiary)' }} />
             </Tooltip>
           </span>
         }
@@ -1900,7 +1901,7 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
           <span>
             Capabilities{' '}
             <Tooltip title="Tells the team what kind of work this agent does — e.g. coding, triage, release. Used when this agent collaborates with or delegates to other agents (mesh routing).">
-              <span style={{ color: 'var(--text-tertiary)', cursor: 'help' }}>ℹ</span>
+              <InfoCircleOutlined style={{ color: 'var(--text-tertiary)' }} />
             </Tooltip>
           </span>
         }

@@ -1451,9 +1451,9 @@ const meta = {
 // by provider id so the web UI can suggest per-selected-provider.
 // ---------------------------------------------------------------------------
 
-const ModelCatalogOutput = z.object({
-  version: z.number(),
-  updatedAt: z.string(),
+export const ModelCatalogOutput = z.object({
+  version: z.number().int().nonnegative(),
+  updatedAt: z.string().datetime({ offset: true }),
   providers: z.record(
     z.string(),
     z.object({
@@ -1461,7 +1461,7 @@ const ModelCatalogOutput = z.object({
         z.object({
           id: z.string(),
           label: z.string(),
-          contextWindow: z.number(),
+          contextWindow: z.number().int().positive(),
           default: z.boolean().optional(),
         }),
       ),

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ApprovalRequestSchema,
   contract,
+  ModelCatalogOutput,
   PersonalitySchema,
   SessionSchema,
   type SseEvent,
@@ -179,6 +180,35 @@ describe('SSE event union', () => {
       message: 'rendering…',
       audience: 'dashboard',
     });
+  });
+
+  it('ModelCatalogOutput round-trips, allows arbitrary model ids, and the optional default key', () => {
+    const manifest = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      providers: {
+        anthropic: {
+          models: [
+            {
+              id: 'claude-opus-4-7',
+              label: 'Claude Opus 4.7',
+              contextWindow: 200_000,
+              default: true,
+            },
+            {
+              // arbitrary / custom model id — the picker allows free text
+              id: 'some-custom/unlisted-model:v9',
+              label: 'Custom',
+              contextWindow: 32_000,
+            },
+          ],
+        },
+      },
+    };
+    const parsed = ModelCatalogOutput.parse(manifest);
+    expect(parsed).toEqual(manifest);
+    expect(parsed.providers.anthropic?.models[0]?.default).toBe(true);
+    expect('default' in (parsed.providers.anthropic?.models[1] ?? {})).toBe(false);
   });
 });
 

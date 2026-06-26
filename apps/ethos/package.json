@@ -71,10 +71,13 @@
     "gray-matter": "^4.0.3",
     "hono": "^4.12.15",
     "ink": "^7.0.0",
+    "mammoth": "^1.8.0",
     "openai": "^6.37.0",
+    "pdf-parse": "^1.1.1",
     "pino": "^10.3.1",
     "react": "19.2.6",
     "ws": "^8.20.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "yaml": "^2.7.1",
     "zod": "^4.3.6"
   },
