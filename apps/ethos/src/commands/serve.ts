@@ -409,14 +409,22 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         boardPath,
         personalityId: activePersonality,
         lane,
-        runner: async (prompt, sessionKey, taskId) => {
+        runner: async (prompt, sessionKey, taskId, taskTitle) => {
           await writeRunActivityComments(
             boardPath,
             taskId,
             activePersonality,
-            loop.run(prompt, { sessionKey }),
+            loop.run(prompt, { sessionKey, personalityId: activePersonality }),
             (err) => console.warn(`[kanban-poll] comment write failed: ${err.message}`),
           );
+          try {
+            const s = await session.getSessionByKey(sessionKey);
+            if (s && !s.title) await session.updateSession(s.id, { title: taskTitle });
+          } catch (err) {
+            console.warn(
+              `[kanban-poll] set title failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
         },
         intervalMs: config.kanbanPoll?.intervalMs,
         onError: (err) => {

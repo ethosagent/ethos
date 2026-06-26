@@ -45,7 +45,10 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
+    const runner =
+      vi.fn<
+        (prompt: string, sessionKey: string, taskId: string, taskTitle: string) => Promise<void>
+      >();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -72,7 +75,10 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
+    const runner =
+      vi.fn<
+        (prompt: string, sessionKey: string, taskId: string, taskTitle: string) => Promise<void>
+      >();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -89,6 +95,7 @@ describe('KanbanPollLoop', () => {
     });
     expect(runner.mock.calls[0][0]).toContain('You have been assigned kanban task');
     expect(runner.mock.calls[0][0]).toContain('kanban_complete');
+    expect(runner.mock.calls[0][3]).toBe('my-task');
   });
 
   it('tick() ignores ready tasks assigned to other personalities', async () => {
@@ -98,7 +105,10 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
+    const runner =
+      vi.fn<
+        (prompt: string, sessionKey: string, taskId: string, taskTitle: string) => Promise<void>
+      >();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -131,7 +141,10 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
+    const runner =
+      vi.fn<
+        (prompt: string, sessionKey: string, taskId: string, taskTitle: string) => Promise<void>
+      >();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -188,7 +201,10 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
+    const runner =
+      vi.fn<
+        (prompt: string, sessionKey: string, taskId: string, taskTitle: string) => Promise<void>
+      >();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -221,7 +237,10 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
+    const runner =
+      vi.fn<
+        (prompt: string, sessionKey: string, taskId: string, taskTitle: string) => Promise<void>
+      >();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -242,7 +261,10 @@ describe('KanbanPollLoop', () => {
 
   it('tick() calls onError on failure', async () => {
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
+    const runner =
+      vi.fn<
+        (prompt: string, sessionKey: string, taskId: string, taskTitle: string) => Promise<void>
+      >();
     runner.mockResolvedValue(undefined);
     const onError = vi.fn();
     const pollLoop = new KanbanPollLoop({

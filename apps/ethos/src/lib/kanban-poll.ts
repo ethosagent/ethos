@@ -13,7 +13,7 @@ export interface KanbanPollConfig {
   /** SessionLane to enqueue stimuli through. */
   lane: SessionLane;
   /** Runner to execute the stimulus prompt. */
-  runner: (prompt: string, sessionKey: string, taskId: string) => Promise<void>;
+  runner: (prompt: string, sessionKey: string, taskId: string, taskTitle: string) => Promise<void>;
   /** Poll interval. Default 5000ms. */
   intervalMs?: number;
   /** Optional error callback. */
@@ -107,7 +107,7 @@ export class KanbanPollLoop {
           'For long-running work, call kanban_heartbeat periodically.';
         const sessionKey = `poll:kanban:${task.id}:${Date.now()}`;
         void this.cfg.lane.enqueue(async () => {
-          await this.cfg.runner(prompt, sessionKey, task.id).catch((err) => {
+          await this.cfg.runner(prompt, sessionKey, task.id, task.title).catch((err) => {
             this.cfg.onError?.(err instanceof Error ? err : new Error(String(err)));
           });
         });
