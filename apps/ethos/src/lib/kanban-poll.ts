@@ -120,7 +120,6 @@ export class KanbanPollLoop {
 
 const ARG_PREVIEW_CAP = 500;
 const ERROR_CAP = 500;
-const FINAL_TEXT_CAP = 2000;
 
 function truncate(s: string, cap: number): string {
   return s.length > cap ? `${s.slice(0, cap)}…` : s;
@@ -171,7 +170,7 @@ export async function writeRunActivityComments(
     }
     const trimmed = finalText.trim();
     if (trimmed.length > 0) {
-      addComment(truncate(trimmed, FINAL_TEXT_CAP));
+      addComment(trimmed);
     }
   } finally {
     store.close();

@@ -406,9 +406,16 @@ export class KanbanService {
     } finally {
       store.close();
     }
-    // Best-effort notify the assigned agent — non-fatal on failure.
-    if (this.mesh && assignee) {
-      void this.notifyAssignee(assignee, opts.taskId, 'kanban_comment').catch(() => {});
+    // Best-effort notify recipients — the assignee plus any @-mentioned agents
+    // in the comment body. Dedupe so a mentioned assignee is only pinged once.
+    // Non-fatal on failure (network/offline agents are reconciled by the poll loop).
+    if (this.mesh) {
+      const recipients = new Set<string>();
+      if (assignee) recipients.add(assignee);
+      for (const token of parseMentions(opts.body)) recipients.add(token);
+      for (const personalityId of recipients) {
+        void this.notifyAssignee(personalityId, opts.taskId, 'kanban_comment').catch(() => {});
+      }
     }
     return { comment: toWireComment(comment) };
   }
@@ -526,6 +533,18 @@ function toWireMemberStats(s: TeamMemberStats): KanbanMemberStats {
     ticketsOrphaned: s.ticketsOrphaned,
     lastUpdatedAt: new Date(s.lastUpdatedAt).toISOString(),
   };
+}
+
+// Match @-mentions of personality ids: letters, digits, hyphens, underscores.
+// e.g. "@swing-trader" -> "swing-trader". Returns the unique set of tokens.
+const MENTION_PATTERN = /@([A-Za-z0-9_-]+)/g;
+function parseMentions(body: string): string[] {
+  const out = new Set<string>();
+  for (const m of body.matchAll(MENTION_PATTERN)) {
+    const token = m[1];
+    if (token) out.add(token);
+  }
+  return [...out];
 }
 
 // Path-traversal guard. Same logic as `ethos team destroy` — refuse anything

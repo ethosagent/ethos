@@ -139,4 +139,60 @@ describe('KanbanService — addComment + notify', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it('addComment notifies the assignee plus @-mentioned agents, deduped, skipping unregistered mentions', async () => {
+    writeManifest('team-a');
+
+    const store = openBoard('team-a');
+    const task = store.createTask({ title: 'work', assignee: 'engineer' });
+    store.updateStatus(task.id, 'ready');
+    store.close();
+
+    await mesh.register({
+      agentId: 'engineer:1:abc',
+      capabilities: [],
+      model: 'test',
+      pid: 1,
+      host: '127.0.0.1',
+      port: 9999,
+      activeSessions: 0,
+      personalityId: 'engineer',
+      displayName: 'Engineer',
+      boardSubscriptions: ['team-a'],
+    });
+    await mesh.register({
+      agentId: 'agent-b:1:xyz',
+      capabilities: [],
+      model: 'test',
+      pid: 1,
+      host: '127.0.0.1',
+      port: 8888,
+      activeSessions: 0,
+      personalityId: 'agent-b',
+      displayName: 'Agent B',
+      boardSubscriptions: ['team-a'],
+    });
+
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+
+    await service.addComment({
+      team: 'team-a',
+      taskId: task.id,
+      body: 'hey @agent-b and @nobody please look',
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    const urls = new Set<string>();
+    for (const call of fetchSpy.mock.calls) {
+      const [url, opts] = call as [string, RequestInit];
+      urls.add(url);
+      expect(JSON.parse(opts.body as string)).toEqual({ kind: 'kanban_comment', ref: task.id });
+    }
+    expect(urls).toEqual(new Set(['http://127.0.0.1:9999/notify', 'http://127.0.0.1:8888/notify']));
+  });
 });

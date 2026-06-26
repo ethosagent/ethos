@@ -6,7 +6,16 @@ import type {
   KanbanTaskStatus,
 } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Descriptions, Dropdown, Input, Modal, Typography } from 'antd';
+import {
+  App as AntApp,
+  Button,
+  Descriptions,
+  Dropdown,
+  Input,
+  Modal,
+  Select,
+  Typography,
+} from 'antd';
 import { useMemo, useState } from 'react';
 import { formatMemberSuccess } from '../../lib/member-stats';
 import { rpc } from '../../rpc';
@@ -439,6 +448,11 @@ export function TaskDrawer({
     queryFn: () => rpc.kanban.getTask({ team: teamName, taskId: task?.id ?? '' }),
     enabled: task !== null,
   });
+  const agentsQuery = useQuery({
+    queryKey: ['kanban', 'agents', teamName],
+    queryFn: () => rpc.kanban.listAgents({ team: teamName }),
+    enabled: task !== null,
+  });
   const commentMut = useMutation({
     mutationFn: (body: string) =>
       rpc.kanban.addComment({ team: teamName, taskId: task?.id ?? '', body }),
@@ -449,6 +463,20 @@ export function TaskDrawer({
     onError: (err) =>
       notification.error({
         message: 'Comment failed',
+        description: (err as Error).message,
+      }),
+  });
+  const assignMut = useMutation({
+    mutationFn: (assignee: string) =>
+      rpc.kanban.assign({ team: teamName, taskId: task?.id ?? '', assignee }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kanban', 'task', teamName, task?.id] });
+      queryClient.invalidateQueries({ queryKey: ['kanban', 'board', teamName] });
+      notification.success({ message: 'Assignee updated' });
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Failed to reassign',
         description: (err as Error).message,
       }),
   });
@@ -523,7 +551,19 @@ export function TaskDrawer({
 
               <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
                 <Descriptions.Item label="Assignee">
-                  {task.assignee ?? <em style={{ opacity: 0.6 }}>unassigned (goal)</em>}
+                  <Select
+                    size="small"
+                    value={task.assignee ?? undefined}
+                    onChange={(value) => assignMut.mutate(value)}
+                    placeholder="Assign to…"
+                    style={{ minWidth: 180 }}
+                    loading={assignMut.isPending}
+                    options={(agentsQuery.data?.agents ?? []).map((a) => ({
+                      label: `${a.displayName}${a.online ? '' : ' (offline)'}`,
+                      value: a.personalityId,
+                      disabled: !a.online,
+                    }))}
+                  />
                 </Descriptions.Item>
                 <Descriptions.Item label="Priority">{task.priority}</Descriptions.Item>
                 <Descriptions.Item label="Workspace">{task.workspaceMode}</Descriptions.Item>
