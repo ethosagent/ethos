@@ -3,7 +3,7 @@ import type { SessionLane } from '@ethosagent/session-lane';
 import type { AgentEvent } from '@ethosagent/types';
 
 const DEFAULT_INTERVAL_MS = 5_000;
-const DEFAULT_STALENESS_THRESHOLD_MS = 300_000;
+const DEFAULT_STALENESS_THRESHOLD_MS = 1_800_000;
 
 export interface KanbanPollConfig {
   /** Path to the board SQLite file. */
