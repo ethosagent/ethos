@@ -3335,7 +3335,7 @@ textarea {
 }
 .cc-board--fill .cc-column {
   flex: 1 1 0;
-  min-width: 280px;
+  min-width: 200px;
   max-width: none;
 }
 .cc-column:last-child {
