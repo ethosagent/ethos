@@ -5,9 +5,9 @@ import type {
   KanbanTask,
   KanbanTaskStatus,
 } from '@ethosagent/web-contracts';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Descriptions, Drawer, Dropdown, Typography } from 'antd';
-import { useMemo } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { App as AntApp, Button, Descriptions, Drawer, Dropdown, Input, Typography } from 'antd';
+import { useMemo, useState } from 'react';
 import { formatMemberSuccess } from '../../lib/member-stats';
 import { rpc } from '../../rpc';
 
@@ -432,6 +432,26 @@ export function TaskDrawer({
       }),
   });
 
+  const [commentBody, setCommentBody] = useState('');
+  const taskQuery = useQuery({
+    queryKey: ['kanban', 'task', teamName, task?.id],
+    queryFn: () => rpc.kanban.getTask({ team: teamName, taskId: task?.id ?? '' }),
+    enabled: task !== null,
+  });
+  const commentMut = useMutation({
+    mutationFn: (body: string) =>
+      rpc.kanban.addComment({ team: teamName, taskId: task?.id ?? '', body }),
+    onSuccess: () => {
+      setCommentBody('');
+      queryClient.invalidateQueries({ queryKey: ['kanban', 'task', teamName, task?.id] });
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Comment failed',
+        description: (err as Error).message,
+      }),
+  });
+
   const events = useMemo(() => {
     if (!task) return [];
     return board.recentEvents.filter((e) => e.taskId === task.id).reverse();
@@ -552,6 +572,72 @@ export function TaskDrawer({
                 </div>
               ))
             )}
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <Typography.Text strong style={{ fontSize: 12 }}>
+              Comments
+            </Typography.Text>
+            <div className="cc-activity-list" style={{ marginTop: 6 }}>
+              {(taskQuery.data?.comments ?? []).length === 0 ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  No comments yet.
+                </Typography.Text>
+              ) : (
+                (taskQuery.data?.comments ?? []).map((c) => (
+                  <div key={c.id} className="cc-activity-row">
+                    <span className="cc-activity-actor" style={{ color: accentFor(c.author) }}>
+                      {c.author}
+                    </span>
+                    <span className="cc-activity-text" style={{ whiteSpace: 'pre-wrap' }}>
+                      {c.body}
+                    </span>
+                    <span className="cc-activity-time">{formatRelative(c.createdAt)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Input.TextArea
+                rows={2}
+                placeholder="Add a comment…"
+                value={commentBody}
+                onChange={(e) => setCommentBody(e.target.value)}
+              />
+              <Button
+                type="primary"
+                size="small"
+                loading={commentMut.isPending}
+                disabled={commentBody.trim().length === 0 || commentMut.isPending}
+                onClick={() => commentMut.mutate(commentBody.trim())}
+                style={{ alignSelf: 'flex-start' }}
+              >
+                Comment
+              </Button>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <Typography.Text strong style={{ fontSize: 12 }}>
+              Runs
+            </Typography.Text>
+            <div className="cc-activity-list" style={{ marginTop: 6 }}>
+              {(taskQuery.data?.runs ?? []).length === 0 ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  No runs yet.
+                </Typography.Text>
+              ) : (
+                (taskQuery.data?.runs ?? []).map((run) => (
+                  <div key={run.id} className="cc-activity-row">
+                    <span className="cc-activity-actor">
+                      {run.endedAt === null ? 'running' : (run.outcome ?? 'ended')}
+                    </span>
+                    <span className="cc-activity-text">{run.summary ?? ''}</span>
+                    <span className="cc-activity-time">{formatRelative(run.startedAt)}</span>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </>
       )}

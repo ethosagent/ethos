@@ -22,6 +22,8 @@ import {
   IdentityMapEntrySchema,
   KanbanAgentSchema,
   KanbanBoardSnapshotSchema,
+  KanbanCommentSchema,
+  KanbanRunSchema,
   KanbanTaskSchema,
   KanbanTaskStatusSchema,
   KanbanTeamSummarySchema,
@@ -1340,6 +1342,19 @@ const KanbanAssignInput = z.object({
 });
 const KanbanAssignOutput = z.object({ task: KanbanTaskSchema });
 
+const KanbanGetTaskInput = z.object({ team: z.string().min(1), taskId: z.string().min(1) });
+const KanbanGetTaskOutput = z.object({
+  task: KanbanTaskSchema,
+  comments: z.array(KanbanCommentSchema),
+  runs: z.array(KanbanRunSchema),
+});
+const KanbanAddCommentInput = z.object({
+  team: z.string().min(1),
+  taskId: z.string().min(1),
+  body: z.string().min(1),
+});
+const KanbanAddCommentOutput = z.object({ comment: KanbanCommentSchema });
+
 /** @experimental */
 const kanban = {
   list: oc.output(KanbanListOutput),
@@ -1348,6 +1363,8 @@ const kanban = {
   createTask: oc.input(KanbanCreateTaskInput).output(KanbanCreateTaskOutput),
   listAgents: oc.input(KanbanListAgentsInput).output(KanbanListAgentsOutput),
   assign: oc.input(KanbanAssignInput).output(KanbanAssignOutput),
+  getTask: oc.input(KanbanGetTaskInput).output(KanbanGetTaskOutput),
+  addComment: oc.input(KanbanAddCommentInput).output(KanbanAddCommentOutput),
 };
 
 // ---------------------------------------------------------------------------

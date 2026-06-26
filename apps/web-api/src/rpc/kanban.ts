@@ -56,4 +56,12 @@ export const kanbanRouter = {
       actor: 'human:control-center',
     }),
   ),
+
+  getTask: os.kanban.getTask.handler(({ input, context }) =>
+    context.kanban.getTask({ team: input.team, taskId: input.taskId }),
+  ),
+
+  addComment: os.kanban.addComment.handler(({ input, context }) =>
+    context.kanban.addComment({ team: input.team, taskId: input.taskId, body: input.body }),
+  ),
 };

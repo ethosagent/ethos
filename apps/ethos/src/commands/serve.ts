@@ -22,7 +22,7 @@ import {
 import { type EthosConfig, ethosDir, readConfig } from '../config';
 import { appendErrorLog } from '../error-log';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
-import { KanbanPollLoop } from '../lib/kanban-poll';
+import { KanbanPollLoop, writeRunActivityComments } from '../lib/kanban-poll';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
@@ -409,11 +409,14 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         boardPath,
         personalityId: activePersonality,
         lane,
-        runner: async (prompt, sessionKey) => {
-          let _fullText = '';
-          for await (const event of loop.run(prompt, { sessionKey })) {
-            if (event.type === 'text_delta') _fullText += event.text;
-          }
+        runner: async (prompt, sessionKey, taskId) => {
+          await writeRunActivityComments(
+            boardPath,
+            taskId,
+            activePersonality,
+            loop.run(prompt, { sessionKey }),
+            (err) => console.warn(`[kanban-poll] comment write failed: ${err.message}`),
+          );
         },
         intervalMs: config.kanbanPoll?.intervalMs,
         onError: (err) => {

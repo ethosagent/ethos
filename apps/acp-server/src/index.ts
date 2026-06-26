@@ -723,6 +723,17 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 function renderNotifyPrompt(kind: string, ref?: string): string {
+  if (kind === 'kanban_comment') {
+    const target = ref ? `task ${ref}` : 'a task';
+    return [
+      `A human posted a new comment on kanban ${target}.`,
+      ref
+        ? `Read the latest discussion with kanban_show passing "${ref}".`
+        : 'Read the latest discussion with kanban_show.',
+      'Then respond or act on it — reconsider the approach, unblock, or continue the work as the comment directs.',
+    ].join(' ');
+  }
+  // Default + 'kanban' (assignment) — preserve existing generic prompt.
   const parts = [`You have been notified: kind=${kind}`];
   if (ref) parts.push(`ref=${ref}`);
   parts.push('Use your tools to check the relevant state and act on this notification.');

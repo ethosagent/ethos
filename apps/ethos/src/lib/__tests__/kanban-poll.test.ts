@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { SessionLane } from '@ethosagent/session-lane';
+import type { AgentEvent } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { KanbanPollLoop } from '../kanban-poll';
+import { KanbanPollLoop, writeRunActivityComments } from '../kanban-poll';
 
 describe('KanbanPollLoop', () => {
   let tempDir: string;
@@ -44,7 +45,7 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string) => Promise<void>>();
+    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -71,7 +72,7 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string) => Promise<void>>();
+    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -97,7 +98,7 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string) => Promise<void>>();
+    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -130,7 +131,7 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string) => Promise<void>>();
+    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -187,7 +188,7 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string) => Promise<void>>();
+    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -220,7 +221,7 @@ describe('KanbanPollLoop', () => {
     });
 
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string) => Promise<void>>();
+    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
     runner.mockResolvedValue(undefined);
     const pollLoop = new KanbanPollLoop({
       boardPath: dbPath,
@@ -241,7 +242,7 @@ describe('KanbanPollLoop', () => {
 
   it('tick() calls onError on failure', async () => {
     const lane = new SessionLane();
-    const runner = vi.fn<(prompt: string, sessionKey: string) => Promise<void>>();
+    const runner = vi.fn<(prompt: string, sessionKey: string, taskId: string) => Promise<void>>();
     runner.mockResolvedValue(undefined);
     const onError = vi.fn();
     const pollLoop = new KanbanPollLoop({
@@ -260,5 +261,51 @@ describe('KanbanPollLoop', () => {
       // Just verify the loop runs without crashing
     });
     pollLoop.stop();
+  });
+});
+
+describe('writeRunActivityComments', () => {
+  let tempDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kanban-poll-test-'));
+    dbPath = join(tempDir, 'board.db');
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('writes a tool_start comment and a final-text comment authored by the personality', async () => {
+    const store = new KanbanStore(dbPath);
+    const task = store.createTask({ title: 'helper-task', assignee: 'agent-a', actor: 'test' });
+    store.close();
+    async function* fakeEvents(): AsyncIterable<AgentEvent> {
+      yield { type: 'tool_start', toolCallId: 'c1', toolName: 'read_file', args: { path: '/x' } };
+      yield { type: 'text_delta', text: 'all ' };
+      yield { type: 'text_delta', text: 'done' };
+      yield { type: 'done', text: 'all done', turnCount: 1 };
+    }
+    await writeRunActivityComments(dbPath, task.id, 'agent-a', fakeEvents());
+    const verify = new KanbanStore(dbPath);
+    const comments = verify.listComments(task.id);
+    expect(comments.every((c) => c.author === 'agent-a')).toBe(true);
+    expect(comments.some((c) => c.body.includes('🔧 read_file'))).toBe(true);
+    expect(comments.some((c) => c.body.includes('all done'))).toBe(true);
+    verify.close();
+  });
+
+  it('writes a warning comment for an error event', async () => {
+    const store = new KanbanStore(dbPath);
+    const task = store.createTask({ title: 'err-task', assignee: 'agent-a', actor: 'test' });
+    store.close();
+    async function* errEvents(): AsyncIterable<AgentEvent> {
+      yield { type: 'error', error: 'boom', code: 'oops' };
+    }
+    await writeRunActivityComments(dbPath, task.id, 'agent-a', errEvents());
+    const verify = new KanbanStore(dbPath);
+    expect(verify.listComments(task.id).some((c) => c.body.includes('⚠️ error: boom'))).toBe(true);
+    verify.close();
   });
 });

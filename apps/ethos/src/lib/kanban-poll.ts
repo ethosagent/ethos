@@ -1,5 +1,6 @@
 import { KanbanStore } from '@ethosagent/kanban-store';
 import type { SessionLane } from '@ethosagent/session-lane';
+import type { AgentEvent } from '@ethosagent/types';
 
 const DEFAULT_INTERVAL_MS = 5_000;
 const DEFAULT_STALENESS_THRESHOLD_MS = 300_000;
@@ -12,7 +13,7 @@ export interface KanbanPollConfig {
   /** SessionLane to enqueue stimuli through. */
   lane: SessionLane;
   /** Runner to execute the stimulus prompt. */
-  runner: (prompt: string, sessionKey: string) => Promise<void>;
+  runner: (prompt: string, sessionKey: string, taskId: string) => Promise<void>;
   /** Poll interval. Default 5000ms. */
   intervalMs?: number;
   /** Optional error callback. */
@@ -106,7 +107,7 @@ export class KanbanPollLoop {
           'For long-running work, call kanban_heartbeat periodically.';
         const sessionKey = `poll:kanban:${task.id}:${Date.now()}`;
         void this.cfg.lane.enqueue(async () => {
-          await this.cfg.runner(prompt, sessionKey).catch((err) => {
+          await this.cfg.runner(prompt, sessionKey, task.id).catch((err) => {
             this.cfg.onError?.(err instanceof Error ? err : new Error(String(err)));
           });
         });
@@ -114,5 +115,65 @@ export class KanbanPollLoop {
     } finally {
       store.close();
     }
+  }
+}
+
+const ARG_PREVIEW_CAP = 120;
+const ERROR_CAP = 500;
+const FINAL_TEXT_CAP = 2000;
+
+function truncate(s: string, cap: number): string {
+  return s.length > cap ? `${s.slice(0, cap)}…` : s;
+}
+
+/**
+ * Drive an agent event stream, writing the agent's activity into the task as
+ * comments authored by `author` (the personalityId). Opens one short-lived
+ * KanbanStore for the whole run and closes it in a finally — the poll loop's
+ * own store is already closed by the time the runner executes, so the runner
+ * MUST open its own handle keyed by boardPath. WAL allows concurrent writers.
+ * Each comment write is wrapped so a write failure never aborts the run.
+ */
+export async function writeRunActivityComments(
+  boardPath: string,
+  taskId: string,
+  author: string,
+  events: AsyncIterable<AgentEvent>,
+  onError?: (err: Error) => void,
+): Promise<void> {
+  const store = new KanbanStore(boardPath);
+  const addComment = (body: string): void => {
+    try {
+      store.addComment(taskId, author, body);
+    } catch (err) {
+      onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+  };
+  try {
+    let finalText = '';
+    for await (const event of events) {
+      if (event.type === 'text_delta') {
+        finalText += event.text;
+      } else if (event.type === 'tool_start') {
+        const argsJson = (() => {
+          try {
+            return JSON.stringify(event.args);
+          } catch {
+            return '';
+          }
+        })();
+        addComment(`🔧 ${event.toolName}(${truncate(argsJson, ARG_PREVIEW_CAP)})`);
+      } else if (event.type === 'error') {
+        addComment(`⚠️ error: ${truncate(event.error, ERROR_CAP)}`);
+      } else if (event.type === 'done') {
+        if (event.text && event.text.length > 0) finalText = event.text;
+      }
+    }
+    const trimmed = finalText.trim();
+    if (trimmed.length > 0) {
+      addComment(truncate(trimmed, FINAL_TEXT_CAP));
+    }
+  } finally {
+    store.close();
   }
 }

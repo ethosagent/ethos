@@ -352,7 +352,7 @@ export class KanbanService {
 
       // Fire /notify to the assignee via mesh — non-fatal on failure.
       if (this.mesh && task.status === 'ready') {
-        void this.notifyAssignee(opts.assignee, task.id).catch(() => {});
+        void this.notifyAssignee(opts.assignee, task.id, 'kanban').catch(() => {});
       }
 
       return { task: toWireTask(task) };
@@ -361,7 +361,59 @@ export class KanbanService {
     }
   }
 
-  private async notifyAssignee(personalityId: string, taskId: string): Promise<void> {
+  async getTask(opts: { team: string; taskId: string }): Promise<{
+    task: KanbanTask;
+    comments: KanbanComment[];
+    runs: KanbanRun[];
+  }> {
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
+    if (!existsSync(boardPath)) {
+      throw new Error(`team board not found: ${opts.team}`);
+    }
+    const store =
+      opts.team !== GLOBAL_BOARD_NAME
+        ? new KanbanStore(boardPath, { teamId: opts.team })
+        : new KanbanStore(boardPath);
+    try {
+      const task = store.getTask(opts.taskId);
+      if (!task) throw new Error(`task not found: ${opts.taskId}`);
+      const comments = store.listComments(opts.taskId).map(toWireComment);
+      const runs = store.listRuns(opts.taskId).map(toWireRun);
+      return { task: toWireTask(task), comments, runs };
+    } finally {
+      store.close();
+    }
+  }
+
+  async addComment(opts: { team: string; taskId: string; body: string }): Promise<{
+    comment: KanbanComment;
+  }> {
+    if (opts.team !== GLOBAL_BOARD_NAME) assertSafeTeamName(opts.team);
+    const boardPath = resolveBoard(this.rootDir, opts.team);
+    if (!existsSync(boardPath)) {
+      throw new Error(`team board not found: ${opts.team}`);
+    }
+    const store =
+      opts.team !== GLOBAL_BOARD_NAME
+        ? new KanbanStore(boardPath, { teamId: opts.team })
+        : new KanbanStore(boardPath);
+    let comment: TaskComment;
+    let assignee: string | null;
+    try {
+      comment = store.addComment(opts.taskId, 'human:control-center', opts.body);
+      assignee = store.getTask(opts.taskId)?.assignee ?? null;
+    } finally {
+      store.close();
+    }
+    // Best-effort notify the assigned agent — non-fatal on failure.
+    if (this.mesh && assignee) {
+      void this.notifyAssignee(assignee, opts.taskId, 'kanban_comment').catch(() => {});
+    }
+    return { comment: toWireComment(comment) };
+  }
+
+  private async notifyAssignee(personalityId: string, taskId: string, kind: string): Promise<void> {
     if (!this.mesh) return;
     const entries = await this.mesh.findByPersonality(personalityId);
     const entry = entries[0];
@@ -371,7 +423,7 @@ export class KanbanService {
       const res = await fetch(`http://${entry.host}:${entry.port}/notify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'kanban', ref: taskId }),
+        body: JSON.stringify({ kind, ref: taskId }),
       });
       if (!res.ok) {
         // Notification failure is non-fatal — poll loop reconciles.
@@ -439,6 +491,29 @@ function toWireTask(t: Task): KanbanTask {
     acceptanceCriteria: t.acceptanceCriteria,
     createdAt: new Date(t.createdAt).toISOString(),
     updatedAt: new Date(t.updatedAt).toISOString(),
+  };
+}
+
+function toWireComment(c: TaskComment): KanbanComment {
+  return {
+    id: c.id,
+    taskId: c.taskId,
+    author: c.author,
+    body: c.body,
+    createdAt: new Date(c.createdAt).toISOString(),
+  };
+}
+
+function toWireRun(r: TaskRun): KanbanRun {
+  return {
+    id: r.id,
+    taskId: r.taskId,
+    startedAt: new Date(r.startedAt).toISOString(),
+    endedAt: r.endedAt !== null ? new Date(r.endedAt).toISOString() : null,
+    outcome: r.outcome,
+    summary: r.summary,
+    lastHeartbeatAt: new Date(r.lastHeartbeatAt).toISOString(),
+    completedBy: r.completedBy,
   };
 }
 
