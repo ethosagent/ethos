@@ -1,5 +1,5 @@
-import { App as AntApp, Button, Input, Select, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { App as AntApp, Button, Input, Modal, Select, Typography } from 'antd';
 import { useState } from 'react';
 import { Board, TaskDrawer } from '../components/kanban/KanbanBoard';
 import { rpc } from '../rpc';
@@ -9,6 +9,7 @@ export function Kanban() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [showCreateTask, setShowCreateTask] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   const teamsQuery = useQuery({
     queryKey: ['kanban', 'list'],
@@ -30,7 +31,7 @@ export function Kanban() {
     board && selectedTaskId ? (board.tasks.find((t) => t.id === selectedTaskId) ?? null) : null;
 
   return (
-    <div className="cc-page">
+    <div className="cc-page cc-page--kanban">
       <header className="cc-header">
         <h2 className="cc-title">Kanban</h2>
         <span className="cc-spacer" />
@@ -45,8 +46,15 @@ export function Kanban() {
         )}
         {activeTeam && (
           <>
-            <Button size="small" onClick={() => setShowCreateTask((v) => !v)}>
-              {showCreateTask ? 'Cancel' : 'New task'}
+            <Button size="small" onClick={() => setShowCreateTask(true)}>
+              New task
+            </Button>
+            <Button
+              size="small"
+              type={showHelp ? 'primary' : 'default'}
+              onClick={() => setShowHelp((v) => !v)}
+            >
+              Connect agents
             </Button>
             <Button
               size="small"
@@ -65,18 +73,20 @@ export function Kanban() {
         </Typography.Text>
       )}
 
-      {showCreateTask && activeTeam && (
-        <CreateTaskForm teamName={activeTeam} onDone={() => setShowCreateTask(false)} />
-      )}
-
       {board && activeTeam && (
-        <div className="cc-grid cc-grid--no-activity cc-grid--no-roster">
+        <div
+          className={
+            showHelp ? 'cc-grid cc-grid--help' : 'cc-grid cc-grid--no-activity cc-grid--no-roster'
+          }
+        >
           <Board
             snapshot={board}
             teamName={activeTeam}
             showArchived={showArchived}
             onSelect={setSelectedTaskId}
+            fill
           />
+          {showHelp && <ConnectAgentsPanel teamName={activeTeam} />}
         </div>
       )}
 
@@ -87,6 +97,18 @@ export function Kanban() {
           teamName={activeTeam}
           onClose={() => setSelectedTaskId(null)}
         />
+      )}
+
+      {activeTeam && (
+        <Modal
+          open={showCreateTask}
+          onCancel={() => setShowCreateTask(false)}
+          title="New task"
+          footer={null}
+          destroyOnClose
+        >
+          <CreateTaskForm teamName={activeTeam} onDone={() => setShowCreateTask(false)} />
+        </Modal>
       )}
     </div>
   );
@@ -122,14 +144,7 @@ function CreateTaskForm({ teamName, onDone }: { teamName: string; onDone: () => 
   const agents = agentsQuery.data?.agents ?? [];
 
   return (
-    <div
-      style={{
-        border: '1px solid var(--ethos-border, #d9d9d9)',
-        borderRadius: 6,
-        padding: 12,
-        marginBottom: 12,
-      }}
-    >
+    <>
       <Input
         placeholder="Task title"
         value={title}
@@ -167,6 +182,58 @@ function CreateTaskForm({ teamName, onDone }: { teamName: string; onDone: () => 
           Create
         </Button>
       </div>
-    </div>
+    </>
+  );
+}
+
+function ConnectAgentsPanel({ teamName }: { teamName: string }) {
+  const agentsQuery = useQuery({
+    queryKey: ['kanban', 'agents', teamName],
+    queryFn: () => rpc.kanban.listAgents({ team: teamName }),
+  });
+
+  const agents = agentsQuery.data?.agents ?? [];
+
+  return (
+    <section className="cc-panel">
+      <header className="cc-panel-header">
+        <h3 className="cc-panel-title">Connect agents</h3>
+      </header>
+      <div className="cc-panel-body" style={{ padding: 16 }}>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+          The board coordinates multiple agents. Each agent is a separate, always-live{' '}
+          <Typography.Text code>ethos serve</Typography.Text> process. This web UI runs only one
+          personality at a time — the active one. Any other personality you assign a task to must be
+          started separately and kept running, or it will not pick up its work.
+        </Typography.Paragraph>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+          {agents.map((a) => (
+            <div key={a.personalityId} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: a.online ? '#4ADE80' : '#F87171',
+                    flex: '0 0 auto',
+                  }}
+                />
+                <Typography.Text strong>{a.displayName}</Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {a.online ? 'online' : 'offline'}
+                </Typography.Text>
+              </div>
+              <Typography.Text type="secondary" code style={{ fontSize: 11 }}>
+                {a.personalityId}
+              </Typography.Text>
+              <Typography.Text code copyable style={{ fontSize: 12 }}>
+                ethos serve --personality {a.personalityId}
+              </Typography.Text>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }

@@ -39,11 +39,13 @@ export function Board({
   teamName,
   showArchived,
   onSelect,
+  fill,
 }: {
   snapshot: KanbanBoardSnapshot;
   teamName: string;
   showArchived: boolean;
   onSelect: (id: string) => void;
+  fill?: boolean;
 }) {
   const byStatus = useMemo(() => {
     const map = new Map<KanbanTaskStatus, KanbanTask[]>();
@@ -61,7 +63,7 @@ export function Board({
   const columns = showArchived ? [...STATUS_COLUMNS, ARCHIVED_STATUS] : STATUS_COLUMNS;
 
   return (
-    <section className="cc-panel cc-board">
+    <section className={`cc-panel cc-board${fill ? ' cc-board--fill' : ''}`}>
       <header className="cc-panel-header">
         <h3 className="cc-panel-title">Board</h3>
         <span className="cc-spacer" />
