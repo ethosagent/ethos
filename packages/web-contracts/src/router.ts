@@ -739,6 +739,7 @@ const ConfigUpdateInput = z.object({
   contextLayering: z.boolean().optional(),
   debugPanelEnabled: z.boolean().optional(),
   debugPanelModel: z.string().nullable().optional(),
+  adminEnabled: z.boolean().optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 
@@ -1445,6 +1446,35 @@ const meta = {
 };
 
 // ---------------------------------------------------------------------------
+// Models — curated catalog for the model picker (suggestions only; users may
+// type any model id). Sourced from packages/wiring's MODEL_CATALOG, grouped
+// by provider id so the web UI can suggest per-selected-provider.
+// ---------------------------------------------------------------------------
+
+const ModelCatalogOutput = z.object({
+  version: z.number(),
+  updatedAt: z.string(),
+  providers: z.record(
+    z.string(),
+    z.object({
+      models: z.array(
+        z.object({
+          id: z.string(),
+          label: z.string(),
+          contextWindow: z.number(),
+          default: z.boolean().optional(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/** @experimental */
+const models = {
+  catalog: oc.output(ModelCatalogOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Dashboards — widget templates from plugins + dashboard/panel CRUD
 // ---------------------------------------------------------------------------
 
@@ -1886,6 +1916,7 @@ export const contract = {
   kanban,
   apiKeys,
   meta,
+  models,
   dashboards,
   admin,
   context,

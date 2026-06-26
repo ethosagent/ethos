@@ -210,6 +210,7 @@ describe('contract router', () => {
       'memory',
       'mesh',
       'meta',
+      'models',
       'onboarding',
       'personalities',
       'platforms',

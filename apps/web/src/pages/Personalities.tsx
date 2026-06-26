@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
+  AutoComplete,
   Button,
   Checkbox,
   Divider,
@@ -45,6 +46,23 @@ import {
   categoryDetail,
 } from '../lib/toolset-categories';
 import { rpc } from '../rpc';
+
+// Shape of one suggestion entry returned by the models.catalog RPC.
+type CatalogModel = { id: string; label: string; contextWindow: number; default?: boolean };
+
+function modelOptionsForProvider(
+  catalog: { providers: Record<string, { models: CatalogModel[] }> } | undefined,
+  provider: string | undefined,
+): { value: string; label: string }[] {
+  if (!catalog || !provider) return [];
+  const models = catalog.providers[provider]?.models ?? [];
+  return models.map((m) => ({ value: m.id, label: `${m.id} — ${m.label}` }));
+}
+
+// Case-insensitive substring match on the model id (option value) so typing
+// narrows the suggestion list. AutoComplete still accepts arbitrary input.
+const modelFilterOption = (input: string, option?: { value: string; label: string }) =>
+  (option?.value ?? '').toLowerCase().includes(input.toLowerCase());
 
 // Personalities tab — v1.
 //
@@ -1046,6 +1064,11 @@ function WizardConfigTab({
   state: WizardState;
   setState: React.Dispatch<React.SetStateAction<WizardState>>;
 }) {
+  const catalogQuery = useQuery({
+    queryKey: ['models', 'catalog'],
+    queryFn: () => rpc.models.catalog(),
+  });
+  const modelOptions = modelOptionsForProvider(catalogQuery.data, state.provider || undefined);
   return (
     <Form layout="vertical">
       <Typography.Paragraph type="secondary">
@@ -1074,24 +1097,33 @@ function WizardConfigTab({
         {state.modelTiered ? (
           <>
             <Form.Item label="Trivial" help="e.g. claude-haiku-4-5">
-              <Input
+              <AutoComplete
                 value={state.modelTrivial}
                 placeholder="claude-haiku-4-5"
-                onChange={(e) => setState((prev) => ({ ...prev, modelTrivial: e.target.value }))}
+                options={modelOptions}
+                filterOption={modelFilterOption}
+                onChange={(val) => setState((prev) => ({ ...prev, modelTrivial: val }))}
+                style={{ width: '100%' }}
               />
             </Form.Item>
             <Form.Item label="Default" help="e.g. claude-sonnet-4-6">
-              <Input
+              <AutoComplete
                 value={state.modelDefault}
                 placeholder="claude-sonnet-4-6"
-                onChange={(e) => setState((prev) => ({ ...prev, modelDefault: e.target.value }))}
+                options={modelOptions}
+                filterOption={modelFilterOption}
+                onChange={(val) => setState((prev) => ({ ...prev, modelDefault: val }))}
+                style={{ width: '100%' }}
               />
             </Form.Item>
             <Form.Item label="Deep" help="e.g. claude-opus-4-7">
-              <Input
+              <AutoComplete
                 value={state.modelDeep}
                 placeholder="claude-opus-4-7"
-                onChange={(e) => setState((prev) => ({ ...prev, modelDeep: e.target.value }))}
+                options={modelOptions}
+                filterOption={modelFilterOption}
+                onChange={(val) => setState((prev) => ({ ...prev, modelDeep: val }))}
+                style={{ width: '100%' }}
               />
             </Form.Item>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -1101,10 +1133,13 @@ function WizardConfigTab({
           </>
         ) : (
           <Form.Item label="Model" help="e.g. claude-opus-4-7, gpt-4o, moonshotai/kimi-k2.6">
-            <Input
+            <AutoComplete
               value={state.model}
               placeholder="claude-opus-4-7"
-              onChange={(e) => setState((prev) => ({ ...prev, model: e.target.value }))}
+              options={modelOptions}
+              filterOption={modelFilterOption}
+              onChange={(val) => setState((prev) => ({ ...prev, model: val }))}
+              style={{ width: '100%' }}
             />
           </Form.Item>
         )}
@@ -1130,8 +1165,15 @@ function WizardConfigTab({
         />
       </Form.Item>
       <Form.Item
-        label="Capabilities"
-        extra="Free-form labels used by the mesh router and operator filtering. e.g. triage, release, cost-sensitive."
+        label={
+          <span>
+            Capabilities{' '}
+            <Tooltip title="Tells the team what kind of work this agent does — e.g. coding, triage, release. Used when this agent collaborates with or delegates to other agents (mesh routing).">
+              <span style={{ color: 'var(--text-tertiary)', cursor: 'help' }}>ℹ</span>
+            </Tooltip>
+          </span>
+        }
+        extra="What kind of work this agent does, e.g. coding, triage, release. Helps other agents route work to it when working as a team."
       >
         <Select
           mode="tags"
@@ -1599,6 +1641,12 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
   const [tieredMode, setTieredMode] = useState(
     typeof personality.model === 'object' && personality.model !== null,
   );
+  const catalogQuery = useQuery({
+    queryKey: ['models', 'catalog'],
+    queryFn: () => rpc.models.catalog(),
+  });
+  const watchedProvider = Form.useWatch('provider', form);
+  const modelOptions = modelOptionsForProvider(catalogQuery.data, watchedProvider || undefined);
 
   useEffect(() => {
     const m = personality.model;
@@ -1805,13 +1853,28 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
         {tieredMode ? (
           <>
             <Form.Item label="Trivial" name="modelTrivial" style={{ marginBottom: 8 }}>
-              <Input placeholder="e.g. claude-haiku-4-5" />
+              <AutoComplete
+                placeholder="e.g. claude-haiku-4-5"
+                options={modelOptions}
+                filterOption={modelFilterOption}
+                style={{ width: '100%' }}
+              />
             </Form.Item>
             <Form.Item label="Default" name="modelDefault" style={{ marginBottom: 8 }}>
-              <Input placeholder="e.g. claude-sonnet-4-6" />
+              <AutoComplete
+                placeholder="e.g. claude-sonnet-4-6"
+                options={modelOptions}
+                filterOption={modelFilterOption}
+                style={{ width: '100%' }}
+              />
             </Form.Item>
             <Form.Item label="Deep" name="modelDeep" style={{ marginBottom: 8 }}>
-              <Input placeholder="e.g. claude-opus-4-7" />
+              <AutoComplete
+                placeholder="e.g. claude-opus-4-7"
+                options={modelOptions}
+                filterOption={modelFilterOption}
+                style={{ width: '100%' }}
+              />
             </Form.Item>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               default is the model used unless a tier is explicitly selected. trivial and deep are
@@ -1820,7 +1883,12 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
           </>
         ) : (
           <Form.Item label="Model" name="model" style={{ marginBottom: 0 }}>
-            <Input placeholder="optional override" />
+            <AutoComplete
+              placeholder="optional override"
+              options={modelOptions}
+              filterOption={modelFilterOption}
+              style={{ width: '100%' }}
+            />
           </Form.Item>
         )}
       </div>
@@ -1828,9 +1896,16 @@ export function ConfigEditor({ id, personality }: { id: string; personality: Per
         <Typography.Text>per-personality</Typography.Text>
       </Form.Item>
       <Form.Item
-        label="Capabilities"
+        label={
+          <span>
+            Capabilities{' '}
+            <Tooltip title="Tells the team what kind of work this agent does — e.g. coding, triage, release. Used when this agent collaborates with or delegates to other agents (mesh routing).">
+              <span style={{ color: 'var(--text-tertiary)', cursor: 'help' }}>ℹ</span>
+            </Tooltip>
+          </span>
+        }
         name="capabilities"
-        extra="Free-form labels used by the mesh router and operator filtering. e.g. triage, release, cost-sensitive."
+        extra="What kind of work this agent does, e.g. coding, triage, release. Helps other agents route work to it when working as a team."
       >
         <Select mode="tags" allowClear placeholder="add capability tags" tokenSeparators={[',']} />
       </Form.Item>

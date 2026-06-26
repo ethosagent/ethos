@@ -151,4 +151,19 @@ describe('ConfigService', () => {
     expect(written).toContain('apiKey: sk-new-key-12345');
     expect(written).not.toContain('sk-old');
   });
+
+  it('update translates adminEnabled into the admin.enabled passthrough key', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: sk-keep', 'personality: researcher'].join('\n'),
+    );
+
+    await service.update({ adminEnabled: true });
+    let written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('admin.enabled: true');
+
+    await service.update({ adminEnabled: false });
+    written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('admin.enabled: false');
+  });
 });

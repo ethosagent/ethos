@@ -51,6 +51,7 @@ export interface ConfigUpdateInput {
   contextLayering?: boolean;
   debugPanelEnabled?: boolean;
   debugPanelModel?: string | null;
+  adminEnabled?: boolean;
 }
 
 export interface ConfigServiceOptions {
@@ -161,6 +162,15 @@ export class ConfigService {
     const cleaned: typeof patch = { ...patch };
     if (cleaned.apiKey !== undefined && cleaned.apiKey === '') delete cleaned.apiKey;
 
+    // `admin.enabled` is a passthrough key, not a typed config field. Translate
+    // the toggle into a passthrough write and strip the field so it doesn't
+    // reach the repository (which has no `adminEnabled` on its update type).
+    const passthrough =
+      patch.adminEnabled !== undefined
+        ? { 'admin.enabled': patch.adminEnabled ? 'true' : 'false' }
+        : undefined;
+    delete cleaned.adminEnabled;
+
     // Convert providers to repository format when present.
     let repoProviders: RawProviderEntry[] | undefined;
     if (cleaned.providers) {
@@ -176,6 +186,7 @@ export class ConfigService {
     await this.opts.config.update({
       ...cleaned,
       ...(repoProviders !== undefined ? { providers: repoProviders } : {}),
+      ...(passthrough !== undefined ? { passthrough } : {}),
     });
   }
 }

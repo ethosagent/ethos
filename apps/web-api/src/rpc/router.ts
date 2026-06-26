@@ -27,6 +27,7 @@ import { mcpRouter } from './mcp';
 import { memoryRouter } from './memory';
 import { meshRouter } from './mesh';
 import { metaRouter } from './meta';
+import { modelsRouter } from './models';
 import { onboardingRouter } from './onboarding';
 import { personalitiesRouter } from './personalities';
 import { platformsRouter } from './platforms';
@@ -95,6 +96,7 @@ export const apiRouter = {
   kanban: kanbanRouter,
   apiKeys: apiKeysRouter,
   meta: metaRouter,
+  models: modelsRouter,
   dashboards: dashboardsRouter,
   admin: adminRouter,
   context: contextRouter,

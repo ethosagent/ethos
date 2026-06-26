@@ -176,6 +176,7 @@ interface FormShape {
   contextLayering: boolean;
   debugPanelEnabled: boolean;
   debugPanelModel: string;
+  adminEnabled: boolean;
 }
 
 export function Settings() {
@@ -210,6 +211,7 @@ export function Settings() {
         contextLayering: configQuery.data.contextLayering,
         debugPanelEnabled: configQuery.data.debugPanelEnabled,
         debugPanelModel: configQuery.data.debugPanelModel ?? '',
+        adminEnabled: configQuery.data.adminEnabled,
       });
       // Only hydrate provider rows on first load or when data changes identity
       if (!hydratedRef.current) {
@@ -312,6 +314,7 @@ export function Settings() {
       contextLayering: values.contextLayering,
       debugPanelEnabled: values.debugPanelEnabled,
       debugPanelModel: values.debugPanelModel || null,
+      adminEnabled: values.adminEnabled,
       modelRouting: Object.fromEntries(
         Object.entries(configQuery.data?.modelRouting ?? {}).filter(
           ([k]) => k !== '__fallbackChain',
@@ -592,6 +595,22 @@ export function Settings() {
             <ModelRoutingView routing={configQuery.data?.modelRouting ?? {}} />
           </Card>
         ) : null}
+
+        {showAdvanced && (
+          <Card title="Admin" size="small" style={{ marginBottom: 16 }}>
+            <Form.Item
+              name="adminEnabled"
+              valuePropName="checked"
+              extra="Enable the admin console for system-level operations. Takes effect on save."
+              style={{ marginBottom: configQuery.data?.adminEnabled ? 12 : 0 }}
+            >
+              <Checkbox>Enable admin panel</Checkbox>
+            </Form.Item>
+            {configQuery.data?.adminEnabled && (
+              <Button onClick={() => navigate('/admin')}>Open admin panel</Button>
+            )}
+          </Card>
+        )}
 
         <Form.Item>
           <Button type="primary" htmlType="submit" loading={updateMut.isPending}>
