@@ -34,9 +34,6 @@ jobs:
           - os: macos-14
             artifact-name: desktop-mac-arm64
             eb-flags: --mac --arm64
-          - os: macos-13
-            artifact-name: desktop-mac-x64
-            eb-flags: --mac --x64
           - os: windows-2022
             artifact-name: desktop-win
             eb-flags: --win --x64
