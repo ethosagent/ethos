@@ -1,0 +1,14 @@
+{
+  "name": "ethos-plugin-my-voice",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "ethos": {
+    "type": "plugin",
+    "pluginContractMajor": 4
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*",
+    "@ethosagent/plugin-sdk": "workspace:*"
+  }
+}

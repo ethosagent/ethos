@@ -275,6 +275,9 @@ export interface GatewayConfig {
    *  (not set), all plugin adapters are allowed (backward compat / dev mode).
    *  When set (even to an empty Set), only listed IDs are started. */
   trustedChannelPlugins?: Set<string>;
+  /** Trusted voice provider plugin IDs. Non-local STT/TTS providers must be
+   *  in this set to be activated. Local providers (caps.local=true) are exempt. */
+  trustedVoicePlugins?: Set<string>;
   /** Resolves (platform, platformUserId) -> internal userId for per-user profiles. */
   resolveUserId?: (
     platform: string,
@@ -462,6 +465,7 @@ export class Gateway {
   private readonly resolveUserIdFn:
     | ((platform: string, platformUserId: string, displayLabel?: string) => Promise<string>)
     | undefined;
+  private readonly trustedVoicePlugins: Set<string> | undefined;
   private readonly backgroundRunner: BackgroundRunner;
   private readonly pluginLoader: GatewayConfig['pluginLoader'];
   private readonly notificationRouter: GatewayConfig['notificationRouter'];
@@ -542,6 +546,7 @@ export class Gateway {
     this.ttsProviderRegistry = config.ttsProviderRegistry;
     this.ttsProviderName = config.ttsProviderName;
     this.defaultVoiceMode = config.defaultVoiceMode ?? DEFAULT_VOICE_MODE;
+    this.trustedVoicePlugins = config.trustedVoicePlugins;
     this.adapterRegistry = config.adapters ?? new Map();
     this.resolveUserIdFn = config.resolveUserId;
     this.pluginLoader = config.pluginLoader;
@@ -636,6 +641,16 @@ export class Gateway {
         secrets: { resolve: async () => '' } as import('@ethosagent/types').SecretsResolver,
         logger: noopLogger,
       });
+      // Trust gate: non-local providers require explicit allowlist
+      if (
+        this.sttProvider &&
+        !this.sttProvider.caps.local &&
+        this.trustedVoicePlugins !== undefined
+      ) {
+        if (!this.trustedVoicePlugins.has(this.sttProviderName ?? '')) {
+          this.sttProvider = null;
+        }
+      }
     } catch {
       // STT provider init failed — transcription will fall back to placeholder
     }
@@ -654,6 +669,16 @@ export class Gateway {
         secrets: { resolve: async () => '' } as import('@ethosagent/types').SecretsResolver,
         logger: noopLogger,
       });
+      // Trust gate: non-local providers require explicit allowlist
+      if (
+        this.ttsProvider &&
+        !this.ttsProvider.caps.local &&
+        this.trustedVoicePlugins !== undefined
+      ) {
+        if (!this.trustedVoicePlugins.has(this.ttsProviderName ?? '')) {
+          this.ttsProvider = null;
+        }
+      }
     } catch {
       // TTS provider init failed — voice replies disabled
     }
