@@ -136,7 +136,7 @@ desktop-dev: web-build
 # Builds the Vite bundles then packages a macOS .app + .zip via electron-builder.
 # Skips code signing for local builds (set CSC_* env vars to enable signing).
 # After the build: open apps/desktop/dist-electron/mac-arm64/Ethos.app
-desktop-build:
+desktop-build: web-build
 	@echo "Building desktop app..."
 	@CSC_IDENTITY_AUTO_DISCOVERY=false $(NVM_EXEC) pnpm --filter @ethosagent/desktop build
 	@echo "Packaging macOS app..."

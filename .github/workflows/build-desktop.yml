@@ -32,9 +32,14 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            artifact-name: desktop-mac
+            artifact-name: desktop-mac-arm64
+            eb-flags: --mac --arm64
+          - os: macos-13
+            artifact-name: desktop-mac-x64
+            eb-flags: --mac --x64
           - os: windows-2022
             artifact-name: desktop-win
+            eb-flags: --win --x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -54,10 +59,13 @@ jobs:
       - name: Build renderer + main
         run: pnpm --filter @ethosagent/desktop build
 
+      - name: Build web SPA (bundled into the app — not downloaded at runtime)
+        run: pnpm build:web
+
       - name: Package artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm --filter @ethosagent/desktop package -- --publish never
+        run: pnpm --filter @ethosagent/desktop package -- --publish never ${{ matrix.eb-flags }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -68,6 +76,7 @@ jobs:
             apps/desktop/dist-electron/*.zip
             apps/desktop/dist-electron/*.exe
             apps/desktop/dist-electron/*.AppImage
+            apps/desktop/dist-electron/*.blockmap
             apps/desktop/dist-electron/*.yml
           if-no-files-found: error
 
@@ -96,22 +105,87 @@ jobs:
         with:
           path: artifacts/
 
+      - name: Merge per-arch latest-mac.yml (arm64 + x64 into one update manifest)
+        run: |
+          # electron-updater reads latest-mac.yml to discover available installers.
+          # We build arm64 and x64 on separate runners, so each emits its own
+          # latest-mac.yml with only its own files. Merge them into one manifest
+          # whose files: list covers both architectures.
+          python3 -c "import yaml" 2>/dev/null || pip3 install pyyaml --break-system-packages --quiet
+          python3 - <<'PY'
+          import os
+          import yaml
+
+          ARM = "artifacts/desktop-mac-arm64/latest-mac.yml"
+          X64 = "artifacts/desktop-mac-x64/latest-mac.yml"
+
+          def load(path):
+              if not os.path.exists(path):
+                  return None
+              with open(path) as fh:
+                  return yaml.safe_load(fh)
+
+          arm = load(ARM)
+          x64 = load(X64)
+
+          # Neither mac job produced a manifest — nothing to merge, skip silently.
+          if arm is None and x64 is None:
+              print("No per-arch latest-mac.yml found; skipping merge.")
+              raise SystemExit(0)
+
+          # arm64 is the base when present; otherwise fall back to x64.
+          base, other = (arm, x64) if arm is not None else (x64, arm)
+
+          # Extend base files with the other arch's files, deduped by url.
+          if other is not None:
+              base_files = base.setdefault("files", [])
+              seen = {f.get("url") for f in base_files}
+              for f in other.get("files", []):
+                  if f.get("url") not in seen:
+                      base_files.append(f)
+                      seen.add(f.get("url"))
+
+              # releaseDate = newest of the two (ISO-8601 sorts lexicographically).
+              dates = [d for d in (base.get("releaseDate"), other.get("releaseDate")) if d]
+              if dates:
+                  base["releaseDate"] = max(dates)
+
+          # version and the legacy top-level path/sha512/size stay as the base's.
+          os.makedirs("merged", exist_ok=True)
+          with open("merged/latest-mac.yml", "w") as fh:
+              yaml.safe_dump(base, fh, sort_keys=False, default_flow_style=False)
+          print("Wrote merged/latest-mac.yml")
+          PY
+
       - name: Create GitHub Release and upload artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Deduplicate by basename — both mac and windows builds emit files with the
+          # Deduplicate by basename — mac and windows builds emit files with the
           # same name (e.g. builder-debug.yml). GitHub rejects duplicate asset names.
+          # Skip the per-arch mac latest-mac.yml files entirely: the merge step above
+          # produced a single combined manifest at merged/latest-mac.yml that we append
+          # explicitly below, so the merged one always wins.
           mapfile -t ALL_FILES < <(find artifacts -type f | sort)
           declare -A _seen
           FILES=()
           for f in "${ALL_FILES[@]}"; do
+            # Exclude both per-arch mac manifests — the merged copy is added below.
+            if [[ "$f" == */desktop-mac-*/latest-mac.yml ]]; then
+              continue
+            fi
             base=$(basename "$f")
             if [[ -z "${_seen[$base]+x}" ]]; then
               _seen[$base]=1
               FILES+=("$f")
             fi
           done
+
+          # Always include the merged mac manifest (if the merge step produced one).
+          # Appended after dedup so it can never be dropped by the basename filter.
+          if [[ -f merged/latest-mac.yml ]]; then
+            FILES+=("merged/latest-mac.yml")
+          fi
 
           # If a release already exists (tag may have been created by a prior CLI or web
           # release without desktop artifacts), delete it and recreate. The tag is kept.

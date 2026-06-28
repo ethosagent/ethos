@@ -1,5 +1,6 @@
 appId: com.ethos.desktop
 productName: Ethos
+artifactName: ${productName}-${version}-${arch}.${ext}
 directories:
   output: dist-electron
 files:
