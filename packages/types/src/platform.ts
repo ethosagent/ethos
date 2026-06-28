@@ -1,7 +1,7 @@
 import type { Logger } from './logger';
 
 export interface Attachment {
-  type: 'image' | 'file';
+  type: 'image' | 'file' | 'audio';
   ref: string;
   url: string;
   mimeType: string;

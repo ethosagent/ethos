@@ -144,12 +144,13 @@ interface MediaDescriptor {
 const MEDIA_PLACEHOLDER: Record<Attachment['type'], string> = {
   image: '(attached image)',
   file: '(attached file)',
+  audio: '(voice message)',
 };
 
 /**
  * Extract media descriptors from a Telegram message object.
- * Only photo (→ image) and document (→ file) produce attachments.
- * Voice, audio, video, animation, and sticker are intentionally dropped —
+ * Photo → image, document → file, voice/audio → audio.
+ * Video, animation, and sticker are intentionally dropped —
  * the inbound caption still reaches the agent, just no attachment is created.
  * Returns an empty array when the message has no supported media.
  */
@@ -176,6 +177,29 @@ function extractMedia(msg: Record<string, unknown>): MediaDescriptor[] {
       mimeType: typeof doc.mime_type === 'string' ? doc.mime_type : 'application/octet-stream',
       filename: typeof doc.file_name === 'string' ? doc.file_name : undefined,
       fileSize: typeof doc.file_size === 'number' ? doc.file_size : undefined,
+    });
+  }
+
+  // voice note (audio/ogg with OPUS codec)
+  if (msg.voice && typeof msg.voice === 'object') {
+    const voice = msg.voice as Record<string, unknown>;
+    results.push({
+      fileId: String(voice.file_id),
+      type: 'audio' as Attachment['type'],
+      mimeType: 'audio/ogg',
+      fileSize: typeof voice.file_size === 'number' ? voice.file_size : undefined,
+    });
+  }
+
+  // audio file (e.g. MP3, forwarded music)
+  if (msg.audio && typeof msg.audio === 'object') {
+    const audio = msg.audio as Record<string, unknown>;
+    results.push({
+      fileId: String(audio.file_id),
+      type: 'audio' as Attachment['type'],
+      mimeType: typeof audio.mime_type === 'string' ? audio.mime_type : 'audio/mpeg',
+      filename: typeof audio.file_name === 'string' ? audio.file_name : undefined,
+      fileSize: typeof audio.file_size === 'number' ? audio.file_size : undefined,
     });
   }
 
@@ -815,6 +839,44 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
 
     this.rememberChunkIds(ids);
     return { ok: true, messageId: ids[0] };
+  }
+
+  async sendVoice(
+    chatId: string,
+    audio: Uint8Array,
+    opts?: { threadId?: string; caption?: string },
+  ): Promise<DeliveryResult> {
+    try {
+      const blob = new Blob([audio], { type: 'audio/ogg' });
+      const file = new File([blob], 'voice.ogg', { type: 'audio/ogg' });
+      const sent = await this.bot.api.sendVoice(Number(chatId), file, {
+        ...(opts?.caption ? { caption: opts.caption } : {}),
+        ...(opts?.threadId ? { message_thread_id: Number(opts.threadId) } : {}),
+      });
+      return { ok: true, messageId: String(sent.message_id) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  async sendAudio(
+    chatId: string,
+    audio: Uint8Array,
+    filename: string,
+    opts?: { threadId?: string; caption?: string; mimeType?: string },
+  ): Promise<DeliveryResult> {
+    try {
+      const mime = opts?.mimeType ?? 'audio/mpeg';
+      const blob = new Blob([audio], { type: mime });
+      const file = new File([blob], filename, { type: mime });
+      const sent = await this.bot.api.sendDocument(Number(chatId), file, {
+        ...(opts?.caption ? { caption: opts.caption } : {}),
+        ...(opts?.threadId ? { message_thread_id: Number(opts.threadId) } : {}),
+      });
+      return { ok: true, messageId: String(sent.message_id) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   async sendTyping(chatId: string): Promise<void> {
