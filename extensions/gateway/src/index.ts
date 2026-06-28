@@ -24,12 +24,18 @@ import type {
   SteerSink,
   SttProvider,
   SttProviderRegistry,
+  TtsProvider,
+  TtsProviderRegistry,
 } from '@ethosagent/types';
 import { MessageDedupCache } from './dedup';
 import {
   buildTranscriptText,
+  DEFAULT_VOICE_MODE,
   hasAudioAttachments,
+  stripMarkdown,
   transcribeAudioAttachments,
+  truncateAtSentenceBoundary,
+  type VoiceMode,
 } from './voice-pipeline';
 
 export { SessionLane } from '@ethosagent/session-lane';
@@ -251,6 +257,12 @@ export interface GatewayConfig {
   sttProviderRegistry?: SttProviderRegistry;
   /** Name of the STT provider to use (from auxiliary.asr.provider in config). */
   sttProviderName?: string;
+  /** TTS provider registry for resolving voice synthesis providers by name. */
+  ttsProviderRegistry?: TtsProviderRegistry;
+  /** Name of the TTS provider to use (from auxiliary.tts.provider in config). */
+  ttsProviderName?: string;
+  /** Default voice mode: 'off' | 'mirror_inbound' | 'all'. Default 'mirror_inbound'. */
+  defaultVoiceMode?: VoiceMode;
   /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
   adapters?: Map<string, PlatformAdapter>;
   /** Plugin-contributed adapter factories. The gateway instantiates and starts
@@ -299,6 +311,7 @@ const PLATFORM_COMMANDS: Record<
   | 'start'
   | 'queue'
   | 'background'
+  | 'voice'
 > = {
   '/new': 'new',
   '/reset': 'new',
@@ -312,6 +325,7 @@ const PLATFORM_COMMANDS: Record<
   '/start': 'start',
   '/queue': 'queue',
   '/background': 'background',
+  '/voice': 'voice',
 };
 
 // ---------------------------------------------------------------------------
@@ -429,6 +443,20 @@ export class Gateway {
   private sttProvider: SttProvider | null = null;
   /** Whether `resolveSttProvider` has been called at least once. */
   private sttProviderResolved = false;
+  /** TTS provider registry for resolving voice synthesis providers by name. */
+  private readonly ttsProviderRegistry: TtsProviderRegistry | undefined;
+  /** Name of the TTS provider to use (from auxiliary.tts.provider in config). */
+  private readonly ttsProviderName: string | undefined;
+  /** Lazily resolved TTS provider instance. */
+  private ttsProvider: TtsProvider | null = null;
+  /** Whether `resolveTtsProvider` has been called at least once. */
+  private ttsProviderResolved = false;
+  /** Per-lane voice mode. */
+  private readonly voiceModes = new Map<string, VoiceMode>();
+  /** Default voice mode for new lanes. */
+  private readonly defaultVoiceMode: VoiceMode;
+  /** Tracks whether the most recent inbound message per lane had audio. */
+  private readonly lastInboundHadAudio = new Map<string, boolean>();
   /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
   private readonly adapterRegistry: Map<string, PlatformAdapter>;
   private readonly resolveUserIdFn:
@@ -511,6 +539,9 @@ export class Gateway {
     this.attachmentCache = config.attachmentCache;
     this.sttProviderRegistry = config.sttProviderRegistry;
     this.sttProviderName = config.sttProviderName;
+    this.ttsProviderRegistry = config.ttsProviderRegistry;
+    this.ttsProviderName = config.ttsProviderName;
+    this.defaultVoiceMode = config.defaultVoiceMode ?? DEFAULT_VOICE_MODE;
     this.adapterRegistry = config.adapters ?? new Map();
     this.resolveUserIdFn = config.resolveUserId;
     this.pluginLoader = config.pluginLoader;
@@ -609,6 +640,24 @@ export class Gateway {
       // STT provider init failed — transcription will fall back to placeholder
     }
     return this.sttProvider;
+  }
+
+  private async resolveTtsProvider(): Promise<TtsProvider | null> {
+    if (this.ttsProviderResolved) return this.ttsProvider;
+    this.ttsProviderResolved = true;
+    if (!this.ttsProviderRegistry || !this.ttsProviderName) return null;
+    const factory = this.ttsProviderRegistry.get(this.ttsProviderName);
+    if (!factory) return null;
+    try {
+      this.ttsProvider = await factory({
+        config: {},
+        secrets: { resolve: async () => '' } as import('@ethosagent/types').SecretsResolver,
+        logger: noopLogger,
+      });
+    } catch {
+      // TTS provider init failed — voice replies disabled
+    }
+    return this.ttsProvider;
   }
 
   /**
@@ -777,6 +826,8 @@ export class Gateway {
       this.sessionKeys.set(laneKey, fresh);
       this.usageStore.delete(laneKey);
       this.personalityIds.delete(laneKey); // reset to default personality
+      this.voiceModes.delete(laneKey);
+      this.lastInboundHadAudio.delete(laneKey);
       await adapter.send(message.chatId, { text: '✓ New session started.' }).catch(() => {});
       return;
     }
@@ -795,6 +846,7 @@ export class Gateway {
         `/stop — abort current response\n` +
         `${personalityLines.join('\n')}\n` +
         `/usage — token and cost stats\n` +
+        `/voice — set voice reply mode (off|mirror_inbound|all)\n` +
         `/help — this message`;
       const pluginCmds = this.pluginLoader?.getAllSlashCommands() ?? [];
       if (pluginCmds.length > 0) {
@@ -1119,6 +1171,33 @@ export class Gateway {
       return;
     }
 
+    if (cmdType === 'voice') {
+      const arg = text.split(/\s+/).slice(1).join(' ').trim().toLowerCase();
+      const validModes: VoiceMode[] = ['off', 'mirror_inbound', 'all'];
+      if (arg && validModes.includes(arg as VoiceMode)) {
+        this.voiceModes.set(laneKey, arg as VoiceMode);
+        await adapter
+          .send(message.chatId, { text: `✓ Voice mode: ${arg}`, threadId })
+          .catch(() => {});
+      } else if (!arg) {
+        const current = this.voiceModes.get(laneKey) ?? this.defaultVoiceMode;
+        await adapter
+          .send(message.chatId, {
+            text: `Voice mode: ${current}\nUsage: /voice off|mirror_inbound|all`,
+            threadId,
+          })
+          .catch(() => {});
+      } else {
+        await adapter
+          .send(message.chatId, {
+            text: `Unknown voice mode "${arg}". Options: off, mirror_inbound, all`,
+            threadId,
+          })
+          .catch(() => {});
+      }
+      return;
+    }
+
     // --- /queue command ---
     if (cmdType === 'queue') {
       const queueText = text.slice('/queue '.length).trim();
@@ -1215,6 +1294,7 @@ export class Gateway {
     signal: AbortSignal,
   ): Promise<void> {
     const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+    this.lastInboundHadAudio.set(laneKey, hasAudioAttachments(message.attachments));
     const personalityId =
       bot.binding.type === 'team'
         ? undefined
@@ -1382,6 +1462,55 @@ export class Gateway {
               threadId,
             })
             .catch(() => {});
+
+          // --- Voice pipeline: post-turn TTS synthesis ---
+          const voiceMode = this.voiceModes.get(laneKey) ?? this.defaultVoiceMode;
+          const hadAudio = this.lastInboundHadAudio.get(laneKey) ?? false;
+          const shouldSynth = voiceMode === 'all' || (voiceMode === 'mirror_inbound' && hadAudio);
+
+          if (shouldSynth) {
+            const tts = await this.resolveTtsProvider();
+            if (tts) {
+              try {
+                let synthText = stripMarkdown(sanitized);
+                const maxChars = tts.caps.maxInputChars;
+                if (maxChars && synthText.length > maxChars) {
+                  synthText = truncateAtSentenceBoundary(synthText, maxChars);
+                }
+                if (synthText.length > 0) {
+                  const result = await tts.synthesize(synthText);
+                  if (result.format === 'opus' && 'sendVoice' in adapter) {
+                    const voiceAdapter = adapter as {
+                      sendVoice(
+                        chatId: string,
+                        audio: Uint8Array,
+                        opts?: { threadId?: string },
+                      ): Promise<unknown>;
+                    };
+                    await voiceAdapter.sendVoice(message.chatId, result.audio, {
+                      threadId,
+                    });
+                  } else if ('sendAudio' in adapter) {
+                    const audioAdapter = adapter as {
+                      sendAudio(
+                        chatId: string,
+                        audio: Uint8Array,
+                        filename: string,
+                        opts?: { threadId?: string },
+                      ): Promise<unknown>;
+                    };
+                    const ext =
+                      result.format === 'mp3' ? 'mp3' : result.format === 'wav' ? 'wav' : 'audio';
+                    await audioAdapter.sendAudio(message.chatId, result.audio, `reply.${ext}`, {
+                      threadId,
+                    });
+                  }
+                }
+              } catch {
+                // TTS synthesis failed — text already sent, degrade silently
+              }
+            }
+          }
         }
       }
     } finally {
@@ -1551,6 +1680,8 @@ export class Gateway {
       this.sessionKeys.delete(evictedKey);
       this.personalityIds.delete(evictedKey);
       this.usageStore.delete(evictedKey);
+      this.voiceModes.delete(evictedKey);
+      this.lastInboundHadAudio.delete(evictedKey);
     }
   }
 }

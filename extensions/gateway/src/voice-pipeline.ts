@@ -66,3 +66,39 @@ export function buildTranscriptText(
   if (!base || base === '(voice message)') return transcripts;
   return `${base}\n\n${transcripts}`;
 }
+
+export type VoiceMode = 'off' | 'mirror_inbound' | 'all';
+export const DEFAULT_VOICE_MODE: VoiceMode = 'mirror_inbound';
+
+export function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '') // fenced code blocks
+    .replace(/`[^`]+`/g, '') // inline code
+    .replace(/!\[.*?\]\(.*?\)/g, '') // images
+    .replace(/\[([^\]]+)\]\(.*?\)/g, '$1') // links → text
+    .replace(/#{1,6}\s+/g, '') // headings
+    .replace(/(\*\*|__)(.*?)\1/g, '$2') // bold
+    .replace(/(\*|_)(.*?)\1/g, '$2') // italic
+    .replace(/~~(.*?)~~/g, '$1') // strikethrough
+    .replace(/^\s*[-*+]\s+/gm, '') // unordered list markers
+    .replace(/^\s*\d+\.\s+/gm, '') // ordered list markers
+    .replace(/^\s*>\s+/gm, '') // blockquotes
+    .replace(/---+/g, '') // horizontal rules
+    .replace(/\n{3,}/g, '\n\n') // collapse excessive newlines
+    .trim();
+}
+
+export function truncateAtSentenceBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const truncated = text.slice(0, maxChars);
+  const lastSentenceEnd = Math.max(
+    truncated.lastIndexOf('.'),
+    truncated.lastIndexOf('!'),
+    truncated.lastIndexOf('?'),
+  );
+  if (lastSentenceEnd > maxChars * 0.5) {
+    return truncated.slice(0, lastSentenceEnd + 1);
+  }
+  const lastSpace = truncated.lastIndexOf(' ');
+  return lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated;
+}

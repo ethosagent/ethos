@@ -62,3 +62,49 @@ describe('buildTranscriptText', () => {
     expect(buildTranscriptText('hello', [])).toBe('hello');
   });
 });
+
+import { stripMarkdown, truncateAtSentenceBoundary } from '../voice-pipeline';
+
+describe('stripMarkdown', () => {
+  it('removes code blocks', () => {
+    expect(stripMarkdown('Hello\n```js\nconst x = 1;\n```\nWorld')).toBe('Hello\n\nWorld');
+  });
+
+  it('removes inline code', () => {
+    expect(stripMarkdown('Use `foo()` here')).toBe('Use  here');
+  });
+
+  it('extracts link text', () => {
+    expect(stripMarkdown('See [docs](http://example.com)')).toBe('See docs');
+  });
+
+  it('removes heading markers', () => {
+    expect(stripMarkdown('## Title')).toBe('Title');
+  });
+
+  it('removes bold/italic', () => {
+    expect(stripMarkdown('**bold** and *italic*')).toBe('bold and italic');
+  });
+
+  it('passes plain text through', () => {
+    expect(stripMarkdown('Hello world')).toBe('Hello world');
+  });
+});
+
+describe('truncateAtSentenceBoundary', () => {
+  it('returns text unchanged when under limit', () => {
+    expect(truncateAtSentenceBoundary('Hello.', 100)).toBe('Hello.');
+  });
+
+  it('truncates at sentence boundary', () => {
+    const text = 'First sentence. Second sentence. Third sentence.';
+    const result = truncateAtSentenceBoundary(text, 20);
+    expect(result).toBe('First sentence.');
+  });
+
+  it('falls back to word boundary', () => {
+    const text = 'This is a long sentence without any periods';
+    const result = truncateAtSentenceBoundary(text, 25);
+    expect(result).toBe('This is a long sentence');
+  });
+});
