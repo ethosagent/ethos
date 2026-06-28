@@ -22,8 +22,15 @@ import type {
   PlatformAdapter,
   PlatformAdapterFactory,
   SteerSink,
+  SttProvider,
+  SttProviderRegistry,
 } from '@ethosagent/types';
 import { MessageDedupCache } from './dedup';
+import {
+  buildTranscriptText,
+  hasAudioAttachments,
+  transcribeAudioAttachments,
+} from './voice-pipeline';
 
 export { SessionLane } from '@ethosagent/session-lane';
 export { MessageDedupCache } from './dedup';
@@ -240,6 +247,10 @@ export interface GatewayConfig {
    * (`/new`) and lane eviction. When absent, no cleanup is performed.
    */
   attachmentCache?: AttachmentCache;
+  /** STT provider registry for resolving voice transcription providers by name. */
+  sttProviderRegistry?: SttProviderRegistry;
+  /** Name of the STT provider to use (from auxiliary.asr.provider in config). */
+  sttProviderName?: string;
   /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
   adapters?: Map<string, PlatformAdapter>;
   /** Plugin-contributed adapter factories. The gateway instantiates and starts
@@ -410,6 +421,14 @@ export class Gateway {
   private readonly greetingProvider: { greet(personalityId: string): Promise<string> } | undefined;
   /** Optional attachment cache for cleanup on /new and lane eviction. */
   private readonly attachmentCache: AttachmentCache | undefined;
+  /** STT provider registry for resolving voice transcription providers by name. */
+  private readonly sttProviderRegistry: SttProviderRegistry | undefined;
+  /** Name of the STT provider to use (from auxiliary.asr.provider in config). */
+  private readonly sttProviderName: string | undefined;
+  /** Lazily resolved STT provider instance. */
+  private sttProvider: SttProvider | null = null;
+  /** Whether `resolveSttProvider` has been called at least once. */
+  private sttProviderResolved = false;
   /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
   private readonly adapterRegistry: Map<string, PlatformAdapter>;
   private readonly resolveUserIdFn:
@@ -490,6 +509,8 @@ export class Gateway {
     this.personalityCardReader = config.personalityCardReader;
     this.greetingProvider = config.greetingProvider;
     this.attachmentCache = config.attachmentCache;
+    this.sttProviderRegistry = config.sttProviderRegistry;
+    this.sttProviderName = config.sttProviderName;
     this.adapterRegistry = config.adapters ?? new Map();
     this.resolveUserIdFn = config.resolveUserId;
     this.pluginLoader = config.pluginLoader;
@@ -570,6 +591,24 @@ export class Gateway {
         }
       }
     }
+  }
+
+  private async resolveSttProvider(): Promise<SttProvider | null> {
+    if (this.sttProviderResolved) return this.sttProvider;
+    this.sttProviderResolved = true;
+    if (!this.sttProviderRegistry || !this.sttProviderName) return null;
+    const factory = this.sttProviderRegistry.get(this.sttProviderName);
+    if (!factory) return null;
+    try {
+      this.sttProvider = await factory({
+        config: {},
+        secrets: { resolve: async () => '' } as import('@ethosagent/types').SecretsResolver,
+        logger: noopLogger,
+      });
+    } catch {
+      // STT provider init failed — transcription will fall back to placeholder
+    }
+    return this.sttProvider;
   }
 
   /**
@@ -1228,6 +1267,17 @@ export class Gateway {
     try {
       let responseText = '';
       let errored: { error: string; code: string } | null = null;
+
+      // --- Voice pipeline: auto-transcribe audio attachments ---
+      if (hasAudioAttachments(message.attachments) && this.attachmentCache) {
+        const provider = await this.resolveSttProvider();
+        const results = await transcribeAudioAttachments(
+          message.attachments ?? [],
+          provider,
+          (url) => this.attachmentCache?.resolveLocalPath(url) ?? url,
+        );
+        text = buildTranscriptText(text, results);
+      }
 
       const wrapped = wrapUntrusted({ content: text, toolName: 'channel_message' });
 
