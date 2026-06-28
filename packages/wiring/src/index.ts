@@ -157,6 +157,19 @@ export interface WiringConfig {
   };
   /** tools-web — web_search backend preference. Auto-detect from env when unset. */
   webSearchBackend?: 'exa' | 'tavily' | 'brave';
+  /** Voice STT provider. auxiliary.asr in config.yaml. */
+  auxiliaryAsr?: {
+    provider: string;
+    model?: string;
+    apiKey?: string;
+  };
+  /** Voice TTS provider. auxiliary.tts in config.yaml. */
+  auxiliaryTts?: {
+    provider: string;
+    model?: string;
+    apiKey?: string;
+    voice?: string;
+  };
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;
@@ -599,6 +612,8 @@ export async function createAgentLoop(
     memoryProviders: infra.memoryProviders,
     storageBackends: infra.storageBackends,
     executionBackends: infra.executionBackends,
+    sttProviders: infra.sttProviders,
+    ttsProviders: infra.ttsProviders,
     activePerson: infra.activePerson,
     skillScanner,
     skillPool,

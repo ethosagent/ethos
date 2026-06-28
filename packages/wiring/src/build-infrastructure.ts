@@ -13,8 +13,10 @@ import {
   DefaultLLMProviderRegistry,
   DefaultMemoryProviderRegistry,
   DefaultStorageRegistry,
+  DefaultSttProviderRegistry,
   DefaultToolRegistry,
   DefaultToolResultReducerRegistry,
+  DefaultTtsProviderRegistry,
   FileClarifyStore,
 } from '@ethosagent/core';
 import { DockerExecutionBackend } from '@ethosagent/execution-docker';
@@ -63,7 +65,10 @@ import type {
   MemoryProviderRegistry,
   PersonalityConfig,
   StorageRegistry,
+  SttProviderRegistry,
+  TtsProviderRegistry,
 } from '@ethosagent/types';
+import { groqSttFactory, openaiSttFactory, openaiTtsFactory } from '@ethosagent/voice-providers';
 import { activateFirstPartyPlugins } from './activate-first-party';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
 import { registerRemainingBuiltinProviders } from './register-builtin-providers';
@@ -82,6 +87,8 @@ export interface InfrastructureResult {
   capabilityBackends: CapabilityBackends;
   tools: DefaultToolRegistry;
   clarifyBridge: ClarifyBridge;
+  sttProviders: SttProviderRegistry;
+  ttsProviders: TtsProviderRegistry;
   constitutionEnforcement?: ConstitutionEnforcement;
   /**
    * The loaded operator constitution. `undefined` only in SAFE MODE (malformed
@@ -179,6 +186,15 @@ export async function buildInfrastructure(
   // via registerStorage.
   const storageBackends = new DefaultStorageRegistry();
   storageBackends.register('fs', () => new FsStorage());
+
+  // Voice provider registries — built-ins registered here; plugins add more via
+  // registerSttProvider / registerTtsProvider.
+  const sttProviders = new DefaultSttProviderRegistry();
+  sttProviders.register('openai-stt', openaiSttFactory);
+  sttProviders.register('groq-stt', groqSttFactory);
+
+  const ttsProviders = new DefaultTtsProviderRegistry();
+  ttsProviders.register('openai-tts', openaiTtsFactory);
 
   // -------------------------------------------------------------------------
   // Personalities
@@ -316,6 +332,8 @@ export async function buildInfrastructure(
     capabilityBackends,
     tools,
     clarifyBridge,
+    sttProviders,
+    ttsProviders,
     constitutionEnforcement,
     constitution,
   };

@@ -1,0 +1,14 @@
+{
+  "name": "@ethosagent/voice-providers",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*"
+  }
+}

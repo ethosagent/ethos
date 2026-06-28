@@ -74,6 +74,7 @@
     "@ethosagent/tools-messaging": "workspace:*",
     "@ethosagent/tools-skills": "workspace:*",
     "@ethosagent/tools-tts": "workspace:*",
+    "@ethosagent/voice-providers": "workspace:*",
     "@ethosagent/tools-goals": "workspace:*",
     "@ethosagent/tools-file": "workspace:*",
     "@ethosagent/tools-image": "workspace:*",
