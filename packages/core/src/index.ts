@@ -72,6 +72,8 @@ export { DefaultExecutionBackendRegistry } from './providers/execution-registry'
 export { DefaultLLMProviderRegistry } from './providers/llm-registry';
 export { DefaultMemoryProviderRegistry } from './providers/memory-registry';
 export { DefaultStorageRegistry } from './providers/storage-registry';
+export { DefaultSttProviderRegistry } from './providers/stt-registry';
+export { DefaultTtsProviderRegistry } from './providers/tts-registry';
 export { InMemoryRequestDumpStore } from './request-dump-store';
 export { stripAnsiEscapes } from './sanitize-output';
 export type { SafeFetchFn, SecretsBackend } from './scoped';

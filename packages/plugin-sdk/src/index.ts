@@ -28,9 +28,13 @@ import type {
   Storage,
   StorageFactory,
   StorageRegistry,
+  SttProviderFactory,
+  SttProviderRegistry,
   Tool,
   ToolInvocationFilter,
   ToolRegistry,
+  TtsProviderFactory,
+  TtsProviderRegistry,
   VoidHooks,
 } from '@ethosagent/types';
 import type { DiagnosticStore } from './diagnostic-store';
@@ -196,6 +200,14 @@ export interface EthosPluginApi {
    *  in their manifest. */
   registerPlatformAdapter(name: string, factory: PlatformAdapterFactory): void;
 
+  /** Register a named STT provider factory. Selected via
+   *  `auxiliary.asr.provider: <name>` in config.yaml. */
+  registerSttProvider(name: string, factory: SttProviderFactory): void;
+
+  /** Register a named TTS provider factory. Selected via
+   *  `auxiliary.tts.provider: <name>` in config.yaml. */
+  registerTtsProvider(name: string, factory: TtsProviderFactory): void;
+
   /** Check whether a secret exists (synchronous). */
   hasSecret(key: string): boolean;
 
@@ -319,6 +331,12 @@ export interface PluginRegistries {
   executionBackends?: ExecutionBackendRegistry;
   /** Platform adapter registry. Maps adapter names to factories. */
   platformAdapters?: Map<string, PlatformAdapterFactory>;
+  /** Voice STT provider registry. Plugins contribute providers via
+   *  `registerSttProvider`. */
+  sttProviders?: SttProviderRegistry;
+  /** Voice TTS provider registry. Plugins contribute providers via
+   *  `registerTtsProvider`. */
+  ttsProviders?: TtsProviderRegistry;
   /** v2 — Tool invocation filters. Plugins register filters that can
    *  approve/deny/modify tool calls before execution. */
   filters?: ToolInvocationFilter[];
@@ -402,6 +420,8 @@ export class PluginApiImpl implements EthosPluginApi {
   private readonly registeredStorageBackends: string[] = [];
   private readonly registeredExecutionBackends: string[] = [];
   private readonly registeredPlatformAdapters: string[] = [];
+  private readonly registeredSttProviders: string[] = [];
+  private readonly registeredTtsProviders: string[] = [];
   private readonly registeredInjectors: ContextInjector[] = [];
   private readonly registeredPersonalities: string[] = [];
   private readonly credentialStorage: CredentialStorage | null;
@@ -524,6 +544,40 @@ export class PluginApiImpl implements EthosPluginApi {
     }
     this.registries.platformAdapters.set(qualifiedName, factory);
     this.registeredPlatformAdapters.push(qualifiedName);
+  }
+
+  registerSttProvider(name: string, factory: SttProviderFactory): void {
+    if (!this.registries.sttProviders) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerSttProvider but the host wiring did not expose an SttProviderRegistry.`,
+      );
+    }
+    const qualifiedName = name.includes('/') ? name : `${this.pluginId}/${name}`;
+    if (name.includes('/') && !name.startsWith(`${this.pluginId}/`)) {
+      throw new Error(
+        `Plugin "${this.pluginId}" cannot register STT provider "${name}": ` +
+          `namespaced names must start with the plugin id ("${this.pluginId}/").`,
+      );
+    }
+    this.registries.sttProviders.register(qualifiedName, factory);
+    this.registeredSttProviders.push(qualifiedName);
+  }
+
+  registerTtsProvider(name: string, factory: TtsProviderFactory): void {
+    if (!this.registries.ttsProviders) {
+      throw new Error(
+        `Plugin "${this.pluginId}" called registerTtsProvider but the host wiring did not expose a TtsProviderRegistry.`,
+      );
+    }
+    const qualifiedName = name.includes('/') ? name : `${this.pluginId}/${name}`;
+    if (name.includes('/') && !name.startsWith(`${this.pluginId}/`)) {
+      throw new Error(
+        `Plugin "${this.pluginId}" cannot register TTS provider "${name}": ` +
+          `namespaced names must start with the plugin id ("${this.pluginId}/").`,
+      );
+    }
+    this.registries.ttsProviders.register(qualifiedName, factory);
+    this.registeredTtsProviders.push(qualifiedName);
   }
 
   registerStorage(name: string, factory: StorageFactory): void {
@@ -1049,6 +1103,16 @@ export class PluginApiImpl implements EthosPluginApi {
       this.registries.platformAdapters?.delete(name);
     }
 
+    // STT providers
+    for (const name of this.registeredSttProviders) {
+      this.registries.sttProviders?.unregister(name);
+    }
+
+    // TTS providers (voice)
+    for (const name of this.registeredTtsProviders) {
+      this.registries.ttsProviders?.unregister(name);
+    }
+
     // Injectors — remove from the shared mutable array + provenance map
     for (const inj of this.registeredInjectors) {
       const idx = this.registries.injectors.indexOf(inj);
@@ -1138,10 +1202,16 @@ export type {
   Storage,
   StorageFactory,
   StorageRegistry,
+  SttProviderFactory,
+  SttProviderRegistry,
   Tool,
   ToolContext,
   ToolInvocationFilter,
   ToolResult,
+  TtsProviderFactory,
+  TtsProviderRegistry,
+  VoiceCapabilities,
+  VoiceProviderFactoryContext,
   VoidHooks,
 } from '@ethosagent/types';
 export { ContextStore } from './context-registry';

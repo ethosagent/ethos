@@ -18,7 +18,7 @@
 // `MIN_SUPPORTED_PLUGIN_CONTRACT_MAJOR` to drop the now-incompatible majors.
 // See `MIGRATIONS.md` header.
 
-export const PLUGIN_CONTRACT_MAJOR = 3;
+export const PLUGIN_CONTRACT_MAJOR = 4;
 
 export const MIN_SUPPORTED_PLUGIN_CONTRACT_MAJOR = 2;
 

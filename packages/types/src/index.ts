@@ -49,6 +49,7 @@ export type {
   ToolResultReducer,
   ToolResultReducerRegistry,
 } from './tool-reducer';
+export * from './voice';
 
 // Phase 5 — Personality export/import portable bundles
 export interface ExportStamp {

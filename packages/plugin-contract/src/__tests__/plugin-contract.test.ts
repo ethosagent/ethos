@@ -122,19 +122,19 @@ describe('checkPluginContractMajor', () => {
     expect(MIN_SUPPORTED_PLUGIN_CONTRACT_MAJOR).toBeLessThanOrEqual(PLUGIN_CONTRACT_MAJOR);
   });
 
-  it('accepts an in-range older major (major-2 plugin on a major-3 build)', () => {
-    const result = checkPluginContractMajor(2, 3, 'old-plugin');
+  it('accepts an in-range older major (major-3 plugin on a major-4 build)', () => {
+    const result = checkPluginContractMajor(3, 4, 'old-plugin');
     expect(result.ok).toBe(true);
     expect(result.reason).toBeUndefined();
   });
 
   it('accepts a plugin declaring the current major', () => {
-    const result = checkPluginContractMajor(3, 3);
+    const result = checkPluginContractMajor(4, 4);
     expect(result.ok).toBe(true);
   });
 
   it('rejects a plugin below the minimum supported major', () => {
-    const result = checkPluginContractMajor(1, 3, 'too-old');
+    const result = checkPluginContractMajor(1, 4, 'too-old');
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/MIGRATIONS\.md/);
     expect(result.reason).toMatch(/minimum/i);
@@ -142,7 +142,7 @@ describe('checkPluginContractMajor', () => {
   });
 
   it('rejects a plugin built for a future major', () => {
-    const result = checkPluginContractMajor(4, 3, 'too-new');
+    const result = checkPluginContractMajor(5, 4, 'too-new');
     expect(result.ok).toBe(false);
     expect(result.reason).toBeDefined();
   });

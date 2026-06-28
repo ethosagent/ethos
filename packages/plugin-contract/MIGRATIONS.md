@@ -17,6 +17,17 @@ for older plugins); add the field before publishing to ClawHub.
 
 ---
 
+## Major 4 (voice provider registration)
+
+**Breaking:** adds `registerSttProvider` / `registerTtsProvider` to `EthosPluginApi` and
+`sttProviders` / `ttsProviders` to `PluginRegistries`. Plugins built against major 3 continue
+to load (overlap window), but any plugin calling the new methods must declare
+`pluginContractMajor: 4`.
+
+**Action:** bump `ethos.pluginContractMajor` to `4` in your plugin's `package.json`.
+
+---
+
 ## Entry template
 
 When the next major bump happens, copy this block, fill in the blanks, and
