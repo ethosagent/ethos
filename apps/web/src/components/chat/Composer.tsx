@@ -381,6 +381,14 @@ export function Composer({
               ))}
             </div>
           )}
+          <button
+            type="button"
+            className="composer-add-btn"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach file"
+          >
+            +
+          </button>
           {isVoiceRecording ? (
             <div className="composer-voice-textarea-placeholder" />
           ) : (
@@ -395,14 +403,6 @@ export function Composer({
               disabled={disabled}
             />
           )}
-          <button
-            type="button"
-            className="composer-add-btn"
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach file"
-          >
-            +
-          </button>
           {voiceEnabled && (
             <VoiceButton
               onTranscript={(t) => {
