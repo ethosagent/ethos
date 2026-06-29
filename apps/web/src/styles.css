@@ -2214,14 +2214,14 @@ textarea {
 
 .composer-card {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  flex-direction: column;
   gap: 8px;
-  padding: 10px 10px 10px 16px;
+  padding: 10px 12px;
   border: 1px solid var(--ethos-border-strong);
   border-radius: 12px;
   background: var(--ethos-bg-elevated);
   transition: border-color 0.15s ease;
+  position: relative;
 }
 
 .composer-card:focus-within {
@@ -2230,7 +2230,7 @@ textarea {
 
 .composer-card .ant-input,
 .composer-card textarea {
-  flex: 1;
+  width: 100%;
   background: transparent;
   border: none;
   outline: none;
@@ -2284,9 +2284,9 @@ textarea {
 .composer-voice-overlay {
   position: absolute;
   left: 8px;
-  right: 76px;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 8px;
+  top: 10px;
+  height: 32px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2332,8 +2332,18 @@ textarea {
 }
 
 .composer-voice-textarea-placeholder {
-  flex: 1;
+  width: 100%;
   min-height: 32px;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-actions-spacer {
+  flex: 1;
 }
 
 /* TTS play button */

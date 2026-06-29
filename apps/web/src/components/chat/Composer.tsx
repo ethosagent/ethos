@@ -381,14 +381,7 @@ export function Composer({
               ))}
             </div>
           )}
-          <button
-            type="button"
-            className="composer-add-btn"
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach file"
-          >
-            +
-          </button>
+          {/* Row 1: Text field, full width */}
           {isVoiceRecording ? (
             <div className="composer-voice-textarea-placeholder" />
           ) : (
@@ -403,46 +396,58 @@ export function Composer({
               disabled={disabled}
             />
           )}
-          {voiceEnabled && (
-            <VoiceButton
-              onTranscript={(t) => {
-                onSend(t);
-              }}
-              onRecordingChange={setIsVoiceRecording}
-              disabled={disabled || isStreaming}
-              accent={accent}
-            />
-          )}
-          {isStreaming && onAbort ? (
+          {/* Row 2: [+] ... [mic] [send/stop] */}
+          <div className="composer-actions">
             <button
               type="button"
-              className="composer-send-btn composer-stop-btn"
-              onClick={onAbort}
-              aria-label="Stop"
+              className="composer-add-btn"
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Attach file"
             >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <rect x="2" y="2" width="10" height="10" rx="1.5" fill="white" />
-              </svg>
+              +
             </button>
-          ) : (
-            <button
-              type="button"
-              className="composer-send-btn"
-              onClick={handleSend}
-              disabled={disabled || (text.trim() === '' && !hasReadyAttachments) || isUploading}
-              aria-label="Send message"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path
-                  d="M3 8h10M9 4l4 4-4 4"
-                  stroke="white"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          )}
+            <div className="composer-actions-spacer" />
+            {voiceEnabled && (
+              <VoiceButton
+                onTranscript={(t) => {
+                  onSend(t);
+                }}
+                onRecordingChange={setIsVoiceRecording}
+                disabled={disabled || isStreaming}
+                accent={accent}
+              />
+            )}
+            {isStreaming && onAbort ? (
+              <button
+                type="button"
+                className="composer-send-btn composer-stop-btn"
+                onClick={onAbort}
+                aria-label="Stop"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                  <rect x="2" y="2" width="10" height="10" rx="1.5" fill="white" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="composer-send-btn"
+                onClick={handleSend}
+                disabled={disabled || (text.trim() === '' && !hasReadyAttachments) || isUploading}
+                aria-label="Send message"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path
+                    d="M3 8h10M9 4l4 4-4 4"
+                    stroke="white"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
         {onGoalRun && !isStreaming ? (
           <div className="composer-goal-row">
