@@ -1,6 +1,6 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
 import { useQuery } from '@tanstack/react-query';
-import { Input } from 'antd';
+import { Dropdown, Input } from 'antd';
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { AttachmentPreview } from '../../lib/attachments';
 import { rpc } from '../../rpc';
@@ -398,14 +398,23 @@ export function Composer({
           )}
           {/* Row 2: [+] ... [mic] [send/stop] */}
           <div className="composer-actions">
-            <button
-              type="button"
-              className="composer-add-btn"
-              onClick={() => fileInputRef.current?.click()}
-              aria-label="Attach file"
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'files',
+                    label: 'Add files or photos',
+                    onClick: () => fileInputRef.current?.click(),
+                  },
+                ],
+              }}
+              trigger={['click']}
+              placement="topLeft"
             >
-              +
-            </button>
+              <button type="button" className="composer-add-btn" aria-label="Attach">
+                +
+              </button>
+            </Dropdown>
             <div className="composer-actions-spacer" />
             {voiceEnabled && (
               <VoiceButton
