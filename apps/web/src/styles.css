@@ -2167,23 +2167,23 @@ body,
   align-items: center;
   justify-content: center;
   margin: 0 auto;
-  width: 36px;
-  height: 36px;
-  border-radius: 9999px;
-  border: 1px solid var(--ethos-border-strong, #333);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--ethos-border-strong, #444);
   background: var(--ethos-bg-elevated, #1a1a1a);
   color: var(--ethos-text-dim, #aaa);
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  transition: background 0.15s, color 0.15s, opacity 0.15s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
   z-index: 5;
-  opacity: 0.9;
 }
 
 .scroll-to-bottom-btn:hover {
   background: var(--ethos-hover, #2a2a2a);
   color: var(--ethos-text, #eee);
-  opacity: 1;
+  border-color: var(--ethos-text-dim, #888);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
 
 @keyframes status-dot-pulse {
