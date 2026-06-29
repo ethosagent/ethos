@@ -44,6 +44,8 @@ export interface RawConfig {
   contextLayering?: boolean;
   debugPanelEnabled?: boolean;
   debugPanelModel?: string | null;
+  voiceProvider?: string;
+  voiceApiKey?: string;
   modelRouting: Record<string, string>;
   /** Ordered provider chain for ChainedProvider failover. */
   providers: RawProviderEntry[];
@@ -84,6 +86,8 @@ export class ConfigRepository {
       'contextLayering',
       'display.debug_panel',
       'display.debug_panel_model',
+      'auxiliary.asr.provider',
+      'auxiliary.asr.apiKey',
     ]);
     const config: RawConfig = { modelRouting: {}, providers: [], passthrough: {} };
     const providerMap = new Map<number, RawProviderEntry>();
@@ -178,6 +182,12 @@ export class ConfigRepository {
           case 'display.debug_panel_model':
             config.debugPanelModel = value || null;
             break;
+          case 'auxiliary.asr.provider':
+            config.voiceProvider = value;
+            break;
+          case 'auxiliary.asr.apiKey':
+            config.voiceApiKey = value;
+            break;
         }
       } else {
         config.passthrough[key] = value;
@@ -269,6 +279,8 @@ export class ConfigRepository {
     if (config.debugPanelEnabled !== undefined)
       lines.push(`display.debug_panel: ${config.debugPanelEnabled}`);
     if (config.debugPanelModel) lines.push(`display.debug_panel_model: ${config.debugPanelModel}`);
+    if (config.voiceProvider) lines.push(`auxiliary.asr.provider: ${yamlScalar(config.voiceProvider)}`);
+    if (config.voiceApiKey) lines.push(`auxiliary.asr.apiKey: ${yamlScalar(config.voiceApiKey)}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
     }

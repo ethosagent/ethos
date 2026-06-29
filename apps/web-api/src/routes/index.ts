@@ -82,6 +82,7 @@ export interface ServiceContainer {
   debug: import('../features/debug/service').DebugService;
   apiKeys: import('../services/api-keys.service').ApiKeysService;
   digest: import('../services/digest.service').DigestService;
+  voice?: import('../services/voice.service').VoiceService;
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
   dashboards?: import('../services/dashboards.service').DashboardsService;
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;

@@ -47,7 +47,7 @@ export async function startServer(port: number): Promise<number> {
     ...(baseUrl ? { baseUrl } : {}),
   };
 
-  const { loop, toolRegistry } = await createAgentLoop(wiringConfig, {
+  const { loop, toolRegistry, sttProviders, voiceConfig } = await createAgentLoop(wiringConfig, {
     dataDir,
     profile: 'web',
     disableDocker: true,
@@ -118,6 +118,9 @@ export async function startServer(port: number): Promise<number> {
     // character sheet must render the honest local (un-sandboxed) posture rather
     // than claiming Docker.
     dockerBuildable: false,
+    sttProviderRegistry: sttProviders,
+    sttProviderName: voiceConfig.sttProviderName,
+    sttProviderConfig: voiceConfig.sttProviderConfig,
     ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
     ...(webDistDir ? { webDist: webDistDir } : {}),
   });

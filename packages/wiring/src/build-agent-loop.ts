@@ -487,5 +487,23 @@ export async function buildAgentLoop(
     pluginLoader,
     goalRunner,
     activePersonality: activePerson,
+    sttProviders: infra.sttProviders,
+    ttsProviders: infra.ttsProviders,
+    voiceConfig: {
+      sttProviderName: config.auxiliaryAsr?.provider,
+      sttProviderConfig: config.auxiliaryAsr
+        ? { apiKey: config.auxiliaryAsr.apiKey, model: config.auxiliaryAsr.model }
+        : {},
+      ttsProviderName: config.auxiliaryTts?.provider,
+      ttsProviderConfig: config.auxiliaryTts
+        ? {
+            apiKey: config.auxiliaryTts.apiKey,
+            model: config.auxiliaryTts.model,
+            voice: config.auxiliaryTts.voice,
+          }
+        : {},
+      secretsResolver:
+        config.secretsResolver ?? (NOOP_SECRETS as import('@ethosagent/types').SecretsResolver),
+    },
   };
 }

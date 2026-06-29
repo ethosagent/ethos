@@ -427,6 +427,9 @@ export async function runGatewayStart(): Promise<void> {
     pluginLoader,
     notificationRouter: systemNotificationRouter,
     activePersonality,
+    sttProviders,
+    ttsProviders,
+    voiceConfig,
   } = await createAgentLoop(config, { cronScheduler: scheduler });
   systemLoop = systemLoopReady;
 
@@ -616,6 +619,13 @@ export async function runGatewayStart(): Promise<void> {
           pluginAdapters: pluginLoader.getPlatformAdapters(),
           trustedChannelPlugins,
           notificationRouter: gatewayNotificationRouter,
+          sttProviderRegistry: sttProviders,
+          sttProviderName: voiceConfig.sttProviderName,
+          sttProviderConfig: voiceConfig.sttProviderConfig,
+          ttsProviderRegistry: ttsProviders,
+          ttsProviderName: voiceConfig.ttsProviderName,
+          ttsProviderConfig: voiceConfig.ttsProviderConfig,
+          voiceSecretsResolver: voiceConfig.secretsResolver,
           ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
           ...(pairingDb ? { pairingDb } : {}),
         })
@@ -629,6 +639,13 @@ export async function runGatewayStart(): Promise<void> {
           pluginAdapters: pluginLoader.getPlatformAdapters(),
           trustedChannelPlugins,
           notificationRouter: gatewayNotificationRouter,
+          sttProviderRegistry: sttProviders,
+          sttProviderName: voiceConfig.sttProviderName,
+          sttProviderConfig: voiceConfig.sttProviderConfig,
+          ttsProviderRegistry: ttsProviders,
+          ttsProviderName: voiceConfig.ttsProviderName,
+          ttsProviderConfig: voiceConfig.ttsProviderConfig,
+          voiceSecretsResolver: voiceConfig.secretsResolver,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),

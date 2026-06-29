@@ -48,6 +48,7 @@ import { PlatformsService } from './services/platforms.service';
 import { PluginsService } from './services/plugins.service';
 import { SkillsService } from './services/skills.service';
 import { SystemEventBus } from './services/system-event-bus';
+import { VoiceService } from './services/voice.service';
 import { DashboardStore } from './stores/dashboard-store';
 
 // Public entry for `@ethosagent/web-api`. Boot code (`apps/ethos/src/commands/
@@ -119,6 +120,12 @@ export interface CreateWebApiOptions {
   storage?: Storage;
   /** Optional attachment cache for persisting inbound file attachments to disk. */
   attachmentCache?: import('@ethosagent/types').AttachmentCache;
+  /** STT provider registry for voice transcription. */
+  sttProviderRegistry?: import('@ethosagent/types').SttProviderRegistry;
+  /** Name of the STT provider (from auxiliary.asr.provider). */
+  sttProviderName?: string;
+  /** Config dict for the STT provider factory. */
+  sttProviderConfig?: Record<string, unknown>;
   /**
    * Secret-backed file resolver under `<dataDir>/secrets/`. Used by the
    * Communications tab to write Telegram / Slack / Discord / email
@@ -309,6 +316,16 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     storage,
     dataDir: opts.dataDir,
     personalities: opts.personalities,
+  });
+  const voiceService = new VoiceService({
+    sttRegistry: opts.sttProviderRegistry,
+    providerName: opts.sttProviderName,
+    providerConfig: opts.sttProviderConfig,
+    secrets,
+    configGetter: async () => {
+      const raw = await configRepo.read();
+      return raw ? { voiceProvider: raw.voiceProvider, voiceApiKey: raw.voiceApiKey } : null;
+    },
   });
   const debugService = new DebugService({ sessionStore: opts.sessionStore, agentLoop });
   // Project-level plugins (`<cwd>/.ethos/plugins/`) are out of scope
@@ -517,6 +534,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       debug: debugService,
       apiKeys: apiKeysService,
       digest: digestService,
+      voice: voiceService,
       toolRegistry: opts.toolRegistry,
       dashboards: dashboardsService,
       pluginLoader: opts.pluginLoader,

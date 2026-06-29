@@ -23,6 +23,7 @@ import type { PersonalitiesService } from '../services/personalities.service';
 import type { PlatformsService } from '../services/platforms.service';
 import type { PluginLoader, PluginsService } from '../services/plugins.service';
 import type { SkillsService } from '../services/skills.service';
+import type { VoiceService } from '../services/voice.service';
 
 // Shared context type for every oRPC handler in the web-api. Each namespace
 // file imports `os` from here (not from `@orpc/server` directly) so TypeScript
@@ -59,6 +60,7 @@ export interface RpcContext {
   dashboards?: DashboardsService;
   pluginLoader?: PluginLoader;
   agentLoop?: AgentLoop;
+  voice?: VoiceService;
 }
 
 export const os = implement(contract).$context<RpcContext>();

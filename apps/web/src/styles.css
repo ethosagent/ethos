@@ -2271,6 +2271,71 @@ textarea {
   background: #dc2626;
 }
 
+/* Voice recording */
+.composer-voice-recording {
+  background: var(--error, #e53935);
+  animation: voice-pulse 1s ease-in-out infinite;
+}
+
+.composer-voice-transcribing {
+  opacity: 0.7;
+}
+
+.composer-voice-overlay {
+  position: absolute;
+  left: 8px;
+  right: 76px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.composer-voice-bars {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-evenly;
+  height: 28px;
+  overflow: hidden;
+}
+
+.composer-voice-bar {
+  width: 3px;
+  flex-shrink: 0;
+  min-height: 3px;
+  border-radius: 1.5px;
+  background: var(--error, #e53935);
+  transition: height 0.08s ease-out;
+}
+
+.composer-voice-timer {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary, #888);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes voice-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.85;
+  }
+}
+
+.composer-voice-textarea-placeholder {
+  flex: 1;
+  min-height: 32px;
+}
+
 .composer-goal-row {
   display: flex;
   justify-content: flex-end;

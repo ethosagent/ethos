@@ -576,6 +576,18 @@ export interface CreateAgentLoopResult {
   /** The resolved active personality for this loop. Exposed so gateway.ts can
    *  read the plugins allowlist without duplicating the personality load. */
   activePersonality: import('@ethosagent/types').PersonalityConfig;
+  /** STT provider registry — threaded to Gateway for voice transcription. */
+  sttProviders: import('@ethosagent/types').SttProviderRegistry;
+  /** TTS provider registry — threaded to Gateway for voice synthesis. */
+  ttsProviders: import('@ethosagent/types').TtsProviderRegistry;
+  /** Voice provider config from auxiliary.asr / auxiliary.tts in config. */
+  voiceConfig: {
+    sttProviderName?: string;
+    sttProviderConfig: Record<string, unknown>;
+    ttsProviderName?: string;
+    ttsProviderConfig: Record<string, unknown>;
+    secretsResolver: import('@ethosagent/types').SecretsResolver;
+  };
 }
 
 export async function createAgentLoop(

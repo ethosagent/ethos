@@ -263,7 +263,20 @@ describe('3.1 — Inbound file support', () => {
     expect(att).not.toHaveProperty('data');
   });
 
-  it('voice message with caption produces no attachments but preserves caption', async () => {
+  it('voice message with caption produces audio attachment', async () => {
+    const fakeBuffer = Buffer.from('fake-audio');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () =>
+          fakeBuffer.buffer.slice(
+            fakeBuffer.byteOffset,
+            fakeBuffer.byteOffset + fakeBuffer.byteLength,
+          ),
+      }),
+    );
+
     const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
@@ -288,12 +301,32 @@ describe('3.1 — Inbound file support', () => {
       me: { username: 'testbot' },
     });
 
-    expect(captured).toHaveLength(1);
+    await vi.waitFor(() => {
+      expect(captured).toHaveLength(1);
+    });
+
     expect(captured[0].text).toBe('voice note caption');
-    expect(captured[0].attachments).toBeUndefined();
+    expect(captured[0].attachments).toHaveLength(1);
+    const att = captured[0].attachments?.[0];
+    expect(att?.type).toBe('audio');
+    expect(att?.mimeType).toBe('audio/ogg');
+    expect(att?.url).toMatch(/^file:\/\//);
   });
 
-  it('voice message without caption is silently dropped (no text, no media)', async () => {
+  it('voice message without caption uses placeholder text and produces audio attachment', async () => {
+    const fakeBuffer = Buffer.from('fake-audio');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () =>
+          fakeBuffer.buffer.slice(
+            fakeBuffer.byteOffset,
+            fakeBuffer.byteOffset + fakeBuffer.byteLength,
+          ),
+      }),
+    );
+
     const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
     await adapter.start();
 
@@ -318,7 +351,13 @@ describe('3.1 — Inbound file support', () => {
       me: { username: 'testbot' },
     });
 
-    expect(captured).toHaveLength(0);
+    await vi.waitFor(() => {
+      expect(captured).toHaveLength(1);
+    });
+
+    expect(captured[0].text).toBe('(voice message)');
+    expect(captured[0].attachments).toHaveLength(1);
+    expect(captured[0].attachments?.[0]?.type).toBe('audio');
   });
 
   it('video message with caption produces no attachments but preserves caption', async () => {

@@ -35,6 +35,7 @@ import { pluginsRouter } from './plugins';
 import { skillsRouter } from './skills';
 import { slashCommandsRouter } from './slash-commands';
 import { toolsRouter } from './tools';
+import { voiceRouter } from './voice';
 
 // Top-level oRPC router. Each namespace lives in its own file (one
 // `os.<namespace>.<method>.handler(...)` per procedure); this file only
@@ -103,6 +104,7 @@ export const apiRouter = {
   files: filesRouter,
   goals: goalsRouter,
   digest: digestRouter,
+  voice: voiceRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

@@ -435,6 +435,8 @@ export interface EthosConfig {
     compression?: AuxiliaryCompressionConfig;
     vision?: AuxiliaryVisionConfig;
     web?: AuxiliaryWebConfig;
+    asr?: { provider: string; model?: string; apiKey?: string };
+    tts?: { provider: string; model?: string; apiKey?: string; voice?: string };
   };
   /** tools-web — web_search/web_extract backend selection. */
   web?: WebConfig;

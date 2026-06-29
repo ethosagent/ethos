@@ -222,6 +222,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     | ((fn: (skillId: string, personalityId: string) => void) => void)
     | undefined;
   let goalRunner: import('@ethosagent/goal-runner').GoalRunner | undefined;
+  let sttProviders: import('@ethosagent/types').SttProviderRegistry | undefined;
+  let voiceConfig:
+    | { sttProviderName?: string; sttProviderConfig: Record<string, unknown> }
+    | undefined;
 
   // Cron scheduler — hoisted ABOVE the agent-loop construction so the
   // same scheduler instance can be threaded into createAgentLoop (registers
@@ -306,6 +310,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
     goalRunner = result.goalRunner;
+    sttProviders = result.sttProviders;
+    voiceConfig = result.voiceConfig;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
     const {
@@ -342,6 +348,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
     goalRunner = result.goalRunner;
+    sttProviders = result.sttProviders;
+    voiceConfig = result.voiceConfig;
   }
   let titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
   try {
@@ -521,6 +529,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
     ...(setOnSkillProposed ? { setOnSkillProposed } : {}),
     ...(goalRunner ? { goalRunner } : {}),
+    ...(sttProviders ? { sttProviderRegistry: sttProviders } : {}),
+    ...(voiceConfig?.sttProviderName ? { sttProviderName: voiceConfig.sttProviderName } : {}),
+    ...(voiceConfig ? { sttProviderConfig: voiceConfig.sttProviderConfig } : {}),
     ...(titleFn ? { titleFn } : {}),
   });
   chatService = created.chatService;

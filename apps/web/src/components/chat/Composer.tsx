@@ -3,6 +3,7 @@ import { Input } from 'antd';
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { AttachmentPreview } from '../../lib/attachments';
 import { rpc } from '../../rpc';
+import { VoiceButton } from './VoiceButton';
 
 export interface ComposerProps {
   personalityId: string;
@@ -30,6 +31,8 @@ export function Composer({
   onGoalRun,
 }: ComposerProps) {
   const [text, setText] = useState('');
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
   const accent = personalityAccent(personalityId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [atQuery, setAtQuery] = useState<string | null>(null);
@@ -43,6 +46,12 @@ export function Composer({
   const [slashCommandsCache, setSlashCommandsCache] = useState<
     Array<{ name: string; description: string; usage: string }>
   >([]);
+
+  useEffect(() => {
+    rpc.meta.capabilities().then((res) => {
+      if (res.capabilities.voice_stt) setVoiceEnabled(true);
+    }).catch(() => {});
+  }, []);
 
   const hasReadyAttachments = attachments && attachments.length > 0;
   const isUploading = attachments?.some((a) => a.state === 'uploading');
@@ -372,16 +381,20 @@ export function Composer({
               ))}
             </div>
           )}
-          <Input.TextArea
-            value={text}
-            onChange={(e) => handleTextChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            placeholder={placeholder ?? 'Send a message…'}
-            autoSize={{ minRows: 1, maxRows: 8 }}
-            style={{ caretColor: accent, fontSize: 14, lineHeight: 1.5 }}
-            disabled={disabled}
-          />
+          {isVoiceRecording ? (
+            <div className="composer-voice-textarea-placeholder" />
+          ) : (
+            <Input.TextArea
+              value={text}
+              onChange={(e) => handleTextChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder={placeholder ?? 'Send a message…'}
+              autoSize={{ minRows: 1, maxRows: 8 }}
+              style={{ caretColor: accent, fontSize: 14, lineHeight: 1.5 }}
+              disabled={disabled}
+            />
+          )}
           <button
             type="button"
             className="composer-add-btn"
@@ -390,6 +403,16 @@ export function Composer({
           >
             +
           </button>
+          {voiceEnabled && (
+            <VoiceButton
+              onTranscript={(t) => {
+                onSend(t);
+              }}
+              onRecordingChange={setIsVoiceRecording}
+              disabled={disabled || isStreaming}
+              accent={accent}
+            />
+          )}
           {isStreaming && onAbort ? (
             <button
               type="button"

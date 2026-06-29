@@ -14,7 +14,7 @@ describe('Attachment shape', () => {
     expect('data' in att).toBe(false);
   });
 
-  it('type union is image | file', () => {
+  it('type union is image | file | audio', () => {
     const img: Attachment = {
       type: 'image',
       ref: 'att-0',
@@ -27,8 +27,15 @@ describe('Attachment shape', () => {
       url: 'file:///b',
       mimeType: 'application/pdf',
     };
+    const audio: Attachment = {
+      type: 'audio',
+      ref: 'att-2',
+      url: 'file:///c',
+      mimeType: 'audio/ogg',
+    };
     expect(img.type).toBe('image');
     expect(doc.type).toBe('file');
+    expect(audio.type).toBe('audio');
   });
 });
 

@@ -201,6 +201,8 @@ export async function createAgentLoop(
       : {}),
     ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
     ...(config.auxiliary?.web ? { auxiliaryWeb: config.auxiliary.web } : {}),
+    ...(config.auxiliary?.asr ? { auxiliaryAsr: config.auxiliary.asr } : {}),
+    ...(config.auxiliary?.tts ? { auxiliaryTts: config.auxiliary.tts } : {}),
     ...(config.web?.search_backend ? { webSearchBackend: config.web.search_backend } : {}),
     ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
     ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),

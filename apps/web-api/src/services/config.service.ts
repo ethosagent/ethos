@@ -28,6 +28,8 @@ export interface ConfigGetResult {
   debugPanelEnabled: boolean;
   debugPanelModel: string | null;
   adminEnabled: boolean;
+  voiceProvider: string | null;
+  voiceApiKeyPreview: string | null;
 }
 
 export interface ConfigUpdateInput {
@@ -52,6 +54,8 @@ export interface ConfigUpdateInput {
   debugPanelEnabled?: boolean;
   debugPanelModel?: string | null;
   adminEnabled?: boolean;
+  voiceProvider?: string;
+  voiceApiKey?: string;
 }
 
 export interface ConfigServiceOptions {
@@ -97,6 +101,8 @@ export class ConfigService {
       debugPanelEnabled: raw.debugPanelEnabled ?? false,
       debugPanelModel: raw.debugPanelModel ?? null,
       adminEnabled: raw.passthrough['admin.enabled'] === 'true',
+      voiceProvider: raw.voiceProvider ?? null,
+      voiceApiKeyPreview: raw.voiceApiKey ? redactKey(raw.voiceApiKey) : null,
     };
   }
 
@@ -187,6 +193,8 @@ export class ConfigService {
       ...cleaned,
       ...(repoProviders !== undefined ? { providers: repoProviders } : {}),
       ...(passthrough !== undefined ? { passthrough } : {}),
+      ...(patch.voiceProvider !== undefined ? { voiceProvider: patch.voiceProvider || undefined } : {}),
+      ...(patch.voiceApiKey !== undefined ? { voiceApiKey: patch.voiceApiKey || undefined } : {}),
     });
   }
 }

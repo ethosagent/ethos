@@ -94,4 +94,25 @@ describe('Provider contract conformance', () => {
     const result = await provider.synthesize('hello');
     expect(provider.caps.formats).toContain(result.format);
   });
+
+  it('detects TTS provider returning undeclared format', async () => {
+    const provider: TtsProvider = {
+      name: 'liar-tts',
+      caps: { kind: 'tts', formats: ['mp3'], contractVersion: 1 },
+      synthesize: async () => ({ audio: new Uint8Array([1, 2, 3]), format: 'opus' }),
+    };
+    const result = await provider.synthesize('hello');
+    expect(provider.caps.formats).not.toContain(result.format);
+  });
+
+  it('detects STT provider with empty formats in caps', () => {
+    const provider: SttProvider = {
+      name: 'broken-stt',
+      caps: { kind: 'stt', formats: [], contractVersion: 1 },
+      transcribe: async () => 'hello',
+    };
+    const errors = validateVoiceCaps(provider.caps);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors).toContain('formats must be a non-empty array');
+  });
 });

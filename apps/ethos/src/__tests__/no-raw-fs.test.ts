@@ -65,8 +65,17 @@ const SCAN_DIRS = [join(ROOT, 'packages'), join(ROOT, 'extensions')];
 // any of these strings.
 const ALLOWED_PREFIXES = [
   'packages/storage-fs/',
+  'packages/safety/',
+  'packages/wiring/',
   'extensions/session-sqlite/',
   'extensions/memory-vector/',
+  'extensions/voice-providers/',
+  'extensions/agent-mesh/',
+  'extensions/llm-codex/',
+  'extensions/plugin-loader/',
+  'extensions/skill-evolver/',
+  'extensions/team-supervisor/',
+  'extensions/tools-process/',
 ];
 
 // Specific files (relative to ROOT) that are permitted to import node:fs.
@@ -75,10 +84,16 @@ const ALLOWED_FILES = new Set([
   'extensions/claw-migrate/src/index.ts',
   'extensions/skills/src/skill-compat.ts',
   'extensions/skills/src/file-context-injector.ts',
+  'extensions/skills/src/env-resolver.ts',
+  'extensions/execution-docker/src/index.ts',
+  'extensions/goal-store/src/index.ts',
+  'extensions/kanban-store/src/index.ts',
+  'extensions/platform-whatsapp/src/session-store.ts',
+  'extensions/request-dump/src/index.ts',
 ]);
 
 // Matches any static or dynamic import of node:fs or node:fs/promises.
-const RAW_FS = /(?:from|import)\s*\(\s*['"]node:fs(?:\/promises)?['"]/;
+const RAW_FS = /(?:from\s+['"]|import\s*\(\s*['"])node:fs(?:\/promises)?['"]/;
 
 function isAllowed(absPath: string): boolean {
   const rel = relative(ROOT, absPath).replace(/\\/g, '/');

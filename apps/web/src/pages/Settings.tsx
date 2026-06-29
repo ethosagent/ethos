@@ -177,6 +177,9 @@ interface FormShape {
   debugPanelEnabled: boolean;
   debugPanelModel: string;
   adminEnabled: boolean;
+  voiceEnabled: boolean;
+  voiceProvider: string;
+  voiceApiKey: string;
 }
 
 export function Settings() {
@@ -212,6 +215,9 @@ export function Settings() {
         debugPanelEnabled: configQuery.data.debugPanelEnabled,
         debugPanelModel: configQuery.data.debugPanelModel ?? '',
         adminEnabled: configQuery.data.adminEnabled,
+        voiceEnabled: Boolean(configQuery.data.voiceProvider),
+        voiceProvider: configQuery.data.voiceProvider ?? '',
+        voiceApiKey: '',
       });
       // Only hydrate provider rows on first load or when data changes identity
       if (!hydratedRef.current) {
@@ -315,6 +321,12 @@ export function Settings() {
       debugPanelEnabled: values.debugPanelEnabled,
       debugPanelModel: values.debugPanelModel || null,
       adminEnabled: values.adminEnabled,
+      ...(!values.voiceEnabled
+        ? (configQuery.data?.voiceProvider ? { voiceProvider: '' } : {})
+        : {
+            ...((values.voiceProvider ?? '') !== (configQuery.data?.voiceProvider ?? '') ? { voiceProvider: values.voiceProvider } : {}),
+            ...(values.voiceApiKey ? { voiceApiKey: values.voiceApiKey } : {}),
+          }),
       modelRouting: Object.fromEntries(
         Object.entries(configQuery.data?.modelRouting ?? {}).filter(
           ([k]) => k !== '__fallbackChain',
@@ -583,6 +595,48 @@ export function Settings() {
             extra="Model for the debug assistant. Leave empty to use the default (claude-sonnet-4-5)."
           >
             <Input placeholder="claude-sonnet-4-5" />
+          </Form.Item>
+        </Card>
+
+        <Card title="Voice" size="small" style={{ marginBottom: 16 }}>
+          <Form.Item
+            name="voiceEnabled"
+            valuePropName="checked"
+            extra="Enable the voice recording button in the chat bar."
+          >
+            <Switch checkedChildren="On" unCheckedChildren="Off" />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.voiceEnabled !== cur.voiceEnabled}>
+            {({ getFieldValue }) =>
+              getFieldValue('voiceEnabled') ? (
+                <>
+                  <Form.Item
+                    name="voiceProvider"
+                    label="STT Provider"
+                    rules={[{ required: true, message: 'Select a provider to enable voice' }]}
+                  >
+                    <Select
+                      placeholder="Select a provider..."
+                      options={[
+                        { label: 'OpenAI Whisper', value: 'openai-stt' },
+                        { label: 'Groq Whisper (free tier)', value: 'groq-stt' },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="voiceApiKey"
+                    label="Voice API Key"
+                    extra={
+                      configQuery.data?.voiceApiKeyPreview
+                        ? `Current: ${configQuery.data.voiceApiKeyPreview}`
+                        : 'API key for the selected STT provider.'
+                    }
+                  >
+                    <Input.Password placeholder="Enter API key..." />
+                  </Form.Item>
+                </>
+              ) : null
+            }
           </Form.Item>
         </Card>
 

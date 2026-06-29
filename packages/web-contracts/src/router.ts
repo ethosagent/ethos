@@ -712,6 +712,8 @@ const ConfigGetOutput = z.object({
   debugPanelEnabled: z.boolean(),
   debugPanelModel: z.string().nullable(),
   adminEnabled: z.boolean(),
+  voiceProvider: z.string().nullable(),
+  voiceApiKeyPreview: z.string().nullable(),
 });
 
 const ConfigUpdateInput = z.object({
@@ -740,6 +742,8 @@ const ConfigUpdateInput = z.object({
   debugPanelEnabled: z.boolean().optional(),
   debugPanelModel: z.string().nullable().optional(),
   adminEnabled: z.boolean().optional(),
+  voiceProvider: z.string().optional(),
+  voiceApiKey: z.string().optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 
@@ -1890,6 +1894,23 @@ const digest = {
 };
 
 // ---------------------------------------------------------------------------
+// Voice — server-side STT transcription for the web/desktop chat
+// ---------------------------------------------------------------------------
+
+const VoiceTranscribeInput = z.object({
+  audio: z.string().min(1),
+  mimeType: z.string().min(1),
+});
+const VoiceTranscribeOutput = z.object({
+  transcript: z.string(),
+});
+
+/** @experimental */
+const voice = {
+  transcribe: oc.input(VoiceTranscribeInput).output(VoiceTranscribeOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Root contract — every namespace mounted under one symbol
 // ---------------------------------------------------------------------------
 
@@ -1923,6 +1944,7 @@ export const contract = {
   files,
   goals,
   digest,
+  voice,
 };
 
 export type Contract = typeof contract;

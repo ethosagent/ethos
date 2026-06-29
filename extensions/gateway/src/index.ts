@@ -261,6 +261,12 @@ export interface GatewayConfig {
   ttsProviderRegistry?: TtsProviderRegistry;
   /** Name of the TTS provider to use (from auxiliary.tts.provider in config). */
   ttsProviderName?: string;
+  /** Config dict passed to STT provider factory (apiKey, model, etc.). */
+  sttProviderConfig?: Record<string, unknown>;
+  /** Config dict passed to TTS provider factory (apiKey, model, voice, etc.). */
+  ttsProviderConfig?: Record<string, unknown>;
+  /** Secrets resolver for voice provider factories. */
+  voiceSecretsResolver?: import('@ethosagent/types').SecretsResolver;
   /** Default voice mode: 'off' | 'mirror_inbound' | 'all'. Default 'mirror_inbound'. */
   defaultVoiceMode?: VoiceMode;
   /** Adapter lookup for agent-initiated outbound sends (send_message tool). */
@@ -454,6 +460,12 @@ export class Gateway {
   private ttsProvider: TtsProvider | null = null;
   /** Whether `resolveTtsProvider` has been called at least once. */
   private ttsProviderResolved = false;
+  /** Config dict passed to STT provider factory. */
+  private readonly sttProviderConfig: Record<string, unknown>;
+  /** Config dict passed to TTS provider factory. */
+  private readonly ttsProviderConfig: Record<string, unknown>;
+  /** Secrets resolver for voice provider factories. */
+  private readonly voiceSecretsResolver: import('@ethosagent/types').SecretsResolver | undefined;
   /** Per-lane voice mode. */
   private readonly voiceModes = new Map<string, VoiceMode>();
   /** Default voice mode for new lanes. */
@@ -545,6 +557,9 @@ export class Gateway {
     this.sttProviderName = config.sttProviderName;
     this.ttsProviderRegistry = config.ttsProviderRegistry;
     this.ttsProviderName = config.ttsProviderName;
+    this.sttProviderConfig = config.sttProviderConfig ?? {};
+    this.ttsProviderConfig = config.ttsProviderConfig ?? {};
+    this.voiceSecretsResolver = config.voiceSecretsResolver;
     this.defaultVoiceMode = config.defaultVoiceMode ?? DEFAULT_VOICE_MODE;
     this.trustedVoicePlugins = config.trustedVoicePlugins;
     this.adapterRegistry = config.adapters ?? new Map();
@@ -637,8 +652,15 @@ export class Gateway {
     if (!factory) return null;
     try {
       this.sttProvider = await factory({
-        config: {},
-        secrets: { resolve: async () => '' } as import('@ethosagent/types').SecretsResolver,
+        config: this.sttProviderConfig,
+        secrets:
+          this.voiceSecretsResolver ??
+          ({
+            get: async () => null,
+            set: async () => {},
+            delete: async () => {},
+            list: async () => [],
+          } as import('@ethosagent/types').SecretsResolver),
         logger: noopLogger,
       });
       // Trust gate: non-local providers require explicit allowlist
@@ -665,8 +687,15 @@ export class Gateway {
     if (!factory) return null;
     try {
       this.ttsProvider = await factory({
-        config: {},
-        secrets: { resolve: async () => '' } as import('@ethosagent/types').SecretsResolver,
+        config: this.ttsProviderConfig,
+        secrets:
+          this.voiceSecretsResolver ??
+          ({
+            get: async () => null,
+            set: async () => {},
+            delete: async () => {},
+            list: async () => [],
+          } as import('@ethosagent/types').SecretsResolver),
         logger: noopLogger,
       });
       // Trust gate: non-local providers require explicit allowlist
