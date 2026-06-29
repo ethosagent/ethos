@@ -1,6 +1,8 @@
 import { ContentRenderer } from '@ethosagent/ui-components';
+import { useQuery } from '@tanstack/react-query';
 import { formatBytes, type MessageAttachment } from '../../lib/attachments';
 import type { AssistantBlock, AssistantTurn, UserMessage } from '../../lib/chat-reducer';
+import { rpc } from '../../rpc';
 import { HtmlBlock } from './HtmlBlock';
 import { ImageBlock } from './ImageBlock';
 import { PdfBlock } from './PdfBlock';
@@ -60,6 +62,12 @@ export function AssistantBubble({ turn, streaming }: { turn: AssistantTurn; stre
     .filter((b): b is Extract<AssistantBlock, { kind: 'text' }> => b.kind === 'text')
     .map((b) => b.content)
     .join('\n');
+  const { data: caps } = useQuery({
+    queryKey: ['meta', 'capabilities'],
+    queryFn: () => rpc.meta.capabilities(),
+    staleTime: 60_000,
+  });
+  const ttsEnabled = caps?.capabilities.voice_tts ?? false;
   return (
     <div className="message-row message-row-assistant">
       <div className="message-assistant">
@@ -73,7 +81,7 @@ export function AssistantBubble({ turn, streaming }: { turn: AssistantTurn; stre
         {streaming && !cursorAfter && lastBlock?.kind === 'tool' ? (
           <span className="streaming-cursor streaming-cursor-trailing" aria-hidden="true" />
         ) : null}
-        {!streaming && fullText ? <PlayButton text={fullText} /> : null}
+        {!streaming && fullText && ttsEnabled ? <PlayButton text={fullText} /> : null}
       </div>
     </div>
   );
