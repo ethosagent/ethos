@@ -6,7 +6,7 @@ export class ScopedAttachmentsImpl implements ScopedAttachments {
 
   constructor(
     allAttachments: Attachment[],
-    kinds: ('image' | 'file')[] | '*',
+    kinds: ('image' | 'file' | 'audio')[] | '*',
     cache: AttachmentCache,
   ) {
     this.cache = cache;

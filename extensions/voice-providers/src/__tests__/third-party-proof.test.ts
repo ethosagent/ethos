@@ -106,7 +106,7 @@ describe('Third-party provider proof (ElevenLabs TTS)', () => {
     expect(() => registry.register('openai-tts', elevenLabsFactory)).toThrow(/already registered/);
   });
 
-  it('config selects the third-party provider by name', () => {
+  it('config selects the third-party provider by name', async () => {
     const registry = new DefaultTtsProviderRegistry();
 
     // Built-in
@@ -125,7 +125,7 @@ describe('Third-party provider proof (ElevenLabs TTS)', () => {
     expect(factory).toBeDefined();
 
     // The provider is ElevenLabs, not OpenAI
-    const provider = factory?.({
+    const provider = await factory?.({
       config: { apiKey: 'test' },
       secrets: noopSecrets,
       logger: noopLogger,

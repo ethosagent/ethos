@@ -94,6 +94,8 @@ function createFirstPartyApi(pluginId: string, llmProviders: LLMProviderRegistry
     registerCliSubcommand: notSupported('registerCliSubcommand'),
     registerCommand: notSupported('registerCommand'),
     registerDocumentExtractor: notSupported('registerDocumentExtractor'),
+    registerSttProvider: notSupported('registerSttProvider'),
+    registerTtsProvider: notSupported('registerTtsProvider'),
     diagnostics: {
       debug: () => {},
       info: () => {},

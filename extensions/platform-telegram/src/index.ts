@@ -12,7 +12,7 @@ import type {
   PlatformAdapter,
   Storage,
 } from '@ethosagent/types';
-import { Bot, InlineKeyboard, webhookCallback } from 'grammy';
+import { Bot, InlineKeyboard, InputFile, webhookCallback } from 'grammy';
 import { type ChannelMode, DEFAULT_CHANNEL_MODE } from './config';
 import { chunkHash, markdownToTelegramHtml } from './format';
 import { shouldRespond } from './routing/channel-mode';
@@ -847,9 +847,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
     opts?: { threadId?: string; caption?: string },
   ): Promise<DeliveryResult> {
     try {
-      const blob = new Blob([audio], { type: 'audio/ogg' });
-      const file = new File([blob], 'voice.ogg', { type: 'audio/ogg' });
-      const sent = await this.bot.api.sendVoice(Number(chatId), file, {
+      const sent = await this.bot.api.sendVoice(Number(chatId), new InputFile(audio, 'voice.ogg'), {
         ...(opts?.caption ? { caption: opts.caption } : {}),
         ...(opts?.threadId ? { message_thread_id: Number(opts.threadId) } : {}),
       });
@@ -866,10 +864,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
     opts?: { threadId?: string; caption?: string; mimeType?: string },
   ): Promise<DeliveryResult> {
     try {
-      const mime = opts?.mimeType ?? 'audio/mpeg';
-      const blob = new Blob([audio], { type: mime });
-      const file = new File([blob], filename, { type: mime });
-      const sent = await this.bot.api.sendDocument(Number(chatId), file, {
+      const sent = await this.bot.api.sendDocument(Number(chatId), new InputFile(audio, filename), {
         ...(opts?.caption ? { caption: opts.caption } : {}),
         ...(opts?.threadId ? { message_thread_id: Number(opts.threadId) } : {}),
       });
