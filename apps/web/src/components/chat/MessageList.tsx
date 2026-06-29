@@ -28,12 +28,20 @@ export function MessageList({
   const pinnedToBottomRef = useRef(true);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveModalUserMessage, setSaveModalUserMessage] = useState<string | undefined>();
+  const [showScrollDown, setShowScrollDown] = useState(false);
 
   const onScroll = () => {
     const el = listRef.current;
     if (!el) return;
     const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     pinnedToBottomRef.current = fromBottom < 32;
+    setShowScrollDown(fromBottom >= 100);
+  };
+
+  const scrollToBottom = () => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   };
 
   // Re-run on every visible change. The `currentTurn` reference is the
@@ -95,6 +103,24 @@ export function MessageList({
         userMessage={saveModalUserMessage}
         sessionId={sessionId}
       />
+      {showScrollDown && (
+        <button
+          type="button"
+          className="scroll-to-bottom-btn"
+          onClick={scrollToBottom}
+          aria-label="Scroll to latest message"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path
+              d="M8 3v10M4 9l4 4 4-4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
