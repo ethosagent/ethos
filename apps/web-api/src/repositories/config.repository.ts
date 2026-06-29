@@ -46,6 +46,9 @@ export interface RawConfig {
   debugPanelModel?: string | null;
   voiceProvider?: string;
   voiceApiKey?: string;
+  voiceTtsProvider?: string;
+  voiceTtsApiKey?: string;
+  voiceTtsVoice?: string;
   modelRouting: Record<string, string>;
   /** Ordered provider chain for ChainedProvider failover. */
   providers: RawProviderEntry[];
@@ -88,6 +91,9 @@ export class ConfigRepository {
       'display.debug_panel_model',
       'auxiliary.asr.provider',
       'auxiliary.asr.apiKey',
+      'auxiliary.tts.provider',
+      'auxiliary.tts.apiKey',
+      'auxiliary.tts.voice',
     ]);
     const config: RawConfig = { modelRouting: {}, providers: [], passthrough: {} };
     const providerMap = new Map<number, RawProviderEntry>();
@@ -188,6 +194,15 @@ export class ConfigRepository {
           case 'auxiliary.asr.apiKey':
             config.voiceApiKey = value;
             break;
+          case 'auxiliary.tts.provider':
+            config.voiceTtsProvider = value;
+            break;
+          case 'auxiliary.tts.apiKey':
+            config.voiceTtsApiKey = value;
+            break;
+          case 'auxiliary.tts.voice':
+            config.voiceTtsVoice = value;
+            break;
         }
       } else {
         config.passthrough[key] = value;
@@ -281,6 +296,9 @@ export class ConfigRepository {
     if (config.debugPanelModel) lines.push(`display.debug_panel_model: ${config.debugPanelModel}`);
     if (config.voiceProvider) lines.push(`auxiliary.asr.provider: ${yamlScalar(config.voiceProvider)}`);
     if (config.voiceApiKey) lines.push(`auxiliary.asr.apiKey: ${yamlScalar(config.voiceApiKey)}`);
+    if (config.voiceTtsProvider) lines.push(`auxiliary.tts.provider: ${yamlScalar(config.voiceTtsProvider)}`);
+    if (config.voiceTtsApiKey) lines.push(`auxiliary.tts.apiKey: ${yamlScalar(config.voiceTtsApiKey)}`);
+    if (config.voiceTtsVoice) lines.push(`auxiliary.tts.voice: ${yamlScalar(config.voiceTtsVoice)}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
     }

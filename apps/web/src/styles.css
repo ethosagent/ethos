@@ -2336,6 +2336,37 @@ textarea {
   min-height: 32px;
 }
 
+/* TTS play button */
+.play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ethos-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.play-btn:hover {
+  background: var(--ethos-hover);
+  color: var(--ethos-text-dim);
+}
+
+.play-btn-active {
+  color: var(--ethos-info);
+  opacity: 1;
+}
+
+/* Show play button on message hover */
+.message-row-assistant:hover .play-btn {
+  opacity: 1;
+}
+
 .composer-goal-row {
   display: flex;
   justify-content: flex-end;

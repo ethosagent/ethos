@@ -30,6 +30,9 @@ export interface ConfigGetResult {
   adminEnabled: boolean;
   voiceProvider: string | null;
   voiceApiKeyPreview: string | null;
+  voiceTtsProvider: string | null;
+  voiceTtsApiKeyPreview: string | null;
+  voiceTtsVoice: string | null;
 }
 
 export interface ConfigUpdateInput {
@@ -56,6 +59,9 @@ export interface ConfigUpdateInput {
   adminEnabled?: boolean;
   voiceProvider?: string;
   voiceApiKey?: string;
+  voiceTtsProvider?: string;
+  voiceTtsApiKey?: string;
+  voiceTtsVoice?: string;
 }
 
 export interface ConfigServiceOptions {
@@ -103,6 +109,9 @@ export class ConfigService {
       adminEnabled: raw.passthrough['admin.enabled'] === 'true',
       voiceProvider: raw.voiceProvider ?? null,
       voiceApiKeyPreview: raw.voiceApiKey ? redactKey(raw.voiceApiKey) : null,
+      voiceTtsProvider: raw.voiceTtsProvider ?? null,
+      voiceTtsApiKeyPreview: raw.voiceTtsApiKey ? redactKey(raw.voiceTtsApiKey) : null,
+      voiceTtsVoice: raw.voiceTtsVoice ?? null,
     };
   }
 
@@ -195,6 +204,9 @@ export class ConfigService {
       ...(passthrough !== undefined ? { passthrough } : {}),
       ...(patch.voiceProvider !== undefined ? { voiceProvider: patch.voiceProvider || undefined } : {}),
       ...(patch.voiceApiKey !== undefined ? { voiceApiKey: patch.voiceApiKey || undefined } : {}),
+      ...(patch.voiceTtsProvider !== undefined ? { voiceTtsProvider: patch.voiceTtsProvider || undefined } : {}),
+      ...(patch.voiceTtsApiKey !== undefined ? { voiceTtsApiKey: patch.voiceTtsApiKey || undefined } : {}),
+      ...(patch.voiceTtsVoice !== undefined ? { voiceTtsVoice: patch.voiceTtsVoice || undefined } : {}),
     });
   }
 }

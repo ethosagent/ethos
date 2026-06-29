@@ -8,4 +8,8 @@ export const voiceRouter = {
     const transcript = await context.voice.transcribe(input.audio, input.mimeType);
     return { transcript };
   }),
+  synthesize: os.voice.synthesize.handler(async ({ input, context }) => {
+    if (!context.voice) throw new Error('Voice synthesis not configured');
+    return context.voice.synthesize(input.text, input.voice);
+  }),
 };

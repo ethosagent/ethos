@@ -714,6 +714,9 @@ const ConfigGetOutput = z.object({
   adminEnabled: z.boolean(),
   voiceProvider: z.string().nullable(),
   voiceApiKeyPreview: z.string().nullable(),
+  voiceTtsProvider: z.string().nullable(),
+  voiceTtsApiKeyPreview: z.string().nullable(),
+  voiceTtsVoice: z.string().nullable(),
 });
 
 const ConfigUpdateInput = z.object({
@@ -744,6 +747,9 @@ const ConfigUpdateInput = z.object({
   adminEnabled: z.boolean().optional(),
   voiceProvider: z.string().optional(),
   voiceApiKey: z.string().optional(),
+  voiceTtsProvider: z.string().optional(),
+  voiceTtsApiKey: z.string().optional(),
+  voiceTtsVoice: z.string().optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 
@@ -1904,10 +1910,20 @@ const VoiceTranscribeInput = z.object({
 const VoiceTranscribeOutput = z.object({
   transcript: z.string(),
 });
+const VoiceSynthesizeInput = z.object({
+  text: z.string().min(1),
+  voice: z.string().optional(),
+});
+const VoiceSynthesizeOutput = z.object({
+  audio: z.string(),
+  format: z.enum(['opus', 'mp3', 'wav', 'pcm']),
+  mimeType: z.string(),
+});
 
 /** @experimental */
 const voice = {
   transcribe: oc.input(VoiceTranscribeInput).output(VoiceTranscribeOutput),
+  synthesize: oc.input(VoiceSynthesizeInput).output(VoiceSynthesizeOutput),
 };
 
 // ---------------------------------------------------------------------------

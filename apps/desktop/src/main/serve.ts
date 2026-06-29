@@ -47,7 +47,7 @@ export async function startServer(port: number): Promise<number> {
     ...(baseUrl ? { baseUrl } : {}),
   };
 
-  const { loop, toolRegistry, sttProviders, voiceConfig } = await createAgentLoop(wiringConfig, {
+  const { loop, toolRegistry, sttProviders, ttsProviders, voiceConfig } = await createAgentLoop(wiringConfig, {
     dataDir,
     profile: 'web',
     disableDocker: true,
@@ -121,6 +121,9 @@ export async function startServer(port: number): Promise<number> {
     sttProviderRegistry: sttProviders,
     sttProviderName: voiceConfig.sttProviderName,
     sttProviderConfig: voiceConfig.sttProviderConfig,
+    ttsProviderRegistry: ttsProviders,
+    ttsProviderName: voiceConfig.ttsProviderName,
+    ttsProviderConfig: voiceConfig.ttsProviderConfig,
     ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
     ...(webDistDir ? { webDist: webDistDir } : {}),
   });

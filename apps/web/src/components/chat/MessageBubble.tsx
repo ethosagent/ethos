@@ -4,6 +4,7 @@ import type { AssistantBlock, AssistantTurn, UserMessage } from '../../lib/chat-
 import { HtmlBlock } from './HtmlBlock';
 import { ImageBlock } from './ImageBlock';
 import { PdfBlock } from './PdfBlock';
+import { PlayButton } from './PlayButton';
 import { ToolChip } from './ToolChip';
 
 // One rendered message. DESIGN.md voice rules in effect:
@@ -55,6 +56,10 @@ function AttachmentChip({ attachment }: { attachment: MessageAttachment }) {
 export function AssistantBubble({ turn, streaming }: { turn: AssistantTurn; streaming?: boolean }) {
   const lastBlock = turn.blocks[turn.blocks.length - 1];
   const cursorAfter = streaming && lastBlock?.kind === 'text';
+  const fullText = turn.blocks
+    .filter((b): b is Extract<AssistantBlock, { kind: 'text' }> => b.kind === 'text')
+    .map((b) => b.content)
+    .join('\n');
   return (
     <div className="message-row message-row-assistant">
       <div className="message-assistant">
@@ -65,13 +70,10 @@ export function AssistantBubble({ turn, streaming }: { turn: AssistantTurn; stre
             streamingTail={streaming && idx === turn.blocks.length - 1}
           />
         ))}
-        {/* If the live turn ended on a tool block (no trailing text yet),
-            the streaming cursor sits as a standalone marker so the user
-            can see the agent is still active even before the next chunk
-            of text arrives. */}
         {streaming && !cursorAfter && lastBlock?.kind === 'tool' ? (
           <span className="streaming-cursor streaming-cursor-trailing" aria-hidden="true" />
         ) : null}
+        {!streaming && fullText ? <PlayButton text={fullText} /> : null}
       </div>
     </div>
   );

@@ -180,6 +180,9 @@ interface FormShape {
   voiceEnabled: boolean;
   voiceProvider: string;
   voiceApiKey: string;
+  voiceTtsProvider: string;
+  voiceTtsApiKey: string;
+  voiceTtsVoice: string;
 }
 
 export function Settings() {
@@ -218,6 +221,9 @@ export function Settings() {
         voiceEnabled: Boolean(configQuery.data.voiceProvider),
         voiceProvider: configQuery.data.voiceProvider ?? '',
         voiceApiKey: '',
+        voiceTtsProvider: configQuery.data.voiceTtsProvider ?? '',
+        voiceTtsApiKey: '',
+        voiceTtsVoice: configQuery.data.voiceTtsVoice ?? '',
       });
       // Only hydrate provider rows on first load or when data changes identity
       if (!hydratedRef.current) {
@@ -323,10 +329,13 @@ export function Settings() {
       debugPanelModel: values.debugPanelModel || null,
       adminEnabled: values.adminEnabled,
       ...(!values.voiceEnabled
-        ? (configQuery.data?.voiceProvider ? { voiceProvider: '' } : {})
+        ? (configQuery.data?.voiceProvider || configQuery.data?.voiceTtsProvider ? { voiceProvider: '', voiceTtsProvider: '' } : {})
         : {
             ...((values.voiceProvider ?? '') !== (configQuery.data?.voiceProvider ?? '') ? { voiceProvider: values.voiceProvider } : {}),
             ...(values.voiceApiKey ? { voiceApiKey: values.voiceApiKey } : {}),
+            ...((values.voiceTtsProvider ?? '') !== (configQuery.data?.voiceTtsProvider ?? '') ? { voiceTtsProvider: values.voiceTtsProvider } : {}),
+            ...(values.voiceTtsApiKey ? { voiceTtsApiKey: values.voiceTtsApiKey } : {}),
+            ...((values.voiceTtsVoice ?? '') !== (configQuery.data?.voiceTtsVoice ?? '') ? { voiceTtsVoice: values.voiceTtsVoice } : {}),
           }),
       modelRouting: Object.fromEntries(
         Object.entries(configQuery.data?.modelRouting ?? {}).filter(
@@ -634,6 +643,48 @@ export function Settings() {
                     }
                   >
                     <Input.Password placeholder="Enter API key..." />
+                  </Form.Item>
+                  <Form.Item
+                    name="voiceTtsProvider"
+                    label="TTS Provider"
+                    extra="Text-to-speech provider for reading agent responses aloud."
+                  >
+                    <Select
+                      allowClear
+                      placeholder="Select a TTS provider..."
+                      options={[
+                        { label: 'OpenAI TTS', value: 'openai-tts' },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="voiceTtsApiKey"
+                    label="TTS API Key"
+                    extra={
+                      configQuery.data?.voiceTtsApiKeyPreview
+                        ? `Current: ${configQuery.data.voiceTtsApiKeyPreview}`
+                        : 'API key for TTS provider. Uses the STT key if same provider.'
+                    }
+                  >
+                    <Input.Password placeholder="Enter API key..." />
+                  </Form.Item>
+                  <Form.Item
+                    name="voiceTtsVoice"
+                    label="Voice"
+                    extra="Voice for text-to-speech output."
+                  >
+                    <Select
+                      allowClear
+                      placeholder="Select a voice..."
+                      options={[
+                        { label: 'Alloy', value: 'alloy' },
+                        { label: 'Echo', value: 'echo' },
+                        { label: 'Fable', value: 'fable' },
+                        { label: 'Onyx', value: 'onyx' },
+                        { label: 'Nova', value: 'nova' },
+                        { label: 'Shimmer', value: 'shimmer' },
+                      ]}
+                    />
                   </Form.Item>
                 </>
               ) : null

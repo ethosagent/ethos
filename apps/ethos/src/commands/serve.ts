@@ -223,8 +223,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     | undefined;
   let goalRunner: import('@ethosagent/goal-runner').GoalRunner | undefined;
   let sttProviders: import('@ethosagent/types').SttProviderRegistry | undefined;
+  let ttsProviders: import('@ethosagent/types').TtsProviderRegistry | undefined;
   let voiceConfig:
-    | { sttProviderName?: string; sttProviderConfig: Record<string, unknown> }
+    | { sttProviderName?: string; sttProviderConfig: Record<string, unknown>; ttsProviderName?: string; ttsProviderConfig: Record<string, unknown> }
     | undefined;
 
   // Cron scheduler — hoisted ABOVE the agent-loop construction so the
@@ -311,6 +312,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     setOnSkillProposed = result.setOnSkillProposed;
     goalRunner = result.goalRunner;
     sttProviders = result.sttProviders;
+    ttsProviders = result.ttsProviders;
     voiceConfig = result.voiceConfig;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
@@ -349,6 +351,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     setOnSkillProposed = result.setOnSkillProposed;
     goalRunner = result.goalRunner;
     sttProviders = result.sttProviders;
+    ttsProviders = result.ttsProviders;
     voiceConfig = result.voiceConfig;
   }
   let titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
@@ -532,6 +535,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(sttProviders ? { sttProviderRegistry: sttProviders } : {}),
     ...(voiceConfig?.sttProviderName ? { sttProviderName: voiceConfig.sttProviderName } : {}),
     ...(voiceConfig ? { sttProviderConfig: voiceConfig.sttProviderConfig } : {}),
+    ...(ttsProviders ? { ttsProviderRegistry: ttsProviders } : {}),
+    ...(voiceConfig?.ttsProviderName ? { ttsProviderName: voiceConfig.ttsProviderName } : {}),
+    ...(voiceConfig ? { ttsProviderConfig: voiceConfig.ttsProviderConfig } : {}),
     ...(titleFn ? { titleFn } : {}),
   });
   chatService = created.chatService;

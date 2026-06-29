@@ -126,6 +126,12 @@ export interface CreateWebApiOptions {
   sttProviderName?: string;
   /** Config dict for the STT provider factory. */
   sttProviderConfig?: Record<string, unknown>;
+  /** TTS provider registry for voice synthesis. */
+  ttsProviderRegistry?: import('@ethosagent/types').TtsProviderRegistry;
+  /** Name of the TTS provider (from auxiliary.tts.provider). */
+  ttsProviderName?: string;
+  /** Config dict for the TTS provider factory. */
+  ttsProviderConfig?: Record<string, unknown>;
   /**
    * Secret-backed file resolver under `<dataDir>/secrets/`. Used by the
    * Communications tab to write Telegram / Slack / Discord / email
@@ -324,8 +330,19 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     secrets,
     configGetter: async () => {
       const raw = await configRepo.read();
-      return raw ? { voiceProvider: raw.voiceProvider, voiceApiKey: raw.voiceApiKey } : null;
+      return raw
+        ? {
+            voiceProvider: raw.voiceProvider,
+            voiceApiKey: raw.voiceApiKey,
+            voiceTtsProvider: raw.voiceTtsProvider,
+            voiceTtsApiKey: raw.voiceTtsApiKey,
+            voiceTtsVoice: raw.voiceTtsVoice,
+          }
+        : null;
     },
+    ttsRegistry: opts.ttsProviderRegistry,
+    ttsProviderName: opts.ttsProviderName,
+    ttsProviderConfig: opts.ttsProviderConfig,
   });
   const debugService = new DebugService({ sessionStore: opts.sessionStore, agentLoop });
   // Project-level plugins (`<cwd>/.ethos/plugins/`) are out of scope

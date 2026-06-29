@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SecretsResolver, SttProvider, SttProviderRegistry } from '@ethosagent/types';
+import type { SecretsResolver, SttProvider, SttProviderRegistry, TtsProvider, TtsProviderRegistry } from '@ethosagent/types';
 
 const HALLUCINATION_PATTERNS = [
   /^thanks?\s*(you\s*)?(for\s+)?(watching|listening|viewing)/i,
@@ -26,12 +26,28 @@ export class VoiceService {
   private readonly initialProviderName: string | undefined;
   private readonly initialProviderConfig: Record<string, unknown>;
   private readonly secrets: SecretsResolver | undefined;
-  private readonly configGetter?: () => Promise<{ voiceProvider?: string | null; voiceApiKey?: string | null } | null>;
+  private readonly configGetter?: () => Promise<{
+    voiceProvider?: string | null;
+    voiceApiKey?: string | null;
+    voiceTtsProvider?: string | null;
+    voiceTtsApiKey?: string | null;
+    voiceTtsVoice?: string | null;
+  } | null>;
   private provider: SttProvider | null = null;
   private resolvedName: string | undefined;
 
+  private readonly ttsRegistry: TtsProviderRegistry | undefined;
+  private readonly initialTtsProviderName: string | undefined;
+  private readonly initialTtsProviderConfig: Record<string, unknown>;
+  private ttsProvider: TtsProvider | null = null;
+  private resolvedTtsName: string | undefined;
+
   get isConfigured(): boolean {
     return Boolean(this.sttRegistry && this.initialProviderName);
+  }
+
+  get isTtsConfigured(): boolean {
+    return Boolean(this.ttsRegistry && this.initialTtsProviderName);
   }
 
   constructor(opts: {
@@ -39,13 +55,25 @@ export class VoiceService {
     providerName?: string;
     providerConfig?: Record<string, unknown>;
     secrets?: SecretsResolver;
-    configGetter?: () => Promise<{ voiceProvider?: string | null; voiceApiKey?: string | null } | null>;
+    configGetter?: () => Promise<{
+      voiceProvider?: string | null;
+      voiceApiKey?: string | null;
+      voiceTtsProvider?: string | null;
+      voiceTtsApiKey?: string | null;
+      voiceTtsVoice?: string | null;
+    } | null>;
+    ttsRegistry?: TtsProviderRegistry;
+    ttsProviderName?: string;
+    ttsProviderConfig?: Record<string, unknown>;
   }) {
     this.sttRegistry = opts.sttRegistry;
     this.initialProviderName = opts.providerName;
     this.initialProviderConfig = opts.providerConfig ?? {};
     this.secrets = opts.secrets;
     this.configGetter = opts.configGetter;
+    this.ttsRegistry = opts.ttsRegistry;
+    this.initialTtsProviderName = opts.ttsProviderName;
+    this.initialTtsProviderConfig = opts.ttsProviderConfig ?? {};
   }
 
   private async resolve(): Promise<SttProvider | null> {
@@ -90,6 +118,80 @@ export class VoiceService {
       this.provider = null;
     }
     return this.provider;
+  }
+
+  private async resolveTts(): Promise<TtsProvider | null> {
+    let name = this.initialTtsProviderName;
+    let config: Record<string, unknown> = this.initialTtsProviderConfig;
+
+    if (!name && this.configGetter) {
+      const live = await this.configGetter().catch(() => null);
+      if (live?.voiceTtsProvider) {
+        name = live.voiceTtsProvider;
+        config = {
+          apiKey: live.voiceTtsApiKey ?? undefined,
+          voice: live.voiceTtsVoice ?? undefined,
+        };
+      }
+    }
+
+    if (this.resolvedTtsName === name && this.ttsProvider) return this.ttsProvider;
+    if (!this.ttsRegistry || !name) return null;
+
+    const factory = this.ttsRegistry.get(name);
+    if (!factory) return null;
+    try {
+      const noopSecrets: SecretsResolver = {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => {},
+        list: async () => [],
+      };
+      this.ttsProvider = await factory({
+        config,
+        secrets: this.secrets ?? noopSecrets,
+        logger: {
+          info() {},
+          warn() {},
+          error() {},
+          debug() {},
+          child() {
+            return this;
+          },
+        },
+      });
+      this.resolvedTtsName = name;
+    } catch {
+      this.ttsProvider = null;
+    }
+    return this.ttsProvider;
+  }
+
+  async synthesize(text: string, voice?: string): Promise<{ audio: string; format: 'opus' | 'mp3' | 'wav' | 'pcm'; mimeType: string }> {
+    const provider = await this.resolveTts();
+    if (!provider) throw new Error('No TTS provider configured — set auxiliary.tts in config');
+
+    const maxChars = provider.caps.maxInputChars;
+    let input = text;
+    if (maxChars && input.length > maxChars) {
+      const truncated = input.slice(0, maxChars);
+      const lastEnd = Math.max(truncated.lastIndexOf('.'), truncated.lastIndexOf('!'), truncated.lastIndexOf('?'));
+      input = lastEnd > maxChars * 0.5 ? truncated.slice(0, lastEnd + 1) : truncated;
+    }
+
+    const result = await provider.synthesize(input, { voice });
+    const base64 = Buffer.from(result.audio).toString('base64');
+    const formatMimeMap: Record<string, string> = {
+      opus: 'audio/ogg;codecs=opus',
+      mp3: 'audio/mpeg',
+      wav: 'audio/wav',
+      pcm: 'audio/pcm',
+    };
+    return {
+      audio: base64,
+      format: result.format,
+      mimeType: formatMimeMap[result.format] ?? 'audio/ogg',
+    };
   }
 
   async transcribe(audioBase64: string, mimeType: string): Promise<string> {
