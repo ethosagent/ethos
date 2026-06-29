@@ -1,3 +1,4 @@
+import { message } from 'antd';
 import { useCallback, useRef, useState } from 'react';
 import { rpc } from '../../rpc';
 
@@ -51,8 +52,13 @@ export function PlayButton({ text }: PlayButtonProps) {
       audio.onerror = () => setState('idle');
       setState('playing');
       await audio.play().catch(() => setState('idle'));
-    } catch {
+    } catch (err) {
       setState('idle');
+      const raw = err instanceof Error ? err.message : 'Text-to-speech failed';
+      const msg = raw.includes('No TTS provider')
+        ? 'TTS not configured — enable a TTS provider in Settings → Voice'
+        : raw;
+      void message.error(msg);
     }
   }, [state, text]);
 
