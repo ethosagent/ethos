@@ -410,7 +410,7 @@ export function Composer({
             {voiceEnabled && (
               <VoiceButton
                 onTranscript={(t) => {
-                  onSend(t);
+                  setText(t);
                 }}
                 onRecordingChange={setIsVoiceRecording}
                 disabled={disabled || isStreaming}
