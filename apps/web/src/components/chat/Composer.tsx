@@ -1,4 +1,5 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
+import { useQuery } from '@tanstack/react-query';
 import { Input } from 'antd';
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { AttachmentPreview } from '../../lib/attachments';
@@ -32,7 +33,12 @@ export function Composer({
 }: ComposerProps) {
   const [text, setText] = useState('');
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const capabilitiesQuery = useQuery({
+    queryKey: ['meta', 'capabilities'],
+    queryFn: () => rpc.meta.capabilities(),
+    staleTime: 60_000,
+  });
+  const voiceEnabled = capabilitiesQuery.data?.capabilities.voice_stt ?? false;
   const accent = personalityAccent(personalityId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [atQuery, setAtQuery] = useState<string | null>(null);
@@ -46,12 +52,6 @@ export function Composer({
   const [slashCommandsCache, setSlashCommandsCache] = useState<
     Array<{ name: string; description: string; usage: string }>
   >([]);
-
-  useEffect(() => {
-    rpc.meta.capabilities().then((res) => {
-      if (res.capabilities.voice_stt) setVoiceEnabled(true);
-    }).catch(() => {});
-  }, []);
 
   const hasReadyAttachments = attachments && attachments.length > 0;
   const isUploading = attachments?.some((a) => a.state === 'uploading');

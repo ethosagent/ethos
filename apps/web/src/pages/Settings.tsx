@@ -265,6 +265,7 @@ export function Settings() {
     mutationFn: (patch: Parameters<typeof rpc.config.update>[0]) => rpc.config.update(patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['config'] });
+      qc.invalidateQueries({ queryKey: ['meta', 'capabilities'] });
       hydratedRef.current = false;
       notification.success({ message: 'Settings saved', placement: 'topRight' });
     },
