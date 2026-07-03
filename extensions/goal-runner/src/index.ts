@@ -18,25 +18,35 @@ export { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-
 
 /** Consecutive same-tool failures before the run is treated as a compounding
  *  failure. Mirrors `compoundingErrorRule`'s default threshold in
- *  packages/safety/watcher — when the watcher pauses the turn we mark the goal
- *  failed rather than letting the judge complete a run that actually failed. */
+ *  packages/safety/watcher — this runner-level streak catches failure loops
+ *  the loop-level guards miss (e.g. a tool that keeps erroring cheaply). */
 const COMPOUNDING_FAILURE_THRESHOLD = 3;
 
-/** Matches the watcher's compounding-error pause marker text (e.g.
- *  "⚠ compounding-error: terminal failed 3 times in a row"). Covers custom
- *  watcher thresholds where the per-tool streak count alone wouldn't reach
- *  COMPOUNDING_FAILURE_THRESHOLD. */
-const COMPOUNDING_MARKER_RE = /compounding-error|failed\s+\d+\s+times in a row/i;
+/** A mid-run stop that must be recovered from (or fail the goal) instead of
+ *  letting the judge score truncated output as if the attempt finished clean.
+ *  `budget` / `watcher` come from structured `halt` AgentEvents; `failure-streak`
+ *  is the runner's own consecutive-tool-failure tracking on `tool_end`. */
+interface StopCause {
+  kind: 'budget' | 'watcher' | 'failure-streak';
+  tool: string;
+  count: number;
+  reason: string;
+}
 
-/** Extract `{ tool, count }` from a watcher marker like "X failed 3 times in a
- *  row". Returns null when the marker doesn't carry a parseable tool/count. */
-function parseCompoundingMarker(text: string): { tool: string; count: number } | null {
-  const m = text.match(/(\S+)\s+failed\s+(\d+)\s+times in a row/i);
-  if (!m) return null;
-  const tool = m[1];
-  const count = Number(m[2]);
-  if (!tool || !Number.isFinite(count)) return null;
-  return { tool, count };
+/** Error codes/messages treated as transient: the attempt is retried in place
+ *  with backoff instead of terminally failing the goal. Covers rate limits
+ *  (429/rate_limit), provider overload (529/overloaded), timeouts (including
+ *  the loop's `streaming_timeout` code), and network-level failures. */
+const TRANSIENT_ERROR_RE =
+  /rate[ _-]?limit|\b429\b|overloaded|timed?[ _-]?out|timeout|econnreset|etimedout|econnrefused|enotfound|fetch failed|socket hang up|network|\b(?:500|502|503|504|529)\b/i;
+
+/** Backoff schedule for transient-error retries — max 3 retries per attempt. */
+const TRANSIENT_RETRY_DELAYS_MS = [2_000, 8_000, 20_000];
+
+function isTransientError(error: string, code: string): boolean {
+  // Aborts are deliberate; watcher terminations are safety decisions. Never retry.
+  if (code === 'aborted' || code.startsWith('watcher_')) return false;
+  return TRANSIENT_ERROR_RE.test(code) || TRANSIENT_ERROR_RE.test(error);
 }
 
 /** Injected into the goal session's system prompt so the agent never blocks on a
@@ -85,6 +95,9 @@ export interface GoalRunnerConfig {
       allowDangerousToolCalls?: boolean;
     },
   ) => AsyncGenerator<AgentEvent>;
+  /** Injectable sleep for transient-error retry backoff. Defaults to a real
+   *  setTimeout delay; tests inject a recorder to skip waiting. */
+  sleepFn?: (ms: number) => Promise<void>;
 }
 
 export class GoalRunner {
@@ -95,12 +108,14 @@ export class GoalRunner {
   private activeSteerSinks = new Map<string, SteerSink>();
   private hooks: HookRegistry | undefined;
   private runAttempt: GoalRunnerConfig['runAttempt'];
+  private sleep: (ms: number) => Promise<void>;
 
   constructor(config: GoalRunnerConfig) {
     this.store = config.store;
     this.maxTurnsSafetyValve = config.maxTurnsSafetyValve ?? 100;
     this.hooks = config.hooks;
     this.runAttempt = config.runAttempt;
+    this.sleep = config.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
   /**
@@ -113,6 +128,9 @@ export class GoalRunner {
     const goal = this.store.get(goalId);
     if (!goal) throw new Error(`Goal not found: ${goalId}`);
     if (goal.status !== 'running') return;
+    // Double-start guard: a run loop is already active for this goal — a second
+    // loop would clobber the registered AbortController and race the first.
+    if (this.activeRuns.has(goalId)) return;
 
     const controller = new AbortController();
     this.activeRuns.set(goalId, controller);
@@ -216,20 +234,16 @@ export class GoalRunner {
     let budgetCapped = false;
     let completionSummary: string | undefined;
     let recoveryCount = 0;
-    const lastToolError = '';
+    let transientRetries = 0;
+    let transientRetryError: string | null = null;
+    let lastToolError = '';
 
-    // Track consecutive tool failures per tool to detect a compounding-error
-    // halt (mirrors compoundingErrorRule in packages/safety/watcher). A success
-    // breaks the streak. When any tool reaches the threshold — or a watcher
-    // marker is seen in turn text / done text — the run is treated as failed,
-    // not completed.
+    // Track consecutive tool failures per tool (a success breaks the streak).
+    // This runner-level streak catches failure loops the loop-level guards
+    // miss; loop-level budget/watcher stops arrive as structured `halt` events.
+    // Either way the run must not be judged as clean output.
     const consecutiveFailures = new Map<string, number>();
-    let compoundingFailure: { tool: string; count: number } | null = null;
-
-    const checkCompoundingMarker = (text: string): void => {
-      if (compoundingFailure || !COMPOUNDING_MARKER_RE.test(text)) return;
-      compoundingFailure = parseCompoundingMarker(text) ?? { tool: 'tool', count: 0 };
-    };
+    let stopCause: StopCause | null = null;
 
     const flushText = (): void => {
       if (pendingText) {
@@ -277,7 +291,6 @@ export class GoalRunner {
             case 'text_delta':
               pendingText += event.text;
               accumulated += event.text;
-              checkCompoundingMarker(event.text);
               break;
             case 'thinking_delta':
               break;
@@ -301,10 +314,16 @@ export class GoalRunner {
                 durationMs: event.durationMs,
               });
               if (event.ok === false) {
+                if (event.error) lastToolError = event.error;
                 const count = (consecutiveFailures.get(event.toolName) ?? 0) + 1;
                 consecutiveFailures.set(event.toolName, count);
-                if (!compoundingFailure && count >= COMPOUNDING_FAILURE_THRESHOLD) {
-                  compoundingFailure = { tool: event.toolName, count };
+                if (!stopCause && count >= COMPOUNDING_FAILURE_THRESHOLD) {
+                  stopCause = {
+                    kind: 'failure-streak',
+                    tool: event.toolName,
+                    count,
+                    reason: `${event.toolName} failed ${count} times in a row`,
+                  };
                 }
               } else {
                 consecutiveFailures.delete(event.toolName);
@@ -314,7 +333,19 @@ export class GoalRunner {
               // Audience gate — only 'user' events surface; 'internal' is dropped.
               if (event.audience === 'user') {
                 this.store.appendEvent(goal.id, 'turn_text', { text: event.message });
-                checkCompoundingMarker(event.message);
+              }
+              break;
+            case 'halt':
+              // Structured mid-run stop from the loop (tool budget or watcher
+              // pause). The loop still emits a normal `done` afterwards, so
+              // record the cause and let the recovery block below handle it.
+              if (!stopCause) {
+                stopCause = {
+                  kind: event.kind,
+                  tool: event.toolName ?? event.rule,
+                  count: event.count ?? 0,
+                  reason: event.message,
+                };
               }
               break;
             case 'usage':
@@ -333,6 +364,15 @@ export class GoalRunner {
               break;
             case 'error':
               this.store.appendEvent(goal.id, 'error', { error: event.error, code: event.code });
+              if (
+                transientRetries < TRANSIENT_RETRY_DELAYS_MS.length &&
+                isTransientError(event.error, event.code)
+              ) {
+                // Transient (rate limit / overload / timeout / network) — retry
+                // the SAME attempt with backoff instead of failing the goal.
+                transientRetryError = event.error;
+                break;
+              }
               this.store.updateStatus(goal.id, 'failed', {
                 errorText: event.error,
                 outputPartial: accumulated || output,
@@ -345,12 +385,15 @@ export class GoalRunner {
             case 'done':
               output = event.text;
               turns = event.turnCount;
-              checkCompoundingMarker(event.text);
               break;
             default:
               // Forward-compat: ignore unknown event types.
               break;
           }
+
+          // A transient error ends this run — stop consuming and re-enter the
+          // while-loop with a continuation message after the backoff.
+          if (transientRetryError) break;
         }
 
         // After each run finishes: flush trailing text from this continuation.
@@ -362,34 +405,68 @@ export class GoalRunner {
           break;
         }
 
-        // Compounding tool failure (watcher pause). In dangerous mode the watcher
-        // never halts, so recovery is skipped and we fall through to judge/complete.
-        if (!goal.allowDangerousToolCalls && compoundingFailure) {
+        // Transient LLM error → retry the SAME attempt in place with backoff.
+        if (transientRetryError) {
+          transientRetries++;
+          const delayMs = TRANSIENT_RETRY_DELAYS_MS[transientRetries - 1] ?? 0;
+          // Journey marker so the graph shows the retry (reuse turn_text).
+          this.store.appendEvent(goal.id, 'turn_text', {
+            text: `↻ Transient error — retrying (${transientRetries}/${TRANSIENT_RETRY_DELAYS_MS.length}) after ${delayMs / 1000}s: ${transientRetryError}`,
+          });
+          currentMessage =
+            `The previous request failed transiently (${transientRetryError}). ` +
+            `Continue the goal from where you left off.`;
+          transientRetryError = null;
+          await this.sleep(delayMs);
+          continue; // re-run the SAME session with the continuation message
+        }
+
+        // Mid-run stop (halt event or failure streak) → recover via reflection.
+        // Budget halts ALWAYS recover — dangerous mode only disables the safety
+        // watcher, not the loop's per-turn tool budgets. Watcher halts and
+        // failure streaks skip recovery in dangerous mode (the watcher is
+        // disabled there; keep the guard consistent for streaks).
+        if (stopCause && (stopCause.kind === 'budget' || !goal.allowDangerousToolCalls)) {
+          const { kind, tool, count, reason } = stopCause;
           const max = goal.maxRecoveryAttempts ?? 2;
           if (recoveryCount < max) {
             recoveryCount++;
-            const { tool, count } = compoundingFailure;
             // Journey marker so the graph shows the recovery (reuse turn_text).
             this.store.appendEvent(goal.id, 'turn_text', {
-              text: `↻ Recovering: detected a loop on \`${tool}\`, reflecting and trying a different approach (recovery ${recoveryCount}/${max})`,
+              text: `↻ Recovering: ${
+                kind === 'budget'
+                  ? `hit a tool-call budget (${reason})`
+                  : `detected a loop on \`${tool}\``
+              }, reflecting and trying a different approach (recovery ${recoveryCount}/${max})`,
             });
+            const loopDesc =
+              kind === 'failure-streak'
+                ? `you called \`${tool}\` ${count} times and it kept failing with: ${lastToolError || 'repeated failures'}`
+                : reason;
             const reflection =
-              `⚠ You are stuck in a loop: you called \`${tool}\` ${count} times and it kept ` +
-              `failing with: ${lastToolError || 'repeated failures'}. STOP repeating that exact ` +
-              `call. Step back and reason explicitly: what is actually going wrong, and why? Then ` +
-              `take a genuinely DIFFERENT approach — a different tool, different parameters, or a ` +
-              `revised plan. If a sub-goal is impossible, work around it and continue toward the ` +
-              `overall goal. Do not give up.`;
-            // Reset per-tool streak tracking + compounding flag so the next stretch
-            // starts fresh; a recovery continuation that loops AGAIN re-sets it.
+              kind === 'budget'
+                ? `⚠ You hit a tool-call budget mid-run: ${reason}. The turn was stopped ` +
+                  `before you finished. Work more efficiently: batch related work into fewer ` +
+                  `calls, vary your tool calls instead of repeating them, and avoid re-doing ` +
+                  `work you already completed. Continue toward the goal from where you left off.`
+                : `⚠ You are stuck in a loop: ${loopDesc}. STOP repeating that exact ` +
+                  `call. Step back and reason explicitly: what is actually going wrong, and why? Then ` +
+                  `take a genuinely DIFFERENT approach — a different tool, different parameters, or a ` +
+                  `revised plan. If a sub-goal is impossible, work around it and continue toward the ` +
+                  `overall goal. Do not give up.`;
+            // Reset per-tool streak tracking + the stop cause so the next stretch
+            // starts fresh; a recovery continuation that stops AGAIN re-sets it.
+            // Each loop.run() continuation also resets the loop's per-turn budgets.
             consecutiveFailures.clear();
-            compoundingFailure = null;
+            stopCause = null;
             currentMessage = reflection;
             continue; // re-run the SAME session with the reflection message
           }
           // Recovery exhausted → terminal failure (owner decision: fail, don't ask).
-          const { tool } = compoundingFailure;
-          const errorText = `Stuck: couldn't recover after ${recoveryCount} recovery attempts — ${tool} kept failing`;
+          const errorText =
+            kind === 'budget'
+              ? `Stuck: couldn't recover after ${recoveryCount} recovery attempts — kept hitting tool-call budgets (${reason})`
+              : `Stuck: couldn't recover after ${recoveryCount} recovery attempts — ${tool} kept failing`;
           const partial = accumulated || output;
           this.store.updateStatus(goal.id, 'failed', { errorText, outputPartial: partial });
           this.fireGoalFailed(goal, errorText, partial);
@@ -399,8 +476,8 @@ export class GoalRunner {
           return;
         }
 
-        // Clean done (no compounding) → leave the recovery loop and proceed to the
-        // normal judge/complete path.
+        // Clean done (no unrecovered stop) → leave the recovery loop and proceed
+        // to the normal judge/complete path.
         break;
       }
 
@@ -536,11 +613,13 @@ export class GoalRunner {
   }
 
   /**
-   * Submit a steer message to a running goal.
+   * Submit a steer message to a running goal. Also accepted while the goal is
+   * judging or retrying — the run loop is still alive between attempts, so the
+   * steer queues via activeRunState and lands in the next attempt's first message.
    */
   steer(goalId: string, message: string): boolean {
-    const goal = this.store.get(goalId);
-    if (goal?.status !== 'running') return false;
+    const status = this.store.get(goalId)?.status;
+    if (status !== 'running' && status !== 'judging' && status !== 'retrying') return false;
 
     const formatted = `[USER STEER] ${message}`;
     const sink = this.activeSteerSinks.get(goalId);

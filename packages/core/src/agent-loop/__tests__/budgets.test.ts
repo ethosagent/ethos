@@ -80,7 +80,9 @@ describe('checkTurnBudgets — consecutive-identical-call guard', () => {
     ]);
     expect(check(streak, 5)).toEqual({
       exceeded: true,
+      rule: 'identical-streak',
       toolName: 'read_file',
+      count: 5,
       message: 'Stopped: read_file called 5 times in a row with identical arguments (loop)',
     });
   });
@@ -110,12 +112,16 @@ describe('checkTurnBudgets — consecutive-identical-call guard', () => {
   it('keeps the existing total and per-name caps intact', () => {
     expect(checkTurnBudgets(100, 100, new Map(), 25, null, 5)).toEqual({
       exceeded: true,
+      rule: 'tool-budget',
       toolName: '_budget',
+      count: 100,
       message: 'Stopped: hit 100-tool-call budget for this turn',
     });
     expect(checkTurnBudgets(30, 100, new Map([['bash', 25]]), 25, null, 5)).toEqual({
       exceeded: true,
+      rule: 'identical-name',
       toolName: 'bash',
+      count: 25,
       message: 'Stopped: bash called 25 times in one turn (likely loop)',
     });
   });

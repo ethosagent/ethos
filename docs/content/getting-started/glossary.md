@@ -25,7 +25,7 @@ The core abstraction. An `AsyncGenerator<AgentEvent>` that takes a user message 
 
 ### AgentEvent {#agent-event}
 
-The streaming event type. Eight variants: `text_delta`, `thinking_delta`, `tool_start`, `tool_progress`, `tool_end`, `usage`, `error`, `done`. Every surface (CLI, channel adapter, web UI) consumes this stream and renders what it cares about.
+The streaming event type. Core variants: `text_delta`, `thinking_delta`, `tool_start`, `tool_progress`, `tool_end`, `usage`, `halt`, `error`, `done` — plus lifecycle variants such as `run_start` and `context_meta`. Every surface (CLI, channel adapter, web UI) consumes this stream and renders what it cares about.
 
 ### Inline context reference {#inline-context-ref}
 

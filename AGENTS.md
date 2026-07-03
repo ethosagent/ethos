@@ -127,8 +127,9 @@ type AgentEvent =
   | { type: 'thinking_delta'; thinking: string }
   | { type: 'tool_start';     toolCallId: string; toolName: string; args: unknown }
   | { type: 'tool_progress';  toolName: string; message: string; percent?: number }
-  | { type: 'tool_end';       toolCallId: string; toolName: string; ok: boolean; durationMs: number }
+  | { type: 'tool_end';       toolCallId: string; toolName: string; ok: boolean; durationMs: number; error?: string }  // error set only when ok: false
   | { type: 'usage';          inputTokens: number; outputTokens: number; estimatedCostUsd: number }
+  | { type: 'halt';           kind: 'budget' | 'watcher'; rule: string; toolName?: string; count?: number; message: string }  // early safety stop; a normal done still follows
   | { type: 'error';          error: string; code: string }
   | { type: 'done';           text: string; turnCount: number }
 Hook registry

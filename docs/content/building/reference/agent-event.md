@@ -4,7 +4,7 @@ description: "Every AgentEvent variant: payload shape, when it is emitted, and w
 kind: reference
 audience: developer
 slug: agent-event
-updated: 2026-05-12
+updated: 2026-07-03
 ---
 
 `AgentEvent` is the streaming event type yielded by `AgentLoop.run()`. Every surface that renders a [turn](../../getting-started/glossary.md#turn) — CLI, TUI, web UI, channel adapters — consumes this stream and renders the variants it cares about.
@@ -37,10 +37,19 @@ export type AgentEvent =
       durationMs: number;
       audience?: 'internal' | 'user';
       result?: string;
+      error?: string;
     }
   | { type: 'usage'; inputTokens: number; outputTokens: number; estimatedCostUsd: number }
   | { type: 'error'; error: string; code: string }
   | { type: 'done'; text: string; turnCount: number }
+  | {
+      type: 'halt';
+      kind: 'budget' | 'watcher';
+      rule: string;
+      toolName?: string;
+      count?: number;
+      message: string;
+    }
   | { type: 'context_meta'; data: Record<string, unknown> }
   | {
       type: 'run_start';
@@ -60,8 +69,9 @@ export type AgentEvent =
 | [`thinking_delta`](#thinking-delta) | Each token of extended-thinking output (when the provider supports it). | `thinking` |
 | [`tool_start`](#tool-start) | Once per [tool](../../getting-started/glossary.md#tool) call, immediately before execution. | `toolCallId`, `toolName`, `args` |
 | [`tool_progress`](#tool-progress) | Zero or more times per tool call while it runs. | `toolName`, `message`, `percent?`, `audience` |
-| [`tool_end`](#tool-end) | Once per tool call after execution returns or throws. | `toolCallId`, `toolName`, `ok`, `durationMs`, `audience?`, `result?` |
+| [`tool_end`](#tool-end) | Once per tool call after execution returns or throws. | `toolCallId`, `toolName`, `ok`, `durationMs`, `audience?`, `result?`, `error?` |
 | [`usage`](#usage) | Once per LLM call, after the response completes. | `inputTokens`, `outputTokens`, `estimatedCostUsd` |
+| [`halt`](#halt) | When the loop stops the turn early — a per-turn tool budget tripped or the safety watcher paused. | `kind`, `rule`, `toolName?`, `count?`, `message` |
 | [`error`](#error) | When a turn aborts (uncaught LLM error, hook failure, abort signal). | `error`, `code` |
 | [`done`](#done) | Once at the end of a successful turn. Always the last event. | `text`, `turnCount` |
 
@@ -98,11 +108,22 @@ The framework never opts in for the tool. Budget-warning events emitted by `Agen
 
 ### tool_end {#tool-end}
 
-Fires once per tool call. `ok: true` indicates the tool returned a success `ToolResult`; `ok: false` indicates an error (including hook-rejected calls). `result` carries the success value or error message — optional so consumers that only render status chips can ignore it. The audience boundary applies to success cases only; failures always render.
+Fires once per tool call. `ok: true` indicates the tool returned a success `ToolResult`; `ok: false` indicates an error (including hook-rejected calls). `result` carries the success value or error message — optional so consumers that only render status chips can ignore it. `error` is set only when `ok: false` and carries the `ToolResult` error message, so consumers that track failures (e.g. the goal runner's failure-streak detection) never parse `result`. The audience boundary applies to success cases only; failures always render.
 
 ### usage {#usage}
 
 Per-LLM-call token + cost accounting. Emitted after every LLM round-trip — a turn that triggers tool calls emits a `usage` event for each round. Sum across the turn to get total cost.
+
+### halt {#halt}
+
+Fires when the loop stops the turn early for safety, alongside a user-facing `tool_progress` carrying the same message. Not terminal — a normal `done` still follows, so consumers that judge or persist turn output (e.g. the goal runner) use `halt` to know the output is truncated, not clean.
+
+| `kind` | Emitted when | `rule` values |
+|---|---|---|
+| `'budget'` | A per-turn tool budget tripped before the next LLM call. | `tool-budget` — total calls hit `maxToolCallsPerTurn`; `identical-name` — one tool name hit `maxIdenticalToolCalls`; `identical-streak` — consecutive identical name+args calls hit the streak cap. |
+| `'watcher'` | The safety watcher paused the turn (a non-terminate decision). | The watcher rule id (e.g. `compounding-error`). |
+
+`toolName` and `count` are set for budget halts (`toolName` is `_budget` for the total-calls rule). Watcher *terminations* are not halts — they remain terminal [`error`](#error) events with a `watcher_<rule>` code.
 
 ### error {#error}
 
@@ -115,6 +136,7 @@ Always the last event of a successful turn. `text` is the full concatenated assi
 ## Notes {#notes}
 
 - The stream always ends with exactly one of `done` or `error`. Consumers must handle both.
+- `halt` is not a terminator — it precedes a normal `done`. A turn with a `halt` produced truncated output.
 - `tool_progress` events are unordered with respect to other events from the same tool — only `tool_start` (first) and `tool_end` (last) are guaranteed bracketing markers per `toolCallId`.
 - `text_delta` and `thinking_delta` may interleave with `tool_start` / `tool_end` when the LLM streams tool calls inline with text.
 - `audience: 'internal'` is the default when absent. Surface code that fans events out to humans must filter explicitly.

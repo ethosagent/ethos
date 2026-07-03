@@ -566,6 +566,7 @@ export class AgentLoop {
           message: `⚠ ${halt.rule}: ${halt.reason}`,
           audience: 'user',
         };
+        yield { type: 'halt', kind: 'watcher', rule: halt.rule, message: halt.reason };
         break;
       }
 
@@ -582,12 +583,9 @@ export class AgentLoop {
         this.maxConsecutiveIdenticalCalls,
       );
       if (budgetResult.exceeded) {
-        yield {
-          type: 'tool_progress',
-          toolName: budgetResult.toolName,
-          message: budgetResult.message,
-          audience: 'user',
-        };
+        const { rule, toolName, count, message } = budgetResult;
+        yield { type: 'tool_progress', toolName, message, audience: 'user' };
+        yield { type: 'halt', kind: 'budget', rule, toolName, count, message };
         break;
       }
 

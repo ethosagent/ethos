@@ -18,7 +18,8 @@
       "toolName": "restricted",
       "ok": false,
       "durationMs": 0,
-      "result": "blocked by policy"
+      "result": "blocked by policy",
+      "error": "blocked by policy"
     },
     {
       "type": "text_delta",

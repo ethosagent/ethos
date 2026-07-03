@@ -218,6 +218,7 @@ export async function* processTools(
         ok: false,
         durationMs: 0,
         result: deps.safety.injection.downgradeRejectionMessage,
+        error: deps.safety.injection.downgradeRejectionMessage,
       };
       prepped.push({
         toolCallId: tc.toolCallId,
@@ -253,6 +254,7 @@ export async function* processTools(
         ok: false,
         durationMs: 0,
         result: beforeResult.error,
+        error: beforeResult.error,
       };
       prepped.push({
         toolCallId: tc.toolCallId,
@@ -281,6 +283,7 @@ export async function* processTools(
         ok: false,
         durationMs: 0,
         result: enabledError,
+        error: enabledError,
       };
       prepped.push({
         toolCallId: tc.toolCallId,
@@ -307,6 +310,7 @@ export async function* processTools(
         ok: false,
         durationMs: 0,
         result: rejectError,
+        error: rejectError,
       };
       prepped.push({
         toolCallId: tc.toolCallId,
@@ -446,6 +450,7 @@ export async function* processTools(
         ...(r.result.ok && r.result.structured !== undefined
           ? { structured: r.result.structured }
           : {}),
+        ...(r.result.ok ? {} : { error: r.result.error }),
       };
     }
     if (ctx.traceId) deps.observability?.endTrace(ctx.traceId, 'ok');
@@ -532,6 +537,7 @@ export async function* processTools(
         durationMs,
         result: result.ok ? result.value : result.error,
         ...(result.ok && result.structured !== undefined ? { structured: result.structured } : {}),
+        ...(result.ok ? {} : { error: result.error }),
       };
       // Aggregate tool-incurred costs (e.g. image generation, vision LLM calls)
       // into the session budget so /usage and budgetCapUsd see them.

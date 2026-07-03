@@ -3,7 +3,7 @@ import { KNOWN_AGENT_EVENT_TYPES } from '../agent-event';
 
 describe('AgentEvent drift gate', () => {
   // Changing this list requires two maintainers + consumer audit per ARCHITECTURE.md §VII.
-  it('has exactly the frozen set of 16 event types', () => {
+  it('has exactly the frozen set of 17 event types', () => {
     const expected = [
       'text_delta',
       'thinking_delta',
@@ -13,6 +13,7 @@ describe('AgentEvent drift gate', () => {
       'usage',
       'error',
       'done',
+      'halt',
       'context_meta',
       'run_start',
       'dry_run_summary',
@@ -23,6 +24,6 @@ describe('AgentEvent drift gate', () => {
       'notification_received',
     ];
     expect([...KNOWN_AGENT_EVENT_TYPES]).toEqual(expected);
-    expect(KNOWN_AGENT_EVENT_TYPES).toHaveLength(16);
+    expect(KNOWN_AGENT_EVENT_TYPES).toHaveLength(17);
   });
 });

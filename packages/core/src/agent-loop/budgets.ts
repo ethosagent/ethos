@@ -30,6 +30,10 @@ export function updateIdenticalStreak(
   return { key, toolName, count: 1 };
 }
 
+/** Which budget guard tripped. Carried on the exceeded result (and the `halt`
+ *  AgentEvent) so consumers never parse the human-readable message. */
+export type BudgetRule = 'tool-budget' | 'identical-name' | 'identical-streak';
+
 export function checkTurnBudgets(
   totalToolCalls: number,
   maxToolCallsPerTurn: number,
@@ -37,11 +41,15 @@ export function checkTurnBudgets(
   maxIdenticalToolCalls: number,
   identicalStreak: IdenticalStreak | null,
   maxConsecutiveIdenticalCalls: number,
-): { exceeded: false } | { exceeded: true; toolName: string; message: string } {
+):
+  | { exceeded: false }
+  | { exceeded: true; rule: BudgetRule; toolName: string; count: number; message: string } {
   if (totalToolCalls >= maxToolCallsPerTurn) {
     return {
       exceeded: true,
+      rule: 'tool-budget',
       toolName: '_budget',
+      count: totalToolCalls,
       message: `Stopped: hit ${maxToolCallsPerTurn}-tool-call budget for this turn`,
     };
   }
@@ -51,14 +59,18 @@ export function checkTurnBudgets(
   if (overused) {
     return {
       exceeded: true,
+      rule: 'identical-name',
       toolName: overused[0],
+      count: overused[1],
       message: `Stopped: ${overused[0]} called ${overused[1]} times in one turn (likely loop)`,
     };
   }
   if (identicalStreak && identicalStreak.count >= maxConsecutiveIdenticalCalls) {
     return {
       exceeded: true,
+      rule: 'identical-streak',
       toolName: identicalStreak.toolName,
+      count: identicalStreak.count,
       message: `Stopped: ${identicalStreak.toolName} called ${identicalStreak.count} times in a row with identical arguments (loop)`,
     };
   }
