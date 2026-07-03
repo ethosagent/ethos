@@ -172,14 +172,14 @@ export interface AgentLoopConfig {
     resultBudgetChars?: number;
     /**
      * Hard cap on total tool calls per user turn (across all LLM iterations).
-     * Defaults to 20. Trips a `tool_progress` warning and exits cleanly.
+     * Defaults to 100. Trips a `tool_progress` warning and exits cleanly.
      * See plan/IMPROVEMENT.md P1-3.
      */
     maxToolCallsPerTurn?: number;
     /**
      * Hard cap on the number of times the same tool name can be invoked in a
      * single turn. Catches the "infinite loop on a single tool" failure mode
-     * (e.g. tts loop reported as OpenClaw #67744). Defaults to 5.
+     * (e.g. tts loop reported as OpenClaw #67744). Defaults to 25.
      */
     maxIdenticalToolCalls?: number;
     /**
@@ -328,7 +328,7 @@ export class AgentLoop {
     this.workingDir = config.options?.workingDir ?? process.cwd();
     this.resultBudgetChars = config.options?.resultBudgetChars ?? 80_000;
     this.maxToolCallsPerTurn = config.options?.maxToolCallsPerTurn ?? 100;
-    this.maxIdenticalToolCalls = config.options?.maxIdenticalToolCalls ?? 5;
+    this.maxIdenticalToolCalls = config.options?.maxIdenticalToolCalls ?? 25;
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 600_000;
     this.modelRouting = config.modelRouting ?? {};
     this.memoryProviders = config.memoryProviders ?? new Map();
