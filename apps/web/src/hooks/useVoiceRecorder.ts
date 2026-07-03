@@ -21,7 +21,9 @@ export function useVoiceRecorder(): VoiceRecorderState & VoiceRecorderActions {
   const [isRecording, setIsRecording] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [audioLevels, setAudioLevels] = useState<number[]>(() => Array.from({ length: 32 }, () => 0));
+  const [audioLevels, setAudioLevels] = useState<number[]>(() =>
+    Array.from({ length: 32 }, () => 0),
+  );
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);

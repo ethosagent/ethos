@@ -67,9 +67,7 @@ describe('VoiceService', () => {
       providerName: 'test-stt',
     });
 
-    await expect(svc.transcribe('dGVzdA==', 'audio/webm')).rejects.toThrow(
-      /Could not transcribe/,
-    );
+    await expect(svc.transcribe('dGVzdA==', 'audio/webm')).rejects.toThrow(/Could not transcribe/);
   });
 
   it('transcribe filters empty text', async () => {
@@ -89,8 +87,6 @@ describe('VoiceService', () => {
       providerName: 'test-stt',
     });
 
-    await expect(svc.transcribe('dGVzdA==', 'audio/webm')).rejects.toThrow(
-      /Could not transcribe/,
-    );
+    await expect(svc.transcribe('dGVzdA==', 'audio/webm')).rejects.toThrow(/Could not transcribe/);
   });
 });

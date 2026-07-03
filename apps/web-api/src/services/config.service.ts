@@ -202,11 +202,19 @@ export class ConfigService {
       ...cleaned,
       ...(repoProviders !== undefined ? { providers: repoProviders } : {}),
       ...(passthrough !== undefined ? { passthrough } : {}),
-      ...(patch.voiceProvider !== undefined ? { voiceProvider: patch.voiceProvider || undefined } : {}),
+      ...(patch.voiceProvider !== undefined
+        ? { voiceProvider: patch.voiceProvider || undefined }
+        : {}),
       ...(patch.voiceApiKey !== undefined ? { voiceApiKey: patch.voiceApiKey || undefined } : {}),
-      ...(patch.voiceTtsProvider !== undefined ? { voiceTtsProvider: patch.voiceTtsProvider || undefined } : {}),
-      ...(patch.voiceTtsApiKey !== undefined ? { voiceTtsApiKey: patch.voiceTtsApiKey || undefined } : {}),
-      ...(patch.voiceTtsVoice !== undefined ? { voiceTtsVoice: patch.voiceTtsVoice || undefined } : {}),
+      ...(patch.voiceTtsProvider !== undefined
+        ? { voiceTtsProvider: patch.voiceTtsProvider || undefined }
+        : {}),
+      ...(patch.voiceTtsApiKey !== undefined
+        ? { voiceTtsApiKey: patch.voiceTtsApiKey || undefined }
+        : {}),
+      ...(patch.voiceTtsVoice !== undefined
+        ? { voiceTtsVoice: patch.voiceTtsVoice || undefined }
+        : {}),
     });
   }
 }

@@ -1,7 +1,7 @@
 import type { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { WebTokenRepository } from '@ethosagent/web-api';
 import { app, BrowserWindow, nativeTheme, session, type Tray } from 'electron';
 import { initAutoUpdater } from './auto-update';
 import { restartBackendAsync, startBackend, startBackendAsync, stopBackend } from './backend';
@@ -25,30 +25,23 @@ function getDataDir(): string {
   return store.get('dataDir') ?? join(homedir(), '.ethos');
 }
 
-function readWebToken(): string | null {
-  try {
-    return readFileSync(join(getDataDir(), 'web-token'), 'utf-8').trim() || null;
-  } catch {
-    return null;
-  }
-}
-
 async function loadSpaUrl(win: BrowserWindow, port: number): Promise<void> {
   const baseUrl = `http://127.0.0.1:${port}`;
-  const cookies = await session.defaultSession.cookies.get({
+  // The embedded web-api gates /rpc behind the ethos_auth cookie matching the
+  // stored web-token. Read (or create) that token and set the cookie directly,
+  // every load, so it can never go stale. We avoid /auth/exchange because it
+  // rotates the token and relies on Electron persisting a 302 Set-Cookie.
+  const tokens = new WebTokenRepository({ dataDir: getDataDir() });
+  const token = await tokens.getOrCreate();
+  await session.defaultSession.cookies.set({
     url: baseUrl,
     name: 'ethos_auth',
+    value: token,
+    httpOnly: true,
+    sameSite: 'strict',
+    path: '/',
   });
-  if (cookies.length > 0) {
-    win.loadURL(baseUrl);
-    return;
-  }
-  const token = readWebToken();
-  if (token) {
-    win.loadURL(`${baseUrl}/auth/exchange?t=${token}`);
-  } else {
-    win.loadURL(baseUrl);
-  }
+  win.loadURL(baseUrl);
 }
 
 function setupSpaCsp(): void {

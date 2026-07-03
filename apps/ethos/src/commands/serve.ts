@@ -225,7 +225,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let sttProviders: import('@ethosagent/types').SttProviderRegistry | undefined;
   let ttsProviders: import('@ethosagent/types').TtsProviderRegistry | undefined;
   let voiceConfig:
-    | { sttProviderName?: string; sttProviderConfig: Record<string, unknown>; ttsProviderName?: string; ttsProviderConfig: Record<string, unknown> }
+    | {
+        sttProviderName?: string;
+        sttProviderConfig: Record<string, unknown>;
+        ttsProviderName?: string;
+        ttsProviderConfig: Record<string, unknown>;
+      }
     | undefined;
 
   // Cron scheduler — hoisted ABOVE the agent-loop construction so the

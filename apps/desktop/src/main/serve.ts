@@ -47,11 +47,14 @@ export async function startServer(port: number): Promise<number> {
     ...(baseUrl ? { baseUrl } : {}),
   };
 
-  const { loop, toolRegistry, sttProviders, ttsProviders, voiceConfig } = await createAgentLoop(wiringConfig, {
-    dataDir,
-    profile: 'web',
-    disableDocker: true,
-  });
+  const { loop, toolRegistry, sttProviders, ttsProviders, voiceConfig } = await createAgentLoop(
+    wiringConfig,
+    {
+      dataDir,
+      profile: 'web',
+      disableDocker: true,
+    },
+  );
 
   const session = createSessionStore({ dataDir });
 

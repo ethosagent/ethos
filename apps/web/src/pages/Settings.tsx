@@ -329,13 +329,21 @@ export function Settings() {
       debugPanelModel: values.debugPanelModel || null,
       adminEnabled: values.adminEnabled,
       ...(!values.voiceEnabled
-        ? (configQuery.data?.voiceProvider || configQuery.data?.voiceTtsProvider ? { voiceProvider: '', voiceTtsProvider: '' } : {})
+        ? configQuery.data?.voiceProvider || configQuery.data?.voiceTtsProvider
+          ? { voiceProvider: '', voiceTtsProvider: '' }
+          : {}
         : {
-            ...((values.voiceProvider ?? '') !== (configQuery.data?.voiceProvider ?? '') ? { voiceProvider: values.voiceProvider } : {}),
+            ...((values.voiceProvider ?? '') !== (configQuery.data?.voiceProvider ?? '')
+              ? { voiceProvider: values.voiceProvider }
+              : {}),
             ...(values.voiceApiKey ? { voiceApiKey: values.voiceApiKey } : {}),
-            ...((values.voiceTtsProvider ?? '') !== (configQuery.data?.voiceTtsProvider ?? '') ? { voiceTtsProvider: values.voiceTtsProvider } : {}),
+            ...((values.voiceTtsProvider ?? '') !== (configQuery.data?.voiceTtsProvider ?? '')
+              ? { voiceTtsProvider: values.voiceTtsProvider }
+              : {}),
             ...(values.voiceTtsApiKey ? { voiceTtsApiKey: values.voiceTtsApiKey } : {}),
-            ...((values.voiceTtsVoice ?? '') !== (configQuery.data?.voiceTtsVoice ?? '') ? { voiceTtsVoice: values.voiceTtsVoice } : {}),
+            ...((values.voiceTtsVoice ?? '') !== (configQuery.data?.voiceTtsVoice ?? '')
+              ? { voiceTtsVoice: values.voiceTtsVoice }
+              : {}),
           }),
       modelRouting: Object.fromEntries(
         Object.entries(configQuery.data?.modelRouting ?? {}).filter(
@@ -652,9 +660,7 @@ export function Settings() {
                     <Select
                       allowClear
                       placeholder="Select a TTS provider..."
-                      options={[
-                        { label: 'OpenAI TTS', value: 'openai-tts' },
-                      ]}
+                      options={[{ label: 'OpenAI TTS', value: 'openai-tts' }]}
                     />
                   </Form.Item>
                   <Form.Item
