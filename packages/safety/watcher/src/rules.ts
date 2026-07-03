@@ -11,14 +11,14 @@ import type { WatcherRule, WatcherState } from './types';
 // ---------------------------------------------------------------------------
 
 export interface RateLimitOptions {
-  /** Max tool_end events allowed in `windowMs`. Default 30. */
+  /** Max tool_end events allowed in `windowMs`. Default 60. */
   max?: number;
   /** Sliding window in milliseconds. Default 60_000 (60s). */
   windowMs?: number;
 }
 
 export function rateLimitRule(opts: RateLimitOptions = {}): WatcherRule {
-  const max = opts.max ?? 30;
+  const max = opts.max ?? 60;
   const windowMs = opts.windowMs ?? 60_000;
   return {
     id: 'rate-limit',

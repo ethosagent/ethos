@@ -276,6 +276,16 @@ describe('AgentLoop', () => {
       expect(progress?.message).toMatch(/tool-call budget/);
       expect(llmCallCount).toBeLessThanOrEqual(4);
       expect(events.find((e) => e.type === 'done')).toBeDefined();
+
+      // Structured halt event mirrors the prose tool_progress.
+      const halt = events.find((e) => e.type === 'halt') as
+        | Extract<AgentEvent, { type: 'halt' }>
+        | undefined;
+      expect(halt).toBeDefined();
+      expect(halt?.kind).toBe('budget');
+      expect(halt?.rule).toBe('tool-budget');
+      expect(halt?.count).toBe(3);
+      expect(halt?.message).toMatch(/tool-call budget/);
     });
 
     it('breaks before exceeding maxIdenticalToolCalls', async () => {
@@ -301,6 +311,14 @@ describe('AgentLoop', () => {
       expect(progress?.message).toMatch(/repeat_me called \d+ times/);
       expect(llmCallCount).toBeLessThanOrEqual(4);
       expect(events.find((e) => e.type === 'done')).toBeDefined();
+
+      const halt = events.find((e) => e.type === 'halt') as
+        | Extract<AgentEvent, { type: 'halt' }>
+        | undefined;
+      expect(halt?.kind).toBe('budget');
+      expect(halt?.rule).toBe('identical-name');
+      expect(halt?.toolName).toBe('repeat_me');
+      expect(halt?.count).toBe(3);
     });
 
     it('streaming watchdog fires when no chunk arrives within timeout', async () => {

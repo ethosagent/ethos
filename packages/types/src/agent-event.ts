@@ -23,6 +23,7 @@ export const KNOWN_AGENT_EVENT_TYPES = [
   'usage',
   'error',
   'done',
+  'halt',
   'context_meta',
   'run_start',
   'dry_run_summary',
@@ -96,10 +97,29 @@ export type AgentEvent =
       /** Structured payload from the tool's ToolResult, passed through for
        *  rich-content rendering (e.g. _uiType: 'image' | 'html'). */
       structured?: Record<string, unknown>;
+      /** Error message from the tool's ToolResult. Only set when `ok: false`. */
+      error?: string;
     }
   | { type: 'usage'; inputTokens: number; outputTokens: number; estimatedCostUsd: number }
   | { type: 'error'; error: string; code: string }
   | { type: 'done'; text: string; turnCount: number }
+  /**
+   * Emitted when the loop stops a turn early for safety: a per-turn tool
+   * budget tripped (`kind: 'budget'`, rule is one of 'tool-budget' |
+   * 'identical-name' | 'identical-streak') or the safety watcher paused the
+   * turn (`kind: 'watcher'`, rule is the watcher rule id). A normal `done`
+   * still follows — consumers that judge or persist turn output (e.g. the
+   * goal runner) use this event to know the output is truncated, not clean.
+   * Watcher *terminations* remain `error` events, not `halt`.
+   */
+  | {
+      type: 'halt';
+      kind: 'budget' | 'watcher';
+      rule: string;
+      toolName?: string;
+      count?: number;
+      message: string;
+    }
   // Emitted once after context injectors run; carries any metadata they wrote to PromptContext.meta.
   | { type: 'context_meta'; data: Record<string, unknown> }
   /**

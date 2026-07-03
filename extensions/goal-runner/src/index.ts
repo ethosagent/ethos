@@ -18,25 +18,35 @@ export { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-
 
 /** Consecutive same-tool failures before the run is treated as a compounding
  *  failure. Mirrors `compoundingErrorRule`'s default threshold in
- *  packages/safety/watcher — when the watcher pauses the turn we mark the goal
- *  failed rather than letting the judge complete a run that actually failed. */
+ *  packages/safety/watcher — this runner-level streak catches failure loops
+ *  the loop-level guards miss (e.g. a tool that keeps erroring cheaply). */
 const COMPOUNDING_FAILURE_THRESHOLD = 3;
 
-/** Matches the watcher's compounding-error pause marker text (e.g.
- *  "⚠ compounding-error: terminal failed 3 times in a row"). Covers custom
- *  watcher thresholds where the per-tool streak count alone wouldn't reach
- *  COMPOUNDING_FAILURE_THRESHOLD. */
-const COMPOUNDING_MARKER_RE = /compounding-error|failed\s+\d+\s+times in a row/i;
+/** A mid-run stop that must be recovered from (or fail the goal) instead of
+ *  letting the judge score truncated output as if the attempt finished clean.
+ *  `budget` / `watcher` come from structured `halt` AgentEvents; `failure-streak`
+ *  is the runner's own consecutive-tool-failure tracking on `tool_end`. */
+interface StopCause {
+  kind: 'budget' | 'watcher' | 'failure-streak';
+  tool: string;
+  count: number;
+  reason: string;
+}
 
-/** Extract `{ tool, count }` from a watcher marker like "X failed 3 times in a
- *  row". Returns null when the marker doesn't carry a parseable tool/count. */
-function parseCompoundingMarker(text: string): { tool: string; count: number } | null {
-  const m = text.match(/(\S+)\s+failed\s+(\d+)\s+times in a row/i);
-  if (!m) return null;
-  const tool = m[1];
-  const count = Number(m[2]);
-  if (!tool || !Number.isFinite(count)) return null;
-  return { tool, count };
+/** Error codes/messages treated as transient: the attempt is retried in place
+ *  with backoff instead of terminally failing the goal. Covers rate limits
+ *  (429/rate_limit), provider overload (529/overloaded), timeouts (including
+ *  the loop's `streaming_timeout` code), and network-level failures. */
+const TRANSIENT_ERROR_RE =
+  /rate[ _-]?limit|\b429\b|overloaded|timed?[ _-]?out|timeout|econnreset|etimedout|econnrefused|enotfound|fetch failed|socket hang up|network|\b(?:500|502|503|504|529)\b/i;
+
+/** Backoff schedule for transient-error retries — max 3 retries per attempt. */
+const TRANSIENT_RETRY_DELAYS_MS = [2_000, 8_000, 20_000];
+
+function isTransientError(error: string, code: string): boolean {
+  // Aborts are deliberate; watcher terminations are safety decisions. Never retry.
+  if (code === 'aborted' || code.startsWith('watcher_')) return false;
+  return TRANSIENT_ERROR_RE.test(code) || TRANSIENT_ERROR_RE.test(error);
 }
 
 /** Injected into the goal session's system prompt so the agent never blocks on a
@@ -46,6 +56,16 @@ const GOAL_AUTONOMY_DIRECTIVE =
   'questions or request clarification. Make reasonable assumptions, decide, and ' +
   'proceed. If information is missing, pick a sensible default and state the ' +
   'assumption in your output.';
+
+/** Injected into the planning session's system prompt. Constrains the planning
+ *  turn to investigation + a written plan — no execution, no mutations. */
+const GOAL_PLANNING_DIRECTIVE =
+  'You are in the PLANNING phase of an autonomous goal run. Nothing has been ' +
+  'executed yet. Investigate as much as you need using your read-only tools ' +
+  '(reading files, searching, web lookups) — but do NOT make any changes: this ' +
+  'phase is planning only. Produce a concise, actionable PLAN in markdown with ' +
+  'numbered steps toward the goal, the key assumptions you are making, and the ' +
+  'main risks. Output only the plan.';
 
 /** Minimal in-memory SteerSink — an array-backed FIFO queue. */
 class ArraySteerSink implements SteerSink {
@@ -81,9 +101,29 @@ export interface GoalRunnerConfig {
       personalityId?: string;
       userId?: string;
       maxToolCallsPerTurn?: number;
+      maxIdenticalToolCalls?: number;
       allowDangerousToolCalls?: boolean;
     },
   ) => AsyncGenerator<AgentEvent>;
+  /** Read-only planning turn. When wired, every goal runs a planning phase
+   *  BEFORE its first attempt: the plan is produced, persisted, and injected
+   *  into execution — no plan, no execution. When ABSENT (store-only and most
+   *  test construction) planning is SKIPPED and behavior is unchanged, so the
+   *  existing goal-runner suite needs no rewrite. Production wiring always
+   *  provides this (with a read-only toolset override), so production goals
+   *  always plan. Same shape as `runAttempt` minus the execution-only knobs. */
+  runPlan?: (
+    sessionKey: string,
+    firstMessage: string,
+    opts: {
+      abortSignal: AbortSignal;
+      personalityId?: string;
+      userId?: string;
+    },
+  ) => AsyncGenerator<AgentEvent>;
+  /** Injectable sleep for transient-error retry backoff. Defaults to a real
+   *  setTimeout delay; tests inject a recorder to skip waiting. */
+  sleepFn?: (ms: number) => Promise<void>;
 }
 
 export class GoalRunner {
@@ -94,57 +134,221 @@ export class GoalRunner {
   private activeSteerSinks = new Map<string, SteerSink>();
   private hooks: HookRegistry | undefined;
   private runAttempt: GoalRunnerConfig['runAttempt'];
+  private runPlan: GoalRunnerConfig['runPlan'];
+  private sleep: (ms: number) => Promise<void>;
 
   constructor(config: GoalRunnerConfig) {
     this.store = config.store;
     this.maxTurnsSafetyValve = config.maxTurnsSafetyValve ?? 100;
     this.hooks = config.hooks;
     this.runAttempt = config.runAttempt;
+    this.runPlan = config.runPlan;
+    this.sleep = config.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
   /**
-   * Start a goal run. If a loop-bearing runAttempt was wired, launches the
-   * convergence/retry loop fire-and-forget and returns immediately. Without
-   * runAttempt this is store-only (records run_start and returns), which keeps
-   * store-only construction type-checking.
+   * Start a goal run. If a loop-bearing runAttempt was wired, emits run_start
+   * and launches the plan-then-run pipeline fire-and-forget, returning
+   * immediately. Without runAttempt this is store-only (records run_start and
+   * returns), which keeps store-only construction type-checking.
    */
   async startGoal(goalId: string): Promise<void> {
     const goal = this.store.get(goalId);
     if (!goal) throw new Error(`Goal not found: ${goalId}`);
     if (goal.status !== 'running') return;
+    // Double-start guard: a run loop is already active for this goal — a second
+    // loop would clobber the registered AbortController and race the first.
+    if (this.activeRuns.has(goalId)) return;
 
     const controller = new AbortController();
     this.activeRuns.set(goalId, controller);
 
+    // run_start is emitted ONCE here, at the top of the run (before any planning
+    // or attempt), so the execution graph shows GOAL first. The store-only path
+    // below preserves the same single emission; runAttemptLoop no longer emits
+    // it for n===1, keeping resume (which re-enters runAttemptLoop directly) from
+    // double-emitting on an already-started goal.
+    this.store.appendEvent(goalId, 'run_start', {
+      attemptN: 1,
+      sessionKey: `goal:${goalId}:attempt-1`,
+    });
+
     if (!this.runAttempt) {
-      // Store-only construction: record the run_start event and return.
-      this.store.appendEvent(goalId, 'run_start', {
-        attemptN: 1,
-        sessionKey: `goal:${goalId}:attempt-1`,
-      });
+      // Store-only construction: run_start recorded above, nothing to run.
       return;
     }
 
-    // Fire-and-forget: launch the convergence/retry loop without awaiting.
-    void this.runAttemptLoop(goal, controller, 1, this.renderGoalPrompt(goal)).catch(() => {});
+    // Fire-and-forget: plan (when a planning callback is wired), then launch the
+    // convergence/retry loop. Kept off startGoal's awaited path so goal creation
+    // returns fast — planning runs in the background.
+    void this.planThenRun(goal, controller).catch(() => {});
+  }
+
+  /**
+   * Ordering seam: PLAN (when wired) then ATTEMPT 1. When no planning callback
+   * is wired, planning is skipped and the attempt loop runs directly — this is
+   * why the existing goal-runner suite (which constructs without runPlan) is
+   * unchanged. When planning fails, runPlanningPhase has already finalized the
+   * goal (failed/interrupted) and returns false, so no attempt runs.
+   */
+  private async planThenRun(goal: Goal, controller: AbortController): Promise<void> {
+    if (this.runPlan) {
+      const planned = await this.runPlanningPhase(goal, controller);
+      if (!planned) return;
+      // Reload so the plan just persisted flows into the attempt prompt.
+      const withPlan = this.store.get(goal.id) ?? goal;
+      await this.runAttemptLoop(withPlan, controller, 1, this.renderGoalPrompt(withPlan));
+      return;
+    }
+    await this.runAttemptLoop(goal, controller, 1, this.renderGoalPrompt(goal));
+  }
+
+  /**
+   * Run the mandatory planning phase: a read-only turn that investigates and
+   * produces the plan. On success the plan is persisted, status returns to
+   * 'running', and plan_ready is appended; returns true so the attempt loop
+   * proceeds. On an error event, empty plan, or abort, the goal is finalized
+   * (failed / interrupted / cancelled) and false is returned — guaranteeing
+   * "no plan, no execution". Returns true immediately when no planning callback
+   * is wired (planning skipped).
+   */
+  private async runPlanningPhase(goal: Goal, controller: AbortController): Promise<boolean> {
+    const runPlan = this.runPlan;
+    if (!runPlan) return true;
+
+    const sessionKey = `goal:${goal.id}:plan`;
+    this.store.updateStatus(goal.id, 'planning');
+    this.store.appendEvent(goal.id, 'plan_start', { sessionKey });
+
+    // Inject the planning directive + goal spec into the plan session's system
+    // prompt (mirrors the per-attempt injector). Cleaned up before returning.
+    let cleanupInjector: (() => void) | undefined;
+    if (this.hooks) {
+      cleanupInjector = this.hooks.registerModifying('before_prompt_build', async (payload) => {
+        if (payload.sessionId !== sessionKey) return null;
+        return {
+          prependSystem: `${this.renderGoalPrompt(goal)}\n\n${GOAL_PLANNING_DIRECTIVE}\n\n${GOAL_AUTONOMY_DIRECTIVE}`,
+        };
+      });
+    }
+
+    const finalizeFailed = (errorText: string): false => {
+      this.store.updateStatus(goal.id, 'failed', { errorText });
+      this.fireGoalFailed(goal, errorText, '');
+      cleanupInjector?.();
+      this.activeRuns.delete(goal.id);
+      this.activeRunState.delete(goal.id);
+      return false;
+    };
+
+    let planText = '';
+    let accumulated = '';
+    let costUsd = 0;
+
+    try {
+      for await (const event of runPlan(sessionKey, this.renderPlanPrompt(goal), {
+        abortSignal: controller.signal,
+        ...(goal.personalityId ? { personalityId: goal.personalityId } : {}),
+        ...(goal.userId ? { userId: goal.userId } : {}),
+      })) {
+        switch (event.type) {
+          case 'text_delta':
+            accumulated += event.text;
+            break;
+          case 'usage':
+            costUsd += event.estimatedCostUsd;
+            this.store.appendEvent(goal.id, 'usage', {
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+              estimatedCostUsd: event.estimatedCostUsd,
+            });
+            if (goal.maxCostUsd != null && costUsd > goal.maxCostUsd) {
+              controller.abort();
+            }
+            break;
+          case 'error':
+            this.store.appendEvent(goal.id, 'error', { error: event.error, code: event.code });
+            return finalizeFailed(`Planning failed: ${event.error}`);
+          case 'done':
+            planText = event.text;
+            break;
+          default:
+            break;
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.store.appendEvent(goal.id, 'error', { error: msg, code: 'planning_failed' });
+      return finalizeFailed(`Planning failed: ${msg}`);
+    } finally {
+      cleanupInjector?.();
+    }
+
+    // Aborted mid-plan: cancel() already set 'cancelled'; a budget abort leaves
+    // status at 'planning' — mark it interrupted. Either way, no attempt runs.
+    if (controller.signal.aborted) {
+      if (this.store.get(goal.id)?.status === 'planning') {
+        this.store.updateStatus(goal.id, 'interrupted', { errorText: 'Planning interrupted' });
+      }
+      this.activeRuns.delete(goal.id);
+      this.activeRunState.delete(goal.id);
+      return false;
+    }
+
+    const plan = (planText || accumulated).trim();
+    if (!plan) {
+      return finalizeFailed('Planning produced no plan');
+    }
+
+    // Persist the plan and return to 'running'; the attempt loop takes over.
+    this.store.updateStatus(goal.id, 'running', { planMd: plan });
+    this.store.appendEvent(goal.id, 'plan_ready', { summary: plan.slice(0, 200) });
+    return true;
   }
 
   /**
    * Render the goal spec into prompt text. Used as BOTH the first message and
    * the before_prompt_build prepend so the agent always sees the goal + criteria.
+   * Once a plan exists it is appended so attempt 1 and every retry see it.
    */
   private renderGoalPrompt(goal: Goal): string {
     const spec = goal.acceptanceCriteria;
-    if (!spec) return `Goal: ${goal.goalText}`;
+    let base: string;
+    if (!spec) {
+      base = `Goal: ${goal.goalText}`;
+    } else {
+      const lines: string[] = [`Goal: ${goal.goalText}`, '', 'Acceptance criteria:'];
+      for (const check of spec.checks ?? []) {
+        lines.push(`- ${check.description}`);
+      }
+      for (const item of spec.rubric ?? []) {
+        lines.push(`- ${item.description} (weight ${item.weight})`);
+      }
+      lines.push(`Threshold: ${spec.threshold}`);
+      base = lines.join('\n');
+    }
+    if (goal.planMd) {
+      base += `\n\n## Plan\n${goal.planMd}`;
+    }
+    return base;
+  }
 
-    const lines: string[] = [`Goal: ${goal.goalText}`, '', 'Acceptance criteria:'];
-    for (const check of spec.checks ?? []) {
-      lines.push(`- ${check.description}`);
+  /**
+   * Render the planning turn's first message: the goal spec plus a directive to
+   * produce the plan. When the goal has no acceptanceCriteria, the model is also
+   * asked to describe, in free-form markdown, how completion will be judged
+   * (structured AcceptanceSpec auto-drafting is deferred to a follow-up).
+   */
+  private renderPlanPrompt(goal: Goal): string {
+    const lines: string[] = [this.renderGoalPrompt(goal), '', GOAL_PLANNING_DIRECTIVE];
+    if (!goal.acceptanceCriteria) {
+      lines.push(
+        '',
+        'This goal has no explicit acceptance criteria. Include a "## Success ' +
+          'criteria" section describing, in plain markdown, how you will judge that ' +
+          'the goal is complete.',
+      );
     }
-    for (const item of spec.rubric ?? []) {
-      lines.push(`- ${item.description} (weight ${item.weight})`);
-    }
-    lines.push(`Threshold: ${spec.threshold}`);
     return lines.join('\n');
   }
 
@@ -185,9 +389,10 @@ export class GoalRunner {
       });
     }
 
-    if (n === 1) {
-      this.store.appendEvent(goal.id, 'run_start', { attemptN: 1, sessionKey });
-    } else {
+    // run_start (n===1) is emitted once by startGoal before planning, so the
+    // graph shows GOAL → PLAN → attempt 1 in order and resume (which re-enters
+    // here directly) never re-emits it. Only retries (n>1) mark an attempt_start.
+    if (n > 1) {
       this.store.appendEvent(goal.id, 'attempt_start', {
         attemptN: n,
         sessionKey,
@@ -215,20 +420,16 @@ export class GoalRunner {
     let budgetCapped = false;
     let completionSummary: string | undefined;
     let recoveryCount = 0;
-    const lastToolError = '';
+    let transientRetries = 0;
+    let transientRetryError: string | null = null;
+    let lastToolError = '';
 
-    // Track consecutive tool failures per tool to detect a compounding-error
-    // halt (mirrors compoundingErrorRule in packages/safety/watcher). A success
-    // breaks the streak. When any tool reaches the threshold — or a watcher
-    // marker is seen in turn text / done text — the run is treated as failed,
-    // not completed.
+    // Track consecutive tool failures per tool (a success breaks the streak).
+    // This runner-level streak catches failure loops the loop-level guards
+    // miss; loop-level budget/watcher stops arrive as structured `halt` events.
+    // Either way the run must not be judged as clean output.
     const consecutiveFailures = new Map<string, number>();
-    let compoundingFailure: { tool: string; count: number } | null = null;
-
-    const checkCompoundingMarker = (text: string): void => {
-      if (compoundingFailure || !COMPOUNDING_MARKER_RE.test(text)) return;
-      compoundingFailure = parseCompoundingMarker(text) ?? { tool: 'tool', count: 0 };
-    };
+    let stopCause: StopCause | null = null;
 
     const flushText = (): void => {
       if (pendingText) {
@@ -264,6 +465,9 @@ export class GoalRunner {
           ...(goal.maxToolCallsPerTurn != null
             ? { maxToolCallsPerTurn: goal.maxToolCallsPerTurn }
             : {}),
+          ...(goal.maxIdenticalToolCalls != null
+            ? { maxIdenticalToolCalls: goal.maxIdenticalToolCalls }
+            : {}),
           ...(goal.allowDangerousToolCalls ? { allowDangerousToolCalls: true } : {}),
         })) {
           // Coalesce text deltas into turn-grained checkpoints — never per-delta.
@@ -273,7 +477,6 @@ export class GoalRunner {
             case 'text_delta':
               pendingText += event.text;
               accumulated += event.text;
-              checkCompoundingMarker(event.text);
               break;
             case 'thinking_delta':
               break;
@@ -297,10 +500,16 @@ export class GoalRunner {
                 durationMs: event.durationMs,
               });
               if (event.ok === false) {
+                if (event.error) lastToolError = event.error;
                 const count = (consecutiveFailures.get(event.toolName) ?? 0) + 1;
                 consecutiveFailures.set(event.toolName, count);
-                if (!compoundingFailure && count >= COMPOUNDING_FAILURE_THRESHOLD) {
-                  compoundingFailure = { tool: event.toolName, count };
+                if (!stopCause && count >= COMPOUNDING_FAILURE_THRESHOLD) {
+                  stopCause = {
+                    kind: 'failure-streak',
+                    tool: event.toolName,
+                    count,
+                    reason: `${event.toolName} failed ${count} times in a row`,
+                  };
                 }
               } else {
                 consecutiveFailures.delete(event.toolName);
@@ -310,7 +519,19 @@ export class GoalRunner {
               // Audience gate — only 'user' events surface; 'internal' is dropped.
               if (event.audience === 'user') {
                 this.store.appendEvent(goal.id, 'turn_text', { text: event.message });
-                checkCompoundingMarker(event.message);
+              }
+              break;
+            case 'halt':
+              // Structured mid-run stop from the loop (tool budget or watcher
+              // pause). The loop still emits a normal `done` afterwards, so
+              // record the cause and let the recovery block below handle it.
+              if (!stopCause) {
+                stopCause = {
+                  kind: event.kind,
+                  tool: event.toolName ?? event.rule,
+                  count: event.count ?? 0,
+                  reason: event.message,
+                };
               }
               break;
             case 'usage':
@@ -329,6 +550,15 @@ export class GoalRunner {
               break;
             case 'error':
               this.store.appendEvent(goal.id, 'error', { error: event.error, code: event.code });
+              if (
+                transientRetries < TRANSIENT_RETRY_DELAYS_MS.length &&
+                isTransientError(event.error, event.code)
+              ) {
+                // Transient (rate limit / overload / timeout / network) — retry
+                // the SAME attempt with backoff instead of failing the goal.
+                transientRetryError = event.error;
+                break;
+              }
               this.store.updateStatus(goal.id, 'failed', {
                 errorText: event.error,
                 outputPartial: accumulated || output,
@@ -341,12 +571,15 @@ export class GoalRunner {
             case 'done':
               output = event.text;
               turns = event.turnCount;
-              checkCompoundingMarker(event.text);
               break;
             default:
               // Forward-compat: ignore unknown event types.
               break;
           }
+
+          // A transient error ends this run — stop consuming and re-enter the
+          // while-loop with a continuation message after the backoff.
+          if (transientRetryError) break;
         }
 
         // After each run finishes: flush trailing text from this continuation.
@@ -358,34 +591,68 @@ export class GoalRunner {
           break;
         }
 
-        // Compounding tool failure (watcher pause). In dangerous mode the watcher
-        // never halts, so recovery is skipped and we fall through to judge/complete.
-        if (!goal.allowDangerousToolCalls && compoundingFailure) {
+        // Transient LLM error → retry the SAME attempt in place with backoff.
+        if (transientRetryError) {
+          transientRetries++;
+          const delayMs = TRANSIENT_RETRY_DELAYS_MS[transientRetries - 1] ?? 0;
+          // Journey marker so the graph shows the retry (reuse turn_text).
+          this.store.appendEvent(goal.id, 'turn_text', {
+            text: `↻ Transient error — retrying (${transientRetries}/${TRANSIENT_RETRY_DELAYS_MS.length}) after ${delayMs / 1000}s: ${transientRetryError}`,
+          });
+          currentMessage =
+            `The previous request failed transiently (${transientRetryError}). ` +
+            `Continue the goal from where you left off.`;
+          transientRetryError = null;
+          await this.sleep(delayMs);
+          continue; // re-run the SAME session with the continuation message
+        }
+
+        // Mid-run stop (halt event or failure streak) → recover via reflection.
+        // Budget halts ALWAYS recover — dangerous mode only disables the safety
+        // watcher, not the loop's per-turn tool budgets. Watcher halts and
+        // failure streaks skip recovery in dangerous mode (the watcher is
+        // disabled there; keep the guard consistent for streaks).
+        if (stopCause && (stopCause.kind === 'budget' || !goal.allowDangerousToolCalls)) {
+          const { kind, tool, count, reason } = stopCause;
           const max = goal.maxRecoveryAttempts ?? 2;
           if (recoveryCount < max) {
             recoveryCount++;
-            const { tool, count } = compoundingFailure;
             // Journey marker so the graph shows the recovery (reuse turn_text).
             this.store.appendEvent(goal.id, 'turn_text', {
-              text: `↻ Recovering: detected a loop on \`${tool}\`, reflecting and trying a different approach (recovery ${recoveryCount}/${max})`,
+              text: `↻ Recovering: ${
+                kind === 'budget'
+                  ? `hit a tool-call budget (${reason})`
+                  : `detected a loop on \`${tool}\``
+              }, reflecting and trying a different approach (recovery ${recoveryCount}/${max})`,
             });
+            const loopDesc =
+              kind === 'failure-streak'
+                ? `you called \`${tool}\` ${count} times and it kept failing with: ${lastToolError || 'repeated failures'}`
+                : reason;
             const reflection =
-              `⚠ You are stuck in a loop: you called \`${tool}\` ${count} times and it kept ` +
-              `failing with: ${lastToolError || 'repeated failures'}. STOP repeating that exact ` +
-              `call. Step back and reason explicitly: what is actually going wrong, and why? Then ` +
-              `take a genuinely DIFFERENT approach — a different tool, different parameters, or a ` +
-              `revised plan. If a sub-goal is impossible, work around it and continue toward the ` +
-              `overall goal. Do not give up.`;
-            // Reset per-tool streak tracking + compounding flag so the next stretch
-            // starts fresh; a recovery continuation that loops AGAIN re-sets it.
+              kind === 'budget'
+                ? `⚠ You hit a tool-call budget mid-run: ${reason}. The turn was stopped ` +
+                  `before you finished. Work more efficiently: batch related work into fewer ` +
+                  `calls, vary your tool calls instead of repeating them, and avoid re-doing ` +
+                  `work you already completed. Continue toward the goal from where you left off.`
+                : `⚠ You are stuck in a loop: ${loopDesc}. STOP repeating that exact ` +
+                  `call. Step back and reason explicitly: what is actually going wrong, and why? Then ` +
+                  `take a genuinely DIFFERENT approach — a different tool, different parameters, or a ` +
+                  `revised plan. If a sub-goal is impossible, work around it and continue toward the ` +
+                  `overall goal. Do not give up.`;
+            // Reset per-tool streak tracking + the stop cause so the next stretch
+            // starts fresh; a recovery continuation that stops AGAIN re-sets it.
+            // Each loop.run() continuation also resets the loop's per-turn budgets.
             consecutiveFailures.clear();
-            compoundingFailure = null;
+            stopCause = null;
             currentMessage = reflection;
             continue; // re-run the SAME session with the reflection message
           }
           // Recovery exhausted → terminal failure (owner decision: fail, don't ask).
-          const { tool } = compoundingFailure;
-          const errorText = `Stuck: couldn't recover after ${recoveryCount} recovery attempts — ${tool} kept failing`;
+          const errorText =
+            kind === 'budget'
+              ? `Stuck: couldn't recover after ${recoveryCount} recovery attempts — kept hitting tool-call budgets (${reason})`
+              : `Stuck: couldn't recover after ${recoveryCount} recovery attempts — ${tool} kept failing`;
           const partial = accumulated || output;
           this.store.updateStatus(goal.id, 'failed', { errorText, outputPartial: partial });
           this.fireGoalFailed(goal, errorText, partial);
@@ -395,8 +662,8 @@ export class GoalRunner {
           return;
         }
 
-        // Clean done (no compounding) → leave the recovery loop and proceed to the
-        // normal judge/complete path.
+        // Clean done (no unrecovered stop) → leave the recovery loop and proceed
+        // to the normal judge/complete path.
         break;
       }
 
@@ -532,11 +799,13 @@ export class GoalRunner {
   }
 
   /**
-   * Submit a steer message to a running goal.
+   * Submit a steer message to a running goal. Also accepted while the goal is
+   * judging or retrying — the run loop is still alive between attempts, so the
+   * steer queues via activeRunState and lands in the next attempt's first message.
    */
   steer(goalId: string, message: string): boolean {
-    const goal = this.store.get(goalId);
-    if (goal?.status !== 'running') return false;
+    const status = this.store.get(goalId)?.status;
+    if (status !== 'running' && status !== 'judging' && status !== 'retrying') return false;
 
     const formatted = `[USER STEER] ${message}`;
     const sink = this.activeSteerSinks.get(goalId);
@@ -562,7 +831,12 @@ export class GoalRunner {
   cancel(goalId: string): boolean {
     const goal = this.store.get(goalId);
     if (!goal) return false;
-    if (goal.status !== 'running' && goal.status !== 'judging' && goal.status !== 'retrying') {
+    if (
+      goal.status !== 'planning' &&
+      goal.status !== 'running' &&
+      goal.status !== 'judging' &&
+      goal.status !== 'retrying'
+    ) {
       return false;
     }
 

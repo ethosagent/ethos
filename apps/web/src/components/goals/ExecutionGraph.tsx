@@ -18,7 +18,7 @@ interface ExecutionGraphProps {
 
 // --- Node types ---
 
-type NodeKind = 'GOAL' | 'ATTEMPT' | 'TURN' | 'TOOL' | 'STEER' | 'REJECTED' | 'DONE';
+type NodeKind = 'GOAL' | 'PLAN' | 'ATTEMPT' | 'TURN' | 'TOOL' | 'STEER' | 'REJECTED' | 'DONE';
 
 interface GraphNode {
   kind: NodeKind;
@@ -58,6 +58,9 @@ function classifyEvent(eventType: string): NodeKind {
   switch (eventType) {
     case 'run_start':
       return 'GOAL';
+    case 'plan_start':
+    case 'plan_ready':
+      return 'PLAN';
     case 'attempt_start':
       return 'ATTEMPT';
     case 'turn_text':
@@ -86,6 +89,9 @@ function buildNodes(events: ExecutionGraphProps['events']): GraphNode[] {
   // A maximal run of consecutive tool_start events shares one batchId.
   let currentBatchId = 0;
   let prevWasToolStart = false;
+  // The single PLAN node's index — plan_start creates it, plan_ready merges its
+  // summary in (mirrors the tool_start/tool_end collapse) so PLAN is one node.
+  let planNodeIndex: number | null = null;
 
   for (const ev of events) {
     // usage events are cost metadata surfaced elsewhere, not journey nodes —
@@ -152,6 +158,28 @@ function buildNodes(events: ExecutionGraphProps['events']): GraphNode[] {
 
     // Any non-tool node breaks a parallel run; the next tool_start starts fresh.
     prevWasToolStart = false;
+
+    // PLAN: plan_ready merges into the plan_start node (carrying its summary)
+    // rather than adding a second node.
+    if (kind === 'PLAN') {
+      if (ev.eventType === 'plan_ready' && planNodeIndex != null) {
+        const existing = mainNodes[planNodeIndex];
+        existing.payload = { ...existing.payload, ...ev.payload };
+        existing.eventType = 'plan_ready';
+        continue;
+      }
+      mainNodes.push({
+        kind,
+        id: ev.id,
+        seq: ev.seq,
+        payload: ev.payload,
+        createdAt: ev.createdAt,
+        eventType: ev.eventType,
+      });
+      planNodeIndex = mainNodes.length - 1;
+      continue;
+    }
+
     mainNodes.push({
       kind,
       id: ev.id,
@@ -173,6 +201,11 @@ function getNodeStyle(kind: NodeKind, isRunning: boolean): { borderLeft: string;
       return {
         borderLeft: '3px solid #8B5CF6',
         bg: 'var(--bg-overlay)',
+      };
+    case 'PLAN':
+      return {
+        borderLeft: '3px solid #14B8A6',
+        bg: 'var(--bg-elevated)',
       };
     case 'ATTEMPT':
       return {
@@ -211,6 +244,8 @@ function getNodeLabel(kind: NodeKind): string {
   switch (kind) {
     case 'GOAL':
       return 'GOAL';
+    case 'PLAN':
+      return 'PLAN';
     case 'ATTEMPT':
       return 'ATTEMPT';
     case 'TURN':
@@ -230,6 +265,8 @@ function getLabelColor(kind: NodeKind): string {
   switch (kind) {
     case 'GOAL':
       return '#8B5CF6';
+    case 'PLAN':
+      return '#14B8A6';
     case 'ATTEMPT':
       return 'var(--warning)';
     case 'TURN':
@@ -292,6 +329,25 @@ function renderNodeContent(
           )}
         </>
       );
+
+    case 'PLAN': {
+      const summary = node.payload?.summary as string | undefined;
+      const planning = node.eventType === 'plan_start';
+      return (
+        <div
+          style={{
+            fontSize: 11,
+            color: planning ? 'var(--text-tertiary)' : 'var(--text-secondary)',
+            fontStyle: planning ? 'italic' : 'normal',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {planning ? 'planning…' : summary ? truncate(summary, 30) : 'plan ready'}
+        </div>
+      );
+    }
 
     case 'ATTEMPT': {
       const attemptN = node.payload?.attemptN as number | undefined;
@@ -531,6 +587,8 @@ function getNodeSummary(node: GraphNode): string {
   switch (node.kind) {
     case 'GOAL':
       return 'Goal started';
+    case 'PLAN':
+      return node.eventType === 'plan_start' ? 'Planning' : 'Plan ready';
     case 'ATTEMPT': {
       const attemptN = node.payload?.attemptN as number | undefined;
       return attemptN != null ? `Attempt ${attemptN}` : 'Attempt';
@@ -553,6 +611,8 @@ function getNonToolInput(node: GraphNode, goalText?: string): string | null {
   switch (node.kind) {
     case 'GOAL':
       return goalText ?? null;
+    case 'PLAN':
+      return (node.payload?.summary as string) ?? null;
     case 'ATTEMPT': {
       const attemptN = node.payload?.attemptN as number | undefined;
       const strategy = node.payload?.strategy as string | undefined;
@@ -1520,25 +1580,30 @@ export function ExecutionGraph({
                     borderLeft: style.borderLeft,
                     border: `1px solid var(--border-subtle)`,
                     borderLeftWidth:
-                      node.kind === 'GOAL' || node.kind === 'ATTEMPT' || node.kind === 'STEER'
+                      node.kind === 'GOAL' ||
+                      node.kind === 'PLAN' ||
+                      node.kind === 'ATTEMPT' ||
+                      node.kind === 'STEER'
                         ? 3
                         : 1,
                     borderLeftColor:
                       node.kind === 'GOAL'
                         ? '#8B5CF6'
-                        : node.kind === 'ATTEMPT'
-                          ? 'var(--warning)'
-                          : node.kind === 'STEER'
-                            ? '#F59E0B'
-                            : node.kind === 'REJECTED'
-                              ? 'var(--error)'
-                              : node.kind === 'DONE'
-                                ? 'var(--success)'
-                                : isLastTurnActive
-                                  ? 'var(--info)'
-                                  : node.kind === 'TURN'
-                                    ? 'var(--success)'
-                                    : 'var(--text-tertiary)',
+                        : node.kind === 'PLAN'
+                          ? '#14B8A6'
+                          : node.kind === 'ATTEMPT'
+                            ? 'var(--warning)'
+                            : node.kind === 'STEER'
+                              ? '#F59E0B'
+                              : node.kind === 'REJECTED'
+                                ? 'var(--error)'
+                                : node.kind === 'DONE'
+                                  ? 'var(--success)'
+                                  : isLastTurnActive
+                                    ? 'var(--info)'
+                                    : node.kind === 'TURN'
+                                      ? 'var(--success)'
+                                      : 'var(--text-tertiary)',
                     background: style.bg,
                     padding: '6px 10px',
                     overflow: 'hidden',

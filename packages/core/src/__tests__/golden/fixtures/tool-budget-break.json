@@ -33,6 +33,14 @@
       "audience": "user"
     },
     {
+      "type": "halt",
+      "kind": "budget",
+      "rule": "tool-budget",
+      "toolName": "_budget",
+      "count": 1,
+      "message": "Stopped: hit 1-tool-call budget for this turn"
+    },
+    {
       "type": "done",
       "text": "",
       "turnCount": 1

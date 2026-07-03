@@ -1,13 +1,55 @@
+/** Running streak of consecutive tool calls with identical name + args. */
+export interface IdenticalStreak {
+  /** Identity key — `${toolName}:${JSON.stringify(args)}`. */
+  key: string;
+  toolName: string;
+  count: number;
+}
+
+/**
+ * Fold one completed tool call into the consecutive-identical-call streak.
+ * Same key as the previous call extends the streak; any different call
+ * (different name OR different args) resets it to 1.
+ */
+export function updateIdenticalStreak(
+  prev: IdenticalStreak | null,
+  toolName: string,
+  args: unknown,
+): IdenticalStreak {
+  let key: string;
+  try {
+    key = `${toolName}:${JSON.stringify(args)}`;
+  } catch {
+    // Non-serializable args (shouldn't happen for JSON tool args) — fall back
+    // to the tool name so the guard still functions, just more coarsely.
+    key = toolName;
+  }
+  if (prev && prev.key === key) {
+    return { key, toolName, count: prev.count + 1 };
+  }
+  return { key, toolName, count: 1 };
+}
+
+/** Which budget guard tripped. Carried on the exceeded result (and the `halt`
+ *  AgentEvent) so consumers never parse the human-readable message. */
+export type BudgetRule = 'tool-budget' | 'identical-name' | 'identical-streak';
+
 export function checkTurnBudgets(
   totalToolCalls: number,
   maxToolCallsPerTurn: number,
   toolNameCounts: Map<string, number>,
   maxIdenticalToolCalls: number,
-): { exceeded: false } | { exceeded: true; toolName: string; message: string } {
+  identicalStreak: IdenticalStreak | null,
+  maxConsecutiveIdenticalCalls: number,
+):
+  | { exceeded: false }
+  | { exceeded: true; rule: BudgetRule; toolName: string; count: number; message: string } {
   if (totalToolCalls >= maxToolCallsPerTurn) {
     return {
       exceeded: true,
+      rule: 'tool-budget',
       toolName: '_budget',
+      count: totalToolCalls,
       message: `Stopped: hit ${maxToolCallsPerTurn}-tool-call budget for this turn`,
     };
   }
@@ -17,8 +59,19 @@ export function checkTurnBudgets(
   if (overused) {
     return {
       exceeded: true,
+      rule: 'identical-name',
       toolName: overused[0],
+      count: overused[1],
       message: `Stopped: ${overused[0]} called ${overused[1]} times in one turn (likely loop)`,
+    };
+  }
+  if (identicalStreak && identicalStreak.count >= maxConsecutiveIdenticalCalls) {
+    return {
+      exceeded: true,
+      rule: 'identical-streak',
+      toolName: identicalStreak.toolName,
+      count: identicalStreak.count,
+      message: `Stopped: ${identicalStreak.toolName} called ${identicalStreak.count} times in a row with identical arguments (loop)`,
     };
   }
   return { exceeded: false };

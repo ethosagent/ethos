@@ -1855,6 +1855,7 @@ const GoalCreateInput = z.object({
   maxAttempts: z.number().int().min(1).optional(),
   maxCostUsd: z.number().optional(),
   maxToolCallsPerTurn: z.number().int().min(1).optional(),
+  maxIdenticalToolCalls: z.number().int().min(1).optional(),
   allowDangerousToolCalls: z.boolean().optional(),
   maxRecoveryAttempts: z.number().int().min(0).optional(),
   deadline: z.string().optional(),

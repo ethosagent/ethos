@@ -42,7 +42,9 @@ const SCHEMA = `
     cost_usd            REAL,
     max_tool_calls_per_turn INTEGER,
     allow_dangerous_tool_calls INTEGER,
-    max_recovery_attempts INTEGER
+    max_recovery_attempts INTEGER,
+    max_identical_tool_calls INTEGER,
+    plan_md             TEXT
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS goal_attempts (
@@ -105,6 +107,8 @@ interface GoalRow {
   max_tool_calls_per_turn: number | null;
   allow_dangerous_tool_calls: number | null;
   max_recovery_attempts: number | null;
+  max_identical_tool_calls: number | null;
+  plan_md: string | null;
 }
 
 interface GoalAttemptRow {
@@ -145,6 +149,7 @@ function rowToGoal(r: GoalRow): Goal {
     title: r.title,
     goalText: r.goal_text,
     acceptanceCriteria: r.acceptance_criteria ? JSON.parse(r.acceptance_criteria) : null,
+    planMd: r.plan_md,
     status: r.status as GoalStatus,
     maxAttempts: r.max_attempts ?? 3,
     maxCostUsd: r.max_cost_usd,
@@ -160,6 +165,7 @@ function rowToGoal(r: GoalRow): Goal {
     tokenCount: r.token_count,
     costUsd: r.cost_usd,
     maxToolCallsPerTurn: r.max_tool_calls_per_turn ?? undefined,
+    maxIdenticalToolCalls: r.max_identical_tool_calls ?? undefined,
     allowDangerousToolCalls: r.allow_dangerous_tool_calls === 1,
     maxRecoveryAttempts: r.max_recovery_attempts ?? undefined,
   };
@@ -227,9 +233,9 @@ export class SQLiteGoalStore implements GoalStore {
     // Version check — refuse to open a DB whose schema is newer than this code.
     const versionRows = this.db.pragma('user_version') as Array<{ user_version: number }>;
     const currentVersion = versionRows[0]?.user_version ?? 0;
-    if (currentVersion > 4) {
+    if (currentVersion > 6) {
       throw new Error(
-        `goal-store: database user_version=${currentVersion} is newer than code (4); refusing to open to avoid downgrade`,
+        `goal-store: database user_version=${currentVersion} is newer than code (6); refusing to open to avoid downgrade`,
       );
     }
 
@@ -262,8 +268,24 @@ export class SQLiteGoalStore implements GoalStore {
       }
     }
 
-    if (currentVersion < 4) {
-      this.db.pragma('user_version = 4');
+    // v4 → v5: add max_identical_tool_calls. Idempotent via table_info.
+    if (currentVersion < 5) {
+      const cols = this.db.pragma('table_info(goals)') as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'max_identical_tool_calls')) {
+        this.db.exec('ALTER TABLE goals ADD COLUMN max_identical_tool_calls INTEGER');
+      }
+    }
+
+    // v5 → v6: add plan_md (the mandatory planning phase's plan). Idempotent via table_info.
+    if (currentVersion < 6) {
+      const cols = this.db.pragma('table_info(goals)') as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'plan_md')) {
+        this.db.exec('ALTER TABLE goals ADD COLUMN plan_md TEXT');
+      }
+    }
+
+    if (currentVersion < 6) {
+      this.db.pragma('user_version = 6');
     }
   }
 
@@ -279,8 +301,9 @@ export class SQLiteGoalStore implements GoalStore {
         `INSERT INTO goals
          (id, user_id, personality_id, origin, source_session, title, goal_text,
           acceptance_criteria, status, max_attempts, max_cost_usd, deadline,
-          started_at, resume_count, max_tool_calls_per_turn, allow_dangerous_tool_calls, max_recovery_attempts)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          started_at, resume_count, max_tool_calls_per_turn, allow_dangerous_tool_calls, max_recovery_attempts,
+          max_identical_tool_calls)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -300,6 +323,7 @@ export class SQLiteGoalStore implements GoalStore {
         input.maxToolCallsPerTurn ?? null,
         input.allowDangerousToolCalls ? 1 : 0,
         input.maxRecoveryAttempts ?? null,
+        input.maxIdenticalToolCalls ?? null,
       );
 
     const goal = this.get(id);
@@ -348,6 +372,7 @@ export class SQLiteGoalStore implements GoalStore {
         | 'toolCount'
         | 'tokenCount'
         | 'costUsd'
+        | 'planMd'
       >
     >,
   ): void {
@@ -385,6 +410,10 @@ export class SQLiteGoalStore implements GoalStore {
     if (extra?.costUsd !== undefined) {
       sets.push('cost_usd = ?');
       values.push(extra.costUsd);
+    }
+    if (extra?.planMd !== undefined) {
+      sets.push('plan_md = ?');
+      values.push(extra.planMd);
     }
 
     values.push(id);

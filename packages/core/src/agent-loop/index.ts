@@ -1,4 +1,5 @@
-export { checkTurnBudgets } from './budgets';
+export type { IdenticalStreak } from './budgets';
+export { checkTurnBudgets, updateIdenticalStreak } from './budgets';
 export { handleChunk } from './chunk-handler';
 export { maybeCompact } from './compaction';
 export { extractFilePath } from './extract-file-path';

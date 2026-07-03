@@ -240,6 +240,7 @@ export function Chat() {
     costLimit: number;
     trials: number;
     maxToolCallsPerTurn: number;
+    maxIdenticalToolCalls: number;
     maxRecoveryAttempts: number;
     allowDangerousToolCalls: boolean;
   }) => {
@@ -254,6 +255,7 @@ export function Chat() {
       maxAttempts: config.trials,
       maxCostUsd: config.costLimit,
       maxToolCallsPerTurn: config.maxToolCallsPerTurn,
+      maxIdenticalToolCalls: config.maxIdenticalToolCalls,
       maxRecoveryAttempts: config.maxRecoveryAttempts,
       allowDangerousToolCalls: config.allowDangerousToolCalls,
     });

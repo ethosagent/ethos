@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 export type GoalStatus =
+  | 'planning'
   | 'running'
   | 'judging'
   | 'retrying'
@@ -89,6 +90,10 @@ export interface Goal {
   title: string;
   goalText: string;
   acceptanceCriteria: AcceptanceSpec | null;
+  /** The plan produced by the mandatory planning phase, as free-form markdown.
+   *  Null until planning completes (or when the runner is wired without a
+   *  planning callback, e.g. store-only / test construction). */
+  planMd: string | null;
   status: GoalStatus;
   maxAttempts: number;
   maxCostUsd: number | null;
@@ -104,6 +109,7 @@ export interface Goal {
   tokenCount: number | null;
   costUsd: number | null;
   maxToolCallsPerTurn?: number;
+  maxIdenticalToolCalls?: number;
   allowDangerousToolCalls?: boolean;
   maxRecoveryAttempts?: number;
 }
@@ -114,6 +120,8 @@ export interface Goal {
 
 export type GoalEventType =
   | 'run_start'
+  | 'plan_start'
+  | 'plan_ready'
   | 'attempt_start'
   | 'turn_text'
   | 'tool_start'
@@ -150,6 +158,7 @@ export interface CreateGoalInput {
   maxCostUsd?: number | null;
   deadline?: string | null;
   maxToolCallsPerTurn?: number;
+  maxIdenticalToolCalls?: number;
   allowDangerousToolCalls?: boolean;
   maxRecoveryAttempts?: number;
 }
@@ -172,6 +181,7 @@ export interface GoalStore {
         | 'toolCount'
         | 'tokenCount'
         | 'costUsd'
+        | 'planMd'
       >
     >,
   ): void;

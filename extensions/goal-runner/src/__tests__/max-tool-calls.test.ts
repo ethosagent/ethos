@@ -57,4 +57,37 @@ describe('GoalRunner — maxToolCallsPerTurn passthrough', () => {
 
     expect(capturedOpts?.maxToolCallsPerTurn).toBe(42);
   });
+
+  it('threads the goal maxIdenticalToolCalls into runAttempt opts', async () => {
+    let capturedOpts: { maxIdenticalToolCalls?: number } | undefined;
+    const capturingRunAttempt = (
+      _sessionKey: string,
+      _firstMessage: string,
+      opts: { maxIdenticalToolCalls?: number },
+    ): AsyncGenerator<AgentEvent> => {
+      capturedOpts = opts;
+      return (async function* () {
+        yield { type: 'done', text: 'done', turnCount: 1 } as AgentEvent;
+      })();
+    };
+
+    const goal = store.create({
+      userId: 'user-1',
+      personalityId: 'tester',
+      origin: 'cli',
+      title: 'Test goal',
+      goalText: 'Do the thing',
+      maxIdenticalToolCalls: 33,
+    });
+
+    const runner = new GoalRunner({
+      store,
+      runAttempt: capturingRunAttempt as GoalRunnerConfig['runAttempt'],
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'completed');
+
+    expect(capturedOpts?.maxIdenticalToolCalls).toBe(33);
+  });
 });
