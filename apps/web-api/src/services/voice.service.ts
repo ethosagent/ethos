@@ -2,7 +2,13 @@ import { randomBytes } from 'node:crypto';
 import { unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SecretsResolver, SttProvider, SttProviderRegistry, TtsProvider, TtsProviderRegistry } from '@ethosagent/types';
+import type {
+  SecretsResolver,
+  SttProvider,
+  SttProviderRegistry,
+  TtsProvider,
+  TtsProviderRegistry,
+} from '@ethosagent/types';
 
 const HALLUCINATION_PATTERNS = [
   /^thanks?\s*(you\s*)?(for\s+)?(watching|listening|viewing)/i,
@@ -167,7 +173,10 @@ export class VoiceService {
     return this.ttsProvider;
   }
 
-  async synthesize(text: string, voice?: string): Promise<{ audio: string; format: 'opus' | 'mp3' | 'wav' | 'pcm'; mimeType: string }> {
+  async synthesize(
+    text: string,
+    voice?: string,
+  ): Promise<{ audio: string; format: 'opus' | 'mp3' | 'wav' | 'pcm'; mimeType: string }> {
     const provider = await this.resolveTts();
     if (!provider) throw new Error('No TTS provider configured — set auxiliary.tts in config');
 
@@ -175,7 +184,11 @@ export class VoiceService {
     let input = text;
     if (maxChars && input.length > maxChars) {
       const truncated = input.slice(0, maxChars);
-      const lastEnd = Math.max(truncated.lastIndexOf('.'), truncated.lastIndexOf('!'), truncated.lastIndexOf('?'));
+      const lastEnd = Math.max(
+        truncated.lastIndexOf('.'),
+        truncated.lastIndexOf('!'),
+        truncated.lastIndexOf('?'),
+      );
       input = lastEnd > maxChars * 0.5 ? truncated.slice(0, lastEnd + 1) : truncated;
     }
 

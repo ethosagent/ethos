@@ -72,8 +72,23 @@ export function PlayButton({ text }: PlayButtonProps) {
     >
       {state === 'loading' ? (
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" strokeDasharray="28" strokeDashoffset="8">
-            <animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="0.8s" repeatCount="indefinite" />
+          <circle
+            cx="8"
+            cy="8"
+            r="6"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeDasharray="28"
+            strokeDashoffset="8"
+          >
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              from="0 8 8"
+              to="360 8 8"
+              dur="0.8s"
+              repeatCount="indefinite"
+            />
           </circle>
         </svg>
       ) : state === 'playing' ? (
@@ -83,9 +98,22 @@ export function PlayButton({ text }: PlayButtonProps) {
         </svg>
       ) : (
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M3 5.5h2l3-2.5v10l-3-2.5H3a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1z" fill="currentColor" />
-          <path d="M11 5.5a3.5 3.5 0 0 1 0 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          <path d="M12.5 3.5a6 6 0 0 1 0 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path
+            d="M3 5.5h2l3-2.5v10l-3-2.5H3a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1z"
+            fill="currentColor"
+          />
+          <path
+            d="M11 5.5a3.5 3.5 0 0 1 0 5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+          <path
+            d="M12.5 3.5a6 6 0 0 1 0 9"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
         </svg>
       )}
     </button>

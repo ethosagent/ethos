@@ -28,9 +28,9 @@ interface VoiceButtonProps {
 export function AudioBars({ levels }: { levels: number[] }) {
   return (
     <div className="composer-voice-bars" aria-hidden="true">
-      {/* biome-ignore lint/suspicious/noArrayIndexKey: fixed-position audio bars never reorder */}
       {levels.map((level, i) => (
         <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: fixed-position audio bars never reorder
           key={i}
           className="composer-voice-bar"
           style={{ height: `${Math.max(4, level * 28)}px` }}
@@ -40,7 +40,12 @@ export function AudioBars({ levels }: { levels: number[] }) {
   );
 }
 
-export function VoiceButton({ onTranscript, onRecordingChange, disabled, accent }: VoiceButtonProps) {
+export function VoiceButton({
+  onTranscript,
+  onRecordingChange,
+  disabled,
+  accent,
+}: VoiceButtonProps) {
   const { isRecording, elapsedMs, audioLevels, startRecording, stopRecording, cancelRecording } =
     useVoiceRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);

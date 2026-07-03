@@ -2175,7 +2175,11 @@ body,
   color: var(--ethos-text-dim, #aaa);
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s;
   z-index: 5;
 }
 
@@ -2387,7 +2391,10 @@ textarea {
   color: var(--ethos-text-tertiary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    background 0.15s;
 }
 
 .play-btn:hover {

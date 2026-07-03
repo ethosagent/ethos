@@ -294,11 +294,15 @@ export class ConfigRepository {
     if (config.debugPanelEnabled !== undefined)
       lines.push(`display.debug_panel: ${config.debugPanelEnabled}`);
     if (config.debugPanelModel) lines.push(`display.debug_panel_model: ${config.debugPanelModel}`);
-    if (config.voiceProvider) lines.push(`auxiliary.asr.provider: ${yamlScalar(config.voiceProvider)}`);
+    if (config.voiceProvider)
+      lines.push(`auxiliary.asr.provider: ${yamlScalar(config.voiceProvider)}`);
     if (config.voiceApiKey) lines.push(`auxiliary.asr.apiKey: ${yamlScalar(config.voiceApiKey)}`);
-    if (config.voiceTtsProvider) lines.push(`auxiliary.tts.provider: ${yamlScalar(config.voiceTtsProvider)}`);
-    if (config.voiceTtsApiKey) lines.push(`auxiliary.tts.apiKey: ${yamlScalar(config.voiceTtsApiKey)}`);
-    if (config.voiceTtsVoice) lines.push(`auxiliary.tts.voice: ${yamlScalar(config.voiceTtsVoice)}`);
+    if (config.voiceTtsProvider)
+      lines.push(`auxiliary.tts.provider: ${yamlScalar(config.voiceTtsProvider)}`);
+    if (config.voiceTtsApiKey)
+      lines.push(`auxiliary.tts.apiKey: ${yamlScalar(config.voiceTtsApiKey)}`);
+    if (config.voiceTtsVoice)
+      lines.push(`auxiliary.tts.voice: ${yamlScalar(config.voiceTtsVoice)}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
     }
