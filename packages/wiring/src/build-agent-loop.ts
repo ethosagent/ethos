@@ -448,6 +448,9 @@ export async function buildAgentLoop(
         ...(o.personalityId ? { personalityId: o.personalityId } : {}),
         ...(o.userId ? { userId: o.userId } : {}),
         ...(o.maxToolCallsPerTurn != null ? { maxToolCallsPerTurn: o.maxToolCallsPerTurn } : {}),
+        ...(o.maxIdenticalToolCalls != null
+          ? { maxIdenticalToolCalls: o.maxIdenticalToolCalls }
+          : {}),
         ...(o.allowDangerousToolCalls ? { allowDangerousToolCalls: true } : {}),
         ...(toolsetOverride ? { toolsetOverride } : {}),
       });

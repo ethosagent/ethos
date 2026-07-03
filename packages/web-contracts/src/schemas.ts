@@ -1099,6 +1099,7 @@ export const GoalSchema = z.object({
   tokenCount: z.number().int().nullable(),
   costUsd: z.number().nullable(),
   maxToolCallsPerTurn: z.number().int().min(1).nullable().optional(),
+  maxIdenticalToolCalls: z.number().int().min(1).nullable().optional(),
   allowDangerousToolCalls: z.boolean().nullable().optional(),
   maxRecoveryAttempts: z.number().int().min(0).nullable().optional(),
 });

@@ -81,6 +81,7 @@ export interface GoalRunnerConfig {
       personalityId?: string;
       userId?: string;
       maxToolCallsPerTurn?: number;
+      maxIdenticalToolCalls?: number;
       allowDangerousToolCalls?: boolean;
     },
   ) => AsyncGenerator<AgentEvent>;
@@ -263,6 +264,9 @@ export class GoalRunner {
           ...(goal.userId ? { userId: goal.userId } : {}),
           ...(goal.maxToolCallsPerTurn != null
             ? { maxToolCallsPerTurn: goal.maxToolCallsPerTurn }
+            : {}),
+          ...(goal.maxIdenticalToolCalls != null
+            ? { maxIdenticalToolCalls: goal.maxIdenticalToolCalls }
             : {}),
           ...(goal.allowDangerousToolCalls ? { allowDangerousToolCalls: true } : {}),
         })) {

@@ -104,6 +104,7 @@ export interface Goal {
   tokenCount: number | null;
   costUsd: number | null;
   maxToolCallsPerTurn?: number;
+  maxIdenticalToolCalls?: number;
   allowDangerousToolCalls?: boolean;
   maxRecoveryAttempts?: number;
 }
@@ -150,6 +151,7 @@ export interface CreateGoalInput {
   maxCostUsd?: number | null;
   deadline?: string | null;
   maxToolCallsPerTurn?: number;
+  maxIdenticalToolCalls?: number;
   allowDangerousToolCalls?: boolean;
   maxRecoveryAttempts?: number;
 }

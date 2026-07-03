@@ -30,6 +30,7 @@ export function useGoalCreate() {
       };
       maxAttempts?: number;
       maxToolCallsPerTurn?: number;
+      maxIdenticalToolCalls?: number;
       allowDangerousToolCalls?: boolean;
       maxRecoveryAttempts?: number;
       maxCostUsd?: number;

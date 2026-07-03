@@ -44,6 +44,7 @@ export interface LoopDeps {
   resultBudgetChars: number;
   maxToolCallsPerTurn: number;
   maxIdenticalToolCalls: number;
+  maxConsecutiveIdenticalCalls: number;
   streamingTimeoutMs: number;
   modelRouting: Record<string, string>;
   memoryProviders: Map<

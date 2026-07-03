@@ -15,7 +15,8 @@ import type {
   Storage,
   ToolRegistry,
 } from '@ethosagent/types';
-import { checkTurnBudgets } from './agent-loop/budgets';
+import type { IdenticalStreak } from './agent-loop/budgets';
+import { checkTurnBudgets, updateIdenticalStreak } from './agent-loop/budgets';
 import { assembleContext } from './agent-loop/stages/context-assembly';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
 import { streamStep } from './agent-loop/stages/stream-step';
@@ -183,6 +184,13 @@ export interface AgentLoopConfig {
      */
     maxIdenticalToolCalls?: number;
     /**
+     * True loop detection: hard cap on *consecutive* tool calls with the same
+     * name AND identical arguments (JSON-stringified), uninterrupted by any
+     * different call. Tighter than `maxIdenticalToolCalls` (a frequency cap)
+     * because it only trips on the actual loop shape. Defaults to 5.
+     */
+    maxConsecutiveIdenticalCalls?: number;
+    /**
      * Default streaming watchdog in milliseconds. If no chunk arrives from the
      * LLM within this window, the agent aborts the stream and emits an error.
      * Reset on every chunk. Personalities can override via
@@ -248,6 +256,8 @@ export interface RunOptions {
   toolsetNarrow?: string[];
   /** Override the per-turn tool-call cap for this run only (goal runs raise it; default applies when absent). */
   maxToolCallsPerTurn?: number;
+  /** Override the per-tool-name repeat cap for this run only (goal runs raise it; default applies when absent). */
+  maxIdenticalToolCalls?: number;
   /** When true, bypass safety-watcher halts for this run (opt-in, dangerous; caps still apply). */
   allowDangerousToolCalls?: boolean;
 }
@@ -276,6 +286,7 @@ export class AgentLoop {
   private readonly resultBudgetChars: number;
   private readonly maxToolCallsPerTurn: number;
   private readonly maxIdenticalToolCalls: number;
+  private readonly maxConsecutiveIdenticalCalls: number;
   private readonly streamingTimeoutMs: number;
   private readonly modelRouting: Record<string, string>;
   private readonly memoryProviders: Map<
@@ -329,6 +340,7 @@ export class AgentLoop {
     this.resultBudgetChars = config.options?.resultBudgetChars ?? 80_000;
     this.maxToolCallsPerTurn = config.options?.maxToolCallsPerTurn ?? 100;
     this.maxIdenticalToolCalls = config.options?.maxIdenticalToolCalls ?? 25;
+    this.maxConsecutiveIdenticalCalls = config.options?.maxConsecutiveIdenticalCalls ?? 5;
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 600_000;
     this.modelRouting = config.modelRouting ?? {};
     this.memoryProviders = config.memoryProviders ?? new Map();
@@ -404,6 +416,7 @@ export class AgentLoop {
       resultBudgetChars: this.resultBudgetChars,
       maxToolCallsPerTurn: this.maxToolCallsPerTurn,
       maxIdenticalToolCalls: this.maxIdenticalToolCalls,
+      maxConsecutiveIdenticalCalls: this.maxConsecutiveIdenticalCalls,
       streamingTimeoutMs: this.streamingTimeoutMs,
       modelRouting: this.modelRouting,
       memoryProviders: this.memoryProviders,
@@ -468,12 +481,16 @@ export class AgentLoop {
     let fullText = '';
     let turnCount = 0;
     const effectiveMaxToolCalls = opts.maxToolCallsPerTurn ?? this.maxToolCallsPerTurn;
+    const effectiveMaxIdentical = opts.maxIdenticalToolCalls ?? this.maxIdenticalToolCalls;
 
     // Tool-call budget tracking — prevents runaway loops (see IMPROVEMENT.md P1-3).
     // Counted across all iterations within a single user turn.
     let totalToolCalls = 0;
     let successfulToolCalls = 0;
     const toolNameCounts = new Map<string, number>();
+    // Consecutive-identical-call streak — true loop detection (same tool name
+    // AND identical args, uninterrupted by any different call).
+    let identicalStreak: IdenticalStreak | null = null;
 
     // Dry-run tracking — accumulates across all iterations of a turn.
     const dryRunState = {
@@ -560,7 +577,9 @@ export class AgentLoop {
         totalToolCalls,
         effectiveMaxToolCalls,
         toolNameCounts,
-        this.maxIdenticalToolCalls,
+        effectiveMaxIdentical,
+        identicalStreak,
+        this.maxConsecutiveIdenticalCalls,
       );
       if (budgetResult.exceeded) {
         yield {
@@ -614,6 +633,7 @@ export class AgentLoop {
         totalToolCalls += stepResult.completedToolCalls.length;
         for (const tc of stepResult.completedToolCalls) {
           toolNameCounts.set(tc.toolName, (toolNameCounts.get(tc.toolName) ?? 0) + 1);
+          identicalStreak = updateIdenticalStreak(identicalStreak, tc.toolName, tc.args);
         }
       }
 

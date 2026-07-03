@@ -14,6 +14,7 @@ interface GoalIntakeModalProps {
     costLimit: number;
     trials: number;
     maxToolCallsPerTurn: number;
+    maxIdenticalToolCalls: number;
     maxRecoveryAttempts: number;
     allowDangerousToolCalls: boolean;
   }) => void;
@@ -42,6 +43,7 @@ export function GoalIntakeModal({
   const [costLimit, setCostLimit] = useState(5);
   const [trials, setTrials] = useState(3);
   const [maxToolCallsPerTurn, setMaxToolCallsPerTurn] = useState(100);
+  const [maxIdenticalToolCalls, setMaxIdenticalToolCalls] = useState(25);
   const [maxRecoveryAttempts, setMaxRecoveryAttempts] = useState(2);
   const [allowDangerousToolCalls, setAllowDangerousToolCalls] = useState(false);
 
@@ -81,6 +83,7 @@ export function GoalIntakeModal({
       costLimit,
       trials,
       maxToolCallsPerTurn,
+      maxIdenticalToolCalls,
       maxRecoveryAttempts,
       allowDangerousToolCalls,
     });
@@ -536,6 +539,46 @@ export function GoalIntakeModal({
                   }}
                 >
                   Higher = the agent can call more tools in a single turn before pausing.
+                </div>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    textTransform: 'uppercase',
+                    color: 'var(--text-secondary)',
+                    letterSpacing: '0.08em',
+                    marginBottom: 8,
+                  }}
+                >
+                  Max identical tool calls
+                </div>
+                <input
+                  type="number"
+                  value={maxIdenticalToolCalls}
+                  onChange={(e) => setMaxIdenticalToolCalls(Number(e.target.value))}
+                  min={1}
+                  style={{
+                    width: 80,
+                    background: 'var(--bg-overlay)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-primary)',
+                    borderRadius: '6px',
+                    padding: 8,
+                    fontSize: 13,
+                  }}
+                />
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-tertiary)',
+                    marginTop: 6,
+                    maxWidth: 160,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  How many times the same tool can be called in one turn before the run pauses.
                 </div>
               </div>
               <div>

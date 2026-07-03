@@ -67,6 +67,7 @@ export class GoalsService {
     maxCostUsd?: number;
     deadline?: string;
     maxToolCallsPerTurn?: number;
+    maxIdenticalToolCalls?: number;
     allowDangerousToolCalls?: boolean;
     maxRecoveryAttempts?: number;
   }): Promise<{ goal: Goal }> {
@@ -97,6 +98,9 @@ export class GoalsService {
       ...(input.deadline !== undefined ? { deadline: input.deadline } : {}),
       ...(input.maxToolCallsPerTurn !== undefined
         ? { maxToolCallsPerTurn: input.maxToolCallsPerTurn }
+        : {}),
+      ...(input.maxIdenticalToolCalls !== undefined
+        ? { maxIdenticalToolCalls: input.maxIdenticalToolCalls }
         : {}),
       ...(input.allowDangerousToolCalls !== undefined
         ? { allowDangerousToolCalls: input.allowDangerousToolCalls }
