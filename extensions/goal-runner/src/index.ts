@@ -57,6 +57,16 @@ const GOAL_AUTONOMY_DIRECTIVE =
   'proceed. If information is missing, pick a sensible default and state the ' +
   'assumption in your output.';
 
+/** Injected into the planning session's system prompt. Constrains the planning
+ *  turn to investigation + a written plan — no execution, no mutations. */
+const GOAL_PLANNING_DIRECTIVE =
+  'You are in the PLANNING phase of an autonomous goal run. Nothing has been ' +
+  'executed yet. Investigate as much as you need using your read-only tools ' +
+  '(reading files, searching, web lookups) — but do NOT make any changes: this ' +
+  'phase is planning only. Produce a concise, actionable PLAN in markdown with ' +
+  'numbered steps toward the goal, the key assumptions you are making, and the ' +
+  'main risks. Output only the plan.';
+
 /** Minimal in-memory SteerSink — an array-backed FIFO queue. */
 class ArraySteerSink implements SteerSink {
   private queue: string[] = [];
@@ -95,6 +105,22 @@ export interface GoalRunnerConfig {
       allowDangerousToolCalls?: boolean;
     },
   ) => AsyncGenerator<AgentEvent>;
+  /** Read-only planning turn. When wired, every goal runs a planning phase
+   *  BEFORE its first attempt: the plan is produced, persisted, and injected
+   *  into execution — no plan, no execution. When ABSENT (store-only and most
+   *  test construction) planning is SKIPPED and behavior is unchanged, so the
+   *  existing goal-runner suite needs no rewrite. Production wiring always
+   *  provides this (with a read-only toolset override), so production goals
+   *  always plan. Same shape as `runAttempt` minus the execution-only knobs. */
+  runPlan?: (
+    sessionKey: string,
+    firstMessage: string,
+    opts: {
+      abortSignal: AbortSignal;
+      personalityId?: string;
+      userId?: string;
+    },
+  ) => AsyncGenerator<AgentEvent>;
   /** Injectable sleep for transient-error retry backoff. Defaults to a real
    *  setTimeout delay; tests inject a recorder to skip waiting. */
   sleepFn?: (ms: number) => Promise<void>;
@@ -108,6 +134,7 @@ export class GoalRunner {
   private activeSteerSinks = new Map<string, SteerSink>();
   private hooks: HookRegistry | undefined;
   private runAttempt: GoalRunnerConfig['runAttempt'];
+  private runPlan: GoalRunnerConfig['runPlan'];
   private sleep: (ms: number) => Promise<void>;
 
   constructor(config: GoalRunnerConfig) {
@@ -115,14 +142,15 @@ export class GoalRunner {
     this.maxTurnsSafetyValve = config.maxTurnsSafetyValve ?? 100;
     this.hooks = config.hooks;
     this.runAttempt = config.runAttempt;
+    this.runPlan = config.runPlan;
     this.sleep = config.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
   /**
-   * Start a goal run. If a loop-bearing runAttempt was wired, launches the
-   * convergence/retry loop fire-and-forget and returns immediately. Without
-   * runAttempt this is store-only (records run_start and returns), which keeps
-   * store-only construction type-checking.
+   * Start a goal run. If a loop-bearing runAttempt was wired, emits run_start
+   * and launches the plan-then-run pipeline fire-and-forget, returning
+   * immediately. Without runAttempt this is store-only (records run_start and
+   * returns), which keeps store-only construction type-checking.
    */
   async startGoal(goalId: string): Promise<void> {
     const goal = this.store.get(goalId);
@@ -135,35 +163,192 @@ export class GoalRunner {
     const controller = new AbortController();
     this.activeRuns.set(goalId, controller);
 
+    // run_start is emitted ONCE here, at the top of the run (before any planning
+    // or attempt), so the execution graph shows GOAL first. The store-only path
+    // below preserves the same single emission; runAttemptLoop no longer emits
+    // it for n===1, keeping resume (which re-enters runAttemptLoop directly) from
+    // double-emitting on an already-started goal.
+    this.store.appendEvent(goalId, 'run_start', {
+      attemptN: 1,
+      sessionKey: `goal:${goalId}:attempt-1`,
+    });
+
     if (!this.runAttempt) {
-      // Store-only construction: record the run_start event and return.
-      this.store.appendEvent(goalId, 'run_start', {
-        attemptN: 1,
-        sessionKey: `goal:${goalId}:attempt-1`,
-      });
+      // Store-only construction: run_start recorded above, nothing to run.
       return;
     }
 
-    // Fire-and-forget: launch the convergence/retry loop without awaiting.
-    void this.runAttemptLoop(goal, controller, 1, this.renderGoalPrompt(goal)).catch(() => {});
+    // Fire-and-forget: plan (when a planning callback is wired), then launch the
+    // convergence/retry loop. Kept off startGoal's awaited path so goal creation
+    // returns fast — planning runs in the background.
+    void this.planThenRun(goal, controller).catch(() => {});
+  }
+
+  /**
+   * Ordering seam: PLAN (when wired) then ATTEMPT 1. When no planning callback
+   * is wired, planning is skipped and the attempt loop runs directly — this is
+   * why the existing goal-runner suite (which constructs without runPlan) is
+   * unchanged. When planning fails, runPlanningPhase has already finalized the
+   * goal (failed/interrupted) and returns false, so no attempt runs.
+   */
+  private async planThenRun(goal: Goal, controller: AbortController): Promise<void> {
+    if (this.runPlan) {
+      const planned = await this.runPlanningPhase(goal, controller);
+      if (!planned) return;
+      // Reload so the plan just persisted flows into the attempt prompt.
+      const withPlan = this.store.get(goal.id) ?? goal;
+      await this.runAttemptLoop(withPlan, controller, 1, this.renderGoalPrompt(withPlan));
+      return;
+    }
+    await this.runAttemptLoop(goal, controller, 1, this.renderGoalPrompt(goal));
+  }
+
+  /**
+   * Run the mandatory planning phase: a read-only turn that investigates and
+   * produces the plan. On success the plan is persisted, status returns to
+   * 'running', and plan_ready is appended; returns true so the attempt loop
+   * proceeds. On an error event, empty plan, or abort, the goal is finalized
+   * (failed / interrupted / cancelled) and false is returned — guaranteeing
+   * "no plan, no execution". Returns true immediately when no planning callback
+   * is wired (planning skipped).
+   */
+  private async runPlanningPhase(goal: Goal, controller: AbortController): Promise<boolean> {
+    const runPlan = this.runPlan;
+    if (!runPlan) return true;
+
+    const sessionKey = `goal:${goal.id}:plan`;
+    this.store.updateStatus(goal.id, 'planning');
+    this.store.appendEvent(goal.id, 'plan_start', { sessionKey });
+
+    // Inject the planning directive + goal spec into the plan session's system
+    // prompt (mirrors the per-attempt injector). Cleaned up before returning.
+    let cleanupInjector: (() => void) | undefined;
+    if (this.hooks) {
+      cleanupInjector = this.hooks.registerModifying('before_prompt_build', async (payload) => {
+        if (payload.sessionId !== sessionKey) return null;
+        return {
+          prependSystem: `${this.renderGoalPrompt(goal)}\n\n${GOAL_PLANNING_DIRECTIVE}\n\n${GOAL_AUTONOMY_DIRECTIVE}`,
+        };
+      });
+    }
+
+    const finalizeFailed = (errorText: string): false => {
+      this.store.updateStatus(goal.id, 'failed', { errorText });
+      this.fireGoalFailed(goal, errorText, '');
+      cleanupInjector?.();
+      this.activeRuns.delete(goal.id);
+      this.activeRunState.delete(goal.id);
+      return false;
+    };
+
+    let planText = '';
+    let accumulated = '';
+    let costUsd = 0;
+
+    try {
+      for await (const event of runPlan(sessionKey, this.renderPlanPrompt(goal), {
+        abortSignal: controller.signal,
+        ...(goal.personalityId ? { personalityId: goal.personalityId } : {}),
+        ...(goal.userId ? { userId: goal.userId } : {}),
+      })) {
+        switch (event.type) {
+          case 'text_delta':
+            accumulated += event.text;
+            break;
+          case 'usage':
+            costUsd += event.estimatedCostUsd;
+            this.store.appendEvent(goal.id, 'usage', {
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+              estimatedCostUsd: event.estimatedCostUsd,
+            });
+            if (goal.maxCostUsd != null && costUsd > goal.maxCostUsd) {
+              controller.abort();
+            }
+            break;
+          case 'error':
+            this.store.appendEvent(goal.id, 'error', { error: event.error, code: event.code });
+            return finalizeFailed(`Planning failed: ${event.error}`);
+          case 'done':
+            planText = event.text;
+            break;
+          default:
+            break;
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.store.appendEvent(goal.id, 'error', { error: msg, code: 'planning_failed' });
+      return finalizeFailed(`Planning failed: ${msg}`);
+    } finally {
+      cleanupInjector?.();
+    }
+
+    // Aborted mid-plan: cancel() already set 'cancelled'; a budget abort leaves
+    // status at 'planning' — mark it interrupted. Either way, no attempt runs.
+    if (controller.signal.aborted) {
+      if (this.store.get(goal.id)?.status === 'planning') {
+        this.store.updateStatus(goal.id, 'interrupted', { errorText: 'Planning interrupted' });
+      }
+      this.activeRuns.delete(goal.id);
+      this.activeRunState.delete(goal.id);
+      return false;
+    }
+
+    const plan = (planText || accumulated).trim();
+    if (!plan) {
+      return finalizeFailed('Planning produced no plan');
+    }
+
+    // Persist the plan and return to 'running'; the attempt loop takes over.
+    this.store.updateStatus(goal.id, 'running', { planMd: plan });
+    this.store.appendEvent(goal.id, 'plan_ready', { summary: plan.slice(0, 200) });
+    return true;
   }
 
   /**
    * Render the goal spec into prompt text. Used as BOTH the first message and
    * the before_prompt_build prepend so the agent always sees the goal + criteria.
+   * Once a plan exists it is appended so attempt 1 and every retry see it.
    */
   private renderGoalPrompt(goal: Goal): string {
     const spec = goal.acceptanceCriteria;
-    if (!spec) return `Goal: ${goal.goalText}`;
+    let base: string;
+    if (!spec) {
+      base = `Goal: ${goal.goalText}`;
+    } else {
+      const lines: string[] = [`Goal: ${goal.goalText}`, '', 'Acceptance criteria:'];
+      for (const check of spec.checks ?? []) {
+        lines.push(`- ${check.description}`);
+      }
+      for (const item of spec.rubric ?? []) {
+        lines.push(`- ${item.description} (weight ${item.weight})`);
+      }
+      lines.push(`Threshold: ${spec.threshold}`);
+      base = lines.join('\n');
+    }
+    if (goal.planMd) {
+      base += `\n\n## Plan\n${goal.planMd}`;
+    }
+    return base;
+  }
 
-    const lines: string[] = [`Goal: ${goal.goalText}`, '', 'Acceptance criteria:'];
-    for (const check of spec.checks ?? []) {
-      lines.push(`- ${check.description}`);
+  /**
+   * Render the planning turn's first message: the goal spec plus a directive to
+   * produce the plan. When the goal has no acceptanceCriteria, the model is also
+   * asked to describe, in free-form markdown, how completion will be judged
+   * (structured AcceptanceSpec auto-drafting is deferred to a follow-up).
+   */
+  private renderPlanPrompt(goal: Goal): string {
+    const lines: string[] = [this.renderGoalPrompt(goal), '', GOAL_PLANNING_DIRECTIVE];
+    if (!goal.acceptanceCriteria) {
+      lines.push(
+        '',
+        'This goal has no explicit acceptance criteria. Include a "## Success ' +
+          'criteria" section describing, in plain markdown, how you will judge that ' +
+          'the goal is complete.',
+      );
     }
-    for (const item of spec.rubric ?? []) {
-      lines.push(`- ${item.description} (weight ${item.weight})`);
-    }
-    lines.push(`Threshold: ${spec.threshold}`);
     return lines.join('\n');
   }
 
@@ -204,9 +389,10 @@ export class GoalRunner {
       });
     }
 
-    if (n === 1) {
-      this.store.appendEvent(goal.id, 'run_start', { attemptN: 1, sessionKey });
-    } else {
+    // run_start (n===1) is emitted once by startGoal before planning, so the
+    // graph shows GOAL → PLAN → attempt 1 in order and resume (which re-enters
+    // here directly) never re-emits it. Only retries (n>1) mark an attempt_start.
+    if (n > 1) {
       this.store.appendEvent(goal.id, 'attempt_start', {
         attemptN: n,
         sessionKey,
@@ -645,7 +831,12 @@ export class GoalRunner {
   cancel(goalId: string): boolean {
     const goal = this.store.get(goalId);
     if (!goal) return false;
-    if (goal.status !== 'running' && goal.status !== 'judging' && goal.status !== 'retrying') {
+    if (
+      goal.status !== 'planning' &&
+      goal.status !== 'running' &&
+      goal.status !== 'judging' &&
+      goal.status !== 'retrying'
+    ) {
       return false;
     }
 

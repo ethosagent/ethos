@@ -1010,6 +1010,7 @@ export type ApiKeyMetadata = z.infer<typeof ApiKeyMetadataSchema>;
 // ---------------------------------------------------------------------------
 
 export const GoalStatusSchema = z.enum([
+  'planning',
   'running',
   'judging',
   'retrying',
@@ -1053,6 +1054,8 @@ export type GoalAttemptWire = z.infer<typeof GoalAttemptSchema>;
 
 export const GoalEventTypeSchema = z.enum([
   'run_start',
+  'plan_start',
+  'plan_ready',
   'attempt_start',
   'turn_text',
   'tool_start',
@@ -1084,6 +1087,7 @@ export const GoalSchema = z.object({
   title: z.string(),
   goalText: z.string(),
   acceptanceCriteria: z.unknown().nullable(),
+  planMd: z.string().nullable(),
   status: GoalStatusSchema,
   maxAttempts: z.number().int(),
   maxCostUsd: z.number().nullable(),

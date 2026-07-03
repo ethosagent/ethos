@@ -435,6 +435,24 @@ export async function buildAgentLoop(
   // user to answer them, so a call would hang the run forever. Stripped from the
   // goal session's effective toolset. Extend this set as new interactive tools land.
   const GOAL_EXCLUDED_TOOLS = new Set(['clarify']);
+  // Read-only planning toolset. The Tool contract carries no read-only/mutates
+  // signal (only `toolset` groups), so planning is gated by an explicit allowlist
+  // of known non-mutating tool names, intersected with the personality's toolset.
+  // This deliberately excludes goal_complete and every mutating/execution tool:
+  // the planning turn investigates and writes a plan, it must not change state.
+  // When the personality toolset can't be resolved the intersection is empty
+  // (planning still produces a plan from the goal text) — never the full toolset.
+  const GOAL_PLAN_READONLY_TOOLS = new Set([
+    'read_file',
+    'search_files',
+    'web_search',
+    'web_extract',
+    'memory_read',
+    'session_search',
+    'session_list_by_date',
+    'team_memory_read',
+    'team_memory_search',
+  ]);
   const goalRunner = new GoalRunner({
     store: goalStore,
     hooks,
@@ -453,6 +471,17 @@ export async function buildAgentLoop(
           : {}),
         ...(o.allowDangerousToolCalls ? { allowDangerousToolCalls: true } : {}),
         ...(toolsetOverride ? { toolsetOverride } : {}),
+      });
+    },
+    runPlan: (sessionKey, firstMessage, o) => {
+      const ptoolset = o.personalityId ? personalities.get(o.personalityId)?.toolset : undefined;
+      const readOnlyToolset = (ptoolset ?? []).filter((t) => GOAL_PLAN_READONLY_TOOLS.has(t));
+      return loop.run(firstMessage, {
+        sessionKey,
+        abortSignal: o.abortSignal,
+        ...(o.personalityId ? { personalityId: o.personalityId } : {}),
+        ...(o.userId ? { userId: o.userId } : {}),
+        toolsetOverride: readOnlyToolset,
       });
     },
   });

@@ -32,6 +32,36 @@ describe('SQLiteGoalStore — maxToolCallsPerTurn', () => {
   });
 });
 
+describe('SQLiteGoalStore — planMd', () => {
+  it('defaults planMd to null on a freshly created goal', () => {
+    const store = new SQLiteGoalStore(':memory:');
+    const goal = store.create({
+      userId: 'user-1',
+      personalityId: 'tester',
+      origin: 'cli',
+      title: 'Test goal',
+      goalText: 'Do the thing',
+    });
+
+    expect(store.get(goal.id)?.planMd).toBeNull();
+  });
+
+  it('round-trips planMd through updateStatus/get', () => {
+    const store = new SQLiteGoalStore(':memory:');
+    const goal = store.create({
+      userId: 'user-1',
+      personalityId: 'tester',
+      origin: 'cli',
+      title: 'Test goal',
+      goalText: 'Do the thing',
+    });
+
+    store.updateStatus(goal.id, 'running', { planMd: '## Plan\n1. Do X\n2. Do Y' });
+
+    expect(store.get(goal.id)?.planMd).toBe('## Plan\n1. Do X\n2. Do Y');
+  });
+});
+
 describe('SQLiteGoalStore — maxIdenticalToolCalls', () => {
   it('round-trips maxIdenticalToolCalls through create/get', () => {
     const store = new SQLiteGoalStore(':memory:');

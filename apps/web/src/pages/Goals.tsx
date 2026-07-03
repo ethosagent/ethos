@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useGoalsList } from '../features/goals/api/queries';
 
 const STATUS_CONFIG: Record<string, { color: string; label: string; icon: string }> = {
+  planning: { color: '#14B8A6', label: 'Planning', icon: '⏳' },
   running: { color: 'var(--info)', label: 'Running', icon: '⏳' },
   judging: { color: 'var(--info)', label: 'Judging', icon: '⏳' },
   retrying: { color: 'var(--info)', label: 'Retrying', icon: '⏳' },
@@ -26,7 +27,13 @@ const STATUS_CONFIG: Record<string, { color: string; label: string; icon: string
   exhausted: { color: 'var(--warning)', label: 'Exhausted', icon: '✗' },
 };
 
-const ACTIVE_STATUSES = new Set(['running', 'judging', 'retrying', 'needs_clarification']);
+const ACTIVE_STATUSES = new Set([
+  'planning',
+  'running',
+  'judging',
+  'retrying',
+  'needs_clarification',
+]);
 
 function formatDuration(startedAt: number, completedAt: number | null): string {
   const end = completedAt ?? Date.now();
