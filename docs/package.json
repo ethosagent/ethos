@@ -35,7 +35,7 @@
     "@docusaurus/types": "3.10.1",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.0",
     "typescript": "~6.0.2"
   },
   "browserslist": {
