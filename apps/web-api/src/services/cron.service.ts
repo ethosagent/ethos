@@ -12,6 +12,7 @@ export interface CronCreateInput {
   prompt: string;
   personalityId: string;
   missedRunPolicy?: 'run-once' | 'skip';
+  notifyInApp?: boolean;
 }
 
 export interface CronRunNowOutput {
@@ -45,6 +46,12 @@ export class CronService {
         prompt: input.prompt,
         personalityId: input.personalityId,
         missedRunPolicy: input.missedRunPolicy ?? 'skip',
+        // In-app heartbeat: a `web` origin routes run output into a stable,
+        // openable session (one per personality) that surfaces in Activity.
+        // Absent origin keeps today's behaviour — output saved to file only.
+        ...(input.notifyInApp
+          ? { origin: { platform: 'web', chatId: `web:heartbeat:${input.personalityId}` } }
+          : {}),
       });
       return { job: toWireJob(job) };
     } catch (err) {

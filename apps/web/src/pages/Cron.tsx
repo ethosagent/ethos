@@ -10,6 +10,7 @@ import {
   Segmented,
   Select,
   Spin,
+  Switch,
   Typography,
 } from 'antd';
 import { useState } from 'react';
@@ -299,6 +300,7 @@ interface CreateForm {
   schedule: string;
   prompt: string;
   personalityId: string;
+  notifyInApp: boolean;
 }
 
 function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -318,6 +320,7 @@ function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void 
         schedule: input.schedule,
         prompt: input.prompt,
         personalityId: input.personalityId,
+        notifyInApp: input.notifyInApp,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['cron', 'list'] });
@@ -380,6 +383,7 @@ function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void 
           label="Prompt"
           name="prompt"
           rules={[{ required: true, message: 'What should the agent do?' }]}
+          extra="Heartbeat tip: end the prompt with an instruction to reply exactly [SILENT] when nothing needs you, so quiet ticks stay silent and don't notify."
         >
           <Input.TextArea
             rows={4}
@@ -401,6 +405,16 @@ function CreateJobModal({ open, onClose }: { open: boolean; onClose: () => void 
               label: p.name,
             }))}
           />
+        </Form.Item>
+
+        <Form.Item
+          label="Notify me in the app"
+          name="notifyInApp"
+          valuePropName="checked"
+          initialValue={true}
+          extra="When on, each run's result appears in the app (Activity feed + a per-personality heartbeat session) unless the run replies [SILENT]. When off, output is saved to the run-history log only."
+        >
+          <Switch />
         </Form.Item>
       </Form>
     </Modal>

@@ -797,6 +797,9 @@ const CronCreateInput = z.object({
   prompt: z.string().min(1),
   personalityId: z.string().min(1),
   missedRunPolicy: MissedRunPolicySchema.optional(),
+  // When true, the job is given a `web` origin so its output delivers into a
+  // web chat session and surfaces in the Activity feed (in-app heartbeat).
+  notifyInApp: z.boolean().optional(),
 });
 const CronCreateOutput = z.object({ job: CronJobSchema });
 

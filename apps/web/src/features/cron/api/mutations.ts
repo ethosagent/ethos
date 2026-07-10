@@ -71,6 +71,7 @@ interface CreateForm {
   schedule: string;
   prompt: string;
   personalityId: string;
+  notifyInApp?: boolean;
 }
 
 export function useCronCreate(onClose: () => void) {
@@ -84,6 +85,7 @@ export function useCronCreate(onClose: () => void) {
         schedule: input.schedule,
         prompt: input.prompt,
         personalityId: input.personalityId,
+        notifyInApp: input.notifyInApp,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: cronKeys.list() });
