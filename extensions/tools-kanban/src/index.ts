@@ -15,6 +15,7 @@ export {
   type KanbanRoleGateOptions,
   type TeamRole,
 } from './role-gate';
+export { type CompletionVerifierOptions, createCompletionVerifier } from './verifier';
 
 // Rules block — appended to every tool description so the LLM remembers when
 // to reach for kanban vs the ephemeral `todo_*` toolset.

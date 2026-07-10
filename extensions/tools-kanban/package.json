@@ -23,6 +23,7 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/eval-harness": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },

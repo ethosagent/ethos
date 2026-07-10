@@ -79,6 +79,7 @@ describe('EthosObservability', () => {
       expect(ETHOS_EVENT_CATEGORIES).toContain('channel.deny');
       expect(ETHOS_EVENT_CATEGORIES).toContain('install.scan');
       expect(ETHOS_EVENT_CATEGORIES).toContain('install.event');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('heartbeat.decision');
     });
 
     it('ETHOS_TRACE_KINDS enumerates ethos trace kinds', () => {
@@ -210,6 +211,29 @@ describe('EthosObservability', () => {
         severity: 'error',
         code: 'EBOOM',
         cause: 'kaboom',
+      });
+    });
+
+    it('recordHeartbeatDecision emits heartbeat.decision with structured details', () => {
+      const { writer, events } = makeFakeWriter();
+      const obs = new EthosObservability(writer);
+      obs.recordHeartbeatDecision({
+        personalityId: 'ops',
+        jobId: 'disk-watch',
+        decision: 'escalate',
+        delivered: true,
+      });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        category: 'heartbeat.decision',
+        severity: 'info',
+        details: {
+          personalityId: 'ops',
+          jobId: 'disk-watch',
+          decision: 'escalate',
+          delivered: true,
+        },
       });
     });
 

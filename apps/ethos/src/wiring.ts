@@ -112,7 +112,7 @@ export function getObservabilityService(): ObservabilityService {
   return obsSingleton;
 }
 
-function getEthosObservability(): EthosObservability {
+export function getEthosObservability(): EthosObservability {
   // Constructed alongside the singleton — getObservabilityService initialises both.
   if (!ethosObsSingleton) {
     getObservabilityService();

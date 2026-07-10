@@ -31,6 +31,7 @@ import {
   createAgentLoop,
   createLLM,
   createTeamAgentLoop,
+  getEthosObservability,
   getSecretsResolver,
   getStorage,
 } from '../wiring';
@@ -248,6 +249,18 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   cronScheduler = new CronScheduler({
     logger: new ConsoleLogger(),
     systemTasks: buildSystemTaskHandlers(config),
+    onDecision: (job, d) => {
+      try {
+        getEthosObservability().recordHeartbeatDecision({
+          personalityId: job.personalityId,
+          jobId: job.id,
+          decision: d.action,
+          delivered: d.delivered,
+        });
+      } catch {
+        // observability unavailable — audit is fail-open
+      }
+    },
     runJob: async (job) => {
       if (!loop) {
         throw new EthosError({

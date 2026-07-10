@@ -41,6 +41,7 @@ import { createImageTools } from '@ethosagent/tools-image';
 import { compose as composeInteractive } from '@ethosagent/tools-interactive/compose';
 import {
   type AutonomyTierOf,
+  createCompletionVerifier,
   createKanbanRoleGateHook,
   registerPostmortemHandler,
 } from '@ethosagent/tools-kanban';
@@ -64,6 +65,9 @@ import type {
   ExecutionBackend,
   ExecutionBackendConfig,
   InjectionResult,
+  LLMProvider,
+  LLMProviderRegistry,
+  Logger,
   MemoryContext,
   MemoryEntryRef,
   MemoryProvider,
@@ -303,6 +307,49 @@ export interface ComposeToolsDeps {
   profile: WiringProfile;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 7 — lazy main-provider resolver for the completion verifier. Mirrors
+// buildCompressionSummarizer (index.ts): resolve the factory from the registry
+// on first use, construct once, cache. Deferral matters because the verifier
+// only needs a provider when a ticket with acceptance criteria completes.
+// ---------------------------------------------------------------------------
+
+function buildVerifierProviderGetter(
+  registry: LLMProviderRegistry,
+  config: WiringConfig,
+  log: Logger,
+): () => Promise<LLMProvider> {
+  let cachedProvider: LLMProvider | undefined;
+  return async () => {
+    if (cachedProvider) return cachedProvider;
+    const factory = registry.get(config.provider);
+    if (!factory) {
+      throw new Error(
+        `LLM provider "${config.provider}" is not registered (completion verifier). ` +
+          `Available: ${registry.list().join(', ')}`,
+      );
+    }
+    const NOOP: SecretsResolver = {
+      get: async () => null,
+      set: async () => {},
+      delete: async () => {},
+      list: async () => [],
+    };
+    cachedProvider = await factory({
+      config: {
+        provider: config.provider,
+        model: config.model,
+        apiKey: config.apiKey,
+        ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+        ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
+      },
+      secrets: config.secretsResolver ?? NOOP,
+      logger: log,
+    });
+    return cachedProvider;
+  };
+}
+
 /**
  * Register all tool groups into the tool registry and wire supporting hooks.
  * Covers: file, terminal, web, todo, think, interactive, kanban, process,
@@ -463,6 +510,19 @@ export async function composeAllTools(
       };
     }
     for (const tool of composeKanban(wiringCtx, kanbanOpts).tools) tools.register(tool);
+
+    // Phase 7 — mandatory verifier review state on team (multi-personality) goals.
+    // Praxis lesson: agents skip an optional review state, so on team deployments
+    // the eval-harness verifier is default-wired, not opt-in. Single-personality
+    // kanban keeps the opt-in hook.
+    if (config.teamName !== undefined) {
+      hooks.registerClaiming(
+        'before_ticket_complete',
+        createCompletionVerifier({
+          getProvider: buildVerifierProviderGetter(infra.llmProviders, config, log),
+        }),
+      );
+    }
   }
 
   // Goal store is shared infrastructure — a single goals.db per dataDir backs the

@@ -6,7 +6,7 @@ import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { EthosError } from '@ethosagent/types';
 import { type EthosConfig, ethosDir } from '../config';
 import { writeJson } from '../json-output';
-import { createAgentLoop } from '../wiring';
+import { createAgentLoop, getEthosObservability } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -24,6 +24,18 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
 
   const scheduler = new CronScheduler({
     logger: new ConsoleLogger(),
+    onDecision: (job, d) => {
+      try {
+        getEthosObservability().recordHeartbeatDecision({
+          personalityId: job.personalityId,
+          jobId: job.id,
+          decision: d.action,
+          delivered: d.delivered,
+        });
+      } catch {
+        // observability unavailable — audit is fail-open
+      }
+    },
     runJob: async (job) => {
       if (!personalities) {
         personalities = await createPersonalityRegistry();

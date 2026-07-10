@@ -4,7 +4,7 @@ description: "Kanban, team-memory, and delegation tools for agents in a team con
 kind: reference
 audience: developer
 slug: team-tools
-updated: 2026-05-17
+updated: 2026-07-10
 ---
 
 The team toolset is what an Ethos [personality](../../getting-started/glossary.md#personality) reaches for when it is running inside a team — `ctx.teamId` is set, a coordinator drives the board, and members claim work off it. Three toolsets ship: **kanban** for the durable task board, **team_memory** for shared knowledge, and **delegation** for spawning sub-agents and routing work across the [mesh](../../getting-started/glossary.md#mesh).
@@ -76,7 +76,7 @@ The delegation tools require the personality's `network` capability — without 
 
 The completion path through `kanban_complete` is interception-aware. Before the running → done transition commits, the tool fires the [claiming hook](./hook-registry.md#claiming-hooks) `before_ticket_complete`. A handler returning `{ handled: true, reason }` rejects the completion: the ticket goes to `needs_revision` (with `reason` in the audit trail and a comment) instead of `done`. The assignee can re-claim and retry; the re-claim counts against the task's `max_retries` budget.
 
-This is **opt-in**. No handler registered — or no `HookRegistry` wired into the kanban tools at all — means `fireClaiming` returns `{ handled: false }` and completion proceeds unchanged. The default behavior is the legacy direct transition.
+This is **opt-in** in standalone (single-personality) deployments. No handler registered — or no `HookRegistry` wired into the kanban tools at all — means `fireClaiming` returns `{ handled: false }` and completion proceeds unchanged. Since Phase 7, team deployments (config `teamName` set) default-wire a verifier handler — an eval-harness scoring pass over the completion summary against the ticket's acceptance criteria — so the review state is non-skippable there.
 
 Signature:
 

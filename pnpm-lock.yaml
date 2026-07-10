@@ -779,6 +779,9 @@ importers:
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../packages/safety/injection
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
@@ -1417,6 +1420,9 @@ importers:
 
   extensions/tools-kanban:
     dependencies:
+      '@ethosagent/eval-harness':
+        specifier: workspace:*
+        version: link:../eval-harness
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../kanban-store

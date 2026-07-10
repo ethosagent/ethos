@@ -2,8 +2,10 @@ import { open, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { noopLogger } from '@ethosagent/logger';
+import { sanitize } from '@ethosagent/safety-injection';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { Logger, Storage } from '@ethosagent/types';
+import { decideEscalation, type HeartbeatDecision } from './heartbeat';
 import { isOneShotSchedule, isValidSchedule, nextRunForSchedule } from './schedule';
 
 // ---------------------------------------------------------------------------
@@ -86,6 +88,11 @@ export interface CronSchedulerConfig {
   deliver?: (job: CronJob, output: string) => Promise<void>;
   /** source:'system' jobs dispatch here by systemTask name instead of runJob. */
   systemTasks?: Record<string, (job: CronJob) => Promise<{ output: string }>>;
+  /** Fired after every executed run with the escalate-vs-silent decision — the heartbeat audit record. Failures are swallowed (audit is fail-open, never breaks the run). */
+  onDecision?: (
+    job: CronJob,
+    decision: HeartbeatDecision & { ranAt: string; delivered: boolean },
+  ) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +139,10 @@ export class CronScheduler {
   private readonly logger: Logger;
   private readonly deliver?: (job: CronJob, output: string) => Promise<void>;
   private readonly systemTasks: Record<string, (job: CronJob) => Promise<{ output: string }>>;
+  private readonly onDecision?: (
+    job: CronJob,
+    decision: HeartbeatDecision & { ranAt: string; delivered: boolean },
+  ) => void;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: CronSchedulerConfig) {
@@ -145,6 +156,7 @@ export class CronScheduler {
     this.logger = config.logger ?? noopLogger;
     this.deliver = config.deliver;
     this.systemTasks = config.systemTasks ?? {};
+    this.onDecision = config.onDecision;
   }
 
   // ---------------------------------------------------------------------------
@@ -516,39 +528,12 @@ export class CronScheduler {
       await this.storage.write(outPath, `# ${job.name}\n\n${output}\n`);
 
       // Deliver to originating channel when origin is present
-      if (job.origin && this.deliver) {
-        if (!/^\s*\[SILENT\]/i.test(output)) {
-          try {
-            await this.deliver(job, output);
-          } catch (err) {
-            this.logger.error(`[cron] Delivery failed for job "${job.id}"`, {
-              component: 'cron',
-              jobId: job.id,
-              error: String(err),
-            });
-          }
-        }
-      }
-
-      return { jobId: job.id, ranAt, output, sessionKey: `cron:system:${job.id}` };
-    }
-
-    const contextPrefix = await this.resolveContext(job);
-    const effectivePrompt = contextPrefix + (job.prompt ?? '');
-    const result = await this.runJob({ ...job, prompt: effectivePrompt });
-
-    // Persist output to ~/.ethos/cron/output/<id>/<timestamp>.md
-    const ts = result.ranAt.replace(/[:.]/g, '-').replace('Z', 'Z');
-    const outPath = join(this.outputDir, job.id, `${ts}.md`);
-    await this.storage.mkdir(dirname(outPath));
-    await this.storage.write(outPath, `# ${job.name}\n\n${result.output}\n`);
-
-    // Deliver to originating channel when origin is present
-    if (job.origin && this.deliver) {
-      // Suppress delivery when output starts with [SILENT]
-      if (!/^\s*\[SILENT\]/i.test(result.output)) {
+      const decision = decideEscalation(output);
+      let delivered = false;
+      if (job.origin && this.deliver && decision.action === 'escalate') {
         try {
-          await this.deliver(job, result.output);
+          await this.deliver(job, output);
+          delivered = true;
         } catch (err) {
           this.logger.error(`[cron] Delivery failed for job "${job.id}"`, {
             component: 'cron',
@@ -557,9 +542,57 @@ export class CronScheduler {
           });
         }
       }
+      this.notifyDecision(job, decision, ranAt, delivered);
+
+      return { jobId: job.id, ranAt, output, sessionKey: `cron:system:${job.id}` };
     }
 
+    // The context prefix carries prior-run outputs (external content) — run the
+    // whole effective prompt through the injection guard before the LLM sees it.
+    const contextPrefix = await this.resolveContext(job);
+    const effectivePrompt = sanitize(contextPrefix + (job.prompt ?? ''));
+    const result = await this.runJob({ ...job, prompt: effectivePrompt });
+
+    // Persist output to ~/.ethos/cron/output/<id>/<timestamp>.md
+    const ts = result.ranAt.replace(/[:.]/g, '-').replace('Z', 'Z');
+    const outPath = join(this.outputDir, job.id, `${ts}.md`);
+    await this.storage.mkdir(dirname(outPath));
+    await this.storage.write(outPath, `# ${job.name}\n\n${result.output}\n`);
+
+    // Deliver to originating channel when origin is present; silent outputs
+    // are audited and persisted but never delivered.
+    const decision = decideEscalation(result.output);
+    let delivered = false;
+    if (job.origin && this.deliver && decision.action === 'escalate') {
+      try {
+        await this.deliver(job, result.output);
+        delivered = true;
+      } catch (err) {
+        this.logger.error(`[cron] Delivery failed for job "${job.id}"`, {
+          component: 'cron',
+          jobId: job.id,
+          error: String(err),
+        });
+      }
+    }
+    this.notifyDecision(job, decision, result.ranAt, delivered);
+
     return result;
+  }
+
+  /** Heartbeat audit callback — fail-open, a throwing observer never breaks the run. */
+  private notifyDecision(
+    job: CronJob,
+    decision: HeartbeatDecision,
+    ranAt: string,
+    delivered: boolean,
+  ): void {
+    if (!this.onDecision) return;
+    try {
+      this.onDecision(job, { ...decision, ranAt, delivered });
+    } catch {
+      // audit is fail-open
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -604,9 +637,11 @@ export class CronScheduler {
 }
 
 // ---------------------------------------------------------------------------
-// Re-exports from schedule module
+// Re-exports from heartbeat + schedule modules
 // ---------------------------------------------------------------------------
 
+export type { HeartbeatAction, HeartbeatDecision } from './heartbeat';
+export { decideEscalation } from './heartbeat';
 export type { ParsedSchedule } from './schedule';
 export {
   isOneShotSchedule,

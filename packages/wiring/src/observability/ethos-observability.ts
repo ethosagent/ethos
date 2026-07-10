@@ -47,6 +47,7 @@ export const ETHOS_EVENT_CATEGORIES = [
   'install.event',
   'tier.escalation',
   'tier.override',
+  'heartbeat.decision',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
 
@@ -327,6 +328,22 @@ export class EthosObservability {
       actor: opts.actor,
       tier: opts.tier,
       personalityId: opts.personalityId,
+    });
+  }
+
+  recordHeartbeatDecision(
+    opts: EventBase & {
+      personalityId?: string;
+      jobId: string;
+      decision: 'escalate' | 'silent';
+      delivered: boolean;
+    },
+  ): void {
+    this.emit('heartbeat.decision', 'info', opts, {
+      personalityId: opts.personalityId,
+      jobId: opts.jobId,
+      decision: opts.decision,
+      delivered: opts.delivered,
     });
   }
 

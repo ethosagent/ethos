@@ -53,6 +53,7 @@ import {
   buildSystemTaskHandlers,
   createAgentLoop,
   createTeamAgentLoop,
+  getEthosObservability,
   getSecretsResolver,
   getStorage,
 } from '../wiring';
@@ -349,6 +350,18 @@ export async function runGatewayStart(): Promise<void> {
   const scheduler = new CronScheduler({
     logger: new ConsoleLogger(),
     systemTasks: buildSystemTaskHandlers(config),
+    onDecision: (job, d) => {
+      try {
+        getEthosObservability().recordHeartbeatDecision({
+          personalityId: job.personalityId,
+          jobId: job.id,
+          decision: d.action,
+          delivered: d.delivered,
+        });
+      } catch {
+        // observability unavailable — audit is fail-open
+      }
+    },
     deliver: async (job, output) => {
       if (cronDeliverFn) await cronDeliverFn(job, output);
     },
