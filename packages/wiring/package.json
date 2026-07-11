@@ -63,6 +63,7 @@
     "@ethosagent/sandbox-docker": "workspace:*",
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/storage-crypto": "workspace:*",
+    "@ethosagent/storage-s3": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/skill-evolver": "workspace:*",
     "@ethosagent/skills": "workspace:*",

@@ -556,3 +556,54 @@ describe('SQLiteSessionStore migration idempotency', () => {
     expect(traceIdCols).toHaveLength(1);
   });
 });
+
+describe('SQLiteSessionStore schema versioning', () => {
+  it('stamps a fresh db to user_version 1', async () => {
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dbPath = join(tmpdir(), `session-version-fresh-${Date.now()}.db`);
+
+    const store = new SQLiteSessionStore(dbPath);
+    store.close();
+
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const db = new Database(dbPath);
+    const rows = db.pragma('user_version') as Array<{ user_version: number }>;
+    db.close();
+    expect(rows[0]?.user_version).toBe(1);
+  });
+
+  it('reopening a populated db preserves rows and keeps user_version at 1', async () => {
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dbPath = join(tmpdir(), `session-version-reopen-${Date.now()}.db`);
+
+    const s1 = new SQLiteSessionStore(dbPath);
+    const session = await s1.createSession(baseSession);
+    s1.close();
+
+    const s2 = new SQLiteSessionStore(dbPath);
+    const got = await s2.getSession(session.id);
+    s2.close();
+    expect(got?.id).toBe(session.id);
+
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const db = new Database(dbPath);
+    const rows = db.pragma('user_version') as Array<{ user_version: number }>;
+    db.close();
+    expect(rows[0]?.user_version).toBe(1);
+  });
+
+  it('refuses to open a db whose user_version is newer than the code', async () => {
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dbPath = join(tmpdir(), `session-version-downgrade-${Date.now()}.db`);
+
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const raw = new Database(dbPath);
+    raw.pragma('user_version = 2');
+    raw.close();
+
+    expect(() => new SQLiteSessionStore(dbPath)).toThrow(/refusing to open to avoid downgrade/);
+  });
+});

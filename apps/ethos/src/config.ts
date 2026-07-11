@@ -484,10 +484,20 @@ export interface EthosConfig {
   /** Public-facing URL of the web UI. Used as the OAuth redirect base.
    *  Resolution: ETHOS_PUBLIC_URL env > config.yaml webBaseUrl > localhost default. */
   webBaseUrl?: string;
-  /** Storage-layer settings. Currently supports at-rest encryption via
-   *  `storage.encryption: true` in config.yaml. Requires ETHOS_STORAGE_KEY. */
+  /** Storage-layer settings. Supports at-rest encryption via
+   *  `storage.encryption: true` in config.yaml (requires ETHOS_STORAGE_KEY), and
+   *  a pluggable backend via `storage.backend` (default `fs`). Set `s3` to
+   *  target AWS S3 (or an S3-compatible endpoint) when `backend: s3`. */
   storage?: {
     encryption?: boolean;
+    backend?: 'fs' | 's3';
+    s3?: {
+      bucket?: string;
+      region?: string;
+      prefix?: string;
+      endpoint?: string;
+      forcePathStyle?: boolean;
+    };
   };
   /** Whether to auto-install plugins from plugins.lock on personality load.
    *  Config key: plugins.auto_install */
@@ -1080,7 +1090,7 @@ function parseConfigYaml(src: string): EthosConfig {
       continue;
     }
     // storage.<field>: <value>
-    const stg = line.match(/^storage\.(\w+):\s*(.+)$/);
+    const stg = line.match(/^storage\.([\w.]+):\s*(.+)$/);
     if (stg) {
       kv[`storage.${stg[1]}`] = stg[2].trim().replace(/^["']|["']$/g, '');
       continue;
@@ -1320,7 +1330,7 @@ function parseConfigYaml(src: string): EthosConfig {
     logs: logsRotation ? { rotation: logsRotation } : undefined,
     aws: awsConfig,
     webBaseUrl: process.env.ETHOS_PUBLIC_URL ?? kv.webBaseUrl ?? undefined,
-    storage: kv['storage.encryption'] === 'true' ? { encryption: true } : undefined,
+    storage: buildStorageConfig(kv),
     pluginsAutoInstall,
     admin:
       kv['admin.enabled'] !== undefined ? { enabled: kv['admin.enabled'] === 'true' } : undefined,
@@ -1530,6 +1540,26 @@ function buildRetentionConfig(kv: Record<string, string>): RetentionConfig | und
   if (kv['events.install']) ev.install = kv['events.install'];
   if (Object.keys(ev).length > 0) cfg.events = ev;
   return cfg;
+}
+
+function buildStorageConfig(kv: Record<string, string>): EthosConfig['storage'] {
+  const s3: NonNullable<NonNullable<EthosConfig['storage']>['s3']> = {};
+  if (kv['storage.s3.bucket']) s3.bucket = kv['storage.s3.bucket'];
+  if (kv['storage.s3.region']) s3.region = kv['storage.s3.region'];
+  if (kv['storage.s3.prefix']) s3.prefix = kv['storage.s3.prefix'];
+  if (kv['storage.s3.endpoint']) s3.endpoint = kv['storage.s3.endpoint'];
+  if (kv['storage.s3.forcePathStyle'] === 'true') s3.forcePathStyle = true;
+  const rawBackend = kv['storage.backend'];
+  const backend: 'fs' | 's3' | undefined =
+    rawBackend === 'fs' || rawBackend === 's3' ? rawBackend : undefined;
+  const encryption = kv['storage.encryption'] === 'true';
+  const hasS3 = s3.bucket !== undefined;
+  if (!encryption && backend === undefined && !hasS3) return undefined;
+  return {
+    ...(encryption ? { encryption: true } : {}),
+    ...(backend ? { backend } : {}),
+    ...(hasS3 ? { s3 } : {}),
+  };
 }
 
 function buildBotBinding(

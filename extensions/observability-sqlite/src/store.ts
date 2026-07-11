@@ -1,33 +1,10 @@
-import Database from '@ethosagent/sqlite';
+import Database, { migrate } from '@ethosagent/sqlite';
 import type { ObsEvent, ObservabilityStore, Snapshot, Span, Trace } from '@ethosagent/types';
 import { redactJson, redactString } from './redact';
 
-// ---------------------------------------------------------------------------
-// SQLiteObservabilityStore
-// Implements ObservabilityStore using @ethosagent/sqlite (synchronous).
-// STRICT tables throughout. All methods are synchronous inside.
-// ---------------------------------------------------------------------------
-
-export class SQLiteObservabilityStore implements ObservabilityStore {
-  private readonly db: Database.Database;
-
-  constructor(dbPath: string) {
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
-    this.migrate();
-  }
-
-  // ---------------------------------------------------------------------------
-  // Schema
-  // ---------------------------------------------------------------------------
-
-  private migrate(): void {
-    // Rename pre-existing legacy columns BEFORE any new-schema operation so
-    // that indexes / future schema additions referencing `subject_id` always
-    // see the renamed column.
-    this.renameLegacySubjectColumns();
-
-    this.db.exec(`
+// v1 baseline schema — the current table/index shape, unchanged. Passed to
+// migrate() as the idempotent `CREATE ... IF NOT EXISTS` baseline.
+const OBS_SCHEMA = `
       CREATE TABLE IF NOT EXISTS traces (
         trace_id        TEXT PRIMARY KEY,
         session_id      TEXT,
@@ -77,7 +54,42 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
         subject_id      TEXT NOT NULL,
         body            TEXT NOT NULL
       ) STRICT;
-    `);
+    `;
+
+// ---------------------------------------------------------------------------
+// SQLiteObservabilityStore
+// Implements ObservabilityStore using @ethosagent/sqlite (synchronous).
+// STRICT tables throughout. All methods are synchronous inside.
+// ---------------------------------------------------------------------------
+
+export class SQLiteObservabilityStore implements ObservabilityStore {
+  private readonly db: Database.Database;
+
+  constructor(dbPath: string) {
+    this.db = new Database(dbPath);
+    this.db.pragma('journal_mode = WAL');
+    this.migrate();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Schema
+  // ---------------------------------------------------------------------------
+
+  private migrate(): void {
+    // Rename pre-existing legacy columns BEFORE any new-schema operation so
+    // that indexes / future schema additions referencing `subject_id` always
+    // see the renamed column.
+    this.renameLegacySubjectColumns();
+
+    // Existing production DBs are at user_version=0: migrate() runs the baseline
+    // (all `IF NOT EXISTS`, a no-op on existing tables) then stamps 0→1. No data
+    // touched. The legacy column rename above still runs first, exactly as before.
+    migrate(this.db, {
+      name: 'observability-sqlite',
+      targetVersion: 1,
+      baseline: OBS_SCHEMA,
+      migrations: {},
+    });
   }
 
   // Idempotent rename for databases created before the personality_id →

@@ -97,6 +97,7 @@
       "@ethosagent/claw-migrate": ["./extensions/claw-migrate/src"],
       "@ethosagent/secrets-aws": ["./extensions/secrets-aws/src"],
       "@ethosagent/storage-crypto": ["./extensions/storage-crypto/src"],
+      "@ethosagent/storage-s3": ["./extensions/storage-s3/src"],
       "@ethosagent/storage-memory-backend": ["./extensions/storage-memory-backend/src"],
       "@ethosagent/oauth": ["./extensions/oauth/src"],
       "@ethosagent/agent-bridge": ["./packages/agent-bridge/src"],

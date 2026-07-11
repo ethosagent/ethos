@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import Database from '@ethosagent/sqlite';
+import Database, { migrate } from '@ethosagent/sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   ListOpts,
@@ -104,6 +104,20 @@ export interface EntryRecord {
   updatedAt: Date;
 }
 
+// v1 baseline schema — the current table shape, unchanged. Passed to migrate()
+// as the idempotent `CREATE ... IF NOT EXISTS` baseline.
+const MEMORY_SCHEMA = `
+      CREATE TABLE IF NOT EXISTS memory_entries (
+        scope_id    TEXT NOT NULL,
+        key         TEXT NOT NULL,
+        content     TEXT NOT NULL,
+        embedding   BLOB NOT NULL,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL,
+        PRIMARY KEY (scope_id, key)
+      ) STRICT;
+    `;
+
 // ---------------------------------------------------------------------------
 // VectorMemoryProvider
 // ---------------------------------------------------------------------------
@@ -148,17 +162,15 @@ export class VectorMemoryProvider implements MemoryProvider {
   }
 
   private migrate(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS memory_entries (
-        scope_id    TEXT NOT NULL,
-        key         TEXT NOT NULL,
-        content     TEXT NOT NULL,
-        embedding   BLOB NOT NULL,
-        created_at  TEXT NOT NULL,
-        updated_at  TEXT NOT NULL,
-        PRIMARY KEY (scope_id, key)
-      ) STRICT;
-    `);
+    // Existing production DBs are at user_version=0: migrate() runs the baseline
+    // (`IF NOT EXISTS`, a no-op on existing tables) then stamps 0→1. No data
+    // touched. The legacy-chunk migration below still runs after, exactly as before.
+    migrate(this.db, {
+      name: 'memory-vector',
+      targetVersion: 1,
+      baseline: MEMORY_SCHEMA,
+      migrations: {},
+    });
     this.migrateLegacyChunks();
   }
 

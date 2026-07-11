@@ -341,4 +341,60 @@ describe('VectorMemoryProvider', () => {
       expect(results.length).toBeLessThanOrEqual(5);
     });
   });
+
+  describe('schema versioning', () => {
+    async function freshDir(): Promise<string> {
+      const dir = join(
+        tmpdir(),
+        `ethos-vector-version-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+      await mkdir(dir, { recursive: true });
+      return dir;
+    }
+
+    it('stamps a fresh db to user_version 1', async () => {
+      const dir = await freshDir();
+      const p = new VectorMemoryProvider({ dir, embedFn: fakeEmbed });
+      p.close();
+
+      const Database = (await import('@ethosagent/sqlite')).default;
+      const db = new Database(join(dir, 'memory.db'));
+      const rows = db.pragma('user_version') as Array<{ user_version: number }>;
+      db.close();
+      expect(rows[0]?.user_version).toBe(1);
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it('reopening a populated db preserves rows and keeps user_version at 1', async () => {
+      const dir = await freshDir();
+      const p1 = new VectorMemoryProvider({ dir, embedFn: fakeEmbed });
+      await p1.sync([{ action: 'add', key: 'fact', content: 'TypeScript' }], ctx);
+      p1.close();
+
+      const p2 = new VectorMemoryProvider({ dir, embedFn: fakeEmbed });
+      const entry = await p2.read('fact', ctx);
+      p2.close();
+      expect(entry?.content).toBe('TypeScript');
+
+      const Database = (await import('@ethosagent/sqlite')).default;
+      const db = new Database(join(dir, 'memory.db'));
+      const rows = db.pragma('user_version') as Array<{ user_version: number }>;
+      db.close();
+      expect(rows[0]?.user_version).toBe(1);
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it('refuses to open a db whose user_version is newer than the code', async () => {
+      const dir = await freshDir();
+      const Database = (await import('@ethosagent/sqlite')).default;
+      const raw = new Database(join(dir, 'memory.db'));
+      raw.pragma('user_version = 2');
+      raw.close();
+
+      expect(() => new VectorMemoryProvider({ dir, embedFn: fakeEmbed })).toThrow(
+        /refusing to open to avoid downgrade/,
+      );
+      await rm(dir, { recursive: true, force: true });
+    });
+  });
 });

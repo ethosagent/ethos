@@ -210,3 +210,51 @@ describe('parseConfigYaml — admin.enabled', () => {
     expect(roundTripped?.admin).toEqual({ enabled: true });
   });
 });
+
+describe('parseConfigYaml — storage backend', () => {
+  const base = [
+    'provider: anthropic',
+    'model: claude-opus-4-7',
+    'apiKey: sk',
+    'personality: researcher',
+  ];
+
+  it('parses storage.backend: s3 and nested storage.s3.* keys', async () => {
+    const cfg = await loadYaml(
+      [
+        ...base,
+        'storage.backend: s3',
+        'storage.s3.bucket: my-bucket',
+        'storage.s3.region: us-east-1',
+        'storage.s3.prefix: ethos',
+      ].join('\n'),
+    );
+    expect(cfg.storage?.backend).toBe('s3');
+    expect(cfg.storage?.s3?.bucket).toBe('my-bucket');
+    expect(cfg.storage?.s3?.region).toBe('us-east-1');
+    expect(cfg.storage?.s3?.prefix).toBe('ethos');
+  });
+
+  it('keeps storage.encryption: true alone yielding { encryption: true }', async () => {
+    const cfg = await loadYaml([...base, 'storage.encryption: true'].join('\n'));
+    expect(cfg.storage).toEqual({ encryption: true });
+    expect(cfg.storage?.backend).toBeUndefined();
+    expect(cfg.storage?.s3).toBeUndefined();
+  });
+
+  it('omits the s3 block when backend is s3 but no bucket is set', async () => {
+    const cfg = await loadYaml([...base, 'storage.backend: s3'].join('\n'));
+    expect(cfg.storage?.backend).toBe('s3');
+    expect(cfg.storage?.s3).toBeUndefined();
+  });
+
+  it('leaves storage undefined when no storage.* keys are present', async () => {
+    const cfg = await loadYaml(base.join('\n'));
+    expect(cfg.storage).toBeUndefined();
+  });
+
+  it('omits an invalid storage.backend value', async () => {
+    const cfg = await loadYaml([...base, 'storage.backend: garbage'].join('\n'));
+    expect(cfg.storage?.backend).toBeUndefined();
+  });
+});

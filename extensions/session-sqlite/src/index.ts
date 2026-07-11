@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import Database from '@ethosagent/sqlite';
+import Database, { migrate } from '@ethosagent/sqlite';
 import type {
   CompressionEvent,
   KeyValueStore,
@@ -33,31 +33,9 @@ export { SqliteKeyValueStore };
 // WAL mode + FTS5 full-text search via external-content virtual table.
 // ---------------------------------------------------------------------------
 
-export function createKvStoreFactory(
-  dbPath: string,
-): (tool: string, scopeId: string) => KeyValueStore {
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  SqliteKeyValueStore.migrate(db);
-  return (tool, scopeId) => new SqliteKeyValueStore(db, tool, scopeId);
-}
-
-export class SQLiteSessionStore implements SessionStore {
-  private readonly db: Database.Database;
-
-  constructor(dbPath: string) {
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('foreign_keys = ON');
-    this.migrate();
-  }
-
-  // ---------------------------------------------------------------------------
-  // Schema
-  // ---------------------------------------------------------------------------
-
-  private migrate(): void {
-    this.db.exec(`
+// v1 baseline schema — the current table/index/FTS5 shape, unchanged. Passed to
+// migrate() as the idempotent `CREATE ... IF NOT EXISTS` baseline.
+const SESSION_SCHEMA = `
       CREATE TABLE IF NOT EXISTS sessions (
         id                   TEXT PRIMARY KEY,
         key                  TEXT UNIQUE NOT NULL,
@@ -136,7 +114,42 @@ export class SQLiteSessionStore implements SessionStore {
       ) STRICT;
 
       CREATE INDEX IF NOT EXISTS idx_compressions_session ON compressions(session_id, created_at);
-    `);
+    `;
+
+export function createKvStoreFactory(
+  dbPath: string,
+): (tool: string, scopeId: string) => KeyValueStore {
+  const db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  SqliteKeyValueStore.migrate(db);
+  return (tool, scopeId) => new SqliteKeyValueStore(db, tool, scopeId);
+}
+
+export class SQLiteSessionStore implements SessionStore {
+  private readonly db: Database.Database;
+
+  constructor(dbPath: string) {
+    this.db = new Database(dbPath);
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('foreign_keys = ON');
+    this.migrate();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Schema
+  // ---------------------------------------------------------------------------
+
+  private migrate(): void {
+    // Existing production DBs are at user_version=0: migrate() runs the baseline
+    // (all `IF NOT EXISTS`, a no-op on existing tables) then stamps 0→1. No data
+    // touched. The FTS5 external-content table and its triggers are carried
+    // verbatim inside SESSION_SCHEMA.
+    migrate(this.db, {
+      name: 'session-sqlite',
+      targetVersion: 1,
+      baseline: SESSION_SCHEMA,
+      migrations: {},
+    });
 
     // Additive migration: soft-reference trace_id column on messages.
     // Idempotent — only adds the column when it does not already exist.

@@ -206,3 +206,47 @@ describe('SQLiteObservabilityStore', () => {
     ).not.toThrow();
   });
 });
+
+describe('SQLiteObservabilityStore schema versioning', () => {
+  it('stamps a fresh db to user_version 1', async () => {
+    const path = tmpDb();
+    const s = new SQLiteObservabilityStore(path);
+    s.close();
+
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const db = new Database(path);
+    const rows = db.pragma('user_version') as Array<{ user_version: number }>;
+    db.close();
+    expect(rows[0]?.user_version).toBe(1);
+  });
+
+  it('reopening a populated db preserves rows and keeps user_version at 1', async () => {
+    const path = tmpDb();
+    const trace: Trace = { traceId: randomUUID(), kind: 'turn', startTs: Date.now() };
+
+    const s1 = new SQLiteObservabilityStore(path);
+    s1.insertTrace(trace);
+    s1.close();
+
+    const s2 = new SQLiteObservabilityStore(path);
+    const got = s2.getTrace(trace.traceId);
+    s2.close();
+    expect(got?.traceId).toBe(trace.traceId);
+
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const db = new Database(path);
+    const rows = db.pragma('user_version') as Array<{ user_version: number }>;
+    db.close();
+    expect(rows[0]?.user_version).toBe(1);
+  });
+
+  it('refuses to open a db whose user_version is newer than the code', async () => {
+    const path = tmpDb();
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const raw = new Database(path);
+    raw.pragma('user_version = 2');
+    raw.close();
+
+    expect(() => new SQLiteObservabilityStore(path)).toThrow(/refusing to open to avoid downgrade/);
+  });
+});

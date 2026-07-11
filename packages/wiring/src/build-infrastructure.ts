@@ -186,6 +186,12 @@ export async function buildInfrastructure(
   // via registerStorage.
   const storageBackends = new DefaultStorageRegistry();
   storageBackends.register('fs', () => new FsStorage());
+  // Dynamic import keeps the AWS SDK out of every boot — it loads only when the
+  // s3 backend is actually resolved.
+  storageBackends.register('s3', async (ctx) => {
+    const { createS3Storage } = await import('@ethosagent/storage-s3');
+    return createS3Storage(ctx.config, ctx.secrets);
+  });
 
   // Voice provider registries — built-ins registered here; plugins add more via
   // registerSttProvider / registerTtsProvider.

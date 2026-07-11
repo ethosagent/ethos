@@ -160,4 +160,5 @@ namespace _Database {
 }
 
 export default _Database;
+export { type MigrationConfig, migrate } from './migrate';
 export type { _Database as Database };
