@@ -80,6 +80,9 @@ describe('EthosObservability', () => {
       expect(ETHOS_EVENT_CATEGORIES).toContain('install.scan');
       expect(ETHOS_EVENT_CATEGORIES).toContain('install.event');
       expect(ETHOS_EVENT_CATEGORIES).toContain('heartbeat.decision');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('a2a.auth');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('a2a.rpc');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('a2a.task');
     });
 
     it('ETHOS_TRACE_KINDS enumerates ethos trace kinds', () => {

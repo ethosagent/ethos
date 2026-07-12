@@ -26,6 +26,11 @@ export interface A2aToolDeps {
   secrets: SecretsResolver;
   /** Injectable outbound client (tests); defaults to a fresh `A2aOutboundClient`. */
   client?: A2aOutboundClient;
+  /**
+   * Allow a personality to call its OWN agent over A2A (self-loop). Default
+   * false — set via `ETHOS_A2A_SELF_LOOP=1` at the wiring layer (plan §14).
+   */
+  allowSelfLoop?: boolean;
 }
 
 interface A2aSendArgs {
@@ -125,6 +130,7 @@ function makeA2aSendTool(deps: A2aToolDeps): Tool {
           ...(args.fingerprint ? { expectedFingerprint: args.fingerprint } : {}),
           myCard,
           myPrivateKeyPem: pem,
+          ...(deps.allowSelfLoop ? { allowSelfLoop: true } : {}),
         });
 
         // Ambient inbound trace (P8) — already the {traceId, depth, reserveOutbound}
@@ -168,6 +174,14 @@ function makeA2aSendTool(deps: A2aToolDeps): Tool {
               ok: false,
               error:
                 'A2A fan-out budget exhausted for this task — refusing further outbound calls (delegation containment).',
+              code: 'execution_failed',
+            };
+          }
+          if (err.code === 'self_loop_forbidden') {
+            return {
+              ok: false,
+              error:
+                'A2A self-loop is disabled (set ETHOS_A2A_SELF_LOOP=1 to allow calling your own agent).',
               code: 'execution_failed',
             };
           }

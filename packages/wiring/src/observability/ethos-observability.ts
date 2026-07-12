@@ -48,6 +48,9 @@ export const ETHOS_EVENT_CATEGORIES = [
   'tier.escalation',
   'tier.override',
   'heartbeat.decision',
+  'a2a.auth',
+  'a2a.rpc',
+  'a2a.task',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
 

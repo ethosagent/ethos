@@ -338,3 +338,53 @@ describe('a2a_send — delegation containment (ctx.a2aDelegation → client → 
     expect(counter.runs).toBe(1);
   });
 });
+
+describe('a2a_send — self-loop guard (plan §14)', () => {
+  it('refuses to call my own agent by default (maps to a clear tool error)', async () => {
+    const me = makeAgent(TARGET_ID);
+    const clock = { t: Date.now() };
+    const { app, counter } = makeServer(me, me, clock);
+    const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
+    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+
+    const [tool] = createA2aTools({
+      identity: stubIdentity(me, ['search']),
+      secrets: stubSecrets({ [`a2a/${me.id}/private-key`]: me.privateKeyPem }),
+      client,
+    });
+
+    const result = await tool?.execute(
+      { peer_url: WELL_KNOWN_URL, fingerprint: me.fingerprint, skill: 'search', message: 'hi' },
+      makeCtx(me.id),
+    );
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect(result.code).toBe('execution_failed');
+      expect(result.error).toContain('self-loop is disabled');
+    }
+    expect(counter.runs).toBe(0);
+  });
+
+  it('allows the self-loop when deps.allowSelfLoop is set', async () => {
+    const me = makeAgent(TARGET_ID);
+    const clock = { t: Date.now() };
+    const { app, counter } = makeServer(me, me, clock);
+    const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
+    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+
+    const [tool] = createA2aTools({
+      identity: stubIdentity(me, ['search']),
+      secrets: stubSecrets({ [`a2a/${me.id}/private-key`]: me.privateKeyPem }),
+      client,
+      allowSelfLoop: true,
+    });
+
+    const result = await tool?.execute(
+      { peer_url: WELL_KNOWN_URL, fingerprint: me.fingerprint, skill: 'search', message: 'hi me' },
+      makeCtx(me.id),
+    );
+    expect(result?.ok).toBe(true);
+    if (result?.ok) expect(result.value).toBe('hello world');
+    expect(counter.runs).toBe(1);
+  });
+});

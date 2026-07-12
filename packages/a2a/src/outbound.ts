@@ -68,7 +68,11 @@ export type A2aOutboundResult =
   | { ok: false; code: number; message: string };
 
 /** Discriminated failure reasons for the outbound path. */
-export type A2aOutboundErrorCode = 'fanout_exhausted' | 'fetch_failed' | 'invalid_response';
+export type A2aOutboundErrorCode =
+  | 'fanout_exhausted'
+  | 'fetch_failed'
+  | 'invalid_response'
+  | 'self_loop_forbidden';
 
 /** Typed error thrown by {@link A2aOutboundClient} — mirrors {@link import('./client').A2aClientError}. */
 export class A2aOutboundError extends Error {
@@ -96,6 +100,14 @@ export interface ConnectArgs {
   myCard: AgentCard;
   /** THIS agent's Ed25519 private key (PKCS8 PEM) — signs the challenge response. */
   myPrivateKeyPem: string;
+  /**
+   * Allow calling my OWN agent (peer fingerprint == my fingerprint). Default
+   * false: a same-box self-loop is refused (plan §14 MESH guard). An external
+   * peer and "myself" are indistinguishable to the server, so a self-loop pays
+   * the full network/TLS/auth tax and muddies the trust model — it is opt-in
+   * behind an explicit flag.
+   */
+  allowSelfLoop?: boolean;
 }
 
 export interface SendMessageArgs {
@@ -132,6 +144,15 @@ export class A2aOutboundClient {
       ...(args.expectedFingerprint ? { expectedFingerprint: args.expectedFingerprint } : {}),
       fetchImpl: this.fetchImpl,
     });
+
+    // Self-loop guard (plan §14): refuse calling my own agent unless explicitly
+    // allowed. Checked here — the first point where BOTH fingerprints are known.
+    if (!args.allowSelfLoop && peerCard.keyFingerprint === args.myCard.keyFingerprint) {
+      throw new A2aOutboundError(
+        'self_loop_forbidden',
+        'refusing to call my own agent (self-loop disabled by default)',
+      );
+    }
 
     const authEndpoint = peerCard.endpoints.auth;
 

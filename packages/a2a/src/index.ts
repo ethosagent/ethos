@@ -23,6 +23,12 @@ export {
   type SubmitAsyncArgs,
 } from './async';
 export {
+  type A2aAuditEntry,
+  type A2aAuditKind,
+  type A2aAuditSink,
+  safeAudit,
+} from './audit';
+export {
   type A2aAuthService,
   type A2aAuthServiceOptions,
   type A2aChallengeStruct,

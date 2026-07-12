@@ -37,6 +37,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { decodeJwt } from 'jose';
 import { A2aAsyncManager, type A2aPushClient, type A2aPushTarget, collectAgentRun } from './async';
+import { type A2aAuditSink, safeAudit } from './audit';
 import { fingerprint, verifyStruct } from './crypto';
 import { type A2aDelegationCredentials, A2aDelegationGuard } from './delegation';
 import type { A2aPeerStore } from './stores';
@@ -245,6 +246,12 @@ export interface A2aRpcServiceOptions {
   pushClient?: A2aPushClient;
   /** Push-back delivery attempts before `peer-unreachable`. Default 3. */
   pushRetries?: number;
+  /**
+   * Metadata-only audit sink (plan §13 / Phase 8). Records gate denials, accepted
+   * dispatches, and terminal task state — fail-open, never a message body. Omit
+   * to disable auditing entirely.
+   */
+  auditSink?: A2aAuditSink;
 }
 
 /** Result of the shared token+PoP authentication gate (reused by RPC + SSE). */
@@ -277,6 +284,7 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
   const popWindowMs = opts.popWindowMs ?? 60_000;
   const limiter = opts.limiter ?? NOOP_LIMITER;
   const delegationGuard = opts.delegationGuard ?? new A2aDelegationGuard();
+  const auditSink = opts.auditSink;
   const asyncManager = opts.taskStore
     ? new A2aAsyncManager({
         taskStore: opts.taskStore,
@@ -284,6 +292,7 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
         now,
         ...(opts.pushClient ? { pushClient: opts.pushClient } : {}),
         ...(opts.pushRetries !== undefined ? { pushRetries: opts.pushRetries } : {}),
+        ...(auditSink ? { auditSink } : {}),
         onSettled: (traceId) => delegationGuard.releaseTrace(traceId),
       })
     : null;
@@ -410,9 +419,28 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
     }
     const params = request.params;
 
+    // Metadata-only audit of a gate denial (fail-open). Only identifiers/labels
+    // are ever passed — never the message body.
+    const auditDenied = (reason: string, extra: { peerFingerprint?: string; traceId?: string }) => {
+      safeAudit(auditSink, {
+        kind: 'rpc',
+        event: A2A_METHOD_MESSAGE_SEND,
+        personalityId,
+        decision: 'denied',
+        reason,
+        severity: 'warn',
+        ts: now(),
+        ...(extra.peerFingerprint ? { peerFingerprint: extra.peerFingerprint } : {}),
+        ...(extra.traceId ? { traceId: extra.traceId } : {}),
+      });
+    };
+
     // --- Gates 1+2: token + PoP -------------------------------------------
+    // (Recorded HERE, not inside `authenticate` — that gate is shared with the
+    // SSE subscribe path, and logging there would double-count.)
     const auth = await authenticate(personalityId, request.method, creds);
     if (!auth.ok) {
+      auditDenied(rpcReasonLabel(auth.code), {});
       return errorResponse(id, auth.code, auth.reason);
     }
     const { claims, peerFingerprint, peerPublicKey, sheetSkills } = auth;
@@ -425,6 +453,7 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
     };
     const admission = delegationGuard.admitInbound(delegationCreds, peerPublicKey);
     if (!admission.ok) {
+      auditDenied('delegation-rejected', { peerFingerprint });
       return errorResponse(id, RPC.DELEGATION_REJECTED, admission.reason);
     }
     const { traceId, depth } = admission;
@@ -432,9 +461,11 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
     // --- Gate 4: scope ∩ current character sheet (evaluated at call time) ---
     const skill = params.skill;
     if (!claims.scope.includes(skill)) {
+      auditDenied('forbidden-scope', { peerFingerprint, traceId });
       return errorResponse(id, RPC.FORBIDDEN_SCOPE, `skill "${skill}" not in granted scope`);
     }
     if (!sheetSkills.has(skill)) {
+      auditDenied('forbidden-scope', { peerFingerprint, traceId });
       return errorResponse(
         id,
         RPC.FORBIDDEN_SCOPE,
@@ -443,6 +474,22 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
     }
 
     const sessionKey = params.sessionKey ?? `a2a:${personalityId}:${peerFingerprint}`;
+
+    // Record the ACCEPTED dispatch once the last gate — the limiter — also grants
+    // a lease (a throttled request is a `rate-limited` denial, not an accept).
+    const auditAccepted = () => {
+      safeAudit(auditSink, {
+        kind: 'rpc',
+        event: A2A_METHOD_MESSAGE_SEND,
+        personalityId,
+        peerFingerprint,
+        skill,
+        traceId,
+        decision: 'accepted',
+        severity: 'info',
+        ts: now(),
+      });
+    };
 
     // --- Async path (Phase 6) ---------------------------------------------
     if (params.mode === 'async') {
@@ -464,8 +511,10 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
       // The lease is held for the whole background run (concurrency cap, §O6).
       const lease = await limiter.acquire(personalityId, peerFingerprint);
       if (!lease) {
+        auditDenied('rate-limited', { peerFingerprint, traceId });
         return errorResponse(id, RPC.RATE_LIMITED, 'rate or concurrency limit exceeded');
       }
+      auditAccepted();
       const task = await asyncManager.submit({
         personalityId,
         peerFingerprint,
@@ -485,12 +534,27 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
     // --- Sync path (Phase 5) — limiter around the run ----------------------
     const lease = await limiter.acquire(personalityId, peerFingerprint);
     if (!lease) {
+      auditDenied('rate-limited', { peerFingerprint, traceId });
       return errorResponse(id, RPC.RATE_LIMITED, 'rate or concurrency limit exceeded');
     }
+    auditAccepted();
     try {
       const result = await runSyncTask(opts.runner, personalityId, params.message, sessionKey, {
         traceId,
         depth,
+      });
+      // Sync terminal task-state (fail-open, metadata only).
+      safeAudit(auditSink, {
+        kind: 'task',
+        event: 'task-state',
+        personalityId,
+        peerFingerprint,
+        taskId: result.taskId,
+        traceId,
+        status: result.state,
+        decision: 'accepted',
+        severity: result.state === 'failed' ? 'error' : 'info',
+        ts: now(),
       });
       return { jsonrpc: '2.0', id, result };
     } catch (err) {
@@ -636,6 +700,26 @@ function readCredentials(c: {
 
 function errorResponse(id: JsonRpcId, code: number, message: string): JsonRpcErrorResponse {
   return { jsonrpc: '2.0', id, error: { code, message } };
+}
+
+/** Map a JSON-RPC error code to a short audit reason label (never a body). */
+function rpcReasonLabel(code: number): string {
+  switch (code) {
+    case RPC.UNAUTHORIZED:
+      return 'unauthorized';
+    case RPC.PROOF_INVALID:
+      return 'proof-invalid';
+    case RPC.FORBIDDEN_SCOPE:
+      return 'forbidden-scope';
+    case RPC.RATE_LIMITED:
+      return 'rate-limited';
+    case RPC.DELEGATION_REJECTED:
+      return 'delegation-rejected';
+    case RPC.INTERNAL:
+      return 'internal-error';
+    default:
+      return 'denied';
+  }
 }
 
 function sseStatusFor(code: number): 401 | 403 {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve as pathResolve } from 'node:path';
 import {
+  type A2aAuditSink,
   A2aDelegationGuard,
   type A2aTaskRunner,
   createA2aAuthRouter,
@@ -611,6 +612,36 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         });
       },
     };
+    // Phase 8: metadata-only audit sink. Built HERE in the app layer so
+    // `@ethosagent/a2a` types never leak into `packages/wiring`. It maps each
+    // A2aAuditEntry to an ethos observability event via the escape hatch — the
+    // log proves THAT an exchange happened (decision, personality, peer), NEVER
+    // WHAT was said. Fail-open: a missing/failing observability sink must not
+    // affect the exchange (plan §13 / O12).
+    const a2aAuditCategory = { auth: 'a2a.auth', rpc: 'a2a.rpc', task: 'a2a.task' } as const;
+    const a2aAuditSink: A2aAuditSink = {
+      record: (e) => {
+        try {
+          getEthosObservability().recordEthosEvent({
+            category: a2aAuditCategory[e.kind],
+            severity: e.severity ?? (e.decision === 'denied' ? 'warn' : 'info'),
+            code: e.event,
+            ...(e.reason ? { cause: e.reason } : {}),
+            details: {
+              decision: e.decision,
+              personalityId: e.personalityId,
+              ...(e.peerFingerprint ? { peerFingerprint: e.peerFingerprint } : {}),
+              ...(e.skill ? { skill: e.skill } : {}),
+              ...(e.taskId ? { taskId: e.taskId } : {}),
+              ...(e.traceId ? { traceId: e.traceId } : {}),
+              ...(e.status ? { status: e.status } : {}),
+            },
+          });
+        } catch {
+          // observability unavailable — audit is fail-open (plan §13).
+        }
+      },
+    };
     a2aRouteModules.push(
       {
         basePath: '/',
@@ -626,6 +657,19 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           allowlist: a2aAllowlist,
           peerStore: a2aPeerStore,
           nonces: new MemoryNonceStore(),
+          // Route the SIGNED auth receipt (already produced by the handshake) into
+          // the audit sink so accepted/rejected handshakes are recorded + queryable.
+          onReceipt: (signed) =>
+            a2aAuditSink.record({
+              kind: 'auth',
+              event: 'a2a-auth',
+              personalityId: signed.receipt.personalityId,
+              peerFingerprint: signed.receipt.peerFingerprint,
+              decision: signed.receipt.decision === 'accepted' ? 'accepted' : 'denied',
+              ...(signed.receipt.reason ? { reason: signed.receipt.reason } : {}),
+              severity: signed.receipt.decision === 'accepted' ? 'info' : 'warn',
+              ts: signed.receipt.ts,
+            }),
         }),
         auth: 'public',
         description:
@@ -641,6 +685,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           limiter: a2aLimiter,
           delegationGuard: a2aDelegationGuard,
           pushClient: a2aPushClient,
+          auditSink: a2aAuditSink,
         }),
         auth: 'public',
         description:
@@ -650,11 +695,23 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     // Phase 7: register the OUTBOUND `a2a_send` tool — opt-in, only when A2A is
     // enabled, and gated by each personality's `a2a` toolset at execute time.
     if (toolRegistry) {
-      for (const tool of createA2aTools({ identity: a2aIdentity, secrets: a2aSecrets })) {
+      const allowSelfLoop = process.env.ETHOS_A2A_SELF_LOOP === '1';
+      for (const tool of createA2aTools({
+        identity: a2aIdentity,
+        secrets: a2aSecrets,
+        ...(allowSelfLoop ? { allowSelfLoop: true } : {}),
+      })) {
         toolRegistry.register(tool);
       }
     }
     console.log(`  a2a:          enabled (${a2aRouteModules.length} modules on the web API)`);
+    // Phase 8: MESH is opt-in and DEFAULT OFF. The concrete safety shipped this
+    // phase is the self-loop-default-off guard above; the flag is just the opt-in
+    // marker for un-advertised mesh mode (a dynamic peer registry is deferred to
+    // v2). Audit fires regardless of this flag.
+    if (process.env.ETHOS_A2A_MESH === '1') {
+      console.log('  a2a mesh:     enabled (un-advertised mesh mode; audit active)');
+    }
   }
 
   const created = createWebApi({

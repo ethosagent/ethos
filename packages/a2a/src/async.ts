@@ -24,6 +24,7 @@
 // core, no extensions, no apps — the runner + push client are injected.
 
 import type { AgentEvent } from '@ethosagent/types';
+import { type A2aAuditSink, safeAudit } from './audit';
 import { signStruct } from './crypto';
 import type { A2aTaskRunner } from './rpc';
 import { type A2aTask, type A2aTaskStore, isTerminalStatus, newTaskId } from './task-store';
@@ -173,6 +174,8 @@ export interface A2aAsyncManagerOptions {
   pushRetries?: number;
   /** Called after a trace's task settles, so the delegation guard can free it. */
   onSettled?: (traceId: string) => void;
+  /** Metadata-only audit sink (plan §13 / Phase 8) — records task-state transitions. */
+  auditSink?: A2aAuditSink;
 }
 
 export interface SubmitAsyncArgs {
@@ -232,10 +235,27 @@ export class A2aAsyncManager {
     return this.running.get(taskId);
   }
 
+  /** Fail-open, metadata-only task-state audit — never a message body (plan §13). */
+  private auditStatus(task: A2aTask, args: SubmitAsyncArgs, status: A2aTask['status']): void {
+    safeAudit(this.opts.auditSink, {
+      kind: 'task',
+      event: 'task-state',
+      personalityId: args.personalityId,
+      peerFingerprint: args.peerFingerprint,
+      taskId: task.id,
+      traceId: task.traceId,
+      status,
+      decision: 'accepted',
+      severity: status === 'failed' || status === 'peer-unreachable' ? 'error' : 'info',
+      ts: this.now(),
+    });
+  }
+
   private async execute(task: A2aTask, args: SubmitAsyncArgs): Promise<A2aTask> {
     const store = this.opts.taskStore;
     try {
       await store.update(task.id, { status: 'working' });
+      this.auditStatus(task, args, 'working');
       const { text, error } = await collectAgentRun(
         this.opts.runner.run(args.personalityId, args.message, {
           sessionKey: args.sessionKey,
@@ -243,6 +263,7 @@ export class A2aAsyncManager {
         }),
       );
       if (error !== undefined) {
+        this.auditStatus(task, args, 'failed');
         return await this.finalize(task, { status: 'failed', error });
       }
       await store.update(task.id, { status: 'completed', result: text });
@@ -255,12 +276,15 @@ export class A2aAsyncManager {
           result: text,
         });
         if (!delivered) {
+          this.auditStatus(task, args, 'peer-unreachable');
           return await this.finalize(task, { status: 'peer-unreachable', result: text });
         }
       }
+      this.auditStatus(task, args, 'completed');
       return await this.finalize(task, { status: 'completed', result: text });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      this.auditStatus(task, args, 'failed');
       return await this.finalize(task, { status: 'failed', error: message });
     }
   }
