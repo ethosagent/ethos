@@ -130,7 +130,7 @@ export async function reflowChunks(
 // ---------------------------------------------------------------------------
 
 /** Maximum file size in bytes that we'll download into memory. */
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
 interface MediaDescriptor {
   fileId: string;
@@ -210,7 +210,7 @@ function extractMedia(msg: Record<string, unknown>): MediaDescriptor[] {
  * Download a single file from the Telegram Bot API. Returns a Buffer on
  * success, null on failure. Best-effort — callers handle the null case.
  */
-async function downloadTelegramFile(
+export async function downloadTelegramFile(
   botApi: { getFile: (fileId: string) => Promise<{ file_path?: string; file_size?: number }> },
   token: string,
   descriptor: MediaDescriptor,
@@ -228,6 +228,10 @@ async function downloadTelegramFile(
     if (!resp.ok) return null;
 
     const arrayBuf = await resp.arrayBuffer();
+    // Post-download guard: the pre-check trusts the *declared* size, which is
+    // `0` (and thus passes) when Telegram omits `file_size`. Re-check the
+    // actual byte length so an undeclared-size file can't bypass the cap.
+    if (arrayBuf.byteLength > MAX_FILE_SIZE) return null;
     return { data: Buffer.from(arrayBuf), fileSize };
   } catch {
     return null;

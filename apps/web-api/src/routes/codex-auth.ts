@@ -17,12 +17,29 @@ interface PendingAuth {
 // In-memory store keyed by sessionToken. Tokens expire after 20 minutes.
 const pending = new Map<string, PendingAuth>();
 
+// WEB-007: this endpoint is intentionally unauthenticated (the user may not be
+// onboarded yet), but each device-code request inserts into `pending` and
+// spawns a ~16-minute background poller doing repeated outbound fetches. Cap the
+// number of concurrent pending flows so an unauthenticated client cannot drive
+// unbounded background pollers / map growth. The rate limiter on the mount is
+// the first line of defense; this is the hard ceiling.
+const MAX_PENDING = 20;
+
 export function codexAuthRoutes(opts: { secrets: SecretsResolver }) {
   const app = new Hono();
   const store = new CodexTokenStore(opts.secrets);
 
   // POST /device-code → request a device code, start background polling
   app.post('/device-code', async (c) => {
+    if (pending.size >= MAX_PENDING) {
+      return c.json(
+        {
+          ok: false,
+          error: 'Too many pending device authorizations. Try again in a few minutes.',
+        },
+        429,
+      );
+    }
     try {
       const { deviceAuthId, userCode } = await requestDeviceCode(fetch);
       const sessionToken = randomBytes(16).toString('hex');

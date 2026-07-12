@@ -3,7 +3,12 @@ import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { loadWidgetTemplates } from '@ethosagent/plugin-loader';
 import Database from '@ethosagent/sqlite';
 import { EthosError, type WidgetTemplate } from '@ethosagent/types';
-import { findInvalidParamKeys } from './interpolate-params';
+import {
+  assertSelectOnlySql,
+  type DashboardImportPayload,
+  findInvalidParamKeys,
+  parseImportPayload,
+} from './interpolate-params';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -430,15 +435,7 @@ export class DashboardsService {
       if (!panel.sqlQuery) {
         throw new Error('sqlQuery is required for sql query type');
       }
-      const trimmed = panel.sqlQuery.trim();
-      if (!/^select\b/i.test(trimmed)) {
-        throw new Error('SQL query must start with SELECT');
-      }
-      // Must not contain ';' except as optional trailing character
-      const withoutTrailingSemicolon = trimmed.endsWith(';') ? trimmed.slice(0, -1) : trimmed;
-      if (withoutTrailingSemicolon.includes(';')) {
-        throw new Error('SQL query must not contain multiple statements');
-      }
+      assertSelectOnlySql(panel.sqlQuery);
     }
 
     const defaults = DEFAULT_SIZES[panel.blockType] ?? { w: 6, h: 4 };
@@ -552,13 +549,22 @@ export class DashboardsService {
     },
   ): void {
     if (patch.queryType === 'sql' && patch.sqlQuery) {
-      const trimmed = patch.sqlQuery.trim();
-      if (!/^select\b/i.test(trimmed)) {
-        throw new Error('SQL query must start with SELECT');
-      }
-      const withoutTrailing = trimmed.endsWith(';') ? trimmed.slice(0, -1) : trimmed;
-      if (withoutTrailing.includes(';')) {
-        throw new Error('SQL query must not contain multiple statements');
+      assertSelectOnlySql(patch.sqlQuery);
+    }
+    if (patch.paramDefaults !== undefined) {
+      // Panel paramDefaults is a resolution source for interpolateParams, so it
+      // is a SQL-injection sink like dashboard params. Vet it against the
+      // owning dashboard's schema before persisting.
+      const panel = this.getPanel(panelId);
+      const schema = panel ? (this.get(panel.dashboardId)?.dashboard.paramsSchema ?? []) : [];
+      const invalid = findInvalidParamKeys(schema, patch.paramDefaults);
+      if (invalid.length > 0) {
+        throw new EthosError({
+          code: 'INVALID_INPUT',
+          cause: `Dashboard param value(s) not permitted by the parameter schema: ${invalid.join(', ')}`,
+          action:
+            'Submit only values allowed by each parameter definition (a listed option, or a YYYY-MM-DD date).',
+        });
       }
     }
     const now = Date.now();
@@ -787,33 +793,13 @@ export class DashboardsService {
     };
   }
 
+  /**
+   * Insert a validated dashboard-import payload. Callers MUST pass a payload
+   * that has been through `parseImportPayload` (see `importDashboardJson`),
+   * which safeParses the structure and vets every SQL query + param sink.
+   */
   importDashboard(
-    data: {
-      version: number;
-      title: string;
-      paramsSchema?: ParamDef[];
-      paramsCurrent?: Record<string, string>;
-      cronSchedule?: string | null;
-      panels: Array<{
-        title: string | null;
-        queryType: string;
-        blockType: string;
-        content: string;
-        prompt: string | null;
-        sqlQuery: string | null;
-        pluginId: string | null;
-        dataSourceId: string | null;
-        cronSchedule: string | null;
-        htmlTemplate: string | null;
-        emitConfig: EmitRule[] | null;
-        dependsOnIndices: number[];
-        paramDefaults?: Record<string, string>;
-        col: number;
-        row: number;
-        w: number;
-        h: number;
-      }>;
-    },
+    data: DashboardImportPayload,
     userId: string,
     personalityId: string,
   ): { dashboardId: string; warnings: string[] } {
@@ -828,7 +814,7 @@ export class DashboardsService {
         dashId,
         userId,
         personalityId,
-        data.title,
+        data.title ?? 'Imported Dashboard',
         null,
         data.paramsSchema ? JSON.stringify(data.paramsSchema) : null,
         data.paramsCurrent ? JSON.stringify(data.paramsCurrent) : null,
@@ -838,8 +824,9 @@ export class DashboardsService {
       );
 
     // Create panels, collecting new IDs
+    const panels = data.panels ?? [];
     const newPanelIds: string[] = [];
-    for (const p of data.panels) {
+    for (const p of panels) {
       const panelId = randomUUID();
       newPanelIds.push(panelId);
       this.db
@@ -854,32 +841,32 @@ export class DashboardsService {
         .run(
           panelId,
           dashId,
-          p.queryType,
-          p.blockType,
-          p.content,
-          p.prompt,
-          p.sqlQuery,
-          p.pluginId,
-          p.dataSourceId,
-          p.cronSchedule,
-          p.htmlTemplate,
-          p.title,
+          p.queryType ?? 'static',
+          p.blockType ?? 'html',
+          p.content ?? '',
+          p.prompt ?? null,
+          p.sqlQuery ?? null,
+          p.pluginId ?? null,
+          p.dataSourceId ?? null,
+          p.cronSchedule ?? null,
+          p.htmlTemplate ?? null,
+          p.title ?? null,
           p.emitConfig ? JSON.stringify(p.emitConfig) : null,
           p.paramDefaults ? JSON.stringify(p.paramDefaults) : null,
-          p.col,
-          p.row,
-          p.w,
-          p.h,
+          p.col ?? 0,
+          p.row ?? 0,
+          p.w ?? 6,
+          p.h ?? 4,
           now,
           now,
         );
     }
 
     // Remap dependsOnIndices to new panel UUIDs
-    for (let i = 0; i < data.panels.length; i++) {
-      const panel = data.panels[i];
-      if (panel && panel.dependsOnIndices.length > 0) {
-        const depIds = panel.dependsOnIndices
+    for (let i = 0; i < panels.length; i++) {
+      const indices = panels[i]?.dependsOnIndices ?? [];
+      if (indices.length > 0) {
+        const depIds = indices
           .map((idx) => newPanelIds[idx])
           .filter((id): id is string => id !== undefined);
         if (depIds.length > 0) {
@@ -914,7 +901,17 @@ export class DashboardsService {
     exportJson: string,
     userId: string,
   ): { dashboardId: string; title: string; warnings: string[] } {
-    const data = JSON.parse(exportJson);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(exportJson);
+    } catch {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: 'Dashboard import JSON is malformed',
+        action: 'Provide the exact JSON produced by dashboard export.',
+      });
+    }
+    const data = parseImportPayload(raw);
     const result = this.importDashboard(data, userId, data.personalityId ?? 'default');
     return {
       dashboardId: result.dashboardId,

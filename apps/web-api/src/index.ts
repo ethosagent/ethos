@@ -93,6 +93,10 @@ export interface CreateWebApiOptions {
   allowedOrigins?: string[];
   /** Set `secure` on the auth cookie. Off by default; flip on for non-loopback bind. */
   secureCookie?: boolean;
+  /** Honor `X-Forwarded-For` for rate-limit bucketing. Only enable behind a
+   *  trusted reverse proxy — otherwise clients spoof the header (WEB-006).
+   *  Default false. */
+  trustProxy?: boolean;
   /**
    * Decides which tool calls require an explicit user approval. When
    * unset, no approvals are demanded — every tool call passes through
@@ -564,6 +568,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
     ...(opts.secureCookie !== undefined ? { secureCookie: opts.secureCookie } : {}),
+    ...(opts.trustProxy !== undefined ? { trustProxy: opts.trustProxy } : {}),
     ...(opts.webDist ? { webDist: opts.webDist } : {}),
     ...(opts.apiKeys ? { apiKeys: opts.apiKeys } : {}),
     ...(opts.listTeams ? { listTeams: opts.listTeams } : {}),

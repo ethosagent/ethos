@@ -451,18 +451,27 @@ export function createDashboardUpdatePanelTool(
           return { ok: false, error: 'Only SELECT queries are allowed', code: 'input_invalid' };
         }
       }
-      store.updatePanel(args.panel_id, {
-        title: args.title,
-        queryType: args.query_type,
-        prompt: args.prompt,
-        sqlQuery: args.sql_query,
-        pluginId: args.plugin_id,
-        dataSourceId: args.data_source_id,
-        htmlTemplate: args.html_template,
-        emitConfig: args.emit_config ?? undefined,
-        dependsOn: args.depends_on ?? undefined,
-        paramDefaults: args.param_defaults ?? undefined,
-      });
+      try {
+        store.updatePanel(args.panel_id, {
+          title: args.title,
+          queryType: args.query_type,
+          prompt: args.prompt,
+          sqlQuery: args.sql_query,
+          pluginId: args.plugin_id,
+          dataSourceId: args.data_source_id,
+          htmlTemplate: args.html_template,
+          emitConfig: args.emit_config ?? undefined,
+          dependsOn: args.depends_on ?? undefined,
+          paramDefaults: args.param_defaults ?? undefined,
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : 'Invalid panel update',
+          code: 'input_invalid',
+          field: 'param_defaults',
+        };
+      }
       return {
         ok: true,
         value: `Panel ${args.panel_id} updated${args.query_type ? ` → ${args.query_type}` : ''}.`,
@@ -531,7 +540,16 @@ export function createDashboardSetParamsTool(
         store.updateParamsSchema(args.dashboard_id, args.params_schema);
       }
       if (args.params_current) {
-        store.updateDashboardParams(args.dashboard_id, args.params_current);
+        try {
+          store.updateDashboardParams(args.dashboard_id, args.params_current);
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : 'Invalid dashboard params',
+            code: 'input_invalid',
+            field: 'params_current',
+          };
+        }
       }
       return { ok: true, value: 'Dashboard params updated.' };
     },
@@ -621,7 +639,17 @@ export function createDashboardImportTool(store: DashboardToolStore): Tool<Dashb
       }
       const userId = (ctx as { userId?: string }).userId ?? 'default-user';
       const personalityId = typeof data.personalityId === 'string' ? data.personalityId : 'default';
-      const result = store.importDashboard(data, userId, personalityId);
+      let result: { dashboardId: string; warnings: string[] };
+      try {
+        result = store.importDashboard(data, userId, personalityId);
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : 'Invalid dashboard import',
+          code: 'input_invalid',
+          field: 'export_json',
+        };
+      }
       let value = `Dashboard imported: '${String(data.title ?? '')}' (id: ${result.dashboardId})\nURL: /dashboards/${result.dashboardId}`;
       if (result.warnings.length > 0) {
         value += `\n\nWarnings:\n${result.warnings.join('\n')}`;

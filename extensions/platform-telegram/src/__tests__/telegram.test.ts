@@ -1,6 +1,12 @@
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
-import { describe, expect, it } from 'vitest';
-import { chunkText, reflowChunks, TelegramAdapter } from '../index';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  chunkText,
+  downloadTelegramFile,
+  MAX_FILE_SIZE,
+  reflowChunks,
+  TelegramAdapter,
+} from '../index';
 
 const cache = new InMemoryAttachmentCache();
 
@@ -130,5 +136,50 @@ describe('TelegramAdapter — botKey identity', () => {
     const b = new TelegramAdapter({ token: '123:ABC', cache, botKey: 'explicit' });
     expect(a.botKey).not.toBe(b.botKey);
     expect(b.botKey).toBe('explicit');
+  });
+});
+
+describe('downloadTelegramFile — size cap (GWA-001)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('rejects an oversized body when the declared size is undefined', async () => {
+    // Telegram omits file_size → pre-check fallback is 0 (passes). The
+    // post-download guard must catch the actual oversized byte length.
+    const botApi = {
+      getFile: vi.fn().mockResolvedValue({ file_path: 'docs/big.bin', file_size: undefined }),
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(MAX_FILE_SIZE + 1),
+    } as unknown as Response);
+
+    const result = await downloadTelegramFile(botApi, 'token', {
+      fileId: 'f1',
+      type: 'file',
+      mimeType: 'application/octet-stream',
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it('accepts a body within the cap', async () => {
+    const botApi = {
+      getFile: vi.fn().mockResolvedValue({ file_path: 'docs/small.bin', file_size: undefined }),
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(16),
+    } as unknown as Response);
+
+    const result = await downloadTelegramFile(botApi, 'token', {
+      fileId: 'f1',
+      type: 'file',
+      mimeType: 'application/octet-stream',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.data.byteLength).toBe(16);
   });
 });

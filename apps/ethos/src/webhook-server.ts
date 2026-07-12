@@ -1,6 +1,14 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
+import { z } from 'zod';
+
+/** Only `prompt` / `text` are consumed; identity is server-derived from the
+ *  authenticated hookId, never the body. Unknown keys are ignored. */
+const WebhookBody = z.object({
+  prompt: z.string().optional(),
+  text: z.string().optional(),
+});
 
 export interface WebhookConfig {
   personalityId: string;
@@ -87,13 +95,19 @@ export function createWebhookServer(
       return;
     }
 
-    let body: { prompt?: string; text?: string };
+    let raw: unknown;
     try {
-      body = JSON.parse(await readBody(req));
+      raw = JSON.parse(await readBody(req));
     } catch {
       sendJson(res, 400, { error: 'invalid JSON body' });
       return;
     }
+    const parsed = WebhookBody.safeParse(raw);
+    if (!parsed.success) {
+      sendJson(res, 400, { error: 'invalid JSON body' });
+      return;
+    }
+    const body = parsed.data;
     // TODO v2: attachments
     const prompt = body.prompt ?? body.text;
     if (!prompt || prompt.trim().length === 0) {

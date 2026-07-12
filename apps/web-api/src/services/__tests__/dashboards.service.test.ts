@@ -401,4 +401,123 @@ describe('DashboardsService', () => {
     svc.updateDashboardParams(id, {});
     expect(svc.get(id)?.dashboard.paramsCurrent).toEqual({});
   });
+
+  // -----------------------------------------------------------------------
+  // Import validation (WEB-004 4c/4d)
+  // -----------------------------------------------------------------------
+
+  it('safeParses malformed import JSON into a typed error, not a 500', () => {
+    expect(() => svc.importDashboardJson('{ not json', 'user-1')).toThrow(/malformed/i);
+  });
+
+  it('rejects an imported panel whose sqlQuery is not a SELECT', () => {
+    const payload = {
+      version: 1,
+      title: 'Evil',
+      panels: [
+        {
+          queryType: 'sql',
+          blockType: 'table',
+          content: '[]',
+          sqlQuery: 'DROP TABLE users',
+          dependsOnIndices: [],
+          col: 0,
+          row: 0,
+          w: 6,
+          h: 4,
+        },
+      ],
+    };
+    expect(() => svc.importDashboardJson(JSON.stringify(payload), 'user-1')).toThrow(/SELECT/i);
+    expect(svc.list('user-1')).toHaveLength(0);
+  });
+
+  it('rejects an imported paramsCurrent value outside the schema allowlist', () => {
+    const payload = {
+      version: 1,
+      title: 'Evil',
+      paramsSchema: [
+        { key: 'region', label: 'Region', type: 'select', options: ['us'], default: 'us' },
+      ],
+      paramsCurrent: { region: "us' UNION SELECT secret FROM users --" },
+      panels: [],
+    };
+    expect(() => svc.importDashboardJson(JSON.stringify(payload), 'user-1')).toThrow(/param/i);
+    expect(svc.list('user-1')).toHaveLength(0);
+  });
+
+  it('rejects an imported panel paramDefault outside the schema allowlist (4d)', () => {
+    const payload = {
+      version: 1,
+      title: 'Evil',
+      paramsSchema: [
+        { key: 'region', label: 'Region', type: 'select', options: ['us'], default: 'us' },
+      ],
+      panels: [
+        {
+          queryType: 'sql',
+          blockType: 'table',
+          content: '[]',
+          sqlQuery: 'SELECT * FROM sales',
+          paramDefaults: { region: "us' OR 1=1 --" },
+          dependsOnIndices: [],
+          col: 0,
+          row: 0,
+          w: 6,
+          h: 4,
+        },
+      ],
+    };
+    expect(() => svc.importDashboardJson(JSON.stringify(payload), 'user-1')).toThrow(/param/i);
+    expect(svc.list('user-1')).toHaveLength(0);
+  });
+
+  it('rejects a panel paramDefault outside the schema allowlist (4d)', () => {
+    const d = svc.create('user-1', 'D', 'p1');
+    svc.update(d.id, {
+      paramsSchema: [
+        { key: 'region', label: 'Region', type: 'select', options: ['us', 'eu'], default: 'us' },
+      ],
+    });
+    const p = svc.addPanel(d.id, {
+      queryType: 'sql',
+      blockType: 'table',
+      content: '[]',
+      sqlQuery: 'SELECT * FROM t WHERE region = {region}',
+    });
+    expect(() => svc.updatePanel(p.id, { paramDefaults: { region: "us' OR 1=1 --" } })).toThrow(
+      /param/i,
+    );
+    svc.updatePanel(p.id, { paramDefaults: { region: 'eu' } });
+    expect(svc.getPanel(p.id)?.paramDefaults).toEqual({ region: 'eu' });
+  });
+
+  it('imports a well-formed dashboard and round-trips an export', () => {
+    const d = svc.create('user-1', 'Source', 'p1');
+    svc.update(d.id, {
+      paramsSchema: [
+        { key: 'region', label: 'Region', type: 'select', options: ['us', 'eu'], default: 'us' },
+      ],
+    });
+    svc.updateDashboardParams(d.id, { region: 'eu' });
+    svc.addPanel(d.id, {
+      queryType: 'sql',
+      blockType: 'table',
+      content: '[]',
+      sqlQuery: 'SELECT * FROM sales',
+      pluginId: 'plugin-a',
+      dataSourceId: 'ds-1',
+    });
+
+    const exported = svc.exportDashboardJson(d.id);
+    expect(exported).not.toBeNull();
+    const json = exported?.json ?? '';
+
+    const result = svc.importDashboardJson(json, 'user-2');
+    expect(result.dashboardId).toBeTruthy();
+    const imported = svc.get(result.dashboardId);
+    expect(imported?.dashboard.paramsCurrent).toEqual({ region: 'eu' });
+    expect(imported?.panels).toHaveLength(1);
+    expect(imported?.panels[0].sqlQuery).toBe('SELECT * FROM sales');
+  });
 });

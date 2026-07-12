@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 // Derive a trustworthy origin string from an inbound web request, for use
 // as the MCP OAuth `redirect_uri`'s scheme+host+port. Returns undefined
 // when the request's origin can't be trusted — the caller (McpService)
@@ -20,12 +22,21 @@
 //   b) Otherwise, `<scheme>://<host>` built from the `Host` header. Same-
 //      origin GETs and `fetch()` calls without Origin still carry Host.
 
-const PRIVATE_IP_PATTERNS: RegExp[] = [
-  /^10\./,
-  /^192\.168\./,
-  // 172.16.0.0 — 172.31.255.255
-  /^172\.(1[6-9]|2\d|3[0-1])\./,
-];
+// WEB-005: only real IPv4 literals may qualify as private ranges. The previous
+// hostname-prefix regexes matched attacker-registerable DNS names like
+// `10.evil.com` / `192.168.attacker.io`, letting an attacker-controlled origin
+// pose as a trusted private host. We parse with `node:net` `isIP()` and
+// range-check octets, so a name that merely starts with `10.` is rejected.
+function isPrivateIpv4(hostname: string): boolean {
+  if (isIP(hostname) !== 4) return false;
+  const parts = hostname.split('.');
+  const a = Number(parts[0]);
+  const b = Number(parts[1]);
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  return false;
+}
 
 /**
  * Build a `<scheme>://<host>[:port]` string from an incoming Fetch
@@ -74,10 +85,8 @@ function isTrustedOrigin(origin: string, webBaseUrl: string | undefined): boolea
     hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
   if (bare === 'localhost' || bare === '127.0.0.1' || bare === '::1') return true;
 
-  // RFC 1918 private ranges.
-  for (const pat of PRIVATE_IP_PATTERNS) {
-    if (pat.test(hostname)) return true;
-  }
+  // RFC 1918 private ranges — only for genuine IPv4 literals (see isPrivateIpv4).
+  if (isPrivateIpv4(bare)) return true;
 
   // Explicit allowlist via webBaseUrl.
   if (webBaseUrl) {

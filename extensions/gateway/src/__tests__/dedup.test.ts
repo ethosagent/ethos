@@ -65,6 +65,21 @@ describe('MessageDedupCache', () => {
     expect(cache.shouldSend('s2', 'a')).toBe(false);
   });
 
+  it('clearSession matches the sessionId exactly and spares sibling thread lanes', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+
+    // Root lane and a threaded sibling — the root is a colon-prefix of the thread.
+    expect(cache.shouldSend('a:b:c', 'hi')).toBe(true);
+    expect(cache.shouldSend('a:b:c:d', 'hi')).toBe(true);
+
+    cache.clearSession('a:b:c');
+
+    // Root lane forgotten...
+    expect(cache.shouldSend('a:b:c', 'hi')).toBe(true);
+    // ...but the threaded sibling's entry survives (still suppressed).
+    expect(cache.shouldSend('a:b:c:d', 'hi')).toBe(false);
+  });
+
   it('ETHOS_DEDUP_LEGACY=1 disables the cache entirely', () => {
     process.env.ETHOS_DEDUP_LEGACY = '1';
     const cache = new MessageDedupCache({ ttlMs: 60_000 });

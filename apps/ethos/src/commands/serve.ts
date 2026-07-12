@@ -59,6 +59,17 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const webPort = parsePort(parseFlagValue(args, ['--web-port']), WEB_PORT_DEFAULT);
   const webHost = parseFlagValue(args, ['--web-host']) ?? process.env.ETHOS_WEB_HOST ?? '127.0.0.1';
 
+  // WEB-006: only honor X-Forwarded-For for rate limiting behind a trusted
+  // reverse proxy. Off by default — a directly-exposed server must never trust
+  // the spoofable header. Opt in with ETHOS_TRUST_PROXY=1.
+  const trustProxy =
+    process.env.ETHOS_TRUST_PROXY === '1' || process.env.ETHOS_TRUST_PROXY === 'true';
+  // WEB-010: mark the long-lived auth cookie `Secure` whenever the server is
+  // reachable off-loopback (non-loopback bind) or fronted by HTTPS
+  // (`webBaseUrl`). The loopback-http default (127.0.0.1 without https) keeps
+  // `Secure` off so the cookie still works over plain http on localhost.
+  const isLoopbackBind = webHost === '127.0.0.1' || webHost === 'localhost' || webHost === '::1';
+
   const dir = ethosDir();
 
   // System skills catalog: packaged at <pkg>/skills/ in production,
@@ -150,6 +161,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       onSetupComplete: () => {
         void bootRealLoop();
       },
+      secureCookie: !isLoopbackBind,
+      trustProxy,
       ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
       ...(webDist ? { webDist } : {}),
     });
@@ -553,6 +566,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(notificationRouter ? { notificationRouter } : {}),
     apiKeys,
     listTeams: async () => listRegisteredTeams(dir),
+    secureCookie: !isLoopbackBind || config.webBaseUrl?.startsWith('https://') === true,
+    trustProxy,
     ...(webDist ? { webDist } : {}),
     ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
     ...(setOnSkillProposed ? { setOnSkillProposed } : {}),

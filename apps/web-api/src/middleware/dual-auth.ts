@@ -25,22 +25,60 @@ const BEARER_PREFIX = 'Bearer ';
 const SECRET_PREFIX = 'sk-ethos-';
 const TOUCH_THROTTLE_MS = 60_000;
 
-const SCOPE_MAP: Record<string, Record<string, string>> = {
+// Sentinel "scope" for methods that live in a mapped namespace but must NOT be
+// reachable via an API key (bearer) at all. These mutate personality config,
+// and the `ApiKeyScope` enum deliberately has no `personalities:write` — such
+// methods are cookie-only (the web UI). Mapping them here (rather than omitting
+// them) keeps the drift test's subset invariant honest: EVERY router method in
+// a mapped namespace has an explicit entry, and the gate below fails closed for
+// every bearer key that resolves to this sentinel.
+export const COOKIE_ONLY = 'cookie-only';
+
+export const SCOPE_MAP: Record<string, Record<string, string>> = {
   sessions: {
     list: 'sessions:read',
     get: 'sessions:read',
     fork: 'sessions:write',
     delete: 'sessions:write',
     update: 'sessions:write',
+    export: 'sessions:read',
+    pin: 'sessions:write',
+    unpin: 'sessions:write',
   },
-  chat: { send: 'chat:send', abort: 'chat:send' },
+  chat: { send: 'chat:send', abort: 'chat:send', steer: 'chat:send' },
   personalities: {
     list: 'personalities:read',
     get: 'personalities:read',
     characterSheet: 'personalities:read',
+    skillsList: 'personalities:read',
+    skillsGet: 'personalities:read',
+    livingSoul: 'personalities:read',
+    skillCandidatesList: 'personalities:read',
+    // Mutating / config-writing methods — cookie-only (no bearer scope grants them).
+    create: COOKIE_ONLY,
+    update: COOKIE_ONLY,
+    delete: COOKIE_ONLY,
+    duplicate: COOKIE_ONLY,
+    skillsCreate: COOKIE_ONLY,
+    skillsUpdate: COOKIE_ONLY,
+    skillsDelete: COOKIE_ONLY,
+    skillsImportGlobal: COOKIE_ONLY,
+    mcpSetToken: COOKIE_ONLY,
+    mcpDeleteToken: COOKIE_ONLY,
+    proposeExpression: COOKIE_ONLY,
+    applyExpression: COOKIE_ONLY,
+    revertExpression: COOKIE_ONLY,
+    proposeSoulSplit: COOKIE_ONLY,
+    skillCandidateApprove: COOKIE_ONLY,
+    skillCandidateReject: COOKIE_ONLY,
   },
-  memory: { list: 'memory:read', get: 'memory:read', write: 'memory:write' },
-  tools: { approve: 'tools:approve', deny: 'tools:approve' },
+  memory: {
+    list: 'memory:read',
+    get: 'memory:read',
+    write: 'memory:write',
+    listUsers: 'memory:read',
+  },
+  tools: { approve: 'tools:approve', deny: 'tools:approve', catalog: 'tools:approve' },
 };
 
 export function resolveScope(rpcPath: string): string | null {
@@ -139,24 +177,48 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
       });
     }
 
-    const requiredScope = opts.scopeForPath(rpcPath);
-    if (requiredScope && !record.scopes.includes(requiredScope)) {
+    // SSE session streams carry the session id as a path param, not an RPC
+    // method: `/sse/sessions/<id>` normalizes to `sessions.<id>`, which has no
+    // SCOPE_MAP entry. Treat any session stream as a read of that session so it
+    // requires `sessions:read` (and doesn't fail closed as an "unmapped method").
+    const isSseSessionStream = c.req.path.startsWith('/sse/sessions/');
+    const requiredScope = isSseSessionStream ? 'sessions:read' : opts.scopeForPath(rpcPath);
+
+    if (requiredScope === COOKIE_ONLY) {
       throw new EthosError({
         code: 'FORBIDDEN',
-        cause: `API key is missing required scope "${requiredScope}".`,
-        action: `Create a key with the "${requiredScope}" scope.`,
+        cause: `Method "${rpcPath}" requires cookie authentication and is not accessible via API key.`,
+        action: 'Use cookie auth (the Ethos web UI) for this method.',
       });
     }
-    if (!requiredScope) {
-      const dotIdx = rpcPath.indexOf('.');
-      const ns = dotIdx > 0 ? rpcPath.slice(0, dotIdx) : rpcPath;
-      if (ns !== 'apiKeys' && !SCOPE_MAP[ns]) {
+    if (requiredScope) {
+      if (!record.scopes.includes(requiredScope)) {
         throw new EthosError({
           code: 'FORBIDDEN',
-          cause: `Namespace "${ns}" is experimental and not accessible via API key.`,
-          action: 'Use cookie auth (the Ethos web UI) for experimental namespaces.',
+          cause: `API key is missing required scope "${requiredScope}".`,
+          action: `Create a key with the "${requiredScope}" scope.`,
         });
       }
+    } else {
+      // No scope resolved. FAIL CLOSED (WEB-001): a known namespace with an
+      // unmapped method previously fell through with NO scope enforced. Now it
+      // is rejected — mapping a new method is a conscious decision, not an
+      // accidental open door. Experimental (unmapped) namespaces keep their
+      // dedicated message.
+      const dotIdx = rpcPath.indexOf('.');
+      const ns = dotIdx > 0 ? rpcPath.slice(0, dotIdx) : rpcPath;
+      if (SCOPE_MAP[ns]) {
+        throw new EthosError({
+          code: 'FORBIDDEN',
+          cause: `Method "${rpcPath}" is not mapped to a scope and is not accessible via API key.`,
+          action: 'Use cookie auth (the Ethos web UI), or map this method to a scope.',
+        });
+      }
+      throw new EthosError({
+        code: 'FORBIDDEN',
+        cause: `Namespace "${ns}" is experimental and not accessible via API key.`,
+        action: 'Use cookie auth (the Ethos web UI) for experimental namespaces.',
+      });
     }
 
     const now = Date.now();

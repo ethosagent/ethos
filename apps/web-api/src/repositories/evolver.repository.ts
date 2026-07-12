@@ -69,7 +69,7 @@ export class EvolverRepository {
       minPatternCount: Math.max(0, Math.floor(config.minPatternCount)),
       autoApprove: config.autoApprove ?? false,
     };
-    await this.storage.write(this.configPath, `${JSON.stringify(merged, null, 2)}\n`);
+    await this.storage.writeAtomic(this.configPath, `${JSON.stringify(merged, null, 2)}\n`);
     return merged;
   }
 

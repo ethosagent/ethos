@@ -92,6 +92,32 @@ describe('deriveMcpRequestOrigin — Origin header', () => {
   });
 });
 
+describe('deriveMcpRequestOrigin — WEB-005 private-range hostname spoofing', () => {
+  it('rejects an attacker domain that merely starts with 10. (not an IP)', () => {
+    expect(
+      deriveMcpRequestOrigin(makeReq({ origin: 'http://10.evil.com' }), undefined),
+    ).toBeUndefined();
+  });
+
+  it('rejects an attacker domain that merely starts with 192.168. (not an IP)', () => {
+    expect(
+      deriveMcpRequestOrigin(makeReq({ origin: 'http://192.168.attacker.io' }), undefined),
+    ).toBeUndefined();
+  });
+
+  it('rejects an attacker domain that merely starts with 172.16. (not an IP)', () => {
+    expect(
+      deriveMcpRequestOrigin(makeReq({ origin: 'http://172.16.evil.example' }), undefined),
+    ).toBeUndefined();
+  });
+
+  it('still accepts the genuine IPv4 literal 10.0.0.5', () => {
+    expect(deriveMcpRequestOrigin(makeReq({ origin: 'http://10.0.0.5' }), undefined)).toBe(
+      'http://10.0.0.5',
+    );
+  });
+});
+
 describe('deriveMcpRequestOrigin — Host fallback', () => {
   it('falls back to <scheme>://<host> when Origin is missing', () => {
     const req = makeReq({

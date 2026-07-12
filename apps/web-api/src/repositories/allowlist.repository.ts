@@ -1,5 +1,6 @@
 import { dirname, join } from 'node:path';
 import type { Storage } from '@ethosagent/types';
+import { z } from 'zod';
 import { requireStorage } from './require-storage';
 
 // `<dataDir>/allowlist.json` — persistent record of "always allow" decisions
@@ -31,6 +32,18 @@ export interface AllowlistEntry {
 interface FileShape {
   entries: AllowlistEntry[];
 }
+
+/** Runtime shape guard for entries deserialised from `allowlist.json`.
+ *  The file records auto-approval decisions, so a malformed or attacker-
+ *  tampered entry must never silently widen the allowlist. Entries that
+ *  don't match are dropped in `readSafe`, mirroring the per-line guard in
+ *  evolver.repository.ts. */
+const allowlistEntrySchema = z.object({
+  toolName: z.string(),
+  scope: z.enum(['exact-args', 'any-args']),
+  args: z.unknown(),
+  createdAt: z.string(),
+});
 
 export interface AllowlistRepositoryOptions {
   /** Where `~/.ethos` lives. The file is `<dataDir>/allowlist.json`. */
@@ -82,12 +95,28 @@ export class AllowlistRepository {
   private async readSafe(): Promise<FileShape> {
     const raw = await this.storage.read(this.path);
     if (!raw) return { entries: [] };
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(raw) as Partial<FileShape>;
-      return { entries: Array.isArray(parsed.entries) ? parsed.entries : [] };
+      parsed = JSON.parse(raw);
     } catch {
       return { entries: [] };
     }
+    const rawEntries =
+      parsed &&
+      typeof parsed === 'object' &&
+      Array.isArray((parsed as { entries?: unknown }).entries)
+        ? (parsed as { entries: unknown[] }).entries
+        : [];
+    const entries: AllowlistEntry[] = [];
+    for (const candidate of rawEntries) {
+      const result = allowlistEntrySchema.safeParse(candidate);
+      // Drop malformed entries rather than throwing — a bad file must not
+      // brick the approval flow, and a widened entry must not slip through.
+      if (!result.success) continue;
+      const { toolName, scope, args, createdAt } = result.data;
+      entries.push({ toolName, scope, args, createdAt });
+    }
+    return { entries };
   }
 
   private async persist(file: FileShape): Promise<void> {

@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type Database from '@ethosagent/sqlite';
+import { EthosError } from '@ethosagent/types';
+import {
+  findInvalidParamKeys,
+  type ParamDef,
+  parseImportPayload,
+} from '../services/interpolate-params';
 
 export interface CreateDashboardParams {
   userId: string;
@@ -121,6 +127,12 @@ export class DashboardStore {
       paramDefaults?: Record<string, string>;
     },
   ): void {
+    // Panel `paramDefaults` is a resolution source for interpolateParams, so it
+    // is a SQL-injection sink just like dashboard params. Vet it against the
+    // owning dashboard's schema before persisting.
+    if (patch.paramDefaults !== undefined) {
+      this.assertValuesAllowed(this.panelParamsSchema(panelId), patch.paramDefaults);
+    }
     const now = Date.now();
     const sets: string[] = ['updated_at = ?'];
     const params: unknown[] = [now];
@@ -172,7 +184,55 @@ export class DashboardStore {
     this.db.prepare(`UPDATE dashboard_panels SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   }
 
+  private parseParamsSchema(raw: string | null): ParamDef[] {
+    if (!raw) return [];
+    try {
+      return JSON.parse(raw) as ParamDef[];
+    } catch {
+      return [];
+    }
+  }
+
+  private dashboardParamsSchema(dashboardId: string): ParamDef[] {
+    const row = this.db
+      .prepare('SELECT params_schema FROM dashboards WHERE id = ?')
+      .get(dashboardId) as { params_schema: string | null } | undefined;
+    return this.parseParamsSchema(row?.params_schema ?? null);
+  }
+
+  private panelParamsSchema(panelId: string): ParamDef[] {
+    const row = this.db
+      .prepare(
+        `SELECT d.params_schema AS params_schema
+           FROM dashboard_panels p
+           JOIN dashboards d ON d.id = p.dashboard_id
+          WHERE p.id = ?`,
+      )
+      .get(panelId) as { params_schema: string | null } | undefined;
+    return this.parseParamsSchema(row?.params_schema ?? null);
+  }
+
+  /**
+   * Validate a bag of param values against a dashboard's schema before it is
+   * stored and later spliced into a SQL/prompt template. This is the same
+   * allowlist `DashboardsService.updateDashboardParams` enforces, so the
+   * agent-tool store path (params + panel defaults) cannot bypass the
+   * SQL-injection defense. Throws `INVALID_INPUT` naming the offending keys.
+   */
+  private assertValuesAllowed(schema: ParamDef[], values: Record<string, string>): void {
+    const invalid = findInvalidParamKeys(schema, values);
+    if (invalid.length > 0) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `Dashboard param value(s) not permitted by the parameter schema: ${invalid.join(', ')}`,
+        action:
+          'Submit only values allowed by each parameter definition (a listed option, or a YYYY-MM-DD date).',
+      });
+    }
+  }
+
   updateParams(id: string, paramsCurrent: Record<string, string>): void {
+    this.assertValuesAllowed(this.dashboardParamsSchema(id), paramsCurrent);
     const now = Date.now();
     this.db
       .prepare('UPDATE dashboards SET params_current = ?, updated_at = ? WHERE id = ?')
@@ -395,6 +455,7 @@ export class DashboardStore {
   }
 
   updateDashboardParams(dashboardId: string, paramsCurrent: Record<string, string>): void {
+    this.assertValuesAllowed(this.dashboardParamsSchema(dashboardId), paramsCurrent);
     const now = Date.now();
     this.db
       .prepare('UPDATE dashboards SET params_current = ?, updated_at = ? WHERE id = ?')
@@ -486,17 +547,13 @@ export class DashboardStore {
     userId: string,
     personalityId: string,
   ): { dashboardId: string; warnings: string[] } {
+    // Vet the untrusted payload before any value reaches a SQL sink: structural
+    // safeParse, SELECT-only guard per panel query, and the param allowlist on
+    // paramsCurrent + each panel's paramDefaults. Throws INVALID_INPUT on any
+    // violation — the calling tool surfaces it.
+    const validated = parseImportPayload(data);
     const now = Date.now();
     const dashId = randomUUID();
-    const title = typeof data.title === 'string' ? data.title : 'Imported Dashboard';
-    const paramsSchema = Array.isArray(data.paramsSchema)
-      ? JSON.stringify(data.paramsSchema)
-      : null;
-    const paramsCurrent =
-      data.paramsCurrent && typeof data.paramsCurrent === 'object'
-        ? JSON.stringify(data.paramsCurrent)
-        : null;
-    const cronSchedule = typeof data.cronSchedule === 'string' ? data.cronSchedule : null;
 
     this.db
       .prepare(
@@ -507,19 +564,18 @@ export class DashboardStore {
         dashId,
         userId,
         personalityId,
-        title,
+        validated.title ?? 'Imported Dashboard',
         null,
-        paramsSchema,
-        paramsCurrent,
-        cronSchedule,
+        validated.paramsSchema ? JSON.stringify(validated.paramsSchema) : null,
+        validated.paramsCurrent ? JSON.stringify(validated.paramsCurrent) : null,
+        validated.cronSchedule ?? null,
         now,
         now,
       );
 
-    const panels = Array.isArray(data.panels) ? data.panels : [];
+    const panels = validated.panels ?? [];
     const newPanelIds: string[] = [];
-    for (const p of panels) {
-      const panel = p as Record<string, unknown>;
+    for (const panel of panels) {
       const panelId = randomUUID();
       newPanelIds.push(panelId);
       this.db
@@ -536,7 +592,7 @@ export class DashboardStore {
           dashId,
           panel.queryType ?? 'static',
           panel.blockType ?? 'html',
-          typeof panel.content === 'string' ? panel.content : '',
+          panel.content ?? '',
           panel.prompt ?? null,
           panel.sqlQuery ?? null,
           panel.pluginId ?? null,
@@ -546,10 +602,10 @@ export class DashboardStore {
           panel.title ?? null,
           panel.emitConfig ? JSON.stringify(panel.emitConfig) : null,
           panel.paramDefaults ? JSON.stringify(panel.paramDefaults) : null,
-          typeof panel.col === 'number' ? panel.col : 0,
-          typeof panel.row === 'number' ? panel.row : 0,
-          typeof panel.w === 'number' ? panel.w : 6,
-          typeof panel.h === 'number' ? panel.h : 4,
+          panel.col ?? 0,
+          panel.row ?? 0,
+          panel.w ?? 6,
+          panel.h ?? 4,
           now,
           now,
         );
@@ -557,10 +613,9 @@ export class DashboardStore {
 
     // Remap dependsOnIndices to new panel UUIDs
     for (let i = 0; i < panels.length; i++) {
-      const panel = panels[i] as Record<string, unknown> | undefined;
-      const indices = Array.isArray(panel?.dependsOnIndices) ? panel.dependsOnIndices : [];
+      const indices = panels[i]?.dependsOnIndices ?? [];
       if (indices.length > 0) {
-        const depIds = (indices as number[])
+        const depIds = indices
           .map((idx) => newPanelIds[idx])
           .filter((id): id is string => id !== undefined);
         if (depIds.length > 0) {

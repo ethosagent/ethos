@@ -830,6 +830,14 @@ export async function runGatewayStart(): Promise<void> {
         )
       : undefined;
   if (webhookServer && config.webhooks) {
+    const isLoopbackHost = ['127.0.0.1', 'localhost', '::1'].includes(webhookHost);
+    if (!isLoopbackHost) {
+      new ConsoleLogger().warn(
+        `webhook bound to non-loopback host ${webhookHost} over plaintext HTTP — ` +
+          'the bearer secret is transmitted in cleartext. Put a TLS-terminating ' +
+          'proxy in front, or bind to loopback (ETHOS_SERVE_HOST=127.0.0.1).',
+      );
+    }
     for (const hookId of Object.keys(config.webhooks)) {
       console.log(`  webhook: http://${webhookHost}:${webhookPort}/webhook/${hookId}`);
     }

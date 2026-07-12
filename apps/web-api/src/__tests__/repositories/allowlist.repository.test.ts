@@ -66,6 +66,48 @@ describe('AllowlistRepository', () => {
     expect(parsed.entries.map((e) => e.toolName)).toEqual(['a', 'b']);
   });
 
+  it('list() drops malformed entries and keeps only valid ones', async () => {
+    await storage.mkdir(DATA);
+    await storage.write(
+      join(DATA, 'allowlist.json'),
+      `${JSON.stringify({
+        entries: [
+          // valid
+          {
+            toolName: 'terminal',
+            scope: 'any-args',
+            args: null,
+            createdAt: '2026-01-01T00:00:00Z',
+          },
+          // malformed: bad scope
+          { toolName: 'evil', scope: 'all', args: null, createdAt: '2026-01-01T00:00:00Z' },
+          // malformed: missing toolName
+          { scope: 'any-args', args: null, createdAt: '2026-01-01T00:00:00Z' },
+          // malformed: toolName wrong type
+          { toolName: 42, scope: 'any-args', args: null, createdAt: '2026-01-01T00:00:00Z' },
+          // malformed: not an object
+          'garbage',
+          // valid
+          {
+            toolName: 'web_fetch',
+            scope: 'exact-args',
+            args: { u: 1 },
+            createdAt: '2026-01-02T00:00:00Z',
+          },
+        ],
+      })}\n`,
+    );
+
+    const entries = await repo.list();
+    expect(entries.map((e) => e.toolName)).toEqual(['terminal', 'web_fetch']);
+  });
+
+  it('list() returns empty for a non-array entries field without throwing', async () => {
+    await storage.mkdir(DATA);
+    await storage.write(join(DATA, 'allowlist.json'), '{"entries": "not-an-array"}');
+    expect(await repo.list()).toEqual([]);
+  });
+
   it('concurrent add() calls do not lose entries', async () => {
     await Promise.all([
       repo.add({ toolName: 't1', scope: 'any-args', args: null }),

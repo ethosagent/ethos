@@ -97,6 +97,17 @@ describe('createWebhookServer', () => {
     expect(res.status).toBe(400);
   });
 
+  it('400 for a malformed body shape (prompt not a string)', async () => {
+    const port = await start(echoGateway);
+    const res = await post(
+      port,
+      '/webhook/hook1',
+      JSON.stringify({ prompt: 123 }),
+      'Bearer s3cret',
+    );
+    expect(res.status).toBe(400);
+  });
+
   it('504 when the gateway never resolves', async () => {
     const prev = process.env.ETHOS_WEBHOOK_TIMEOUT_MS;
     process.env.ETHOS_WEBHOOK_TIMEOUT_MS = '50';

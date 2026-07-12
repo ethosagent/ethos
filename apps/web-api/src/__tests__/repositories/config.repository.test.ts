@@ -127,6 +127,18 @@ describe('ConfigRepository', () => {
     expect(yaml).not.toContain('openrouter');
   });
 
+  it('writes config.yaml with 0o600 so plaintext apiKeys are not world-readable', async () => {
+    const path = join(DATA, 'config.yaml');
+
+    // update() (the common write path)
+    await repo.update({ apiKey: 'sk-ant-secret' });
+    expect(storage.getMode(path)).toBe(0o600);
+
+    // deletePassthroughKeys() (the other write path)
+    await repo.deletePassthroughKeys(['nonexistent']);
+    expect(storage.getMode(path)).toBe(0o600);
+  });
+
   it('deletePassthroughKeys removes dotted keys', async () => {
     await repo.update({
       passthrough: {

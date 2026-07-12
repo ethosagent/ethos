@@ -149,7 +149,7 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
     expect(loop.run).toHaveBeenCalledTimes(1);
   });
 
-  it('ChannelContext.onMessage preserves existing botKey when present', async () => {
+  it('ChannelContext.onMessage pins botKey to the adapter, overriding a foreign botKey', async () => {
     let capturedCtx: ChannelContext | undefined;
     const pluginAdapter = stubAdapter({
       id: 'my-channel',
@@ -159,14 +159,25 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
     });
     const factory: PlatformAdapterFactory = vi.fn(() => pluginAdapter);
 
-    const botKey = deriveBotKey('test-plugin/my-channel');
-    const loop = stubLoop();
+    // Two bots: the plugin adapter's own bot, and a foreign bot the adapter
+    // must NOT be able to address. GWA-002: a plugin adapter represents
+    // exactly one bot, so a caller-supplied botKey is pinned back to the
+    // adapter's derived key and can never route into another bot's loop.
+    const adapterBotKey = deriveBotKey('test-plugin/my-channel');
+    const foreignBotKey = 'foreign-bot';
+    const adapterLoop = stubLoop();
+    const foreignLoop = stubLoop();
     new Gateway({
       bots: [
         {
-          botKey,
-          loop: loop as unknown as AgentLoop,
+          botKey: adapterBotKey,
+          loop: adapterLoop as unknown as AgentLoop,
           binding: { type: 'personality' as const, name: 'default' },
+        },
+        {
+          botKey: foreignBotKey,
+          loop: foreignLoop as unknown as AgentLoop,
+          binding: { type: 'personality' as const, name: 'other' },
         },
       ],
       pluginAdapters: new Map([['test-plugin/my-channel', factory]]),
@@ -175,11 +186,13 @@ describe('Gateway — plugin-contributed adapters (Channel SDK)', () => {
 
     expect(capturedCtx).toBeDefined();
 
-    // Message already has the correct botKey — should be preserved as-is
-    const msg = makeMessage({ botKey });
+    // Message carries the FOREIGN botKey — the gateway must re-stamp it.
+    const msg = makeMessage({ botKey: foreignBotKey });
     await capturedCtx?.onMessage(msg);
 
-    expect(loop.run).toHaveBeenCalledTimes(1);
+    // Routed to the adapter's own loop, never the foreign one.
+    expect(adapterLoop.run).toHaveBeenCalledTimes(1);
+    expect(foreignLoop.run).not.toHaveBeenCalled();
   });
 
   it('adapter with caps.edit === false gets graceful degradation', () => {

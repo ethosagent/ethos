@@ -583,7 +583,10 @@ export class Gateway {
         const ctx: ChannelContext = {
           botKey: adapterBotKey,
           onMessage: async (msg: InboundMessage) => {
-            const stamped = msg.botKey !== undefined ? msg : { ...msg, botKey: adapterBotKey };
+            // Pin unconditionally: a plugin adapter represents exactly one bot
+            // (`adapterBotKey`), so a caller-supplied `botKey` must never be
+            // allowed to address a different bot's loop.
+            const stamped = { ...msg, botKey: adapterBotKey };
             await this.handleMessage(stamped, adapter);
           },
           logger: noopLogger,
@@ -592,7 +595,8 @@ export class Gateway {
           adapter.startWithContext(ctx).catch(() => {});
         } else {
           adapter.onMessage((msg: InboundMessage) => {
-            const stamped = msg.botKey !== undefined ? msg : { ...msg, botKey: adapterBotKey };
+            // Pin unconditionally — see the startWithContext path above.
+            const stamped = { ...msg, botKey: adapterBotKey };
             void this.handleMessage(stamped, adapter);
           });
           adapter.start().catch(() => {});
@@ -749,6 +753,13 @@ export class Gateway {
     // doesn't accidentally cross-dedupe. Edited messages (`isEdit: true`)
     // bypass dedup because they intentionally re-use the same `messageId`
     // with different content.
+    // NOTE (GWA-008): dedup/clarify are intentionally keyed on this
+    // pre-resolution `dedupBotKey`, not the authoritative `bot.botKey`
+    // resolved further below. Dedup must run BEFORE any work (billing) and
+    // before the safety filter can rewrite `message`, so it cannot wait on
+    // full resolution. Adapters stamp `botKey` consistently, so the two agree
+    // in practice; single-bot has one loop, so a stale/foreign botKey here has
+    // no cross-bot effect. The namespace divergence is deliberate, not a bug.
     const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
     if (!message.isEdit && this.isDuplicate(message, dedupBotKey)) return;
 
@@ -814,15 +825,18 @@ export class Gateway {
 
     // Resolve which bot this message is for. `message.botKey` wins when
     // adapters populate it; single-bot deployments fall back to the
-    // synthesized default. Multi-bot deployments with an unknown botKey
-    // gracefully degrade to the default bot (if one exists) so messages
-    // are not silently dropped; an observability event still fires.
+    // synthesized default. The degrade-to-default fallback below is
+    // reachable in SINGLE-BOT mode ONLY: `this.defaultBotKey` is null in
+    // multi-bot deployments (see constructor), so a multi-bot message with
+    // an unknown botKey is dropped at `no_bot_available` rather than routed
+    // to another bot's loop — cross-bot isolation is preserved.
     let botKey = message.botKey ?? this.defaultBotKey ?? '';
     let bot = botKey ? this.bots.get(botKey) : undefined;
     if (!bot && this.defaultBotKey) {
-      // Graceful fallback: unknown botKey degrades to the default bot
-      // rather than silently dropping. Multi-bot deployments still get
-      // an observability event so operators can fix the adapter config.
+      // Graceful fallback (single-bot only — `defaultBotKey` is null in
+      // multi-bot): an unknown botKey degrades to the sole bot rather than
+      // silently dropping. The observability event lets operators spot a
+      // misconfigured adapter that is stamping the wrong botKey.
       this.observability?.recordSafetyBlock({
         code: 'gateway.unknown_botKey',
         details: {

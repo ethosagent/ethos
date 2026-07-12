@@ -55,9 +55,12 @@ export class MessageDedupCache {
 
   /** Forget every key associated with `sessionId` (called by `/new`). */
   clearSession(sessionId: string): void {
-    const prefix = `${sessionId}:`;
+    // Entry keys are `${sessionId}:${sha256}`, so the sessionId is everything
+    // before the LAST colon. Match it exactly rather than as a colon-prefix:
+    // a root lane `a:b:c` is a colon-prefix of a threaded lane `a:b:c:thread`,
+    // and a prefix match would wrongly evict the sibling thread's entries.
     for (const key of this.entries.keys()) {
-      if (key.startsWith(prefix)) this.entries.delete(key);
+      if (key.slice(0, key.lastIndexOf(':')) === sessionId) this.entries.delete(key);
     }
   }
 

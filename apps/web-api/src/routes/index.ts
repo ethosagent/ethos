@@ -42,6 +42,10 @@ export interface CreateRoutesOptions {
   allowedOrigins?: string[];
   /** Set the `secure` flag on the auth cookie. Off by default for localhost. */
   secureCookie?: boolean;
+  /** Honor `X-Forwarded-For` for rate-limit bucketing. Only enable behind a
+   *  trusted reverse proxy — otherwise clients spoof the header (WEB-006).
+   *  Default false. */
+  trustProxy?: boolean;
   /** Absolute path to the built `apps/web/dist`. When set, the SPA is
    *  served at `/*` with a fallback to `index.html` for client-side
    *  routes. Omit during dev — Vite's :5173 dev server proxies API calls
@@ -88,6 +92,23 @@ export interface ServiceContainer {
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
   agentLoop?: import('@ethosagent/core').AgentLoop;
   systemBus?: import('../services/system-event-bus').SystemEventBus;
+}
+
+/**
+ * WEB-002 CORS origin decision. Returns the origin to reflect (allowing
+ * credentialed cross-origin access) or `null` to deny. Only origins the
+ * operator explicitly enumerated in `allowedOrigins` are reflected — there is
+ * no port-agnostic localhost / `file://` / RFC1918 fallback, so a co-resident
+ * localhost origin cannot ride the `ethos_auth` cookie. A missing Origin header
+ * (same-origin / non-browser) returns `null`; the browser permits same-origin
+ * regardless of CORS.
+ */
+export function resolveCorsOrigin(
+  origin: string | undefined,
+  allowedOrigins: readonly string[],
+): string | null {
+  if (!origin) return null;
+  return allowedOrigins.includes(origin) ? origin : null;
 }
 
 export function createRoutes(opts: CreateRoutesOptions): Hono {
@@ -138,34 +159,28 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   app.onError(errorHandler);
 
   // CORS preflight + Access-Control-Allow-Origin headers. The browser needs
-  // these BEFORE any RPC/SSE call from a different origin will succeed —
-  // the Mission Control template on :3001 calling the API on :3000 is the
-  // canonical case. Origin policy matches the CSRF default: explicit
-  // `allowedOrigins` if set, otherwise any localhost host:port for dev.
+  // these BEFORE any RPC/SSE call from a different origin will succeed — the
+  // Mission Control template on :3001 calling the API on :3000 is the canonical
+  // cross-origin case.
+  //
+  // WEB-002: because this policy sets `credentials: true`, the browser attaches
+  // the `ethos_auth` cookie to reflected cross-origin requests. Reflecting a
+  // broad set (any localhost port / `file://` / RFC1918) let ANY co-resident
+  // localhost origin — a second dev server, a malicious npx package's local
+  // HTTP server — read every RPC response with credentials. We now reflect ONLY
+  // the operator-enumerated `allowedOrigins` and FAIL CLOSED when unset.
+  //
+  // Same-origin requests (the packaged web UI and the desktop app, which loads
+  // the SPA from this server) send no `Origin` header, so they never hit this
+  // callback and are unaffected. The desktop's remote mode uses bearer auth
+  // (an injected `Authorization` header), not cookies, so it does not depend on
+  // credentialed CORS reflection either. Cross-origin companion origins must be
+  // enumerated explicitly via `allowedOrigins`.
+  const corsAllowlist = opts.allowedOrigins ?? [];
   app.use(
     '*',
     cors({
-      origin: (origin) => {
-        if (!origin) return null; // same-origin / non-browser request
-        const explicit = opts.allowedOrigins ?? [];
-        if (explicit.includes(origin)) return origin;
-        try {
-          const host = new URL(origin).hostname;
-          if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') return origin;
-          // Electron uses file:// — no host to check
-          if (origin.startsWith('file://')) return origin;
-          // RFC 1918 private ranges — LAN and Docker
-          if (
-            /^10\./.test(host) ||
-            /^192\.168\./.test(host) ||
-            /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
-          )
-            return origin;
-        } catch {
-          /* malformed origin header — fall through */
-        }
-        return null;
-      },
+      origin: (origin) => resolveCorsOrigin(origin, corsAllowlist),
       credentials: true,
       allowMethods: ['GET', 'POST', 'OPTIONS', 'DELETE', 'PATCH'],
       allowHeaders: ['Authorization', 'Content-Type'],
@@ -181,6 +196,9 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 
   // Codex device auth — unauthenticated (user may not be onboarded yet).
   // The flow is safe to expose: it requires explicit user action in the browser.
+  // WEB-007: rate-limit the mount so an unauthenticated client cannot spawn
+  // unbounded background pollers / outbound fetch fan-out.
+  app.use('/auth/codex/*', rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false }));
   app.route('/auth/codex', codexAuthRoutes({ secrets: opts.secrets }));
 
   // RPC + SSE auth: dual-auth (cookie OR bearer) when an api-key store
@@ -214,7 +232,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   app.use('/openapi/*', csrf);
 
   // Rate-limit mcp.start to prevent DCR registration spam
-  const mcpStartRateLimit = rateLimitMiddleware();
+  const mcpStartRateLimit = rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false });
   app.use(mcpRpcPath('start'), mcpStartRateLimit);
 
   app.route(

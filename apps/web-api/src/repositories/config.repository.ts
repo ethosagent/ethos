@@ -319,7 +319,10 @@ export class ConfigRepository {
     for (const key of Object.keys(config.passthrough).sort()) {
       lines.push(`${yamlScalar(key)}: ${yamlScalar(config.passthrough[key] ?? '')}`);
     }
-    await this.storage.writeAtomic(this.path, `${lines.join('\n')}\n`);
+    // config.yaml holds plaintext provider apiKeys — write it 0o600 so a
+    // web-driven update never regresses the file to a world-readable mode
+    // (matches apps/ethos/src/config.ts and web-token.repository.ts).
+    await this.storage.writeAtomic(this.path, `${lines.join('\n')}\n`, { mode: 0o600 });
   }
 }
 
