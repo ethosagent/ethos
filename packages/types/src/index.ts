@@ -1,6 +1,7 @@
 // @ethosagent/types — zero-dep interface contract layer
 // All packages import from here. No runtime code.
 
+export * from './a2a';
 export * from './agent-event';
 export * from './channel-conformance';
 export * from './clarify';

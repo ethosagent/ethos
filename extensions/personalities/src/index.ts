@@ -19,6 +19,23 @@ import {
 } from './living-soul';
 
 export {
+  buildDidDocument,
+  canonicalize,
+  deriveDidKey,
+  type Ed25519KeyPair,
+  fingerprint,
+  generateEd25519,
+  publicKeyMultibase,
+  rawPublicKeyFromPem,
+  signCard,
+  verifyCard,
+} from './a2a-crypto';
+export {
+  type A2aIdentityProviderOptions,
+  type A2aPersonalitySource,
+  PersonalityA2aIdentityProvider,
+} from './a2a-identity';
+export {
   type CharacterSheetExecution,
   firstParagraph,
   renderCharacterSheet,
