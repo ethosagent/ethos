@@ -1,4 +1,4 @@
-// A2A JSON-RPC server + execute-task wrap (Phase 5, plan §5/§10/§12).
+// A2A JSON-RPC server + execute-task wrap (Phase 5 sync + Phase 6 async).
 //
 // The `/a2a/<personalityId>` endpoint is the authenticated talk surface. It is
 // mounted `public` through the Phase-2 RouteModule seam and owns its OWN access
@@ -7,7 +7,7 @@
 // neither of which is the web-api credential. Every failure is a JSON-RPC error
 // envelope (HTTP stays 200, per JSON-RPC-over-HTTP).
 //
-// Three gates, in order (plan §4 / P3 / P5):
+// Gates, in order (plan §4 / P3 / P5 / P8):
 //   1. TOKEN      — the sender-constrained JWT validates (jose sig + exp + cnf +
 //                   revocation gate against the peer store).
 //   2. PoP        — a per-request signature over the DOMAIN-SEPARATED struct
@@ -15,16 +15,17 @@
 //                   against the token's bound peer key (`cnf.jkt`). A stolen token
 //                   WITHOUT the peer's private key cannot produce this → REJECT.
 //                   Replay-guarded: short timestamp window + single-use signature.
-//   3. SCOPE      — the requested `skill` must be in BOTH the token's granted
+//   3. DELEGATION — the SIGNED in-envelope trace id + call depth (plan §P8). The
+//                   server reads the SIGNED depth (a plain header is ignored) and
+//                   rejects depth ≥ MAX_DEPTH. Fan-out is bounded per trace id.
+//   4. SCOPE      — the requested `skill` must be in BOTH the token's granted
 //                   scope AND the personality's CURRENT character sheet, re-read
-//                   via `getIdentity(...,'trusted-peer')` AT CALL TIME (never
-//                   cached at grant). Removing the skill revokes it immediately.
+//                   via `getIdentity(...,'trusted-peer')` AT CALL TIME.
 //
-// The task itself is the existing loop wrapped thinly: an injected
-// `A2aTaskRunner` (mirrors ACP's `AgentRunner`) yields the 8-variant AgentEvent
-// stream; sync path collects `text_delta` → final text, `done` → completed,
-// `error` → failed. thinking_delta is a working update, NEVER surfaced to the
-// peer (internal reasoning must not leak across the trust boundary).
+// Sync path: collect the AgentEvent stream → completed/failed and return inline.
+// Async path (Phase 6): dedupe on the idempotency key, return { taskId,
+// status:'submitted' } immediately, and run in the background via the injected
+// A2aAsyncManager (working→completed/failed, optional push-back→peer-unreachable).
 //
 // Layer-clean: imports only `@ethosagent/types` (the AgentEvent TYPE + the
 // identity contract), `hono`, `jose`, and sibling `./` modules (which bottom out
@@ -33,10 +34,19 @@
 import { randomUUID } from 'node:crypto';
 import { type A2aIdentityProvider, type AgentEvent, EthosError } from '@ethosagent/types';
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { decodeJwt } from 'jose';
+import { A2aAsyncManager, type A2aPushClient, type A2aPushTarget, collectAgentRun } from './async';
 import { fingerprint, verifyStruct } from './crypto';
+import { type A2aDelegationCredentials, A2aDelegationGuard } from './delegation';
 import type { A2aPeerStore } from './stores';
-import { validateToken } from './tokens';
+import {
+  type A2aTask,
+  type A2aTaskStatus,
+  type A2aTaskStore,
+  isTerminalStatus,
+} from './task-store';
+import { type A2aTokenClaims, validateToken } from './tokens';
 
 // ---------------------------------------------------------------------------
 // Injected task runner — mirrors ACP's `AgentRunner` (apps/acp-server).
@@ -57,15 +67,15 @@ export interface A2aTaskRunner {
 }
 
 // ---------------------------------------------------------------------------
-// Isolatable limiter hook (plan §12 blast-radius mitigation seam).
+// Isolatable limiter hook (plan §12 blast-radius mitigation seam; §O6 caps).
 // ---------------------------------------------------------------------------
 
 /**
- * Optional per-request limiter (rate + concurrency). A no-op default ships now;
- * full caps are Phase 6. `acquire` returns a lease to release when the task
- * finishes, or `null` to reject the request (rate/concurrency exceeded). This is
- * the §12 seam that keeps A2A abuse from taking down the rest of the API even
- * though it is mounted in-process.
+ * Optional per-request limiter (rate + concurrency). `acquire` returns a lease
+ * to release when the task finishes, or `null` to reject the request (rate or
+ * concurrency cap exceeded → typed JSON-RPC busy `-32004`). This is the §12 seam
+ * that keeps A2A abuse from taking down the rest of the API even though it is
+ * mounted in-process. The real caps live in `MemoryA2aLimiter` (`./limiter`).
  */
 export interface A2aLimiter {
   acquire(personalityId: string, peerFingerprint: string): Promise<A2aLease | null>;
@@ -82,8 +92,7 @@ const NOOP_LIMITER: A2aLimiter = {
 };
 
 // ---------------------------------------------------------------------------
-// Per-request proof-of-possession (plan §0A / §9, completes the Phase-4
-// sender-constraint end-to-end).
+// Per-request proof-of-possession (plan §0A / §9).
 // ---------------------------------------------------------------------------
 
 export const A2A_REQUEST_POP_CONTEXT = 'a2a-request-pop' as const;
@@ -91,7 +100,7 @@ export const A2A_REQUEST_POP_CONTEXT = 'a2a-request-pop' as const;
 /** The domain-separated struct the peer signs on every `/a2a` request. */
 export interface A2aRequestPopStruct {
   context: typeof A2A_REQUEST_POP_CONTEXT;
-  /** The JSON-RPC method being called (binds the proof to this call). */
+  /** The JSON-RPC method (or SSE pseudo-method) being called. */
   method: string;
   /** The presented token's id — a proof for token T is useless for token T'. */
   jti: string;
@@ -128,6 +137,8 @@ export type JsonRpcResponse = JsonRpcSuccess | JsonRpcErrorResponse;
 
 /** JSON-RPC method name for A2A `tasks/send` (plan §10). */
 export const A2A_METHOD_MESSAGE_SEND = 'message/send' as const;
+/** Pseudo-method bound into the PoP for the task-events SSE stream. */
+export const A2A_METHOD_TASKS_SUBSCRIBE = 'tasks/subscribe' as const;
 
 const RPC = {
   PARSE_ERROR: -32700,
@@ -141,6 +152,7 @@ const RPC = {
   PROOF_INVALID: -32002,
   FORBIDDEN_SCOPE: -32003,
   RATE_LIMITED: -32004,
+  DELEGATION_REJECTED: -32005,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -155,9 +167,14 @@ export interface A2aRequestCredentials {
   proofSignature: string | null;
   /** ms epoch echoed from the signed proof struct. */
   proofTimestamp: number | null;
+  /**
+   * The SIGNED delegation envelope (plan §P8). Absent → a fresh top-level call.
+   * The server reads the signed depth here — a plain `depth` header is ignored.
+   */
+  delegation?: A2aDelegationCredentials;
 }
 
-/** `message/send` params (sync path). */
+/** `message/send` params (sync + async). */
 export interface A2aMessageSendParams {
   /** Target capability — enforced against scope ∩ current character sheet. */
   skill: string;
@@ -165,6 +182,12 @@ export interface A2aMessageSendParams {
   message: string;
   /** Optional session key; defaults to `a2a:<personalityId>:<peerFingerprint>`. */
   sessionKey?: string;
+  /** `'async'` returns a taskId immediately and runs in the background. Default `'sync'`. */
+  mode?: 'sync' | 'async';
+  /** Dedupe key — a retried send with the same key does NOT re-run the loop. */
+  idempotencyKey?: string;
+  /** Async only: deliver the result back to the peer's JSON-RPC server on completion. */
+  pushBack?: A2aPushTarget;
 }
 
 /** The sync task result returned as the JSON-RPC `result`. */
@@ -176,6 +199,12 @@ export interface A2aTaskResult {
   error?: string;
 }
 
+/** The async submit acknowledgement returned as the JSON-RPC `result`. */
+export interface A2aAsyncSubmitResult {
+  taskId: string;
+  status: A2aTaskStatus;
+}
+
 // ---------------------------------------------------------------------------
 // Service.
 // ---------------------------------------------------------------------------
@@ -184,7 +213,6 @@ export interface A2aRpcServiceOptions {
   /**
    * Read-only identity projection. Re-read AT CALL TIME for the current
    * character sheet (scope ∩) and the target public key that validates tokens.
-   * Injected — this package never imports the personalities extension.
    */
   getIdentity: A2aIdentityProvider;
   /** Peer store — recovers the bound peer key for PoP + the revocation gate. */
@@ -195,9 +223,31 @@ export interface A2aRpcServiceOptions {
   now?: () => number;
   /** PoP timestamp window in ms (replay guard). Default 60_000. */
   popWindowMs?: number;
-  /** Isolatable limiter (plan §12). Default no-op. */
+  /** Isolatable limiter (plan §12 / §O6). Default no-op. */
   limiter?: A2aLimiter;
+  /** P8 delegation containment (depth ceiling + fan-out budget). Default a fresh guard. */
+  delegationGuard?: A2aDelegationGuard;
+  /**
+   * Async task store — enables the async `mode:'async'` path + the SSE stream.
+   * Omit to serve sync-only (async requests then return an execution error).
+   */
+  taskStore?: A2aTaskStore;
+  /** Push-back delivery client for async completion (plan §10). Omit to disable. */
+  pushClient?: A2aPushClient;
+  /** Push-back delivery attempts before `peer-unreachable`. Default 3. */
+  pushRetries?: number;
 }
+
+/** Result of the shared token+PoP authentication gate (reused by RPC + SSE). */
+export type A2aAuthResult =
+  | {
+      ok: true;
+      claims: A2aTokenClaims;
+      peerFingerprint: string;
+      peerPublicKey: Buffer;
+      sheetSkills: Set<string>;
+    }
+  | { ok: false; code: number; reason: string };
 
 export interface A2aRpcService {
   handleRpc(
@@ -205,22 +255,132 @@ export interface A2aRpcService {
     request: unknown,
     creds: A2aRequestCredentials,
   ): Promise<JsonRpcResponse>;
+  /** Token + per-request PoP gate only (no scope) — the SSE stream reuses this. */
+  authenticate(
+    personalityId: string,
+    method: string,
+    creds: A2aRequestCredentials,
+  ): Promise<A2aAuthResult>;
 }
 
 export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
   const now = opts.now ?? Date.now;
   const popWindowMs = opts.popWindowMs ?? 60_000;
   const limiter = opts.limiter ?? NOOP_LIMITER;
+  const delegationGuard = opts.delegationGuard ?? new A2aDelegationGuard();
+  const asyncManager = opts.taskStore
+    ? new A2aAsyncManager({
+        taskStore: opts.taskStore,
+        runner: opts.runner,
+        now,
+        ...(opts.pushClient ? { pushClient: opts.pushClient } : {}),
+        ...(opts.pushRetries !== undefined ? { pushRetries: opts.pushRetries } : {}),
+        onSettled: (traceId) => delegationGuard.releaseTrace(traceId),
+      })
+    : null;
 
   // Single-use PoP signatures within the window (replay guard, plan §9). Keyed
   // by the signature; value is the ms-epoch expiry. In-process for the single-
-  // process v1 — moves to shared storage if the server scales out (same note as
-  // the nonce store).
+  // process v1 — moves to shared storage if the server scales out.
   const usedProofs = new Map<string, number>();
   function sweepProofs(nowMs: number): void {
     for (const [sig, exp] of usedProofs) {
       if (exp <= nowMs) usedProofs.delete(sig);
     }
+  }
+
+  async function authenticate(
+    personalityId: string,
+    method: string,
+    creds: A2aRequestCredentials,
+  ): Promise<A2aAuthResult> {
+    // --- Gate 1: token -----------------------------------------------------
+    if (!creds.token) {
+      return { ok: false, code: RPC.UNAUTHORIZED, reason: 'missing access token' };
+    }
+    const jkt = peekCnfJkt(creds.token);
+    if (jkt === null) {
+      return {
+        ok: false,
+        code: RPC.UNAUTHORIZED,
+        reason: 'malformed token or missing sender-constraint',
+      };
+    }
+
+    // Current identity — one read serves BOTH the target public key (validates
+    // the token) AND the current character-sheet skills (scope ∩, at call time).
+    let targetPublicKey: Buffer;
+    let sheetSkills: Set<string>;
+    try {
+      const card = await opts.getIdentity.getIdentity(personalityId, 'trusted-peer');
+      targetPublicKey = Buffer.from(card.publicKey, 'base64');
+      sheetSkills = new Set(card.skills.map((s) => s.name));
+    } catch (err) {
+      if (err instanceof EthosError && err.code === 'PERSONALITY_NOT_FOUND') {
+        return {
+          ok: false,
+          code: RPC.UNAUTHORIZED,
+          reason: `unknown personality "${personalityId}"`,
+        };
+      }
+      return { ok: false, code: RPC.INTERNAL, reason: 'identity lookup failed' };
+    }
+
+    const validation = await validateToken(creds.token, {
+      targetPublicKey,
+      presentedFingerprint: jkt,
+      issuer: personalityId,
+      audience: personalityId,
+      now: now(),
+      peerStore: opts.peerStore,
+      personalityId,
+    });
+    if (!validation.ok) {
+      return { ok: false, code: RPC.UNAUTHORIZED, reason: `token rejected: ${validation.reason}` };
+    }
+    const claims = validation.claims;
+
+    // --- Gate 2: per-request proof-of-possession ---------------------------
+    if (!creds.proofSignature || creds.proofTimestamp === null) {
+      return { ok: false, code: RPC.PROOF_INVALID, reason: 'missing proof-of-possession' };
+    }
+    const nowMs = now();
+    if (Math.abs(nowMs - creds.proofTimestamp) > popWindowMs) {
+      return {
+        ok: false,
+        code: RPC.PROOF_INVALID,
+        reason: 'proof timestamp outside allowed window',
+      };
+    }
+    sweepProofs(nowMs);
+    if (usedProofs.has(creds.proofSignature)) {
+      return { ok: false, code: RPC.PROOF_INVALID, reason: 'proof already used (replay)' };
+    }
+    const entry = await opts.peerStore.get(personalityId, jkt);
+    if (!entry) {
+      return { ok: false, code: RPC.UNAUTHORIZED, reason: 'unknown peer' };
+    }
+    const peerPublicKey = Buffer.from(entry.card.publicKey, 'base64');
+    if (fingerprint(peerPublicKey) !== jkt) {
+      return { ok: false, code: RPC.UNAUTHORIZED, reason: 'peer key/fingerprint mismatch' };
+    }
+    const popStruct: A2aRequestPopStruct = {
+      context: A2A_REQUEST_POP_CONTEXT,
+      method,
+      jti: claims.jti,
+      timestamp: creds.proofTimestamp,
+    };
+    if (!verifyStruct(popStruct, creds.proofSignature, peerPublicKey)) {
+      return {
+        ok: false,
+        code: RPC.PROOF_INVALID,
+        reason: 'proof-of-possession signature invalid',
+      };
+    }
+    // Burn the proof only once it is proven valid (single-use within the window).
+    usedProofs.set(creds.proofSignature, nowMs + popWindowMs);
+
+    return { ok: true, claims, peerFingerprint: jkt, peerPublicKey, sheetSkills };
   }
 
   async function handleRpc(
@@ -241,80 +401,26 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
     }
     const params = request.params;
 
-    // --- Gate 1: token -----------------------------------------------------
-    if (!creds.token) {
-      return errorResponse(id, RPC.UNAUTHORIZED, 'missing access token');
+    // --- Gates 1+2: token + PoP -------------------------------------------
+    const auth = await authenticate(personalityId, request.method, creds);
+    if (!auth.ok) {
+      return errorResponse(id, auth.code, auth.reason);
     }
-    // Peek the sender-constraint fingerprint (unverified) to drive validation;
-    // validateToken then does the real crypto (sig + exp + cnf + revocation).
-    const jkt = peekCnfJkt(creds.token);
-    if (jkt === null) {
-      return errorResponse(id, RPC.UNAUTHORIZED, 'malformed token or missing sender-constraint');
-    }
+    const { claims, peerFingerprint, peerPublicKey, sheetSkills } = auth;
 
-    // Current identity — one read serves BOTH the target public key (validates
-    // the token) AND the current character-sheet skills (scope ∩, at call time).
-    let targetPublicKey: Buffer;
-    let sheetSkills: Set<string>;
-    try {
-      const card = await opts.getIdentity.getIdentity(personalityId, 'trusted-peer');
-      targetPublicKey = Buffer.from(card.publicKey, 'base64');
-      sheetSkills = new Set(card.skills.map((s) => s.name));
-    } catch (err) {
-      if (err instanceof EthosError && err.code === 'PERSONALITY_NOT_FOUND') {
-        return errorResponse(id, RPC.UNAUTHORIZED, `unknown personality "${personalityId}"`);
-      }
-      return errorResponse(id, RPC.INTERNAL, 'identity lookup failed');
-    }
-
-    const validation = await validateToken(creds.token, {
-      targetPublicKey,
-      presentedFingerprint: jkt,
-      issuer: personalityId,
-      audience: personalityId,
-      now: now(),
-      peerStore: opts.peerStore,
-      personalityId,
-    });
-    if (!validation.ok) {
-      return errorResponse(id, RPC.UNAUTHORIZED, `token rejected: ${validation.reason}`);
-    }
-    const claims = validation.claims;
-
-    // --- Gate 2: per-request proof-of-possession ---------------------------
-    if (!creds.proofSignature || creds.proofTimestamp === null) {
-      return errorResponse(id, RPC.PROOF_INVALID, 'missing proof-of-possession');
-    }
-    const nowMs = now();
-    if (Math.abs(nowMs - creds.proofTimestamp) > popWindowMs) {
-      return errorResponse(id, RPC.PROOF_INVALID, 'proof timestamp outside allowed window');
-    }
-    sweepProofs(nowMs);
-    if (usedProofs.has(creds.proofSignature)) {
-      return errorResponse(id, RPC.PROOF_INVALID, 'proof already used (replay)');
-    }
-    // Recover the bound peer key from the store to verify the proof against it.
-    const entry = await opts.peerStore.get(personalityId, jkt);
-    if (!entry) {
-      return errorResponse(id, RPC.UNAUTHORIZED, 'unknown peer');
-    }
-    const peerPublicKey = Buffer.from(entry.card.publicKey, 'base64');
-    if (fingerprint(peerPublicKey) !== jkt) {
-      return errorResponse(id, RPC.UNAUTHORIZED, 'peer key/fingerprint mismatch');
-    }
-    const popStruct: A2aRequestPopStruct = {
-      context: A2A_REQUEST_POP_CONTEXT,
-      method: request.method,
-      jti: claims.jti,
-      timestamp: creds.proofTimestamp,
+    // --- Gate 3: delegation containment (signed depth ≤ MAX) ---------------
+    const delegationCreds: A2aDelegationCredentials = creds.delegation ?? {
+      traceId: null,
+      depth: null,
+      signature: null,
     };
-    if (!verifyStruct(popStruct, creds.proofSignature, peerPublicKey)) {
-      return errorResponse(id, RPC.PROOF_INVALID, 'proof-of-possession signature invalid');
+    const admission = delegationGuard.admitInbound(delegationCreds, peerPublicKey);
+    if (!admission.ok) {
+      return errorResponse(id, RPC.DELEGATION_REJECTED, admission.reason);
     }
-    // Burn the proof only once it is proven valid (single-use within the window).
-    usedProofs.set(creds.proofSignature, nowMs + popWindowMs);
+    const { traceId } = admission;
 
-    // --- Gate 3: scope ∩ current character sheet (evaluated at call time) ---
+    // --- Gate 4: scope ∩ current character sheet (evaluated at call time) ---
     const skill = params.skill;
     if (!claims.scope.includes(skill)) {
       return errorResponse(id, RPC.FORBIDDEN_SCOPE, `skill "${skill}" not in granted scope`);
@@ -327,63 +433,78 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
       );
     }
 
-    // --- Execute (isolatable limiter around the run) -----------------------
-    const lease = await limiter.acquire(personalityId, jkt);
+    const sessionKey = params.sessionKey ?? `a2a:${personalityId}:${peerFingerprint}`;
+
+    // --- Async path (Phase 6) ---------------------------------------------
+    if (params.mode === 'async') {
+      if (!asyncManager || !opts.taskStore) {
+        return errorResponse(
+          id,
+          RPC.EXECUTION_FAILED,
+          'async tasks are not enabled on this server',
+        );
+      }
+      const idempotencyKey = params.idempotencyKey ?? randomUUID();
+      // Idempotency dedupe (plan §10): a retried send returns the prior task and
+      // does NOT acquire a lease or re-run the loop.
+      const existing = await opts.taskStore.findByIdempotencyKey(peerFingerprint, idempotencyKey);
+      if (existing) {
+        const result: A2aAsyncSubmitResult = { taskId: existing.id, status: existing.status };
+        return { jsonrpc: '2.0', id, result };
+      }
+      // The lease is held for the whole background run (concurrency cap, §O6).
+      const lease = await limiter.acquire(personalityId, peerFingerprint);
+      if (!lease) {
+        return errorResponse(id, RPC.RATE_LIMITED, 'rate or concurrency limit exceeded');
+      }
+      const task = await asyncManager.submit({
+        personalityId,
+        peerFingerprint,
+        message: params.message,
+        sessionKey,
+        traceId,
+        idempotencyKey,
+        ...(params.pushBack ? { pushBack: params.pushBack } : {}),
+      });
+      const settled = asyncManager.settled(task.id) ?? Promise.resolve<A2aTask | null>(null);
+      void settled.finally(() => lease.release());
+      const result: A2aAsyncSubmitResult = { taskId: task.id, status: task.status };
+      return { jsonrpc: '2.0', id, result };
+    }
+
+    // --- Sync path (Phase 5) — limiter around the run ----------------------
+    const lease = await limiter.acquire(personalityId, peerFingerprint);
     if (!lease) {
       return errorResponse(id, RPC.RATE_LIMITED, 'rate or concurrency limit exceeded');
     }
     try {
-      const sessionKey = params.sessionKey ?? `a2a:${personalityId}:${jkt}`;
-      const result = await runTask(opts.runner, personalityId, params.message, sessionKey);
+      const result = await runSyncTask(opts.runner, personalityId, params.message, sessionKey);
       return { jsonrpc: '2.0', id, result };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return errorResponse(id, RPC.EXECUTION_FAILED, `task execution failed: ${message}`);
     } finally {
       lease.release();
+      delegationGuard.releaseTrace(traceId);
     }
   }
 
-  return { handleRpc };
+  return { handleRpc, authenticate };
 }
 
-/**
- * Consume the AgentEvent stream (sync path): accumulate `text_delta` as the
- * final text; `done` → completed (its `text` is the fallback final); `error` →
- * failed. `thinking_delta` and tool events are working updates and are NOT
- * surfaced to the peer — internal reasoning must not cross the trust boundary.
- */
-async function runTask(
+/** Sync path: collect the stream (shared mapping) into an {@link A2aTaskResult}. */
+async function runSyncTask(
   runner: A2aTaskRunner,
   personalityId: string,
   text: string,
   sessionKey: string,
 ): Promise<A2aTaskResult> {
   const taskId = randomUUID();
-  let out = '';
-  let doneText: string | null = null;
-  let failure: string | undefined;
-
-  for await (const event of runner.run(personalityId, text, { sessionKey })) {
-    switch (event.type) {
-      case 'text_delta':
-        out += event.text;
-        break;
-      case 'done':
-        doneText = event.text;
-        break;
-      case 'error':
-        failure = event.error;
-        break;
-      default:
-        // thinking_delta, tool_*, usage, halt, … → working updates, not surfaced.
-        break;
-    }
-  }
-
-  const finalText = out.length > 0 ? out : (doneText ?? '');
-  if (failure !== undefined) {
-    return { taskId, state: 'failed', text: finalText, error: failure };
+  const { text: finalText, error } = await collectAgentRun(
+    runner.run(personalityId, text, { sessionKey }),
+  );
+  if (error !== undefined) {
+    return { taskId, state: 'failed', text: finalText, error };
   }
   return { taskId, state: 'completed', text: finalText };
 }
@@ -394,14 +515,17 @@ async function runTask(
 
 /**
  * Build the `/a2a` Hono sub-router. Routes are RELATIVE to the RouteModule
- * basePath `/a2a` (the seam mounts it with `app.route('/a2a', router)`,
- * `auth: 'public'`), yielding:
+ * basePath `/a2a`, yielding:
  *
- *   POST /a2a/:personalityId   JSON-RPC 2.0 (method `message/send`)
+ *   POST /a2a/:personalityId                      JSON-RPC 2.0 (`message/send`)
+ *   GET  /a2a/:personalityId/tasks/:taskId/events SSE task-update stream
  *
  * The token rides `Authorization: Bearer <token>`; the per-request proof rides
- * `X-A2A-PoP` (signature) + `X-A2A-PoP-Timestamp` (ms epoch). Every decision
- * lives in {@link A2aRpcService} so the attack tests exercise it without HTTP.
+ * `X-A2A-PoP` (signature) + `X-A2A-PoP-Timestamp` (ms epoch). The SIGNED
+ * delegation envelope rides `X-A2A-Trace-Id` + `X-A2A-Delegation-Depth` +
+ * `X-A2A-Delegation-Sig`. A plain `X-A2A-Depth` header is NEVER read — only the
+ * signed value counts (plan §P8). Every decision lives in {@link A2aRpcService}
+ * so the attack tests exercise it without HTTP.
  */
 export function createA2aRpcRouter(opts: A2aRpcServiceOptions): Hono {
   const service = createA2aRpcService(opts);
@@ -409,12 +533,7 @@ export function createA2aRpcRouter(opts: A2aRpcServiceOptions): Hono {
 
   router.post('/:personalityId', async (c) => {
     const personalityId = c.req.param('personalityId');
-
-    const authz = c.req.header('authorization');
-    const token = authz?.startsWith('Bearer ') ? authz.slice('Bearer '.length).trim() : null;
-    const proofSignature = c.req.header('x-a2a-pop') ?? null;
-    const tsRaw = c.req.header('x-a2a-pop-timestamp');
-    const proofTimestamp = tsRaw !== undefined && /^\d+$/.test(tsRaw) ? Number(tsRaw) : null;
+    const creds = readCredentials(c);
 
     let body: unknown;
     try {
@@ -423,12 +542,52 @@ export function createA2aRpcRouter(opts: A2aRpcServiceOptions): Hono {
       return c.json(errorResponse(null, RPC.PARSE_ERROR, 'parse error'));
     }
 
-    const response = await service.handleRpc(personalityId, body, {
-      token,
-      proofSignature,
-      proofTimestamp,
-    });
+    const response = await service.handleRpc(personalityId, body, creds);
     return c.json(response);
+  });
+
+  // SSE task-update stream — authed with the same token + PoP as the RPC POST
+  // (the PoP is bound to the `tasks/subscribe` pseudo-method).
+  router.get('/:personalityId/tasks/:taskId/events', async (c) => {
+    const personalityId = c.req.param('personalityId');
+    const taskId = c.req.param('taskId');
+    const taskStore = opts.taskStore;
+    if (!taskStore) {
+      return c.json({ error: 'NOT_SUPPORTED', message: 'async tasks are not enabled' }, 404);
+    }
+
+    const auth = await service.authenticate(
+      personalityId,
+      A2A_METHOD_TASKS_SUBSCRIBE,
+      readCredentials(c),
+    );
+    if (!auth.ok) {
+      return c.json({ error: 'REJECTED', message: auth.reason }, sseStatusFor(auth.code));
+    }
+
+    const task = await taskStore.get(taskId);
+    if (!task) {
+      return c.json({ error: 'NOT_FOUND', message: `unknown task "${taskId}"` }, 404);
+    }
+
+    return streamSSE(c, async (stream) => {
+      await stream.writeSSE({ data: JSON.stringify(task) });
+      if (isTerminalStatus(task.status)) return;
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          unsubscribe();
+          resolve();
+        };
+        const unsubscribe = taskStore.subscribe(taskId, (t) => {
+          void stream.writeSSE({ data: JSON.stringify(t) }).catch(() => finish());
+          if (isTerminalStatus(t.status)) finish();
+        });
+        stream.onAbort(finish);
+      });
+    });
   });
 
   return router;
@@ -438,8 +597,35 @@ export function createA2aRpcRouter(opts: A2aRpcServiceOptions): Hono {
 // Helpers.
 // ---------------------------------------------------------------------------
 
+/** Pull the token + PoP + SIGNED delegation off an inbound HTTP request. */
+function readCredentials(c: {
+  req: { header(name: string): string | undefined };
+}): A2aRequestCredentials {
+  const authz = c.req.header('authorization');
+  const token = authz?.startsWith('Bearer ') ? authz.slice('Bearer '.length).trim() : null;
+  const proofSignature = c.req.header('x-a2a-pop') ?? null;
+  const tsRaw = c.req.header('x-a2a-pop-timestamp');
+  const proofTimestamp = tsRaw !== undefined && /^\d+$/.test(tsRaw) ? Number(tsRaw) : null;
+
+  const traceId = c.req.header('x-a2a-trace-id') ?? null;
+  const depthRaw = c.req.header('x-a2a-delegation-depth');
+  const depth = depthRaw !== undefined && /^\d+$/.test(depthRaw) ? Number(depthRaw) : null;
+  const delegationSig = c.req.header('x-a2a-delegation-sig') ?? null;
+
+  return {
+    token,
+    proofSignature,
+    proofTimestamp,
+    delegation: { traceId, depth, signature: delegationSig },
+  };
+}
+
 function errorResponse(id: JsonRpcId, code: number, message: string): JsonRpcErrorResponse {
   return { jsonrpc: '2.0', id, error: { code, message } };
+}
+
+function sseStatusFor(code: number): 401 | 403 {
+  return code === RPC.FORBIDDEN_SCOPE ? 403 : 401;
 }
 
 /** Peek `cnf.jkt` from an UNVERIFIED token (validateToken does the real check). */
@@ -468,5 +654,11 @@ function isMessageSendParams(value: unknown): value is A2aMessageSendParams {
   if (typeof v.skill !== 'string' || v.skill.length === 0) return false;
   if (typeof v.message !== 'string') return false;
   if (v.sessionKey !== undefined && typeof v.sessionKey !== 'string') return false;
+  if (v.mode !== undefined && v.mode !== 'sync' && v.mode !== 'async') return false;
+  if (v.idempotencyKey !== undefined && typeof v.idempotencyKey !== 'string') return false;
+  if (v.pushBack !== undefined) {
+    if (v.pushBack === null || typeof v.pushBack !== 'object') return false;
+    if (typeof (v.pushBack as Record<string, unknown>).url !== 'string') return false;
+  }
   return true;
 }

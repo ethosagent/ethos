@@ -2,10 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve as pathResolve } from 'node:path';
 import {
+  A2aDelegationGuard,
   type A2aTaskRunner,
   createA2aAuthRouter,
   createA2aRpcRouter,
   createA2aWellKnownRouter,
+  FetchA2aPushClient,
+  InMemoryA2aTaskStore,
+  MemoryA2aLimiter,
   MemoryNonceStore,
   StorageA2aAllowlist,
   StorageA2aPeerStore,
@@ -582,6 +586,15 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
         }),
     };
+    // Phase 6: async task lifecycle + P8 delegation containment + real limiter.
+    // The task store + delegation guard are process-scoped so async task state
+    // and per-trace fan-out counters persist across requests. The limiter is
+    // A2A's OWN isolatable rate + concurrency stack (plan §12 blast-radius): its
+    // caps cannot take down `/rpc`.
+    const a2aTaskStore = new InMemoryA2aTaskStore();
+    const a2aDelegationGuard = new A2aDelegationGuard();
+    const a2aLimiter = new MemoryA2aLimiter();
+    const a2aPushClient = new FetchA2aPushClient();
     a2aRouteModules.push(
       {
         basePath: '/',
@@ -608,10 +621,14 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           getIdentity: a2aIdentity,
           peerStore: a2aPeerStore,
           runner: a2aRunner,
+          taskStore: a2aTaskStore,
+          limiter: a2aLimiter,
+          delegationGuard: a2aDelegationGuard,
+          pushClient: a2aPushClient,
         }),
         auth: 'public',
         description:
-          'A2A JSON-RPC message/send — token + per-request PoP + call-time scope ∩ character sheet.',
+          'A2A JSON-RPC message/send (sync + async) — token + PoP + P8 delegation + scope; per-peer rate/concurrency caps.',
       },
     );
     console.log(`  a2a:          enabled (${a2aRouteModules.length} modules on the web API)`);

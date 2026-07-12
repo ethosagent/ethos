@@ -9,6 +9,20 @@
 // import from `extensions/*` or `apps/*`. The identity provider is injected.
 
 export {
+  A2aAsyncManager,
+  type A2aAsyncManagerOptions,
+  A2aInitiatorTracker,
+  type A2aInitiatorTrackerOptions,
+  type A2aPushClient,
+  type A2aPushPayload,
+  type A2aPushTarget,
+  collectAgentRun,
+  FetchA2aPushClient,
+  type OpenedInitiatorTask,
+  type OpenInitiatorArgs,
+  type SubmitAsyncArgs,
+} from './async';
+export {
   type A2aAuthService,
   type A2aAuthServiceOptions,
   type A2aChallengeStruct,
@@ -26,6 +40,17 @@ export {
   fetchAndVerifyCard,
 } from './client';
 export {
+  A2A_DELEGATION_CONTEXT,
+  type A2aDelegationCredentials,
+  A2aDelegationGuard,
+  type A2aDelegationGuardOptions,
+  type A2aDelegationStruct,
+  buildDelegationCredentials,
+  type DelegationAdmission,
+  signDelegation,
+} from './delegation';
+export { MemoryA2aLimiter, type MemoryA2aLimiterOptions } from './limiter';
+export {
   type A2aAuthReceipt,
   type SignedA2aAuthReceipt,
   signReceipt,
@@ -33,7 +58,10 @@ export {
 } from './receipts';
 export {
   A2A_METHOD_MESSAGE_SEND,
+  A2A_METHOD_TASKS_SUBSCRIBE,
   A2A_REQUEST_POP_CONTEXT,
+  type A2aAsyncSubmitResult,
+  type A2aAuthResult,
   type A2aLease,
   type A2aLimiter,
   type A2aMessageSendParams,
@@ -59,6 +87,14 @@ export {
   StorageA2aAllowlist,
   StorageA2aPeerStore,
 } from './stores';
+export {
+  type A2aTask,
+  type A2aTaskStatus,
+  type A2aTaskStore,
+  InMemoryA2aTaskStore,
+  isTerminalStatus,
+  newTaskId,
+} from './task-store';
 export {
   type A2aTokenClaims,
   type MintedToken,
