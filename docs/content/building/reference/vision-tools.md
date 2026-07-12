@@ -116,7 +116,7 @@ auxiliary.vision.apiKey:   sk-ant-vision-... # defaults to top-level apiKey
 auxiliary.vision.baseUrl:  https://...       # defaults to top-level baseUrl
 ```
 
-Mirrors the [`auxiliary.compression`](../../using/reference/config-yaml.md) shape. The config type is `AuxiliaryVisionConfig` in [`apps/ethos/src/config.ts`](https://github.com/MiteshSharma/ethos/blob/main/apps/ethos/src/config.ts).
+Mirrors the [`auxiliary.compression`](../../using/reference/config-yaml.md) shape. The config type is `AuxiliaryVisionConfig` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts).
 
 ## Examples {#examples}
 

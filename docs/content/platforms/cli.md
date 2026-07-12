@@ -15,7 +15,7 @@ The CLI is also what you pipe into for scripted runs and what every other surfac
 
 - `apps/ethos/src/index.ts` — top-level dispatch and `USAGE` string
 - `apps/ethos/src/commands/chat.ts` — readline REPL, single-query mode, slash command handlers
-- `apps/ethos/src/config.ts` — the `EthosConfig` shape parsed from `~/.ethos/config.yaml`
+- `packages/config/src/index.ts` — the `EthosConfig` shape parsed from `~/.ethos/config.yaml`
 - `apps/tui/src/` — the rich TUI rendered when stdin and stdout are both TTYs
 
 ## Subcommands {#subcommands}
@@ -141,7 +141,7 @@ The TUI surface ships richer bindings (history navigation, palette, panes); the 
 
 ## EthosConfig fields that affect the CLI {#config-fields}
 
-Read by `readConfig()` in `apps/ethos/src/config.ts`. Only the fields the CLI cares about:
+Read by `readConfig()` in `packages/config/src/index.ts`. Only the fields the CLI cares about:
 
 | Field | Effect on the CLI |
 |---|---|

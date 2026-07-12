@@ -11,7 +11,7 @@ updated: 2026-06-09
 
 ## Source {#source}
 
-The full field set lives in the `EthosConfig` interface in [`apps/ethos/src/config.ts`](../../../../apps/ethos/src/config.ts). `parseConfigYaml` reads values; `writeConfig` writes them. Fields marked `@internal` are managed by the runtime (e.g. `activeContext` by `ethos set`) — do not hand-edit them.
+The full field set lives in the `EthosConfig` interface in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts). `parseConfigYaml` reads values; `writeConfig` writes them. Fields marked `@internal` are managed by the runtime (e.g. `activeContext` by `ethos set`) — do not hand-edit them.
 
 ## Minimal example {#minimal-example}
 
@@ -147,7 +147,7 @@ telegram.bots.1.bind.name: engineer
 Notes:
 
 - Session key format in multi-bot mode: `telegram:<botKey>:<chatId>`. This differs from single-bot mode (`telegram:<chatId>`).
-- `deriveBotKey()` in [`apps/ethos/src/config.ts`](../../../../apps/ethos/src/config.ts) computes the sha256-derived default when `id` is omitted.
+- `deriveBotKey()` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts) computes the sha256-derived default when `id` is omitted.
 - See [Run multiple Telegram bots from one process](../how-to/run-multi-bot-telegram.md) for a full walkthrough.
 
 ## telegramToken {#telegram-token}
