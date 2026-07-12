@@ -15,6 +15,12 @@ export interface LocalToolTransportLiveCtx {
   readMtimes?: Map<string, { mtimeMs: number; readAtTurn: number }>;
   storage?: import('@ethosagent/types').Storage;
   inboundAttachments?: Attachment[];
+  /**
+   * A2A delegation frame (plan §P8). Carries a live `reserveOutbound` callback,
+   * so it cannot ride the serializable `ToolExecuteRequest` — it must travel on
+   * this live side-channel and be re-attached to the reconstructed ctx.
+   */
+  a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean };
 }
 
 export class LocalToolTransport implements ToolTransport {
@@ -52,6 +58,7 @@ export class LocalToolTransport implements ToolTransport {
       emit: live?.emit ?? (() => {}),
       readMtimes: live?.readMtimes,
       storage: live?.storage,
+      a2aDelegation: live?.a2aDelegation,
     };
 
     if (tool.capabilities && this.backends) {

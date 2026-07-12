@@ -61,6 +61,12 @@ export interface ToolContext {
    * Generic per-run context; goal_create reads it to stamp Goal.origin.
    */
   origin?: string;
+  /**
+   * Set by the A2A runner when this turn is servicing an inbound A2A task; the
+   * outbound A2A tool threads it so an onward call signs `depth + 1` and consumes
+   * the per-trace fan-out budget (plan §P8). Absent for normal turns.
+   */
+  a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean };
   /** Active personality for this turn. Tools that touch memory must thread this through. */
   personalityId?: string;
   /**

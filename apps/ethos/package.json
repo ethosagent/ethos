@@ -110,6 +110,7 @@
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/sqlite": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
+    "@ethosagent/tools-a2a": "workspace:*",
     "@ethosagent/tools-process": "workspace:*",
     "@ethosagent/web-api": "workspace:*",
     "@ethosagent/wiring": "workspace:*"

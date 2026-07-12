@@ -64,12 +64,22 @@ export interface A2aDelegationGuardOptions {
 /**
  * Enforces both delegation bounds. One instance is shared per process so the
  * fan-out counters persist across requests within a trace.
+ *
+ * Trace lifetime is REFERENCE-COUNTED: a single trace id can be admitted by
+ * several concurrent inbound tasks at this agent (a diamond — A fans out to B
+ * and C, both of which call back into this agent under the one trace). Each
+ * `admitInbound` retains the trace; each `releaseTrace` releases it; the
+ * fan-out counter is only cleared once the LAST holder settles. Without the
+ * ref-count the first task to settle would reset the shared budget while a
+ * sibling task is still fanning out.
  */
 export class A2aDelegationGuard {
   readonly maxDepth: number;
   readonly fanOutBudget: number;
   // trace id → count of outbound calls already reserved under it.
   private readonly fanOut = new Map<string, number>();
+  // trace id → count of concurrent inbound tasks still active under it.
+  private readonly activeInbound = new Map<string, number>();
 
   constructor(opts: A2aDelegationGuardOptions = {}) {
     this.maxDepth = opts.maxDepth ?? 3;
@@ -80,13 +90,17 @@ export class A2aDelegationGuard {
    * Admit an inbound request. Verifies the signed envelope against the CALLER's
    * public key and enforces the depth ceiling. A plain (unsigned) depth header
    * is intentionally not an input to this method — only the signed value counts.
+   * Every `ok` admission retains the trace (ref-count); pair it with exactly one
+   * {@link releaseTrace} once the admitted task settles.
    */
   admitInbound(creds: A2aDelegationCredentials, callerPublicKey: Buffer): DelegationAdmission {
     const { traceId, depth, signature } = creds;
     const allNull = traceId === null && depth === null && signature === null;
     if (allNull) {
       // Fresh top-level call: mint a new trace at depth 0.
-      return { ok: true, traceId: randomUUID(), depth: 0 };
+      const fresh = randomUUID();
+      this.retain(fresh);
+      return { ok: true, traceId: fresh, depth: 0 };
     }
     if (traceId === null || depth === null || signature === null) {
       return { ok: false, reason: 'incomplete delegation envelope' };
@@ -105,6 +119,7 @@ export class A2aDelegationGuard {
     if (depth >= this.maxDepth) {
       return { ok: false, reason: `delegation depth ${depth} exceeds max ${this.maxDepth}` };
     }
+    this.retain(traceId);
     return { ok: true, traceId, depth };
   }
 
@@ -120,9 +135,24 @@ export class A2aDelegationGuard {
     return true;
   }
 
-  /** Drop a trace's fan-out counter once its inbound task has settled. */
+  /**
+   * Release one inbound admission of a trace. The fan-out counter is cleared
+   * only when the last concurrent inbound task under the trace has settled (the
+   * ref-count reaches 0, or the trace was never retained).
+   */
   releaseTrace(traceId: string): void {
-    this.fanOut.delete(traceId);
+    const active = this.activeInbound.get(traceId);
+    if (active === undefined || active <= 1) {
+      this.activeInbound.delete(traceId);
+      this.fanOut.delete(traceId);
+      return;
+    }
+    this.activeInbound.set(traceId, active - 1);
+  }
+
+  /** Retain one inbound admission of a trace (ref-count up). */
+  private retain(traceId: string): void {
+    this.activeInbound.set(traceId, (this.activeInbound.get(traceId) ?? 0) + 1);
   }
 }
 

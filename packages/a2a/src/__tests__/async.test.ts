@@ -3,7 +3,13 @@
 
 import type { AgentEvent } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { A2aAsyncManager, A2aInitiatorTracker, type A2aPushClient } from '../async';
+import {
+  A2aAsyncManager,
+  A2aInitiatorTracker,
+  type A2aPushClient,
+  FetchA2aPushClient,
+} from '../async';
+import { generateEd25519, rawPublicKeyFromPem, verifyStruct } from '../crypto';
 import type { A2aTaskRunner } from '../rpc';
 import { InMemoryA2aTaskStore } from '../task-store';
 
@@ -33,6 +39,7 @@ describe('A2aAsyncManager — completion', () => {
       message: 'hi',
       sessionKey: 's',
       traceId: 't',
+      depth: 0,
       idempotencyKey: 'k1',
     });
     expect(task.status).toBe('submitted');
@@ -56,6 +63,7 @@ describe('A2aAsyncManager — completion', () => {
       message: 'hi',
       sessionKey: 's',
       traceId: 't',
+      depth: 0,
       idempotencyKey: 'k',
     });
     const settled = await mgr.settled(task.id);
@@ -75,6 +83,7 @@ describe('A2aAsyncManager — idempotency dedupe (no double run)', () => {
       message: 'hi',
       sessionKey: 's',
       traceId: 't',
+      depth: 0,
       idempotencyKey: 'same-key',
     } as const;
 
@@ -95,6 +104,7 @@ describe('A2aAsyncManager — idempotency dedupe (no double run)', () => {
       message: 'hi',
       sessionKey: 's',
       traceId: 't',
+      depth: 0,
       idempotencyKey: 'k',
     };
     const a = await mgr.submit({ ...base, peerFingerprint: 'fp-a' });
@@ -130,6 +140,7 @@ describe('A2aAsyncManager — push-back → peer-unreachable', () => {
       message: 'hi',
       sessionKey: 's',
       traceId: 't',
+      depth: 0,
       idempotencyKey: 'k',
       pushBack: { url: 'http://peer/a2a/initiator', token: 'tok' },
     });
@@ -160,12 +171,69 @@ describe('A2aAsyncManager — push-back → peer-unreachable', () => {
       message: 'hi',
       sessionKey: 's',
       traceId: 't',
+      depth: 0,
       idempotencyKey: 'k',
       pushBack: { url: 'http://peer/a2a/initiator' },
     });
     const settled = await mgr.settled(task.id);
     expect(settled?.status).toBe('completed');
     expect(delivered).toHaveLength(1);
+  });
+});
+
+describe('FetchA2aPushClient — outbound push-back proof-of-possession (Phase 7)', () => {
+  it('attaches a verifiable PoP over the tasks/pushResult struct when signing material is supplied', async () => {
+    const { privateKeyPem } = generateEd25519();
+    const responderPublicKey = rawPublicKeyFromPem(privateKeyPem);
+    let capturedHeaders: Headers | null = null;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      capturedHeaders = new Headers(init?.headers);
+      return new Response(null, { status: 200 });
+    };
+    const client = new FetchA2aPushClient(fetchImpl, () => 1000);
+
+    await client.push(
+      {
+        url: 'http://initiator/a2a/initiator',
+        token: 'tok',
+        signingKeyPem: privateKeyPem,
+        tokenJti: 'jti-xyz',
+      },
+      { taskId: 't1', status: 'completed', result: 'done' },
+    );
+
+    const headers = capturedHeaders ?? new Headers();
+    expect(headers.get('authorization')).toBe('Bearer tok');
+    expect(headers.get('x-a2a-pop-timestamp')).toBe('1000');
+    const sig = headers.get('x-a2a-pop') ?? '';
+    expect(sig).not.toBe('');
+    // The signature verifies against the RESPONDER's public key over the exact
+    // struct the initiator's /a2a endpoint reconstructs.
+    const verified = verifyStruct(
+      { context: 'a2a-request-pop', method: 'tasks/pushResult', jti: 'jti-xyz', timestamp: 1000 },
+      sig,
+      responderPublicKey,
+    );
+    expect(verified).toBe(true);
+  });
+
+  it('stays bearer-only (no PoP headers) when signing material is absent', async () => {
+    let capturedHeaders: Headers | null = null;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      capturedHeaders = new Headers(init?.headers);
+      return new Response(null, { status: 200 });
+    };
+    const client = new FetchA2aPushClient(fetchImpl);
+
+    await client.push(
+      { url: 'http://initiator/a2a/initiator', token: 'tok' },
+      { taskId: 't1', status: 'completed', result: 'done' },
+    );
+
+    const headers = capturedHeaders ?? new Headers();
+    expect(headers.get('authorization')).toBe('Bearer tok');
+    expect(headers.get('x-a2a-pop')).toBeNull();
+    expect(headers.get('x-a2a-pop-timestamp')).toBeNull();
   });
 });
 

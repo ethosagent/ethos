@@ -51,6 +51,17 @@ export {
 } from './delegation';
 export { MemoryA2aLimiter, type MemoryA2aLimiterOptions } from './limiter';
 export {
+  A2aOutboundClient,
+  type A2aOutboundClientDeps,
+  A2aOutboundError,
+  type A2aOutboundErrorCode,
+  type A2aOutboundResult,
+  type A2aSession,
+  type ConnectArgs,
+  type OutboundDelegation,
+  type SendMessageArgs,
+} from './outbound';
+export {
   type A2aAuthReceipt,
   type SignedA2aAuthReceipt,
   signReceipt,

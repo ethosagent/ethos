@@ -107,6 +107,7 @@ export interface ToolProcessingContext {
     attachments?: Attachment[];
     dryRun?: boolean;
     userId?: string;
+    a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean };
   };
 }
 
@@ -156,6 +157,7 @@ export async function* processTools(
     workingDir: deps.workingDir,
     agentId: ctx.opts.agentId,
     origin: ctx.opts.origin,
+    ...(ctx.opts.a2aDelegation ? { a2aDelegation: ctx.opts.a2aDelegation } : {}),
     personalityId: ctx.personality.id,
     memoryScopeId: ctx.memScopeId,
     ...(ctx.userScopeId ? { userScopeId: ctx.userScopeId } : {}),

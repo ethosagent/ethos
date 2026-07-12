@@ -144,4 +144,32 @@ describe('P8 — global per-trace fan-out budget', () => {
     guard.releaseTrace('trace-a');
     expect(guard.reserveOutbound('trace-a')).toBe(true);
   });
+
+  it('ref-counts concurrent inbound tasks on one trace (diamond): budget not reset until all settle', () => {
+    // A fans out to two peers that BOTH call back into this agent under the one
+    // trace — two concurrent inbound admissions. The first to settle must NOT
+    // reset the shared fan-out budget while its sibling is still fanning out.
+    const guard = new A2aDelegationGuard({ fanOutBudget: 1, maxDepth: 3 });
+    const caller = makeKey();
+    const admit = () =>
+      guard.admitInbound(
+        buildDelegationCredentials('trace-diamond', 0, caller.privateKeyPem),
+        caller.publicKey,
+      );
+    const a = admit();
+    const b = admit();
+    expect(a.ok && b.ok).toBe(true);
+
+    // Exhaust the shared per-trace fan-out budget.
+    expect(guard.reserveOutbound('trace-diamond')).toBe(true);
+    expect(guard.reserveOutbound('trace-diamond')).toBe(false);
+
+    // First inbound task settles → budget STILL enforced (sibling is active).
+    guard.releaseTrace('trace-diamond');
+    expect(guard.reserveOutbound('trace-diamond')).toBe(false);
+
+    // Last inbound task settles → trace fully released, budget cleared.
+    guard.releaseTrace('trace-diamond');
+    expect(guard.reserveOutbound('trace-diamond')).toBe(true);
+  });
 });

@@ -24,8 +24,17 @@
 // core, no extensions, no apps — the runner + push client are injected.
 
 import type { AgentEvent } from '@ethosagent/types';
+import { signStruct } from './crypto';
 import type { A2aTaskRunner } from './rpc';
 import { type A2aTask, type A2aTaskStore, isTerminalStatus, newTaskId } from './task-store';
+
+// Duplicated as local literals (NOT imported from `./rpc`) so this module keeps
+// `./rpc` a TYPE-only dependency — a runtime import would create a require cycle
+// (rpc.ts imports A2aAsyncManager + collectAgentRun from here). The strings must
+// match rpc.ts's `A2A_REQUEST_POP_CONTEXT` and the `tasks/pushResult` method the
+// initiator's /a2a endpoint verifies the PoP against.
+const A2A_REQUEST_POP_CONTEXT = 'a2a-request-pop' as const;
+const A2A_METHOD_TASKS_PUSH_RESULT = 'tasks/pushResult' as const;
 
 // ---------------------------------------------------------------------------
 // Shared AgentEvent → result mapping (plan §10 / Phase 5).
@@ -71,6 +80,18 @@ export interface A2aPushTarget {
   url: string;
   /** The token THIS agent holds for the peer (from gated reciprocation). */
   token?: string;
+  /**
+   * The RESPONDER's Ed25519 private key (PKCS8 PEM). Set SERVER-SIDE by the
+   * responder wiring (NEVER from the wire — the initiator never learns it) so
+   * the push-back carries a per-request proof-of-possession, exactly like every
+   * other /a2a call. When absent the push is bearer-only (legacy behaviour).
+   */
+  signingKeyPem?: string;
+  /**
+   * The `jti` of {@link A2aPushTarget.token} — bound into the PoP struct so the
+   * proof is useless for any other token. Required alongside `signingKeyPem`.
+   */
+  tokenJti?: string;
 }
 
 /** The push-back payload delivered to the initiator on async completion. */
@@ -90,13 +111,40 @@ export interface A2aPushClient {
   push(target: A2aPushTarget, payload: A2aPushPayload): Promise<void>;
 }
 
-/** Default push client: POST the payload as a JSON-RPC notification to the peer. */
+/**
+ * Default push client: POST the payload as a JSON-RPC notification to the peer.
+ *
+ * Phase 7 formalizes the OUTBOUND push proof-of-possession: when the responder
+ * supplies `signingKeyPem` + `tokenJti` on the target, the push carries an
+ * `X-A2A-PoP` over the domain-separated `{ context:'a2a-request-pop',
+ * method:'tasks/pushResult', jti, timestamp }` struct — the same shape the
+ * initiator's /a2a endpoint verifies for any other call. The full initiator-side
+ * `tasks/pushResult` INBOUND handler (verifying this PoP and landing the result)
+ * is Phase 8/9 scope; here we close the OUTBOUND half so the loop is closeable.
+ */
 export class FetchA2aPushClient implements A2aPushClient {
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  private readonly fetchImpl: typeof fetch;
+  private readonly now: () => number;
+
+  constructor(fetchImpl: typeof fetch = fetch, now: () => number = Date.now) {
+    this.fetchImpl = fetchImpl;
+    this.now = now;
+  }
 
   async push(target: A2aPushTarget, payload: A2aPushPayload): Promise<void> {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (target.token) headers.authorization = `Bearer ${target.token}`;
+    if (target.signingKeyPem && target.tokenJti) {
+      const timestamp = this.now();
+      const popStruct = {
+        context: A2A_REQUEST_POP_CONTEXT,
+        method: A2A_METHOD_TASKS_PUSH_RESULT,
+        jti: target.tokenJti,
+        timestamp,
+      };
+      headers['x-a2a-pop'] = signStruct(popStruct, target.signingKeyPem);
+      headers['x-a2a-pop-timestamp'] = String(timestamp);
+    }
     const res = await this.fetchImpl(target.url, {
       method: 'POST',
       headers,
@@ -133,6 +181,8 @@ export interface SubmitAsyncArgs {
   message: string;
   sessionKey: string;
   traceId: string;
+  /** Signed delegation depth this task was admitted at — threaded to the runner (P8). */
+  depth: number;
   idempotencyKey: string;
   /** When set (and a push client is wired), deliver the result on completion. */
   pushBack?: A2aPushTarget;
@@ -187,7 +237,10 @@ export class A2aAsyncManager {
     try {
       await store.update(task.id, { status: 'working' });
       const { text, error } = await collectAgentRun(
-        this.opts.runner.run(args.personalityId, args.message, { sessionKey: args.sessionKey }),
+        this.opts.runner.run(args.personalityId, args.message, {
+          sessionKey: args.sessionKey,
+          delegation: { traceId: args.traceId, depth: args.depth },
+        }),
       );
       if (error !== undefined) {
         return await this.finalize(task, { status: 'failed', error });

@@ -27,6 +27,7 @@ import {
 import { SessionLane } from '@ethosagent/session-lane';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
+import { createA2aTools } from '@ethosagent/tools-a2a';
 import type { McpManager } from '@ethosagent/tools-mcp';
 import { EthosError, type ToolRegistry } from '@ethosagent/types';
 import {
@@ -579,13 +580,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     });
     const a2aPeerStore = new StorageA2aPeerStore(a2aStorage, a2aBaseDir);
     const a2aAllowlist = new StorageA2aAllowlist(a2aStorage, a2aBaseDir);
-    const a2aRunner: A2aTaskRunner = {
-      run: (personalityId, text, opts) =>
-        loop.run(text, {
-          personalityId,
-          ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
-        }),
-    };
     // Phase 6: async task lifecycle + P8 delegation containment + real limiter.
     // The task store + delegation guard are process-scoped so async task state
     // and per-trace fan-out counters persist across requests. The limiter is
@@ -595,6 +589,28 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     const a2aDelegationGuard = new A2aDelegationGuard();
     const a2aLimiter = new MemoryA2aLimiter();
     const a2aPushClient = new FetchA2aPushClient();
+    // Phase 7: forward the inbound trace into the loop as the ambient delegation
+    // frame, so an onward `a2a_send` signs `depth + 1` and consumes the shared
+    // per-trace fan-out budget. `reserveOutbound` binds to the SAME process guard
+    // above, so inbound admissions and outbound reservations share one counter.
+    const a2aRunner: A2aTaskRunner = {
+      run: (personalityId, text, opts) => {
+        const delegation = opts?.delegation;
+        return loop.run(text, {
+          personalityId,
+          ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
+          ...(delegation
+            ? {
+                a2aDelegation: {
+                  traceId: delegation.traceId,
+                  depth: delegation.depth,
+                  reserveOutbound: () => a2aDelegationGuard.reserveOutbound(delegation.traceId),
+                },
+              }
+            : {}),
+        });
+      },
+    };
     a2aRouteModules.push(
       {
         basePath: '/',
@@ -631,6 +647,13 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           'A2A JSON-RPC message/send (sync + async) — token + PoP + P8 delegation + scope; per-peer rate/concurrency caps.',
       },
     );
+    // Phase 7: register the OUTBOUND `a2a_send` tool — opt-in, only when A2A is
+    // enabled, and gated by each personality's `a2a` toolset at execute time.
+    if (toolRegistry) {
+      for (const tool of createA2aTools({ identity: a2aIdentity, secrets: a2aSecrets })) {
+        toolRegistry.register(tool);
+      }
+    }
     console.log(`  a2a:          enabled (${a2aRouteModules.length} modules on the web API)`);
   }
 

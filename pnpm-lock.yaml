@@ -319,6 +319,9 @@ importers:
       '@ethosagent/team-supervisor':
         specifier: workspace:*
         version: link:../../extensions/team-supervisor
+      '@ethosagent/tools-a2a':
+        specifier: workspace:*
+        version: link:../../extensions/tools-a2a
       '@ethosagent/tools-process':
         specifier: workspace:*
         version: link:../../extensions/tools-process
@@ -1372,6 +1375,22 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.4.3
+
+  extensions/tools-a2a:
+    dependencies:
+      '@ethosagent/a2a':
+        specifier: workspace:*
+        version: link:../../packages/a2a
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+      hono:
+        specifier: ^4.12.15
+        version: 4.12.23
 
   extensions/tools-browser:
     dependencies:

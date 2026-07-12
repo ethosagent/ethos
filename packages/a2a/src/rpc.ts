@@ -62,7 +62,16 @@ export interface A2aTaskRunner {
   run(
     personalityId: string,
     text: string,
-    opts?: { sessionKey?: string },
+    opts?: {
+      sessionKey?: string;
+      /**
+       * The admitted inbound trace + signed depth (plan §P8). The runner threads
+       * it onto `ToolContext.a2aDelegation` so an onward outbound A2A call signs
+       * `depth + 1` and consumes the per-trace fan-out budget. Absent for a fresh
+       * top-level call the runner does not need to contain.
+       */
+      delegation?: { traceId: string; depth: number };
+    },
   ): AsyncIterable<AgentEvent>;
 }
 
@@ -418,7 +427,7 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
     if (!admission.ok) {
       return errorResponse(id, RPC.DELEGATION_REJECTED, admission.reason);
     }
-    const { traceId } = admission;
+    const { traceId, depth } = admission;
 
     // --- Gate 4: scope ∩ current character sheet (evaluated at call time) ---
     const skill = params.skill;
@@ -463,6 +472,7 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
         message: params.message,
         sessionKey,
         traceId,
+        depth,
         idempotencyKey,
         ...(params.pushBack ? { pushBack: params.pushBack } : {}),
       });
@@ -478,7 +488,10 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
       return errorResponse(id, RPC.RATE_LIMITED, 'rate or concurrency limit exceeded');
     }
     try {
-      const result = await runSyncTask(opts.runner, personalityId, params.message, sessionKey);
+      const result = await runSyncTask(opts.runner, personalityId, params.message, sessionKey, {
+        traceId,
+        depth,
+      });
       return { jsonrpc: '2.0', id, result };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -498,10 +511,11 @@ async function runSyncTask(
   personalityId: string,
   text: string,
   sessionKey: string,
+  delegation: { traceId: string; depth: number },
 ): Promise<A2aTaskResult> {
   const taskId = randomUUID();
   const { text: finalText, error } = await collectAgentRun(
-    runner.run(personalityId, text, { sessionKey }),
+    runner.run(personalityId, text, { sessionKey, delegation }),
   );
   if (error !== undefined) {
     return { taskId, state: 'failed', text: finalText, error };

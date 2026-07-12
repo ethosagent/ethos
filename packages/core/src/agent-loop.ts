@@ -220,6 +220,7 @@ export interface RunOptions {
   agentId?: string;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
   origin?: string;
+  a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean }; // A2A runner sets this servicing an inbound task → `ToolContext.a2aDelegation` (plan §P8).
   /**
    * FW-9 — `steer` busy-input mode. Surfaces (CLI REPL) push user-typed text
    * here while the agent is mid-turn. AgentLoop drains the sink at the
@@ -695,6 +696,7 @@ export class AgentLoop {
             attachments: opts.attachments,
             dryRun: opts.dryRun,
             userId: opts.userId,
+            ...(opts.a2aDelegation ? { a2aDelegation: opts.a2aDelegation } : {}),
           },
         },
       );
