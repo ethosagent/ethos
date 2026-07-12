@@ -1,0 +1,27 @@
+{
+  "name": "@ethosagent/dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "production": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
+  },
+  "dependencies": {
+    "@ethosagent/cron": "workspace:*",
+    "@ethosagent/logger": "workspace:*",
+    "@ethosagent/plugin-loader": "workspace:*",
+    "@ethosagent/sqlite": "workspace:*",
+    "@ethosagent/types": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@ethosagent/core": "workspace:*"
+  }
+}

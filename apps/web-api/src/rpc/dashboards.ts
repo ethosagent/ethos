@@ -1,5 +1,9 @@
-import { refreshAllPanels, refreshPanelById } from '../services/dashboard-refresh';
-import { buildPromptSummary, runPluginQuery } from '../services/dashboards.service';
+import {
+  buildPromptSummary,
+  refreshAllPanels,
+  refreshPanelById,
+  runPluginQuery,
+} from '@ethosagent/dashboard';
 import { os } from './context';
 
 export const dashboardsRouter = {
@@ -15,10 +19,7 @@ export const dashboardsRouter = {
   }),
 
   list: os.dashboards.list.handler(async ({ context }) => {
-    const dashboards =
-      context.dashboards?.list(
-        'default-user' /* TODO: replace with auth-context userId once user scoping lands */,
-      ) ?? [];
+    const dashboards = context.dashboards?.list('default-user') ?? [];
     return { dashboards };
   }),
 

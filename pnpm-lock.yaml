@@ -478,6 +478,9 @@ importers:
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
+      '@ethosagent/dashboard':
+        specifier: workspace:*
+        version: link:../../extensions/dashboard
       '@ethosagent/digest':
         specifier: workspace:*
         version: link:../../extensions/digest
@@ -792,6 +795,31 @@ importers:
       croner:
         specifier: ^9.0.0
         version: 9.1.0
+
+  extensions/dashboard:
+    dependencies:
+      '@ethosagent/cron':
+        specifier: workspace:*
+        version: link:../cron
+      '@ethosagent/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@ethosagent/plugin-loader':
+        specifier: workspace:*
+        version: link:../plugin-loader
+      '@ethosagent/sqlite':
+        specifier: workspace:*
+        version: link:../../packages/sqlite
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
   extensions/digest:
     dependencies:

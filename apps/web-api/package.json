@@ -20,6 +20,7 @@
     "@ethosagent/digest": "workspace:*",
     "@ethosagent/batch-runner": "workspace:*",
     "@ethosagent/cron": "workspace:*",
+    "@ethosagent/dashboard": "workspace:*",
     "@ethosagent/eval-harness": "workspace:*",
     "@ethosagent/goal-runner": "workspace:*",
     "@ethosagent/goal-store": "workspace:*",

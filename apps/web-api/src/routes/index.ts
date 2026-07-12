@@ -88,7 +88,7 @@ export interface ServiceContainer {
   digest: import('../services/digest.service').DigestService;
   voice?: import('../services/voice.service').VoiceService;
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
-  dashboards?: import('../services/dashboards.service').DashboardsService;
+  dashboards?: import('@ethosagent/dashboard').DashboardsService;
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
   agentLoop?: import('@ethosagent/core').AgentLoop;
   systemBus?: import('../services/system-event-bus').SystemEventBus;

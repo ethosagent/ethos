@@ -3,6 +3,11 @@ import { SessionStreamBuffer } from '@ethosagent/agent-bridge';
 import { AgentMesh, defaultRegistryPath } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
+import {
+  DashboardRefreshScheduler,
+  DashboardStore,
+  DashboardsService,
+} from '@ethosagent/dashboard';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
@@ -32,8 +37,6 @@ import { createWebApprovalHook, type DangerPredicate } from './services/approval
 import { ApprovalsService } from './services/approvals.service';
 import { ConfigService } from './services/config.service';
 import { CronService } from './services/cron.service';
-import { refreshSinglePanel } from './services/dashboard-refresh';
-import { DashboardsService } from './services/dashboards.service';
 import { DigestService } from './services/digest.service';
 import { EvolverService } from './services/evolver.service';
 import { GoalsService } from './services/goals.service';
@@ -49,7 +52,6 @@ import { PluginsService } from './services/plugins.service';
 import { SkillsService } from './services/skills.service';
 import { SystemEventBus } from './services/system-event-bus';
 import { VoiceService } from './services/voice.service';
-import { DashboardStore } from './stores/dashboard-store';
 
 // Public entry for `@ethosagent/web-api`. Boot code (`apps/ethos/src/commands/
 // serve.ts`) builds the dependencies it has lying around — a `SessionStore`,
@@ -577,47 +579,17 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     secrets,
   });
 
-  // Dashboard panel cron poller — checks every 60s for panels with due cron schedules
+  // Dashboard panel refresh — driven by the cron extension's schedule engine
+  // via the extension-owned scheduler (replaces the old hand-rolled `isCronDue`
+  // + `setInterval` poller). Each prompt refresh runs as an ephemeral session
+  // (the throwaway chat session is GC'd via the shared session store).
   if (opts.agentLoop) {
-    const POLL_INTERVAL_MS = 60_000;
-    const dashboardCronLastRun = new Map<string, number>();
-    const dashboardCronInterval = setInterval(async () => {
-      try {
-        const allDashboards = dashboardsService.list('default-user');
-        for (const dash of allDashboards) {
-          const panels = dashboardsService.listLivePanels(dash.id);
-          const refreshDeps = {
-            dashboards: dashboardsService,
-            pluginLoader: opts.pluginLoader,
-            agentLoop: opts.agentLoop,
-          };
-
-          // Dashboard-level cron: refresh ALL panels when due
-          if (
-            dash.cronSchedule &&
-            isCronDue(dash.cronSchedule, dashboardCronLastRun.get(dash.id) ?? null)
-          ) {
-            dashboardCronLastRun.set(dash.id, Date.now());
-            for (const panel of panels) {
-              await refreshSinglePanel(panel, refreshDeps);
-            }
-            continue; // skip per-panel cron this tick
-          }
-
-          // Per-panel cron
-          for (const panel of panels) {
-            if (!panel.cronSchedule) continue;
-            if (!isCronDue(panel.cronSchedule, panel.lastRunAt)) continue;
-            await refreshSinglePanel(panel, refreshDeps);
-          }
-        }
-      } catch {
-        // Silent failure — cron polling is best-effort
-      }
-    }, POLL_INTERVAL_MS);
-
-    // Unref so it doesn't keep the process alive
-    dashboardCronInterval.unref();
+    new DashboardRefreshScheduler({
+      dashboards: dashboardsService,
+      agentLoop: opts.agentLoop,
+      pluginLoader: opts.pluginLoader,
+      sessions: opts.sessionStore,
+    }).start();
   }
 
   return { app, chatService, systemBus };
@@ -669,42 +641,6 @@ function createPassiveMcpManager(): McpManager {
     invalidatePersonalityClients: () => {},
     reconnectPersonality: async () => {},
   } as unknown as McpManager;
-}
-
-/**
- * Lightweight cron-due check for dashboard panel schedules. Supports the
- * subset of 5-field cron expressions used by dashboards: minute, hour,
- * and day-of-week. Day-of-month and month fields must be `*` — expressions
- * that specify them are rejected (returns false) rather than silently
- * ignoring them. Returns true when the panel has never run or the scheduled
- * time has passed since the last run.
- */
-function isCronDue(cronExpr: string, lastRunAt: number | null): boolean {
-  const now = Date.now();
-  if (!lastRunAt) return true; // Never run — due immediately
-  const parts = cronExpr.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [, , domStr, monthStr] = parts;
-  if (domStr !== '*' || monthStr !== '*') return false;
-  const d = new Date(now);
-  const [minStr, hourStr, , , dowStr] = parts;
-  const minute = minStr === '*' ? d.getMinutes() : Number(minStr);
-  const hour = hourStr === '*' ? d.getHours() : Number(hourStr);
-  // Check if we're past the scheduled time today
-  const scheduledToday = new Date(d);
-  scheduledToday.setHours(hour, minute, 0, 0);
-  // Must be past scheduled time AND not already run since then
-  if (now < scheduledToday.getTime()) return false;
-  if (lastRunAt > scheduledToday.getTime()) return false;
-  // Day-of-week check (cron uses 0=Sun..6=Sat)
-  if (dowStr !== '*') {
-    const dowRange = dowStr.includes('-') ? dowStr.split('-').map(Number) : [Number(dowStr)];
-    if (dowRange.length === 2) {
-      const [start, end] = dowRange;
-      if (d.getDay() < (start ?? 0) || d.getDay() > (end ?? 6)) return false;
-    } else if (d.getDay() !== dowRange[0]) return false;
-  }
-  return true;
 }
 
 export { type ChatDefaults, ChatService } from './features/chat/service';

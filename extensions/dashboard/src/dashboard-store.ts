@@ -1,11 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type Database from '@ethosagent/sqlite';
 import { EthosError } from '@ethosagent/types';
-import {
-  findInvalidParamKeys,
-  type ParamDef,
-  parseImportPayload,
-} from '../services/interpolate-params';
+import { findInvalidParamKeys, type ParamDef, parseImportPayload } from './interpolate-params';
 
 export interface CreateDashboardParams {
   userId: string;

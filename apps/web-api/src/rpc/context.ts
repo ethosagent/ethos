@@ -1,4 +1,5 @@
 import type { AgentLoop, ClarifyBridge } from '@ethosagent/core';
+import type { DashboardsService } from '@ethosagent/dashboard';
 import type { ToolRegistry } from '@ethosagent/types';
 import { contract } from '@ethosagent/web-contracts';
 import { implement } from '@orpc/server';
@@ -9,7 +10,6 @@ import type { ApiKeysService } from '../services/api-keys.service';
 import type { ApprovalsService } from '../services/approvals.service';
 import type { ConfigService } from '../services/config.service';
 import type { CronService } from '../services/cron.service';
-import type { DashboardsService } from '../services/dashboards.service';
 import type { DigestService } from '../services/digest.service';
 import type { EvolverService } from '../services/evolver.service';
 import type { GoalsService } from '../services/goals.service';

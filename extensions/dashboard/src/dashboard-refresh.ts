@@ -1,5 +1,6 @@
 import type { AgentLoop } from '@ethosagent/core';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
+import type { SessionStore } from '@ethosagent/types';
 import type { DashboardPanel } from './dashboards.service';
 import { extractParamRefs, interpolateParams } from './interpolate-params';
 
@@ -33,6 +34,15 @@ interface RefreshDeps {
   dashboards: RefreshDashboardsHandle;
   pluginLoader?: PluginLoader;
   agentLoop?: AgentLoop;
+  /**
+   * When present, a prompt-panel refresh runs as an *ephemeral* session: the
+   * throwaway `dashboard:<id>:<panel>:<ts>` chat session is deleted once the
+   * refresh completes (panel content is already persisted to the dashboard
+   * DB). The scheduled refresh path passes this so a 1-minute auto-refresh
+   * does not accumulate junk sessions in sessions.db. Omit it and behaviour is
+   * unchanged (the manual/RPC path keeps its session).
+   */
+  sessions?: SessionStore;
 }
 
 /**
@@ -145,6 +155,9 @@ export async function refreshSinglePanel(
       deps.dashboards.setPanelError(panel.id, 'Agent loop not configured');
       return;
     }
+    // Ephemeral refresh session key — hoisted so the post-run cleanup below can
+    // delete the throwaway session regardless of success/failure.
+    const sessionKey = `dashboard:${panel.dashboardId}:${panel.id}:${Date.now()}`;
     try {
       // Get the dashboard to find its personality
       const dashResult = deps.dashboards.get(panel.dashboardId);
@@ -156,7 +169,6 @@ export async function refreshSinglePanel(
       const fullPrompt = `${widgetContext}\n\n${prompt}`;
 
       // Run through AgentLoop
-      const sessionKey = `dashboard:${panel.dashboardId}:${panel.id}:${Date.now()}`;
       let output = '';
       let structured: unknown = null;
       for await (const event of loop.run(fullPrompt, {
@@ -180,6 +192,16 @@ export async function refreshSinglePanel(
       writeBackParams(panel, ephemeral, persistent, panelDefaults, deps);
     } catch (err) {
       deps.dashboards.setPanelError(panel.id, err instanceof Error ? err.message : String(err));
+    } finally {
+      // Ephemeral session GC — best-effort, never fails a refresh.
+      if (deps.sessions) {
+        try {
+          const session = await deps.sessions.getSessionByKey(sessionKey);
+          if (session) await deps.sessions.deleteSession(session.id);
+        } catch {
+          // session vanished or store errored — leave it; a later prune sweeps it.
+        }
+      }
     }
   }
 }
