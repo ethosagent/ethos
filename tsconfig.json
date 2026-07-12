@@ -5,6 +5,8 @@
     "jsx": "react-jsx",
     "paths": {
       "@ethosagent/types": ["./packages/types/src"],
+      "@ethosagent/a2a": ["./packages/a2a/src"],
+      "@ethosagent/a2a/crypto": ["./packages/a2a/src/crypto"],
       "@ethosagent/oauth-core": ["./packages/oauth-core/src"],
       "@ethosagent/storage-fs": ["./packages/storage-fs/src"],
       "@ethosagent/sqlite": ["./packages/sqlite/src"],

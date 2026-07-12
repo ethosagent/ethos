@@ -1120,6 +1120,9 @@ importers:
 
   extensions/personalities:
     dependencies:
+      '@ethosagent/a2a':
+        specifier: workspace:*
+        version: link:../../packages/a2a
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
@@ -1631,6 +1634,15 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+
+  packages/a2a:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../types
+      hono:
+        specifier: ^4.12.15
+        version: 4.12.23
 
   packages/agent-bridge:
     dependencies:
