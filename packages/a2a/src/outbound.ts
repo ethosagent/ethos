@@ -69,6 +69,7 @@ export type A2aOutboundResult =
 
 /** Discriminated failure reasons for the outbound path. */
 export type A2aOutboundErrorCode =
+  | 'egress_denied'
   | 'fanout_exhausted'
   | 'fetch_failed'
   | 'invalid_response'
@@ -108,6 +109,15 @@ export interface ConnectArgs {
    * behind an explicit flag.
    */
   allowSelfLoop?: boolean;
+  /**
+   * EGRESS default-deny (plan §15, mirrors the inbound allowlist). When provided,
+   * it is consulted with the VERIFIED peer fingerprint AFTER the card is fetched +
+   * verified and the self-loop guard passes, but BEFORE the handshake: a `false`
+   * result throws `egress_denied` so a non-approved peer never sees a challenge,
+   * my card, or a token request. The allowlist itself is injected at composition —
+   * the outbound client stays decoupled from the store type.
+   */
+  egressCheck?: (peerFingerprint: string) => boolean | Promise<boolean>;
 }
 
 export interface SendMessageArgs {
@@ -151,6 +161,16 @@ export class A2aOutboundClient {
       throw new A2aOutboundError(
         'self_loop_forbidden',
         'refusing to call my own agent (self-loop disabled by default)',
+      );
+    }
+
+    // Egress default-deny (plan §15): a non-approved peer never even sees a
+    // challenge. Checked AFTER the self-loop guard, BEFORE the handshake — no
+    // card presented, no token requested to a peer the human has not approved.
+    if (args.egressCheck && !(await args.egressCheck(peerCard.keyFingerprint))) {
+      throw new A2aOutboundError(
+        'egress_denied',
+        `peer ${peerCard.keyFingerprint} is not on this personality's A2A egress allowlist`,
       );
     }
 

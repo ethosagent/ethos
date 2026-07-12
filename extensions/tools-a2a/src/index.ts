@@ -10,7 +10,12 @@
 //
 // Layer purity: imports ONLY `@ethosagent/types` + `@ethosagent/a2a`. No core, no apps.
 
-import { A2aClientError, A2aOutboundClient, A2aOutboundError } from '@ethosagent/a2a';
+import {
+  type A2aAllowlist,
+  A2aClientError,
+  A2aOutboundClient,
+  A2aOutboundError,
+} from '@ethosagent/a2a';
 import type {
   A2aIdentityProvider,
   SecretsResolver,
@@ -24,6 +29,12 @@ export interface A2aToolDeps {
   identity: A2aIdentityProvider;
   /** Resolves MY Ed25519 signing key from `a2a/<personalityId>/private-key`. */
   secrets: SecretsResolver;
+  /**
+   * EGRESS default-deny gate (plan §15). Consulted with the VERIFIED peer
+   * fingerprint before the handshake; a peer absent from this personality's
+   * allowlist is refused (mirrors the inbound default-deny).
+   */
+  allowlist: A2aAllowlist;
   /** Injectable outbound client (tests); defaults to a fresh `A2aOutboundClient`. */
   client?: A2aOutboundClient;
   /**
@@ -131,6 +142,9 @@ function makeA2aSendTool(deps: A2aToolDeps): Tool {
           myCard,
           myPrivateKeyPem: pem,
           ...(deps.allowSelfLoop ? { allowSelfLoop: true } : {}),
+          // Egress default-deny: refuse a peer that is not on this personality's
+          // allowlist BEFORE the handshake (no challenge, no card, no token).
+          egressCheck: (fp) => deps.allowlist.lookup(personalityId, fp).then((g) => g !== null),
         });
 
         // Ambient inbound trace (P8) — already the {traceId, depth, reserveOutbound}
@@ -182,6 +196,14 @@ function makeA2aSendTool(deps: A2aToolDeps): Tool {
               ok: false,
               error:
                 'A2A self-loop is disabled (set ETHOS_A2A_SELF_LOOP=1 to allow calling your own agent).',
+              code: 'execution_failed',
+            };
+          }
+          if (err.code === 'egress_denied') {
+            return {
+              ok: false,
+              error:
+                "peer is not on this personality's A2A egress allowlist (default-deny) — approve it out-of-band before calling it.",
               code: 'execution_failed',
             };
           }

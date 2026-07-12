@@ -699,6 +699,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       for (const tool of createA2aTools({
         identity: a2aIdentity,
         secrets: a2aSecrets,
+        // Egress default-deny (plan §15): the SAME per-personality allowlist that
+        // gates inbound peers gates outbound calls — approve a peer once, both ways.
+        allowlist: a2aAllowlist,
         ...(allowSelfLoop ? { allowSelfLoop: true } : {}),
       })) {
         toolRegistry.register(tool);

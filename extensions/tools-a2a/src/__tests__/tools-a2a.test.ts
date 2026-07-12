@@ -128,6 +128,15 @@ function stubAllowlist(approved: Map<string, PeerGrant>): A2aAllowlist {
   };
 }
 
+/** An egress allowlist approving each given agent's fingerprint (default-deny otherwise). */
+function egressAllow(...agents: Agent[]): A2aAllowlist {
+  return stubAllowlist(
+    new Map(
+      agents.map((a) => [a.fingerprint, { fingerprint: a.fingerprint, scope: [], enabled: true }]),
+    ),
+  );
+}
+
 const HELLO_SCRIPT: AgentEvent[] = [
   { type: 'text_delta', text: 'hello ' },
   { type: 'text_delta', text: 'world' },
@@ -227,6 +236,7 @@ describe('a2a_send — full round-trip', () => {
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
       secrets: stubSecrets({ [`a2a/${initiator.id}/private-key`]: initiator.privateKeyPem }),
+      allowlist: egressAllow(target),
       client,
     });
 
@@ -250,6 +260,7 @@ describe('a2a_send — full round-trip', () => {
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
       secrets: stubSecrets({ [`a2a/${initiator.id}/private-key`]: initiator.privateKeyPem }),
+      allowlist: egressAllow(),
       client: new A2aOutboundClient(),
     });
     const result = await tool?.execute(
@@ -265,6 +276,7 @@ describe('a2a_send — full round-trip', () => {
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
       secrets: stubSecrets({}),
+      allowlist: egressAllow(),
       client: new A2aOutboundClient(),
     });
     const result = await tool?.execute(
@@ -308,6 +320,7 @@ describe('a2a_send — delegation containment (ctx.a2aDelegation → client → 
     const [tool] = createA2aTools({
       identity: stubIdentity(initiator, ['search']),
       secrets: stubSecrets({ [`a2a/${initiator.id}/private-key`]: initiator.privateKeyPem }),
+      allowlist: egressAllow(target),
       client,
     });
 
@@ -350,6 +363,7 @@ describe('a2a_send — self-loop guard (plan §14)', () => {
     const [tool] = createA2aTools({
       identity: stubIdentity(me, ['search']),
       secrets: stubSecrets({ [`a2a/${me.id}/private-key`]: me.privateKeyPem }),
+      allowlist: egressAllow(me),
       client,
     });
 
@@ -375,6 +389,7 @@ describe('a2a_send — self-loop guard (plan §14)', () => {
     const [tool] = createA2aTools({
       identity: stubIdentity(me, ['search']),
       secrets: stubSecrets({ [`a2a/${me.id}/private-key`]: me.privateKeyPem }),
+      allowlist: egressAllow(me),
       client,
       allowSelfLoop: true,
     });
@@ -383,6 +398,81 @@ describe('a2a_send — self-loop guard (plan §14)', () => {
       { peer_url: WELL_KNOWN_URL, fingerprint: me.fingerprint, skill: 'search', message: 'hi me' },
       makeCtx(me.id),
     );
+    expect(result?.ok).toBe(true);
+    if (result?.ok) expect(result.value).toBe('hello world');
+    expect(counter.runs).toBe(1);
+  });
+});
+
+describe('a2a_send — egress default-deny (plan §15)', () => {
+  it('refuses a non-allowlisted peer BEFORE any handshake (no challenge POST)', async () => {
+    const target = makeAgent(TARGET_ID);
+    const initiator = makeAgent('me');
+    const clock = { t: Date.now() };
+    const { app, counter } = makeServer(target, initiator, clock);
+
+    // Count challenge POSTs to the auth endpoint — the first handshake step.
+    let authPosts = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = toUrl(input);
+      if ((init?.method ?? 'GET') === 'POST' && url.includes('/a2a-auth/')) authPosts += 1;
+      return app.request(url, init);
+    };
+    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+
+    // Egress allowlist is EMPTY — the target is not approved for this personality.
+    const [tool] = createA2aTools({
+      identity: stubIdentity(initiator, ['search']),
+      secrets: stubSecrets({ [`a2a/${initiator.id}/private-key`]: initiator.privateKeyPem }),
+      allowlist: egressAllow(),
+      client,
+    });
+
+    const result = await tool?.execute(
+      {
+        peer_url: WELL_KNOWN_URL,
+        fingerprint: target.fingerprint,
+        skill: 'search',
+        message: 'hi',
+      },
+      makeCtx(initiator.id),
+    );
+
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect(result.code).toBe('execution_failed');
+      expect(result.error).toContain('egress allowlist');
+    }
+    // No handshake was attempted, no run happened.
+    expect(authPosts).toBe(0);
+    expect(counter.runs).toBe(0);
+  });
+
+  it('lets an allowlisted peer through end to end', async () => {
+    const target = makeAgent(TARGET_ID);
+    const initiator = makeAgent('me');
+    const clock = { t: Date.now() };
+    const { app, counter } = makeServer(target, initiator, clock);
+    const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
+    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+
+    const [tool] = createA2aTools({
+      identity: stubIdentity(initiator, ['search']),
+      secrets: stubSecrets({ [`a2a/${initiator.id}/private-key`]: initiator.privateKeyPem }),
+      allowlist: egressAllow(target),
+      client,
+    });
+
+    const result = await tool?.execute(
+      {
+        peer_url: WELL_KNOWN_URL,
+        fingerprint: target.fingerprint,
+        skill: 'search',
+        message: 'hi',
+      },
+      makeCtx(initiator.id),
+    );
+
     expect(result?.ok).toBe(true);
     if (result?.ok) expect(result.value).toBe('hello world');
     expect(counter.runs).toBe(1);

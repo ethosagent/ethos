@@ -224,6 +224,9 @@ export class A2aAsyncManager {
       idempotencyKey: args.idempotencyKey,
       traceId: args.traceId,
       peerFingerprint: args.peerFingerprint,
+      // Stamp the owning personality so the SSE stream can reject a cross-
+      // personality read (plan §15 multi-tenancy task-ownership check).
+      personalityId: args.personalityId,
     };
     await this.opts.taskStore.create(task);
     this.running.set(task.id, this.execute(task, args));

@@ -147,6 +147,69 @@ describe('A2aOutboundClient — full round-trip (handshake → sync task)', () =
   });
 });
 
+describe('A2aOutboundClient — egress default-deny (plan §15)', () => {
+  it('refuses a non-approved peer with egress_denied and does NO handshake', async () => {
+    const target = makeAgent(TARGET_ID);
+    const initiator = makeAgent('initiator');
+    const sheet: SheetHolder = { skills: ['search'] };
+    const clock = { t: Date.now() };
+    const { app, counter } = makeServer(target, initiator, sheet, clock);
+
+    // Count challenge POSTs — the first handshake step. A refused egress must
+    // never reach it.
+    let authPosts = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = toUrl(input);
+      if ((init?.method ?? 'GET') === 'POST' && url.includes('/a2a-auth/')) authPosts += 1;
+      return app.request(url, init);
+    };
+    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+
+    let thrown: unknown;
+    try {
+      await client.connect({
+        wellKnownUrl: WELL_KNOWN_URL,
+        expectedFingerprint: target.fingerprint,
+        myCard: initiator.card,
+        myPrivateKeyPem: initiator.privateKeyPem,
+        egressCheck: () => false,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(A2aOutboundError);
+    if (thrown instanceof A2aOutboundError) expect(thrown.code).toBe('egress_denied');
+    // The card was fetched + verified, but NO handshake was attempted, no run ran.
+    expect(authPosts).toBe(0);
+    expect(counter.runs).toBe(0);
+  });
+
+  it('admits an approved peer and completes the handshake', async () => {
+    const target = makeAgent(TARGET_ID);
+    const initiator = makeAgent('initiator');
+    const sheet: SheetHolder = { skills: ['search'] };
+    const clock = { t: Date.now() };
+    const { app } = makeServer(target, initiator, sheet, clock);
+    const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
+    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+
+    const seen: string[] = [];
+    const session = await client.connect({
+      wellKnownUrl: WELL_KNOWN_URL,
+      expectedFingerprint: target.fingerprint,
+      myCard: initiator.card,
+      myPrivateKeyPem: initiator.privateKeyPem,
+      egressCheck: (fp) => {
+        seen.push(fp);
+        return true;
+      },
+    });
+    expect(session.token).toBeTruthy();
+    // The egress gate saw the VERIFIED peer fingerprint.
+    expect(seen).toEqual([target.fingerprint]);
+  });
+});
+
 describe('A2aOutboundClient — delegation containment (P8)', () => {
   it('signs depth+1 (admitted by the server), then throws fanout_exhausted with NO HTTP call', async () => {
     const target = makeAgent(TARGET_ID);

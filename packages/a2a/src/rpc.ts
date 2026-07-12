@@ -647,6 +647,12 @@ export function createA2aRpcRouter(opts: A2aRpcServiceOptions): Hono {
     if (!task) {
       return c.json({ error: 'NOT_FOUND', message: `unknown task "${taskId}"` }, 404);
     }
+    // Multi-tenancy task-ownership (plan §15): a task stamped with a personality
+    // is readable ONLY via that personality's SSE route — do not leak another
+    // personality's task. Optional field ⇒ initiator-tracker tasks are unaffected.
+    if (task.personalityId && task.personalityId !== personalityId) {
+      return c.json({ error: 'NOT_FOUND', message: `unknown task "${taskId}"` }, 404);
+    }
 
     return streamSSE(c, async (stream) => {
       await stream.writeSSE({ data: JSON.stringify(task) });
