@@ -13,6 +13,7 @@ import { shortPatternCheck, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactPii } from '@ethosagent/safety-redact';
 import { SessionLane } from '@ethosagent/session-lane';
 import type Database from '@ethosagent/sqlite';
+import { createEventTranslator } from '@ethosagent/surface-kit';
 import type {
   AttachmentCache,
   ChannelContext,
@@ -1596,6 +1597,7 @@ export class Gateway {
           ? await this.resolveUserIdFn(message.platform, message.userId, message.username)
           : undefined;
 
+      const translator = createEventTranslator();
       for await (const event of bot.loop.run(loopText, {
         sessionKey,
         personalityId,
@@ -1605,7 +1607,7 @@ export class Gateway {
         steerSink,
         origin: `${message.platform}:${message.chatId}`,
       })) {
-        if (event.type === 'text_delta') responseText += event.text;
+        translator.push(event);
         if (event.type === 'usage') {
           const u = this.usageStore.get(laneKey) ?? {
             inputTokens: 0,
@@ -1617,12 +1619,13 @@ export class Gateway {
           u.costUsd += event.estimatedCostUsd;
           this.usageStore.set(laneKey, u);
         }
-        if (event.type === 'error') {
-          errored = { error: event.error, code: event.code };
+        if (translator.error) {
+          errored = translator.error;
           break;
         }
-        if (event.type === 'done') break;
+        if (translator.done) break;
       }
+      responseText = translator.text;
 
       if (signal.aborted) {
         // /stop or shutdown — caller already notified the user.

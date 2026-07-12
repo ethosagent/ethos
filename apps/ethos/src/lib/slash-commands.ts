@@ -1,6 +1,13 @@
 // FW-14 — shared slash command registry. Both the executor in chat.ts and
 // the autocomplete surface share this single source, so descriptions and
 // names never drift.
+//
+// The built-in command SET now lives in `@ethosagent/surface-kit` (the
+// cross-surface source of truth); `builtInCommands` below is the CLI-advertised
+// subset, derived from it. This registry class remains CLI-local — it also
+// holds plugin/skill/quick commands that are not surface-shared.
+
+import { slashCommandsForSurface } from '@ethosagent/surface-kit';
 
 export interface SlashCommand {
   name: string;
@@ -43,64 +50,11 @@ export class SlashCommandRegistry {
   }
 }
 
-export const builtInCommands: SlashCommand[] = [
-  { name: 'help', description: 'Show all slash commands', usage: '/help' },
-  { name: 'new', description: 'Start a fresh session', usage: '/new' },
-  { name: 'reset', description: 'Alias for /new', usage: '/reset' },
-  {
-    name: 'personality',
-    description: 'Show or switch personality',
-    usage: '/personality [id|list]',
-  },
-  {
-    name: 'model',
-    description: 'Show current model (switch requires restart)',
-    usage: '/model [name]',
-  },
-  {
-    name: 'tier',
-    description: 'Override LLM tier for next turn',
-    usage: '/tier [trivial|default|deep|status]',
-  },
-  { name: 'memory', description: 'Show ~/.ethos/MEMORY.md and USER.md', usage: '/memory' },
-  { name: 'usage', description: 'Show token and cost stats', usage: '/usage' },
-  { name: 'budget', description: 'Show session spend against cap', usage: '/budget [reset]' },
-  {
-    name: 'verbose',
-    description: 'Cycle or set output verbosity',
-    usage: '/verbose [quiet|default|verbose|debug|status]',
-  },
-  {
-    name: 'busy',
-    description: 'Set busy-input mode',
-    usage: '/busy [interrupt|queue|steer|status]',
-  },
-  { name: 'steer', description: 'Inject a user steer mid-turn', usage: '/steer <text>' },
-  { name: 'allow', description: 'Approve a pending channel sender', usage: '/allow <code>' },
-  {
-    name: 'deny',
-    description: 'Revoke an approved channel sender',
-    usage: '/deny <platform> <id>',
-  },
-  {
-    name: 'communications',
-    description: 'List approved senders and pairing codes',
-    usage: '/communications',
-  },
-  {
-    name: 'commands',
-    description: 'List available commands',
-    usage: '/commands',
-  },
-  {
-    name: 'learn',
-    description: 'Capture knowledge as memory or skill',
-    usage: '/learn [remember:|skill:] <description>',
-  },
-  { name: 'undo', description: 'Undo last N turns (default 1)', usage: '/undo [N]' },
-  { name: 'exit', description: 'Quit ethos', usage: '/exit' },
-  { name: 'quit', description: 'Alias for /exit', usage: '/quit' },
-];
+export const builtInCommands: SlashCommand[] = slashCommandsForSurface('cli').map((cmd) => ({
+  name: cmd.name,
+  description: cmd.description,
+  usage: cmd.usage,
+}));
 
 export function buildBaseRegistry(): SlashCommandRegistry {
   const registry = new SlashCommandRegistry();

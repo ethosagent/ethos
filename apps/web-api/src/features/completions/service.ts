@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
+import { createEventTranslator } from '@ethosagent/surface-kit';
 import { type Attachment, EthosError } from '@ethosagent/types';
 import type {
   ChatCompletionChunk,
@@ -55,10 +56,8 @@ export class CompletionsService {
 
   async complete(input: CompletionsInput): Promise<ChatCompletionResponse> {
     const { sessionKey, lastUserText, attachments } = await this.prepareSession(input);
-    let text = '';
-    let promptTokens = 0;
-    let completionTokens = 0;
     const finishReason: 'stop' | 'length' | 'tool_calls' = 'stop';
+    const translator = createEventTranslator();
 
     for await (const event of this.driveLoop({
       sessionKey,
@@ -71,14 +70,11 @@ export class CompletionsService {
       ...(input.req.seed !== undefined ? { seed: input.req.seed } : {}),
       ...(attachments?.length ? { attachments } : {}),
     })) {
-      if (event.type === 'text_delta') text += event.text;
-      else if (event.type === 'usage') {
-        promptTokens += event.inputTokens;
-        completionTokens += event.outputTokens;
-      } else if (event.type === 'error') {
+      translator.push(event);
+      if (translator.error) {
         throw new EthosError({
           code: 'INTERNAL',
-          cause: event.error,
+          cause: translator.error.error,
           action: 'Retry the request. If the error repeats, file an issue.',
         });
       }
@@ -90,12 +86,16 @@ export class CompletionsService {
       created: this.unixNow(),
       model: input.req.model,
       choices: [
-        { index: 0, message: { role: 'assistant', content: text }, finish_reason: finishReason },
+        {
+          index: 0,
+          message: { role: 'assistant', content: translator.text },
+          finish_reason: finishReason,
+        },
       ],
       usage: {
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        total_tokens: promptTokens + completionTokens,
+        prompt_tokens: translator.usage.inputTokens,
+        completion_tokens: translator.usage.outputTokens,
+        total_tokens: translator.usage.inputTokens + translator.usage.outputTokens,
       },
     };
   }
@@ -106,9 +106,8 @@ export class CompletionsService {
     const created = this.unixNow();
     const model = input.req.model;
 
-    let promptTokens = 0;
-    let completionTokens = 0;
     let yieldedRole = false;
+    const translator = createEventTranslator();
 
     for await (const event of this.driveLoop({
       sessionKey,
@@ -121,6 +120,7 @@ export class CompletionsService {
       ...(input.req.seed !== undefined ? { seed: input.req.seed } : {}),
       ...(attachments?.length ? { attachments } : {}),
     })) {
+      translator.push(event);
       if (event.type === 'text_delta') {
         const delta: ChatCompletionChunk['choices'][0]['delta'] = yieldedRole
           ? { content: event.text }
@@ -133,13 +133,10 @@ export class CompletionsService {
           model,
           choices: [{ index: 0, delta, finish_reason: null }],
         };
-      } else if (event.type === 'usage') {
-        promptTokens += event.inputTokens;
-        completionTokens += event.outputTokens;
-      } else if (event.type === 'error') {
+      } else if (translator.error) {
         throw new EthosError({
           code: 'INTERNAL',
-          cause: event.error,
+          cause: translator.error.error,
           action: 'Retry the request. If the error repeats, file an issue.',
         });
       }
@@ -165,9 +162,9 @@ export class CompletionsService {
         model,
         choices: [],
         usage: {
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: promptTokens + completionTokens,
+          prompt_tokens: translator.usage.inputTokens,
+          completion_tokens: translator.usage.outputTokens,
+          total_tokens: translator.usage.inputTokens + translator.usage.outputTokens,
         },
       };
     }

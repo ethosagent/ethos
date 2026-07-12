@@ -34,6 +34,7 @@
     "@ethosagent/skill-evolver": "workspace:*",
     "@ethosagent/skills": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
+    "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/tools-mcp": "workspace:*",
     "@ethosagent/tools-ui": "workspace:*",

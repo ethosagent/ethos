@@ -1,0 +1,20 @@
+{
+  "name": "@ethosagent/surface-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared surface primitives: a typed AgentEvent translator (common fold + audience gate) and the reconciled slash-command definitions. Depends only on @ethosagent/types so any surface (app or extension) can consume it without a layer cycle.",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "production": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*"
+  }
+}

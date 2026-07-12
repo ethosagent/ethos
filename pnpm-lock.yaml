@@ -310,6 +310,9 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/team-supervisor':
         specifier: workspace:*
         version: link:../../extensions/team-supervisor
@@ -529,6 +532,9 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/team-supervisor':
         specifier: workspace:*
         version: link:../../extensions/team-supervisor
@@ -918,6 +924,9 @@ importers:
       '@ethosagent/sqlite':
         specifier: workspace:*
         version: link:../../packages/sqlite
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1768,6 +1777,12 @@ importers:
   packages/sqlite: {}
 
   packages/storage-fs:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../types
+
+  packages/surface-kit:
     dependencies:
       '@ethosagent/types':
         specifier: workspace:*

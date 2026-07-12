@@ -20,6 +20,7 @@
     "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/session-lane": "workspace:*",
-    "@ethosagent/sqlite": "workspace:*"
+    "@ethosagent/sqlite": "workspace:*",
+    "@ethosagent/surface-kit": "workspace:*"
   }
 }

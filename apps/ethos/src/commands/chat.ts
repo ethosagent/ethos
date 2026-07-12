@@ -6,6 +6,7 @@ import type { EthosConfig, QuickCommandConfig } from '@ethosagent/config';
 import { ethosDir } from '@ethosagent/config';
 import { type AgentEvent, type AgentLoop, stripAnsiEscapes } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
+import { parseSlashCommand, shouldSurfaceProgress } from '@ethosagent/surface-kit';
 import type { SplashInventory } from '@ethosagent/tui';
 import type { Attachment, NotificationAdapter, SteerSink, Storage } from '@ethosagent/types';
 import { resolveAtRefs } from '../lib/at-refs';
@@ -789,7 +790,7 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       break;
 
     case 'tool_progress':
-      if (state.verbosity === 'default' && event.audience !== 'user') break;
+      if (state.verbosity === 'default' && !shouldSurfaceProgress(event)) break;
       if (event.toolName === '_watcher') {
         out(`${c.yellow}  ${stripAnsiEscapes(event.message)}${c.reset}\n`);
       } else {
@@ -980,9 +981,7 @@ async function handleSlashCommand(
   registry: SlashCommandRegistry,
   ctx: SlashHandlerContext,
 ): Promise<void> {
-  const parts = raw.slice(1).trim().split(/\s+/);
-  const name = parts[0]?.toLowerCase() ?? '';
-  const arg = parts.slice(1).join(' ');
+  const { name, arg } = parseSlashCommand(raw);
 
   switch (name) {
     case 'help':

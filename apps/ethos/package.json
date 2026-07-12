@@ -105,6 +105,7 @@
     "@ethosagent/session-lane": "workspace:*",
     "@ethosagent/skills": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
+    "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/session-sqlite": "workspace:*",
     "@ethosagent/sqlite": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
