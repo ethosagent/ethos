@@ -9,11 +9,49 @@
 // import from `extensions/*` or `apps/*`. The identity provider is injected.
 
 export {
+  type A2aAuthService,
+  type A2aAuthServiceOptions,
+  type A2aChallengeStruct,
+  type ChallengeRequest,
+  type ChallengeResponse,
+  type ChallengeResult,
+  createA2aAuthRouter,
+  createA2aAuthService,
+  type RespondResult,
+} from './auth';
+export {
   A2aClientError,
   type A2aClientErrorCode,
   type FetchAndVerifyCardOptions,
   fetchAndVerifyCard,
 } from './client';
+export {
+  type A2aAuthReceipt,
+  type SignedA2aAuthReceipt,
+  signReceipt,
+  verifyReceipt,
+} from './receipts';
+export {
+  type A2aAllowlist,
+  type A2aPeerStore,
+  MemoryNonceStore,
+  type MemoryNonceStoreOptions,
+  type NonceRecord,
+  type NonceStore,
+  type PeerEntry,
+  type PeerGrant,
+  StorageA2aAllowlist,
+  StorageA2aPeerStore,
+} from './stores';
+export {
+  type A2aTokenClaims,
+  type MintedToken,
+  type MintTokenParams,
+  mintToken,
+  type TokenValidation,
+  type ValidateTokenOptions,
+  validateToken,
+} from './tokens';
 export {
   type A2aWellKnownRouterOptions,
   createA2aWellKnownRouter,

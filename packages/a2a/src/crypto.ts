@@ -99,6 +99,43 @@ export function verifyCard(card: AgentCard): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Generic domain-separated struct signing (plan §7 / §0A)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sign an arbitrary structured object with an Ed25519 key. The object is run
+ * through the SAME {@link canonicalize} the card signer uses (recursively
+ * sorted keys) before signing, so there is no serialization drift between
+ * signer and verifier. Returns the base64 Ed25519 signature.
+ *
+ * The caller is responsible for domain separation: every signed struct MUST
+ * carry a `context` discriminator (e.g. `'a2a-auth-challenge'`) so the one
+ * Ed25519 key can never have a signature reused across protocols (plan §7).
+ */
+export function signStruct(obj: unknown, privateKeyPem: string): string {
+  const message = Buffer.from(canonicalize(obj), 'utf8');
+  return cryptoSign(null, message, privateKeyPem).toString('base64');
+}
+
+/**
+ * Verify a base64 Ed25519 signature over the canonical form of `obj` against a
+ * raw 32-byte public key. Returns false on any failure (bad signature, malformed
+ * key, decode error) — never throws.
+ */
+export function verifyStruct(obj: unknown, signature: string, rawPublicKey: Buffer): boolean {
+  const message = Buffer.from(canonicalize(obj), 'utf8');
+  const publicKey = createPublicKey({
+    key: { kty: 'OKP', crv: 'Ed25519', x: rawPublicKey.toString('base64url') },
+    format: 'jwk',
+  });
+  try {
+    return cryptoVerify(null, message, publicKey, Buffer.from(signature, 'base64'));
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // did:key derivation (multicodec ed25519-pub 0xed01 + base58btc, multibase `z`)
 // ---------------------------------------------------------------------------
 

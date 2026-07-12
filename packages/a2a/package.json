@@ -20,6 +20,10 @@
   },
   "dependencies": {
     "@ethosagent/types": "workspace:*",
-    "hono": "^4.12.15"
+    "hono": "^4.12.15",
+    "jose": "^6.2.3"
+  },
+  "devDependencies": {
+    "@ethosagent/storage-fs": "workspace:*"
   }
 }
