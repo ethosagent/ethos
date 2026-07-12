@@ -82,6 +82,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@ethosagent/a2a": "workspace:*",
     "@ethosagent/agent-bridge": "workspace:*",
     "@ethosagent/agent-mesh": "workspace:*",
     "@ethosagent/config": "workspace:*",

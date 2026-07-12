@@ -32,6 +32,22 @@ export {
   verifyReceipt,
 } from './receipts';
 export {
+  A2A_METHOD_MESSAGE_SEND,
+  A2A_REQUEST_POP_CONTEXT,
+  type A2aLease,
+  type A2aLimiter,
+  type A2aMessageSendParams,
+  type A2aRequestCredentials,
+  type A2aRequestPopStruct,
+  type A2aRpcService,
+  type A2aRpcServiceOptions,
+  type A2aTaskResult,
+  type A2aTaskRunner,
+  createA2aRpcRouter,
+  createA2aRpcService,
+  type JsonRpcResponse,
+} from './rpc';
+export {
   type A2aAllowlist,
   type A2aPeerStore,
   MemoryNonceStore,

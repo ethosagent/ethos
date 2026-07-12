@@ -235,6 +235,9 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
+      '@ethosagent/a2a':
+        specifier: workspace:*
+        version: link:../../packages/a2a
       '@ethosagent/agent-bridge':
         specifier: workspace:*
         version: link:../../packages/agent-bridge

@@ -1,19 +1,36 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve as pathResolve } from 'node:path';
+import {
+  type A2aTaskRunner,
+  createA2aAuthRouter,
+  createA2aRpcRouter,
+  createA2aWellKnownRouter,
+  MemoryNonceStore,
+  StorageA2aAllowlist,
+  StorageA2aPeerStore,
+} from '@ethosagent/a2a';
 import { AcpServer } from '@ethosagent/acp-server';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import { type EthosConfig, ethosDir, readConfig } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
-import { createPersonalityRegistry } from '@ethosagent/personalities';
+import {
+  createPersonalityRegistry,
+  PersonalityA2aIdentityProvider,
+} from '@ethosagent/personalities';
 import { SessionLane } from '@ethosagent/session-lane';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import type { McpManager } from '@ethosagent/tools-mcp';
 import { EthosError, type ToolRegistry } from '@ethosagent/types';
-import { type ChatService, createWebApi, WebTokenRepository } from '@ethosagent/web-api';
+import {
+  type ChatService,
+  createWebApi,
+  type RouteModule,
+  WebTokenRepository,
+} from '@ethosagent/web-api';
 import {
   createDangerPredicate,
   createMemoryProvider,
@@ -540,6 +557,66 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const attachmentCache = new FsAttachmentCache(new FsStorage(), join(dir, 'cache', 'attachments'));
   void attachmentCache.pruneOlderThan(24 * 60 * 60 * 1000).catch(() => {});
 
+  // A2A (Agent-to-Agent) — opt-in, DEFAULT OFF. Gated behind ETHOS_A2A_ENABLED=1.
+  // Mounts three PUBLIC RouteModules through the Phase-2 seam: the well-known
+  // card (stranger tier), the /a2a-auth handshake (owns its default-deny auth),
+  // and the /a2a JSON-RPC endpoint (owns its token + per-request PoP + call-time
+  // scope gate). Each is isolatable (own limiter hook) per plan §12 blast-radius.
+  const a2aRouteModules: RouteModule[] = [];
+  if (process.env.ETHOS_A2A_ENABLED === '1') {
+    const a2aSecrets = await getSecretsResolver();
+    const a2aStorage = getStorage();
+    const a2aBaseDir = join(dir, 'a2a');
+    const a2aIdentity = new PersonalityA2aIdentityProvider({
+      personalities,
+      secrets: a2aSecrets,
+      storage: a2aStorage,
+      ...(config.webBaseUrl ? { baseUrl: config.webBaseUrl } : {}),
+    });
+    const a2aPeerStore = new StorageA2aPeerStore(a2aStorage, a2aBaseDir);
+    const a2aAllowlist = new StorageA2aAllowlist(a2aStorage, a2aBaseDir);
+    const a2aRunner: A2aTaskRunner = {
+      run: (personalityId, text, opts) =>
+        loop.run(text, {
+          personalityId,
+          ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
+        }),
+    };
+    a2aRouteModules.push(
+      {
+        basePath: '/',
+        router: createA2aWellKnownRouter({ getIdentity: a2aIdentity }),
+        auth: 'public',
+        description:
+          'A2A discovery — public signed Agent Card (stranger tier) at /.well-known/agent-card.json.',
+      },
+      {
+        basePath: '/a2a-auth',
+        router: createA2aAuthRouter({
+          secrets: a2aSecrets,
+          allowlist: a2aAllowlist,
+          peerStore: a2aPeerStore,
+          nonces: new MemoryNonceStore(),
+        }),
+        auth: 'public',
+        description:
+          'A2A auth handshake — default-deny allowlist + challenge-response; mints sender-constrained tokens.',
+      },
+      {
+        basePath: '/a2a',
+        router: createA2aRpcRouter({
+          getIdentity: a2aIdentity,
+          peerStore: a2aPeerStore,
+          runner: a2aRunner,
+        }),
+        auth: 'public',
+        description:
+          'A2A JSON-RPC message/send — token + per-request PoP + call-time scope ∩ character sheet.',
+      },
+    );
+    console.log(`  a2a:          enabled (${a2aRouteModules.length} modules on the web API)`);
+  }
+
   const created = createWebApi({
     dataDir: dir,
     attachmentCache,
@@ -579,6 +656,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(voiceConfig?.ttsProviderName ? { ttsProviderName: voiceConfig.ttsProviderName } : {}),
     ...(voiceConfig ? { ttsProviderConfig: voiceConfig.ttsProviderConfig } : {}),
     ...(titleFn ? { titleFn } : {}),
+    ...(a2aRouteModules.length > 0 ? { routeModules: a2aRouteModules } : {}),
   });
   chatService = created.chatService;
   const webApp = created.app;
