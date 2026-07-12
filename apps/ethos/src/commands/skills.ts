@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { createInterface } from 'node:readline';
+import { ethosDir } from '@ethosagent/config';
 import {
   canInstall,
   deriveTier,
@@ -13,7 +14,6 @@ import {
 import { bundledSkillsSource, checkRequirements, UniversalScanner } from '@ethosagent/skills';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError, type Skill } from '@ethosagent/types';
-import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
 import { getStorage } from '../wiring';
 

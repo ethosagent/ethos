@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { type EthosConfig, ethosDir, readRawConfig } from '../config';
+import { type EthosConfig, ethosDir, readRawConfig } from '@ethosagent/config';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { buildVersionInfo } from '../version-info';
 import { getStorage } from '../wiring';

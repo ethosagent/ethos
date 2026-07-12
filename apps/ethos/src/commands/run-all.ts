@@ -15,7 +15,7 @@
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, statSync, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
-import { ethosDir } from '../config';
+import { ethosDir } from '@ethosagent/config';
 import { type LogRotationConfig, rotateIfNeeded } from '../error-log';
 import { createHealthServer } from '../health-server';
 import { emitReady } from '../logger';

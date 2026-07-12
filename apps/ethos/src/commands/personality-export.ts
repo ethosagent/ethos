@@ -10,9 +10,9 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import type { BundleManifest, ExportStamp } from '@ethosagent/types';
-import { ethosDir } from '../config';
 import { getStorage } from '../wiring';
 import { type Entry, writeTarGz } from './backup';
 

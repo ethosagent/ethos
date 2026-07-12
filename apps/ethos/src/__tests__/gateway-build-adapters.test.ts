@@ -1,7 +1,7 @@
+import type { EthosConfig } from '@ethosagent/config';
 import type { InboundMessage, PlatformAdapter } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { type AdapterModuleLoader, buildAdapters } from '../commands/gateway';
-import type { EthosConfig } from '../config';
 
 // Phase 2 — multi-adapter instantiation.
 //

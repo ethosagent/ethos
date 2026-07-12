@@ -1,4 +1,4 @@
-import { readKeys, writeKeys } from '../config';
+import { readKeys, writeKeys } from '@ethosagent/config';
 import { writeJson } from '../json-output';
 import { getSecretsResolver, getStorage } from '../wiring';
 

@@ -9,6 +9,7 @@
 // Personality-Judge on-demand and reports an alignment score and any signal.
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
+import type { EthosConfig } from '@ethosagent/config';
 import { EvalRunner } from '@ethosagent/eval-harness';
 import {
   GOOD_ALIGNMENT_THRESHOLD,
@@ -17,7 +18,6 @@ import {
 } from '@ethosagent/personality-judge';
 import { draftExpressionUpdate } from '@ethosagent/skill-evolver';
 import { formatError, toEthosError } from '@ethosagent/types';
-import type { EthosConfig } from '../config';
 import { createAgentLoop, createLLM, getStorage } from '../wiring';
 
 async function confirm(question: string): Promise<boolean> {
@@ -135,7 +135,7 @@ export async function buildEvidenceDigest(
 // Build an EvalRunner the Judge can drive: real AgentLoop, LLM judge scorer,
 // run history written under the personality's .judge-history/runs/.
 export async function buildJudgeRunner(config: EthosConfig, id: string): Promise<EvalRunner> {
-  const { ethosDir } = await import('../config');
+  const { ethosDir } = await import('@ethosagent/config');
   const { join } = await import('node:path');
   const storage = getStorage();
   const runsDir = join(ethosDir(), 'personalities', id, '.judge-history', 'runs');
@@ -157,7 +157,7 @@ function judgeStatePath(ethosDir: string, id: string, join: (...p: string[]) => 
 
 // Read the persisted consecutive-low-batch streak; 0 when missing/invalid.
 export async function readJudgeStreak(id: string): Promise<number> {
-  const { ethosDir } = await import('../config');
+  const { ethosDir } = await import('@ethosagent/config');
   const { join } = await import('node:path');
   const raw = await getStorage().read(judgeStatePath(ethosDir(), id, join));
   if (!raw) return 0;
@@ -179,7 +179,7 @@ export async function writeJudgeStreak(
   lowStreak: number,
   result: JudgeResult,
 ): Promise<void> {
-  const { ethosDir } = await import('../config');
+  const { ethosDir } = await import('@ethosagent/config');
   const { join } = await import('node:path');
   const dir = join(ethosDir(), 'personalities', id, '.judge-history');
   await getStorage().mkdir(dir);
@@ -206,7 +206,7 @@ export async function runPersonalityJudge(argv: string[]): Promise<void> {
 
   try {
     const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-    const { ethosDir, readConfig } = await import('../config');
+    const { ethosDir, readConfig } = await import('@ethosagent/config');
     const { join } = await import('node:path');
     const { getSecretsResolver } = await import('../wiring');
 
@@ -285,7 +285,7 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
 
   try {
     const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-    const { ethosDir, readConfig } = await import('../config');
+    const { ethosDir, readConfig } = await import('@ethosagent/config');
     const { join } = await import('node:path');
     const { getSecretsResolver } = await import('../wiring');
 
@@ -441,7 +441,7 @@ export async function runPersonalityRevert(argv: string[]): Promise<void> {
 
   try {
     const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-    const { ethosDir } = await import('../config');
+    const { ethosDir } = await import('@ethosagent/config');
     const { join } = await import('node:path');
 
     const storage = getStorage();

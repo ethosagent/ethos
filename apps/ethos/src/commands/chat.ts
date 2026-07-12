@@ -2,12 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { clearLine, createInterface } from 'node:readline';
 import { BackgroundRunner, InMemorySteerSink } from '@ethosagent/agent-bridge';
+import type { EthosConfig, QuickCommandConfig } from '@ethosagent/config';
+import { ethosDir } from '@ethosagent/config';
 import { type AgentEvent, type AgentLoop, stripAnsiEscapes } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import type { SplashInventory } from '@ethosagent/tui';
 import type { Attachment, NotificationAdapter, SteerSink, Storage } from '@ethosagent/types';
-import type { EthosConfig, QuickCommandConfig } from '../config';
-import { ethosDir } from '../config';
 import { resolveAtRefs } from '../lib/at-refs';
 import { makeCompleter } from '../lib/autocomplete';
 import { formatClarifyPrompt, parseClarifyAnswer } from '../lib/clarify-prompt';
@@ -1047,7 +1047,7 @@ async function handleSlashCommand(
 
     case 'memory': {
       const { createMemoryProvider } = await import('@ethosagent/wiring');
-      const { ethosDir } = await import('../config');
+      const { ethosDir } = await import('@ethosagent/config');
       const mem = createMemoryProvider({ dataDir: ethosDir(), storage: getStorage() });
       const result = await mem.prefetch({
         scopeId: `personality:${state.personalityId}`,

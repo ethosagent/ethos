@@ -1,5 +1,5 @@
+import { readConfig } from '@ethosagent/config';
 import { applyCliOverrides, parseCliOverrideFlags } from '../cli-overrides';
-import { readConfig } from '../config';
 import { getSecretsResolver, getStorage, resolveActiveLoop } from '../wiring';
 
 /**

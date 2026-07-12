@@ -1,6 +1,6 @@
+import { readRawConfig, writeConfig } from '@ethosagent/config';
 import { mergeRetentionConfig, parseDuration } from '@ethosagent/observability-sqlite';
 import { RETENTION_DEFAULTS, type RetentionConfig } from '@ethosagent/types';
-import { readRawConfig, writeConfig } from '../config';
 import { writeJson } from '../json-output';
 import { getStorage } from '../wiring';
 

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
-import { type EthosConfig, ethosDir, readRawConfig } from '../config';
+import { type EthosConfig, ethosDir, readRawConfig } from '../index';
 
 // plugins.auto_install — controls whether personality lockfile plugins
 // are auto-installed on load.

@@ -1,5 +1,5 @@
-import type { EthosConfig } from './config';
-import { readConfig } from './config';
+import type { EthosConfig } from '@ethosagent/config';
+import { readConfig } from '@ethosagent/config';
 import { setRotationConfig } from './error-log';
 import { getSecretsResolver, getStorage } from './wiring';
 

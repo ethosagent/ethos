@@ -1,5 +1,10 @@
 import { createInterface, type Interface } from 'node:readline';
-import { type EthosConfig, type ProviderConfig, readRawConfig, writeConfig } from '../config';
+import {
+  type EthosConfig,
+  type ProviderConfig,
+  readRawConfig,
+  writeConfig,
+} from '@ethosagent/config';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 // `ethos fallback` — interactive editor for the `providers:` chain in

@@ -1,3 +1,4 @@
+import { ethosDir } from '@ethosagent/config';
 import {
   listProcesses,
   type ProcessListItem,
@@ -6,7 +7,6 @@ import {
   type StopSignal,
   stopProcess,
 } from '@ethosagent/tools-process';
-import { ethosDir } from '../config';
 
 // `ethos process` — CLI mirror of the `process_*` tool family. It drives the
 // same registry helpers the tools call (listProcesses / readProcessLogs /

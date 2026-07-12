@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { EthosConfig } from '@ethosagent/config';
+import { readRawConfig, writeConfig } from '@ethosagent/config';
 import { teamsDir } from '@ethosagent/team-supervisor';
 import { EthosError } from '@ethosagent/types';
-import type { EthosConfig } from '../config';
-import { readRawConfig, writeConfig } from '../config';
 import { getStorage } from '../wiring';
 
 const c = {

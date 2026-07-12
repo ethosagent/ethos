@@ -1,7 +1,7 @@
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { Span, Trace } from '@ethosagent/types';
-import { ethosDir } from '../config';
 
 // ethos trace [id] [--session <id>] [--recent [N]] [--slow [N]]
 

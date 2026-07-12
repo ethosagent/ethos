@@ -129,7 +129,7 @@ describe('log-rotation config parsing', () => {
   it('logs.rotation fields are parsed via parseConfigYaml', async () => {
     const { join: pathJoin } = await import('node:path');
     const { InMemoryStorage } = await import('@ethosagent/storage-fs');
-    const { ethosDir, readRawConfig } = await import('../config');
+    const { ethosDir, readRawConfig } = await import('@ethosagent/config');
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());
     await storage.write(
@@ -151,7 +151,7 @@ describe('log-rotation config parsing', () => {
   it('logs field is undefined when no rotation config present', async () => {
     const { join: pathJoin } = await import('node:path');
     const { InMemoryStorage } = await import('@ethosagent/storage-fs');
-    const { ethosDir, readRawConfig } = await import('../config');
+    const { ethosDir, readRawConfig } = await import('@ethosagent/config');
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());
     await storage.write(
@@ -164,7 +164,7 @@ describe('log-rotation config parsing', () => {
 
   it('round-trips logs.rotation through writeConfig', async () => {
     const { InMemoryStorage } = await import('@ethosagent/storage-fs');
-    const { ethosDir, readRawConfig, writeConfig } = await import('../config');
+    const { ethosDir, readRawConfig, writeConfig } = await import('@ethosagent/config');
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());
     const original = {

@@ -1,10 +1,10 @@
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import {
   AmbiguousPrefixError,
   type ApiKeyRecord,
   SqliteApiKeyStore,
 } from '@ethosagent/session-sqlite';
-import { ethosDir } from '../config';
 
 // `ethos api-key` — manage bearer-token credentials for the OpenAI-compat
 // `/v1/*` surface. Keys live alongside session state in `sessions.db` so

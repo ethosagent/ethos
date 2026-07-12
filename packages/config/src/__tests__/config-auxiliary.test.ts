@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
-import { ethosDir, readRawConfig, writeConfig } from '../config';
+import { ethosDir, readRawConfig, writeConfig } from '../index';
 
 // context_compression F1 — auxiliary.compression config block.
 describe('auxiliary.compression config parsing', () => {

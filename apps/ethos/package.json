@@ -84,6 +84,7 @@
   "devDependencies": {
     "@ethosagent/agent-bridge": "workspace:*",
     "@ethosagent/agent-mesh": "workspace:*",
+    "@ethosagent/config": "workspace:*",
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/digest": "workspace:*",
     "@ethosagent/gateway": "workspace:*",

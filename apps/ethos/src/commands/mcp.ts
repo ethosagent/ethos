@@ -11,6 +11,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { ethosDir, readConfig, readRawConfig } from '@ethosagent/config';
 import type { ClientAdapter } from '@ethosagent/mcp-server';
 import {
   claudeDesktop,
@@ -33,7 +34,6 @@ import {
   runPkceLogin,
 } from '@ethosagent/tools-mcp';
 import type { SecretsResolver } from '@ethosagent/types';
-import { ethosDir, readConfig, readRawConfig } from '../config';
 import { writeJson } from '../json-output';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 

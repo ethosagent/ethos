@@ -11,6 +11,7 @@ if (_nodeMajor < 24) {
 // Don't put it here - tsx in dev mode doesn't need it and source-level shebangs
 // in TypeScript trip on tsup's bundler.
 import { join } from 'node:path';
+import { ethosDir, readConfig } from '@ethosagent/config';
 import { reconcileRegistry } from '@ethosagent/tools-process';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from './cli-overrides';
@@ -57,7 +58,6 @@ import { runTail } from './commands/tail';
 import { runTeamCommand } from './commands/team';
 import { runTrace } from './commands/trace';
 import { runUpgrade } from './commands/upgrade';
-import { ethosDir, readConfig } from './config';
 import { appendErrorLog } from './error-log';
 import { writeJson } from './json-output';
 import { CliSubcommandRegistry } from './lib/cli-subcommand-registry';
@@ -218,7 +218,7 @@ try {
       let resumeSessionId: string | undefined;
       if (continueFlag || resumeQuery !== undefined) {
         const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
-        const { ethosDir } = await import('./config');
+        const { ethosDir } = await import('@ethosagent/config');
         const { join: pathJoin } = await import('node:path');
         const { resolveResumeSession } = await import('./commands/sessions');
         const store = new SQLiteSessionStore(pathJoin(ethosDir(), 'sessions.db'));
@@ -325,7 +325,7 @@ try {
         const { runPersonalityCreate } = await import('./commands/personality-create');
         await runPersonalityCreate(args.slice(2));
       } else if (sub === 'set' && args[2]) {
-        const { writeConfig, readRawConfig: rc } = await import('./config');
+        const { writeConfig, readRawConfig: rc } = await import('@ethosagent/config');
         const cfg = await rc(getStorage());
         if (!cfg) {
           console.error('Run ethos setup first.');
@@ -452,7 +452,7 @@ try {
 
       if (config?.memory === 'vector') {
         const { VectorMemoryProvider } = await import('@ethosagent/memory-vector');
-        const { ethosDir: getDir } = await import('./config');
+        const { ethosDir: getDir } = await import('@ethosagent/config');
         const mem = new VectorMemoryProvider({ dir: getDir(), storage: getStorage() });
 
         if (sub === 'show' || sub === '') {
@@ -516,7 +516,7 @@ try {
         mem.close();
       } else {
         const { createMemoryProvider } = await import('@ethosagent/wiring');
-        const { ethosDir: getDir } = await import('./config');
+        const { ethosDir: getDir } = await import('@ethosagent/config');
         const mem = createMemoryProvider({ dataDir: getDir(), storage: getStorage() });
         const personalityId = config?.personality ?? 'default';
         const cliCtx = {
@@ -907,7 +907,7 @@ async function runPersonalityMcp(argv: string[]): Promise<void> {
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
   const { loadMcpConfig, mcpTokenSecretRef } = await import('@ethosagent/tools-mcp');
   const { PersonalityScopedSecrets } = await import('@ethosagent/storage-fs');
-  const { ethosDir } = await import('./config');
+  const { ethosDir } = await import('@ethosagent/config');
   const storage = getStorage();
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
   await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
@@ -1021,7 +1021,7 @@ async function runPersonalityPlugins(argv: string[]): Promise<void> {
   const flags = parseCliFlags(argv.slice(1));
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
   const { scanInstalledPlugins } = await import('@ethosagent/plugin-loader');
-  const { ethosDir } = await import('./config');
+  const { ethosDir } = await import('@ethosagent/config');
   const storage = getStorage();
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
   await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
@@ -1072,7 +1072,7 @@ async function runPersonalityDuplicate(argv: string[]): Promise<void> {
     return;
   }
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-  const { ethosDir } = await import('./config');
+  const { ethosDir } = await import('@ethosagent/config');
   const storage = getStorage();
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
   await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
@@ -1095,7 +1095,7 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
   const { createPersonalityRegistry, renderCharacterSheet } = await import(
     '@ethosagent/personalities'
   );
-  const { ethosDir } = await import('./config');
+  const { ethosDir } = await import('@ethosagent/config');
   const storage = getStorage();
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
   await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
@@ -1199,7 +1199,7 @@ async function runPersonalityDiff(argv: string[]): Promise<void> {
   const { createPersonalityRegistry, renderCharacterSheet } = await import(
     '@ethosagent/personalities'
   );
-  const { ethosDir } = await import('./config');
+  const { ethosDir } = await import('@ethosagent/config');
   const storage = getStorage();
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
   await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
@@ -1238,7 +1238,7 @@ async function runPersonalityDiff(argv: string[]): Promise<void> {
 async function runPluginsStatus(): Promise<void> {
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
   const { scanInstalledPlugins } = await import('@ethosagent/plugin-loader');
-  const { ethosDir } = await import('./config');
+  const { ethosDir } = await import('@ethosagent/config');
   const storage = getStorage();
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
   await reg.loadFromDirectory(join(ethosDir(), 'personalities'));

@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { ethosDir } from '@ethosagent/config';
 import {
   computeIntegrity,
   type PluginLockEntry,
@@ -17,7 +18,6 @@ import {
 } from '@ethosagent/safety-scanner';
 import type { Storage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
 import { getStorage } from '../wiring';
 

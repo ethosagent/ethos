@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type EthosConfig, ethosDir, readRawConfig, writeConfig } from '../config';
+import { type EthosConfig, ethosDir, readRawConfig, writeConfig } from '../index';
 
 describe('ethosDir', () => {
   afterEach(() => {

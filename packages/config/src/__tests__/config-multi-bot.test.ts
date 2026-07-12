@@ -10,7 +10,7 @@ import {
   readRawConfig,
   validateBotBindings,
   writeConfig,
-} from '../config';
+} from '../index';
 
 // Multi-bot routing schema (plan/phases/multi_bot_routing.md, Phase 0).
 

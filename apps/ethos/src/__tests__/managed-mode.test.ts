@@ -7,8 +7,8 @@ vi.mock('../wiring', () => ({
 }));
 
 // Mock config module — only readConfig needs to be swappable.
-vi.mock('../config', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../config')>();
+vi.mock('@ethosagent/config', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('@ethosagent/config')>();
   return {
     ...orig,
     readConfig: vi.fn(),
@@ -35,7 +35,7 @@ describe('ETHOS_MANAGED mode', () => {
   it('exits 2 with managed-mode message when ETHOS_MANAGED=1 and no config', async () => {
     process.env.ETHOS_MANAGED = '1';
 
-    const { readConfig } = await import('../config');
+    const { readConfig } = await import('@ethosagent/config');
     vi.mocked(readConfig).mockResolvedValue(null);
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code) => {
@@ -60,7 +60,7 @@ describe('ETHOS_MANAGED mode', () => {
 
     const fakeConfig = { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' } as never;
 
-    const { readConfig } = await import('../config');
+    const { readConfig } = await import('@ethosagent/config');
     vi.mocked(readConfig).mockResolvedValue(fakeConfig);
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code) => {
@@ -77,7 +77,7 @@ describe('ETHOS_MANAGED mode', () => {
   it('exits 1 with "Run ethos setup first" when ETHOS_MANAGED is unset and no config', async () => {
     delete process.env.ETHOS_MANAGED;
 
-    const { readConfig } = await import('../config');
+    const { readConfig } = await import('@ethosagent/config');
     vi.mocked(readConfig).mockResolvedValue(null);
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code) => {
@@ -97,7 +97,7 @@ describe('ETHOS_MANAGED mode', () => {
 
     const fakeConfig = { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' } as never;
 
-    const { readConfig } = await import('../config');
+    const { readConfig } = await import('@ethosagent/config');
     vi.mocked(readConfig).mockResolvedValue(fakeConfig);
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code) => {

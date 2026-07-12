@@ -8,6 +8,7 @@ const srcAliases = {
   '@ethosagent/storage-fs': resolve('./packages/storage-fs/src'),
   '@ethosagent/sqlite': resolve('./packages/sqlite/src'),
   '@ethosagent/core': resolve('./packages/core/src'),
+  '@ethosagent/config': resolve('./packages/config/src'),
   '@ethosagent/plugin-sdk': resolve('./packages/plugin-sdk/src'),
   '@ethosagent/plugin-sdk/tool-helpers': resolve('./packages/plugin-sdk/src/tool-helpers.ts'),
   '@ethosagent/plugin-sdk/testing': resolve('./packages/plugin-sdk/src/testing.ts'),

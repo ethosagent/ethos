@@ -1,6 +1,7 @@
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { ethosDir, readRawConfig } from '@ethosagent/config';
 import {
   archiveMonth,
   BlobStore,
@@ -13,7 +14,6 @@ import {
 } from '@ethosagent/observability-sqlite';
 import { RETENTION_DEFAULTS } from '@ethosagent/types';
 import { EthosObservability } from '@ethosagent/wiring';
-import { ethosDir, readRawConfig } from '../config';
 import { writeJson } from '../json-output';
 import { getStorage } from '../wiring';
 

@@ -1,13 +1,7 @@
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
-import {
-  type EthosConfig,
-  ethosDir,
-  loadConfigStrict,
-  readRawConfig,
-  writeConfig,
-} from '../config';
+import { type EthosConfig, ethosDir, loadConfigStrict, readRawConfig, writeConfig } from '../index';
 
 async function load(yaml: string): Promise<EthosConfig> {
   const storage = new InMemoryStorage();

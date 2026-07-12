@@ -7,11 +7,11 @@
 // tests exercise the parsing and validation layer directly rather than spawning
 // a full CLI process.
 
+import type { EthosConfig } from '@ethosagent/config';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { EthosError } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { applyCliOverrides, parseCliOverrideFlags, VALID_PROVIDERS } from '../cli-overrides';
-import type { EthosConfig } from '../config';
 
 // ---------------------------------------------------------------------------
 // Minimal config fixture — real fields, no side effects

@@ -1,10 +1,10 @@
 import { join } from 'node:path';
+import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler, isValidSchedule, nextRunForSchedule } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { EthosError } from '@ethosagent/types';
-import { type EthosConfig, ethosDir } from '../config';
 import { writeJson } from '../json-output';
 import { createAgentLoop, getEthosObservability, getStorage } from '../wiring';
 

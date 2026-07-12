@@ -69,7 +69,7 @@ async function scaffoldBlank(name: string | undefined): Promise<void> {
     );
     process.exit(1);
   }
-  const { ethosDir } = await import('../config');
+  const { ethosDir } = await import('@ethosagent/config');
   const dir = join(ethosDir(), 'personalities', id);
 
   if (existsSync(dir)) {
@@ -114,7 +114,7 @@ async function scaffoldFrom(sourceId: string, targetName: string | undefined): P
 }
 
 async function runAiAssisted(name: string | undefined): Promise<void> {
-  const { readConfig } = await import('../config');
+  const { readConfig } = await import('@ethosagent/config');
   const { getSecretsResolver } = await import('../wiring');
   const { runChat } = await import('./chat');
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');

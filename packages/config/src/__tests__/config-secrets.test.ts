@@ -13,7 +13,7 @@ import {
   readKeys,
   readRawConfig,
   writeConfig,
-} from '../config';
+} from '../index';
 
 function secretRef(path: string): string {
   return ['${', 'secrets:', path, '}'].join('');

@@ -8,9 +8,9 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { Span } from '@ethosagent/types';
-import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
 
 export async function runPerf(argv: string[]): Promise<void> {

@@ -241,6 +241,9 @@ importers:
       '@ethosagent/agent-mesh':
         specifier: workspace:*
         version: link:../../extensions/agent-mesh
+      '@ethosagent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@ethosagent/cron':
         specifier: workspace:*
         version: link:../../extensions/cron
@@ -1625,6 +1628,24 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../core
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../types
+
+  packages/config:
+    dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ethosagent/safety-channel':
+        specifier: workspace:*
+        version: link:../safety/channel
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../safety/redact
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../storage-fs
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../types

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { meshRegistryPath, setMeshObservabilityService } from '@ethosagent/agent-mesh';
+import { type EthosConfig, ethosDir, readKeys, readRawConfig } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import type { CronJob } from '@ethosagent/cron';
 import {
@@ -31,7 +32,6 @@ import {
   type WiringConfig,
   type WiringProfile,
 } from '@ethosagent/wiring';
-import { type EthosConfig, ethosDir, readKeys, readRawConfig } from './config';
 import { setObservabilityService } from './error-log';
 import { logger } from './logger';
 

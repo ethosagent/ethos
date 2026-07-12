@@ -20,8 +20,8 @@ import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
+import { ethosDir } from '@ethosagent/config';
 import { type BundleManifest, EthosError } from '@ethosagent/types';
-import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
 import { getSecretsResolver } from '../wiring';
 

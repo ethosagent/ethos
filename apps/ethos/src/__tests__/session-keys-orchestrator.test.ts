@@ -1,11 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { EthosConfig } from '@ethosagent/config';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import Database from '@ethosagent/sqlite';
 import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { EthosConfig } from '../config';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
 
 // Phase 1 follow-up — the orchestrator wraps the SQLite-side rewrite

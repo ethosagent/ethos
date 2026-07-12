@@ -10,12 +10,12 @@ vi.mock('../wiring', () => ({
   resolveActiveLoop: vi.fn(),
 }));
 
-vi.mock('../config', () => ({
+vi.mock('@ethosagent/config', () => ({
   readConfig: vi.fn(),
 }));
 
+import { readConfig } from '@ethosagent/config';
 import { runZero } from '../commands/zero';
-import { readConfig } from '../config';
 import { resolveActiveLoop } from '../wiring';
 
 const FAKE_CONFIG = {

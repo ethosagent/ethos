@@ -7,8 +7,8 @@
 // None of these overrides are written back to ~/.ethos/config.yaml.
 
 import { join } from 'node:path';
+import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import { EthosError, type Storage } from '@ethosagent/types';
-import { type EthosConfig, ethosDir } from './config';
 
 // ---------------------------------------------------------------------------
 // Known toolsets (derived from extensions/tools-*/src/index.ts)

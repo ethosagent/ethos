@@ -1,8 +1,8 @@
 // FW-§9.6 — `ethos commands` CLI subcommand: list and inspect file-drop commands.
 
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { ethosDir } from '../config';
 import type { CommandMeta } from '../lib/command-loader';
 import { scanCommandsIntoRegistry } from '../lib/command-loader';
 import { SlashCommandRegistry } from '../lib/slash-commands';

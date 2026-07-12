@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { platform } from 'node:os';
-import type { EthosConfig } from '../config';
+import type { EthosConfig } from '@ethosagent/config';
 import { runServe } from './serve';
 
 // `ethos dashboard` — discoverability alias for `ethos serve`.

@@ -8,6 +8,7 @@
 // pass itself is on-demand only — this command adds no cron scheduling and no
 // gateway/serve triggers.
 import { join } from 'node:path';
+import type { EthosConfig } from '@ethosagent/config';
 import {
   type ConsolidationInput,
   consolidateMemory,
@@ -23,7 +24,6 @@ import {
 } from '@ethosagent/personality-judge';
 import { draftExpressionUpdate, proposeSkillFromEvidence } from '@ethosagent/skill-evolver';
 import { formatError, type LLMProvider, type MemoryUpdate, toEthosError } from '@ethosagent/types';
-import type { EthosConfig } from '../config';
 import { createLLM, getStorage } from '../wiring';
 import {
   buildEvidenceDigest,
@@ -245,7 +245,7 @@ function buildDeps(args: {
 export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }): Promise<void> {
   const id = opts?.id;
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-  const { ethosDir } = await import('../config');
+  const { ethosDir } = await import('@ethosagent/config');
   const { createMemoryProvider } = await import('@ethosagent/wiring');
 
   const storage = getStorage();
@@ -310,7 +310,7 @@ export async function runNightly(argv: string[]): Promise<void> {
   const id = argv.find((a) => !a.startsWith('-'));
 
   try {
-    const { readConfig } = await import('../config');
+    const { readConfig } = await import('@ethosagent/config');
     const { getSecretsResolver } = await import('../wiring');
 
     const config = await readConfig(getStorage(), await getSecretsResolver());

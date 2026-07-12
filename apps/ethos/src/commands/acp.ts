@@ -1,6 +1,6 @@
 import { AcpServer } from '@ethosagent/acp-server';
+import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import { createSessionStore } from '@ethosagent/wiring';
-import { type EthosConfig, ethosDir } from '../config';
 import { createAgentLoop } from '../wiring';
 
 export async function runAcp(config: EthosConfig): Promise<void> {

@@ -1,6 +1,19 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import {
+  applyPlatformShim,
+  deriveBotKey,
+  type EthosConfig,
+  ethosDir,
+  loadConfigStrict,
+  readRawConfig,
+  type SlackAppConfig,
+  type TelegramBotConfig,
+  validateBotBindings,
+  type WhatsAppConfig,
+  writeConfig,
+} from '@ethosagent/config';
 import { type AgentLoop, deriveBotKey as deriveBotKeyFromSeed } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { createCapturingAdapter, Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
@@ -31,19 +44,6 @@ import {
   type MessagingSendFn,
 } from '@ethosagent/wiring';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
-import {
-  applyPlatformShim,
-  deriveBotKey,
-  type EthosConfig,
-  ethosDir,
-  loadConfigStrict,
-  readRawConfig,
-  type SlackAppConfig,
-  type TelegramBotConfig,
-  validateBotBindings,
-  type WhatsAppConfig,
-  writeConfig,
-} from '../config';
 import { createHealthServer } from '../health-server';
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';

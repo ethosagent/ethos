@@ -1,7 +1,7 @@
 import { join } from 'node:path';
+import { ethosDir, readRawConfig, writeConfig } from '@ethosagent/config';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
-import { ethosDir, readRawConfig, writeConfig } from '../config';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 

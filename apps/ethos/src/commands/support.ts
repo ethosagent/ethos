@@ -9,11 +9,11 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
+import { ethosDir, readRawConfig } from '@ethosagent/config';
 import { stripAnsiEscapes } from '@ethosagent/core';
 import { createTarGz, readTarGz, SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { ObsEvent, Span, Trace } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import { ethosDir, readRawConfig } from '../config';
 import { getStorage } from '../wiring';
 
 // ---------------------------------------------------------------------------

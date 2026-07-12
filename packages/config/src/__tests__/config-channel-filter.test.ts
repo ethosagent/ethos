@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
-import { type EthosConfig, ethosDir, readRawConfig, writeConfig } from '../config';
+import { type EthosConfig, ethosDir, readRawConfig, writeConfig } from '../index';
 
 // channel_filter.<platform>.enable — per-platform explicit on/off switch.
 

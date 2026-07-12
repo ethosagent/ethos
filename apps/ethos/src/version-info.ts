@@ -1,4 +1,4 @@
-import { ethosDir } from './config';
+import { ethosDir } from '@ethosagent/config';
 
 declare const __ETHOS_VERSION__: string;
 const ETHOS_VERSION =

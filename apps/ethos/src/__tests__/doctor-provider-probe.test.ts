@@ -16,8 +16,8 @@ vi.mock('../wiring', () => ({
 
 // Mock config — readRawConfig is swappable per test.
 const mockReadRawConfig = vi.fn();
-vi.mock('../config', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../config')>();
+vi.mock('@ethosagent/config', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('@ethosagent/config')>();
   return {
     ...orig,
     readRawConfig: (...args: unknown[]) => mockReadRawConfig(...args),

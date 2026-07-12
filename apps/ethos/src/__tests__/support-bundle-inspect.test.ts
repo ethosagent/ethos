@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 // Mock wiring and config to avoid the plugin-loader transitive dependency
 // (support.ts uses getStorage/readConfig only in runBundle/runInspect, not in diagnoseBundleLines)
 vi.mock('../wiring', () => ({ getStorage: vi.fn() }));
-vi.mock('../config', () => ({ ethosDir: vi.fn(() => '/tmp'), readConfig: vi.fn() }));
+vi.mock('@ethosagent/config', () => ({ ethosDir: vi.fn(() => '/tmp'), readConfig: vi.fn() }));
 
 import { diagnoseBundleLines } from '../commands/support';
 

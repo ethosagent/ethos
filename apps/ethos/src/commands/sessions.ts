@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { ethosDir } from '@ethosagent/config';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { SearchResult, Session, SessionUsage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import { ethosDir } from '../config';
 
 // ---------------------------------------------------------------------------
 // Types

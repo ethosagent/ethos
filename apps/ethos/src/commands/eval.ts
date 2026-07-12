@@ -1,10 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseTasksJsonl } from '@ethosagent/batch-runner';
+import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import { EvalRunner, parseExpectedJsonl } from '@ethosagent/eval-harness';
 import { loadEvolveConfig, SkillEvolver } from '@ethosagent/skill-evolver';
 import { EthosError } from '@ethosagent/types';
-import { type EthosConfig, ethosDir } from '../config';
 import { createAgentLoop, createLLM, getStorage } from '../wiring';
 
 const c = {

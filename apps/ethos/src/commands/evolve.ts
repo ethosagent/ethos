@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import {
   loadEvolveConfig,
   runEvolveApply,
@@ -8,7 +9,6 @@ import {
   runEvolveStatus,
   SkillEvolver,
 } from '@ethosagent/skill-evolver';
-import { type EthosConfig, ethosDir } from '../config';
 import { createLLM, getStorage } from '../wiring';
 
 const c = {

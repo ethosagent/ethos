@@ -1,12 +1,7 @@
 import { join } from 'node:path';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
-import {
-  type EthosConfig,
-  ethosDir,
-  loadConfigStrict,
-  validateNoPlaintextSecrets,
-} from '../config';
+import { type EthosConfig, ethosDir, loadConfigStrict, validateNoPlaintextSecrets } from '../index';
 
 function secretRef(path: string): string {
   return ['${', 'secrets:', path, '}'].join('');

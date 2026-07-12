@@ -19,6 +19,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import {
   consumeAndAllow,
   getApprovedSenders,
@@ -26,7 +27,6 @@ import {
   revokeApproval,
 } from '@ethosagent/safety-channel';
 import Database from '@ethosagent/sqlite';
-import { ethosDir } from '../config';
 
 const SUPPORTED_PLATFORMS = ['telegram', 'discord', 'slack', 'whatsapp', 'email'];
 

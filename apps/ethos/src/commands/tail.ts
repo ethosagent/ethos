@@ -7,9 +7,9 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import { stripAnsiEscapes } from '@ethosagent/core';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
-import { ethosDir } from '../config';
 
 function formatTime(ts: number): string {
   const d = new Date(ts);

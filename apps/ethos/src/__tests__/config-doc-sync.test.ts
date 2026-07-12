@@ -27,7 +27,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
-const ETHOS_CONFIG_SRC = join(REPO_ROOT, 'apps', 'ethos', 'src', 'config.ts');
+const ETHOS_CONFIG_SRC = join(REPO_ROOT, 'packages', 'config', 'src', 'index.ts');
 const PERSONALITY_SRC = join(REPO_ROOT, 'packages', 'types', 'src', 'personality.ts');
 // New IA per DOCS.md: EthosConfig fields live in using/reference/config-yaml.md;
 // PersonalityConfig fields live in using/reference/personality-yaml.md.
@@ -247,7 +247,7 @@ describe('config surface doc-sync', () => {
             `Add either:\n` +
             `  (a) a markdown table row whose first cell names \`${field.name}\` and whose remaining cells describe it, or\n` +
             `  (b) a YAML code-block line: \`${field.name}: <value>  # <comment>\`.\n` +
-            `If \`${field.name}\` is not user-facing, mark it with \`@internal\` in apps/ethos/src/config.ts.`,
+            `If \`${field.name}\` is not user-facing, mark it with \`@internal\` in packages/config/src/index.ts.`,
         ).toBe(true);
       });
     }

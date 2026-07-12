@@ -1,8 +1,8 @@
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import { stripAnsiEscapes } from '@ethosagent/core';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { ObsEvent } from '@ethosagent/types';
-import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
 
 // ethos errors [--recent [N]] [--since <duration>] [--code <code>]

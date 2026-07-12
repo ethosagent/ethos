@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { ethosDir } from '../config';
+import { ethosDir } from '@ethosagent/config';
 
 const c = {
   reset: '\x1b[0m',

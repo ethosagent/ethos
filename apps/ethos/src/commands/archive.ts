@@ -5,13 +5,13 @@
 // This command handles restore and prune operations on the archive tier.
 
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import {
   listArchives,
   parseDuration,
   pruneArchives,
   restoreArchive,
 } from '@ethosagent/observability-sqlite';
-import { ethosDir } from '../config';
 import { getStorage } from '../wiring';
 
 export async function runArchive(sub: string, argv: string[]): Promise<void> {

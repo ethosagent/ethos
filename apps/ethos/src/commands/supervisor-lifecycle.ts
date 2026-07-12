@@ -1,7 +1,7 @@
 import type { SpawnOptions } from 'node:child_process';
 import { join } from 'node:path';
+import type { TeamRuntimeConfig } from '@ethosagent/config';
 import { type TeamRuntime, teamsDir } from '@ethosagent/team-supervisor';
-import type { TeamRuntimeConfig } from '../config';
 import { buildSupervisorLaunchArgs } from './team';
 
 /**

@@ -22,8 +22,8 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import type { EthosError } from '@ethosagent/types';
-import { ethosDir } from './config';
 
 interface ErrorLogObservability {
   recordError(opts: { code?: string; cause?: string; details?: Record<string, unknown> }): void;

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { BatchRunner, parseTasksJsonl } from '@ethosagent/batch-runner';
+import type { EthosConfig } from '@ethosagent/config';
 import { EthosError } from '@ethosagent/types';
-import type { EthosConfig } from '../config';
 import { createAgentLoop, getStorage } from '../wiring';
 
 const c = {

@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { ethosDir } from '../config';
+import { ethosDir } from '@ethosagent/config';
 import { writeJson } from '../json-output';
 import { getSecretsResolver } from '../wiring';
 

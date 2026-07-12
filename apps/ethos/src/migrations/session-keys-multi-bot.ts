@@ -1,7 +1,7 @@
 import { join } from 'node:path';
+import { deriveBotKey, type EthosConfig, ethosDir } from '@ethosagent/config';
 import { migrateSessionKeys, type SessionKeyMigrationResult } from '@ethosagent/session-sqlite';
 import type { Logger, Storage } from '@ethosagent/types';
-import { deriveBotKey, type EthosConfig, ethosDir } from '../config';
 
 // Multi-bot routing session-key migration — orchestrator.
 //

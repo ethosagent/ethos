@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve as pathResolve } from 'node:path';
 import { AcpServer } from '@ethosagent/acp-server';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
+import { type EthosConfig, ethosDir, readConfig } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
@@ -19,7 +20,6 @@ import {
   createSessionStore,
   IdentityMap,
 } from '@ethosagent/wiring';
-import { type EthosConfig, ethosDir, readConfig } from '../config';
 import { appendErrorLog } from '../error-log';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { KanbanPollLoop, writeRunActivityComments } from '../lib/kanban-poll';

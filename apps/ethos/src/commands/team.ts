@@ -434,7 +434,7 @@ async function runTeamStatus(name: string | undefined, args: string[] = []): Pro
     );
   }
 
-  const { ethosDir } = await import('../config');
+  const { ethosDir } = await import('@ethosagent/config');
   const boardPath = join(ethosDir(), 'teams', effectiveName, 'board.db');
   if (existsSync(boardPath)) {
     try {
@@ -520,7 +520,7 @@ async function runTeamCreateBlank(name: string | undefined): Promise<void> {
 }
 
 async function runTeamCreateAiAssisted(name: string | undefined): Promise<void> {
-  const { readConfig } = await import('../config');
+  const { readConfig } = await import('@ethosagent/config');
   const { getStorage, getSecretsResolver } = await import('../wiring');
   const { runChat } = await import('./chat');
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
@@ -573,7 +573,7 @@ async function runTeamMemberAdd(teamName: string, personality: string | undefine
 
   // Look up personality capabilities to auto-populate domain_capabilities.
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-  const { ethosDir } = await import('../config');
+  const { ethosDir } = await import('@ethosagent/config');
   const { getStorage } = await import('../wiring');
   const reg = await createPersonalityRegistry({
     storage: getStorage(),
@@ -745,7 +745,7 @@ async function runTeamRetro(name: string | undefined): Promise<void> {
     process.exit(1);
   }
 
-  const { ethosDir } = await import('../config');
+  const { ethosDir } = await import('@ethosagent/config');
   const { getStorage } = await import('../wiring');
   const storage = getStorage();
   const pmDir = join(ethosDir(), 'teams', name, 'memory', 'postmortems');

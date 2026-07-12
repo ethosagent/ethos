@@ -10,6 +10,7 @@
       "@ethosagent/sqlite": ["./packages/sqlite/src"],
       "@ethosagent/logger": ["./packages/logger/src"],
       "@ethosagent/core": ["./packages/core/src"],
+      "@ethosagent/config": ["./packages/config/src"],
       "@ethosagent/llm-anthropic": ["./extensions/llm-anthropic/src"],
       "@ethosagent/llm-azure": ["./extensions/llm-azure/src"],
       "@ethosagent/llm-bedrock": ["./extensions/llm-bedrock/src"],

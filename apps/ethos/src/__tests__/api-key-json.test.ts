@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let tempDir: string;
 
-vi.mock('../config', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../config')>();
+vi.mock('@ethosagent/config', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('@ethosagent/config')>();
   return {
     ...orig,
     ethosDir: () => tempDir,

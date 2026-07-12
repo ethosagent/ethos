@@ -1,7 +1,13 @@
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import {
+  type EthosConfig,
+  ethosDir,
+  readRawConfig,
+  writeConfig,
+  writeKeys,
+} from '@ethosagent/config';
 import type { WizardStepId } from '@ethosagent/tui/setup';
-import { type EthosConfig, ethosDir, readRawConfig, writeConfig, writeKeys } from '../config';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {

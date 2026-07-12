@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { ethosDir } from '../config';
+import { ethosDir } from '@ethosagent/config';
 
 export async function runRequestDump(args: string[]): Promise<void> {
   const { JsonlRequestDumpStore } = await import('@ethosagent/request-dump');

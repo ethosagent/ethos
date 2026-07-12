@@ -7,9 +7,9 @@
 
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import type { PersonalityConfig } from '@ethosagent/types';
-import { ethosDir } from '../config';
 import { getStorage } from '../wiring';
 
 const c = {

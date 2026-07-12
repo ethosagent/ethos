@@ -26,10 +26,10 @@ function surface(err: unknown): never {
 // optionally emails it. Does NOT call `process.exit` — the cron callback wraps
 // its own try/catch; the CLI wraps it with `surface`.
 export async function runDigestOnce(
-  config: import('../config').EthosConfig,
+  config: import('@ethosagent/config').EthosConfig,
   opts?: { email?: boolean },
 ): Promise<void> {
-  const { ethosDir } = await import('../config');
+  const { ethosDir } = await import('@ethosagent/config');
   const { getStorage } = await import('../wiring');
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
 
@@ -91,7 +91,7 @@ export async function runDigest(argv: string[]): Promise<void> {
   const wantEmail = argv.includes('--email');
 
   try {
-    const { readConfig } = await import('../config');
+    const { readConfig } = await import('@ethosagent/config');
     const { getStorage, getSecretsResolver } = await import('../wiring');
 
     const config = await readConfig(getStorage(), await getSecretsResolver());
@@ -111,7 +111,7 @@ export async function runDigest(argv: string[]): Promise<void> {
 // does not crash. Plain-markdown body — themed HTML styling is a deferred
 // follow-up (see Phase 3e notes).
 async function emailDigest(
-  config: import('../config').EthosConfig,
+  config: import('@ethosagent/config').EthosConfig,
   markdown: string,
   label: string,
 ): Promise<void> {

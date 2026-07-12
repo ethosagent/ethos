@@ -1,6 +1,6 @@
 import { join } from 'node:path';
+import { ethosDir } from '@ethosagent/config';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { ethosDir } from '../config';
 
 interface UsageResult {
   since: string;
