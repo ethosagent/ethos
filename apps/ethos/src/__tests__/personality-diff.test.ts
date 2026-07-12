@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FilePersonalityRegistry, renderCharacterSheet } from '@ethosagent/personalities';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 let testDir: string;
@@ -30,7 +31,7 @@ async function seedPersonality(
 }
 
 function makeRegistry(): FilePersonalityRegistry {
-  return new FilePersonalityRegistry(undefined, testDir);
+  return new FilePersonalityRegistry(new FsStorage(), testDir);
 }
 
 describe('personality diff', () => {

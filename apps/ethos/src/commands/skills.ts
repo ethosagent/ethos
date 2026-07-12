@@ -15,6 +15,7 @@ import { isSafePathSegment } from '@ethosagent/storage-fs';
 import { EthosError, type Skill } from '@ethosagent/types';
 import { ethosDir } from '../config';
 import { writeJson } from '../json-output';
+import { getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -184,6 +185,7 @@ async function removeSkill(slug: string): Promise<void> {
 async function listSkills(args: string[] = []): Promise<void> {
   const jsonMode = args.includes('--json');
   const pool = await new UniversalScanner({
+    storage: getStorage(),
     trustedFirstPartySources: [bundledSkillsSource()],
   }).scan();
 

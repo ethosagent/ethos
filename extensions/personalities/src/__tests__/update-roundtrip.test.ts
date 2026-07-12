@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FilePersonalityRegistry } from '../index';
 
@@ -32,7 +33,7 @@ async function seedPersonality(
 }
 
 function makeRegistry(): FilePersonalityRegistry {
-  return new FilePersonalityRegistry(undefined, testDir);
+  return new FilePersonalityRegistry(new FsStorage(), testDir);
 }
 
 describe('capabilities round-trip', () => {

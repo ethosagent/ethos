@@ -805,6 +805,7 @@ function isOnPath(bin: string): boolean {
 async function checkSkillPrerequisites(): Promise<SkillPrereqIssue[]> {
   const issues: SkillPrereqIssue[] = [];
   const pool = await new UniversalScanner({
+    storage: getStorage(),
     trustedFirstPartySources: [bundledSkillsSource()],
   }).scan();
 

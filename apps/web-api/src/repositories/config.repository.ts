@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
+import { requireStorage } from './require-storage';
 
 // Read/write `~/.ethos/config.yaml` from the web side. The file is shared
 // with the CLI (`apps/ethos/src/config.ts`), so any web-driven update must
@@ -15,8 +15,8 @@ import type { Storage } from '@ethosagent/types';
 export interface ConfigRepositoryOptions {
   /** Where `~/.ethos` lives. config.yaml is `<dataDir>/config.yaml`. */
   dataDir: string;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required. */
+  storage: Storage;
 }
 
 /** A single entry in the provider chain (providers.N.* lines in config.yaml). */
@@ -63,7 +63,7 @@ export class ConfigRepository {
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(opts: ConfigRepositoryOptions) {
-    this.storage = opts.storage ?? new FsStorage();
+    this.storage = requireStorage(opts.storage, 'ConfigRepository');
     this.path = join(opts.dataDir, 'config.yaml');
   }
 

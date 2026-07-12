@@ -1,7 +1,6 @@
 import type { AtroposRecord, AtroposUsage, BatchTask } from '@ethosagent/batch-runner';
 import { ATROPOS_SCHEMA_VERSION } from '@ethosagent/batch-runner';
 import type { AgentLoop } from '@ethosagent/core';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
 import {
   containsScorer,
@@ -66,7 +65,7 @@ export class EvalRunner {
     expectedMap: Map<string, EvalExpected>,
     onProgress?: (done: number, total: number) => void,
   ): Promise<EvalStats> {
-    const storage = this.options.storage ?? new FsStorage();
+    const storage = this.options.storage;
     const writer = new Writer(this.options.outputPath, storage);
     await writer.init(true);
 

@@ -7,6 +7,7 @@
   "main": "./src/index.ts",
   "ethos": {
     "type": "plugin",
+    "pluginContractMajor": 4,
     "pluginApi": "1.0.0"
   },
   "scripts": {

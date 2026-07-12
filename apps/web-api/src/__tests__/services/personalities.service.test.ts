@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
-import { InMemoryStorage } from '@ethosagent/storage-fs';
+import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { PersonalitiesService } from '../../services/personalities.service';
@@ -34,7 +34,7 @@ const DATA = '/data';
 describe('PersonalitiesService', () => {
   function makeService(opts: { personalities: import('@ethosagent/types').PersonalityConfig[] }) {
     const registry = makeStubPersonalityRegistry(opts.personalities, DATA);
-    const library = new SkillsLibrary({ dataDir: DATA });
+    const library = new SkillsLibrary({ dataDir: DATA, storage: new FsStorage() });
     return new PersonalitiesService({ personalities: registry, library });
   }
 

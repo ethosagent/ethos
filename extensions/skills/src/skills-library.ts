@@ -1,5 +1,4 @@
 import { join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import { assertSafeId, EthosError, type Storage } from '@ethosagent/types';
 import { parseEthosRequires } from './dialects/ethos-namespace';
 import { checkRequirements, parseSkillFrontmatter } from './skill-compat';
@@ -50,8 +49,9 @@ export interface SkillsLibraryOptions {
   dataDir: string;
   /** Read-only system skills directory (subdirectory layout: `<id>/SKILL.md`). */
   catalogDir?: string;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required — never
+   *  falls back to raw disk. */
+  storage: Storage;
   /**
    * Gap 11 — lazy getter for the tool names registered in this deployment,
    * used to evaluate `ethos.requires.tools`. A getter (not a snapshot) so
@@ -72,7 +72,7 @@ export class SkillsLibrary {
   private catalogIndex: Map<string, string> | null = null;
 
   constructor(opts: SkillsLibraryOptions) {
-    this.storage = opts.storage ?? new FsStorage();
+    this.storage = opts.storage;
     this.skillsDir = join(opts.dataDir, 'skills');
     this.pendingDir = join(this.skillsDir, '.pending');
     this.personalitiesDir = join(opts.dataDir, 'personalities');

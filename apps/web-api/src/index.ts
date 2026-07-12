@@ -241,30 +241,34 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       },
     } as unknown as AgentLoop);
 
+  // The composition root owns Storage construction; every repository/service
+  // below receives this single instance (never a silent FsStorage fallback).
+  const storage: Storage = opts.storage ?? new FsStorage();
+
   // --- Repositories (data access only) ---
-  const tokens = new WebTokenRepository({ dataDir: opts.dataDir });
+  const tokens = new WebTokenRepository({ dataDir: opts.dataDir, storage });
   const sessionsRepo = new SessionsRepository(opts.sessionStore);
   const chatRepo = new ChatRepository(opts.sessionStore);
   const completionsRepo = new CompletionsRepository(opts.sessionStore);
-  const configRepo = new ConfigRepository({ dataDir: opts.dataDir });
-  const allowlistRepo = new AllowlistRepository({ dataDir: opts.dataDir });
+  const configRepo = new ConfigRepository({ dataDir: opts.dataDir, storage });
+  const allowlistRepo = new AllowlistRepository({ dataDir: opts.dataDir, storage });
   // Gap 11 — lazy getter so skills' `requires.tools` gates see the live
   // registry (including MCP/plugin tools registered after boot). Omitted
   // when no registry is wired: the tools gate is skipped, not failed.
   const skillsToolRegistry = opts.toolRegistry;
   const skillsLibrary = new SkillsLibrary({
     dataDir: opts.dataDir,
+    storage,
     ...(opts.catalogDir ? { catalogDir: opts.catalogDir } : {}),
     ...(skillsToolRegistry
       ? { availableTools: () => new Set(skillsToolRegistry.getAvailable().map((t) => t.name)) }
       : {}),
   });
-  const evolverRepo = new EvolverRepository({ dataDir: opts.dataDir });
+  const evolverRepo = new EvolverRepository({ dataDir: opts.dataDir, storage });
   // The mesh registry lives at ~/.ethos/meshes/default/registry.json —
   // the same path `ethos serve` writes to via meshRegistryPath('default').
-  const mesh = new AgentMesh(defaultRegistryPath());
+  const mesh = new AgentMesh(defaultRegistryPath(), { storage });
   const memoryProvider = opts.memoryProvider;
-  const storage: Storage = opts.storage ?? new FsStorage();
   const secrets: SecretsResolver =
     opts.secrets ?? new FileSecretsResolver({ dir: join(opts.dataDir, 'secrets'), storage });
   const platformsRepo = new PlatformsRepository({
@@ -369,7 +373,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       : 'http://localhost:3000/oauth/callback',
   });
   const platformsService = new PlatformsService({ repo: platformsRepo });
-  const labService = new LabService({ dataDir: opts.dataDir, loop: agentLoop });
+  const labService = new LabService({ dataDir: opts.dataDir, loop: agentLoop, storage });
   // F3+F4 — drives `POST /v1/chat/completions`. Shares the AgentLoop with
   // the web chat surface so personality reloads + tool wiring reach both.
   const completionsService = new CompletionsService({

@@ -637,7 +637,7 @@ export async function composeAllTools(
   // MCP tools
   // -------------------------------------------------------------------------
 
-  const rawMcpConfig = await loadMcpConfig();
+  const rawMcpConfig = await loadMcpConfig(wiringCtx.storage);
   const mcpConfig = applySkillPassthrough(
     rawMcpConfig,
     skillPassthrough,
@@ -775,7 +775,9 @@ export async function composeAllTools(
     }
     const teamMemoryDir = join(dataDir, 'teams', config.teamName, 'memory');
     const teamMemory = new LazyOnDemandPolicy(
-      new LastWriteWinsPolicy(new MarkdownFileMemoryProvider({ dir: teamMemoryDir })),
+      new LastWriteWinsPolicy(
+        new MarkdownFileMemoryProvider({ dir: teamMemoryDir, storage: wiringCtx.storage }),
+      ),
     );
 
     await seedTeamMemory(teamMemory, config.teamName);

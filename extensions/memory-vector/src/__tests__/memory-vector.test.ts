@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { MemoryContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { VectorMemoryProvider } from '../index';
@@ -46,7 +47,11 @@ beforeEach(async () => {
     `ethos-vector-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   await mkdir(testDir, { recursive: true });
-  provider = new VectorMemoryProvider({ dir: testDir, embedFn: fakeEmbed });
+  provider = new VectorMemoryProvider({
+    dir: testDir,
+    embedFn: fakeEmbed,
+    storage: new FsStorage(),
+  });
 });
 
 afterEach(async () => {
@@ -303,7 +308,11 @@ describe('VectorMemoryProvider', () => {
       legacyDb.close();
 
       // Re-open via VectorMemoryProvider — migration fires in the constructor.
-      provider = new VectorMemoryProvider({ dir: testDir, embedFn: fakeEmbed });
+      provider = new VectorMemoryProvider({
+        dir: testDir,
+        embedFn: fakeEmbed,
+        storage: new FsStorage(),
+      });
       expect(provider.count()).toBe(2);
       const refs = await provider.list({ ...ctx, scopeId: 'global' });
       expect(refs.map((r) => r.key).sort()).toEqual(['legacy-memory-1', 'legacy-user-2']);
@@ -354,7 +363,7 @@ describe('VectorMemoryProvider', () => {
 
     it('stamps a fresh db to user_version 1', async () => {
       const dir = await freshDir();
-      const p = new VectorMemoryProvider({ dir, embedFn: fakeEmbed });
+      const p = new VectorMemoryProvider({ dir, embedFn: fakeEmbed, storage: new FsStorage() });
       p.close();
 
       const Database = (await import('@ethosagent/sqlite')).default;
@@ -367,11 +376,11 @@ describe('VectorMemoryProvider', () => {
 
     it('reopening a populated db preserves rows and keeps user_version at 1', async () => {
       const dir = await freshDir();
-      const p1 = new VectorMemoryProvider({ dir, embedFn: fakeEmbed });
+      const p1 = new VectorMemoryProvider({ dir, embedFn: fakeEmbed, storage: new FsStorage() });
       await p1.sync([{ action: 'add', key: 'fact', content: 'TypeScript' }], ctx);
       p1.close();
 
-      const p2 = new VectorMemoryProvider({ dir, embedFn: fakeEmbed });
+      const p2 = new VectorMemoryProvider({ dir, embedFn: fakeEmbed, storage: new FsStorage() });
       const entry = await p2.read('fact', ctx);
       p2.close();
       expect(entry?.content).toBe('TypeScript');
@@ -391,9 +400,9 @@ describe('VectorMemoryProvider', () => {
       raw.pragma('user_version = 2');
       raw.close();
 
-      expect(() => new VectorMemoryProvider({ dir, embedFn: fakeEmbed })).toThrow(
-        /refusing to open to avoid downgrade/,
-      );
+      expect(
+        () => new VectorMemoryProvider({ dir, embedFn: fakeEmbed, storage: new FsStorage() }),
+      ).toThrow(/refusing to open to avoid downgrade/);
       await rm(dir, { recursive: true, force: true });
     });
   });

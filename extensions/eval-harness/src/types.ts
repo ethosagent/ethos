@@ -11,8 +11,9 @@ export interface EvalRunOptions {
   outputPath: string;
   defaultScorer: 'exact' | 'contains' | 'regex' | 'llm';
   llmProvider?: LLMProvider;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required — never
+   *  falls back to raw disk. */
+  storage: Storage;
 }
 
 export interface EvalStats {

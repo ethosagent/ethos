@@ -1,5 +1,4 @@
 import { join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { LLMProvider, Message, Storage } from '@ethosagent/types';
 import { analyzeEvalOutput, parseEvalJsonl } from './analyze';
 import {
@@ -16,8 +15,9 @@ export interface EvolveOptions {
   pendingDir: string;
   config: EvolveConfig;
   llm: LLMProvider;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required — never
+   *  falls back to raw disk. */
+  storage: Storage;
   /**
    * Improve existing skills (the rewrite branch). Defaults to `true` —
    * today's behavior. Set `false` to skip rewrites while still creating new
@@ -39,7 +39,7 @@ export class SkillEvolver {
 
   async evolve(): Promise<EvolveResult> {
     const { evalOutputPath, skillsDir, pendingDir, config, llm } = this.options;
-    const storage = this.options.storage ?? new FsStorage();
+    const storage = this.options.storage;
     const evolveExisting = this.options.evolveExisting ?? true;
 
     const src = await storage.read(evalOutputPath);

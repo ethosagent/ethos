@@ -14,8 +14,8 @@ export interface DelegationToolsCompose {
  * time.
  */
 export function compose(
-  _ctx: WiringContext,
+  ctx: WiringContext,
   deps: { loop: AgentLoop; meshRegistryPath?: string },
 ): DelegationToolsCompose {
-  return { tools: createDelegationTools(deps.loop, deps.meshRegistryPath) };
+  return { tools: createDelegationTools(deps.loop, ctx.storage, deps.meshRegistryPath) };
 }

@@ -1,6 +1,5 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   GlobalMemoryEntry,
   ListOpts,
@@ -25,17 +24,18 @@ const MAX_MEMORY_BYTES = 512 * 1024; // 512KB per key
 export interface MarkdownMemoryConfig {
   /** Directory containing MEMORY.md and USER.md. Defaults to ~/.ethos */
   dir?: string;
-  /** Storage backend. Defaults to FsStorage. Inject InMemoryStorage in tests. */
-  storage?: Storage;
+  /** Storage backend. Injected by wiring (composition root). Inject
+   *  InMemoryStorage in tests. Required — never falls back to raw disk. */
+  storage: Storage;
 }
 
 export class MarkdownFileMemoryProvider implements MemoryProvider {
   private readonly dir: string;
   private readonly storage: Storage;
 
-  constructor(config: MarkdownMemoryConfig = {}) {
+  constructor(config: MarkdownMemoryConfig) {
     this.dir = config.dir ?? join(homedir(), '.ethos');
-    this.storage = config.storage ?? new FsStorage();
+    this.storage = config.storage;
   }
 
   // ---------------------------------------------------------------------------

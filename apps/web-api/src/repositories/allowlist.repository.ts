@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
+import { requireStorage } from './require-storage';
 
 // `<dataDir>/allowlist.json` — persistent record of "always allow" decisions
 // the user made through the web approval modal. Keeps the modal from firing
@@ -35,8 +35,8 @@ interface FileShape {
 export interface AllowlistRepositoryOptions {
   /** Where `~/.ethos` lives. The file is `<dataDir>/allowlist.json`. */
   dataDir: string;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required. */
+  storage: Storage;
 }
 
 export class AllowlistRepository {
@@ -45,7 +45,7 @@ export class AllowlistRepository {
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(opts: AllowlistRepositoryOptions) {
-    this.storage = opts.storage ?? new FsStorage();
+    this.storage = requireStorage(opts.storage, 'AllowlistRepository');
     this.path = join(opts.dataDir, 'allowlist.json');
   }
 

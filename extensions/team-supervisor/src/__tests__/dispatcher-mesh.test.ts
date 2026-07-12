@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentMesh } from '@ethosagent/agent-mesh';
 import { KanbanStore } from '@ethosagent/kanban-store';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DispatchCall, Dispatcher, type SupervisorState } from '../dispatcher';
 
@@ -20,7 +21,7 @@ describe('Dispatcher with AgentMesh', () => {
   beforeEach(() => {
     board = new KanbanStore(':memory:');
     meshDir = mkdtempSync(join(tmpdir(), 'mesh-'));
-    mesh = new AgentMesh(join(meshDir, 'registry.json'));
+    mesh = new AgentMesh(join(meshDir, 'registry.json'), { storage: new FsStorage() });
   });
 
   afterEach(() => {

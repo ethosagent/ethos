@@ -3,9 +3,9 @@ import { join } from 'node:path';
 import { BatchRunner, parseTasksJsonl } from '@ethosagent/batch-runner';
 import type { AgentLoop } from '@ethosagent/core';
 import { EvalRunner } from '@ethosagent/eval-harness';
-import { FsStorage } from '@ethosagent/storage-fs';
 import { EthosError, type Storage } from '@ethosagent/types';
 import type { BatchRunInfo, EvalRunInfo, EvalScorer } from '@ethosagent/web-contracts';
+import { requireStorage } from '../repositories/require-storage';
 
 // Lab service — owns the lifecycle of background batch + eval runs.
 //
@@ -37,8 +37,8 @@ interface EvalRunState extends EvalRunInfo {}
 export interface LabServiceOptions {
   dataDir: string;
   loop: AgentLoop;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required. */
+  storage: Storage;
 }
 
 export class LabService {
@@ -47,7 +47,7 @@ export class LabService {
   private readonly storage: Storage;
 
   constructor(private readonly opts: LabServiceOptions) {
-    this.storage = opts.storage ?? new FsStorage();
+    this.storage = requireStorage(opts.storage, 'LabService');
   }
 
   // ---------------------------------------------------------------------------
@@ -113,12 +113,16 @@ export class LabService {
     };
     this.batchRuns.set(runId, initial);
 
-    const runner = new BatchRunner(this.opts.loop, {
-      concurrency: input.concurrency ?? 4,
-      outputPath,
-      checkpointPath,
-      defaultPersonalityId: input.defaultPersonalityId ?? '',
-    });
+    const runner = new BatchRunner(
+      this.opts.loop,
+      {
+        concurrency: input.concurrency ?? 4,
+        outputPath,
+        checkpointPath,
+        defaultPersonalityId: input.defaultPersonalityId ?? '',
+      },
+      this.storage,
+    );
 
     // Fire and forget — the run progresses in the background while
     // `batchList`/`batchGet` polls the in-memory state.
@@ -226,6 +230,7 @@ export class LabService {
       concurrency: input.concurrency ?? 4,
       outputPath,
       defaultScorer: scorer,
+      storage: this.storage,
     });
 
     void this.driveEvalRun(runId, runner, tasks, expected).catch((err) => {

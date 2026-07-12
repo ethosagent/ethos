@@ -4,9 +4,9 @@ import {
   type EvolveConfig,
   loadEvolveConfig,
 } from '@ethosagent/skill-evolver';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
 import type { EvolverRun } from '@ethosagent/web-contracts';
+import { requireStorage } from './require-storage';
 
 // Web-internal repository for the SkillEvolver's surrounding metadata —
 // the threshold config and the append-only run log. The evolver itself
@@ -21,8 +21,8 @@ import type { EvolverRun } from '@ethosagent/web-contracts';
 export interface EvolverRepositoryOptions {
   /** Root data dir — `~/.ethos/`. */
   dataDir: string;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required. */
+  storage: Storage;
 }
 
 interface RunRecord {
@@ -40,7 +40,7 @@ export class EvolverRepository {
   private readonly dataDir: string;
 
   constructor(opts: EvolverRepositoryOptions) {
-    this.storage = opts.storage ?? new FsStorage();
+    this.storage = requireStorage(opts.storage, 'EvolverRepository');
     this.dataDir = opts.dataDir;
     this.configPath = join(opts.dataDir, 'evolve-config.json');
     this.historyPath = join(opts.dataDir, 'evolver-history.jsonl');

@@ -11,7 +11,6 @@
 // reach the queue.
 
 import { join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   AgentDonePayload,
   HookRegistry,
@@ -25,7 +24,9 @@ export interface SkillEvolutionAutoTriggerOptions {
   /** Absolute root for ~/.ethos/ — the per-personality pending dir is
    *  resolved as `<dataDir>/skills/.pending/<personalityId>/`. */
   dataDir: string;
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required — never
+   *  falls back to raw disk. */
+  storage: Storage;
   /** Test seam — defaults to Date.now(). */
   now?: () => number;
 }
@@ -44,7 +45,7 @@ const cooldowns = new Map<string, CooldownState>();
 export function registerSkillEvolutionAutoTrigger(
   opts: SkillEvolutionAutoTriggerOptions,
 ): () => void {
-  const storage = opts.storage ?? new FsStorage();
+  const storage = opts.storage;
   const now = opts.now ?? (() => Date.now());
 
   return opts.hooks.registerVoid('agent_done', async (payload: AgentDonePayload) => {

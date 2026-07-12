@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentMesh } from '@ethosagent/agent-mesh';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MeshService } from '../../services/mesh.service';
 
@@ -13,7 +14,7 @@ describe('MeshService', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'ethos-mesh-'));
     registryPath = join(dir, 'mesh-registry.json');
-    service = new MeshService({ mesh: new AgentMesh(registryPath) });
+    service = new MeshService({ mesh: new AgentMesh(registryPath, { storage: new FsStorage() }) });
   });
 
   afterEach(async () => {

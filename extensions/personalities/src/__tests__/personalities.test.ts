@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPersonalityRegistry, FilePersonalityRegistry } from '../index';
 
@@ -16,9 +17,9 @@ afterEach(async () => {
 });
 
 describe('FilePersonalityRegistry', () => {
-  describe('built-ins via createPersonalityRegistry()', () => {
+  describe('built-ins via createPersonalityRegistry(new FsStorage())', () => {
     it('loads built-in personalities', async () => {
-      const registry = await createPersonalityRegistry();
+      const registry = await createPersonalityRegistry(new FsStorage());
       const ids = registry.list().map((p) => p.id);
       expect(ids).toContain('researcher');
       expect(ids).toContain('engineer');
@@ -32,12 +33,12 @@ describe('FilePersonalityRegistry', () => {
     });
 
     it('archived directory is not loaded as a personality', async () => {
-      const registry = await createPersonalityRegistry();
+      const registry = await createPersonalityRegistry(new FsStorage());
       expect(registry.get('archived')).toBeUndefined();
     });
 
     it('researcher has soulFile and toolset', async () => {
-      const registry = await createPersonalityRegistry();
+      const registry = await createPersonalityRegistry(new FsStorage());
       const researcher = registry.get('researcher');
       expect(researcher).toBeDefined();
       expect(researcher?.soulFile).toBeTruthy();
@@ -46,14 +47,14 @@ describe('FilePersonalityRegistry', () => {
     });
 
     it('reviewer toolset is read-only (no terminal or write tools)', async () => {
-      const registry = await createPersonalityRegistry();
+      const registry = await createPersonalityRegistry(new FsStorage());
       const reviewer = registry.get('reviewer');
       expect(reviewer?.toolset).not.toContain('terminal');
       expect(reviewer?.toolset).not.toContain('write_file');
     });
 
     it('default personality is researcher', async () => {
-      const registry = await createPersonalityRegistry();
+      const registry = await createPersonalityRegistry(new FsStorage());
       expect(registry.getDefault().id).toBe('researcher');
     });
   });
@@ -72,7 +73,7 @@ describe('FilePersonalityRegistry', () => {
         '- web_search\n- read_file\n- memory_read\n',
       );
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
 
       const strategist = registry.get('strategist');
@@ -88,13 +89,13 @@ describe('FilePersonalityRegistry', () => {
       await mkdir(join(testDir, 'empty-dir'));
       await writeFile(join(testDir, 'empty-dir', 'notes.txt'), 'nothing useful');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.list()).toHaveLength(0);
     });
 
     it('does not throw when directory does not exist', async () => {
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await expect(registry.loadFromDirectory(join(testDir, 'nonexistent'))).resolves.not.toThrow();
     });
 
@@ -104,7 +105,7 @@ describe('FilePersonalityRegistry', () => {
       await writeFile(join(personalityDir, 'config.yaml'), 'name: Cached\ndescription: Test\n');
       await writeFile(join(personalityDir, 'SOUL.md'), '# Cached\n\nTest personality.');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('cached')?.name).toBe('Cached');
 
@@ -123,7 +124,7 @@ describe('FilePersonalityRegistry', () => {
       await writeFile(join(personalityDir, 'config.yaml'), 'name: Real\n');
       await writeFile(join(personalityDir, 'SOUL.md'), 'first version');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('ethosedit')?.name).toBe('Real');
 
@@ -147,7 +148,7 @@ describe('FilePersonalityRegistry', () => {
       await writeFile(join(personalityDir, 'SOUL.md'), 'identity');
       await writeFile(join(personalityDir, 'toolset.yaml'), '- read_file\n');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('toolsetedit')?.toolset).toEqual(['read_file']);
 
@@ -179,7 +180,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(dir, 'SOUL.md'), '# Analyst');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
-      const registry = new FilePersonalityRegistry(undefined, testDir);
+      const registry = new FilePersonalityRegistry(new FsStorage(), testDir);
       await registry.loadFromDirectory(testDir);
       const p = registry.get('analyst');
       expect(p?.safety?.observability?.storeToolBodies).toBe('redacted');
@@ -192,7 +193,7 @@ describe('FilePersonalityRegistry', () => {
       await writeFile(join(dir, 'config.yaml'), 'name: Plain\nmodel: claude-sonnet-4-6\n');
       await writeFile(join(dir, 'SOUL.md'), '# Plain');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
-      const registry = new FilePersonalityRegistry(undefined, testDir);
+      const registry = new FilePersonalityRegistry(new FsStorage(), testDir);
       await registry.loadFromDirectory(testDir);
       expect(registry.get('plain')?.safety).toBeUndefined();
     });
@@ -212,7 +213,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(dir, 'SOUL.md'), '# Bad');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
-      const registry = new FilePersonalityRegistry(undefined, testDir);
+      const registry = new FilePersonalityRegistry(new FsStorage(), testDir);
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/storeToolBodies/);
     });
 
@@ -225,7 +226,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(dir, 'SOUL.md'), '# Nested');
       await writeFile(join(dir, 'toolset.yaml'), '- read_file\n');
-      const registry = new FilePersonalityRegistry(undefined, testDir);
+      const registry = new FilePersonalityRegistry(new FsStorage(), testDir);
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(
         /cannot be a nested object/,
       );
@@ -234,27 +235,27 @@ describe('FilePersonalityRegistry', () => {
 
   describe('define / get / list / setDefault', () => {
     it('define and get round-trip', () => {
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       registry.define({ id: 'custom', name: 'Custom', toolset: ['read_file'] });
       expect(registry.get('custom')?.toolset).toContain('read_file');
     });
 
     it('list returns all defined personalities', () => {
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       registry.define({ id: 'a', name: 'A' });
       registry.define({ id: 'b', name: 'B' });
       expect(registry.list().map((p) => p.id)).toEqual(expect.arrayContaining(['a', 'b']));
     });
 
     it('setDefault changes getDefault', () => {
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       registry.define({ id: 'x', name: 'X' });
       registry.setDefault('x');
       expect(registry.getDefault().id).toBe('x');
     });
 
     it('setDefault throws for unknown id', () => {
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       expect(() => registry.setDefault('unknown')).toThrow();
     });
   });
@@ -270,7 +271,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# P1');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('p1')?.safety?.approvalMode).toBe('smart');
     });
@@ -284,7 +285,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# Bot');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/approvalMode: off/);
     });
 
@@ -302,7 +303,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# P');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/approvalMode: off/);
     });
 
@@ -315,7 +316,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# Cron');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('cron')?.safety?.approvalMode).toBe('off');
     });
@@ -329,7 +330,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# Bot');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('bot')?.safety?.approvalMode).toBe('manual');
     });
@@ -343,7 +344,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# Bad');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await expect(registry.loadFromDirectory(testDir)).rejects.toThrow(/Invalid approvalMode/);
     });
   });
@@ -358,7 +359,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# Tiered');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       const config = registry.get('tiered');
       expect(config).toBeDefined();
@@ -374,7 +375,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# Plain');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       const config = registry.get('plain');
       expect(config).toBeDefined();
@@ -382,7 +383,7 @@ describe('FilePersonalityRegistry', () => {
     });
 
     it('engineer built-in has tier config with think_deeper in toolset', async () => {
-      const registry = await createPersonalityRegistry();
+      const registry = await createPersonalityRegistry(new FsStorage());
       const engineer = registry.get('engineer');
       expect(engineer).toBeDefined();
       expect(typeof engineer?.model).toBe('object');
@@ -400,7 +401,7 @@ describe('FilePersonalityRegistry', () => {
       await writeFile(join(personalityDir, 'config.yaml'), 'name: NoDream\n');
       await writeFile(join(personalityDir, 'SOUL.md'), '# NoDream');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('no-dream')?.dreaming).toBeUndefined();
     });
@@ -414,7 +415,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# DreamOff');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('dream-off')?.dreaming).toBeUndefined();
     });
@@ -428,7 +429,7 @@ describe('FilePersonalityRegistry', () => {
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# DreamOn');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       const dreaming = registry.get('dream-on')?.dreaming;
       expect(dreaming).toEqual({ enable: true, idleMinutes: 60, maxPerDay: 1 });
@@ -449,7 +450,7 @@ dreaming.prompt: Reflect.
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# DreamFull');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('dream-full')?.dreaming).toEqual({
         enable: true,
@@ -468,7 +469,7 @@ dreaming.prompt: Reflect.
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# DreamBad');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.get('dream-bad')?.dreaming?.idleMinutes).toBe(60);
     });
@@ -484,7 +485,7 @@ dreaming.prompt: Reflect.
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# DreamModel');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       const config = registry.get('dream-model');
       expect(config?.model).toEqual({
@@ -502,7 +503,7 @@ dreaming.prompt: Reflect.
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# DreamOnly');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       const config = registry.get('dream-only');
       expect(config?.model).toEqual({ dreaming: 'claude-haiku-4-5' });
@@ -519,7 +520,7 @@ dreaming.prompt: Reflect.
       );
       await writeFile(join(personalityDir, 'SOUL.md'), '# MemCustom');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       const config = registry.get('mem-custom');
       expect(config?.memory).toEqual({
@@ -534,7 +535,7 @@ dreaming.prompt: Reflect.
       await writeFile(join(personalityDir, 'config.yaml'), 'name: NoMem\n');
       await writeFile(join(personalityDir, 'SOUL.md'), '# NoMem');
 
-      const registry = new FilePersonalityRegistry();
+      const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       const config = registry.get('no-mem');
       expect(config?.memory).toBeUndefined();

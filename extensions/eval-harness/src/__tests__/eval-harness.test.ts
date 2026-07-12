@@ -2,6 +2,7 @@ import { mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EvalRunner, parseExpectedJsonl } from '../runner';
 import { containsScorer, exactMatchScorer, regexScorer } from '../scorers';
@@ -151,6 +152,7 @@ describe('EvalRunner', () => {
       concurrency: 1,
       outputPath,
       defaultScorer: 'contains',
+      storage: new FsStorage(),
     });
 
     const tasks = [
@@ -187,6 +189,7 @@ describe('EvalRunner', () => {
       concurrency: 1,
       outputPath,
       defaultScorer: 'contains',
+      storage: new FsStorage(),
     });
 
     const tasks = [{ id: 'task1', prompt: 'test' }];
@@ -209,6 +212,7 @@ describe('EvalRunner', () => {
       concurrency: 1,
       outputPath,
       defaultScorer: 'exact',
+      storage: new FsStorage(),
     });
 
     const tasks = [{ id: 'task1', prompt: 'say hello' }];
@@ -233,6 +237,7 @@ describe('EvalRunner', () => {
       concurrency: 1,
       outputPath,
       defaultScorer: 'contains',
+      storage: new FsStorage(),
     });
 
     const tasks = [{ id: 'task1', prompt: 'test' }];

@@ -23,6 +23,7 @@ import type {
   MemoryProvider,
   SecretsResolver,
   SessionStore,
+  Storage,
   ToolRegistry,
 } from '@ethosagent/types';
 
@@ -682,6 +683,8 @@ export function createSessionStore(opts: CreateSessionStoreOptions): SessionStor
 export interface CreateMemoryProviderOptions {
   /** Root data directory (typically `~/.ethos`). */
   dataDir: string;
+  /** Storage backend. Injected by the composition root; required. */
+  storage: Storage;
 }
 
 // The markdown backend supports MEMORY.md / USER.md direct read/write
@@ -691,7 +694,7 @@ export interface CreateMemoryProviderOptions {
 export function createMemoryProvider(
   opts: CreateMemoryProviderOptions,
 ): MemoryProvider & GlobalMemoryStore {
-  return new MarkdownFileMemoryProvider({ dir: opts.dataDir });
+  return new MarkdownFileMemoryProvider({ dir: opts.dataDir, storage: opts.storage });
 }
 
 // ---------------------------------------------------------------------------

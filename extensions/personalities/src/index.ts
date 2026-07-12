@@ -1,5 +1,4 @@
 import { join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import {
   assertSafeId,
   type DreamingConfig,
@@ -543,7 +542,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
    *  CRUD methods (create/update/delete/duplicate) are unavailable. */
   private readonly userDir: string | undefined;
 
-  constructor(storage: Storage = new FsStorage(), userPersonalitiesDir?: string) {
+  constructor(storage: Storage, userPersonalitiesDir?: string) {
     this.storage = storage;
     this.userDir = userPersonalitiesDir ? join(userPersonalitiesDir, 'personalities') : undefined;
   }
@@ -1316,15 +1315,16 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 // ---------------------------------------------------------------------------
 
 export async function createPersonalityRegistry(
-  storageOrOpts?: Storage | { storage?: Storage; userPersonalitiesDir?: string },
+  storageOrOpts: Storage | { storage: Storage; userPersonalitiesDir?: string },
 ): Promise<FilePersonalityRegistry> {
-  // Backwards-compatible: original signature took a single Storage argument.
-  // New callers can pass { storage, userPersonalitiesDir } to enable CRUD.
-  let storage: Storage | undefined;
+  // Two accepted shapes: a bare Storage, or { storage, userPersonalitiesDir }
+  // to enable CRUD. Storage is required either way — the composition root
+  // injects it; the registry never falls back to raw disk.
+  let storage: Storage;
   let userDir: string | undefined;
-  if (storageOrOpts && isStorageLike(storageOrOpts)) {
+  if (isStorageLike(storageOrOpts)) {
     storage = storageOrOpts;
-  } else if (storageOrOpts) {
+  } else {
     storage = storageOrOpts.storage;
     userDir = storageOrOpts.userPersonalitiesDir;
   }

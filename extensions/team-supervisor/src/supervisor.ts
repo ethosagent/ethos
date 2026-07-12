@@ -6,7 +6,7 @@ import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { noopLogger } from '@ethosagent/logger';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
-import type { Logger, TeamManifest } from '@ethosagent/types';
+import type { Logger, Storage, TeamManifest } from '@ethosagent/types';
 import { Dispatcher, type SupervisorState } from './dispatcher';
 import { startHealthProbeLoop } from './health';
 import { logSupervisorEvent } from './logger';
@@ -55,7 +55,7 @@ interface MemberState extends MemberRuntime {
 export async function runSupervisor(
   manifest: TeamManifest,
   manifestPath: string,
-  opts: { logger?: Logger } = {},
+  opts: { logger?: Logger; storage: Storage },
 ): Promise<void> {
   const log0 = opts.logger ?? noopLogger;
   const name = manifest.name;
@@ -369,7 +369,7 @@ export async function runSupervisor(
   // Pass the team name as `teamId` so the board records per-member outcome
   // counters (`team_member_stats`) on every terminal task transition.
   const board = new KanbanStore(boardPath, { teamId: name });
-  const mesh = new AgentMesh(meshRegistryPath(meshName));
+  const mesh = new AgentMesh(meshRegistryPath(meshName), { storage: opts.storage });
 
   const supervisorView: SupervisorState = {
     portOf: (p) => memberMap.get(p)?.port ?? null,

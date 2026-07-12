@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { MemoryContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MarkdownFileMemoryProvider } from '../index';
@@ -25,7 +26,7 @@ beforeEach(async () => {
   );
   scopeDir = join(testDir, 'personalities', 'test');
   await mkdir(scopeDir, { recursive: true });
-  provider = new MarkdownFileMemoryProvider({ dir: testDir });
+  provider = new MarkdownFileMemoryProvider({ dir: testDir, storage: new FsStorage() });
 });
 
 afterEach(async () => {

@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
 import { ClawMigrator, type MigrateOptions, type MigrationPlan } from '@ethosagent/claw-migrate';
+import { getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -27,6 +28,7 @@ export async function runClaw(args: string[]): Promise<void> {
 
   const flags = parseFlags(args.slice(1));
   const opts: MigrateOptions = {
+    storage: getStorage(),
     dryRun: flags.dryRun,
     preset: flags.preset,
     overwrite: flags.overwrite,

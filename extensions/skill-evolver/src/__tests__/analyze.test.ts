@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   analyzeEvalOutput,
@@ -67,14 +68,14 @@ describe('parseEvalJsonl', () => {
 
 describe('loadEvolveConfig', () => {
   it('returns defaults when file is missing', async () => {
-    const cfg = await loadEvolveConfig(join(testDir, 'nope.json'));
+    const cfg = await loadEvolveConfig(join(testDir, 'nope.json'), new FsStorage());
     expect(cfg).toEqual(DEFAULT_EVOLVE_CONFIG);
   });
 
   it('merges partial config over defaults', async () => {
     const path = join(testDir, 'evolve-config.json');
     await writeFile(path, JSON.stringify({ rewriteThreshold: 0.5 }), 'utf-8');
-    const cfg = await loadEvolveConfig(path);
+    const cfg = await loadEvolveConfig(path, new FsStorage());
     expect(cfg.rewriteThreshold).toBe(0.5);
     expect(cfg.minRunsBeforeEvolve).toBe(DEFAULT_EVOLVE_CONFIG.minRunsBeforeEvolve);
   });
@@ -82,14 +83,14 @@ describe('loadEvolveConfig', () => {
   it('round-trips autoApprove field', async () => {
     const path = join(testDir, 'evolve-config.json');
     await writeFile(path, JSON.stringify({ autoApprove: true }), 'utf-8');
-    const cfg = await loadEvolveConfig(path);
+    const cfg = await loadEvolveConfig(path, new FsStorage());
     expect(cfg.autoApprove).toBe(true);
   });
 
   it('defaults autoApprove to false when missing', async () => {
     const path = join(testDir, 'evolve-config.json');
     await writeFile(path, JSON.stringify({ rewriteThreshold: 0.7 }), 'utf-8');
-    const cfg = await loadEvolveConfig(path);
+    const cfg = await loadEvolveConfig(path, new FsStorage());
     expect(cfg.autoApprove).toBe(false);
   });
 });
@@ -109,7 +110,7 @@ describe('analyzeEvalOutput', () => {
       { task_id: 't2', role: 'assistant', content: 'a2', score: 0, skill_files_used: ['a.md'] },
     );
     const records = parseEvalJsonl(src);
-    const plan = await analyzeEvalOutput(records, testDir, DEFAULT_EVOLVE_CONFIG);
+    const plan = await analyzeEvalOutput(records, testDir, DEFAULT_EVOLVE_CONFIG, new FsStorage());
 
     const a = plan.skillStats.find((s) => s.fileName === 'a.md');
     const b = plan.skillStats.find((s) => s.fileName === 'b.md');
@@ -131,7 +132,12 @@ describe('analyzeEvalOutput', () => {
         error: 'boom',
       },
     );
-    const plan = await analyzeEvalOutput(parseEvalJsonl(src), testDir, DEFAULT_EVOLVE_CONFIG);
+    const plan = await analyzeEvalOutput(
+      parseEvalJsonl(src),
+      testDir,
+      DEFAULT_EVOLVE_CONFIG,
+      new FsStorage(),
+    );
     expect(plan.skillStats).toHaveLength(0);
   });
 
@@ -163,6 +169,7 @@ describe('analyzeEvalOutput', () => {
       parseEvalJsonl(lines.join('\n')),
       testDir,
       DEFAULT_EVOLVE_CONFIG,
+      new FsStorage(),
     );
     expect(plan.rewriteCandidates).toHaveLength(1);
     expect(plan.rewriteCandidates[0]?.fileName).toBe('low.md');
@@ -189,6 +196,7 @@ describe('analyzeEvalOutput', () => {
       parseEvalJsonl(lines.join('\n')),
       testDir,
       DEFAULT_EVOLVE_CONFIG,
+      new FsStorage(),
     );
     expect(plan.rewriteCandidates).toHaveLength(0);
   });
@@ -212,6 +220,7 @@ describe('analyzeEvalOutput', () => {
       parseEvalJsonl(lines.join('\n')),
       testDir,
       DEFAULT_EVOLVE_CONFIG,
+      new FsStorage(),
     );
     expect(plan.rewriteCandidates).toHaveLength(0);
   });
@@ -242,6 +251,7 @@ describe('analyzeEvalOutput', () => {
       parseEvalJsonl(lines.join('\n')),
       testDir,
       DEFAULT_EVOLVE_CONFIG,
+      new FsStorage(),
     );
     expect(plan.newSkillCandidates).toHaveLength(1);
     expect(plan.newSkillCandidates[0]?.tasks).toHaveLength(4);
@@ -266,6 +276,7 @@ describe('analyzeEvalOutput', () => {
       parseEvalJsonl(lines.join('\n')),
       testDir,
       DEFAULT_EVOLVE_CONFIG,
+      new FsStorage(),
     );
     expect(plan.newSkillCandidates).toHaveLength(0);
   });

@@ -5,7 +5,7 @@ import { EvalRunner, parseExpectedJsonl } from '@ethosagent/eval-harness';
 import { loadEvolveConfig, SkillEvolver } from '@ethosagent/skill-evolver';
 import { EthosError } from '@ethosagent/types';
 import { type EthosConfig, ethosDir } from '../config';
-import { createAgentLoop, createLLM } from '../wiring';
+import { createAgentLoop, createLLM, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -171,6 +171,7 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
     concurrency,
     outputPath,
     defaultScorer: scorer,
+    storage: getStorage(),
   });
 
   const start = Date.now();
@@ -206,7 +207,7 @@ async function runEvolveAfter(
   const dir = ethosDir();
   const skillsDir = join(dir, 'skills');
   const pendingDir = join(skillsDir, 'pending');
-  const evolveConfig = await loadEvolveConfig(join(dir, 'evolve-config.json'));
+  const evolveConfig = await loadEvolveConfig(join(dir, 'evolve-config.json'), getStorage());
   const llm = await createLLM(config);
 
   console.log(`\n${c.bold}evolving skills${c.reset}  ${c.dim}model: ${llm.model}${c.reset}`);
@@ -217,6 +218,7 @@ async function runEvolveAfter(
     pendingDir,
     config: evolveConfig,
     llm,
+    storage: getStorage(),
   });
   const result = await evolver.evolve();
 

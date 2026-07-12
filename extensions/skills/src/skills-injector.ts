@@ -1,6 +1,5 @@
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   ContextInjector,
   InjectionResult,
@@ -29,8 +28,9 @@ export interface SkillsInjectorOptions {
   globalSkillsDir?: string;
   /** Called when a skill is skipped because of OpenClaw `requires`/`os` rules. */
   onSkip?: (skillId: string, reason: string) => void;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required — never
+   *  falls back to raw disk. */
+  storage: Storage;
   /**
    * Tool names reachable by a personality.
    * When provided, capability-mode filtering is applied to global-pool skills.
@@ -74,13 +74,11 @@ export class SkillsInjector implements ContextInjector {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly scanner: UniversalScanner;
 
-  constructor(personalities: PersonalityRegistry, optionsOrDir?: string | SkillsInjectorOptions) {
+  constructor(personalities: PersonalityRegistry, opts: SkillsInjectorOptions) {
     this.personalities = personalities;
-    const opts: SkillsInjectorOptions =
-      typeof optionsOrDir === 'string' ? { globalSkillsDir: optionsOrDir } : (optionsOrDir ?? {});
     this.globalSkillsDir = opts.globalSkillsDir ?? join(homedir(), '.ethos', 'skills');
     this.onSkip = opts.onSkip;
-    this.storage = opts.storage ?? new FsStorage();
+    this.storage = opts.storage;
     this.toolNamesForPersonality = opts.toolNamesForPersonality;
     this.maxInjectionChars = opts.maxInjectionChars ?? 40_000;
     this.scanner = opts.scanner ?? new UniversalScanner({ storage: this.storage });

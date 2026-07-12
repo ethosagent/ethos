@@ -9,12 +9,13 @@
 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
 import { AgentMesh } from '../../index';
 
 function makeMesh(): AgentMesh {
   const path = join(tmpdir(), `mesh-cc1-${Date.now()}-${Math.random()}.json`);
-  return new AgentMesh(path);
+  return new AgentMesh(path, { storage: new FsStorage() });
 }
 
 function entry(id: string, port: number) {
@@ -92,8 +93,12 @@ describe('CC-1: atomic registry RMW (concurrent register)', () => {
 
 describe('mesh isolation — separate meshes do not share registries', () => {
   it('two AgentMesh instances at different paths are fully isolated', async () => {
-    const meshA = new AgentMesh(join(tmpdir(), `mesh-isolation-a-${Date.now()}.json`));
-    const meshB = new AgentMesh(join(tmpdir(), `mesh-isolation-b-${Date.now()}.json`));
+    const meshA = new AgentMesh(join(tmpdir(), `mesh-isolation-a-${Date.now()}.json`), {
+      storage: new FsStorage(),
+    });
+    const meshB = new AgentMesh(join(tmpdir(), `mesh-isolation-b-${Date.now()}.json`), {
+      storage: new FsStorage(),
+    });
 
     await meshA.register(entry('agent-a', 4001));
     await meshB.register(entry('agent-b', 4002));

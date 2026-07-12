@@ -1,5 +1,4 @@
 import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   ContextInjector,
   HookRegistry,
@@ -44,8 +43,9 @@ interface SessionState {
 }
 
 export interface FileContextInjectorOptions {
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required — never
+   *  falls back to raw disk. */
+  storage: Storage;
   /** When provided, the injector subscribes to `tool_end_with_path` so it can
    *  discover sub-AGENTS.md as the agent navigates. Without this, only the
    *  root-level layer is loaded (static mode). */
@@ -65,8 +65,8 @@ export class FileContextInjector implements ContextInjector {
   /** Per-session discovered layers. Keyed by sessionId; cleared lazily. */
   private readonly sessionLayers = new Map<string, SessionState>();
 
-  constructor(opts: FileContextInjectorOptions = {}) {
-    this.storage = opts.storage ?? new FsStorage();
+  constructor(opts: FileContextInjectorOptions) {
+    this.storage = opts.storage;
     if (opts.personalities) this.personalities = opts.personalities;
     if (opts.hooks) {
       opts.hooks.registerVoid('tool_end_with_path', async (payload) => {

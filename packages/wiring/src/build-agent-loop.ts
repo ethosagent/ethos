@@ -424,7 +424,8 @@ export async function buildAgentLoop(
   });
 
   // Delegation tools need the loop reference; register after loop creation.
-  for (const tool of createDelegationTools(loop, opts.meshRegistryPath)) tools.register(tool);
+  for (const tool of createDelegationTools(loop, wiringStorage, opts.meshRegistryPath))
+    tools.register(tool);
 
   // Goal runner — loop-bearing, constructed after the loop exists (mirrors
   // createDelegationTools handing the loop to tools post-construction). Shares

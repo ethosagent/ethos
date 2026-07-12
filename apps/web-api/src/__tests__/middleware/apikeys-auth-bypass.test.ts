@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cookieOnlyGuard, dualAuth, resolveScope } from '../../middleware/dual-auth';
@@ -32,7 +33,7 @@ describe('apiKeys namespace — bearer token rejection', () => {
     app.onError(errorHandler);
 
     const dir = mkdtempSync(join(tmpdir(), 'ethos-bypass-'));
-    const tokens = new WebTokenRepository({ dataDir: dir });
+    const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     cookieToken = await tokens.getOrCreate();
 
     const dual = dualAuth({

@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
 import { mcpRpcPath } from '../../routes/rpc';
@@ -35,7 +36,7 @@ describe('createWebApi — auth + rpc happy path', () => {
     }).app;
     // Pre-create a token so we can run the exchange without waiting for it
     // to be lazily generated on first miss.
-    const tokens = new WebTokenRepository({ dataDir: dir });
+    const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     token = await tokens.getOrCreate();
   });
 

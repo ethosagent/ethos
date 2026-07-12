@@ -31,7 +31,7 @@ import {
   makeTuiSlashCommands,
 } from '../lib/tui-capabilities';
 import { isVerbosity, nextVerbosity, projectEvent, type Verbosity } from '../lib/verbosity';
-import { resolveActiveLoop } from '../wiring';
+import { getStorage, resolveActiveLoop } from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
@@ -1048,7 +1048,7 @@ async function handleSlashCommand(
     case 'memory': {
       const { createMemoryProvider } = await import('@ethosagent/wiring');
       const { ethosDir } = await import('../config');
-      const mem = createMemoryProvider({ dataDir: ethosDir() });
+      const mem = createMemoryProvider({ dataDir: ethosDir(), storage: getStorage() });
       const result = await mem.prefetch({
         scopeId: `personality:${state.personalityId}`,
         sessionId: '',

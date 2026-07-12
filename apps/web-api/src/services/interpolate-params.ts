@@ -73,3 +73,37 @@ export function validateParamValue(def: ParamDef, _key: string, value: string): 
   }
   return true;
 }
+
+/**
+ * Resolve the ParamDef that governs a persisted param key. Date-range defs are
+ * stored under two derived keys (`<key>_from`, `<key>_to`), so a suffix strip
+ * is needed to find the governing def.
+ */
+function resolveParamDef(schema: ParamDef[], key: string): ParamDef | undefined {
+  const direct = schema.find((d) => d.key === key);
+  if (direct) return direct;
+  return schema.find(
+    (d) => d.type === 'date-range' && (key === `${d.key}_from` || key === `${d.key}_to`),
+  );
+}
+
+/**
+ * Validate a bag of param values against a dashboard's schema before it is
+ * persisted and later interpolated into a SQL/prompt template. Returns the keys
+ * that fail — either unknown (no governing def) or a value outside the def's
+ * allowlist / format. An empty array means every value is safe to persist.
+ *
+ * This is the allowlist that neutralizes SQL injection via the interpolation
+ * path: template positions cannot be `?`-bound, so only vetted values may
+ * reach `interpolateParams`.
+ */
+export function findInvalidParamKeys(schema: ParamDef[], values: Record<string, string>): string[] {
+  const invalid: string[] = [];
+  for (const [key, value] of Object.entries(values)) {
+    const def = resolveParamDef(schema, key);
+    if (!def || !validateParamValue(def, key, value)) {
+      invalid.push(key);
+    }
+  }
+  return invalid;
+}

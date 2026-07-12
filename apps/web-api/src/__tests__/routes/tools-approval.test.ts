@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentLoop } from '@ethosagent/core';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
@@ -44,7 +45,7 @@ describe('tools.approve / tools.deny — full inversion loop', () => {
     }).app;
 
     // Auth handshake → cookie used for every subsequent request.
-    const tokens = new WebTokenRepository({ dataDir: dir });
+    const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
       headers: { origin: 'http://localhost:3000' },

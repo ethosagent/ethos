@@ -24,6 +24,7 @@ import { useParams } from 'react-router-dom';
 import { DashboardPanelShell } from '../components/dashboard/DashboardPanelShell';
 import { ParamFilterBar } from '../components/dashboard/ParamFilterBar';
 import { ParamSchemaEditor } from '../components/dashboard/ParamSchemaEditor';
+import { readTrustedParamMessage } from '../lib/dashboard-param-message';
 import { rpc } from '../rpc';
 
 function DashboardCronPopover({
@@ -209,13 +210,8 @@ export function DashboardView() {
 
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
-      if (
-        e.data?.type === 'ethos:select' &&
-        typeof e.data.param === 'string' &&
-        typeof e.data.value === 'string'
-      ) {
-        emitParam(e.data.param, e.data.value);
-      }
+      const msg = readTrustedParamMessage(e, window);
+      if (msg) emitParam(msg.param, msg.value);
     }
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);

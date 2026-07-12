@@ -58,7 +58,10 @@ export async function startServer(port: number): Promise<number> {
 
   const session = createSessionStore({ dataDir });
 
-  const personalities = await createPersonalityRegistry({ userPersonalitiesDir: dataDir });
+  const personalities = await createPersonalityRegistry({
+    storage: new FsStorage(),
+    userPersonalitiesDir: dataDir,
+  });
 
   // Load built-in personalities from the bundled data directory.
   // import.meta.dirname inside loadBuiltins() points to the bundled output dir
@@ -110,7 +113,7 @@ export async function startServer(port: number): Promise<number> {
   const { app: webApp } = createWebApi({
     dataDir,
     sessionStore: session,
-    memoryProvider: createMemoryProvider({ dataDir }),
+    memoryProvider: createMemoryProvider({ dataDir, storage: new FsStorage() }),
     identityMap,
     agentLoop: loop,
     personalities,

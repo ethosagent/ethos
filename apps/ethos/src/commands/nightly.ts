@@ -275,7 +275,7 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
   }
 
   const llm = await createLLM(config);
-  const memory = createMemoryProvider({ dataDir: dir });
+  const memory = createMemoryProvider({ dataDir: dir, storage: getStorage() });
   const deps = buildDeps({ config, ethosDir: dir, reg, llm, memory });
 
   for (const target of targets) {

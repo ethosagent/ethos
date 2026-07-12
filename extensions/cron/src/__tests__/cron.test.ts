@@ -1,6 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CronJob, CronRunResult, CronSchedulerConfig } from '../index';
 import { CronScheduler, isValidCronExpression, nextRun, nextRunAfter } from '../index';
@@ -27,6 +28,7 @@ function makeScheduler(opts?: {
   return new CronScheduler({
     cronDir: testDir,
     tickIntervalMs: 999_999, // don't auto-tick in tests
+    storage: new FsStorage(),
     runJob:
       opts?.runJob ??
       (async (job) => ({
@@ -891,6 +893,7 @@ describe('CronScheduler system jobs', () => {
         sessionKey: 'k',
       }),
       tickIntervalMs: 60_000,
+      storage: new FsStorage(),
       ...overrides,
     });
   }

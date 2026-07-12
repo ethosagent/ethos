@@ -20,3 +20,4 @@ export {
   type FileSecretsResolverOptions,
   InMemorySecretsResolver,
 } from './secrets';
+export { sensitiveDenyPaths } from './sensitive-paths';

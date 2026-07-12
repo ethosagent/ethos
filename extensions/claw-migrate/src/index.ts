@@ -10,7 +10,6 @@
 import { copyFile, lstat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -82,8 +81,9 @@ export interface MigrateOptions {
   preset?: 'all' | 'user-data';
   overwrite?: boolean;
   dryRun?: boolean;
-  /** Storage backend for plan inspection + write ops. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend for plan inspection + write ops. Injected by the
+   *  composition root; required — never falls back to raw disk. */
+  storage: Storage;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,14 +115,14 @@ export class ClawMigrator {
   readonly dryRun: boolean;
   private readonly storage: Storage;
 
-  constructor(opts: MigrateOptions = {}) {
+  constructor(opts: MigrateOptions) {
     this.source = opts.source ?? join(homedir(), '.openclaw');
     this.target = opts.target ?? join(homedir(), '.ethos');
     this.workspace = opts.workspace ?? process.cwd();
     this.preset = opts.preset ?? 'all';
     this.overwrite = opts.overwrite ?? false;
     this.dryRun = opts.dryRun ?? false;
-    this.storage = opts.storage ?? new FsStorage();
+    this.storage = opts.storage;
   }
 
   /** True iff the OpenClaw source directory contains config.yaml. */

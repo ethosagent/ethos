@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_EVOLVE_CONFIG } from '../analyze';
@@ -83,6 +84,7 @@ describe('SkillEvolver', () => {
       pendingDir,
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
+      storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
@@ -126,6 +128,7 @@ describe('SkillEvolver', () => {
       pendingDir,
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
+      storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
@@ -158,6 +161,7 @@ describe('SkillEvolver', () => {
       pendingDir,
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
+      storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
@@ -210,6 +214,7 @@ describe('SkillEvolver', () => {
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
       evolveExisting: false,
+      storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
@@ -243,6 +248,7 @@ describe('SkillEvolver', () => {
       pendingDir,
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
+      storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();

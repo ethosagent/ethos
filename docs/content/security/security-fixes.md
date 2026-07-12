@@ -281,11 +281,11 @@ A follow-up security audit and gap analysis identified six additive hardening me
 
 **Why it matters.** Tool results are the primary vector for secrets entering LLM context post-construction. Without scanning at the tool-result seam, a leaked key in a tool response is invisible until it appears in an outbound message or audit log.
 
-**Fix.** `detectSecrets` runs on every successful tool result. Detections emit an `observability` event (`secret_in_tool_result`) with the secret labels. When `injectionDefense.blockSecretResults: true` is set, detected secrets are redacted before entering LLM context. Default: emit only (non-blocking) — operators opt in to blocking after verifying their tool ecosystem.
+**Fix.** `detectSecrets` runs on every successful tool result. Detections emit an `observability` event (`secret_in_tool_result`) with the secret labels. Unless `injectionDefense.blockSecretResults: false` is set, detected secrets are redacted before entering LLM context. Default: block (redacting) — operators set `blockSecretResults: false` to opt into emit-only (non-blocking) mode.
 
 - **Status:** Shipped.
 - Source: `packages/core/src/agent-loop.ts`
-- Config: `injectionDefense.blockSecretResults: true` in personality safety config
+- Config: `injectionDefense.blockSecretResults` in personality safety config (default `true`; set `false` for emit-only)
 
 ### 22. PII redaction before LLM context {#22-pii-redaction-personality}
 

@@ -1,13 +1,7 @@
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
 import type { CheckpointState } from './types';
 
-const defaultStorage = new FsStorage();
-
-export async function readCheckpoint(
-  path: string,
-  storage: Storage = defaultStorage,
-): Promise<CheckpointState> {
+export async function readCheckpoint(path: string, storage: Storage): Promise<CheckpointState> {
   const src = await storage.read(path);
   if (!src) return { version: 1, completedTaskIds: [], failedTaskIds: [] };
   try {
@@ -22,7 +16,7 @@ export async function readCheckpoint(
 export async function writeCheckpoint(
   path: string,
   state: CheckpointState,
-  storage: Storage = defaultStorage,
+  storage: Storage,
 ): Promise<void> {
   await storage.writeAtomic(path, JSON.stringify(state, null, 2));
 }

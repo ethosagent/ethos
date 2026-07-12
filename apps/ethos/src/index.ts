@@ -303,7 +303,7 @@ try {
       if (sub === 'list' || sub === '') {
         const jsonMode = args.includes('--json');
         const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-        const reg = await createPersonalityRegistry();
+        const reg = await createPersonalityRegistry(getStorage());
         if (jsonMode) {
           const defaultId = reg.getDefault().id;
           writeJson(
@@ -453,7 +453,7 @@ try {
       if (config?.memory === 'vector') {
         const { VectorMemoryProvider } = await import('@ethosagent/memory-vector');
         const { ethosDir: getDir } = await import('./config');
-        const mem = new VectorMemoryProvider({ dir: getDir() });
+        const mem = new VectorMemoryProvider({ dir: getDir(), storage: getStorage() });
 
         if (sub === 'show' || sub === '') {
           const records = mem.showRecent(20);
@@ -517,7 +517,7 @@ try {
       } else {
         const { createMemoryProvider } = await import('@ethosagent/wiring');
         const { ethosDir: getDir } = await import('./config');
-        const mem = createMemoryProvider({ dataDir: getDir() });
+        const mem = createMemoryProvider({ dataDir: getDir(), storage: getStorage() });
         const personalityId = config?.personality ?? 'default';
         const cliCtx = {
           scopeId: `personality:${personalityId}`,
@@ -843,7 +843,10 @@ try {
       const manifest = parseTeamManifest(readFileSync(manifestPath, 'utf-8'), {
         logger: supervisorLogger,
       });
-      await runSupervisor(manifest, manifestPath, { logger: supervisorLogger });
+      await runSupervisor(manifest, manifestPath, {
+        logger: supervisorLogger,
+        storage: getStorage(),
+      });
       break;
     }
 

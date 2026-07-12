@@ -105,7 +105,7 @@ async function scaffoldFrom(sourceId: string, targetName: string | undefined): P
   }
 
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-  const reg = await createPersonalityRegistry();
+  const reg = await createPersonalityRegistry(getStorage());
   await reg.duplicate(sourceId, targetName.toLowerCase().replace(/\s+/g, '-'));
   console.log(`\n${c.bold}Created personality "${targetName}" from "${sourceId}"${c.reset}`);
   console.log(
@@ -125,7 +125,7 @@ async function runAiAssisted(name: string | undefined): Promise<void> {
     process.exit(1);
   }
 
-  const reg = await createPersonalityRegistry();
+  const reg = await createPersonalityRegistry(getStorage());
   if (!reg.get('personality-architect')) {
     console.error(
       'personality-architect personality not found. Is the framework installed correctly?',

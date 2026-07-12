@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { validateUrl } from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import { buildMcpEnv } from '@ethosagent/safety-scanner';
-import { FsStorage, PersonalityScopedSecrets } from '@ethosagent/storage-fs';
+import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
 import type {
   Logger,
   McpServerInfo,
@@ -1494,9 +1494,7 @@ export class McpSessionView {
 // Config loader
 // ---------------------------------------------------------------------------
 
-export async function loadMcpConfig(
-  storage: Storage = new FsStorage(),
-): Promise<McpServerConfig[]> {
+export async function loadMcpConfig(storage: Storage): Promise<McpServerConfig[]> {
   const path = join(homedir(), '.ethos', 'mcp.json');
   const raw = await storage.read(path);
   if (!raw) return [];

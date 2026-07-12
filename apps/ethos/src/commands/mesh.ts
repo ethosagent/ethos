@@ -1,6 +1,9 @@
 import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { AgentMesh, meshesDir, meshRegistryPath } from '@ethosagent/agent-mesh';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { writeJson, writeJsonError } from '../json-output';
+
+const storage = new FsStorage();
 
 const c = {
   reset: '\x1b[0m',
@@ -47,7 +50,7 @@ async function runMeshList(args: string[] = []): Promise<void> {
   if (jsonMode) {
     const result = [];
     for (const meshName of names) {
-      const mesh = new AgentMesh(meshRegistryPath(meshName));
+      const mesh = new AgentMesh(meshRegistryPath(meshName), { storage });
       const members = await mesh.list();
       result.push({ name: meshName, liveMembers: members.length });
     }
@@ -57,7 +60,7 @@ async function runMeshList(args: string[] = []): Promise<void> {
 
   console.log(`\n${c.bold}Meshes:${c.reset}\n`);
   for (const meshName of names) {
-    const mesh = new AgentMesh(meshRegistryPath(meshName));
+    const mesh = new AgentMesh(meshRegistryPath(meshName), { storage });
     const members = await mesh.list();
     const count = members.length;
     const countStr = count > 0 ? `${c.green}${count} live${c.reset}` : `${c.dim}0 live${c.reset}`;
@@ -79,7 +82,7 @@ async function runMeshStatus(name: string | undefined, args: string[] = []): Pro
     process.exit(1);
   }
 
-  const mesh = new AgentMesh(meshRegistryPath(effectiveName));
+  const mesh = new AgentMesh(meshRegistryPath(effectiveName), { storage });
   const members = await mesh.list();
 
   if (jsonMode) {
@@ -149,7 +152,7 @@ async function runMeshDestroy(name: string | undefined): Promise<void> {
     process.exit(1);
   }
 
-  const mesh = new AgentMesh(meshRegistryPath(name));
+  const mesh = new AgentMesh(meshRegistryPath(name), { storage });
   const members = await mesh.list();
 
   if (members.length > 0) {

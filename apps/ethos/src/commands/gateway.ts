@@ -348,6 +348,7 @@ export async function runGatewayStart(): Promise<void> {
     | ((job: import('@ethosagent/cron').CronJob, output: string) => Promise<void>)
     | null = null;
   const scheduler = new CronScheduler({
+    storage: getStorage(),
     logger: new ConsoleLogger(),
     systemTasks: buildSystemTaskHandlers(config),
     onDecision: (job, d) => {
@@ -377,7 +378,7 @@ export async function runGatewayStart(): Promise<void> {
       // Recursion guard: exclude 'cron' from the effective toolset so
       // cron-spawned sessions cannot schedule further cron jobs.
       if (!cronPersonalities) {
-        cronPersonalities = await createPersonalityRegistry();
+        cronPersonalities = await createPersonalityRegistry(getStorage());
         await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
       }
       const pid = job.personalityId;
@@ -1254,7 +1255,7 @@ export type AdapterModuleLoader = <T>(modulePath: string, label: string) => Prom
  * the MEMORY.md of the personality it's bound to.
  */
 function createSlackMemoryReader(personalityId: string) {
-  const provider = createMemoryProvider({ dataDir: ethosDir() });
+  const provider = createMemoryProvider({ dataDir: ethosDir(), storage: getStorage() });
   const ctx: MemoryContext = {
     scopeId: `personality:${personalityId}`,
     sessionId: '',
@@ -1290,6 +1291,7 @@ async function createSlackPersonalityCardReader() {
     userPersonalitiesDir: personalitiesDir,
   });
   const { skillsInjector } = createInjectors(registry, {
+    storage,
     trustedFirstPartySources: [bundledSkillsSource()],
   });
   return {
@@ -1327,6 +1329,7 @@ async function createTelegramPersonalityCardReader() {
     userPersonalitiesDir: personalitiesDir,
   });
   const { skillsInjector } = createInjectors(registry, {
+    storage,
     trustedFirstPartySources: [bundledSkillsSource()],
   });
   // Lazily import the Telegram personality renderer. The import type is

@@ -531,7 +531,7 @@ async function runTeamCreateAiAssisted(name: string | undefined): Promise<void> 
     process.exit(1);
   }
 
-  const reg = await createPersonalityRegistry();
+  const reg = await createPersonalityRegistry(getStorage());
   if (!reg.get('team-architect')) {
     console.error('team-architect personality not found. Is the framework installed correctly?');
     process.exit(1);
@@ -574,7 +574,11 @@ async function runTeamMemberAdd(teamName: string, personality: string | undefine
   // Look up personality capabilities to auto-populate domain_capabilities.
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
   const { ethosDir } = await import('../config');
-  const reg = await createPersonalityRegistry({ userPersonalitiesDir: ethosDir() });
+  const { getStorage } = await import('../wiring');
+  const reg = await createPersonalityRegistry({
+    storage: getStorage(),
+    userPersonalitiesDir: ethosDir(),
+  });
   await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
   const personalityConfig = reg.get(personality);
   if (!personalityConfig) {

@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
+import { requireStorage } from './require-storage';
 
 // File-backed store for the single web-UI auth token. The token lives at
 // `<dataDir>/web-token` chmod 600 — same posture as `~/.ssh/id_*`.
@@ -22,8 +22,8 @@ const TOKEN_BYTES = 32;
 export interface WebTokenRepositoryOptions {
   /** Where `~/.ethos` lives. The token file is `<dataDir>/web-token`. */
   dataDir: string;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required. */
+  storage: Storage;
 }
 
 export class WebTokenRepository {
@@ -32,7 +32,7 @@ export class WebTokenRepository {
   private readonly dir: string;
 
   constructor(opts: WebTokenRepositoryOptions) {
-    this.storage = opts.storage ?? new FsStorage();
+    this.storage = requireStorage(opts.storage, 'WebTokenRepository');
     this.dir = opts.dataDir;
     this.path = join(opts.dataDir, 'web-token');
   }

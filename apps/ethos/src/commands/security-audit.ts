@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import type { PersonalityConfig } from '@ethosagent/types';
 import { ethosDir } from '../config';
+import { getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -78,6 +79,7 @@ export async function runSecurityAudit(argv: string[]): Promise<void> {
   let registry: import('@ethosagent/personalities').FilePersonalityRegistry;
   try {
     registry = await createPersonalityRegistry({
+      storage: getStorage(),
       userPersonalitiesDir: join(dir, 'personalities'),
     });
   } catch (err) {

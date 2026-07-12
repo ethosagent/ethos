@@ -1,3 +1,4 @@
+import { sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -109,18 +110,34 @@ const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
 // command string. Each pattern requires a path-segment boundary (/ or end of
 // token) AFTER the file portion so suffix collisions like
 // `.bash_history.example` don't false-positive.
-const ARGV_FS_DENY_PATTERNS: Array<{ test: (cmd: string) => boolean; path: string }> = [
-  { test: (cmd) => /\/\.ssh\/(?:id_|authorized|known)/.test(cmd), path: '~/.ssh/...' },
-  { test: (cmd) => /\/\.aws\/credentials(?:[/\s]|$)/.test(cmd), path: '~/.aws/credentials' },
-  { test: (cmd) => /\/\.gnupg(?:[/\s]|$)/.test(cmd), path: '~/.gnupg' },
-  { test: (cmd) => /\/\.netrc(?:[\s]|$)/.test(cmd), path: '~/.netrc' },
+//
+// Each entry's `paths` are selected from the canonical `sensitiveDenyPaths()`
+// manifest rather than re-hardcoded, so this floor and the terminal guard's
+// share one source of truth (the paths can no longer drift out of sync). The
+// parity test asserts every path here is a manifest member.
+function denyPathsEndingWith(...suffixes: string[]): string[] {
+  const deny = sensitiveDenyPaths();
+  return suffixes.flatMap((suffix) => deny.filter((p) => p === suffix || p.endsWith(suffix)));
+}
+
+export const ARGV_FS_DENY_PATTERNS: Array<{ test: (cmd: string) => boolean; paths: string[] }> = [
+  {
+    test: (cmd) => /\/\.ssh\/(?:id_|authorized|known)/.test(cmd),
+    paths: denyPathsEndingWith('/.ssh'),
+  },
+  {
+    test: (cmd) => /\/\.aws\/credentials(?:[/\s]|$)/.test(cmd),
+    paths: denyPathsEndingWith('/.aws/credentials'),
+  },
+  { test: (cmd) => /\/\.gnupg(?:[/\s]|$)/.test(cmd), paths: denyPathsEndingWith('/.gnupg') },
+  { test: (cmd) => /\/\.netrc(?:[\s]|$)/.test(cmd), paths: denyPathsEndingWith('/.netrc') },
   {
     test: (cmd) => /\/etc\/(?:passwd|shadow|sudoers)(?:[/\s]|$)/.test(cmd),
-    path: '/etc/passwd|shadow|sudoers',
+    paths: denyPathsEndingWith('/etc/passwd', '/etc/shadow', '/etc/sudoers'),
   },
   {
     test: (cmd) => /(?:^|\s|<|>|\/)\.(?:bash|zsh|psql|mysql)_history(?:[\s]|$)/.test(cmd),
-    path: 'shell history file',
+    paths: denyPathsEndingWith('_history'),
   },
 ];
 
@@ -134,9 +151,9 @@ export function checkCommand(command: string): DangerResult {
   for (const { test, reason } of PATTERNS) {
     if (test(command)) return { dangerous: true, reason };
   }
-  for (const { test, path } of ARGV_FS_DENY_PATTERNS) {
+  for (const { test, paths } of ARGV_FS_DENY_PATTERNS) {
     if (test(command)) {
-      return { dangerous: true, reason: `command targets always-deny path '${path}'` };
+      return { dangerous: true, reason: `command targets always-deny path '${paths.join(', ')}'` };
     }
   }
   return { dangerous: false };

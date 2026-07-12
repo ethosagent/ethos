@@ -179,7 +179,7 @@ export async function buildInfrastructure(
     return memoryProvider;
   });
   memoryProviders.register('vector', ({ dataDir: dir }) => {
-    return new VectorMemoryProvider({ dir });
+    return new VectorMemoryProvider({ dir, storage: wiringCtx.storage });
   });
 
   // Storage backend registry — built-ins registered here; plugins add more

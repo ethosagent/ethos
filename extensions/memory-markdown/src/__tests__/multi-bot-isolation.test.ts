@@ -20,6 +20,7 @@
 import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { MemoryContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MarkdownFileMemoryProvider } from '../index';
@@ -43,7 +44,7 @@ beforeEach(() => {
     tmpdir(),
     `ethos-multi-bot-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  provider = new MarkdownFileMemoryProvider({ dir: testDir });
+  provider = new MarkdownFileMemoryProvider({ dir: testDir, storage: new FsStorage() });
 });
 
 afterEach(async () => {

@@ -1,7 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import Database, { migrate } from '@ethosagent/sqlite';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   ListOpts,
   MemoryContext,
@@ -83,8 +82,11 @@ export interface VectorMemoryConfig {
    * Storage backend for the markdown side (migrateFromMarkdown, exportAll
    * output). The SQLite side stays raw — @ethosagent/sqlite opens memory.db
    * directly per the storage-abstraction plan's SQLite carve-out.
+   *
+   * Injected by wiring (composition root). Required — never falls back to
+   * raw disk. Inject InMemoryStorage in tests.
    */
-  storage?: Storage;
+  storage: Storage;
 }
 
 interface EntryRow {
@@ -151,11 +153,11 @@ export class VectorMemoryProvider implements MemoryProvider {
     }
   }
 
-  constructor(config: VectorMemoryConfig = {}) {
+  constructor(config: VectorMemoryConfig) {
     this.dir = config.dir ?? join(homedir(), '.ethos');
     this.topK = config.topK ?? TOP_K;
     this.embedFn = config.embedFn;
-    this.storage = config.storage ?? new FsStorage();
+    this.storage = config.storage;
     this.db = new Database(join(this.dir, 'memory.db'));
     this.db.pragma('journal_mode = WAL');
     this.migrate();

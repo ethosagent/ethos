@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentMesh } from '@ethosagent/agent-mesh';
 import type { AgentEvent } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { ToolContext } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -48,6 +49,7 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   };
 }
 
+const storage = new FsStorage();
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -298,7 +300,7 @@ describe('mixture_of_agents', () => {
 
 describe('createDelegationTools', () => {
   it('returns both tools', () => {
-    const tools = createDelegationTools(makeLoop());
+    const tools = createDelegationTools(makeLoop(), storage);
     const names = tools.map((t) => t.name);
     expect(names).toContain('delegate_task');
     expect(names).toContain('mixture_of_agents');
@@ -309,7 +311,7 @@ describe('createDelegationTools', () => {
   });
 
   it('both tools belong to delegation toolset', () => {
-    const tools = createDelegationTools(makeLoop());
+    const tools = createDelegationTools(makeLoop(), storage);
     for (const tool of tools) {
       expect(tool.toolset).toBe('delegation');
     }
@@ -319,7 +321,7 @@ describe('createDelegationTools', () => {
 describe('mesh orchestration tools', () => {
   it('list_team excludes current process by default', async () => {
     const registryPath = makeRegistryPath();
-    const mesh = new AgentMesh(registryPath);
+    const mesh = new AgentMesh(registryPath, { storage });
     await mesh.register({
       agentId: `coordinator:${process.pid}:self`,
       capabilities: ['coordination'],
@@ -339,7 +341,7 @@ describe('mesh orchestration tools', () => {
       activeSessions: 0,
     });
 
-    const tool = createListTeamTool(registryPath);
+    const tool = createListTeamTool(storage, registryPath);
     const result = await tool.execute({}, makeCtx());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -350,7 +352,7 @@ describe('mesh orchestration tools', () => {
 
   it('route_to_agent retries alternate candidate on failure', async () => {
     const registryPath = makeRegistryPath();
-    const mesh = new AgentMesh(registryPath);
+    const mesh = new AgentMesh(registryPath, { storage });
     await mesh.register({
       agentId: 'researcher:111:first',
       capabilities: ['research'],
@@ -385,7 +387,7 @@ describe('mesh orchestration tools', () => {
       };
     }) as unknown as (url: string | URL, init?: RequestInit) => Promise<Response>;
 
-    const tool = createRouteToAgentTool(registryPath);
+    const tool = createRouteToAgentTool(storage, registryPath);
     const result = await tool.execute(
       { capability: 'research', prompt: 'analyze', retries: 2, timeout_s: 5 },
       makeCtx({ scopedFetch: { fetch: mockFetch } }),
@@ -398,7 +400,7 @@ describe('mesh orchestration tools', () => {
 
   it('dispatch_team returns structured per-task records', async () => {
     const registryPath = makeRegistryPath();
-    const mesh = new AgentMesh(registryPath);
+    const mesh = new AgentMesh(registryPath, { storage });
     await mesh.register({
       agentId: 'researcher:301:r',
       capabilities: ['research'],
@@ -429,7 +431,7 @@ describe('mesh orchestration tools', () => {
       return { json: async () => ({ result: { text: `ok:${payload.params?.text}` } }) };
     }) as unknown as (url: string | URL, init?: RequestInit) => Promise<Response>;
 
-    const tool = createDispatchTeamTool(registryPath);
+    const tool = createDispatchTeamTool(storage, registryPath);
     const result = await tool.execute(
       {
         tasks: [

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { DefaultNotificationRouter } from '@ethosagent/core';
 import { DefaultOAuthRegistry } from '@ethosagent/oauth';
-import { PluginLoader } from '@ethosagent/plugin-loader';
+import { type InstalledPluginManifest, PluginLoader } from '@ethosagent/plugin-loader';
 import {
   DiagnosticStore,
   OAuthCoordinatorImpl,
@@ -35,6 +35,8 @@ export interface LoadPluginsResult {
   pluginFilters: ToolInvocationFilter[];
   pluginEvaluators: PostTurnEvaluator[];
   pluginRoutes: PluginRouteEntry[];
+  /** P2.6/S7 — plugins that failed to load (rejected/missing dep/activate threw), with reasons. */
+  pluginFailures: InstalledPluginManifest[];
   contextEngines: import('@ethosagent/core').DefaultContextEngineRegistry;
   /** LLM handle for context engines — wraps the compression summarizer. */
   llmHandle?: ContextEngineLLMHandle;
@@ -154,12 +156,31 @@ export async function loadPlugins(
     });
   }
 
+  // P2.6/S7 — surface per-plugin load failures to the operator. A plugin rejected
+  // for a bad/undeclared contract major, a missing dependency, or an activate()
+  // that threw is tracked as failed by the loader; escalate each here so a buried
+  // failure is visible. Isolation holds — the sibling plugins that loaded are
+  // unaffected; this only reports.
+  const pluginFailures = pluginLoader.getFailures();
+  for (const failure of pluginFailures) {
+    log.warn(
+      `[wiring] Plugin "${failure.id}" failed to load: ${failure.error ?? 'unknown error'}`,
+      {
+        component: 'wiring',
+        pluginId: failure.id,
+      },
+    );
+  }
+
   // Merge skill dirs declared by plugins/tools into the live injector scanner
   // and the boot-time skill pool (for MCP passthrough + design tools).
   const pluginSkillSources = pluginLoader.getPluginSkillSources();
   if (pluginSkillSources.length > 0) {
     skillScanner.addExtraSources(pluginSkillSources);
-    const pluginSkillPool = await new UniversalScanner({ sources: pluginSkillSources }).scan();
+    const pluginSkillPool = await new UniversalScanner({
+      storage: wiringCtx.storage,
+      sources: pluginSkillSources,
+    }).scan();
     for (const [k, v] of pluginSkillPool) skillPool.set(k, v);
   }
 
@@ -176,6 +197,7 @@ export async function loadPlugins(
     pluginFilters,
     pluginEvaluators,
     pluginRoutes,
+    pluginFailures,
     contextEngines,
     llmHandle,
     documentExtractors,

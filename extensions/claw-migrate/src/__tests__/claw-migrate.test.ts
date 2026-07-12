@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
 import { ClawMigrator } from '../index';
 
@@ -41,14 +42,14 @@ async function seedMinimalOpenclaw(source: string): Promise<void> {
 describe('ClawMigrator.sourceExists', () => {
   it('returns false when ~/.openclaw is missing', async () => {
     const { source, target } = await makeSandbox();
-    const m = new ClawMigrator({ source, target });
+    const m = new ClawMigrator({ source, target, storage: new FsStorage() });
     expect(await m.sourceExists()).toBe(false);
   });
 
   it('returns true when source has config.yaml', async () => {
     const { source, target } = await makeSandbox();
     await seedMinimalOpenclaw(source);
-    const m = new ClawMigrator({ source, target });
+    const m = new ClawMigrator({ source, target, storage: new FsStorage() });
     expect(await m.sourceExists()).toBe(true);
   });
 });
@@ -66,7 +67,7 @@ describe('ClawMigrator.plan', () => {
     await writeFile(join(source, 'keys.json'), '[{"apiKey":"sk-a","priority":1}]');
     await writeFile(join(source, 'AGENTS.md'), '# AGENTS\n');
 
-    const m = new ClawMigrator({ source, target, workspace });
+    const m = new ClawMigrator({ source, target, workspace, storage: new FsStorage() });
     const plan = await m.plan();
 
     expect(plan.detected).toEqual({
@@ -108,7 +109,7 @@ describe('ClawMigrator.plan', () => {
     await writeFile(join(source, 'config.yaml'), 'personality: my-custom-team-coder\n');
     await writeFile(join(source, 'SOUL.md'), '# Custom\n');
 
-    const plan = await new ClawMigrator({ source, target }).plan();
+    const plan = await new ClawMigrator({ source, target, storage: new FsStorage() }).plan();
     expect(plan.personality.resolved).toBe('migrated');
     expect(plan.personality.becomesMigrated).toBe(true);
   });
@@ -118,7 +119,12 @@ describe('ClawMigrator.plan', () => {
     await seedMinimalOpenclaw(source);
     await writeFile(join(source, 'keys.json'), '[]');
 
-    const plan = await new ClawMigrator({ source, target, preset: 'user-data' }).plan();
+    const plan = await new ClawMigrator({
+      source,
+      target,
+      preset: 'user-data',
+      storage: new FsStorage(),
+    }).plan();
     const kinds = plan.ops.map((o) => `${o.kind}:${o.label}`);
     expect(kinds.some((k) => k.includes('keys.json'))).toBe(false);
     expect(plan.summary.apiKeys).toBe(0);
@@ -138,7 +144,7 @@ describe('ClawMigrator.execute', () => {
     await writeFile(join(source, 'AGENTS.md'), '# AGENTS\nWorkspace instructions.\n');
     await mkdir(workspace, { recursive: true });
 
-    const m = new ClawMigrator({ source, target, workspace });
+    const m = new ClawMigrator({ source, target, workspace, storage: new FsStorage() });
     const plan = await m.plan();
     const result = await m.execute(plan);
 
@@ -179,7 +185,7 @@ describe('ClawMigrator.execute', () => {
     const { source, target } = await makeSandbox();
     await seedMinimalOpenclaw(source);
 
-    const m = new ClawMigrator({ source, target, dryRun: true });
+    const m = new ClawMigrator({ source, target, dryRun: true, storage: new FsStorage() });
     const plan = await m.plan();
     const result = await m.execute(plan);
 
@@ -196,7 +202,7 @@ describe('ClawMigrator.execute', () => {
     await writeFile(join(target, 'config.yaml'), 'provider: openai\n');
 
     // Without --overwrite, both are skipped and pre-existing content is kept.
-    const noOverwrite = new ClawMigrator({ source, target });
+    const noOverwrite = new ClawMigrator({ source, target, storage: new FsStorage() });
     const planA = await noOverwrite.plan();
     const resultA = await noOverwrite.execute(planA);
     expect(resultA.skipped).toBeGreaterThanOrEqual(2);
@@ -204,7 +210,12 @@ describe('ClawMigrator.execute', () => {
     expect(await readFile(join(target, 'config.yaml'), 'utf-8')).toBe('provider: openai\n');
 
     // With --overwrite, both get replaced.
-    const overwrite = new ClawMigrator({ source, target, overwrite: true });
+    const overwrite = new ClawMigrator({
+      source,
+      target,
+      overwrite: true,
+      storage: new FsStorage(),
+    });
     const planB = await overwrite.plan();
     const resultB = await overwrite.execute(planB);
     expect(resultB.skipped).toBe(0);
@@ -219,7 +230,7 @@ describe('ClawMigrator.execute', () => {
     const { source, target } = await makeSandbox();
     await seedMinimalOpenclaw(source);
 
-    const m = new ClawMigrator({ source, target, preset: 'user-data' });
+    const m = new ClawMigrator({ source, target, preset: 'user-data', storage: new FsStorage() });
     const plan = await m.plan();
     await m.execute(plan);
 
@@ -237,7 +248,7 @@ describe('ClawMigrator.execute', () => {
     await writeFile(join(source, 'keys.json'), '[]');
     await mkdir(join(target, 'keys.json'), { recursive: true });
 
-    const m = new ClawMigrator({ source, target });
+    const m = new ClawMigrator({ source, target, storage: new FsStorage() });
     const plan = await m.plan();
     const result = await m.execute(plan);
 
@@ -259,7 +270,7 @@ describe('ClawMigrator cron migration (Phase 3.2)', () => {
     await mkdir(join(source, 'cron'), { recursive: true });
     await writeFile(join(source, 'cron', 'jobs.json'), JSON.stringify([]));
 
-    const m = new ClawMigrator({ source, target, workspace });
+    const m = new ClawMigrator({ source, target, workspace, storage: new FsStorage() });
     const plan = await m.plan();
 
     expect(plan.detected.cron).toBe(true);
@@ -272,7 +283,7 @@ describe('ClawMigrator cron migration (Phase 3.2)', () => {
     const { source, target, workspace } = await makeSandbox();
     await seedMinimalOpenclaw(source);
 
-    const m = new ClawMigrator({ source, target, workspace });
+    const m = new ClawMigrator({ source, target, workspace, storage: new FsStorage() });
     const plan = await m.plan();
 
     expect(plan.detected.cron).toBe(false);
@@ -307,7 +318,7 @@ describe('ClawMigrator cron migration (Phase 3.2)', () => {
     await mkdir(join(source, 'cron'), { recursive: true });
     await writeFile(join(source, 'cron', 'jobs.json'), JSON.stringify(jobs));
 
-    const m = new ClawMigrator({ source, target, workspace });
+    const m = new ClawMigrator({ source, target, workspace, storage: new FsStorage() });
     const plan = await m.plan();
     await m.execute(plan);
 
@@ -339,7 +350,7 @@ describe('ClawMigrator cron migration (Phase 3.2)', () => {
     await mkdir(join(source, 'cron'), { recursive: true });
     await writeFile(join(source, 'cron', 'jobs.json'), JSON.stringify(jobs));
 
-    const m = new ClawMigrator({ source, target, workspace });
+    const m = new ClawMigrator({ source, target, workspace, storage: new FsStorage() });
     const plan = await m.plan();
     await m.execute(plan);
 
@@ -369,7 +380,13 @@ describe('ClawMigrator cron migration (Phase 3.2)', () => {
     await mkdir(join(target, 'cron'), { recursive: true });
     await writeFile(join(target, 'cron', 'jobs.json'), '[]');
 
-    const m = new ClawMigrator({ source, target, workspace, overwrite: false });
+    const m = new ClawMigrator({
+      source,
+      target,
+      workspace,
+      overwrite: false,
+      storage: new FsStorage(),
+    });
     const plan = await m.plan();
     const result = await m.execute(plan);
 
@@ -397,7 +414,13 @@ describe('ClawMigrator cron migration (Phase 3.2)', () => {
     await mkdir(join(source, 'cron'), { recursive: true });
     await writeFile(join(source, 'cron', 'jobs.json'), JSON.stringify(jobs));
 
-    const m = new ClawMigrator({ source, target, workspace, dryRun: true });
+    const m = new ClawMigrator({
+      source,
+      target,
+      workspace,
+      dryRun: true,
+      storage: new FsStorage(),
+    });
     const plan = await m.plan();
     const result = await m.execute(plan);
 

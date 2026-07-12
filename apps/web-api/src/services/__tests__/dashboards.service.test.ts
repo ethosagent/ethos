@@ -337,4 +337,68 @@ describe('DashboardsService', () => {
     const fetched = svc.getPanel(p.id);
     expect(fetched?.metadata).toEqual(meta);
   });
+
+  // -----------------------------------------------------------------------
+  // Param validation (SQL-injection boundary)
+  // -----------------------------------------------------------------------
+
+  function withRegionSchema(): string {
+    const d = svc.create('user-1', 'D', 'p1');
+    svc.update(d.id, {
+      paramsSchema: [
+        { key: 'region', label: 'Region', type: 'select', options: ['us', 'eu'], default: 'us' },
+      ],
+    });
+    return d.id;
+  }
+
+  it('rejects a param value not in a select param options', () => {
+    const id = withRegionSchema();
+    expect(() =>
+      svc.updateDashboardParams(id, { region: "us' UNION SELECT secret FROM users --" }),
+    ).toThrow(/param/i);
+    // Nothing persisted.
+    expect(svc.get(id)?.dashboard.paramsCurrent).toEqual({});
+  });
+
+  it('accepts a param value that is one of the options', () => {
+    const id = withRegionSchema();
+    svc.updateDashboardParams(id, { region: 'eu' });
+    expect(svc.get(id)?.dashboard.paramsCurrent).toEqual({ region: 'eu' });
+  });
+
+  it('rejects an unknown param with no matching def', () => {
+    const id = withRegionSchema();
+    expect(() => svc.updateDashboardParams(id, { evil: 'anything' })).toThrow(/param/i);
+  });
+
+  it('accepts date-range _from/_to keys with valid dates', () => {
+    const d = svc.create('user-1', 'D', 'p1');
+    svc.update(d.id, {
+      paramsSchema: [
+        { key: 'range', label: 'Range', type: 'date-range', default: '2024-01-01,2024-12-31' },
+      ],
+    });
+    svc.updateDashboardParams(d.id, { range_from: '2024-02-01', range_to: '2024-03-01' });
+    expect(svc.get(d.id)?.dashboard.paramsCurrent).toEqual({
+      range_from: '2024-02-01',
+      range_to: '2024-03-01',
+    });
+  });
+
+  it('rejects a malformed date on a date-range param', () => {
+    const d = svc.create('user-1', 'D', 'p1');
+    svc.update(d.id, {
+      paramsSchema: [
+        { key: 'range', label: 'Range', type: 'date-range', default: '2024-01-01,2024-12-31' },
+      ],
+    });
+    expect(() => svc.updateDashboardParams(d.id, { range_from: "2024' OR 1=1" })).toThrow(/param/i);
+  });
+
+  it('allows clearing params with an empty object', () => {
+    const id = withRegionSchema();
+    svc.updateDashboardParams(id, {});
+    expect(svc.get(id)?.dashboard.paramsCurrent).toEqual({});
+  });
 });

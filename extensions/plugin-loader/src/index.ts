@@ -12,6 +12,7 @@ import {
   checkPluginContractMajor,
   type EthosPluginPackageJson,
   isEthosPlugin,
+  PLUGIN_CONTRACT_MAJOR,
 } from '@ethosagent/plugin-contract';
 import type { EthosPlugin, PluginRegistries, PluginRouteEntry } from '@ethosagent/plugin-sdk';
 import { type CredentialStorage, PluginApiImpl } from '@ethosagent/plugin-sdk';
@@ -23,7 +24,6 @@ import {
   scanPluginCode,
   type TrustTier,
 } from '@ethosagent/safety-scanner';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { HealthCheckResult, Logger, PlatformAdapter, Storage } from '@ethosagent/types';
 import { type PluginLockEntry, readLockfile } from './lockfile';
 
@@ -64,8 +64,8 @@ export interface InstalledPluginManifest {
 // ---------------------------------------------------------------------------
 
 export interface PluginLoaderOptions {
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required. */
+  storage: Storage;
   /** Logger for load-time failures. Defaults to a silent NoopLogger. */
   logger?: Logger;
   /**
@@ -73,7 +73,7 @@ export interface PluginLoaderOptions {
    * The wiring layer uses this to register the adapter with the Gateway.
    */
   onPlatformAdapterRegistered?: (pluginId: string, adapter: PlatformAdapter) => void;
-  /** Credential storage backend. Defaults to a new FsStorage instance.
+  /** Credential storage backend. Defaults to the injected `storage`.
    *  Must implement `existsSync` in addition to the Storage interface. */
   credentialStorage?: CredentialStorage;
   /** Ethos data directory (e.g. `~/.ethos`). Credential files are stored
@@ -100,11 +100,10 @@ export class PluginLoader {
   private readonly pluginPaths = new Map<string, string>();
   private readonly pluginHasWidgets = new Map<string, boolean>();
 
-  constructor(registries: PluginRegistries, opts: PluginLoaderOptions = {}) {
+  constructor(registries: PluginRegistries, opts: PluginLoaderOptions) {
     this.registries = registries;
-    const defaultFsStorage = new FsStorage();
-    this.storage = opts.storage ?? defaultFsStorage;
-    this.credentialStorage = opts.credentialStorage ?? (defaultFsStorage as CredentialStorage);
+    this.storage = opts.storage;
+    this.credentialStorage = opts.credentialStorage ?? (opts.storage as CredentialStorage);
     this.dataDir = opts.dataDir ?? join(homedir(), '.ethos');
     this.logger = opts.logger ?? noopLogger;
     this.compatCallbacks = {
@@ -186,6 +185,7 @@ export class PluginLoader {
     const reject = await checkContractMajorFromDir(this.storage, dir, id);
     if (reject) {
       this.logger.warn(`[plugin-loader] ${reject}`, { component: 'plugin-loader', pluginId: id });
+      this.trackManifestStatus(id, 'failed', reject);
       return;
     }
 
@@ -312,15 +312,22 @@ export class PluginLoader {
         if (!isEthos && !isOpenClaw) continue;
 
         if (isEthos) {
-          // Phase 30.6 — reject incompatible contract major before import.
+          // Phase 30.6 + P2.6/S8 — reject an incompatible OR undeclared contract
+          // major before import, so a stale/unknown plugin's top-level code never runs.
           const declared = (raw as { ethos?: { pluginContractMajor?: number } }).ethos
             ?.pluginContractMajor;
-          const compat = checkPluginContractMajor(declared, undefined, name);
-          if (!compat.ok) {
-            this.logger.warn(`[plugin-loader] ${compat.reason}`, {
+          const reject = rejectionForDeclaredMajor(declared, name);
+          if (reject) {
+            const declaredId = ethosNm?.id as string | undefined;
+            const rejectedId = declaredId ?? name.replace(/^@[^/]+\//, '');
+            this.logger.warn(`[plugin-loader] ${reject}`, {
               component: 'plugin-loader',
-              pluginId: name,
+              pluginId: rejectedId,
             });
+            // Register manifest + path so the failure surfaces via listManifests()/getFailures().
+            this.manifests.set(rejectedId, raw as EthosPluginPackageJson);
+            this.pluginPaths.set(rejectedId, join(nmDir, name));
+            this.trackManifestStatus(rejectedId, 'failed', reject);
             continue;
           }
         }
@@ -476,6 +483,16 @@ export class PluginLoader {
   /** Return all loaded/failed plugin manifests with status info. */
   listManifests(): InstalledPluginManifest[] {
     return [...this.loadedManifests.values()];
+  }
+
+  /**
+   * Return manifests for plugins that failed to load (rejected contract major,
+   * missing dependency, or an `activate()` that threw), each carrying its
+   * `error` reason. P2.6/S7 — the caller inspects this to escalate per-plugin
+   * load failures instead of leaving them buried in the logs.
+   */
+  getFailures(): InstalledPluginManifest[] {
+    return [...this.loadedManifests.values()].filter((m) => m.status === 'failed');
   }
 
   getDataSourcePath(pluginId: string, sourceId: string): string | null {
@@ -973,9 +990,9 @@ async function collectFindings(
 export async function scanInstalledPlugins(opts: {
   userDir: string;
   workingDir?: string;
-  storage?: Storage;
+  storage: Storage;
 }): Promise<InstalledPluginManifest[]> {
-  const storage = opts.storage ?? new FsStorage();
+  const storage = opts.storage;
   const out: InstalledPluginManifest[] = [];
   out.push(...(await scanManifestsIn(storage, join(opts.userDir, 'plugins'), 'user')));
   if (opts.workingDir) {
@@ -1103,10 +1120,13 @@ function isPluginModule(mod: unknown): mod is EthosPlugin {
 /**
  * Phase 30.6 — read the plugin's package.json (if present) and return a
  * rejection message string when the declared `ethos.pluginContractMajor` is
- * incompatible with the current contract. Returns `null` to allow the load.
+ * incompatible with — or (P2.6/S8) absent from — the current contract. Returns
+ * `null` to allow the load.
  *
- * Plugins without a package.json or without the field are allowed (older
- * plugins predating the field; in-development plugins).
+ * Only Ethos-native plugins (`ethos.type === 'plugin'`) are gated. Packages
+ * without a package.json (loader-only/dev plugins), OpenClaw plugins, and
+ * skills-only packages declare no contract major and are not subject to this
+ * check.
  */
 async function checkContractMajorFromDir(
   storage: Storage,
@@ -1114,14 +1134,29 @@ async function checkContractMajorFromDir(
   id: string,
 ): Promise<string | null> {
   const src = await storage.read(join(dir, 'package.json'));
-  if (!src) return null; // no package.json — allow (loader-only plugin)
-  let raw: { ethos?: { pluginContractMajor?: number } };
+  if (!src) return null; // no package.json — loader-only/dev plugin, not contract-gated
+  let raw: unknown;
   try {
     raw = JSON.parse(src);
   } catch {
     return null;
   }
-  const declared = raw.ethos?.pluginContractMajor;
+  if (!isEthosPlugin(raw)) return null; // not an Ethos-native plugin — not gated
+  const declared = (raw as { ethos?: { pluginContractMajor?: number } }).ethos?.pluginContractMajor;
+  return rejectionForDeclaredMajor(declared, id);
+}
+
+/**
+ * Phase P2.6 (S8) — an Ethos plugin that declares NO `ethos.pluginContractMajor`
+ * has an unknown contract; we cannot verify compatibility, so we refuse to run
+ * its top-level code. This is the same enforcement as an incompatible-major
+ * rejection (logged + status-tracked + not imported by the caller). Returns a
+ * rejection string, or `null` when the declared major is compatible.
+ */
+function rejectionForDeclaredMajor(declared: number | undefined, id: string): string | null {
+  if (declared === undefined) {
+    return `Plugin "${id}" declares no ethos.pluginContractMajor; its plugin contract is unknown and cannot be verified (current contract major is ${PLUGIN_CONTRACT_MAJOR}). Declare ethos.pluginContractMajor in package.json. See https://github.com/ethosdev/ethos/blob/main/packages/plugin-contract/MIGRATIONS.md`;
+  }
   const result = checkPluginContractMajor(declared, undefined, id);
   return result.ok ? null : (result.reason ?? `Plugin "${id}" rejected`);
 }

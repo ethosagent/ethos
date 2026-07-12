@@ -1,5 +1,6 @@
 import { type AgentEvent, type AgentLoop, DefaultHookRegistry } from '@ethosagent/core';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   MemoryEntry,
   MemoryEntryRef,
@@ -58,7 +59,7 @@ export function makeStubPersonalityRegistry(
   personalities: PersonalityConfig[] = [],
   userPersonalitiesDir?: string,
 ): FilePersonalityRegistry {
-  const registry = new FilePersonalityRegistry(undefined, userPersonalitiesDir);
+  const registry = new FilePersonalityRegistry(new FsStorage(), userPersonalitiesDir);
   for (const p of personalities) registry.define(p);
   if (personalities[0]) registry.setDefault(personalities[0].id);
   return registry;

@@ -1,4 +1,10 @@
-import type { HookRegistry, PersonalityConfig, PersonalityRegistry, Tool } from '@ethosagent/types';
+import type {
+  HookRegistry,
+  PersonalityConfig,
+  PersonalityRegistry,
+  Storage,
+  Tool,
+} from '@ethosagent/types';
 import { FileContextInjector } from './file-context-injector';
 import { GetSkillTool } from './get-skill-tool';
 import { MemoryGuidanceInjector } from './memory-guidance-injector';
@@ -51,6 +57,9 @@ export {
 } from './universal-scanner';
 
 export interface InjectorConfig {
+  /** Storage backend. Injected by the composition root; required — never
+   *  falls back to raw disk. */
+  storage: Storage;
   /** Override the global skills directory (defaults to ~/.ethos/skills/) */
   globalSkillsDir?: string;
   /** Notified when a skill is skipped because of OpenClaw `requires`/`os` rules. */
@@ -94,7 +103,7 @@ export interface InjectorConfig {
  */
 export function createInjectors(
   personalities: PersonalityRegistry,
-  config: InjectorConfig = {},
+  config: InjectorConfig,
 ): {
   injectors: import('@ethosagent/types').ContextInjector[];
   tools: Tool[];
@@ -102,10 +111,12 @@ export function createInjectors(
   scanner: UniversalScanner;
 } {
   const scanner = new UniversalScanner({
+    storage: config.storage,
     extraSources: config.extraSources,
     trustedFirstPartySources: config.trustedFirstPartySources,
   });
   const skillsInjector = new SkillsInjector(personalities, {
+    storage: config.storage,
     globalSkillsDir: config.globalSkillsDir,
     onSkip: config.onSkillSkip,
     scanner,
@@ -114,6 +125,7 @@ export function createInjectors(
       : {}),
   });
   const fileContext = new FileContextInjector({
+    storage: config.storage,
     personalities,
     ...(config.hooks ? { hooks: config.hooks } : {}),
   });

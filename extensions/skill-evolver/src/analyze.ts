@@ -1,5 +1,4 @@
 import { join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
 import type {
   EvalRecord,
@@ -10,8 +9,6 @@ import type {
   SkillStats,
   TaskSummary,
 } from './types';
-
-const defaultStorage = new FsStorage();
 
 export const DEFAULT_EVOLVE_CONFIG: EvolveConfig = {
   rewriteThreshold: 0.6,
@@ -66,10 +63,7 @@ function isEvalRecord(obj: unknown): obj is EvalRecord {
   );
 }
 
-export async function loadEvolveConfig(
-  path: string,
-  storage: Storage = defaultStorage,
-): Promise<EvolveConfig> {
+export async function loadEvolveConfig(path: string, storage: Storage): Promise<EvolveConfig> {
   const raw = await storage.read(path);
   if (!raw) return DEFAULT_EVOLVE_CONFIG;
   const parsed = JSON.parse(raw) as Partial<EvolveConfig>;
@@ -151,7 +145,7 @@ export async function analyzeEvalOutput(
   records: EvalRecord[],
   skillsDir: string,
   config: EvolveConfig,
-  storage: Storage = defaultStorage,
+  storage: Storage,
 ): Promise<EvolutionPlan> {
   const tasks = summarizeTasks(records);
   const skillStats = computeSkillStats(tasks);

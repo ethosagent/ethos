@@ -1,4 +1,3 @@
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
 import type { AtroposRecord } from './types';
 
@@ -9,7 +8,7 @@ export class AtroposWriter {
 
   constructor(
     private readonly path: string,
-    storage: Storage = new FsStorage(),
+    storage: Storage,
   ) {
     this.storage = storage;
   }

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { UniversalScanner } from '@ethosagent/skills';
+import { FsStorage } from '@ethosagent/storage-fs';
 import matter from 'gray-matter';
 import { describe, expect, it } from 'vitest';
 import { BUNDLED_SKILL_IDS, bundledSkillsSource } from '../bundled';
@@ -89,6 +90,7 @@ describe('@ethosagent/skills bundle', () => {
 
   it('universal scanner discovers all bundled skills via trustedFirstPartySources', async () => {
     const pool = await new UniversalScanner({
+      storage: new FsStorage(),
       // disable default community sources so we don't scan the real ~/.ethos
       // / ~/.claude tree on the dev machine running these tests
       sources: [],

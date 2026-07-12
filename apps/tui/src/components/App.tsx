@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 import type { AgentBridge } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { PendingClarify, Session } from '@ethosagent/types';
 import { createMemoryProvider } from '@ethosagent/wiring';
 import { Box, Static, Text, useApp, useInput } from 'ink';
@@ -822,7 +823,10 @@ export function App({
         break;
       case 'memory': {
         try {
-          const mem = createMemoryProvider({ dataDir: `${homedir()}/.ethos` });
+          const mem = createMemoryProvider({
+            dataDir: `${homedir()}/.ethos`,
+            storage: new FsStorage(),
+          });
           const result = await mem.prefetch({
             scopeId: `personality:${personality}`,
             sessionId: '',

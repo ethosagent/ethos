@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FilePersonalityRegistry, parseMcpYaml, renderMcpYaml } from '../index';
 
@@ -273,7 +274,7 @@ describe('FilePersonalityRegistry — writeMcpToolSubsets', () => {
     await writeFile(join(personalityDir, 'config.yaml'), 'name: Agent\nmcp_servers: linear\n');
     await writeFile(join(personalityDir, 'SOUL.md'), '# Agent');
 
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadFromDirectory(join(testDir, 'personalities'));
 
     await reg.writeMcpToolSubsets('agent', { linear: ['list_issues', 'get_issue'] });
@@ -302,7 +303,7 @@ describe('FilePersonalityRegistry — writeMcpToolSubsets', () => {
       ].join('\n'),
     );
 
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadFromDirectory(join(testDir, 'personalities'));
 
     await reg.writeMcpToolSubsets('with-reject', { linear: ['list_issues'] });
@@ -332,7 +333,7 @@ describe('FilePersonalityRegistry — writeMcpToolSubsets', () => {
       ].join('\n'),
     );
 
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadFromDirectory(join(testDir, 'personalities'));
 
     await reg.writeMcpToolSubsets('clear-tools', { linear: null });
@@ -352,7 +353,7 @@ describe('FilePersonalityRegistry — writeMcpToolSubsets', () => {
       ['servers:', '  linear:', '    tools:', '      - list_issues'].join('\n'),
     );
 
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadFromDirectory(join(testDir, 'personalities'));
 
     await reg.writeMcpToolSubsets('all-default', { linear: null });
@@ -378,7 +379,7 @@ describe('FilePersonalityRegistry — writeMcpToolSubsets', () => {
       ].join('\n'),
     );
 
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadFromDirectory(join(testDir, 'personalities'));
 
     await reg.writeMcpToolSubsets('multi', { linear: ['get_issue'] });
@@ -390,7 +391,7 @@ describe('FilePersonalityRegistry — writeMcpToolSubsets', () => {
   });
 
   it('throws for a built-in personality', async () => {
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadBuiltins();
     await expect(reg.writeMcpToolSubsets('researcher', { linear: ['x'] })).rejects.toThrow();
   });
@@ -407,7 +408,7 @@ describe('FilePersonalityRegistry — writeMcpToolSubsets', () => {
       ),
     );
 
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadFromDirectory(join(testDir, 'personalities'));
 
     await reg.writeMcpToolSubsets('enabled-only', { linear: null });
@@ -435,7 +436,7 @@ describe('FilePersonalityRegistry — mcp.yaml loading', () => {
       ),
     );
 
-    const reg = new FilePersonalityRegistry();
+    const reg = new FilePersonalityRegistry(new FsStorage());
     await reg.loadFromDirectory(testDir);
 
     const policy = reg.getMcpPolicy('test-agent');
@@ -449,7 +450,7 @@ describe('FilePersonalityRegistry — mcp.yaml loading', () => {
     await writeFile(join(personalityDir, 'config.yaml'), 'name: No MCP\n');
     await writeFile(join(personalityDir, 'SOUL.md'), '# No MCP\nI have no MCP policy.');
 
-    const reg = new FilePersonalityRegistry();
+    const reg = new FilePersonalityRegistry(new FsStorage());
     await reg.loadFromDirectory(testDir);
 
     expect(reg.getMcpPolicy('no-mcp')).toBeUndefined();
@@ -465,7 +466,7 @@ describe('FilePersonalityRegistry — mcp.yaml loading', () => {
       ['servers:', '  slack:', '    tools:', '      - search_public'].join('\n'),
     );
 
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadFromDirectory(testDir);
 
     const described = reg.describe('described');
@@ -490,7 +491,7 @@ describe('FilePersonalityRegistry — mcp.yaml loading', () => {
       ].join('\n'),
     );
 
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadFromDirectory(testDir);
 
     const described = reg.describe('warn-agent');
@@ -511,7 +512,7 @@ describe('FilePersonalityRegistry — mcp.yaml loading', () => {
       ['servers:', '  linear:', '    tools:', '      - list_issues'].join('\n'),
     );
 
-    const reg = new FilePersonalityRegistry(undefined, testDir);
+    const reg = new FilePersonalityRegistry(new FsStorage(), testDir);
     await reg.loadFromDirectory(testDir);
 
     const described = reg.describe('clean-agent');
@@ -525,7 +526,7 @@ describe('FilePersonalityRegistry — mcp.yaml loading', () => {
     await writeFile(join(personalityDir, 'config.yaml'), 'name: Cached\n');
     await writeFile(join(personalityDir, 'SOUL.md'), '# Cached');
 
-    const reg = new FilePersonalityRegistry();
+    const reg = new FilePersonalityRegistry(new FsStorage());
     await reg.loadFromDirectory(testDir);
 
     // Initially no mcp.yaml

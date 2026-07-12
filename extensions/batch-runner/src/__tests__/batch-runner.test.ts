@@ -2,9 +2,12 @@ import { mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AtroposRecord, BatchTask } from '../index';
 import { BatchRunner, parseTasksJsonl, readCheckpoint } from '../index';
+
+const storage = new FsStorage();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,11 +42,15 @@ function makePaths() {
 }
 
 function makeRunner(loop: AgentLoop, concurrency = 1) {
-  return new BatchRunner(loop, {
-    concurrency,
-    defaultPersonalityId: 'researcher',
-    ...makePaths(),
-  });
+  return new BatchRunner(
+    loop,
+    {
+      concurrency,
+      defaultPersonalityId: 'researcher',
+      ...makePaths(),
+    },
+    storage,
+  );
 }
 
 async function readOutput(dir: string): Promise<AtroposRecord[]> {
@@ -176,11 +183,15 @@ describe('BatchRunner.run', () => {
   it('skips already-completed tasks from checkpoint', async () => {
     // Pre-write a checkpoint marking task-1 as done
     const { writeCheckpoint } = await import('../checkpoint');
-    await writeCheckpoint(join(testDir, 'checkpoint.json'), {
-      version: 1,
-      completedTaskIds: ['task-1'],
-      failedTaskIds: [],
-    });
+    await writeCheckpoint(
+      join(testDir, 'checkpoint.json'),
+      {
+        version: 1,
+        completedTaskIds: ['task-1'],
+        failedTaskIds: [],
+      },
+      storage,
+    );
 
     const calls: string[] = [];
     const loop = {
@@ -204,7 +215,7 @@ describe('BatchRunner.run', () => {
     const runner = makeRunner(loop);
     await runner.run(tasks);
 
-    const cp = await readCheckpoint(join(testDir, 'checkpoint.json'));
+    const cp = await readCheckpoint(join(testDir, 'checkpoint.json'), storage);
     expect(cp.completedTaskIds).toContain('task-1');
     expect(cp.completedTaskIds).toContain('task-2');
   });
@@ -230,11 +241,15 @@ describe('BatchRunner.run', () => {
       },
     } as unknown as AgentLoop;
 
-    const runner = new BatchRunner(loop, {
-      concurrency,
-      defaultPersonalityId: 'researcher',
-      ...makePaths(),
-    });
+    const runner = new BatchRunner(
+      loop,
+      {
+        concurrency,
+        defaultPersonalityId: 'researcher',
+        ...makePaths(),
+      },
+      storage,
+    );
     await runner.run(manyTasks);
 
     expect(maxActive).toBeLessThanOrEqual(concurrency);

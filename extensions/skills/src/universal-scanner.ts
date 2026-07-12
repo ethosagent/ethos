@@ -1,7 +1,6 @@
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { canInstall, scanSkillMd, type TrustTier } from '@ethosagent/safety-scanner';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Skill, Storage } from '@ethosagent/types';
 import matter from 'gray-matter';
 import { canParse as canParseAgentSkills, parseAgentSkills } from './dialects/agentskills';
@@ -42,7 +41,9 @@ export interface UniversalScannerOptions {
    * combine this with `trustedFirstPartySources`.
    */
   sources?: ScanSource[];
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required — never
+   *  falls back to raw disk. */
+  storage: Storage;
   /** Called when a skill is rejected by the safety scan. */
   onSkip?: (qualifiedName: string, reason: string) => void;
 }
@@ -107,8 +108,8 @@ export class UniversalScanner {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly onSkip?: (qualifiedName: string, reason: string) => void;
 
-  constructor(opts: UniversalScannerOptions = {}) {
-    this.storage = opts.storage ?? new FsStorage();
+  constructor(opts: UniversalScannerOptions) {
+    this.storage = opts.storage;
     const trustedDefaults = opts.sources ? [] : defaultTrustedSources();
     const communityDefaults = opts.sources ?? defaultCommunitySources();
     this.sources = [

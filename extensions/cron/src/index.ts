@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { noopLogger } from '@ethosagent/logger';
 import { sanitize } from '@ethosagent/safety-injection';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Logger, Storage } from '@ethosagent/types';
 import { decideEscalation, type HeartbeatDecision } from './heartbeat';
 import { isOneShotSchedule, isValidSchedule, nextRunForSchedule } from './schedule';
@@ -80,8 +79,9 @@ export interface CronSchedulerConfig {
   cronDir?: string;
   /** Tick interval in ms. Default 60_000 (1 min). */
   tickIntervalMs?: number;
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required — never
+   *  falls back to raw disk. */
+  storage: Storage;
   /** Logger for tick-time errors. Defaults to a silent NoopLogger. */
   logger?: Logger;
   /** Optional callback to deliver run output back to the originating channel. */
@@ -152,7 +152,7 @@ export class CronScheduler {
     this.outputDir = join(this.cronDir, 'output');
     this.runJob = config.runJob;
     this.tickIntervalMs = config.tickIntervalMs ?? 60_000;
-    this.storage = config.storage ?? new FsStorage();
+    this.storage = config.storage;
     this.logger = config.logger ?? noopLogger;
     this.deliver = config.deliver;
     this.systemTasks = config.systemTasks ?? {};

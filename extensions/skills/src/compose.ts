@@ -33,7 +33,7 @@ export interface SkillsCompose {
 }
 
 export async function compose(
-  _ctx: WiringContext,
+  ctx: WiringContext,
   deps: {
     personalities: PersonalityRegistry;
     activePerson: PersonalityConfig;
@@ -52,10 +52,12 @@ export async function compose(
 
   const codingBundleSource = bundledSkillsSource();
   const skillPool = await new UniversalScanner({
+    storage: ctx.storage,
     trustedFirstPartySources: [codingBundleSource],
   }).scan();
 
   const { injectors, tools, skillsInjector, scanner } = createInjectors(personalities, {
+    storage: ctx.storage,
     onSkillSkip: (skillId, reason) => log.info(`skill ${skillId} skipped: ${reason}`),
     trustedFirstPartySources: [codingBundleSource],
     hooks,

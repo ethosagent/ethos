@@ -635,3 +635,69 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
     expect(terminalEnd?.ok).toBe(true);
   });
 });
+
+describe('AgentLoop — P2.1 secret-result blocking default', () => {
+  // A GitHub PAT that detectSecrets recognises; redactString replaces it with
+  // the `[REDACTED:github-pat]` marker.
+  const SECRET = 'ghp_abcdefghij1234567890abcdefghij123456';
+  const REDACTED_MARKER = '[REDACTED:github-pat]';
+
+  function toolResultContent(capturedTurn: Message[] | undefined): string {
+    const last = capturedTurn?.[capturedTurn.length - 1];
+    const block = Array.isArray(last?.content) ? last.content[0] : null;
+    return block && 'content' in block ? block.content : '';
+  }
+
+  function runWithBlockSetting(blockSecretResults: boolean | undefined) {
+    const captured: Message[][] = [];
+    const tools = new DefaultToolRegistry();
+    tools.register(makeTrustedTool('read_file', `token: ${SECRET}`));
+    const llm = makeScriptedLLM(
+      [
+        {
+          toolCalls: [{ id: 't1', name: 'read_file', input: { path: '/x' } }],
+          finishReason: 'tool_use',
+        },
+        { text: 'ok', finishReason: 'end_turn' },
+      ],
+      captured,
+    );
+
+    const personalities = new DefaultPersonalityRegistry();
+    personalities.define({
+      id: 'default',
+      name: 'Default',
+      safety: {
+        injectionDefense: blockSecretResults === undefined ? {} : { blockSecretResults },
+      },
+    });
+    personalities.setDefault('default');
+
+    const loop = new AgentLoop({ llm, tools, personalities, safety: createTestSafety() });
+    return { loop, captured };
+  }
+
+  it('unset (undefined) blocks secret-looking tool results by default', async () => {
+    const { loop, captured } = runWithBlockSetting(undefined);
+    await collect(loop.run('go'));
+    const content = toolResultContent(captured[1]);
+    expect(content).toContain(REDACTED_MARKER);
+    expect(content).not.toContain(SECRET);
+  });
+
+  it('explicit `false` opts out — secret passes through unredacted', async () => {
+    const { loop, captured } = runWithBlockSetting(false);
+    await collect(loop.run('go'));
+    const content = toolResultContent(captured[1]);
+    expect(content).toContain(SECRET);
+    expect(content).not.toContain(REDACTED_MARKER);
+  });
+
+  it('explicit `true` blocks (same as the default)', async () => {
+    const { loop, captured } = runWithBlockSetting(true);
+    await collect(loop.run('go'));
+    const content = toolResultContent(captured[1]);
+    expect(content).toContain(REDACTED_MARKER);
+    expect(content).not.toContain(SECRET);
+  });
+});

@@ -2,6 +2,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DefaultHookRegistry } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { PersonalityConfig } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { registerSkillEvolutionAutoTrigger, resetSkillEvolutionCooldowns } from '../auto-trigger';
@@ -52,7 +53,12 @@ async function listAutoCandidates(personalityId: string): Promise<string[]> {
 describe('SkillEvolutionAutoTrigger (E3)', () => {
   it('queues a candidate when threshold is met', async () => {
     const hooks = new DefaultHookRegistry();
-    registerSkillEvolutionAutoTrigger({ hooks, personalities: makeRegistry(), dataDir });
+    registerSkillEvolutionAutoTrigger({
+      hooks,
+      personalities: makeRegistry(),
+      dataDir,
+      storage: new FsStorage(),
+    });
     await hooks.fireVoid('agent_done', {
       sessionId: 'sess1',
       text: 'Done.',
@@ -70,7 +76,12 @@ describe('SkillEvolutionAutoTrigger (E3)', () => {
 
   it('does NOT queue when below threshold', async () => {
     const hooks = new DefaultHookRegistry();
-    registerSkillEvolutionAutoTrigger({ hooks, personalities: makeRegistry(), dataDir });
+    registerSkillEvolutionAutoTrigger({
+      hooks,
+      personalities: makeRegistry(),
+      dataDir,
+      storage: new FsStorage(),
+    });
     await hooks.fireVoid('agent_done', {
       sessionId: 'sess1',
       text: 'Done.',
@@ -89,6 +100,7 @@ describe('SkillEvolutionAutoTrigger (E3)', () => {
       hooks,
       personalities: makeRegistry({ skill_evolution: { enabled: false } }),
       dataDir,
+      storage: new FsStorage(),
     });
     await hooks.fireVoid('agent_done', {
       sessionId: 'sess1',
@@ -109,6 +121,7 @@ describe('SkillEvolutionAutoTrigger (E3)', () => {
       hooks,
       personalities: makeRegistry(),
       dataDir,
+      storage: new FsStorage(),
       now: () => now,
     });
     const payload = {
@@ -135,6 +148,7 @@ describe('SkillEvolutionAutoTrigger (E3)', () => {
       hooks,
       personalities: makeRegistry(),
       dataDir,
+      storage: new FsStorage(),
       now: () => now,
     });
     const payload = {
@@ -173,7 +187,7 @@ describe('SkillEvolutionAutoTrigger (E3)', () => {
       loadFromDirectory: async () => {},
       remove: () => {},
     };
-    registerSkillEvolutionAutoTrigger({ hooks, personalities, dataDir });
+    registerSkillEvolutionAutoTrigger({ hooks, personalities, dataDir, storage: new FsStorage() });
     await hooks.fireVoid('agent_done', {
       sessionId: 'sess1',
       text: 'engineer done',
@@ -196,7 +210,12 @@ describe('SkillEvolutionAutoTrigger (E3)', () => {
 
   it('candidate frontmatter includes auto_proposed provenance', async () => {
     const hooks = new DefaultHookRegistry();
-    registerSkillEvolutionAutoTrigger({ hooks, personalities: makeRegistry(), dataDir });
+    registerSkillEvolutionAutoTrigger({
+      hooks,
+      personalities: makeRegistry(),
+      dataDir,
+      storage: new FsStorage(),
+    });
     await hooks.fireVoid('agent_done', {
       sessionId: 'session-abc',
       text: 'Complete.',

@@ -1,11 +1,12 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { describe, expect, it } from 'vitest';
 import { AgentMesh } from '../index';
 
 function makeMesh(): AgentMesh {
   const path = join(tmpdir(), `mesh-test-${Date.now()}-${Math.random()}.json`);
-  return new AgentMesh(path);
+  return new AgentMesh(path, { storage: new FsStorage() });
 }
 
 function entry(overrides: Partial<Parameters<AgentMesh['register']>[0]> = {}) {

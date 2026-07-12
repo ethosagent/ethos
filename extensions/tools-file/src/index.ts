@@ -1,20 +1,26 @@
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { sensitiveDenyPaths } from '@ethosagent/storage-fs';
 import type { ScopedFs, Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Ethos operational-state files the write tools must never clobber. Distinct
+// from the credential/system floor below: these are app state, not secrets —
+// write-blocked here but still readable.
 const BLOCKED_WRITE_PATHS = [
   join(homedir(), '.ethos', 'config.yaml'),
-  join(homedir(), '.ethos', 'keys.json'),
   join(homedir(), '.ethos', 'web-token'),
   join(homedir(), '.ethos', 'pairing.db'),
 ];
 const BLOCKED_WRITE_PREFIXES = [
   join(homedir(), '.ethos', 'sessions'),
-  join(homedir(), '.ethos', 'secrets'),
+  // Credential/system deny floor — single source of truth shared with
+  // ScopedStorage (defaultAlwaysDeny) and the terminal/process argv floors.
+  // Covers ~/.ethos/keys.json and ~/.ethos/secrets among others.
+  ...sensitiveDenyPaths(),
 ];
 
 function expandPath(p: string, cwd: string): string {
@@ -37,7 +43,7 @@ function canonicalizeForRead(path: string): string {
   return resolve(path);
 }
 
-function isWriteBlocked(abs: string): boolean {
+export function isWriteBlocked(abs: string): boolean {
   const normalized = resolve(abs);
   if (BLOCKED_WRITE_PATHS.some((p) => resolve(p) === normalized)) return true;
   return BLOCKED_WRITE_PREFIXES.some((prefix) => {

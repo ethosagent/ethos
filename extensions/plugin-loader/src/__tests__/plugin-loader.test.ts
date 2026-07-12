@@ -9,7 +9,7 @@ import {
   DefaultToolRegistry,
 } from '@ethosagent/core';
 import type { CredentialStorage, PluginRegistries } from '@ethosagent/plugin-sdk';
-import { InMemoryStorage } from '@ethosagent/storage-fs';
+import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
 import type { ContextInjector, Logger } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PluginLoader } from '../index';
@@ -49,7 +49,7 @@ async function writePlugin(dir: string, name: string, code: string): Promise<str
 describe('PluginLoader', () => {
   it('loads a plugin that registers a tool', async () => {
     const registries = makeRegistries();
-    const loader = new PluginLoader(registries);
+    const loader = new PluginLoader(registries, { storage: new FsStorage() });
 
     await writePlugin(
       testDir,
@@ -75,7 +75,7 @@ export async function activate(api) {
 
   it('unloads a plugin and removes its tools', async () => {
     const registries = makeRegistries();
-    const loader = new PluginLoader(registries);
+    const loader = new PluginLoader(registries, { storage: new FsStorage() });
 
     await writePlugin(
       testDir,
@@ -103,7 +103,7 @@ export async function deactivate() {}
 
   it('skips directories without activate export', async () => {
     const registries = makeRegistries();
-    const loader = new PluginLoader(registries);
+    const loader = new PluginLoader(registries, { storage: new FsStorage() });
 
     await writePlugin(testDir, 'broken-plugin', '// no activate export');
 
@@ -113,13 +113,13 @@ export async function deactivate() {}
 
   it('does not throw when directory does not exist', async () => {
     const registries = makeRegistries();
-    const loader = new PluginLoader(registries);
+    const loader = new PluginLoader(registries, { storage: new FsStorage() });
     await expect(loader.loadFromDirectory(join(testDir, 'nonexistent'))).resolves.not.toThrow();
   });
 
   it('list() returns loaded plugin ids', async () => {
     const registries = makeRegistries();
-    const loader = new PluginLoader(registries);
+    const loader = new PluginLoader(registries, { storage: new FsStorage() });
 
     await writePlugin(testDir, 'plugin-a', 'export async function activate(api) {}');
     await writePlugin(testDir, 'plugin-b', 'export async function activate(api) {}');
@@ -133,7 +133,7 @@ export async function deactivate() {}
 
   it('unloadAll() removes all plugins', async () => {
     const registries = makeRegistries();
-    const loader = new PluginLoader(registries);
+    const loader = new PluginLoader(registries, { storage: new FsStorage() });
 
     await writePlugin(testDir, 'p1', 'export async function activate(api) {}');
     await writePlugin(testDir, 'p2', 'export async function activate(api) {}');
@@ -147,14 +147,18 @@ export async function deactivate() {}
 
   it('loadFromNodeModules discovers scoped @ethos-plugins/* packages', async () => {
     const registries = makeRegistries();
-    const loader = new PluginLoader(registries);
+    const loader = new PluginLoader(registries, { storage: new FsStorage() });
 
     // Lay out a fake node_modules with both a flat ethos-plugin-* and a scoped one.
     const flatDir = join(testDir, 'ethos-plugin-flat');
     await mkdir(flatDir, { recursive: true });
     await writeFile(
       join(flatDir, 'package.json'),
-      JSON.stringify({ name: 'ethos-plugin-flat', main: 'index.ts', ethos: { type: 'plugin' } }),
+      JSON.stringify({
+        name: 'ethos-plugin-flat',
+        main: 'index.ts',
+        ethos: { type: 'plugin', pluginContractMajor: 4 },
+      }),
     );
     await writeFile(
       join(flatDir, 'index.ts'),
@@ -175,7 +179,7 @@ export async function deactivate() {}
       JSON.stringify({
         name: '@ethos-plugins/scoped',
         main: 'index.ts',
-        ethos: { type: 'plugin' },
+        ethos: { type: 'plugin', pluginContractMajor: 4 },
       }),
     );
     await writeFile(
@@ -203,6 +207,7 @@ export async function deactivate() {}
       const registries = makeRegistries();
       const credStorage = new InMemoryStorage();
       const loader = new PluginLoader(registries, {
+        storage: new FsStorage(),
         credentialStorage: credStorage as CredentialStorage,
         dataDir: testDir,
       });
@@ -216,6 +221,7 @@ export async function deactivate() {}
       const registries = makeRegistries();
       const credStorage = new InMemoryStorage();
       const loader = new PluginLoader(registries, {
+        storage: new FsStorage(),
         credentialStorage: credStorage as CredentialStorage,
         dataDir: '/test-data',
       });
@@ -243,6 +249,7 @@ export async function deactivate() {}
       const registries = makeRegistries();
       const credStorage = new InMemoryStorage();
       const loader = new PluginLoader(registries, {
+        storage: new FsStorage(),
         credentialStorage: credStorage as CredentialStorage,
         dataDir: '/test-data',
       });
@@ -255,6 +262,7 @@ export async function deactivate() {}
       const registries = makeRegistries();
       const credStorage = new InMemoryStorage();
       const loader = new PluginLoader(registries, {
+        storage: new FsStorage(),
         credentialStorage: credStorage as CredentialStorage,
         dataDir: '/test-data',
       });
@@ -275,6 +283,7 @@ export async function deactivate() {}
       const registries = makeRegistries();
       const credStorage = new InMemoryStorage();
       const loader = new PluginLoader(registries, {
+        storage: new FsStorage(),
         credentialStorage: credStorage as CredentialStorage,
         dataDir: '/test-data',
       });
@@ -306,6 +315,7 @@ export async function deactivate() {}
       const registries = makeRegistries();
       const credStorage = new InMemoryStorage();
       const loader = new PluginLoader(registries, {
+        storage: new FsStorage(),
         credentialStorage: credStorage as CredentialStorage,
         dataDir: '/test-data',
       });
@@ -320,6 +330,7 @@ export async function deactivate() {}
           version: '1.0.0',
           ethos: {
             type: 'plugin',
+            pluginContractMajor: 4,
             credentials: [
               {
                 key: 'API_KEY',
@@ -387,6 +398,7 @@ export async function deactivate() {}
       const registries = makeRegistries();
       const credStorage = new InMemoryStorage();
       const loader = new PluginLoader(registries, {
+        storage: new FsStorage(),
         credentialStorage: credStorage as CredentialStorage,
         dataDir: '/test-data',
       });
@@ -405,7 +417,7 @@ export async function deactivate() {}
     it('getDataSourcePath returns path registered by plugin', async () => {
       const registries = makeRegistries();
       registries.dataSources = new Map();
-      const loader = new PluginLoader(registries);
+      const loader = new PluginLoader(registries, { storage: new FsStorage() });
 
       await writePlugin(
         testDir,
@@ -424,7 +436,7 @@ export async function activate(api) {
     it('getDataSourcePath returns null for unknown source', async () => {
       const registries = makeRegistries();
       registries.dataSources = new Map();
-      const loader = new PluginLoader(registries);
+      const loader = new PluginLoader(registries, { storage: new FsStorage() });
 
       await writePlugin(testDir, 'ds-plugin2', 'export async function activate(api) {}');
       await loader.loadFromDirectory(testDir);
@@ -433,7 +445,7 @@ export async function activate(api) {
 
     it('getPluginPath returns plugin directory', async () => {
       const registries = makeRegistries();
-      const loader = new PluginLoader(registries);
+      const loader = new PluginLoader(registries, { storage: new FsStorage() });
 
       await writePlugin(testDir, 'path-plugin', 'export async function activate(api) {}');
       await loader.loadFromDirectory(testDir);
@@ -442,7 +454,7 @@ export async function activate(api) {
 
     it('getPluginPath returns null for unknown plugin', async () => {
       const registries = makeRegistries();
-      const loader = new PluginLoader(registries);
+      const loader = new PluginLoader(registries, { storage: new FsStorage() });
       expect(loader.getPluginPath('nonexistent')).toBeNull();
     });
   });
@@ -462,7 +474,7 @@ export async function activate(api) {
         error: () => {},
         child: () => logger,
       };
-      const loader = new PluginLoader(registries, { logger });
+      const loader = new PluginLoader(registries, { storage: new FsStorage(), logger });
 
       const pluginDir = join(testDir, 'old-major');
       await mkdir(pluginDir, { recursive: true });
@@ -509,7 +521,7 @@ export async function activate(api) {
         error: () => {},
         child: () => logger,
       };
-      const loader = new PluginLoader(registries, { logger });
+      const loader = new PluginLoader(registries, { storage: new FsStorage(), logger });
 
       const pluginDir = join(testDir, 'ethos-plugin-bad');
       await mkdir(pluginDir, { recursive: true });
@@ -539,9 +551,21 @@ export async function activate(api) {
       expect(warns.find((w) => /ethos-plugin-bad.*pluginContractMajor=42/.test(w))).toBeDefined();
     });
 
-    it('allows a plugin without pluginContractMajor (backward compat)', async () => {
+    // P2.6/S8 — an Ethos plugin that declares NO contract major is rejected
+    // (unknown contract). This replaces the old backward-compat allowance.
+    it('rejects an Ethos plugin that declares no pluginContractMajor (S8)', async () => {
       const registries = makeRegistries();
-      const loader = new PluginLoader(registries);
+      const warns: string[] = [];
+      const logger: Logger = {
+        debug: () => {},
+        info: () => {},
+        warn: (msg: string) => {
+          warns.push(msg);
+        },
+        error: () => {},
+        child: () => logger,
+      };
+      const loader = new PluginLoader(registries, { storage: new FsStorage(), logger });
 
       const pluginDir = join(testDir, 'no-major');
       await mkdir(pluginDir, { recursive: true });
@@ -562,8 +586,123 @@ export async function activate(api) {
       );
 
       await loader.loadFromDirectory(testDir);
-      expect(loader.isLoaded('no-major')).toBe(true);
-      expect(registries.tools.get('compat_tool')).toBeDefined();
+
+      // Not imported: not loaded and its tool never registered.
+      expect(loader.isLoaded('no-major')).toBe(false);
+      expect(registries.tools.get('compat_tool')).toBeUndefined();
+      // Status tracked as failed with a reason naming the missing field.
+      const manifest = loader.listManifests().find((m) => m.id === 'no-major');
+      expect(manifest?.status).toBe('failed');
+      expect(manifest?.error).toMatch(/pluginContractMajor/);
+      // Rejection logged.
+      expect(warns.find((w) => /no-major.*pluginContractMajor/.test(w))).toBeDefined();
+    });
+
+    it('does not gate an OpenClaw / non-Ethos package lacking a contract major', async () => {
+      const registries = makeRegistries();
+      const loader = new PluginLoader(registries, { storage: new FsStorage() });
+
+      // ethos.type is NOT 'plugin' — this is not an Ethos-native plugin, so the
+      // contract gate must not reject it for a missing pluginContractMajor.
+      const pluginDir = join(testDir, 'not-ethos');
+      await mkdir(pluginDir, { recursive: true });
+      await writeFile(
+        join(pluginDir, 'package.json'),
+        JSON.stringify({ name: 'not-ethos', version: '1.0.0' }),
+      );
+      await writeFile(
+        join(pluginDir, 'index.ts'),
+        `export async function activate(api) {
+          api.registerTool({
+            name: 'non_ethos_tool',
+            description: '',
+            schema: { type: 'object', properties: {} },
+            async execute() { return { ok: true, value: 'ok' }; },
+          });
+        }`,
+      );
+
+      await loader.loadFromDirectory(testDir);
+      expect(loader.isLoaded('not-ethos')).toBe(true);
+      expect(registries.tools.get('non_ethos_tool')).toBeDefined();
+    });
+
+    // P2.6/S7 — load failures are retrievable by the caller via getFailures().
+    it('exposes load failures to the caller via getFailures() (S7)', async () => {
+      const registries = makeRegistries();
+      const loader = new PluginLoader(registries, { storage: new FsStorage() });
+
+      const pluginDir = join(testDir, 'failing');
+      await mkdir(pluginDir, { recursive: true });
+      await writeFile(
+        join(pluginDir, 'package.json'),
+        JSON.stringify({ name: 'failing', version: '1.0.0', ethos: { type: 'plugin' } }),
+      );
+      await writeFile(join(pluginDir, 'index.ts'), 'export async function activate(api) {}');
+
+      await loader.loadFromDirectory(testDir);
+
+      const failures = loader.getFailures();
+      const failure = failures.find((f) => f.id === 'failing');
+      expect(failure).toBeDefined();
+      expect(failure?.status).toBe('failed');
+      expect(failure?.error).toMatch(/pluginContractMajor/);
+    });
+
+    // P2.6 — isolation: one plugin's rejection must not block a valid sibling.
+    it('one plugin failing does not block a sibling from loading', async () => {
+      const registries = makeRegistries();
+      const loader = new PluginLoader(registries, { storage: new FsStorage() });
+
+      // Sibling A — rejected (Ethos plugin, no contract major).
+      const badDir = join(testDir, 'bad-sibling');
+      await mkdir(badDir, { recursive: true });
+      await writeFile(
+        join(badDir, 'package.json'),
+        JSON.stringify({ name: 'bad-sibling', version: '1.0.0', ethos: { type: 'plugin' } }),
+      );
+      await writeFile(
+        join(badDir, 'index.ts'),
+        `export async function activate(api) {
+          api.registerTool({
+            name: 'bad_sibling_tool',
+            description: '',
+            schema: { type: 'object', properties: {} },
+            async execute() { return { ok: true, value: 'no' }; },
+          });
+        }`,
+      );
+
+      // Sibling B — valid (declares a compatible major).
+      const goodDir = join(testDir, 'good-sibling');
+      await mkdir(goodDir, { recursive: true });
+      await writeFile(
+        join(goodDir, 'package.json'),
+        JSON.stringify({
+          name: 'good-sibling',
+          version: '1.0.0',
+          ethos: { type: 'plugin', pluginContractMajor: 4 },
+        }),
+      );
+      await writeFile(
+        join(goodDir, 'index.ts'),
+        `export async function activate(api) {
+          api.registerTool({
+            name: 'good_sibling_tool',
+            description: '',
+            schema: { type: 'object', properties: {} },
+            async execute() { return { ok: true, value: 'yes' }; },
+          });
+        }`,
+      );
+
+      await loader.loadFromDirectory(testDir);
+
+      // Bad sibling rejected, good sibling loaded — isolation holds.
+      expect(loader.isLoaded('bad-sibling')).toBe(false);
+      expect(registries.tools.get('bad_sibling_tool')).toBeUndefined();
+      expect(loader.isLoaded('good-sibling')).toBe(true);
+      expect(registries.tools.get('good_sibling_tool')).toBeDefined();
     });
   });
 });

@@ -1,6 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { MemoryContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MarkdownFileMemoryProvider } from '../index';
@@ -22,7 +23,7 @@ beforeEach(async () => {
     `ethos-memory-cap-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   await mkdir(join(testDir, 'personalities', 'test'), { recursive: true });
-  provider = new MarkdownFileMemoryProvider({ dir: testDir });
+  provider = new MarkdownFileMemoryProvider({ dir: testDir, storage: new FsStorage() });
 });
 
 afterEach(async () => {

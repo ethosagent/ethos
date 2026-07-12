@@ -1,6 +1,7 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebTokenRepository } from '../../repositories/web-token.repository';
 
@@ -16,7 +17,7 @@ describe('WebTokenRepository', () => {
   });
 
   it('getOrCreate generates a 64-char hex token on first call and reuses it after', async () => {
-    const repo = new WebTokenRepository({ dataDir: dir });
+    const repo = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const a = await repo.getOrCreate();
     const b = await repo.getOrCreate();
     expect(a).toMatch(/^[0-9a-f]{64}$/);
@@ -24,7 +25,7 @@ describe('WebTokenRepository', () => {
   });
 
   it('matches uses constant-time compare and accepts the stored token', async () => {
-    const repo = new WebTokenRepository({ dataDir: dir });
+    const repo = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await repo.getOrCreate();
     expect(await repo.matches(token)).toBe(true);
     expect(await repo.matches(`${token}!`)).toBe(false);
@@ -32,7 +33,7 @@ describe('WebTokenRepository', () => {
   });
 
   it('rotate invalidates the previous token', async () => {
-    const repo = new WebTokenRepository({ dataDir: dir });
+    const repo = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const original = await repo.getOrCreate();
     const fresh = await repo.rotate();
     expect(fresh).not.toBe(original);
@@ -41,7 +42,7 @@ describe('WebTokenRepository', () => {
   });
 
   it('writes the token file with mode 600', async () => {
-    const repo = new WebTokenRepository({ dataDir: dir });
+    const repo = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     await repo.getOrCreate();
     const stats = await stat(join(dir, 'web-token'));
     // Mask off type bits, keep permission bits

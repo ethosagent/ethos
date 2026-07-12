@@ -9,7 +9,7 @@ import {
   SkillEvolver,
 } from '@ethosagent/skill-evolver';
 import { type EthosConfig, ethosDir } from '../config';
-import { createLLM } from '../wiring';
+import { createLLM, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -263,7 +263,7 @@ async function runAnalyze(
 
   await mkdir(skillsDir, { recursive: true });
 
-  const evolveConfig = await loadEvolveConfig(join(ethosDir(), 'evolve-config.json'));
+  const evolveConfig = await loadEvolveConfig(join(ethosDir(), 'evolve-config.json'), getStorage());
   const llm = await createLLM(config);
 
   console.log(
@@ -276,6 +276,7 @@ async function runAnalyze(
     pendingDir,
     config: evolveConfig,
     llm,
+    storage: getStorage(),
   });
 
   const ranAt = new Date().toISOString();

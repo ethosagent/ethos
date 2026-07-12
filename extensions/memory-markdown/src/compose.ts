@@ -7,6 +7,6 @@ export interface MemoryMarkdownCompose {
 
 export function compose(ctx: WiringContext): MemoryMarkdownCompose {
   return {
-    memoryProvider: new MarkdownFileMemoryProvider({ dir: ctx.dataDir }),
+    memoryProvider: new MarkdownFileMemoryProvider({ dir: ctx.dataDir, storage: ctx.storage }),
   };
 }

@@ -82,7 +82,7 @@ export interface PersonalitySafetyConfig {
        */
       tools?: string[] | 'auto';
     };
-    /** Redact tool results that contain detected secrets. Default false (emit only). */
+    /** Redact tool results that contain detected secrets. Default true (block); set false to emit only. */
     blockSecretResults?: boolean;
     /** Wrap tool results in ===TOOL_RESULT_START/<END>=== sentinels. Default true. */
     toolResultDelimiters?: boolean;

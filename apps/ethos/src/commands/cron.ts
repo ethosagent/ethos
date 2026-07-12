@@ -6,7 +6,7 @@ import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { EthosError } from '@ethosagent/types';
 import { type EthosConfig, ethosDir } from '../config';
 import { writeJson } from '../json-output';
-import { createAgentLoop, getEthosObservability } from '../wiring';
+import { createAgentLoop, getEthosObservability, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -23,6 +23,7 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
   let personalities: Awaited<ReturnType<typeof createPersonalityRegistry>> | null = null;
 
   const scheduler = new CronScheduler({
+    storage: getStorage(),
     logger: new ConsoleLogger(),
     onDecision: (job, d) => {
       try {
@@ -38,7 +39,7 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
     },
     runJob: async (job) => {
       if (!personalities) {
-        personalities = await createPersonalityRegistry();
+        personalities = await createPersonalityRegistry(getStorage());
         await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
       }
       if (!personalities.get(job.personalityId)) {
@@ -55,7 +56,7 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
       // Recursion guard: exclude 'cron' from the effective toolset so
       // cron-spawned sessions cannot schedule further cron jobs.
       if (!personalities) {
-        personalities = await createPersonalityRegistry();
+        personalities = await createPersonalityRegistry(getStorage());
         await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
       }
       const pid = job.personalityId;
@@ -214,7 +215,7 @@ export async function runCronCommand(
       }
 
       if (personality) {
-        const reg = await createPersonalityRegistry();
+        const reg = await createPersonalityRegistry(getStorage());
         await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
         if (!reg.get(personality)) {
           console.log(`${c.red}Personality "${personality}" not found${c.reset}`);

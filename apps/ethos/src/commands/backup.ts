@@ -1161,9 +1161,7 @@ export async function runPersonalityImport(argv: string[]): Promise<void> {
 
     const { createPersonalityRegistry } = await import('@ethosagent/personalities');
     const dataDir = ethosDir();
-    const storage = (await import('@ethosagent/storage-fs')).FsStorage
-      ? new (await import('@ethosagent/storage-fs')).FsStorage()
-      : undefined;
+    const storage = new (await import('@ethosagent/storage-fs')).FsStorage();
     const reg = await createPersonalityRegistry(storage);
     await reg.loadFromDirectory(join(dataDir, 'personalities'));
     const existing = reg.get(personalityId);

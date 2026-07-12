@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { loadWidgetTemplates } from '@ethosagent/plugin-loader';
 import Database from '@ethosagent/sqlite';
-import type { WidgetTemplate } from '@ethosagent/types';
+import { EthosError, type WidgetTemplate } from '@ethosagent/types';
+import { findInvalidParamKeys } from './interpolate-params';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -681,6 +682,21 @@ export class DashboardsService {
   // -------------------------------------------------------------------------
 
   updateDashboardParams(id: string, paramsCurrent: Record<string, string>): void {
+    // Validate every incoming (key, value) against the dashboard's param schema
+    // before persisting. These values later flow into `interpolateParams` and
+    // are spliced into a user-authored SQL/prompt template, so a value that
+    // escapes its definition's allowlist is a SQL-injection vector. Rejecting
+    // unknown params (no matching def) keeps this a strict allowlist.
+    const schema = this.get(id)?.dashboard.paramsSchema ?? [];
+    const invalid = findInvalidParamKeys(schema, paramsCurrent);
+    if (invalid.length > 0) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `Dashboard param value(s) not permitted by the parameter schema: ${invalid.join(', ')}`,
+        action:
+          'Submit only values allowed by each parameter definition (a listed option, or a YYYY-MM-DD date).',
+      });
+    }
     const now = Date.now();
     this.db
       .prepare('UPDATE dashboards SET params_current = ?, updated_at = ? WHERE id = ?')

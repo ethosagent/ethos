@@ -1,7 +1,6 @@
 import { mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
 import type { Storage } from '@ethosagent/types';
 
 export interface MeshEntry {
@@ -76,17 +75,17 @@ async function acquireRegistryLock(lockPath: string): Promise<() => void> {
 }
 
 export interface AgentMeshOptions {
-  /** Storage backend. Defaults to FsStorage. */
-  storage?: Storage;
+  /** Storage backend. Injected by the composition root; required. */
+  storage: Storage;
 }
 
 export class AgentMesh {
   private readonly path: string;
   private readonly storage: Storage;
 
-  constructor(registryPath: string = defaultRegistryPath(), opts: AgentMeshOptions = {}) {
+  constructor(registryPath: string = defaultRegistryPath(), opts: AgentMeshOptions) {
     this.path = registryPath;
-    this.storage = opts.storage ?? new FsStorage();
+    this.storage = opts.storage;
   }
 
   private lockPath(): string {

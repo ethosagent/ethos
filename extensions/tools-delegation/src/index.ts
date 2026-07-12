@@ -5,7 +5,7 @@ import {
   type MeshEntry,
 } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
-import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
+import type { Storage, Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Depth tracking — stored in ToolContext.agentId as "depth:<n>"
@@ -435,7 +435,7 @@ async function routeWithFailover(params: {
   return { ok: false, attempts: maxAttempts, errors };
 }
 
-export function createListTeamTool(registryPath = defaultRegistryPath()): Tool {
+export function createListTeamTool(storage: Storage, registryPath = defaultRegistryPath()): Tool {
   return {
     name: 'list_team',
     description:
@@ -457,7 +457,7 @@ export function createListTeamTool(registryPath = defaultRegistryPath()): Tool {
     },
     async execute(args): Promise<ToolResult> {
       const { include_self = false } = (args ?? {}) as { include_self?: boolean };
-      const mesh = new AgentMesh(registryPath);
+      const mesh = new AgentMesh(registryPath, { storage });
       const peers = await mesh.list();
 
       const filtered = include_self ? peers : peers.filter((p) => p.pid !== process.pid);
@@ -476,7 +476,10 @@ export function createListTeamTool(registryPath = defaultRegistryPath()): Tool {
   };
 }
 
-export function createRouteToAgentTool(registryPath = defaultRegistryPath()): Tool {
+export function createRouteToAgentTool(
+  storage: Storage,
+  registryPath = defaultRegistryPath(),
+): Tool {
   return {
     name: 'route_to_agent',
     description:
@@ -530,7 +533,7 @@ export function createRouteToAgentTool(registryPath = defaultRegistryPath()): To
           code: 'not_available' as const,
         };
 
-      const mesh = new AgentMesh(registryPath);
+      const mesh = new AgentMesh(registryPath, { storage });
       const peers = await mesh.list();
       const timeoutMs = Math.max(1, timeout_s ?? 60) * 1000;
       const retryCount = Math.min(Math.max(0, retries ?? MAX_ROUTE_RETRIES), 5);
@@ -576,7 +579,10 @@ export function createRouteToAgentTool(registryPath = defaultRegistryPath()): To
   };
 }
 
-export function createDispatchTeamTool(registryPath = defaultRegistryPath()): Tool {
+export function createDispatchTeamTool(
+  storage: Storage,
+  registryPath = defaultRegistryPath(),
+): Tool {
   return {
     name: 'dispatch_team',
     description:
@@ -635,7 +641,7 @@ export function createDispatchTeamTool(registryPath = defaultRegistryPath()): To
           code: 'not_available' as const,
         };
 
-      const mesh = new AgentMesh(registryPath);
+      const mesh = new AgentMesh(registryPath, { storage });
       const peers = await mesh.list();
 
       const results = await Promise.all(
@@ -688,7 +694,10 @@ export function createDispatchTeamTool(registryPath = defaultRegistryPath()): To
   };
 }
 
-export function createBroadcastToAgentsTool(registryPath = defaultRegistryPath()): Tool {
+export function createBroadcastToAgentsTool(
+  storage: Storage,
+  registryPath = defaultRegistryPath(),
+): Tool {
   return {
     name: 'broadcast_to_agents',
     description:
@@ -722,7 +731,7 @@ export function createBroadcastToAgentsTool(registryPath = defaultRegistryPath()
           code: 'not_available' as const,
         };
 
-      const mesh = new AgentMesh(registryPath);
+      const mesh = new AgentMesh(registryPath, { storage });
       const agents = await mesh.list();
       if (agents.length === 0) {
         return { ok: false, error: 'no live agents in mesh', code: 'execution_failed' };
@@ -774,13 +783,17 @@ export function createBroadcastToAgentsTool(registryPath = defaultRegistryPath()
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createDelegationTools(loop: AgentLoop, registryPath?: string): Tool[] {
+export function createDelegationTools(
+  loop: AgentLoop,
+  storage: Storage,
+  registryPath?: string,
+): Tool[] {
   return [
     createDelegateTaskTool(loop),
     createMixtureOfAgentsTool(loop),
-    createListTeamTool(registryPath),
-    createDispatchTeamTool(registryPath),
-    createRouteToAgentTool(registryPath),
-    createBroadcastToAgentsTool(registryPath),
+    createListTeamTool(storage, registryPath),
+    createDispatchTeamTool(storage, registryPath),
+    createRouteToAgentTool(storage, registryPath),
+    createBroadcastToAgentsTool(storage, registryPath),
   ];
 }

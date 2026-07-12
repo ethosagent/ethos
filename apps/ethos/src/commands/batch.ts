@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { BatchRunner, parseTasksJsonl } from '@ethosagent/batch-runner';
 import { EthosError } from '@ethosagent/types';
 import type { EthosConfig } from '../config';
-import { createAgentLoop } from '../wiring';
+import { createAgentLoop, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -101,12 +101,16 @@ export async function runBatch(args: string[], config: EthosConfig): Promise<voi
 
   const { loop } = await createAgentLoop(config);
 
-  const runner = new BatchRunner(loop, {
-    concurrency,
-    outputPath,
-    checkpointPath,
-    defaultPersonalityId: config.personality,
-  });
+  const runner = new BatchRunner(
+    loop,
+    {
+      concurrency,
+      outputPath,
+      checkpointPath,
+      defaultPersonalityId: config.personality,
+    },
+    getStorage(),
+  );
 
   const start = Date.now();
   let lastLine = '';

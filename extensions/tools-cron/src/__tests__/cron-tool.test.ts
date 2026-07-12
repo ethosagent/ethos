@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CronJob, CronRunResult } from '@ethosagent/cron';
 import { CronScheduler } from '@ethosagent/cron';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { ToolContext } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createCronTool } from '../index';
@@ -26,6 +27,7 @@ function makeScheduler(opts?: { runJob?: (job: CronJob) => Promise<CronRunResult
   return new CronScheduler({
     cronDir: testDir,
     tickIntervalMs: 999_999,
+    storage: new FsStorage(),
     runJob:
       opts?.runJob ??
       (async (job) => ({

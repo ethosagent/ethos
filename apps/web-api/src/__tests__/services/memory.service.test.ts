@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MemoryService } from '../../services/memory.service';
 
@@ -16,7 +17,9 @@ describe('MemoryService', () => {
     dir = await mkdtemp(join(tmpdir(), 'ethos-memory-'));
     personalityDir = join(dir, 'personalities', PERSONALITY_ID);
     await mkdir(personalityDir, { recursive: true });
-    service = new MemoryService({ memory: new MarkdownFileMemoryProvider({ dir }) });
+    service = new MemoryService({
+      memory: new MarkdownFileMemoryProvider({ dir, storage: new FsStorage() }),
+    });
   });
 
   afterEach(async () => {

@@ -608,7 +608,9 @@ export async function* processTools(
             code: 'secret_in_tool_result',
             cause: detections.map((d) => d.label).join(', '),
           });
-          if (ctx.personality.safety?.injectionDefense?.blockSecretResults) {
+          // S9 — secret-result blocking is ON by default. Unset (undefined)
+          // blocks; an explicit `false` opts out.
+          if (ctx.personality.safety?.injectionDefense?.blockSecretResults ?? true) {
             const redactStr = deps.safety.redaction.redactString;
             result = { ...result, value: redactStr(result.value) };
             llmContent = result.value;

@@ -70,7 +70,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // so the UI can run the onboarding wizard.
   if (config === null) {
     const session = createSessionStore({ dataDir: dir });
-    const personalities = await createPersonalityRegistry({ userPersonalitiesDir: dir });
+    const personalities = await createPersonalityRegistry({
+      storage: getStorage(),
+      userPersonalitiesDir: dir,
+    });
     await personalities.loadFromDirectory(join(dir, 'personalities'));
     const identityMap = new IdentityMap({ storage: new FsStorage(), dataDir: dir });
     // Lazy loader: stays as a stub until onboarding writes config, then
@@ -136,7 +139,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       dataDir: dir,
       attachmentCache,
       sessionStore: session,
-      memoryProvider: createMemoryProvider({ dataDir: dir }),
+      memoryProvider: createMemoryProvider({ dataDir: dir, storage: getStorage() }),
       identityMap,
       agentLoop: stubLoop,
       personalities,
@@ -151,7 +154,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       ...(webDist ? { webDist } : {}),
     });
     const webApp = created.app;
-    const tokens = new WebTokenRepository({ dataDir: dir });
+    const tokens = new WebTokenRepository({ dataDir: dir, storage: getStorage() });
     const token = await tokens.getOrCreate();
     const { server, port } = await listenWithFallback(
       webApp,
@@ -247,6 +250,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let chatService: ChatService | null = null;
   let cronPersonalities: Awaited<ReturnType<typeof createPersonalityRegistry>> | null = null;
   cronScheduler = new CronScheduler({
+    storage: getStorage(),
     logger: new ConsoleLogger(),
     systemTasks: buildSystemTaskHandlers(config),
     onDecision: (job, d) => {
@@ -273,7 +277,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // Recursion guard: exclude 'cron' from the effective toolset so
       // cron-spawned sessions cannot schedule further cron jobs.
       if (!cronPersonalities) {
-        cronPersonalities = await createPersonalityRegistry();
+        cronPersonalities = await createPersonalityRegistry(getStorage());
         await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
       }
       const pid = job.personalityId;
@@ -390,13 +394,16 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   }
 
   const session = createSessionStore({ dataDir: dir });
-  const mesh = new AgentMesh(meshRegistryPath(activeMeshName));
+  const mesh = new AgentMesh(meshRegistryPath(activeMeshName), { storage: getStorage() });
 
   // ACP server (existing behavior — kept first so any breakage is obvious).
   const acpServer = new AcpServer({ runner: loop, session, mesh });
   acpServer.startHttp(acpPort);
 
-  const personalities = await createPersonalityRegistry({ userPersonalitiesDir: dir });
+  const personalities = await createPersonalityRegistry({
+    storage: getStorage(),
+    userPersonalitiesDir: dir,
+  });
   await personalities.loadFromDirectory(join(dir, 'personalities'));
   const personalityConfig = personalities.get(activePersonality);
   const capabilities = personalityConfig?.capabilities ?? [];
@@ -525,7 +532,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     attachmentCache,
     sessionStore: session,
     personalitiesLlm: () => createLLM(config),
-    memoryProvider: createMemoryProvider({ dataDir: dir }),
+    memoryProvider: createMemoryProvider({ dataDir: dir, storage: getStorage() }),
     identityMap,
     agentLoop: loop,
     // The same registry the agent loop loaded above is reused so mtime
@@ -560,7 +567,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   });
   chatService = created.chatService;
   const webApp = created.app;
-  const tokens = new WebTokenRepository({ dataDir: dir });
+  const tokens = new WebTokenRepository({ dataDir: dir, storage: getStorage() });
   const token = await tokens.getOrCreate();
   const { server, port } = await listenWithFallback(
     webApp,

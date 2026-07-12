@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { InMemoryStorage } from '@ethosagent/storage-fs';
+import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
 import type { SecretsResolver } from '@ethosagent/types';
 import { call } from '@orpc/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -41,7 +41,7 @@ describe('admin RPCs — gated by admin.enabled', () => {
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },
     }).app;
-    const tokens = new WebTokenRepository({ dataDir: dir });
+    const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
       headers: { origin: 'http://localhost:3000' },

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentMesh } from '@ethosagent/agent-mesh';
 import { KanbanStore } from '@ethosagent/kanban-store';
+import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KanbanService } from '../../services/kanban.service';
 
@@ -15,7 +16,7 @@ describe('KanbanService — assign + /notify', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'kanban-notify-'));
     meshDir = mkdtempSync(join(tmpdir(), 'mesh-notify-'));
-    mesh = new AgentMesh(join(meshDir, 'registry.json'));
+    mesh = new AgentMesh(join(meshDir, 'registry.json'), { storage: new FsStorage() });
     service = new KanbanService({ teamsDir: dir, mesh });
   });
 
