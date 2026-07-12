@@ -32,6 +32,7 @@ import { EvolverRepository } from './repositories/evolver.repository';
 import { PlatformsRepository } from './repositories/platforms.repository';
 import { WebTokenRepository } from './repositories/web-token.repository';
 import { createRoutes } from './routes';
+import type { RouteModule } from './routes/route-module';
 import { ApiKeysService } from './services/api-keys.service';
 import { createWebApprovalHook, type DangerPredicate } from './services/approval-hook';
 import { ApprovalsService } from './services/approvals.service';
@@ -215,6 +216,14 @@ export interface CreateWebApiOptions {
    * Defaults to `true`.
    */
   dockerBuildable?: boolean;
+  /**
+   * Protocol route modules (A2A, Phase 3) contributed to the Hono app via the
+   * explicit, reviewable seam. Each declares its mount path, auth posture, and
+   * description; `enabled: false` skips it. Modules inherit the app-wide CORS +
+   * error-envelope middleware but bring their own auth posture. See
+   * {@link RouteModule}. serve.ts does not pass any yet — Phase 3 wires A2A here.
+   */
+  routeModules?: RouteModule[];
 }
 
 export interface CreateWebApiResult {
@@ -575,6 +584,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     ...(opts.apiKeys ? { apiKeys: opts.apiKeys } : {}),
     ...(opts.listTeams ? { listTeams: opts.listTeams } : {}),
     ...(opts.webBaseUrl ? { webBaseUrl: opts.webBaseUrl } : {}),
+    ...(opts.routeModules ? { routeModules: opts.routeModules } : {}),
     storage,
     secrets,
   });
@@ -646,5 +656,6 @@ function createPassiveMcpManager(): McpManager {
 export { type ChatDefaults, ChatService } from './features/chat/service';
 // Re-exports so boot code can read tokens / inspect contract surfaces directly.
 export { WebTokenRepository } from './repositories/web-token.repository';
+export type { RouteModule } from './routes/route-module';
 export { setWhatsAppPairingCode, setWhatsAppQr } from './routes/setup-whatsapp';
 export type { DangerPredicate, DangerReason } from './services/approval-hook';

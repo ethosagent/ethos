@@ -18,6 +18,7 @@ import { codexAuthRoutes } from './codex-auth';
 import { goalSseRoutes } from './goal-sse';
 import { openAiRoutes } from './openai';
 import { openapiRoutes } from './openapi';
+import type { RouteModule } from './route-module';
 import { mcpRpcPath, rpcRoutes } from './rpc';
 import { setupWhatsAppRoutes } from './setup-whatsapp';
 import { sseRoutes } from './sse';
@@ -60,6 +61,10 @@ export interface CreateRoutesOptions {
   storage?: Storage;
   /** Secret store — used to persist Codex OAuth tokens from the device-auth flow. */
   secrets: SecretsResolver;
+  /** Protocol route modules (A2A, Phase 3) mounted via the explicit, reviewable
+   *  seam. Each declares its mount path, auth posture, and description;
+   *  `enabled: false` skips it. See {@link RouteModule}. */
+  routeModules?: RouteModule[];
 }
 
 export interface ServiceContainer {
@@ -335,6 +340,38 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 
     return c.html(html);
   });
+
+  // Route-module seam (plan §12). Protocol modules (A2A, Phase 3) contribute
+  // their own Hono sub-router alongside the built-in routes, inheriting the
+  // shared CORS + error-envelope middleware registered above. Registration is
+  // EXPLICIT (the caller passes the list) and REVIEWABLE (each module declares
+  // path + auth + description).
+  //
+  // Isolation (plan §12 blast-radius mitigation): each module mounts under its
+  // OWN basePath with its OWN declared auth posture — a module NEVER shares
+  // another route's auth (A2A does not ride `/rpc`'s auth). A per-module
+  // `enabled: false` is the kill switch: a disabled module is skipped entirely,
+  // so a misbehaving module can be isolated without disturbing the rest of the
+  // app. Mounted before the static SPA mount below, which owns `/*`.
+  for (const mod of opts.routeModules ?? []) {
+    if (mod.enabled === false) continue;
+    const wildcard = `${mod.basePath}/*`;
+    if (mod.auth === 'cookie') {
+      app.use(wildcard, authMiddleware({ tokens: opts.tokens }));
+    } else if (mod.auth === 'bearer') {
+      // Mirror `/rpc/*`: dual-auth (cookie OR bearer) when an api-key store is
+      // wired; cookie-only otherwise. A bearer module brings the main API's
+      // auth posture without re-implementing it.
+      app.use(
+        wildcard,
+        opts.apiKeys
+          ? dualAuth({ tokens: opts.tokens, apiKeys: opts.apiKeys, scopeForPath: resolveScope })
+          : authMiddleware({ tokens: opts.tokens }),
+      );
+    }
+    // 'public' — no auth middleware; the module owns its own access control.
+    app.route(mod.basePath, mod.router);
+  }
 
   // Static SPA mount (must be LAST — it owns `/*` so any unmatched path
   // falls through to index.html). Skipped when `webDist` isn't supplied;
