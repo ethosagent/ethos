@@ -111,6 +111,75 @@ function buildLaneKey(...segments: string[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Concurrency limiter
+// ---------------------------------------------------------------------------
+
+/** Reply sent when a lane is rejected under saturation (typed busy result). */
+const SYSTEM_BUSY_MESSAGE =
+  '⚠ The system is busy right now — too many requests in progress. Please try again in a moment.';
+
+/**
+ * Counting semaphore bounding how many turns run at once across ALL lanes.
+ * `maxConcurrentSessions` is the single-instance quota knob; when the operator
+ * leaves it unset the limiter is constructed with `Infinity` permits, so
+ * `acquire()` never blocks and today's unbounded behavior is preserved
+ * exactly.
+ *
+ * Leak-free contract: every `acquire()` that resolves `true` MUST be paired
+ * with exactly one `release()` in a `finally`. `acquire(signal)` is abortable
+ * — if the signal fires while the caller is parked it resolves `false` (NO
+ * permit was taken, so the caller must NOT release) and the waiter is removed
+ * so a later `release()` never hands a permit to a dead waiter.
+ */
+class TurnSemaphore {
+  private permits: number;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(permits: number) {
+    this.permits = permits;
+  }
+
+  /** True when no permit is currently free (all slots in use). */
+  get saturated(): boolean {
+    return this.permits <= 0;
+  }
+
+  /** Acquire a permit. Resolves `true` once held; `false` if `signal` aborts
+   *  first, in which case no permit is held. */
+  acquire(signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) return Promise.resolve(false);
+    if (this.permits > 0) {
+      this.permits--;
+      return Promise.resolve(true);
+    }
+    return new Promise<boolean>((resolve) => {
+      const grant = () => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(true);
+      };
+      const onAbort = () => {
+        const idx = this.waiters.indexOf(grant);
+        if (idx !== -1) this.waiters.splice(idx, 1);
+        resolve(false);
+      };
+      this.waiters.push(grant);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  /** Release a permit — hand it straight to the next waiter if any, else
+   *  return it to the pool. */
+  release(): void {
+    const next = this.waiters.shift();
+    if (next) {
+      next(); // transfer the permit directly; `permits` stays "held"
+    } else {
+      this.permits++;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gateway config
 // ---------------------------------------------------------------------------
 
@@ -159,8 +228,26 @@ export interface GatewayConfig {
   loop?: AgentLoop;
   /** Default personality ID for the back-compat single-bot path. */
   defaultPersonality?: string;
-  /** Maximum concurrent active sessions. Excess sessions are queued per-lane. */
+  /**
+   * Global cap on how many turns (`runTurn`) execute simultaneously across ALL
+   * lanes — the single-instance quota knob. Enforced by a semaphore around
+   * turn execution: excess turns wait for a slot, and a lane whose backlog
+   * reaches `maxLaneQueue` while the global budget is saturated gets a typed
+   * busy rejection instead of an unbounded queue.
+   *
+   * When UNSET (or <= 0) the limit is unbounded — today's behavior is
+   * preserved exactly, no turn ever waits. Set it only to impose a quota.
+   */
   maxConcurrentSessions?: number;
+  /**
+   * Maximum messages queued for a single lane while turns wait on a global
+   * concurrency slot. Once a lane's depth reaches this AND
+   * `maxConcurrentSessions` is saturated, further messages for that lane are
+   * rejected with a typed "system busy" reply rather than queued unbounded.
+   * Defaults to 8. Has no effect unless `maxConcurrentSessions` is set (an
+   * unbounded global budget never saturates, so lanes never back up).
+   */
+  maxLaneQueue?: number;
   /**
    * Size of the inbound-message dedup window. The Gateway remembers the most
    * recent N `(platform, chatId, messageId)` triples and silently drops
@@ -177,12 +264,6 @@ export interface GatewayConfig {
    * `dedup.ts` and plan/phases/30-robustness.md § 30.4.
    */
   outboundDedupTtlMs?: number;
-  /**
-   * Send a brief message to the channel whenever a tool call starts, so users
-   * can see what the agent is doing mid-turn. Defaults to `true`. Set to
-   * `false` (or read from `ETHOS_CHANNEL_TOOL_CALLS=false`) to silence.
-   */
-  showToolCalls?: boolean;
   /**
    * Maximum number of distinct chats kept in memory. The least-recently-used
    * idle chat is evicted (its lane, session key, personality override, and
@@ -384,16 +465,6 @@ export class Gateway {
   private readonly activeSinks = new Map<string, SteerSink>();
   /** Buffered notifications for sessions whose turn has ended. */
   private readonly unreadNotifications = new Map<string, string[]>();
-  /** Live status message per lane — edited in place during tool execution. */
-  private readonly activeStatusMessages = new Map<
-    string,
-    {
-      messageId: string;
-      adapter: PlatformAdapter;
-      chatId: string;
-      threadId?: string;
-    }
-  >();
   /**
    * Routing for an in-flight turn, keyed by `sessionKey`. Populated when the
    * turn is enqueued (where `adapter`, `chatId`, and `threadId` are all in
@@ -430,8 +501,10 @@ export class Gateway {
   private readonly pairingDb: Database.Database | undefined;
   /** Observability adapter for audit events. */
   private readonly observability: GatewayObservability | undefined;
-  /** Whether to send a brief channel message on each tool_start event. */
-  private readonly showToolCalls: boolean;
+  /** Global limiter on simultaneous turns (`maxConcurrentSessions` quota). */
+  private readonly concurrency: TurnSemaphore;
+  /** Per-lane queue cap — beyond this, saturated lanes get a busy rejection. */
+  private readonly maxLaneQueue: number;
   /** Hook called when the allowlist changes via /allow or /deny. */
   private readonly onAllowlistChange:
     | ((platform: string, userId: string, action: 'add' | 'remove') => void | Promise<void>)
@@ -542,12 +615,33 @@ export class Gateway {
 
     this.dedupWindow = config.dedupWindow ?? 1024;
     this.maxChats = config.maxChats ?? 4096;
-    // ttlMs <= 0 disables dedup inside the cache itself (shouldSend always returns true).
-    this.outboundDedup = new MessageDedupCache({ ttlMs: config.outboundDedupTtlMs ?? 30_000 });
     this.channelFilter = config.channelFilter;
     this.pairingDb = config.pairingDb;
     this.observability = config.observability;
-    this.showToolCalls = config.showToolCalls ?? true;
+    // Global turn budget. Unset / non-positive => Infinity permits (unbounded,
+    // preserving today's behavior). A positive value is the enforced quota.
+    this.concurrency = new TurnSemaphore(
+      config.maxConcurrentSessions && config.maxConcurrentSessions > 0
+        ? config.maxConcurrentSessions
+        : Number.POSITIVE_INFINITY,
+    );
+    this.maxLaneQueue = config.maxLaneQueue ?? 8;
+    // ttlMs <= 0 disables dedup inside the cache itself (shouldSend always returns true).
+    // onDrop surfaces every genuine duplicate suppression to observability
+    // (read lazily, so it sees the observability set on the line above).
+    this.outboundDedup = new MessageDedupCache({
+      ttlMs: config.outboundDedupTtlMs ?? 30_000,
+      onDrop: (info) => {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.dedup_drop',
+          details: {
+            sessionId: info.sessionId,
+            contentHash: info.contentHash,
+            contentLength: info.contentLength,
+          },
+        });
+      },
+    });
     this.onAllowlistChange = config.onAllowlistChange;
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
     this.personalityCardReader = config.personalityCardReader;
@@ -1274,9 +1368,7 @@ export class Gateway {
         return;
       }
       if (this.activeSinks.has(laneKey)) {
-        void lane.enqueue((signal) =>
-          this.runTurn(laneKey, lane, bot, message, adapter, queueText, threadId, signal),
-        );
+        void this.enqueueTurn(laneKey, lane, bot, message, adapter, queueText, threadId);
         await adapter
           .send(message.chatId, { text: `✅ queued (position ${lane.length})`, threadId })
           .catch(() => {});
@@ -1298,9 +1390,7 @@ export class Gateway {
         sessionKey: learnSessionKey,
         surface: 'gateway',
       });
-      await lane.enqueue((signal) =>
-        this.runTurn(laneKey, lane, bot, message, adapter, prompt, threadId, signal),
-      );
+      await this.enqueueTurn(laneKey, lane, bot, message, adapter, prompt, threadId);
       return;
     }
 
@@ -1346,9 +1436,58 @@ export class Gateway {
     // --- Agent turn ---
 
     const turnText = cmdType === 'queue' ? text.slice('/queue '.length).trim() : text;
-    await lane.enqueue((signal) =>
-      this.runTurn(laneKey, lane, bot, message, adapter, turnText, threadId, signal),
-    );
+
+    // Backpressure: when the global turn budget is saturated AND this lane has
+    // already queued its cap, reject with a typed busy reply rather than
+    // growing an unbounded backlog or dropping silently. An unset
+    // (Infinity-permit) budget never saturates, so this never trips.
+    if (this.concurrency.saturated && lane.length >= this.maxLaneQueue) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.session_busy',
+        details: {
+          platform: message.platform,
+          chatId: message.chatId,
+          botKey: bot.botKey,
+          laneDepth: lane.length,
+          maxLaneQueue: this.maxLaneQueue,
+        },
+      });
+      await adapter.send(message.chatId, { text: SYSTEM_BUSY_MESSAGE, threadId }).catch(() => {});
+      return;
+    }
+
+    await this.enqueueTurn(laneKey, lane, bot, message, adapter, turnText, threadId);
+  }
+
+  /**
+   * Enqueue a turn on `lane`, gated by the global concurrency semaphore. The
+   * permit is acquired INSIDE the lane task (so lane ordering is preserved)
+   * but BEFORE `runTurn` marks the lane active — so while a turn waits for a
+   * global slot, further inbound messages for the lane enqueue (and hit the
+   * per-lane cap) instead of steering into a turn that hasn't started.
+   *
+   * Leak-free: the permit is released in `finally`; an abort before a slot
+   * frees resolves `acquire` to `false` (no permit held, nothing to release,
+   * `runTurn` never runs so there is no lane state to unwind).
+   */
+  private enqueueTurn(
+    laneKey: string,
+    lane: SessionLane,
+    bot: GatewayBotConfig,
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+    text: string,
+    threadId: string | undefined,
+  ): Promise<void> {
+    return lane.enqueue(async (signal) => {
+      const slotHeld = await this.concurrency.acquire(signal);
+      if (!slotHeld) return;
+      try {
+        await this.runTurn(laneKey, lane, bot, message, adapter, text, threadId, signal);
+      } finally {
+        this.concurrency.release();
+      }
+    });
   }
 
   private async runTurn(
@@ -1466,24 +1605,6 @@ export class Gateway {
         steerSink,
         origin: `${message.platform}:${message.chatId}`,
       })) {
-        if (event.type === 'tool_start' && this.showToolCalls) {
-          const status = this.activeStatusMessages.get(laneKey);
-          if (status && status.adapter.caps?.edit !== false) {
-            await status.adapter
-              .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName}…`)
-              .catch(() => {});
-          }
-        }
-
-        if (event.type === 'tool_end' && this.showToolCalls) {
-          const status = this.activeStatusMessages.get(laneKey);
-          if (status && status.adapter.caps?.edit !== false) {
-            const dur = `${(event.durationMs / 1000).toFixed(1)}s`;
-            await status.adapter
-              .editMessage?.(status.chatId, status.messageId, `⚙ ${event.toolName} ✓ · ${dur}`)
-              .catch(() => {});
-          }
-        }
         if (event.type === 'text_delta') responseText += event.text;
         if (event.type === 'usage') {
           const u = this.usageStore.get(laneKey) ?? {
@@ -1506,12 +1627,6 @@ export class Gateway {
       if (signal.aborted) {
         // /stop or shutdown — caller already notified the user.
       } else if (errored) {
-        const errStatus = this.activeStatusMessages.get(laneKey);
-        if (errStatus && errStatus.adapter.caps?.edit !== false) {
-          await errStatus.adapter
-            .editMessage?.(errStatus.chatId, errStatus.messageId, '⚠ Stopped')
-            .catch(() => {});
-        }
         const note =
           responseText.trim().length > 0
             ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
@@ -1586,12 +1701,6 @@ export class Gateway {
       this.activeTurns.delete(laneKey);
       this.activeSinks.delete(laneKey);
 
-      const status = this.activeStatusMessages.get(laneKey);
-      if (status && status.adapter.caps?.edit !== false) {
-        await status.adapter.editMessage?.(status.chatId, status.messageId, '').catch(() => {});
-        this.activeStatusMessages.delete(laneKey);
-      }
-
       turnActive = false;
       // Don't deregister — keep the adapter alive to buffer offline notifications
       this.sessionRouting.delete(sessionKey);
@@ -1639,7 +1748,6 @@ export class Gateway {
     this.lanes.clear();
     this.sessionKeys.clear();
     this.activeTurns.clear();
-    this.activeStatusMessages.clear();
     this.activeSinks.clear();
     this.sessionRouting.clear();
     this.approvalRoutes.clear();

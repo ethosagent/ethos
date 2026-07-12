@@ -95,36 +95,24 @@ describe('SlackAdapter — botKey identity', () => {
     expect(b.botKey).toBe('b');
   });
 
-  it('derives a stable botKey from botToken when omitted (back-compat for direct constructors)', () => {
+  // P5.2 — botKey is computed once in wiring and passed as a required
+  // constructor param; the adapter no longer derives it from the botToken.
+  it('botKey (not the botToken) drives identity — same token, distinct botKeys, distinct ids', () => {
     const a = new SlackAdapter({
-      botToken: 'xoxb-stable',
+      botToken: 'xoxb-shared',
       appToken: 'xapp-1',
       signingSecret: 's1',
+      botKey: 'alpha',
     });
     const b = new SlackAdapter({
-      botToken: 'xoxb-stable',
+      botToken: 'xoxb-shared',
       appToken: 'xapp-2',
       signingSecret: 's2',
-    });
-    expect(a.botKey).toBe(b.botKey);
-    expect(a.botKey).toMatch(/^[0-9a-f]{24}$/);
-    expect(a.id).toBe(`slack:${a.botKey}`);
-  });
-
-  it('explicit botKey wins over the derived default', () => {
-    const a = new SlackAdapter({
-      botToken: 'xoxb-1',
-      appToken: 'xapp-1',
-      signingSecret: 's1',
-    });
-    const b = new SlackAdapter({
-      botToken: 'xoxb-1',
-      appToken: 'xapp-1',
-      signingSecret: 's1',
-      botKey: 'explicit',
+      botKey: 'beta',
     });
     expect(a.botKey).not.toBe(b.botKey);
-    expect(b.botKey).toBe('explicit');
+    expect(a.id).not.toBe(b.id);
+    expect(b.botKey).toBe('beta');
   });
 });
 
@@ -144,6 +132,7 @@ describe('SlackAdapter — webUiBaseUrl normalization', () => {
       botToken: 'xoxb-fake',
       appToken: 'xapp-fake',
       signingSecret: 'sig-fake',
+      botKey: 'test-bot',
       webUiBaseUrl,
     });
 
@@ -207,6 +196,7 @@ describe('SlackAdapter — receipt reactions', () => {
       botToken: 'xoxb-fake',
       appToken: 'xapp-fake',
       signingSecret: 'sig-fake',
+      botKey: 'test-bot',
       ...(opts?.receiptReaction ? { receiptReaction: opts.receiptReaction } : {}),
     });
 

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { AgentLoop } from '@ethosagent/core';
+import { type AgentLoop, deriveBotKey as deriveBotKeyFromSeed } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { createCapturingAdapter, Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { registerGoalNotifications } from '@ethosagent/goal-runner';
@@ -284,28 +284,6 @@ export async function runGatewayStart(): Promise<void> {
     );
   }
 
-  // Multi-bot routing has a known limitation in v1: email and discord
-  // continue to use a single legacy adapter without botKey stamping.
-  // When multi-bot telegram/slack is configured alongside email/discord,
-  // those legacy adapters' messages have no botKey, and the Gateway has
-  // no `defaultBotKey` to fall back on (defaultBotKey only fires for
-  // single-bot deployments). Warn at boot so operators know.
-  const multiBotConfigured =
-    (config.telegram?.bots.length ?? 0) +
-      (config.slack?.apps.length ?? 0) +
-      (config.whatsapp?.length ?? 0) >
-    1;
-  const legacyAdapterConfigured =
-    !!config.discordToken ||
-    !!(config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost);
-  if (multiBotConfigured && legacyAdapterConfigured) {
-    console.log(
-      `${c.yellow}⚠${c.reset} ${c.dim}Multi-bot routing is configured alongside email/discord. ` +
-        `Email and Discord inbound messages will not be routed in v1 — they have no botKey. ` +
-        `Use single-bot configs or wait for v1.1 multi-bot email/discord.${c.reset}`,
-    );
-  }
-
   // Validate bot bindings against the on-disk personality registry and
   // team manifests. Fail loudly here rather than letting messages route
   // to a non-existent destination at first request.
@@ -540,10 +518,9 @@ export async function runGatewayStart(): Promise<void> {
   // Discord clarify surfaces — same pattern as Slack but no thread routing.
   // Discord delivers component clicks via `interactionCreate`, which the
   // surface registers on directly via `adapter.onClarifyInteraction`.
-  // `systemLoop` is the fallback bridge for the legacy single-Discord
-  // deployment (no telegram/slack bots configured) — Discord doesn't yet
-  // appear in `buildGatewayBots`, so per-bot lookup misses and we use
-  // the system loop's bridge instead.
+  // Discord now appears in `buildGatewayBots`, so the surface binds to that
+  // per-bot loop's bridge; `systemLoop` remains the fallback for the rare
+  // case where no bot entry matched.
   await buildDiscordClarifySurfaces(bots, adapters, systemLoop, (sessionId) => {
     const route = gatewayRef?.resolveApprovalRoute(sessionId);
     if (!route) return undefined;
@@ -621,14 +598,14 @@ export async function runGatewayStart(): Promise<void> {
 
   const gateway: Gateway =
     bots.length === 0
-      ? // Email-only deployment (no telegram/slack bots configured). Keep
-        // the legacy single-loop construction for the email path.
+      ? // No platform configured — idle gateway. Every configured platform
+        // (including Discord/Email) now registers a bot in `buildGatewayBots`,
+        // so this single-loop path is reached only when nothing is wired up.
         new Gateway({
           loop: systemLoop,
           defaultPersonality: config.personality,
           adapters: adapterMap,
           resolveUserId,
-          showToolCalls: process.env.ETHOS_CHANNEL_TOOL_CALLS !== 'false',
           pluginLoader,
           pluginAdapters: pluginLoader.getPlatformAdapters(),
           trustedChannelPlugins,
@@ -648,7 +625,6 @@ export async function runGatewayStart(): Promise<void> {
           attachmentCache,
           adapters: adapterMap,
           resolveUserId,
-          showToolCalls: process.env.ETHOS_CHANNEL_TOOL_CALLS !== 'false',
           pluginLoader,
           pluginAdapters: pluginLoader.getPlatformAdapters(),
           trustedChannelPlugins,
@@ -707,12 +683,11 @@ export async function runGatewayStart(): Promise<void> {
     );
   }
 
-  // Wire all adapters → gateway. Telegram and Slack adapters stamp
-  // `InboundMessage.botKey` themselves (from the `botKey` field passed
-  // at construction). Email and Discord don't stamp; their messages
-  // fall back to `defaultBotKey` in single-bot deployments and are
-  // dropped by the gateway with an observability event in multi-bot
-  // ones (warned about at boot above).
+  // Wire all adapters → gateway. Every adapter (Telegram, Slack, Discord,
+  // Email, WhatsApp) stamps `InboundMessage.botKey` from the `botKey` field
+  // passed at construction — computed once in wiring — and every one is
+  // registered as a bot in `buildGatewayBots`, so inbound routes to the
+  // matching loop instead of dropping at the unknown-botKey gate.
   for (const adapter of adapters) {
     adapter.onMessage((message: InboundMessage) => {
       void gateway.handleMessage(message, adapter).catch((err) => {
@@ -925,6 +900,26 @@ function whatsAppBotKey(waCfg: WhatsAppConfig): string {
   );
 }
 
+/**
+ * Derive the botKey for the legacy scalar Discord config. Computed once here
+ * and passed to BOTH the adapter (which stamps it on inbound messages) and
+ * `buildGatewayBots` (which registers the routing entry), so the two never
+ * drift. Seed is the bot token, matching the pre-P5 adapter derivation so the
+ * key value is stable across the change.
+ */
+function discordBotKey(discordToken: string): string {
+  return deriveBotKeyFromSeed(discordToken);
+}
+
+/**
+ * Derive the botKey for the legacy scalar Email config. Same contract as
+ * `discordBotKey`. Seed is `<user>@<imapHost>`, matching the pre-P5 adapter
+ * derivation.
+ */
+function emailBotKey(user: string, imapHost: string): string {
+  return deriveBotKeyFromSeed(`${user}@${imapHost}`);
+}
+
 async function buildGatewayBots(
   config: EthosConfig,
   scheduler: CronScheduler,
@@ -994,6 +989,31 @@ async function buildGatewayBots(
       botKey: `webhook:${hookId}`,
       loop: result.loop,
       binding: { type: 'personality', name: hook.personalityId },
+    });
+    setters.push(result.setMessagingSend);
+    routers.push(result.notificationRouter);
+  }
+  // Legacy scalar Discord — register as a first-class bot bound to the default
+  // personality so its inbound (stamped with the wiring-computed botKey)
+  // resolves to a loop instead of dropping at the unknown-botKey gate. The
+  // botKey MUST match what `buildAdapters` passes the DiscordAdapter.
+  if (config.discordToken) {
+    const result = await createAgentLoop(config, { cronScheduler: scheduler });
+    out.push({
+      botKey: discordBotKey(config.discordToken),
+      loop: result.loop,
+      binding: { type: 'personality', name: config.personality },
+    });
+    setters.push(result.setMessagingSend);
+    routers.push(result.notificationRouter);
+  }
+  // Legacy scalar Email — same treatment as Discord.
+  if (config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost) {
+    const result = await createAgentLoop(config, { cronScheduler: scheduler });
+    out.push({
+      botKey: emailBotKey(config.emailUser, config.emailImapHost),
+      loop: result.loop,
+      binding: { type: 'personality', name: config.personality },
     });
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);
@@ -1510,7 +1530,12 @@ export async function buildAdapters(
       'Discord',
     );
     if (mod) {
-      adapters.push(new mod.DiscordAdapter({ token: config.discordToken }));
+      adapters.push(
+        new mod.DiscordAdapter({
+          token: config.discordToken,
+          botKey: discordBotKey(config.discordToken),
+        }),
+      );
     }
   }
 
@@ -1528,6 +1553,7 @@ export async function buildAdapters(
           password: config.emailPassword,
           smtpHost: config.emailSmtpHost,
           smtpPort: config.emailSmtpPort ?? 587,
+          botKey: emailBotKey(config.emailUser, config.emailImapHost),
         }),
       );
     }

@@ -1,12 +1,31 @@
 import { createHash } from 'node:crypto';
 
 /**
+ * Context surfaced on every genuine dedup drop, so callers can wire it into
+ * observability. Deliberately excludes the message content — only a hash and
+ * a length, never the plaintext (which may contain secrets or PII).
+ */
+export interface DedupDropInfo {
+  sessionId: string;
+  /** sha256 hex of the dropped content — safe to log, not reversible. */
+  contentHash: string;
+  contentLength: number;
+}
+
+/**
  * Single dedup path for outbound channel messages. Adapter-specific dedup
  * gets pulled into here so a new adapter doesn't need to invent its own
  * idempotency layer. See plan/phases/30-robustness.md § 30.4.
  *
  * Key shape: `${sessionId}:${sha256(content)}`. Same content within `ttlMs`
  * for the same session is a duplicate. Empty content is never deduped.
+ *
+ * Single-process assumption: dedup state lives entirely in this in-memory
+ * `Map`, so it only suppresses duplicates within ONE gateway process. A
+ * multi-instance / horizontally-scaled deployment would see the same content
+ * pass independent caches and would need a shared store (e.g. Redis) to dedup
+ * across instances. Today's single-instance model does not — do not assume
+ * this cache is a cross-process idempotency guarantee.
  *
  * Rollback escape hatch: if `ETHOS_DEDUP_LEGACY=1` is set in the env at
  * cache construction, `shouldSend` always returns true (every send goes
@@ -18,11 +37,16 @@ export class MessageDedupCache {
   private readonly ttlMs: number;
   private readonly disabled: boolean;
   private readonly maxEntries: number;
+  /** Optional observability hook fired on each genuine duplicate drop. */
+  private readonly onDrop: ((info: DedupDropInfo) => void) | undefined;
 
-  constructor(opts: { ttlMs?: number; maxEntries?: number } = {}) {
+  constructor(
+    opts: { ttlMs?: number; maxEntries?: number; onDrop?: (info: DedupDropInfo) => void } = {},
+  ) {
     this.ttlMs = opts.ttlMs ?? 30_000;
     this.maxEntries = opts.maxEntries ?? 4096;
     this.disabled = process.env.ETHOS_DEDUP_LEGACY === '1' || this.ttlMs <= 0;
+    this.onDrop = opts.onDrop;
   }
 
   /**
@@ -41,7 +65,14 @@ export class MessageDedupCache {
     // the global bound; a periodic O(N) sweep would dominate hot paths.
     const expiry = this.entries.get(key);
     if (expiry !== undefined) {
-      if (expiry > now) return false;
+      if (expiry > now) {
+        // Genuine duplicate within TTL — suppress the send. Surface the drop
+        // so operators can see suppressed sends. Fires ONLY here: not on the
+        // disabled / empty-content fast-paths above, and not on the expired
+        // branch below (that's a stale-entry refresh, not a dropped send).
+        this.onDrop?.({ sessionId, contentHash: hash, contentLength: content.length });
+        return false;
+      }
       this.entries.delete(key); // expired — drop so re-insert refreshes order
     }
 

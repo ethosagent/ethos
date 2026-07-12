@@ -58,7 +58,12 @@ vi.mock('grammy', () => {
   return { Bot: MockBot, InlineKeyboard: MockInlineKeyboard };
 });
 
-import { TelegramAdapter } from '../index';
+import { TelegramAdapter, type TelegramAdapterConfig } from '../index';
+
+// botKey is a required constructor param (computed once in wiring); these
+// cases don't exercise routing, so `mk` supplies a fixed default.
+const mk = (cfg: Omit<TelegramAdapterConfig, 'botKey'> & { botKey?: string }): TelegramAdapter =>
+  new TelegramAdapter({ ...cfg, botKey: cfg.botKey ?? 'test-bot' });
 
 let cache: InMemoryAttachmentCache;
 
@@ -131,7 +136,7 @@ describe('3.1 — Inbound file support', () => {
       }),
     );
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -185,7 +190,7 @@ describe('3.1 — Inbound file support', () => {
       }),
     );
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -225,7 +230,7 @@ describe('3.1 — Inbound file support', () => {
       }),
     );
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -277,7 +282,7 @@ describe('3.1 — Inbound file support', () => {
       }),
     );
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -327,7 +332,7 @@ describe('3.1 — Inbound file support', () => {
       }),
     );
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -361,7 +366,7 @@ describe('3.1 — Inbound file support', () => {
   });
 
   it('video message with caption produces no attachments but preserves caption', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -393,7 +398,7 @@ describe('3.1 — Inbound file support', () => {
   });
 
   it('sticker is dropped (no text, no supported media)', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -431,7 +436,7 @@ describe('3.1 — Inbound file support', () => {
       file_size: 30 * 1024 * 1024, // 30 MB
     });
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -469,7 +474,7 @@ describe('3.1 — Inbound file support', () => {
   it('still forwards message with caption when download fails', async () => {
     mockApi.getFile.mockRejectedValueOnce(new Error('network error'));
 
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -498,7 +503,7 @@ describe('3.1 — Inbound file support', () => {
   });
 
   it('animation (GIF) is dropped when no caption (no supported media)', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -528,7 +533,7 @@ describe('3.1 — Inbound file support', () => {
   });
 
   it('audio message is dropped when no caption (no supported media)', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -565,7 +570,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   beforeEach(resetMocks);
 
   it('sets threadId from message_thread_id when not General topic', async () => {
-    const adapter = new TelegramAdapter({
+    const adapter = mk({
       token: '1:fake-token',
       cache,
       defaultChannelMode: 'all',
@@ -593,7 +598,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('leaves threadId undefined for General topic (id 1)', async () => {
-    const adapter = new TelegramAdapter({
+    const adapter = mk({
       token: '1:fake-token',
       cache,
       defaultChannelMode: 'all',
@@ -621,7 +626,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('leaves threadId undefined for non-forum chats', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -644,7 +649,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('passes message_thread_id on send() when threadId is set', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     await adapter.send('100', {
@@ -662,7 +667,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('does not pass message_thread_id on send() when threadId is undefined', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     await adapter.send('100', { text: 'no topic' });
@@ -672,7 +677,7 @@ describe('3.2 — Forum-mode topic isolation', () => {
   });
 
   it('passes message_thread_id on editMessage when threadId is set', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     // First send so we have a chunk mapping
@@ -692,7 +697,7 @@ describe('3.3 — edited_message handling', () => {
   beforeEach(resetMocks);
 
   it('registers an edited_message handler on start()', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     expect(registeredHandlers.edited_message).toBeDefined();
@@ -700,7 +705,7 @@ describe('3.3 — edited_message handling', () => {
   });
 
   it('forwards edited message with isEdit: true', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -734,7 +739,7 @@ describe('3.3 — edited_message handling', () => {
   });
 
   it('ignores edits outside the edit window', async () => {
-    const adapter = new TelegramAdapter({
+    const adapter = mk({
       token: '1:fake-token',
       cache,
       editWindowMs: 30_000, // 30 seconds
@@ -764,7 +769,7 @@ describe('3.3 — edited_message handling', () => {
   });
 
   it('coalesces rapid edits with debounce (only last edit fires)', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -829,7 +834,7 @@ describe('3.3 — edited_message handling', () => {
   });
 
   it('uses default 60s edit window when editWindowMs is not configured', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];
@@ -862,7 +867,7 @@ describe('3.3 — edited_message handling', () => {
   });
 
   it('includes threadId on edited messages from forum topics', async () => {
-    const adapter = new TelegramAdapter({ token: '1:fake-token', cache });
+    const adapter = mk({ token: '1:fake-token', cache });
     await adapter.start();
 
     const captured: InboundMessage[] = [];

@@ -1,4 +1,3 @@
-import { deriveBotKey } from '@ethosagent/core';
 import type {
   AdapterCapabilities,
   DeliveryResult,
@@ -26,8 +25,9 @@ export interface EmailAdapterConfig {
   smtpSecure?: boolean;
   /** Polling interval in ms. Default 60_000. */
   pollIntervalMs?: number;
-  /** Explicit bot identity for multi-bot routing. When omitted, derived from IMAP credentials. */
-  botKey?: string;
+  /** Stable bot identity, computed once in wiring (`deriveBotKey`). Required —
+   *  the adapter no longer derives its own key; routing is stamped from this. */
+  botKey: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ export class EmailAdapter implements PlatformAdapter {
   ) {
     this.config = config;
     this.pollIntervalMs = config.pollIntervalMs ?? 60_000;
-    this.botKey = config.botKey ?? deriveBotKey(`${config.user}@${config.imapHost}`);
+    this.botKey = config.botKey;
     this.createImapClient = overrides?.createImapClient ?? defaultImapClient;
     this.createTransporter = overrides?.createTransporter ?? defaultTransporter;
   }

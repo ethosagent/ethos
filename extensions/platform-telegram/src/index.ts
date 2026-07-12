@@ -1,5 +1,4 @@
 import { join } from 'node:path';
-import { deriveBotKey } from '@ethosagent/core';
 import type {
   AdapterCapabilities,
   ApprovalCapableAdapter,
@@ -252,13 +251,11 @@ export interface TelegramAdapterConfig {
   /**
    * Stable identifier of the bot this adapter is bound to. Stamped on every
    * inbound `InboundMessage.botKey` so the Gateway can route to the right
-   * `AgentLoop` in multi-bot deployments. Optional: when omitted the
-   * adapter derives the same 24-hex sha256(token) prefix the config
-   * layer's `deriveBotKey()` produces, so a direct constructor call
-   * without `botKey` round-trips with the same identity the boot path
-   * would have produced from the same token.
+   * `AgentLoop` in multi-bot deployments. Required — computed once in wiring
+   * (`deriveBotKey`); the adapter no longer derives its own key, so the
+   * routing identity has a single source of truth.
    */
-  botKey?: string;
+  botKey: string;
   /** Whether to drop updates that arrived while the bot was offline. Default true. */
   dropPendingUpdates?: boolean;
   /**
@@ -378,15 +375,15 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
     this.cache = config.cache;
     this.config = config;
     this.dropPendingUpdates = config.dropPendingUpdates ?? true;
-    this.botKey = config.botKey ?? deriveBotKey(config.token);
+    this.botKey = config.botKey;
     this.identity = config.identity;
     this.receiptReaction = config.receiptReaction ?? '👀';
     this.editWindowMs = config.editWindowMs ?? 60_000;
     this.parseMode = config.parseMode ?? 'html';
     // Multi-bot logs disambiguate by including the botKey. Single-bot
-    // deployments pass 'default' (or omit and let the derived hash
-    // stand in) and see `telegram:<key>` — the shape is identical, the
-    // value carries the routing identity.
+    // deployments still pass a botKey (computed once in wiring) and see
+    // `telegram:<key>` — the shape is identical, the value carries the
+    // routing identity.
     this.id = `telegram:${this.botKey}`;
 
     // --- Persistence stores (Gap 4) ---

@@ -5,7 +5,6 @@
 // sibling modules.
 
 import { join } from 'node:path';
-import { deriveBotKey } from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import type {
   AdapterCapabilities,
@@ -122,8 +121,9 @@ export interface SlackAdapterConfig {
   appToken: string;
   /** Signing secret from Slack app config */
   signingSecret: string;
-  /** Stable identifier for multi-bot routing. See `deriveDefaultBotKey`. */
-  botKey?: string;
+  /** Stable bot identity, computed once in wiring (`deriveBotKey`). Required —
+   *  the adapter no longer derives its own key; routing is stamped from this. */
+  botKey: string;
   /** Bot binding — used by slash commands and the member-join greeting.
    *  Optional for back-compat: callers that don't wire it get default
    *  responses. New deployments should always set this. */
@@ -268,7 +268,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
     });
     this.client = this.app.client;
 
-    this.botKey = config.botKey ?? deriveBotKey(config.botToken);
+    this.botKey = config.botKey;
     this.id = `slack:${this.botKey}`;
     this.binding = config.binding;
     this.defaultChannelMode = config.defaultChannelMode ?? DEFAULT_CHANNEL_MODE;

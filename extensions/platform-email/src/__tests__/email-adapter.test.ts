@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { InboundMessage } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import type { EmailAdapterConfig } from '../index';
@@ -11,6 +10,9 @@ const BASE_CONFIG: EmailAdapterConfig = {
   password: 'secret',
   smtpHost: 'smtp.example.com',
   smtpPort: 587,
+  // botKey is a required constructor param (computed once in wiring); tests
+  // supply a fixed value.
+  botKey: 'email-test-bot',
 };
 
 // ---------------------------------------------------------------------------
@@ -257,19 +259,9 @@ describe('EmailAdapter lifecycle', () => {
 // ---------------------------------------------------------------------------
 
 describe('EmailAdapter botKey', () => {
-  it('derives botKey from IMAP credentials when not configured', () => {
-    const adapter = new EmailAdapter(BASE_CONFIG, {
-      createImapClient: () => makeImapMock() as never,
-      createTransporter: () => makeTransportMock() as never,
-    });
-    const expected = createHash('sha256')
-      .update(`${BASE_CONFIG.user}@${BASE_CONFIG.imapHost}`)
-      .digest('hex')
-      .slice(0, 24);
-    expect(adapter.botKey).toBe(expected);
-  });
-
-  it('uses explicit botKey from config when provided', () => {
+  // P5.2 — botKey is computed once in wiring and passed as a required
+  // constructor param; the adapter no longer derives it from credentials.
+  it('uses the configured botKey verbatim', () => {
     const adapter = new EmailAdapter(
       { ...BASE_CONFIG, botKey: 'my-email-bot' },
       {
@@ -278,18 +270,6 @@ describe('EmailAdapter botKey', () => {
       },
     );
     expect(adapter.botKey).toBe('my-email-bot');
-  });
-
-  it('derivation is stable — same credentials produce same botKey', () => {
-    const a = new EmailAdapter(BASE_CONFIG, {
-      createImapClient: () => makeImapMock() as never,
-      createTransporter: () => makeTransportMock() as never,
-    });
-    const b = new EmailAdapter(BASE_CONFIG, {
-      createImapClient: () => makeImapMock() as never,
-      createTransporter: () => makeTransportMock() as never,
-    });
-    expect(a.botKey).toBe(b.botKey);
   });
 
   it('sets botKey on every emitted InboundMessage', async () => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { MessageDedupCache } from '../dedup';
+import { type DedupDropInfo, MessageDedupCache } from '../dedup';
 
 describe('MessageDedupCache', () => {
   const originalEnv = process.env.ETHOS_DEDUP_LEGACY;
@@ -102,6 +102,58 @@ describe('MessageDedupCache', () => {
     expect(cache.shouldSend('s', 'a')).toBe(true);
     // 'd' was the most recent insertion; still suppressed
     expect(cache.shouldSend('s', 'd')).toBe(false);
+  });
+});
+
+describe('MessageDedupCache — onDrop observability (P5.4)', () => {
+  const originalEnv = process.env.ETHOS_DEDUP_LEGACY;
+  afterEach(() => {
+    if (originalEnv === undefined) delete process.env.ETHOS_DEDUP_LEGACY;
+    else process.env.ETHOS_DEDUP_LEGACY = originalEnv;
+  });
+
+  it('fires onDrop exactly once per genuine duplicate — not on first send or empty content', () => {
+    const drops: DedupDropInfo[] = [];
+    const cache = new MessageDedupCache({ ttlMs: 60_000, onDrop: (i) => drops.push(i) });
+
+    // First send: admitted, no drop.
+    expect(cache.shouldSend('s1', 'hello')).toBe(true);
+    expect(drops).toHaveLength(0);
+
+    // Duplicate: dropped, exactly one event.
+    expect(cache.shouldSend('s1', 'hello')).toBe(false);
+    expect(drops).toHaveLength(1);
+    expect(drops[0]).toMatchObject({ sessionId: 's1', contentLength: 5 });
+    expect(drops[0]?.contentHash).toMatch(/^[0-9a-f]{64}$/);
+
+    // Content only, never the plaintext.
+    expect(JSON.stringify(drops[0])).not.toContain('hello');
+
+    // Empty content is never deduped and never drops.
+    expect(cache.shouldSend('s1', '')).toBe(true);
+    expect(cache.shouldSend('s1', '')).toBe(true);
+    expect(drops).toHaveLength(1);
+  });
+
+  it('does not fire onDrop on the disabled (legacy) path', () => {
+    process.env.ETHOS_DEDUP_LEGACY = '1';
+    const drops: DedupDropInfo[] = [];
+    const cache = new MessageDedupCache({ ttlMs: 60_000, onDrop: (i) => drops.push(i) });
+
+    cache.shouldSend('s1', 'x');
+    cache.shouldSend('s1', 'x');
+    expect(drops).toHaveLength(0);
+  });
+
+  it('does not fire onDrop when a stale (expired) entry is refreshed', async () => {
+    const drops: DedupDropInfo[] = [];
+    const cache = new MessageDedupCache({ ttlMs: 10, onDrop: (i) => drops.push(i) });
+
+    expect(cache.shouldSend('s1', 'x')).toBe(true);
+    await new Promise((r) => setTimeout(r, 25));
+    // Re-send after TTL: admitted (not a drop), so onDrop must NOT fire.
+    expect(cache.shouldSend('s1', 'x')).toBe(true);
+    expect(drops).toHaveLength(0);
   });
 });
 

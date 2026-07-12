@@ -244,7 +244,7 @@ describe('buildAdapters — multi-bot adapter loop (Phase 2)', () => {
     expect(cfg.botKey).toMatch(/^[0-9a-f]{24}$/);
   });
 
-  it('still constructs legacy discord + email adapters alongside multi-bot telegram', async () => {
+  it('threads a computed botKey into legacy discord + email adapters alongside multi-bot telegram', async () => {
     const adapters = await buildAdapters(
       {
         ...baseConfig,
@@ -260,8 +260,15 @@ describe('buildAdapters — multi-bot adapter loop (Phase 2)', () => {
       makeLoader(),
     );
 
-    const platformIds = adapters.map((a) => a.id).sort();
-    expect(platformIds).toEqual(['discord', 'email', 'telegram:tg-a']);
+    expect(adapters).toHaveLength(3);
+    const byPlatform = new Map(
+      adapters.map((a) => [(a as CapturedAdapter).displayName, a as CapturedAdapter]),
+    );
+    // P5.2 — botKey is now computed once in wiring and passed to every adapter,
+    // including the legacy Discord/Email scalars (they no longer self-derive).
+    expect(byPlatform.get('discord')?.capturedConfig.botKey).toMatch(/^[0-9a-f]{24}$/);
+    expect(byPlatform.get('email')?.capturedConfig.botKey).toMatch(/^[0-9a-f]{24}$/);
+    expect(byPlatform.get('telegram')?.id).toBe('telegram:tg-a');
   });
 
   it('skips a platform whose adapter module fails to load (graceful degradation)', async () => {

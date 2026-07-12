@@ -1,4 +1,3 @@
-import { deriveBotKey } from '@ethosagent/core';
 import type {
   AdapterCapabilities,
   ApprovalCapableAdapter,
@@ -33,7 +32,10 @@ interface DiscordAdapterConfig {
   token: string;
   /** @deprecated Use `defaultChannelMode` instead. */
   mentionOnly?: boolean;
-  botKey?: string;
+  /** Stable bot identity, computed once in wiring (`deriveBotKey`). Required —
+   *  the adapter no longer derives its own key, so routing (lane keys,
+   *  `InboundMessage.botKey`) is stamped from this single source of truth. */
+  botKey: string;
   receiptReaction?: string;
   cache?: AttachmentCache;
   storage?: Storage;
@@ -129,7 +131,7 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   constructor(config: DiscordAdapterConfig) {
     this.token = config.token;
     this.receiptReaction = config.receiptReaction ?? '👀';
-    this.botKey = config.botKey ?? deriveBotKey(config.token);
+    this.botKey = config.botKey;
     this.id = `discord:${this.botKey}`;
     this.cache = config.cache;
     this.applicationId = config.applicationId;
