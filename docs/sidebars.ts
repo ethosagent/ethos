@@ -39,6 +39,7 @@ const sidebars: SidebarsConfig = {
             'using/how-to/install-on-windows-wsl2',
             'using/how-to/configure-providers',
             'using/how-to/qualify-a-local-model',
+            'using/how-to/local-voice',
             'using/how-to/deploy-in-production',
             'using/how-to/deploy-on-ec2',
             'using/how-to/run-multiple-bots',
