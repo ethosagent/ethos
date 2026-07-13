@@ -1,0 +1,10 @@
+{"id":"tool-calling/echo-shell","expected":"ethos-ok","match":"contains"}
+{"id":"tool-calling/nested-args-write","expected":"DONE","match":"contains"}
+{"id":"tool-calling/arithmetic","expected":"391","match":"contains"}
+{"id":"json-discipline/object-only","expected":"{\"status\":\"ok\",\"count\":3}","match":"exact"}
+{"id":"json-discipline/array-only","expected":"[1,2,3]","match":"exact"}
+{"id":"planning/three-steps","expected":"Step 3","match":"contains"}
+{"id":"planning/decompose-login","expected":"test","match":"contains"}
+{"id":"coding/reverse-python","expected":"s[::-1]","match":"contains"}
+{"id":"coding/sum-list","expected":"sum(xs)","match":"contains"}
+{"id":"compaction-survival/passphrase","expected":"ETHOS-ZEBRA-42","match":"contains"}
