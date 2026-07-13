@@ -373,28 +373,46 @@ export class ChatService {
       }
       this.firstUserMessages.delete(sessionId);
       await this.titleSession(sessionId, firstMessage);
-    } catch {
-      // Best-effort: auto-title failures are non-fatal.
+    } catch (err) {
+      // Best-effort: auto-title failures are non-fatal, but log so a persistent
+      // failure (e.g. the session store rejecting the update) is diagnosable.
+      console.warn(`[chat] auto-title failed for session ${sessionId}:`, err);
     }
   }
 
+  /**
+   * Title a session from its first user message. Prefers the injected `titleFn`
+   * (an LLM call); when that is absent, throws, or yields an empty title, falls
+   * back to a deterministic title derived from the first user message. Net
+   * effect: every session with a non-empty first message ends up titled.
+   */
   private async titleSession(sessionId: string, firstUserMessage: string): Promise<void> {
-    if (!this.opts.titleFn) {
-      return;
-    }
-    try {
-      const title = await this.opts.titleFn(
-        'Generate a title for this conversation in 6 words or fewer. Reply with only the title, no punctuation.',
-        firstUserMessage,
-      );
-      const trimmed = title.trim().slice(0, 200);
-      if (trimmed) {
-        await this.opts.sessions.update(sessionId, { title: trimmed });
-        this.opts.systemBus?.emitSystem({ type: 'session.titled', sessionId, title: trimmed });
+    let title = '';
+    if (this.opts.titleFn) {
+      try {
+        const generated = await this.opts.titleFn(
+          'Generate a title for this conversation in 6 words or fewer. Reply with only the title, no punctuation.',
+          firstUserMessage,
+        );
+        title = generated.trim().slice(0, 200);
+      } catch (err) {
+        // Non-fatal: fall through to the deterministic fallback below.
+        console.warn(
+          `[chat] auto-title LLM failed for session ${sessionId}; using fallback title:`,
+          err,
+        );
       }
-    } catch {
-      // Best-effort: title generation failures are non-fatal.
     }
+
+    if (!title) {
+      title = deriveFallbackTitle(firstUserMessage);
+    }
+    if (!title) {
+      return; // Empty first message — nothing meaningful to title with.
+    }
+
+    await this.opts.sessions.update(sessionId, { title });
+    this.opts.systemBus?.emitSystem({ type: 'session.titled', sessionId, title });
   }
 
   private invokeSubscriber(
@@ -414,4 +432,28 @@ export class ChatService {
     const seq = this.opts.buffer.append(sessionId, event);
     this.emitter.emit('appended', sessionId, { seq, event });
   }
+}
+
+/** Max length of a deterministic fallback title (before the ellipsis). */
+const FALLBACK_TITLE_MAX = 60;
+
+/**
+ * Derive a deterministic session title from the first user message. Takes the
+ * first line, strips a leading slash-command token, collapses whitespace, and
+ * truncates to `FALLBACK_TITLE_MAX` chars (appending an ellipsis when cut).
+ * Returns '' only when the message has no titleable content.
+ */
+function deriveFallbackTitle(firstUserMessage: string): string {
+  const firstLine = firstUserMessage.split('\n', 1)[0] ?? '';
+  // Strip a leading slash-command token (e.g. "/new", "/deploy the app").
+  const withoutCommand = firstLine.replace(/^\/\S+\s*/, '');
+  const source = withoutCommand.trim() ? withoutCommand : firstLine;
+  const collapsed = source.replace(/\s+/g, ' ').trim();
+  if (!collapsed) {
+    return '';
+  }
+  if (collapsed.length <= FALLBACK_TITLE_MAX) {
+    return collapsed;
+  }
+  return `${collapsed.slice(0, FALLBACK_TITLE_MAX).trimEnd()}…`;
 }

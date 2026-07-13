@@ -213,6 +213,73 @@ describe('ChatService', () => {
     expect(updated?.title).toBe('Generated Title');
   });
 
+  it('uses the LLM title when titleFn returns a good title', async () => {
+    const service = new ChatService({
+      loop: makeStubAgentLoop({
+        events: [
+          { type: 'text_delta', text: 'hi' },
+          { type: 'done', text: 'hi', turnCount: 1 },
+        ],
+      }),
+      sessions,
+      buffer,
+      defaults: { model: 'claude-test', provider: 'anthropic' },
+      titleFn: async () => 'A Fine Title',
+    });
+    const result = await service.send({ clientId: 'tab-1', text: 'first question' });
+    expect(await waitForTitle(sessions, result.sessionId)).toBe('A Fine Title');
+  });
+
+  it('falls back to the first user message when titleFn returns an empty title', async () => {
+    const service = new ChatService({
+      loop: makeStubAgentLoop({
+        events: [{ type: 'done', text: 'ok', turnCount: 1 }],
+      }),
+      sessions,
+      buffer,
+      defaults: { model: 'claude-test', provider: 'anthropic' },
+      titleFn: async () => '   ',
+    });
+    const result = await service.send({ clientId: 'tab-1', text: 'How do I center a div?' });
+    const title = await waitForTitle(sessions, result.sessionId);
+    expect(title).toBe('How do I center a div?');
+    expect(title?.length).toBeLessThanOrEqual(63);
+  });
+
+  it('falls back to the first user message when titleFn throws', async () => {
+    const service = new ChatService({
+      loop: makeStubAgentLoop({
+        events: [{ type: 'done', text: 'ok', turnCount: 1 }],
+      }),
+      sessions,
+      buffer,
+      defaults: { model: 'claude-test', provider: 'anthropic' },
+      titleFn: async () => {
+        throw new Error('LLM unreachable');
+      },
+    });
+    const result = await service.send({ clientId: 'tab-1', text: 'Fix the login bug' });
+    expect(await waitForTitle(sessions, result.sessionId)).toBe('Fix the login bug');
+  });
+
+  it('falls back to the first user message when titleFn is absent', async () => {
+    // makeService wires no titleFn.
+    const service = makeService([{ type: 'done', text: 'ok', turnCount: 1 }]);
+    const result = await service.send({ clientId: 'tab-1', text: 'Explain event loops' });
+    expect(await waitForTitle(sessions, result.sessionId)).toBe('Explain event loops');
+  });
+
+  it('fallback title is single-line and truncated for long multi-line messages', async () => {
+    const service = makeService([{ type: 'done', text: 'ok', turnCount: 1 }]);
+    const longText = `${'word '.repeat(40)}\nsecond line should be dropped`;
+    const result = await service.send({ clientId: 'tab-1', text: longText });
+    const title = (await waitForTitle(sessions, result.sessionId)) ?? '';
+    expect(title).not.toContain('\n');
+    expect(title).not.toContain('second line');
+    expect(title.length).toBeLessThanOrEqual(63);
+    expect(title.endsWith('…')).toBe(true);
+  });
+
   it('a rejecting subscriber does not crash the emitter or starve other subscribers', async () => {
     const service = makeService();
     const result = await service.send({ clientId: 'tab-1', text: 'hi' });
@@ -277,4 +344,19 @@ async function waitForEvent<T>(
   timeoutMs = 1000,
 ): Promise<void> {
   await waitFor(() => predicate(collected), timeoutMs);
+}
+
+/** Poll the session store until a title is set (auto-title runs async on `done`). */
+async function waitForTitle(
+  sessions: ChatRepository,
+  sessionId: string,
+  timeoutMs = 1000,
+): Promise<string | undefined> {
+  const start = Date.now();
+  for (;;) {
+    const session = await sessions.get(sessionId);
+    if (session?.title) return session.title;
+    if (Date.now() - start > timeoutMs) return undefined;
+    await new Promise((r) => setTimeout(r, 5));
+  }
 }
