@@ -404,6 +404,86 @@ describe('a2a_send — self-loop guard (plan §14)', () => {
   });
 });
 
+describe('a2a_send — live enablement gate (Stage 1c)', () => {
+  it('returns not_available without touching identity/secrets/network when isEnabled is false', async () => {
+    let identityCalls = 0;
+    let secretCalls = 0;
+    let fetchCalls = 0;
+    const initiator = makeAgent('me');
+
+    const identity: A2aIdentityProvider = {
+      async getIdentity(personalityId, audience) {
+        identityCalls += 1;
+        return stubIdentity(initiator, ['search']).getIdentity(personalityId, audience);
+      },
+    };
+    const secrets: SecretsResolver = {
+      async get(_ref: SecretRef) {
+        secretCalls += 1;
+        return initiator.privateKeyPem;
+      },
+      async set() {},
+      async delete() {},
+      async list() {
+        return [];
+      },
+    };
+    const fetchImpl: typeof fetch = async () => {
+      fetchCalls += 1;
+      return new Response('{}');
+    };
+
+    const [tool] = createA2aTools({
+      identity,
+      secrets,
+      allowlist: egressAllow(),
+      client: new A2aOutboundClient({ fetchImpl }),
+      isEnabled: () => false,
+    });
+
+    const result = await tool?.execute(
+      { peer_url: WELL_KNOWN_URL, skill: 'search', message: 'hi' },
+      makeCtx(initiator.id),
+    );
+
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect(result.code).toBe('not_available');
+      expect(result.error).toContain('A2A is disabled');
+    }
+    // The gate short-circuits before any identity/secret/network work.
+    expect(identityCalls).toBe(0);
+    expect(secretCalls).toBe(0);
+    expect(fetchCalls).toBe(0);
+  });
+
+  it('proceeds end to end when isEnabled returns true', async () => {
+    const target = makeAgent(TARGET_ID);
+    const initiator = makeAgent('me');
+    const clock = { t: Date.now() };
+    const { app, counter } = makeServer(target, initiator, clock);
+    const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
+    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+
+    const [tool] = createA2aTools({
+      identity: stubIdentity(initiator, ['search']),
+      secrets: stubSecrets({ [`a2a/${initiator.id}/private-key`]: initiator.privateKeyPem }),
+      allowlist: egressAllow(target),
+      client,
+      isEnabled: () => true,
+    });
+
+    const result = await tool?.execute(
+      { peer_url: WELL_KNOWN_URL, fingerprint: target.fingerprint, skill: 'search', message: 'hi' },
+      makeCtx(initiator.id),
+    );
+
+    expect(result?.ok).toBe(true);
+    if (result?.ok) expect(result.value).toBe('hello world');
+    expect(counter.runs).toBe(1);
+  });
+});
+
 describe('a2a_send — egress default-deny (plan §15)', () => {
   it('refuses a non-allowlisted peer BEFORE any handshake (no challenge POST)', async () => {
     const target = makeAgent(TARGET_ID);

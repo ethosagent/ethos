@@ -741,6 +741,8 @@ export function Settings() {
 
       <LatestDigestSection />
 
+      <A2aSection />
+
       <ApiKeysSection />
 
       {isDesktop ? <DesktopSettings /> : null}
@@ -826,6 +828,77 @@ function LatestDigestSection() {
           </div>
           <ContentRenderer content={digestQuery.data.markdown} format="markdown" />
         </div>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Agent-to-Agent (A2A) — serve-wide enable/disable toggle. Live gate: the
+// switch calls `a2a.settings.set` on flip (not the page Save button). Enabling
+// exposes the discovery + peering surface; peers stay default-deny regardless.
+// When A2A is not wired on this server the `get` returns NOT_AVAILABLE (503) —
+// render the switch disabled with a subtle note rather than erroring loudly.
+// ---------------------------------------------------------------------------
+
+/** True when an oRPC client error carries the `NOT_AVAILABLE` code. */
+function isNotAvailable(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === 'object' &&
+    'code' in err &&
+    (err as { code: unknown }).code === 'NOT_AVAILABLE'
+  );
+}
+
+function A2aSection() {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+
+  const settingsQuery = useQuery({
+    queryKey: ['a2a', 'settings'],
+    queryFn: () => rpc.a2a.settings.get(),
+    retry: false,
+  });
+
+  const setMut = useMutation({
+    mutationFn: (enabled: boolean) => rpc.a2a.settings.set({ enabled }),
+    onSuccess: (data) => {
+      qc.setQueryData(['a2a', 'settings'], data);
+      notification.success({
+        message: data.enabled ? 'A2A enabled' : 'A2A disabled',
+        placement: 'topRight',
+      });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Failed to update A2A', description: (err as Error).message }),
+  });
+
+  const unavailable = isNotAvailable(settingsQuery.error);
+  const loadError = settingsQuery.error && !unavailable ? settingsQuery.error : null;
+  const enabled = settingsQuery.data?.enabled ?? false;
+
+  return (
+    <Card title="Agent-to-Agent (A2A)" size="small" style={{ maxWidth: 640, marginTop: 32 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <Switch
+          checked={enabled}
+          disabled={unavailable || Boolean(loadError) || settingsQuery.isLoading}
+          loading={settingsQuery.isLoading || setMut.isPending}
+          onChange={(next) => setMut.mutate(next)}
+        />
+        <Typography.Text>{enabled ? 'Enabled' : 'Disabled'}</Typography.Text>
+      </div>
+      {loadError ? (
+        <Typography.Text type="danger" style={{ fontSize: 12 }}>
+          Failed to load A2A status: {(loadError as Error).message}
+        </Typography.Text>
+      ) : (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {unavailable
+            ? 'Unavailable on this server.'
+            : 'Enabling exposes the A2A discovery and peering surface. Peers are still default-deny.'}
+        </Typography.Text>
       )}
     </Card>
   );

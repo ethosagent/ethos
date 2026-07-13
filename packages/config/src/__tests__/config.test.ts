@@ -211,6 +211,52 @@ describe('parseConfigYaml — admin.enabled', () => {
   });
 });
 
+describe('parseConfigYaml — a2a.enabled', () => {
+  it('parses a2a.enabled: true into config.a2a', async () => {
+    const cfg = await loadYaml(
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'apiKey: sk',
+        'personality: researcher',
+        'a2a.enabled: true',
+      ].join('\n'),
+    );
+    expect(cfg.a2a).toEqual({ enabled: true });
+  });
+
+  it('leaves config.a2a undefined when the key is absent (default off)', async () => {
+    const cfg = await loadYaml(
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'apiKey: sk',
+        'personality: researcher',
+      ].join('\n'),
+    );
+    expect(cfg.a2a).toBeUndefined();
+  });
+
+  it('round-trips through writeConfig and back', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+      a2a: { enabled: true },
+    };
+    await writeConfig(storage, original);
+
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('a2a.enabled: true');
+
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.a2a).toEqual({ enabled: true });
+  });
+});
+
 describe('parseConfigYaml — storage backend', () => {
   const base = [
     'provider: anthropic',

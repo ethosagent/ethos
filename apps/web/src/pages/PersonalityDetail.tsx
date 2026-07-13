@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
+import { A2aPeersSection } from '../components/personality/A2aPeersSection';
 import { CharacterSheetView } from '../components/personality/CharacterSheetView';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { rpc } from '../rpc';
@@ -757,6 +758,8 @@ export function PersonalityDetail() {
       </div>
 
       {!personality.builtin && <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />}
+
+      <A2aPeersSection personalityId={id} />
 
       {editModalOpen ? (
         <EditModal

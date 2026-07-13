@@ -509,6 +509,13 @@ export interface EthosConfig {
    */
   admin?: { enabled?: boolean };
   /**
+   * Agent-to-Agent (A2A) surface gate. The `/a2a`, `/a2a-auth`, and well-known
+   * card routes plus the `a2a_send` tool are live only when `a2a.enabled: true`
+   * is set explicitly — default false (A2A stays opt-in). Config key:
+   * a2a.enabled. Supersedes the deprecated `ETHOS_A2A_ENABLED` env override.
+   */
+  a2a?: { enabled?: boolean };
+  /**
    * Governed-learning nightly pass scheduler (Phase 3c E). Default-off: when
    * absent or `enabled !== true`, no timer is created and behavior is
    * unchanged. When enabled, `ethos serve` / `ethos gateway start` fire the
@@ -783,6 +790,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.pluginsAutoInstall !== undefined)
     lines.push(`plugins.auto_install: ${config.pluginsAutoInstall}`);
   if (config.admin?.enabled !== undefined) lines.push(`admin.enabled: ${config.admin.enabled}`);
+  if (config.a2a?.enabled !== undefined) lines.push(`a2a.enabled: ${config.a2a.enabled}`);
   if (config.nightlyPass) {
     if (config.nightlyPass.enabled !== undefined)
       lines.push(`nightlyPass.enabled: ${config.nightlyPass.enabled}`);
@@ -1107,6 +1115,12 @@ function parseConfigYaml(src: string): EthosConfig {
       kv['admin.enabled'] = adm[1].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // a2a.enabled: <value>
+    const a2a = line.match(/^a2a\.enabled:\s*(.+)$/);
+    if (a2a) {
+      kv['a2a.enabled'] = a2a[1].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // nightlyPass.<field>: <value>
     const np = line.match(/^nightlyPass\.(\w+):\s*(.+)$/);
     if (np) {
@@ -1334,6 +1348,7 @@ function parseConfigYaml(src: string): EthosConfig {
     pluginsAutoInstall,
     admin:
       kv['admin.enabled'] !== undefined ? { enabled: kv['admin.enabled'] === 'true' } : undefined,
+    a2a: kv['a2a.enabled'] !== undefined ? { enabled: kv['a2a.enabled'] === 'true' } : undefined,
     nightlyPass:
       kv['nightlyPass.enabled'] !== undefined || kv['nightlyPass.cron'] !== undefined
         ? {

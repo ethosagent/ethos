@@ -42,6 +42,13 @@ export interface A2aToolDeps {
    * false — set via `ETHOS_A2A_SELF_LOOP=1` at the wiring layer (plan §14).
    */
   allowSelfLoop?: boolean;
+  /**
+   * Live A2A enablement gate. When provided and it returns false, `a2a_send`
+   * short-circuits with `not_available` BEFORE touching identity/secrets/network
+   * — so the tool can stay registered while A2A is disabled and start working
+   * the moment it is live-enabled (no restart). When absent, assume enabled.
+   */
+  isEnabled?: () => boolean;
 }
 
 interface A2aSendArgs {
@@ -107,6 +114,14 @@ function makeA2aSendTool(deps: A2aToolDeps): Tool {
       required: ['peer_url', 'skill', 'message'],
     },
     async execute(rawArgs, ctx: ToolContext): Promise<ToolResult> {
+      if (deps.isEnabled && !deps.isEnabled()) {
+        return {
+          ok: false,
+          code: 'not_available',
+          error: 'A2A is disabled — enable it in Settings or run `ethos a2a enable`.',
+        };
+      }
+
       const args = parseArgs(rawArgs);
       if (!args) {
         return {

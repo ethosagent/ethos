@@ -1,6 +1,8 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import {
+  A2aIdentityViewSchema,
+  A2aPeerRowSchema,
   ApiKeyMetadataSchema,
   ApiKeyScopeSchema,
   ApprovalScopeSchema,
@@ -1931,6 +1933,75 @@ const voice = {
 };
 
 // ---------------------------------------------------------------------------
+// A2A peering (admin surface) — thin RPC wrappers over the wiring
+// `A2aPeeringService` + the runtime enable/disable control. Rides the same
+// cookie/bearer `/rpc` auth as the other management namespaces; NOT the public
+// peer-facing `/a2a` surface. Serve-wide `settings` toggle plus per-personality
+// identity / peer / skill-exposure reads (plan §6, §13).
+// ---------------------------------------------------------------------------
+
+const A2aSettingsGetOutput = z.object({ enabled: z.boolean() });
+const A2aSettingsSetInput = z.object({ enabled: z.boolean() });
+const A2aSettingsSetOutput = z.object({ enabled: z.boolean() });
+
+const A2aIdentityInput = z.object({ personalityId: z.string().min(1) });
+
+const A2aPeersListInput = z.object({ personalityId: z.string().min(1) });
+
+const A2aPeersPreviewInput = z.object({ url: z.string().min(1) });
+// Only what the verify-step UI needs — the fetched fingerprint + peer
+// name/description — NOT the whole signed card.
+const A2aPeersPreviewOutput = z.object({
+  fingerprint: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+});
+
+const A2aPeersAddInput = z.object({
+  personalityId: z.string().min(1),
+  url: z.string().min(1),
+  /** The out-of-band fingerprint the peer gave you; must match the fetched
+   *  card's fingerprint or the add is rejected (verify-first, plan §8). */
+  expectedFingerprint: z.string().min(1),
+  label: z.string().optional(),
+});
+
+const A2aPeersSetEnabledInput = z.object({
+  personalityId: z.string().min(1),
+  fingerprint: z.string().min(1),
+  enabled: z.boolean(),
+});
+
+const A2aPeersRemoveInput = z.object({
+  personalityId: z.string().min(1),
+  fingerprint: z.string().min(1),
+});
+
+const A2aOkOutput = z.object({ ok: z.literal(true) });
+
+const A2aSkillsListExposableInput = z.object({ personalityId: z.string().min(1) });
+const A2aSkillsListExposableOutput = z.array(z.object({ name: z.string(), exposed: z.boolean() }));
+
+/** @experimental */
+const a2a = {
+  settings: {
+    get: oc.output(A2aSettingsGetOutput),
+    set: oc.input(A2aSettingsSetInput).output(A2aSettingsSetOutput),
+  },
+  identity: oc.input(A2aIdentityInput).output(A2aIdentityViewSchema),
+  peers: {
+    list: oc.input(A2aPeersListInput).output(z.array(A2aPeerRowSchema)),
+    preview: oc.input(A2aPeersPreviewInput).output(A2aPeersPreviewOutput),
+    add: oc.input(A2aPeersAddInput).output(A2aPeerRowSchema),
+    setEnabled: oc.input(A2aPeersSetEnabledInput).output(A2aOkOutput),
+    remove: oc.input(A2aPeersRemoveInput).output(A2aOkOutput),
+  },
+  skills: {
+    listExposable: oc.input(A2aSkillsListExposableInput).output(A2aSkillsListExposableOutput),
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Root contract — every namespace mounted under one symbol
 // ---------------------------------------------------------------------------
 
@@ -1965,6 +2036,7 @@ export const contract = {
   goals,
   digest,
   voice,
+  a2a,
 };
 
 export type Contract = typeof contract;

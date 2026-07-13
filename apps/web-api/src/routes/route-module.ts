@@ -33,4 +33,24 @@ export interface RouteModule {
   description: string;
   /** Kill switch. Defaults to true; when false the module is NOT mounted. */
   enabled?: boolean;
+  /**
+   * Live per-request gate — when present and it returns false, the module's
+   * routes 404 as if unmounted. Distinct from `enabled?` (mount-time static).
+   * Lets a feature be toggled at runtime without a restart.
+   */
+  enabledCheck?: () => boolean;
+}
+
+/**
+ * Runtime control surface for a live-toggleable protocol module (A2A). The
+ * route modules + the outbound tool consult `isEnabled`; `setEnabled` flips the
+ * live state and persists it. Threaded through {@link RouteModule.enabledCheck}
+ * and consumed by the RPC layer so a UI toggle and the live `/a2a` handshake
+ * stay one source of truth.
+ */
+export interface A2aControl {
+  /** Current live state — the same predicate wired into `enabledCheck`. */
+  isEnabled: () => boolean;
+  /** Flip A2A on/off at runtime and persist the new state to config. */
+  setEnabled: (enabled: boolean) => Promise<void>;
 }

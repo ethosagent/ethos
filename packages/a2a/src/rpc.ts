@@ -459,8 +459,12 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
     const { traceId, depth } = admission;
 
     // --- Gate 4: scope ∩ current character sheet (evaluated at call time) ---
+    // `*` is the full-access marker (plan §2a): it grants any skill the token's
+    // scope covers, but ONLY as far as the sheet-intersection below still allows
+    // — so `*` can never reach a skill the owner has not exposed. Empty scope
+    // `[]` keeps its deny-all meaning.
     const skill = params.skill;
-    if (!claims.scope.includes(skill)) {
+    if (!claims.scope.includes(skill) && !claims.scope.includes('*')) {
       auditDenied('forbidden-scope', { peerFingerprint, traceId });
       return errorResponse(id, RPC.FORBIDDEN_SCOPE, `skill "${skill}" not in granted scope`);
     }
@@ -471,6 +475,16 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
         RPC.FORBIDDEN_SCOPE,
         `skill "${skill}" not in the personality's current character sheet`,
       );
+    }
+
+    // Stamp inbound "last seen" (plan §11) — authenticated + authorized; fail-open
+    // so a touch error never affects the RPC outcome.
+    if (typeof opts.peerStore.touchLastSeen === 'function') {
+      try {
+        await opts.peerStore.touchLastSeen(personalityId, peerFingerprint, now());
+      } catch {
+        // fail-open
+      }
     }
 
     const sessionKey = params.sessionKey ?? `a2a:${personalityId}:${peerFingerprint}`;

@@ -117,6 +117,34 @@ export interface A2aAllowlist {
   lookup(personalityId: string, peerFingerprint: string): Promise<PeerGrant | null>;
 }
 
+/**
+ * A human-curated allowlist record (plan §3). Distinct from {@link PeerGrant}:
+ * this is the full stored entry the CLI/UI manages (including disabled ones and
+ * the optional local display `label`), whereas `lookup` returns a `PeerGrant`
+ * only for enabled peers on the handshake hot path.
+ */
+export interface AllowlistEntry {
+  fingerprint: string;
+  scope: string[];
+  enabled: boolean;
+  /** Optional local display name, user-controlled (plan §11). */
+  label?: string;
+  /** Optional peer well-known URL — lets the address book show + re-resolve it. */
+  url?: string;
+}
+
+/**
+ * The admin/management face of the allowlist (plan §3) — list / upsert /
+ * set-enabled / remove, for the CLI + web UI. Kept SEPARATE from the read-only
+ * {@link A2aAllowlist.lookup} hot path so the handshake interface stays minimal.
+ */
+export interface A2aAllowlistAdmin {
+  list(personalityId: string): Promise<AllowlistEntry[]>;
+  upsert(personalityId: string, e: AllowlistEntry): Promise<void>;
+  setEnabled(personalityId: string, fp: string, enabled: boolean): Promise<void>;
+  remove(personalityId: string, fp: string): Promise<void>;
+}
+
 // ---------------------------------------------------------------------------
 // Peer store — runtime peer entries
 // ---------------------------------------------------------------------------
@@ -132,6 +160,12 @@ export interface PeerEntry {
   scope: string[];
   tokenRef?: string;
   enabled: boolean;
+  /**
+   * ms epoch of the most recent INBOUND authenticated interaction from this peer
+   * (plan §11). Optional + backward-compatible: pre-existing entries omit it and
+   * surface as "never connected". Debounce-stamped via {@link touchLastSeen}.
+   */
+  lastSeenAt?: number;
 }
 
 /**
@@ -143,6 +177,26 @@ export interface PeerEntry {
 export interface A2aPeerStore {
   get(personalityId: string, fingerprint: string): Promise<PeerEntry | null>;
   upsert(personalityId: string, entry: PeerEntry): Promise<void>;
+  /**
+   * Debounced "last seen" stamp (plan §11) — OPTIONAL so lightweight in-memory
+   * test stores need not implement it. Callers must feature-detect
+   * (`typeof store.touchLastSeen === 'function'`) and treat it as fail-open.
+   */
+  touchLastSeen?(
+    personalityId: string,
+    fingerprint: string,
+    now: number,
+    debounceMs?: number,
+  ): Promise<void>;
+}
+
+/**
+ * The admin/management face of the peer store (plan §3) — list all peers for a
+ * personality, for the CLI + web UI. Kept SEPARATE from the read-only
+ * {@link A2aPeerStore} hot path so the handshake interface stays minimal.
+ */
+export interface A2aPeerStoreAdmin {
+  list(personalityId: string): Promise<PeerEntry[]>;
 }
 
 /**
@@ -152,15 +206,19 @@ export interface A2aPeerStore {
  * {@link Storage}). This is the wiring/testing default; the real
  * per-personality-config source arrives in a later phase.
  */
-export class StorageA2aPeerStore implements A2aPeerStore {
+export class StorageA2aPeerStore implements A2aPeerStore, A2aPeerStoreAdmin {
   constructor(
     private readonly storage: Storage,
     /** Absolute base directory (paths are absolute per the Storage contract). */
     private readonly baseDir: string,
   ) {}
 
+  private dir(personalityId: string): string {
+    return `${this.baseDir}/${personalityId}/peers`;
+  }
+
   private path(personalityId: string, fingerprint: string): string {
-    return `${this.baseDir}/${personalityId}/peers/${fingerprint}.json`;
+    return `${this.dir(personalityId)}/${fingerprint}.json`;
   }
 
   async get(personalityId: string, fingerprint: string): Promise<PeerEntry | null> {
@@ -173,8 +231,46 @@ export class StorageA2aPeerStore implements A2aPeerStore {
 
   async upsert(personalityId: string, entry: PeerEntry): Promise<void> {
     const path = this.path(personalityId, entry.fingerprint);
-    await this.storage.mkdir(`${this.baseDir}/${personalityId}/peers`);
+    await this.storage.mkdir(this.dir(personalityId));
     await this.storage.writeAtomic(path, JSON.stringify(entry), { mode: 0o600 });
+  }
+
+  /** Admin: every persisted peer entry for a personality (unsorted). */
+  async list(personalityId: string): Promise<PeerEntry[]> {
+    const dir = this.dir(personalityId);
+    const entries = await this.storage.listEntries(dir);
+    const results: PeerEntry[] = [];
+    for (const e of entries) {
+      if (e.isDir || !e.name.endsWith('.json')) continue;
+      const raw = await this.storage.read(`${dir}/${e.name}`);
+      if (raw === null) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (isPeerEntry(parsed)) results.push(parsed);
+    }
+    return results;
+  }
+
+  /**
+   * Debounced inbound "last seen" stamp (plan §11). No-op if the peer is absent;
+   * otherwise rewrites the entry with `lastSeenAt: now` only when the stored
+   * value is older than `debounceMs` — so a busy peer costs one write per window,
+   * not one per request.
+   */
+  async touchLastSeen(
+    personalityId: string,
+    fingerprint: string,
+    now: number,
+    debounceMs = 60_000,
+  ): Promise<void> {
+    const entry = await this.get(personalityId, fingerprint);
+    if (!entry) return;
+    if (now - (entry.lastSeenAt ?? 0) < debounceMs) return;
+    await this.upsert(personalityId, { ...entry, lastSeenAt: now });
   }
 }
 
@@ -186,7 +282,9 @@ function isPeerEntry(value: unknown): value is PeerEntry {
     typeof v.enabled === 'boolean' &&
     Array.isArray(v.scope) &&
     v.card !== null &&
-    typeof v.card === 'object'
+    typeof v.card === 'object' &&
+    // Backward-compatible: absent is fine; present must be a number.
+    (v.lastSeenAt === undefined || typeof v.lastSeenAt === 'number')
   );
 }
 
@@ -196,15 +294,22 @@ function isPeerEntry(value: unknown): value is PeerEntry {
  * `{ scope, enabled }`. A missing file (unknown peer) or `enabled: false`
  * yields `null` → default-deny. Wiring/testing default only.
  */
-export class StorageA2aAllowlist implements A2aAllowlist {
+export class StorageA2aAllowlist implements A2aAllowlist, A2aAllowlistAdmin {
   constructor(
     private readonly storage: Storage,
     private readonly baseDir: string,
   ) {}
 
+  private dir(personalityId: string): string {
+    return `${this.baseDir}/${personalityId}/allowlist`;
+  }
+
+  private path(personalityId: string, fingerprint: string): string {
+    return `${this.dir(personalityId)}/${fingerprint}.json`;
+  }
+
   async lookup(personalityId: string, peerFingerprint: string): Promise<PeerGrant | null> {
-    const path = `${this.baseDir}/${personalityId}/allowlist/${peerFingerprint}.json`;
-    const raw = await this.storage.read(path);
+    const raw = await this.storage.read(this.path(personalityId, peerFingerprint));
     if (raw === null) return null;
     const parsed: unknown = JSON.parse(raw);
     if (parsed === null || typeof parsed !== 'object') return null;
@@ -216,4 +321,78 @@ export class StorageA2aAllowlist implements A2aAllowlist {
       : [];
     return { fingerprint: peerFingerprint, scope, enabled: true };
   }
+
+  /** Admin: every allowlist entry for a personality (enabled AND disabled). */
+  async list(personalityId: string): Promise<AllowlistEntry[]> {
+    const dir = this.dir(personalityId);
+    const entries = await this.storage.listEntries(dir);
+    const results: AllowlistEntry[] = [];
+    for (const e of entries) {
+      if (e.isDir || !e.name.endsWith('.json')) continue;
+      const raw = await this.storage.read(`${dir}/${e.name}`);
+      if (raw === null) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      const entry = toAllowlistEntry(e.name.slice(0, -'.json'.length), parsed);
+      if (entry) results.push(entry);
+    }
+    return results;
+  }
+
+  async upsert(personalityId: string, e: AllowlistEntry): Promise<void> {
+    await this.storage.mkdir(this.dir(personalityId));
+    const payload: { scope: string[]; enabled: boolean; label?: string; url?: string } = {
+      scope: e.scope,
+      enabled: e.enabled,
+    };
+    if (e.label !== undefined) payload.label = e.label;
+    if (e.url !== undefined) payload.url = e.url;
+    await this.storage.writeAtomic(
+      this.path(personalityId, e.fingerprint),
+      JSON.stringify(payload),
+      {
+        mode: 0o600,
+      },
+    );
+  }
+
+  /** Read-modify-write the one entry's `enabled` flag; no-op if the entry is absent. */
+  async setEnabled(personalityId: string, fp: string, enabled: boolean): Promise<void> {
+    const raw = await this.storage.read(this.path(personalityId, fp));
+    if (raw === null) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const entry = toAllowlistEntry(fp, parsed);
+    if (!entry) return;
+    await this.upsert(personalityId, { ...entry, enabled });
+  }
+
+  async remove(personalityId: string, fp: string): Promise<void> {
+    await this.storage.remove(this.path(personalityId, fp));
+  }
+}
+
+/**
+ * Parse a stored allowlist record (`{scope, enabled, label?, url?}`) into an
+ * {@link AllowlistEntry}, taking the fingerprint from the filename. Returns
+ * `null` for a non-object payload — a structural guard, no `as` narrowing.
+ */
+function toAllowlistEntry(fingerprint: string, parsed: unknown): AllowlistEntry | null {
+  if (parsed === null || typeof parsed !== 'object') return null;
+  const v = parsed as Record<string, unknown>;
+  const scope = Array.isArray(v.scope)
+    ? v.scope.filter((s): s is string => typeof s === 'string')
+    : [];
+  const entry: AllowlistEntry = { fingerprint, scope, enabled: v.enabled === true };
+  if (typeof v.label === 'string') entry.label = v.label;
+  if (typeof v.url === 'string') entry.url = v.url;
+  return entry;
 }

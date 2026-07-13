@@ -10,6 +10,7 @@ import { sessionsList } from '../features/sessions/rpc/list';
 import { sessionsPin } from '../features/sessions/rpc/pin';
 import { sessionsUnpin } from '../features/sessions/rpc/unpin';
 import { sessionsUpdate } from '../features/sessions/rpc/update';
+import { a2aRouter } from './a2a';
 import { adminRouter } from './admin';
 import { apiKeysRouter } from './api-keys';
 import { batchRouter } from './batch';
@@ -105,6 +106,7 @@ export const apiRouter = {
   goals: goalsRouter,
   digest: digestRouter,
   voice: voiceRouter,
+  a2a: a2aRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

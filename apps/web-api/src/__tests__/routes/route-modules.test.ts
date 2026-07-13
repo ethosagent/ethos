@@ -121,6 +121,64 @@ describe('createWebApi — route-module seam', () => {
   });
 });
 
+// Stage 1c: `enabledCheck` is a LIVE per-request gate — distinct from the
+// mount-time static `enabled?`. A module stays mounted but 404s while the gate
+// returns false, and starts serving the moment it flips true, WITHOUT a restart.
+describe('createWebApi — route-module live enabledCheck gate', () => {
+  let dir: string;
+  let store: SQLiteSessionStore;
+  let app: ReturnType<typeof createWebApi>['app'];
+  const state = { enabled: false };
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'ethos-webapi-livegate-'));
+    store = new SQLiteSessionStore(':memory:');
+    state.enabled = false;
+
+    const routeModules: RouteModule[] = [
+      {
+        basePath: '/_live',
+        router: pingRouter(),
+        auth: 'public',
+        description: 'Live-gated public probe (Stage 1c).',
+        enabledCheck: () => state.enabled,
+      },
+    ];
+
+    app = createWebApi({
+      dataDir: dir,
+      sessionStore: store,
+      memoryProvider: makeStubMemoryProvider(),
+      agentLoop: makeStubAgentLoop(),
+      personalities: makeStubPersonalityRegistry(),
+      chatDefaults: { model: 'claude-test', provider: 'anthropic' },
+      routeModules,
+    }).app;
+  });
+
+  afterEach(async () => {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('404s (DISABLED) while the gate is false and serves when flipped true — live, between requests', async () => {
+    const disabled = await app.request('/_live/ping');
+    expect(disabled.status).toBe(404);
+    expect((await disabled.json()) as { error: string }).toEqual({ error: 'DISABLED' });
+
+    // Flip live — no restart, no re-mount.
+    state.enabled = true;
+    const enabled = await app.request('/_live/ping');
+    expect(enabled.status).toBe(200);
+    expect((await enabled.json()) as { ok: boolean }).toEqual({ ok: true });
+
+    // And back off again.
+    state.enabled = false;
+    const reDisabled = await app.request('/_live/ping');
+    expect(reDisabled.status).toBe(404);
+  });
+});
+
 // `set-cookie` from Hono's test client is a single joined header; we only ever
 // set one auth cookie, so extracting the value before the first attribute is
 // enough (mirrors auth-and-rpc.test.ts).

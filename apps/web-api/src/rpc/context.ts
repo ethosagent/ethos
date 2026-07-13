@@ -61,6 +61,14 @@ export interface RpcContext {
   pluginLoader?: PluginLoader;
   agentLoop?: AgentLoop;
   voice?: VoiceService;
+  /** A2A peering service (from `@ethosagent/wiring`) — shared with the live
+   *  `/a2a` handshake so the admin RPC and the trust decisions are one source
+   *  of truth (plan §12). Absent in non-serve contexts. */
+  a2aPeering?: import('@ethosagent/wiring').A2aPeeringService;
+  /** Runtime A2A enable/disable control — the Settings toggle flips the same
+   *  live gate the route modules and the `a2a_send` tool consult. Absent in
+   *  non-serve contexts. */
+  a2aControl?: import('../routes/route-module').A2aControl;
 }
 
 export const os = implement(contract).$context<RpcContext>();

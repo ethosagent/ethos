@@ -94,7 +94,10 @@ export {
 } from './rpc';
 export {
   type A2aAllowlist,
+  type A2aAllowlistAdmin,
   type A2aPeerStore,
+  type A2aPeerStoreAdmin,
+  type AllowlistEntry,
   MemoryNonceStore,
   type MemoryNonceStoreOptions,
   type NonceRecord,

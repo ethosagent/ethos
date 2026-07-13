@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { StorageA2aAllowlist } from '@ethosagent/a2a';
 import {
   applyPlatformShim,
   deriveBotKey,
@@ -19,11 +20,16 @@ import { CronScheduler } from '@ethosagent/cron';
 import { createCapturingAdapter, Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { registerGoalNotifications } from '@ethosagent/goal-runner';
 import { ConsoleLogger } from '@ethosagent/logger';
-import { createPersonalityRegistry, firstParagraph } from '@ethosagent/personalities';
+import {
+  createPersonalityRegistry,
+  firstParagraph,
+  PersonalityA2aIdentityProvider,
+} from '@ethosagent/personalities';
 import { initPairingDb } from '@ethosagent/safety-channel';
 import { bundledSkillsSource, createInjectors } from '@ethosagent/skills';
 import Database from '@ethosagent/sqlite';
 import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
+import { createA2aTools } from '@ethosagent/tools-a2a';
 // Platform adapters are loaded LAZILY in runGatewayStart() — see plan/IMPROVEMENT.md P0-3.
 // Their underlying SDKs (grammy, discord.js, @slack/bolt, imapflow…) are
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
@@ -36,6 +42,7 @@ import {
   type NotificationRouter,
   type PlatformAdapter,
   resolveModelDisplay,
+  type ToolRegistry,
 } from '@ethosagent/types';
 import {
   createDangerPredicate,
@@ -384,6 +391,7 @@ export async function runGatewayStart(): Promise<void> {
     bots,
     messagingSetters: botMessagingSetters,
     notificationRouters: botNotificationRouters,
+    toolRegistries: botToolRegistries,
   } = await buildGatewayBots(config, scheduler);
 
   // Phase 3: for each team-bound bot, ensure the supervisor is running.
@@ -415,6 +423,7 @@ export async function runGatewayStart(): Promise<void> {
   // tools register against the same instance the firing engine uses.
   const {
     loop: systemLoopReady,
+    toolRegistry: systemToolRegistry,
     setMessagingSend: setSystemMessagingSend,
     pluginLoader,
     notificationRouter: systemNotificationRouter,
@@ -424,6 +433,16 @@ export async function runGatewayStart(): Promise<void> {
     voiceConfig,
   } = await createAgentLoop(config, { cronScheduler: scheduler });
   systemLoop = systemLoopReady;
+
+  // A2A Stage 1d: register the outbound `a2a_send` tool on every gateway loop's
+  // tool registry (per-bot loops + the system loop), so an A2A call can
+  // originate from a channel turn — not just from `ethos serve`. The gateway is
+  // a separate process with no live settings flag, so the tool follows the
+  // persisted `config.a2a.enabled` value (mirrors serve's `ETHOS_A2A_ENABLED`
+  // override for parity); a toggle reaches it on the next gateway start (plan
+  // §13). Fail-open: a failure constructing the A2A deps must NOT crash gateway
+  // startup — channels are the gateway's core job.
+  await registerA2aOutboundTools(config, [...botToolRegistries, systemToolRegistry]);
 
   // Resolve the active personality's plugin allowlist for the trust gate.
   // If the personality declares `plugins:`, only those are trusted; if it
@@ -883,6 +902,10 @@ interface BuildGatewayBotsResult {
    *  the owning loop's router, so the Gateway must register its per-session
    *  adapter on every one of them. */
   notificationRouters: NotificationRouter[];
+  /** One ToolRegistry per bot loop. Each loop owns its own registry (there is
+   *  no shared one), so the outbound `a2a_send` tool is registered on every one
+   *  of them — see `registerA2aOutboundTools`. */
+  toolRegistries: ToolRegistry[];
 }
 
 /**
@@ -927,6 +950,7 @@ async function buildGatewayBots(
   const out: GatewayBotConfig[] = [];
   const setters: Array<(fn: MessagingSendFn) => void> = [];
   const routers: NotificationRouter[] = [];
+  const registries: ToolRegistry[] = [];
   const buildOne = async (bot: TelegramBotConfig | SlackAppConfig): Promise<GatewayBotConfig> => {
     const botKey = deriveBotKey(bot);
     let loop: AgentLoop;
@@ -934,6 +958,7 @@ async function buildGatewayBots(
       const team = await createTeamAgentLoop(config, bot.bind.name);
       loop = team.loop;
       routers.push(team.notificationRouter);
+      registries.push(team.toolRegistry);
     } else {
       // Per-bot personality loop. Threads the shared scheduler so
       // `create_cron_job` etc. lands in the same store as the
@@ -945,6 +970,7 @@ async function buildGatewayBots(
       loop = result.loop;
       setters.push(result.setMessagingSend);
       routers.push(result.notificationRouter);
+      registries.push(result.toolRegistry);
     }
     return { botKey, loop, binding: { ...bot.bind }, piiRedaction: bot.piiRedaction };
   };
@@ -966,6 +992,7 @@ async function buildGatewayBots(
       const team = await createTeamAgentLoop(config, bind.name);
       loop = team.loop;
       routers.push(team.notificationRouter);
+      registries.push(team.toolRegistry);
     } else {
       const result = await createAgentLoop(
         { ...config, personality: bind.name },
@@ -974,6 +1001,7 @@ async function buildGatewayBots(
       loop = result.loop;
       setters.push(result.setMessagingSend);
       routers.push(result.notificationRouter);
+      registries.push(result.toolRegistry);
     }
     out.push({ botKey, loop, binding: { ...bind }, piiRedaction: waCfg.piiRedaction });
   }
@@ -992,6 +1020,7 @@ async function buildGatewayBots(
     });
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);
+    registries.push(result.toolRegistry);
   }
   // Legacy scalar Discord — register as a first-class bot bound to the default
   // personality so its inbound (stamped with the wiring-computed botKey)
@@ -1006,6 +1035,7 @@ async function buildGatewayBots(
     });
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);
+    registries.push(result.toolRegistry);
   }
   // Legacy scalar Email — same treatment as Discord.
   if (config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost) {
@@ -1017,8 +1047,75 @@ async function buildGatewayBots(
     });
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);
+    registries.push(result.toolRegistry);
   }
-  return { bots: out, messagingSetters: setters, notificationRouters: routers };
+  return {
+    bots: out,
+    messagingSetters: setters,
+    notificationRouters: routers,
+    toolRegistries: registries,
+  };
+}
+
+/**
+ * A2A Stage 1d — register the outbound `a2a_send` tool on every gateway loop's
+ * tool registry so an A2A call can originate from a channel turn (Telegram,
+ * Slack, …), not just from `ethos serve`. Mirrors serve.ts's construction:
+ * the SAME per-personality allowlist that gates inbound peers gates outbound
+ * calls (egress default-deny, plan §15), and the tool is still gated by each
+ * personality's `a2a` toolset.
+ *
+ * Unlike serve (which owns a live toggle), the gateway is a separate process
+ * with no live settings flag: `isEnabled` reads the persisted `config.a2a`
+ * value (plus the `ETHOS_A2A_ENABLED` override, for parity with serve). A
+ * toggle therefore reaches the gateway on its next start — the documented
+ * gateway behaviour (plan §13).
+ *
+ * Fail-open: constructing the A2A deps must NEVER crash gateway startup —
+ * channels are the gateway's core job — so any failure is logged and swallowed.
+ */
+async function registerA2aOutboundTools(
+  config: EthosConfig,
+  registries: ToolRegistry[],
+): Promise<void> {
+  if (registries.length === 0) return;
+  try {
+    const isEnabled = () => config.a2a?.enabled === true || process.env.ETHOS_A2A_ENABLED === '1';
+    const secrets = await getSecretsResolver();
+    const storage = getStorage();
+    const dir = ethosDir();
+    const baseDir = join(dir, 'a2a');
+    const personalities = await createPersonalityRegistry({
+      storage,
+      userPersonalitiesDir: join(dir, 'personalities'),
+    });
+    await personalities.loadFromDirectory(join(dir, 'personalities'));
+    const identity = new PersonalityA2aIdentityProvider({
+      personalities,
+      secrets,
+      storage,
+      ...(config.webBaseUrl ? { baseUrl: config.webBaseUrl } : {}),
+    });
+    const allowlist = new StorageA2aAllowlist(storage, baseDir);
+    const allowSelfLoop = process.env.ETHOS_A2A_SELF_LOOP === '1';
+    const tools = createA2aTools({
+      identity,
+      secrets,
+      allowlist,
+      ...(allowSelfLoop ? { allowSelfLoop: true } : {}),
+      isEnabled,
+    });
+    for (const registry of registries) {
+      for (const tool of tools) registry.register(tool);
+    }
+    console.log(
+      `${c.dim}a2a:          outbound tool registered on ${registries.length} loop(s) (${isEnabled() ? 'enabled' : 'disabled'})${c.reset}`,
+    );
+  } catch (err) {
+    console.warn(
+      `${c.yellow}⚠ a2a: outbound tool registration failed — A2A calls from channels unavailable${c.reset} ${c.dim}(${err instanceof Error ? err.message : String(err)})${c.reset}`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -299,6 +299,18 @@ export interface CreateAgentLoopOptions {
 // LLM provider construction
 // ---------------------------------------------------------------------------
 
+export {
+  type A2aIdentityView,
+  A2aPeeringError,
+  type A2aPeeringErrorCode,
+  A2aPeeringService,
+  type A2aPeeringServiceDeps,
+  type A2aPeerRow,
+  type AddPeerArgs,
+  type BuildA2aPeeringServiceContext,
+  buildA2aPeeringService,
+  createA2aPeeringService,
+} from './a2a-peering-service';
 export { resolveKanbanDbPath } from './kanban-path';
 
 // Hard ceiling on a single summarizer call. The summarizer runs on the turn's

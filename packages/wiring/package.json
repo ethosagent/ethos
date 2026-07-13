@@ -30,6 +30,7 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/a2a": "workspace:*",
     "@ethosagent/constitution": "workspace:*",
     "@ethosagent/core": "workspace:*",
     "@ethosagent/document-extractors": "workspace:*",

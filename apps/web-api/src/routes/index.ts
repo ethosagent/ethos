@@ -97,6 +97,13 @@ export interface ServiceContainer {
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
   agentLoop?: import('@ethosagent/core').AgentLoop;
   systemBus?: import('../services/system-event-bus').SystemEventBus;
+  /** A2A peering service — shared with the live `/a2a` handshake (one source of
+   *  truth, plan §12). Consumed by the peering RPC procedures (later stage). */
+  a2aPeering?: import('@ethosagent/wiring').A2aPeeringService;
+  /** Runtime A2A enable/disable control. Consumed by the peering RPC (later
+   *  stage) so the Settings toggle flips the same live gate the route modules
+   *  and the `a2a_send` tool consult. */
+  a2aControl?: import('./route-module').A2aControl;
 }
 
 /**
@@ -356,6 +363,22 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   for (const mod of opts.routeModules ?? []) {
     if (mod.enabled === false) continue;
     const wildcard = `${mod.basePath}/*`;
+    // Live per-request gate (plan §12 runtime kill switch). When `enabledCheck`
+    // is present and returns false, the whole module 404s as if unmounted —
+    // without a restart. Registered BEFORE the auth middleware + route so a
+    // disabled module never reaches auth or its handler. Scope: a module mounted
+    // at '/' owns the app root, so a '/*' gate there would swallow the SPA and
+    // every sibling route; the only surface a root-mounted protocol module
+    // legitimately claims is the discovery prefix `/.well-known`, so scope the
+    // live gate to it (the A2A well-known Agent Card).
+    const liveCheck = mod.enabledCheck;
+    if (liveCheck) {
+      const gateScope = mod.basePath === '/' ? '/.well-known/*' : wildcard;
+      app.use(gateScope, async (c, next) => {
+        if (!liveCheck()) return c.json({ error: 'DISABLED' }, 404);
+        return next();
+      });
+    }
     if (mod.auth === 'cookie') {
       app.use(wildcard, authMiddleware({ tokens: opts.tokens }));
     } else if (mod.auth === 'bearer') {

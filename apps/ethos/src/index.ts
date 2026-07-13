@@ -15,6 +15,7 @@ import { ethosDir, readConfig } from '@ethosagent/config';
 import { reconcileRegistry } from '@ethosagent/tools-process';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from './cli-overrides';
+import { runA2a } from './commands/a2a';
 import { runAcp } from './commands/acp';
 import { runApiKey } from './commands/api-key';
 import { runArchive } from './commands/archive';
@@ -70,7 +71,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | learn | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | cron | personality | memory | acp | batch | eval | evolve | learn | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
@@ -577,6 +578,11 @@ try {
     case 'cron': {
       const config = await loadRequiredConfig();
       await runCronCommand(args[1] ?? 'list', args.slice(2), config);
+      break;
+    }
+
+    case 'a2a': {
+      await runA2a(args.slice(1));
       break;
     }
 

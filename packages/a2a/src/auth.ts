@@ -274,6 +274,16 @@ export function createA2aAuthService(opts: A2aAuthServiceOptions): A2aAuthServic
       enabled: true,
     });
 
+    // Stamp inbound "last seen" (plan §11) — fail-open: a touch error must never
+    // affect the handshake outcome.
+    if (typeof opts.peerStore.touchLastSeen === 'function') {
+      try {
+        await opts.peerStore.touchLastSeen(personalityId, peerFingerprint, now());
+      } catch {
+        // fail-open
+      }
+    }
+
     const receipt = emit(privateKeyPem, personalityId, peerFingerprint, 'accepted');
     return { ok: true, token: minted.token, expiresAt: minted.expiresAt, receipt };
   }

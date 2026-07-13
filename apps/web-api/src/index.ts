@@ -224,6 +224,20 @@ export interface CreateWebApiOptions {
    * {@link RouteModule}. serve.ts does not pass any yet — Phase 3 wires A2A here.
    */
   routeModules?: RouteModule[];
+  /**
+   * A2A peering service (from `@ethosagent/wiring`), built over the SAME
+   * storage + baseDir as the A2A route modules so the UI/RPC and the live
+   * `/a2a` handshake are one source of truth (plan §12). Consumed by the
+   * peering RPC procedures wired in a later stage — threaded through here.
+   */
+  a2aPeering?: import('@ethosagent/wiring').A2aPeeringService;
+  /**
+   * Runtime A2A enable/disable control. `isEnabled` is the same predicate wired
+   * into each A2A `RouteModule.enabledCheck` and the `a2a_send` tool; `setEnabled`
+   * flips the live gate and persists to config. Consumed by the peering RPC
+   * (later stage) — threaded through here.
+   */
+  a2aControl?: import('./routes/route-module').A2aControl;
 }
 
 export interface CreateWebApiResult {
@@ -576,6 +590,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       pluginLoader: opts.pluginLoader,
       agentLoop,
       systemBus,
+      ...(opts.a2aPeering ? { a2aPeering: opts.a2aPeering } : {}),
+      ...(opts.a2aControl ? { a2aControl: opts.a2aControl } : {}),
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
     ...(opts.secureCookie !== undefined ? { secureCookie: opts.secureCookie } : {}),

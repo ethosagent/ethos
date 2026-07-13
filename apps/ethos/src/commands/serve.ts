@@ -17,7 +17,13 @@ import {
 } from '@ethosagent/a2a';
 import { AcpServer } from '@ethosagent/acp-server';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
-import { type EthosConfig, ethosDir, readConfig } from '@ethosagent/config';
+import {
+  type EthosConfig,
+  ethosDir,
+  readConfig,
+  readRawConfig,
+  writeConfig,
+} from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
@@ -38,6 +44,7 @@ import {
   WebTokenRepository,
 } from '@ethosagent/web-api';
 import {
+  buildA2aPeeringService,
   createDangerPredicate,
   createMemoryProvider,
   createSessionStore,
@@ -563,158 +570,203 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const attachmentCache = new FsAttachmentCache(new FsStorage(), join(dir, 'cache', 'attachments'));
   void attachmentCache.pruneOlderThan(24 * 60 * 60 * 1000).catch(() => {});
 
-  // A2A (Agent-to-Agent) — opt-in, DEFAULT OFF. Gated behind ETHOS_A2A_ENABLED=1.
-  // Mounts three PUBLIC RouteModules through the Phase-2 seam: the well-known
-  // card (stranger tier), the /a2a-auth handshake (owns its default-deny auth),
-  // and the /a2a JSON-RPC endpoint (owns its token + per-request PoP + call-time
-  // scope gate). Each is isolatable (own limiter hook) per plan §12 blast-radius.
-  const a2aRouteModules: RouteModule[] = [];
-  if (process.env.ETHOS_A2A_ENABLED === '1') {
-    const a2aSecrets = await getSecretsResolver();
-    const a2aStorage = getStorage();
-    const a2aBaseDir = join(dir, 'a2a');
-    const a2aIdentity = new PersonalityA2aIdentityProvider({
-      personalities,
-      secrets: a2aSecrets,
-      storage: a2aStorage,
-      ...(config.webBaseUrl ? { baseUrl: config.webBaseUrl } : {}),
-    });
-    const a2aPeerStore = new StorageA2aPeerStore(a2aStorage, a2aBaseDir);
-    const a2aAllowlist = new StorageA2aAllowlist(a2aStorage, a2aBaseDir);
-    // Phase 6: async task lifecycle + P8 delegation containment + real limiter.
-    // The task store + delegation guard are process-scoped so async task state
-    // and per-trace fan-out counters persist across requests. The limiter is
-    // A2A's OWN isolatable rate + concurrency stack (plan §12 blast-radius): its
-    // caps cannot take down `/rpc`.
-    const a2aTaskStore = new InMemoryA2aTaskStore();
-    const a2aDelegationGuard = new A2aDelegationGuard();
-    const a2aLimiter = new MemoryA2aLimiter();
-    const a2aPushClient = new FetchA2aPushClient();
-    // Phase 7: forward the inbound trace into the loop as the ambient delegation
-    // frame, so an onward `a2a_send` signs `depth + 1` and consumes the shared
-    // per-trace fan-out budget. `reserveOutbound` binds to the SAME process guard
-    // above, so inbound admissions and outbound reservations share one counter.
-    const a2aRunner: A2aTaskRunner = {
-      run: (personalityId, text, opts) => {
-        const delegation = opts?.delegation;
-        return loop.run(text, {
-          personalityId,
-          ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
-          ...(delegation
-            ? {
-                a2aDelegation: {
-                  traceId: delegation.traceId,
-                  depth: delegation.depth,
-                  reserveOutbound: () => a2aDelegationGuard.reserveOutbound(delegation.traceId),
-                },
-              }
-            : {}),
+  // A2A (Agent-to-Agent) — ALWAYS constructed, LIVE-GATED at request time so
+  // `ethos a2a enable/disable` and the Settings toggle flip it WITHOUT a restart.
+  // Initial state is `config.a2a.enabled`; the deprecated `ETHOS_A2A_ENABLED=1`
+  // env still forces it on. Three PUBLIC RouteModules mount through the Phase-2
+  // seam behind the live gate (`enabledCheck`): the well-known card (stranger
+  // tier), the /a2a-auth handshake (owns its default-deny auth), and the /a2a
+  // JSON-RPC endpoint (owns its token + per-request PoP + call-time scope gate).
+  // While disabled each 404s as if unmounted; lazy keygen only fires on a real
+  // (gated) request, so always-constructing is cheap and safe. Each is isolatable
+  // (own limiter hook) per plan §12 blast-radius.
+  const a2aInitiallyEnabled = config.a2a?.enabled === true || process.env.ETHOS_A2A_ENABLED === '1';
+  const a2aState = { enabled: a2aInitiallyEnabled };
+  const isA2aEnabled = () => a2aState.enabled;
+
+  const a2aSecrets = await getSecretsResolver();
+  const a2aStorage = getStorage();
+  const a2aBaseDir = join(dir, 'a2a');
+  const a2aIdentity = new PersonalityA2aIdentityProvider({
+    personalities,
+    secrets: a2aSecrets,
+    storage: a2aStorage,
+    ...(config.webBaseUrl ? { baseUrl: config.webBaseUrl } : {}),
+  });
+  const a2aPeerStore = new StorageA2aPeerStore(a2aStorage, a2aBaseDir);
+  const a2aAllowlist = new StorageA2aAllowlist(a2aStorage, a2aBaseDir);
+  // Phase 6: async task lifecycle + P8 delegation containment + real limiter.
+  // The task store + delegation guard are process-scoped so async task state
+  // and per-trace fan-out counters persist across requests. The limiter is
+  // A2A's OWN isolatable rate + concurrency stack (plan §12 blast-radius): its
+  // caps cannot take down `/rpc`.
+  const a2aTaskStore = new InMemoryA2aTaskStore();
+  const a2aDelegationGuard = new A2aDelegationGuard();
+  const a2aLimiter = new MemoryA2aLimiter();
+  const a2aPushClient = new FetchA2aPushClient();
+  // Phase 7: forward the inbound trace into the loop as the ambient delegation
+  // frame, so an onward `a2a_send` signs `depth + 1` and consumes the shared
+  // per-trace fan-out budget. `reserveOutbound` binds to the SAME process guard
+  // above, so inbound admissions and outbound reservations share one counter.
+  const a2aRunner: A2aTaskRunner = {
+    run: (personalityId, text, opts) => {
+      const delegation = opts?.delegation;
+      return loop.run(text, {
+        personalityId,
+        ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
+        ...(delegation
+          ? {
+              a2aDelegation: {
+                traceId: delegation.traceId,
+                depth: delegation.depth,
+                reserveOutbound: () => a2aDelegationGuard.reserveOutbound(delegation.traceId),
+              },
+            }
+          : {}),
+      });
+    },
+  };
+  // Phase 8: metadata-only audit sink. Built HERE in the app layer so
+  // `@ethosagent/a2a` types never leak into `packages/wiring`. It maps each
+  // A2aAuditEntry to an ethos observability event via the escape hatch — the
+  // log proves THAT an exchange happened (decision, personality, peer), NEVER
+  // WHAT was said. Fail-open: a missing/failing observability sink must not
+  // affect the exchange (plan §13 / O12).
+  const a2aAuditCategory = { auth: 'a2a.auth', rpc: 'a2a.rpc', task: 'a2a.task' } as const;
+  const a2aAuditSink: A2aAuditSink = {
+    record: (e) => {
+      try {
+        getEthosObservability().recordEthosEvent({
+          category: a2aAuditCategory[e.kind],
+          severity: e.severity ?? (e.decision === 'denied' ? 'warn' : 'info'),
+          code: e.event,
+          ...(e.reason ? { cause: e.reason } : {}),
+          details: {
+            decision: e.decision,
+            personalityId: e.personalityId,
+            ...(e.peerFingerprint ? { peerFingerprint: e.peerFingerprint } : {}),
+            ...(e.skill ? { skill: e.skill } : {}),
+            ...(e.taskId ? { taskId: e.taskId } : {}),
+            ...(e.traceId ? { traceId: e.traceId } : {}),
+            ...(e.status ? { status: e.status } : {}),
+          },
         });
-      },
-    };
-    // Phase 8: metadata-only audit sink. Built HERE in the app layer so
-    // `@ethosagent/a2a` types never leak into `packages/wiring`. It maps each
-    // A2aAuditEntry to an ethos observability event via the escape hatch — the
-    // log proves THAT an exchange happened (decision, personality, peer), NEVER
-    // WHAT was said. Fail-open: a missing/failing observability sink must not
-    // affect the exchange (plan §13 / O12).
-    const a2aAuditCategory = { auth: 'a2a.auth', rpc: 'a2a.rpc', task: 'a2a.task' } as const;
-    const a2aAuditSink: A2aAuditSink = {
-      record: (e) => {
-        try {
-          getEthosObservability().recordEthosEvent({
-            category: a2aAuditCategory[e.kind],
-            severity: e.severity ?? (e.decision === 'denied' ? 'warn' : 'info'),
-            code: e.event,
-            ...(e.reason ? { cause: e.reason } : {}),
-            details: {
-              decision: e.decision,
-              personalityId: e.personalityId,
-              ...(e.peerFingerprint ? { peerFingerprint: e.peerFingerprint } : {}),
-              ...(e.skill ? { skill: e.skill } : {}),
-              ...(e.taskId ? { taskId: e.taskId } : {}),
-              ...(e.traceId ? { traceId: e.traceId } : {}),
-              ...(e.status ? { status: e.status } : {}),
-            },
-          });
-        } catch {
-          // observability unavailable — audit is fail-open (plan §13).
-        }
-      },
-    };
-    a2aRouteModules.push(
-      {
-        basePath: '/',
-        router: createA2aWellKnownRouter({ getIdentity: a2aIdentity }),
-        auth: 'public',
-        description:
-          'A2A discovery — public signed Agent Card (stranger tier) at /.well-known/agent-card.json.',
-      },
-      {
-        basePath: '/a2a-auth',
-        router: createA2aAuthRouter({
-          secrets: a2aSecrets,
-          allowlist: a2aAllowlist,
-          peerStore: a2aPeerStore,
-          nonces: new MemoryNonceStore(),
-          // Route the SIGNED auth receipt (already produced by the handshake) into
-          // the audit sink so accepted/rejected handshakes are recorded + queryable.
-          onReceipt: (signed) =>
-            a2aAuditSink.record({
-              kind: 'auth',
-              event: 'a2a-auth',
-              personalityId: signed.receipt.personalityId,
-              peerFingerprint: signed.receipt.peerFingerprint,
-              decision: signed.receipt.decision === 'accepted' ? 'accepted' : 'denied',
-              ...(signed.receipt.reason ? { reason: signed.receipt.reason } : {}),
-              severity: signed.receipt.decision === 'accepted' ? 'info' : 'warn',
-              ts: signed.receipt.ts,
-            }),
-        }),
-        auth: 'public',
-        description:
-          'A2A auth handshake — default-deny allowlist + challenge-response; mints sender-constrained tokens.',
-      },
-      {
-        basePath: '/a2a',
-        router: createA2aRpcRouter({
-          getIdentity: a2aIdentity,
-          peerStore: a2aPeerStore,
-          runner: a2aRunner,
-          taskStore: a2aTaskStore,
-          limiter: a2aLimiter,
-          delegationGuard: a2aDelegationGuard,
-          pushClient: a2aPushClient,
-          auditSink: a2aAuditSink,
-        }),
-        auth: 'public',
-        description:
-          'A2A JSON-RPC message/send (sync + async) — token + PoP + P8 delegation + scope; per-peer rate/concurrency caps.',
-      },
-    );
-    // Phase 7: register the OUTBOUND `a2a_send` tool — opt-in, only when A2A is
-    // enabled, and gated by each personality's `a2a` toolset at execute time.
-    if (toolRegistry) {
-      const allowSelfLoop = process.env.ETHOS_A2A_SELF_LOOP === '1';
-      for (const tool of createA2aTools({
-        identity: a2aIdentity,
-        secrets: a2aSecrets,
-        // Egress default-deny (plan §15): the SAME per-personality allowlist that
-        // gates inbound peers gates outbound calls — approve a peer once, both ways.
-        allowlist: a2aAllowlist,
-        ...(allowSelfLoop ? { allowSelfLoop: true } : {}),
-      })) {
-        toolRegistry.register(tool);
+      } catch {
+        // observability unavailable — audit is fail-open (plan §13).
       }
+    },
+  };
+  // Peering service — built from the SAME storage + baseDir the route modules
+  // use, so the UI/RPC and the live `/a2a` handshake are ONE source of truth
+  // (plan §12): approve a peer once and both surfaces see it.
+  const a2aPeering = buildA2aPeeringService({
+    storage: a2aStorage,
+    baseDir: a2aBaseDir,
+    identity: a2aIdentity,
+  });
+  const a2aRouteModules: RouteModule[] = [
+    {
+      basePath: '/',
+      router: createA2aWellKnownRouter({ getIdentity: a2aIdentity }),
+      auth: 'public',
+      description:
+        'A2A discovery — public signed Agent Card (stranger tier) at /.well-known/agent-card.json.',
+      enabledCheck: isA2aEnabled,
+    },
+    {
+      basePath: '/a2a-auth',
+      router: createA2aAuthRouter({
+        secrets: a2aSecrets,
+        allowlist: a2aAllowlist,
+        peerStore: a2aPeerStore,
+        nonces: new MemoryNonceStore(),
+        // Route the SIGNED auth receipt (already produced by the handshake) into
+        // the audit sink so accepted/rejected handshakes are recorded + queryable.
+        onReceipt: (signed) =>
+          a2aAuditSink.record({
+            kind: 'auth',
+            event: 'a2a-auth',
+            personalityId: signed.receipt.personalityId,
+            peerFingerprint: signed.receipt.peerFingerprint,
+            decision: signed.receipt.decision === 'accepted' ? 'accepted' : 'denied',
+            ...(signed.receipt.reason ? { reason: signed.receipt.reason } : {}),
+            severity: signed.receipt.decision === 'accepted' ? 'info' : 'warn',
+            ts: signed.receipt.ts,
+          }),
+      }),
+      auth: 'public',
+      description:
+        'A2A auth handshake — default-deny allowlist + challenge-response; mints sender-constrained tokens.',
+      enabledCheck: isA2aEnabled,
+    },
+    {
+      basePath: '/a2a',
+      router: createA2aRpcRouter({
+        getIdentity: a2aIdentity,
+        peerStore: a2aPeerStore,
+        runner: a2aRunner,
+        taskStore: a2aTaskStore,
+        limiter: a2aLimiter,
+        delegationGuard: a2aDelegationGuard,
+        pushClient: a2aPushClient,
+        auditSink: a2aAuditSink,
+      }),
+      auth: 'public',
+      description:
+        'A2A JSON-RPC message/send (sync + async) — token + PoP + P8 delegation + scope; per-peer rate/concurrency caps.',
+      enabledCheck: isA2aEnabled,
+    },
+  ];
+  // Phase 7: register the OUTBOUND `a2a_send` tool — ALWAYS registered, gated by
+  // `isA2aEnabled` at execute time so live-enabling makes it work without a
+  // restart (it is registered, just gated). Still gated by each personality's
+  // `a2a` toolset.
+  if (toolRegistry) {
+    const allowSelfLoop = process.env.ETHOS_A2A_SELF_LOOP === '1';
+    for (const tool of createA2aTools({
+      identity: a2aIdentity,
+      secrets: a2aSecrets,
+      // Egress default-deny (plan §15): the SAME per-personality allowlist that
+      // gates inbound peers gates outbound calls — approve a peer once, both ways.
+      allowlist: a2aAllowlist,
+      ...(allowSelfLoop ? { allowSelfLoop: true } : {}),
+      isEnabled: isA2aEnabled,
+    })) {
+      toolRegistry.register(tool);
     }
-    console.log(`  a2a:          enabled (${a2aRouteModules.length} modules on the web API)`);
-    // Phase 8: MESH is opt-in and DEFAULT OFF. The concrete safety shipped this
-    // phase is the self-loop-default-off guard above; the flag is just the opt-in
-    // marker for un-advertised mesh mode (a dynamic peer registry is deferred to
-    // v2). Audit fires regardless of this flag.
-    if (process.env.ETHOS_A2A_MESH === '1') {
-      console.log('  a2a mesh:     enabled (un-advertised mesh mode; audit active)');
+  }
+  // Live enable/disable control surfaced to the peering RPC (later stage). Flips
+  // the in-memory gate immediately, then persists `a2a.enabled` to
+  // ~/.ethos/config.yaml via the config serializer (the same readRawConfig +
+  // writeConfig path the CLI uses). Persistence is best-effort — a failed write
+  // must NEVER throw on the request path; the process-local toggle already took
+  // effect for this run.
+  const setA2aEnabled = async (enabled: boolean): Promise<void> => {
+    a2aState.enabled = enabled;
+    try {
+      const raw = await readRawConfig(a2aStorage);
+      if (raw) await writeConfig(a2aStorage, { ...raw, a2a: { enabled } });
+    } catch (err) {
+      console.warn(
+        `  a2a:          failed to persist a2a.enabled=${enabled} to config.yaml (toggle still applied for this process):`,
+        err instanceof Error ? err.message : err,
+      );
     }
+  };
+  console.log(
+    `  a2a:          ${isA2aEnabled() ? 'enabled' : 'disabled'} (live-toggleable; ${a2aRouteModules.length} modules on the web API)`,
+  );
+  if (isA2aEnabled() && !config.webBaseUrl) {
+    console.log(
+      '  a2a warn:     webBaseUrl unset — Agent Cards will advertise the default serve port; set webBaseUrl for a stable public URL.',
+    );
+  }
+  // Phase 8: MESH is opt-in and DEFAULT OFF. The concrete safety shipped this
+  // phase is the self-loop-default-off guard above; the flag is just the opt-in
+  // marker for un-advertised mesh mode (a dynamic peer registry is deferred to
+  // v2). Audit fires regardless of this flag.
+  if (process.env.ETHOS_A2A_MESH === '1') {
+    console.log('  a2a mesh:     enabled (un-advertised mesh mode; audit active)');
   }
 
   const created = createWebApi({
@@ -756,7 +808,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(voiceConfig?.ttsProviderName ? { ttsProviderName: voiceConfig.ttsProviderName } : {}),
     ...(voiceConfig ? { ttsProviderConfig: voiceConfig.ttsProviderConfig } : {}),
     ...(titleFn ? { titleFn } : {}),
-    ...(a2aRouteModules.length > 0 ? { routeModules: a2aRouteModules } : {}),
+    routeModules: a2aRouteModules,
+    a2aPeering,
+    a2aControl: { isEnabled: isA2aEnabled, setEnabled: setA2aEnabled },
   });
   chatService = created.chatService;
   const webApp = created.app;

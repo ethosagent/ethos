@@ -1864,6 +1864,9 @@ importers:
 
   packages/wiring:
     dependencies:
+      '@ethosagent/a2a':
+        specifier: workspace:*
+        version: link:../a2a
       '@ethosagent/constitution':
         specifier: workspace:*
         version: link:../../extensions/constitution
