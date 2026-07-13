@@ -14,6 +14,43 @@ import type { Storage, Tool, ToolContext, ToolResult } from '@ethosagent/types';
 const MAX_SPAWN_DEPTH = 3;
 const MAX_ROUTE_RETRIES = 2;
 
+// Summary-mode result cap. Much lower than the 20k full-mode cap so the parent
+// re-ingests only a bounded digest of the child's work.
+const SUMMARY_RESULT_CAP = 2_000;
+
+// Instruction appended to the child prompt in summary mode. The child is asked
+// to end its final message with a `## Summary` section; the parent extracts and
+// returns only that section.
+const SUMMARY_INSTRUCTION =
+  '\n\n---\n' +
+  'When you finish, end your final message with a section:\n\n' +
+  '## Summary\n' +
+  '<a concise summary of what you did and the key result, under ~1500 chars>\n\n' +
+  'The caller will read ONLY this Summary section.';
+
+/**
+ * Extracts the content of a `## Summary` section from the child's final text.
+ * Heading match is case-tolerant and accepts any markdown heading level. The
+ * section runs from the heading to the next heading (or end of text). Returns
+ * `undefined` when no summary heading is present.
+ */
+function extractSummarySection(text: string): string | undefined {
+  const lines = text.split('\n');
+  const headingIdx = lines.findIndex((line) => /^#{1,6}\s+summary\s*$/i.test(line.trim()));
+  if (headingIdx === -1) return undefined;
+  const rest = lines.slice(headingIdx + 1);
+  const nextHeadingRel = rest.findIndex((line) => /^#{1,6}\s+/.test(line.trim()));
+  const sectionLines = nextHeadingRel === -1 ? rest : rest.slice(0, nextHeadingRel);
+  return sectionLines.join('\n').trim();
+}
+
+/** Truncates text to `cap` chars, appending a marker while staying within `cap`. */
+function capText(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const marker = '\n[truncated]';
+  return text.slice(0, cap - marker.length) + marker;
+}
+
 function getDepth(ctx: ToolContext): number {
   const raw = ctx.agentId ?? '';
   const match = raw.match(/^depth:(\d+)$/);
@@ -113,17 +150,39 @@ export function createDelegateTaskTool(loop: AgentLoop): Tool {
           type: 'string',
           description: 'Optional label to identify this sub-task in the result',
         },
+        return_mode: {
+          type: 'string',
+          enum: ['full', 'summary'],
+          description:
+            "How much of the sub-agent's output to return. " +
+            "'full' (default) returns the complete output (≤20,000 chars). " +
+            `'summary' asks the sub-agent to end with a ## Summary section and returns only that (≤${SUMMARY_RESULT_CAP} chars).`,
+        },
       },
       required: ['prompt'],
     },
     async execute(args, ctx): Promise<ToolResult> {
-      const { prompt, personality, label } = args as {
+      const {
+        prompt,
+        personality,
+        label,
+        return_mode = 'full',
+      } = args as {
         prompt: string;
         personality?: string;
         label?: string;
+        return_mode?: 'full' | 'summary';
       };
 
       if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
+
+      if (return_mode !== 'full' && return_mode !== 'summary') {
+        return {
+          ok: false,
+          error: "return_mode must be 'full' or 'summary'",
+          code: 'input_invalid',
+        };
+      }
 
       // Personality privilege escalation guard: sub-agents can only run
       // under the caller's current personality.
@@ -142,9 +201,10 @@ export function createDelegateTaskTool(loop: AgentLoop): Tool {
       }
 
       const sessionKey = `${ctx.sessionKey}:sub:${label ?? 'task'}:${ctx.currentTurn}`;
+      const childPrompt = return_mode === 'summary' ? prompt + SUMMARY_INSTRUCTION : prompt;
 
       try {
-        const output = await runSubAgent(loop, prompt, {
+        const output = await runSubAgent(loop, childPrompt, {
           personalityId: personality ?? ctx.personalityId,
           sessionKey,
           depth: depth + 1,
@@ -152,6 +212,10 @@ export function createDelegateTaskTool(loop: AgentLoop): Tool {
         });
 
         const header = label ? `[${label}]\n\n` : '';
+        if (return_mode === 'summary') {
+          const summaryBody = extractSummarySection(output) ?? output;
+          return { ok: true, value: capText(`${header}${summaryBody}`, SUMMARY_RESULT_CAP) };
+        }
         return { ok: true, value: `${header}${output}` };
       } catch (err) {
         return {

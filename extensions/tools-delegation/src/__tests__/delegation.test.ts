@@ -162,6 +162,87 @@ describe('delegate_task', () => {
     expect(seenAgentIds[1]).toBe('depth:2');
   });
 
+  it('return_mode full (default) returns the full child output capped at 20k', async () => {
+    const big = 'x'.repeat(50_000);
+    const loop = makeLoop({ 'Do it.': big });
+    const tool = createDelegateTaskTool(loop);
+
+    const defaultResult = await tool.execute({ prompt: 'Do it.' }, makeCtx());
+    const explicitResult = await tool.execute({ prompt: 'Do it.', return_mode: 'full' }, makeCtx());
+
+    expect(defaultResult.ok).toBe(true);
+    expect(explicitResult.ok).toBe(true);
+    if (defaultResult.ok && explicitResult.ok) {
+      // execute() returns the raw full output; executeParallel applies the 20k cap.
+      expect(defaultResult.value).toBe(big);
+      expect(defaultResult.value).toBe(explicitResult.value);
+    }
+  });
+
+  it('summary-mode prompt appends the end-with-a-summary instruction; full-mode does not', async () => {
+    const prompts: string[] = [];
+    const loop = {
+      run: async function* (prompt: string): AsyncGenerator<AgentEvent> {
+        prompts.push(prompt);
+        yield { type: 'text_delta', text: '## Summary\nDone.' };
+        yield { type: 'done', text: '## Summary\nDone.', turnCount: 1 };
+      },
+    } as unknown as import('@ethosagent/core').AgentLoop;
+
+    const tool = createDelegateTaskTool(loop);
+    await tool.execute({ prompt: 'Task A.', return_mode: 'summary' }, makeCtx());
+    await tool.execute({ prompt: 'Task B.', return_mode: 'full' }, makeCtx());
+
+    expect(prompts[0]).toContain('## Summary');
+    expect(prompts[0]).toContain('read ONLY this Summary section');
+    expect(prompts[1]).toBe('Task B.');
+    expect(prompts[1]).not.toContain('read ONLY this Summary section');
+  });
+
+  it('summary mode returns only the ## Summary section content, ≤2000 chars', async () => {
+    const childText =
+      '# Report\n\nLots of detailed reasoning here that should be dropped.\n\n' +
+      '## Summary\nBuilt the widget and shipped it. Key result: 42.\n\n' +
+      '## Appendix\nMore noise that should not be returned.';
+    const loop = makeLoop({ 'Build it.': childText });
+    const tool = createDelegateTaskTool(loop);
+
+    const result = await tool.execute({ prompt: 'Build it.', return_mode: 'summary' }, makeCtx());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toBe('Built the widget and shipped it. Key result: 42.');
+      expect(result.value).not.toContain('detailed reasoning');
+      expect(result.value).not.toContain('Appendix');
+      expect(result.value.length).toBeLessThanOrEqual(2_000);
+    }
+  });
+
+  it('summary mode falls back to truncated child text when no ## Summary present', async () => {
+    const childText = 'y'.repeat(5_000); // no summary heading
+    const loop = makeLoop({ 'No summary.': childText });
+    const tool = createDelegateTaskTool(loop);
+
+    const result = await tool.execute({ prompt: 'No summary.', return_mode: 'summary' }, makeCtx());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.length).toBeLessThanOrEqual(2_000);
+      expect(result.value.startsWith('yyy')).toBe(true);
+      expect(result.value).toContain('[truncated]');
+    }
+  });
+
+  it('rejects an invalid return_mode value', async () => {
+    const tool = createDelegateTaskTool(makeLoop());
+    const result = await tool.execute(
+      { prompt: 'task', return_mode: 'digest' } as unknown as { prompt: string },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('input_invalid');
+  });
+
   it('mixture_of_agents threads depth into every spawned child', async () => {
     const seenAgentIds: Array<string | undefined> = [];
     const loop = {
