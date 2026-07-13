@@ -61,6 +61,44 @@ export function useSessionRename() {
   });
 }
 
+export function useSessionPin() {
+  const queryClient = useQueryClient();
+  const { notification } = AntApp.useApp();
+
+  return useMutation({
+    mutationFn: (id: string) => rpc.sessions.pin({ id }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.list() });
+    },
+    onError: (err) => {
+      notification.error({
+        message: 'Could not pin session',
+        description: err instanceof Error ? err.message : String(err),
+        placement: 'topRight',
+      });
+    },
+  });
+}
+
+export function useSessionUnpin() {
+  const queryClient = useQueryClient();
+  const { notification } = AntApp.useApp();
+
+  return useMutation({
+    mutationFn: (id: string) => rpc.sessions.unpin({ id }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.list() });
+    },
+    onError: (err) => {
+      notification.error({
+        message: 'Could not unpin session',
+        description: err instanceof Error ? err.message : String(err),
+        placement: 'topRight',
+      });
+    },
+  });
+}
+
 export function useSessionExport() {
   const { message } = AntApp.useApp();
 

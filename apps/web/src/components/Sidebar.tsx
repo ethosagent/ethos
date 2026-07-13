@@ -1,8 +1,11 @@
+import { Input, Modal } from 'antd';
 import { useMemo, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useConfig } from '../features/config/api/queries';
+import { useSessionRename } from '../features/sessions/api/mutations';
 import { useRecentSessions } from '../features/sessions/api/queries';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
+import { SessionContextMenu } from './SessionContextMenu';
 
 export interface SidebarProps {
   collapsed: boolean;
@@ -10,6 +13,14 @@ export interface SidebarProps {
 }
 
 const SIDEBAR_SESSION_LIMIT = 20;
+
+type SidebarSession = {
+  id: string;
+  title: string | null;
+  key: string;
+  updatedAt: string;
+  pinned: boolean;
+};
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { pathname } = useLocation();
@@ -33,6 +44,16 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       } catch {}
       return next;
     });
+  };
+
+  const [menu, setMenu] = useState<{
+    session: SidebarSession;
+    position: { x: number; y: number };
+  } | null>(null);
+  const [renaming, setRenaming] = useState<SidebarSession | null>(null);
+
+  const openContextMenu = (e: React.MouseEvent, session: SidebarSession) => {
+    setMenu({ session, position: { x: e.clientX, y: e.clientY } });
   };
 
   const { data: sessionsData } = useRecentSessions(SIDEBAR_SESSION_LIMIT);
@@ -139,7 +160,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               <>
                 <div className="sidebar-section-label">PINNED</div>
                 {filteredPinned.map((s) => (
-                  <SessionRow key={s.id} session={s} active={activeSessionId === s.id} />
+                  <SessionRow
+                    key={s.id}
+                    session={s}
+                    active={activeSessionId === s.id}
+                    onContextMenu={openContextMenu}
+                  />
                 ))}
               </>
             )}
@@ -148,7 +174,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               SESSIONS <span className="sidebar-session-count">{filteredUnpinned.length}</span>
             </div>
             {filteredUnpinned.map((s) => (
-              <SessionRow key={s.id} session={s} active={activeSessionId === s.id} />
+              <SessionRow
+                key={s.id}
+                session={s}
+                active={activeSessionId === s.id}
+                onContextMenu={openContextMenu}
+              />
             ))}
 
             <Link to="/sessions" className="sidebar-view-all">
@@ -241,7 +272,65 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <NavRow path="/settings" icon="⚙️" label="Settings" active={pathname === '/settings'} />
         </div>
       )}
+
+      {menu && (
+        <SessionContextMenu
+          sessionId={menu.session.id}
+          position={menu.position}
+          pinned={menu.session.pinned}
+          onClose={() => setMenu(null)}
+          onRename={() => {
+            setRenaming(menu.session);
+            setMenu(null);
+          }}
+        />
+      )}
+
+      {renaming && (
+        <RenameSessionModal
+          key={renaming.id}
+          session={renaming}
+          onClose={() => setRenaming(null)}
+        />
+      )}
     </nav>
+  );
+}
+
+function RenameSessionModal({
+  session,
+  onClose,
+}: {
+  session: SidebarSession;
+  onClose: () => void;
+}) {
+  const renameMut = useSessionRename();
+  const [title, setTitle] = useState(session.title ?? '');
+
+  const submit = () => {
+    const next = title.trim();
+    renameMut.mutate({ id: session.id, title: next.length > 0 ? next : null });
+    onClose();
+  };
+
+  return (
+    <Modal
+      open
+      title="Rename session"
+      okText="Rename"
+      onOk={submit}
+      onCancel={onClose}
+      confirmLoading={renameMut.isPending}
+      width={420}
+    >
+      <Input
+        autoFocus
+        placeholder="Session title"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onPressEnter={submit}
+      />
+    </Modal>
   );
 }
 
@@ -270,9 +359,11 @@ function NavRow({
 function SessionRow({
   session,
   active,
+  onContextMenu,
 }: {
-  session: { id: string; title: string | null; key: string; updatedAt: string };
+  session: SidebarSession;
   active: boolean;
+  onContextMenu?: (e: React.MouseEvent, session: SidebarSession) => void;
 }) {
   const label = session.title ?? 'Untitled session';
   const time = formatRelativeTime(session.updatedAt);
@@ -280,6 +371,10 @@ function SessionRow({
     <Link
       to={`/chat?session=${session.id}`}
       className={`sidebar-session-row${active ? ' active' : ''}`}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu?.(e, session);
+      }}
     >
       <span className="sidebar-session-name">{label}</span>
       <span className="sidebar-session-time">{time}</span>

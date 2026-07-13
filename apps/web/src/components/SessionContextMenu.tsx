@@ -3,8 +3,9 @@ import {
   useSessionDelete,
   useSessionExport,
   useSessionFork,
+  useSessionPin,
+  useSessionUnpin,
 } from '../features/sessions/api/mutations';
-import { rpc } from '../rpc';
 
 interface SessionContextMenuProps {
   sessionId: string;
@@ -25,6 +26,8 @@ export function SessionContextMenu({
   const deleteMut = useSessionDelete();
   const forkMut = useSessionFork();
   const exportMut = useSessionExport();
+  const pinMut = useSessionPin();
+  const unpinMut = useSessionUnpin();
 
   // Close on outside click
   useEffect(() => {
@@ -48,9 +51,9 @@ export function SessionContextMenu({
 
   const handlePin = () => {
     if (pinned) {
-      void rpc.sessions.unpin({ id: sessionId });
+      unpinMut.mutate(sessionId);
     } else {
-      void rpc.sessions.pin({ id: sessionId });
+      pinMut.mutate(sessionId);
     }
     onClose();
   };
