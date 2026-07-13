@@ -38,6 +38,9 @@ export interface AgentLoopObservability {
   ): void;
   recordSafetyBlock(opts: RecordEventOpts): void;
   recordCompaction(opts: RecordEventOpts): void;
+  recordToolRepair?(
+    opts: RecordEventOpts & { toolName: string; outcome: 'repaired' | 'failed' },
+  ): void;
   recordTierEscalation(
     opts: RecordEventOpts & {
       from: string;

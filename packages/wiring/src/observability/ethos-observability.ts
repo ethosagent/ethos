@@ -40,6 +40,7 @@ export const ETHOS_EVENT_CATEGORIES = [
   'audit.injection_flag',
   'audit.redacted',
   'audit.compaction',
+  'tool.repair',
   'channel.pairing',
   'channel.allow',
   'channel.deny',
@@ -282,6 +283,16 @@ export class EthosObservability {
 
   recordCompaction(opts: EventBase & { severity?: EventSeverity }): void {
     this.emit('audit.compaction', 'info', opts);
+  }
+
+  recordToolRepair(
+    opts: EventBase & {
+      toolName: string;
+      outcome: 'repaired' | 'failed';
+      severity?: EventSeverity;
+    },
+  ): void {
+    this.emit('tool.repair', 'info', opts, { toolName: opts.toolName, outcome: opts.outcome });
   }
 
   recordChannelPairing(opts: EventBase): void {

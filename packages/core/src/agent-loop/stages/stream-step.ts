@@ -31,6 +31,10 @@ export interface CompletedToolCall {
   toolCallId: string;
   toolName: string;
   args: unknown;
+  // Set when the streamed arguments were unparseable and unrepairable. The
+  // call still reaches tool-processing (so the tool_use gets a matching
+  // tool_result) but is rejected there instead of executing with empty args.
+  parseError?: string;
 }
 
 export type StreamStepResult =
@@ -122,6 +126,8 @@ export async function* streamStep(
     toolName: string;
     partialJson: string;
     args?: unknown;
+    parseError?: string;
+    repair?: { outcome: 'repaired' | 'failed' };
   }> = [];
   let chunkText = '';
   let fullTextDelta = '';
@@ -263,9 +269,25 @@ export async function* streamStep(
 
   const usageSink: UsageSink = { llmInputTokens, llmOutputTokens };
 
-  // Determine which tool calls completed parsing
+  // Record one observability event per tool-call repair attempt (§4). Only
+  // fires when a strict parse failed and the repair pass ran — feeds the §9
+  // per-model repair-rate metric.
+  for (const tc of pendingToolCalls) {
+    if (tc.repair) {
+      deps.observability?.recordToolRepair?.({
+        traceId: ctx.traceId,
+        toolName: tc.toolName,
+        outcome: tc.repair.outcome,
+      });
+    }
+  }
+
+  // Determine which tool calls completed parsing. Calls with a parse error are
+  // kept — they still need a matching tool_result (rejected in tool-processing)
+  // to satisfy the tool_use/tool_result contract; they never execute.
   const completedToolCalls = pendingToolCalls.filter(
-    (tc): tc is typeof tc & { args: unknown } => tc.args !== undefined,
+    (tc): tc is typeof tc & { args: unknown } =>
+      tc.args !== undefined || tc.parseError !== undefined,
   );
 
   // Persist assistant message — include tool_use references so history is LLM-replayable
@@ -278,7 +300,9 @@ export async function* streamStep(
       toolCalls: completedToolCalls.map((tc) => ({
         id: tc.toolCallId,
         name: tc.toolName,
-        input: tc.args,
+        // Malformed args are recorded as `{}` in the tool_use history block;
+        // the call is rejected (not executed) in tool-processing.
+        input: tc.args ?? {},
       })),
     }),
   });
@@ -346,7 +370,7 @@ export async function* streamStep(
         type: 'tool_use',
         id: tc.toolCallId,
         name: tc.toolName,
-        input: tc.args,
+        input: tc.args ?? {},
       });
     }
     ctx.llmMessages.push({ role: 'assistant', content: assistantContent });

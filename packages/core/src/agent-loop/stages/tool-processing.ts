@@ -111,6 +111,28 @@ export interface ToolProcessingContext {
   };
 }
 
+// Emit the standard rejection signal for a tool call that will not execute:
+// notify the watcher and yield an is_error tool_end. Callers still push the
+// corresponding Prepped `{ rejected }` entry so the LLM receives a matching
+// is_error tool_result (Anthropic tool_use/tool_result contract).
+function* emitToolRejection(
+  observe: WatcherTap['observe'],
+  toolCallId: string,
+  toolName: string,
+  reason: string,
+): Generator<AgentEvent> {
+  observe({ type: 'tool_end', toolName, ok: false });
+  yield {
+    type: 'tool_end',
+    toolCallId,
+    toolName,
+    ok: false,
+    durationMs: 0,
+    result: reason,
+    error: reason,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // processTools — one iteration's tool handling
 // ---------------------------------------------------------------------------
@@ -203,6 +225,20 @@ export async function* processTools(
   const getHalt = ctx.watcherTap.getHalt;
 
   for (const tc of ctx.completedToolCalls) {
+    // §4 — the streamed arguments were unparseable and unrepairable. Never run
+    // the tool with empty args; reject via the same Prepped.rejected path used
+    // by hook/watcher rejections so the model gets a visible is_error result.
+    if (tc.parseError !== undefined) {
+      yield* emitToolRejection(observe, tc.toolCallId, tc.toolName, tc.parseError);
+      prepped.push({
+        toolCallId: tc.toolCallId,
+        name: tc.toolName,
+        args: tc.args ?? {},
+        rejected: tc.parseError,
+      });
+      continue;
+    }
+
     // Ch.3d — refuse downgraded tools while the post-untrusted-read
     // counter is positive. The user's next message clears the counter
     // (run() is invoked fresh; dgRemaining resets to 0).
@@ -212,16 +248,12 @@ export async function* processTools(
         code: 'tool_downgraded_post_untrusted_read',
         cause: tc.toolName,
       });
-      observe({ type: 'tool_end', toolName: tc.toolName, ok: false });
-      yield {
-        type: 'tool_end',
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        ok: false,
-        durationMs: 0,
-        result: deps.safety.injection.downgradeRejectionMessage,
-        error: deps.safety.injection.downgradeRejectionMessage,
-      };
+      yield* emitToolRejection(
+        observe,
+        tc.toolCallId,
+        tc.toolName,
+        deps.safety.injection.downgradeRejectionMessage,
+      );
       prepped.push({
         toolCallId: tc.toolCallId,
         name: tc.toolName,
@@ -248,16 +280,7 @@ export async function* processTools(
         code: 'tool_blocked',
         cause: beforeResult.error,
       });
-      observe({ type: 'tool_end', toolName: tc.toolName, ok: false });
-      yield {
-        type: 'tool_end',
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        ok: false,
-        durationMs: 0,
-        result: beforeResult.error,
-        error: beforeResult.error,
-      };
+      yield* emitToolRejection(observe, tc.toolCallId, tc.toolName, beforeResult.error);
       prepped.push({
         toolCallId: tc.toolCallId,
         name: tc.toolName,
@@ -277,16 +300,7 @@ export async function* processTools(
         code: 'tool_blocked',
         cause: enabledError,
       });
-      observe({ type: 'tool_end', toolName: tc.toolName, ok: false });
-      yield {
-        type: 'tool_end',
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        ok: false,
-        durationMs: 0,
-        result: enabledError,
-        error: enabledError,
-      };
+      yield* emitToolRejection(observe, tc.toolCallId, tc.toolName, enabledError);
       prepped.push({
         toolCallId: tc.toolCallId,
         name: tc.toolName,
@@ -304,16 +318,7 @@ export async function* processTools(
         code: 'tool_blocked',
         cause: rejectError,
       });
-      observe({ type: 'tool_end', toolName: tc.toolName, ok: false });
-      yield {
-        type: 'tool_end',
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        ok: false,
-        durationMs: 0,
-        result: rejectError,
-        error: rejectError,
-      };
+      yield* emitToolRejection(observe, tc.toolCallId, tc.toolName, rejectError);
       prepped.push({
         toolCallId: tc.toolCallId,
         name: tc.toolName,

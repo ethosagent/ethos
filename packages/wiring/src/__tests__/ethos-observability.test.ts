@@ -74,6 +74,7 @@ describe('EthosObservability', () => {
       expect(ETHOS_EVENT_CATEGORIES).toContain('audit.injection_flag');
       expect(ETHOS_EVENT_CATEGORIES).toContain('audit.redacted');
       expect(ETHOS_EVENT_CATEGORIES).toContain('audit.compaction');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('tool.repair');
       expect(ETHOS_EVENT_CATEGORIES).toContain('channel.pairing');
       expect(ETHOS_EVENT_CATEGORIES).toContain('channel.allow');
       expect(ETHOS_EVENT_CATEGORIES).toContain('channel.deny');
@@ -247,6 +248,7 @@ describe('EthosObservability', () => {
       ['recordSkillScan', 'install.scan'],
       ['recordInstallEvent', 'install.event'],
       ['recordCompaction', 'audit.compaction'],
+      ['recordToolRepair', 'tool.repair'],
       ['recordInjectionFlag', 'audit.injection_flag'],
       ['recordRedacted', 'audit.redacted'],
     ] as const)('%s emits category %s', (method, category) => {
