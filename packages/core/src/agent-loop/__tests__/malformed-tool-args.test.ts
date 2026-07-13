@@ -43,6 +43,16 @@ function makeSpyTool(name: string, execute: Tool['execute']): Tool {
   };
 }
 
+function makeSpyToolWithRequired(name: string, required: string[], execute: Tool['execute']): Tool {
+  return {
+    name,
+    description: `${name} tool`,
+    schema: { type: 'object', properties: {}, required },
+    capabilities: {},
+    execute,
+  };
+}
+
 function makeFakeObservability(): AgentLoopObservability & {
   repairs: Array<{ toolName: string; outcome: 'repaired' | 'failed' }>;
 } {
@@ -119,6 +129,107 @@ describe('malformed tool arguments (§4 silent-{} bugfix)', () => {
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(seenArgs).toEqual({ path: '/tmp/x', force: true });
+    expect(obs.repairs).toEqual([{ toolName: 'do_thing', outcome: 'repaired' }]);
+  });
+
+  it('rejects a REPAIRED call missing a required field instead of executing it', async () => {
+    const execute = vi.fn(async (): Promise<ToolResult> => ({ ok: true, value: 'ran' }));
+    const tools = new DefaultToolRegistry();
+    tools.register(makeSpyToolWithRequired('write_file', ['path', 'content'], execute));
+    const obs = makeFakeObservability();
+
+    const loop = new AgentLoop({
+      // Repairs to { path: '/tmp/x' } — valid object but missing `content`.
+      llm: makeToolThenDoneLLM('write_file', "{'path': '/tmp/x',}"),
+      tools,
+      safety: createTestSafety(),
+      observability: obs,
+    });
+    const events = await collect(loop.run('go'));
+
+    // Incomplete repair must NOT execute the tool.
+    expect(execute).not.toHaveBeenCalled();
+
+    // A visible is_error tool_end naming the missing field is produced.
+    const toolEnd = events.find(
+      (e): e is Extract<AgentEvent, { type: 'tool_end' }> =>
+        e.type === 'tool_end' && e.toolName === 'write_file',
+    );
+    expect(toolEnd?.ok).toBe(false);
+    expect(toolEnd?.error).toContain('missing required field(s): content');
+
+    // The args were still repaired (the observability event fires on repair).
+    expect(obs.repairs).toEqual([{ toolName: 'write_file', outcome: 'repaired' }]);
+  });
+
+  it('executes a REPAIRED call that has every required field', async () => {
+    let seenArgs: unknown;
+    const execute = vi.fn(async (args: unknown): Promise<ToolResult> => {
+      seenArgs = args;
+      return { ok: true, value: 'ran' };
+    });
+    const tools = new DefaultToolRegistry();
+    tools.register(makeSpyToolWithRequired('write_file', ['path', 'content'], execute));
+    const obs = makeFakeObservability();
+
+    const loop = new AgentLoop({
+      llm: makeToolThenDoneLLM('write_file', "{'path': '/tmp/x', content: 'hi',}"),
+      tools,
+      safety: createTestSafety(),
+      observability: obs,
+    });
+    await collect(loop.run('go'));
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(seenArgs).toEqual({ path: '/tmp/x', content: 'hi' });
+  });
+
+  it('does NOT validate CLEAN strict-parse args missing a required field (repaired-path only)', async () => {
+    let seenArgs: unknown;
+    const execute = vi.fn(async (args: unknown): Promise<ToolResult> => {
+      seenArgs = args;
+      return { ok: true, value: 'ran' };
+    });
+    const tools = new DefaultToolRegistry();
+    tools.register(makeSpyToolWithRequired('write_file', ['path', 'content'], execute));
+    const obs = makeFakeObservability();
+
+    const loop = new AgentLoop({
+      // Valid JSON — parses cleanly, no repair — even though `content` is absent.
+      llm: makeToolThenDoneLLM('write_file', '{"path": "/tmp/x"}'),
+      tools,
+      safety: createTestSafety(),
+      observability: obs,
+    });
+    await collect(loop.run('go'));
+
+    // Clean parse is trusted: the tool executes as today, no required-field gate.
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(seenArgs).toEqual({ path: '/tmp/x' });
+    expect(obs.repairs).toEqual([]);
+  });
+
+  it('runs a REPAIRED call with no required fields regardless of contents', async () => {
+    let seenArgs: unknown;
+    const execute = vi.fn(async (args: unknown): Promise<ToolResult> => {
+      seenArgs = args;
+      return { ok: true, value: 'ran' };
+    });
+    const tools = new DefaultToolRegistry();
+    // No `required` on the schema.
+    tools.register(makeSpyTool('do_thing', execute));
+    const obs = makeFakeObservability();
+
+    const loop = new AgentLoop({
+      llm: makeToolThenDoneLLM('do_thing', "{'a': 1,}"),
+      tools,
+      safety: createTestSafety(),
+      observability: obs,
+    });
+    await collect(loop.run('go'));
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(seenArgs).toEqual({ a: 1 });
     expect(obs.repairs).toEqual([{ toolName: 'do_thing', outcome: 'repaired' }]);
   });
 

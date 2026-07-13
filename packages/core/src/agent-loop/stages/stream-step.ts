@@ -35,6 +35,11 @@ export interface CompletedToolCall {
   // call still reaches tool-processing (so the tool_use gets a matching
   // tool_result) but is rejected there instead of executing with empty args.
   parseError?: string;
+  // Set only when strict parse failed and a mechanical repair pass ran.
+  // `outcome: 'repaired'` means `args` is the repaired object — tool-processing
+  // validates it against the tool's `required` fields (§4) before executing,
+  // since a repair signals the model produced malformed output.
+  repair?: { outcome: 'repaired' | 'failed' };
 }
 
 export type StreamStepResult =

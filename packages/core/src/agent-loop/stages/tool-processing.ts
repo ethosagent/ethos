@@ -27,6 +27,7 @@ import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import type { WatcherTap } from '../turn-context';
 import type { CompletedToolCall, UsageSink } from './stream-step';
+import { emitToolRejection, missingRequiredFields } from './tool-rejection';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,28 +109,6 @@ export interface ToolProcessingContext {
     dryRun?: boolean;
     userId?: string;
     a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean };
-  };
-}
-
-// Emit the standard rejection signal for a tool call that will not execute:
-// notify the watcher and yield an is_error tool_end. Callers still push the
-// corresponding Prepped `{ rejected }` entry so the LLM receives a matching
-// is_error tool_result (Anthropic tool_use/tool_result contract).
-function* emitToolRejection(
-  observe: WatcherTap['observe'],
-  toolCallId: string,
-  toolName: string,
-  reason: string,
-): Generator<AgentEvent> {
-  observe({ type: 'tool_end', toolName, ok: false });
-  yield {
-    type: 'tool_end',
-    toolCallId,
-    toolName,
-    ok: false,
-    durationMs: 0,
-    result: reason,
-    error: reason,
   };
 }
 
@@ -237,6 +216,27 @@ export async function* processTools(
         rejected: tc.parseError,
       });
       continue;
+    }
+
+    // §4 (remainder) — the streamed arguments were REPAIRED (chunk-handler's
+    // mechanical pass succeeded), so validate the repaired object against the
+    // tool's `required` fields — a dropped key must not run. Clean parses skip.
+    if (tc.repair?.outcome === 'repaired') {
+      const tool = deps.tools.get(tc.toolName);
+      if (tool) {
+        const missing = missingRequiredFields(tool.schema, tc.args);
+        if (missing.length > 0) {
+          const reason = `repaired tool arguments are missing required field(s): ${missing.join(', ')}`;
+          yield* emitToolRejection(observe, tc.toolCallId, tc.toolName, reason);
+          prepped.push({
+            toolCallId: tc.toolCallId,
+            name: tc.toolName,
+            args: tc.args ?? {},
+            rejected: reason,
+          });
+          continue;
+        }
+      }
     }
 
     // Ch.3d — refuse downgraded tools while the post-untrusted-read
