@@ -347,6 +347,41 @@ describe('§7 — manifest carries an optional profile', () => {
       'model catalog: invalid manifest shape',
     );
   });
+
+  it('accepts and preserves a structuredOutput flag (§3)', async () => {
+    const manifest = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            { id: 'm', label: 'l', contextWindow: 8_192, profile: { structuredOutput: true } },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(manifest));
+    const result = await fetchManifest('https://example.com/catalog.json');
+    expect(result.providers['openai-compat'].models[0].profile?.structuredOutput).toBe(true);
+  });
+
+  it('rejects a malformed profile (non-boolean structuredOutput)', async () => {
+    const bad = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            { id: 'm', label: 'l', contextWindow: 8_192, profile: { structuredOutput: 'yes' } },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(bad));
+    await expect(fetchManifest('https://example.com/catalog.json')).rejects.toThrow(
+      'model catalog: invalid manifest shape',
+    );
+  });
 });
 
 describe('loadModelCatalog', () => {

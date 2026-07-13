@@ -17,6 +17,45 @@ export interface ChatCompletionsStreamParams {
   effectiveModel: string;
 }
 
+type StructuredOutputDialect = 'openai' | 'ollama' | 'vllm';
+
+/**
+ * §3 — forward a grammar-constrained JSON request built by
+ * `structuredOutputOption` (@ethosagent/types). The caller sets
+ * `providerOptions['openai-compat'].responseFormat = { name?, strict?, schema }`;
+ * we map it to the provider dialect on the request body. Absent or malformed
+ * (no `schema` object) → no field is set, so every existing call is unchanged.
+ * The incoming value is caller data, so it is structurally guarded here.
+ */
+function applyStructuredOutput(
+  oaiParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming,
+  options: CompletionOptions,
+  dialect: StructuredOutputDialect,
+): void {
+  const responseFormat = options.providerOptions?.['openai-compat']?.responseFormat;
+  if (!responseFormat || typeof responseFormat !== 'object') return;
+  const wrapper = responseFormat as Record<string, unknown>;
+  const schema = wrapper.schema;
+  if (!schema || typeof schema !== 'object') return;
+  const jsonSchema = schema as Record<string, unknown>;
+  const name = typeof wrapper.name === 'string' ? wrapper.name : 'response';
+  const strict = typeof wrapper.strict === 'boolean' ? wrapper.strict : true;
+
+  if (dialect === 'ollama') {
+    // Ollama structured output: top-level `format` accepts a JSON schema.
+    Object.assign(oaiParams, { format: jsonSchema });
+  } else if (dialect === 'vllm') {
+    // vLLM guided decoding: `guided_json` accepts a JSON schema.
+    Object.assign(oaiParams, { guided_json: jsonSchema });
+  } else {
+    // OpenAI-compat standard: response_format json_schema.
+    oaiParams.response_format = {
+      type: 'json_schema',
+      json_schema: { name, strict, schema: jsonSchema },
+    };
+  }
+}
+
 /**
  * Pure function that converts Ethos messages + options into the OpenAI Chat
  * Completions streaming params object. No I/O — all side-effect-free.
@@ -26,7 +65,11 @@ export function buildChatCompletionsParams(
   tools: ToolDefinitionLite[],
   options: CompletionOptions,
   model: string,
-  opts?: { gemini?: boolean; countTokens?: (msgs: Message[]) => Promise<number> },
+  opts?: {
+    gemini?: boolean;
+    countTokens?: (msgs: Message[]) => Promise<number>;
+    structuredOutputDialect?: StructuredOutputDialect;
+  },
 ): ChatCompletionsStreamParams {
   const oaiMessages = toOpenAIMessages(messages, options.system);
 
@@ -53,6 +96,8 @@ export function buildChatCompletionsParams(
     ...(oaiTools.length > 0 ? { tools: oaiTools } : {}),
   };
 
+  applyStructuredOutput(oaiParams, options, opts?.structuredOutputDialect ?? 'openai');
+
   return { oaiParams, requestTokens: undefined, effectiveModel };
 }
 
@@ -65,7 +110,11 @@ export async function buildChatCompletionsParamsAsync(
   tools: ToolDefinitionLite[],
   options: CompletionOptions,
   model: string,
-  opts?: { gemini?: boolean; countTokens?: (msgs: Message[]) => Promise<number> },
+  opts?: {
+    gemini?: boolean;
+    countTokens?: (msgs: Message[]) => Promise<number>;
+    structuredOutputDialect?: StructuredOutputDialect;
+  },
 ): Promise<ChatCompletionsStreamParams> {
   const result = buildChatCompletionsParams(messages, tools, options, model, opts);
 

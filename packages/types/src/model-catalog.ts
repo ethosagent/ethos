@@ -20,6 +20,10 @@ export interface ModelProfile {
   sampling?: ModelSampling;
   toolCallFormat?: 'openai' | 'text-xml';
   maxOutputTokens?: number;
+  /** §3 — when true, wiring sets `ProviderCapabilities.structuredOutput` so
+   *  internal JSON consumers request grammar-constrained decoding. Absent →
+   *  capability stays unset (models without native structured output). */
+  structuredOutput?: boolean;
 }
 
 export interface ModelEntry {

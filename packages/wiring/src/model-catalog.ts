@@ -418,6 +418,8 @@ export function mergeModelProfile(
   if (toolCallFormat !== undefined) merged.toolCallFormat = toolCallFormat;
   const maxOutputTokens = override?.maxOutputTokens ?? base?.maxOutputTokens;
   if (maxOutputTokens !== undefined) merged.maxOutputTokens = maxOutputTokens;
+  const structuredOutput = override?.structuredOutput ?? base?.structuredOutput;
+  if (structuredOutput !== undefined) merged.structuredOutput = structuredOutput;
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 

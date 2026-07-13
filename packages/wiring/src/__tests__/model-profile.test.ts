@@ -72,6 +72,15 @@ describe('mergeModelProfile', () => {
     const override = { toolCallFormat: 'text-xml' as const };
     expect(mergeModelProfile(undefined, override)).toEqual({ toolCallFormat: 'text-xml' });
   });
+
+  it('merges structuredOutput, override winning (§3)', () => {
+    expect(mergeModelProfile({ structuredOutput: false }, { structuredOutput: true })).toEqual({
+      structuredOutput: true,
+    });
+    expect(mergeModelProfile({ structuredOutput: true }, undefined)).toEqual({
+      structuredOutput: true,
+    });
+  });
 });
 
 describe('§7 profile fields reach the provider config', () => {
@@ -126,5 +135,28 @@ describe('§7 profile fields reach the provider config', () => {
       expect(provider.toolCallFormat).toBe('openai');
       expect(provider.maxOutputTokens).toBeUndefined();
     }
+  });
+
+  it('§3 — a structuredOutput override sets capabilities.structuredOutput', async () => {
+    const provider = await createLLM({
+      provider: 'ollama',
+      model: 'llama3.2',
+      apiKey: 'k',
+      models: {
+        'ollama/llama3.2': { structuredOutput: true },
+      },
+    });
+    expect(provider).toBeInstanceOf(OpenAICompatProvider);
+    expect(provider.capabilities?.structuredOutput).toBe(true);
+  });
+
+  it('§3 — no profile → capabilities.structuredOutput stays unset', async () => {
+    const provider = await createLLM({
+      provider: 'ollama',
+      model: 'llama3.2',
+      apiKey: 'k',
+    });
+    expect(provider).toBeInstanceOf(OpenAICompatProvider);
+    expect(provider.capabilities?.structuredOutput).toBeUndefined();
   });
 });

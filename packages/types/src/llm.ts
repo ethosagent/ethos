@@ -63,6 +63,30 @@ export interface CompletionOptions {
   providerOptions?: Record<string, Record<string, unknown>>;
 }
 
+/**
+ * §3 — build the `providerOptions` bag that requests grammar-constrained JSON
+ * output for a given JSON Schema, so callers don't hand-assemble the nested
+ * shape. Merge the result into `CompletionOptions.providerOptions`. The
+ * openai-compat transport reads `providerOptions['openai-compat'].responseFormat`
+ * and maps it to the provider dialect (`response_format` json_schema / Ollama
+ * `format` / vLLM `guided_json`). Only consume this when the provider declares
+ * `capabilities.structuredOutput` — models without it ignore the field.
+ */
+export function structuredOutputOption(
+  schema: Record<string, unknown>,
+  opts?: { name?: string; strict?: boolean },
+): Record<string, Record<string, unknown>> {
+  return {
+    'openai-compat': {
+      responseFormat: {
+        name: opts?.name ?? 'response',
+        strict: opts?.strict ?? true,
+        schema,
+      },
+    },
+  };
+}
+
 export interface ProviderCapabilities {
   streaming: boolean;
   toolCalling: boolean;

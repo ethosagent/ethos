@@ -87,6 +87,7 @@ function isValidProfile(obj: unknown): boolean {
     (typeof p.maxOutputTokens !== 'number' || !Number.isFinite(p.maxOutputTokens))
   )
     return false;
+  if (p.structuredOutput !== undefined && typeof p.structuredOutput !== 'boolean') return false;
   return true;
 }
 

@@ -519,6 +519,12 @@ async function createLLMFromRegistry(
         ...(profile?.maxOutputTokens !== undefined
           ? { maxOutputTokens: profile.maxOutputTokens }
           : {}),
+        // §3 — a profile that declares structured-output support turns on the
+        // provider's `capabilities.structuredOutput`, which internal JSON
+        // consumers gate on. Absent → capability stays unset (unchanged).
+        ...(profile?.structuredOutput !== undefined
+          ? { structuredOutput: profile.structuredOutput }
+          : {}),
       },
       secrets: config.secretsResolver ?? secrets,
       logger: log,

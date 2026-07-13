@@ -32,6 +32,30 @@ export interface OpenAICompatProviderConfig {
   /** §7 — default output-token cap applied when the completion does not set
    *  `maxTokens`. A per-call `maxTokens` always wins. */
   maxOutputTokens?: number;
+  /** §3 — when true, the provider advertises `capabilities.structuredOutput`
+   *  so internal JSON consumers request grammar-constrained decoding. Absent →
+   *  capability stays unset. */
+  structuredOutput?: boolean;
+}
+
+/**
+ * §3 — pick the request dialect for grammar-constrained JSON. The three
+ * OpenAI-compat families phrase structured output differently:
+ *   - openai (default): `response_format: { type: 'json_schema', json_schema }`
+ *   - ollama:           top-level `format` accepts a JSON schema
+ *   - vllm:             `guided_json` guided-decoding param
+ * Derived from the provider name (the configured alias) plus Ollama's
+ * distinctive default port. Only ever consumed when a caller sets
+ * `providerOptions['openai-compat'].responseFormat` — no effect otherwise.
+ */
+function detectStructuredOutputDialect(
+  name: string,
+  baseUrl: string,
+): 'openai' | 'ollama' | 'vllm' {
+  const n = name.toLowerCase();
+  if (n === 'ollama' || baseUrl.includes(':11434')) return 'ollama';
+  if (n === 'vllm') return 'vllm';
+  return 'openai';
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +262,8 @@ export class OpenAICompatProvider implements LLMProvider {
       systemPromptStyle: 'system-role',
       tokenCounting: 'estimated',
       contractVersion: 1,
+      // §3 — profile-driven. Absent → key omitted → capability stays unset.
+      ...(this.structuredOutput !== undefined ? { structuredOutput: this.structuredOutput } : {}),
     };
   }
 
@@ -250,6 +276,11 @@ export class OpenAICompatProvider implements LLMProvider {
   /** §7 profile output-token default; undefined when unset. Public for
    *  observability + wiring tests. */
   readonly maxOutputTokens?: number;
+  /** §3 profile structured-output flag; surfaces via `capabilities`. Undefined
+   *  when unset. Public for wiring tests. */
+  readonly structuredOutput?: boolean;
+  /** §3 request dialect for grammar-constrained JSON (openai/ollama/vllm). */
+  private readonly structuredOutputDialect: 'openai' | 'ollama' | 'vllm';
 
   constructor(config: OpenAICompatProviderConfig) {
     this.name = config.name;
@@ -259,6 +290,8 @@ export class OpenAICompatProvider implements LLMProvider {
     this.azure = config.baseUrl.includes('azure.com');
     this.toolCallFormat = config.toolCallFormat ?? 'openai';
     this.maxOutputTokens = config.maxOutputTokens;
+    this.structuredOutput = config.structuredOutput;
+    this.structuredOutputDialect = detectStructuredOutputDialect(config.name, config.baseUrl);
 
     const baseURL = this.azure
       ? `${config.baseUrl.replace(/\/$/, '')}/openai/deployments/${config.model}`
@@ -295,6 +328,7 @@ export class OpenAICompatProvider implements LLMProvider {
       {
         gemini: this.gemini,
         countTokens: (msgs) => this.countTokens(msgs),
+        structuredOutputDialect: this.structuredOutputDialect,
       },
     );
 
@@ -390,6 +424,9 @@ export const openaiCompatFactory: LLMProviderFactory = async ({
       ? { toolCallFormat: cfg.toolCallFormat }
       : {}),
     ...(typeof cfg.maxOutputTokens === 'number' ? { maxOutputTokens: cfg.maxOutputTokens } : {}),
+    ...(typeof cfg.structuredOutput === 'boolean'
+      ? { structuredOutput: cfg.structuredOutput }
+      : {}),
   });
 };
 
