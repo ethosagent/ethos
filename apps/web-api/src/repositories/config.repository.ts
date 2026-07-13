@@ -46,9 +46,13 @@ export interface RawConfig {
   debugPanelModel?: string | null;
   voiceProvider?: string;
   voiceApiKey?: string;
+  voiceBaseUrl?: string;
+  voiceModel?: string;
   voiceTtsProvider?: string;
   voiceTtsApiKey?: string;
   voiceTtsVoice?: string;
+  voiceTtsBaseUrl?: string;
+  voiceTtsModel?: string;
   modelRouting: Record<string, string>;
   /** Ordered provider chain for ChainedProvider failover. */
   providers: RawProviderEntry[];
@@ -91,9 +95,13 @@ export class ConfigRepository {
       'display.debug_panel_model',
       'auxiliary.asr.provider',
       'auxiliary.asr.apiKey',
+      'auxiliary.asr.baseUrl',
+      'auxiliary.asr.model',
       'auxiliary.tts.provider',
       'auxiliary.tts.apiKey',
       'auxiliary.tts.voice',
+      'auxiliary.tts.baseUrl',
+      'auxiliary.tts.model',
     ]);
     const config: RawConfig = { modelRouting: {}, providers: [], passthrough: {} };
     const providerMap = new Map<number, RawProviderEntry>();
@@ -194,6 +202,12 @@ export class ConfigRepository {
           case 'auxiliary.asr.apiKey':
             config.voiceApiKey = value;
             break;
+          case 'auxiliary.asr.baseUrl':
+            config.voiceBaseUrl = value;
+            break;
+          case 'auxiliary.asr.model':
+            config.voiceModel = value;
+            break;
           case 'auxiliary.tts.provider':
             config.voiceTtsProvider = value;
             break;
@@ -202,6 +216,12 @@ export class ConfigRepository {
             break;
           case 'auxiliary.tts.voice':
             config.voiceTtsVoice = value;
+            break;
+          case 'auxiliary.tts.baseUrl':
+            config.voiceTtsBaseUrl = value;
+            break;
+          case 'auxiliary.tts.model':
+            config.voiceTtsModel = value;
             break;
         }
       } else {
@@ -297,12 +317,19 @@ export class ConfigRepository {
     if (config.voiceProvider)
       lines.push(`auxiliary.asr.provider: ${yamlScalar(config.voiceProvider)}`);
     if (config.voiceApiKey) lines.push(`auxiliary.asr.apiKey: ${yamlScalar(config.voiceApiKey)}`);
+    if (config.voiceBaseUrl)
+      lines.push(`auxiliary.asr.baseUrl: ${yamlScalar(config.voiceBaseUrl)}`);
+    if (config.voiceModel) lines.push(`auxiliary.asr.model: ${yamlScalar(config.voiceModel)}`);
     if (config.voiceTtsProvider)
       lines.push(`auxiliary.tts.provider: ${yamlScalar(config.voiceTtsProvider)}`);
     if (config.voiceTtsApiKey)
       lines.push(`auxiliary.tts.apiKey: ${yamlScalar(config.voiceTtsApiKey)}`);
     if (config.voiceTtsVoice)
       lines.push(`auxiliary.tts.voice: ${yamlScalar(config.voiceTtsVoice)}`);
+    if (config.voiceTtsBaseUrl)
+      lines.push(`auxiliary.tts.baseUrl: ${yamlScalar(config.voiceTtsBaseUrl)}`);
+    if (config.voiceTtsModel)
+      lines.push(`auxiliary.tts.model: ${yamlScalar(config.voiceTtsModel)}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
     }

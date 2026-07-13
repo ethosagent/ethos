@@ -30,9 +30,13 @@ export interface ConfigGetResult {
   adminEnabled: boolean;
   voiceProvider: string | null;
   voiceApiKeyPreview: string | null;
+  voiceBaseUrl: string | null;
+  voiceModel: string | null;
   voiceTtsProvider: string | null;
   voiceTtsApiKeyPreview: string | null;
   voiceTtsVoice: string | null;
+  voiceTtsBaseUrl: string | null;
+  voiceTtsModel: string | null;
 }
 
 export interface ConfigUpdateInput {
@@ -59,9 +63,13 @@ export interface ConfigUpdateInput {
   adminEnabled?: boolean;
   voiceProvider?: string;
   voiceApiKey?: string;
+  voiceBaseUrl?: string;
+  voiceModel?: string;
   voiceTtsProvider?: string;
   voiceTtsApiKey?: string;
   voiceTtsVoice?: string;
+  voiceTtsBaseUrl?: string;
+  voiceTtsModel?: string;
 }
 
 export interface ConfigServiceOptions {
@@ -109,9 +117,13 @@ export class ConfigService {
       adminEnabled: raw.passthrough['admin.enabled'] === 'true',
       voiceProvider: raw.voiceProvider ?? null,
       voiceApiKeyPreview: raw.voiceApiKey ? redactKey(raw.voiceApiKey) : null,
+      voiceBaseUrl: raw.voiceBaseUrl ?? null,
+      voiceModel: raw.voiceModel ?? null,
       voiceTtsProvider: raw.voiceTtsProvider ?? null,
       voiceTtsApiKeyPreview: raw.voiceTtsApiKey ? redactKey(raw.voiceTtsApiKey) : null,
       voiceTtsVoice: raw.voiceTtsVoice ?? null,
+      voiceTtsBaseUrl: raw.voiceTtsBaseUrl ?? null,
+      voiceTtsModel: raw.voiceTtsModel ?? null,
     };
   }
 
@@ -206,6 +218,10 @@ export class ConfigService {
         ? { voiceProvider: patch.voiceProvider || undefined }
         : {}),
       ...(patch.voiceApiKey !== undefined ? { voiceApiKey: patch.voiceApiKey || undefined } : {}),
+      ...(patch.voiceBaseUrl !== undefined
+        ? { voiceBaseUrl: patch.voiceBaseUrl || undefined }
+        : {}),
+      ...(patch.voiceModel !== undefined ? { voiceModel: patch.voiceModel || undefined } : {}),
       ...(patch.voiceTtsProvider !== undefined
         ? { voiceTtsProvider: patch.voiceTtsProvider || undefined }
         : {}),
@@ -214,6 +230,12 @@ export class ConfigService {
         : {}),
       ...(patch.voiceTtsVoice !== undefined
         ? { voiceTtsVoice: patch.voiceTtsVoice || undefined }
+        : {}),
+      ...(patch.voiceTtsBaseUrl !== undefined
+        ? { voiceTtsBaseUrl: patch.voiceTtsBaseUrl || undefined }
+        : {}),
+      ...(patch.voiceTtsModel !== undefined
+        ? { voiceTtsModel: patch.voiceTtsModel || undefined }
         : {}),
     });
   }

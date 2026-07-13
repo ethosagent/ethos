@@ -35,9 +35,13 @@ export class VoiceService {
   private readonly configGetter?: () => Promise<{
     voiceProvider?: string | null;
     voiceApiKey?: string | null;
+    voiceBaseUrl?: string | null;
+    voiceModel?: string | null;
     voiceTtsProvider?: string | null;
     voiceTtsApiKey?: string | null;
     voiceTtsVoice?: string | null;
+    voiceTtsBaseUrl?: string | null;
+    voiceTtsModel?: string | null;
   } | null>;
   private provider: SttProvider | null = null;
   private resolvedName: string | undefined;
@@ -64,9 +68,13 @@ export class VoiceService {
     configGetter?: () => Promise<{
       voiceProvider?: string | null;
       voiceApiKey?: string | null;
+      voiceBaseUrl?: string | null;
+      voiceModel?: string | null;
       voiceTtsProvider?: string | null;
       voiceTtsApiKey?: string | null;
       voiceTtsVoice?: string | null;
+      voiceTtsBaseUrl?: string | null;
+      voiceTtsModel?: string | null;
     } | null>;
     ttsRegistry?: TtsProviderRegistry;
     ttsProviderName?: string;
@@ -90,7 +98,11 @@ export class VoiceService {
       const live = await this.configGetter().catch(() => null);
       if (live?.voiceProvider) {
         name = live.voiceProvider;
-        config = { apiKey: live.voiceApiKey ?? undefined };
+        config = {
+          apiKey: live.voiceApiKey ?? undefined,
+          baseUrl: live.voiceBaseUrl ?? undefined,
+          model: live.voiceModel ?? undefined,
+        };
       }
     }
 
@@ -137,6 +149,8 @@ export class VoiceService {
         config = {
           apiKey: live.voiceTtsApiKey ?? undefined,
           voice: live.voiceTtsVoice ?? undefined,
+          baseUrl: live.voiceTtsBaseUrl ?? undefined,
+          model: live.voiceTtsModel ?? undefined,
         };
       }
     }

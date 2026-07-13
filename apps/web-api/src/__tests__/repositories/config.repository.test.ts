@@ -139,6 +139,44 @@ describe('ConfigRepository', () => {
     expect(storage.getMode(path)).toBe(0o600);
   });
 
+  it('round-trips voice base URL, model, and free-form voice id', async () => {
+    await repo.update({
+      voiceProvider: 'local-stt',
+      voiceBaseUrl: 'http://localhost:8000/v1',
+      voiceModel: 'whisper-large-v3',
+      voiceTtsProvider: 'local-tts',
+      voiceTtsBaseUrl: 'http://localhost:8880/v1',
+      voiceTtsModel: 'kokoro',
+      voiceTtsVoice: 'af_bella',
+    });
+    const yaml = await storage.read(join(DATA, 'config.yaml'));
+    expect(yaml).toContain('auxiliary.asr.baseUrl: "http://localhost:8000/v1"');
+    expect(yaml).toContain('auxiliary.asr.model: whisper-large-v3');
+    expect(yaml).toContain('auxiliary.tts.baseUrl: "http://localhost:8880/v1"');
+    expect(yaml).toContain('auxiliary.tts.model: kokoro');
+    expect(yaml).toContain('auxiliary.tts.voice: af_bella');
+
+    const config = await repo.read();
+    expect(config?.voiceProvider).toBe('local-stt');
+    expect(config?.voiceBaseUrl).toBe('http://localhost:8000/v1');
+    expect(config?.voiceModel).toBe('whisper-large-v3');
+    expect(config?.voiceTtsProvider).toBe('local-tts');
+    expect(config?.voiceTtsBaseUrl).toBe('http://localhost:8880/v1');
+    expect(config?.voiceTtsModel).toBe('kokoro');
+    expect(config?.voiceTtsVoice).toBe('af_bella');
+  });
+
+  it('does not duplicate voice keys into passthrough on round-trip', async () => {
+    await repo.update({
+      voiceProvider: 'local-stt',
+      voiceBaseUrl: 'http://localhost:8000/v1',
+      voiceModel: 'whisper-large-v3',
+    });
+    const config = await repo.read();
+    expect(config?.passthrough['auxiliary.asr.baseUrl']).toBeUndefined();
+    expect(config?.passthrough['auxiliary.asr.model']).toBeUndefined();
+  });
+
   it('deletePassthroughKeys removes dotted keys', async () => {
     await repo.update({
       passthrough: {

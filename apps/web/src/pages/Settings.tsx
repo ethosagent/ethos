@@ -180,10 +180,24 @@ interface FormShape {
   voiceEnabled: boolean;
   voiceProvider: string;
   voiceApiKey: string;
+  voiceBaseUrl: string;
+  voiceModel: string;
   voiceTtsProvider: string;
   voiceTtsApiKey: string;
   voiceTtsVoice: string;
+  voiceTtsBaseUrl: string;
+  voiceTtsModel: string;
 }
+
+// Sensible defaults prefilled when a local (OpenAI-compatible) voice provider
+// is selected. Kokoro TTS listens on :8880, Whisper STT on :8000 by convention.
+// Only prefilled into empty fields — never clobbers a user's edits.
+const STT_PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
+  'local-stt': { baseUrl: 'http://localhost:8000/v1', model: 'whisper-large-v3' },
+};
+const TTS_PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
+  'local-tts': { baseUrl: 'http://localhost:8880/v1', model: 'kokoro' },
+};
 
 export function Settings() {
   const qc = useQueryClient();
@@ -221,9 +235,13 @@ export function Settings() {
         voiceEnabled: Boolean(configQuery.data.voiceProvider),
         voiceProvider: configQuery.data.voiceProvider ?? '',
         voiceApiKey: '',
+        voiceBaseUrl: configQuery.data.voiceBaseUrl ?? '',
+        voiceModel: configQuery.data.voiceModel ?? '',
         voiceTtsProvider: configQuery.data.voiceTtsProvider ?? '',
         voiceTtsApiKey: '',
         voiceTtsVoice: configQuery.data.voiceTtsVoice ?? '',
+        voiceTtsBaseUrl: configQuery.data.voiceTtsBaseUrl ?? '',
+        voiceTtsModel: configQuery.data.voiceTtsModel ?? '',
       });
       // Only hydrate provider rows on first load or when data changes identity
       if (!hydratedRef.current) {
@@ -337,12 +355,24 @@ export function Settings() {
               ? { voiceProvider: values.voiceProvider }
               : {}),
             ...(values.voiceApiKey ? { voiceApiKey: values.voiceApiKey } : {}),
+            ...((values.voiceBaseUrl ?? '') !== (configQuery.data?.voiceBaseUrl ?? '')
+              ? { voiceBaseUrl: values.voiceBaseUrl }
+              : {}),
+            ...((values.voiceModel ?? '') !== (configQuery.data?.voiceModel ?? '')
+              ? { voiceModel: values.voiceModel }
+              : {}),
             ...((values.voiceTtsProvider ?? '') !== (configQuery.data?.voiceTtsProvider ?? '')
               ? { voiceTtsProvider: values.voiceTtsProvider }
               : {}),
             ...(values.voiceTtsApiKey ? { voiceTtsApiKey: values.voiceTtsApiKey } : {}),
             ...((values.voiceTtsVoice ?? '') !== (configQuery.data?.voiceTtsVoice ?? '')
               ? { voiceTtsVoice: values.voiceTtsVoice }
+              : {}),
+            ...((values.voiceTtsBaseUrl ?? '') !== (configQuery.data?.voiceTtsBaseUrl ?? '')
+              ? { voiceTtsBaseUrl: values.voiceTtsBaseUrl }
+              : {}),
+            ...((values.voiceTtsModel ?? '') !== (configQuery.data?.voiceTtsModel ?? '')
+              ? { voiceTtsModel: values.voiceTtsModel }
               : {}),
           }),
       modelRouting: Object.fromEntries(
@@ -635,19 +665,42 @@ export function Settings() {
                   >
                     <Select
                       placeholder="Select a provider..."
+                      onChange={(value: string) => {
+                        const d = STT_PROVIDER_DEFAULTS[value];
+                        if (!d) return;
+                        const patch: Partial<FormShape> = {};
+                        if (!form.getFieldValue('voiceBaseUrl')) patch.voiceBaseUrl = d.baseUrl;
+                        if (!form.getFieldValue('voiceModel')) patch.voiceModel = d.model;
+                        if (Object.keys(patch).length > 0) form.setFieldsValue(patch);
+                      }}
                       options={[
                         { label: 'OpenAI Whisper', value: 'openai-stt' },
                         { label: 'Groq Whisper (free tier)', value: 'groq-stt' },
+                        { label: 'Local (Whisper / OpenAI-compatible)', value: 'local-stt' },
                       ]}
                     />
                   </Form.Item>
                   <Form.Item
+                    name="voiceBaseUrl"
+                    label="STT Base URL"
+                    extra="OpenAI-compatible endpoint. Leave blank for the provider default."
+                  >
+                    <Input placeholder="http://localhost:8000/v1" />
+                  </Form.Item>
+                  <Form.Item
+                    name="voiceModel"
+                    label="STT Model"
+                    extra="Free-form — server-specific (e.g. Systran/faster-whisper-large-v3)."
+                  >
+                    <Input placeholder="whisper-large-v3" />
+                  </Form.Item>
+                  <Form.Item
                     name="voiceApiKey"
-                    label="Voice API Key"
+                    label="STT API key (optional)"
                     extra={
                       configQuery.data?.voiceApiKeyPreview
                         ? `Current: ${configQuery.data.voiceApiKeyPreview}`
-                        : 'API key for the selected STT provider.'
+                        : 'Optional — leave blank for local servers that need no key.'
                     }
                   >
                     <Input.Password placeholder="Enter API key..." />
@@ -660,37 +713,64 @@ export function Settings() {
                     <Select
                       allowClear
                       placeholder="Select a TTS provider..."
-                      options={[{ label: 'OpenAI TTS', value: 'openai-tts' }]}
-                    />
-                  </Form.Item>
-                  <Form.Item
-                    name="voiceTtsApiKey"
-                    label="TTS API Key"
-                    extra={
-                      configQuery.data?.voiceTtsApiKeyPreview
-                        ? `Current: ${configQuery.data.voiceTtsApiKeyPreview}`
-                        : 'API key for TTS provider. Uses the STT key if same provider.'
-                    }
-                  >
-                    <Input.Password placeholder="Enter API key..." />
-                  </Form.Item>
-                  <Form.Item
-                    name="voiceTtsVoice"
-                    label="Voice"
-                    extra="Voice for text-to-speech output."
-                  >
-                    <Select
-                      allowClear
-                      placeholder="Select a voice..."
+                      onChange={(value: string | undefined) => {
+                        if (!value) return;
+                        const d = TTS_PROVIDER_DEFAULTS[value];
+                        if (!d) return;
+                        const patch: Partial<FormShape> = {};
+                        if (!form.getFieldValue('voiceTtsBaseUrl'))
+                          patch.voiceTtsBaseUrl = d.baseUrl;
+                        if (!form.getFieldValue('voiceTtsModel')) patch.voiceTtsModel = d.model;
+                        if (Object.keys(patch).length > 0) form.setFieldsValue(patch);
+                      }}
                       options={[
-                        { label: 'Alloy', value: 'alloy' },
-                        { label: 'Echo', value: 'echo' },
-                        { label: 'Fable', value: 'fable' },
-                        { label: 'Onyx', value: 'onyx' },
-                        { label: 'Nova', value: 'nova' },
-                        { label: 'Shimmer', value: 'shimmer' },
+                        { label: 'OpenAI TTS', value: 'openai-tts' },
+                        { label: 'Local (Kokoro / OpenAI-compatible)', value: 'local-tts' },
                       ]}
                     />
+                  </Form.Item>
+                  <Form.Item
+                    noStyle
+                    shouldUpdate={(prev, cur) => prev.voiceTtsProvider !== cur.voiceTtsProvider}
+                  >
+                    {({ getFieldValue: getTts }) =>
+                      getTts('voiceTtsProvider') ? (
+                        <>
+                          <Form.Item
+                            name="voiceTtsBaseUrl"
+                            label="TTS Base URL"
+                            extra="OpenAI-compatible endpoint. Leave blank for the provider default."
+                          >
+                            <Input placeholder="http://localhost:8880/v1" />
+                          </Form.Item>
+                          <Form.Item
+                            name="voiceTtsModel"
+                            label="TTS Model"
+                            extra="Free-form — server-specific (e.g. kokoro, tts-1)."
+                          >
+                            <Input placeholder="kokoro" />
+                          </Form.Item>
+                          <Form.Item
+                            name="voiceTtsApiKey"
+                            label="TTS API key (optional)"
+                            extra={
+                              configQuery.data?.voiceTtsApiKeyPreview
+                                ? `Current: ${configQuery.data.voiceTtsApiKeyPreview}`
+                                : 'Optional — leave blank for local servers that need no key.'
+                            }
+                          >
+                            <Input.Password placeholder="Enter API key..." />
+                          </Form.Item>
+                          <Form.Item
+                            name="voiceTtsVoice"
+                            label="Voice ID"
+                            extra="Free-form — every server names voices differently (e.g. Kokoro af_bella, OpenAI nova)."
+                          >
+                            <Input placeholder="e.g. af_bella" />
+                          </Form.Item>
+                        </>
+                      ) : null
+                    }
                   </Form.Item>
                 </>
               ) : null

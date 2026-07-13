@@ -716,9 +716,13 @@ const ConfigGetOutput = z.object({
   adminEnabled: z.boolean(),
   voiceProvider: z.string().nullable(),
   voiceApiKeyPreview: z.string().nullable(),
+  voiceBaseUrl: z.string().nullable(),
+  voiceModel: z.string().nullable(),
   voiceTtsProvider: z.string().nullable(),
   voiceTtsApiKeyPreview: z.string().nullable(),
   voiceTtsVoice: z.string().nullable(),
+  voiceTtsBaseUrl: z.string().nullable(),
+  voiceTtsModel: z.string().nullable(),
 });
 
 const ConfigUpdateInput = z.object({
@@ -749,9 +753,13 @@ const ConfigUpdateInput = z.object({
   adminEnabled: z.boolean().optional(),
   voiceProvider: z.string().optional(),
   voiceApiKey: z.string().optional(),
+  voiceBaseUrl: z.string().optional(),
+  voiceModel: z.string().optional(),
   voiceTtsProvider: z.string().optional(),
   voiceTtsApiKey: z.string().optional(),
   voiceTtsVoice: z.string().optional(),
+  voiceTtsBaseUrl: z.string().optional(),
+  voiceTtsModel: z.string().optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 

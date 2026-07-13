@@ -367,9 +367,13 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
         ? {
             voiceProvider: raw.voiceProvider,
             voiceApiKey: raw.voiceApiKey,
+            voiceBaseUrl: raw.voiceBaseUrl,
+            voiceModel: raw.voiceModel,
             voiceTtsProvider: raw.voiceTtsProvider,
             voiceTtsApiKey: raw.voiceTtsApiKey,
             voiceTtsVoice: raw.voiceTtsVoice,
+            voiceTtsBaseUrl: raw.voiceTtsBaseUrl,
+            voiceTtsModel: raw.voiceTtsModel,
           }
         : null;
     },
