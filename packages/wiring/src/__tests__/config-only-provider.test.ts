@@ -1,6 +1,7 @@
 import { DefaultLLMProviderRegistry } from '@ethosagent/core';
 import type { Logger, SecretsResolver } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { lookupContextWindow } from '../model-catalog';
 import { registerBuiltinProviders } from '../register-builtin-providers';
 
 const noopLogger: Logger = {
@@ -109,5 +110,75 @@ describe('config-only providers', () => {
     });
 
     expect(provider.model).toBe('mistral-large-latest');
+  });
+});
+
+describe('M1b — catalog context-window lookup', () => {
+  const noop: SecretsResolver = {
+    get: async () => null,
+    set: async () => {},
+    delete: async () => {},
+    list: async () => [],
+  };
+
+  it('lookupContextWindow returns the catalog window on a hit', () => {
+    // Ollama's llama3.2 is an 8k-context local model in the catalog.
+    expect(lookupContextWindow('ollama', 'llama3.2')).toBe(8_192);
+  });
+
+  it('lookupContextWindow returns undefined on a miss', () => {
+    expect(lookupContextWindow('ollama', 'no-such-model')).toBeUndefined();
+    expect(lookupContextWindow('no-such-provider', 'llama3.2')).toBeUndefined();
+  });
+
+  it('config-only factory sizes maxContextTokens from the catalog (8k model)', async () => {
+    const registry = new DefaultLLMProviderRegistry();
+    registerBuiltinProviders(registry);
+    const factory = registry.get('fireworks');
+    if (!factory) throw new Error('Expected fireworks factory to be registered');
+
+    // firefunction-v2 is an 8k-context entry in MODEL_CATALOG under `fireworks`.
+    const provider = await factory({
+      config: { model: 'accounts/fireworks/models/firefunction-v2', apiKey: 'test-key' },
+      secrets: noop,
+      logger: noopLogger,
+    });
+
+    expect(provider.maxContextTokens).toBe(8_192);
+  });
+
+  it('miss path falls back to the provider default (128k), no crash', async () => {
+    const registry = new DefaultLLMProviderRegistry();
+    registerBuiltinProviders(registry);
+    const factory = registry.get('fireworks');
+    if (!factory) throw new Error('Expected fireworks factory to be registered');
+
+    // A model absent from the catalog → lookup miss → provider 128k default.
+    const provider = await factory({
+      config: { model: 'accounts/fireworks/models/not-in-catalog', apiKey: 'test-key' },
+      secrets: noop,
+      logger: noopLogger,
+    });
+
+    expect(provider.maxContextTokens).toBe(128_000);
+  });
+
+  it('an explicit config.maxContextTokens wins over the catalog', async () => {
+    const registry = new DefaultLLMProviderRegistry();
+    registerBuiltinProviders(registry);
+    const factory = registry.get('fireworks');
+    if (!factory) throw new Error('Expected fireworks factory to be registered');
+
+    const provider = await factory({
+      config: {
+        model: 'accounts/fireworks/models/firefunction-v2',
+        apiKey: 'test-key',
+        maxContextTokens: 4_096,
+      },
+      secrets: noop,
+      logger: noopLogger,
+    });
+
+    expect(provider.maxContextTokens).toBe(4_096);
   });
 });

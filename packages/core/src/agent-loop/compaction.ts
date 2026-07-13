@@ -23,7 +23,29 @@ export interface CompactionDeps {
   dataDir?: string;
   /** Framework-owned, model-pinned token counter. */
   countTokens?: (messages: Message[]) => Promise<number>;
+  /**
+   * T3 — max output tokens the pending completion may generate. Reserved from
+   * the window before computing pressure so the *response* can't push the
+   * request past the context limit. Defaults to `DEFAULT_OUTPUT_RESERVE_TOKENS`
+   * when the caller didn't set a completion budget.
+   */
+  reservedOutputTokens?: number;
 }
+
+// T3 — gate-hardening constants (generic, no per-model config).
+/**
+ * Output-token headroom reserved when the caller doesn't specify a completion
+ * budget. Keeps the pending response from pushing the request past the window.
+ */
+const DEFAULT_OUTPUT_RESERVE_TOKENS = 4_096;
+/**
+ * Windows at or below this size get a conservative estimate inflation: char/4
+ * undershoots real local tokenizers (~3.3–3.8 char/tok, worse on dense code)
+ * by ~15%, and overflowing a small window is fatal. Large (Anthropic-class)
+ * windows are left effectively unchanged — the factor only bites here.
+ */
+const SMALL_WINDOW_THRESHOLD = 16_000;
+const SMALL_WINDOW_SAFETY_FACTOR = 1.15;
 
 // ---------------------------------------------------------------------------
 // E4 — pre-LLM compaction. Resolves the personality's context engine and
@@ -48,10 +70,25 @@ export async function maybeCompact(
   cacheBreakpoints?: number[];
   notice?: { engineName: string; droppedCount: number; summaryTokens: number };
 }> {
-  const window = deps.llm.maxContextTokens || 200_000;
+  const rawWindow = deps.llm.maxContextTokens || 200_000;
+
+  // T3.1 — reserve headroom for the pending completion's output. The next
+  // provider call generates up to `maxTokens`; gating on input alone lets the
+  // *response* push the request past the window. Subtract the output reserve
+  // from the window before computing pressure. Never reserve more than half the
+  // window, else no input ever fits on a tiny local window.
+  const requestedOutput = deps.reservedOutputTokens ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
+  const outputReserve = Math.min(Math.max(0, requestedOutput), Math.floor(rawWindow / 2));
+  const window = rawWindow - outputReserve;
+
+  // T3.2 — conservative safety factor for small windows (see constant docs).
+  const safetyFactor = rawWindow <= SMALL_WINDOW_THRESHOLD ? SMALL_WINDOW_SAFETY_FACTOR : 1;
+
   const target = Math.floor(window * 0.7);
   const pressureGate = Math.floor(window * 0.8);
-  const current = estimateTokens(systemPrompt) + estimateMessagesTokens(messages);
+  const current = Math.ceil(
+    (estimateTokens(systemPrompt) + estimateMessagesTokens(messages)) * safetyFactor,
+  );
   if (current <= pressureGate) return { messages };
 
   // Q2 — anti-thrashing cooldown. After a compaction, skip the next few

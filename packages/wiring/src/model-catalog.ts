@@ -373,6 +373,17 @@ export function getModelsForProvider(providerId: string): ModelCatalogEntry[] {
   return MODEL_CATALOG.filter((m) => m.providerId === providerId);
 }
 
+/**
+ * Look up the context window for a `(providerId, modelId)` pair. Returns
+ * `undefined` on a miss so callers can fall back to the provider default rather
+ * than crash. Shared by the model picker and the provider factories so the
+ * lookup lives in exactly one place (M1b).
+ */
+export function lookupContextWindow(providerId: string, modelId: string): number | undefined {
+  return MODEL_CATALOG.find((m) => m.providerId === providerId && m.modelId === modelId)
+    ?.contextWindow;
+}
+
 export function getDefaultModel(providerId: string): ModelCatalogEntry | undefined {
   const models = getModelsForProvider(providerId);
   return models.find((m) => m.default) ?? models[0];

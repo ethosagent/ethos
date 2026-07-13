@@ -25,6 +25,9 @@ export async function* assembleContext(
     attachments?: Attachment[];
     userId?: string;
     dryRun?: boolean;
+    /** T3 — max output tokens for the pending completion; reserved from the
+     *  context window by compaction so the response can't overflow. */
+    maxCompletionTokens?: number;
   },
 ): AsyncGenerator<AgentEvent, AssembledContext> {
   const {
@@ -369,6 +372,9 @@ export async function* assembleContext(
       storage: deps.storage,
       dataDir: deps.dataDir,
       countTokens: deps.llm.countTokens.bind(deps.llm),
+      ...(opts.maxCompletionTokens !== undefined
+        ? { reservedOutputTokens: opts.maxCompletionTokens }
+        : {}),
     },
     llmMessages,
     systemPrompt ?? '',

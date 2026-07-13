@@ -34,6 +34,7 @@ import { buildWiringContext } from './build-context';
 import { buildInfrastructure } from './build-infrastructure';
 import { composeAllTools } from './compose-tools';
 import { loadPlugins } from './load-plugins';
+import { lookupContextWindow } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 import { registerBuiltinProviders } from './register-builtin-providers';
 import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
@@ -486,8 +487,16 @@ async function createLLMFromRegistry(
           `Available: ${registry.list().join(', ')}`,
       );
     }
+    // M1b — resolve the model's context window from the catalog and inject it
+    // so openai-compat-alias providers (ollama, groq, …) report their real
+    // window to compaction instead of the 128k default. A catalog miss leaves
+    // the field absent → the provider default still applies (no crash).
+    const contextWindow = lookupContextWindow(cfg.provider, cfg.model);
     const provider = await factory({
-      config: cfg as unknown as Record<string, unknown>,
+      config: {
+        ...(cfg as unknown as Record<string, unknown>),
+        ...(contextWindow !== undefined ? { maxContextTokens: contextWindow } : {}),
+      },
       secrets: config.secretsResolver ?? secrets,
       logger: log,
     });

@@ -5,6 +5,7 @@ import type {
   LLMProviderFactory,
   LLMProviderFactoryContext,
 } from '@ethosagent/types';
+import { lookupContextWindow } from './model-catalog';
 
 export function createConfigOnlyFactory(manifest: ConfigOnlyProviderManifest): LLMProviderFactory {
   return async (ctx: LLMProviderFactoryContext) => {
@@ -28,11 +29,21 @@ export function createConfigOnlyFactory(manifest: ConfigOnlyProviderManifest): L
       );
     }
 
+    // M1b — size the context window from the model catalog so compaction sees
+    // the real window (e.g. an 8k local model), not the provider's 128k default.
+    // An explicit `config.maxContextTokens` (injected by wiring or set by the
+    // user) wins; otherwise fall back to the catalog. A catalog miss leaves it
+    // undefined, degrading to the provider default — never a crash.
+    const explicitWindow =
+      typeof ctx.config.maxContextTokens === 'number' ? ctx.config.maxContextTokens : undefined;
+    const contextWindow = explicitWindow ?? lookupContextWindow(manifest.id, model);
+
     const provider = new OpenAICompatProvider({
       name: manifest.id,
       model,
       apiKey,
       baseUrl: manifest.baseUrl,
+      ...(contextWindow !== undefined ? { maxContextTokens: contextWindow } : {}),
     });
 
     // Attach capabilities from manifest

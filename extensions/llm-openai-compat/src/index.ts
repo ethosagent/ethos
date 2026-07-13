@@ -360,6 +360,10 @@ export const openaiCompatFactory: LLMProviderFactory = async ({
     model: cfg.model as string,
     apiKey,
     baseUrl,
+    // M1b — honor a context window resolved by wiring (from the model catalog)
+    // so a small local model reports its real window to compaction instead of
+    // the 128k default. Absent → the provider default still applies.
+    ...(typeof cfg.maxContextTokens === 'number' ? { maxContextTokens: cfg.maxContextTokens } : {}),
   });
 };
 

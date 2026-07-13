@@ -1,0 +1,205 @@
+// T3 — compaction gate hardening: output-budget reserve + small-window safety
+// factor. Drives `maybeCompact` directly (same harness style as
+// third-party-engine.test.ts) so the gate arithmetic is asserted in isolation.
+
+import type { ContextEngineCompactInput, Message, PersonalityConfig } from '@ethosagent/types';
+import { describe, expect, it } from 'vitest';
+import { maybeCompact } from '../agent-loop/compaction';
+import { DefaultContextEngineRegistry } from '../context-engines/registry';
+
+// A spy engine records whether the framework gate let it run, and keeps only
+// the first + last message when it does.
+function createSpyEngine() {
+  let compactCalled = false;
+  return {
+    get compactCalled() {
+      return compactCalled;
+    },
+    name: 'spy_engine' as const,
+    async compact(opts: ContextEngineCompactInput) {
+      compactCalled = true;
+      const msgs = opts.messages;
+      const kept =
+        msgs.length <= 2 ? msgs : [msgs[0], msgs[msgs.length - 1]].filter((m): m is Message => !!m);
+      return { messages: kept, notes: 'dropped middle' };
+    },
+    shouldCompact() {
+      return true;
+    },
+  };
+}
+
+function registryWith(engine: ReturnType<typeof createSpyEngine>) {
+  const registry = new DefaultContextEngineRegistry();
+  registry.register(engine);
+  return registry;
+}
+
+const sessionMock = {
+  recordCompression: async () => ({}),
+  updateUsage: async () => {},
+  recordCompactionTurn: async () => {},
+  // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+} as any;
+
+const personality: PersonalityConfig = {
+  id: 'test',
+  name: 'Test',
+  context_engine: 'spy_engine',
+};
+
+function userMsg(text: string): Message {
+  return { role: 'user', content: text };
+}
+
+// Build a 4-message list of roughly `chars` total characters.
+function messagesOfSize(chars: number): Message[] {
+  const per = Math.floor(chars / 4);
+  return [
+    userMsg('x'.repeat(per)),
+    userMsg('y'.repeat(per)),
+    userMsg('z'.repeat(per)),
+    userMsg('w'.repeat(chars - per * 3)),
+  ];
+}
+
+const meta = { sessionId: 's1', sessionKey: 'cli:s1', turnNumber: 1, lastCompactionTurn: 0 };
+
+describe('T3 — small-window safety factor (code-heavy undershoot case)', () => {
+  it('compacts an 8k-window code-heavy session that the old input-only char/4 gate would have let overflow', async () => {
+    const engine = createSpyEngine();
+    // 8192 window, no output reserve (isolate the safety factor).
+    // Old gate: pressure = 0.8 * 8192 = 6553 tokens. Four dense-code turns of
+    // ~24_000 chars total are ~6000 char/4 tokens → the OLD gate would NOT
+    // fire (overflow risk on a real local tokenizer that runs hotter on code).
+    // New gate: 6000 * 1.15 = 6900 > 6553 → fires.
+    const codeLine = 'const f=(a,b)=>{return a?.b??[...c].map(x=>x|0);};'; // ~49 chars
+    const codeHeavy: Message[] = [
+      userMsg(codeLine.repeat(130)),
+      userMsg(codeLine.repeat(130)),
+      userMsg(codeLine.repeat(130)),
+      userMsg(codeLine.repeat(130)),
+    ];
+    const result = await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registryWith(engine),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+      },
+      codeHeavy,
+      '',
+      personality,
+      meta,
+    );
+    expect(engine.compactCalled).toBe(true);
+    expect(result.messages.length).toBeLessThan(codeHeavy.length);
+  });
+
+  it('does NOT compact when even the inflated estimate stays under the gate', async () => {
+    const engine = createSpyEngine();
+    // ~16_000 chars → 4000 char/4 tokens → *1.15 = 4600 < gate 6553.
+    const result = await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registryWith(engine),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+      },
+      messagesOfSize(16_000),
+      '',
+      personality,
+      meta,
+    );
+    expect(engine.compactCalled).toBe(false);
+    expect(result.messages.length).toBe(4);
+  });
+});
+
+describe('T3 — output-budget reserve is counted against the headroom', () => {
+  // Same input; a large max_tokens reserves more of the window → compacts,
+  // while a tiny max_tokens leaves room → does not.
+  // 8192 window, small-window factor 1.15.
+  //   tiny reserve (100): inputWindow=8092, pressure=floor(8092*0.8)=6473.
+  //   large reserve (4000): inputWindow=4192, pressure=floor(4192*0.8)=3353.
+  // Input ~12_800 chars → 3200 char/4 tokens → *1.15 = 3680.
+  //   3680 > 3353 (large → fires) and 3680 < 6473 (tiny → no fire).
+  it('compacts earlier with a large output budget', async () => {
+    const engine = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registryWith(engine),
+        session: sessionMock,
+        reservedOutputTokens: 4_000,
+      },
+      messagesOfSize(12_800),
+      '',
+      personality,
+      meta,
+    );
+    expect(engine.compactCalled).toBe(true);
+  });
+
+  it('does not compact the same input with a tiny output budget', async () => {
+    const engine = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registryWith(engine),
+        session: sessionMock,
+        reservedOutputTokens: 100,
+      },
+      messagesOfSize(12_800),
+      '',
+      personality,
+      meta,
+    );
+    expect(engine.compactCalled).toBe(false);
+  });
+});
+
+describe('T3 — large (Anthropic 200k) window behavior unchanged', () => {
+  it('does not compact below the pressure gate', async () => {
+    const engine = createSpyEngine();
+    // ~600_000 chars → 150_000 char/4 tokens. Effective pressure at 200k with
+    // the default 4k reserve is ~156_723 (>150_000) → no compaction, and no
+    // safety-factor inflation at 200k.
+    const result = await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 200_000 } as any,
+        contextEngines: registryWith(engine),
+        session: sessionMock,
+      },
+      messagesOfSize(600_000),
+      '',
+      personality,
+      meta,
+    );
+    expect(engine.compactCalled).toBe(false);
+    expect(result.messages.length).toBe(4);
+  });
+
+  it('compacts above the pressure gate', async () => {
+    const engine = createSpyEngine();
+    // ~700_000 chars → 175_000 char/4 tokens > 156_723 effective gate → fires.
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 200_000 } as any,
+        contextEngines: registryWith(engine),
+        session: sessionMock,
+      },
+      messagesOfSize(700_000),
+      '',
+      personality,
+      meta,
+    );
+    expect(engine.compactCalled).toBe(true);
+  });
+});
