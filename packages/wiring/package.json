@@ -17,6 +17,10 @@
       "import": "./src/model-catalog.ts",
       "types": "./src/model-catalog.ts"
     },
+    "./local-models": {
+      "import": "./src/local-models.ts",
+      "types": "./src/local-models.ts"
+    },
     "./types": {
       "import": "./src/types.ts",
       "types": "./src/types.ts"

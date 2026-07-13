@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchLocalModels, parseOpenAiModelsResponse } from '../setup';
+import { fetchLocalModels, parseOpenAiModelsResponse } from '../local-models';
 
 describe('parseOpenAiModelsResponse', () => {
   it('extracts model ids from a valid openai-compat body', () => {

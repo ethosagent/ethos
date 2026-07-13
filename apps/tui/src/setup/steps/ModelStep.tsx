@@ -1,3 +1,4 @@
+import { fetchLocalModels } from '@ethosagent/wiring/local-models';
 import {
   formatContextWindow,
   getDefaultModel,
@@ -5,11 +6,165 @@ import {
   MIN_CONTEXT_WINDOW,
 } from '@ethosagent/wiring/model-catalog';
 import { Box, Text, useInput } from 'ink';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DESIGN, GLYPHS } from '../../skin';
 import { useWizardContext } from '../context';
+import { localProviderPlan } from '../local-provider';
 
 export function ModelStep() {
+  const { answers } = useWizardContext();
+  const providerId = answers.provider ?? 'anthropic';
+  if (localProviderPlan(providerId).isLocal) {
+    return <LocalModelStep />;
+  }
+  return <CatalogModelStep />;
+}
+
+// ---------------------------------------------------------------------------
+// Local providers (ollama, vllm): drive the model choice from GET /v1/models.
+// Reachable → pick from the served list; unreachable/timeout → free-text entry.
+// ---------------------------------------------------------------------------
+
+type LocalPhase = 'loading' | 'list' | 'manual';
+
+function LocalModelStep() {
+  const { answers, dispatch } = useWizardContext();
+  const providerId = answers.provider ?? 'ollama';
+  const baseUrl = answers.baseUrl ?? localProviderPlan(providerId).defaultBaseUrl ?? '';
+
+  const [phase, setPhase] = useState<LocalPhase>('loading');
+  const [models, setModels] = useState<string[]>([]);
+  const [selected, setSelected] = useState(0);
+  const [manual, setManual] = useState(answers.model ?? '');
+
+  // Fetch the served model list on mount. The helper already times out fast
+  // (2.5s) so the wizard never hangs on an unreachable endpoint.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { reachable, models: served } = await fetchLocalModels(baseUrl);
+      if (cancelled) return;
+      if (reachable && served.length > 0) {
+        setModels(served);
+        const idx = answers.model ? served.indexOf(answers.model) : -1;
+        setSelected(idx >= 0 ? idx : 0);
+        setPhase('list');
+      } else {
+        setPhase('manual');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl, answers.model]);
+
+  useInput((input, key) => {
+    if (phase === 'loading') {
+      if (key.escape) dispatch({ type: 'back' });
+      return;
+    }
+    if (phase === 'list') {
+      if (key.upArrow) setSelected((s) => Math.max(0, s - 1));
+      if (key.downArrow) setSelected((s) => Math.min(models.length - 1, s + 1));
+      if (key.return) {
+        const m = models[selected];
+        if (m) dispatch({ type: 'next', patch: { model: m } });
+      }
+      if (key.escape) dispatch({ type: 'back' });
+      return;
+    }
+    // phase === 'manual'
+    if (key.escape) {
+      dispatch({ type: 'back' });
+      return;
+    }
+    if (key.return) {
+      const m = manual.trim();
+      if (m) dispatch({ type: 'next', patch: { model: m } });
+      return;
+    }
+    if (key.backspace || key.delete) {
+      setManual((v) => v.slice(0, -1));
+      return;
+    }
+    if (!key.ctrl && !key.meta && input) {
+      setManual((v) => v + input);
+    }
+  });
+
+  if (phase === 'loading') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text color={DESIGN.textPrimary} bold>
+          Choose a model:
+        </Text>
+        <Text color={DESIGN.textSecondary}>{`  Checking ${baseUrl} for available models…`}</Text>
+        <Text color={DESIGN.textTertiary}>{'  Esc back'}</Text>
+      </Box>
+    );
+  }
+
+  if (phase === 'manual') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text color={DESIGN.textPrimary} bold>
+          Enter a model name:
+        </Text>
+        <Text
+          color={DESIGN.textTertiary}
+        >{`  ${baseUrl} not reachable — type the model to use.`}</Text>
+        <Box flexDirection="row" gap={1} marginTop={1}>
+          <Text color={DESIGN.textPrimary}>{`  ${GLYPHS.prompt} `}</Text>
+          <Text color={manual ? DESIGN.textPrimary : DESIGN.textTertiary}>
+            {manual || 'e.g. llama3.2'}
+          </Text>
+        </Box>
+        <Text color={DESIGN.textTertiary}>{'  Enter confirm   Esc back'}</Text>
+      </Box>
+    );
+  }
+
+  // phase === 'list'
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text color={DESIGN.textPrimary} bold>
+        Choose a model:
+      </Text>
+      <Text color={DESIGN.textTertiary}>{`  Served by ${baseUrl}`}</Text>
+      <Box flexDirection="column">
+        {models.map((m, i) => {
+          const isSelected = i === selected;
+          const cursor = isSelected ? GLYPHS.prompt : ' ';
+          const isCurrent = answers.model === m;
+          return (
+            <Box key={m} flexDirection="row" gap={1}>
+              <Text color={DESIGN.textPrimary}>{` ${cursor} `}</Text>
+              <Text
+                color={
+                  isCurrent
+                    ? DESIGN.success
+                    : isSelected
+                      ? DESIGN.textPrimary
+                      : DESIGN.textSecondary
+                }
+                bold={isSelected}
+              >
+                {m}
+              </Text>
+            </Box>
+          );
+        })}
+      </Box>
+      <Text color={DESIGN.textTertiary}>{'  ↑↓ select   Enter confirm   Esc back'}</Text>
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Catalog providers: pick from the static model catalog.
+// ---------------------------------------------------------------------------
+
+function CatalogModelStep() {
   const { answers, dispatch } = useWizardContext();
   const providerId = answers.provider ?? 'anthropic';
   const models = getModelsForProvider(providerId);

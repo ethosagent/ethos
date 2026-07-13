@@ -111,6 +111,7 @@
       "@ethosagent/wiring/conformance": ["./packages/wiring/src/conformance"],
       "@ethosagent/wiring/provider-catalog": ["./packages/wiring/src/provider-catalog"],
       "@ethosagent/wiring/model-catalog": ["./packages/wiring/src/model-catalog"],
+      "@ethosagent/wiring/local-models": ["./packages/wiring/src/local-models"],
       "@ethosagent/wiring/types": ["./packages/wiring/src/types"],
       "@ethosagent/session-sqlite/compose": ["./extensions/session-sqlite/src/compose"],
       "@ethosagent/memory-markdown/compose": ["./extensions/memory-markdown/src/compose"],

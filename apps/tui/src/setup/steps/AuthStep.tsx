@@ -12,6 +12,7 @@ import { Box, Text, useInput } from 'ink';
 import { useEffect, useRef, useState } from 'react';
 import { DESIGN, GLYPHS } from '../../skin';
 import { useWizardContext } from '../context';
+import { LOCAL_API_KEY_PLACEHOLDER } from '../local-provider';
 
 // ---------------------------------------------------------------------------
 // Device auth flow (used for codex provider)
@@ -188,7 +189,10 @@ export function AuthStep() {
         setError('API key is required');
         return;
       }
-      dispatch({ type: 'next', patch: { apiKey: isSelfHosted ? '' : apiKeyValue } });
+      dispatch({
+        type: 'next',
+        patch: { apiKey: isSelfHosted ? LOCAL_API_KEY_PLACEHOLDER : apiKeyValue },
+      });
       return;
     }
     if (key.backspace || key.delete) {
