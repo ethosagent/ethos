@@ -252,7 +252,12 @@ export async function* assembleContext(
   // read `<untrusted>` blocks before any personality content sets the tone.
   const injectionDefenseEnabled = personality.safety?.injectionDefense?.enabled !== false;
   if (injectionDefenseEnabled) {
-    systemParts.push(deps.safety.injection.prelude);
+    // §2 — a lean model's `promptBudget.compactPrelude` swaps in the short
+    // prelude variant; fall back to the full prelude when none is wired.
+    const prelude = deps.promptBudget?.compactPrelude
+      ? (deps.safety.injection.preludeCompact ?? deps.safety.injection.prelude)
+      : deps.safety.injection.prelude;
+    systemParts.push(prelude);
   }
 
   // SOUL.md / personality identity — routes through Storage so ScopedStorage
@@ -265,6 +270,9 @@ export async function* assembleContext(
 
   // Context injectors sorted by priority (already sorted in constructor)
   for (const injector of deps.injectors) {
+    // §2 — a lean model's `promptBudget.suppressMemoryGuidance` drops the
+    // memory-usage guidance block (the MemoryGuidanceInjector).
+    if (deps.promptBudget?.suppressMemoryGuidance && injector.id === 'memory-guidance') continue;
     // Plugin-registered injectors only fire when the plugin is permitted.
     const injPluginId = deps.injectorPluginIds.get(injector);
     if (injPluginId !== undefined && !allowedPlugins.includes(injPluginId)) continue;
@@ -314,7 +322,9 @@ export async function* assembleContext(
     }
     if (blocks.length > 0) {
       let rendered = `## Memory\n\n${blocks.join('\n\n')}`;
-      const MEMORY_MAX_CHARS = 20_000;
+      // §2 — a lean model's `promptBudget.memorySnapshotCap` overrides the
+      // default 20k char cap on the memory block.
+      const MEMORY_MAX_CHARS = deps.promptBudget?.memorySnapshotCap ?? 20_000;
       if (rendered.length > MEMORY_MAX_CHARS) {
         // Tail-keep — newer memory lives at the end; the prelude carries
         // less per-token signal than the freshest facts.

@@ -188,6 +188,10 @@ export class SkillsInjector implements ContextInjector {
 
     const sections: string[] = [];
     const fileNames: string[] = [];
+    // Stub rows for the shared `## Available Skills` index table. Personality
+    // (index mode) and global (index mode) stubs both accumulate here so a
+    // single table lists everything the model can `get_skill(name)`.
+    const indexRows: string[] = [];
     let totalChars = 0;
     const budget = this.maxInjectionChars;
 
@@ -199,12 +203,28 @@ export class SkillsInjector implements ContextInjector {
       return true;
     }
 
-    // 1. Per-personality skills — always loaded unfiltered (hand-curated library)
+    // Determine injection mode for global-pool skills.
+    // 'index' (default) injects a compact table; 'full' injects complete bodies.
+    const injectionMode: 'full' | 'index' = personality.skills?.injection_mode ?? 'index';
+    // Per-personality `skillsDirs` skills honor an EXPLICIT `injection_mode:
+    // index` (become stubs, reachable via `get_skill`). Absent/`full` keeps the
+    // historical always-inline behavior for the hand-curated library — the
+    // global-pool default of `index` does not silently stub a personality's own
+    // skills. `get_skill` resolves a stubbed personality skill via
+    // `loadSkillBody()`.
+    const personalityIndex = personality.skills?.injection_mode === 'index';
+
+    // 1. Per-personality skills — hand-curated library.
     for (const r of resolved) {
       if (r.source !== 'personality') continue;
       const raw = await this.readCached(r.filePath);
       if (!raw) continue;
       const parsed = parseSkillFrontmatter(raw);
+      if (personalityIndex) {
+        const desc = parsed?.description ?? '—';
+        indexRows.push(`| \`${r.id}\` | ${desc} |`);
+        continue;
+      }
       const body = parsed ? parsed.body : raw;
       const substituted = applySubstitutions(body, dirname(r.filePath), ctx.sessionId);
       addSection(sanitize(substituted.trim()), r.id);
@@ -213,27 +233,11 @@ export class SkillsInjector implements ContextInjector {
     // 2. Global pool from universal scanner — filtered per personality (resolved above)
     const eligibleGlobal = resolved.flatMap((r) => (r.source === 'global' ? [r.skill] : []));
 
-    // Determine injection mode for global-pool skills.
-    // 'index' (default) injects a compact table; 'full' injects complete bodies.
-    const injectionMode: 'full' | 'index' = personality.skills?.injection_mode ?? 'index';
-
     if (injectionMode === 'index') {
       // Phase 1: compact index table — the LLM calls get_skill() for full bodies
-      if (eligibleGlobal.length > 0) {
-        const rows = eligibleGlobal
-          .map((s) => {
-            const desc = (s.rawFrontmatter.description as string | undefined) ?? '—';
-            return `| \`${s.qualifiedName}\` | ${desc} |`;
-          })
-          .join('\n');
-        const indexBlock =
-          `## Available Skills\n\n` +
-          `Call \`get_skill(name)\` to load full instructions before using any skill.\n\n` +
-          `| Skill | Description |\n` +
-          `|---|---|\n` +
-          rows;
-        sections.push(indexBlock);
-        fileNames.push('__skill_index__');
+      for (const s of eligibleGlobal) {
+        const desc = (s.rawFrontmatter.description as string | undefined) ?? '—';
+        indexRows.push(`| \`${s.qualifiedName}\` | ${desc} |`);
       }
     } else {
       // Phase 1 (full mode): inject complete bodies, respecting budget
@@ -254,6 +258,18 @@ export class SkillsInjector implements ContextInjector {
       }
     }
 
+    // Emit the shared index table once, if any skill was stubbed.
+    if (indexRows.length > 0) {
+      const indexBlock =
+        `## Available Skills\n\n` +
+        `Call \`get_skill(name)\` to load full instructions before using any skill.\n\n` +
+        `| Skill | Description |\n` +
+        `|---|---|\n` +
+        indexRows.join('\n');
+      sections.push(indexBlock);
+      fileNames.push('__skill_index__');
+    }
+
     if (sections.length === 0) return null;
 
     ctx.meta ??= {};
@@ -263,6 +279,29 @@ export class SkillsInjector implements ContextInjector {
       content: `## Skills\n\n${sections.join('\n\n---\n\n')}`,
       position: 'append',
     };
+  }
+
+  /**
+   * Resolve a single personality-`skillsDirs` skill's full body by id — the
+   * on-demand counterpart to the index stub. `get_skill` calls this when the
+   * global scanner pool misses, so personality skills injected as stubs in
+   * `index` mode are still reachable (never stranded). Returns null when no
+   * eligible personality skill matches `skillId`.
+   */
+  async loadSkillBody(
+    personalityId: string | undefined,
+    skillId: string,
+    sessionId: string,
+  ): Promise<string | null> {
+    const resolved = await this.resolveSkills(personalityId);
+    const match = resolved.find((r) => r.source === 'personality' && r.id === skillId);
+    if (match?.source !== 'personality') return null;
+    const raw = await this.readCached(match.filePath);
+    if (!raw) return null;
+    const parsed = parseSkillFrontmatter(raw);
+    const body = parsed ? parsed.body : raw;
+    const substituted = applySubstitutions(body, dirname(match.filePath), sessionId);
+    return sanitize(substituted.trim());
   }
 
   private async discoverSkillFiles(dir: string): Promise<string[]> {

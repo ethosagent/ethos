@@ -51,6 +51,14 @@ export interface LoopDeps {
    *  per-model charsPerToken). Undefined → gate uses its 0.8/0.7 + char/4
    *  defaults. */
   compaction?: { pressure?: number; target?: number; charsPerToken?: number };
+  /** §2 — prompt-economy knobs applied in context assembly (compact prelude,
+   *  memory-snapshot cap, memory-guidance suppression). Undefined → assembly
+   *  byte-identical to today. */
+  promptBudget?: {
+    compactPrelude?: boolean;
+    memorySnapshotCap?: number;
+    suppressMemoryGuidance?: boolean;
+  };
   memoryProviders: Map<
     string,
     (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>

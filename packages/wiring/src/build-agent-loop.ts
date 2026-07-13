@@ -225,6 +225,7 @@ export async function buildAgentLoop(
 
   const {
     INJECTION_DEFENSE_PRELUDE: prelude,
+    INJECTION_DEFENSE_PRELUDE_COMPACT: preludeCompact,
     DOWNGRADE_REJECTION_MESSAGE: downgradeRejectionMessage,
     sanitize: sanitizeFn,
     wrapUntrusted: wrapUntrustedFn,
@@ -244,6 +245,7 @@ export async function buildAgentLoop(
   const safety: import('@ethosagent/types').AgentSafety = {
     injection: {
       prelude,
+      preludeCompact,
       downgradeRejectionMessage,
       sanitize: sanitizeFn,
       wrapUntrusted: wrapUntrustedFn,
@@ -396,6 +398,10 @@ export async function buildAgentLoop(
   // undefined → the gate behaves exactly as it does today.
   const compaction = resolveCompactionGate(resolvedProfile, config.compaction);
 
+  // §2 — the resolved profile's prompt-economy knobs (compact prelude, memory
+  // cap, guidance suppression). Absent → context assembly unchanged.
+  const promptBudget = resolvedProfile?.promptBudget;
+
   const loop = new AgentLoop({
     llm,
     tools,
@@ -411,6 +417,7 @@ export async function buildAgentLoop(
     modelRouting: config.modelRouting,
     ...(modelSampling ? { modelSampling } : {}),
     ...(compaction ? { compaction } : {}),
+    ...(promptBudget ? { promptBudget } : {}),
     memoryProviders: memoryProviderMap,
     safety,
     documentExtractors,

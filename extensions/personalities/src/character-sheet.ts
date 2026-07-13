@@ -40,6 +40,23 @@ function bulletList(items: readonly string[], emptyLabel: string): string[] {
   return items.map((item) => `- ${item}`);
 }
 
+// Rough char/4 token estimate for the injection-defense prelude — a static
+// system-prompt component the character sheet cannot see directly. Kept as a
+// constant so the estimate approximates the assembled prompt without pulling in
+// a cross-package dependency on @ethosagent/safety-injection.
+const PRELUDE_TOKEN_ESTIMATE = 340;
+
+/**
+ * Estimate the assembled system-prompt token count from the components the
+ * character sheet already carries: the injection prelude, SOUL.md, and the
+ * toolset names. char/4 rule of thumb — deliberately an under-estimate (no tool
+ * schemas, no memory), labeled `~` in the sheet.
+ */
+function estimateSystemPromptTokens(soulMd: string, toolset: readonly string[]): number {
+  const chars = soulMd.length + toolset.join(', ').length;
+  return PRELUDE_TOKEN_ESTIMATE + Math.ceil(chars / 4);
+}
+
 /**
  * Optional context for the `## Execution` section. The renderer is pure: it
  * formats whatever posture the caller resolved (via the wiring posture
@@ -222,6 +239,14 @@ export function renderCharacterSheet(
     lines.push(`${toolset.length} tool${toolset.length === 1 ? '' : 's'}:`);
   }
   lines.push(...bulletList(toolset, '(none)'));
+  lines.push('');
+
+  // §2 — a rough estimate of the assembled system-prompt weight, so prompt
+  // cost is visible per personality. char/4 over the components the sheet
+  // already has (injection prelude + SOUL.md + toolset names); it does NOT
+  // include tool schemas or memory, so it reads low — hence "~" and "Estimated".
+  lines.push('## Prompt size');
+  lines.push(`- Estimated system-prompt tokens: ~${estimateSystemPromptTokens(soulMd, toolset)}`);
   lines.push('');
 
   lines.push('## MCP servers');

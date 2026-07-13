@@ -134,7 +134,7 @@ export function createInjectors(
   // scanner + filter wiring.
   return {
     injectors: [skillsInjector, fileContext, new MemoryGuidanceInjector()],
-    tools: [new GetSkillTool(scanner) as Tool],
+    tools: [new GetSkillTool(scanner, skillsInjector) as Tool],
     skillsInjector,
     scanner,
   };

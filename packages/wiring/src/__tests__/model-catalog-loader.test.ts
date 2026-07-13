@@ -464,6 +464,86 @@ describe('§7 — manifest carries an optional profile', () => {
       'model catalog: invalid manifest shape',
     );
   });
+
+  it('accepts and preserves a promptBudget (§2)', async () => {
+    const manifest = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            {
+              id: 'm',
+              label: 'l',
+              contextWindow: 8_192,
+              profile: {
+                promptBudget: {
+                  compactPrelude: true,
+                  memorySnapshotCap: 4_000,
+                  suppressMemoryGuidance: true,
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(manifest));
+    const result = await fetchManifest('https://example.com/catalog.json');
+    expect(result.providers['openai-compat'].models[0].profile).toEqual({
+      promptBudget: {
+        compactPrelude: true,
+        memorySnapshotCap: 4_000,
+        suppressMemoryGuidance: true,
+      },
+    });
+  });
+
+  it('rejects a non-boolean promptBudget.compactPrelude (§2)', async () => {
+    const bad = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            {
+              id: 'm',
+              label: 'l',
+              contextWindow: 8_192,
+              profile: { promptBudget: { compactPrelude: 'yes' } },
+            },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(bad));
+    await expect(fetchManifest('https://example.com/catalog.json')).rejects.toThrow(
+      'model catalog: invalid manifest shape',
+    );
+  });
+
+  it('rejects a non-positive promptBudget.memorySnapshotCap (§2)', async () => {
+    const bad = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            {
+              id: 'm',
+              label: 'l',
+              contextWindow: 8_192,
+              profile: { promptBudget: { memorySnapshotCap: 0 } },
+            },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(bad));
+    await expect(fetchManifest('https://example.com/catalog.json')).rejects.toThrow(
+      'model catalog: invalid manifest shape',
+    );
+  });
 });
 
 describe('loadModelCatalog', () => {

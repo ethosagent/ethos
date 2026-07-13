@@ -37,6 +37,16 @@ export interface ModelProfile {
    *  inflating it would double-count). Absent → char/4 + small-window factor
    *  (unchanged). The engine-only `countTokens` is untouched. */
   charsPerToken?: number;
+  /** §2 — prompt-economy knobs for lean (small-context) models. Applied in
+   *  context assembly. Absent → assembly is byte-identical to today.
+   *  - `compactPrelude`: use the short injection-defense prelude variant.
+   *  - `memorySnapshotCap`: cap the memory block at N chars (overrides ≤20,000).
+   *  - `suppressMemoryGuidance`: omit the memory-usage guidance block. */
+  promptBudget?: {
+    compactPrelude?: boolean;
+    memorySnapshotCap?: number;
+    suppressMemoryGuidance?: boolean;
+  };
 }
 
 export interface ModelEntry {

@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 import { sanitize } from './prompt-injection-guard';
 import { applySubstitutions } from './skill-compat';
+import type { SkillsInjector } from './skills-injector';
 import type { UniversalScanner } from './universal-scanner';
 
 interface GetSkillArgs {
@@ -36,13 +37,27 @@ export class GetSkillTool implements Tool<GetSkillArgs> {
   readonly alwaysInclude = true;
   readonly capabilities = {};
 
-  constructor(private readonly scanner: UniversalScanner) {}
+  constructor(
+    private readonly scanner: UniversalScanner,
+    private readonly skillsInjector?: SkillsInjector,
+  ) {}
 
   async execute({ name }: GetSkillArgs, ctx: ToolContext): Promise<ToolResult> {
     const pool = await this.scanner.scan();
     const skill = pool.get(name);
 
     if (!skill) {
+      // Miss in the global pool — a personality-`skillsDirs` skill injected as
+      // an index stub lives outside the scanner, so resolve it on demand.
+      const personalityBody = await this.skillsInjector?.loadSkillBody(
+        ctx.personalityId,
+        name,
+        ctx.sessionId,
+      );
+      if (personalityBody != null) {
+        return { ok: true, value: personalityBody || '(skill body is empty)' };
+      }
+
       const available = [...pool.keys()].slice(0, 8).join(', ');
       const suffix = pool.size > 8 ? ` … (${pool.size} total)` : '';
       return {

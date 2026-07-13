@@ -105,6 +105,28 @@ describe('mergeModelProfile', () => {
       charsPerToken: 3.3,
     });
   });
+
+  it('merges promptBudget per-field, override winning (§2)', () => {
+    // Partial override keeps the base's other promptBudget knobs.
+    expect(
+      mergeModelProfile(
+        { promptBudget: { compactPrelude: true, memorySnapshotCap: 4_000 } },
+        { promptBudget: { memorySnapshotCap: 2_000, suppressMemoryGuidance: true } },
+      ),
+    ).toEqual({
+      promptBudget: {
+        compactPrelude: true,
+        memorySnapshotCap: 2_000,
+        suppressMemoryGuidance: true,
+      },
+    });
+  });
+
+  it('preserves a catalog-only promptBudget through the merge (§2)', () => {
+    expect(mergeModelProfile({ promptBudget: { compactPrelude: true } }, undefined)).toEqual({
+      promptBudget: { compactPrelude: true },
+    });
+  });
 });
 
 describe('§5 — resolveCompactionGate precedence', () => {

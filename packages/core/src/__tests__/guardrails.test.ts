@@ -10,9 +10,11 @@ describe('Orchestrator guardrails', () => {
     const content = readFileSync(agentLoopFile, 'utf-8');
     const lineCount = content.split('\n').length;
     // Phase 9 threshold — the orchestrator should stay lean. Ratcheted as the
-    // loop legitimately grows (735 → 750 → 754); §5 added the compaction gate
-    // config field + its constructor/deps threading (4 irreducible lines).
-    expect(lineCount).toBeLessThanOrEqual(754);
+    // loop legitimately grows (735 → 750 → 754 → 759); §5 added the compaction
+    // gate config field, §2 added the promptBudget config field + its
+    // constructor/deps threading (5 irreducible lines, compressed to one-line
+    // shapes to keep the growth minimal).
+    expect(lineCount).toBeLessThanOrEqual(759);
   });
 
   it('no stage file exceeds 700 lines', () => {

@@ -99,6 +99,8 @@ export interface AgentLoopConfig {
   modelRouting?: Record<string, string>;
   modelSampling?: ModelSamplingDefaults; // §7 — applied when the per-call value is unset
   compaction?: { pressure?: number; target?: number; charsPerToken?: number };
+  // biome-ignore format: §2 prompt-economy knobs (docs on LoopDeps.promptBudget); one line keeps agent-loop.ts under the size guardrail.
+  promptBudget?: { compactPrelude?: boolean; memorySnapshotCap?: number; suppressMemoryGuidance?: boolean };
   /**
    * Per-personality memory provider registry. Maps provider names ('markdown',
    * 'vector', plugin-registered names) to factory functions. When a personality
@@ -295,6 +297,7 @@ export class AgentLoop {
   private readonly modelRouting: Record<string, string>;
   private readonly modelSampling?: AgentLoopConfig['modelSampling'];
   private readonly compaction?: AgentLoopConfig['compaction'];
+  private readonly promptBudget?: AgentLoopConfig['promptBudget'];
   private readonly memoryProviders: Map<
     string,
     (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
@@ -351,6 +354,7 @@ export class AgentLoop {
     this.modelRouting = config.modelRouting ?? {};
     this.modelSampling = config.modelSampling;
     if (config.compaction) this.compaction = config.compaction;
+    if (config.promptBudget) this.promptBudget = config.promptBudget;
     this.memoryProviders = config.memoryProviders ?? new Map();
     if (config.storage) this.storage = config.storage;
     if (config.attachmentCache) this.attachmentCache = config.attachmentCache;
@@ -428,6 +432,7 @@ export class AgentLoop {
       streamingTimeoutMs: this.streamingTimeoutMs,
       modelRouting: this.modelRouting,
       compaction: this.compaction,
+      promptBudget: this.promptBudget,
       memoryProviders: this.memoryProviders,
       storage: this.storage,
       attachmentCache: this.attachmentCache,

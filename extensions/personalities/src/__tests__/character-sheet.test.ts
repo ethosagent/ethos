@@ -49,6 +49,12 @@ describe('renderCharacterSheet', () => {
     expect(sheet).toContain('anthropic');
   });
 
+  it('renders an estimated system-prompt token count (§2)', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
+    expect(sheet).toContain('## Prompt size');
+    expect(sheet).toMatch(/Estimated system-prompt tokens: ~\d+/);
+  });
+
   it('renders dreaming off when unset', () => {
     const sheet = renderCharacterSheet(fullConfig, soulMd);
     expect(sheet).toContain('Dreaming: off');

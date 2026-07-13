@@ -2,6 +2,7 @@ import {
   c2PatternCheck,
   DOWNGRADE_REJECTION_MESSAGE,
   INJECTION_DEFENSE_PRELUDE,
+  INJECTION_DEFENSE_PRELUDE_COMPACT,
   resolveDowngradedTools,
   sanitize,
   shortPatternCheck,
@@ -20,6 +21,7 @@ export function createTestSafety(overrides?: TestSafetyOverrides): AgentSafety {
   return {
     injection: {
       prelude: INJECTION_DEFENSE_PRELUDE,
+      preludeCompact: INJECTION_DEFENSE_PRELUDE_COMPACT,
       downgradeRejectionMessage: DOWNGRADE_REJECTION_MESSAGE,
       sanitize,
       wrapUntrusted,

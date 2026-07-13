@@ -6,6 +6,6 @@ export { C2_PATTERNS, c2PatternCheck, shortPatternCheck } from './pattern-check'
 export { sanitize } from './prompt-sanitize';
 export type { SanitizeResult } from './sanitize';
 export { STRIPPED_PLACEHOLDER, sanitizeTemplateTokens } from './sanitize';
-export { INJECTION_DEFENSE_PRELUDE } from './system-prompt';
+export { INJECTION_DEFENSE_PRELUDE, INJECTION_DEFENSE_PRELUDE_COMPACT } from './system-prompt';
 export type { WrapInput, WrapResult } from './wrap';
 export { wrapUntrusted } from './wrap';

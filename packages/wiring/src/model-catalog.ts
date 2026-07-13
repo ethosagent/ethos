@@ -426,6 +426,10 @@ export function mergeModelProfile(
   if (Object.keys(compaction).length > 0) merged.compaction = compaction;
   const charsPerToken = override?.charsPerToken ?? base?.charsPerToken;
   if (charsPerToken !== undefined) merged.charsPerToken = charsPerToken;
+  // §2 — merge promptBudget per-field (override wins per key) so a partial
+  // override keeps the base's other knobs.
+  const promptBudget = { ...base?.promptBudget, ...override?.promptBudget };
+  if (Object.keys(promptBudget).length > 0) merged.promptBudget = promptBudget;
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 

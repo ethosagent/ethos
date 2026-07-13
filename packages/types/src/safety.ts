@@ -9,6 +9,9 @@ export type InjectionClassifier = (input: { content: string }) => Promise<Inject
 
 export interface InjectionDefenseKit {
   prelude: string;
+  /** §2 — shorter prelude variant used when a model's `promptBudget.compactPrelude`
+   *  is set. Optional; context assembly falls back to `prelude` when absent. */
+  preludeCompact?: string;
   downgradeRejectionMessage: string;
   sanitize(content: string): string;
   wrapUntrusted(input: { content: string; toolName: string; source?: string }): {

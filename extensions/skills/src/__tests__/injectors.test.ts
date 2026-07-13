@@ -1,10 +1,11 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DefaultHookRegistry } from '@ethosagent/core';
+import { DefaultHookRegistry, makeTestToolContext } from '@ethosagent/core';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileContextInjector } from '../file-context-injector';
+import { GetSkillTool } from '../get-skill-tool';
 import { MemoryGuidanceInjector } from '../memory-guidance-injector';
 import { sanitize } from '../prompt-injection-guard';
 import { SkillsInjector } from '../skills-injector';
@@ -326,6 +327,111 @@ describe('SkillsInjector.resolveSkills', () => {
     expect(resolved.map((r) => r.id).sort()).toEqual(
       (ctx.meta?.skillFilesUsed as string[]).slice().sort(),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-personality skillsDirs honor injection_mode (§2)
+// ---------------------------------------------------------------------------
+
+describe('SkillsInjector — per-personality injection_mode (§2)', () => {
+  const makeRegistryWithMode = (skillsDirs: string[], mode: 'full' | 'index' | undefined) => ({
+    define: () => {},
+    get: (_id: string) => ({
+      id: 'researcher',
+      name: 'Researcher',
+      skillsDirs,
+      ...(mode ? { skills: { injection_mode: mode } } : {}),
+    }),
+    list: () => [],
+    getDefault: () => ({ id: 'researcher', name: 'Researcher', skillsDirs }),
+    setDefault: () => {},
+    loadFromDirectory: async () => {},
+    remove: () => {},
+  });
+
+  const writePersonalitySkill = async () => {
+    const slugDir = join(testDir, 'my-skill');
+    await mkdir(slugDir, { recursive: true });
+    await writeFile(
+      join(slugDir, 'SKILL.md'),
+      [
+        '---',
+        'name: my-skill',
+        'description: Does a specific thing',
+        '---',
+        'FULL BODY HERE.',
+      ].join('\n'),
+    );
+  };
+
+  it('index mode → personality skill becomes a stub, not the full body', async () => {
+    await writePersonalitySkill();
+    const injector = new SkillsInjector(makeRegistryWithMode([testDir], 'index'), {
+      storage: new FsStorage(),
+      globalSkillsDir: testDir,
+      scanner: hermeticScanner(),
+    });
+    const result = await injector.inject(makeCtx(testDir));
+    expect(result?.content).toContain('## Available Skills');
+    expect(result?.content).toContain('`my-skill`');
+    expect(result?.content).toContain('Does a specific thing');
+    // Body is NOT inlined — reachable via get_skill instead.
+    expect(result?.content).not.toContain('FULL BODY HERE.');
+  });
+
+  it('full mode → personality skill is inlined as today', async () => {
+    await writePersonalitySkill();
+    const injector = new SkillsInjector(makeRegistryWithMode([testDir], 'full'), {
+      storage: new FsStorage(),
+      globalSkillsDir: testDir,
+      scanner: hermeticScanner(),
+    });
+    const result = await injector.inject(makeCtx(testDir));
+    expect(result?.content).toContain('FULL BODY HERE.');
+    expect(result?.content).not.toContain('## Available Skills');
+  });
+
+  it('unset mode → personality skill stays inlined (historical behavior preserved)', async () => {
+    await writePersonalitySkill();
+    const injector = new SkillsInjector(makeRegistryWithMode([testDir], undefined), {
+      storage: new FsStorage(),
+      globalSkillsDir: testDir,
+      scanner: hermeticScanner(),
+    });
+    const result = await injector.inject(makeCtx(testDir));
+    expect(result?.content).toContain('FULL BODY HERE.');
+  });
+
+  it('get_skill resolves a stubbed personality skill on demand (not stranded)', async () => {
+    await writePersonalitySkill();
+    const injector = new SkillsInjector(makeRegistryWithMode([testDir], 'index'), {
+      storage: new FsStorage(),
+      globalSkillsDir: testDir,
+      scanner: hermeticScanner(),
+    });
+    // Confirm it is a stub in the prompt first.
+    const injected = await injector.inject(makeCtx(testDir));
+    expect(injected?.content).not.toContain('FULL BODY HERE.');
+
+    const getSkill = new GetSkillTool(hermeticScanner(), injector);
+    const ctx = makeTestToolContext({ personalityId: 'researcher', sessionId: 'sess-1' });
+    const result = await getSkill.execute({ name: 'my-skill' }, ctx);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toContain('FULL BODY HERE.');
+  });
+
+  it('get_skill reports not_available for an unknown personality skill', async () => {
+    const injector = new SkillsInjector(makeRegistryWithMode([testDir], 'index'), {
+      storage: new FsStorage(),
+      globalSkillsDir: testDir,
+      scanner: hermeticScanner(),
+    });
+    const getSkill = new GetSkillTool(hermeticScanner(), injector);
+    const ctx = makeTestToolContext({ personalityId: 'researcher', sessionId: 'sess-1' });
+    const result = await getSkill.execute({ name: 'no-such-skill' }, ctx);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('not_available');
   });
 });
 

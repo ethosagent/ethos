@@ -107,6 +107,22 @@ function isValidProfile(obj: unknown): boolean {
       p.charsPerToken <= 0)
   )
     return false;
+  // §2 — prompt-budget knobs. Booleans + a positive char cap. Malformed values
+  // reject the whole profile; absent is fine (assembly unchanged).
+  if (p.promptBudget !== undefined) {
+    if (typeof p.promptBudget !== 'object' || p.promptBudget === null) return false;
+    const pb = p.promptBudget as Record<string, unknown>;
+    if (pb.compactPrelude !== undefined && typeof pb.compactPrelude !== 'boolean') return false;
+    if (pb.suppressMemoryGuidance !== undefined && typeof pb.suppressMemoryGuidance !== 'boolean')
+      return false;
+    if (
+      pb.memorySnapshotCap !== undefined &&
+      (typeof pb.memorySnapshotCap !== 'number' ||
+        !Number.isFinite(pb.memorySnapshotCap) ||
+        pb.memorySnapshotCap <= 0)
+    )
+      return false;
+  }
   return true;
 }
 
