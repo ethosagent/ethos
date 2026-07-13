@@ -39,6 +39,7 @@ export const VALID_PROVIDERS = [
   'openrouter',
   'openai-compat',
   'ollama',
+  'vllm',
   'gemini',
 ] as const;
 

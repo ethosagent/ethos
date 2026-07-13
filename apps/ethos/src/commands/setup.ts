@@ -8,6 +8,7 @@ import {
   writeKeys,
 } from '@ethosagent/config';
 import type { WizardStepId } from '@ethosagent/tui/setup';
+import { getProvider } from '@ethosagent/wiring/provider-catalog';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
@@ -26,6 +27,59 @@ function ask(rl: ReturnType<typeof createInterface>, question: string): Promise<
 export interface SetupResult {
   config: EthosConfig;
   launchChat: boolean;
+}
+
+/** Providers that run against a local OpenAI-compatible endpoint: default the
+ *  base URL to localhost, skip the API-key prompt, and offer the served model
+ *  list from `GET /v1/models`. */
+const LOCAL_PROVIDERS = new Set(['ollama', 'vllm']);
+
+/** Placeholder API key written for local endpoints, which ignore it. */
+const LOCAL_API_KEY = 'local';
+
+/** Extract model ids from an OpenAI-compatible `GET /v1/models` body.
+ *  Shape: `{ data: [{ id: string }, ...] }`. Structural guard only — anything
+ *  that doesn't match yields an empty list (no `as` casts). */
+export function parseOpenAiModelsResponse(body: unknown): string[] {
+  if (typeof body !== 'object' || body === null) return [];
+  const data = (body as { data?: unknown }).data;
+  if (!Array.isArray(data)) return [];
+  const ids: string[] = [];
+  for (const entry of data) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const id = (entry as { id?: unknown }).id;
+    if (typeof id === 'string' && id.length > 0) ids.push(id);
+  }
+  return ids;
+}
+
+export interface LocalModelsResult {
+  /** Whether the endpoint answered a well-formed model list in time. */
+  reachable: boolean;
+  models: string[];
+}
+
+/** Fetch the served model list from a local OpenAI-compatible endpoint.
+ *  Times out fast so setup never hangs on an unreachable endpoint; any
+ *  failure (network error, timeout, non-2xx, malformed body) reports
+ *  `reachable: false` so the caller falls back to a free-text model prompt. */
+export async function fetchLocalModels(
+  baseUrl: string,
+  opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+): Promise<LocalModelsResult> {
+  const timeoutMs = opts.timeoutMs ?? 2500;
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const url = `${baseUrl.replace(/\/$/, '')}/models`;
+  try {
+    const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return { reachable: false, models: [] };
+    const body: unknown = await res.json();
+    const models = parseOpenAiModelsResponse(body);
+    if (models.length === 0) return { reachable: false, models: [] };
+    return { reachable: true, models };
+  } catch {
+    return { reachable: false, models: [] };
+  }
 }
 
 export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult | null> {
@@ -161,46 +215,79 @@ async function runReadlineFallback({
 
   console.log(`\n${c.cyan}${c.bold}ethos setup${c.reset}\n`);
 
-  console.log(
-    `${c.dim}Supported providers: anthropic, openai-compat (OpenRouter / Ollama / Gemini), azure${c.reset}`,
-  );
+  console.log(`${c.dim}Supported providers: anthropic, openrouter, ollama, vllm, azure${c.reset}`);
   const provider = (await ask(rl, 'Provider (anthropic): ')).trim() || 'anthropic';
 
-  const defaultModel =
-    provider === 'anthropic'
-      ? 'claude-opus-4-7'
-      : provider === 'azure'
-        ? 'gpt-5.4'
-        : 'openai/gpt-4o';
-  const modelPrompt =
-    provider === 'azure'
-      ? `Azure deployment name (${defaultModel}): `
-      : `Model (${defaultModel}): `;
-  const model = (await ask(rl, modelPrompt)).trim() || defaultModel;
-
-  const apiKey = (await ask(rl, 'API key: ')).trim();
-  if (!apiKey) {
-    console.log(
-      `${c.yellow}Warning: no API key entered. Edit ~/.ethos/config.yaml to add one.${c.reset}`,
-    );
-  }
-
+  let model: string;
+  let apiKey: string;
   let baseUrl: string | undefined;
   let apiVersion: string | undefined;
-  if (provider === 'azure') {
-    baseUrl = (
-      await ask(rl, 'Azure endpoint (e.g. https://my-resource.openai.azure.com): ')
-    ).trim();
-    if (!baseUrl) {
+
+  if (LOCAL_PROVIDERS.has(provider)) {
+    // Local OpenAI-compatible endpoint (Ollama / vLLM): localhost base URL,
+    // no API-key prompt, model list offered from GET /v1/models when reachable.
+    const defaultBaseUrl = getProvider(provider)?.defaultBaseUrl ?? 'http://localhost:11434/v1';
+    baseUrl = (await ask(rl, `Base URL (${defaultBaseUrl}): `)).trim() || defaultBaseUrl;
+    apiKey = LOCAL_API_KEY;
+
+    console.log(`${c.dim}Checking ${baseUrl} for available models…${c.reset}`);
+    const { reachable, models } = await fetchLocalModels(baseUrl);
+    if (reachable) {
+      console.log(`${c.dim}Available models:${c.reset}`);
+      for (const [i, m] of models.entries()) {
+        console.log(`  ${c.bold}${i + 1}${c.reset}. ${m}`);
+      }
+      const firstModel = models[0] ?? '';
+      const choice = (
+        await ask(rl, `Model (1-${models.length}, or name) [${firstModel}]: `)
+      ).trim();
+      const n = Number.parseInt(choice, 10);
+      if (choice === '') {
+        model = firstModel;
+      } else if (Number.isInteger(n) && n >= 1 && n <= models.length) {
+        model = models[n - 1] ?? firstModel;
+      } else {
+        model = choice;
+      }
+    } else {
+      console.log(`${c.yellow}Endpoint not reachable — enter a model name manually.${c.reset}`);
+      model = (await ask(rl, 'Model: ')).trim();
+    }
+  } else {
+    const defaultModel =
+      provider === 'anthropic'
+        ? 'claude-opus-4-7'
+        : provider === 'azure'
+          ? 'gpt-5.4'
+          : 'openai/gpt-4o';
+    const modelPrompt =
+      provider === 'azure'
+        ? `Azure deployment name (${defaultModel}): `
+        : `Model (${defaultModel}): `;
+    model = (await ask(rl, modelPrompt)).trim() || defaultModel;
+
+    apiKey = (await ask(rl, 'API key: ')).trim();
+    if (!apiKey) {
       console.log(
-        `${c.yellow}Warning: no Azure endpoint entered. Edit ~/.ethos/config.yaml to add one.${c.reset}`,
+        `${c.yellow}Warning: no API key entered. Edit ~/.ethos/config.yaml to add one.${c.reset}`,
       );
     }
-    apiVersion = (await ask(rl, 'API version (2024-10-21): ')).trim() || undefined;
-  } else if (provider !== 'anthropic') {
-    baseUrl =
-      (await ask(rl, 'Base URL (https://openrouter.ai/api/v1): ')).trim() ||
-      'https://openrouter.ai/api/v1';
+
+    if (provider === 'azure') {
+      baseUrl = (
+        await ask(rl, 'Azure endpoint (e.g. https://my-resource.openai.azure.com): ')
+      ).trim();
+      if (!baseUrl) {
+        console.log(
+          `${c.yellow}Warning: no Azure endpoint entered. Edit ~/.ethos/config.yaml to add one.${c.reset}`,
+        );
+      }
+      apiVersion = (await ask(rl, 'API version (2024-10-21): ')).trim() || undefined;
+    } else if (provider !== 'anthropic') {
+      baseUrl =
+        (await ask(rl, 'Base URL (https://openrouter.ai/api/v1): ')).trim() ||
+        'https://openrouter.ai/api/v1';
+    }
   }
 
   console.log(

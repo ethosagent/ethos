@@ -93,8 +93,15 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     description: 'Run models locally — no API key required',
     authType: 'self-hosted',
     costType: 'local',
-    comingSoon: true,
     defaultBaseUrl: 'http://localhost:11434/v1',
+  },
+  {
+    id: 'vllm',
+    label: 'Local Models (vLLM)',
+    description: 'Run models locally via vLLM — no API key required',
+    authType: 'self-hosted',
+    costType: 'local',
+    defaultBaseUrl: 'http://localhost:8000/v1',
   },
   {
     id: 'mistral',

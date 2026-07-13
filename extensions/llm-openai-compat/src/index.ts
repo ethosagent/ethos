@@ -400,6 +400,7 @@ export const OPENAI_COMPAT_ALIASES = [
   'groq',
   'deepseek',
   'ollama',
+  'vllm',
 ] as const;
 
 export function activate(api: EthosPluginApi): void {

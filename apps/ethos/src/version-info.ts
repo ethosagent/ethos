@@ -32,6 +32,7 @@ export function buildVersionInfo(): VersionInfo {
       'groq',
       'deepseek',
       'ollama',
+      'vllm',
     ],
     supportedChannels: ['telegram', 'slack', 'discord', 'email'],
     managedMode: process.env.ETHOS_MANAGED === '1',
