@@ -3,6 +3,7 @@ import type {
   VoiceCapabilities,
   VoiceProviderFactoryContext,
 } from '@ethosagent/types';
+import { transcribeOpenAiCompat } from './openai-compat';
 
 export class OpenAiSttProvider implements SttProvider {
   readonly name: string;
@@ -25,26 +26,13 @@ export class OpenAiSttProvider implements SttProvider {
   }
 
   async transcribe(audioPath: string): Promise<string> {
-    const { readFile } = await import('node:fs/promises');
-    const data = await readFile(audioPath);
-    const blob = new Blob([data]);
-    const formData = new FormData();
-    formData.append('file', blob, 'audio.ogg');
-    formData.append('model', this.model);
-
-    const res = await fetch(`${this.baseUrl}/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.apiKey}` },
-      body: formData,
+    return transcribeOpenAiCompat({
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      model: this.model,
+      audioPath,
+      label: 'OpenAI STT',
     });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`OpenAI STT failed (${res.status}): ${body}`);
-    }
-
-    const json = (await res.json()) as { text: string };
-    return json.text;
   }
 }
 

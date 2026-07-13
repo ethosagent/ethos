@@ -460,8 +460,8 @@ export interface EthosConfig {
     compression?: AuxiliaryCompressionConfig;
     vision?: AuxiliaryVisionConfig;
     web?: AuxiliaryWebConfig;
-    asr?: { provider: string; model?: string; apiKey?: string };
-    tts?: { provider: string; model?: string; apiKey?: string; voice?: string };
+    asr?: { provider: string; model?: string; apiKey?: string; baseUrl?: string };
+    tts?: { provider: string; model?: string; apiKey?: string; voice?: string; baseUrl?: string };
   };
   /** tools-web — web_search/web_extract backend selection. */
   web?: WebConfig;
@@ -802,6 +802,21 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (w.apiKey) lines.push(`auxiliary.web.apiKey: ${w.apiKey}`);
     if (w.baseUrl) lines.push(`auxiliary.web.baseUrl: ${w.baseUrl}`);
   }
+  if (config.auxiliary?.asr) {
+    const a = config.auxiliary.asr;
+    lines.push(`auxiliary.asr.provider: ${a.provider}`);
+    if (a.model) lines.push(`auxiliary.asr.model: ${a.model}`);
+    if (a.apiKey) lines.push(`auxiliary.asr.apiKey: ${a.apiKey}`);
+    if (a.baseUrl) lines.push(`auxiliary.asr.baseUrl: ${a.baseUrl}`);
+  }
+  if (config.auxiliary?.tts) {
+    const t = config.auxiliary.tts;
+    lines.push(`auxiliary.tts.provider: ${t.provider}`);
+    if (t.model) lines.push(`auxiliary.tts.model: ${t.model}`);
+    if (t.apiKey) lines.push(`auxiliary.tts.apiKey: ${t.apiKey}`);
+    if (t.voice) lines.push(`auxiliary.tts.voice: ${t.voice}`);
+    if (t.baseUrl) lines.push(`auxiliary.tts.baseUrl: ${t.baseUrl}`);
+  }
   if (config.web?.search_backend) lines.push(`web.search_backend: ${config.web.search_backend}`);
   if (config.web?.extract_backend) lines.push(`web.extract_backend: ${config.web.extract_backend}`);
   if (config.webhooks) {
@@ -943,6 +958,8 @@ function parseConfigYaml(src: string): EthosConfig {
   const auxiliaryCompressionKv: Record<string, string> = {};
   const auxiliaryVisionKv: Record<string, string> = {};
   const auxiliaryWebKv: Record<string, string> = {};
+  const auxiliaryAsrKv: Record<string, string> = {};
+  const auxiliaryTtsKv: Record<string, string> = {};
   const webKv: Record<string, string> = {};
   const modelCatalogKv: Record<string, string> = {};
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
@@ -1087,6 +1104,18 @@ function parseConfigYaml(src: string): EthosConfig {
     const auxw = line.match(/^auxiliary\.web\.(\w+):\s*(.+)$/);
     if (auxw) {
       auxiliaryWebKv[auxw[1]] = auxw[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // auxiliary.asr.<field>: <value>
+    const auxAsr = line.match(/^auxiliary\.asr\.(\w+):\s*(.+)$/);
+    if (auxAsr) {
+      auxiliaryAsrKv[auxAsr[1]] = auxAsr[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // auxiliary.tts.<field>: <value>
+    const auxTts = line.match(/^auxiliary\.tts\.(\w+):\s*(.+)$/);
+    if (auxTts) {
+      auxiliaryTtsKv[auxTts[1]] = auxTts[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // web.<field>: <value>
@@ -1266,6 +1295,27 @@ function parseConfigYaml(src: string): EthosConfig {
         ...(auxiliaryWebKv.baseUrl ? { baseUrl: auxiliaryWebKv.baseUrl } : {}),
       }
     : undefined;
+  const auxiliaryAsr:
+    | { provider: string; model?: string; apiKey?: string; baseUrl?: string }
+    | undefined = auxiliaryAsrKv.provider
+    ? {
+        provider: auxiliaryAsrKv.provider,
+        ...(auxiliaryAsrKv.model ? { model: auxiliaryAsrKv.model } : {}),
+        ...(auxiliaryAsrKv.apiKey ? { apiKey: auxiliaryAsrKv.apiKey } : {}),
+        ...(auxiliaryAsrKv.baseUrl ? { baseUrl: auxiliaryAsrKv.baseUrl } : {}),
+      }
+    : undefined;
+  const auxiliaryTts:
+    | { provider: string; model?: string; apiKey?: string; voice?: string; baseUrl?: string }
+    | undefined = auxiliaryTtsKv.provider
+    ? {
+        provider: auxiliaryTtsKv.provider,
+        ...(auxiliaryTtsKv.model ? { model: auxiliaryTtsKv.model } : {}),
+        ...(auxiliaryTtsKv.apiKey ? { apiKey: auxiliaryTtsKv.apiKey } : {}),
+        ...(auxiliaryTtsKv.voice ? { voice: auxiliaryTtsKv.voice } : {}),
+        ...(auxiliaryTtsKv.baseUrl ? { baseUrl: auxiliaryTtsKv.baseUrl } : {}),
+      }
+    : undefined;
   const webConfig: WebConfig | undefined =
     webKv.search_backend || webKv.extract_backend
       ? {
@@ -1408,11 +1458,13 @@ function parseConfigYaml(src: string): EthosConfig {
     quick_commands,
     channelFilter,
     auxiliary:
-      auxiliaryCompression || auxiliaryVision || auxiliaryWeb
+      auxiliaryCompression || auxiliaryVision || auxiliaryWeb || auxiliaryAsr || auxiliaryTts
         ? {
             ...(auxiliaryCompression ? { compression: auxiliaryCompression } : {}),
             ...(auxiliaryVision ? { vision: auxiliaryVision } : {}),
             ...(auxiliaryWeb ? { web: auxiliaryWeb } : {}),
+            ...(auxiliaryAsr ? { asr: auxiliaryAsr } : {}),
+            ...(auxiliaryTts ? { tts: auxiliaryTts } : {}),
           }
         : undefined,
     web: webConfig,

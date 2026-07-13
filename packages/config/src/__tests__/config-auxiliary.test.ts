@@ -196,6 +196,86 @@ describe('writeConfig round-trip — previously dropped fields', () => {
   });
 });
 
+// local-voice-providers Stage 1 — auxiliary.asr / auxiliary.tts voice config.
+describe('auxiliary.asr / auxiliary.tts config parsing', () => {
+  async function load(yaml: string) {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(join(ethosDir(), 'config.yaml'), yaml);
+    return readRawConfig(storage);
+  }
+
+  const base = ['provider: anthropic', 'model: claude-opus-4-7', 'apiKey: sk', 'personality: p'];
+
+  it('leaves asr/tts undefined when absent', async () => {
+    const cfg = await load(base.join('\n'));
+    expect(cfg?.auxiliary?.asr).toBeUndefined();
+    expect(cfg?.auxiliary?.tts).toBeUndefined();
+  });
+
+  it('parses a local-stt asr block with baseUrl (no api key)', async () => {
+    const cfg = await load(
+      [
+        ...base,
+        'auxiliary.asr.provider: local-stt',
+        'auxiliary.asr.model: whisper-large-v3',
+        'auxiliary.asr.baseUrl: http://localhost:8000/v1',
+      ].join('\n'),
+    );
+    expect(cfg?.auxiliary?.asr).toEqual({
+      provider: 'local-stt',
+      model: 'whisper-large-v3',
+      baseUrl: 'http://localhost:8000/v1',
+    });
+  });
+
+  it('parses a local-tts block with baseUrl + free-form voice (no api key)', async () => {
+    const cfg = await load(
+      [
+        ...base,
+        'auxiliary.tts.provider: local-tts',
+        'auxiliary.tts.model: kokoro',
+        'auxiliary.tts.voice: af_bella',
+        'auxiliary.tts.baseUrl: http://localhost:8880/v1',
+      ].join('\n'),
+    );
+    expect(cfg?.auxiliary?.tts).toEqual({
+      provider: 'local-tts',
+      model: 'kokoro',
+      voice: 'af_bella',
+      baseUrl: 'http://localhost:8880/v1',
+    });
+  });
+
+  it('round-trips asr.baseUrl and tts.baseUrl through writeConfig', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+      auxiliary: {
+        asr: {
+          provider: 'local-stt',
+          model: 'whisper-large-v3',
+          baseUrl: 'http://localhost:8000/v1',
+        },
+        tts: {
+          provider: 'local-tts',
+          model: 'kokoro',
+          voice: 'af_bella',
+          baseUrl: 'http://localhost:8880/v1',
+        },
+      },
+    };
+    await writeConfig(storage, original);
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.auxiliary?.asr).toEqual(original.auxiliary.asr);
+    expect(roundTripped?.auxiliary?.tts).toEqual(original.auxiliary.tts);
+  });
+});
+
 // Phase 3c E — nightlyPass scheduler config block.
 describe('nightlyPass config parsing', () => {
   async function load(yaml: string) {

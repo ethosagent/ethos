@@ -68,7 +68,13 @@ import type {
   SttProviderRegistry,
   TtsProviderRegistry,
 } from '@ethosagent/types';
-import { groqSttFactory, openaiSttFactory, openaiTtsFactory } from '@ethosagent/voice-providers';
+import {
+  groqSttFactory,
+  localSttFactory,
+  localTtsFactory,
+  openaiSttFactory,
+  openaiTtsFactory,
+} from '@ethosagent/voice-providers';
 import { activateFirstPartyPlugins } from './activate-first-party';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
 import { registerRemainingBuiltinProviders } from './register-builtin-providers';
@@ -198,9 +204,11 @@ export async function buildInfrastructure(
   const sttProviders = new DefaultSttProviderRegistry();
   sttProviders.register('openai-stt', openaiSttFactory);
   sttProviders.register('groq-stt', groqSttFactory);
+  sttProviders.register('local-stt', localSttFactory);
 
   const ttsProviders = new DefaultTtsProviderRegistry();
   ttsProviders.register('openai-tts', openaiTtsFactory);
+  ttsProviders.register('local-tts', localTtsFactory);
 
   // -------------------------------------------------------------------------
   // Personalities

@@ -551,7 +551,11 @@ export async function buildAgentLoop(
     voiceConfig: {
       sttProviderName: config.auxiliaryAsr?.provider,
       sttProviderConfig: config.auxiliaryAsr
-        ? { apiKey: config.auxiliaryAsr.apiKey, model: config.auxiliaryAsr.model }
+        ? {
+            apiKey: config.auxiliaryAsr.apiKey,
+            model: config.auxiliaryAsr.model,
+            baseUrl: config.auxiliaryAsr.baseUrl,
+          }
         : {},
       ttsProviderName: config.auxiliaryTts?.provider,
       ttsProviderConfig: config.auxiliaryTts
@@ -559,6 +563,7 @@ export async function buildAgentLoop(
             apiKey: config.auxiliaryTts.apiKey,
             model: config.auxiliaryTts.model,
             voice: config.auxiliaryTts.voice,
+            baseUrl: config.auxiliaryTts.baseUrl,
           }
         : {},
       secretsResolver:

@@ -178,6 +178,7 @@ export interface WiringConfig {
     provider: string;
     model?: string;
     apiKey?: string;
+    baseUrl?: string;
   };
   /** Voice TTS provider. auxiliary.tts in config.yaml. */
   auxiliaryTts?: {
@@ -185,6 +186,7 @@ export interface WiringConfig {
     model?: string;
     apiKey?: string;
     voice?: string;
+    baseUrl?: string;
   };
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */

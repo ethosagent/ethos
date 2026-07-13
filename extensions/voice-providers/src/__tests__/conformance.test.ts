@@ -1,6 +1,8 @@
 import type { SttProvider, TtsProvider, VoiceCapabilities } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { validateVoiceCaps } from '../conformance';
+import { LocalSttProvider } from '../local-stt';
+import { LocalTtsProvider } from '../local-tts';
 
 describe('VoiceCapabilities conformance', () => {
   it('validates a correct STT caps object', () => {
@@ -114,5 +116,17 @@ describe('Provider contract conformance', () => {
     const errors = validateVoiceCaps(provider.caps);
     expect(errors.length).toBeGreaterThan(0);
     expect(errors).toContain('formats must be a non-empty array');
+  });
+
+  it('local-stt caps pass conformance', () => {
+    const provider = new LocalSttProvider();
+    expect(provider.caps.local).toBe(true);
+    expect(validateVoiceCaps(provider.caps)).toEqual([]);
+  });
+
+  it('local-tts caps pass conformance', () => {
+    const provider = new LocalTtsProvider();
+    expect(provider.caps.local).toBe(true);
+    expect(validateVoiceCaps(provider.caps)).toEqual([]);
   });
 });
