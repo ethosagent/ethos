@@ -277,6 +277,16 @@ export interface EthosConfig {
    */
   models?: Record<string, ModelProfile>;
   /**
+   * §5 — global context-compaction gate thresholds, as fractions of the
+   * model's window in (0,1]. `pressure` is the gate (compact above it);
+   * `target` is what compaction shrinks toward. A per-model catalog `profile`'s
+   * `compaction` overrides these; both absent → hardcoded 0.8/0.7 defaults.
+   * Flat-key config shape:
+   *   compaction.pressure: 0.85
+   *   compaction.target: 0.7
+   */
+  compaction?: { pressure?: number; target?: number };
+  /**
    * Fallback provider chain. When 2+ entries are present, `createLLM` wraps
    * them in a `ChainedProvider` with automatic cooldown-based failover.
    * The primary `provider`/`apiKey`/`model` fields are used when absent or
@@ -640,6 +650,14 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       }
     }
   }
+  if (config.compaction) {
+    if (config.compaction.pressure !== undefined) {
+      lines.push(`compaction.pressure: ${config.compaction.pressure}`);
+    }
+    if (config.compaction.target !== undefined) {
+      lines.push(`compaction.target: ${config.compaction.target}`);
+    }
+  }
   if (config.activeContext) {
     lines.push(`activeContext.type: ${config.activeContext.type}`);
     lines.push(`activeContext.name: ${config.activeContext.name}`);
@@ -931,6 +949,8 @@ function parseConfigYaml(src: string): EthosConfig {
   // §7 — models.<providerId>/<modelId>.<field>: <value>. Keyed by the full
   // `<providerId>/<modelId>` string; field path → raw value.
   const modelsKv: Record<string, Record<string, string>> = {};
+  // §5 — global compaction.<field>: <value> (pressure | target).
+  const compactionKv: Record<string, string> = {};
   const logsRotationKv: Record<string, string> = {};
   const awsSecretsKv: Record<string, string> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
@@ -1114,6 +1134,12 @@ function parseConfigYaml(src: string): EthosConfig {
       modelsKv[modelKey][mdl[2]] = mdl[3].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // §5 — compaction.<pressure|target>: <fraction>  (global gate thresholds).
+    const cmp = line.match(/^compaction\.(pressure|target):\s*(.+)$/);
+    if (cmp) {
+      compactionKv[cmp[1]] = cmp[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // modelRouting.<personality>: <model>
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
     if (mr) {
@@ -1277,6 +1303,7 @@ function parseConfigYaml(src: string): EthosConfig {
         }
       : undefined;
   const models = buildModelProfiles(modelsKv);
+  const compaction = buildCompaction(compactionKv);
   const parsedMaxBytes = logsRotationKv.maxBytes ? Number(logsRotationKv.maxBytes) : undefined;
   const parsedMaxFiles = logsRotationKv.maxFiles ? Number(logsRotationKv.maxFiles) : undefined;
   const logsRotation =
@@ -1339,6 +1366,7 @@ function parseConfigYaml(src: string): EthosConfig {
     apiVersion: kv.apiVersion,
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
     models,
+    compaction,
     activeContext,
     providers: providers.length > 0 ? providers : undefined,
     telegramToken: kv.telegramToken,
@@ -2005,6 +2033,25 @@ function buildModelProfiles(
       if (Number.isFinite(n)) profile.maxOutputTokens = n;
     }
     if (Object.keys(profile).length > 0) result[modelKey] = profile;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * §5 — assemble the global compaction thresholds from parsed flat keys.
+ * `pressure`/`target` are kept only when they parse to a finite fraction in
+ * (0,1]; out-of-range or non-numeric values are dropped. Returns `undefined`
+ * when neither field survives, so the gate falls back to its 0.8/0.7 defaults.
+ */
+function buildCompaction(
+  kv: Record<string, string>,
+): { pressure?: number; target?: number } | undefined {
+  const result: { pressure?: number; target?: number } = {};
+  for (const key of ['pressure', 'target'] as const) {
+    const raw = kv[key];
+    if (raw === undefined) continue;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0 && n <= 1) result[key] = n;
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }

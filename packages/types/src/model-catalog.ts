@@ -24,6 +24,19 @@ export interface ModelProfile {
    *  internal JSON consumers request grammar-constrained decoding. Absent →
    *  capability stays unset (models without native structured output). */
   structuredOutput?: boolean;
+  /** §5 — per-model compaction gate thresholds, as fractions of the model's
+   *  window in (0,1]. `pressure` is the gate (compact above it); `target` is
+   *  what compaction aims to shrink to. Both override the global `compaction:`
+   *  config, which overrides the hardcoded 0.8/0.7 defaults. Absent →
+   *  global/default applies (behavior unchanged). */
+  compaction?: { pressure?: number; target?: number };
+  /** §5 — gate estimator divisor (chars per token) for THIS model. Local
+   *  tokenizers diverge from the char/4 rule of thumb. When set, the compaction
+   *  gate divides characters by this value INSTEAD of char/4 and skips the
+   *  generic small-window safety factor (this is the accurate per-model value —
+   *  inflating it would double-count). Absent → char/4 + small-window factor
+   *  (unchanged). The engine-only `countTokens` is untouched. */
+  charsPerToken?: number;
 }
 
 export interface ModelEntry {

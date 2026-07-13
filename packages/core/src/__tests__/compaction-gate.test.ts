@@ -163,6 +163,147 @@ describe('T3 — output-budget reserve is counted against the headroom', () => {
   });
 });
 
+describe('§5 — configurable pressure/target thresholds', () => {
+  // 8192 window, reservedOutputTokens 0 (isolate), small-window factor 1.15.
+  //   messagesOfSize(17400) → char/4 ≈ 4352 tok → *1.15 ≈ 5005.
+  //   default pressure 0.8 → gate floor(8192*0.8)=6553: 5005 < 6553 → no compact.
+  //   configured pressure 0.5 → gate floor(8192*0.5)=4096: 5005 > 4096 → compact.
+  it('gates at the configured pressure, not the 0.8 default', async () => {
+    const withOverride = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registryWith(withOverride),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+        pressure: 0.5,
+      },
+      messagesOfSize(17_400),
+      '',
+      personality,
+      meta,
+    );
+    expect(withOverride.compactCalled).toBe(true);
+
+    const defaultGate = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registryWith(defaultGate),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+      },
+      messagesOfSize(17_400),
+      '',
+      personality,
+      meta,
+    );
+    expect(defaultGate.compactCalled).toBe(false);
+  });
+
+  it('passes the configured target fraction to the engine', async () => {
+    let seenTarget: number | undefined;
+    // Name must match personality.context_engine ('spy_engine') so the gate
+    // resolves to this engine rather than falling back to drop_oldest.
+    const engine = {
+      name: 'spy_engine' as const,
+      async compact(opts: ContextEngineCompactInput) {
+        seenTarget = opts.targetTokens;
+        return { messages: opts.messages, notes: 'noop' };
+      },
+      shouldCompact() {
+        return true;
+      },
+    };
+    const registry = new DefaultContextEngineRegistry();
+    registry.register(engine);
+    // ~28_000 chars → char/4 7000 tok → *1.15 = 8050 > gate 6553 → fires.
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registry,
+        session: sessionMock,
+        reservedOutputTokens: 0,
+        target: 0.5,
+      },
+      messagesOfSize(28_000),
+      '',
+      personality,
+      meta,
+    );
+    // target = floor(8192 * 0.5) = 4096
+    expect(seenTarget).toBe(4_096);
+  });
+});
+
+describe('§5 — per-model charsPerToken gate estimator', () => {
+  // 8192 window, reservedOutputTokens 0, default pressure 0.8 → gate 6553.
+  //   messagesOfSize(21_000): char/4 ≈ 5252 → *1.15 ≈ 6040 < 6553 → no compact.
+  //                           chars/3 = 7000 > 6553 → compact.
+  // Fewer chars-per-token → more tokens → higher pressure → gates earlier.
+  it('gates earlier than char/4 for the same text (charsPerToken: 3)', async () => {
+    const cptEngine = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registryWith(cptEngine),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+        charsPerToken: 3,
+      },
+      messagesOfSize(21_000),
+      '',
+      personality,
+      meta,
+    );
+    expect(cptEngine.compactCalled).toBe(true);
+
+    const char4Engine = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registryWith(char4Engine),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+      },
+      messagesOfSize(21_000),
+      '',
+      personality,
+      meta,
+    );
+    expect(char4Engine.compactCalled).toBe(false);
+  });
+
+  it('does NOT stack the small-window 1.15 factor on top of charsPerToken', async () => {
+    // 18_000 chars, charsPerToken 3 → estimate = 18000/3 = 6000 ≤ gate 6553 →
+    // no compaction. If the generic 1.15 factor were wrongly applied on top,
+    // 6000 * 1.15 = 6900 > 6553 would compact. Asserting NO compaction proves
+    // the effective estimate is chars/charsPerToken, not chars/charsPerToken*1.15.
+    const engine = createSpyEngine();
+    const result = await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 8_192 } as any,
+        contextEngines: registryWith(engine),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+        charsPerToken: 3,
+      },
+      messagesOfSize(18_000),
+      '',
+      personality,
+      meta,
+    );
+    expect(engine.compactCalled).toBe(false);
+    expect(result.messages.length).toBe(4);
+  });
+});
+
 describe('T3 — large (Anthropic 200k) window behavior unchanged', () => {
   it('does not compact below the pressure gate', async () => {
     const engine = createSpyEngine();

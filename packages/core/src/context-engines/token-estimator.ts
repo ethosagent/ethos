@@ -46,3 +46,20 @@ export function estimateMessagesTokens(input: Message | Message[] | string): num
   }
   return estimateMessageTokens(input);
 }
+
+/**
+ * Raw character count for the same content `estimateMessagesTokens` measures,
+ * WITHOUT the char/4 divide or per-message rounding. Used only by the
+ * compaction gate's per-model `charsPerToken` path so it can divide the true
+ * char total by the model's tokenizer ratio. The token estimators above stay
+ * the exact char/4 gate used everywhere else.
+ */
+export function estimateMessagesChars(input: Message | Message[] | string): number {
+  if (typeof input === 'string') return input.length;
+  if (Array.isArray(input)) {
+    let total = 0;
+    for (const m of input) total += messageContentChars(m.content);
+    return total;
+  }
+  return messageContentChars(input.content);
+}

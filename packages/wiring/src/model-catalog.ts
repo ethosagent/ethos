@@ -420,7 +420,37 @@ export function mergeModelProfile(
   if (maxOutputTokens !== undefined) merged.maxOutputTokens = maxOutputTokens;
   const structuredOutput = override?.structuredOutput ?? base?.structuredOutput;
   if (structuredOutput !== undefined) merged.structuredOutput = structuredOutput;
+  // §5 — merge compaction per-field (override wins per key) so a partial
+  // override (e.g. only `pressure`) keeps the base `target`.
+  const compaction = { ...base?.compaction, ...override?.compaction };
+  if (Object.keys(compaction).length > 0) merged.compaction = compaction;
+  const charsPerToken = override?.charsPerToken ?? base?.charsPerToken;
+  if (charsPerToken !== undefined) merged.charsPerToken = charsPerToken;
   return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+/**
+ * §5 — resolve the effective compaction gate config for a model. Precedence:
+ * per-model `profile.compaction` > global `compaction:` config > the gate's
+ * hardcoded 0.8/0.7 defaults (applied downstream in the gate, so both-absent
+ * yields `undefined` here and the gate stays byte-identical to today).
+ * `charsPerToken` is per-model only. Returns `undefined` when nothing is set.
+ */
+export function resolveCompactionGate(
+  profile: ModelProfile | undefined,
+  global: { pressure?: number; target?: number } | undefined,
+): { pressure?: number; target?: number; charsPerToken?: number } | undefined {
+  const pressure = profile?.compaction?.pressure ?? global?.pressure;
+  const target = profile?.compaction?.target ?? global?.target;
+  const charsPerToken = profile?.charsPerToken;
+  if (pressure === undefined && target === undefined && charsPerToken === undefined) {
+    return undefined;
+  }
+  return {
+    ...(pressure !== undefined ? { pressure } : {}),
+    ...(target !== undefined ? { target } : {}),
+    ...(charsPerToken !== undefined ? { charsPerToken } : {}),
+  };
 }
 
 export function getDefaultModel(providerId: string): ModelCatalogEntry | undefined {

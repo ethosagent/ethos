@@ -17,7 +17,7 @@ import type {
   WiringProfile,
 } from './index';
 import type { LoadPluginsResult } from './load-plugins';
-import { lookupProfile, mergeModelProfile } from './model-catalog';
+import { lookupProfile, mergeModelProfile, resolveCompactionGate } from './model-catalog';
 import type { WiringContext } from './types';
 
 export interface BuildAgentLoopDeps {
@@ -380,15 +380,21 @@ export async function buildAgentLoop(
   const activeMcpPolicy = personalities.getMcpPolicy(activePerson.id);
   const workingDir = wiringCtx.workingDir;
 
-  // §7 — resolve the primary model's effective sampling profile (config
-  // override OVER catalog) and thread it into the loop. streamStep applies each
-  // value only when the per-call RunOptions value is undefined, so precedence is
-  // per-call > config override > catalog > provider default. No profile →
-  // undefined → no defaults applied (behavior byte-identical to today).
-  const modelSampling = mergeModelProfile(
+  // §7 — resolve the primary model's effective profile (config override OVER
+  // catalog) once and thread its loop-facing fields in. streamStep applies each
+  // sampling value only when the per-call RunOptions value is undefined, so
+  // precedence is per-call > config override > catalog > provider default. No
+  // profile → undefined → no defaults applied (behavior byte-identical to today).
+  const resolvedProfile = mergeModelProfile(
     lookupProfile(config.provider, config.model),
     config.models?.[`${config.provider}/${config.model}`],
-  )?.sampling;
+  );
+  const modelSampling = resolvedProfile?.sampling;
+
+  // §5 — resolve the effective compaction gate config: per-model profile OVER
+  // global `compaction:` config (charsPerToken is per-model only). All absent →
+  // undefined → the gate behaves exactly as it does today.
+  const compaction = resolveCompactionGate(resolvedProfile, config.compaction);
 
   const loop = new AgentLoop({
     llm,
@@ -404,6 +410,7 @@ export async function buildAgentLoop(
     dataDir,
     modelRouting: config.modelRouting,
     ...(modelSampling ? { modelSampling } : {}),
+    ...(compaction ? { compaction } : {}),
     memoryProviders: memoryProviderMap,
     safety,
     documentExtractors,

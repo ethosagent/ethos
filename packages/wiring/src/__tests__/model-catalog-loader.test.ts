@@ -382,6 +382,88 @@ describe('§7 — manifest carries an optional profile', () => {
       'model catalog: invalid manifest shape',
     );
   });
+
+  it('accepts and preserves compaction thresholds + charsPerToken (§5)', async () => {
+    const manifest = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            {
+              id: 'm',
+              label: 'l',
+              contextWindow: 8_192,
+              profile: { compaction: { pressure: 0.85, target: 0.6 }, charsPerToken: 3.3 },
+            },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(manifest));
+    const result = await fetchManifest('https://example.com/catalog.json');
+    expect(result.providers['openai-compat'].models[0].profile).toEqual({
+      compaction: { pressure: 0.85, target: 0.6 },
+      charsPerToken: 3.3,
+    });
+  });
+
+  it('rejects an out-of-range compaction pressure (>1)', async () => {
+    const bad = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            {
+              id: 'm',
+              label: 'l',
+              contextWindow: 8_192,
+              profile: { compaction: { pressure: 1.5 } },
+            },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(bad));
+    await expect(fetchManifest('https://example.com/catalog.json')).rejects.toThrow(
+      'model catalog: invalid manifest shape',
+    );
+  });
+
+  it('rejects a non-positive compaction target', async () => {
+    const bad = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            { id: 'm', label: 'l', contextWindow: 8_192, profile: { compaction: { target: 0 } } },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(bad));
+    await expect(fetchManifest('https://example.com/catalog.json')).rejects.toThrow(
+      'model catalog: invalid manifest shape',
+    );
+  });
+
+  it('rejects a non-positive charsPerToken', async () => {
+    const bad = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [{ id: 'm', label: 'l', contextWindow: 8_192, profile: { charsPerToken: -3 } }],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(bad));
+    await expect(fetchManifest('https://example.com/catalog.json')).rejects.toThrow(
+      'model catalog: invalid manifest shape',
+    );
+  });
 });
 
 describe('loadModelCatalog', () => {

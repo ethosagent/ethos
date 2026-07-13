@@ -7,7 +7,7 @@ import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
 import type { Logger, SecretsResolver } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { createLLM } from '../index';
-import { lookupProfile, mergeModelProfile } from '../model-catalog';
+import { lookupProfile, mergeModelProfile, resolveCompactionGate } from '../model-catalog';
 import { registerBuiltinProviders } from '../register-builtin-providers';
 
 const noopLogger: Logger = {
@@ -79,6 +79,61 @@ describe('mergeModelProfile', () => {
     });
     expect(mergeModelProfile({ structuredOutput: true }, undefined)).toEqual({
       structuredOutput: true,
+    });
+  });
+
+  it('merges compaction per-field + charsPerToken, override winning (§5)', () => {
+    // Partial override keeps the base's other compaction field.
+    expect(
+      mergeModelProfile(
+        { compaction: { pressure: 0.8, target: 0.7 }, charsPerToken: 4 },
+        { compaction: { pressure: 0.9 }, charsPerToken: 3 },
+      ),
+    ).toEqual({
+      compaction: { pressure: 0.9, target: 0.7 },
+      charsPerToken: 3,
+    });
+  });
+
+  it('preserves a catalog-only compaction/charsPerToken through the merge (§5)', () => {
+    // Regression: the merge must carry compaction/charsPerToken even when only
+    // the base sets them — otherwise per-model thresholds never reach the gate.
+    expect(
+      mergeModelProfile({ compaction: { pressure: 0.85 }, charsPerToken: 3.3 }, undefined),
+    ).toEqual({
+      compaction: { pressure: 0.85 },
+      charsPerToken: 3.3,
+    });
+  });
+});
+
+describe('§5 — resolveCompactionGate precedence', () => {
+  it('returns undefined when neither profile nor global config sets anything', () => {
+    expect(resolveCompactionGate(undefined, undefined)).toBeUndefined();
+    expect(resolveCompactionGate({ sampling: { temperature: 0.2 } }, undefined)).toBeUndefined();
+  });
+
+  it('uses the global config when the profile has no compaction', () => {
+    expect(resolveCompactionGate(undefined, { pressure: 0.85, target: 0.6 })).toEqual({
+      pressure: 0.85,
+      target: 0.6,
+    });
+  });
+
+  it('per-model profile wins over global config (profile > global)', () => {
+    expect(
+      resolveCompactionGate({ compaction: { pressure: 0.5 } }, { pressure: 0.85, target: 0.6 }),
+    ).toEqual({
+      // profile pressure wins; global target fills the field the profile omits
+      pressure: 0.5,
+      target: 0.6,
+    });
+  });
+
+  it('threads charsPerToken from the profile (global has no such field)', () => {
+    expect(resolveCompactionGate({ charsPerToken: 3 }, { pressure: 0.9 })).toEqual({
+      pressure: 0.9,
+      charsPerToken: 3,
     });
   });
 });

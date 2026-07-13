@@ -61,9 +61,10 @@ function isValidManifest(obj: unknown): boolean {
 /**
  * Structurally validate an optional per-model `profile` (§7). Rejects a
  * malformed profile (non-numeric sampling, bad toolCallFormat, non-numeric
- * maxOutputTokens) but treats an absent profile as valid — old manifests
- * without a profile still load. Unknown keys are tolerated (dropped at
- * construction), matching the loader's forward-compatibility posture.
+ * maxOutputTokens, out-of-range compaction/charsPerToken) but treats an absent
+ * profile as valid — old manifests without a profile still load. Unknown keys
+ * are tolerated (dropped at construction), matching the loader's
+ * forward-compatibility posture.
  */
 function isValidProfile(obj: unknown): boolean {
   if (typeof obj !== 'object' || obj === null) return false;
@@ -88,6 +89,24 @@ function isValidProfile(obj: unknown): boolean {
   )
     return false;
   if (p.structuredOutput !== undefined && typeof p.structuredOutput !== 'boolean') return false;
+  // §5 — compaction thresholds are fractions in (0,1]; charsPerToken is a
+  // positive divisor. Malformed values reject the whole profile; absent is fine.
+  if (p.compaction !== undefined) {
+    if (typeof p.compaction !== 'object' || p.compaction === null) return false;
+    const c = p.compaction as Record<string, unknown>;
+    for (const key of ['pressure', 'target']) {
+      const v = c[key];
+      if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > 1))
+        return false;
+    }
+  }
+  if (
+    p.charsPerToken !== undefined &&
+    (typeof p.charsPerToken !== 'number' ||
+      !Number.isFinite(p.charsPerToken) ||
+      p.charsPerToken <= 0)
+  )
+    return false;
   return true;
 }
 

@@ -8,7 +8,11 @@ import type {
   SessionStore,
   Storage,
 } from '@ethosagent/types';
-import { estimateMessagesTokens, estimateTokens } from '../context-engines/token-estimator';
+import {
+  estimateMessagesChars,
+  estimateMessagesTokens,
+  estimateTokens,
+} from '../context-engines/token-estimator';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
 
 export interface CompactionDeps {
@@ -30,6 +34,24 @@ export interface CompactionDeps {
    * when the caller didn't set a completion budget.
    */
   reservedOutputTokens?: number;
+  /**
+   * §5 — pressure gate as a fraction of the window in (0,1]. Compaction fires
+   * when estimated usage exceeds this. Defaults to 0.8 when unset. Resolved
+   * upstream as: per-model profile > global `compaction:` config > this default.
+   */
+  pressure?: number;
+  /**
+   * §5 — target usage as a fraction of the window in (0,1]; compaction shrinks
+   * toward it. Defaults to 0.7 when unset. Same precedence as `pressure`.
+   */
+  target?: number;
+  /**
+   * §5 — per-model gate estimator divisor (chars per token). When set, the gate
+   * computes usage as `chars / charsPerToken` INSTEAD of char/4 and does NOT
+   * apply the small-window safety factor (this is the accurate per-model value —
+   * inflating it would double-count). Absent → char/4 + small-window factor.
+   */
+  charsPerToken?: number;
 }
 
 // T3 — gate-hardening constants (generic, no per-model config).
@@ -81,14 +103,29 @@ export async function maybeCompact(
   const outputReserve = Math.min(Math.max(0, requestedOutput), Math.floor(rawWindow / 2));
   const window = rawWindow - outputReserve;
 
-  // T3.2 — conservative safety factor for small windows (see constant docs).
-  const safetyFactor = rawWindow <= SMALL_WINDOW_THRESHOLD ? SMALL_WINDOW_SAFETY_FACTOR : 1;
+  // §5 — effective gate/target fractions. Resolved upstream (per-model profile >
+  // global config); the hardcoded 0.8/0.7 defaults live here so an unset caller
+  // is byte-identical to before.
+  const pressureFraction = deps.pressure ?? 0.8;
+  const targetFraction = deps.target ?? 0.7;
+  const target = Math.floor(window * targetFraction);
+  const pressureGate = Math.floor(window * pressureFraction);
 
-  const target = Math.floor(window * 0.7);
-  const pressureGate = Math.floor(window * 0.8);
-  const current = Math.ceil(
-    (estimateTokens(systemPrompt) + estimateMessagesTokens(messages)) * safetyFactor,
-  );
+  // §5 — usage estimate. When the model carries an accurate `charsPerToken`,
+  // divide the true char total by it and skip the small-window safety factor
+  // (stacking the generic factor on an already-accurate divisor would
+  // double-count). Otherwise keep the char/4 estimate + small-window factor.
+  let current: number;
+  const charsPerToken = deps.charsPerToken;
+  if (charsPerToken !== undefined) {
+    current = Math.ceil((systemPrompt.length + estimateMessagesChars(messages)) / charsPerToken);
+  } else {
+    // T3.2 — conservative safety factor for small windows (see constant docs).
+    const safetyFactor = rawWindow <= SMALL_WINDOW_THRESHOLD ? SMALL_WINDOW_SAFETY_FACTOR : 1;
+    current = Math.ceil(
+      (estimateTokens(systemPrompt) + estimateMessagesTokens(messages)) * safetyFactor,
+    );
+  }
   if (current <= pressureGate) return { messages };
 
   // Q2 — anti-thrashing cooldown. After a compaction, skip the next few

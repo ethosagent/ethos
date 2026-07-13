@@ -85,6 +85,12 @@ export interface WiringConfig {
    * the loop.
    */
   models?: Record<string, ModelProfile>;
+  /**
+   * §5 — global context-compaction gate thresholds (fractions in (0,1]). A
+   * per-model catalog `profile.compaction` overrides these; both absent → the
+   * hardcoded 0.8/0.7 defaults. Threaded into the loop → compaction gate.
+   */
+  compaction?: { pressure?: number; target?: number };
   /** Anthropic key rotation pool. Empty / absent = single-key provider. */
   rotationKeys?: RotationKey[];
   /**

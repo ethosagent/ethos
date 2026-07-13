@@ -375,6 +375,11 @@ export async function* assembleContext(
       ...(opts.maxCompletionTokens !== undefined
         ? { reservedOutputTokens: opts.maxCompletionTokens }
         : {}),
+      ...(deps.compaction?.pressure !== undefined ? { pressure: deps.compaction.pressure } : {}),
+      ...(deps.compaction?.target !== undefined ? { target: deps.compaction.target } : {}),
+      ...(deps.compaction?.charsPerToken !== undefined
+        ? { charsPerToken: deps.compaction.charsPerToken }
+        : {}),
     },
     llmMessages,
     systemPrompt ?? '',

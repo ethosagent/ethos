@@ -98,6 +98,7 @@ export interface AgentLoopConfig {
   // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
   modelRouting?: Record<string, string>;
   modelSampling?: ModelSamplingDefaults; // §7 — applied when the per-call value is unset
+  compaction?: { pressure?: number; target?: number; charsPerToken?: number };
   /**
    * Per-personality memory provider registry. Maps provider names ('markdown',
    * 'vector', plugin-registered names) to factory functions. When a personality
@@ -293,6 +294,7 @@ export class AgentLoop {
   private readonly streamingTimeoutMs: number;
   private readonly modelRouting: Record<string, string>;
   private readonly modelSampling?: AgentLoopConfig['modelSampling'];
+  private readonly compaction?: AgentLoopConfig['compaction'];
   private readonly memoryProviders: Map<
     string,
     (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
@@ -348,6 +350,7 @@ export class AgentLoop {
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 600_000;
     this.modelRouting = config.modelRouting ?? {};
     this.modelSampling = config.modelSampling;
+    if (config.compaction) this.compaction = config.compaction;
     this.memoryProviders = config.memoryProviders ?? new Map();
     if (config.storage) this.storage = config.storage;
     if (config.attachmentCache) this.attachmentCache = config.attachmentCache;
@@ -424,6 +427,7 @@ export class AgentLoop {
       maxConsecutiveIdenticalCalls: this.maxConsecutiveIdenticalCalls,
       streamingTimeoutMs: this.streamingTimeoutMs,
       modelRouting: this.modelRouting,
+      compaction: this.compaction,
       memoryProviders: this.memoryProviders,
       storage: this.storage,
       attachmentCache: this.attachmentCache,

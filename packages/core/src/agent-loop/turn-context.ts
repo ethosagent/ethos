@@ -47,6 +47,10 @@ export interface LoopDeps {
   maxConsecutiveIdenticalCalls: number;
   streamingTimeoutMs: number;
   modelRouting: Record<string, string>;
+  /** §5 — resolved compaction gate config (pressure/target fractions +
+   *  per-model charsPerToken). Undefined → gate uses its 0.8/0.7 + char/4
+   *  defaults. */
+  compaction?: { pressure?: number; target?: number; charsPerToken?: number };
   memoryProviders: Map<
     string,
     (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
