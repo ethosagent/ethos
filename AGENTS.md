@@ -350,6 +350,11 @@ extensions/personalities/src/index.ts uses join(import.meta.dirname, '..', 'data
 tsx + extensionless imports: why we don't use --experimental-strip-types
 Node 24's --experimental-strip-types requires explicit file extensions in imports (.js or .ts). This conflicts with TypeScript's extensionless import convention. tsx handles extensionless imports and tsconfig path aliases correctly. The decision to keep tsx was made explicitly — don't try to migrate to --experimental-strip-types without also adding extensions to every internal import.
 
+Prompt ordering is static-first, dynamic-tail — keep it that way
+The system prompt is assembled STATIC-FIRST (injection-defense prelude → SOUL.md → priority-sorted injectors) with DYNAMIC sections at the TAIL (memory snapshot, progressive file-context, team topic index) — see `packages/core/src/agent-loop/stages/context-assembly.ts`. NO per-turn-varying text (dates, timestamps, turn counters) appears anywhere in the prompt. This is what keeps the static prefix byte-identical across turns so prefix caching works — Anthropic cache breakpoints, vLLM `--enable-prefix-caching`, and Ollama keep-alive all reuse the unchanged prefix. Any new injector MUST emit content that depends only on static inputs (personality, platform), or render per-turn/dynamic content as an `append` so it lands in the tail. Don't put a date/clock/counter in an injector. The regression guard is `packages/core/src/__tests__/prompt-prefix-stability.test.ts` — it drives two consecutive turns with unchanged memory and asserts a byte-identical static prefix; if you break the ordering it fails.
+
+Local-serving note: to exploit the stable prefix, run vLLM with `--enable-prefix-caching` and rely on Ollama's keep-alive so the loaded prefix survives between turns.
+
 noNonNullAssertion is enforced by Biome
 array[n]! and map.get(key)! are blocked. Preferred patterns:
 
