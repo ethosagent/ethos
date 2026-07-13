@@ -38,12 +38,23 @@ export function createConfigOnlyFactory(manifest: ConfigOnlyProviderManifest): L
       typeof ctx.config.maxContextTokens === 'number' ? ctx.config.maxContextTokens : undefined;
     const contextWindow = explicitWindow ?? lookupContextWindow(manifest.id, model);
 
+    // §7 — provider-facing profile fields threaded by wiring's resolveOne (from
+    // the merged catalog + config override). Absent → provider defaults apply.
+    const toolCallFormat =
+      ctx.config.toolCallFormat === 'openai' || ctx.config.toolCallFormat === 'text-xml'
+        ? ctx.config.toolCallFormat
+        : undefined;
+    const maxOutputTokens =
+      typeof ctx.config.maxOutputTokens === 'number' ? ctx.config.maxOutputTokens : undefined;
+
     const provider = new OpenAICompatProvider({
       name: manifest.id,
       model,
       apiKey,
       baseUrl: manifest.baseUrl,
       ...(contextWindow !== undefined ? { maxContextTokens: contextWindow } : {}),
+      ...(toolCallFormat !== undefined ? { toolCallFormat } : {}),
+      ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     });
 
     // Attach capabilities from manifest

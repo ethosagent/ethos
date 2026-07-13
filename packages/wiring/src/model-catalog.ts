@@ -1,9 +1,17 @@
+import type { ModelProfile } from '@ethosagent/types';
+
+export type { ModelProfile, ModelSampling } from '@ethosagent/types';
+
 export interface ModelCatalogEntry {
   providerId: string;
   modelId: string;
   label: string;
   contextWindow: number;
   default?: boolean;
+  /** §7 keystone — optional per-model profile (sampling defaults, tool-call
+   *  format, output-token cap). Absent for models without a profile, in which
+   *  case no defaults are applied and behavior is byte-identical to today. */
+  profile?: ModelProfile;
 }
 
 /** Context window below which a warning is shown in the model picker. */
@@ -382,6 +390,35 @@ export function getModelsForProvider(providerId: string): ModelCatalogEntry[] {
 export function lookupContextWindow(providerId: string, modelId: string): number | undefined {
   return MODEL_CATALOG.find((m) => m.providerId === providerId && m.modelId === modelId)
     ?.contextWindow;
+}
+
+/**
+ * Look up the per-model `profile` for a `(providerId, modelId)` pair. Same
+ * lookup shape as {@link lookupContextWindow} (DRY). Returns `undefined` on a
+ * miss OR when the entry carries no profile — callers then apply no defaults.
+ */
+export function lookupProfile(providerId: string, modelId: string): ModelProfile | undefined {
+  return MODEL_CATALOG.find((m) => m.providerId === providerId && m.modelId === modelId)?.profile;
+}
+
+/**
+ * Merge a config `models:` override OVER a catalog `profile`. The override wins
+ * field-by-field (per-key for sampling). Precedence within §7: config override
+ * beats catalog. Returns `undefined` when neither side sets anything.
+ */
+export function mergeModelProfile(
+  base: ModelProfile | undefined,
+  override: ModelProfile | undefined,
+): ModelProfile | undefined {
+  if (!base && !override) return undefined;
+  const merged: ModelProfile = {};
+  const sampling = { ...base?.sampling, ...override?.sampling };
+  if (Object.keys(sampling).length > 0) merged.sampling = sampling;
+  const toolCallFormat = override?.toolCallFormat ?? base?.toolCallFormat;
+  if (toolCallFormat !== undefined) merged.toolCallFormat = toolCallFormat;
+  const maxOutputTokens = override?.maxOutputTokens ?? base?.maxOutputTokens;
+  if (maxOutputTokens !== undefined) merged.maxOutputTokens = maxOutputTokens;
+  return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
 export function getDefaultModel(providerId: string): ModelCatalogEntry | undefined {

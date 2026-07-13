@@ -6,6 +6,7 @@ import {
   fetchManifest,
   loadCachedManifest,
   loadModelCatalog,
+  manifestToEntries,
   mergeRemoteIntoBundled,
   writeCachedManifest,
 } from '../model-catalog-loader';
@@ -249,6 +250,102 @@ describe('mergeRemoteIntoBundled', () => {
     const merged = mergeRemoteIntoBundled(remote, bundled);
     expect(merged.version).toBe(3);
     expect(merged.updatedAt).toBe('2026-06-01T00:00:00.000Z');
+  });
+});
+
+describe('§7 — manifest carries an optional profile', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const MANIFEST_WITH_PROFILE: ModelCatalogManifest = {
+    version: 2,
+    updatedAt: '2026-07-13T00:00:00.000Z',
+    providers: {
+      'openai-compat': {
+        models: [
+          {
+            id: 'llama3.2',
+            label: '3B',
+            contextWindow: 8_192,
+            profile: {
+              sampling: { temperature: 0.2, topK: 40 },
+              toolCallFormat: 'text-xml',
+              maxOutputTokens: 2048,
+            },
+          },
+        ],
+      },
+    },
+  };
+
+  it('accepts and preserves a profile through fetchManifest', async () => {
+    vi.stubGlobal('fetch', mockFetchOk(MANIFEST_WITH_PROFILE));
+    const result = await fetchManifest('https://example.com/catalog.json');
+    expect(result.providers['openai-compat'].models[0].profile).toEqual({
+      sampling: { temperature: 0.2, topK: 40 },
+      toolCallFormat: 'text-xml',
+      maxOutputTokens: 2048,
+    });
+  });
+
+  it('manifestToEntries preserves the profile', () => {
+    const entries = manifestToEntries(MANIFEST_WITH_PROFILE);
+    const entry = entries.find((e) => e.modelId === 'llama3.2');
+    expect(entry?.profile).toEqual({
+      sampling: { temperature: 0.2, topK: 40 },
+      toolCallFormat: 'text-xml',
+      maxOutputTokens: 2048,
+    });
+  });
+
+  it('an old manifest without a profile still loads', async () => {
+    // VALID_MANIFEST has no profile anywhere.
+    vi.stubGlobal('fetch', mockFetchOk(VALID_MANIFEST));
+    const result = await fetchManifest('https://example.com/catalog.json');
+    expect(result).toEqual(VALID_MANIFEST);
+    expect(result.providers.anthropic.models[0].profile).toBeUndefined();
+  });
+
+  it('rejects a malformed profile (non-numeric sampling)', async () => {
+    const bad = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            {
+              id: 'm',
+              label: 'l',
+              contextWindow: 8_192,
+              profile: { sampling: { temperature: 'hot' } },
+            },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(bad));
+    await expect(fetchManifest('https://example.com/catalog.json')).rejects.toThrow(
+      'model catalog: invalid manifest shape',
+    );
+  });
+
+  it('rejects a malformed profile (bad toolCallFormat enum)', async () => {
+    const bad = {
+      version: 2,
+      updatedAt: 'x',
+      providers: {
+        'openai-compat': {
+          models: [
+            { id: 'm', label: 'l', contextWindow: 8_192, profile: { toolCallFormat: 'grpc' } },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', mockFetchOk(bad));
+    await expect(fetchManifest('https://example.com/catalog.json')).rejects.toThrow(
+      'model catalog: invalid manifest shape',
+    );
   });
 });
 

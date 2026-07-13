@@ -5,6 +5,7 @@ import type { ChannelFilterConfig, ChannelPlatformConfig } from '@ethosagent/saf
 import { detectSecrets } from '@ethosagent/safety-redact';
 import { REF_TO_ENV } from '@ethosagent/storage-fs';
 import type {
+  ModelProfile,
   RetentionConfig,
   RetentionEventsConfig,
   SecretsResolver,
@@ -261,6 +262,20 @@ export interface EthosConfig {
   apiVersion?: string;
   // Per-personality model overrides: maps personality ID → model ID string
   modelRouting?: Record<string, string>;
+  /**
+   * §7 — per-model config profile overrides, merged OVER the catalog profile
+   * for the same `(providerId, modelId)`. Keyed by `<providerId>/<modelId>`
+   * (the model id itself may contain `/`, e.g. `openrouter/anthropic/...`).
+   * Flat-key config shape (the first path segment is the providerId, the rest
+   * is the modelId):
+   *   models.ollama/llama3.2.sampling.temperature: 0.2
+   *   models.ollama/llama3.2.sampling.topP: 0.9
+   *   models.ollama/llama3.2.sampling.topK: 40
+   *   models.ollama/llama3.2.sampling.minP: 0.05
+   *   models.ollama/llama3.2.toolCallFormat: openai
+   *   models.ollama/llama3.2.maxOutputTokens: 2048
+   */
+  models?: Record<string, ModelProfile>;
   /**
    * Fallback provider chain. When 2+ entries are present, `createLLM` wraps
    * them in a `ChainedProvider` with automatic cooldown-based failover.
@@ -609,6 +624,22 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       lines.push(`modelRouting.${id}: ${model}`);
     }
   }
+  if (config.models) {
+    for (const [modelKey, profile] of Object.entries(config.models)) {
+      if (profile.sampling) {
+        for (const key of ['temperature', 'topP', 'topK', 'minP'] as const) {
+          const v = profile.sampling[key];
+          if (v !== undefined) lines.push(`models.${modelKey}.sampling.${key}: ${v}`);
+        }
+      }
+      if (profile.toolCallFormat !== undefined) {
+        lines.push(`models.${modelKey}.toolCallFormat: ${profile.toolCallFormat}`);
+      }
+      if (profile.maxOutputTokens !== undefined) {
+        lines.push(`models.${modelKey}.maxOutputTokens: ${profile.maxOutputTokens}`);
+      }
+    }
+  }
   if (config.activeContext) {
     lines.push(`activeContext.type: ${config.activeContext.type}`);
     lines.push(`activeContext.name: ${config.activeContext.name}`);
@@ -897,6 +928,9 @@ function parseConfigYaml(src: string): EthosConfig {
   const webKv: Record<string, string> = {};
   const modelCatalogKv: Record<string, string> = {};
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
+  // §7 — models.<providerId>/<modelId>.<field>: <value>. Keyed by the full
+  // `<providerId>/<modelId>` string; field path → raw value.
+  const modelsKv: Record<string, Record<string, string>> = {};
   const logsRotationKv: Record<string, string> = {};
   const awsSecretsKv: Record<string, string> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
@@ -1067,6 +1101,19 @@ function parseConfigYaml(src: string): EthosConfig {
       modelCatalogKv[mc[1]] = mc[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // models.<providerId>/<modelId>.<field>: <value>  (§7 per-model profile).
+    // The model key is greedy `.+` so ids containing `/` and `.` round-trip;
+    // the trailing field is one of a fixed set, anchored so the split is
+    // unambiguous.
+    const mdl = line.match(
+      /^models\.(.+)\.(sampling\.(?:temperature|topP|topK|minP)|toolCallFormat|maxOutputTokens):\s*(.+)$/,
+    );
+    if (mdl) {
+      const modelKey = mdl[1];
+      modelsKv[modelKey] ??= {};
+      modelsKv[modelKey][mdl[2]] = mdl[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // modelRouting.<personality>: <model>
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
     if (mr) {
@@ -1229,6 +1276,7 @@ function parseConfigYaml(src: string): EthosConfig {
           ...(modelCatalogProviders ? { providers: modelCatalogProviders } : {}),
         }
       : undefined;
+  const models = buildModelProfiles(modelsKv);
   const parsedMaxBytes = logsRotationKv.maxBytes ? Number(logsRotationKv.maxBytes) : undefined;
   const parsedMaxFiles = logsRotationKv.maxFiles ? Number(logsRotationKv.maxFiles) : undefined;
   const logsRotation =
@@ -1290,6 +1338,7 @@ function parseConfigYaml(src: string): EthosConfig {
     baseUrl: kv.baseUrl,
     apiVersion: kv.apiVersion,
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
+    models,
     activeContext,
     providers: providers.length > 0 ? providers : undefined,
     telegramToken: kv.telegramToken,
@@ -1925,6 +1974,37 @@ function buildQuickCommands(
     if (fields.type === 'exec' && fields.command) {
       result[name] = { type: 'exec', command: fields.command };
     }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * §7 — assemble per-model profile overrides from parsed flat keys. Numeric
+ * fields are dropped when non-finite; `toolCallFormat` is dropped unless it is
+ * a known enum value. A model key with no valid fields is omitted.
+ */
+function buildModelProfiles(
+  kv: Record<string, Record<string, string>>,
+): Record<string, ModelProfile> | undefined {
+  const result: Record<string, ModelProfile> = {};
+  for (const [modelKey, fields] of Object.entries(kv)) {
+    const profile: ModelProfile = {};
+    const sampling: Record<string, number> = {};
+    for (const key of ['temperature', 'topP', 'topK', 'minP'] as const) {
+      const raw = fields[`sampling.${key}`];
+      if (raw === undefined) continue;
+      const n = Number(raw);
+      if (Number.isFinite(n)) sampling[key] = n;
+    }
+    if (Object.keys(sampling).length > 0) profile.sampling = sampling;
+    if (fields.toolCallFormat === 'openai' || fields.toolCallFormat === 'text-xml') {
+      profile.toolCallFormat = fields.toolCallFormat;
+    }
+    if (fields.maxOutputTokens !== undefined) {
+      const n = Number(fields.maxOutputTokens);
+      if (Number.isFinite(n)) profile.maxOutputTokens = n;
+    }
+    if (Object.keys(profile).length > 0) result[modelKey] = profile;
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }

@@ -17,6 +17,7 @@ import type {
   WiringProfile,
 } from './index';
 import type { LoadPluginsResult } from './load-plugins';
+import { lookupProfile, mergeModelProfile } from './model-catalog';
 import type { WiringContext } from './types';
 
 export interface BuildAgentLoopDeps {
@@ -379,6 +380,16 @@ export async function buildAgentLoop(
   const activeMcpPolicy = personalities.getMcpPolicy(activePerson.id);
   const workingDir = wiringCtx.workingDir;
 
+  // §7 — resolve the primary model's effective sampling profile (config
+  // override OVER catalog) and thread it into the loop. streamStep applies each
+  // value only when the per-call RunOptions value is undefined, so precedence is
+  // per-call > config override > catalog > provider default. No profile →
+  // undefined → no defaults applied (behavior byte-identical to today).
+  const modelSampling = mergeModelProfile(
+    lookupProfile(config.provider, config.model),
+    config.models?.[`${config.provider}/${config.model}`],
+  )?.sampling;
+
   const loop = new AgentLoop({
     llm,
     tools,
@@ -392,6 +403,7 @@ export async function buildAgentLoop(
     attachmentCache: infra.capabilityBackends.attachmentCache,
     dataDir,
     modelRouting: config.modelRouting,
+    ...(modelSampling ? { modelSampling } : {}),
     memoryProviders: memoryProviderMap,
     safety,
     documentExtractors,

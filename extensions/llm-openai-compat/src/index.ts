@@ -29,6 +29,9 @@ export interface OpenAICompatProviderConfig {
   baseUrl: string;
   maxContextTokens?: number;
   toolCallFormat?: 'openai' | 'text-xml';
+  /** §7 — default output-token cap applied when the completion does not set
+   *  `maxTokens`. A per-call `maxTokens` always wins. */
+  maxOutputTokens?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +244,12 @@ export class OpenAICompatProvider implements LLMProvider {
   private readonly client: OpenAI;
   private readonly gemini: boolean;
   private readonly azure: boolean;
-  private readonly toolCallFormat: 'openai' | 'text-xml';
+  /** Effective tool-call transport (§7 profile / config). Public for
+   *  observability + wiring tests; defaults to `'openai'`. */
+  readonly toolCallFormat: 'openai' | 'text-xml';
+  /** §7 profile output-token default; undefined when unset. Public for
+   *  observability + wiring tests. */
+  readonly maxOutputTokens?: number;
 
   constructor(config: OpenAICompatProviderConfig) {
     this.name = config.name;
@@ -250,6 +258,7 @@ export class OpenAICompatProvider implements LLMProvider {
     this.gemini = isGeminiEndpoint(config.baseUrl);
     this.azure = config.baseUrl.includes('azure.com');
     this.toolCallFormat = config.toolCallFormat ?? 'openai';
+    this.maxOutputTokens = config.maxOutputTokens;
 
     const baseURL = this.azure
       ? `${config.baseUrl.replace(/\/$/, '')}/openai/deployments/${config.model}`
@@ -272,10 +281,22 @@ export class OpenAICompatProvider implements LLMProvider {
     tools: ToolDefinitionLite[],
     options: CompletionOptions,
   ): AsyncIterable<CompletionChunk> {
-    const params = await buildChatCompletionsParamsAsync(messages, tools, options, this.model, {
-      gemini: this.gemini,
-      countTokens: (msgs) => this.countTokens(msgs),
-    });
+    // §7 — apply the profile's output-token default only when the caller did
+    // not set maxTokens (a per-call maxTokens always wins).
+    const effectiveOptions: CompletionOptions =
+      options.maxTokens === undefined && this.maxOutputTokens !== undefined
+        ? { ...options, maxTokens: this.maxOutputTokens }
+        : options;
+    const params = await buildChatCompletionsParamsAsync(
+      messages,
+      tools,
+      effectiveOptions,
+      this.model,
+      {
+        gemini: this.gemini,
+        countTokens: (msgs) => this.countTokens(msgs),
+      },
+    );
 
     if (this.toolCallFormat === 'text-xml') {
       // Strip structured tools so the model uses text-based XML tool calls
@@ -364,6 +385,11 @@ export const openaiCompatFactory: LLMProviderFactory = async ({
     // so a small local model reports its real window to compaction instead of
     // the 128k default. Absent → the provider default still applies.
     ...(typeof cfg.maxContextTokens === 'number' ? { maxContextTokens: cfg.maxContextTokens } : {}),
+    // §7 — provider-facing profile fields threaded by wiring. Absent → defaults.
+    ...(cfg.toolCallFormat === 'openai' || cfg.toolCallFormat === 'text-xml'
+      ? { toolCallFormat: cfg.toolCallFormat }
+      : {}),
+    ...(typeof cfg.maxOutputTokens === 'number' ? { maxOutputTokens: cfg.maxOutputTokens } : {}),
   });
 };
 

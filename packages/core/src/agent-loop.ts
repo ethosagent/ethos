@@ -17,6 +17,7 @@ import type {
 } from '@ethosagent/types';
 import type { IdenticalStreak } from './agent-loop/budgets';
 import { checkTurnBudgets, updateIdenticalStreak } from './agent-loop/budgets';
+import { applySamplingDefaults, type ModelSamplingDefaults } from './agent-loop/sampling';
 import { assembleContext } from './agent-loop/stages/context-assembly';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
 import { streamStep } from './agent-loop/stages/stream-step';
@@ -96,6 +97,7 @@ export interface AgentLoopConfig {
   observability?: AgentLoopObservability;
   // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
   modelRouting?: Record<string, string>;
+  modelSampling?: ModelSamplingDefaults; // §7 — applied when the per-call value is unset
   /**
    * Per-personality memory provider registry. Maps provider names ('markdown',
    * 'vector', plugin-registered names) to factory functions. When a personality
@@ -290,6 +292,7 @@ export class AgentLoop {
   private readonly maxConsecutiveIdenticalCalls: number;
   private readonly streamingTimeoutMs: number;
   private readonly modelRouting: Record<string, string>;
+  private readonly modelSampling?: AgentLoopConfig['modelSampling'];
   private readonly memoryProviders: Map<
     string,
     (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
@@ -344,6 +347,7 @@ export class AgentLoop {
     this.maxConsecutiveIdenticalCalls = config.options?.maxConsecutiveIdenticalCalls ?? 5;
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 600_000;
     this.modelRouting = config.modelRouting ?? {};
+    this.modelSampling = config.modelSampling;
     this.memoryProviders = config.memoryProviders ?? new Map();
     if (config.storage) this.storage = config.storage;
     if (config.attachmentCache) this.attachmentCache = config.attachmentCache;
@@ -612,12 +616,8 @@ export class AgentLoop {
           abortSignal,
           turnCount,
           watcherTap,
-          opts: {
-            temperature: opts.temperature,
-            topP: opts.topP,
-            maxCompletionTokens: opts.maxCompletionTokens,
-            seed: opts.seed,
-          },
+          // §7 — per-call sampling wins; profile defaults fill the gaps.
+          opts: applySamplingDefaults(opts, this.modelSampling),
         },
         tierEscalationRef,
       );

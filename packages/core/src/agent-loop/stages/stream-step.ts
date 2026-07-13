@@ -88,6 +88,8 @@ export interface StreamStepContext {
     topP?: number;
     maxCompletionTokens?: number;
     seed?: number;
+    /** Provider-namespaced escape hatch (§7 carries topK/minP here). */
+    providerOptions?: Record<string, Record<string, unknown>>;
   };
 }
 
@@ -198,6 +200,7 @@ export async function* streamStep(
         ? { maxTokens: ctx.opts.maxCompletionTokens }
         : {}),
       ...(ctx.opts.seed !== undefined ? { seed: ctx.opts.seed } : {}),
+      ...(ctx.opts.providerOptions ? { providerOptions: ctx.opts.providerOptions } : {}),
     });
 
     for await (const chunk of stream) {

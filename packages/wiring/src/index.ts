@@ -21,6 +21,7 @@ import type {
   LLMProvider,
   Logger,
   MemoryProvider,
+  ModelProfile,
   SecretsResolver,
   SessionStore,
   Storage,
@@ -34,7 +35,7 @@ import { buildWiringContext } from './build-context';
 import { buildInfrastructure } from './build-infrastructure';
 import { composeAllTools } from './compose-tools';
 import { loadPlugins } from './load-plugins';
-import { lookupContextWindow } from './model-catalog';
+import { lookupContextWindow, lookupProfile, mergeModelProfile } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 import { registerBuiltinProviders } from './register-builtin-providers';
 import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
@@ -77,6 +78,13 @@ export interface WiringConfig {
   apiVersion?: string;
   /** Maps personality ID → model ID for per-personality model overrides. */
   modelRouting?: Record<string, string>;
+  /**
+   * §7 — per-model profile overrides, keyed by `<providerId>/<modelId>`. Merged
+   * OVER the catalog `profile` at provider construction (override wins). Threads
+   * `toolCallFormat`/`maxOutputTokens` to the provider and sampling defaults to
+   * the loop.
+   */
+  models?: Record<string, ModelProfile>;
   /** Anthropic key rotation pool. Empty / absent = single-key provider. */
   rotationKeys?: RotationKey[];
   /**
@@ -492,10 +500,25 @@ async function createLLMFromRegistry(
     // window to compaction instead of the 128k default. A catalog miss leaves
     // the field absent → the provider default still applies (no crash).
     const contextWindow = lookupContextWindow(cfg.provider, cfg.model);
+    // §7 — resolve the effective per-model profile (config override OVER catalog)
+    // and thread its provider-facing fields (toolCallFormat, maxOutputTokens)
+    // into the factory config, next to maxContextTokens. Sampling defaults are
+    // handled at the loop (see resolveModelProfile / buildAgentLoop). No profile
+    // → no fields injected → behavior byte-identical to today.
+    const profile = mergeModelProfile(
+      lookupProfile(cfg.provider, cfg.model),
+      config.models?.[`${cfg.provider}/${cfg.model}`],
+    );
     const provider = await factory({
       config: {
         ...(cfg as unknown as Record<string, unknown>),
         ...(contextWindow !== undefined ? { maxContextTokens: contextWindow } : {}),
+        ...(profile?.toolCallFormat !== undefined
+          ? { toolCallFormat: profile.toolCallFormat }
+          : {}),
+        ...(profile?.maxOutputTokens !== undefined
+          ? { maxOutputTokens: profile.maxOutputTokens }
+          : {}),
       },
       secrets: config.secretsResolver ?? secrets,
       logger: log,

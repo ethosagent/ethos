@@ -1,5 +1,5 @@
 import { safeFetch } from '@ethosagent/safety-network';
-import type { ModelCatalogManifest, Storage } from '@ethosagent/types';
+import type { ModelCatalogManifest, ModelEntry, Storage } from '@ethosagent/types';
 import { MODEL_CATALOG, type ModelCatalogEntry } from './model-catalog';
 
 export interface LoadModelCatalogOptions {
@@ -52,8 +52,41 @@ function isValidManifest(obj: unknown): boolean {
       )
         return false;
       if (entry.default !== undefined && typeof entry.default !== 'boolean') return false;
+      if (entry.profile !== undefined && !isValidProfile(entry.profile)) return false;
     }
   }
+  return true;
+}
+
+/**
+ * Structurally validate an optional per-model `profile` (§7). Rejects a
+ * malformed profile (non-numeric sampling, bad toolCallFormat, non-numeric
+ * maxOutputTokens) but treats an absent profile as valid — old manifests
+ * without a profile still load. Unknown keys are tolerated (dropped at
+ * construction), matching the loader's forward-compatibility posture.
+ */
+function isValidProfile(obj: unknown): boolean {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const p = obj as Record<string, unknown>;
+  if (p.sampling !== undefined) {
+    if (typeof p.sampling !== 'object' || p.sampling === null) return false;
+    const s = p.sampling as Record<string, unknown>;
+    for (const key of ['temperature', 'topP', 'topK', 'minP']) {
+      const v = s[key];
+      if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v))) return false;
+    }
+  }
+  if (
+    p.toolCallFormat !== undefined &&
+    p.toolCallFormat !== 'openai' &&
+    p.toolCallFormat !== 'text-xml'
+  )
+    return false;
+  if (
+    p.maxOutputTokens !== undefined &&
+    (typeof p.maxOutputTokens !== 'number' || !Number.isFinite(p.maxOutputTokens))
+  )
+    return false;
   return true;
 }
 
@@ -94,10 +127,7 @@ export async function writeCachedManifest(
  * Convert the bundled MODEL_CATALOG array to the manifest shape.
  */
 export function bundledToManifest(): ModelCatalogManifest {
-  const providers: Record<
-    string,
-    { models: Array<{ id: string; label: string; contextWindow: number; default?: boolean }> }
-  > = {};
+  const providers: Record<string, { models: ModelEntry[] }> = {};
   for (const entry of MODEL_CATALOG) {
     const key =
       entry.providerId === 'anthropic'
@@ -106,12 +136,13 @@ export function bundledToManifest(): ModelCatalogManifest {
           ? 'azure'
           : 'openai-compat';
     if (!providers[key]) providers[key] = { models: [] };
-    const model: { id: string; label: string; contextWindow: number; default?: boolean } = {
+    const model: ModelEntry = {
       id: entry.modelId,
       label: entry.label,
       contextWindow: entry.contextWindow,
     };
     if (entry.default) model.default = true;
+    if (entry.profile) model.profile = entry.profile;
     providers[key].models.push(model);
   }
   return { version: 1, updatedAt: new Date().toISOString(), providers };
@@ -190,6 +221,7 @@ export function manifestToEntries(manifest: ModelCatalogManifest): ModelCatalogE
         contextWindow: model.contextWindow,
       };
       if (model.default) entry.default = true;
+      if (model.profile) entry.profile = model.profile;
       entries.push(entry);
     }
   }

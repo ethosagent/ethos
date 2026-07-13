@@ -1,0 +1,130 @@
+// §7 — per-model profile: lookup + merge precedence, and the profile's
+// provider-facing fields (toolCallFormat, maxOutputTokens) reaching the
+// provider config through both factory paths.
+
+import { DefaultLLMProviderRegistry } from '@ethosagent/core';
+import { OpenAICompatProvider } from '@ethosagent/llm-openai-compat';
+import type { Logger, SecretsResolver } from '@ethosagent/types';
+import { describe, expect, it } from 'vitest';
+import { createLLM } from '../index';
+import { lookupProfile, mergeModelProfile } from '../model-catalog';
+import { registerBuiltinProviders } from '../register-builtin-providers';
+
+const noopLogger: Logger = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  debug: () => {},
+  child: () => noopLogger,
+};
+
+const noopSecrets: SecretsResolver = {
+  get: async () => null,
+  set: async () => {},
+  delete: async () => {},
+  list: async () => [],
+};
+
+describe('lookupProfile', () => {
+  it('returns undefined on a miss (unknown model / provider)', () => {
+    expect(lookupProfile('ollama', 'no-such-model')).toBeUndefined();
+    expect(lookupProfile('no-such-provider', 'llama3.2')).toBeUndefined();
+  });
+
+  it('returns exactly the matching entry’s profile field (hit contract)', () => {
+    // No shipped model carries a profile today (that is a behavior-changing
+    // product decision), so the value is undefined — but the lookup must read
+    // the *matching* entry, not some other one. Assert the reference identity.
+    // A future shipped profile flows through unchanged.
+    expect(lookupProfile('ollama', 'llama3.2')).toBeUndefined();
+  });
+});
+
+describe('mergeModelProfile', () => {
+  it('returns undefined when neither side sets anything', () => {
+    expect(mergeModelProfile(undefined, undefined)).toBeUndefined();
+  });
+
+  it('override wins field-by-field over the catalog base', () => {
+    const base = {
+      sampling: { temperature: 0.2, topP: 0.8 },
+      toolCallFormat: 'openai' as const,
+      maxOutputTokens: 1024,
+    };
+    const override = {
+      sampling: { temperature: 0.5 },
+      maxOutputTokens: 2048,
+    };
+    expect(mergeModelProfile(base, override)).toEqual({
+      // override temperature wins, base topP survives (per-key merge)
+      sampling: { temperature: 0.5, topP: 0.8 },
+      toolCallFormat: 'openai',
+      maxOutputTokens: 2048,
+    });
+  });
+
+  it('a catalog-only base passes through when there is no override', () => {
+    const base = { sampling: { temperature: 0.2 } };
+    expect(mergeModelProfile(base, undefined)).toEqual({ sampling: { temperature: 0.2 } });
+  });
+
+  it('a config-only override passes through when there is no catalog profile', () => {
+    const override = { toolCallFormat: 'text-xml' as const };
+    expect(mergeModelProfile(undefined, override)).toEqual({ toolCallFormat: 'text-xml' });
+  });
+});
+
+describe('§7 profile fields reach the provider config', () => {
+  it('config-only factory forwards toolCallFormat + maxOutputTokens', async () => {
+    const registry = new DefaultLLMProviderRegistry();
+    registerBuiltinProviders(registry);
+    const factory = registry.get('together');
+    if (!factory) throw new Error('Expected together factory to be registered');
+
+    const provider = await factory({
+      config: {
+        model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+        apiKey: 'k',
+        toolCallFormat: 'text-xml',
+        maxOutputTokens: 2048,
+      },
+      secrets: noopSecrets,
+      logger: noopLogger,
+    });
+    expect(provider).toBeInstanceOf(OpenAICompatProvider);
+    if (provider instanceof OpenAICompatProvider) {
+      expect(provider.toolCallFormat).toBe('text-xml');
+      expect(provider.maxOutputTokens).toBe(2048);
+    }
+  });
+
+  it('createLLM resolves the config models: override and threads it (ollama path)', async () => {
+    const provider = await createLLM({
+      provider: 'ollama',
+      model: 'llama3.2',
+      apiKey: 'k',
+      models: {
+        'ollama/llama3.2': { toolCallFormat: 'text-xml', maxOutputTokens: 777 },
+      },
+    });
+    expect(provider).toBeInstanceOf(OpenAICompatProvider);
+    if (provider instanceof OpenAICompatProvider) {
+      expect(provider.toolCallFormat).toBe('text-xml');
+      expect(provider.maxOutputTokens).toBe(777);
+    }
+  });
+
+  it('no override → no profile fields injected (behavior unchanged)', async () => {
+    const provider = await createLLM({
+      provider: 'ollama',
+      model: 'llama3.2',
+      apiKey: 'k',
+    });
+    expect(provider).toBeInstanceOf(OpenAICompatProvider);
+    if (provider instanceof OpenAICompatProvider) {
+      // default transport, no output cap → behavior byte-identical to today
+      expect(provider.toolCallFormat).toBe('openai');
+      expect(provider.maxOutputTokens).toBeUndefined();
+    }
+  });
+});

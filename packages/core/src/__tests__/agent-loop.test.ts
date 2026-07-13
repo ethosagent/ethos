@@ -120,6 +120,71 @@ describe('AgentLoop', () => {
     expect(capturedOpts[0]?.modelOverride).toBeUndefined();
   });
 
+  // §7 — per-model sampling profile precedence.
+  describe('modelSampling profile defaults', () => {
+    it('applies the profile temperature when the caller sets nothing', async () => {
+      const capturedOpts: CompletionOptions[] = [];
+      const llm = makeMockLLM(['ok'], (opts) => capturedOpts.push(opts));
+      const loop = new AgentLoop({
+        llm,
+        safety: createTestSafety(),
+        modelSampling: { temperature: 0.2 },
+      });
+      await collect(loop.run('hi'));
+      expect(capturedOpts[0]?.temperature).toBe(0.2);
+    });
+
+    it('per-call temperature wins over the profile default', async () => {
+      const capturedOpts: CompletionOptions[] = [];
+      const llm = makeMockLLM(['ok'], (opts) => capturedOpts.push(opts));
+      const loop = new AgentLoop({
+        llm,
+        safety: createTestSafety(),
+        modelSampling: { temperature: 0.2 },
+      });
+      await collect(loop.run('hi', { temperature: 0.9 }));
+      expect(capturedOpts[0]?.temperature).toBe(0.9);
+    });
+
+    it('an already-merged config override value is what the profile carries', async () => {
+      // Wiring merges config override OVER catalog before it reaches the loop,
+      // so the loop sees 0.5; a per-call 0.9 still wins, none falls back to 0.5.
+      const capturedOpts: CompletionOptions[] = [];
+      const llm = makeMockLLM(['ok', 'ok'], (opts) => capturedOpts.push(opts));
+      const loop = new AgentLoop({
+        llm,
+        safety: createTestSafety(),
+        modelSampling: { temperature: 0.5 },
+      });
+      await collect(loop.run('hi', { temperature: 0.9 }));
+      expect(capturedOpts[0]?.temperature).toBe(0.9);
+      await collect(loop.run('hi again'));
+      expect(capturedOpts[1]?.temperature).toBe(0.5);
+    });
+
+    it('carries topK/minP on providerOptions (not CompletionOptions fields)', async () => {
+      const capturedOpts: CompletionOptions[] = [];
+      const llm = makeMockLLM(['ok'], (opts) => capturedOpts.push(opts));
+      const loop = new AgentLoop({
+        llm,
+        safety: createTestSafety(),
+        modelSampling: { topK: 40, minP: 0.05 },
+      });
+      await collect(loop.run('hi'));
+      expect(capturedOpts[0]?.providerOptions?.['openai-compat']).toEqual({ topK: 40, minP: 0.05 });
+    });
+
+    it('no profile → no sampling defaults injected (byte-identical to today)', async () => {
+      const capturedOpts: CompletionOptions[] = [];
+      const llm = makeMockLLM(['ok'], (opts) => capturedOpts.push(opts));
+      const loop = new AgentLoop({ llm, safety: createTestSafety() });
+      await collect(loop.run('hi'));
+      expect(capturedOpts[0]?.temperature).toBeUndefined();
+      expect(capturedOpts[0]?.topP).toBeUndefined();
+      expect(capturedOpts[0]?.providerOptions).toBeUndefined();
+    });
+  });
+
   it('passes filtered tool definitions when personality has a toolset', async () => {
     const capturedTools: unknown[][] = [];
     const llm: LLMProvider = {
