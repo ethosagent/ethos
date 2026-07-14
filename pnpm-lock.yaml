@@ -168,6 +168,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.96.0
         version: 0.96.0(zod@4.4.3)
+      '@aws-sdk/client-s3':
+        specifier: ^3.800.0
+        version: 3.1061.0
       '@aws-sdk/client-secrets-manager':
         specifier: ^3.800.0
         version: 3.1061.0
@@ -207,6 +210,9 @@ importers:
       ink:
         specifier: ^7.0.0
         version: 7.0.5(@types/react@19.2.16)(react@19.2.6)
+      jose:
+        specifier: ^6.2.3
+        version: 6.2.3
       mammoth:
         specifier: ^1.8.0
         version: 1.12.0
