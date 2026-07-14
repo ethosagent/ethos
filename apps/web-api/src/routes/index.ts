@@ -208,9 +208,20 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 
   // Codex device auth — unauthenticated (user may not be onboarded yet).
   // The flow is safe to expose: it requires explicit user action in the browser.
-  // WEB-007: rate-limit the mount so an unauthenticated client cannot spawn
-  // unbounded background pollers / outbound fetch fan-out.
-  app.use('/auth/codex/*', rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false }));
+  // WEB-007: rate-limit device-code strictly — it spawns background pollers /
+  // outbound fetch fan-out. Status is a cheap in-memory lookup the onboarding
+  // UI polls repeatedly, so it gets a poll-tolerant limiter (1 token per 4s
+  // sustains the UI's polling; short lockout for genuine hammering).
+  app.use('/auth/codex/device-code', rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false }));
+  app.use(
+    '/auth/codex/status',
+    rateLimitMiddleware({
+      maxTokens: 30,
+      refillMs: 4_000,
+      lockoutMs: 60_000,
+      trustProxy: opts.trustProxy ?? false,
+    }),
+  );
   app.route('/auth/codex', codexAuthRoutes({ secrets: opts.secrets }));
 
   // RPC + SSE auth: dual-auth (cookie OR bearer) when an api-key store

@@ -21,6 +21,16 @@ type DeviceAuthState =
   | { phase: 'authorized' }
   | { phase: 'error'; message: string };
 
+// Seconds to wait after a 429: Retry-After header, else the first integer in
+// the body's detail string, else 30.
+function parseRetryAfter(res: Response, detail: string | undefined): number {
+  const header = Number.parseInt(res.headers.get('Retry-After') ?? '', 10);
+  if (Number.isFinite(header) && header > 0) return header;
+  const fromDetail = Number.parseInt(detail?.match(/\d+/)?.[0] ?? '', 10);
+  if (Number.isFinite(fromDetail) && fromDetail > 0) return fromDetail;
+  return 30;
+}
+
 function DeviceAuthFlow({
   catalog,
   onNext,
@@ -29,17 +39,41 @@ function DeviceAuthFlow({
   onNext: (patch: Partial<WizardAnswers>) => void;
 }) {
   const [state, setState] = useState<DeviceAuthState>({ phase: 'loading' });
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [retryIn, setRetryIn] = useState<number | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function clearPoll() {
     if (intervalRef.current !== null) {
-      clearInterval(intervalRef.current);
+      clearTimeout(intervalRef.current);
       intervalRef.current = null;
     }
+    if (countdownRef.current !== null) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+  }
+
+  function startCountdown(seconds: number) {
+    if (countdownRef.current !== null) clearInterval(countdownRef.current);
+    setRetryIn(seconds);
+    countdownRef.current = setInterval(() => {
+      setRetryIn((prev) => {
+        if (prev === null || prev <= 1) {
+          if (countdownRef.current !== null) {
+            clearInterval(countdownRef.current);
+            countdownRef.current = null;
+          }
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1_000);
   }
 
   async function startDeviceAuth() {
     setState({ phase: 'loading' });
+    setRetryIn(null);
     clearPoll();
     try {
       const res = await fetch('/auth/codex/device-code', { method: 'POST' });
@@ -53,42 +87,53 @@ function DeviceAuthFlow({
         setState({ phase: 'error', message: data.error ?? 'Failed to start device auth.' });
         return;
       }
+      const sessionToken = data.sessionToken;
       setState({
         phase: 'awaiting_code',
         userCode: data.userCode,
-        sessionToken: data.sessionToken,
+        sessionToken,
       });
 
-      intervalRef.current = setInterval(() => {
-        void (async () => {
-          try {
-            const statusRes = await fetch(
-              `/auth/codex/status?session=${encodeURIComponent(data.sessionToken ?? '')}`,
-            );
-            const statusData = (await statusRes.json()) as {
-              ok: boolean;
-              authorized?: boolean;
-              error?: string;
-            };
-            if (!statusData.ok && statusData.error) {
-              clearPoll();
-              setState({ phase: 'error', message: statusData.error });
-              return;
-            }
-            if (statusData.authorized) {
-              clearPoll();
-              setState({ phase: 'authorized' });
-              onNext({ apiKey: '', models: [] });
-            }
-          } catch (err) {
-            clearPoll();
-            setState({
-              phase: 'error',
-              message: err instanceof Error ? err.message : 'Status check failed.',
-            });
+      const poll = async () => {
+        try {
+          const statusRes = await fetch(
+            `/auth/codex/status?session=${encodeURIComponent(sessionToken)}`,
+          );
+          const statusData = (await statusRes.json()) as {
+            ok: boolean;
+            authorized?: boolean;
+            error?: string;
+            code?: string;
+            detail?: string;
+          };
+          if (statusData.code === 'rate_limited') {
+            // Transient — wait out the server-indicated window, then resume.
+            const retryAfter = parseRetryAfter(statusRes, statusData.detail);
+            startCountdown(retryAfter);
+            intervalRef.current = setTimeout(() => void poll(), retryAfter * 1_000);
+            return;
           }
-        })();
-      }, 4_000);
+          if (!statusData.ok && statusData.error) {
+            clearPoll();
+            setState({ phase: 'error', message: statusData.error });
+            return;
+          }
+          if (statusData.authorized) {
+            clearPoll();
+            setState({ phase: 'authorized' });
+            onNext({ apiKey: '', models: [] });
+            return;
+          }
+          intervalRef.current = setTimeout(() => void poll(), 8_000);
+        } catch (err) {
+          clearPoll();
+          setState({
+            phase: 'error',
+            message: err instanceof Error ? err.message : 'Status check failed.',
+          });
+        }
+      };
+      intervalRef.current = setTimeout(() => void poll(), 8_000);
     } catch (err) {
       setState({
         phase: 'error',
@@ -152,6 +197,11 @@ function DeviceAuthFlow({
             </button>
           </p>
           <div className="onboarding-validate-success">Waiting for authorization…</div>
+          {retryIn !== null && (
+            <div style={{ fontSize: 12, color: 'var(--ethos-text-dim)', marginTop: 8 }}>
+              Server rate limit hit — next check in {retryIn}s
+            </div>
+          )}
         </div>
       )}
 
