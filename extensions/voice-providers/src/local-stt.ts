@@ -28,13 +28,17 @@ export class LocalSttProvider implements SttProvider {
     };
   }
 
-  async transcribe(audioPath: string): Promise<string> {
+  async transcribe(
+    audioPath: string,
+    opts?: { language?: string; signal?: AbortSignal },
+  ): Promise<string> {
     return transcribeOpenAiCompat({
       baseUrl: this.baseUrl,
       apiKey: this.apiKey,
       model: this.model,
       audioPath,
       label: 'Local STT',
+      signal: opts?.signal,
     });
   }
 }

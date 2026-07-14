@@ -81,6 +81,74 @@ describe('openai-compat shared transport', () => {
       expect(init.headers as Record<string, string>).not.toHaveProperty('Authorization');
     });
 
+    it.each([
+      ['clip.webm', 'audio/webm'],
+      ['clip.wav', 'audio/wav'],
+      ['clip.mp3', 'audio/mpeg'],
+      ['clip.ogg', 'audio/ogg'],
+    ])('sends %s as filename with content-type %s', async (name, mime) => {
+      const path = join(dir, name);
+      await writeFile(path, Buffer.from([1, 2, 3, 4]));
+
+      const fetchMock = vi.fn(
+        async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ text: 'ok' })),
+      );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await transcribeOpenAiCompat({
+        baseUrl: 'http://localhost:8000/v1',
+        model: 'whisper-large-v3',
+        audioPath: path,
+        label: 'Local STT',
+      });
+
+      const [, init] = fetchMock.mock.calls[0];
+      const file = (init.body as FormData).get('file') as File;
+      expect(file.name).toBe(name);
+      expect(file.type).toBe(mime);
+    });
+
+    it('falls back to octet-stream + "audio" filename for an unknown extension', async () => {
+      const path = join(dir, 'clip.xyz');
+      await writeFile(path, Buffer.from([1, 2, 3, 4]));
+
+      const fetchMock = vi.fn(
+        async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ text: 'ok' })),
+      );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await transcribeOpenAiCompat({
+        baseUrl: 'http://localhost:8000/v1',
+        model: 'whisper-large-v3',
+        audioPath: path,
+        label: 'Local STT',
+      });
+
+      const [, init] = fetchMock.mock.calls[0];
+      const file = (init.body as FormData).get('file') as File;
+      expect(file.name).toBe('audio');
+      expect(file.type).toBe('application/octet-stream');
+    });
+
+    it('threads an abort signal into fetch and rejects when aborted', async () => {
+      const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+        if (init.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        return new Response(JSON.stringify({ text: 'ok' }));
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await expect(
+        transcribeOpenAiCompat({
+          baseUrl: 'http://localhost:8000/v1',
+          model: 'whisper-large-v3',
+          audioPath,
+          label: 'Local STT',
+          signal: AbortSignal.abort(),
+        }),
+      ).rejects.toThrow(/Aborted/);
+      expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    });
+
     it('throws with the label prefix on a non-ok response', async () => {
       globalThis.fetch = vi.fn(
         async () => new Response('boom', { status: 500 }),

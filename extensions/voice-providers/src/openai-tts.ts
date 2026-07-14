@@ -30,7 +30,7 @@ export class OpenAiTtsProvider implements TtsProvider {
 
   async synthesize(
     text: string,
-    opts?: { voice?: string; speed?: number },
+    opts?: { voice?: string; speed?: number; signal?: AbortSignal },
   ): Promise<{ audio: Uint8Array; format: 'opus' | 'mp3' | 'wav' | 'pcm' }> {
     const voice = opts?.voice ?? this.defaultVoice;
     const speed = opts?.speed ?? 1.0;
@@ -43,6 +43,7 @@ export class OpenAiTtsProvider implements TtsProvider {
       input: text,
       speed,
       label: 'OpenAI TTS',
+      signal: opts?.signal,
     });
   }
 }
