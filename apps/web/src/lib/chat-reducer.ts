@@ -115,6 +115,12 @@ export interface ChatState {
   currentOp: string | null;
   /** Wall-clock timestamp when the current turn started. Null when idle. */
   turnStartedAt: number | null;
+  /**
+   * Input-token count from the most recent `usage` event — the size of the
+   * context sent to the model on the last turn. Null before the first turn.
+   * Resets with the session (via `reset`), not per turn.
+   */
+  contextTokens: number | null;
 }
 
 export const initialChatState: ChatState = {
@@ -127,6 +133,7 @@ export const initialChatState: ChatState = {
   lastStreamEventAt: null,
   currentOp: null,
   turnStartedAt: null,
+  contextTokens: null,
 };
 
 /**
@@ -402,9 +409,12 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
     case 'run_start':
       return { ...state, turnStartedAt: now, currentOp: '\u{1F4AD} Thinking…' };
 
+    case 'usage':
+      // Track the most recent input-token count as the current context size.
+      return { ...state, contextTokens: event.inputTokens };
+
     case 'thinking_delta':
     case 'tool_progress':
-    case 'usage':
     case 'context_meta':
     case 'message_persisted':
     case 'cron.fired':

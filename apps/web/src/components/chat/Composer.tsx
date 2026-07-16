@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Dropdown, Input } from 'antd';
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { AttachmentPreview } from '../../lib/attachments';
+import { formatContextTokens } from '../../lib/format-context-tokens';
 import { rpc } from '../../rpc';
 import { VoiceButton } from './VoiceButton';
 
@@ -17,6 +18,9 @@ export interface ComposerProps {
   onAttach?: (files: File[]) => void;
   onRemoveAttachment?: (localId: string) => void;
   onGoalRun?: () => void;
+  /** Input-token count from the last turn — the current context size. Renders
+   *  nothing when null/0 (before the first turn). */
+  contextTokens?: number | null;
 }
 
 export function Composer({
@@ -30,6 +34,7 @@ export function Composer({
   onAttach,
   onRemoveAttachment,
   onGoalRun,
+  contextTokens,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
@@ -416,6 +421,11 @@ export function Composer({
               </button>
             </Dropdown>
             <div className="composer-actions-spacer" />
+            {contextTokens ? (
+              <span className="composer-context-meter">
+                {formatContextTokens(contextTokens)} tokens
+              </span>
+            ) : null}
             {voiceEnabled && (
               <VoiceButton
                 onTranscript={(t) => {

@@ -375,6 +375,7 @@ export function Chat() {
             onAttach={handleAttach}
             onRemoveAttachment={handleRemoveAttachment}
             onGoalRun={handleGoalRunDirect}
+            contextTokens={state.contextTokens}
           />
         </div>
       </div>

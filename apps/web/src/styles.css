@@ -2417,6 +2417,14 @@ textarea {
   flex: 1;
 }
 
+.composer-context-meter {
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+}
+
 /* TTS play button */
 .play-btn {
   display: inline-flex;

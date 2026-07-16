@@ -119,6 +119,8 @@ interface ChatState {
   usage: { inputTokens: number; outputTokens: number; costUsd: number };
   /** FW-1 — running max-of-turn context tokens for the status bar. */
   contextTokens: number;
+  /** Latest turn's input tokens = current context size. Drives the prompt chip. */
+  contextInputTokens: number;
   startedAt: number;
   verbosity: Verbosity;
   busyMode: BusyInputMode;
@@ -181,6 +183,29 @@ function renderStatusBarLine(state: ChatState): void {
   });
   const color = colorForThreshold(bar.threshold);
   out(`${c.dim}⚕ ${color}${bar.text}${c.reset}\n`);
+}
+
+// Compact formatter for the context-size chip. Mirrors
+// apps/web/src/lib/format-context-tokens.ts exactly so web + CLI read identically.
+//   < 1000       → exact           (820)
+//   >= 1000      → one-decimal k   (12.4k), trailing `.0` trimmed (12k)
+//   >= 1_000_000 → one-decimal M   (1.2M),  trailing `.0` trimmed (2M)
+function formatContextTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${trimTrailingZero((n / 1000).toFixed(1))}k`;
+  return `${trimTrailingZero((n / 1_000_000).toFixed(1))}M`;
+}
+
+function trimTrailingZero(s: string): string {
+  return s.endsWith('.0') ? s.slice(0, -2) : s;
+}
+
+// The interactive input prompt. Prepends a muted context-size chip once the
+// first turn has reported usage; before that the prompt is unchanged.
+function promptString(state: ChatState): string {
+  const base = `${c.cyan}You${c.reset} > `;
+  if (state.contextInputTokens <= 0) return base;
+  return `${c.dim}[${formatContextTokens(state.contextInputTokens)}]${c.reset} ${base}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +340,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     personalityId,
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     contextTokens: 0,
+    contextInputTokens: 0,
     startedAt: Date.now(),
     verbosity: config.displayVerbosity ?? (config.verbose ? 'verbose' : 'default'),
     busyMode: config.displayBusyInputMode ?? 'interrupt',
@@ -349,7 +375,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       rl.off('line', onLine);
       unsubscribe();
       state.awaitingClarify = false;
-      rl.setPrompt(`${c.cyan}You${c.reset} > `);
+      rl.setPrompt(promptString(state));
       if (!state.abort) rl.prompt();
     };
     const onLine = (raw: string) => {
@@ -491,7 +517,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
   // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
   // input can be dispatched on busyMode.
-  rl.setPrompt(`${c.cyan}You${c.reset} > `);
+  rl.setPrompt(promptString(state));
   rl.prompt();
 
   rl.on('line', (raw) => {
@@ -520,6 +546,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
               .then(() => {
                 state.draining = false;
                 if (state.verbosity !== 'quiet') renderStatusBarLine(state);
+                rl.setPrompt(promptString(state));
                 rl.prompt();
               })
               .catch((err) => {
@@ -532,7 +559,10 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
             return;
           }
           // Only re-prompt when idle; a running turn will prompt on completion.
-          if (!state.draining && !state.abort) rl.prompt();
+          if (!state.draining && !state.abort) {
+            rl.setPrompt(promptString(state));
+            rl.prompt();
+          }
         })
         .catch((err) => {
           out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
@@ -557,6 +587,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
           if (!next) {
             state.draining = false;
             if (state.verbosity !== 'quiet') renderStatusBarLine(state);
+            rl.setPrompt(promptString(state));
             rl.prompt();
             return;
           }
@@ -753,6 +784,8 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
           estimatedCostUsd: event.estimatedCostUsd,
         };
         state.contextTokens = event.inputTokens + event.outputTokens;
+        // Latest turn's input tokens = current context size (mirrors web composer).
+        state.contextInputTokens = event.inputTokens;
       }
       if (event.type === 'error') clearSpinner();
 
@@ -1034,6 +1067,7 @@ async function handleSlashCommand(
       state.sessionKey = `cli:${basename(process.cwd())}:${Date.now()}`;
       ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
       state.contextTokens = 0;
+      state.contextInputTokens = 0;
       state.startedAt = Date.now();
       out(`${c.dim}[new session started]${c.reset}\n`);
       break;

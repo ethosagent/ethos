@@ -385,12 +385,30 @@ describe('applyEvent — error and unhandled events', () => {
     const events: SseEvent[] = [
       { type: 'thinking_delta', thinking: 'planning' },
       { type: 'tool_progress', toolName: 'x', message: 'wait', audience: 'user' },
-      { type: 'usage', inputTokens: 1, outputTokens: 1, estimatedCostUsd: 0 },
       { type: 'message_persisted', messageId: 'm1', role: 'assistant' },
     ];
     let s: ChatState = initialChatState;
     for (const event of events) s = applyEvent(s, event, NOW);
     expect(s).toEqual(initialChatState);
+  });
+
+  it('usage tracks the latest inputTokens as context size and reset clears it', () => {
+    let s: ChatState = initialChatState;
+    expect(s.contextTokens).toBeNull();
+    s = applyEvent(
+      s,
+      { type: 'usage', inputTokens: 1200, outputTokens: 50, estimatedCostUsd: 0 },
+      NOW,
+    );
+    expect(s.contextTokens).toBe(1200);
+    s = applyEvent(
+      s,
+      { type: 'usage', inputTokens: 3400, outputTokens: 90, estimatedCostUsd: 0 },
+      NOW,
+    );
+    expect(s.contextTokens).toBe(3400);
+    s = applyAction(s, { type: 'reset' });
+    expect(s.contextTokens).toBeNull();
   });
 });
 
