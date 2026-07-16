@@ -1,0 +1,512 @@
+/* ── OrbitHero — text left, 3D orbital system right ────────────────────
+   Ported from plan/hero-demos/demo-final-hybrid.html (demo-2 "Orbit").
+   Theme-aware via --ethos-* tokens; the orbit core keeps dark-styled
+   internals in both themes (product vignette, like HeroTerminal).
+   Page-scoped accent re-theme rides --landing-accent (set on the page
+   root). Single easing token, animate transform/opacity/color only. */
+
+.container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 28px;
+  position: relative;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Fixed starfield canvas — sits behind every landing section (they are
+   transparent); negative z-index keeps it under the navbar and footer
+   backgrounds while staying above the page background. */
+.stars {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.hero {
+  padding: 84px 0 30px;
+}
+
+.heroGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
+  gap: 40px;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
+.heroInner {
+  position: relative;
+  padding-left: 22px;
+}
+
+.heroStripe {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  background: var(--landing-accent);
+  border-radius: 2px;
+  transition: background 0.35s var(--ifm-transition-timing-default);
+}
+
+.heroEyebrow {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  color: var(--ethos-text-secondary);
+  margin-bottom: 16px;
+}
+
+.heroTitle {
+  font-size: clamp(34px, 4.6vw, 54px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+  margin-bottom: 20px;
+  color: var(--ethos-text-primary);
+}
+
+.heroWord {
+  display: inline-block;
+  animation: heroWord 0.7s var(--ifm-transition-timing-default) both;
+  animation-delay: calc(var(--i) * 0.06s);
+  margin-right: 0.25em;
+}
+
+@keyframes heroWord {
+  from {
+    opacity: 0;
+    transform: translateY(14px) rotateX(28deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.heroSubtitle {
+  color: var(--ethos-text-secondary);
+  max-width: 560px;
+  margin-bottom: 28px;
+}
+
+.heroActions {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+
+.btnPrimary,
+.btnGhost {
+  display: inline-block;
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  text-decoration: none;
+  transition:
+    background 0.35s var(--ifm-transition-timing-default),
+    color 0.35s var(--ifm-transition-timing-default),
+    border-color 0.35s var(--ifm-transition-timing-default),
+    transform 0.35s var(--ifm-transition-timing-default);
+}
+
+.btnPrimary {
+  background: var(--landing-accent);
+  color: #0f0f0f;
+}
+.btnPrimary:hover {
+  transform: translateY(-1px);
+  text-decoration: none;
+  color: #0f0f0f;
+}
+
+.btnGhost {
+  border: 1px solid var(--ethos-border-strong);
+  color: var(--ethos-text-primary);
+}
+.btnGhost:hover {
+  border-color: var(--landing-accent);
+  color: var(--landing-accent);
+  text-decoration: none;
+}
+
+.heroMeta {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+}
+
+/* ── orbit stage ─────────────────────────────────────────────────────── */
+
+.orbitStage {
+  position: relative;
+  height: 460px;
+  min-width: 0;
+  user-select: none;
+  z-index: 1;
+}
+
+.orbitGuide {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.orbitEllipse {
+  fill: none;
+  stroke: var(--ethos-border-subtle);
+  stroke-width: 1;
+}
+
+/* Dark-styled internals in both themes — product vignette. */
+.core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 128px;
+  height: 128px;
+  margin: -64px 0 0 -64px;
+  border-radius: 50%;
+  border: 2px solid #3a3a3a;
+  background: radial-gradient(circle at 50% 42%, #191919, #101010 72%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  box-shadow: 0 0 0 6px var(--landing-core-halo);
+}
+
+.coreLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  color: #9a9a98;
+  letter-spacing: 0.04em;
+}
+
+.core::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--landing-accent);
+  opacity: 0;
+  animation: corePulse 3.4s var(--ifm-transition-timing-default) infinite;
+}
+
+@keyframes corePulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+.orbitMark {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  font: inherit;
+  color: inherit;
+  will-change: transform, opacity;
+  transform: translate(-50%, -50%);
+}
+
+/* No-JS fallback ring positions — cleared by JS before the first layout. */
+.orbitMark:nth-of-type(1) {
+  left: 50%;
+  top: 26%;
+}
+.orbitMark:nth-of-type(2) {
+  left: 85%;
+  top: 62%;
+}
+.orbitMark:nth-of-type(3) {
+  left: 15%;
+  top: 62%;
+}
+
+.orbitDisc {
+  display: block;
+  border-radius: 50%;
+  line-height: 0;
+}
+
+.recv .orbitDisc {
+  animation: recvPulse 0.7s var(--ifm-transition-timing-default);
+}
+
+@keyframes recvPulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--pulse, rgba(74, 158, 255, 0.35));
+  }
+  100% {
+    box-shadow: 0 0 0 18px rgba(0, 0, 0, 0);
+  }
+}
+
+.orbitMarkSel .orbitDisc {
+  outline: 2px solid var(--landing-accent);
+  outline-offset: 3px;
+}
+
+.orbitLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  color: var(--ethos-text-secondary);
+  letter-spacing: 0.05em;
+}
+
+.orbitMarkSel .orbitLabel {
+  color: var(--landing-accent);
+}
+
+.dispatchDot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: var(--ethos-text-tertiary);
+  opacity: 0;
+  z-index: 46;
+  pointer-events: none;
+}
+
+.toolFlight {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 9999px;
+  background: var(--ethos-bg-elevated);
+  color: var(--ethos-text-secondary);
+  padding: 2px 9px;
+  white-space: nowrap;
+  opacity: 0;
+  z-index: 48;
+  pointer-events: none;
+  transition:
+    border-color 0.3s var(--ifm-transition-timing-default),
+    color 0.3s var(--ifm-transition-timing-default);
+  will-change: transform, opacity;
+}
+
+.flightRefused {
+  color: #f87171;
+}
+
+.chipTrail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: var(--ethos-text-tertiary);
+  opacity: 0;
+  z-index: 47;
+  pointer-events: none;
+}
+
+.coreEmit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 128px;
+  height: 128px;
+  margin: -64px 0 0 -64px;
+  border-radius: 50%;
+  border: 1px solid var(--ethos-border-strong);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 45;
+}
+
+.coreEmitGo {
+  animation: coreEmit 0.9s var(--ifm-transition-timing-default);
+}
+
+@keyframes coreEmit {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+.refusedFlash .orbitDisc {
+  animation: refuseFlash 0.8s var(--ifm-transition-timing-default);
+}
+
+@keyframes refuseFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 14px rgba(0, 0, 0, 0);
+  }
+}
+
+.callCard {
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  transform: translate(-50%, 12px);
+  width: min(340px, 92%);
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 10px;
+  padding: 14px 16px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.4s var(--ifm-transition-timing-default),
+    transform 0.5s var(--ifm-transition-timing-default);
+  z-index: 60;
+}
+
+.callCardShow {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+
+.callCardHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.callCardMark {
+  line-height: 0;
+}
+
+.callCardName {
+  font-weight: 650;
+  font-size: 15px;
+  color: var(--ethos-text-primary);
+}
+
+.callCardModel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  color: var(--ethos-text-tertiary);
+  margin-left: auto;
+}
+
+.callCardTagline {
+  font-size: 13px;
+  color: var(--ethos-text-secondary);
+  margin-bottom: 10px;
+}
+
+.callCardTools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.toolChip {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 9999px;
+  padding: 2px 9px;
+  color: var(--ethos-text-secondary);
+  background: var(--ethos-bg-base);
+}
+
+.toolChipRefused {
+  opacity: 0.65;
+  border-style: dashed;
+  border-color: var(--ethos-border-strong);
+  color: var(--ethos-text-tertiary);
+}
+
+.toolChipX {
+  color: #f87171;
+}
+
+/* ── responsive ─────────────────────────────────────────────────────── */
+
+@media (max-width: 960px) {
+  .heroGrid {
+    grid-template-columns: 1fr;
+  }
+  .orbitStage {
+    height: 420px;
+  }
+}
+
+/* ── reduced motion — static ring, selection still works ────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .heroWord,
+  .core::after,
+  .coreEmitGo,
+  .recv .orbitDisc,
+  .refusedFlash .orbitDisc {
+    animation: none;
+  }
+  .heroWord {
+    opacity: 1;
+    transform: none;
+  }
+  .core::after {
+    opacity: 0;
+  }
+  .dispatchDot,
+  .toolFlight,
+  .chipTrail,
+  .coreEmit {
+    display: none;
+  }
+  .heroStripe,
+  .btnPrimary,
+  .btnGhost,
+  .toolFlight,
+  .callCard {
+    transition: none;
+  }
+}

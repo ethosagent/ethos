@@ -7,7 +7,7 @@ import rawMarkdownPlugin from './plugins/raw-markdown';
 const config: Config = {
   title: 'Ethos',
   tagline:
-    'A team of AI specialists — researcher, engineer, reviewer, coach, operator — that remember you across Slack, Telegram, and your terminal.',
+    'A team of AI specialists — researcher, engineer, reviewer — that remember you across Slack, Telegram, and your terminal.',
   favicon: 'img/favicon.svg',
 
   future: {
@@ -66,7 +66,7 @@ const config: Config = {
   // wired as a `prebuild` script in package.json — sits under static/ so
   // the standard static-asset pipeline serves them at /llms.txt and
   // /llms-full.txt with no extra config.
-  plugins: [rawMarkdownPlugin, jsonLdPlugin],
+  plugins: [(context) => rawMarkdownPlugin(context), (context) => jsonLdPlugin(context)],
 
   themeConfig: {
     // Fallback for pages that don't get a per-page card rewrite (404, opt-out).

@@ -41,7 +41,7 @@ interface PageFrontMatter {
 export default function jsonLdPlugin(
   context: LoadContext,
   options: PluginOptions = {},
-): Plugin<void> {
+): Plugin<unknown> {
   const contentDir = options.contentDir ?? 'content';
   const routeBasePath = options.routeBasePath ?? 'docs';
   const siteUrl = options.siteUrl ?? context.siteConfig.url ?? '';

@@ -33,7 +33,7 @@ interface PluginOptions {
 export default function rawMarkdownPlugin(
   _context: LoadContext,
   options: PluginOptions = {},
-): Plugin<void> {
+): Plugin<unknown> {
   const contentDir = options.contentDir ?? 'content';
   const routeBasePath = options.routeBasePath ?? 'docs';
 

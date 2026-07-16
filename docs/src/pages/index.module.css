@@ -1,615 +1,916 @@
-/* ── Landing page · DESIGN.md applied ─────────────────────────────────
-   Anti-slop rules (see DESIGN.md):
-   - No 3-column card grid (was the original layout — removed)
-   - No purple gradients (was previously --ifm-color-primary #7c3aed — removed)
-   - Hero + showcase top sections are CENTER-aligned by explicit user override
-     of the prior "no centered everything" rule (see commit history); other
-     sections (fast-paths, arch, teaser) remain left-aligned per the system.
-   - Typography does the work, not decoration
-   - Cards earn existence — fast-paths and feature rows are NOT cards
-   ─────────────────────────────────────────────────────────────────── */
+/* ── Landing page — final hybrid port ─────────────────────────────────
+   Ported from plan/hero-demos/demo-final-hybrid.html. Theme-aware via
+   the --ethos-* tokens in src/css/custom.css (dark is primary and
+   matches the reference; light stays readable). The page-wide accent
+   re-theme rides --landing-accent, set inline on the landing root when
+   an orbit selection pins a personality.
 
-/* ── Hero — centered, accent stripe leads ─────────────────────────── */
+   The `landing-fx` global class (added after mount, motion allowed)
+   gates every scroll-driven 3D treatment; without it the page renders
+   as a plain readable document — that is also the no-JS and
+   reduced-motion fallback. Animate transform/opacity/color only. */
 
-.hero {
-  background: var(--ethos-bg-base);
-  padding: 96px 32px 64px;
-  border-bottom: 1px solid var(--ethos-border-subtle);
+.landing {
+  --landing-accent: var(--ifm-color-primary);
+  --landing-core-halo: rgba(250, 250, 247, 0.85);
+  --landing-inset-bg: var(--ethos-bg-overlay);
+  --landing-plate-bg: rgba(255, 255, 255, 0.94);
+  /* clip (not hidden) — hidden would create a scroll container and break
+     position:sticky for the conveyor section. */
+  overflow-x: clip;
+  padding-bottom: 14vh;
 }
 
-/* Two-column at desktop: copy left, terminal vignette right (where the
-   hero image used to sit). Stacks below the text under 996px. */
-.heroLayout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 480px);
-  gap: 48px;
-  align-items: center;
-  max-width: 1160px;
+:global([data-theme="dark"]) .landing {
+  --landing-core-halo: rgba(15, 15, 15, 0.85);
+  --landing-inset-bg: #131312;
+  --landing-plate-bg: rgba(26, 26, 26, 0.94);
+}
+
+.container {
+  max-width: 1120px;
   margin: 0 auto;
+  padding: 0 28px;
+  position: relative;
 }
 
-/* Left-aligned in the two-column layout; recentered when stacked (<996px). */
-.heroInner {
-  max-width: 560px;
-  margin: 0;
-  text-align: left;
-}
-
-.heroTerminal {
-  width: 100%;
-  max-width: 480px;
-  justify-self: end;
-}
-
-/* Announcement pill — terminal-adjacent, points at the personality value prop */
-.announcePill {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 14px 4px 4px;
-  border-radius: 9999px;
-  background: var(--ethos-bg-overlay);
-  border: 1px solid var(--ethos-border-subtle);
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 12px;
-  color: var(--ethos-text-secondary);
-  text-decoration: none;
-  margin-bottom: 32px;
-  transition:
-    background var(--ifm-transition-fast) var(--ifm-transition-timing-default),
-    border-color var(--ifm-transition-fast) var(--ifm-transition-timing-default);
-}
-.announcePill:hover {
-  background: var(--ethos-bg-elevated);
-  border-color: var(--ethos-border-strong);
-}
-
-.announceBadge {
-  background: var(--ifm-color-primary);
-  color: #ffffff;
-  padding: 3px 10px;
-  border-radius: 9999px;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-}
-
-.announceText {
-  color: var(--ethos-text-primary);
-}
-
-.announceArrow {
-  color: var(--ifm-color-primary);
-  font-weight: 500;
-}
-
-.heroStripe {
-  height: 4px;
-  width: 80px;
-  background: var(--ifm-color-primary);
-  margin: 0 0 32px;
-}
-
-.heroEyebrow {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ethos-text-tertiary);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin-bottom: 16px;
-}
-
-.heroTitle {
-  font-size: 48px;
-  font-weight: 600;
-  line-height: 1.1;
-  color: var(--ethos-text-primary);
-  margin-bottom: 16px;
-  letter-spacing: -0.02em;
-}
-
-.heroSubtitle {
-  font-size: 18px;
-  line-height: 1.5;
-  color: var(--ethos-text-secondary);
-  max-width: 600px;
-  margin: 0 0 32px;
-}
-
-.heroSubtitle code {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 14px;
-  background: var(--ethos-bg-overlay);
-  border: 1px solid var(--ethos-border-subtle);
-  border-radius: 4px;
-  padding: 1px 6px;
-  color: var(--ethos-text-primary);
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
   white-space: nowrap;
+  border: 0;
 }
 
-/* Word-stagger entrance — opacity + transform only, never width.
-   Stagger via custom prop --i. Single easing token. */
-.heroWord {
-  display: inline-block;
-  margin-right: 0.25em;
-  opacity: 0;
-  transform: translateY(4px);
-  animation: ethosWordIn 240ms var(--ifm-transition-timing-default) forwards;
-  animation-delay: calc(var(--i, 0) * 40ms);
-}
-.heroWord:last-child {
-  margin-right: 0;
-}
-@keyframes ethosWordIn {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .heroWord {
-    animation: none;
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.heroActions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  margin-bottom: 24px;
-}
-
-.btnPrimary {
-  background: var(--ifm-color-primary);
-  color: #ffffff;
-  padding: 10px 18px;
-  border-radius: 4px;
-  font-weight: 500;
-  font-size: 14px;
-  text-decoration: none;
-  border: 1px solid var(--ifm-color-primary);
-  transition:
-    opacity 80ms cubic-bezier(0.16, 1, 0.3, 1),
-    background 80ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.btnPrimary:hover {
-  opacity: 0.92;
-}
-
-.btnGhost {
-  color: var(--ethos-text-primary);
-  padding: 10px 18px;
-  border-radius: 4px;
-  font-weight: 500;
-  font-size: 14px;
-  border: 1px solid var(--ethos-border-strong);
-  text-decoration: none;
-  background: transparent;
-  transition:
-    background 80ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.btnGhost:hover {
-  background: var(--ethos-bg-overlay);
-  border-color: var(--ethos-text-secondary);
-}
-
-.heroMeta {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 11px;
-  color: var(--ethos-text-tertiary);
-  margin: 0;
-}
-
-/* ── Scroll reveal — fires once, opacity + transform only ──────────── */
-
-.revealHidden {
-  opacity: 0;
-  transform: translateY(12px);
-}
-
-.revealIn {
-  opacity: 1;
-  transform: translateY(0);
-  transition:
-    opacity 240ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .revealHidden,
-  .revealIn {
-    opacity: 1;
-    transform: none;
-    transition: none;
-  }
-}
-
-/* ── QuickStart — install + invoke a personality, side by side ─────── */
-
-.quickStart {
-  background: var(--ethos-bg-base);
-  padding: 56px 32px 72px;
-  border-bottom: 1px solid var(--ethos-border-subtle);
-}
-
-.quickStartInner {
-  max-width: 760px;
-  margin: 0 auto;
-}
-
-.sectionHeading {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 24px;
-}
-
-.sectionChevron {
-  font-family: var(--ifm-font-family-monospace);
-  color: var(--ifm-color-primary);
-  font-size: 14px;
-  line-height: 1;
-}
-
-.quickStartNote {
-  font-size: 13px;
-  color: var(--ethos-text-tertiary);
-  line-height: 1.6;
-  margin: 16px 0 0;
-  text-align: center;
-}
-
-/* ── Fast paths — stacked rows, NOT card grid ──────────────────────── */
-
-.fastPaths {
-  background: var(--ethos-bg-base);
-  padding: 48px 0;
-  border-bottom: 1px solid var(--ethos-border-subtle);
-}
+/* ── section furniture — labels re-theme with --landing-accent ──────── */
 
 .sectionLabel {
   font-family: var(--ifm-font-family-monospace);
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ethos-text-tertiary);
-  margin-bottom: 24px;
-}
-
-.sectionHeading .sectionLabel {
-  margin-bottom: 0;
-}
-
-.pathRows {
-  display: grid;
-  gap: 0;
-  border-top: 1px solid var(--ethos-border-subtle);
-}
-
-.pathRow {
-  display: grid;
-  grid-template-columns: 56px 200px 1fr 140px;
-  gap: 24px;
-  align-items: center;
-  padding: 24px 16px;
-  border-bottom: 1px solid var(--ethos-border-subtle);
-  text-decoration: none;
-  color: inherit;
-  transition: background 80ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.pathRow:hover {
-  background: var(--ethos-bg-overlay);
-}
-
-.pathRow .pathNumber {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--ethos-text-tertiary);
-  letter-spacing: 0.06em;
-}
-
-.pathRow .pathLabel {
-  font-size: 18px;
-  font-weight: 500;
-  color: var(--ethos-text-primary);
-  letter-spacing: -0.005em;
-}
-
-.pathRow .pathDescription {
-  font-size: 14px;
-  color: var(--ethos-text-secondary);
-  line-height: 1.5;
-}
-
-.pathRow .pathCta {
-  font-family: var(--ifm-font-family-monospace);
   font-size: 12px;
-  font-weight: 500;
-  color: var(--ifm-color-primary);
-  text-align: right;
-}
-
-/* ── Architecture section ──────────────────────────────────────────── */
-
-.arch {
-  background: var(--ethos-bg-base);
-  padding: 64px 0;
-  border-bottom: 1px solid var(--ethos-border-subtle);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--landing-accent);
+  margin-bottom: 18px;
+  transition: color 0.35s var(--ifm-transition-timing-default);
 }
 
 .sectionTitle {
-  font-size: 24px;
-  font-weight: 600;
-  margin: 0 0 8px;
+  font-size: clamp(26px, 3.4vw, 36px);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin-bottom: 14px;
   color: var(--ethos-text-primary);
-  letter-spacing: -0.005em;
 }
 
 .sectionSubtitle {
   color: var(--ethos-text-secondary);
   max-width: 640px;
-  margin: 0 0 32px;
-  font-size: 14px;
-  line-height: 1.5;
 }
 
-/* Two-column at desktop: copy left, flow diagram right — mirrors .heroLayout.
-   Stacks (text above, diagram below) under 996px. */
-.archLayout {
+/* ── scenes / plates (JS-driven flythrough) ─────────────────────────── */
+
+.scene {
+  perspective: 1200px;
+}
+
+:global(.landing-fx) .scene > * {
+  will-change: transform, opacity;
+}
+
+/* ── progress rail ──────────────────────────────────────────────────── */
+
+.rail {
+  position: fixed;
+  right: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-left: 16px;
+}
+
+.railTrack {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--ethos-border-strong);
+}
+
+.railDot {
+  position: absolute;
+  left: 1.5px;
+  top: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ethos-text-primary);
+  transition: top 0.45s var(--ifm-transition-timing-default);
+}
+
+.railLink {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ethos-text-tertiary);
+  text-decoration: none;
+  transition: color 0.3s var(--ifm-transition-timing-default);
+}
+
+.railLink:hover {
+  color: var(--landing-accent);
+  text-decoration: none;
+}
+
+.railActive {
+  color: var(--ethos-text-primary);
+}
+
+@media (max-width: 1100px) {
+  .rail {
+    display: none;
+  }
+}
+
+/* ── two doors — swinging plates ────────────────────────────────────── */
+
+.doorsSection {
+  padding: 110px 0 90px;
+  position: relative;
+  z-index: 1;
+}
+
+.doorGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 560px);
-  gap: 48px;
-  align-items: center;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
 }
 
-.archCopy {
+@media (max-width: 760px) {
+  .doorGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.doorScene {
+  perspective: 1000px;
+}
+
+:global(.landing-fx) .doorScene > * {
+  will-change: transform, opacity;
+}
+
+.door {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  transform: rotateY(var(--ry, 0deg));
+  transform-style: preserve-3d;
+}
+
+.door:hover {
+  text-decoration: none;
+  color: inherit;
+}
+
+.doorSceneR .door {
+  transform-origin: right center;
+}
+
+.doorSceneL .door {
+  transform-origin: left center;
+}
+
+.doorInner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 240px;
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 12px;
+  padding: 30px 30px 26px;
+  transition:
+    transform 0.55s var(--ifm-transition-timing-default),
+    border-color 0.4s var(--ifm-transition-timing-default);
+}
+
+.door:hover .doorInner {
+  border-color: var(--ethos-border-strong);
+}
+
+:global(.landing-fx) .doorSceneL .door:hover .doorInner {
+  transform: rotateY(-5deg) translateZ(16px);
+}
+
+:global(.landing-fx) .doorSceneR .door:hover .doorInner {
+  transform: rotateY(5deg) translateZ(16px);
+}
+
+.doorNumber {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+}
+
+.doorLabel {
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ethos-text-primary);
+}
+
+.doorDesc {
+  color: var(--ethos-text-secondary);
+  font-size: 0.98rem;
+  flex: 1;
+}
+
+.doorCta {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 13px;
+  color: var(--ethos-text-primary);
+}
+
+/* ── orientation teaser ─────────────────────────────────────────────── */
+
+.teaser {
+  padding: 40px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.teaserText {
+  color: var(--ethos-text-secondary);
+  max-width: 720px;
+  border-left: 2px solid var(--ethos-border-strong);
+  padding-left: 20px;
+}
+
+.teaserText strong {
+  color: var(--ethos-text-primary);
+}
+
+.teaserText a {
+  color: var(--landing-accent);
+  transition: color 0.3s var(--ifm-transition-timing-default);
+}
+
+.teaserText a:hover {
+  color: var(--ethos-text-primary);
+  text-decoration: none;
+}
+
+/* ── how it works — AgentLoop 3D conveyor ───────────────────────────────
+   Default (no JS / reduced motion): plain vertical pipeline.
+   landing-fx: tall section + sticky stage, camera dollies along z.
+   This section sits directly under the landing root — never inside a
+   transformed or perspective wrapper, which would break position:sticky. */
+
+.conveyor {
+  padding: 80px 0 40px;
+  position: relative;
+  z-index: 1;
+}
+
+:global(.landing-fx) .conveyor {
+  height: 400vh;
+  padding: 0;
+}
+
+:global(.landing-fx) .convSticky {
+  position: sticky;
+  top: var(--ifm-navbar-height);
+  height: calc(100vh - var(--ifm-navbar-height));
+  overflow: hidden;
+}
+
+.convCopy {
+  max-width: 640px;
+  margin: 0 auto 40px;
+  padding: 0 28px;
+}
+
+:global(.landing-fx) .convCopy {
+  position: absolute;
+  z-index: 5;
+  top: 4vh;
+  left: 6vw;
   max-width: 400px;
-}
-
-/* The diagram itself lives in components/ArchDiagramAnimated */
-.archDiagram {
-  width: 100%;
-  max-width: 560px;
-  justify-self: end;
+  margin: 0;
+  padding: 0;
 }
 
 .archLink {
+  display: inline-block;
+  margin-top: 14px;
   font-family: var(--ifm-font-family-monospace);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ifm-color-primary);
+  font-size: 13px;
+  color: var(--landing-accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--ethos-border-strong);
+  padding-bottom: 2px;
+  transition: color 0.3s var(--ifm-transition-timing-default);
+}
+
+.archLink:hover {
+  color: var(--ethos-text-primary);
   text-decoration: none;
 }
-.archLink:hover {
-  text-decoration: underline;
+
+:global(.landing-fx) .convStage {
+  position: absolute;
+  inset: 0;
+  perspective: 950px;
 }
 
-/* ── Ecosystem compat — migrate + install, side by side ───────────── */
+.convRunLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  color: var(--ethos-text-secondary);
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 8px;
+  padding: 8px 16px;
+  width: fit-content;
+  margin: 0 auto 30px;
+}
+
+:global(.landing-fx) .convRunLabel {
+  position: absolute;
+  z-index: 5;
+  top: 4vh;
+  right: 6vw;
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  :global(.landing-fx) .convCopy {
+    top: 2vh;
+    left: 24px;
+    right: 24px;
+    max-width: none;
+  }
+  :global(.landing-fx) .convCopy .sectionSubtitle {
+    display: none;
+  }
+  :global(.landing-fx) .convRunLabel {
+    display: none;
+  }
+}
+
+.convDolly {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 26px;
+  padding: 10px 28px 30px;
+}
+
+:global(.landing-fx) .convDolly {
+  position: absolute;
+  inset: 0;
+  display: block;
+  padding: 0;
+  transform-style: preserve-3d;
+}
+
+.station {
+  transform-style: preserve-3d;
+}
+
+:global(.landing-fx) .station {
+  position: absolute;
+  left: 50%;
+  top: 56%;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+/* -- node stations (input / generator) -- */
+
+.stNode {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.nodeRing {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ethos-text-tertiary);
+}
+
+.nodeRingGen {
+  border-color: var(--ethos-accent-engineer);
+  box-shadow: 0 0 22px rgba(74, 222, 128, 0.15);
+}
+
+.nodeLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12.5px;
+  color: var(--ethos-text-secondary);
+  white-space: nowrap;
+}
+
+.stNode.lit .nodeRing {
+  border-color: var(--ethos-text-primary);
+  box-shadow: 0 0 26px rgba(232, 232, 230, 0.14);
+}
+
+.stNode.lit .nodeLabel {
+  color: var(--ethos-text-primary);
+}
+
+/* -- step plates -- */
+
+.stStep {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(440px, 82vw);
+  background: var(--landing-plate-bg);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 10px;
+  padding: 12px 18px;
+}
+
+.stepCircleWrap {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+.stepNum {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--ethos-border-strong);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  color: var(--ethos-text-secondary);
+}
+
+.stepText {
+  font-size: 13.5px;
+  color: var(--ethos-text-secondary);
+}
+
+.stStepLoop .stepNum {
+  border-color: var(--ethos-accent-researcher);
+  color: var(--ethos-accent-researcher);
+}
+
+.stepOrbit {
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  animation: orbitSpin 3s linear infinite;
+}
+
+.stepOrbit::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  margin-left: -2.5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ethos-accent-researcher);
+  box-shadow: 0 0 8px var(--ethos-accent-researcher);
+}
+
+@keyframes orbitSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.stStep.lit {
+  border-color: var(--ethos-accent-engineer);
+  box-shadow: 0 0 34px rgba(74, 222, 128, 0.12);
+}
+
+.stStep.lit .stepNum {
+  border-color: var(--ethos-accent-engineer);
+  color: var(--ethos-accent-engineer);
+}
+
+.stStep.lit .stepText {
+  color: var(--ethos-text-primary);
+}
+
+.stStepLoop.lit .stepNum {
+  border-color: var(--ethos-accent-researcher);
+  color: var(--ethos-accent-researcher);
+}
+
+/* -- event chips -- */
+
+.stChips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 9px;
+  width: min(520px, 84vw);
+}
+
+.achip {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11.5px;
+  color: var(--ethos-text-secondary);
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 9999px;
+  padding: 3px 12px;
+}
+
+.achipDone {
+  border-color: var(--ethos-accent-engineer);
+  color: var(--ethos-accent-engineer);
+}
+
+:global(.landing-fx) .stChips .achip:nth-child(odd) {
+  transform: translateZ(24px);
+}
+
+:global(.landing-fx) .stChips .achip:nth-child(3n) {
+  transform: translateZ(46px);
+}
+
+.stChips.lit .achip {
+  color: var(--ethos-text-primary);
+  border-color: var(--ethos-text-tertiary);
+}
+
+.stChips.lit .achipDone {
+  color: var(--ethos-accent-engineer);
+  border-color: var(--ethos-accent-engineer);
+}
+
+/* -- surfaces arc -- */
+
+.stSurfaces {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 22px;
+  width: min(560px, 88vw);
+}
+
+.surfaceItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translateY(var(--arc, 0px));
+}
+
+.surfaceRing {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ethos-border-strong);
+}
+
+.surfaceLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  color: var(--ethos-text-tertiary);
+}
+
+.stSurfaces.lit .surfaceRing {
+  border-color: var(--ethos-text-secondary);
+}
+
+.stSurfaces.lit .surfaceLabel {
+  color: var(--ethos-text-primary);
+}
+
+@media (max-width: 560px) {
+  .stSurfaces {
+    gap: 12px;
+  }
+}
+
+/* -- traveling pulse -- */
+
+.convPulse {
+  display: none;
+}
+
+:global(.landing-fx) .convPulse {
+  display: block;
+  position: absolute;
+  left: 50%;
+  top: 56%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ethos-accent-researcher);
+  box-shadow:
+    0 0 14px rgba(74, 158, 255, 0.8),
+    0 0 36px rgba(74, 158, 255, 0.4);
+  pointer-events: none;
+}
+
+/* ── ecosystem / compat ─────────────────────────────────────────────── */
 
 .compat {
-  background: var(--ethos-bg-base);
-  padding: 64px 0;
-  border-bottom: 1px solid var(--ethos-border-subtle);
+  padding: 120px 0 60px;
+  position: relative;
+  z-index: 1;
 }
 
 .compatRows {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 32px;
-  margin-top: 8px;
+  gap: 22px;
+  margin-top: 40px;
+}
+
+@media (max-width: 820px) {
+  .compatRows {
+    grid-template-columns: 1fr;
+  }
 }
 
 .compatRow {
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 12px;
+  padding: 26px 28px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .compatHeading {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .compatBadge {
   font-family: var(--ifm-font-family-monospace);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--ifm-color-primary);
-  border: 1px solid var(--ifm-color-primary);
-  padding: 2px 8px;
+  color: var(--landing-accent);
+  border: 1px solid var(--landing-accent);
   border-radius: 9999px;
+  padding: 2px 10px;
+  transition:
+    border-color 0.35s var(--ifm-transition-timing-default),
+    color 0.35s var(--ifm-transition-timing-default);
 }
 
 .compatTitle {
-  font-size: 16px;
-  font-weight: 500;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 13px;
   color: var(--ethos-text-primary);
-  letter-spacing: -0.005em;
 }
 
 .compatCommand {
-  background: var(--ethos-bg-elevated);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--ethos-text-secondary);
+  background: var(--landing-inset-bg);
   border: 1px solid var(--ethos-border-subtle);
   border-radius: 8px;
-  padding: 16px 20px;
+  padding: 14px 18px;
   margin: 0;
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--ethos-text-secondary);
-  white-space: pre;
   overflow-x: auto;
+  white-space: pre;
 }
 
 .compatNote {
-  font-size: 14px;
-  line-height: 1.55;
   color: var(--ethos-text-secondary);
+  font-size: 0.93rem;
   margin: 0;
 }
 
-.compatNote code {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 12px;
-  background: var(--ethos-bg-overlay);
-  border: 1px solid var(--ethos-border-subtle);
-  border-radius: 4px;
-  padding: 1px 6px;
-  color: var(--ethos-text-primary);
+/* ── surfaces — plates + accent hover bar ───────────────────────────── */
+
+.surfaces {
+  padding: 110px 0 50px;
+  position: relative;
+  z-index: 1;
 }
 
-/* ── Why-not teaser — utilitarian strip, no purple ─────────────────── */
-
-.teaser {
-  background: var(--ethos-bg-elevated);
-  padding: 24px 0;
-  border-bottom: 1px solid var(--ethos-border-subtle);
-}
-
-.teaserInner {
+.surfList {
   display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 40px;
+}
+
+.surfScene {
+  perspective: 1100px;
+}
+
+.surfPlate {
+  transform-style: preserve-3d;
+}
+
+.surfRow {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px 130px 1fr auto;
+  gap: 18px;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 10px;
+  padding: 16px 22px;
+  transition:
+    transform 0.55s var(--ifm-transition-timing-default),
+    border-color 0.4s var(--ifm-transition-timing-default);
 }
 
-.teaserText {
+/* accent hover bar — re-themes with the page-wide --landing-accent */
+.surfRow::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: var(--landing-accent);
+  border-radius: 1px;
+  opacity: 0;
+  transition:
+    opacity 0.35s var(--ifm-transition-timing-default),
+    background 0.35s var(--ifm-transition-timing-default);
+}
+
+.surfScene:hover .surfRow::before {
+  opacity: 1;
+}
+
+:global(.landing-fx) .surfScene:hover .surfRow {
+  transform: translateZ(18px);
+  border-color: var(--ethos-border-strong);
+}
+
+@media (max-width: 820px) {
+  .surfRow {
+    grid-template-columns: 20px 1fr;
+    row-gap: 4px;
+  }
+  .surfDesc,
+  .surfDetail {
+    grid-column: 2;
+  }
+}
+
+.surfGlyph {
+  display: inline-flex;
   color: var(--ethos-text-secondary);
-  font-size: 14px;
-  margin: 0;
 }
 
-.teaserText strong {
+.surfName {
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
   color: var(--ethos-text-primary);
-  font-weight: 500;
 }
 
-.teaserLink {
+.surfDesc {
+  color: var(--ethos-text-secondary);
+  font-size: 0.93rem;
+}
+
+.surfDetail {
   font-family: var(--ifm-font-family-monospace);
-  color: var(--ifm-color-primary);
-  font-weight: 500;
-  font-size: 12px;
-  text-decoration: none;
+  font-size: 11.5px;
+  color: var(--ethos-text-tertiary);
   white-space: nowrap;
 }
-.teaserLink:hover {
-  text-decoration: underline;
+
+.surfSecondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin-top: 30px;
+  color: var(--ethos-text-tertiary);
 }
 
-/* ── Responsive ────────────────────────────────────────────────────── */
+.surfMini {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+}
 
-@media (max-width: 996px) {
-  .heroLayout {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-  }
-  .heroInner {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 0 24px;
-    text-align: center;
-  }
-  .heroStripe {
-    margin: 0 auto 32px;
-  }
-  .heroSubtitle {
-    margin: 0 auto 32px;
-  }
-  .heroActions {
-    justify-content: center;
-  }
-  .heroTerminal {
-    margin: 48px auto 0;
-    justify-self: center;
-  }
-  .archLayout {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 32px;
-  }
-  .archCopy {
-    max-width: none;
-  }
-  .archDiagram {
-    max-width: none;
-    justify-self: stretch;
-  }
-  .compatRows {
+.surfClosing {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12.5px;
+  color: var(--ethos-text-secondary);
+  margin-top: 30px;
+  border-top: 1px solid var(--ethos-border-subtle);
+  padding-top: 18px;
+}
+
+/* ── beyond the chat window ─────────────────────────────────────────── */
+
+.beyond {
+  padding: 110px 0 40px;
+  position: relative;
+  z-index: 1;
+}
+
+.beyondIntro {
+  margin-bottom: 40px;
+}
+
+.beyondRow {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 26px;
+  border-top: 1px solid var(--ethos-border-subtle);
+  padding: 30px 0;
+}
+
+@media (max-width: 760px) {
+  .beyondRow {
     grid-template-columns: 1fr;
-    gap: 40px;
-  }
-  .pathRow {
-    grid-template-columns: 56px 1fr 100px;
-  }
-  .pathRow .pathDescription {
-    grid-column: 2 / -1;
-    grid-row: 2;
-    margin-top: 4px;
-  }
-  .pathRow .pathLabel {
-    grid-column: 2;
-    grid-row: 1;
-  }
-  .pathRow .pathCta {
-    grid-row: 1;
+    gap: 10px;
   }
 }
 
-@media (max-width: 640px) {
-  .hero {
-    padding: 64px 24px 48px;
+.beyondKicker {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ethos-text-tertiary);
+  padding-top: 5px;
+}
+
+.beyondHeading {
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 8px;
+  color: var(--ethos-text-primary);
+}
+
+.beyondBody {
+  color: var(--ethos-text-secondary);
+  font-size: 0.95rem;
+  max-width: 640px;
+  margin-bottom: 14px;
+}
+
+.beyondSnippet {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  color: var(--ethos-text-secondary);
+  background: var(--landing-inset-bg);
+  border: 1px solid var(--ethos-border-subtle);
+  border-radius: 8px;
+  padding: 10px 14px;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* ── reduced motion — every subsystem falls back static ─────────────── */
+
+/* Plates render flat without the fx class (never added under reduced
+   motion; the fx loop's cleanup clears any inline transforms). */
+@media (prefers-reduced-motion: reduce) {
+  .stepOrbit {
+    display: none;
   }
-  .heroTitle {
-    font-size: 32px;
-  }
-  .heroSubtitle {
-    font-size: 16px;
-  }
-  .heroActions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .btnPrimary,
-  .btnGhost {
-    text-align: center;
-  }
-  .pathRow {
-    grid-template-columns: 1fr;
-    padding: 20px 16px;
-  }
-  .pathRow .pathNumber {
-    grid-row: 1;
-  }
-  .pathRow .pathLabel {
-    grid-row: 2;
-  }
-  .pathRow .pathDescription {
-    grid-row: 3;
-  }
-  .pathRow .pathCta {
-    grid-row: 4;
-    text-align: left;
-  }
-  .teaserInner {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .heroTerminal {
-    margin-top: 32px;
+  .sectionLabel,
+  .railDot,
+  .railLink,
+  .doorInner,
+  .teaserText a,
+  .archLink,
+  .compatBadge,
+  .surfRow,
+  .surfRow::before {
+    transition: none;
   }
 }

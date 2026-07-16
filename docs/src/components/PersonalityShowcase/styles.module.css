@@ -1,57 +1,60 @@
-/* ── Personality showcase · DESIGN.md applied ─────────────────────────
-   The page hero. Argues for specialization, then proves it with rows.
-   Per-personality accents flow via inline --accent. Stacked rows, NOT
-   a card grid. Cards earn existence.
-   ─────────────────────────────────────────────────────────────────── */
+/* ── Personality showcase — flythrough plates ──────────────────────────
+   Ported from plan/hero-demos/demo-final-hybrid.html (demo-3 plates).
+   Row-local accent is --p-accent (namespaced so the page-wide
+   --landing-accent re-theme never collides with it). */
 
-.section {
-  background: var(--ethos-bg-base);
-  padding: 80px 0;
-  border-bottom: 1px solid var(--ethos-border-subtle);
+.container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 28px;
+  position: relative;
+}
+
+.showcase {
+  padding: 90px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.scene {
+  perspective: 1200px;
+}
+
+:global(.landing-fx) .scene > *,
+:global(.landing-fx) .prowScene > * {
+  will-change: transform, opacity;
 }
 
 .sectionLabel {
   font-family: var(--ifm-font-family-monospace);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ethos-text-tertiary);
-  margin-bottom: 16px;
-  text-align: center;
+  color: var(--landing-accent);
+  margin-bottom: 18px;
+  transition: color 0.35s var(--ifm-transition-timing-default);
 }
 
 .sectionTitle {
-  font-size: 32px;
-  font-weight: 600;
-  margin: 0 auto 24px;
-  color: var(--ethos-text-primary);
-  letter-spacing: -0.01em;
+  font-size: clamp(26px, 3.4vw, 36px);
+  font-weight: 650;
+  letter-spacing: -0.02em;
   line-height: 1.15;
-  max-width: 720px;
-  text-align: center;
+  margin-bottom: 14px;
+  color: var(--ethos-text-primary);
 }
 
 .lead {
-  max-width: 720px;
-  margin: 0 auto 40px;
-  text-align: center;
+  max-width: 680px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 46px;
+  color: var(--ethos-text-secondary);
 }
 
 .lead p {
-  font-size: 16px;
-  line-height: 1.6;
-  color: var(--ethos-text-secondary);
-  margin: 0 0 16px;
-}
-
-.lead code {
-  background: var(--ethos-bg-overlay);
-  border: 1px solid var(--ethos-border-subtle);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 0.85em;
-  color: var(--ethos-text-primary);
+  margin: 0;
 }
 
 .leadKicker {
@@ -59,194 +62,174 @@
   font-weight: 500;
 }
 
-.rows {
-  display: grid;
-  gap: 0;
-  border-top: 1px solid var(--ethos-border-subtle);
+.leadRouting {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
 }
 
-.row {
+.prowScene {
+  perspective: 1100px;
+  margin-bottom: 14px;
+}
+
+.prow {
+  transform-style: preserve-3d;
+}
+
+/* a real <button> for a11y — reset chrome, keep the plate look */
+.prowInner {
   display: grid;
-  grid-template-columns: 56px 1fr 200px;
-  gap: 24px;
+  grid-template-columns: 48px 1fr 190px;
+  gap: 22px;
   align-items: start;
-  padding: 24px 16px;
-  border-bottom: 1px solid var(--ethos-border-subtle);
-  position: relative;
-  transition: background 80ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.row:hover {
-  background: var(--ethos-bg-overlay);
-}
-
-/* Hover-only accent stripe — load-bearing identity affordance per DESIGN.md */
-.row::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--accent);
-  opacity: 0;
-  transition: opacity 80ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.row:hover::before {
-  opacity: 1;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-subtle);
+  border-left: 2px solid var(--p-accent, var(--ethos-border-strong));
+  border-radius: 10px;
+  padding: 22px 24px;
+  cursor: pointer;
+  transition:
+    transform 0.55s var(--ifm-transition-timing-default),
+    box-shadow 0.55s var(--ifm-transition-timing-default),
+    border-color 0.4s var(--ifm-transition-timing-default);
 }
 
-.mark {
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-  border-radius: 8px;
-  margin-top: 2px;
+:global(.landing-fx) .prowScene:hover .prowInner {
+  transform: translateZ(24px);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.4);
+  border-color: var(--ethos-border-strong);
+  border-left-color: var(--p-accent, var(--ethos-border-strong));
 }
 
-.body {
+.prowInnerActive {
+  border-color: var(--landing-accent);
+  border-left-color: var(--p-accent, var(--ethos-border-strong));
+}
+
+@media (max-width: 820px) {
+  .prowInner {
+    grid-template-columns: 48px 1fr;
+  }
+  .prowMeta {
+    grid-column: 2;
+    text-align: left;
+  }
+}
+
+.pmark {
+  line-height: 0;
+}
+
+.prowBody {
+  display: block;
   min-width: 0;
 }
 
-.nameLine {
+.prowNameLine {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 8px;
   flex-wrap: wrap;
+  margin-bottom: 6px;
 }
 
-.name {
-  font-size: 18px;
-  font-weight: 500;
+.prowName {
+  font-weight: 600;
+  font-size: 1.08rem;
   color: var(--ethos-text-primary);
-  letter-spacing: -0.005em;
 }
 
-.tagline {
+.prowTagline {
   font-family: var(--ifm-font-family-monospace);
   font-size: 11px;
   color: var(--ethos-text-tertiary);
-  text-transform: lowercase;
+  letter-spacing: 0.03em;
 }
 
-.sample {
-  font-size: 13px;
+.prowSample {
+  display: block;
   color: var(--ethos-text-secondary);
-  line-height: 1.5;
+  font-size: 0.95rem;
   margin-bottom: 10px;
 }
 
-.toolList {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 11px;
+.prowTools {
+  display: block;
+  font-size: 12px;
   color: var(--ethos-text-tertiary);
-  line-height: 1.6;
+  line-height: 2;
 }
 
-.toolList code {
-  background: transparent;
-  padding: 0;
-  border: 0;
+.prowTools code {
   font-size: 11px;
-  color: var(--accent);
 }
 
-.meta {
+.prowMeta {
+  text-align: right;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+}
+
+.prowCountNum {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1.5rem;
+  color: var(--ethos-text-primary);
+}
+
+.prowCountLabel {
   font-family: var(--ifm-font-family-monospace);
   font-size: 11px;
   color: var(--ethos-text-tertiary);
-  text-align: right;
-  align-items: flex-end;
 }
 
-.metaCount {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
+.prowModel code,
+.prowScope code {
+  font-size: 10.5px;
 }
 
-.metaCountNum {
-  font-size: 18px;
-  font-weight: 500;
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
-
-.metaCountLabel {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.prowScope {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 10.5px;
   color: var(--ethos-text-tertiary);
 }
 
-.metaModel,
-.metaScope {
-  font-size: 11px;
-  color: var(--ethos-text-tertiary);
-}
-
-.metaModel code,
-.metaScope code {
-  background: transparent;
-  padding: 0;
-  border: 0;
-  font-size: 11px;
-  color: var(--ethos-text-secondary);
-}
-
-.cta {
-  margin-top: 32px;
+.showcaseCta {
   display: flex;
-  gap: 24px;
+  gap: 28px;
   flex-wrap: wrap;
+  margin-top: 34px;
 }
 
 .ctaLink {
   font-family: var(--ifm-font-family-monospace);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ifm-color-primary);
+  font-size: 13px;
+  color: var(--landing-accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--ethos-border-strong);
+  padding-bottom: 2px;
+  transition:
+    color 0.3s var(--ifm-transition-timing-default),
+    border-color 0.3s var(--ifm-transition-timing-default);
+}
+
+.ctaLink:hover {
+  color: var(--ethos-text-primary);
+  border-color: var(--ethos-text-tertiary);
   text-decoration: none;
 }
-.ctaLink:hover {
-  text-decoration: underline;
-}
 
-/* Responsive */
-@media (max-width: 996px) {
-  .row {
-    grid-template-columns: 48px 1fr;
-  }
-  .meta {
-    grid-column: 2;
-    grid-row: 2;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 16px;
-    align-items: baseline;
-    text-align: left;
-    margin-top: 12px;
-  }
-  .metaCount {
-    align-items: baseline;
-  }
-}
-
-@media (max-width: 640px) {
-  .sectionTitle {
-    font-size: 24px;
-  }
-  .lead p {
-    font-size: 14px;
-  }
-  .nameLine {
-    flex-direction: column;
-    gap: 4px;
-  }
-  .toolList {
-    line-height: 1.7;
+/* Plates render flat without the fx class (never added under reduced
+   motion; the fx loop's cleanup clears any inline transforms). */
+@media (prefers-reduced-motion: reduce) {
+  .prowInner,
+  .sectionLabel,
+  .ctaLink {
+    transition: none;
   }
 }

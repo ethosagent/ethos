@@ -35,12 +35,10 @@
   --ethos-text-secondary: #6b6b6a;
   --ethos-text-tertiary: #94948f;
 
-  /* Per-personality accents (researcher / engineer / reviewer / coach / operator) */
+  /* Per-personality accents (researcher / engineer / reviewer) */
   --ethos-accent-researcher: #4a9eff;
   --ethos-accent-engineer: #4ade80;
   --ethos-accent-reviewer: #f59e0b;
-  --ethos-accent-coach: #e879f9;
-  --ethos-accent-operator: #94a3b8;
 
   /* Map Docusaurus surface tokens to DESIGN.md */
   --ifm-background-color: var(--ethos-bg-base);

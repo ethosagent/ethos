@@ -1,0 +1,121 @@
+/* ── Terminal section — slim copy left, 3D tilting slab right ─────────
+   Ported from plan/hero-demos/demo-final-hybrid.html (demo-1 "Depth").
+   The slab keeps dark-styled internals in both themes (HeroTerminal is a
+   product vignette). */
+
+.container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 28px;
+  position: relative;
+}
+
+.terminalSection {
+  padding: 70px 0 50px;
+  position: relative;
+  z-index: 1;
+}
+
+.terminalGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+  gap: 56px;
+  align-items: center;
+}
+
+.scene {
+  perspective: 1200px;
+}
+
+:global(.landing-fx) .scene > * {
+  will-change: transform, opacity;
+}
+
+.sectionLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--landing-accent);
+  margin-bottom: 18px;
+  transition: color 0.35s var(--ifm-transition-timing-default);
+}
+
+.termCopyText {
+  color: var(--ethos-text-secondary);
+  font-size: 17px;
+  max-width: 400px;
+}
+
+.slabScene {
+  perspective: 1200px;
+}
+
+.terminalSlab {
+  position: relative;
+  transform: rotateX(2deg) rotateY(-6deg);
+  will-change: transform;
+  border-radius: 14px;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.45),
+    0 12px 32px rgba(0, 0, 0, 0.5),
+    0 40px 90px rgba(0, 0, 0, 0.55);
+}
+
+/* thin edge highlight — a lit top/left edge, like a physical bevel */
+.terminalSlab::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  pointer-events: none;
+  z-index: 3;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 1px 0 0 rgba(255, 255, 255, 0.03);
+}
+
+/* moving specular glare — a soft radial spot translated by the pointer */
+.terminalGlare {
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.terminalGlareSpot {
+  position: absolute;
+  left: -50%;
+  top: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.075),
+    rgba(255, 255, 255, 0.02) 32%,
+    transparent 48%
+  );
+  will-change: transform;
+}
+
+@media (max-width: 960px) {
+  .terminalGrid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminalSlab {
+    transform: none;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+  .terminalGlare {
+    display: none;
+  }
+  .sectionLabel {
+    transition: none;
+  }
+}
