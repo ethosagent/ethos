@@ -223,6 +223,8 @@ export interface RunOptions {
    * `MAX_SPAWN_DEPTH` can be enforced across recursive sub-agent calls.
    */
   agentId?: string;
+  /** Root session key for background-job containment; threaded to ToolContext.rootSessionKey. */
+  rootSessionKey?: string;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
   origin?: string;
   a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean }; // A2A runner sets this servicing an inbound task → `ToolContext.a2aDelegation` (plan §P8).
@@ -701,6 +703,7 @@ export class AgentLoop {
           steerSink: opts.steerSink,
           opts: {
             agentId: opts.agentId,
+            rootSessionKey: opts.rootSessionKey,
             origin: opts.origin,
             attachments: opts.attachments,
             dryRun: opts.dryRun,

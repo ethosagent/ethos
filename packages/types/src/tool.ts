@@ -57,6 +57,12 @@ export interface ToolContext {
   workingDir: string;
   agentId?: string;
   /**
+   * Root session key for background-job scoping. Set by the background executor
+   * when running a detached child so nested background spawns inherit the same
+   * root. Absent for ordinary turns — background tools fall back to sessionKey.
+   */
+  rootSessionKey?: string;
+  /**
    * Where this turn originated, as `platform:chatId` for channel turns (else unset).
    * Generic per-run context; goal_create reads it to stamp Goal.origin.
    */
@@ -195,6 +201,7 @@ export interface ToolExecuteRequest {
   personalityId?: string;
   teamId?: string;
   agentId?: string;
+  rootSessionKey?: string;
   origin?: string;
   memoryScopeId?: string;
   userScopeId?: string;

@@ -1,4 +1,4 @@
-import { BackgroundRunner } from '@ethosagent/agent-bridge';
+import { randomUUID } from 'node:crypto';
 import type { AgentLoop } from '@ethosagent/core';
 import { deriveBotKey, stripAnsiEscapes } from '@ethosagent/core';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
@@ -16,6 +16,7 @@ import type Database from '@ethosagent/sqlite';
 import { createEventTranslator } from '@ethosagent/surface-kit';
 import type {
   AttachmentCache,
+  BackgroundJob,
   ChannelContext,
   ClarifyResponse,
   InboundMessage,
@@ -115,6 +116,14 @@ function buildLaneKey(...segments: string[]): string {
 // Concurrency limiter
 // ---------------------------------------------------------------------------
 
+/**
+ * Per-root concurrency cap for `/background` jobs — parity with the durable
+ * engine's `maxJobsPerRoot` default (see `backgroundDefaults()` in
+ * `@ethosagent/config`). The gateway has no live background config, so it uses
+ * the same default constant.
+ */
+const BACKGROUND_MAX_JOBS_PER_ROOT = 3;
+
 /** Reply sent when a lane is rejected under saturation (typed busy result). */
 const SYSTEM_BUSY_MESSAGE =
   '⚠ The system is busy right now — too many requests in progress. Please try again in a moment.';
@@ -212,6 +221,12 @@ export interface GatewayBotConfig {
   /** When true, PII (email, phone, card, SSN) is redacted from inbound message
    *  text before it reaches AgentLoop. Default false. */
   piiRedaction?: boolean;
+  /** Durable background executor for this bot's loop — present when the background
+   *  subsystem is enabled. The gateway subscribes to it for completion wakes and
+   *  creates /background jobs through it. */
+  backgroundExecutor?: import('@ethosagent/job-runner').BackgroundExecutor;
+  /** This bot's job store — present when background is enabled. */
+  jobStore?: import('@ethosagent/types').JobStore;
 }
 
 export interface GatewayConfig {
@@ -552,13 +567,16 @@ export class Gateway {
     | ((platform: string, platformUserId: string, displayLabel?: string) => Promise<string>)
     | undefined;
   private readonly trustedVoicePlugins: Set<string> | undefined;
-  private readonly backgroundRunner: BackgroundRunner;
   private readonly pluginLoader: GatewayConfig['pluginLoader'];
   private readonly notificationRouter: GatewayConfig['notificationRouter'];
-  private readonly backgroundCallbacks = new Map<
-    string,
-    { adapter: PlatformAdapter; chatId: string; threadId?: string }
-  >();
+  /** Completion notices waiting for their lane to go idle. laneKey -> items. */
+  private readonly pendingWakes = new Map<string, Array<{ job: BackgroundJob; botKey: string }>>();
+  /** job.id of every wake already delivered (or claimed for delivery) — exactly-once. */
+  private readonly deliveredWakes = new Set<string>();
+  /** Unsubscribe callbacks for each bot executor's `onComplete` subscription. */
+  private readonly bgWakeUnsubs: Array<() => void> = [];
+  /** Periodic timer retrying deferred wakes whose lane may since have gone idle. */
+  private bgWakeSweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(config: GatewayConfig) {
     // The two construction shapes are mutually exclusive. Silent
@@ -700,19 +718,22 @@ export class Gateway {
       }
     }
 
-    this.backgroundRunner = new BackgroundRunner({ maxConcurrent: 4 });
-    this.backgroundRunner.onComplete((task) => {
-      const routing = this.backgroundCallbacks.get(task.id);
-      if (!routing) return;
-      this.backgroundCallbacks.delete(task.id);
-      const text =
-        task.status === 'done'
-          ? `📋 Background task complete:\n${task.result ?? '(no output)'}`
-          : `❌ Background task failed: ${task.error ?? 'unknown error'}`;
-      void routing.adapter
-        .send(routing.chatId, { text, threadId: routing.threadId })
-        .catch(() => {});
-    });
+    // Background completion wakes — one subscription per bot whose loop has a
+    // durable executor. A finished job's notice is delivered to its originating
+    // chat, but never while a turn is in flight on that lane (see flushWakes).
+    for (const bot of botEntries) {
+      if (!bot.backgroundExecutor) continue;
+      this.bgWakeUnsubs.push(
+        bot.backgroundExecutor.onComplete((job) => this.onBackgroundJobComplete(bot, job)),
+      );
+    }
+    // Periodic retry for deferred wakes: a turn that was in flight when a job
+    // finished won't always fire the turn-end flush for the RIGHT lane (a wake
+    // may arrive between turns), so sweep every lane with pending items.
+    this.bgWakeSweepTimer = setInterval(() => {
+      for (const laneKey of [...this.pendingWakes.keys()]) void this.flushWakes(laneKey);
+    }, 15_000);
+    this.bgWakeSweepTimer.unref?.();
 
     // Clarify sweep — fires on a single timer for all bots' bridges so a
     // multi-bot deployment doesn't pile up N timers. Each bridge owns its own
@@ -1307,30 +1328,51 @@ export class Gateway {
           .catch(() => {});
         return;
       }
-      const bgSessionKey = `bg:${laneKey}:${Date.now()}`;
-      try {
-        const task = this.backgroundRunner.run(bgText, bot.loop, bgSessionKey);
-        this.backgroundCallbacks.set(task.id, {
-          adapter,
-          chatId: message.chatId,
-          threadId,
-        });
+      const jobStore = bot.jobStore;
+      const executor = bot.backgroundExecutor;
+      // Background disabled for this bot (e.g. one-shot / team-bound loop) — the
+      // durable engine isn't wired. Reply gracefully instead of crashing.
+      if (!jobStore || !executor) {
         await adapter
-          .send(message.chatId, { text: '⏳ Background task started', threadId })
+          .send(message.chatId, {
+            text: '✗ Background jobs are not enabled for this bot.',
+            threadId,
+          })
           .catch(() => {});
-      } catch (err: unknown) {
-        const code = (err as { code?: string }).code;
-        if (code === 'BACKGROUND_QUEUE_FULL') {
-          await adapter
-            .send(message.chatId, {
-              text: '⚠ Background queue full (max 4). Wait for a task to finish.',
-              threadId,
-            })
-            .catch(() => {});
-        } else {
-          throw err;
-        }
+        return;
       }
+      const root = this.sessionKeys.get(laneKey) ?? laneKey;
+      // Per-root concurrency cap parity with the durable engine (default 3).
+      const cap = BACKGROUND_MAX_JOBS_PER_ROOT;
+      if ((await jobStore.countActiveByRoot(root)) >= cap) {
+        await adapter
+          .send(message.chatId, {
+            text: `⚠ Background queue full (max ${cap}). Wait for a task to finish.`,
+            threadId,
+          })
+          .catch(() => {});
+        return;
+      }
+      const personalityId =
+        bot.binding.type === 'team' ? undefined : this.activePersonalityFor(laneKey, bot);
+      const short = randomUUID().slice(0, 8);
+      await jobStore.create({
+        owner: executor.owner,
+        parentSessionKey: root,
+        rootSessionKey: root,
+        childSessionKey: `${root}:bgcmd:${short}`,
+        ...(personalityId ? { personalityId } : {}),
+        depth: 0,
+        prompt: bgText,
+        originPlatform: message.platform,
+        originBotKey: bot.botKey,
+        originChatId: message.chatId,
+        ...(threadId ? { originThreadId: threadId } : {}),
+      });
+      executor.nudge();
+      await adapter
+        .send(message.chatId, { text: '⏳ Background task started', threadId })
+        .catch(() => {});
       return;
     }
 
@@ -1712,7 +1754,115 @@ export class Gateway {
         this.approvalRoutes.delete(sessionId);
         this.sessionIdByKey.delete(sessionKey);
       }
+      // The lane just went idle — deliver any background-completion notices that
+      // were deferred because a turn was running.
+      void this.flushWakes(laneKey);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Background-completion wakes
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A durable background job finished. Queue a completion notice for its
+   * originating lane and try to flush it. Deferred (not sent) while a turn is
+   * in flight on that lane so the notice never interleaves with a streaming
+   * response. Only `done` / `failed` wake — `aborted` is user-requested and
+   * stays silent; `stale` / `expired` never reach `onComplete` (they come from
+   * sweeps, whose cross-process delivery is a later phase). Never throws — a
+   * completion callback that throws would crash the executor.
+   */
+  private onBackgroundJobComplete(bot: GatewayBotConfig, job: BackgroundJob): void {
+    if (job.status !== 'done' && job.status !== 'failed') return;
+    if (this.deliveredWakes.has(job.id)) return;
+    const platform = job.originPlatform;
+    const chatId = job.originChatId;
+    if (!platform || !chatId) return; // no originating channel (e.g. CLI-owned)
+    const threadId = job.originThreadId;
+    const laneKey = threadId
+      ? buildLaneKey(platform, bot.botKey, chatId, threadId)
+      : buildLaneKey(platform, bot.botKey, chatId);
+    const list = this.pendingWakes.get(laneKey) ?? [];
+    list.push({ job, botKey: bot.botKey });
+    this.pendingWakes.set(laneKey, list);
+    void this.flushWakes(laneKey);
+  }
+
+  /**
+   * Deliver every queued completion notice for `laneKey`, unless a turn is
+   * running on that lane (then it's retried on turn-end and by the periodic
+   * sweep). Exactly-once is enforced by marking `deliveredWakes` and dequeuing
+   * BEFORE the async send, so a concurrent flush (turn-end vs sweep) cannot
+   * double-send. Best-effort adapter resolution: an unresolved platform drops
+   * the item with an observability record rather than throwing.
+   */
+  private async flushWakes(laneKey: string): Promise<void> {
+    if (this.activeSinks.has(laneKey)) return; // a turn is running — defer
+    const list = this.pendingWakes.get(laneKey);
+    if (!list || list.length === 0) {
+      this.pendingWakes.delete(laneKey);
+      return;
+    }
+    // Drain synchronously into a local batch so a re-entrant flush sees an empty
+    // queue. Items are re-checked against deliveredWakes as a second guard.
+    const batch = list.splice(0, list.length);
+    if (list.length === 0) this.pendingWakes.delete(laneKey);
+    for (const item of batch) {
+      const { job } = item;
+      if (this.deliveredWakes.has(job.id)) continue;
+      const platform = job.originPlatform;
+      const chatId = job.originChatId;
+      if (!platform || !chatId) continue;
+      const adapter = this.adapterRegistry.get(platform);
+      if (!adapter) {
+        // No adapter for this platform in this process — drop, don't retry.
+        this.deliveredWakes.add(job.id);
+        this.observability?.recordSafetyBlock({
+          code: 'background.wake_undeliverable',
+          details: { jobId: job.id, platform, chatId, botKey: item.botKey },
+        });
+        continue;
+      }
+      const threadId = job.originThreadId;
+      const text = this.buildWakeNotice(job);
+      // Mark delivered + already-dequeued BEFORE the async send so a concurrent
+      // flush never re-sends this notice.
+      this.deliveredWakes.add(job.id);
+      if (this.outboundDedup.shouldSend(laneKey, text)) {
+        void adapter.send(chatId, { text, threadId }).catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * Notice text for a finished background job: a plain, trusted envelope plus
+   * the job's own summary/error wrapped as untrusted content (it may echo
+   * whatever the child agent read). Mirrors the `channel_message` treatment.
+   */
+  private buildWakeNotice(job: BackgroundJob): string {
+    const shortId = job.id.slice(0, 8);
+    const labelPart = job.label ? `"${job.label}" ` : '';
+    const envelope = `[background job ${shortId} ${labelPart}finished — status: ${job.status}]`;
+    const body =
+      job.status === 'done' ? (job.summary ?? '(no summary)') : (job.error ?? 'unknown error');
+    const wrapped = wrapUntrusted({ content: body, toolName: 'background_job_summary' });
+    const tier1 = shortPatternCheck(body);
+    if (tier1.containsInstructions || wrapped.strippedTokens > 0) {
+      this.observability?.recordInjectionFlag?.({
+        code: 'background.injection_detected',
+        cause: tier1.containsInstructions
+          ? (tier1.hits[0]?.rule ?? 'pattern-hit')
+          : `stripped ${wrapped.strippedTokens} template token${wrapped.strippedTokens === 1 ? '' : 's'}`,
+        details: {
+          jobId: job.id,
+          ...(job.originPlatform ? { platform: job.originPlatform } : {}),
+          ...(job.originChatId ? { chatId: job.originChatId } : {}),
+          ...(tier1.containsInstructions ? { hits: tier1.hits } : {}),
+        },
+      });
+    }
+    return `${envelope}\n\n${wrapped.content}`;
   }
 
   /**
@@ -1745,6 +1895,13 @@ export class Gateway {
       clearInterval(this.clarifySweepTimer);
       this.clarifySweepTimer = undefined;
     }
+    if (this.bgWakeSweepTimer) {
+      clearInterval(this.bgWakeSweepTimer);
+      this.bgWakeSweepTimer = undefined;
+    }
+    for (const unsub of this.bgWakeUnsubs) unsub();
+    this.bgWakeUnsubs.length = 0;
+    this.pendingWakes.clear();
     for (const lane of this.lanes.values()) {
       lane.abort();
     }

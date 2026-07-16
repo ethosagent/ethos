@@ -206,6 +206,7 @@ export async function createAgentLoop(
     ...(config.web?.search_backend ? { webSearchBackend: config.web.search_backend } : {}),
     ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
     ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
+    ...(config.background ? { background: config.background } : {}),
     ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),
     ...(config.storage ? { storage: config.storage } : {}),
     ...(config.pluginsAutoInstall !== undefined
@@ -244,6 +245,9 @@ export interface TeamLoopInfo {
   notificationRouter: import('@ethosagent/types').NotificationRouter;
   /** v2.2 — Plugin loader for health checks and diagnostics. */
   pluginLoader: import('@ethosagent/wiring').CreateAgentLoopResult['pluginLoader'];
+  /** Phase B — durable background engine handles (undefined when background is disabled). */
+  jobStore?: import('@ethosagent/wiring').CreateAgentLoopResult['jobStore'];
+  backgroundExecutor?: import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor'];
 }
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
@@ -292,22 +296,29 @@ export async function createTeamAgentLoop(
 
   // Plan B — thread teamName + role into the wiring so the kanban store points at
   // the team board and the role-gate hook gets registered.
-  const { loop, toolRegistry, setOnSkillProposed, notificationRouter, pluginLoader } =
-    await createAgentLoop(
-      {
-        ...coordinatorConfig,
-        personality: coordinatorPersonality,
-        teamName,
-        role: opts.role ?? 'coordinator',
-        postmortems: manifest.postmortems,
-        trustPolicy: manifest.trust_policy,
-      },
-      {
-        profile: opts.profile ?? 'cli',
-        meshRegistryPath: meshRegistryPath(meshName),
-        ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
-      },
-    );
+  const {
+    loop,
+    toolRegistry,
+    setOnSkillProposed,
+    notificationRouter,
+    pluginLoader,
+    jobStore,
+    backgroundExecutor,
+  } = await createAgentLoop(
+    {
+      ...coordinatorConfig,
+      personality: coordinatorPersonality,
+      teamName,
+      role: opts.role ?? 'coordinator',
+      postmortems: manifest.postmortems,
+      trustPolicy: manifest.trust_policy,
+    },
+    {
+      profile: opts.profile ?? 'cli',
+      meshRegistryPath: meshRegistryPath(meshName),
+      ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
+    },
+  );
 
   const coordinatorSystem = buildCoordinatorTeamPrompt(manifest);
   loop.hooks.registerModifying('before_prompt_build', async (payload) => {
@@ -323,6 +334,8 @@ export async function createTeamAgentLoop(
     setOnSkillProposed,
     notificationRouter,
     pluginLoader,
+    ...(jobStore ? { jobStore } : {}),
+    ...(backgroundExecutor ? { backgroundExecutor } : {}),
   };
 }
 
@@ -357,6 +370,9 @@ export interface ActiveLoop {
   notificationRouter: import('@ethosagent/types').NotificationRouter;
   /** v2.2 — Plugin loader for health checks and diagnostics. */
   pluginLoader: import('@ethosagent/wiring').CreateAgentLoopResult['pluginLoader'];
+  /** Phase B — durable background engine handles (undefined when background is disabled). */
+  jobStore?: import('@ethosagent/wiring').CreateAgentLoopResult['jobStore'];
+  backgroundExecutor?: import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor'];
 }
 
 export async function resolveActiveLoop(
@@ -377,6 +393,10 @@ export async function resolveActiveLoop(
       setOnSkillProposed: teamResult.setOnSkillProposed,
       notificationRouter: teamResult.notificationRouter,
       pluginLoader: teamResult.pluginLoader,
+      ...(teamResult.jobStore ? { jobStore: teamResult.jobStore } : {}),
+      ...(teamResult.backgroundExecutor
+        ? { backgroundExecutor: teamResult.backgroundExecutor }
+        : {}),
     };
   }
   const personalityId = config.activeContext?.name ?? config.personality;
@@ -389,6 +409,8 @@ export async function resolveActiveLoop(
     setOnSkillProposed: result.setOnSkillProposed,
     notificationRouter: result.notificationRouter,
     pluginLoader: result.pluginLoader,
+    ...(result.jobStore ? { jobStore: result.jobStore } : {}),
+    ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
   };
 }
 

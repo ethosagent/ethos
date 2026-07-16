@@ -954,6 +954,8 @@ async function buildGatewayBots(
   const buildOne = async (bot: TelegramBotConfig | SlackAppConfig): Promise<GatewayBotConfig> => {
     const botKey = deriveBotKey(bot);
     let loop: AgentLoop;
+    let jobStore: GatewayBotConfig['jobStore'];
+    let backgroundExecutor: GatewayBotConfig['backgroundExecutor'];
     if (bot.bind.type === 'team') {
       const team = await createTeamAgentLoop(config, bot.bind.name);
       loop = team.loop;
@@ -968,11 +970,20 @@ async function buildGatewayBots(
         { cronScheduler: scheduler },
       );
       loop = result.loop;
+      jobStore = result.jobStore;
+      backgroundExecutor = result.backgroundExecutor;
       setters.push(result.setMessagingSend);
       routers.push(result.notificationRouter);
       registries.push(result.toolRegistry);
     }
-    return { botKey, loop, binding: { ...bot.bind }, piiRedaction: bot.piiRedaction };
+    return {
+      botKey,
+      loop,
+      binding: { ...bot.bind },
+      piiRedaction: bot.piiRedaction,
+      ...(jobStore ? { jobStore } : {}),
+      ...(backgroundExecutor ? { backgroundExecutor } : {}),
+    };
   };
   for (const bot of config.telegram?.bots ?? []) out.push(await buildOne(bot));
   for (const app of config.slack?.apps ?? []) out.push(await buildOne(app));
@@ -988,6 +999,8 @@ async function buildGatewayBots(
       );
     }
     let loop: AgentLoop;
+    let jobStore: GatewayBotConfig['jobStore'];
+    let backgroundExecutor: GatewayBotConfig['backgroundExecutor'];
     if (bind.type === 'team') {
       const team = await createTeamAgentLoop(config, bind.name);
       loop = team.loop;
@@ -999,11 +1012,20 @@ async function buildGatewayBots(
         { cronScheduler: scheduler },
       );
       loop = result.loop;
+      jobStore = result.jobStore;
+      backgroundExecutor = result.backgroundExecutor;
       setters.push(result.setMessagingSend);
       routers.push(result.notificationRouter);
       registries.push(result.toolRegistry);
     }
-    out.push({ botKey, loop, binding: { ...bind }, piiRedaction: waCfg.piiRedaction });
+    out.push({
+      botKey,
+      loop,
+      binding: { ...bind },
+      piiRedaction: waCfg.piiRedaction,
+      ...(jobStore ? { jobStore } : {}),
+      ...(backgroundExecutor ? { backgroundExecutor } : {}),
+    });
   }
   // Inbound webhooks — each hookId becomes a first-class personality-bound bot
   // so POST /webhook/<hookId> drives the same gateway/session machinery as a
@@ -1017,6 +1039,8 @@ async function buildGatewayBots(
       botKey: `webhook:${hookId}`,
       loop: result.loop,
       binding: { type: 'personality', name: hook.personalityId },
+      ...(result.jobStore ? { jobStore: result.jobStore } : {}),
+      ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
     });
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);
@@ -1032,6 +1056,8 @@ async function buildGatewayBots(
       botKey: discordBotKey(config.discordToken),
       loop: result.loop,
       binding: { type: 'personality', name: config.personality },
+      ...(result.jobStore ? { jobStore: result.jobStore } : {}),
+      ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
     });
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);
@@ -1044,6 +1070,8 @@ async function buildGatewayBots(
       botKey: emailBotKey(config.emailUser, config.emailImapHost),
       loop: result.loop,
       binding: { type: 'personality', name: config.personality },
+      ...(result.jobStore ? { jobStore: result.jobStore } : {}),
+      ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
     });
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);

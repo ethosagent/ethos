@@ -104,6 +104,7 @@ export interface ToolProcessingContext {
   // Run options
   opts: {
     agentId?: string;
+    rootSessionKey?: string;
     origin?: string;
     attachments?: Attachment[];
     dryRun?: boolean;
@@ -157,6 +158,7 @@ export async function* processTools(
     platform: deps.platform,
     workingDir: deps.workingDir,
     agentId: ctx.opts.agentId,
+    rootSessionKey: ctx.opts.rootSessionKey ?? ctx.sessionKey,
     origin: ctx.opts.origin,
     ...(ctx.opts.a2aDelegation ? { a2aDelegation: ctx.opts.a2aDelegation } : {}),
     personalityId: ctx.personality.id,

@@ -1,6 +1,11 @@
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type DispatchCall, Dispatcher, type SupervisorState } from '../dispatcher';
+import {
+  type DispatchCall,
+  Dispatcher,
+  type SpawnDispatchCall,
+  type SupervisorState,
+} from '../dispatcher';
 
 // In-memory supervisor stand-in. Production uses the real `Map<personality, MemberState>`
 // from `runSupervisor`; tests build this directly.
@@ -560,6 +565,111 @@ describe('Dispatcher.tick()', () => {
 
       const order = dispatch.mock.calls.map(([args]) => args.personalityId);
       expect(order).toEqual(['flaky', 'reliable']);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // dispatchAsBackgroundJob — opt-in durable spawn path
+  // ---------------------------------------------------------------------------
+
+  describe('dispatchAsBackgroundJob', () => {
+    it('uses the spawn transport (not the blocking dispatch) and does not mark the task done', async () => {
+      const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+      const t = board.createTask({ title: 'background work', assignee: 'engineer' });
+      board.updateStatus(t.id, 'ready');
+
+      const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+      const spawnDispatch = vi.fn<SpawnDispatchCall>(async () => ({ jobId: 'job-123' }));
+      const dispatcher = new Dispatcher({
+        board,
+        supervisor: sup,
+        dispatch,
+        spawnDispatch,
+        dispatchAsBackgroundJob: true,
+      });
+
+      await dispatcher.tick();
+      await new Promise((r) => setImmediate(r));
+
+      // Spawn transport was used; the blocking prompt transport was NOT.
+      expect(spawnDispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch).not.toHaveBeenCalled();
+      const call = spawnDispatch.mock.calls[0]?.[0];
+      expect(call?.port).toBe(3001);
+      expect(call?.personalityId).toBe('engineer');
+
+      // The task was claimed (running) and NOT prematurely completed — the
+      // kanban board still owns its state; the worker will close it out of band.
+      expect(board.getTask(t.id)?.status).toBe('running');
+    });
+
+    it('returns without awaiting a full run — resolves even while the peer job is still executing', async () => {
+      const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+      const t = board.createTask({ title: 'long background work', assignee: 'engineer' });
+      board.updateStatus(t.id, 'ready');
+
+      // A blocking transport that never resolves — if the dispatcher awaited a
+      // full run, the task would hang here. The spawn path must not touch it.
+      const dispatch = vi.fn<DispatchCall>(() => new Promise<string>(() => {}));
+      const spawnDispatch = vi.fn<SpawnDispatchCall>(async () => ({ jobId: 'job-xyz' }));
+      const dispatcher = new Dispatcher({
+        board,
+        supervisor: sup,
+        dispatch,
+        spawnDispatch,
+        dispatchAsBackgroundJob: true,
+      });
+
+      await dispatcher.tick();
+      await new Promise((r) => setImmediate(r));
+
+      expect(spawnDispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch).not.toHaveBeenCalled();
+      // Task stays running, tracked by kanban; nothing forced it to done/blocked.
+      expect(board.getTask(t.id)?.status).toBe('running');
+    });
+
+    it('blocks the run when the spawn transport fails', async () => {
+      const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+      const t = board.createTask({ title: 'unreachable peer', assignee: 'engineer' });
+      board.updateStatus(t.id, 'ready');
+
+      const errors: Array<{ msg: string; id: string }> = [];
+      const spawnDispatch = vi.fn<SpawnDispatchCall>(async () => {
+        throw new Error('connection refused');
+      });
+      const dispatcher = new Dispatcher({
+        board,
+        supervisor: sup,
+        spawnDispatch,
+        dispatchAsBackgroundJob: true,
+        onError: (err, id) => errors.push({ msg: err.message, id }),
+      });
+
+      await dispatcher.tick();
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+
+      expect(board.getTask(t.id)?.status).toBe('blocked');
+      expect(errors).toEqual([{ msg: 'connection refused', id: t.id }]);
+    });
+
+    it('uses the blocking dispatch path unchanged when the option is off (default)', async () => {
+      const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+      const t = board.createTask({ title: 'normal work', assignee: 'engineer' });
+      board.updateStatus(t.id, 'ready');
+
+      const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+      const spawnDispatch = vi.fn<SpawnDispatchCall>(async () => ({ jobId: 'job-999' }));
+      // dispatchAsBackgroundJob omitted → default false.
+      const dispatcher = new Dispatcher({ board, supervisor: sup, dispatch, spawnDispatch });
+
+      await dispatcher.tick();
+      await new Promise((r) => setImmediate(r));
+
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(spawnDispatch).not.toHaveBeenCalled();
+      expect(board.getTask(t.id)?.status).toBe('running');
     });
   });
 });

@@ -14,7 +14,13 @@ import { SkillsLibrary } from '@ethosagent/skills';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import { McpJsonStore, type McpManager } from '@ethosagent/tools-mcp';
 import { buildDashboardTools } from '@ethosagent/tools-ui';
-import type { MemoryProvider, SecretsResolver, SessionStore, Storage } from '@ethosagent/types';
+import type {
+  JobStore,
+  MemoryProvider,
+  SecretsResolver,
+  SessionStore,
+  Storage,
+} from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import type { IdentityMap } from '@ethosagent/wiring';
 import type { Hono } from 'hono';
@@ -52,6 +58,7 @@ import { PlatformsService } from './services/platforms.service';
 import { PluginsService } from './services/plugins.service';
 import { SkillsService } from './services/skills.service';
 import { SystemEventBus } from './services/system-event-bus';
+import { TasksService } from './services/tasks.service';
 import { VoiceService } from './services/voice.service';
 
 // Public entry for `@ethosagent/web-api`. Boot code (`apps/ethos/src/commands/
@@ -83,6 +90,10 @@ export interface CreateWebApiOptions {
   /** Loop-bearing goal runner from `createAgentLoop`. When provided, web-created
    *  goals execute on the same runner+store as the CLI/gateway path. */
   goalRunner?: GoalRunner;
+  /** Durable background-job store from wiring's CreateAgentLoopResult. Backs the
+   *  Tasks surface (list/get/cancel). Absent when background delegation is
+   *  disabled — the tasks RPC degrades to empty reads. */
+  jobStore?: JobStore;
   /** Personality registry — shared with the loop so hot-reloads (mtime cache)
    *  reach both surfaces. Must be a `FilePersonalityRegistry` so the web-api's
    *  Personalities tab can drive its CRUD methods (create / update / delete /
@@ -350,6 +361,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     identityMap: opts.identityMap,
   });
   const kanbanService = new KanbanService({ mesh });
+  const tasksService = new TasksService(opts.jobStore ? { store: opts.jobStore } : {});
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
   const digestService = new DigestService({
     storage,
@@ -584,6 +596,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       platforms: platformsService,
       lab: labService,
       kanban: kanbanService,
+      tasks: tasksService,
       completions: completionsService,
       debug: debugService,
       apiKeys: apiKeysService,

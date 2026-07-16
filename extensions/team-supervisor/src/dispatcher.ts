@@ -33,6 +33,21 @@ export type DispatchCall = (args: {
   signal: AbortSignal;
 }) => Promise<string>;
 
+/**
+ * Dispatches a run to a peer as a durable BACKGROUND job via the peer's `/rpc`
+ * `spawn` method. Unlike {@link DispatchCall}, this returns as soon as the peer
+ * has recorded the job (yielding its `jobId`) — it does NOT await the run to
+ * completion. Used only when `dispatchAsBackgroundJob` is enabled. Injected so
+ * tests can substitute a stub.
+ */
+export type SpawnDispatchCall = (args: {
+  host: string;
+  port: number;
+  prompt: string;
+  personalityId: string;
+  signal: AbortSignal;
+}) => Promise<{ jobId: string }>;
+
 export interface DispatcherOptions {
   board: KanbanStore;
   supervisor: SupervisorState;
@@ -40,6 +55,22 @@ export interface DispatcherOptions {
   mesh?: AgentMesh;
   /** Dispatch transport. Defaults to {@link defaultDispatchCall}. */
   dispatch?: DispatchCall;
+  /**
+   * OPT-IN. When true, ready+assigned tasks are dispatched to peers as durable
+   * BACKGROUND jobs (via the peer's `/rpc` `spawn` method) instead of a blocking
+   * one-shot prompt. The peer records a `BackgroundJob`, gaining a per-run
+   * durable record, spend tracking, and Tasks-page visibility on the peer. The
+   * kanban board remains the source of truth for task state (heartbeat,
+   * staleness reclaim, and the verifier flow are unchanged); the peer's job
+   * store supplements that execution record, it never replaces the board's run
+   * state. Default: false — the blocking {@link DispatchCall} path is used.
+   */
+  dispatchAsBackgroundJob?: boolean;
+  /**
+   * Background-job dispatch transport, used only when `dispatchAsBackgroundJob`
+   * is true. Defaults to {@link defaultSpawnDispatchCall}.
+   */
+  spawnDispatch?: SpawnDispatchCall;
   /**
    * Heartbeat threshold. A task whose open run hasn't heartbeated in this many
    * milliseconds gets marked `blocked` ("stalled — no heartbeat"). Default: 90 s.
@@ -110,6 +141,8 @@ export class Dispatcher {
   private readonly supervisor: SupervisorState;
   private readonly mesh: AgentMesh | null;
   private readonly dispatch: DispatchCall;
+  private readonly dispatchAsBackgroundJob: boolean;
+  private readonly spawnDispatch: SpawnDispatchCall;
   private readonly staleMs: number;
   private readonly pollMs: number;
   private readonly dispatchTimeoutMs: number;
@@ -128,6 +161,8 @@ export class Dispatcher {
     this.supervisor = opts.supervisor;
     this.mesh = opts.mesh ?? null;
     this.dispatch = opts.dispatch ?? defaultDispatchCall;
+    this.dispatchAsBackgroundJob = opts.dispatchAsBackgroundJob ?? false;
+    this.spawnDispatch = opts.spawnDispatch ?? defaultSpawnDispatchCall;
     this.staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
     this.pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
     this.dispatchTimeoutMs = opts.dispatchTimeoutMs ?? DEFAULT_DISPATCH_TIMEOUT_MS;
@@ -270,9 +305,23 @@ export class Dispatcher {
 
       const controller = new AbortController();
       this.inflight.set(task.id, controller);
-      void this.fireDispatch(task, assignee, dispatchHost, dispatchPort, controller).finally(() => {
-        this.inflight.delete(task.id);
-      });
+      // OPT-IN background path: dispatch as a durable spawn job. The task stays
+      // tracked by the kanban heartbeat/staleness machinery below — the worker
+      // updates the board as the background job runs — so we do NOT await a full
+      // run here. Default path (blocking prompt) is unchanged.
+      if (this.dispatchAsBackgroundJob) {
+        void this.fireSpawnDispatch(task, assignee, dispatchHost, dispatchPort, controller).finally(
+          () => {
+            this.inflight.delete(task.id);
+          },
+        );
+      } else {
+        void this.fireDispatch(task, assignee, dispatchHost, dispatchPort, controller).finally(
+          () => {
+            this.inflight.delete(task.id);
+          },
+        );
+      }
     }
   }
 
@@ -405,6 +454,63 @@ export class Dispatcher {
       clearTimeout(timer);
     }
   }
+
+  /**
+   * Background-job variant of {@link fireDispatch}. Instead of awaiting a full
+   * blocking run, it fires the peer's `/rpc` `spawn` method and returns as soon
+   * as the peer has recorded the job. We do NOT mark the task done/blocked on
+   * success — there is no completion to await here. The task remains tracked by
+   * the kanban heartbeat/staleness machinery; the worker updates the board via
+   * kanban tools as the background job runs. On a real transport failure (peer
+   * unreachable, spawn rejected) we block the run, exactly like the blocking
+   * path, so a claimed-but-never-started task surfaces on the board instead of
+   * silently waiting for a heartbeat that will never come.
+   */
+  private async fireSpawnDispatch(
+    task: Task,
+    assignee: string,
+    host: string,
+    port: number,
+    controller: AbortController,
+  ): Promise<void> {
+    const prompt = renderTaskPrompt(task);
+
+    const timer = setTimeout(() => {
+      controller.abort(new Error(`dispatch timeout after ${this.dispatchTimeoutMs}ms`));
+    }, this.dispatchTimeoutMs);
+
+    try {
+      const { jobId } = await this.spawnDispatch({
+        host,
+        port,
+        prompt,
+        personalityId: assignee,
+        signal: controller.signal,
+      });
+      // Job accepted and durably recorded on the peer (jobId). We intentionally
+      // do not await completion: the assignee heartbeats and calls
+      // `kanban_complete` / `kanban_block` as the background job progresses.
+      void jobId;
+    } catch (err) {
+      const reason = controller.signal.reason;
+      const timedOut = reason instanceof Error && /dispatch timeout/.test(reason.message);
+      if (controller.signal.aborted && !timedOut) return;
+
+      const error = timedOut
+        ? (reason as Error)
+        : err instanceof Error
+          ? err
+          : new Error(String(err));
+      this.onError(error, task.id);
+      try {
+        this.board.blockRun(task.id, `dispatch failed: ${error.message}`);
+      } catch {
+        /* run may already be ended */
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -458,4 +564,44 @@ export const defaultDispatchCall: DispatchCall = async ({
     throw new Error(`/notify error: ${data.error ?? 'unknown'}`);
   }
   return 'notified';
+};
+
+// ---------------------------------------------------------------------------
+// Background-job transport — JSON-RPC `spawn` over POST /rpc
+// ---------------------------------------------------------------------------
+
+export const defaultSpawnDispatchCall: SpawnDispatchCall = async ({
+  host,
+  port,
+  prompt,
+  personalityId,
+  signal,
+}) => {
+  const url = `http://${host}:${port}/rpc`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'spawn',
+      params: { text: prompt, personalityId },
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(`/rpc spawn failed: HTTP ${res.status} ${res.statusText}`);
+  }
+  const data = (await res.json()) as {
+    result?: { jobId?: string; status?: string };
+    error?: { message?: string };
+  };
+  if (data.error) {
+    throw new Error(`/rpc spawn error: ${data.error.message ?? 'unknown'}`);
+  }
+  const jobId = data.result?.jobId;
+  if (!jobId) {
+    throw new Error('/rpc spawn error: response missing jobId');
+  }
+  return { jobId };
 };

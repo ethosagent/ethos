@@ -1,14 +1,21 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { clearLine, createInterface } from 'node:readline';
-import { BackgroundRunner, InMemorySteerSink } from '@ethosagent/agent-bridge';
+import { InMemorySteerSink } from '@ethosagent/agent-bridge';
 import type { EthosConfig, QuickCommandConfig } from '@ethosagent/config';
 import { ethosDir } from '@ethosagent/config';
 import { type AgentEvent, type AgentLoop, stripAnsiEscapes } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import { parseSlashCommand, shouldSurfaceProgress } from '@ethosagent/surface-kit';
 import type { SplashInventory } from '@ethosagent/tui';
-import type { Attachment, NotificationAdapter, SteerSink, Storage } from '@ethosagent/types';
+import type {
+  Attachment,
+  JobStore,
+  NotificationAdapter,
+  SteerSink,
+  Storage,
+} from '@ethosagent/types';
 import { resolveAtRefs } from '../lib/at-refs';
 import { makeCompleter } from '../lib/autocomplete';
 import { formatClarifyPrompt, parseClarifyAnswer } from '../lib/clarify-prompt';
@@ -123,8 +130,9 @@ interface ChatState {
   inputQueue: string[];
   /** Currently running turn — null when idle. */
   abort: AbortController | null;
-  /** FW-13 — background task runner. */
-  bgRunner: BackgroundRunner;
+  /** Phase B — durable background engine handles (undefined when background is disabled). */
+  jobStore?: JobStore;
+  backgroundExecutor?: import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor'];
   /** Total in-flight iterations seen this turn (for steer pre-first-iteration fallback). */
   iterationsThisTurn: number;
   /**
@@ -185,8 +193,16 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // register plugin slash commands into it via registerSlashCommand.
   const registry = buildBaseRegistry();
 
-  const { loop, personalityId, displayName, setOnSkillProposed, notificationRouter, pluginLoader } =
-    await resolveActiveLoop(config, { slashRegistry: registry });
+  const {
+    loop,
+    personalityId,
+    displayName,
+    setOnSkillProposed,
+    notificationRouter,
+    pluginLoader,
+    jobStore,
+    backgroundExecutor,
+  } = await resolveActiveLoop(config, { slashRegistry: registry });
 
   // FW-15 — scan global and per-personality skill directories into the registry.
   const storage: Storage = new FsStorage();
@@ -278,8 +294,6 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     process.stdout.write(`\n${c.dim}${formatSkillProposedNotice(skillId)}${c.reset}\n> `);
   });
 
-  const bgRunner = new BackgroundRunner({ maxConcurrent: config.backgroundMaxConcurrent ?? 4 });
-
   const sessionKey = opts.resumeSessionKey ?? `cli:${basename(process.cwd())}`;
 
   // v2.2 — Register a CLI NotificationAdapter so plugin monitors can deliver
@@ -311,7 +325,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     abort: null,
     iterationsThisTurn: 0,
     draining: false,
-    bgRunner,
+    ...(jobStore ? { jobStore } : {}),
+    ...(backgroundExecutor ? { backgroundExecutor } : {}),
     awaitingConsent: false,
     awaitingClarify: false,
     pendingAttachments: [],
@@ -350,16 +365,21 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     rl.once('line', onLine);
   });
 
-  bgRunner.onComplete((task) => {
-    const header = `bg:${task.id}`;
-    const statusLine = task.status === 'done' ? 'done' : `error: ${task.error ?? 'unknown'}`;
+  // Completion notice rendered at the idle prompt — no auto-turn. Auto-triggering
+  // a turn while the user is mid-thought is hostile, so we only print and re-prompt.
+  // Only `done`/`failed` are surfaced; `aborted` is user-requested and stays silent.
+  backgroundExecutor?.onComplete((job) => {
+    if (job.status !== 'done' && job.status !== 'failed') return;
+    const header = `bg:${job.id.slice(0, 8)}`;
+    const statusLine = job.status === 'done' ? 'done' : `error: ${job.error ?? 'unknown'}`;
+    const body = job.status === 'done' ? job.summary : undefined;
     out(`\n${c.dim}╭─ background [${header}] ${statusLine}${c.reset}\n`);
-    if (task.result) {
-      const lines = task.result.split('\n').slice(0, 10);
+    if (body) {
+      const lines = body.split('\n').slice(0, 10);
       for (const line of lines) {
         out(`${c.dim}│ ${line}${c.reset}\n`);
       }
-      if (task.result.split('\n').length > 10) {
+      if (body.split('\n').length > 10) {
         out(`${c.dim}│ ... (truncated)${c.reset}\n`);
       }
     }
@@ -380,6 +400,25 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
   rl.on('close', async () => {
     notificationRouter.deregister(state.sessionKey);
+    // Phase B (T9) — warn if durable background jobs are still active for this
+    // session's root. They'll be orphaned when the process exits and reappear as
+    // `stale`/`expired` on the next boot (`task_status` shows their owner). This
+    // is intentionally a simple one-line warning — a full interactive wait/abort
+    // prompt is out of scope.
+    if (state.jobStore) {
+      try {
+        const active = await state.jobStore.countActiveByRoot(state.sessionKey);
+        if (active > 0) {
+          out(
+            `\n${c.yellow}[${active} background job${active === 1 ? '' : 's'} still running — ` +
+              `they will be orphaned on exit; ${active === 1 ? 'it' : 'they'} will show as ` +
+              `stale/expired on next boot]${c.reset}\n`,
+          );
+        }
+      } catch {
+        // best-effort — never block exit on a store read failure
+      }
+    }
     if (config.displayResumeHint !== false && !opts.noResumeHint) {
       try {
         const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
@@ -1367,7 +1406,7 @@ async function handleSlashCommand(
 
     case 'background':
     case 'bg':
-      handleBackgroundCommand(arg, state, loop);
+      await handleBackgroundCommand(arg, state);
       break;
 
     case 'learn': {
@@ -1456,42 +1495,56 @@ async function handleSlashCommand(
 }
 
 // ---------------------------------------------------------------------------
-// FW-13 — /background command handler
+// /background command handler — durable background engine (Phase B)
 // ---------------------------------------------------------------------------
 
-function handleBackgroundCommand(arg: string, state: ChatState, loop: AgentLoop): void {
+async function handleBackgroundCommand(arg: string, state: ChatState): Promise<void> {
+  const jobStore = state.jobStore;
+  const executor = state.backgroundExecutor;
+  if (!jobStore || !executor) {
+    out(`${c.dim}[background not enabled]${c.reset}\n`);
+    return;
+  }
+  // Root scoping key for every cap/roll-up — the chat REPL's current session key.
+  const root = state.sessionKey;
+
   if (!arg || arg === 'list') {
-    const tasks = state.bgRunner.list();
-    if (tasks.length === 0) {
+    const jobs = await jobStore.listByRoot(root);
+    if (jobs.length === 0) {
       out(`${c.dim}[no background tasks]${c.reset}\n`);
       return;
     }
-    for (const t of tasks) {
-      const elapsed = Math.round((Date.now() - t.startedAt) / 1000);
-      out(`${c.dim}  ${t.id}  [${t.status}]  ${t.prompt.slice(0, 60)}  (${elapsed}s)${c.reset}\n`);
+    for (const j of jobs) {
+      const age = Math.round((Date.now() - j.createdAt) / 1000);
+      const label = j.label ?? j.prompt.slice(0, 60);
+      out(
+        `${c.dim}  ${j.id}  [${j.status}]  ${label}  $${j.spendUsd.toFixed(4)}  (${age}s)${c.reset}\n`,
+      );
     }
     return;
   }
 
   if (arg.startsWith('cancel ')) {
     const taskId = arg.slice('cancel '.length).trim();
-    const ok = state.bgRunner.cancel(taskId);
-    if (ok) {
-      out(`${c.dim}[background task ${taskId} cancelled]${c.reset}\n`);
-    } else {
-      out(`${c.dim}[no running task with id ${taskId}]${c.reset}\n`);
-    }
+    // Cross-process/async: set the cancel flag; the executor honors it shortly.
+    await jobStore.requestCancel(taskId);
+    out(`${c.dim}[background task ${taskId} cancelled]${c.reset}\n`);
     return;
   }
 
-  // /background <prompt> — spawn
-  try {
-    const task = state.bgRunner.run(arg, loop);
-    out(`${c.dim}[background task started: ${task.id}]${c.reset}\n`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    out(`${c.dim}[background: ${msg}]${c.reset}\n`);
-  }
+  // /background <prompt> — spawn a durable job. No origin* fields: the CLI has no
+  // channel lane, so completion surfaces via the idle-prompt onComplete notice.
+  const short = randomUUID().slice(0, 8);
+  const job = await jobStore.create({
+    owner: executor.owner,
+    parentSessionKey: root,
+    rootSessionKey: root,
+    childSessionKey: `${root}:bgcmd:${short}`,
+    depth: 0,
+    prompt: arg,
+  });
+  executor.nudge();
+  out(`${c.dim}[background task started: ${job.id}]${c.reset}\n`);
 }
 
 // ---------------------------------------------------------------------------

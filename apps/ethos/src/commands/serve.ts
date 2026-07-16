@@ -269,6 +269,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     | ((fn: (skillId: string, personalityId: string) => void) => void)
     | undefined;
   let goalRunner: import('@ethosagent/goal-runner').GoalRunner | undefined;
+  let jobStore: import('@ethosagent/types').JobStore | undefined;
+  let backgroundExecutor:
+    | import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor']
+    | undefined;
   let sttProviders: import('@ethosagent/types').SttProviderRegistry | undefined;
   let ttsProviders: import('@ethosagent/types').TtsProviderRegistry | undefined;
   let voiceConfig:
@@ -376,6 +380,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
     goalRunner = result.goalRunner;
+    jobStore = result.jobStore;
+    backgroundExecutor = result.backgroundExecutor;
     sttProviders = result.sttProviders;
     ttsProviders = result.ttsProviders;
     voiceConfig = result.voiceConfig;
@@ -415,6 +421,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
     goalRunner = result.goalRunner;
+    jobStore = result.jobStore;
+    backgroundExecutor = result.backgroundExecutor;
     sttProviders = result.sttProviders;
     ttsProviders = result.ttsProviders;
     voiceConfig = result.voiceConfig;
@@ -440,7 +448,13 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const mesh = new AgentMesh(meshRegistryPath(activeMeshName), { storage: getStorage() });
 
   // ACP server (existing behavior — kept first so any breakage is obvious).
-  const acpServer = new AcpServer({ runner: loop, session, mesh });
+  const acpServer = new AcpServer({
+    runner: loop,
+    session,
+    mesh,
+    ...(jobStore ? { jobStore } : {}),
+    ...(backgroundExecutor ? { backgroundExecutor } : {}),
+  });
   acpServer.startHttp(acpPort);
 
   const personalities = await createPersonalityRegistry({
@@ -801,6 +815,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
     ...(setOnSkillProposed ? { setOnSkillProposed } : {}),
     ...(goalRunner ? { goalRunner } : {}),
+    ...(jobStore ? { jobStore } : {}),
     ...(sttProviders ? { sttProviderRegistry: sttProviders } : {}),
     ...(voiceConfig?.sttProviderName ? { sttProviderName: voiceConfig.sttProviderName } : {}),
     ...(voiceConfig ? { sttProviderConfig: voiceConfig.sttProviderConfig } : {}),

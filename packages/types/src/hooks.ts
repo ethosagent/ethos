@@ -1,3 +1,4 @@
+import type { BackgroundJob } from './background-job';
 import type {
   BeforeGoalCompletePayload,
   BeforeGoalCompleteResult,
@@ -230,6 +231,18 @@ export interface ProcessCompleteEvent {
   durationMs: number;
 }
 
+/**
+ * Fired by the BackgroundExecutor after EVERY terminal transition of a
+ * background job (`done` / `failed` / `aborted`, including the stale→terminal
+ * "recovered" case). Carries the final persisted job row; the handler reads
+ * status/summary/error/origin* off it and decides whether to surface it (e.g.
+ * the gateway stays silent on `aborted`). Suppression is the subscriber's call,
+ * not the executor's.
+ */
+export interface BackgroundJobCompletePayload {
+  job: BackgroundJob;
+}
+
 // ---------------------------------------------------------------------------
 // Hook map — groups by execution model
 // ---------------------------------------------------------------------------
@@ -247,6 +260,7 @@ export interface VoidHooks {
   subagent_ended: SubagentEndedPayload;
   after_ticket_revision: AfterTicketRevisionPayload;
   process_complete: ProcessCompleteEvent;
+  on_background_job_complete: BackgroundJobCompletePayload;
   goal_completed: GoalCompletedPayload;
   goal_failed: GoalFailedPayload;
   goal_exhausted: GoalExhaustedPayload;

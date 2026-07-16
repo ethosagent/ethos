@@ -1,0 +1,508 @@
+import { randomUUID } from 'node:crypto';
+import { existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { CreateBackgroundJobInput } from '@ethosagent/types';
+import { afterEach, describe, expect, it } from 'vitest';
+import { SQLiteJobStore } from '../index';
+
+function baseInput(overrides: Partial<CreateBackgroundJobInput> = {}): CreateBackgroundJobInput {
+  return {
+    owner: 'proc-A',
+    parentSessionKey: 'cli:root',
+    rootSessionKey: 'cli:root',
+    childSessionKey: 'cli:root:job:build:abcd1234',
+    personalityId: 'ada',
+    depth: 1,
+    label: 'build',
+    prompt: 'do the thing',
+    maxCostUsd: 2.5,
+    originPlatform: 'telegram',
+    originBotKey: 'bot-1',
+    originChatId: 'chat-9',
+    originThreadId: 'thread-3',
+    ...overrides,
+  };
+}
+
+describe('SQLiteJobStore', () => {
+  const tmpFiles: string[] = [];
+
+  afterEach(() => {
+    for (const f of tmpFiles) {
+      for (const suffix of ['', '-wal', '-shm']) {
+        if (existsSync(f + suffix)) rmSync(f + suffix);
+      }
+    }
+    tmpFiles.length = 0;
+  });
+
+  function tmpStore(): SQLiteJobStore {
+    const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
+    tmpFiles.push(path);
+    return new SQLiteJobStore(path);
+  }
+
+  it('create → get round-trips all fields and records a queued event', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const created = await store.create(baseInput());
+
+    expect(created.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(created.status).toBe('queued');
+    expect(created.spendUsd).toBe(0);
+    expect(created.cancelRequested).toBe(false);
+    expect(created.owner).toBe('proc-A');
+    expect(created.parentSessionKey).toBe('cli:root');
+    expect(created.rootSessionKey).toBe('cli:root');
+    expect(created.childSessionKey).toBe('cli:root:job:build:abcd1234');
+    expect(created.personalityId).toBe('ada');
+    expect(created.depth).toBe(1);
+    expect(created.label).toBe('build');
+    expect(created.prompt).toBe('do the thing');
+    expect(created.maxCostUsd).toBe(2.5);
+    expect(created.originPlatform).toBe('telegram');
+    expect(created.originBotKey).toBe('bot-1');
+    expect(created.originChatId).toBe('chat-9');
+    expect(created.originThreadId).toBe('thread-3');
+    expect(created.createdAt).toBeGreaterThan(0);
+    expect(created.startedAt).toBeUndefined();
+    expect(created.finishedAt).toBeUndefined();
+
+    const fetched = await store.get(created.id);
+    expect(fetched).toEqual(created);
+
+    const events = await store.getEvents(created.id);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventType).toBe('queued');
+    store.close();
+  });
+
+  it('leaves optional fields undefined when omitted', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const created = await store.create({
+      owner: 'proc-A',
+      parentSessionKey: 'cli:root',
+      rootSessionKey: 'cli:root',
+      childSessionKey: 'cli:root:job:x:1',
+      depth: 0,
+      prompt: 'minimal',
+    });
+    expect(created.personalityId).toBeUndefined();
+    expect(created.label).toBeUndefined();
+    expect(created.maxCostUsd).toBeUndefined();
+    expect(created.originPlatform).toBeUndefined();
+    expect(created.summary).toBeUndefined();
+    expect(created.error).toBeUndefined();
+    expect(created.heartbeatAt).toBeUndefined();
+    store.close();
+  });
+
+  it('get returns null for a missing id', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    expect(await store.get('nope')).toBeNull();
+    store.close();
+  });
+
+  it('claimNextQueued transitions the oldest queued row to running with heartbeat', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const first = await store.create(baseInput({ prompt: 'first' }));
+    const second = await store.create(baseInput({ prompt: 'second' }));
+
+    const claimed = await store.claimNextQueued('proc-A');
+    expect(claimed?.id).toBe(first.id);
+    expect(claimed?.status).toBe('running');
+    expect(claimed?.startedAt).toBeGreaterThan(0);
+    expect(claimed?.heartbeatAt).toBeGreaterThan(0);
+
+    const events = await store.getEvents(first.id);
+    expect(events.map((e) => e.eventType)).toEqual(['queued', 'claimed', 'running']);
+
+    // The second is still queued.
+    expect((await store.get(second.id))?.status).toBe('queued');
+    store.close();
+  });
+
+  it('claimNextQueued returns null when the owner has no queued jobs', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    expect(await store.claimNextQueued('proc-A')).toBeNull();
+    store.close();
+  });
+
+  it('claimNextQueued enforces owner isolation', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const jobA = await store.create(baseInput({ owner: 'A' }));
+
+    // B cannot claim A's job.
+    expect(await store.claimNextQueued('B')).toBeNull();
+    expect((await store.get(jobA.id))?.status).toBe('queued');
+
+    // A can.
+    const claimed = await store.claimNextQueued('A');
+    expect(claimed?.id).toBe(jobA.id);
+    store.close();
+  });
+
+  it('orders listByRoot deterministically via rowid tie-break on equal created_at', async () => {
+    const store = tmpStore();
+    // Two fast inserts likely share the same Date.now() millisecond.
+    const first = await store.create(baseInput({ prompt: 'first' }));
+    const second = await store.create(baseInput({ prompt: 'second' }));
+
+    const list = await store.listByRoot('cli:root');
+    expect(list).toHaveLength(2);
+    // Newest-first: the second-created row comes first even when created_at ties.
+    expect(list[0]?.id).toBe(second.id);
+    expect(list[1]?.id).toBe(first.id);
+    store.close();
+  });
+
+  it('heartbeat updates heartbeat_at on a running job', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await store.create(baseInput());
+    await store.claimNextQueued('proc-A');
+    const before = (await store.get(job.id))?.heartbeatAt ?? 0;
+
+    await new Promise((r) => setTimeout(r, 2));
+    await store.heartbeat(job.id);
+    const after = (await store.get(job.id))?.heartbeatAt ?? 0;
+    expect(after).toBeGreaterThanOrEqual(before);
+    // No event written for a heartbeat.
+    const events = await store.getEvents(job.id);
+    expect(events.some((e) => e.eventType === 'heartbeat')).toBe(false);
+    store.close();
+  });
+
+  it('updateSpend sets spend_usd', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await store.create(baseInput());
+    await store.updateSpend(job.id, 1.23);
+    expect((await store.get(job.id))?.spendUsd).toBe(1.23);
+    // No event written for spend.
+    const events = await store.getEvents(job.id);
+    expect(events.some((e) => e.eventType === 'spend')).toBe(false);
+    store.close();
+  });
+
+  it('requestCancel sets cancelRequested and appends an event', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await store.create(baseInput());
+    await store.requestCancel(job.id);
+    expect((await store.get(job.id))?.cancelRequested).toBe(true);
+    const events = await store.getEvents(job.id);
+    expect(events.at(-1)?.eventType).toBe('cancel_requested');
+    store.close();
+  });
+
+  it('finish from running → done sets summary and finished_at', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await store.create(baseInput());
+    await store.claimNextQueued('proc-A');
+    await store.finish(job.id, 'done', { summary: 'all good' });
+
+    const done = await store.get(job.id);
+    expect(done?.status).toBe('done');
+    expect(done?.summary).toBe('all good');
+    expect(done?.finishedAt).toBeGreaterThan(0);
+
+    const events = await store.getEvents(job.id);
+    expect(events.at(-1)?.eventType).toBe('done');
+    store.close();
+  });
+
+  it('finish from stale → done also records a recovered event', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await store.create(baseInput());
+    await store.claimNextQueued('proc-A');
+    // reclaimStale(0) marks every running row stale regardless of heartbeat age.
+    const stale = await store.reclaimStale(0);
+    expect(stale.map((j) => j.id)).toContain(job.id);
+    expect((await store.get(job.id))?.status).toBe('stale');
+
+    await store.finish(job.id, 'done', { summary: 'was actually alive' });
+    expect((await store.get(job.id))?.status).toBe('done');
+    const types = (await store.getEvents(job.id)).map((e) => e.eventType);
+    expect(types).toContain('recovered');
+    expect(types).toContain('done');
+    // recovered precedes done.
+    expect(types.indexOf('recovered')).toBeLessThan(types.indexOf('done'));
+    store.close();
+  });
+
+  it('finish from a terminal status throws', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await store.create(baseInput());
+    await store.claimNextQueued('proc-A');
+    await store.finish(job.id, 'done', {});
+    await expect(store.finish(job.id, 'failed', {})).rejects.toThrow(/not in running\/stale/);
+    store.close();
+  });
+
+  it('reclaimStale transitions only running rows past the threshold', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const stale = await store.create(baseInput({ prompt: 'stale' }));
+    const fresh = await store.create(baseInput({ prompt: 'fresh' }));
+    await store.claimNextQueued('proc-A'); // claims `stale` (oldest)
+    await store.claimNextQueued('proc-A'); // claims `fresh`
+
+    // Threshold huge → nothing is old enough.
+    expect(await store.reclaimStale(Number.MAX_SAFE_INTEGER)).toHaveLength(0);
+    expect((await store.get(stale.id))?.status).toBe('running');
+    expect((await store.get(fresh.id))?.status).toBe('running');
+
+    // reclaimStale(0): every running row's heartbeat is <= now.
+    const transitioned = await store.reclaimStale(0);
+    expect(transitioned.map((j) => j.id).sort()).toEqual([stale.id, fresh.id].sort());
+    expect((await store.get(stale.id))?.status).toBe('stale');
+    expect((await store.get(stale.id))?.error).toBe('stalled — no heartbeat');
+    const events = await store.getEvents(stale.id);
+    expect(events.at(-1)?.eventType).toBe('stale');
+    store.close();
+  });
+
+  it('reclaimStale ignores queued rows (no heartbeat)', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const queued = await store.create(baseInput());
+    expect(await store.reclaimStale(0)).toHaveLength(0);
+    expect((await store.get(queued.id))?.status).toBe('queued');
+    store.close();
+  });
+
+  it('expireQueued transitions only queued rows past the threshold', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const queued = await store.create(baseInput());
+
+    // Huge threshold → too new to expire.
+    expect(await store.expireQueued(Number.MAX_SAFE_INTEGER)).toHaveLength(0);
+    expect((await store.get(queued.id))?.status).toBe('queued');
+
+    // ttl 0 → created_at <= now, so it expires.
+    const expired = await store.expireQueued(0);
+    expect(expired.map((j) => j.id)).toEqual([queued.id]);
+    const row = await store.get(queued.id);
+    expect(row?.status).toBe('expired');
+    expect(row?.error).toContain('queued too long');
+    expect((await store.getEvents(queued.id)).at(-1)?.eventType).toBe('expired');
+    store.close();
+  });
+
+  it('expireQueued ignores running rows', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await store.create(baseInput());
+    await store.claimNextQueued('proc-A');
+    expect(await store.expireQueued(0)).toHaveLength(0);
+    expect((await store.get(job.id))?.status).toBe('running');
+    store.close();
+  });
+
+  it('countActiveByRoot counts only queued|running', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    await store.create(baseInput()); // queued
+    const running = await store.create(baseInput());
+    const done = await store.create(baseInput());
+    await store.claimNextQueued('proc-A'); // first queued becomes running
+    // Move `done` to done: claim then finish.
+    // (claimNextQueued claims oldest; sequence: 3 created, one claimed above.)
+    // Instead, directly finish `running` and `done` after claiming each.
+    await store.claimNextQueued('proc-A');
+    await store.finish(running.id, 'done', {});
+    await store.claimNextQueued('proc-A');
+    await store.finish(done.id, 'done', {});
+
+    // Only the very first job (claimed → running, never finished) stays active.
+    expect(await store.countActiveByRoot('cli:root')).toBe(1);
+    expect(await store.countActiveByRoot('other')).toBe(0);
+    store.close();
+  });
+
+  it('countActiveByPersonality counts only queued|running', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    await store.create(baseInput({ personalityId: 'ada' }));
+    const running = await store.create(baseInput({ personalityId: 'ada' }));
+    await store.create(baseInput({ personalityId: 'linus' }));
+    await store.claimNextQueued('proc-A'); // claims first ada (queued)
+
+    expect(await store.countActiveByPersonality('ada')).toBe(2);
+    expect(await store.countActiveByPersonality('linus')).toBe(1);
+
+    // Finish the running ada job → count drops.
+    await store.claimNextQueued('proc-A');
+    await store.finish(running.id, 'done', {});
+    expect(await store.countActiveByPersonality('ada')).toBe(1);
+    store.close();
+  });
+
+  it('getEvents returns events in seq order', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await store.create(baseInput());
+    await store.appendEvent(job.id, 'tool_headline', { tool: 'bash' });
+    await store.appendEvent(job.id, 'spend', { usd: 0.5 });
+
+    const events = await store.getEvents(job.id);
+    expect(events.map((e) => e.seq)).toEqual([1, 2, 3]);
+    expect(events.map((e) => e.eventType)).toEqual(['queued', 'tool_headline', 'spend']);
+    expect(events[1]?.payload).toEqual({ tool: 'bash' });
+    store.close();
+  });
+
+  it('persists across reopen of the same db file', async () => {
+    const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
+    tmpFiles.push(path);
+    const store1 = new SQLiteJobStore(path);
+    const job = await store1.create(baseInput());
+    store1.close();
+
+    const store2 = new SQLiteJobStore(path);
+    const reloaded = await store2.get(job.id);
+    expect(reloaded?.id).toBe(job.id);
+    expect(reloaded?.prompt).toBe('do the thing');
+    store2.close();
+  });
+
+  it('refuses to open a db whose user_version is newer than the code', async () => {
+    const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
+    tmpFiles.push(path);
+    const store = new SQLiteJobStore(path);
+    store.close();
+    // Bump user_version beyond the code's supported version out-of-band.
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const raw = new Database(path);
+    raw.pragma('user_version = 3');
+    raw.close();
+
+    expect(() => new SQLiteJobStore(path)).toThrow(/newer than code/);
+  });
+
+  it('create → get round-trips remotePeer / remoteJobId for a proxy row', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const created = await store.create(
+      baseInput({ remotePeer: 'host:9000', remoteJobId: 'peer-job-42' }),
+    );
+    expect(created.remotePeer).toBe('host:9000');
+    expect(created.remoteJobId).toBe('peer-job-42');
+
+    const fetched = await store.get(created.id);
+    expect(fetched?.remotePeer).toBe('host:9000');
+    expect(fetched?.remoteJobId).toBe('peer-job-42');
+    store.close();
+  });
+
+  it('leaves remotePeer / remoteJobId undefined for a local row', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const created = await store.create(baseInput());
+    expect(created.remotePeer).toBeUndefined();
+    expect(created.remoteJobId).toBeUndefined();
+    store.close();
+  });
+
+  it('listRunningRemote returns only running rows with a remoteJobId', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    // A running remote proxy row.
+    const remote = await store.create(
+      baseInput({ remotePeer: 'host:9000', remoteJobId: 'peer-1' }),
+    );
+    // A running LOCAL row (no remoteJobId).
+    const local = await store.create(baseInput());
+    // A terminal remote row.
+    const terminalRemote = await store.create(
+      baseInput({ remotePeer: 'host:9000', remoteJobId: 'peer-2' }),
+    );
+
+    await store.claimNextQueued('proc-A'); // claims `remote` (oldest)
+    await store.claimNextQueued('proc-A'); // claims `local`
+    await store.claimNextQueued('proc-A'); // claims `terminalRemote`
+    await store.finish(terminalRemote.id, 'done', {});
+
+    const running = await store.listRunningRemote();
+    expect(running.map((j) => j.id)).toEqual([remote.id]);
+    // The local running row is excluded.
+    expect(running.some((j) => j.id === local.id)).toBe(false);
+    store.close();
+  });
+
+  it('pruneTerminal deletes old terminal rows and their events, leaving running and recent rows', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    // An old, finished (terminal) row.
+    const oldDone = await store.create(baseInput());
+    await store.claimNextQueued('proc-A');
+    await store.finish(oldDone.id, 'done', { summary: 'old' });
+    // A running row (never terminal).
+    const running = await store.create(baseInput());
+    await store.claimNextQueued('proc-A');
+
+    // Cutoff far in the future → the terminal row's finished_at is < cutoff.
+    const deleted = await store.pruneTerminal(Date.now() + 1_000_000);
+    expect(deleted).toBe(1);
+
+    expect(await store.get(oldDone.id)).toBeNull();
+    expect(await store.getEvents(oldDone.id)).toHaveLength(0);
+    // The running row survives.
+    expect((await store.get(running.id))?.status).toBe('running');
+
+    // A cutoff in the past leaves everything.
+    const deletedNone = await store.pruneTerminal(0);
+    expect(deletedNone).toBe(0);
+    store.close();
+  });
+
+  it('migrates a v1 database (adds remote columns) when opened by v2 code', async () => {
+    const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
+    tmpFiles.push(path);
+    // Build a v1 jobs table out-of-band: the full v1 shape minus the remote
+    // columns, with user_version = 1.
+    const Database = (await import('@ethosagent/sqlite')).default;
+    const raw = new Database(path);
+    raw.exec(`
+      CREATE TABLE jobs (
+        id                 TEXT PRIMARY KEY,
+        owner              TEXT NOT NULL,
+        parent_session_key TEXT NOT NULL,
+        root_session_key   TEXT NOT NULL,
+        child_session_key  TEXT NOT NULL,
+        personality_id     TEXT,
+        depth              INTEGER NOT NULL,
+        status             TEXT NOT NULL DEFAULT 'queued',
+        label              TEXT,
+        prompt             TEXT NOT NULL,
+        summary            TEXT,
+        error              TEXT,
+        spend_usd          REAL NOT NULL DEFAULT 0,
+        max_cost_usd       REAL,
+        cancel_requested   INTEGER NOT NULL DEFAULT 0,
+        heartbeat_at       INTEGER,
+        created_at         INTEGER NOT NULL,
+        started_at         INTEGER,
+        finished_at        INTEGER,
+        origin_platform    TEXT,
+        origin_bot_key     TEXT,
+        origin_chat_id     TEXT,
+        origin_thread_id   TEXT
+      ) STRICT;
+      CREATE TABLE job_events (
+        id         INTEGER PRIMARY KEY,
+        job_id     TEXT NOT NULL REFERENCES jobs(id),
+        seq        INTEGER NOT NULL,
+        event_type TEXT NOT NULL,
+        payload    TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+    `);
+    raw.pragma('user_version = 1');
+    raw.close();
+
+    // Opening with current code migrates to v2.
+    const store = new SQLiteJobStore(path);
+    const created = await store.create(
+      baseInput({ remotePeer: 'host:9000', remoteJobId: 'peer-1' }),
+    );
+    expect(created.remotePeer).toBe('host:9000');
+    expect(created.remoteJobId).toBe('peer-1');
+    store.close();
+
+    // user_version bumped to 2.
+    const raw2 = new Database(path);
+    const version = (raw2.pragma('user_version') as Array<{ user_version: number }>)[0]
+      ?.user_version;
+    raw2.close();
+    expect(version).toBe(2);
+  });
+});

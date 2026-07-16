@@ -170,6 +170,7 @@ ScopedStorage	@ethosagent/storage-fs	Decorator — enforces a per-personality re
 Allowed exceptions (these stay raw node:fs):
 
 extensions/session-sqlite/, extensions/memory-vector/ — SQLite via @ethosagent/sqlite opens raw paths and manages WAL/SHM natively
+extensions/job-store/ — SQLiteJobStore opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir (same rationale as session-sqlite/memory-vector)
 apps/ethos/src/error-log.ts — sync crash logger; must flush before process exit
 apps/ethos/tsup.config.ts and other build-time tooling
 extensions/skills/src/skill-compat.ts statSync — walks $PATH, not ~/.ethos/

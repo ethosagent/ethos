@@ -243,6 +243,59 @@ export interface AwsConfig {
  */
 export const CURRENT_ETHOS_CONFIG_SCHEMA_VERSION = 1;
 
+/**
+ * Background sub-agent job config (`background:` section). All fields optional;
+ * omitted values fall back to the defaults in `backgroundDefaults()`. Lives in
+ * ~/.ethos/config.yaml, NOT on PersonalityConfig (frozen schema).
+ *
+ * Distinct from the FW-13 `backgroundMaxConcurrent` scalar (config key
+ * `background.max_concurrent`) — that governs interactive background sessions;
+ * this section governs the Background Sub-Agents job pool.
+ */
+export interface BackgroundConfig {
+  /** Master switch. Default resolved by the wiring layer per surface, not here. */
+  enabled?: boolean;
+  /** Separate concurrency pool size for background jobs (additive to interactive). Default 2. */
+  maxConcurrentJobs?: number;
+  /** Max simultaneous active (queued|running) jobs per root session. Default 3. */
+  maxJobsPerRoot?: number;
+  /** Max simultaneous active jobs per personality. Default 5. */
+  maxJobsPerPersonality?: number;
+  /** Default per-job cost cap in USD when the tool call omits max_cost_usd. Default 1.00. */
+  defaultMaxCostUsd?: number;
+  /** Finite-by-default aggregate background spend cap per root, summed over rootSessionKey. Default 5.00. */
+  maxRootBackgroundUsd?: number;
+  /** Queued rows older than this at boot are expired (ms). Default 900000 (15 min). */
+  queuedTtlMs?: number;
+  /** Heartbeat staleness threshold (ms). Default 90000 (90s = 3 missed 30s beats). */
+  staleMs?: number;
+  /** Executor per-job heartbeat timer interval (ms). Default 30000. */
+  heartbeatMs?: number;
+  /** Terminal-row retention before GC (days). Default 30. */
+  retentionDays?: number;
+}
+
+/**
+ * Canonical defaults for the `background:` section. `enabled` defaults to false;
+ * the wiring layer may override per surface. All other fields are finite.
+ */
+export function backgroundDefaults(): Required<Omit<BackgroundConfig, 'enabled'>> & {
+  enabled: boolean;
+} {
+  return {
+    enabled: false,
+    maxConcurrentJobs: 2,
+    maxJobsPerRoot: 3,
+    maxJobsPerPersonality: 5,
+    defaultMaxCostUsd: 1.0,
+    maxRootBackgroundUsd: 5.0,
+    queuedTtlMs: 900_000,
+    staleMs: 90_000,
+    heartbeatMs: 30_000,
+    retentionDays: 30,
+  };
+}
+
 export interface EthosConfig {
   /**
    * On-disk schema version. Optional for backward compatibility — pre-
@@ -435,8 +488,18 @@ export interface EthosConfig {
    *     Config key: background.max_concurrent
    *   `displayBellOnComplete` — ring the terminal bell when a background task finishes.
    *     Config key: display.bell_on_complete
+   *
+   * NOTE: `backgroundMaxConcurrent` is superseded by the durable engine's
+   * `background.maxConcurrentJobs` (`BackgroundJobConfig`). It is retained only
+   * for config round-trip stability and is no longer read by any surface.
    */
   backgroundMaxConcurrent?: number;
+  /**
+   * Background Sub-Agents job pool config (`background:` section). Parsed from
+   * flat `background.<snake_case>` keys; see `BackgroundConfig` for the fields
+   * and `backgroundDefaults()` for the fallbacks.
+   */
+  background?: BackgroundConfig;
   displayBellOnComplete?: boolean;
   displayDebugPanel?: boolean;
   displayDebugPanelModel?: string;
@@ -705,6 +768,11 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.evolverSchedule) lines.push(`evolver.schedule: ${config.evolverSchedule}`);
   if (config.backgroundMaxConcurrent !== undefined)
     lines.push(`background.max_concurrent: ${config.backgroundMaxConcurrent}`);
+  if (config.background) {
+    for (const [key, val] of backgroundToLines(config.background)) {
+      lines.push(`background.${key}: ${val}`);
+    }
+  }
   if (config.telegram?.bots.length) {
     for (const [i, bot] of config.telegram.bots.entries()) {
       if (bot.id) lines.push(`telegram.bots.${i}.id: ${bot.id}`);
@@ -1452,6 +1520,7 @@ function parseConfigYaml(src: string): EthosConfig {
     backgroundMaxConcurrent: backgroundKv.max_concurrent
       ? Number(backgroundKv.max_concurrent)
       : undefined,
+    background: buildBackgroundConfig(backgroundKv),
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
     displayDebugPanel: displayKv.debug_panel === 'true' ? true : undefined,
     displayDebugPanelModel: displayKv.debug_panel_model || undefined,
@@ -1683,6 +1752,49 @@ function buildRetentionConfig(kv: Record<string, string>): RetentionConfig | und
   if (kv['events.channel']) ev.channel = kv['events.channel'];
   if (kv['events.install']) ev.install = kv['events.install'];
   if (Object.keys(ev).length > 0) cfg.events = ev;
+  return cfg;
+}
+
+/**
+ * Parse the `background:` section from the shared `background.*` flat-key bag.
+ * Only recognised Background Sub-Agents fields are picked — the FW-13
+ * `background.max_concurrent` key belongs to `backgroundMaxConcurrent` and is
+ * handled separately. Returns undefined when no recognised field is present so
+ * `config.background` is only set when the section actually appears.
+ *
+ * `default_max_cost_usd` / `max_root_background_usd` may legitimately be the
+ * literal `null` meaning "explicit opt-out / unbounded". At this config layer we
+ * only parse finite numbers — a `null` (or any non-finite value) leaves the
+ * field undefined; the wiring layer distinguishes absence from a tool-level
+ * explicit null.
+ */
+function buildBackgroundConfig(kv: Record<string, string>): BackgroundConfig | undefined {
+  const cfg: BackgroundConfig = {};
+  if (kv.enabled !== undefined) cfg.enabled = kv.enabled === 'true';
+  const num = (raw: string | undefined): number | undefined => {
+    if (raw === undefined) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const maxConcurrentJobs = num(kv.max_concurrent_jobs);
+  if (maxConcurrentJobs !== undefined) cfg.maxConcurrentJobs = maxConcurrentJobs;
+  const maxJobsPerRoot = num(kv.max_jobs_per_root);
+  if (maxJobsPerRoot !== undefined) cfg.maxJobsPerRoot = maxJobsPerRoot;
+  const maxJobsPerPersonality = num(kv.max_jobs_per_personality);
+  if (maxJobsPerPersonality !== undefined) cfg.maxJobsPerPersonality = maxJobsPerPersonality;
+  const defaultMaxCostUsd = num(kv.default_max_cost_usd);
+  if (defaultMaxCostUsd !== undefined) cfg.defaultMaxCostUsd = defaultMaxCostUsd;
+  const maxRootBackgroundUsd = num(kv.max_root_background_usd);
+  if (maxRootBackgroundUsd !== undefined) cfg.maxRootBackgroundUsd = maxRootBackgroundUsd;
+  const queuedTtlMs = num(kv.queued_ttl_ms);
+  if (queuedTtlMs !== undefined) cfg.queuedTtlMs = queuedTtlMs;
+  const staleMs = num(kv.stale_ms);
+  if (staleMs !== undefined) cfg.staleMs = staleMs;
+  const heartbeatMs = num(kv.heartbeat_ms);
+  if (heartbeatMs !== undefined) cfg.heartbeatMs = heartbeatMs;
+  const retentionDays = num(kv.retention_days);
+  if (retentionDays !== undefined) cfg.retentionDays = retentionDays;
+  if (Object.keys(cfg).length === 0) return undefined;
   return cfg;
 }
 
@@ -2174,5 +2286,30 @@ function retentionToLines(cfg: RetentionConfig): Array<[string, string]> {
     if (cfg.events.channel) lines.push(['events.channel', cfg.events.channel]);
     if (cfg.events.install) lines.push(['events.install', cfg.events.install]);
   }
+  return lines;
+}
+
+/**
+ * Serialize the `background:` section to flat `[key, value]` pairs, emitting
+ * only fields actually present on the config so parse→serialize→parse round-
+ * trips are stable (absent fields fall back to `backgroundDefaults()`, never
+ * written out).
+ */
+function backgroundToLines(bg: BackgroundConfig): Array<[string, string]> {
+  const lines: Array<[string, string]> = [];
+  if (bg.enabled !== undefined) lines.push(['enabled', String(bg.enabled)]);
+  if (bg.maxConcurrentJobs !== undefined)
+    lines.push(['max_concurrent_jobs', String(bg.maxConcurrentJobs)]);
+  if (bg.maxJobsPerRoot !== undefined) lines.push(['max_jobs_per_root', String(bg.maxJobsPerRoot)]);
+  if (bg.maxJobsPerPersonality !== undefined)
+    lines.push(['max_jobs_per_personality', String(bg.maxJobsPerPersonality)]);
+  if (bg.defaultMaxCostUsd !== undefined)
+    lines.push(['default_max_cost_usd', String(bg.defaultMaxCostUsd)]);
+  if (bg.maxRootBackgroundUsd !== undefined)
+    lines.push(['max_root_background_usd', String(bg.maxRootBackgroundUsd)]);
+  if (bg.queuedTtlMs !== undefined) lines.push(['queued_ttl_ms', String(bg.queuedTtlMs)]);
+  if (bg.staleMs !== undefined) lines.push(['stale_ms', String(bg.staleMs)]);
+  if (bg.heartbeatMs !== undefined) lines.push(['heartbeat_ms', String(bg.heartbeatMs)]);
+  if (bg.retentionDays !== undefined) lines.push(['retention_days', String(bg.retentionDays)]);
   return lines;
 }

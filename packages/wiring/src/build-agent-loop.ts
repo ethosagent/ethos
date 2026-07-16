@@ -1,9 +1,17 @@
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
+import { backgroundDefaults } from '@ethosagent/config';
 import { AgentLoop, EagerPrefetchPolicy, SimpleCompletionImpl } from '@ethosagent/core';
 import { registerBuiltinExtractors } from '@ethosagent/document-extractors';
 import { GoalRunner } from '@ethosagent/goal-runner';
+import { BackgroundExecutor } from '@ethosagent/job-runner';
+import { SQLiteJobStore } from '@ethosagent/job-store';
 import { FsStorage } from '@ethosagent/storage-fs';
-import { createDelegationTools } from '@ethosagent/tools-delegation';
+import {
+  type BackgroundToolDeps,
+  createDelegationTools,
+  MeshProxyReconciler,
+} from '@ethosagent/tools-delegation';
 import { createMemoryTools } from '@ethosagent/tools-memory';
 import { createVisionTools } from '@ethosagent/tools-vision';
 import { createWebTools } from '@ethosagent/tools-web';
@@ -449,8 +457,68 @@ export async function buildAgentLoop(
     },
   });
 
+  // --- Background sub-agent engine (durable spawn-and-continue) ---
+  const bg = { ...backgroundDefaults(), ...(config.background ?? {}) };
+  // Default ON for long-lived surfaces; OFF for one-shot CLI invocations that exit
+  // immediately (a job spawned in a dying process would never run). An explicit
+  // config.background.enabled always wins.
+  const backgroundEnabled = config.background?.enabled ?? !(opts.oneShot ?? false);
+
+  let jobStore: SQLiteJobStore | undefined;
+  let backgroundExecutor: BackgroundExecutor | undefined;
+  let backgroundDeps: BackgroundToolDeps | undefined;
+  let meshProxyReconciler: MeshProxyReconciler | undefined;
+  if (backgroundEnabled) {
+    jobStore = new SQLiteJobStore(join(dataDir, 'jobs.db'));
+    // Owner is unique per executor instance so multiple loops in one process
+    // (multi-bot gateway) never race on claimNextQueued and each runs only its
+    // own jobs. randomBytes suffix distinguishes same-profile same-pid instances.
+    const owner = `${profile}:${process.pid}:${randomBytes(3).toString('hex')}`;
+    backgroundExecutor = new BackgroundExecutor({
+      store: jobStore,
+      loop,
+      owner,
+      config: {
+        maxConcurrentJobs: bg.maxConcurrentJobs,
+        staleMs: bg.staleMs,
+        heartbeatMs: bg.heartbeatMs,
+        queuedTtlMs: bg.queuedTtlMs,
+        maxRootBackgroundUsd: bg.maxRootBackgroundUsd,
+        retentionMs: bg.retentionDays * 86_400_000,
+      },
+      log: (msg) => log.info(`[background] ${msg}`),
+    });
+    backgroundExecutor.start();
+    backgroundDeps = {
+      store: jobStore,
+      nudge: () => backgroundExecutor?.nudge(),
+      owner,
+      defaultMaxCostUsd: bg.defaultMaxCostUsd,
+      maxJobsPerRoot: bg.maxJobsPerRoot,
+      maxJobsPerPersonality: bg.maxJobsPerPersonality,
+      staleMs: bg.staleMs,
+    };
+
+    // Mesh proxy reconciler — polls peers for background jobs spawned via
+    // route_to_agent(background:true) and mirrors their status onto local proxy
+    // rows. Uses plain globalThis.fetch: it runs OUTSIDE any turn and only
+    // contacts mesh peers from the registry, so it bypasses per-personality
+    // network policy by design.
+    meshProxyReconciler = new MeshProxyReconciler({
+      store: jobStore,
+      fetchImpl: (url, init) => globalThis.fetch(url, init),
+      log: (m) => log.info(`[mesh-reconciler] ${m}`),
+    });
+    meshProxyReconciler.start();
+  }
+
   // Delegation tools need the loop reference; register after loop creation.
-  for (const tool of createDelegationTools(loop, wiringStorage, opts.meshRegistryPath))
+  for (const tool of createDelegationTools(
+    loop,
+    wiringStorage,
+    opts.meshRegistryPath,
+    backgroundDeps,
+  ))
     tools.register(tool);
 
   // Goal runner — loop-bearing, constructed after the loop exists (mirrors
@@ -545,6 +613,9 @@ export async function buildAgentLoop(
     notificationRouter,
     pluginLoader,
     goalRunner,
+    ...(jobStore ? { jobStore } : {}),
+    ...(backgroundExecutor ? { backgroundExecutor } : {}),
+    ...(meshProxyReconciler ? { meshProxyReconciler } : {}),
     activePersonality: activePerson,
     sttProviders: infra.sttProviders,
     ttsProviders: infra.ttsProviders,

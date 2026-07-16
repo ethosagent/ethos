@@ -1110,6 +1110,80 @@ export const GoalSchema = z.object({
 export type GoalWire = z.infer<typeof GoalSchema>;
 
 // ---------------------------------------------------------------------------
+// Background jobs — detached spawn-and-continue delegation (Tasks surface)
+//
+// Wire-format mirror of `@ethosagent/types` BackgroundJob / BackgroundJobEvent.
+// Epoch-ms timestamps pass through as numbers (the Tasks page formats them
+// client-side); optional columns are surfaced as `null` rather than absent.
+// The `tasks` RPC namespace lists jobs, reads one job with its ordered event
+// trail, and requests cancellation.
+// ---------------------------------------------------------------------------
+
+export const BackgroundJobStatusSchema = z.enum([
+  'queued',
+  'running',
+  'done',
+  'failed',
+  'aborted',
+  'stale',
+  'expired',
+]);
+export type BackgroundJobStatusWire = z.infer<typeof BackgroundJobStatusSchema>;
+
+export const BackgroundJobEventTypeSchema = z.enum([
+  'queued',
+  'claimed',
+  'running',
+  'heartbeat',
+  'spend',
+  'cancel_requested',
+  'tool_headline',
+  'done',
+  'failed',
+  'aborted',
+  'stale',
+  'expired',
+  'recovered',
+]);
+export type BackgroundJobEventTypeWire = z.infer<typeof BackgroundJobEventTypeSchema>;
+
+export const BackgroundJobEventSchema = z.object({
+  id: z.number().int(),
+  jobId: z.string(),
+  seq: z.number().int(),
+  eventType: BackgroundJobEventTypeSchema,
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: z.number(),
+});
+export type BackgroundJobEventWire = z.infer<typeof BackgroundJobEventSchema>;
+
+export const BackgroundJobSummarySchema = z.object({
+  id: z.string(),
+  status: BackgroundJobStatusSchema,
+  label: z.string().nullable(),
+  personalityId: z.string().nullable(),
+  spendUsd: z.number(),
+  maxCostUsd: z.number().nullable(),
+  depth: z.number().int(),
+  createdAt: z.number(),
+  startedAt: z.number().nullable(),
+  finishedAt: z.number().nullable(),
+  heartbeatAt: z.number().nullable(),
+  owner: z.string(),
+  rootSessionKey: z.string(),
+  parentSessionKey: z.string(),
+});
+export type BackgroundJobSummaryWire = z.infer<typeof BackgroundJobSummarySchema>;
+
+export const BackgroundJobDetailSchema = BackgroundJobSummarySchema.extend({
+  prompt: z.string(),
+  summary: z.string().nullable(),
+  error: z.string().nullable(),
+  events: z.array(BackgroundJobEventSchema),
+});
+export type BackgroundJobDetailWire = z.infer<typeof BackgroundJobDetailSchema>;
+
+// ---------------------------------------------------------------------------
 // Digest — weekly governed-learning report (read-only)
 //
 // The CLI / cron writes Markdown to `~/.ethos/digests/<ISO-week>.md`.

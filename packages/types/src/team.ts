@@ -64,6 +64,15 @@ export interface TeamManifest {
    * dominates. Defaults to false.
    */
   dispatch_prefer_reliable?: boolean;
+  /**
+   * OPT-IN. When true, the dispatcher sends each ready+assigned task to its
+   * peer as a durable BACKGROUND job (via the peer's `/rpc` `spawn` method)
+   * rather than a blocking one-shot prompt. The peer gains a per-run durable
+   * record, spend tracking, and Tasks-page visibility; the kanban board remains
+   * the source of truth for task state (heartbeat, staleness, verifier flow
+   * unchanged). Defaults to false.
+   */
+  dispatch_as_background_job?: boolean;
   /** Agents to boot as part of this team. */
   members: TeamMember[];
   /** When true, bounced tickets produce structured postmortem entries in team memory. Default: true for multi-member teams. */

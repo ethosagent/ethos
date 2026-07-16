@@ -6,6 +6,8 @@ import {
   ApiKeyMetadataSchema,
   ApiKeyScopeSchema,
   ApprovalScopeSchema,
+  BackgroundJobDetailSchema,
+  BackgroundJobSummarySchema,
   BatchRunInfoSchema,
   BotBindingSchema,
   ChannelPlatformFilterSchema,
@@ -1898,6 +1900,31 @@ const goals = {
 };
 
 // ---------------------------------------------------------------------------
+// Tasks — background-job (detached spawn-and-continue) surface
+//
+// Read-only plus one cancel: `list` enumerates jobs (optionally scoped to a
+// root session), `get` reads one job with its ordered event trail (null when
+// absent), `cancel` requests cancellation. The JobStore is the source of
+// truth; the server maps rows to the wire schemas in `schemas.ts`.
+// ---------------------------------------------------------------------------
+
+const TasksListInput = z.object({ rootSessionKey: z.string().optional() });
+const TasksListOutput = z.array(BackgroundJobSummarySchema);
+
+const TasksGetInput = z.object({ id: z.string().min(1) });
+const TasksGetOutput = BackgroundJobDetailSchema.nullable();
+
+const TasksCancelInput = z.object({ id: z.string().min(1) });
+const TasksCancelOutput = z.object({ ok: z.boolean() });
+
+/** @experimental */
+const tasks = {
+  list: oc.input(TasksListInput).output(TasksListOutput),
+  get: oc.input(TasksGetInput).output(TasksGetOutput),
+  cancel: oc.input(TasksCancelInput).output(TasksCancelOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Digest — read-only view of the most recent weekly governed-learning digest
 //
 // The weekly digest writes Markdown to `~/.ethos/digests/<ISO-week>.md`.
@@ -2042,6 +2069,7 @@ export const contract = {
   context,
   files,
   goals,
+  tasks,
   digest,
   voice,
   a2a,

@@ -1,3 +1,4 @@
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   AgentMesh,
   appendMeshJournal,
@@ -5,7 +6,15 @@ import {
   type MeshEntry,
 } from '@ethosagent/agent-mesh';
 import type { AgentLoop } from '@ethosagent/core';
-import type { Storage, Tool, ToolContext, ToolResult } from '@ethosagent/types';
+import type {
+  BackgroundJob,
+  BackgroundJobEvent,
+  JobStore,
+  Storage,
+  Tool,
+  ToolContext,
+  ToolResult,
+} from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Depth tracking — stored in ToolContext.agentId as "depth:<n>"
@@ -59,6 +68,18 @@ function getDepth(ctx: ToolContext): number {
 
 function childAgentId(depth: number): string {
   return `depth:${depth}`;
+}
+
+/**
+ * Splits a `ToolContext.origin` ("<platform>:<chatId>") on the FIRST `:` only —
+ * chatIds can theoretically contain `:`. Returns `{}` when `s` is falsy or has
+ * no colon.
+ */
+function splitFirstColon(s: string | undefined): { platform?: string; chatId?: string } {
+  if (!s) return {};
+  const idx = s.indexOf(':');
+  if (idx === -1) return {};
+  return { platform: s.slice(0, idx), chatId: s.slice(idx + 1) };
 }
 
 // ---------------------------------------------------------------------------
@@ -118,10 +139,130 @@ async function runSubAgent(
 }
 
 // ---------------------------------------------------------------------------
+// Background sub-agents — detached spawn-and-continue delegation
+// ---------------------------------------------------------------------------
+
+/**
+ * Dependencies the tool layer needs to spawn and inspect background jobs.
+ * Injected at wiring time; when absent the background surface degrades to
+ * `not_available`. `nudge` is `executor.nudge` passed structurally so this
+ * package never imports the job-runner.
+ */
+export interface BackgroundToolDeps {
+  store: JobStore; // durable job persistence
+  nudge: () => void; // executor.nudge — structural, do NOT import job-runner
+  owner: string; // stamped on created jobs
+  defaultMaxCostUsd: number; // used when max_cost_usd arg is omitted
+  maxJobsPerRoot: number; // spawn-time concurrency cap
+  maxJobsPerPersonality: number;
+  staleMs: number; // for heartbeat-freshness reporting in task_status/logs
+}
+
+const LABEL_RE = /^[a-z0-9-]{1,32}$/;
+
+const TERMINAL_STATUSES: ReadonlySet<BackgroundJob['status']> = new Set([
+  'done',
+  'failed',
+  'aborted',
+  'stale',
+  'expired',
+]);
+
+const NOT_AVAILABLE: ToolResult = {
+  ok: false,
+  code: 'not_available',
+  error: 'Background jobs are not enabled in this deployment',
+};
+
+// Uniform "not found" for both a missing job and a job scoped to another
+// session — never leak another session's job existence.
+const JOB_NOT_FOUND: ToolResult = { ok: false, code: 'input_invalid', error: 'job not found' };
+
+/** A job is visible iff its root matches the caller's root (exact, never prefix). */
+async function fetchScopedJob(
+  store: JobStore,
+  id: string,
+  ctx: ToolContext,
+): Promise<BackgroundJob | null> {
+  const job = await store.get(id);
+  if (!job) return null;
+  if (job.rootSessionKey !== (ctx.rootSessionKey ?? ctx.sessionKey)) return null;
+  return job;
+}
+
+function summarizeJob(job: BackgroundJob, staleMs: number): Record<string, unknown> {
+  const now = Date.now();
+  const summary: Record<string, unknown> = {
+    id: job.id,
+    status: job.status,
+    label: job.label,
+    personality: job.personalityId,
+    spendUsd: job.spendUsd,
+    ageMs: now - job.createdAt,
+    owner: job.owner,
+  };
+  if (job.status === 'running') {
+    const hbAge = job.heartbeatAt !== undefined ? now - job.heartbeatAt : undefined;
+    summary.heartbeatAgeMs = hbAge;
+    if (hbAge !== undefined && hbAge > staleMs) {
+      summary.heartbeat = 'heartbeat stale — owner may be gone';
+    }
+  }
+  return summary;
+}
+
+function compactJob(job: BackgroundJob): Record<string, unknown> {
+  return {
+    id: job.id,
+    status: job.status,
+    label: job.label,
+    spendUsd: job.spendUsd,
+    ageMs: Date.now() - job.createdAt,
+  };
+}
+
+function relAge(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ago`;
+}
+
+function formatEvent(e: BackgroundJobEvent): string {
+  const p = e.payload;
+  switch (e.eventType) {
+    case 'queued':
+      return 'queued';
+    case 'claimed':
+      return `claimed by ${String(p.owner ?? 'unknown')}`;
+    case 'running':
+      return 'started running';
+    case 'tool_headline':
+      return `ran ${String(p.toolName ?? '')}${p.arg ? ` — ${String(p.arg)}` : ''}`;
+    case 'spend':
+      return `spend $${String(p.spendUsd ?? p.usd ?? '')}`;
+    case 'cancel_requested':
+      return 'cancel requested';
+    case 'recovered':
+      return 'recovered (was falsely marked stale)';
+    case 'done':
+    case 'failed':
+    case 'aborted':
+    case 'stale':
+    case 'expired':
+      return `→ ${e.eventType}`;
+    default:
+      return e.eventType;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // delegate_task — spawns a single child agent
 // ---------------------------------------------------------------------------
 
-export function createDelegateTaskTool(loop: AgentLoop): Tool {
+export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundToolDeps): Tool {
   return {
     name: 'delegate_task',
     description:
@@ -158,21 +299,130 @@ export function createDelegateTaskTool(loop: AgentLoop): Tool {
             "'full' (default) returns the complete output (≤20,000 chars). " +
             `'summary' asks the sub-agent to end with a ## Summary section and returns only that (≤${SUMMARY_RESULT_CAP} chars).`,
         },
+        background: {
+          type: 'boolean',
+          description:
+            'Run detached: returns a job id immediately instead of blocking. Poll with task_status/task_result.',
+        },
+        max_cost_usd: {
+          type: ['number', 'null'],
+          description:
+            'Per-job USD spend cap; the job aborts on breach. Omit for the deployment default; pass null to explicitly run uncapped.',
+        },
       },
       required: ['prompt'],
     },
     async execute(args, ctx): Promise<ToolResult> {
+      const rawArgs = (args ?? {}) as Record<string, unknown>;
       const {
         prompt,
         personality,
         label,
         return_mode = 'full',
+        background: runInBackground,
       } = args as {
         prompt: string;
         personality?: string;
         label?: string;
         return_mode?: 'full' | 'summary';
+        background?: boolean;
       };
+
+      // ---- Background (detached) path -------------------------------------
+      // Same up-front validation as the blocking path, then hand off to the
+      // JobStore. When background deps are not wired, degrade to not_available.
+      if (runInBackground === true) {
+        if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
+
+        // Cross-personality delegation is blocked here just like the blocking
+        // path; background jobs always run as the caller's personality.
+        const delegationError = assertCanDelegateTo(ctx.personalityId, personality);
+        if (delegationError) {
+          return { ok: false, error: delegationError, code: 'input_invalid' };
+        }
+
+        const bgDepth = getDepth(ctx);
+        if (bgDepth >= MAX_SPAWN_DEPTH) {
+          return {
+            ok: false,
+            error: `Maximum spawn depth (${MAX_SPAWN_DEPTH}) reached. Cannot delegate further.`,
+            code: 'execution_failed',
+          };
+        }
+
+        if (!background) return NOT_AVAILABLE;
+
+        // Slug-restrict the label so the derived child session key is
+        // unspoofable — a label cannot smuggle a `:` segment separator.
+        if (label !== undefined && !LABEL_RE.test(label)) {
+          return { ok: false, code: 'input_invalid', error: 'label must match [a-z0-9-]{1,32}' };
+        }
+        const jobLabel = label ?? 'task';
+
+        // Spawn-time concurrency caps.
+        const root = ctx.rootSessionKey ?? ctx.sessionKey;
+        if ((await background.store.countActiveByRoot(root)) >= background.maxJobsPerRoot) {
+          return {
+            ok: false,
+            code: 'execution_failed',
+            error: `too many active background jobs for this session (max ${background.maxJobsPerRoot})`,
+          };
+        }
+        if (
+          ctx.personalityId &&
+          (await background.store.countActiveByPersonality(ctx.personalityId)) >=
+            background.maxJobsPerPersonality
+        ) {
+          return {
+            ok: false,
+            code: 'execution_failed',
+            error: `too many active background jobs for this personality (max ${background.maxJobsPerPersonality})`,
+          };
+        }
+
+        // Resolve the cost cap: distinguish explicit null (uncapped opt-out)
+        // from an absent arg (deployment default).
+        let maxCostUsd: number | undefined;
+        if ('max_cost_usd' in rawArgs && rawArgs.max_cost_usd === null) {
+          maxCostUsd = undefined;
+        } else if (typeof rawArgs.max_cost_usd === 'number') {
+          maxCostUsd = rawArgs.max_cost_usd;
+        } else {
+          maxCostUsd = background.defaultMaxCostUsd;
+        }
+
+        // The store mints the job id (UUID); the child session key uses an
+        // independent random suffix — the two are decoupled, which is fine.
+        const childSessionKey = `${ctx.sessionKey}:job:${jobLabel}:${randomBytes(4).toString('hex')}`;
+
+        // Resolve the origin lane from ctx.origin ("<platform>:<chatId>") so the
+        // gateway's wake path can deliver the completion notice to the
+        // originating chat. originBotKey is supplied by the gateway's per-bot
+        // wake handler; originThreadId is not available on ToolContext, so
+        // delegate_task-spawned jobs deliver to the channel root — an accepted
+        // Phase-B limitation.
+        const { platform: originPlatform, chatId: originChatId } = splitFirstColon(ctx.origin);
+        const job = await background.store.create({
+          owner: background.owner,
+          parentSessionKey: ctx.sessionKey,
+          rootSessionKey: root,
+          childSessionKey,
+          ...(ctx.personalityId ? { personalityId: ctx.personalityId } : {}),
+          depth: bgDepth + 1,
+          label: jobLabel,
+          prompt,
+          ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+          ...(originPlatform ? { originPlatform } : {}),
+          ...(originChatId ? { originChatId } : {}),
+        });
+
+        background.nudge();
+
+        return {
+          ok: true,
+          value: JSON.stringify({ jobId: job.id, childSessionKey, status: 'queued' }),
+        };
+      }
 
       if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
 
@@ -432,6 +682,40 @@ async function callMeshAgent(
   return promptData.result?.text ?? '';
 }
 
+/**
+ * Spawn a DETACHED background job on a mesh peer via the `spawn` JSON-RPC method.
+ * Returns the remote job id. Throws on a JSON-RPC error, a missing jobId, or a
+ * transport failure — the caller decides whether to try the next candidate.
+ */
+async function spawnOnMeshPeer(
+  host: string,
+  port: number,
+  prompt: string,
+  personalityId: string | undefined,
+  signal: AbortSignal | undefined,
+  fetchImpl: FetchImpl,
+): Promise<string> {
+  const res = await fetchImpl(`http://${host}:${port}/rpc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'spawn',
+      params: { text: prompt, ...(personalityId ? { personalityId } : {}) },
+    }),
+    signal,
+  });
+  const data = (await res.json()) as {
+    result?: { jobId?: string; status?: string };
+    error?: { message?: string };
+  };
+  if (data.error) throw new Error(data.error.message ?? 'remote spawn error');
+  const jobId = data.result?.jobId;
+  if (!jobId) throw new Error('remote spawn returned no jobId');
+  return jobId;
+}
+
 function personalityFromAgentId(agentId: string): string {
   const idx = agentId.indexOf(':');
   return idx > 0 ? agentId.slice(0, idx) : agentId;
@@ -543,6 +827,7 @@ export function createListTeamTool(storage: Storage, registryPath = defaultRegis
 export function createRouteToAgentTool(
   storage: Storage,
   registryPath = defaultRegistryPath(),
+  background?: BackgroundToolDeps,
 ): Tool {
   return {
     name: 'route_to_agent',
@@ -576,15 +861,27 @@ export function createRouteToAgentTool(
           type: 'number',
           description: 'Retry count across alternate peers (default: 2, max: 5)',
         },
+        background: {
+          type: 'boolean',
+          description:
+            'Run the remote task detached: spawn it on the peer and return a job id immediately (poll with task_status). ',
+        },
       },
       required: ['capability', 'prompt'],
     },
     async execute(args, ctx): Promise<ToolResult> {
-      const { capability, prompt, timeout_s, retries } = args as {
+      const {
+        capability,
+        prompt,
+        timeout_s,
+        retries,
+        background: runInBackground,
+      } = args as {
         capability: string;
         prompt: string;
         timeout_s?: number;
         retries?: number;
+        background?: boolean;
       };
       if (!capability) return { ok: false, error: 'capability is required', code: 'input_invalid' };
       if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
@@ -600,6 +897,96 @@ export function createRouteToAgentTool(
       const mesh = new AgentMesh(registryPath, { storage });
       const peers = await mesh.list();
       const timeoutMs = Math.max(1, timeout_s ?? 60) * 1000;
+
+      // ---- Background (detached) path — spawn on a peer, track via a proxy row.
+      if (runInBackground === true) {
+        if (!background) return NOT_AVAILABLE;
+
+        const candidates = selectCandidates(peers, capability);
+        if (candidates.length === 0) {
+          appendMeshJournal({
+            ts: new Date().toISOString(),
+            event: 'route_to_agent_bg_failed',
+            capability,
+            errors: ['no matching candidates'],
+          });
+          return {
+            ok: false,
+            code: 'execution_failed',
+            error: `no agent available for capability: ${capability}`,
+          };
+        }
+
+        const errs: string[] = [];
+        for (const agent of candidates) {
+          try {
+            const signal = withTimeout(ctx.abortSignal, timeoutMs);
+            const remoteJobId = await spawnOnMeshPeer(
+              agent.host,
+              agent.port,
+              prompt,
+              ctx.personalityId,
+              signal,
+              fetchFn,
+            );
+
+            // Local proxy row: unique owner → the local executor (a different
+            // owner) never claims it, but the reconciler's listRunningRemote()
+            // picks it up.
+            const proxyOwner = `mesh-proxy:${randomUUID()}`;
+            const remotePeer = `${agent.host}:${agent.port}`;
+            const created = await background.store.create({
+              owner: proxyOwner,
+              parentSessionKey: ctx.sessionKey,
+              rootSessionKey: ctx.rootSessionKey ?? ctx.sessionKey,
+              childSessionKey: `${ctx.sessionKey}:mesh:${String(remoteJobId).slice(0, 8)}`,
+              depth: getDepth(ctx) + 1,
+              prompt,
+              remotePeer,
+              remoteJobId: String(remoteJobId),
+              ...(ctx.personalityId ? { personalityId: ctx.personalityId } : {}),
+            });
+            // Transition to running so it isn't expired as a stale queued row and
+            // so the reconciler picks it up. The unique owner guarantees
+            // claimNextQueued grabs exactly this proxy.
+            await background.store.claimNextQueued(proxyOwner);
+
+            appendMeshJournal({
+              ts: new Date().toISOString(),
+              event: 'route_to_agent_bg',
+              capability,
+              callee: agent.agentId,
+              jobId: created.id,
+              remoteJobId: String(remoteJobId),
+            });
+
+            return {
+              ok: true,
+              value: JSON.stringify({
+                jobId: created.id,
+                remotePeer,
+                remoteJobId: String(remoteJobId),
+                status: 'running',
+              }),
+            };
+          } catch (err) {
+            errs.push(`${agent.agentId}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+
+        appendMeshJournal({
+          ts: new Date().toISOString(),
+          event: 'route_to_agent_bg_failed',
+          capability,
+          errors: errs,
+        });
+        return {
+          ok: false,
+          code: 'execution_failed',
+          error: `no peer accepted the background spawn: ${errs.join('; ')}`,
+        };
+      }
+
       const retryCount = Math.min(Math.max(0, retries ?? MAX_ROUTE_RETRIES), 5);
 
       const routed = await routeWithFailover({
@@ -844,6 +1231,154 @@ export function createBroadcastToAgentsTool(
 }
 
 // ---------------------------------------------------------------------------
+// task_status / task_result / task_cancel / task_logs — background job surface
+//
+// Registered ALWAYS so personality toolset gating composes. When `background`
+// is undefined the deployment has no background executor and every call
+// degrades to `not_available`.
+// ---------------------------------------------------------------------------
+
+export function createTaskStatusTool(background?: BackgroundToolDeps): Tool {
+  return {
+    name: 'task_status',
+    description:
+      'Inspect background jobs spawned from this session. Pass an id for one job, ' +
+      'or omit it to list all jobs for this session.',
+    toolset: 'delegation',
+    maxResultChars: 4_000,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Job id to inspect. Omit to list all jobs for this session.',
+        },
+      },
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      if (!background) return NOT_AVAILABLE;
+      const { id } = (args ?? {}) as { id?: string };
+      if (id) {
+        const job = await fetchScopedJob(background.store, id, ctx);
+        if (!job) return JOB_NOT_FOUND;
+        return { ok: true, value: JSON.stringify(summarizeJob(job, background.staleMs)) };
+      }
+      const root = ctx.rootSessionKey ?? ctx.sessionKey;
+      const jobs = await background.store.listByRoot(root);
+      return { ok: true, value: JSON.stringify(jobs.map(compactJob)) };
+    },
+  };
+}
+
+export function createTaskResultTool(background?: BackgroundToolDeps): Tool {
+  return {
+    name: 'task_result',
+    description:
+      "Fetch a background job's result. Terminal jobs return the summary (done) or error; " +
+      'jobs still running return a progress line, not an error.',
+    toolset: 'delegation',
+    maxResultChars: 4_000,
+    outputIsUntrusted: true,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Job id.' },
+      },
+      required: ['id'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      if (!background) return NOT_AVAILABLE;
+      const { id } = (args ?? {}) as { id?: string };
+      if (!id) return { ok: false, code: 'input_invalid', error: 'id is required' };
+      const job = await fetchScopedJob(background.store, id, ctx);
+      if (!job) return JOB_NOT_FOUND;
+
+      if (job.status === 'done') {
+        return { ok: true, value: job.summary ?? '(no summary)' };
+      }
+      if (TERMINAL_STATUSES.has(job.status)) {
+        return { ok: true, value: job.error ?? `job ${job.status}` };
+      }
+      // Non-terminal is not an error — report progress.
+      return {
+        ok: true,
+        value: `still ${job.status}; spent $${job.spendUsd.toFixed(4)} so far`,
+      };
+    },
+  };
+}
+
+export function createTaskCancelTool(background?: BackgroundToolDeps): Tool {
+  return {
+    name: 'task_cancel',
+    description:
+      'Request cancellation of a background job. The owning executor honors it within a ' +
+      'bounded window; any process may request.',
+    toolset: 'delegation',
+    maxResultChars: 4_000,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Job id.' },
+      },
+      required: ['id'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      if (!background) return NOT_AVAILABLE;
+      const { id } = (args ?? {}) as { id?: string };
+      if (!id) return { ok: false, code: 'input_invalid', error: 'id is required' };
+      const job = await fetchScopedJob(background.store, id, ctx);
+      if (!job) return JOB_NOT_FOUND;
+      await background.store.requestCancel(id);
+      return { ok: true, value: 'cancel requested; the job will stop shortly' };
+    },
+  };
+}
+
+export function createTaskLogsTool(background?: BackgroundToolDeps): Tool {
+  return {
+    name: 'task_logs',
+    description:
+      "Read a background job's recent audit events (works on running and terminal jobs).",
+    toolset: 'delegation',
+    maxResultChars: 8_000,
+    outputIsUntrusted: true,
+    capabilities: {},
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Job id.' },
+        tail: {
+          type: 'number',
+          description: 'How many recent events to return (default 20, max 100).',
+        },
+      },
+      required: ['id'],
+    },
+    async execute(args, ctx): Promise<ToolResult> {
+      if (!background) return NOT_AVAILABLE;
+      const { id, tail } = (args ?? {}) as { id?: string; tail?: number };
+      if (!id) return { ok: false, code: 'input_invalid', error: 'id is required' };
+      const job = await fetchScopedJob(background.store, id, ctx);
+      if (!job) return JOB_NOT_FOUND;
+
+      const count = Math.min(Math.max(1, Math.floor(tail ?? 20)), 100);
+      const events = await background.store.getEvents(id);
+      const now = Date.now();
+      const lines = events
+        .slice(-count)
+        .map((e) => `${relAge(now - e.createdAt)} ${formatEvent(e)}`);
+      return { ok: true, value: lines.join('\n') || '(no events)' };
+    },
+  };
+}
+
+export { MeshProxyReconciler, type MeshProxyReconcilerDeps } from './mesh-reconciler';
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -851,13 +1386,18 @@ export function createDelegationTools(
   loop: AgentLoop,
   storage: Storage,
   registryPath?: string,
+  background?: BackgroundToolDeps,
 ): Tool[] {
   return [
-    createDelegateTaskTool(loop),
+    createDelegateTaskTool(loop, background),
     createMixtureOfAgentsTool(loop),
     createListTeamTool(storage, registryPath),
     createDispatchTeamTool(storage, registryPath),
-    createRouteToAgentTool(storage, registryPath),
+    createRouteToAgentTool(storage, registryPath, background),
     createBroadcastToAgentsTool(storage, registryPath),
+    createTaskStatusTool(background),
+    createTaskResultTool(background),
+    createTaskCancelTool(background),
+    createTaskLogsTool(background),
   ];
 }

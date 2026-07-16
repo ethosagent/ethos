@@ -19,5 +19,8 @@
   "dependencies": {
     "@ethosagent/agent-mesh": "workspace:*",
     "@ethosagent/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@ethosagent/job-store": "workspace:*"
   }
 }

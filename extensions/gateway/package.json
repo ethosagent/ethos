@@ -13,8 +13,8 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
-    "@ethosagent/agent-bridge": "workspace:*",
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/job-runner": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/safety-channel": "workspace:*",
     "@ethosagent/safety-injection": "workspace:*",

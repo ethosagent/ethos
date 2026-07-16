@@ -26,7 +26,8 @@
 //
 //   extensions/session-sqlite/   @ethosagent/sqlite opens raw paths. WAL, FTS5, and
 //   extensions/memory-vector/    atomic transactions don't fit a generic Storage
-//                                 interface without losing ACID guarantees.
+//   extensions/job-store/         interface without losing ACID guarantees.
+//                                 (job-store also mkdirSync's the db's parent dir.)
 //
 //   extensions/cron/src/index.ts  File lock via fs.open(..., 'wx'): exclusive
 //                                 create is a POSIX-level primitive with no
@@ -69,6 +70,7 @@ const ALLOWED_PREFIXES = [
   'packages/wiring/',
   'extensions/session-sqlite/',
   'extensions/memory-vector/',
+  'extensions/job-store/',
   'extensions/voice-providers/',
   'extensions/agent-mesh/',
   'extensions/llm-codex/',

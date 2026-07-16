@@ -87,6 +87,7 @@ export interface ServiceContainer {
   platforms: import('../services/platforms.service').PlatformsService;
   lab: import('../services/lab.service').LabService;
   kanban: import('../services/kanban.service').KanbanService;
+  tasks: import('../services/tasks.service').TasksService;
   completions: import('../features/completions/service').CompletionsService;
   debug: import('../features/debug/service').DebugService;
   apiKeys: import('../services/api-keys.service').ApiKeysService;

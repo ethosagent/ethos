@@ -394,6 +394,11 @@ export async function runSupervisor(
     ...(manifest.dispatch_prefer_reliable !== undefined
       ? { preferReliable: manifest.dispatch_prefer_reliable }
       : {}),
+    // Opt-in: dispatch runs to peers as durable background jobs (via the peer's
+    // `/rpc` spawn) instead of blocking prompts. The board still owns task state.
+    ...(manifest.dispatch_as_background_job !== undefined
+      ? { dispatchAsBackgroundJob: manifest.dispatch_as_background_job }
+      : {}),
     ...(manifest.trust_policy !== undefined ? { trustPolicy: manifest.trust_policy } : {}),
     onError: (err, taskId) => {
       logSupervisorEvent({

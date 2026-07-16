@@ -31,6 +31,7 @@ const TeamManifestSchema = z
     personality_models: z.record(z.string(), z.string()).optional(),
     mesh: z.string().optional(),
     dispatch_prefer_reliable: z.boolean().optional(),
+    dispatch_as_background_job: z.boolean().optional(),
     postmortems: z.boolean().optional(),
     trust_policy: z
       .object({

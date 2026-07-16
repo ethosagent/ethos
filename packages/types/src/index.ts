@@ -3,6 +3,7 @@
 
 export * from './a2a';
 export * from './agent-event';
+export * from './background-job';
 export * from './channel-conformance';
 export * from './clarify';
 export * from './command';

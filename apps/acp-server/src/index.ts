@@ -10,7 +10,7 @@ import type { Readable, Writable } from 'node:stream';
 import type { AgentMesh, MeshEntry } from '@ethosagent/agent-mesh';
 import { SessionLane } from '@ethosagent/session-lane';
 import type { McpServerConfig, McpSessionView } from '@ethosagent/tools-mcp';
-import type { SessionStore } from '@ethosagent/types';
+import type { JobStore, SessionStore } from '@ethosagent/types';
 import { type WebSocket, WebSocketServer } from 'ws';
 
 /** Maximum number of concurrent MCP session views. */
@@ -95,6 +95,10 @@ export class AcpServer {
   private readonly _authToken: string;
   private readonly lane = new SessionLane();
 
+  // Phase C — remote background spawn over the mesh RPC
+  private readonly jobStore: JobStore | undefined;
+  private readonly backgroundExecutor: { readonly owner: string; nudge(): void } | undefined;
+
   constructor(config: {
     runner: AgentRunner;
     session: SessionStore;
@@ -107,6 +111,10 @@ export class AcpServer {
     createSessionView?: SessionViewFactory;
     /** Optional bearer token. If omitted, a 32-byte random hex token is generated. */
     authToken?: string;
+    /** Phase C: durable background job store, enables the `spawn`/`job_status` methods. */
+    jobStore?: JobStore;
+    // Structural — avoids depending on @ethosagent/job-runner. Only owner + nudge are needed.
+    backgroundExecutor?: { readonly owner: string; nudge(): void };
   }) {
     this.runner = config.runner;
     this.session = config.session;
@@ -116,6 +124,8 @@ export class AcpServer {
     this._resolveAllowlist = config.resolveAllowlist;
     this._createSessionView = config.createSessionView;
     this._authToken = config.authToken ?? randomBytes(32).toString('hex');
+    this.jobStore = config.jobStore;
+    this.backgroundExecutor = config.backgroundExecutor;
   }
 
   /** Returns the bearer token clients must present to access authenticated endpoints. */
@@ -383,6 +393,64 @@ export class AcpServer {
           return { jsonrpc: '2.0', id, result: { ok: true, queued: this.lane.length } };
         }
 
+        case 'spawn': {
+          if (!this.jobStore || !this.backgroundExecutor) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              error: { code: -32000, message: 'Background jobs are not enabled on this agent' },
+            };
+          }
+          const p = req.params as {
+            text: string;
+            personalityId?: string;
+            label?: string;
+            maxCostUsd?: number | null;
+          };
+          if (!p.text || typeof p.text !== 'string') {
+            return { jsonrpc: '2.0', id, error: { code: -32602, message: 'text is required' } };
+          }
+          const sk = `acp:${randomUUID()}`;
+          const label = sanitizeJobLabel(p.label);
+          const job = await this.jobStore.create({
+            owner: this.backgroundExecutor.owner,
+            parentSessionKey: sk,
+            rootSessionKey: sk,
+            childSessionKey: `${sk}:job`,
+            depth: 0,
+            prompt: p.text,
+            ...(p.personalityId ? { personalityId: p.personalityId } : {}),
+            ...(label ? { label } : {}),
+            ...(typeof p.maxCostUsd === 'number' ? { maxCostUsd: p.maxCostUsd } : {}),
+          });
+          this.backgroundExecutor.nudge();
+          return { jsonrpc: '2.0', id, result: { jobId: job.id, status: job.status } };
+        }
+
+        case 'job_status': {
+          if (!this.jobStore) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              error: { code: -32000, message: 'Background jobs are not enabled on this agent' },
+            };
+          }
+          const p = req.params as { jobId: string };
+          const job = await this.jobStore.get(p.jobId);
+          if (!job) return { jsonrpc: '2.0', id, result: { found: false } };
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              found: true,
+              status: job.status,
+              summary: job.summary ?? null,
+              error: job.error ?? null,
+              spendUsd: job.spendUsd,
+            },
+          };
+        }
+
         default:
           return {
             jsonrpc: '2.0',
@@ -555,6 +623,60 @@ export class AcpServer {
           break;
         }
 
+        case 'spawn': {
+          if (!this.jobStore || !this.backgroundExecutor) {
+            sendError(-32000, 'Background jobs are not enabled on this agent');
+            return;
+          }
+          const p = req.params as {
+            text: string;
+            personalityId?: string;
+            label?: string;
+            maxCostUsd?: number | null;
+          };
+          if (!p.text || typeof p.text !== 'string') {
+            sendError(-32602, 'text is required');
+            return;
+          }
+          const sk = `acp:${randomUUID()}`;
+          const label = sanitizeJobLabel(p.label);
+          const job = await this.jobStore.create({
+            owner: this.backgroundExecutor.owner,
+            parentSessionKey: sk,
+            rootSessionKey: sk,
+            childSessionKey: `${sk}:job`,
+            depth: 0,
+            prompt: p.text,
+            ...(p.personalityId ? { personalityId: p.personalityId } : {}),
+            ...(label ? { label } : {}),
+            ...(typeof p.maxCostUsd === 'number' ? { maxCostUsd: p.maxCostUsd } : {}),
+          });
+          this.backgroundExecutor.nudge();
+          sendResult({ jobId: job.id, status: job.status });
+          break;
+        }
+
+        case 'job_status': {
+          if (!this.jobStore) {
+            sendError(-32000, 'Background jobs are not enabled on this agent');
+            return;
+          }
+          const p = req.params as { jobId: string };
+          const job = await this.jobStore.get(p.jobId);
+          if (!job) {
+            sendResult({ found: false });
+            return;
+          }
+          sendResult({
+            found: true,
+            status: job.status,
+            summary: job.summary ?? null,
+            error: job.error ?? null,
+            spendUsd: job.spendUsd,
+          });
+          break;
+        }
+
         default:
           sendError(-32601, `Method not found: ${req.method}`);
       }
@@ -720,6 +842,14 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+/**
+ * A `label` supplied by a peer is untrusted. Accept it only when it matches the
+ * slug shape jobs use internally; otherwise drop it (the job just has no label).
+ */
+function sanitizeJobLabel(label: unknown): string | undefined {
+  return typeof label === 'string' && /^[a-z0-9-]{1,32}$/.test(label) ? label : undefined;
 }
 
 function renderNotifyPrompt(kind: string, ref?: string): string {

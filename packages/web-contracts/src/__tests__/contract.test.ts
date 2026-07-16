@@ -249,6 +249,7 @@ describe('contract router', () => {
       'sessions',
       'skills',
       'slashCommands',
+      'tasks',
       'tools',
       'voice',
     ]);

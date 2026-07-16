@@ -40,6 +40,7 @@ import { Settings } from './pages/Settings';
 import { SetupWhatsApp } from './pages/SetupWhatsApp';
 import { SigningIn } from './pages/SigningIn';
 import { Skills } from './pages/Skills';
+import { Tasks } from './pages/Tasks';
 import { TeamControlCenter } from './pages/TeamControlCenter';
 import { TeamCreate } from './pages/TeamCreate';
 import { Teams } from './pages/Teams';
@@ -153,6 +154,7 @@ export function App() {
           <Route path="/eval" element={<Eval />} />
           <Route path="/goals" element={<Goals />} />
           <Route path="/goals/:id" element={<GoalDetail />} />
+          <Route path="/tasks" element={<Tasks />} />
           <Route path="/dashboards" element={<Dashboards />} />
           <Route path="/dashboards/create" element={<CreateDashboardFlow />} />
           <Route path="/dashboards/:id" element={<DashboardView />} />

@@ -915,12 +915,12 @@ importers:
 
   extensions/gateway:
     dependencies:
-      '@ethosagent/agent-bridge':
-        specifier: workspace:*
-        version: link:../../packages/agent-bridge
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/job-runner':
+        specifier: workspace:*
+        version: link:../job-runner
       '@ethosagent/safety-channel':
         specifier: workspace:*
         version: link:../../packages/safety/channel
@@ -957,6 +957,31 @@ importers:
         version: link:../goal-store
 
   extensions/goal-store:
+    dependencies:
+      '@ethosagent/sqlite':
+        specifier: workspace:*
+        version: link:../../packages/sqlite
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/job-runner:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/job-store':
+        specifier: workspace:*
+        version: link:../job-store
+      '@ethosagent/tools-delegation':
+        specifier: workspace:*
+        version: link:../tools-delegation
+
+  extensions/job-store:
     dependencies:
       '@ethosagent/sqlite':
         specifier: workspace:*
@@ -1457,6 +1482,10 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/job-store':
+        specifier: workspace:*
+        version: link:../job-store
 
   extensions/tools-file:
     dependencies:
@@ -1873,6 +1902,9 @@ importers:
       '@ethosagent/a2a':
         specifier: workspace:*
         version: link:../a2a
+      '@ethosagent/config':
+        specifier: workspace:*
+        version: link:../config
       '@ethosagent/constitution':
         specifier: workspace:*
         version: link:../../extensions/constitution
@@ -1900,6 +1932,12 @@ importers:
       '@ethosagent/goal-store':
         specifier: workspace:*
         version: link:../../extensions/goal-store
+      '@ethosagent/job-runner':
+        specifier: workspace:*
+        version: link:../../extensions/job-runner
+      '@ethosagent/job-store':
+        specifier: workspace:*
+        version: link:../../extensions/job-store
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store

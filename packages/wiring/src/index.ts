@@ -119,6 +119,8 @@ export interface WiringConfig {
   postmortems?: boolean;
   /** Reputation-aware autonomy tiers for team members. */
   trustPolicy?: TrustPolicy;
+  /** Background sub-agent engine config (durable spawn-and-continue jobs). */
+  background?: import('@ethosagent/config').BackgroundConfig;
   /**
    * P3 observability — request dump store configuration. When enabled, every
    * LLM request/response is logged to JSONL files for offline debugging.
@@ -310,6 +312,10 @@ export interface CreateAgentLoopOptions {
    * with no CLI subcommand UI (web, ACP).
    */
   cliSubcommandRegistry?: WiringCliSubcommandRegistry;
+  /** True for one-shot CLI invocations that exit immediately — disables the
+   *  background executor by default (a job spawned in a dying process is a lie).
+   *  Long-lived surfaces (chat, gateway, web) omit it. */
+  oneShot?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +638,16 @@ export interface CreateAgentLoopResult {
   /** Loop-bearing goal runner — always present (backed by the shared goals.db).
    *  Shared with the web-api GoalsService so web-created goals execute on the same runner+store. */
   goalRunner: GoalRunner;
+  /** Durable background-job store — present only when the background subsystem is
+   *  enabled for this loop. Shared with the gateway/Tasks surface. */
+  jobStore?: import('@ethosagent/types').JobStore;
+  /** Detached background executor — present only when enabled. gateway.ts/chat.ts
+   *  register completion handlers and call shutdown() on it. */
+  backgroundExecutor?: import('@ethosagent/job-runner').BackgroundExecutor;
+  /** Mesh proxy reconciler — present only when the background subsystem is enabled.
+   *  Polls mesh peers for jobs spawned via route_to_agent(background:true). Timers
+   *  are unref'd; expose stop() for shutdown symmetry. */
+  meshProxyReconciler?: import('@ethosagent/tools-delegation').MeshProxyReconciler;
   /** The resolved active personality for this loop. Exposed so gateway.ts can
    *  read the plugins allowlist without duplicating the personality load. */
   activePersonality: import('@ethosagent/types').PersonalityConfig;
