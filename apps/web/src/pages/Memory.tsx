@@ -1,10 +1,27 @@
-import type { MemoryFile, MemoryStoreId } from '@ethosagent/web-contracts';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Input, Select, Spin, Tabs, Tooltip, Typography } from 'antd';
+import type { MemoryFile, MemoryHistoryEntry, MemoryStoreId } from '@ethosagent/web-contracts';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  App as AntApp,
+  Button,
+  DatePicker,
+  Input,
+  Select,
+  Spin,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+  theme,
+} from 'antd';
+import type { Dayjs } from 'dayjs';
 import { useEffect, useState } from 'react';
 import { rpc } from '../rpc';
 
+type MemoryHistorySource = MemoryHistoryEntry['source'];
+type MemoryView = 'files' | 'timeline';
+
 export function Memory() {
+  const [view, setView] = useState<MemoryView>('files');
   const [activeStore, setActiveStore] = useState<MemoryStoreId>('memory');
   const [personalityId, setPersonalityId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -75,7 +92,7 @@ export function Memory() {
             label: p.name,
           }))}
         />
-        {activeStore === 'user' ? (
+        {view === 'files' && activeStore === 'user' ? (
           <>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               User
@@ -106,30 +123,49 @@ export function Memory() {
       ) : null}
 
       <Tabs
-        activeKey={activeStore}
-        onChange={(k) => setActiveStore(k as MemoryStoreId)}
+        activeKey={view}
+        onChange={(k) => setView(k as MemoryView)}
         items={[
           {
-            key: 'memory',
-            label: 'MEMORY.md',
-            children: effectivePersonalityId ? (
-              <MemoryEditor
-                store="memory"
-                file={fileByStore.get('memory') ?? null}
-                personalityId={effectivePersonalityId}
+            key: 'files',
+            label: 'Files',
+            children: (
+              <Tabs
+                activeKey={activeStore}
+                onChange={(k) => setActiveStore(k as MemoryStoreId)}
+                items={[
+                  {
+                    key: 'memory',
+                    label: 'MEMORY.md',
+                    children: effectivePersonalityId ? (
+                      <MemoryEditor
+                        store="memory"
+                        file={fileByStore.get('memory') ?? null}
+                        personalityId={effectivePersonalityId}
+                      />
+                    ) : null,
+                  },
+                  {
+                    key: 'user',
+                    label: 'USER.md',
+                    children: effectivePersonalityId ? (
+                      <MemoryEditor
+                        store="user"
+                        file={fileByStore.get('user') ?? null}
+                        personalityId={effectivePersonalityId}
+                        userId={userId ?? undefined}
+                      />
+                    ) : null,
+                  },
+                ]}
               />
-            ) : null,
+            ),
           },
           {
-            key: 'user',
-            label: 'USER.md',
+            key: 'timeline',
+            label: 'Timeline',
             children: effectivePersonalityId ? (
-              <MemoryEditor
-                store="user"
-                file={fileByStore.get('user') ?? null}
-                personalityId={effectivePersonalityId}
-                userId={userId ?? undefined}
-              />
+              <MemoryTimeline personalityId={effectivePersonalityId} />
             ) : null,
           },
         ]}
@@ -257,6 +293,370 @@ function MemoryEditor({
       </footer>
     </div>
   );
+}
+
+// --- Timeline sub-view -------------------------------------------------------
+
+const HISTORY_PAGE_SIZE = 50;
+
+const SOURCE_LABEL: Record<MemoryHistorySource, string> = {
+  tool: 'tool',
+  consolidation: 'consolidation',
+  dream: 'dream',
+  capture: 'capture',
+  'web-editor': 'web editor',
+  'global-entry': 'global entry',
+  restore: 'restore',
+};
+
+// Categorical tag colors — antd presets resolve through the ConfigProvider
+// theme, so they track light/dark. The label text carries the meaning; color
+// is a scan aid, never the sole signal.
+const SOURCE_COLOR: Record<MemoryHistorySource, string> = {
+  capture: 'blue',
+  consolidation: 'orange',
+  dream: 'magenta',
+  tool: 'default',
+  'web-editor': 'green',
+  'global-entry': 'default',
+  restore: 'gold',
+};
+
+const KEY_OPTIONS = [
+  { value: '', label: 'All files' },
+  { value: 'MEMORY.md', label: 'MEMORY.md' },
+  { value: 'USER.md', label: 'USER.md' },
+  { value: 'memory-archive.md', label: 'memory-archive.md' },
+];
+
+function MemoryTimeline({ personalityId }: { personalityId: string }) {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+  const [keyFilter, setKeyFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null);
+
+  const sinceMs = range ? range[0].startOf('day').valueOf() : undefined;
+  const untilMs = range ? range[1].endOf('day').valueOf() : undefined;
+
+  const historyQuery = useInfiniteQuery({
+    queryKey: [
+      'memory',
+      'history',
+      personalityId,
+      keyFilter || null,
+      sourceFilter || null,
+      sinceMs ?? null,
+      untilMs ?? null,
+    ],
+    queryFn: ({ pageParam }: { pageParam: string | null }) =>
+      rpc.memory.history({
+        personalityId,
+        ...(keyFilter ? { key: keyFilter } : {}),
+        ...(sourceFilter ? { source: sourceFilter as MemoryHistorySource } : {}),
+        ...(sinceMs !== undefined ? { sinceMs } : {}),
+        ...(untilMs !== undefined ? { untilMs } : {}),
+        limit: HISTORY_PAGE_SIZE,
+        ...(pageParam ? { cursor: pageParam } : {}),
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    enabled: !!personalityId,
+  });
+
+  const restoreMut = useMutation({
+    mutationFn: (slug: string) => rpc.memory.restore({ personalityId, slug }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['memory', 'history', personalityId] });
+      qc.invalidateQueries({ queryKey: ['memory', 'list'] });
+      notification.success({
+        message: `Restored to ${res.restoredTo}`,
+        placement: 'topRight',
+      });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Restore failed', description: (err as Error).message }),
+  });
+
+  const pages = historyQuery.data?.pages ?? [];
+  const entries = pages.flatMap((p) => p.entries);
+  const corruptLines = pages[0]?.corruptLines ?? 0;
+
+  return (
+    <div className="memory-timeline">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+          marginBottom: 16,
+        }}
+      >
+        <Select
+          size="small"
+          style={{ width: 180 }}
+          value={keyFilter}
+          onChange={setKeyFilter}
+          options={KEY_OPTIONS}
+        />
+        <Select
+          size="small"
+          style={{ width: 160 }}
+          value={sourceFilter}
+          onChange={setSourceFilter}
+          options={[
+            { value: '', label: 'All sources' },
+            ...(Object.keys(SOURCE_LABEL) as MemoryHistorySource[]).map((s) => ({
+              value: s,
+              label: SOURCE_LABEL[s],
+            })),
+          ]}
+        />
+        <DatePicker.RangePicker
+          size="small"
+          value={range}
+          onChange={(dates) => {
+            const from = dates?.[0];
+            const to = dates?.[1];
+            setRange(from && to ? [from, to] : null);
+          }}
+          allowClear
+        />
+      </div>
+
+      {historyQuery.isLoading ? (
+        <div style={{ display: 'grid', placeItems: 'center', height: 160 }}>
+          <Spin />
+        </div>
+      ) : historyQuery.error ? (
+        <Typography.Text type="danger">
+          Failed to load history: {(historyQuery.error as Error).message}
+        </Typography.Text>
+      ) : entries.length === 0 ? (
+        <Typography.Text type="secondary">
+          No memory history yet. Edits, captures, and consolidation runs appear here.
+        </Typography.Text>
+      ) : (
+        <>
+          <div>
+            {entries.map((e) => (
+              <TimelineRow
+                key={`${e.ts}-${e.key}-${e.afterHash}`}
+                entry={e}
+                personalityId={personalityId}
+                onRestore={(slug) => restoreMut.mutate(slug)}
+                restorePending={restoreMut.isPending}
+              />
+            ))}
+          </div>
+          {corruptLines > 0 ? (
+            <Typography.Text
+              type="warning"
+              style={{ fontSize: 12, display: 'block', marginTop: 8 }}
+            >
+              {corruptLines} corrupt line{corruptLines === 1 ? '' : 's'} skipped.
+            </Typography.Text>
+          ) : null}
+          {historyQuery.hasNextPage ? (
+            <div style={{ marginTop: 12 }}>
+              <Button
+                size="small"
+                onClick={() => historyQuery.fetchNextPage()}
+                loading={historyQuery.isFetchingNextPage}
+              >
+                Load more
+              </Button>
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Extract the archive slug from a `memory-archive.md` add diff (the archive
+ *  marker carries `slug=<x>`); null for entries that aren't archive moves. */
+function archiveMoveSlug(entry: MemoryHistoryEntry): string | null {
+  if (entry.source !== 'consolidation') return null;
+  if (entry.key !== 'memory-archive.md') return null;
+  if (!entry.actions.includes('add')) return null;
+  const match = /slug=([^\s]+)/.exec(entry.diff);
+  return match?.[1] ?? null;
+}
+
+function TimelineRow({
+  entry,
+  personalityId,
+  onRestore,
+  restorePending,
+}: {
+  entry: MemoryHistoryEntry;
+  personalityId: string;
+  onRestore: (slug: string) => void;
+  restorePending: boolean;
+}) {
+  const { token } = theme.useToken();
+  const [expanded, setExpanded] = useState(false);
+  const slug = archiveMoveSlug(entry);
+
+  const blobQuery = useQuery({
+    queryKey: ['memory', 'historyBlob', personalityId, entry.blob],
+    queryFn: () => rpc.memory.historyBlob({ personalityId, blob: entry.blob as string }),
+    enabled: expanded && !!entry.blob,
+  });
+
+  return (
+    <div style={{ borderBottom: `1px solid ${token.colorBorderSecondary}`, padding: '8px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+            color: token.colorTextTertiary,
+            fontFamily: 'Geist Mono, monospace',
+            fontSize: 12,
+            width: 14,
+          }}
+        >
+          {expanded ? '▾' : '▸'}
+        </button>
+        <Typography.Text
+          type="secondary"
+          style={{
+            fontFamily: 'Geist Mono, monospace',
+            fontSize: 12,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {formatTimestamp(entry.ts)}
+        </Typography.Text>
+        <Tag color={SOURCE_COLOR[entry.source]} style={{ marginInlineEnd: 0 }}>
+          {SOURCE_LABEL[entry.source]}
+        </Tag>
+        <Typography.Text style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12.5 }}>
+          {entry.key}
+        </Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+          [{entry.actions.join(',')}]
+        </Typography.Text>
+        <Typography.Text
+          type="secondary"
+          style={{
+            fontFamily: 'Geist Mono, monospace',
+            fontSize: 11,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {entry.sizeBefore}→{entry.sizeAfter}B
+        </Typography.Text>
+        {entry.hint !== undefined ? (
+          <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
+            importance {entry.hint.toFixed(2)}
+          </Tag>
+        ) : null}
+        {entry.sessionKey ? (
+          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+            · {entry.sessionKey}
+          </Typography.Text>
+        ) : null}
+        <span style={{ flex: 1 }} />
+        {slug ? (
+          <Button
+            size="small"
+            onClick={() => onRestore(slug)}
+            loading={restorePending}
+            title={`Restore "${slug}" to its live file`}
+          >
+            Restore
+          </Button>
+        ) : null}
+      </div>
+
+      {expanded ? (
+        <div style={{ marginTop: 8, marginLeft: 22 }}>
+          <DiffBlock diff={entry.diff} token={token} />
+          {entry.blob ? (
+            <div style={{ marginTop: 8 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                Full before-state (diff was truncated):
+              </Typography.Text>
+              {blobQuery.isLoading ? (
+                <div style={{ padding: 8 }}>
+                  <Spin size="small" />
+                </div>
+              ) : blobQuery.data?.content != null ? (
+                <DiffBlock diff={blobQuery.data.content} token={token} plain />
+              ) : (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Blob missing — the before-state could not be recovered.
+                </Typography.Text>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** A scroll-contained diff/content viewer. Add/remove lines colored via theme
+ *  tokens; the container owns its own horizontal + vertical overflow so the
+ *  page body never scrolls sideways. */
+function DiffBlock({
+  diff,
+  token,
+  plain = false,
+}: {
+  diff: string;
+  token: ReturnType<typeof theme.useToken>['token'];
+  plain?: boolean;
+}) {
+  const lines = diff.split('\n');
+  return (
+    <pre
+      style={{
+        margin: 0,
+        maxHeight: 360,
+        overflow: 'auto',
+        background: token.colorBgElevated,
+        border: `1px solid ${token.colorBorderSecondary}`,
+        borderRadius: token.borderRadius,
+        padding: 12,
+        fontFamily: 'Geist Mono, monospace',
+        fontSize: 12,
+        lineHeight: 1.45,
+      }}
+    >
+      {lines.map((line, i) => (
+        <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: diff lines have no stable id; order is fixed
+          key={i}
+          style={{ color: plain ? token.colorText : diffLineColor(line, token), whiteSpace: 'pre' }}
+        >
+          {line || ' '}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+function diffLineColor(line: string, token: ReturnType<typeof theme.useToken>['token']): string {
+  if (line.startsWith('@@')) return token.colorInfo;
+  if (line.startsWith('+') && !line.startsWith('+++')) return token.colorSuccess;
+  if (line.startsWith('-') && !line.startsWith('---')) return token.colorError;
+  return token.colorTextSecondary;
+}
+
+function formatTimestamp(ts: number): string {
+  const d = new Date(ts);
+  if (!Number.isFinite(d.getTime())) return String(ts);
+  return d.toISOString().slice(0, 16).replace('T', ' ');
 }
 
 function countMatches(text: string, q: string): number {

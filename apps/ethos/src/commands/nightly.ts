@@ -12,9 +12,11 @@ import type { EthosConfig } from '@ethosagent/config';
 import {
   type ConsolidationInput,
   consolidateMemory,
+  type MemoryMeta,
   type NightlyEvidence,
   type NightlyPassDeps,
   type NightlyState,
+  parseMemoryMeta,
   runNightlyPass,
 } from '@ethosagent/nightly-loop';
 import {
@@ -92,6 +94,20 @@ async function writeNightlyState(ethosDir: string, id: string, state: NightlySta
   const dir = join(ethosDir, 'personalities', id);
   await getStorage().mkdir(dir);
   await getStorage().writeAtomic(join(dir, '.nightly-state.json'), JSON.stringify(state, null, 2));
+}
+
+// Read the importance/decay sidecar (M3, §4.1). Tolerant: a missing or corrupt
+// file yields an empty meta so slugs are treated as fresh rather than crashing.
+async function readMemoryMeta(ethosDir: string, id: string): Promise<MemoryMeta> {
+  const path = join(ethosDir, 'personalities', id, 'memory-meta.json');
+  return parseMemoryMeta(await getStorage().read(path));
+}
+
+// Single writer: only the nightly pass persists `memory-meta.json`.
+async function writeMemoryMeta(ethosDir: string, id: string, meta: MemoryMeta): Promise<void> {
+  const dir = join(ethosDir, 'personalities', id);
+  await getStorage().mkdir(dir);
+  await getStorage().writeAtomic(join(dir, 'memory-meta.json'), JSON.stringify(meta, null, 2));
 }
 
 // Build the real per-personality dependency object the orchestrator drives.
@@ -220,6 +236,18 @@ function buildDeps(args: {
       await memory.sync(updates, memoryCtx(id));
     },
 
+    readMemoryMeta(id) {
+      return readMemoryMeta(ethosDir, id);
+    },
+
+    writeMemoryMeta(id, meta) {
+      return writeMemoryMeta(ethosDir, id, meta);
+    },
+
+    // Decay tuning from `memoryConsolidation.*`; undefined → all defaults
+    // (30-day half-life, 0.05 threshold, USER.md exempt).
+    memoryDecay: config.memoryConsolidation,
+
     readState(id) {
       return readNightlyState(ethosDir, id);
     },
@@ -275,7 +303,16 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
   }
 
   const llm = await createLLM(config);
-  const memory = createMemoryProvider({ dataDir: dir, storage: getStorage() });
+  // Consolidation writes are labelled `consolidation` in the provenance
+  // history (§2.1). The nightly pass is also the single rotator of the
+  // history JSONL (§2.2) — no other process renames it.
+  const { HistoryStore } = await import('@ethosagent/wiring');
+  const memory = createMemoryProvider({
+    dataDir: dir,
+    storage: getStorage(),
+    source: 'consolidation',
+  });
+  const history = new HistoryStore({ dataDir: dir, storage: getStorage() });
   const deps = buildDeps({ config, ethosDir: dir, reg, llm, memory });
 
   for (const target of targets) {
@@ -299,6 +336,8 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
       for (const step of result.steps) {
         console.log(`  ${step.step.padEnd(12)} ${step.status.padEnd(8)} ${step.detail}`);
       }
+      // Single-rotator: roll last month's history out of the live JSONL.
+      await history.rotate(`personality:${target}`);
     } catch (err) {
       const e = toEthosError(err);
       console.error(`\n✗ Nightly pass failed for ${target}: ${e.cause}`);

@@ -1076,6 +1076,41 @@ importers:
         specifier: ^6.37.0
         version: 6.42.0(ws@8.21.0)(zod@4.4.3)
 
+  extensions/memory-capture:
+    dependencies:
+      '@ethosagent/memory-history':
+        specifier: workspace:*
+        version: link:../memory-history
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/memory-markdown':
+        specifier: workspace:*
+        version: link:../memory-markdown
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+
+  extensions/memory-history:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      diff:
+        specifier: ^7.0.0
+        version: 7.0.0
+    devDependencies:
+      '@ethosagent/memory-markdown':
+        specifier: workspace:*
+        version: link:../memory-markdown
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+      '@types/diff':
+        specifier: ^7.0.0
+        version: 7.0.2
+
   extensions/memory-markdown:
     dependencies:
       '@ethosagent/storage-fs':
@@ -1108,6 +1143,16 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/memory-history':
+        specifier: workspace:*
+        version: link:../memory-history
+      '@ethosagent/memory-markdown':
+        specifier: workspace:*
+        version: link:../memory-markdown
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
 
   extensions/oauth:
     dependencies:
@@ -1962,12 +2007,21 @@ importers:
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../logger
+      '@ethosagent/memory-capture':
+        specifier: workspace:*
+        version: link:../../extensions/memory-capture
+      '@ethosagent/memory-history':
+        specifier: workspace:*
+        version: link:../../extensions/memory-history
       '@ethosagent/memory-markdown':
         specifier: workspace:*
         version: link:../../extensions/memory-markdown
       '@ethosagent/memory-vector':
         specifier: workspace:*
         version: link:../../extensions/memory-vector
+      '@ethosagent/nightly-loop':
+        specifier: workspace:*
+        version: link:../../extensions/nightly-loop
       '@ethosagent/oauth':
         specifier: workspace:*
         version: link:../../extensions/oauth
@@ -5646,6 +5700,9 @@ packages:
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
 
+  '@types/diff@7.0.2':
+    resolution: {integrity: sha512-JSWRMozjFKsGlEjiiKajUjIJVKuKdE3oVy2DNtK+fUo8q82nhFZ2CPQwicAIkXrofahDXrWJ7mjelvZphMS98Q==}
+
   '@types/dompurify@3.2.0':
     resolution: {integrity: sha512-Fgg31wv9QbLDA0SpTOXO3MaxySc4DKGLi8sna4/Utjo4r3ZRPdCt4UQee8BWr+Q5z21yifghREPJGYaEOEIACg==}
     deprecated: This is a stub types definition. dompurify provides its own type definitions, so you do not need this installed.
@@ -7052,6 +7109,10 @@ packages:
 
   diff@5.2.2:
     resolution: {integrity: sha512-vtcDfH3TOjP8UekytvnHH1o1P4FcUdt4eQ1Y+Abap1tk/OB2MWQvcwS2ClCd1zuIhc3JKOx6p3kod8Vfys3E+A==}
+    engines: {node: '>=0.3.1'}
+
+  diff@7.0.0:
+    resolution: {integrity: sha512-PJWHUb1RFevKCwaFA9RlG5tCd+FO5iRh9A8HEtkmBH2Li03iJriB6m6JIN4rGz3K3JLawI7/veA1xzRKP6ISBw==}
     engines: {node: '>=0.3.1'}
 
   dingbat-to-unicode@1.0.1:
@@ -16777,6 +16838,8 @@ snapshots:
 
   '@types/deep-eql@4.0.2': {}
 
+  '@types/diff@7.0.2': {}
+
   '@types/dompurify@3.2.0':
     dependencies:
       dompurify: 3.4.8
@@ -18413,6 +18476,8 @@ snapshots:
       dequal: 2.0.3
 
   diff@5.2.2: {}
+
+  diff@7.0.0: {}
 
   dingbat-to-unicode@1.0.1: {}
 

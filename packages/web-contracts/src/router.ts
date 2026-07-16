@@ -61,6 +61,8 @@ import {
   McpValidateConfigInputSchema,
   McpValidateConfigOutputSchema,
   MemoryFileSchema,
+  MemoryHistoryEntrySchema,
+  MemoryHistorySourceSchema,
   MemoryStoreSchema,
   MeshAgentSchema,
   MeshRouteResultSchema,
@@ -1221,12 +1223,60 @@ const MemoryListUsersOutput = z.object({
   users: z.array(IdentityMapEntrySchema),
 });
 
+// Timeline sub-view (pillar D, §5). Read-only over the personality-scoped
+// provenance history; paginated newest-first with an opaque offset cursor so
+// a 1k-entry history loads a page at a time.
+const MemoryHistoryInput = z.object({
+  personalityId: z.string().min(1),
+  /** Filter to one memory file (e.g. `MEMORY.md`, `memory-archive.md`). */
+  key: z.string().optional(),
+  source: MemoryHistorySourceSchema.optional(),
+  /** Lower time bound (epoch-ms, inclusive) — the start of the date range. */
+  sinceMs: z.number().optional(),
+  /** Upper time bound (epoch-ms, inclusive) — the end of the date range. */
+  untilMs: z.number().optional(),
+  /** Page size; max 200 to keep payloads bounded. Default 50. */
+  limit: z.number().int().min(1).max(200).optional(),
+  /** Opaque offset cursor from the previous response's `nextCursor`. */
+  cursor: z.string().nullable().optional(),
+});
+const MemoryHistoryOutput = z.object({
+  entries: z.array(MemoryHistoryEntrySchema),
+  nextCursor: z.string().nullable(),
+  /** Count of torn/malformed JSONL lines the tolerant reader skipped. */
+  corruptLines: z.number(),
+});
+
+const MemoryHistoryBlobInput = z.object({
+  personalityId: z.string().min(1),
+  /** Content-address from a history entry's `blob` field. */
+  blob: z.string().min(1),
+});
+const MemoryHistoryBlobOutput = z.object({
+  /** Full pre-mutation content, or null when the blob is missing. */
+  content: z.string().nullable(),
+});
+
+const MemoryRestoreInput = z.object({
+  personalityId: z.string().min(1),
+  /** Stable slug of the archived section to restore. */
+  slug: z.string().min(1),
+});
+const MemoryRestoreOutput = z.object({
+  ok: z.literal(true),
+  /** The live file the section was restored into (e.g. `MEMORY.md`). */
+  restoredTo: z.string(),
+});
+
 /** @stable v1 */
 const memory = {
   list: oc.input(MemoryListInput).output(MemoryListOutput),
   get: oc.input(MemoryGetInput).output(MemoryGetOutput),
   write: oc.input(MemoryWriteInput).output(MemoryWriteOutput),
   listUsers: oc.input(z.object({})).output(MemoryListUsersOutput),
+  history: oc.input(MemoryHistoryInput).output(MemoryHistoryOutput),
+  historyBlob: oc.input(MemoryHistoryBlobInput).output(MemoryHistoryBlobOutput),
+  restore: oc.input(MemoryRestoreInput).output(MemoryRestoreOutput),
 };
 
 // ---------------------------------------------------------------------------

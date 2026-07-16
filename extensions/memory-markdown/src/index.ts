@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type {
   GlobalMemoryEntry,
   ListOpts,
@@ -216,7 +216,10 @@ export class MarkdownFileMemoryProvider implements MemoryProvider {
   async writeGlobalEntry(store: 'memory' | 'user', content: string): Promise<GlobalMemoryEntry> {
     await this.storage.mkdir(this.dir);
     const path = this.globalPath(store);
-    await this.storage.write(path, content);
+    // Atomic write: a partial write to MEMORY.md/USER.md would corrupt the
+    // user's memory (§2.3). The history decorator records this under
+    // `global-entry`.
+    await this.storage.writeAtomic(path, content);
     return this.readGlobalEntry(store);
   }
 
@@ -274,7 +277,21 @@ export class MarkdownFileMemoryProvider implements MemoryProvider {
       const trimmed = content.slice(content.length - MAX_MEMORY_BYTES);
       // Find the first complete line break to avoid cutting mid-line
       const firstNewline = trimmed.indexOf('\n');
-      content = firstNewline > 0 ? trimmed.slice(firstNewline + 1) : trimmed;
+      const kept = firstNewline > 0 ? trimmed.slice(firstNewline + 1) : trimmed;
+      // Route the trimmed-away prefix into the scope archive instead of
+      // silently dropping it (§2.3). The provenance-history decorator records
+      // the file's shrink (before-state preserved as a blob), and the bytes
+      // themselves survive in memory-archive.md — nothing is destroyed.
+      const dropped = content.slice(0, content.length - kept.length).trimEnd();
+      if (dropped.length > 0) {
+        const archivePath = join(dirname(filePath), 'memory-archive.md');
+        const stamp = new Date().toISOString();
+        await this.storage.append(
+          archivePath,
+          `\n<!-- overflow-archived ${stamp} from ${basename(filePath)} -->\n${dropped}\n`,
+        );
+      }
+      content = kept;
     }
 
     if (deleted) {

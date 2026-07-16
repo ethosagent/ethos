@@ -1,0 +1,277 @@
+// Importance scoring + decay (memory-experience pillar C, §4).
+//
+// Decay is DEMOTION TO ARCHIVE, never deletion. At consolidation time each
+// distilled section carries a model-assigned importance (§4.1); its effective
+// weight is that importance decayed by recency over a half-life. Sections that
+// fall below a threshold MOVE to `memory-archive.md` (a `remove`-from-MEMORY.md
+// via `replace` + an `add` to the archive — existing contract verbs, no new
+// MemoryUpdate action). Everything here is a PURE function of its inputs so it
+// is trivially testable; the sidecar I/O and the `sync()` happen in the
+// orchestrator's injected deps.
+//
+// Slug — not content hash — is the stable identity the whole pillar keys on:
+// content hashes churn on every reword and would orphan `lastSeen`. The sidecar
+// `memory-meta.json` is written by the nightly pass ONLY (single writer, §4.1).
+
+import type { MemoryUpdate } from '@ethosagent/types';
+import type { ConsolidationResult, ScoredSection } from './memory-consolidation';
+
+const ARCHIVE_KEY = 'memory-archive.md';
+
+/** Per-slug importance + recency, stored in the sidecar keyed by (key, slug). */
+export interface MetaEntry {
+  /** Model-assigned importance in [0,1] from the latest consolidation. */
+  importance: number;
+  /** epoch-ms this slug was first seen; preserved across rewords (§4.1). */
+  lastSeen: number;
+}
+
+/** Sidecar shape — `memory-meta.json` per scope. `keys[file][slug] = entry`. */
+export interface MemoryMeta {
+  version: 1;
+  keys: Record<string, Record<string, MetaEntry>>;
+}
+
+/** Tuning knobs; the orchestrator resolves defaults via `resolveDecayParams`. */
+export interface DecayConfig {
+  /** Recency half-life in days (default 30). */
+  halfLifeDays?: number;
+  /** Effective weight below which a section is archived (default 0.05). */
+  threshold?: number;
+  /** When true (default), USER.md is exempt from decay entirely (§4.3). */
+  exemptUser?: boolean;
+}
+
+export interface DecayParams {
+  halfLifeMs: number;
+  threshold: number;
+  exemptUser: boolean;
+  /** Injected clock — keeps the planner pure/testable. */
+  now: number;
+}
+
+/** Explicit defaults (§4.3): USER.md exempt by default, not emergent. */
+export const DEFAULT_DECAY_CONFIG: Required<DecayConfig> = {
+  halfLifeDays: 30,
+  threshold: 0.05,
+  exemptUser: true,
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function resolveDecayParams(config: DecayConfig | undefined, now: number): DecayParams {
+  const halfLifeDays = config?.halfLifeDays ?? DEFAULT_DECAY_CONFIG.halfLifeDays;
+  return {
+    halfLifeMs: Math.max(1, halfLifeDays) * DAY_MS,
+    threshold: config?.threshold ?? DEFAULT_DECAY_CONFIG.threshold,
+    exemptUser: config?.exemptUser ?? DEFAULT_DECAY_CONFIG.exemptUser,
+    now,
+  };
+}
+
+export function emptyMeta(): MemoryMeta {
+  return { version: 1, keys: {} };
+}
+
+/**
+ * Tolerant sidecar reader. Any structural problem returns an empty meta so a
+ * corrupt file degrades to "no history" (fresh slugs), never a crash.
+ */
+export function parseMemoryMeta(raw: string | null): MemoryMeta {
+  if (!raw) return emptyMeta();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return emptyMeta();
+  }
+  if (!parsed || typeof parsed !== 'object') return emptyMeta();
+  const obj = parsed as Record<string, unknown>;
+  if (obj.version !== 1 || !obj.keys || typeof obj.keys !== 'object') return emptyMeta();
+
+  const keys: MemoryMeta['keys'] = {};
+  for (const [key, slugMap] of Object.entries(obj.keys as Record<string, unknown>)) {
+    if (!slugMap || typeof slugMap !== 'object') continue;
+    const out: Record<string, MetaEntry> = {};
+    for (const [slug, entry] of Object.entries(slugMap as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.importance === 'number' && typeof e.lastSeen === 'number') {
+        out[slug] = { importance: e.importance, lastSeen: e.lastSeen };
+      }
+    }
+    if (Object.keys(out).length > 0) keys[key] = out;
+  }
+  return { version: 1, keys };
+}
+
+export interface ConsolidationPlan {
+  /** MEMORY.md/USER.md `replace` + `memory-archive.md` `add`, existing verbs. */
+  updates: MemoryUpdate[];
+  /** Next sidecar state — the nightly pass (single writer) persists this. */
+  nextMeta: MemoryMeta;
+  /** Slugs demoted to the archive this pass (for the step log). */
+  archivedSlugs: string[];
+}
+
+interface FileInput {
+  key: 'MEMORY.md' | 'USER.md';
+  sections: ScoredSection[];
+  currentText: string;
+  exempt: boolean;
+}
+
+/**
+ * Plan a decay-aware consolidation. For each file, sections whose effective
+ * weight (importance × 2^(-age/halfLife)) falls below the threshold move to the
+ * archive; the rest are re-rendered back into the live file. USER.md is exempt
+ * by default and is then just re-written (never archived, never destroyed on an
+ * empty distillation). The returned `nextMeta` tracks only KEPT slugs of
+ * non-exempt files — archived and dropped slugs fall out, so a later restore
+ * re-enters as a fresh slug.
+ */
+export function planConsolidation(args: {
+  current: { memory: string; user: string };
+  result: ConsolidationResult;
+  meta: MemoryMeta;
+  params: DecayParams;
+}): ConsolidationPlan {
+  const { current, result, meta, params } = args;
+  const updates: MemoryUpdate[] = [];
+  const archivedSlugs: string[] = [];
+  const nextMeta = emptyMeta();
+
+  const files: FileInput[] = [
+    {
+      key: 'MEMORY.md',
+      sections: result.memorySections ?? [],
+      currentText: current.memory,
+      exempt: false,
+    },
+    {
+      key: 'USER.md',
+      sections: result.userSections ?? [],
+      currentText: current.user,
+      exempt: params.exemptUser,
+    },
+  ];
+
+  for (const file of files) {
+    if (file.sections.length === 0) continue;
+
+    const prior = meta.keys[file.key] ?? {};
+    const kept: ScoredSection[] = [];
+    const archived: ScoredSection[] = [];
+    const keyMeta: Record<string, MetaEntry> = {};
+
+    for (const section of file.sections) {
+      const priorEntry = prior[section.slug];
+      // Preserve lastSeen across rewords (slug is the stable key); a brand-new
+      // slug is seen `now`. This is what keeps a stale section decaying instead
+      // of resetting every night when the model rephrases it.
+      const lastSeen = priorEntry ? priorEntry.lastSeen : params.now;
+      const age = params.now - lastSeen;
+      const weight = section.score * 2 ** (-age / params.halfLifeMs);
+
+      if (!file.exempt && weight < params.threshold) {
+        archived.push(section);
+      } else {
+        kept.push(section);
+        if (!file.exempt) keyMeta[section.slug] = { importance: section.score, lastSeen };
+      }
+    }
+
+    if (Object.keys(keyMeta).length > 0) nextMeta.keys[file.key] = keyMeta;
+
+    const keptText = kept.map(renderSection).join('\n\n').trim();
+    const changed = keptText !== file.currentText.trim();
+
+    if (file.exempt) {
+      // Never destructive: an empty distillation leaves USER.md as-is.
+      if (keptText.length > 0 && changed) {
+        updates.push({ action: 'replace', key: file.key, content: keptText });
+      }
+    } else if (changed && (keptText.length > 0 || archived.length > 0)) {
+      // A `replace` to '' is acceptable here only because the removed bytes are
+      // captured in the archive `add` below (and, always, in the history diff).
+      updates.push({ action: 'replace', key: file.key, content: keptText });
+    }
+
+    for (const section of archived) {
+      updates.push({
+        action: 'add',
+        key: ARCHIVE_KEY,
+        content: formatArchiveBlock(section, file.key, params.now),
+      });
+      archivedSlugs.push(section.slug);
+    }
+  }
+
+  return { updates, nextMeta, archivedSlugs };
+}
+
+/** Render a section as `### <slug>\n<content>`. */
+export function renderSection(section: ScoredSection): string {
+  return `### ${section.slug}\n${section.content.trim()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Archive block format — a machine-parseable marker + the section, so restore
+// can move a section back BY SLUG (§4.2). The archive is not the pristine
+// MEMORY.md, so a marker comment is acceptable here (unlike in MEMORY.md).
+// ---------------------------------------------------------------------------
+
+export interface ArchiveBlock {
+  slug: string;
+  fromKey: string;
+  iso: string;
+  /** Full block text incl. marker — used to re-serialise the archive. */
+  raw: string;
+  /** Just the `### <slug>\n<body>` section — used to restore into the file. */
+  section: string;
+}
+
+export function formatArchiveBlock(section: ScoredSection, fromKey: string, now: number): string {
+  const iso = new Date(now).toISOString();
+  return `<!-- archived ${iso} slug=${section.slug} from=${fromKey} -->\n${renderSection(section)}`;
+}
+
+const ARCHIVE_MARKER = /<!-- archived (\S+) slug=(\S+) from=(\S+) -->/g;
+
+export function parseArchiveBlocks(archive: string): ArchiveBlock[] {
+  const markers: Array<{
+    index: number;
+    markerLen: number;
+    iso: string;
+    slug: string;
+    from: string;
+  }> = [];
+  let m: RegExpExecArray | null = ARCHIVE_MARKER.exec(archive);
+  while (m !== null) {
+    markers.push({
+      index: m.index,
+      markerLen: m[0].length,
+      iso: m[1] ?? '',
+      slug: m[2] ?? '',
+      from: m[3] ?? '',
+    });
+    m = ARCHIVE_MARKER.exec(archive);
+  }
+  ARCHIVE_MARKER.lastIndex = 0;
+
+  const blocks: ArchiveBlock[] = [];
+  for (let i = 0; i < markers.length; i++) {
+    const cur = markers[i];
+    if (!cur) continue;
+    const next = markers[i + 1];
+    const end = next ? next.index : archive.length;
+    blocks.push({
+      slug: cur.slug,
+      fromKey: cur.from,
+      iso: cur.iso,
+      raw: archive.slice(cur.index, end).trim(),
+      section: archive.slice(cur.index + cur.markerLen, end).trim(),
+    });
+  }
+  return blocks;
+}

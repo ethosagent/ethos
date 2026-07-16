@@ -180,7 +180,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       dataDir: dir,
       attachmentCache,
       sessionStore: session,
-      memoryProvider: createMemoryProvider({ dataDir: dir, storage: getStorage() }),
+      memoryProvider: createMemoryProvider({
+        dataDir: dir,
+        storage: getStorage(),
+        source: 'web-editor',
+      }),
       identityMap,
       agentLoop: stubLoop,
       personalities,
@@ -788,7 +792,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     attachmentCache,
     sessionStore: session,
     personalitiesLlm: () => createLLM(config),
-    memoryProvider: createMemoryProvider({ dataDir: dir, storage: getStorage() }),
+    memoryProvider: createMemoryProvider({
+      dataDir: dir,
+      storage: getStorage(),
+      source: 'web-editor',
+    }),
     identityMap,
     agentLoop: loop,
     // The same registry the agent loop loaded above is reused so mtime

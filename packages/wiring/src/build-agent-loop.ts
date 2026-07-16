@@ -6,6 +6,11 @@ import { registerBuiltinExtractors } from '@ethosagent/document-extractors';
 import { GoalRunner } from '@ethosagent/goal-runner';
 import { BackgroundExecutor } from '@ethosagent/job-runner';
 import { SQLiteJobStore } from '@ethosagent/job-store';
+import { type ConsolidateFn, MemoryCaptureRunner } from '@ethosagent/memory-capture';
+import { HistoryStore, withHistory } from '@ethosagent/memory-history';
+import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
+import { buildConsolidationUpdates, consolidateMemory } from '@ethosagent/nightly-loop';
+import { sanitize } from '@ethosagent/safety-injection';
 import { FsStorage } from '@ethosagent/storage-fs';
 import {
   type BackgroundToolDeps,
@@ -597,6 +602,89 @@ export async function buildAgentLoop(
 
   const ref: GatewaySendRef = gatewaySendRef;
 
+  // -------------------------------------------------------------------------
+  // memory-experience pillar B — proactive capture (default-off, §3)
+  // -------------------------------------------------------------------------
+  let onMemoryCapturedFn:
+    | ((cb: (n: { scopeId: string; summary: string }) => void) => () => void)
+    | undefined;
+  if (config.memoryCapture?.enabled && memoryName === 'markdown') {
+    const captureConfig = config.memoryCapture;
+    // Undecorated write provider + its own HistoryStore: the runner records
+    // history itself (with hint + capture hashes), so it must not double-record
+    // through a decorated handle.
+    const captureBase = new MarkdownFileMemoryProvider({
+      dir: dataDir,
+      storage: wiringCtx.storage,
+    });
+    const captureHistory = new HistoryStore({ dataDir, storage: wiringCtx.storage });
+
+    // Extraction model: dedicated cheap aux model when configured, else reuse
+    // the primary provider (open-question 2 — zero-config installs pay primary).
+    let captureLlm: LLMProvider = llm;
+    if (captureConfig.model && captureConfig.model !== config.model) {
+      const auxProviderName = captureConfig.provider ?? config.provider;
+      const auxFactory = infra.llmProviders.get(auxProviderName);
+      if (auxFactory) {
+        captureLlm = await auxFactory({
+          config: {
+            provider: auxProviderName,
+            model: captureConfig.model,
+            apiKey: captureConfig.apiKey ?? config.apiKey,
+            ...((captureConfig.baseUrl ?? config.baseUrl)
+              ? { baseUrl: captureConfig.baseUrl ?? config.baseUrl }
+              : {}),
+            ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
+          },
+          secrets: config.secretsResolver ?? NOOP_SECRETS,
+          logger: log,
+        });
+      } else {
+        log.warn(
+          `memoryCapture provider "${auxProviderName}" not registered; ` +
+            'capture extraction will reuse the primary model',
+        );
+      }
+    }
+
+    // Inline consolidation fallback (§3.5): only when no macro-loop is
+    // configured. Reuses the pure consolidateMemory(); the consolidation write
+    // is recorded through a history-decorated handle so it lands as
+    // `source: 'consolidation'`.
+    const nightlyConfigured = config.nightlyPass?.enabled === true;
+    const consolidationHandle = withHistory(captureBase, captureHistory, {
+      source: 'consolidation',
+    });
+    const consolidate: ConsolidateFn = async ({ ctx }) => {
+      const memBefore = (await captureBase.read('MEMORY.md', ctx))?.content ?? '';
+      const userBefore = (await captureBase.read('USER.md', ctx))?.content ?? '';
+      const result = await consolidateMemory(
+        { memory: memBefore, user: userBefore, recentContext: '' },
+        llm,
+      );
+      const updates = buildConsolidationUpdates({ memory: memBefore, user: userBefore }, result);
+      if (updates.length > 0) await consolidationHandle.sync(updates, ctx);
+    };
+
+    const captureRunner = new MemoryCaptureRunner({
+      provider: captureBase,
+      history: captureHistory,
+      session,
+      llm: captureLlm,
+      sanitize,
+      logger: log,
+      nightlyConfigured,
+      consolidate,
+      config: {
+        ...(captureConfig.maxPerHour !== undefined ? { maxPerHour: captureConfig.maxPerHour } : {}),
+        ...(captureConfig.maxPerDay !== undefined ? { maxPerDay: captureConfig.maxPerDay } : {}),
+      },
+      workingDir: wiringCtx.dataDir,
+    });
+    captureRunner.registerHook(hooks);
+    onMemoryCapturedFn = (cb) => captureRunner.onCaptured(cb);
+  }
+
   return {
     loop,
     toolRegistry: tools,
@@ -610,6 +698,7 @@ export async function buildAgentLoop(
     setOnSkillApplied: (fn) => {
       onSkillAppliedFn = fn;
     },
+    ...(onMemoryCapturedFn ? { onMemoryCaptured: onMemoryCapturedFn } : {}),
     notificationRouter,
     pluginLoader,
     goalRunner,

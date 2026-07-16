@@ -46,6 +46,7 @@ import {
   activate as activateOpenaiCompat,
   PROVIDER_CONTRACT_MAJOR as OPENAI_COMPAT_CONTRACT,
 } from '@ethosagent/llm-openai-compat';
+import { HistoryStore, withHistory } from '@ethosagent/memory-history';
 import { compose as composeMemory } from '@ethosagent/memory-markdown/compose';
 import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import type { PersonalityCompose } from '@ethosagent/personalities/compose';
@@ -182,7 +183,11 @@ export async function buildInfrastructure(
   const memoryProviders = new DefaultMemoryProviderRegistry();
   memoryProviders.register('markdown', ({ dataDir: dir }) => {
     const { memoryProvider } = composeMemory({ ...wiringCtx, dataDir: dir });
-    return memoryProvider;
+    // Agent tool writes flow through this provider; wrap it in the history
+    // decorator so every mutation is auditable. Dream turns write through the
+    // same handle and are relabelled from their `dream:` sessionKey (§2.1).
+    const history = new HistoryStore({ dataDir: dir, storage: wiringCtx.storage });
+    return withHistory(memoryProvider, history, { source: 'tool' });
   });
   memoryProviders.register('vector', ({ dataDir: dir }) => {
     return new VectorMemoryProvider({ dir, storage: wiringCtx.storage });

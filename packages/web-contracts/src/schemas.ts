@@ -817,6 +817,44 @@ export const MemoryFileSchema = z.object({
 });
 export type MemoryFile = z.infer<typeof MemoryFileSchema>;
 
+// Provenance history (memory-experience pillar D, §5). One wire entry per
+// memory mutation, mirroring the `HistoryEntry` shape the M1 HistoryStore
+// records — minus the capture dedup hashes, which are an internal concern.
+export const MemoryHistorySourceSchema = z.enum([
+  'tool',
+  'consolidation',
+  'dream',
+  'capture',
+  'web-editor',
+  'global-entry',
+  'restore',
+]);
+export type MemoryHistorySource = z.infer<typeof MemoryHistorySourceSchema>;
+
+export const MemoryHistoryEntrySchema = z.object({
+  /** epoch-ms of the mutation. */
+  ts: z.number(),
+  scopeId: z.string(),
+  key: z.string(),
+  /** The `MemoryUpdate.action`s applied to this key in the batch. */
+  actions: z.array(z.string()),
+  source: MemoryHistorySourceSchema,
+  sessionId: z.string(),
+  sessionKey: z.string(),
+  beforeHash: z.string(),
+  afterHash: z.string(),
+  /** Unified diff (before → after), inline-capped; truncated when `blob` is set. */
+  diff: z.string(),
+  /** Candidate importance in [0,1] — present on `capture` entries only. */
+  hint: z.number().optional(),
+  /** Content-address of the full before-state blob (§2.1). When set, `diff` is
+   *  truncated and the full before-content is fetched via `memory.historyBlob`. */
+  blob: z.string().optional(),
+  sizeBefore: z.number(),
+  sizeAfter: z.number(),
+});
+export type MemoryHistoryEntry = z.infer<typeof MemoryHistoryEntrySchema>;
+
 export const IdentityMapEntrySchema = z.object({
   userId: z.string(),
   displayLabel: z.string(),
