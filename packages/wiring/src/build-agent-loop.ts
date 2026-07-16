@@ -617,6 +617,7 @@ export async function buildAgentLoop(
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
     ...(meshProxyReconciler ? { meshProxyReconciler } : {}),
     activePersonality: activePerson,
+    refreshPersonalities: () => personalities.loadFromDirectory(join(dataDir, 'personalities')),
     sttProviders: infra.sttProviders,
     ttsProviders: infra.ttsProviders,
     voiceConfig: {

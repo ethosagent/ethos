@@ -55,6 +55,12 @@ export interface ChatServiceOptions {
   systemBus?: SystemEventBus;
   /** Optional attachment cache for persisting inbound attachments. */
   attachmentCache?: import('@ethosagent/types').AttachmentCache;
+  /**
+   * Optional refresh closure — reloads the loop's personality registry from
+   * disk before a turn runs, so a hot-dropped or edited personality resolves
+   * without a server restart. Absent → no refresh.
+   */
+  refreshPersonalities?: () => Promise<void>;
 }
 
 export interface ChatSendInput {
@@ -164,6 +170,11 @@ export class ChatService {
     }
 
     const turnId = randomUUID();
+
+    // Refresh the loop's personality registry from disk before the turn runs so
+    // a hot-dropped or edited personality resolves without a restart. No-op when
+    // no closure is wired (tests, embedders).
+    await this.opts.refreshPersonalities?.();
 
     // Fire and forget — the bridge streams events through our subscription
     // and persists messages via the agent loop. `chat.send` returns as soon

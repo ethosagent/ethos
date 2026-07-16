@@ -29,6 +29,12 @@ export interface CompletionsServiceOptions {
   now?: () => Date;
   /** Same — overridable so tests can assert deterministic ids. */
   newId?: () => string;
+  /**
+   * Optional refresh closure — reloads the loop's personality registry from
+   * disk before a completion runs, so a hot-dropped or edited personality
+   * resolves without a server restart. Absent → no refresh.
+   */
+  refreshPersonalities?: () => Promise<void>;
 }
 
 export interface CompletionsInput {
@@ -177,6 +183,10 @@ export class CompletionsService {
   private async prepareSession(
     input: CompletionsInput,
   ): Promise<{ sessionKey: string; lastUserText: string; attachments?: Attachment[] }> {
+    // Refresh the loop's personality registry from disk before the turn runs so
+    // a hot-dropped or edited personality resolves without a restart. No-op when
+    // no closure is wired (tests, embedders).
+    await this.opts.refreshPersonalities?.();
     const lastUser = finalUserMessage(input.req.messages);
     if (!lastUser) {
       throw new EthosError({

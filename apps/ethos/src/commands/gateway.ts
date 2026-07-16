@@ -362,10 +362,12 @@ export async function runGatewayStart(): Promise<void> {
       }
       // Recursion guard: exclude 'cron' from the effective toolset so
       // cron-spawned sessions cannot schedule further cron jobs.
+      // Refresh-before-use (not create-once-cache-forever) so a personality
+      // created/edited after boot is honored the next time cron fires.
       if (!cronPersonalities) {
         cronPersonalities = await createPersonalityRegistry(getStorage());
-        await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
       }
+      await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
       const pid = job.personalityId;
       const pers = cronPersonalities.get(pid);
       const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
@@ -392,6 +394,7 @@ export async function runGatewayStart(): Promise<void> {
     messagingSetters: botMessagingSetters,
     notificationRouters: botNotificationRouters,
     toolRegistries: botToolRegistries,
+    refreshers: botPersonalityRefreshers,
   } = await buildGatewayBots(config, scheduler);
 
   // Phase 3: for each team-bound bot, ensure the supervisor is running.
@@ -431,8 +434,42 @@ export async function runGatewayStart(): Promise<void> {
     sttProviders,
     ttsProviders,
     voiceConfig,
+    refreshPersonalities: refreshSystemPersonalities,
   } = await createAgentLoop(config, { cronScheduler: scheduler });
   systemLoop = systemLoopReady;
+
+  // Personality-directory seam for hot-reload. `refresh()` reloads every loop
+  // registry (system + per-bot) plus a dedicated read registry from disk, so a
+  // personality dropped into or edited under `~/.ethos/personalities/` is
+  // usable on the next turn/command without a restart. `has()`/`list()` read
+  // the dedicated registry, which `refresh()` keeps in sync with the same disk
+  // the loops resolve against.
+  const personalitiesDir = join(ethosDir(), 'personalities');
+  const seamPersonalities = await createPersonalityRegistry(getStorage());
+  await seamPersonalities.loadFromDirectory(personalitiesDir);
+  try {
+    seamPersonalities.setDefault(config.personality);
+  } catch {
+    // Configured default not on disk — keep the registry's built-in default.
+  }
+  const personalityRefreshers = [refreshSystemPersonalities, ...botPersonalityRefreshers];
+  const personalityDirectory = {
+    refresh: async (): Promise<void> => {
+      await Promise.all([
+        seamPersonalities.loadFromDirectory(personalitiesDir),
+        ...personalityRefreshers.map((fn) => fn()),
+      ]);
+    },
+    has: (id: string): boolean => seamPersonalities.get(id) != null,
+    list: (): Array<{ id: string; name: string; isDefault: boolean }> => {
+      const defaultId = seamPersonalities.getDefault().id;
+      return seamPersonalities.list().map((p) => ({
+        id: p.id,
+        name: p.name,
+        isDefault: p.id === defaultId,
+      }));
+    },
+  };
 
   // A2A Stage 1d: register the outbound `a2a_send` tool on every gateway loop's
   // tool registry (per-bot loops + the system loop), so an A2A call can
@@ -636,6 +673,7 @@ export async function runGatewayStart(): Promise<void> {
           ttsProviderName: voiceConfig.ttsProviderName,
           ttsProviderConfig: voiceConfig.ttsProviderConfig,
           voiceSecretsResolver: voiceConfig.secretsResolver,
+          personalityDirectory,
           ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
           ...(pairingDb ? { pairingDb } : {}),
         })
@@ -655,6 +693,7 @@ export async function runGatewayStart(): Promise<void> {
           ttsProviderName: voiceConfig.ttsProviderName,
           ttsProviderConfig: voiceConfig.ttsProviderConfig,
           voiceSecretsResolver: voiceConfig.secretsResolver,
+          personalityDirectory,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),
@@ -906,6 +945,11 @@ interface BuildGatewayBotsResult {
    *  no shared one), so the outbound `a2a_send` tool is registered on every one
    *  of them — see `registerA2aOutboundTools`. */
   toolRegistries: ToolRegistry[];
+  /** One `refreshPersonalities` closure per personality-bound bot loop. The
+   *  gateway's `personalityDirectory.refresh()` invokes all of them so a
+   *  hot-dropped/edited personality reaches every loop's registry. Team loops
+   *  have no personality registry and contribute none. */
+  refreshers: Array<() => Promise<void>>;
 }
 
 /**
@@ -951,6 +995,7 @@ async function buildGatewayBots(
   const setters: Array<(fn: MessagingSendFn) => void> = [];
   const routers: NotificationRouter[] = [];
   const registries: ToolRegistry[] = [];
+  const refreshers: Array<() => Promise<void>> = [];
   const buildOne = async (bot: TelegramBotConfig | SlackAppConfig): Promise<GatewayBotConfig> => {
     const botKey = deriveBotKey(bot);
     let loop: AgentLoop;
@@ -975,6 +1020,7 @@ async function buildGatewayBots(
       setters.push(result.setMessagingSend);
       routers.push(result.notificationRouter);
       registries.push(result.toolRegistry);
+      refreshers.push(result.refreshPersonalities);
     }
     return {
       botKey,
@@ -1017,6 +1063,7 @@ async function buildGatewayBots(
       setters.push(result.setMessagingSend);
       routers.push(result.notificationRouter);
       registries.push(result.toolRegistry);
+      refreshers.push(result.refreshPersonalities);
     }
     out.push({
       botKey,
@@ -1045,6 +1092,7 @@ async function buildGatewayBots(
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);
     registries.push(result.toolRegistry);
+    refreshers.push(result.refreshPersonalities);
   }
   // Legacy scalar Discord — register as a first-class bot bound to the default
   // personality so its inbound (stamped with the wiring-computed botKey)
@@ -1062,6 +1110,7 @@ async function buildGatewayBots(
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);
     registries.push(result.toolRegistry);
+    refreshers.push(result.refreshPersonalities);
   }
   // Legacy scalar Email — same treatment as Discord.
   if (config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost) {
@@ -1076,12 +1125,14 @@ async function buildGatewayBots(
     setters.push(result.setMessagingSend);
     routers.push(result.notificationRouter);
     registries.push(result.toolRegistry);
+    refreshers.push(result.refreshPersonalities);
   }
   return {
     bots: out,
     messagingSetters: setters,
     notificationRouters: routers,
     toolRegistries: registries,
+    refreshers,
   };
 }
 

@@ -64,12 +64,20 @@ export interface PersonalitiesServiceOptions {
    * Defaults to `true` (server deployments where Docker is available).
    */
   dockerBuildable?: boolean;
+  /**
+   * Optional refresh closure — reloads the personality registry from disk
+   * before a read so a hot-dropped or edited personality is visible without a
+   * server restart. Awaited at the top of `list`/`get`/`characterSheet`.
+   * Absent → no refresh (registry state as of last mutation/boot).
+   */
+  refresh?: () => Promise<void>;
 }
 
 export class PersonalitiesService {
   constructor(private readonly opts: PersonalitiesServiceOptions) {}
 
-  list(): { items: Personality[]; nextCursor: string | null; defaultId: string } {
+  async list(): Promise<{ items: Personality[]; nextCursor: string | null; defaultId: string }> {
+    await this.opts.refresh?.();
     return {
       items: this.opts.personalities.describeAll().map(toWire),
       nextCursor: null,
@@ -80,6 +88,7 @@ export class PersonalitiesService {
   async get(
     id: string,
   ): Promise<{ personality: Personality; soulMd: string; mcpPolicy: McpPolicy | null }> {
+    await this.opts.refresh?.();
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
     const soulMd = await this.opts.personalities.readSoulMd(id);
@@ -93,6 +102,7 @@ export class PersonalitiesService {
   async characterSheet(
     id: string,
   ): Promise<{ markdown: string; posture: ExecutionPosture | null }> {
+    await this.opts.refresh?.();
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
     const soulMd = await this.opts.personalities.readSoulMd(id);

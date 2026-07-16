@@ -55,7 +55,7 @@ export function openAiChatRoutes(opts: OpenAiChatRouteOptions): Hono {
     }
 
     // 3. Resolve `model` → personalityId per principle #2.
-    const resolved = resolveModel(req.model, opts.personalities);
+    const resolved = await resolveModel(req.model, opts.personalities);
     if (resolved.kind === 'team') {
       return c.json(
         openAiErrorBody({
@@ -180,12 +180,12 @@ type Resolved =
   | { kind: 'team' }
   | { kind: 'unknown' };
 
-function resolveModel(model: string, personalities: PersonalitiesService): Resolved {
+async function resolveModel(model: string, personalities: PersonalitiesService): Promise<Resolved> {
   if (model.startsWith('team:')) return { kind: 'team' };
   if (model === 'ethos-default') {
     return { kind: 'personality', personalityId: undefined };
   }
-  const found = personalities.list().items.find((p) => p.id === model);
+  const found = (await personalities.list()).items.find((p) => p.id === model);
   if (!found) return { kind: 'unknown' };
   return { kind: 'personality', personalityId: model };
 }

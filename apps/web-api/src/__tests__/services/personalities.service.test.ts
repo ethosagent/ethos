@@ -38,7 +38,7 @@ describe('PersonalitiesService', () => {
     return new PersonalitiesService({ personalities: registry, library });
   }
 
-  it('list maps PersonalityConfig → wire shape and includes defaultId', () => {
+  it('list maps PersonalityConfig → wire shape and includes defaultId', async () => {
     const service = makeService({
       personalities: [
         {
@@ -51,7 +51,7 @@ describe('PersonalitiesService', () => {
         },
       ],
     });
-    const result = service.list();
+    const result = await service.list();
     expect(result.defaultId).toBe('researcher');
     expect(result.items).toHaveLength(1);
     const p = result.items[0];
@@ -63,7 +63,7 @@ describe('PersonalitiesService', () => {
     expect('skillsDirs' in p).toBe(false);
   });
 
-  it('marks user personalities as builtin: false based on soulFile path', () => {
+  it('marks user personalities as builtin: false based on soulFile path', async () => {
     const userSoulFile = join(DATA, 'personalities', 'custom', 'SOUL.md');
     const service = makeService({
       personalities: [
@@ -72,7 +72,7 @@ describe('PersonalitiesService', () => {
         { id: 'builtin', name: 'Built-in' },
       ],
     });
-    const result = service.list();
+    const result = await service.list();
     const byId = Object.fromEntries(result.items.map((p) => [p.id, p]));
     expect(byId.custom?.builtin).toBe(false);
     expect(byId.builtin?.builtin).toBe(true);

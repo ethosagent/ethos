@@ -33,7 +33,7 @@ export const kanbanRouter = {
     const onlineIds = new Set(meshResult.agents.map((a) => a.personalityId));
 
     // Get all personalities from disk
-    const allPersonalities = context.personalities.list().items;
+    const allPersonalities = (await context.personalities.list()).items;
 
     // Add offline personalities that aren't already in the mesh list
     const offlineAgents = allPersonalities

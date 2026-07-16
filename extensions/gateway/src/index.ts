@@ -346,6 +346,19 @@ export interface GatewayConfig {
     greet(personalityId: string): Promise<string>;
   };
   /**
+   * Optional personality-directory seam for hot-reload. The gateway extension
+   * holds no registry — this seam lets the app layer inject refresh + read
+   * closures over every loop registry it built. `refresh()` re-loads ALL loop
+   * registries in this process from disk (cheap — mtime-fingerprint cache);
+   * `has()` / `list()` read the system loop's registry. Absent (tests,
+   * standalone) → no refresh, legacy hardcoded `/personality list`.
+   */
+  personalityDirectory?: {
+    refresh(): Promise<void>;
+    has(id: string): boolean;
+    list(): Array<{ id: string; name: string; isDefault: boolean }>;
+  };
+  /**
    * Optional attachment cache for cleaning up cached files on session reset
    * (`/new`) and lane eviction. When absent, no cleanup is performed.
    */
@@ -531,6 +544,8 @@ export class Gateway {
     | undefined;
   /** Optional greeting provider for `/start`. */
   private readonly greetingProvider: { greet(personalityId: string): Promise<string> } | undefined;
+  /** Optional personality-directory seam for hot-reload (refresh + read). */
+  private readonly personalityDirectory: GatewayConfig['personalityDirectory'];
   /** Optional attachment cache for cleanup on /new and lane eviction. */
   private readonly attachmentCache: AttachmentCache | undefined;
   /** STT provider registry for resolving voice transcription providers by name. */
@@ -665,6 +680,7 @@ export class Gateway {
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
     this.personalityCardReader = config.personalityCardReader;
     this.greetingProvider = config.greetingProvider;
+    this.personalityDirectory = config.personalityDirectory;
     this.attachmentCache = config.attachmentCache;
     this.sttProviderRegistry = config.sttProviderRegistry;
     this.sttProviderName = config.sttProviderName;
@@ -1065,6 +1081,9 @@ export class Gateway {
     }
 
     if (cmdType === 'personality') {
+      // Refresh from disk before resolving so a newly dropped or edited
+      // personality is visible to this command. Seam absent → no-op.
+      await this.personalityDirectory?.refresh();
       const arg = text.split(/\s+/).slice(1).join(' ').trim();
       const current = this.activePersonalityFor(laneKey, bot);
 
@@ -1108,9 +1127,25 @@ export class Gateway {
       }
 
       if (arg === 'list') {
+        const dir = this.personalityDirectory;
+        const listText = dir
+          ? `${dir
+              .list()
+              .map((p) => `${p.id} — ${p.name}${p.isDefault ? ' (default)' : ''}`)
+              .join('\n')}\n\nUse /personality <id> to switch.`
+          : 'Built-in personalities: researcher · engineer · reviewer · coach · operator\n\nUse /personality <id> to switch.';
+        await adapter.send(message.chatId, { text: listText }).catch(() => {});
+        return;
+      }
+
+      // Validate against the (just-refreshed) registry before storing the id.
+      // Unknown ids must never be stored — turn-setup's `?? getDefault()`
+      // would then silently run the default personality. Seam absent → skip
+      // validation (standalone/test posture unchanged).
+      if (this.personalityDirectory && !this.personalityDirectory.has(arg)) {
         await adapter
           .send(message.chatId, {
-            text: 'Built-in personalities: researcher · engineer · reviewer · coach · operator\n\nUse /personality <id> to switch.',
+            text: `Personality '${arg}' not found — /personality list to see what's available.`,
           })
           .catch(() => {});
         return;
@@ -1545,6 +1580,10 @@ export class Gateway {
   ): Promise<void> {
     const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
     this.lastInboundHadAudio.set(laneKey, hasAudioAttachments(message.attachments));
+    // Refresh every loop registry from disk before resolving which personality
+    // this turn runs as, so a hot-dropped or edited directory takes effect on
+    // the next turn without a restart. Seam absent (tests, standalone) → no-op.
+    await this.personalityDirectory?.refresh();
     const personalityId =
       bot.binding.type === 'team'
         ? undefined

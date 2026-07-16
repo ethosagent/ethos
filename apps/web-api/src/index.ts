@@ -100,6 +100,12 @@ export interface CreateWebApiOptions {
    *  duplicate). Construct via `createPersonalityRegistry({ userPersonalitiesDir })`
    *  to enable the writable user directory. */
   personalities: FilePersonalityRegistry;
+  /** Loop-registry refresh from wiring's `CreateAgentLoopResult`. When present,
+   *  the chat + completions services await it before a turn so a hot-dropped or
+   *  edited personality resolves against the loop's registry without a restart.
+   *  The Personalities-tab service refreshes `personalities` (this process's
+   *  web-api registry) on its own from disk. Absent → no refresh. */
+  refreshPersonalities?: () => Promise<void>;
   /** Provider/model defaults stamped on web-created session rows. */
   chatDefaults: ChatDefaults;
   /** Origins to accept for cross-origin (CSRF) state-changing requests.
@@ -332,6 +338,10 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     sessions: opts.sessionStore,
     storage,
     dataDir: opts.dataDir,
+    // Reload this process's web-api registry from disk before each read so a
+    // personality dropped/edited on disk (by another process, or the loop's
+    // create path) is visible in the Personalities tab without a restart.
+    refresh: () => opts.personalities.loadFromDirectory(join(opts.dataDir, 'personalities')),
     ...(opts.dockerBuildable === false ? { dockerBuildable: false } : {}),
   });
   const configService = new ConfigService({ config: configRepo, secrets });
@@ -425,6 +435,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     loop: agentLoop,
     sessions: completionsRepo,
     defaults: opts.chatDefaults,
+    ...(opts.refreshPersonalities ? { refreshPersonalities: opts.refreshPersonalities } : {}),
   });
 
   const dashboardsService = new DashboardsService({
@@ -458,6 +469,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     ...(opts.titleFn ? { titleFn: opts.titleFn } : {}),
     systemBus,
     ...(opts.attachmentCache ? { attachmentCache: opts.attachmentCache } : {}),
+    ...(opts.refreshPersonalities ? { refreshPersonalities: opts.refreshPersonalities } : {}),
   });
   buffer.onReap = (sessionId) => {
     chatService.forget(sessionId);

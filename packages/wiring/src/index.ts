@@ -651,6 +651,11 @@ export interface CreateAgentLoopResult {
   /** The resolved active personality for this loop. Exposed so gateway.ts can
    *  read the plugins allowlist without duplicating the personality load. */
   activePersonality: import('@ethosagent/types').PersonalityConfig;
+  /** Re-load this loop's personality registry from `~/.ethos/personalities/`.
+   *  Cheap when nothing changed (mtime-fingerprint cache → ~4 stat() calls per
+   *  dir). Callers refresh before resolving a personality so a newly dropped or
+   *  edited directory is picked up without a restart. */
+  refreshPersonalities: () => Promise<void>;
   /** STT provider registry — threaded to Gateway for voice transcription. */
   sttProviders: import('@ethosagent/types').SttProviderRegistry;
   /** TTS provider registry — threaded to Gateway for voice synthesis. */

@@ -275,6 +275,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     | undefined;
   let sttProviders: import('@ethosagent/types').SttProviderRegistry | undefined;
   let ttsProviders: import('@ethosagent/types').TtsProviderRegistry | undefined;
+  // Loop-registry refresh from createAgentLoop; undefined on the team-coordinator
+  // path (createTeamAgentLoop has no personality registry to hot-reload).
+  let refreshLoopPersonalities: (() => Promise<void>) | undefined;
   let voiceConfig:
     | {
         sttProviderName?: string;
@@ -323,10 +326,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       }
       // Recursion guard: exclude 'cron' from the effective toolset so
       // cron-spawned sessions cannot schedule further cron jobs.
+      // Refresh-before-use (not create-once-cache-forever) so a personality
+      // created/edited after boot is honored the next time cron fires.
       if (!cronPersonalities) {
         cronPersonalities = await createPersonalityRegistry(getStorage());
-        await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
       }
+      await cronPersonalities.loadFromDirectory(join(ethosDir(), 'personalities'));
       const pid = job.personalityId;
       const pers = cronPersonalities.get(pid);
       const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
@@ -385,6 +390,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     sttProviders = result.sttProviders;
     ttsProviders = result.ttsProviders;
     voiceConfig = result.voiceConfig;
+    refreshLoopPersonalities = result.refreshPersonalities;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
     const {
@@ -426,6 +432,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     sttProviders = result.sttProviders;
     ttsProviders = result.ttsProviders;
     voiceConfig = result.voiceConfig;
+    refreshLoopPersonalities = result.refreshPersonalities;
   }
   let titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
   try {
@@ -794,6 +801,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     // The same registry the agent loop loaded above is reused so mtime
     // hot-reloads of personality files reach both surfaces in one tick.
     personalities,
+    // Loop-registry refresh — chat/completions await it before a turn so a
+    // hot-dropped/edited personality resolves without a restart.
+    ...(refreshLoopPersonalities ? { refreshPersonalities: refreshLoopPersonalities } : {}),
     chatDefaults: {
       model: config.model,
       provider: config.provider,
