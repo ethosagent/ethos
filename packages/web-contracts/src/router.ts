@@ -2037,6 +2037,101 @@ const a2a = {
 };
 
 // ---------------------------------------------------------------------------
+// Named secrets — global vault manager for web_search provider keys (Phase 2)
+//
+// A named secret lives at `providers/<provider>/<name>` in the vault. The raw
+// value is written here and NEVER round-tripped back — `list` returns masked
+// previews only. A personality stores just the secret NAME (a reference).
+// ---------------------------------------------------------------------------
+
+const NamedSecretProviderSchema = z.enum(['exa', 'tavily', 'brave']);
+const NamedSecretNameSchema = z
+  .string()
+  .min(1)
+  .regex(/^[a-zA-Z0-9_-]+$/);
+
+const NamedSecretViewSchema = z.object({
+  provider: NamedSecretProviderSchema,
+  name: z.string(),
+  /** Masked preview (e.g. `sk-…abc1`) — never the raw value. */
+  preview: z.string(),
+  kind: z.literal('web-search'),
+});
+
+/** @experimental */
+const namedSecrets = {
+  list: oc.output(z.object({ secrets: z.array(NamedSecretViewSchema) })),
+  create: oc
+    .input(
+      z.object({
+        provider: NamedSecretProviderSchema,
+        name: NamedSecretNameSchema,
+        value: z.string().min(1),
+      }),
+    )
+    .output(z.object({ ok: z.literal(true), preview: z.string() })),
+  delete: oc
+    .input(z.object({ provider: NamedSecretProviderSchema, name: NamedSecretNameSchema }))
+    .output(z.object({ ok: z.literal(true) })),
+  testKey: oc
+    .input(z.object({ provider: NamedSecretProviderSchema, name: NamedSecretNameSchema }))
+    .output(z.object({ ok: z.boolean(), error: z.string().optional() })),
+};
+
+// ---------------------------------------------------------------------------
+// Tool settings — generic per-personality tool config, driven by each tool's
+// `settingsSchema` (Phase 2). `web_search` is the sole consumer in v1.
+// ---------------------------------------------------------------------------
+
+const ToolSettingsEnumFieldSchema = z.object({
+  kind: z.literal('enum'),
+  key: z.string(),
+  label: z.string(),
+  options: z.array(z.object({ value: z.string(), label: z.string().optional() })),
+  default: z.string().optional(),
+  required: z.boolean().optional(),
+});
+const ToolSettingsSecretBindingFieldSchema = z.object({
+  kind: z.literal('secret-binding'),
+  key: z.string(),
+  label: z.string(),
+  secretKind: z.string(),
+  required: z.boolean().optional(),
+});
+const ToolSettingsSchemaSchema = z.object({
+  fields: z.array(
+    z.discriminatedUnion('kind', [
+      ToolSettingsEnumFieldSchema,
+      ToolSettingsSecretBindingFieldSchema,
+    ]),
+  ),
+});
+
+/** toolName → fieldKey → string value. Only a secret NAME is ever carried for
+ *  a secret-binding field — never a value. */
+const ToolSettingsValuesSchema = z.record(z.string(), z.record(z.string(), z.string()));
+const ToolStorageSchema = z.enum(['personality', 'global']);
+
+/** @experimental */
+const toolSettings = {
+  schemas: oc.output(
+    z.object({
+      tools: z.array(z.object({ name: z.string(), settingsSchema: ToolSettingsSchemaSchema })),
+    }),
+  ),
+  getDefault: oc.output(z.object({ values: ToolSettingsValuesSchema })),
+  setDefault: oc
+    .input(z.object({ values: ToolSettingsValuesSchema }))
+    .output(z.object({ ok: z.literal(true) })),
+  getForPersonality: oc
+    .input(z.object({ personalityId: z.string().min(1) }))
+    .output(z.object({ values: ToolSettingsValuesSchema, storage: ToolStorageSchema })),
+  setForPersonality: oc
+    .input(z.object({ personalityId: z.string().min(1), values: ToolSettingsValuesSchema }))
+    .output(z.object({ ok: z.literal(true), storage: ToolStorageSchema })),
+};
+
+// ---------------------------------------------------------------------------
 // Root contract — every namespace mounted under one symbol
 // ---------------------------------------------------------------------------
 
@@ -2073,6 +2168,8 @@ export const contract = {
   digest,
   voice,
   a2a,
+  namedSecrets,
+  toolSettings,
 };
 
 export type Contract = typeof contract;

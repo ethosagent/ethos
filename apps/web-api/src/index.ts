@@ -52,6 +52,7 @@ import { LabService } from './services/lab.service';
 import { McpService } from './services/mcp.service';
 import { MemoryService } from './services/memory.service';
 import { MeshService } from './services/mesh.service';
+import { NamedSecretsService } from './services/named-secrets.service';
 import { OnboardingService } from './services/onboarding.service';
 import { PersonalitiesService } from './services/personalities.service';
 import { PlatformsService } from './services/platforms.service';
@@ -59,6 +60,7 @@ import { PluginsService } from './services/plugins.service';
 import { SkillsService } from './services/skills.service';
 import { SystemEventBus } from './services/system-event-bus';
 import { TasksService } from './services/tasks.service';
+import { ToolSettingsService } from './services/tool-settings.service';
 import { VoiceService } from './services/voice.service';
 
 // Public entry for `@ethosagent/web-api`. Boot code (`apps/ethos/src/commands/
@@ -363,6 +365,13 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const kanbanService = new KanbanService({ mesh });
   const tasksService = new TasksService(opts.jobStore ? { store: opts.jobStore } : {});
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
+  // Phase 2 — global named-secrets vault + generic per-tool settings surface.
+  const namedSecretsService = new NamedSecretsService({ secrets });
+  const toolSettingsService = new ToolSettingsService({
+    config: configRepo,
+    personalities: personalitiesService,
+    ...(opts.toolRegistry ? { toolRegistry: opts.toolRegistry } : {}),
+  });
   const digestService = new DigestService({
     storage,
     dataDir: opts.dataDir,
@@ -601,6 +610,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       debug: debugService,
       apiKeys: apiKeysService,
       digest: digestService,
+      namedSecrets: namedSecretsService,
+      toolSettings: toolSettingsService,
       voice: voiceService,
       toolRegistry: opts.toolRegistry,
       dashboards: dashboardsService,

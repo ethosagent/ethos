@@ -198,6 +198,11 @@ export async function buildAgentLoop(
   }
   for (const tool of createWebTools({
     ...(config.webSearchBackend ? { searchBackend: config.webSearchBackend } : {}),
+    // Personality tools.yaml is the source of truth; config.toolSettings is
+    // the global fallback layer. The tool resolves both by ctx.personalityId.
+    resolvePersonalitySetting: (personalityId) =>
+      personalities.getToolsConfig(personalityId)?.web_search,
+    ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),
     ...(auxWebConfig ? { auxModel: auxWebConfig.model } : {}),
     resolveProvider: (model) => {
       if (model === config.model) return llm;

@@ -273,6 +273,33 @@ describe('ScopedSecretsImpl', () => {
     const secrets = new ScopedSecretsImpl(new Set(['API_KEY']), backend);
     await expect(secrets.get('API_KEY')).rejects.toThrow('vault down');
   });
+
+  it('allows any ref under a declared prefix glob', async () => {
+    const backend = vi.fn().mockResolvedValue('v');
+    const secrets = new ScopedSecretsImpl(new Set(['providers/exa/*']), backend);
+    expect(await secrets.get('providers/exa/exa-main')).toBe('v');
+    expect(await secrets.get('providers/exa/apiKey')).toBe('v');
+    expect(backend).toHaveBeenCalledWith('providers/exa/exa-main');
+  });
+
+  it('denies a ref outside the declared provider prefixes', async () => {
+    const backend = vi.fn();
+    const secrets = new ScopedSecretsImpl(
+      new Set(['providers/exa/*', 'providers/tavily/*', 'providers/brave/*']),
+      backend,
+    );
+    await expect(secrets.get('providers/openai/apiKey')).rejects.toThrow('SECRET_NOT_DECLARED');
+    expect(backend).not.toHaveBeenCalled();
+  });
+
+  it('prefix glob does not leak into a sibling namespace sharing a name prefix', async () => {
+    const backend = vi.fn();
+    const secrets = new ScopedSecretsImpl(new Set(['providers/exa/*']), backend);
+    // `providers/exaEVIL/...` shares the `providers/exa` text but is a
+    // different namespace — the trailing slash in the grant keeps it out.
+    await expect(secrets.get('providers/exaEVIL/key')).rejects.toThrow('SECRET_NOT_DECLARED');
+    expect(backend).not.toHaveBeenCalled();
+  });
 });
 
 describe('ScopedProcessImpl', () => {

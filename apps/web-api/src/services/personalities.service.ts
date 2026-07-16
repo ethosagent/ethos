@@ -3,6 +3,7 @@ import {
   type CreatePersonalityInput,
   type DescribedPersonality,
   type FilePersonalityRegistry,
+  type PersonalityToolsConfig,
   renderCharacterSheet,
   SYSTEM_PERSONALITY_IDS,
   type UpdatePersonalityPatch,
@@ -149,6 +150,27 @@ export class PersonalitiesService {
       subsets[server] = mcpTools[server] ?? null;
     }
     await this.opts.personalities.writeMcpToolSubsets(id, subsets);
+  }
+
+  /** Whether a personality's files are read-only built-ins (its tool bindings
+   *  must go to the global `toolSettings` fallback, not a `tools.yaml`). */
+  isBuiltin(id: string): boolean {
+    return this.opts.personalities.describe(id)?.builtin ?? false;
+  }
+
+  /** Read a custom personality's own `tools.yaml` bindings (source of truth).
+   *  Undefined when the personality has no `tools.yaml`. */
+  getToolsConfig(id: string): PersonalityToolsConfig | undefined {
+    this.requirePersonality(id);
+    return this.opts.personalities.getToolsConfig(id);
+  }
+
+  /** Write a custom personality's `tools.yaml` (only a secret NAME, never a
+   *  value). Throws for built-ins — their bindings live in the global
+   *  `toolSettings` fallback. */
+  async writeToolsConfig(id: string, config: PersonalityToolsConfig): Promise<void> {
+    this.requirePersonality(id);
+    await this.opts.personalities.writeToolsConfig(id, config);
   }
 
   async delete(id: string): Promise<void> {

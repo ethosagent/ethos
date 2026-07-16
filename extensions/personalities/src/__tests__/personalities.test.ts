@@ -85,6 +85,54 @@ describe('FilePersonalityRegistry', () => {
       expect(strategist?.toolset).toContain('memory_read');
     });
 
+    it('parses tools.yaml into a per-personality tool-config sidecar (name only)', async () => {
+      const personalityDir = join(testDir, 'binder');
+      await mkdir(personalityDir);
+      await writeFile(join(personalityDir, 'config.yaml'), 'name: Binder\n');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Binder');
+      await writeFile(join(personalityDir, 'toolset.yaml'), '- web_search\n');
+      await writeFile(
+        join(personalityDir, 'tools.yaml'),
+        'web_search: { provider: exa, secret: exa-main }\n',
+      );
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+
+      const cfg = registry.getToolsConfig('binder');
+      expect(cfg).toEqual({ web_search: { provider: 'exa', secret: 'exa-main' } });
+      // Guardrail: only a NAME is surfaced — the value never leaves the vault.
+      expect(cfg?.web_search?.secret).toBe('exa-main');
+    });
+
+    it('parses the block form of tools.yaml', async () => {
+      const personalityDir = join(testDir, 'blockform');
+      await mkdir(personalityDir);
+      await writeFile(join(personalityDir, 'config.yaml'), 'name: Block\n');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Block');
+      await writeFile(
+        join(personalityDir, 'tools.yaml'),
+        'web_search:\n  provider: tavily\n  secret: tavily-main\n',
+      );
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('blockform')).toEqual({
+        web_search: { provider: 'tavily', secret: 'tavily-main' },
+      });
+    });
+
+    it('getToolsConfig is undefined for a personality with no tools.yaml', async () => {
+      const personalityDir = join(testDir, 'nofile');
+      await mkdir(personalityDir);
+      await writeFile(join(personalityDir, 'config.yaml'), 'name: NoFile\n');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# NoFile');
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('nofile')).toBeUndefined();
+    });
+
     it('skips directories without config.yaml or SOUL.md', async () => {
       await mkdir(join(testDir, 'empty-dir'));
       await writeFile(join(testDir, 'empty-dir', 'notes.txt'), 'nothing useful');

@@ -18,12 +18,14 @@ import type { LabService } from '../services/lab.service';
 import type { McpService } from '../services/mcp.service';
 import type { MemoryService } from '../services/memory.service';
 import type { MeshService } from '../services/mesh.service';
+import type { NamedSecretsService } from '../services/named-secrets.service';
 import type { OnboardingService } from '../services/onboarding.service';
 import type { PersonalitiesService } from '../services/personalities.service';
 import type { PlatformsService } from '../services/platforms.service';
 import type { PluginLoader, PluginsService } from '../services/plugins.service';
 import type { SkillsService } from '../services/skills.service';
 import type { TasksService } from '../services/tasks.service';
+import type { ToolSettingsService } from '../services/tool-settings.service';
 import type { VoiceService } from '../services/voice.service';
 
 // Shared context type for every oRPC handler in the web-api. Each namespace
@@ -58,6 +60,10 @@ export interface RpcContext {
   tasks: TasksService;
   apiKeys: ApiKeysService;
   digest: DigestService;
+  /** Global named-secrets vault manager (Phase 2). */
+  namedSecrets: NamedSecretsService;
+  /** Generic per-personality tool settings (Phase 2). */
+  toolSettings: ToolSettingsService;
   toolRegistry?: ToolRegistry;
   dashboards?: DashboardsService;
   pluginLoader?: PluginLoader;

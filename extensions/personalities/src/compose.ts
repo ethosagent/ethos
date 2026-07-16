@@ -1,11 +1,12 @@
 import { join } from 'node:path';
 import type { PersonalityConfig, PersonalityRegistry } from '@ethosagent/types';
 import type { WiringContext } from '@ethosagent/wiring/types';
-import { createPersonalityRegistry } from './index';
+import { createPersonalityRegistry, type PersonalityToolsConfig } from './index';
 
 export interface PersonalityCompose {
   personalities: PersonalityRegistry & {
     getMcpPolicy(id: string): import('@ethosagent/types').McpPolicy | undefined;
+    getToolsConfig(id: string): PersonalityToolsConfig | undefined;
   };
   activePerson: PersonalityConfig;
 }

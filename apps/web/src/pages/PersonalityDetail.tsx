@@ -18,7 +18,13 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
 import { A2aPeersSection } from '../components/personality/A2aPeersSection';
 import { CharacterSheetView } from '../components/personality/CharacterSheetView';
+import { ToolSettingsForm } from '../components/tool-settings/ToolSettingsForm';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
+import { useToolSettingsSetForPersonality } from '../features/settings/api/mutations';
+import {
+  useToolSettingsForPersonality,
+  useToolSettingsSchemas,
+} from '../features/settings/api/queries';
 import { rpc } from '../rpc';
 import {
   EditModal,
@@ -694,6 +700,81 @@ function McpSection({
 // PersonalityDetail page
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Tool settings — per-personality config for every tool in the toolset that
+// declares a `settingsSchema` (Phase 2). Presented uniformly for both built-in
+// and custom personalities; the storage target differs by type (custom →
+// tools.yaml, built-in → global toolSettings slot) and is surfaced in the note.
+// ---------------------------------------------------------------------------
+
+function ToolSettingsSection({
+  personalityId,
+  toolset,
+}: {
+  personalityId: string;
+  toolset: string[];
+}) {
+  const schemasQuery = useToolSettingsSchemas();
+  const settingQuery = useToolSettingsForPersonality(personalityId);
+  const saveMut = useToolSettingsSetForPersonality(personalityId);
+  const [values, setValues] = useState<Record<string, Record<string, string>>>({});
+  const [dirty, setDirty] = useState(false);
+
+  const configurable = (schemasQuery.data?.tools ?? []).filter((t) => toolset.includes(t.name));
+
+  useEffect(() => {
+    if (!dirty && settingQuery.data) setValues(settingQuery.data.values);
+  }, [settingQuery.data, dirty]);
+
+  // No configurable tool in this personality's toolset — render nothing.
+  if (configurable.length === 0) return null;
+
+  const storage = settingQuery.data?.storage;
+
+  return (
+    <div style={{ marginBottom: 32 }}>
+      <Typography.Title level={5} style={{ marginBottom: 4 }}>
+        Tool settings
+      </Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        {storage === 'personality'
+          ? "Saved to this personality's tools.yaml — travels when you export it."
+          : 'Built-in personality — saved to your local config (its files are read-only).'}
+      </Typography.Paragraph>
+      {configurable.map((tool) => (
+        <div key={tool.name} style={{ marginBottom: 20 }}>
+          <Typography.Text
+            strong
+            style={{
+              fontFamily: 'Geist Mono, monospace',
+              fontSize: 13,
+              display: 'block',
+              marginBottom: 8,
+            }}
+          >
+            {tool.name}
+          </Typography.Text>
+          <ToolSettingsForm
+            schema={tool.settingsSchema}
+            value={values[tool.name] ?? {}}
+            onChange={(next) => {
+              setValues((prev) => ({ ...prev, [tool.name]: next }));
+              setDirty(true);
+            }}
+          />
+        </div>
+      ))}
+      <Button
+        type="primary"
+        loading={saveMut.isPending}
+        onClick={() => saveMut.mutate(values, { onSuccess: () => setDirty(false) })}
+      >
+        Save tool settings
+      </Button>
+    </div>
+  );
+}
+
 export function PersonalityDetail() {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -756,6 +837,8 @@ export function PersonalityDetail() {
 
         <CharacterSheetView personality={personality} />
       </div>
+
+      <ToolSettingsSection personalityId={id} toolset={personality.toolset ?? []} />
 
       {!personality.builtin && <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />}
 

@@ -23,9 +23,26 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AddSecretModal } from '../components/tool-settings/SecretPicker';
+import { ToolSettingsForm } from '../components/tool-settings/ToolSettingsForm';
+import {
+  useNamedSecretDelete,
+  useToolSettingsSetDefault,
+} from '../features/settings/api/mutations';
+import {
+  useNamedSecretsList,
+  useToolSettingsDefault,
+  useToolSettingsSchemas,
+} from '../features/settings/api/queries';
 import { isDesktop } from '../lib/desktop';
 import { rpc } from '../rpc';
 import { DesktopSettings } from './DesktopSettings';
+
+const WEB_SEARCH_PROVIDERS = ['exa', 'tavily', 'brave'] as const;
+type WebSearchProvider = (typeof WEB_SEARCH_PROVIDERS)[number];
+function isWebSearchProvider(v: string | undefined): v is WebSearchProvider {
+  return v === 'exa' || v === 'tavily' || v === 'brave';
+}
 
 // Settings tab — read/write surface for ~/.ethos/config.yaml.
 //
@@ -819,6 +836,10 @@ export function Settings() {
         <Button onClick={() => navigate('/onboarding')}>Run setup wizard</Button>
       </Card>
 
+      <WebSearchDefaultsSection />
+
+      <NamedSecretsSection />
+
       <LatestDigestSection />
 
       <A2aSection />
@@ -1003,6 +1024,194 @@ interface CreateKeyForm {
   name: string;
   scopes: ApiKeyScope[];
   origins: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Web-search defaults — the global default provider + bound secret
+// (`toolSettings._default.web_search`), rendered from the tool's settingsSchema.
+// Mirrors the "Model routing" / "Voice" cards. Optional test-key probe reuses
+// the provider test-connection pattern.
+// ---------------------------------------------------------------------------
+
+function WebSearchDefaultsSection() {
+  const schemasQuery = useToolSettingsSchemas();
+  const defaultQuery = useToolSettingsDefault();
+  const setDefault = useToolSettingsSetDefault();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [dirty, setDirty] = useState(false);
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
+  const [testError, setTestError] = useState<string | undefined>();
+
+  const schema = schemasQuery.data?.tools.find((t) => t.name === 'web_search')?.settingsSchema;
+
+  useEffect(() => {
+    if (!dirty && defaultQuery.data) {
+      setValues(defaultQuery.data.values.web_search ?? {});
+    }
+  }, [defaultQuery.data, dirty]);
+
+  // No web_search tool wired (no schema) → nothing to configure.
+  if (!schema) return null;
+
+  const handleTest = async () => {
+    const provider = values.provider;
+    const name = values.secret;
+    if (!isWebSearchProvider(provider) || !name) return;
+    setTestStatus('testing');
+    setTestError(undefined);
+    try {
+      const res = await rpc.namedSecrets.testKey({ provider, name });
+      if (res.ok) setTestStatus('ok');
+      else {
+        setTestStatus('error');
+        setTestError(res.error);
+      }
+    } catch (err) {
+      setTestStatus('error');
+      setTestError((err as Error).message);
+    }
+  };
+
+  const canTest = isWebSearchProvider(values.provider) && !!values.secret;
+
+  return (
+    <Card title="Web-search defaults" size="small" style={{ maxWidth: 640, marginTop: 32 }}>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        The provider and key <Typography.Text code>web_search</Typography.Text> uses when a
+        personality doesn&apos;t bind its own. A personality&apos;s own setting always wins.
+      </Typography.Paragraph>
+      <ToolSettingsForm
+        schema={schema}
+        value={values}
+        onChange={(next) => {
+          setValues(next);
+          setDirty(true);
+          setTestStatus('idle');
+        }}
+      />
+      <Space style={{ marginTop: 16 }}>
+        <Button
+          type="primary"
+          loading={setDefault.isPending}
+          onClick={() =>
+            setDefault.mutate({ web_search: values }, { onSuccess: () => setDirty(false) })
+          }
+        >
+          Save
+        </Button>
+        <Tooltip
+          title={
+            canTest ? 'Test the bound key against the provider' : 'Pick a provider and key to test'
+          }
+        >
+          <Button onClick={handleTest} loading={testStatus === 'testing'} disabled={!canTest}>
+            Test key
+          </Button>
+        </Tooltip>
+        {testStatus === 'ok' && <Tag color="success">Key accepted</Tag>}
+        {testStatus === 'error' && <Tag color="error">{testError ?? 'Failed'}</Tag>}
+      </Space>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Named secrets — the vault manager. Add / delete provider keys; values are
+// masked on read and never round-tripped back to the browser.
+// ---------------------------------------------------------------------------
+
+type NamedSecretRow = Awaited<ReturnType<typeof rpc.namedSecrets.list>>['secrets'][number];
+
+function NamedSecretsSection() {
+  const listQuery = useNamedSecretsList();
+  const deleteMut = useNamedSecretDelete();
+  const { modal } = AntApp.useApp();
+  const [addOpen, setAddOpen] = useState(false);
+
+  const handleDelete = (row: NamedSecretRow) => {
+    modal.confirm({
+      title: 'Delete secret',
+      content: `Delete "${row.provider}/${row.name}"? Any personality bound to it falls back to the default provider.`,
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      onOk: () => deleteMut.mutate({ provider: row.provider, name: row.name }),
+    });
+  };
+
+  const columns: ColumnsType<NamedSecretRow> = [
+    {
+      title: 'Provider',
+      dataIndex: 'provider',
+      key: 'provider',
+      render: (provider: string) => <Tag style={{ margin: 0 }}>{provider}</Tag>,
+    },
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string) => (
+        <Typography.Text style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}>
+          {name}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Value',
+      dataIndex: 'preview',
+      key: 'preview',
+      render: (preview: string) => (
+        <Typography.Text
+          type="secondary"
+          style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}
+        >
+          {preview}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: unknown, row: NamedSecretRow) => (
+        <Button size="small" danger onClick={() => handleDelete(row)} loading={deleteMut.isPending}>
+          Delete
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <Card
+      title="Named secrets"
+      size="small"
+      style={{ maxWidth: 640, marginTop: 32 }}
+      extra={
+        <Button size="small" onClick={() => setAddOpen(true)}>
+          Add secret
+        </Button>
+      }
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        Provider keys reusable across personalities. A personality references a secret by name; the
+        value stays here and is never shown again.
+      </Typography.Paragraph>
+      <Table
+        size="small"
+        rowKey={(r) => `${r.provider}/${r.name}`}
+        columns={columns}
+        dataSource={listQuery.data?.secrets ?? []}
+        loading={listQuery.isLoading}
+        pagination={false}
+        locale={{ emptyText: 'No secrets yet. Add one to bind it from a personality.' }}
+      />
+      {addOpen ? (
+        <AddSecretModal
+          lockProvider={false}
+          onClose={() => setAddOpen(false)}
+          onCreated={() => setAddOpen(false)}
+        />
+      ) : null}
+    </Card>
+  );
 }
 
 function ApiKeysSection() {

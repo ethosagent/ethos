@@ -54,6 +54,14 @@ export interface RawConfig {
   voiceTtsBaseUrl?: string;
   voiceTtsModel?: string;
   modelRouting: Record<string, string>;
+  /**
+   * Global FALLBACK layer for per-personality tool config, keyed by personality
+   * ID (or `_default`). The personality's own `tools.yaml` is the source of
+   * truth; this fills the gap for read-only built-ins. Only secret NAMES live
+   * here — never values (§V S9). `web_search` is the sole consumer in v1;
+   * mirrors the flat-key format packages/config writes/parses.
+   */
+  toolSettings: Record<string, { web_search?: { provider?: string; secret?: string } }>;
   /** Ordered provider chain for ChainedProvider failover. */
   providers: RawProviderEntry[];
   /** Every other top-level key the file contained (telegramToken etc.).
@@ -103,7 +111,12 @@ export class ConfigRepository {
       'auxiliary.tts.baseUrl',
       'auxiliary.tts.model',
     ]);
-    const config: RawConfig = { modelRouting: {}, providers: [], passthrough: {} };
+    const config: RawConfig = {
+      modelRouting: {},
+      toolSettings: {},
+      providers: [],
+      passthrough: {},
+    };
     const providerMap = new Map<number, RawProviderEntry>();
 
     for (const line of src.split('\n')) {
@@ -143,6 +156,25 @@ export class ConfigRepository {
         const id = mr[1]?.trim();
         const value = mr[2]?.trim();
         if (id && value) config.modelRouting[id] = stripQuotes(value);
+        continue;
+      }
+
+      // `toolSettings.<personality|_default>.web_search.<provider|secret>: <value>`
+      // — global FALLBACK layer. Parsed explicitly (not via passthrough) so the
+      // service reads/writes it typed; the on-disk format matches packages/config.
+      const ts = line.match(/^toolSettings\.([^.]+)\.web_search\.(provider|secret):\s*(.+)$/);
+      if (ts) {
+        const pid = ts[1]?.trim();
+        const field = ts[2];
+        const value = ts[3] !== undefined ? stripQuotes(ts[3].trim()) : '';
+        if (pid && value) {
+          const slot = config.toolSettings[pid] ?? {};
+          config.toolSettings[pid] = slot;
+          const ws = slot.web_search ?? {};
+          slot.web_search = ws;
+          if (field === 'provider') ws.provider = value;
+          else ws.secret = value;
+        }
         continue;
       }
       const kv = line.match(/^([\w.]+):\s*(.+)$/);
@@ -256,6 +288,7 @@ export class ConfigRepository {
       .then(async () => {
         const current: RawConfig = (await this.read()) ?? {
           modelRouting: {},
+          toolSettings: {},
           providers: [],
           passthrough: {},
         };
@@ -263,6 +296,9 @@ export class ConfigRepository {
           ...current,
           ...patch,
           modelRouting: { ...current.modelRouting, ...(patch.modelRouting ?? {}) },
+          // Merge per-personality slots so writing one binding never drops
+          // another personality's slot. Slot-level replace (patch wins).
+          toolSettings: { ...current.toolSettings, ...(patch.toolSettings ?? {}) },
           // When providers is explicitly provided in the patch, replace entirely;
           // otherwise keep the current array.
           providers: patch.providers !== undefined ? patch.providers : current.providers,
@@ -286,7 +322,12 @@ export class ConfigRepository {
     const op = this.writeChain
       .catch(() => {})
       .then(async () => {
-        current = (await this.read()) ?? { modelRouting: {}, providers: [], passthrough: {} };
+        current = (await this.read()) ?? {
+          modelRouting: {},
+          toolSettings: {},
+          providers: [],
+          passthrough: {},
+        };
         for (const key of keys) delete current.passthrough[key];
         await this.write(current);
       });
@@ -332,6 +373,17 @@ export class ConfigRepository {
       lines.push(`auxiliary.tts.model: ${yamlScalar(config.voiceTtsModel)}`);
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${yamlScalar(id)}: ${yamlScalar(model)}`);
+    }
+    for (const [pid, settings] of Object.entries(config.toolSettings)) {
+      const ws = settings.web_search;
+      if (ws?.provider) {
+        lines.push(
+          `toolSettings.${yamlScalar(pid)}.web_search.provider: ${yamlScalar(ws.provider)}`,
+        );
+      }
+      if (ws?.secret) {
+        lines.push(`toolSettings.${yamlScalar(pid)}.web_search.secret: ${yamlScalar(ws.secret)}`);
+      }
     }
     for (let i = 0; i < config.providers.length; i++) {
       const p = config.providers[i];

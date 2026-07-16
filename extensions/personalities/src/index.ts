@@ -237,6 +237,97 @@ function parseToolsetYaml(src: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// tools.yaml — per-personality tool config (source of truth). A sibling
+// artifact to config.yaml / toolset.yaml / mcp.yaml, NOT a field on the frozen
+// PersonalityConfig schema. Only `web_search` is modeled in v1. A binding
+// carries a secret NAME only — never a value (§V S9) — so the directory stays
+// shareable and committable.
+// ---------------------------------------------------------------------------
+
+export interface PersonalityToolsConfig {
+  web_search?: { provider?: 'exa' | 'tavily' | 'brave'; secret?: string };
+}
+
+function parseInlineToolMap(s: string): Record<string, string> {
+  const inner = s.replace(/^\{/, '').replace(/\}$/, '').trim();
+  const out: Record<string, string> = {};
+  if (!inner) return out;
+  for (const pair of inner.split(',')) {
+    const idx = pair.indexOf(':');
+    if (idx === -1) continue;
+    const k = pair.slice(0, idx).trim();
+    const v = pair
+      .slice(idx + 1)
+      .trim()
+      .replace(/^["']|["']$/g, '');
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * Parse a personality-directory `tools.yaml`. Supports the documented inline
+ * flow-map form and the equivalent block form:
+ *
+ *   web_search: { provider: exa, secret: exa-main }
+ *   # or
+ *   web_search:
+ *     provider: exa
+ *     secret: exa-main
+ */
+export function parseToolsYaml(src: string): PersonalityToolsConfig {
+  const out: PersonalityToolsConfig = {};
+  const lines = src.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    const m = line.match(/^web_search:\s*(.*)$/);
+    if (!m) continue;
+    const rest = (m[1] ?? '').trim();
+    let entry: Record<string, string> = {};
+    if (rest.startsWith('{')) {
+      entry = parseInlineToolMap(rest);
+    } else if (rest === '') {
+      let j = i + 1;
+      while (j < lines.length) {
+        const bl = lines[j] ?? '';
+        if (bl.trim() === '' || bl.trim().startsWith('#')) {
+          j++;
+          continue;
+        }
+        const indent = bl.match(/^(\s*)/)?.[1]?.length ?? 0;
+        if (indent === 0) break;
+        const bm = bl.match(/^\s+(\w+):\s*(.+)$/);
+        if (bm) entry[bm[1]] = bm[2].trim().replace(/^["']|["']$/g, '');
+        j++;
+      }
+      i = j - 1;
+    }
+    const ws: NonNullable<PersonalityToolsConfig['web_search']> = {};
+    if (entry.provider === 'exa' || entry.provider === 'tavily' || entry.provider === 'brave') {
+      ws.provider = entry.provider;
+    }
+    if (entry.secret) ws.secret = entry.secret;
+    if (ws.provider || ws.secret) out.web_search = ws;
+  }
+  return out;
+}
+
+/**
+ * Render a `PersonalityToolsConfig` back to the inline flow-map form
+ * `parseToolsYaml` reads. Only fields that are set are emitted; a config with
+ * no meaningful `web_search` binding renders to `''` (caller removes the file).
+ */
+export function renderToolsYaml(config: PersonalityToolsConfig): string {
+  const ws = config.web_search;
+  if (!ws) return '';
+  const parts: string[] = [];
+  if (ws.provider) parts.push(`provider: ${ws.provider}`);
+  if (ws.secret) parts.push(`secret: ${ws.secret}`);
+  if (parts.length === 0) return '';
+  return `web_search: { ${parts.join(', ')} }\n`;
+}
+
+// ---------------------------------------------------------------------------
 // mcp.yaml parser — handles the subset we need for McpPolicy
 // ---------------------------------------------------------------------------
 
@@ -551,6 +642,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   private readonly mcpPolicies = new Map<string, import('@ethosagent/types').McpPolicy>();
   /** Warnings from parsing mcp.yaml, keyed by personality id. */
   private readonly mcpWarningsMap = new Map<string, string[]>();
+  /** Per-personality tool config loaded from tools.yaml (source of truth,
+   *  sibling artifact — NOT on PersonalityConfig). Keyed by personality id. */
+  private readonly toolsConfigs = new Map<string, PersonalityToolsConfig>();
   // dir → fingerprint of config.yaml + SOUL.md + toolset.yaml + mcp.yaml mtimes
   private readonly fingerprintCache = new Map<string, string>();
   private defaultId = 'researcher';
@@ -582,6 +676,13 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     return this.mcpPolicies.get(id);
   }
 
+  /** Return the tool config loaded from tools.yaml for the given personality
+   *  id (the source-of-truth binding). Undefined when the personality has no
+   *  tools.yaml file. */
+  getToolsConfig(id: string): PersonalityToolsConfig | undefined {
+    return this.toolsConfigs.get(id);
+  }
+
   list(): PersonalityConfig[] {
     return [...this.personalities.values()];
   }
@@ -604,6 +705,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   remove(id: string): void {
     this.personalities.delete(id);
     this.mcpWarningsMap.delete(id);
+    this.toolsConfigs.delete(id);
     // Also drop fingerprint entries for that id's directory so a
     // subsequent re-create with the same id rebuilds cleanly. We
     // don't know the dir from the id alone, so iterate.
@@ -1017,6 +1119,29 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     await this.refreshUserDir();
   }
 
+  /**
+   * Write the per-personality `tools.yaml` (source of truth for a CUSTOM
+   * personality's tool bindings). Only a secret NAME is ever written — never a
+   * value (§V S9) — so the directory stays shareable/committable. Built-ins
+   * are read-only (`requireMutable` throws); their bindings live in the global
+   * `toolSettings` fallback instead. Passing an empty config removes the file.
+   */
+  async writeToolsConfig(id: string, config: PersonalityToolsConfig): Promise<void> {
+    const existing = this.requireMutable(id);
+    const dir = this.dirOf(existing);
+    const rendered = renderToolsYaml(config);
+    const path = join(dir, 'tools.yaml');
+    if (rendered === '') {
+      await this.storage.remove(path).catch(() => {});
+    } else {
+      await this.storage.writeAtomic(path, rendered);
+    }
+    // Invalidate the mtime fingerprint so loadOne re-reads even within the
+    // same millisecond, then refresh so getToolsConfig reflects the write.
+    this.fingerprintCache.delete(dir);
+    await this.refreshUserDir();
+  }
+
   async deletePersonality(id: string): Promise<void> {
     const existing = this.requireMutable(id);
     const dir = this.dirOf(existing);
@@ -1171,11 +1296,12 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       join(dir, 'SOUL.md'),
       join(dir, 'toolset.yaml'),
       join(dir, 'mcp.yaml'),
+      join(dir, 'tools.yaml'),
     ]);
     if (this.fingerprintCache.get(dir) === fingerprint) return;
     this.fingerprintCache.set(dir, fingerprint);
 
-    const { config, mcpPolicy, mcpWarnings } = await this.buildConfig(dir, id);
+    const { config, mcpPolicy, mcpWarnings, toolsConfig } = await this.buildConfig(dir, id);
     if (config) {
       this.define(config);
       if (mcpPolicy) {
@@ -1188,6 +1314,11 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       } else {
         this.mcpWarningsMap.delete(id);
       }
+      if (toolsConfig) {
+        this.toolsConfigs.set(id, toolsConfig);
+      } else {
+        this.toolsConfigs.delete(id);
+      }
     }
   }
 
@@ -1198,14 +1329,16 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     config: PersonalityConfig | null;
     mcpPolicy?: import('@ethosagent/types').McpPolicy;
     mcpWarnings?: string[];
+    toolsConfig?: PersonalityToolsConfig;
   }> {
     // Must have at least config.yaml or SOUL.md to be considered a personality
-    const [configSrc, toolsetSrc, soulExists, skillsExists, mcpSrc] = await Promise.all([
+    const [configSrc, toolsetSrc, soulExists, skillsExists, mcpSrc, toolsSrc] = await Promise.all([
       this.storage.read(join(dir, 'config.yaml')),
       this.storage.read(join(dir, 'toolset.yaml')),
       this.storage.exists(join(dir, 'SOUL.md')),
       this.storage.exists(join(dir, 'skills')),
       this.storage.read(join(dir, 'mcp.yaml')),
+      this.storage.read(join(dir, 'tools.yaml')),
     ]);
 
     if (!configSrc && !soulExists) return { config: null };
@@ -1313,7 +1446,12 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       mcpPolicy = parsed.policy;
       if (parsed.warnings.length > 0) mcpWarnings = parsed.warnings;
     }
-    return { config, mcpPolicy, mcpWarnings };
+    let toolsConfig: PersonalityToolsConfig | undefined;
+    if (toolsSrc) {
+      const parsed = parseToolsYaml(toolsSrc);
+      if (parsed.web_search) toolsConfig = parsed;
+    }
+    return { config, mcpPolicy, mcpWarnings, toolsConfig };
   }
 
   private async fileFingerprint(paths: string[]): Promise<string> {

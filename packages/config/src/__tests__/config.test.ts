@@ -78,6 +78,31 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
     expect(roundTripped?.whatsapp).toEqual(original.whatsapp);
   });
 
+  it('round-trips toolSettings (global web_search fallback map)', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+      toolSettings: {
+        _default: { web_search: { provider: 'tavily', secret: 'tavily-main' } },
+        scout: { web_search: { provider: 'brave', secret: 'brave-main' } },
+      },
+    };
+    await writeConfig(storage, original);
+
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('toolSettings._default.web_search.provider: tavily');
+    expect(raw).toContain('toolSettings._default.web_search.secret: tavily-main');
+    expect(raw).toContain('toolSettings.scout.web_search.provider: brave');
+    expect(raw).toContain('toolSettings.scout.web_search.secret: brave-main');
+
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.toolSettings).toEqual(original.toolSettings);
+  });
+
   it('round-trips phone_number for phone-number pairing', async () => {
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());
