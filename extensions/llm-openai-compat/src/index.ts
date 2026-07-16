@@ -48,6 +48,11 @@ export interface OpenAICompatProviderConfig {
  * distinctive default port. Only ever consumed when a caller sets
  * `providerOptions['openai-compat'].responseFormat` — no effect otherwise.
  */
+// Phase 1d — documented floor for agentic tool use on local backends. Below
+// this, tool schemas + a single turn already overflow, and Ollama/vLLM truncate
+// silently. Surfaced as a loud constructor error instead.
+const LOCAL_CONTEXT_FLOOR_TOKENS = 16_000;
+
 function detectStructuredOutputDialect(
   name: string,
   baseUrl: string,
@@ -292,6 +297,23 @@ export class OpenAICompatProvider implements LLMProvider {
     this.maxOutputTokens = config.maxOutputTokens;
     this.structuredOutput = config.structuredOutput;
     this.structuredOutputDialect = detectStructuredOutputDialect(config.name, config.baseUrl);
+
+    // Phase 1d — local-model context floor. Ollama silently truncates at its
+    // default `num_ctx` (2–4k) and vLLM can be launched with a small
+    // `--max-model-len`; agentic tool use needs a documented 16k floor. When a
+    // local backend reports an effective window below the floor, fail LOUDLY at
+    // init rather than letting the server silently drop the prompt mid-session.
+    if (
+      (this.structuredOutputDialect === 'ollama' || this.structuredOutputDialect === 'vllm') &&
+      this.maxContextTokens < LOCAL_CONTEXT_FLOOR_TOKENS
+    ) {
+      throw new Error(
+        `${config.name}: effective context window ${this.maxContextTokens} tokens is below the ` +
+          `${LOCAL_CONTEXT_FLOOR_TOKENS}-token floor required for agentic tool use. ` +
+          `Raise the model's num_ctx / --max-model-len (or its catalog contextWindow) to at least ` +
+          `${LOCAL_CONTEXT_FLOOR_TOKENS}.`,
+      );
+    }
 
     const baseURL = this.azure
       ? `${config.baseUrl.replace(/\/$/, '')}/openai/deployments/${config.model}`

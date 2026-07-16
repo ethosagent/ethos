@@ -1,6 +1,8 @@
 export type { ArchiveResult } from './archive';
 export { archiveMonth, listArchives, pruneArchives, restoreArchive } from './archive';
 export { BlobStore } from './blob-store';
+export type { ContextAnatomy } from './context-anatomy';
+export { computeContextAnatomy } from './context-anatomy';
 export type { PruneCronOptions } from './prune-cron';
 export { startPruneCron } from './prune-cron';
 export { redactJson, redactString } from './redact';

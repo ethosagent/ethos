@@ -304,6 +304,107 @@ describe('§5 — per-model charsPerToken gate estimator', () => {
   });
 });
 
+describe('Phase 1c — model-aware gate, actuals-first', () => {
+  // A 32k local model gates at ~0.8 × 32k ≈ 25.6k (NOT the 157k a 200k default
+  // would imply). The signal is the previous turn's ACTUAL input tokens.
+  it('a 32k model gates at ~26k on the actual input-token signal', async () => {
+    const over = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 32_000 } as any,
+        contextEngines: registryWith(over),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+        lastActualInputTokens: 26_000, // just above the ~25.6k gate
+      },
+      [userMsg('a'), userMsg('b')],
+      '',
+      personality,
+      meta,
+    );
+    expect(over.compactCalled).toBe(true);
+
+    const under = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 32_000 } as any,
+        contextEngines: registryWith(under),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+        lastActualInputTokens: 25_000, // just below the ~25.6k gate
+      },
+      [userMsg('a'), userMsg('b')],
+      '',
+      personality,
+      meta,
+    );
+    expect(under.compactCalled).toBe(false);
+  });
+
+  it('subtracts measured static (system+tools) so pressure applies to the messages slice', async () => {
+    // window 32k, pressure 0.8. With static=20k the messages budget is
+    // (32k−20k)×0.8 = 9.6k; an actual input of 27k is a 7k messages slice —
+    // under budget → NO compaction. The SAME 27k WITHOUT static subtraction is
+    // above the whole-window 25.6k gate → would compact. Proves the slice math.
+    const withStatic = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 32_000 } as any,
+        contextEngines: registryWith(withStatic),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+        lastActualInputTokens: 27_000,
+        staticTokens: 20_000,
+      },
+      [userMsg('a'), userMsg('b')],
+      '',
+      personality,
+      meta,
+    );
+    expect(withStatic.compactCalled).toBe(false);
+
+    const noStatic = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 32_000 } as any,
+        contextEngines: registryWith(noStatic),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+        lastActualInputTokens: 27_000,
+      },
+      [userMsg('a'), userMsg('b')],
+      '',
+      personality,
+      meta,
+    );
+    expect(noStatic.compactCalled).toBe(true);
+  });
+
+  it('adds the configurable gateDelta to the actual input signal', async () => {
+    const engine = createSpyEngine();
+    await maybeCompact(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: standard test mock
+        llm: { maxContextTokens: 32_000 } as any,
+        contextEngines: registryWith(engine),
+        session: sessionMock,
+        reservedOutputTokens: 0,
+        lastActualInputTokens: 25_000, // under the gate alone
+        gateDelta: 2_000, // 25k + 2k = 27k > 25.6k → fires
+      },
+      [userMsg('a'), userMsg('b')],
+      '',
+      personality,
+      meta,
+    );
+    expect(engine.compactCalled).toBe(true);
+  });
+});
+
 describe('T3 — large (Anthropic 200k) window behavior unchanged', () => {
   it('does not compact below the pressure gate', async () => {
     const engine = createSpyEngine();

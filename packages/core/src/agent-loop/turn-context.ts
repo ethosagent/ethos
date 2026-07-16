@@ -49,15 +49,42 @@ export interface LoopDeps {
   modelRouting: Record<string, string>;
   /** §5 — resolved compaction gate config (pressure/target fractions +
    *  per-model charsPerToken). Undefined → gate uses its 0.8/0.7 + char/4
-   *  defaults. */
-  compaction?: { pressure?: number; target?: number; charsPerToken?: number };
-  /** §2 — prompt-economy knobs applied in context assembly (compact prelude,
-   *  memory-snapshot cap, memory-guidance suppression). Undefined → assembly
-   *  byte-identical to today. */
+   *  defaults. Phase 3 adds `autoCompact` (turn-end trigger, default off),
+   *  `retryOnOverflow` (compact-and-retry on a context-overflow rejection,
+   *  default on), and `defaultEngine` (per-model-class default when the
+   *  personality declares no `context_engine`). */
+  compaction?: {
+    pressure?: number;
+    target?: number;
+    charsPerToken?: number;
+    gateDelta?: number;
+    autoCompact?: boolean;
+    retryOnOverflow?: boolean;
+    defaultEngine?: string;
+  };
+  /** Phase 3 — silent memory-flush turn config. `enabled` gates the whole
+   *  feature (default off); the rest tune the soft threshold, hard timebox +
+   *  token cap, per-flush memory-delta cap, and the trivial-delta skip. */
+  memoryConsolidation?: {
+    enabled?: boolean;
+    flushThreshold?: number;
+    timeboxMs?: number;
+    maxTokens?: number;
+    maxDeltaChars?: number;
+    minMessagesSinceFlush?: number;
+  };
+  /** §2 / Phase 4 — prompt-economy knobs applied in context assembly (compact
+   *  prelude, memory-snapshot cap, memory-guidance suppression). Phase 4
+   *  small-window mode additionally sets `memoryIndexMode` (personality memory
+   *  becomes an index the agent loads via `memory_read`) and `skillsIndexMode`
+   *  (skills forced to index mode). Undefined → assembly byte-identical to
+   *  today. */
   promptBudget?: {
     compactPrelude?: boolean;
     memorySnapshotCap?: number;
     suppressMemoryGuidance?: boolean;
+    memoryIndexMode?: boolean;
+    skillsIndexMode?: boolean;
   };
   memoryProviders: Map<
     string,
@@ -134,6 +161,10 @@ export interface AssembledContext {
   injectionDefenseEnabled: boolean;
   baseMessageCount: number;
   userScopeId: string | undefined;
+  /** Phase 3 — a pressure-gated compaction fired during THIS turn's assembly.
+   *  The turn-end trigger reads it to avoid double-compacting / flushing right
+   *  after (it shares the compaction cooldown). */
+  compactedThisTurn: boolean;
 }
 
 // ---------------------------------------------------------------------------

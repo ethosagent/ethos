@@ -337,8 +337,41 @@ export interface EthosConfig {
    * Flat-key config shape:
    *   compaction.pressure: 0.85
    *   compaction.target: 0.7
+   *   compaction.gateDelta: 2000
+   *
+   * Phase 1c — `gateDelta` is a token headroom (integer ≥ 0, NOT a fraction)
+   * added to the previous turn's actual input tokens so the gate fires slightly
+   * before the next turn reaches pressure.
+   *
+   * Phase 3 — `autoCompact` enables the turn-end auto-compaction trigger
+   * (default off — gated behind the Phase 0 cache-hit go/no-go). `retryOnOverflow`
+   * (default on) turns a provider context-overflow rejection into a
+   * compact-and-retry instead of a surfaced error. Flat-key config shape:
+   *   compaction.autoCompact: true
+   *   compaction.retryOnOverflow: false
+   *
+   * Phase 4 — `smallWindow` overrides small-window-mode auto-detection. `auto`
+   * (default) applies the window (≤32k) + static-ratio (>40%) triggers; `on`
+   * forces small-window mode; `off` disables it. Flat-key config shape:
+   *   compaction.smallWindow: on
    */
-  compaction?: { pressure?: number; target?: number };
+  // biome-ignore format: keep the option shape on one line for readability.
+  compaction?: { pressure?: number; target?: number; gateDelta?: number; autoCompact?: boolean; retryOnOverflow?: boolean; smallWindow?: 'auto' | 'on' | 'off' };
+  /**
+   * Phase 3 — silent memory-flush turn (opt-in). At a soft threshold (default
+   * 70% of the model-aware gate) a non-persisted agentic turn, restricted to the
+   * memory tools, consolidates durable facts into MEMORY.md / USER.md before
+   * auto-compaction (80%) later drops raw history. All flags optional. Flat-key
+   * config shape:
+   *   memoryConsolidation.enabled: true
+   *   memoryConsolidation.flushThreshold: 0.7
+   *   memoryConsolidation.timeboxMs: 30000
+   *   memoryConsolidation.maxTokens: 1024
+   *   memoryConsolidation.maxDeltaChars: 4000
+   *   memoryConsolidation.minMessagesSinceFlush: 8
+   */
+  // biome-ignore format: keep the option shape on one line for readability.
+  memoryConsolidation?: { enabled?: boolean; flushThreshold?: number; timeboxMs?: number; maxTokens?: number; maxDeltaChars?: number; minMessagesSinceFlush?: number };
   /**
    * Fallback provider chain. When 2+ entries are present, `createLLM` wraps
    * them in a `ChainedProvider` with automatic cooldown-based failover.
@@ -720,6 +753,30 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (config.compaction.target !== undefined) {
       lines.push(`compaction.target: ${config.compaction.target}`);
     }
+    if (config.compaction.gateDelta !== undefined) {
+      lines.push(`compaction.gateDelta: ${config.compaction.gateDelta}`);
+    }
+    if (config.compaction.autoCompact !== undefined) {
+      lines.push(`compaction.autoCompact: ${config.compaction.autoCompact}`);
+    }
+    if (config.compaction.retryOnOverflow !== undefined) {
+      lines.push(`compaction.retryOnOverflow: ${config.compaction.retryOnOverflow}`);
+    }
+    if (config.compaction.smallWindow !== undefined) {
+      lines.push(`compaction.smallWindow: ${config.compaction.smallWindow}`);
+    }
+  }
+  if (config.memoryConsolidation) {
+    const m = config.memoryConsolidation;
+    if (m.enabled !== undefined) lines.push(`memoryConsolidation.enabled: ${m.enabled}`);
+    if (m.flushThreshold !== undefined)
+      lines.push(`memoryConsolidation.flushThreshold: ${m.flushThreshold}`);
+    if (m.timeboxMs !== undefined) lines.push(`memoryConsolidation.timeboxMs: ${m.timeboxMs}`);
+    if (m.maxTokens !== undefined) lines.push(`memoryConsolidation.maxTokens: ${m.maxTokens}`);
+    if (m.maxDeltaChars !== undefined)
+      lines.push(`memoryConsolidation.maxDeltaChars: ${m.maxDeltaChars}`);
+    if (m.minMessagesSinceFlush !== undefined)
+      lines.push(`memoryConsolidation.minMessagesSinceFlush: ${m.minMessagesSinceFlush}`);
   }
   if (config.activeContext) {
     lines.push(`activeContext.type: ${config.activeContext.type}`);
@@ -1034,8 +1091,10 @@ function parseConfigYaml(src: string): EthosConfig {
   // §7 — models.<providerId>/<modelId>.<field>: <value>. Keyed by the full
   // `<providerId>/<modelId>` string; field path → raw value.
   const modelsKv: Record<string, Record<string, string>> = {};
-  // §5 — global compaction.<field>: <value> (pressure | target).
+  // §5 — global compaction.<field>: <value> (pressure | target | ...flags).
   const compactionKv: Record<string, string> = {};
+  // Phase 3 — memoryConsolidation.<field>: <value> (silent flush config).
+  const memoryConsolidationKv: Record<string, string> = {};
   const logsRotationKv: Record<string, string> = {};
   const awsSecretsKv: Record<string, string> = {};
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
@@ -1231,10 +1290,20 @@ function parseConfigYaml(src: string): EthosConfig {
       modelsKv[modelKey][mdl[2]] = mdl[3].trim().replace(/^["']|["']$/g, '');
       continue;
     }
-    // §5 — compaction.<pressure|target>: <fraction>  (global gate thresholds).
-    const cmp = line.match(/^compaction\.(pressure|target):\s*(.+)$/);
+    // §5 / Phase 3 — compaction.<field>: <value>  (global gate + turn-end flags).
+    const cmp = line.match(
+      /^compaction\.(pressure|target|gateDelta|autoCompact|retryOnOverflow|smallWindow):\s*(.+)$/,
+    );
     if (cmp) {
       compactionKv[cmp[1]] = cmp[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // Phase 3 — memoryConsolidation.<field>: <value>  (silent flush config).
+    const mcz = line.match(
+      /^memoryConsolidation\.(enabled|flushThreshold|timeboxMs|maxTokens|maxDeltaChars|minMessagesSinceFlush):\s*(.+)$/,
+    );
+    if (mcz) {
+      memoryConsolidationKv[mcz[1]] = mcz[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // modelRouting.<personality>: <model>
@@ -1422,6 +1491,7 @@ function parseConfigYaml(src: string): EthosConfig {
       : undefined;
   const models = buildModelProfiles(modelsKv);
   const compaction = buildCompaction(compactionKv);
+  const memoryConsolidation = buildMemoryConsolidation(memoryConsolidationKv);
   const parsedMaxBytes = logsRotationKv.maxBytes ? Number(logsRotationKv.maxBytes) : undefined;
   const parsedMaxFiles = logsRotationKv.maxFiles ? Number(logsRotationKv.maxFiles) : undefined;
   const logsRotation =
@@ -1485,6 +1555,7 @@ function parseConfigYaml(src: string): EthosConfig {
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
     models,
     compaction,
+    memoryConsolidation,
     activeContext,
     providers: providers.length > 0 ? providers : undefined,
     telegramToken: kv.telegramToken,
@@ -2207,15 +2278,54 @@ function buildModelProfiles(
  * (0,1]; out-of-range or non-numeric values are dropped. Returns `undefined`
  * when neither field survives, so the gate falls back to its 0.8/0.7 defaults.
  */
-function buildCompaction(
-  kv: Record<string, string>,
-): { pressure?: number; target?: number } | undefined {
-  const result: { pressure?: number; target?: number } = {};
+function buildCompaction(kv: Record<string, string>): EthosConfig['compaction'] | undefined {
+  const result: NonNullable<EthosConfig['compaction']> = {};
   for (const key of ['pressure', 'target'] as const) {
     const raw = kv[key];
     if (raw === undefined) continue;
     const n = Number(raw);
     if (Number.isFinite(n) && n > 0 && n <= 1) result[key] = n;
+  }
+  // Phase 1c — gateDelta is a token headroom (non-negative integer), not a
+  // fraction; validated on a different range from pressure/target.
+  const rawDelta = kv.gateDelta;
+  if (rawDelta !== undefined) {
+    const d = Number(rawDelta);
+    if (Number.isFinite(d) && d >= 0) result.gateDelta = Math.floor(d);
+  }
+  // Phase 3 — boolean flags for the turn-end trigger + overflow-retry.
+  if (kv.autoCompact === 'true') result.autoCompact = true;
+  else if (kv.autoCompact === 'false') result.autoCompact = false;
+  if (kv.retryOnOverflow === 'true') result.retryOnOverflow = true;
+  else if (kv.retryOnOverflow === 'false') result.retryOnOverflow = false;
+  // Phase 4 — small-window-mode override (auto | on | off).
+  if (kv.smallWindow === 'auto' || kv.smallWindow === 'on' || kv.smallWindow === 'off') {
+    result.smallWindow = kv.smallWindow;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Phase 3 — assemble the memory-consolidation (silent flush) config from parsed
+ * flat keys. `flushThreshold` is a fraction in (0,1]; the caps are non-negative
+ * integers. Returns `undefined` when nothing survives so the loop stays opt-out.
+ */
+function buildMemoryConsolidation(
+  kv: Record<string, string>,
+): EthosConfig['memoryConsolidation'] | undefined {
+  const result: NonNullable<EthosConfig['memoryConsolidation']> = {};
+  if (kv.enabled === 'true') result.enabled = true;
+  else if (kv.enabled === 'false') result.enabled = false;
+  const threshold = kv.flushThreshold;
+  if (threshold !== undefined) {
+    const n = Number(threshold);
+    if (Number.isFinite(n) && n > 0 && n <= 1) result.flushThreshold = n;
+  }
+  for (const key of ['timeboxMs', 'maxTokens', 'maxDeltaChars', 'minMessagesSinceFlush'] as const) {
+    const raw = kv[key];
+    if (raw === undefined) continue;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) result[key] = Math.floor(n);
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }

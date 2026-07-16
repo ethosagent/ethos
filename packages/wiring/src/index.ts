@@ -38,7 +38,11 @@ import { loadPlugins } from './load-plugins';
 import { lookupContextWindow, lookupProfile, mergeModelProfile } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 import { registerBuiltinProviders } from './register-builtin-providers';
-import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from './summarizer-prompt';
+import {
+  buildSummarizerSystemPrompt,
+  capSummary,
+  renderMiddleForSummary,
+} from './summarizer-prompt';
 
 // ---------------------------------------------------------------------------
 // Messaging gateway — send function type re-exported for callers
@@ -90,7 +94,16 @@ export interface WiringConfig {
    * per-model catalog `profile.compaction` overrides these; both absent → the
    * hardcoded 0.8/0.7 defaults. Threaded into the loop → compaction gate.
    */
-  compaction?: { pressure?: number; target?: number };
+  // biome-ignore format: Phase 3 adds turn-end auto-compact + overflow-retry flags; Phase 4 adds smallWindow.
+  compaction?: { pressure?: number; target?: number; gateDelta?: number; autoCompact?: boolean; retryOnOverflow?: boolean; smallWindow?: 'auto' | 'on' | 'off' };
+  /**
+   * Phase 3 — silent memory-flush turn config (opt-in). `enabled` gates the
+   * whole feature; the rest tune the soft threshold, timebox + token cap,
+   * per-flush memory-delta cap, and the trivial-delta skip. Threaded into the
+   * loop untouched.
+   */
+  // biome-ignore format: one line keeps the option shape adjacent to its doc.
+  memoryConsolidation?: { enabled?: boolean; flushThreshold?: number; timeboxMs?: number; maxTokens?: number; maxDeltaChars?: number; minMessagesSinceFlush?: number };
   /** Anthropic key rotation pool. Empty / absent = single-key provider. */
   rotationKeys?: RotationKey[];
   /**
@@ -387,7 +400,7 @@ function buildCompressionSummarizer(
     return cachedProvider;
   };
 
-  return async (middle, targetTokens) => {
+  return async (middle, targetTokens, instructions) => {
     const provider = await getProvider();
     const startedAt = Date.now();
     let text = '';
@@ -399,7 +412,7 @@ function buildCompressionSummarizer(
         [{ role: 'user', content: renderMiddleForSummary(middle) }],
         [],
         {
-          system: SUMMARIZER_SYSTEM_PROMPT,
+          system: buildSummarizerSystemPrompt(instructions),
           maxTokens: Math.ceil(targetTokens * 1.5),
           abortSignal: AbortSignal.timeout(SUMMARIZER_TIMEOUT_MS),
         },

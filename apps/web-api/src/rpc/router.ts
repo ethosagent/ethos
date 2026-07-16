@@ -2,6 +2,8 @@ import { chatAbort } from '../features/chat/rpc/abort';
 import { chatSend } from '../features/chat/rpc/send';
 import { chatSteer } from '../features/chat/rpc/steer';
 import { debugChat } from '../features/debug/rpc/chat';
+import { sessionsCompact } from '../features/sessions/rpc/compact';
+import { sessionsContextAnatomy } from '../features/sessions/rpc/context-anatomy';
 import { sessionsDelete } from '../features/sessions/rpc/delete';
 import { sessionsExport } from '../features/sessions/rpc/export';
 import { sessionsFork } from '../features/sessions/rpc/fork';
@@ -71,6 +73,8 @@ export const apiRouter = {
     export: sessionsExport,
     pin: sessionsPin,
     unpin: sessionsUnpin,
+    contextAnatomy: sessionsContextAnatomy,
+    compact: sessionsCompact,
   },
   chat: {
     send: chatSend,

@@ -44,6 +44,8 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     export: 'sessions:read',
     pin: 'sessions:write',
     unpin: 'sessions:write',
+    contextAnatomy: 'sessions:read',
+    compact: 'sessions:write',
   },
   chat: { send: 'chat:send', abort: 'chat:send', steer: 'chat:send' },
   personalities: {

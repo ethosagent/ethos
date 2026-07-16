@@ -4186,6 +4186,20 @@ textarea {
   margin-bottom: 16px;
 }
 
+.activity-context-anatomy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.activity-context-anatomy .aca-title {
+  font-size: 12px;
+  color: var(--ethos-text-secondary, #888);
+  margin-right: 4px;
+}
+
 .activity-filter-chip {
   font-size: 12px;
   padding: 4px 12px;

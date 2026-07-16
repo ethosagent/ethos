@@ -25,7 +25,14 @@ import type {
   WiringProfile,
 } from './index';
 import type { LoadPluginsResult } from './load-plugins';
-import { lookupProfile, mergeModelProfile, resolveCompactionGate } from './model-catalog';
+import {
+  lookupProfile,
+  mergeModelProfile,
+  resolveCompactionGate,
+  resolveDefaultContextEngine,
+  resolveSmallWindowMode,
+  scaleHistoryLimit,
+} from './model-catalog';
 import type { WiringContext } from './types';
 
 export interface BuildAgentLoopDeps {
@@ -404,11 +411,69 @@ export async function buildAgentLoop(
   // §5 — resolve the effective compaction gate config: per-model profile OVER
   // global `compaction:` config (charsPerToken is per-model only). All absent →
   // undefined → the gate behaves exactly as it does today.
-  const compaction = resolveCompactionGate(resolvedProfile, config.compaction);
+  const compactionGate = resolveCompactionGate(resolvedProfile, config.compaction);
+  // Phase 1c — `gateDelta` is global-only (a token headroom, not a fraction);
+  // merge it onto the resolved gate so the loop's actuals-first gate can use it.
+  const gateDelta = config.compaction?.gateDelta;
+
+  // Phase 3 — per-model-class default engine (frontier + summarizer wired →
+  // semantic_summary; else drop_oldest) plus the turn-end auto-compact and
+  // overflow-retry flags. These only apply when the personality declares no
+  // `context_engine`; a personality override always wins.
+  const summarizerWired = llmHandle?.summarize !== undefined;
+  const defaultEngine = resolveDefaultContextEngine(llm.maxContextTokens, summarizerWired);
+  const autoCompact = config.compaction?.autoCompact;
+  const retryOnOverflow = config.compaction?.retryOnOverflow;
+  const compaction = {
+    ...(compactionGate ?? {}),
+    ...(gateDelta !== undefined ? { gateDelta } : {}),
+    ...(autoCompact !== undefined ? { autoCompact } : {}),
+    ...(retryOnOverflow !== undefined ? { retryOnOverflow } : {}),
+    defaultEngine,
+  };
+  const memoryConsolidation = config.memoryConsolidation;
 
   // §2 — the resolved profile's prompt-economy knobs (compact prelude, memory
   // cap, guidance suppression). Absent → context assembly unchanged.
-  const promptBudget = resolvedProfile?.promptBudget;
+  const profilePromptBudget = resolvedProfile?.promptBudget;
+
+  // Phase 4 — small-window mode. Resolved ONCE here (never per turn) from static
+  // inputs so the prompt prefix stays byte-stable. Triggers on a small window
+  // (≤32k) OR when the measured static overhead (SOUL + prelude + tool schemas)
+  // exceeds 40% of the window. When active, it forces the compact prelude,
+  // index-not-content personality memory, index-mode skills, and a scaled
+  // history limit. A config `compaction.smallWindow` (auto|on|off) overrides the
+  // triggers. NOTE: tool schemas registered AFTER loop construction (delegation,
+  // goal, MCP) are not counted in the static estimate — the estimate is
+  // best-effort and biases slightly low; the window trigger is exact.
+  let soulChars = 0;
+  if (activePerson.soulFile) {
+    try {
+      soulChars = (await wiringStorage.read(activePerson.soulFile))?.length ?? 0;
+    } catch {
+      soulChars = 0;
+    }
+  }
+  const toolSchemaChars = JSON.stringify(tools.toDefinitions(activePerson.toolset)).length;
+  const preludeChars = (profilePromptBudget?.compactPrelude ? preludeCompact : prelude).length;
+  const staticTokens = Math.ceil((soulChars + toolSchemaChars + preludeChars) / 4);
+  const smallWindow = resolveSmallWindowMode({
+    contextWindow: llm.maxContextTokens,
+    staticTokens,
+    ...(config.compaction?.smallWindow ? { override: config.compaction.smallWindow } : {}),
+  });
+  // Small-window defaults first, then let any explicit profile knobs win.
+  const promptBudget = smallWindow
+    ? {
+        compactPrelude: true,
+        suppressMemoryGuidance: true,
+        memoryIndexMode: true,
+        skillsIndexMode: true,
+        memorySnapshotCap: 4_000,
+        ...profilePromptBudget,
+      }
+    : profilePromptBudget;
+  const historyLimit = smallWindow ? scaleHistoryLimit(llm.maxContextTokens) : undefined;
 
   const loop = new AgentLoop({
     llm,
@@ -424,7 +489,8 @@ export async function buildAgentLoop(
     dataDir,
     modelRouting: config.modelRouting,
     ...(modelSampling ? { modelSampling } : {}),
-    ...(compaction ? { compaction } : {}),
+    compaction,
+    ...(memoryConsolidation ? { memoryConsolidation } : {}),
     ...(promptBudget ? { promptBudget } : {}),
     memoryProviders: memoryProviderMap,
     safety,
@@ -454,6 +520,7 @@ export async function buildAgentLoop(
     options: {
       platform: profile,
       workingDir,
+      ...(historyLimit !== undefined ? { historyLimit } : {}),
     },
   });
 

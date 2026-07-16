@@ -85,7 +85,12 @@ export interface ObservabilityStore {
   insertTrace(trace: Trace): void;
   closeTrace(traceId: string, status: 'ok' | 'error' | 'aborted'): void;
   insertSpan(span: Span, extraRedactPatterns?: string[]): void;
-  closeSpan(spanId: string, status: 'ok' | 'error' | 'blocked'): void;
+  closeSpan(
+    spanId: string,
+    status: 'ok' | 'error' | 'blocked',
+    attrs?: Record<string, unknown>,
+    extraRedactPatterns?: string[],
+  ): void;
   insertEvent(event: ObsEvent, extraRedactPatterns?: string[]): void;
   insertSnapshot(snapshot: Snapshot): void;
   getTrace(traceId: string): Trace | null;

@@ -418,6 +418,7 @@ const PLATFORM_COMMANDS: Record<
   | 'queue'
   | 'background'
   | 'voice'
+  | 'compact'
 > = {
   '/new': 'new',
   '/reset': 'new',
@@ -425,6 +426,7 @@ const PLATFORM_COMMANDS: Record<
   '/usage': 'usage',
   '/help': 'help',
   '/personality': 'personality',
+  '/compact': 'compact',
   '/allow': 'allow',
   '/deny': 'deny',
   '/communications': 'communications',
@@ -1030,6 +1032,7 @@ export class Gateway {
         `/stop — abort current response\n` +
         `${personalityLines.join('\n')}\n` +
         `/usage — token and cost stats\n` +
+        `/compact [focus] — compress older context now\n` +
         `/voice — set voice reply mode (off|mirror_inbound|all)\n` +
         `/help — this message`;
       const pluginCmds = this.pluginLoader?.getAllSlashCommands() ?? [];
@@ -1400,6 +1403,42 @@ export class Gateway {
           })
           .catch(() => {});
       }
+      return;
+    }
+
+    if (cmdType === 'compact') {
+      const focus = text.split(/\s+/).slice(1).join(' ').trim();
+      if (focus.toLowerCase() === 'status') {
+        await adapter
+          .send(message.chatId, {
+            text: 'Context anatomy is available in the CLI: `ethos sessions show <id>`.',
+            threadId,
+          })
+          .catch(() => {});
+        return;
+      }
+      const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+      const personalityId = this.activePersonalityFor(laneKey, bot);
+      const result = await bot.loop
+        .compact(sessionKey, {
+          personalityId,
+          ...(focus ? { instructions: focus } : {}),
+        })
+        .catch(() => null);
+      let reply: string;
+      if (!result?.ok) {
+        reply = '✗ Not enough history to compact yet.';
+      } else {
+        const saved = Math.max(0, result.preTotalTokens - result.postTotalTokens);
+        reply =
+          `✓ Compacted ${result.droppedCount} earlier message(s) (${result.engineName}): ` +
+          `${result.preTotalTokens.toLocaleString()} → ${result.postTotalTokens.toLocaleString()} tok (−${saved.toLocaleString()}).`;
+        if (!result.summariesEnabled) {
+          reply +=
+            '\nSummaries disabled — set auxiliary.compression.model to enable summarized compaction.';
+        }
+      }
+      await adapter.send(message.chatId, { text: reply, threadId }).catch(() => {});
       return;
     }
 

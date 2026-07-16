@@ -17,7 +17,12 @@ import type {
 } from '@ethosagent/types';
 import { estimateMessagesTokens, estimateMessageTokens } from './token-estimator';
 
-export type SummarizerFn = (middle: Message[], targetTokens: number) => Promise<string>;
+export type SummarizerFn = (
+  middle: Message[],
+  targetTokens: number,
+  /** Phase 2 — `/compact <focus…>` guidance threaded into the summarizer prompt. */
+  instructions?: string,
+) => Promise<string>;
 
 interface SemanticSummaryOptions {
   preserve_first_n_turns?: number;
@@ -60,7 +65,7 @@ export class SemanticSummaryEngine implements ContextEngine {
     let summaryText: string;
     const summarizer = opts.llm?.summarize ?? this.summarize;
     if (summarizer) {
-      summaryText = await summarizer(middle, summaryTarget);
+      summaryText = await summarizer(middle, summaryTarget, opts.instructions);
     } else {
       // Fallback: synthesise a deterministic placeholder. Loses information
       // but preserves history shape so downstream replay still works.

@@ -172,6 +172,14 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     this.loop.resetSessionCost(sessionKey);
   }
 
+  /** Manual `/compact` — force a compaction outside a turn (delegates to the loop). */
+  compact(
+    sessionKey: string,
+    opts?: { instructions?: string; personalityId?: string },
+  ): ReturnType<AgentLoop['compact']> {
+    return this.loop.compact(sessionKey, opts);
+  }
+
   /** Returns the budget cap for the personality (undefined = no cap). */
   getPersonalityBudgetCap(personalityId?: string): number | undefined {
     return this.loop.getPersonalityBudgetCap(personalityId);

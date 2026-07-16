@@ -796,6 +796,32 @@ export function App({
         setStatusMsg('[new session started]');
         break;
       }
+      case 'compact': {
+        const focus = args.join(' ').trim();
+        if (focus.toLowerCase() === 'status') {
+          setStatusMsg('[context anatomy: run `ethos sessions show <id>` in the CLI]');
+          break;
+        }
+        setStatusMsg('[compacting context…]');
+        try {
+          const result = await bridge.compact(sessionKey, {
+            personalityId: personality,
+            ...(focus ? { instructions: focus } : {}),
+          });
+          if (!result.ok) {
+            setStatusMsg('[not enough history to compact yet]');
+          } else {
+            const saved = Math.max(0, result.preTotalTokens - result.postTotalTokens);
+            const hint = result.summariesEnabled ? '' : ' (summaries disabled)';
+            setStatusMsg(
+              `[compacted ${result.droppedCount} msg via ${result.engineName}: −${saved.toLocaleString()} tok${hint}]`,
+            );
+          }
+        } catch {
+          setStatusMsg('[compaction failed]');
+        }
+        break;
+      }
       case 'personality':
         if (args.length === 0) {
           setStatusMsg(`personality: ${personality}`);

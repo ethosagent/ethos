@@ -40,6 +40,7 @@ describe('SLASH_COMMANDS registry', () => {
       'tier',
       'memory',
       'usage',
+      'compact',
       'budget',
       'verbose',
       'busy',

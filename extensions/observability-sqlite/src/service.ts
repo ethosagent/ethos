@@ -122,11 +122,9 @@ export class ObservabilityService implements ObservabilityWriter {
     attrs?: Record<string, unknown>,
   ): void {
     if (this.isDisabled?.()) return;
-    // Close the span (sets end_ts + status).
-    this.store.closeSpan(spanId, status);
-    // If extra attrs provided, we'd update — but the store interface only supports closeSpan.
-    // attrs parameter is reserved for future use.
-    void attrs;
+    // Close the span (sets end_ts + status) and merge any close-time attrs
+    // (e.g. Phase 0 per-slice llm_call token counts) into the stored row.
+    this.store.closeSpan(spanId, status, attrs);
   }
 
   /** Record a timestamped event. */

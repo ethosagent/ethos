@@ -258,6 +258,15 @@ export function Activity() {
     [sessionData],
   );
 
+  // Phase 0 — per-session context anatomy (system / tools / messages token
+  // slices + cache-hit rate), aggregated from observability llm_call spans.
+  const { data: anatomyData } = useQuery({
+    queryKey: ['sessions', 'contextAnatomy', activeSessionId, completedGroupCount],
+    queryFn: () => rpc.sessions.contextAnatomy({ id: activeSessionId ?? '' }),
+    enabled: !!activeSessionId,
+  });
+  const anatomy = anatomyData?.anatomy ?? null;
+
   const appendEvent = useCallback((evt: ActivityEvent) => {
     setGroups((prev) => {
       // cron.fired: standalone group, not part of a turn
@@ -356,6 +365,17 @@ export function Activity() {
           }))}
         />
       </header>
+
+      {anatomy && (
+        <div className="activity-context-anatomy">
+          <span className="aca-title">Context</span>
+          <Tag>system {anatomy.system.toLocaleString()}</Tag>
+          <Tag>tools {anatomy.tools.toLocaleString()}</Tag>
+          <Tag>messages {anatomy.messages.toLocaleString()}</Tag>
+          <Tag color="blue">total {anatomy.total.toLocaleString()} tok</Tag>
+          <Tag color="green">cache {Math.round(anatomy.cacheHitRate * 100)}%</Tag>
+        </div>
+      )}
 
       <div className="activity-filter-bar">
         {TYPE_FILTERS.map((f) => (

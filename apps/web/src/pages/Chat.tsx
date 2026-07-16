@@ -67,6 +67,7 @@ export function Chat() {
     abortTurn,
     switchSession,
     resetSession,
+    compact,
   } = useChat({
     ...(sessionParam ? { initialSessionId: sessionParam } : {}),
     personalityId,
@@ -214,6 +215,40 @@ export function Chat() {
   }, [state.turnStartedAt]);
 
   const handleSend = async (text: string) => {
+    // Phase 2 — `/compact [focus]` is handled client-side: it forces a
+    // server-side compaction instead of sending a turn. `/compact status`
+    // points to the Activity tab (persisted context anatomy lives there).
+    const trimmed = text.trim();
+    if (/^\/compact(\s|$)/i.test(trimmed)) {
+      const focus = trimmed.replace(/^\/compact\s*/i, '').trim();
+      if (focus.toLowerCase() === 'status') {
+        notification.info({
+          message: 'Context anatomy',
+          description: 'See the Activity tab for this session’s context breakdown.',
+        });
+        return;
+      }
+      const result = await compact(focus || undefined);
+      if (!result?.ok) {
+        notification.info({
+          message: 'Compaction',
+          description: 'Not enough history to compact yet.',
+        });
+        return;
+      }
+      const saved = Math.max(0, result.preTotalTokens - result.postTotalTokens);
+      notification.success({
+        message: `Compacted ${result.droppedCount} earlier message(s)`,
+        description:
+          `${result.engineName}: ${result.preTotalTokens.toLocaleString()} → ` +
+          `${result.postTotalTokens.toLocaleString()} tok (−${saved.toLocaleString()})` +
+          (result.summariesEnabled
+            ? ''
+            : '. Summaries disabled — set auxiliary.compression.model to enable.'),
+      });
+      return;
+    }
+
     if (state.isStreaming) {
       const ok = await steerMessage(text);
       if (ok) return;

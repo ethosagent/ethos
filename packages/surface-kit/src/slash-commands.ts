@@ -86,6 +86,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     surfaces: ['cli', 'gateway'],
   },
   {
+    name: 'compact',
+    description: 'Compress older context now (optional focus hint)',
+    usage: '/compact [focus|status]',
+    surfaces: ['cli', 'gateway', 'web'],
+  },
+  {
     name: 'budget',
     description: 'Show session spend against cap',
     usage: '/budget [reset]',

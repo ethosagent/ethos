@@ -1,6 +1,11 @@
 import type { Message } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { capSummary, renderMiddleForSummary, SUMMARIZER_SYSTEM_PROMPT } from '../summarizer-prompt';
+import {
+  buildSummarizerSystemPrompt,
+  capSummary,
+  renderMiddleForSummary,
+  SUMMARIZER_SYSTEM_PROMPT,
+} from '../summarizer-prompt';
 
 describe('SUMMARIZER_SYSTEM_PROMPT', () => {
   it('demands the structured handoff headings', () => {
@@ -20,6 +25,21 @@ describe('SUMMARIZER_SYSTEM_PROMPT', () => {
     expect(SUMMARIZER_SYSTEM_PROMPT).toContain('CHARACTER-FOR-CHARACTER');
     expect(SUMMARIZER_SYSTEM_PROMPT).toContain('SAME LANGUAGE');
     expect(SUMMARIZER_SYSTEM_PROMPT).toContain('VERBATIM');
+  });
+});
+
+describe('buildSummarizerSystemPrompt (Phase 2 — /compact focus)', () => {
+  it('returns the base prompt unchanged when there is no focus', () => {
+    expect(buildSummarizerSystemPrompt()).toBe(SUMMARIZER_SYSTEM_PROMPT);
+    expect(buildSummarizerSystemPrompt('   ')).toBe(SUMMARIZER_SYSTEM_PROMPT);
+  });
+
+  it('appends the focus directive without dropping the base rules', () => {
+    const out = buildSummarizerSystemPrompt('the deploy debugging');
+    expect(out).toContain(SUMMARIZER_SYSTEM_PROMPT);
+    expect(out).toContain('## Focus');
+    expect(out).toContain('the deploy debugging');
+    expect(out).toContain('never drop file paths, identifiers, or error strings');
   });
 });
 

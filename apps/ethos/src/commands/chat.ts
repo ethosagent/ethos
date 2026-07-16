@@ -1028,6 +1028,8 @@ export function buildChatHelpText(
     `  /verbose status       show current level\n` +
     `  /busy <mode|status>   busy-input mode (interrupt/queue/steer)\n` +
     `  /attach <path>        attach a file to the next message\n` +
+    `  /compact [focus]      compress older context now (optional focus hint)\n` +
+    `  /compact status       show context anatomy (system/tools/messages tokens)\n` +
     `  /undo [N]             undo last N turns (default 1)\n` +
     `  /dry-run on|off      toggle dry-run mode (plan tools without executing)\n` +
     `  /goal <text>          create and start a new goal\n` +
@@ -1433,6 +1435,41 @@ async function handleSlashCommand(
       break;
     }
 
+    case 'compact': {
+      if (arg === 'status') {
+        await printCompactStatus(state.sessionKey);
+        break;
+      }
+      out(`${c.dim}[compacting context…]${c.reset}\n`);
+      const result = await loop.compact(state.sessionKey, {
+        personalityId: state.personalityId,
+        ...(arg ? { instructions: arg } : {}),
+      });
+      if (!result.ok) {
+        out(
+          result.reason === 'no_session'
+            ? `${c.dim}[no session yet — send a message first]${c.reset}\n`
+            : `${c.dim}[not enough history to compact yet]${c.reset}\n`,
+        );
+        break;
+      }
+      const saved = Math.max(0, result.preTotalTokens - result.postTotalTokens);
+      out(
+        `${c.green}[compacted ${result.droppedCount} earlier message(s) via ${result.engineName}: ` +
+          `${result.preTotalTokens.toLocaleString()} → ${result.postTotalTokens.toLocaleString()} tok, ` +
+          `−${saved.toLocaleString()}]${c.reset}\n`,
+      );
+      if (!result.summariesEnabled) {
+        out(
+          `${c.yellow}[summaries disabled — dropped older messages. Set auxiliary.compression.model ` +
+            `in ~/.ethos/config.yaml to enable summarized compaction.]${c.reset}\n`,
+        );
+      }
+      // Reflect the shrunk context in the prompt chip immediately.
+      state.contextInputTokens = result.postTotalTokens;
+      break;
+    }
+
     case 'exit':
     case 'quit':
       rl.close();
@@ -1525,6 +1562,53 @@ async function handleSlashCommand(
       out(`${c.dim}Unknown command /${name} — type /help${c.reset}\n`);
       break;
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// /compact status — context anatomy from PERSISTED Phase 0 data (never a live
+// countTokens API call). Mirrors `ethos sessions show`.
+// ---------------------------------------------------------------------------
+
+async function printCompactStatus(sessionKey: string): Promise<void> {
+  const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+  const { SQLiteObservabilityStore, computeContextAnatomy } = await import(
+    '@ethosagent/observability-sqlite'
+  );
+  const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+  try {
+    const session = await store.getSessionByKey(sessionKey);
+    if (!session) {
+      out(`${c.dim}[no session yet — send a message first]${c.reset}\n`);
+      return;
+    }
+    let obs: InstanceType<typeof SQLiteObservabilityStore> | undefined;
+    let anatomy: ReturnType<typeof computeContextAnatomy> = null;
+    try {
+      obs = new SQLiteObservabilityStore(join(ethosDir(), 'observability.db'));
+      anatomy = computeContextAnatomy(obs.getLlmCallSpansForSession(session.id));
+    } catch {
+      anatomy = null;
+    } finally {
+      obs?.close();
+    }
+    if (!anatomy) {
+      out(`${c.dim}[no context data yet — send a message first]${c.reset}\n`);
+      return;
+    }
+    const n = (v: number) => v.toLocaleString();
+    const pct = (v: number) => `${Math.round((v / DEFAULT_CONTEXT_MAX) * 100)}%`;
+    out(
+      `\n${c.bold}Context anatomy${c.reset} ${c.dim}(latest of ${anatomy.llmCallCount} llm call${anatomy.llmCallCount === 1 ? '' : 's'})${c.reset}\n` +
+        `  ${'system'.padEnd(10)}${n(anatomy.system).padStart(9)} tok  ${c.dim}${pct(anatomy.system)}${c.reset}\n` +
+        `  ${'tools'.padEnd(10)}${n(anatomy.tools).padStart(9)} tok  ${c.dim}${pct(anatomy.tools)}${c.reset}\n` +
+        `  ${'messages'.padEnd(10)}${n(anatomy.messages).padStart(9)} tok  ${c.dim}${pct(anatomy.messages)}${c.reset}\n` +
+        `  ${c.dim}─────────${c.reset}\n` +
+        `  ${'total'.padEnd(10)}${n(anatomy.total).padStart(9)} tok  ${c.dim}${pct(anatomy.total)} of ${n(DEFAULT_CONTEXT_MAX)}${c.reset}\n` +
+        `  ${'cache hit'.padEnd(10)}${`${Math.round(anatomy.cacheHitRate * 100)}%`.padStart(9)}\n\n`,
+    );
+  } finally {
+    store.close();
   }
 }
 
