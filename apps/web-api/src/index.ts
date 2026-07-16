@@ -175,6 +175,8 @@ export interface CreateWebApiOptions {
   listTeams?: () => Promise<string[]>;
   /** Optional title generation function. When provided, ChatService auto-titles new sessions after the first turn. */
   titleFn?: (systemPrompt: string, userMessage: string) => Promise<string>;
+  /** Called on every completed chat turn — boot code wires the W4.1 funnel tracker here. */
+  onTurnDone?: () => void;
   /** Tool registry for the tools.catalog RPC. */
   toolRegistry?: import('@ethosagent/types').ToolRegistry;
   /** Plugin loader for resolving plugin data-source paths (dashboard SQL queries). */
@@ -456,6 +458,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     defaults: opts.chatDefaults,
     onForget: (sessionId) => approvalsService.cancelForSession(sessionId),
     ...(opts.titleFn ? { titleFn: opts.titleFn } : {}),
+    ...(opts.onTurnDone ? { onTurnDone: opts.onTurnDone } : {}),
     systemBus,
     ...(opts.attachmentCache ? { attachmentCache: opts.attachmentCache } : {}),
   });

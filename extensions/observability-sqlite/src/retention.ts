@@ -167,6 +167,11 @@ export function pruneObservability(
   // plan/phases/observability_extractability.md "Out of scope"). The
   // hardcoded LIKE patterns mirror the conventions documented in the
   // library README's vocabulary-contract section.
+  //
+  // `funnel.%` is INTENTIONALLY absent (zero-friction-first-hour W4.2):
+  // funnel events are one-shot install-lifecycle data, bytes in size, and
+  // `ethos doctor --funnel` must still work months later — they are exempt
+  // from retention/pruning by not being enumerated here. Do not add them.
   const categories: Array<[string, string]> = [
     ['error', config.events?.error ?? '90d'],
     ['audit.%', config.events?.audit ?? '365d'],

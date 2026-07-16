@@ -215,6 +215,29 @@ describe('pruneObservability', () => {
     expect(remaining).toBe(2);
   });
 
+  it('funnel.* events are exempt from pruning — they survive any TTL (W4.2)', () => {
+    // 10x older than every enumerated TTL. `funnel.%` is intentionally not in
+    // the retention category list, so these must survive `doctor --funnel`
+    // months (or years) later.
+    const ancient = NOW - 4000 * 86_400_000;
+    insertEvent('funnel-setup', 'funnel.setup_completed', ancient);
+    insertEvent('funnel-first', 'funnel.first_reply', ancient);
+    insertEvent('funnel-channel', 'funnel.channel_first_reply', ancient);
+    insertEvent('old-error', 'error', ancient); // control: this one IS pruned
+
+    const result = pruneObservability(db, RETENTION_DEFAULTS, { dryRun: false, now: NOW });
+
+    expect(result.events).toBe(1); // only the control error event
+    const remaining = db
+      .prepare("SELECT event_id FROM events WHERE category LIKE 'funnel.%' ORDER BY event_id")
+      .all() as Array<{ event_id: string }>;
+    expect(remaining.map((r) => r.event_id)).toEqual([
+      'funnel-channel',
+      'funnel-first',
+      'funnel-setup',
+    ]);
+  });
+
   it('prunes audit events past their TTL', () => {
     // Old enough to be past 365d audit TTL
     const veryOld = NOW - 400 * 86_400_000;

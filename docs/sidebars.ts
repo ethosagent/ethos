@@ -209,6 +209,7 @@ const sidebars: SidebarsConfig = {
         'platforms/telegram',
         'platforms/discord',
         'platforms/slack',
+        'platforms/capability-matrix',
       ],
     },
     {

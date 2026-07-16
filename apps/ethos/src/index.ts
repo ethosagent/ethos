@@ -112,6 +112,32 @@ function extractSingleQuery(argv: string[]): {
   return { query, rest, queryFlagUsed };
 }
 
+// W2.5 — dispatch the setup wizard's three-way close. 'chat' opens the CLI
+// REPL; 'gateway' hands off to `ethos gateway start` with the t.me deep-link
+// success block (reusing the validated @username); 'done' exits.
+async function launchAfterSetup(
+  setupResult: import('./commands/setup').SetupResult | null,
+): Promise<void> {
+  if (!setupResult) return;
+  if (setupResult.launch === 'chat') {
+    await runChat(setupResult.config);
+    return;
+  }
+  if (setupResult.launch === 'gateway') {
+    console.log('Starting the Telegram bot…');
+    const username = setupResult.telegramUsername;
+    await runGatewayStart({
+      onReady: () => {
+        if (username) {
+          const handle = username.replace(/^@/, '');
+          console.log(`✓ ${username} is live — message it: t.me/${handle}`);
+        }
+        console.log("Ctrl+C stops the bot. Run 'ethos gateway start' to restart it.");
+      },
+    });
+  }
+}
+
 // Pure-metadata commands (`--version`/`--help`) do no registry work, so skip
 // the startup crash-recovery scan for them — no point acquiring the registry
 // lock + scanning files to print a version string.
@@ -165,6 +191,12 @@ try {
     }
 
     case 'setup': {
+      // W2.4 — headless bootstrap for Docker/CI: `ethos setup --from-env`.
+      if (args.includes('--from-env')) {
+        const { runSetupFromEnv } = await import('./commands/setup-from-env');
+        await runSetupFromEnv();
+        break;
+      }
       const setupSub = args[1];
       const sectionStepMap: Record<string, import('@ethosagent/tui/setup').WizardStepId> = {
         auth: 'auth',
@@ -177,9 +209,7 @@ try {
       };
       const startAtStep = setupSub ? sectionStepMap[setupSub] : undefined;
       const setupResult = await runSetup(startAtStep);
-      if (setupResult?.launchChat) {
-        await runChat(setupResult.config);
-      }
+      await launchAfterSetup(setupResult);
       break;
     }
 
@@ -566,7 +596,7 @@ try {
       if (sub === 'setup') {
         // Alias: open the TUI wizard at the messaging step (TTY), else legacy readline setup.
         const gwResult = await runSetup('messaging');
-        if (gwResult?.launchChat) await runChat(gwResult.config);
+        await launchAfterSetup(gwResult);
       } else if (sub === 'start') {
         await runGatewayStart();
       } else {

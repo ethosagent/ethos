@@ -85,6 +85,27 @@ describe('OnboardingService', () => {
       expect(state.hasProvider).toBe(true);
       expect(state.selectedPersonalityId).toBe('researcher');
     });
+
+    // F3 SPA-lands-in-chat (Z-T14): the Docker `--from-env` path writes the
+    // apiKey as a `${secrets:...}` reference (never a literal), plus a default
+    // personality. That pre-provisioned config must resolve to 'done' so the
+    // web SPA opens directly in chat and never re-asks for the key in .env.
+    it('lands in chat (done) with a secret-ref apiKey from --from-env', async () => {
+      await storage.write(
+        join(DATA, 'config.yaml'),
+        [
+          'provider: anthropic',
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: literal secrets ref written by --from-env, not a JS template
+          'apiKey: ${secrets:providers/anthropic/apiKey}',
+          'personality: researcher',
+          'model: claude-opus-4-7',
+        ].join('\n'),
+      );
+      const service = makeService();
+      const state = await service.state();
+      expect(state.step).toBe('done');
+      expect(state.hasProvider).toBe(true);
+    });
   });
 
   describe('validateProvider', () => {

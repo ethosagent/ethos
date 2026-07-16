@@ -55,6 +55,12 @@ export interface ChatServiceOptions {
   systemBus?: SystemEventBus;
   /** Optional attachment cache for persisting inbound attachments. */
   attachmentCache?: import('@ethosagent/types').AttachmentCache;
+  /**
+   * Called on every completed turn (`done` event). Boot code wires this to
+   * the W4.1 funnel tracker (`funnel.first_reply`) — the tracker itself
+   * no-ops after the first stamp, so the callback stays cheap.
+   */
+  onTurnDone?: () => void;
 }
 
 export interface ChatSendInput {
@@ -354,6 +360,11 @@ export class ChatService {
     bridge.on('error', (error, code) => this.append(sessionId, { type: 'error', error, code }));
     bridge.on('done', (text, turnCount) => {
       this.append(sessionId, { type: 'done', text, turnCount });
+      try {
+        this.opts.onTurnDone?.();
+      } catch {
+        // Funnel/analytics callbacks are best-effort — never break the stream.
+      }
       void this.tryAutoTitle(sessionId);
     });
   }

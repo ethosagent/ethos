@@ -2,15 +2,24 @@ name: docker-publish
 
 # Build and publish the Docker image to the public Docker Hub repo (ethosagent/ethos).
 #
-# Usage:
-#   1. Ensure the npm release for this version is already published (run the
-#      `release` workflow first if needed) — the image installs @ethosagent/cli
-#      from npm at the given version.
-#   2. GitHub → Actions → docker-publish → Run workflow → enter version (e.g. 0.4.17)
+# Triggers (W1.1, zero-friction-first-hour plan):
+#   • Automatically after a successful `release` workflow run — the image
+#     version is read from the released commit's VERSION file, so it can
+#     never drift from npm again.
+#   • Manually via workflow_dispatch with an explicit version (the override
+#     path; also republishes an existing tag).
 #
-# Non-prerelease versions are also tagged `latest`; prereleases (vX.Y.Z-...) are not.
+# Pipeline: publish the version tag → post-publish smoke gate (compose up the
+# single-service profile, poll /healthz, assert a web-UI reply via RPC and an
+# `ethos -z` CLI reply, SIGTERM clean stop) → only then promote `latest`.
+# A smoke failure marks the tag (`<version>-smoke-failed`) and fails the run.
+#
+# Non-prerelease versions are promoted to `latest`; prereleases (vX.Y.Z-...) are not.
 
 on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       version:
@@ -27,38 +36,82 @@ concurrency:
 
 jobs:
   docker-publish:
+    # Auto path runs only when the release workflow concluded successfully.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      published: ${{ steps.meta.outputs.published }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Auto path: build exactly what the release built.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Resolve version
+        id: meta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="${INPUT_VERSION#v}"
+          else
+            VERSION="$(cat VERSION)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          case "$VERSION" in
+            *-*) echo "prerelease=true"  >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          # Auto path: skip if this tag is already on Docker Hub (release
+          # re-runs / tag-exists skips). Manual dispatch always republishes.
+          PUBLISH=true
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            if curl -sf "https://hub.docker.com/v2/repositories/ethosagent/ethos/tags/${VERSION}" > /dev/null; then
+              echo "Tag ${VERSION} already on Docker Hub — skipping publish."
+              PUBLISH=false
+            fi
+          fi
+          echo "published=$PUBLISH" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for @ethosagent/cli@${{ steps.meta.outputs.version }} on npm
+        if: steps.meta.outputs.published == 'true'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          # The image installs the CLI from npm; registry propagation after a
+          # release can lag by a few minutes.
+          for i in $(seq 1 30); do
+            if [ "$(npm view "@ethosagent/cli@${VERSION}" version 2>/dev/null)" = "$VERSION" ]; then
+              echo "npm has @ethosagent/cli@${VERSION}"
+              exit 0
+            fi
+            echo "attempt $i: not visible yet, retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::@ethosagent/cli@${VERSION} never appeared on npm — was the release published?"
+          exit 1
 
       - name: Set up QEMU
+        if: steps.meta.outputs.published == 'true'
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
 
       - name: Set up Docker Buildx
+        if: steps.meta.outputs.published == 'true'
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Log in to Docker Hub
+        if: steps.meta.outputs.published == 'true'
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract version from input
-        id: meta
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          VERSION="${INPUT_VERSION#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          TAGS="ethosagent/ethos:${VERSION}"
-          case "$VERSION" in
-            *-*) ;; # prerelease — skip latest
-            *)   TAGS="${TAGS},ethosagent/ethos:latest" ;;
-          esac
-          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push
+      - name: Build and push version tag
+        if: steps.meta.outputs.published == 'true'
         uses: docker/build-push-action@0adf9959216b96bec444f325f1e493d4aa344497 # v6.14.0
         with:
           context: docker/
@@ -67,4 +120,191 @@ jobs:
           push: true
           build-args: |
             CLI_VERSION=${{ steps.meta.outputs.version }}
-          tags: ${{ steps.meta.outputs.tags }}
+          # `latest` is promoted only after the smoke gate passes.
+          tags: ethosagent/ethos:${{ steps.meta.outputs.version }}
+
+  # Post-publish smoke gate: pull the just-published image and prove the
+  # single-service profile boots to a talking web UI. Closes the standing
+  # "CI Docker smoke test (docker-smoke.test.ts)" item (plan/uncompleted-tasks.md).
+  smoke:
+    needs: docker-publish
+    if: needs.docker-publish.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.docker-publish.outputs.version }}
+      COMPOSE_FILE_PATH: docker/docker-compose.single.yml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pre-provision config into the data volume
+        env:
+          SMOKE_ANTHROPIC_API_KEY: ${{ secrets.SMOKE_ANTHROPIC_API_KEY }}
+        run: |
+          # Stand-in for `ethos setup --from-env` (W2.4, Phase F2) — once that
+          # lands, the compose init path provisions this instead.
+          if [ -z "$SMOKE_ANTHROPIC_API_KEY" ]; then
+            echo "::warning::SMOKE_ANTHROPIC_API_KEY secret is not set — reply assertions will be skipped."
+          fi
+          DATA_DIR="$RUNNER_TEMP/ethos-data"
+          mkdir -p "$DATA_DIR/secrets/providers/anthropic"
+          cat > "$DATA_DIR/config.yaml" <<'EOF'
+          schemaVersion: 1
+          provider: anthropic
+          apiKey: ${secrets:providers/anthropic/apiKey}
+          personality: researcher
+          EOF
+          printf '%s\n' "$SMOKE_ANTHROPIC_API_KEY" > "$DATA_DIR/secrets/providers/anthropic/apiKey"
+          chmod 600 "$DATA_DIR/config.yaml" "$DATA_DIR/secrets/providers/anthropic/apiKey"
+          # Container runs as uid 1000 (ethos) and needs rw on the volume.
+          sudo chown -R 1000:1000 "$DATA_DIR"
+          echo "DATA_DIR=$DATA_DIR" >> "$GITHUB_ENV"
+
+      - name: Compose up (single-service profile, published image)
+        run: |
+          # W4.3 wall-clock budget starts here: the Docker golden path is
+          # `.env` → `docker compose up` → first web-UI reply, and `up` includes
+          # the image pull. Stamp before it so the budget covers pull + boot.
+          echo "BUDGET_START=$(date +%s)" >> "$GITHUB_ENV"
+          ETHOS_IMAGE="ethosagent/ethos:${VERSION}" \
+          ETHOS_DATA_DIR="$DATA_DIR" \
+          docker compose -f "$COMPOSE_FILE_PATH" up -d
+
+      - name: Poll /healthz + baked healthcheck until healthy
+        run: |
+          CID="$(ETHOS_IMAGE="ethosagent/ethos:${VERSION}" ETHOS_DATA_DIR="$DATA_DIR" docker compose -f "$COMPOSE_FILE_PATH" ps -q ethos)"
+          echo "CID=$CID" >> "$GITHUB_ENV"
+          # 1) The endpoint answers (200 ok or 503 degraded both mean the
+          #    process is alive; gateway.status must reach "ok" = fresh heartbeat).
+          for i in $(seq 1 60); do
+            BODY="$(curl -s --max-time 5 http://localhost:3000/healthz || true)"
+            case "$BODY" in
+              *'"gateway"'*'"status":"ok"'*) echo "healthz gateway heartbeat fresh"; break ;;
+            esac
+            [ "$i" = 60 ] && { echo "::error::/healthz never reported a fresh gateway heartbeat"; echo "$BODY"; exit 1; }
+            sleep 5
+          done
+          # 2) Docker's own mode-aware healthcheck agrees.
+          for i in $(seq 1 30); do
+            STATUS="$(docker inspect -f '{{.State.Health.Status}}' "$CID")"
+            [ "$STATUS" = "healthy" ] && { echo "container healthy"; exit 0; }
+            sleep 5
+          done
+          echo "::error::container never reached healthy (last: $STATUS)"
+          exit 1
+
+      - name: Assert web-UI reply via RPC
+        env:
+          SMOKE_ANTHROPIC_API_KEY: ${{ secrets.SMOKE_ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$SMOKE_ANTHROPIC_API_KEY" ]; then
+            echo "skipping — no SMOKE_ANTHROPIC_API_KEY"
+            exit 0
+          fi
+          TOKEN="$(sudo cat "$DATA_DIR/web-token")"
+          # Cookie is flagged Secure (non-loopback bind), so lift it from the
+          # exchange response headers and send it explicitly over http.
+          SET_COOKIE="$(curl -si "http://localhost:3000/auth/exchange?t=${TOKEN}" | tr -d '\r' | sed -n 's/^[Ss]et-[Cc]ookie: \([^;]*\).*/\1/p' | head -1)"
+          [ -n "$SET_COOKIE" ] || { echo "::error::auth exchange returned no cookie"; exit 1; }
+          SEND="$(curl -s -X POST "http://localhost:3000/rpc/chat/send" \
+            -H "content-type: application/json" -H "Cookie: $SET_COOKIE" \
+            -d '{"json":{"clientId":"smoke-ci","text":"Reply with the single word OK."}}')"
+          SID="$(printf '%s' "$SEND" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p')"
+          [ -n "$SID" ] || { echo "::error::chat.send returned no sessionId: $SEND"; exit 1; }
+          # The SSE buffer replays the turn; wait for a done event.
+          if curl -s -N --max-time 120 -H "Cookie: $SET_COOKIE" "http://localhost:3000/sse/sessions/${SID}" \
+            | grep -m1 '"type":"done"'; then
+            echo "web-UI reply received"
+          else
+            echo "::error::no done event on the SSE stream within 120s"
+            exit 1
+          fi
+
+      - name: Assert <5 min wall-clock budget (env var → compose up → web reply)
+        env:
+          SMOKE_ANTHROPIC_API_KEY: ${{ secrets.SMOKE_ANTHROPIC_API_KEY }}
+        run: |
+          # W4.3 target: the Docker golden path (`.env` → `docker compose up` →
+          # first web-UI reply) completes in under 5 minutes. Only meaningful
+          # when a reply actually happened, which needs the provider key.
+          if [ -z "$SMOKE_ANTHROPIC_API_KEY" ]; then
+            echo "skipping — no SMOKE_ANTHROPIC_API_KEY, so there was no web reply to time"
+            exit 0
+          fi
+          BUDGET_SECONDS=300
+          ELAPSED=$(( $(date +%s) - BUDGET_START ))
+          echo "compose up → web reply took ${ELAPSED}s (budget ${BUDGET_SECONDS}s)"
+          if [ "$ELAPSED" -gt "$BUDGET_SECONDS" ]; then
+            echo "::error::Docker path took ${ELAPSED}s, over the ${BUDGET_SECONDS}s (<5 min) budget — the zero-friction target regressed."
+            exit 1
+          fi
+
+      - name: Assert CLI reply (ethos -z)
+        env:
+          SMOKE_ANTHROPIC_API_KEY: ${{ secrets.SMOKE_ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$SMOKE_ANTHROPIC_API_KEY" ]; then
+            echo "skipping — no SMOKE_ANTHROPIC_API_KEY"
+            exit 0
+          fi
+          OUT="$(docker exec "$CID" ethos -z "Reply with the single word OK.")"
+          [ -n "$OUT" ] || { echo "::error::ethos -z produced no output"; exit 1; }
+          echo "ethos -z replied: $OUT"
+
+      - name: SIGTERM clean stop
+        run: |
+          ETHOS_IMAGE="ethosagent/ethos:${VERSION}" ETHOS_DATA_DIR="$DATA_DIR" \
+            docker compose -f "$COMPOSE_FILE_PATH" stop -t 30 ethos
+          CODE="$(docker inspect -f '{{.State.ExitCode}}' "$CID")"
+          # 0 = run-all's SIGTERM handler exited cleanly; 143 = default SIGTERM
+          # exit. 137 means the 30s grace expired and Docker SIGKILLed — fail.
+          case "$CODE" in
+            0|143) echo "clean stop (exit $CODE)" ;;
+            *) echo "::error::container did not stop cleanly on SIGTERM (exit $CODE)"; exit 1 ;;
+          esac
+
+      - name: Dump container logs
+        if: failure()
+        run: docker logs "$CID" 2>&1 | tail -200 || true
+
+      - name: Mark tag as smoke-failed
+        if: failure()
+        run: |
+          docker buildx imagetools create "ethosagent/ethos:${VERSION}" \
+            --tag "ethosagent/ethos:${VERSION}-smoke-failed" || true
+          echo "::error::smoke gate failed — tag ethosagent/ethos:${VERSION} marked ${VERSION}-smoke-failed"
+
+      - name: Compose down
+        if: always()
+        run: |
+          ETHOS_IMAGE="ethosagent/ethos:${VERSION}" ETHOS_DATA_DIR="$DATA_DIR" \
+            docker compose -f "$COMPOSE_FILE_PATH" down -v || true
+
+  # `latest` moves only after the smoke gate passes (and never for prereleases).
+  promote-latest:
+    needs: [docker-publish, smoke]
+    if: needs.docker-publish.outputs.published == 'true' && needs.docker-publish.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Promote version tag to latest
+        env:
+          VERSION: ${{ needs.docker-publish.outputs.version }}
+        run: |
+          docker buildx imagetools create "ethosagent/ethos:${VERSION}" \
+            --tag "ethosagent/ethos:latest"

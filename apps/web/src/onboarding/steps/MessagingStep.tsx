@@ -54,6 +54,15 @@ const PLATFORMS: PlatformShape[] = [
   },
 ];
 
+// Five-state machine (W2.1): idle → pending → ok | rejected | unreachable.
+// `email-saved` is the probe-less exception. Only `ok`, `unreachable`, and
+// `email-saved` unlock Continue; a definitively `rejected` token never saves.
+type ProbeResult =
+  | { status: 'ok'; label: string | null }
+  | { status: 'rejected'; error: string | null }
+  | { status: 'unreachable' }
+  | { status: 'email-saved' };
+
 export function MessagingStep({
   answers,
   onNext,
@@ -67,16 +76,40 @@ export function MessagingStep({
   );
   const [platformId, setPlatformId] = useState<PlatformId>('telegram');
   const [fields, setFields] = useState<Record<string, string>>({});
-  const [saved, setSaved] = useState(false);
 
   const foundPlatform = PLATFORMS.find((p) => p.id === platformId);
   const platform = foundPlatform ??
     PLATFORMS[0] ?? { id: 'telegram' as PlatformId, label: 'Telegram', fields: [] };
+  const isEmail = platformId === 'email';
 
-  const saveMut = useMutation({
-    mutationFn: () => rpc.platforms.set({ id: platformId, fields }),
-    onSuccess: () => setSaved(true),
+  const runMut = useMutation<ProbeResult, Error, void>({
+    mutationFn: async (): Promise<ProbeResult> => {
+      if (isEmail) {
+        await rpc.platforms.set({ id: platformId, fields });
+        return { status: 'email-saved' };
+      }
+      const verdict = await rpc.platforms.validate({ id: platformId, fields });
+      // A definitively rejected token must never reach config — do not save.
+      if (verdict.status === 'rejected') {
+        return { status: 'rejected', error: verdict.error };
+      }
+      // ok or unreachable (W1.2 liveness) — persist and continue.
+      await rpc.platforms.set({ id: platformId, fields });
+      return verdict.status === 'ok'
+        ? { status: 'ok', label: verdict.label }
+        : { status: 'unreachable' };
+    },
   });
+
+  const result = runMut.data ?? null;
+  const missingFields = platform.fields.some((f) => !fields[f.name]?.trim());
+  const canContinue =
+    choice === 'skip' ||
+    result?.status === 'ok' ||
+    result?.status === 'unreachable' ||
+    result?.status === 'email-saved';
+
+  const resetResult = () => runMut.reset();
 
   const handleContinue = () => {
     if (choice === 'skip') {
@@ -85,6 +118,13 @@ export function MessagingStep({
       onNext({ messaging: { platform: platformId, fields } });
     }
   };
+
+  const disabledReason =
+    choice === 'setup' && !canContinue
+      ? result?.status === 'rejected'
+        ? 'Token rejected — re-enter to continue.'
+        : `Validate the ${platform.label} token to continue.`
+      : null;
 
   return (
     <section className="onboarding-step-content">
@@ -111,7 +151,7 @@ export function MessagingStep({
               checked={choice === opt.value}
               onChange={() => {
                 setChoice(opt.value);
-                setSaved(false);
+                resetResult();
               }}
             />
             <div className="onboarding-mode-option-body">
@@ -139,7 +179,7 @@ export function MessagingStep({
                   onChange={() => {
                     setPlatformId(p.id);
                     setFields({});
-                    setSaved(false);
+                    resetResult();
                   }}
                 />
                 <span className="onboarding-provider-label">{p.label}</span>
@@ -170,7 +210,7 @@ export function MessagingStep({
                   value={fields[f.name] ?? ''}
                   onChange={(e) => {
                     setFields((prev) => ({ ...prev, [f.name]: e.target.value }));
-                    setSaved(false);
+                    resetResult();
                   }}
                   placeholder={f.placeholder}
                   autoComplete="off"
@@ -181,7 +221,7 @@ export function MessagingStep({
                   value={fields[f.name] ?? ''}
                   onChange={(e) => {
                     setFields((prev) => ({ ...prev, [f.name]: e.target.value }));
-                    setSaved(false);
+                    resetResult();
                   }}
                   placeholder={f.placeholder}
                   autoComplete="off"
@@ -190,29 +230,64 @@ export function MessagingStep({
             </div>
           ))}
 
-          {saved ? <div className="onboarding-validate-success">✓ Credentials saved</div> : null}
-          {saveMut.isError ? (
-            <div className="onboarding-error" role="alert">
-              {saveMut.error instanceof Error ? saveMut.error.message : 'Save failed.'}
-            </div>
-          ) : null}
+          <div className="onboarding-messaging-result" aria-live="polite">
+            {result?.status === 'ok' ? (
+              <div className="onboarding-validate-success">
+                ✓ Connected
+                {result.label ? (
+                  <>
+                    {' · '}
+                    <code>{result.label}</code>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+            {result?.status === 'email-saved' ? (
+              <div className="onboarding-validate-success">✓ Saved</div>
+            ) : null}
+            {result?.status === 'unreachable' ? (
+              <div className="onboarding-warning" role="status">
+                Couldn't reach {platform.label} — saved unverified.
+              </div>
+            ) : null}
+            {result?.status === 'rejected' ? (
+              <div className="onboarding-error" role="alert">
+                Token rejected by {platform.label} — re-enter to continue.
+              </div>
+            ) : null}
+            {runMut.isError ? (
+              <div className="onboarding-error" role="alert">
+                {runMut.error instanceof Error ? runMut.error.message : 'Validation failed.'}
+              </div>
+            ) : null}
+          </div>
 
           <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button
-              onClick={() => void saveMut.mutateAsync()}
-              loading={saveMut.isPending}
-              disabled={platform.fields.some((f) => !fields[f.name]?.trim())}
+              onClick={() => void runMut.mutateAsync().catch(() => {})}
+              loading={runMut.isPending}
+              disabled={missingFields}
             >
-              Save credentials
+              {isEmail ? 'Save' : 'Validate & save'}
             </Button>
           </div>
         </>
       ) : null}
 
       <div className="onboarding-actions">
-        <Button type="primary" onClick={handleContinue} disabled={choice === 'setup' && !saved}>
+        <Button
+          type="primary"
+          onClick={handleContinue}
+          disabled={!canContinue}
+          aria-disabled={!canContinue}
+        >
           Continue
         </Button>
+        {disabledReason ? (
+          <span className="onboarding-disabled-reason" aria-live="polite">
+            {disabledReason}
+          </span>
+        ) : null}
       </div>
     </section>
   );

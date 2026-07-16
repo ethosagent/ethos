@@ -320,13 +320,28 @@ export interface TelegramAdapterConfig {
   webhookSecretToken?: string;
 }
 
+/**
+ * Resolve an outbound `Attachment` into a grammy `InputFile`. `url` is either
+ * a `data:<mime>;base64,<...>` URI (inline bytes) or a local filesystem path,
+ * per the W3.2 outbound-media convention.
+ */
+function toTelegramInputFile(att: Attachment): InputFile {
+  const m = att.url.match(/^data:[^;,]+;base64,(.*)$/s);
+  const name = att.filename ?? att.ref;
+  if (m?.[1] !== undefined) {
+    return new InputFile(Buffer.from(m[1], 'base64'), name);
+  }
+  // Local path — grammy streams it lazily.
+  return new InputFile(att.url, name);
+}
+
 export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   readonly id: string;
   readonly displayName = 'Telegram';
   readonly canSendTyping = true;
   readonly canEditMessage = true;
   readonly canReact = true;
-  readonly canSendFiles = false;
+  readonly canSendFiles = true;
   readonly maxMessageLength = 4096;
 
   get capabilities(): AdapterCapabilities {
@@ -337,6 +352,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
       replyToThreading: true,
       persistence: !!this.channelOverrides,
       channelModes: !!this.channelOverrides,
+      outboundFiles: true,
       webhookMode: !!this.config.useWebhook,
     };
   }
@@ -770,6 +786,11 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
   // ---------------------------------------------------------------------------
 
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
+    // W3.2 — outbound media. When the gateway attaches native media
+    // (OutboundMessage.attachments), deliver it as photos/documents.
+    if (message.attachments && message.attachments.length > 0) {
+      return this.sendWithAttachments(chatId, message);
+    }
     const useHtml = this.parseMode === 'html';
     const chunks = chunkText(message.text, this.maxMessageLength);
     const totalChunks = chunks.length;
@@ -840,6 +861,50 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
 
     this.rememberChunkIds(ids);
     return { ok: true, messageId: ids[0] };
+  }
+
+  /**
+   * Send one or more attachments natively (W3.2). The text, when short enough
+   * for a Telegram caption (≤1024 chars), rides on the first attachment;
+   * otherwise it is posted as a leading message so no content is lost. Images
+   * go via `sendPhoto`, everything else via `sendDocument`.
+   */
+  private async sendWithAttachments(
+    chatId: string,
+    message: OutboundMessage,
+  ): Promise<DeliveryResult> {
+    const atts = message.attachments ?? [];
+    const threadOpt = message.threadId ? { message_thread_id: Number(message.threadId) } : {};
+    const caption = message.text?.trim() ?? '';
+    const captionFitsFirst = caption.length > 0 && caption.length <= 1024;
+    const ids: string[] = [];
+
+    try {
+      if (caption.length > 0 && !captionFitsFirst) {
+        // Too long for a caption — post the text first as its own message.
+        const lead = await this.send(chatId, {
+          text: caption,
+          ...(message.threadId ? { threadId: message.threadId } : {}),
+        });
+        if (lead.ok && lead.messageId) ids.push(lead.messageId);
+      }
+
+      for (let i = 0; i < atts.length; i++) {
+        const att = atts[i];
+        if (!att) continue;
+        const input = toTelegramInputFile(att);
+        const cap = i === 0 && captionFitsFirst ? caption : undefined;
+        const opts = { ...threadOpt, ...(cap ? { caption: cap } : {}) };
+        const sent =
+          att.type === 'image'
+            ? await this.bot.api.sendPhoto(Number(chatId), input, opts)
+            : await this.bot.api.sendDocument(Number(chatId), input, opts);
+        ids.push(String(sent.message_id));
+      }
+      return { ok: true, messageId: ids[0] };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   async sendVoice(

@@ -5,7 +5,7 @@ kind: tutorial
 audience: user
 slug: first-deploy-telegram
 time: "30 min"
-updated: 2026-05-22
+updated: 2026-07-17
 ---
 
 Your [personality](../../getting-started/glossary.md#personality) runs locally in `ethos chat`. This tutorial puts it in front of real users on Telegram. The path is: create a bot, paste its token, foreground-test the gateway, then wrap it in a service manager that survives reboots.
@@ -49,6 +49,18 @@ You can regenerate the token any time with `/token` in BotFather; the old token 
 ## 2. Configure the [channel adapter](../../getting-started/glossary.md#channel-adapter)
 
 Ethos ships a Telegram adapter inside `@ethosagent/cli` — no extra install. The `ethos gateway setup` command writes the token into `~/.ethos/config.yaml` for you and validates the token against Telegram's `getMe` endpoint.
+
+:::tip Fast path — validate and launch in one pass
+If you are setting up from scratch, run `ethos setup` instead. Its messaging step validates the token the same way (`✓ Connected · @my_strategist_bot`), and when a channel validates the closing prompt offers three choices — **Start the Telegram bot now** / **Open chat instead** / **Done**. Pick the first and the wizard brings the bot up immediately:
+
+```
+Starting the Telegram bot…
+✓ @my_strategist_bot is live — message it: t.me/my_strategist_bot
+Ctrl+C stops the bot. Run 'ethos gateway start' to restart it.
+```
+
+That gets you a replying bot in one command. This tutorial continues past that first reply to wire the bot for production — a durable access list and a daemon that survives reboots.
+:::
 
 ```bash
 ethos gateway setup

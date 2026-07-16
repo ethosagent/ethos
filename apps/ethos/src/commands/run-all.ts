@@ -216,7 +216,10 @@ export async function runAll(opts: RunAllOptions = {}): Promise<void> {
     startChild(sc, entryPoint, logsDir, spawn, log, onChildReady, rotation);
   }
 
-  const healthPort = Number(process.env.ETHOS_RUNALL_HEALTH_PORT) || 3003;
+  // Default 3004 — 3003 collided with the gateway webhook server's default
+  // (ETHOS_WEBHOOK_PORT, gateway.ts). Health is the newer, less
+  // user-configured endpoint of the two, so it's the one that moved.
+  const healthPort = Number(process.env.ETHOS_RUNALL_HEALTH_PORT) || 3004;
   const healthHost = process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
   healthServer = createHealthServer(healthPort, healthHost, () => {
     const childStatuses = children.map((child) => ({

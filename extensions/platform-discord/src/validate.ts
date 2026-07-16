@@ -1,7 +1,15 @@
+/** Liveness classification for a failed probe (W1.2 semantics):
+ *  - `rejected`    — the credential was DEFINITIVELY refused (401/403 / bad token).
+ *  - `unreachable` — Discord could not be reached (timeout/DNS/5xx/429); the
+ *                    token is unverified, not necessarily invalid. */
+export type ValidationReason = 'rejected' | 'unreachable';
+
 export interface ValidationResult {
   ok: boolean;
   label?: string;
   error?: string;
+  /** Present when `ok === false` — distinguishes a bad token from an outage. */
+  reason?: ValidationReason;
 }
 
 export async function validateDiscordToken(token: string): Promise<ValidationResult> {
@@ -14,11 +22,11 @@ export async function validateDiscordToken(token: string): Promise<ValidationRes
       const data = (await res.json()) as { username?: string };
       return { ok: true, label: data.username };
     }
-    if (res.status === 401) {
-      return { ok: false, error: 'Invalid bot token' };
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, error: 'Invalid bot token', reason: 'rejected' };
     }
-    return { ok: false, error: 'Discord API error' };
+    return { ok: false, error: `Discord returned ${res.status}`, reason: 'unreachable' };
   } catch {
-    return { ok: false, error: 'Could not reach Discord (timeout)' };
+    return { ok: false, error: 'Could not reach Discord (timeout)', reason: 'unreachable' };
   }
 }

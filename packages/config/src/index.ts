@@ -504,6 +504,16 @@ export interface EthosConfig {
   displayDebugPanel?: boolean;
   displayDebugPanelModel?: string;
   /**
+   * Channel streaming draft edits (W3.1). Controls whether the gateway
+   * delivers a turn's reply as live `editMessage` updates that grow in place
+   * on edit-capable channels (Telegram, Slack):
+   *   `'off'`  — never stream; one final message per turn.
+   *   `'dms'`  — stream in direct messages only (default).
+   *   `'all'`  — stream in DMs and group chats.
+   * Config key: `display.streaming_edits`.
+   */
+  displayStreamingEdits?: 'off' | 'dms' | 'all';
+  /**
    * context_compression F1 — auxiliary model wiring. `auxiliary.compression`
    * configures the cheap summarizer that `semantic_summary` uses to condense
    * long histories. Config keys:
@@ -746,6 +756,8 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.displayResumeRecapTurns !== undefined)
     lines.push(`display.resume_recap_turns: ${config.displayResumeRecapTurns}`);
   if (config.displayBellOnComplete) lines.push('display.bell_on_complete: true');
+  if (config.displayStreamingEdits)
+    lines.push(`display.streaming_edits: ${config.displayStreamingEdits}`);
   if (config.displayDebugPanel) lines.push('display.debug_panel: true');
   if (config.displayDebugPanelModel)
     lines.push(`display.debug_panel_model: ${config.displayDebugPanelModel}`);
@@ -1524,6 +1536,7 @@ function parseConfigYaml(src: string): EthosConfig {
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
     displayDebugPanel: displayKv.debug_panel === 'true' ? true : undefined,
     displayDebugPanelModel: displayKv.debug_panel_model || undefined,
+    displayStreamingEdits: parseStreamingEdits(displayKv.streaming_edits),
     quick_commands,
     channelFilter,
     auxiliary:
@@ -1729,6 +1742,10 @@ function parseVerbosity(v: string | undefined): EthosConfig['displayVerbosity'] 
 
 function parseBusyMode(v: string | undefined): EthosConfig['displayBusyInputMode'] {
   return v === 'interrupt' || v === 'queue' || v === 'steer' ? v : undefined;
+}
+
+function parseStreamingEdits(v: string | undefined): EthosConfig['displayStreamingEdits'] {
+  return v === 'off' || v === 'dms' || v === 'all' ? v : undefined;
 }
 
 function parseToolPreviewLength(v: string | undefined): number | undefined {

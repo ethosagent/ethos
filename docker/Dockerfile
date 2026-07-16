@@ -12,7 +12,11 @@ RUN apt-get update \
 # install nests every transitive dep inside cli/node_modules/ instead of
 # hoisting to /usr/local/lib/node_modules/, which then breaks Node ESM
 # resolution at runtime ("Cannot find package @ethosagent/types").
-ARG CLI_VERSION=0.4.2
+# No working default — a stale pinned default drifted two minors behind the
+# released VERSION once already. CI passes the released version explicitly:
+#   docker build --build-arg CLI_VERSION=$(cat VERSION) docker/
+ARG CLI_VERSION
+RUN test -n "${CLI_VERSION}" || { echo "CLI_VERSION build-arg is required (e.g. --build-arg CLI_VERSION=\$(cat VERSION))" >&2; exit 1; }
 RUN npm install -g --omit=dev @ethosagent/cli@${CLI_VERSION}
 RUN npm install -g argon2@^0.43.0
 
@@ -34,7 +38,8 @@ COPY --from=install /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -sf /usr/local/lib/node_modules/@ethosagent/cli/dist/index.js /usr/local/bin/ethos
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY docker-healthcheck.sh /usr/local/bin/docker-healthcheck.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-healthcheck.sh
 
 USER ethos
 WORKDIR /home/ethos
@@ -42,8 +47,10 @@ WORKDIR /home/ethos
 VOLUME /home/ethos/.ethos
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -sf http://localhost:3000/healthz || exit 1
+# Mode-aware: probes :3000 for ui/all, :3002 for gateway — a hardcoded :3000
+# curl could never pass for ETHOS_MODE=gateway (nothing listens there).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD docker-healthcheck.sh
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["run-all"]

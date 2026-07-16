@@ -7,6 +7,7 @@ import {
   requestDeviceCode,
 } from '@ethosagent/llm-codex';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
+import { probeProvider } from '@ethosagent/wiring';
 import { PROVIDER_CATALOG } from '@ethosagent/wiring/provider-catalog';
 import { Box, Text, useInput } from 'ink';
 import { useEffect, useRef, useState } from 'react';
@@ -125,6 +126,21 @@ function DeviceAuthFlow() {
 
 // ---------------------------------------------------------------------------
 
+// W2.2 — a live 1-token probe needs *a* model; ModelStep runs later, so use a
+// per-provider default. A wrong model on a GOOD key classifies as `unreachable`
+// (non-blocking), while a BAD key still returns 401 → `rejected`.
+const PROBE_MODEL: Record<string, string> = {
+  anthropic: 'claude-opus-4-7',
+  openai: 'gpt-4o',
+  openrouter: 'openai/gpt-4o',
+};
+
+type AuthPhase = 'input' | 'validating' | 'validated';
+type AuthValidation =
+  | { kind: 'ok' }
+  | { kind: 'rejected'; error: string }
+  | { kind: 'unreachable'; error: string };
+
 export function AuthStep() {
   const { answers, dispatch } = useWizardContext();
   const [key, setKey] = useState(answers.apiKey ?? '');
@@ -146,13 +162,52 @@ export function AuthStep() {
   // Alias to avoid shadowing by the `key` parameter in useInput below
   const apiKeyValue = key;
 
+  // W2.2 — provider-key probe phase machine (normal api-key path only; azure,
+  // device-auth, and self-hosted keep their existing flow). The probe applies
+  // the W1.2 liveness split: 401/403 → re-enter; unreachable → save-with-warning.
+  const probeEligible = !isAzure && !isDeviceAuth && !isSelfHosted;
+  const [phase, setPhase] = useState<AuthPhase>('input');
+  const [validation, setValidation] = useState<AuthValidation | null>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: probe runs once per validating transition
+  useEffect(() => {
+    if (phase !== 'validating') return;
+    let cancelled = false;
+    void (async () => {
+      const outcome = await probeProvider({
+        provider: answers.provider ?? 'anthropic',
+        model: PROBE_MODEL[answers.provider ?? 'anthropic'] ?? 'gpt-4o',
+        apiKey: apiKeyValue,
+        baseUrl: answers.baseUrl ?? provider?.defaultBaseUrl,
+      });
+      if (cancelled) return;
+      if (outcome.ok) setValidation({ kind: 'ok' });
+      else if (outcome.reason === 'rejected')
+        setValidation({ kind: 'rejected', error: outcome.error });
+      else setValidation({ kind: 'unreachable', error: outcome.error });
+      setPhase('validated');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase]);
+
   useInput((input, key: import('ink').Key) => {
     // Device-auth input is handled by <DeviceAuthFlow> — skip here.
     if (isDeviceAuth) return;
+    // Ignore all input while a provider probe is in flight.
+    if (probeEligible && phase === 'validating') return;
     if (key.escape) {
       if (isAzure && azurePhase === 'apiKey') {
         // Step back to the endpoint field, not out of the step.
         setAzurePhase('endpoint');
+        setError('');
+        return;
+      }
+      // A probed result → Esc re-enters the key rather than leaving the step.
+      if (probeEligible && phase === 'validated') {
+        setPhase('input');
+        setValidation(null);
         setError('');
         return;
       }
@@ -185,6 +240,27 @@ export function AuthStep() {
         });
         return;
       }
+      if (probeEligible) {
+        if (phase === 'input') {
+          if (!apiKeyValue) {
+            setError('API key is required');
+            return;
+          }
+          setError('');
+          setPhase('validating');
+          return;
+        }
+        // phase === 'validated'
+        if (validation?.kind === 'rejected') {
+          // No save-anyway for a definitively rejected key — re-enter it.
+          setPhase('input');
+          setValidation(null);
+          return;
+        }
+        // ok or unreachable → proceed (unreachable saves the key unverified).
+        dispatch({ type: 'next', patch: { apiKey: apiKeyValue } });
+        return;
+      }
       if (!isSelfHosted && !apiKeyValue) {
         setError('API key is required');
         return;
@@ -199,6 +275,11 @@ export function AuthStep() {
       if (isAzure && azurePhase === 'endpoint') {
         setEndpoint((v) => v.slice(0, -1));
       } else {
+        // Editing the key invalidates any prior probe result.
+        if (probeEligible && phase === 'validated') {
+          setPhase('input');
+          setValidation(null);
+        }
         setKey((k) => k.slice(0, -1));
       }
       setError('');
@@ -208,6 +289,10 @@ export function AuthStep() {
       if (isAzure && azurePhase === 'endpoint') {
         setEndpoint((v) => v + input);
       } else {
+        if (probeEligible && phase === 'validated') {
+          setPhase('input');
+          setValidation(null);
+        }
         setKey((k) => k + input);
       }
       setError('');
@@ -265,6 +350,40 @@ export function AuthStep() {
             ? '  Enter confirm   Esc back to provider'
             : '  Enter confirm   Esc edit endpoint'}
         </Text>
+      </Box>
+    );
+  }
+
+  if (probeEligible && phase === 'validating') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text color={DESIGN.textPrimary} bold>
+          {`Validating ${provider?.label ?? answers.provider} key...`}
+        </Text>
+        <Text color={DESIGN.textTertiary}>{'  Checking the key with a 1-token request'}</Text>
+      </Box>
+    );
+  }
+
+  if (probeEligible && phase === 'validated' && validation) {
+    const label = provider?.label ?? answers.provider;
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text color={DESIGN.textPrimary} bold>{`${label} key:`}</Text>
+        {validation.kind === 'ok' && (
+          <>
+            <Text color={DESIGN.success}>{`  ${GLYPHS.toolOk} Key validated`}</Text>
+            <Text color={DESIGN.textTertiary}>{'  Enter to continue'}</Text>
+          </>
+        )}
+        {validation.kind === 'unreachable' && (
+          <Text color={DESIGN.warning}>
+            {`  Couldn't reach ${label} — saved unverified. Enter to continue`}
+          </Text>
+        )}
+        {validation.kind === 'rejected' && (
+          <Text color={DESIGN.error}>{`  ${GLYPHS.toolFail} Key rejected — Esc to re-enter`}</Text>
+        )}
       </Box>
     );
   }

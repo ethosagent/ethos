@@ -244,5 +244,6 @@ Both bots share a `recipientAllowlist` entry and both are members of the same gr
 - [Run multiple Telegram bots from one process](../using/how-to/run-multi-bot-telegram.md) — full walkthrough of the `telegram.bots` list shape and per-bot personality binding.
 - [Connect a Telegram bot to a team](../using/how-to/connect-telegram-to-team.md) — bind a bot to a team coordinator and auto-start the team supervisor.
 - [Discord adapter](discord.md), [Slack adapter](slack.md) — the other channel adapters share the same gateway boundary.
+- [Channel capability matrix](capability-matrix.md) — what every adapter supports for typing, streaming edits, media, and threads.
 - [Run Ethos as a daemon](../using/how-to/run-as-daemon.md) — `launchd`, `systemd`, `pm2`.
 - [Glossary](../getting-started/glossary.md) — [`gateway`](../getting-started/glossary.md#gateway), [`session`](../getting-started/glossary.md#session), [`audience boundary`](../getting-started/glossary.md#audience-boundary).

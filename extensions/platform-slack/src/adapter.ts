@@ -172,6 +172,17 @@ export interface SlackAdapterConfig {
   logger?: Logger;
 }
 
+/**
+ * Resolve an outbound `Attachment` into a `files.uploadV2` file source: a
+ * decoded `Buffer` for `data:` URIs, or the raw local path string otherwise
+ * (per the W3.2 outbound-media convention).
+ */
+function slackFileSource(att: Attachment): Buffer | string {
+  const m = att.url.match(/^data:[^;,]+;base64,(.*)$/s);
+  if (m?.[1] !== undefined) return Buffer.from(m[1], 'base64');
+  return att.url;
+}
+
 export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   readonly id: string;
   readonly displayName = 'Slack';
@@ -182,7 +193,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   }
   readonly canEditMessage = true;
   readonly canReact = true;
-  readonly canSendFiles = false;
+  readonly canSendFiles = true;
   readonly maxMessageLength = 3000;
 
   get capabilities(): AdapterCapabilities {
@@ -196,7 +207,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       homeView: true,
       joinGreeting: true,
       roleBasedApprovals: false,
-      outboundFiles: false,
+      outboundFiles: true,
       webhookMode: false,
     };
   }
@@ -600,6 +611,10 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   // ---------------------------------------------------------------------------
 
   async send(chatId: string, message: OutboundMessage): Promise<DeliveryResult> {
+    // W3.2 — outbound media. Native file upload via files.uploadV2.
+    if (message.attachments && message.attachments.length > 0) {
+      return this.sendWithAttachments(chatId, message);
+    }
     try {
       // `threadId` is the canonical thread routing field. We deliberately
       // do NOT fall back to `replyToId` — that field has Discord/Telegram
@@ -631,6 +646,42 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       // Clear the receipt reaction now that the reply has landed.
       this.clearReceiptReaction(chatId, threadTs);
       return { ok: true, messageId: ids[0] };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * Upload one or more attachments natively (W3.2) via `files.uploadV2`. The
+   * text rides along as `initial_comment` on the first file; subsequent files
+   * upload without a comment. `Attachment.url` is either a
+   * `data:<mime>;base64,<...>` URI (inline bytes → Buffer) or a local path.
+   */
+  private async sendWithAttachments(
+    chatId: string,
+    message: OutboundMessage,
+  ): Promise<DeliveryResult> {
+    const atts = message.attachments ?? [];
+    const threadTs = message.threadId;
+    const comment = message.text?.trim() ?? '';
+    try {
+      let firstTs: string | undefined;
+      for (let i = 0; i < atts.length; i++) {
+        const att = atts[i];
+        if (!att) continue;
+        const file = slackFileSource(att);
+        const res = (await this.client.files.uploadV2({
+          channel_id: chatId,
+          file,
+          filename: att.filename ?? att.ref,
+          ...(i === 0 && comment ? { initial_comment: comment } : {}),
+          ...(threadTs ? { thread_ts: threadTs } : {}),
+        })) as { files?: Array<{ ts?: string }> };
+        if (firstTs === undefined) firstTs = res.files?.[0]?.ts;
+      }
+      if (threadTs) await this.threadState?.recordPost(chatId, threadTs);
+      this.clearReceiptReaction(chatId, threadTs);
+      return { ok: true, ...(firstTs ? { messageId: firstTs } : {}) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
