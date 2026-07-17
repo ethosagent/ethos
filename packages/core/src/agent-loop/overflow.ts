@@ -14,8 +14,13 @@ import type {
 import { estimateMessagesTokens, estimateTokens } from '../context-engines/token-estimator';
 import type { LoopDeps } from './turn-context';
 
+// The bare phrases `too many tokens` / `too long for` are context-anchored: a
+// non-overflow error like `value too long for column X` (SQLite/Postgres/
+// validation) must NOT match. A false negative just surfaces the original error
+// (status quo); a false positive would silently drop history on a NON-overflow
+// failure, so we require a context/prompt/model reference near those phrases.
 const OVERFLOW_MESSAGE_RE =
-  /context[_ ]?length|context window|maximum context|prompt is too long|too many tokens|reduce the (?:length|number)|input is too long|exceeds? the maximum (?:context|number of tokens)|too long for/i;
+  /context[_ ]?length|context window|maximum context|prompt is too long|(?:context|prompt|input|request|conversation|window|the model)[^\n]{0,40}?too many tokens|reduce the (?:length|number)|input is too long|exceeds? the maximum (?:context|number of tokens)|too long for (?:the |this |your )?(?:model|context|conversation|prompt|input|window|request)/i;
 
 const OVERFLOW_CODES = new Set([
   'context_length_exceeded',

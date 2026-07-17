@@ -484,6 +484,9 @@ export class AgentLoop {
     };
   }
 
+  /** Drive one user turn. Callers MUST drain to completion (not stop at `done`):
+   *  turn-end maintenance — silent memory flush + auto-compaction — runs AFTER
+   *  `done` while the lane is held, so breaking on `done` skips it. */
   async *run(text: string, opts: RunOptions = {}): AsyncGenerator<AgentEvent> {
     // Stage 1: Turn setup (session, personality, tier, tools, hooks, credential gate)
     const setupResult = yield* setupTurn(this.deps, text, opts);
@@ -805,6 +808,7 @@ export class AgentLoop {
       userScopeId,
       compactedThisTurn,
       abortSignal,
+      systemPrompt: systemPrompt ?? '',
       ...(opts.maxCompletionTokens !== undefined
         ? { maxCompletionTokens: opts.maxCompletionTokens }
         : {}),

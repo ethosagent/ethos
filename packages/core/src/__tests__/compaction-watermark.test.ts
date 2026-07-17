@@ -83,6 +83,20 @@ describe('watermark helpers', () => {
     expect(keptFromMessageId).toBe('2');
   });
 
+  it('walks back over MULTIPLE consecutive tool_result rows (depth > 1)', () => {
+    const history = [
+      row({ id: '0', role: 'user' }),
+      row({ id: '1', role: 'assistant' }), // tool_use owner
+      row({ id: '2', role: 'tool_result' }),
+      row({ id: '3', role: 'tool_result' }),
+    ];
+    // tailKeep 1 → index 3 (tool_result) → walk back past index 2 (tool_result)
+    // to the owning assistant at index 1. Exercises the multi-step walk-back.
+    const { index, keptFromMessageId } = computeKeptTailBoundary(history, 1);
+    expect(index).toBe(1);
+    expect(keptFromMessageId).toBe('1');
+  });
+
   it('reconstructFromWatermark replaces the prefix with the summary and keeps the tail', () => {
     const history = [
       row({ id: '0', role: 'user', content: 'OLD-0' }),

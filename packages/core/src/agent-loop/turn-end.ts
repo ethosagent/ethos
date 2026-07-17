@@ -70,7 +70,18 @@ export interface TurnEndCtx {
   filterOpts: ToolFilterOpts;
   /** A compaction already fired during this turn's assembly. */
   compactedThisTurn: boolean;
+  /**
+   * The run's abort signal (from `RunOptions.abortSignal`). The SAME signal that
+   * aborts the main turn also aborts an in-flight memory flush — in the CLI it is
+   * `state.abort.signal`, tripped on SIGINT and on interrupt-mode busy input (see
+   * apps/ethos/src/commands/chat.ts); `runMemoryFlush` folds it into an
+   * `AbortSignal.any` with the internal timebox deadline.
+   */
   abortSignal: AbortSignal;
+  /** The assembled system prompt for the just-finished turn — fed to the pressure
+   *  gate so first-turn/legacy paths (no measured static tokens) don't understate
+   *  pressure by treating the system+tools overhead as zero. */
+  systemPrompt: string;
   /** Output reserve for the pressure gate (from RunOptions.maxCompletionTokens). */
   maxCompletionTokens?: number;
 }
@@ -80,6 +91,7 @@ export interface TurnEndExtras {
   userScopeId: string | undefined;
   compactedThisTurn: boolean;
   abortSignal: AbortSignal;
+  systemPrompt: string;
   maxCompletionTokens?: number;
 }
 
@@ -97,6 +109,7 @@ export function buildTurnEndCtx(setup: TurnSetup, extras: TurnEndExtras): TurnEn
     userScopeId: extras.userScopeId,
     compactedThisTurn: extras.compactedThisTurn,
     abortSignal: extras.abortSignal,
+    systemPrompt: extras.systemPrompt,
     ...(extras.maxCompletionTokens !== undefined
       ? { maxCompletionTokens: extras.maxCompletionTokens }
       : {}),
@@ -212,7 +225,11 @@ export async function* maybeConsolidateAtTurnEnd(
       ...(staticTokens !== undefined ? { staticTokens } : {}),
     },
     llmMessages,
-    '',
+    // Feed the real assembled system prompt (matching the pre-LLM `maybeCompact`
+    // path) so first-turn / legacy-provider turns — which carry no measured
+    // static-token count — still account for the system+tools overhead instead
+    // of understating pressure with an empty string.
+    ctx.systemPrompt,
   );
 
   const compactGate = gateThreshold(
@@ -310,9 +327,20 @@ export async function runMemoryFlush(
     return { flushed: false, deltaChars: 0 };
   }
 
+  // INTERSECT the flush toolset with the personality's own toolset — never UNION.
+  // A personality that intentionally excludes memory tools (read-only, data-
+  // classification, team-memory cross-visibility) must not have them handed back
+  // through the flush. An unrestricted toolset (undefined) keeps the full set; an
+  // empty intersection means the personality opted out → skip the flush entirely.
+  const personalityToolset = ctx.personality.toolset;
+  const flushToolset = personalityToolset
+    ? FLUSH_TOOLSET.filter((name) => personalityToolset.includes(name))
+    : FLUSH_TOOLSET;
+  if (flushToolset.length === 0) return { flushed: false, deltaChars: 0 };
+
   const memWrite = deps.tools.get('memory_write');
   const memRead = deps.tools.get('memory_read');
-  const toolDefs = deps.tools.toDefinitions(FLUSH_TOOLSET, ctx.filterOpts);
+  const toolDefs = deps.tools.toDefinitions(flushToolset, ctx.filterOpts);
   if (!memWrite || toolDefs.length === 0) return { flushed: false, deltaChars: 0 };
 
   const timeboxMs = mc.timeboxMs ?? DEFAULT_FLUSH_TIMEBOX_MS;
@@ -437,12 +465,18 @@ export async function runMemoryFlush(
     return { flushed: false, deltaChars, error: err instanceof Error ? err.message : String(err) };
   } finally {
     clearTimeout(timer);
-    // Advance the trivial-delta guard even on a no-op flush so we don't re-run
-    // every subsequent turn while pressure sits between the flush and compact
-    // thresholds.
-    await saveFlushState(deps.storage, deps.dataDir, ctx.sessionId, {
-      lastFlushTurn: ctx.turnNumber,
-      lastFlushMessageCount: messageCount,
-    });
+    // Advance the trivial-delta guard on a NATURAL completion (a no-op flush that
+    // wrote nothing still counts, so we don't re-run every subsequent turn while
+    // pressure sits between the flush and compact thresholds). But when the flush
+    // was ABORTED before doing any work (inbound user message or timebox) we do
+    // NOT advance — otherwise the next turn's trivial-delta guard would skip a
+    // legitimate flush window for ~minDelta more messages, starving consolidation
+    // under frequent inbound aborts.
+    if (deltaChars > 0 || !signal.aborted) {
+      await saveFlushState(deps.storage, deps.dataDir, ctx.sessionId, {
+        lastFlushTurn: ctx.turnNumber,
+        lastFlushMessageCount: messageCount,
+      });
+    }
   }
 }
