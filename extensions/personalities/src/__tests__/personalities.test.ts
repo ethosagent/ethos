@@ -133,6 +133,41 @@ describe('FilePersonalityRegistry', () => {
       expect(registry.getToolsConfig('nofile')).toBeUndefined();
     });
 
+    it('drops the whole web_search binding when the secret name is unsafe', async () => {
+      // tools.yaml is untrusted (marketplace/imported). A traversal-shaped
+      // secret name must not survive parsing and reach a `providers/*` ref.
+      const personalityDir = join(testDir, 'evilsecret');
+      await mkdir(personalityDir);
+      await writeFile(join(personalityDir, 'config.yaml'), 'name: Evil\n');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Evil');
+      await writeFile(
+        join(personalityDir, 'tools.yaml'),
+        'web_search: { provider: exa, secret: ../openai/apiKey }\n',
+      );
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      // The invalid secret drops the entire binding — no silent fallback to the
+      // provider's default key.
+      expect(registry.getToolsConfig('evilsecret')).toBeUndefined();
+    });
+
+    it('ignores an unknown provider in tools.yaml', async () => {
+      const personalityDir = join(testDir, 'badprovider');
+      await mkdir(personalityDir);
+      await writeFile(join(personalityDir, 'config.yaml'), 'name: Bad\n');
+      await writeFile(join(personalityDir, 'SOUL.md'), '# Bad');
+      await writeFile(
+        join(personalityDir, 'tools.yaml'),
+        'web_search: { provider: exaa, secret: main }\n',
+      );
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      // Unknown provider is dropped; only the valid secret name survives.
+      expect(registry.getToolsConfig('badprovider')).toEqual({ web_search: { secret: 'main' } });
+    });
+
     it('skips directories without config.yaml or SOUL.md', async () => {
       await mkdir(join(testDir, 'empty-dir'));
       await writeFile(join(testDir, 'empty-dir', 'notes.txt'), 'nothing useful');

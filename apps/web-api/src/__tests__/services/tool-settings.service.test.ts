@@ -1,12 +1,13 @@
 import { DefaultToolRegistry } from '@ethosagent/core';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SkillsLibrary } from '@ethosagent/skills';
-import { InMemoryStorage } from '@ethosagent/storage-fs';
-import type { Tool } from '@ethosagent/types';
+import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
+import { isEthosError, type Tool } from '@ethosagent/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ConfigRepository } from '../../repositories/config.repository';
+import { NamedSecretsService } from '../../services/named-secrets.service';
 import { PersonalitiesService } from '../../services/personalities.service';
-import { ToolSettingsService } from '../../services/tool-settings.service';
+import { ToolSettingsService, type ToolSettingsValues } from '../../services/tool-settings.service';
 
 const DATA = '/data';
 
@@ -119,14 +120,45 @@ describe('ToolSettingsService', () => {
   });
 
   it('only the secret NAME reaches a personality dir — never the raw value', async () => {
-    // A raw key lives in the vault under the bound name; the personality only
-    // ever stores the NAME reference.
+    // Seed a REAL raw value into the vault under the bound name, then bind by
+    // name. The raw value genuinely exists in the system, so asserting its
+    // absence from tools.yaml is a meaningful boundary check (not a no-op).
+    const RAW_VALUE = 'sk-exa-RAW-SECRET-VALUE-4f2a9c';
+    const secrets = new InMemorySecretsResolver();
+    const vault = new NamedSecretsService({ secrets });
+    await vault.create({ provider: 'exa', name: 'mine-key', value: RAW_VALUE });
+    expect(await secrets.get('providers/exa/mine-key')).toBe(RAW_VALUE);
+
     await service.setForPersonality('mine', {
       web_search: { provider: 'exa', secret: 'mine-key' },
     });
     const toolsYaml = (await storage.read('/data/personalities/mine/tools.yaml')) ?? '';
-    // The binding is a reference (the name), never a resolved value.
+    // The binding is a reference (the name), never the resolved value.
     expect(toolsYaml).toContain('mine-key');
+    expect(toolsYaml).not.toContain(RAW_VALUE);
     expect(toolsYaml).not.toContain('RAW-SECRET-VALUE');
+  });
+
+  it('rejects a reserved / unsafe personality id used as a config slot key', async () => {
+    // A built-in id flows straight into `toolSettings[<id>]` as a computed key.
+    // `__proto__` and friends must never become serialized own-keys (a
+    // prototype-pollution reservoir). Exercise the internal global-slot writer,
+    // which no real built-in id could ever carry these shapes to.
+    const writer = service as unknown as {
+      writeGlobalSlot(p: string, v: ToolSettingsValues): Promise<void>;
+    };
+    for (const pid of ['__proto__', 'constructor', 'prototype', 'bad/id', 'bad key']) {
+      let threw = false;
+      try {
+        await writer.writeGlobalSlot(pid, { web_search: { provider: 'exa', secret: 'k' } });
+      } catch (err) {
+        threw = true;
+        expect(isEthosError(err)).toBe(true);
+      }
+      expect(threw).toBe(true);
+    }
+    // Nothing unsafe reached the written config.
+    const raw = (await storage.read('/data/config.yaml')) ?? '';
+    expect(raw).not.toContain('__proto__');
   });
 });

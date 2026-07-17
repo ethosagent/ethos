@@ -11,6 +11,10 @@ export interface SearchHit {
   publishedDate?: string;
 }
 
+/** Actionable "no key" message naming the provider and where to set one. */
+const NO_KEY_MESSAGE = (provider: 'exa' | 'tavily' | 'brave'): string =>
+  `No ${provider} key configured — add one in Settings > Named Secrets (or set the ${provider.toUpperCase()}_API_KEY env var).`;
+
 export interface SearchBackend {
   id: 'exa' | 'tavily' | 'brave';
   host: string;
@@ -41,7 +45,7 @@ export const exaBackend: SearchBackend = {
   isAvailable: () => Boolean(process.env.EXA_API_KEY),
   async search(query, numResults, ctx, secretRef): Promise<SearchHit[]> {
     const apiKey = await ctx.secretsResolver?.get(secretRef);
-    if (!apiKey) throw new Error('missing api key');
+    if (!apiKey) throw new Error(NO_KEY_MESSAGE('exa'));
     const net = ctx.scopedFetch;
     if (!net) throw new Error('scopedFetch not configured');
 
@@ -75,7 +79,7 @@ export const tavilyBackend: SearchBackend = {
   isAvailable: () => Boolean(process.env.TAVILY_API_KEY),
   async search(query, numResults, ctx, secretRef): Promise<SearchHit[]> {
     const apiKey = await ctx.secretsResolver?.get(secretRef);
-    if (!apiKey) throw new Error('missing api key');
+    if (!apiKey) throw new Error(NO_KEY_MESSAGE('tavily'));
     const net = ctx.scopedFetch;
     if (!net) throw new Error('scopedFetch not configured');
 
@@ -120,7 +124,7 @@ export const braveBackend: SearchBackend = {
   isAvailable: () => Boolean(process.env.BRAVE_API_KEY),
   async search(query, numResults, ctx, secretRef): Promise<SearchHit[]> {
     const apiKey = await ctx.secretsResolver?.get(secretRef);
-    if (!apiKey) throw new Error('missing api key');
+    if (!apiKey) throw new Error(NO_KEY_MESSAGE('brave'));
     const net = ctx.scopedFetch;
     if (!net) throw new Error('scopedFetch not configured');
 

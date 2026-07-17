@@ -1,4 +1,9 @@
-import type { ToolRegistry, ToolSettingsSchema } from '@ethosagent/types';
+import {
+  EthosError,
+  isValidSecretName,
+  type ToolRegistry,
+  type ToolSettingsSchema,
+} from '@ethosagent/types';
 import type { ConfigRepository } from '../repositories/config.repository';
 import type { PersonalitiesService } from './personalities.service';
 
@@ -89,8 +94,27 @@ export class ToolSettingsService {
   }
 
   private async writeGlobalSlot(pid: string, values: ToolSettingsValues): Promise<void> {
+    assertSafeSlotKey(pid);
     await this.opts.config.update({
       toolSettings: { [pid]: { web_search: toWebSearch(values) } },
+    });
+  }
+}
+
+/** Object keys reserved by the JS object model — never let one become a
+ *  computed own-key, or it seeds a prototype-pollution reservoir on the
+ *  serialized config. */
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** Guard the personality/slot id used as a computed object key on `toolSettings`.
+ *  Rejects anything outside the alnum/hyphen/underscore shape and the reserved
+ *  object-model names. `_default` (the global fallback slot) passes. */
+function assertSafeSlotKey(pid: string): void {
+  if (!isValidSecretName(pid) || RESERVED_KEYS.has(pid)) {
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: `Invalid personality id "${pid}".`,
+      action: 'Use letters, digits, hyphens, and underscores only.',
     });
   }
 }
@@ -117,7 +141,10 @@ function toWebSearch(values: ToolSettingsValues): {
   if (provider && (WEB_SEARCH_PROVIDERS as readonly string[]).includes(provider)) {
     out.provider = provider as WebSearchProvider;
   }
+  // The secret is a NAME reference persisted into a `providers/<p>/<name>` ref;
+  // validate it with the same shared rule the vault enforces so a malformed
+  // name can never reach the personality's tools.yaml or the config slot.
   const secret = fields.secret?.trim();
-  if (secret) out.secret = secret;
+  if (secret && isValidSecretName(secret)) out.secret = secret;
   return out;
 }

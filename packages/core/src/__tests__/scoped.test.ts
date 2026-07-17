@@ -296,9 +296,38 @@ describe('ScopedSecretsImpl', () => {
     const backend = vi.fn();
     const secrets = new ScopedSecretsImpl(new Set(['providers/exa/*']), backend);
     // `providers/exaEVIL/...` shares the `providers/exa` text but is a
-    // different namespace — the trailing slash in the grant keeps it out.
+    // different namespace — the segment-wise compare keeps it out.
     await expect(secrets.get('providers/exaEVIL/key')).rejects.toThrow('SECRET_NOT_DECLARED');
     expect(backend).not.toHaveBeenCalled();
+  });
+
+  it('prefix glob rejects path-traversal refs that raw startsWith would pass', async () => {
+    const backend = vi.fn();
+    const secrets = new ScopedSecretsImpl(
+      new Set(['providers/exa/*', 'providers/tavily/*', 'providers/brave/*']),
+      backend,
+    );
+    // Every one of these literally starts with `providers/exa/` but must be
+    // denied — a `..`/`.`/empty segment can never be a real named secret and is
+    // exactly how a traversal escapes the grant into another vault namespace.
+    const evil = [
+      'providers/exa/../openai/apiKey',
+      'providers/exa/./foo',
+      'providers/exa//foo',
+      'providers/exa/../../channels/telegram/default/botToken',
+    ];
+    for (const ref of evil) {
+      await expect(secrets.get(ref)).rejects.toThrow('SECRET_NOT_DECLARED');
+    }
+    expect(backend).not.toHaveBeenCalled();
+  });
+
+  it('denied error does not leak the requested ref to the caller', async () => {
+    const backend = vi.fn();
+    const secrets = new ScopedSecretsImpl(new Set(['providers/exa/*']), backend);
+    await expect(
+      secrets.get('providers/exa/../../channels/telegram/default/botToken'),
+    ).rejects.toThrow(/^SECRET_NOT_DECLARED: requested secret is not permitted for this tool$/);
   });
 });
 

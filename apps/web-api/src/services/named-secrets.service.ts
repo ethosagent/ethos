@@ -1,4 +1,4 @@
-import { EthosError, type SecretsResolver } from '@ethosagent/types';
+import { EthosError, isValidSecretName, type SecretsResolver } from '@ethosagent/types';
 
 // Global named-secrets vault manager (Phase 2, web-search-provider-selection).
 //
@@ -16,7 +16,9 @@ import { EthosError, type SecretsResolver } from '@ethosagent/types';
 const WEB_SEARCH_PROVIDERS = ['exa', 'tavily', 'brave'] as const;
 export type NamedSecretProvider = (typeof WEB_SEARCH_PROVIDERS)[number];
 
-const NAME_RE = /^[a-zA-Z0-9_-]+$/;
+/** Upper bound on a stored secret value. Real provider API keys are well under
+ *  1 KiB; the cap is a DoS guard so a client cannot fill the vault dir. */
+const MAX_VALUE_BYTES = 8 * 1024;
 
 export interface NamedSecretView {
   provider: NamedSecretProvider;
@@ -65,6 +67,9 @@ export class NamedSecretsService {
     if (input.value.length === 0) {
       throw invalid('Secret value must not be empty.', 'Enter the API key value.');
     }
+    if (Buffer.byteLength(input.value, 'utf8') > MAX_VALUE_BYTES) {
+      throw invalid('Secret value is too large.', 'API keys are short — paste only the key.');
+    }
     await this.opts.secrets.set(`providers/${provider}/${name}`, input.value);
     return { ok: true, preview: redactSecret(input.value) };
   }
@@ -91,7 +96,14 @@ export class NamedSecretsService {
     try {
       return await probeProvider(provider, value);
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      // This path handled the raw API key in fetch headers — never echo the
+      // caught error verbatim (it can carry the URL, headers, or key). Collapse
+      // to a fixed category the client can render safely.
+      const aborted = err instanceof Error && err.name === 'AbortError';
+      return {
+        ok: false,
+        error: aborted ? 'Key check timed out.' : 'Key check could not be completed.',
+      };
     }
   }
 
@@ -106,7 +118,7 @@ export class NamedSecretsService {
   }
 
   private assertName(name: string): string {
-    if (!NAME_RE.test(name)) {
+    if (!isValidSecretName(name)) {
       throw invalid(
         `Invalid secret name "${name}".`,
         'Use letters, digits, hyphens, and underscores only.',
@@ -117,16 +129,15 @@ export class NamedSecretsService {
 }
 
 /**
- * Mask a secret value for display. Same shape as the config redactor:
+ * Mask a secret value for display:
  *   • `sk-…abc1` — first 3 + last 4 (10+ chars)
- *   • `…abc1`    — last 4 (6-9 chars)
- *   • `<set>`    — shorter (present but too short to preview safely)
+ *   • `<set>`    — present but shorter than 10 (too short to preview without
+ *                 over-exposing a real key — e.g. a 6-char key showing 4 chars)
  *   • `<unset>`  — absent/empty
  */
 export function redactSecret(value: string | null | undefined): string {
   if (!value) return '<unset>';
   if (value.length >= 10) return `${value.slice(0, 3)}…${value.slice(-4)}`;
-  if (value.length >= 6) return `…${value.slice(-4)}`;
   return '<set>';
 }
 

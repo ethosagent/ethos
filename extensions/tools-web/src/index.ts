@@ -117,8 +117,15 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
         },
       ],
     },
+    // web_search is always registered. A key can arrive from an env var OR from
+    // the named-secrets vault via a personality/global binding — and the vault
+    // is not reachable at filter time (isAvailable has no ToolContext/resolver).
+    // Gating solely on env vars would filter the tool out for a user who
+    // onboarded purely through Settings > Named Secrets. Instead the tool stays
+    // available and `execute` surfaces a clear "no key configured" error when no
+    // backend can resolve one.
     isAvailable() {
-      return ALL_BACKENDS.some((b) => b.isAvailable());
+      return true;
     },
     schema: {
       type: 'object',
@@ -151,7 +158,7 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
         return {
           ok: false,
           error:
-            'No web search backend available. Set EXA_API_KEY, TAVILY_API_KEY, or BRAVE_API_KEY.',
+            'No web search provider is configured. Add a key in Settings > Named Secrets and bind it to a provider in the personality tool settings, or set EXA_API_KEY, TAVILY_API_KEY, or BRAVE_API_KEY.',
           code: 'not_available' as const,
         };
       }

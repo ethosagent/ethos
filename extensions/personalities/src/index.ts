@@ -3,6 +3,7 @@ import {
   assertSafeId,
   type DreamingConfig,
   EthosError,
+  isValidSecretName,
   type LearningLogEntry,
   type LivingSoul,
   type ModelTierConfig,
@@ -302,6 +303,14 @@ export function parseToolsYaml(src: string): PersonalityToolsConfig {
       }
       i = j - 1;
     }
+    // `tools.yaml` is personality-owned and therefore UNTRUSTED input
+    // (marketplace / imported personalities). A `secret` value flows into a
+    // `providers/<provider>/<name>` ref that must stay inside web_search's
+    // capability prefix grant — so it is validated with the same shared rule
+    // the vault enforces. An out-of-shape secret drops the WHOLE binding: a
+    // provider without its intended key must not silently fall back to a
+    // different (default) key.
+    if (entry.secret && !isValidSecretName(entry.secret)) continue;
     const ws: NonNullable<PersonalityToolsConfig['web_search']> = {};
     if (entry.provider === 'exa' || entry.provider === 'tavily' || entry.provider === 'brave') {
       ws.provider = entry.provider;

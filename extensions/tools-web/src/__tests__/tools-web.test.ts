@@ -79,19 +79,23 @@ describe('createWebTools', () => {
 });
 
 describe('web_search', () => {
-  it('isAvailable returns false when EXA_API_KEY is not set', () => {
-    const saved = process.env.EXA_API_KEY;
+  it('isAvailable stays true with no provider env vars — a vault-only user still gets the tool', () => {
+    // A key can arrive from the named-secrets vault via a personality binding,
+    // which is not reachable at filter time; env-only gating would wrongly
+    // filter web_search out of toDefinitions for a vault-only onboarding.
+    const saved = {
+      EXA_API_KEY: process.env.EXA_API_KEY,
+      TAVILY_API_KEY: process.env.TAVILY_API_KEY,
+      BRAVE_API_KEY: process.env.BRAVE_API_KEY,
+    };
     delete process.env.EXA_API_KEY;
-    expect(webSearchTool.isAvailable?.()).toBe(false);
-    if (saved) process.env.EXA_API_KEY = saved;
-  });
-
-  it('isAvailable returns true when EXA_API_KEY is set', () => {
-    const saved = process.env.EXA_API_KEY;
-    process.env.EXA_API_KEY = 'test-key';
+    delete process.env.TAVILY_API_KEY;
+    delete process.env.BRAVE_API_KEY;
     expect(webSearchTool.isAvailable?.()).toBe(true);
-    if (saved) process.env.EXA_API_KEY = saved;
-    else delete process.env.EXA_API_KEY;
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   });
 
   it('returns not_available when capability backends are missing', async () => {
@@ -531,13 +535,20 @@ describe('web_search — provider + named-secret resolution', () => {
 // ---------------------------------------------------------------------------
 
 describe('web_search — Exa availability env fix', () => {
-  it('ETHOS_EXA_API_KEY alone does NOT make exa available', () => {
+  it('ETHOS_EXA_API_KEY (stale name) does not auto-select exa', async () => {
+    // The tool itself is now always registered (a key can come from the vault),
+    // so availability no longer keys off env. But the env-based AUTO-SELECT path
+    // must still honor only the canonical `EXA_API_KEY` — the stale
+    // `ETHOS_EXA_API_KEY` name must not resolve a backend. With no personality
+    // binding and only the stale name set, execute finds no backend.
     const saved = saveSearchEnv();
     const savedLegacy = process.env.ETHOS_EXA_API_KEY;
     for (const k of SEARCH_ENV_KEYS) delete process.env[k];
     process.env.ETHOS_EXA_API_KEY = 'legacy';
     try {
-      expect(webSearchTool.isAvailable?.()).toBe(false);
+      const result = await createWebTools({})[0].execute({ query: 'q' }, ctx);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('not_available');
     } finally {
       restoreSearchEnv(saved);
       if (savedLegacy === undefined) delete process.env.ETHOS_EXA_API_KEY;

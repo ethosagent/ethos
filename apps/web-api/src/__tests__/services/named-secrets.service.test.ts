@@ -1,12 +1,14 @@
 import { InMemorySecretsResolver } from '@ethosagent/storage-fs';
 import { isEthosError } from '@ethosagent/types';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NamedSecretsService, redactSecret } from '../../services/named-secrets.service';
 
 describe('redactSecret', () => {
   it('masks the value and never returns it verbatim', () => {
     expect(redactSecret('sk-exa-1234567890abcdef')).toBe('sk-…cdef');
-    expect(redactSecret('123456')).toBe('…3456');
+    // Below the 10-char boundary we do NOT reveal a suffix — a short key would
+    // over-expose (a 6-char key showing 4 chars leaks two-thirds of it).
+    expect(redactSecret('123456')).toBe('<set>');
     expect(redactSecret('abc')).toBe('<set>');
     expect(redactSecret('')).toBe('<unset>');
     expect(redactSecret(null)).toBe('<unset>');
@@ -72,5 +74,86 @@ describe('NamedSecretsService', () => {
     } catch (err) {
       expect(isEthosError(err)).toBe(true);
     }
+  });
+
+  it('rejects an over-cap value (DoS guard)', async () => {
+    const huge = 'x'.repeat(8 * 1024 + 1);
+    try {
+      await service.create({ provider: 'exa', name: 'big', value: huge });
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(isEthosError(err)).toBe(true);
+    }
+    // Nothing was written to the vault.
+    expect(await secrets.get('providers/exa/big')).toBeNull();
+  });
+
+  describe('testKey', () => {
+    const originalFetch = globalThis.fetch;
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    it('returns a shape with no value/key/preview field', async () => {
+      await service.create({ provider: 'exa', name: 'main', value: 'sk-exa-secret-value' });
+      globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch;
+      const res = await service.testKey({ provider: 'exa', name: 'main' });
+      expect(res.ok).toBe(true);
+      expect(Object.keys(res).sort()).toEqual(['ok']);
+      // Belt-and-braces: the raw value never appears anywhere on the wire.
+      expect(JSON.stringify(res)).not.toContain('secret-value');
+    });
+
+    it('early-returns when the secret is missing — no HTTP call', async () => {
+      let called = false;
+      globalThis.fetch = (async () => {
+        called = true;
+        return new Response('{}', { status: 200 });
+      }) as typeof fetch;
+      const res = await service.testKey({ provider: 'exa', name: 'absent' });
+      expect(res).toEqual({ ok: false, error: 'Secret not found.' });
+      expect(called).toBe(false);
+    });
+
+    it('rejects invalid input with an EthosError (code INVALID_INPUT)', async () => {
+      try {
+        await service.testKey({ provider: 'nope', name: 'main' });
+        throw new Error('expected throw');
+      } catch (err) {
+        expect(isEthosError(err)).toBe(true);
+        if (isEthosError(err)) expect(err.code).toBe('INVALID_INPUT');
+      }
+    });
+
+    it('maps a 401 to an unauthorized result', async () => {
+      await service.create({ provider: 'brave', name: 'k', value: 'brave-xxxxxxxx' });
+      globalThis.fetch = (async () => new Response('', { status: 401 })) as typeof fetch;
+      const res = await service.testKey({ provider: 'brave', name: 'k' });
+      expect(res).toEqual({ ok: false, error: 'Key rejected (unauthorized).' });
+    });
+
+    it('sanitizes a thrown fetch error — never echoes the raw message', async () => {
+      await service.create({ provider: 'tavily', name: 'k', value: 'tvly-abcdef123456' });
+      globalThis.fetch = (async () => {
+        throw new Error('connect ECONNREFUSED 10.0.0.1:443 x-api-key: tvly-abcdef123456');
+      }) as typeof fetch;
+      const res = await service.testKey({ provider: 'tavily', name: 'k' });
+      expect(res.ok).toBe(false);
+      expect(res.error).toBe('Key check could not be completed.');
+      // The raw error text (which carried the key) must not leak back out.
+      expect(JSON.stringify(res)).not.toContain('tvly-abcdef123456');
+      expect(JSON.stringify(res)).not.toContain('ECONNREFUSED');
+    });
+
+    it('reports a timeout distinctly (AbortError)', async () => {
+      await service.create({ provider: 'exa', name: 'k', value: 'sk-exa-1234567890' });
+      globalThis.fetch = (async () => {
+        const e = new Error('aborted');
+        e.name = 'AbortError';
+        throw e;
+      }) as typeof fetch;
+      const res = await service.testKey({ provider: 'exa', name: 'k' });
+      expect(res).toEqual({ ok: false, error: 'Key check timed out.' });
+    });
   });
 });

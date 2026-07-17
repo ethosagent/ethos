@@ -2066,7 +2066,9 @@ const namedSecrets = {
       z.object({
         provider: NamedSecretProviderSchema,
         name: NamedSecretNameSchema,
-        value: z.string().min(1),
+        // 8 KiB cap — real API keys are well under 1 KiB; the bound stops a
+        // client from filling the vault dir with a giant value.
+        value: z.string().min(1).max(8192),
       }),
     )
     .output(z.object({ ok: z.literal(true), preview: z.string() })),
