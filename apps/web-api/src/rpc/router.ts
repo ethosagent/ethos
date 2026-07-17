@@ -45,25 +45,8 @@ import { voiceRouter } from './voice';
 
 // Top-level oRPC router. Each namespace lives in its own file (one
 // `os.<namespace>.<method>.handler(...)` per procedure); this file only
-// composes them.
-//
-// Namespaces in place:
-//   • sessions      — list / get / fork / delete
-//   • chat          — send / abort (SSE handles the streamed response)
-//   • personalities — list / get (read-only — full lifecycle in v1)
-//   • config        — get with redacted apiKey / update
-//   • onboarding    — state / validateProvider / complete
-//   • tools         — approve / deny (resolves pending approvals; the
-//                     `before_tool_call` hook + SSE handle the request side)
-//   • cron          — proactive pillar (v0.5)
-//   • skills        — library CRUD over ~/.ethos/skills/*.md (v0.5)
-//   • evolver       — config + approval queue + run history (v0.5)
-//   • mesh          — list live mesh agents + route test (v0.5)
-//   • memory        — read/write MEMORY.md + USER.md (v1)
-//   • plugins       — list installed plugins + configured MCP servers (v1)
-//   • platforms     — Telegram/Slack/Discord/Email connection state + setup (v1)
-//   • batch         — Lab: BatchRunner submissions + progress (v1)
-//   • eval          — Lab: EvalRunner submissions + scoring (v1)
+// composes them. Add a namespace by importing its router and mounting it
+// on `apiRouter` below — keep handler logic in the per-namespace file.
 
 export const apiRouter = {
   sessions: {
