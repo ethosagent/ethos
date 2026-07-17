@@ -216,12 +216,29 @@ export interface MemoryCaptureConfig {
  * keys.
  */
 export interface MemoryConsolidationConfig {
+  // Importance scoring + decay tuning (memory-experience pillar C, §4.2/§4.3).
   /** Recency half-life in days. Default 30. */
   halfLifeDays?: number;
   /** Effective weight below which a section is archived. Default 0.05. */
   threshold?: number;
   /** Exempt USER.md from decay entirely. Default true. */
   exemptUser?: boolean;
+  // Silent memory-flush turn (context-compaction Phase 3). At a soft threshold
+  // (default 70% of the model-aware gate) a non-persisted agentic turn,
+  // restricted to the memory tools, consolidates durable facts into
+  // MEMORY.md / USER.md before auto-compaction later drops raw history.
+  /** Enable the opt-in silent memory-flush turn. */
+  enabled?: boolean;
+  /** Soft threshold (fraction of the model-aware gate) that triggers the flush. Default 0.7. */
+  flushThreshold?: number;
+  /** Timebox for the flush turn in ms. Default 30000. */
+  timeboxMs?: number;
+  /** Max tokens for the flush turn. Default 1024. */
+  maxTokens?: number;
+  /** Max delta chars written per flush. Default 4000. */
+  maxDeltaChars?: number;
+  /** Minimum messages since last flush before another runs. Default 8. */
+  minMessagesSinceFlush?: number;
 }
 
 /**
@@ -418,21 +435,6 @@ export interface EthosConfig {
    */
   // biome-ignore format: keep the option shape on one line for readability.
   compaction?: { pressure?: number; target?: number; gateDelta?: number; autoCompact?: boolean; retryOnOverflow?: boolean; smallWindow?: 'auto' | 'on' | 'off' };
-  /**
-   * Phase 3 — silent memory-flush turn (opt-in). At a soft threshold (default
-   * 70% of the model-aware gate) a non-persisted agentic turn, restricted to the
-   * memory tools, consolidates durable facts into MEMORY.md / USER.md before
-   * auto-compaction (80%) later drops raw history. All flags optional. Flat-key
-   * config shape:
-   *   memoryConsolidation.enabled: true
-   *   memoryConsolidation.flushThreshold: 0.7
-   *   memoryConsolidation.timeboxMs: 30000
-   *   memoryConsolidation.maxTokens: 1024
-   *   memoryConsolidation.maxDeltaChars: 4000
-   *   memoryConsolidation.minMessagesSinceFlush: 8
-   */
-  // biome-ignore format: keep the option shape on one line for readability.
-  memoryConsolidation?: { enabled?: boolean; flushThreshold?: number; timeboxMs?: number; maxTokens?: number; maxDeltaChars?: number; minMessagesSinceFlush?: number };
   /**
    * Fallback provider chain. When 2+ entries are present, `createLLM` wraps
    * them in a `ChainedProvider` with automatic cooldown-based failover.
@@ -1691,7 +1693,6 @@ function parseConfigYaml(src: string): EthosConfig {
     toolSettings: Object.keys(toolSettings).length > 0 ? toolSettings : undefined,
     models,
     compaction,
-    memoryConsolidation,
     activeContext,
     providers: providers.length > 0 ? providers : undefined,
     telegramToken: kv.telegramToken,
@@ -1770,7 +1771,13 @@ function parseConfigYaml(src: string): EthosConfig {
           }
         : undefined,
     memoryCapture: buildMemoryCaptureConfig(kv),
-    memoryConsolidation: buildMemoryConsolidationConfig(kv),
+    memoryConsolidation: (() => {
+      // Union of the silent memory-flush turn (context-compaction) and the
+      // decay/importance tuning (memory-experience) — disjoint field sets, one key.
+      const decay = buildMemoryConsolidationConfig(kv);
+      if (!memoryConsolidation && !decay) return undefined;
+      return { ...memoryConsolidation, ...decay };
+    })(),
     weeklyDigest:
       kv['weeklyDigest.enabled'] !== undefined ||
       kv['weeklyDigest.cron'] !== undefined ||
