@@ -449,6 +449,19 @@ try {
     case 'memory': {
       const sub = args[1] ?? 'show';
       const jsonMode = args.includes('--json');
+
+      if (sub === 'history') {
+        const { runMemoryHistory } = await import('./commands/memory-history');
+        await runMemoryHistory(args.slice(2));
+        break;
+      }
+
+      if (sub === 'restore') {
+        const { runMemoryRestore } = await import('./commands/memory-restore');
+        await runMemoryRestore(args.slice(2));
+        break;
+      }
+
       const config = await readConfig(getStorage(), await getSecretsResolver());
 
       if (config?.memory === 'vector') {
@@ -555,7 +568,9 @@ try {
           await mem.sync([{ action: 'replace', key: 'MEMORY.md', content: '' }], cliCtx);
           console.log('Memory cleared.');
         } else {
-          console.log('Usage: ethos memory [show | add "<text>" | clear]');
+          console.log(
+            'Usage: ethos memory [show | add "<text>" | clear | history | restore <slug>]',
+          );
         }
       }
       break;

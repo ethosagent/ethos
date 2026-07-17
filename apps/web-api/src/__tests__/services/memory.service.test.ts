@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { FsStorage } from '@ethosagent/storage-fs';
+import { createMemoryProvider, HistoryStore } from '@ethosagent/wiring';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MemoryService } from '../../services/memory.service';
 
@@ -68,5 +69,130 @@ describe('MemoryService', () => {
   it('listUsers returns empty when no identityMap is wired', async () => {
     const { users } = await service.listUsers();
     expect(users).toEqual([]);
+  });
+});
+
+describe('MemoryService.history / restore (Timeline)', () => {
+  let dir: string;
+  let history: HistoryStore;
+  let service: MemoryService;
+  const storage = new FsStorage();
+  const scopeId = `personality:${PERSONALITY_ID}`;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'ethos-memory-hist-'));
+    await mkdir(join(dir, 'personalities', PERSONALITY_ID), { recursive: true });
+    history = new HistoryStore({ dataDir: dir, storage });
+    service = new MemoryService({
+      memory: new MarkdownFileMemoryProvider({ dir, storage }),
+      history,
+      restoreMemory: createMemoryProvider({ dataDir: dir, storage, source: 'restore' }),
+    });
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('returns entries from all six write sources, newest-first', async () => {
+    const sources = [
+      'tool',
+      'consolidation',
+      'dream',
+      'capture',
+      'web-editor',
+      'global-entry',
+    ] as const;
+    for (const source of sources) {
+      await history.record({
+        scopeId,
+        key: 'MEMORY.md',
+        actions: ['add'],
+        source,
+        sessionId: 's',
+        sessionKey: 'cli',
+        before: `before ${source}`,
+        after: `after ${source}`,
+        ...(source === 'capture' ? { hint: 0.7 } : {}),
+      });
+    }
+
+    const { entries } = await service.history(PERSONALITY_ID, {});
+    expect(entries.map((e) => e.source).sort()).toEqual([...sources].sort());
+    // Newest-first: the last-recorded source leads.
+    expect(entries[0]?.source).toBe('global-entry');
+    // Capture entry carries its importance hint.
+    expect(entries.find((e) => e.source === 'capture')?.hint).toBe(0.7);
+  });
+
+  it('paginates a large history with an opaque cursor', async () => {
+    for (let i = 0; i < 120; i++) {
+      await history.record({
+        scopeId,
+        key: 'MEMORY.md',
+        actions: ['add'],
+        source: 'tool',
+        sessionId: 's',
+        sessionKey: 'cli',
+        before: `b${i}`,
+        after: `a${i}`,
+      });
+    }
+    const page1 = await service.history(PERSONALITY_ID, { limit: 50 });
+    expect(page1.entries).toHaveLength(50);
+    expect(page1.nextCursor).toBe('50');
+
+    const page2 = await service.history(PERSONALITY_ID, { limit: 50, cursor: page1.nextCursor });
+    expect(page2.entries).toHaveLength(50);
+    const page3 = await service.history(PERSONALITY_ID, { limit: 50, cursor: page2.nextCursor });
+    expect(page3.entries).toHaveLength(20);
+    expect(page3.nextCursor).toBeNull();
+  });
+
+  it('recovers an oversized diff before-state from its blob', async () => {
+    const big = 'x'.repeat(6000);
+    const entry = await history.record({
+      scopeId,
+      key: 'MEMORY.md',
+      actions: ['replace'],
+      source: 'consolidation',
+      sessionId: 's',
+      sessionKey: 'cli',
+      before: big,
+      after: 'small',
+    });
+    expect(entry?.blob).toBeDefined();
+    const blob = entry?.blob ?? '';
+    const { content } = await service.historyBlob(PERSONALITY_ID, blob);
+    expect(content).toBe(big);
+  });
+
+  it('restore round-trips a slug and records itself in the history', async () => {
+    const personalityDir = join(dir, 'personalities', PERSONALITY_ID);
+    const iso = new Date().toISOString();
+    const archive = `<!-- archived ${iso} slug=old-project from=MEMORY.md -->\n### old-project\n\nShipped in 2024.`;
+    await writeFile(join(personalityDir, 'memory-archive.md'), archive);
+
+    const { ok, restoredTo } = await service.restore(PERSONALITY_ID, 'old-project');
+    expect(ok).toBe(true);
+    expect(restoredTo).toBe('MEMORY.md');
+
+    // Section moved back into MEMORY.md.
+    const memory = await readFile(join(personalityDir, 'MEMORY.md'), 'utf-8');
+    expect(memory).toContain('### old-project');
+    // Archive no longer holds it.
+    const newArchive = await readFile(join(personalityDir, 'memory-archive.md'), 'utf-8');
+    expect(newArchive).not.toContain('slug=old-project');
+
+    // The move recorded itself under source 'restore'.
+    const { entries } = await service.history(PERSONALITY_ID, { source: 'restore' });
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.every((e) => e.source === 'restore')).toBe(true);
+  });
+
+  it('restore throws NOT_FOUND for an unknown slug', async () => {
+    const personalityDir = join(dir, 'personalities', PERSONALITY_ID);
+    await writeFile(join(personalityDir, 'memory-archive.md'), '');
+    await expect(service.restore(PERSONALITY_ID, 'nope')).rejects.toThrow();
   });
 });

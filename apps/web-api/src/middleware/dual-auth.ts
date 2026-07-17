@@ -79,6 +79,9 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     get: 'memory:read',
     write: 'memory:write',
     listUsers: 'memory:read',
+    history: 'memory:read',
+    historyBlob: 'memory:read',
+    restore: 'memory:write',
   },
   tools: { approve: 'tools:approve', deny: 'tools:approve', catalog: 'tools:approve' },
 };

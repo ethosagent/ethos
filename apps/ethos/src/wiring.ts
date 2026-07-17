@@ -215,6 +215,11 @@ export async function createAgentLoop(
     ...(config.auxiliary?.web ? { auxiliaryWeb: config.auxiliary.web } : {}),
     ...(config.auxiliary?.asr ? { auxiliaryAsr: config.auxiliary.asr } : {}),
     ...(config.auxiliary?.tts ? { auxiliaryTts: config.auxiliary.tts } : {}),
+    ...(config.memoryCapture ? { memoryCapture: config.memoryCapture } : {}),
+    ...(config.nightlyPass ? { nightlyPass: config.nightlyPass } : {}),
+    ...(config.displayMemoryNotices !== undefined
+      ? { displayMemoryNotices: config.displayMemoryNotices }
+      : {}),
     ...(config.web?.search_backend ? { webSearchBackend: config.web.search_backend } : {}),
     ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
     ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
@@ -378,6 +383,8 @@ export interface ActiveLoop {
   displayName: string;
   /** Forward the skill-evolution callback setter so surfaces can wire SSE/CLI notifications. */
   setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
+  /** memory-experience §3.3 — subscribe to proactive-capture notices (CLI prints them). */
+  onMemoryCaptured?: import('@ethosagent/wiring').CreateAgentLoopResult['onMemoryCaptured'];
   /** v2.2 — Notification router for registering per-session adapters. */
   notificationRouter: import('@ethosagent/types').NotificationRouter;
   /** v2.2 — Plugin loader for health checks and diagnostics. */
@@ -403,6 +410,7 @@ export async function resolveActiveLoop(
       personalityId: teamResult.coordinatorPersonality,
       displayName: `team:${teamName}`,
       setOnSkillProposed: teamResult.setOnSkillProposed,
+      // Team-scope capture is deferred (open-question 6); no notice forwarding.
       notificationRouter: teamResult.notificationRouter,
       pluginLoader: teamResult.pluginLoader,
       ...(teamResult.jobStore ? { jobStore: teamResult.jobStore } : {}),
@@ -419,6 +427,7 @@ export async function resolveActiveLoop(
     personalityId,
     displayName: personalityId,
     setOnSkillProposed: result.setOnSkillProposed,
+    ...(result.onMemoryCaptured ? { onMemoryCaptured: result.onMemoryCaptured } : {}),
     notificationRouter: result.notificationRouter,
     pluginLoader: result.pluginLoader,
     ...(result.jobStore ? { jobStore: result.jobStore } : {}),

@@ -9,6 +9,7 @@ import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { TrustPolicy } from '@ethosagent/kanban-store';
 import { AuthRotatingProvider } from '@ethosagent/llm-anthropic';
+import { type HistorySource, HistoryStore, withHistory } from '@ethosagent/memory-history';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
@@ -208,6 +209,30 @@ export interface WiringConfig {
     voice?: string;
     baseUrl?: string;
   };
+  /**
+   * memory-experience pillar B — proactive capture. Default-off; when
+   * `enabled`, the capture runner is wired on the `agent_done` seam. `model`
+   * (+ optional provider/apiKey/baseUrl) selects the auxiliary extraction
+   * model; when unset the primary model is reused. Same shape as the
+   * `EthosConfig.memoryCapture` block it maps from.
+   */
+  memoryCapture?: {
+    enabled?: boolean;
+    model?: string;
+    provider?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    maxPerHour?: number;
+    maxPerDay?: number;
+  };
+  /**
+   * Nightly-pass scheduler flag (mapped from `EthosConfig.nightlyPass`). Read
+   * here only to gate capture's inline consolidation fallback (§3.5): when a
+   * macro-loop is configured, capture never inline-consolidates.
+   */
+  nightlyPass?: { enabled?: boolean; cron?: string };
+  /** Per-surface capture-notice opt-in (§3.3), mapped from display.memory_notices. */
+  displayMemoryNotices?: boolean;
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;
@@ -647,6 +672,13 @@ export interface CreateAgentLoopResult {
   /** Set by the web-api chat service to receive SSE notifications when the
    *  improvement fork auto-promotes a skill to the live library. */
   setOnSkillApplied?: (fn: (skillId: string, personalityId: string) => void) => void;
+  /**
+   * Subscribe to proactive-capture notices (memory-experience §3.3). Present
+   * only when `memoryCapture.enabled`. CLI chat subscribes to print one dim
+   * "· remembered: …" line; channel adapters do not subscribe. Returns an
+   * unsubscribe fn.
+   */
+  onMemoryCaptured?: (cb: (n: { scopeId: string; summary: string }) => void) => () => void;
   /** v2.2 — Notification router for registering per-session adapters.
    *  CLI/TUI/web-api register a NotificationAdapter on this router so plugin
    *  monitors can deliver messages to the active surface. */
@@ -782,17 +814,42 @@ export interface CreateMemoryProviderOptions {
   dataDir: string;
   /** Storage backend. Injected by the composition root; required. */
   storage: Storage;
+  /**
+   * Provenance-history source label baked into this handle (§2.1). Every
+   * write through the returned provider is recorded under this source, except
+   * `writeGlobalEntry` (always `global-entry`) and dream turns (derived from
+   * the `dream:` sessionKey prefix). Defaults to `tool`.
+   */
+  source?: HistorySource;
 }
 
 // The markdown backend supports MEMORY.md / USER.md direct read/write
 // (GlobalMemoryStore) alongside the contract methods. The factory
 // advertises both via intersection so apps that need only one half
-// narrow at the use site.
+// narrow at the use site. The result is wrapped in the history decorator so
+// every mutation is auditable (§2) — reads and tool-visible write behaviour
+// stay byte-identical.
 export function createMemoryProvider(
   opts: CreateMemoryProviderOptions,
 ): MemoryProvider & GlobalMemoryStore {
-  return new MarkdownFileMemoryProvider({ dir: opts.dataDir, storage: opts.storage });
+  const base = new MarkdownFileMemoryProvider({ dir: opts.dataDir, storage: opts.storage });
+  const history = new HistoryStore({ dataDir: opts.dataDir, storage: opts.storage });
+  return withHistory(base, history, { source: opts.source ?? 'tool' });
 }
+
+export {
+  type HistoryEntry,
+  type HistoryReadFilter,
+  type HistoryReadResult,
+  type HistorySource,
+  HistoryStore,
+  withHistory,
+} from '@ethosagent/memory-history';
+
+// Shared archive-restore path (pillar C, §4.2) — re-exported so the web-api
+// MemoryService can call the exact function the CLI `ethos memory restore`
+// uses, without depending on `apps/ethos`.
+export { type RestoreResult, restoreArchivedSlug } from '@ethosagent/nightly-loop';
 
 // ---------------------------------------------------------------------------
 // Danger predicate (shared between CLI guard + web approval flow)

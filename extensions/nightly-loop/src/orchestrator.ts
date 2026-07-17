@@ -15,7 +15,13 @@
 
 import { GOOD_ALIGNMENT_THRESHOLD, type ScoreOutcome } from '@ethosagent/personality-judge';
 import type { MemoryUpdate } from '@ethosagent/types';
-import { buildConsolidationUpdates } from './memory-consolidation';
+import { buildConsolidationUpdates, type ConsolidationResult } from './memory-consolidation';
+import {
+  type DecayConfig,
+  type MemoryMeta,
+  planConsolidation,
+  resolveDecayParams,
+} from './memory-decay';
 
 export interface NightlyStepLog {
   step: string;
@@ -73,8 +79,17 @@ export interface NightlyPassDeps {
     memory: string;
     user: string;
     recentContext: string;
-  }): Promise<{ memory: string; user: string }>;
+  }): Promise<ConsolidationResult>;
   applyMemoryUpdates(personalityId: string, updates: MemoryUpdate[]): Promise<void>;
+  // Importance/decay sidecar (M3, §4.1). OPTIONAL — when either is absent the
+  // memory step degrades to the pre-M3 whole-file consolidation (no decay).
+  // The nightly pass is the SINGLE writer of `memory-meta.json`.
+  readMemoryMeta?(id: string): Promise<MemoryMeta>;
+  writeMemoryMeta?(id: string, meta: MemoryMeta): Promise<void>;
+  /** Decay tuning (§4.2/§4.3). Defaults applied by `resolveDecayParams`. */
+  memoryDecay?: DecayConfig;
+  /** Injected clock for decay recency; defaults to Date.now. */
+  now?(): number;
   readState(id: string): Promise<NightlyState | null>;
   writeState(id: string, state: NightlyState): Promise<void>;
   onSignal?(id: string, signal: 'drift' | 'underspecified_soul'): void; // surface the actionable signal
@@ -242,10 +257,36 @@ export async function runNightlyPass(
         user: cur.user,
         recentContext: evidence.evidenceDigest,
       });
-      const updates = buildConsolidationUpdates(cur, next);
+
+      // Decay-aware path (M3): requires a scored result AND the sidecar deps.
+      // A scoring failure (unstructured/garbage response) or an unwired sidecar
+      // degrades to the whole-file no-decay path — never "archive everything".
+      let updates: MemoryUpdate[];
+      let detailSuffix = '';
+      if (next.scored && deps.readMemoryMeta && deps.writeMemoryMeta) {
+        const meta = await deps.readMemoryMeta(personalityId);
+        const now = deps.now?.() ?? Date.now();
+        const plan = planConsolidation({
+          current: cur,
+          result: next,
+          meta,
+          params: resolveDecayParams(deps.memoryDecay, now),
+        });
+        updates = plan.updates;
+        // Single writer: only the nightly pass persists the sidecar.
+        await deps.writeMemoryMeta(personalityId, plan.nextMeta);
+        if (plan.archivedSlugs.length > 0) detailSuffix = `, archived ${plan.archivedSlugs.length}`;
+      } else {
+        updates = buildConsolidationUpdates(cur, next);
+      }
+
       if (updates.length) {
         await deps.applyMemoryUpdates(personalityId, updates);
-        steps.push({ step: 'memory', status: 'ran', detail: `${updates.length} update(s)` });
+        steps.push({
+          step: 'memory',
+          status: 'ran',
+          detail: `${updates.length} update(s)${detailSuffix}`,
+        });
       } else {
         steps.push({ step: 'memory', status: 'noop', detail: '0 updates' });
       }

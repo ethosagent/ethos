@@ -1,6 +1,8 @@
 import type { JudgeResult, ScoreOutcome } from '@ethosagent/personality-judge';
 import { GOOD_ALIGNMENT_THRESHOLD } from '@ethosagent/personality-judge';
 import { describe, expect, it, vi } from 'vitest';
+import type { ConsolidationResult } from '../memory-consolidation';
+import { emptyMeta, type MemoryMeta } from '../memory-decay';
 import {
   type NightlyEvidence,
   type NightlyPassDeps,
@@ -252,6 +254,62 @@ describe('runNightlyPass', () => {
       expect(expr?.detail).toBe('expression disabled');
       expect(spies.draftExpression).not.toHaveBeenCalled();
       expect(spies.applyExpression).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('M3 — importance decay in the memory step', () => {
+    function scored(memorySections: ConsolidationResult['memorySections']): ConsolidationResult {
+      const memory = (memorySections ?? []).map((s) => `### ${s.slug}\n${s.content}`).join('\n\n');
+      return { memory, user: '', memorySections, userSections: [], scored: true };
+    }
+
+    it('scored result + sidecar deps: archives low-importance and writes meta', async () => {
+      const writeMemoryMeta = vi.fn(async () => {});
+      let stored: MemoryMeta = emptyMeta();
+      const { deps, spies } = makeDeps({
+        readMemory: async () => ({ memory: '### keep\nx\n\n### drop\ny', user: '' }),
+        consolidate: async () =>
+          scored([
+            { slug: 'keep', content: 'x', score: 0.9 },
+            { slug: 'drop', content: 'y', score: 0.0 },
+          ]),
+        readMemoryMeta: async () => stored,
+        writeMemoryMeta: async (_id, m) => {
+          stored = m;
+          writeMemoryMeta();
+        },
+        now: () => 1_800_000_000_000,
+      });
+
+      const res = await runNightlyPass('sage', deps);
+      expect(stepStatus(res.steps, 'memory')).toBe('ran');
+      expect(res.steps.find((s) => s.step === 'memory')?.detail).toContain('archived 1');
+      expect(writeMemoryMeta).toHaveBeenCalledTimes(1);
+
+      const updates = spies.applyMemoryUpdates.mock.calls[0]?.[1] as Array<{ key: string }>;
+      expect(updates.some((u) => u.key === 'memory-archive.md')).toBe(true);
+      // Only the kept slug remains tracked.
+      expect(Object.keys(stored.keys['MEMORY.md'] ?? {})).toEqual(['keep']);
+    });
+
+    it('scoring failure (scored=false): no decay, meta untouched', async () => {
+      const writeMemoryMeta = vi.fn(async () => {});
+      const { deps, spies } = makeDeps({
+        readMemory: async () => ({ memory: 'old memory', user: 'old user' }),
+        consolidate: async (): Promise<ConsolidationResult> => ({
+          memory: 'new memory',
+          user: 'new user',
+          scored: false,
+        }),
+        readMemoryMeta: async () => emptyMeta(),
+        writeMemoryMeta,
+      });
+
+      const res = await runNightlyPass('sage', deps);
+      expect(stepStatus(res.steps, 'memory')).toBe('ran');
+      expect(res.steps.find((s) => s.step === 'memory')?.detail).not.toContain('archived');
+      expect(writeMemoryMeta).not.toHaveBeenCalled();
+      expect(spies.applyMemoryUpdates).toHaveBeenCalledTimes(1);
     });
   });
 });

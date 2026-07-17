@@ -22,7 +22,7 @@ import type {
   Storage,
 } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
-import type { IdentityMap } from '@ethosagent/wiring';
+import { createMemoryProvider, HistoryStore, type IdentityMap } from '@ethosagent/wiring';
 import type { Hono } from 'hono';
 import { ChatRepository } from './features/chat/repository';
 import { type ChatDefaults, ChatService } from './features/chat/service';
@@ -384,6 +384,14 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const memoryService = new MemoryService({
     memory: memoryProvider,
     identityMap: opts.identityMap,
+    // Timeline reads the same JSONL history the CLI does; restore writes through
+    // a `restore`-labelled handle so the move records itself (§5).
+    history: new HistoryStore({ dataDir: opts.dataDir, storage }),
+    restoreMemory: createMemoryProvider({
+      dataDir: opts.dataDir,
+      storage,
+      source: 'restore',
+    }),
   });
   const kanbanService = new KanbanService({ mesh });
   const tasksService = new TasksService(opts.jobStore ? { store: opts.jobStore } : {});

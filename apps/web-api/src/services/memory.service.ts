@@ -1,10 +1,29 @@
-import type { MemoryContext, MemoryProvider } from '@ethosagent/types';
-import type { MemoryFile, MemoryStoreId } from '@ethosagent/web-contracts';
-import type { IdentityMap } from '@ethosagent/wiring';
+import { EthosError, type MemoryContext, type MemoryProvider } from '@ethosagent/types';
+import type {
+  MemoryFile,
+  MemoryHistoryEntry,
+  MemoryHistorySource,
+  MemoryStoreId,
+} from '@ethosagent/web-contracts';
+import { type HistoryStore, type IdentityMap, restoreArchivedSlug } from '@ethosagent/wiring';
 
 export interface MemoryServiceOptions {
   memory: MemoryProvider;
   identityMap?: IdentityMap;
+  /** Provenance-history reader (M1). Absent in tests / ACP-only deployments —
+   *  the Timeline procedures then return empty results. */
+  history?: HistoryStore;
+  /** A `restore`-labelled memory handle. Absent → restore is unavailable. */
+  restoreMemory?: Pick<MemoryProvider, 'read' | 'sync'>;
+}
+
+interface HistoryQuery {
+  key?: string;
+  source?: MemoryHistorySource;
+  sinceMs?: number;
+  untilMs?: number;
+  limit?: number;
+  cursor?: string | null;
 }
 
 export class MemoryService {
@@ -72,6 +91,84 @@ export class MemoryService {
     };
   }
 
+  /**
+   * Timeline read (§5). Returns the personality scope's history newest-first,
+   * paginated by an opaque offset cursor. Filtering (key / source / date range)
+   * runs server-side before pagination so `nextCursor` stays accurate. Returns
+   * empty when no history reader is wired.
+   */
+  async history(
+    personalityId: string,
+    query: HistoryQuery,
+  ): Promise<{
+    entries: MemoryHistoryEntry[];
+    nextCursor: string | null;
+    corruptLines: number;
+  }> {
+    const history = this.opts.history;
+    if (!history) return { entries: [], nextCursor: null, corruptLines: 0 };
+
+    const scopeId = `personality:${personalityId}`;
+    const { entries, corruptLines } = await history.read(scopeId, {
+      ...(query.key ? { key: query.key } : {}),
+      ...(query.source ? { source: query.source } : {}),
+      ...(query.sinceMs !== undefined ? { sinceMs: query.sinceMs } : {}),
+    });
+
+    // The store returns chronological (oldest first); the Timeline reads
+    // newest-first. `untilMs` is applied here since the store filter only
+    // supports a lower bound.
+    const until = query.untilMs;
+    const ordered = entries
+      .slice()
+      .reverse()
+      .filter((e) => (until === undefined ? true : e.ts <= until));
+
+    const limit = query.limit ?? 50;
+    const offset = parseCursor(query.cursor);
+    const page = ordered.slice(offset, offset + limit);
+    const next = offset + limit;
+    const nextCursor = next < ordered.length ? String(next) : null;
+
+    return { entries: page.map(toWireEntry), nextCursor, corruptLines };
+  }
+
+  /** Fetch one entry's full before-state blob (§2.1) for the diff expander. */
+  async historyBlob(personalityId: string, blob: string): Promise<{ content: string | null }> {
+    const history = this.opts.history;
+    if (!history) return { content: null };
+    return { content: await history.readBlob(`personality:${personalityId}`, blob) };
+  }
+
+  /**
+   * Restore an archived section by slug (§4.2). Reuses the same
+   * `restoreArchivedSlug` path the CLI `ethos memory restore` calls, through a
+   * `restore`-labelled handle so the move records itself in the history.
+   */
+  async restore(personalityId: string, slug: string): Promise<{ ok: true; restoredTo: string }> {
+    const mem = this.opts.restoreMemory;
+    if (!mem) {
+      throw new EthosError({
+        code: 'NOT_CONFIGURED',
+        cause: 'No restore-capable memory handle is wired.',
+        action: 'Restore is available when the server runs with a data directory.',
+      });
+    }
+    const ctx = this.buildCtx(`personality:${personalityId}`);
+    const result = await restoreArchivedSlug(mem, ctx, slug);
+    if (!result.ok) {
+      throw new EthosError({
+        code: 'NOT_FOUND',
+        cause: result.error,
+        action:
+          result.availableSlugs.length > 0
+            ? `Archived slugs: ${result.availableSlugs.join(', ')}`
+            : 'The archive has no restorable sections.',
+      });
+    }
+    return { ok: true, restoredTo: result.restoredTo };
+  }
+
   private async readEntry(
     store: MemoryStoreId,
     personalityId: string,
@@ -99,4 +196,47 @@ export class MemoryService {
   private buildCtx(scopeId: string): MemoryContext {
     return { scopeId, sessionId: '', sessionKey: '', platform: 'web', workingDir: '' };
   }
+}
+
+/** Parse an opaque offset cursor; a missing / malformed cursor is offset 0. */
+function parseCursor(cursor: string | null | undefined): number {
+  if (!cursor) return 0;
+  const n = Number.parseInt(cursor, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Project a stored history entry onto the wire schema — the capture dedup
+ *  hashes stay server-side; everything the Timeline renders is carried. */
+function toWireEntry(e: {
+  ts: number;
+  scopeId: string;
+  key: string;
+  actions: string[];
+  source: MemoryHistorySource;
+  sessionId: string;
+  sessionKey: string;
+  beforeHash: string;
+  afterHash: string;
+  diff: string;
+  hint?: number;
+  blob?: string;
+  sizeBefore: number;
+  sizeAfter: number;
+}): MemoryHistoryEntry {
+  return {
+    ts: e.ts,
+    scopeId: e.scopeId,
+    key: e.key,
+    actions: e.actions,
+    source: e.source,
+    sessionId: e.sessionId,
+    sessionKey: e.sessionKey,
+    beforeHash: e.beforeHash,
+    afterHash: e.afterHash,
+    diff: e.diff,
+    ...(e.hint !== undefined ? { hint: e.hint } : {}),
+    ...(e.blob !== undefined ? { blob: e.blob } : {}),
+    sizeBefore: e.sizeBefore,
+    sizeAfter: e.sizeAfter,
+  };
 }

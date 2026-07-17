@@ -223,6 +223,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     personalityId,
     displayName,
     setOnSkillProposed,
+    onMemoryCaptured,
     notificationRouter,
     pluginLoader,
     jobStore,
@@ -318,6 +319,17 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     clearLine(process.stdout, 0);
     process.stdout.write(`\n${c.dim}${formatSkillProposedNotice(skillId)}${c.reset}\n> `);
   });
+
+  // memory-experience §3.3 — surface a dim, single-line "remembered" notice when
+  // a proactive capture lands (after the turn's event stream has closed). CLI is
+  // subtle-on by default; suppressible via `display.memory_notices: false`.
+  if (config.displayMemoryNotices !== false) {
+    onMemoryCaptured?.((n) => {
+      const summary = n.summary.length > 80 ? `${n.summary.slice(0, 79)}…` : n.summary;
+      clearLine(process.stdout, 0);
+      process.stdout.write(`\n${c.dim}· remembered: ${summary}${c.reset}\n> `);
+    });
+  }
 
   const sessionKey = opts.resumeSessionKey ?? `cli:${basename(process.cwd())}`;
 

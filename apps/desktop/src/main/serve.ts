@@ -111,7 +111,11 @@ export async function startServer(port: number): Promise<number> {
   const { app: webApp } = createWebApi({
     dataDir,
     sessionStore: session,
-    memoryProvider: createMemoryProvider({ dataDir, storage: new FsStorage() }),
+    memoryProvider: createMemoryProvider({
+      dataDir,
+      storage: new FsStorage(),
+      source: 'web-editor',
+    }),
     identityMap,
     agentLoop: loop,
     personalities,

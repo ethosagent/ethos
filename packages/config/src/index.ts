@@ -188,6 +188,43 @@ export interface AuxiliaryCompressionConfig {
 }
 
 /**
+ * Proactive memory capture (memory-experience pillar B). Default-OFF: absent or
+ * `enabled !== true` means no capture runner is wired and behaviour is
+ * unchanged (opt-in for one release). `model` (+ optional provider/apiKey/
+ * baseUrl) selects the cheap auxiliary model for the single extraction call per
+ * turn; when unset the primary model is reused. Rate caps default to 6/hour,
+ * 30/day per scope. Config keys:
+ *   memoryCapture.enabled: true
+ *   memoryCapture.model: claude-haiku-4-5-20251001
+ *   memoryCapture.maxPerHour: 6
+ *   memoryCapture.maxPerDay: 30
+ */
+export interface MemoryCaptureConfig {
+  enabled?: boolean;
+  model?: string;
+  provider?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  maxPerHour?: number;
+  maxPerDay?: number;
+}
+
+/**
+ * Importance scoring + decay tuning (memory-experience pillar C, §4.2/§4.3).
+ * All optional — the nightly pass applies defaults (30-day half-life, 0.05
+ * archive threshold, USER.md exempt). Parsed from flat `memoryConsolidation.<field>`
+ * keys.
+ */
+export interface MemoryConsolidationConfig {
+  /** Recency half-life in days. Default 30. */
+  halfLifeDays?: number;
+  /** Effective weight below which a section is archived. Default 0.05. */
+  threshold?: number;
+  /** Exempt USER.md from decay entirely. Default true. */
+  exemptUser?: boolean;
+}
+
+/**
  * tools-vision P2 — auxiliary vision model wiring. `vision_analyze` uses this
  * (typically vision-capable) model when the active personality's primary
  * model can't handle images / PDFs, or when the user wants to route vision
@@ -561,6 +598,12 @@ export interface EthosConfig {
   displayDebugPanel?: boolean;
   displayDebugPanelModel?: string;
   /**
+   * Per-surface opt-in for the "· remembered: …" capture notice (pillar B,
+   * §3.3). CLI subtle-on when `true`; channels never surface it. Default
+   * undefined (CLI decides its own default). Config key: display.memory_notices
+   */
+  displayMemoryNotices?: boolean;
+  /**
    * context_compression F1 — auxiliary model wiring. `auxiliary.compression`
    * configures the cheap summarizer that `semantic_summary` uses to condense
    * long histories. Config keys:
@@ -669,6 +712,17 @@ export interface EthosConfig {
    *   nightlyPass.cron: 0 3 * * *
    */
   nightlyPass?: { enabled?: boolean; cron?: string };
+  /**
+   * Proactive memory capture (memory-experience pillar B). Default-off. See
+   * `MemoryCaptureConfig`. Parsed from flat `memoryCapture.<field>` keys.
+   */
+  memoryCapture?: MemoryCaptureConfig;
+  /**
+   * Importance scoring + decay tuning (memory-experience pillar C). Defaults
+   * applied by the nightly pass when absent. See `MemoryConsolidationConfig`.
+   * Parsed from flat `memoryConsolidation.<field>` keys.
+   */
+  memoryConsolidation?: MemoryConsolidationConfig;
   /**
    * Weekly governed-learning digest scheduler (Phase 3e). Default-off: when
    * absent or `enabled !== true`, no timer is created and behavior is
@@ -834,6 +888,8 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.displayResumeRecapTurns !== undefined)
     lines.push(`display.resume_recap_turns: ${config.displayResumeRecapTurns}`);
   if (config.displayBellOnComplete) lines.push('display.bell_on_complete: true');
+  if (config.displayMemoryNotices !== undefined)
+    lines.push(`display.memory_notices: ${config.displayMemoryNotices}`);
   if (config.displayDebugPanel) lines.push('display.debug_panel: true');
   if (config.displayDebugPanelModel)
     lines.push(`display.debug_panel_model: ${config.displayDebugPanelModel}`);
@@ -1015,6 +1071,24 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (config.nightlyPass.enabled !== undefined)
       lines.push(`nightlyPass.enabled: ${config.nightlyPass.enabled}`);
     if (config.nightlyPass.cron) lines.push(`nightlyPass.cron: ${config.nightlyPass.cron}`);
+  }
+  if (config.memoryCapture) {
+    const mc = config.memoryCapture;
+    if (mc.enabled !== undefined) lines.push(`memoryCapture.enabled: ${mc.enabled}`);
+    if (mc.model) lines.push(`memoryCapture.model: ${mc.model}`);
+    if (mc.provider) lines.push(`memoryCapture.provider: ${mc.provider}`);
+    if (mc.apiKey) lines.push(`memoryCapture.apiKey: ${mc.apiKey}`);
+    if (mc.baseUrl) lines.push(`memoryCapture.baseUrl: ${mc.baseUrl}`);
+    if (mc.maxPerHour !== undefined) lines.push(`memoryCapture.maxPerHour: ${mc.maxPerHour}`);
+    if (mc.maxPerDay !== undefined) lines.push(`memoryCapture.maxPerDay: ${mc.maxPerDay}`);
+  }
+  if (config.memoryConsolidation) {
+    const mco = config.memoryConsolidation;
+    if (mco.halfLifeDays !== undefined)
+      lines.push(`memoryConsolidation.halfLifeDays: ${mco.halfLifeDays}`);
+    if (mco.threshold !== undefined) lines.push(`memoryConsolidation.threshold: ${mco.threshold}`);
+    if (mco.exemptUser !== undefined)
+      lines.push(`memoryConsolidation.exemptUser: ${mco.exemptUser}`);
   }
   if (config.weeklyDigest) {
     if (config.weeklyDigest.enabled !== undefined)
@@ -1427,6 +1501,18 @@ function parseConfigYaml(src: string): EthosConfig {
       kv[`kanbanPoll.${kp[1]}`] = kp[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // memoryCapture.<field>: <value>
+    const mcap = line.match(/^memoryCapture\.(\w+):\s*(.+)$/);
+    if (mcap) {
+      kv[`memoryCapture.${mcap[1]}`] = mcap[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // memoryConsolidation.<field>: <value>
+    const mcon = line.match(/^memoryConsolidation\.(\w+):\s*(.+)$/);
+    if (mcon) {
+      kv[`memoryConsolidation.${mcon[1]}`] = mcon[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
   }
@@ -1643,6 +1729,12 @@ function parseConfigYaml(src: string): EthosConfig {
       : undefined,
     background: buildBackgroundConfig(backgroundKv),
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
+    displayMemoryNotices:
+      displayKv.memory_notices === 'true'
+        ? true
+        : displayKv.memory_notices === 'false'
+          ? false
+          : undefined,
     displayDebugPanel: displayKv.debug_panel === 'true' ? true : undefined,
     displayDebugPanelModel: displayKv.debug_panel_model || undefined,
     quick_commands,
@@ -1677,6 +1769,8 @@ function parseConfigYaml(src: string): EthosConfig {
             ...(kv['nightlyPass.cron'] ? { cron: kv['nightlyPass.cron'] } : {}),
           }
         : undefined,
+    memoryCapture: buildMemoryCaptureConfig(kv),
+    memoryConsolidation: buildMemoryConsolidationConfig(kv),
     weeklyDigest:
       kv['weeklyDigest.enabled'] !== undefined ||
       kv['weeklyDigest.cron'] !== undefined ||
@@ -1936,6 +2030,40 @@ function buildStorageConfig(kv: Record<string, string>): EthosConfig['storage'] 
     ...(encryption ? { encryption: true } : {}),
     ...(backend ? { backend } : {}),
     ...(hasS3 ? { s3 } : {}),
+  };
+}
+
+function buildMemoryCaptureConfig(kv: Record<string, string>): MemoryCaptureConfig | undefined {
+  const present = Object.keys(kv).some((k) => k.startsWith('memoryCapture.'));
+  if (!present) return undefined;
+  const maxPerHour = Number.parseInt(kv['memoryCapture.maxPerHour'] ?? '', 10);
+  const maxPerDay = Number.parseInt(kv['memoryCapture.maxPerDay'] ?? '', 10);
+  return {
+    ...(kv['memoryCapture.enabled'] !== undefined
+      ? { enabled: kv['memoryCapture.enabled'] === 'true' }
+      : {}),
+    ...(kv['memoryCapture.model'] ? { model: kv['memoryCapture.model'] } : {}),
+    ...(kv['memoryCapture.provider'] ? { provider: kv['memoryCapture.provider'] } : {}),
+    ...(kv['memoryCapture.apiKey'] ? { apiKey: kv['memoryCapture.apiKey'] } : {}),
+    ...(kv['memoryCapture.baseUrl'] ? { baseUrl: kv['memoryCapture.baseUrl'] } : {}),
+    ...(Number.isFinite(maxPerHour) ? { maxPerHour } : {}),
+    ...(Number.isFinite(maxPerDay) ? { maxPerDay } : {}),
+  };
+}
+
+function buildMemoryConsolidationConfig(
+  kv: Record<string, string>,
+): MemoryConsolidationConfig | undefined {
+  const present = Object.keys(kv).some((k) => k.startsWith('memoryConsolidation.'));
+  if (!present) return undefined;
+  const halfLifeDays = Number.parseFloat(kv['memoryConsolidation.halfLifeDays'] ?? '');
+  const threshold = Number.parseFloat(kv['memoryConsolidation.threshold'] ?? '');
+  return {
+    ...(Number.isFinite(halfLifeDays) ? { halfLifeDays } : {}),
+    ...(Number.isFinite(threshold) ? { threshold } : {}),
+    ...(kv['memoryConsolidation.exemptUser'] !== undefined
+      ? { exemptUser: kv['memoryConsolidation.exemptUser'] === 'true' }
+      : {}),
   };
 }
 

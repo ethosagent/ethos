@@ -18,4 +18,23 @@ export const memoryRouter = {
   ),
 
   listUsers: os.memory.listUsers.handler(({ context }) => context.memory.listUsers()),
+
+  history: os.memory.history.handler(({ input, context }) =>
+    context.memory.history(input.personalityId, {
+      key: input.key,
+      source: input.source,
+      sinceMs: input.sinceMs,
+      untilMs: input.untilMs,
+      limit: input.limit,
+      cursor: input.cursor,
+    }),
+  ),
+
+  historyBlob: os.memory.historyBlob.handler(({ input, context }) =>
+    context.memory.historyBlob(input.personalityId, input.blob),
+  ),
+
+  restore: os.memory.restore.handler(({ input, context }) =>
+    context.memory.restore(input.personalityId, input.slug),
+  ),
 };
