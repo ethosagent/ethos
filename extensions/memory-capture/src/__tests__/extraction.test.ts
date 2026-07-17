@@ -36,4 +36,17 @@ describe('parseFacts', () => {
   it('drops lines with non-numeric importance', () => {
     expect(parseFacts('USER|high|nope')).toEqual([]);
   });
+
+  it('caps an over-long fact to bound the memory-pollution blast radius', () => {
+    const huge = 'z'.repeat(5000);
+    const facts = parseFacts(`USER|0.5|${huge}`);
+    expect(facts).toHaveLength(1);
+    expect(facts[0]?.text.length).toBe(240);
+    expect(facts[0]?.text).toBe('z'.repeat(240));
+  });
+
+  it('leaves a fact at or below the cap untouched', () => {
+    const exact = 'z'.repeat(240);
+    expect(parseFacts(`USER|0.5|${exact}`)[0]?.text).toBe(exact);
+  });
 });

@@ -5,6 +5,14 @@
 import type { LLMProvider } from '@ethosagent/types';
 import type { CaptureFact } from './types';
 
+/**
+ * Hard cap on a single extracted FACT. The fact is free-form, attacker-
+ * influenceable text that lands in USER.md / MEMORY.md and persists through the
+ * 90-day dedup window, so an unbounded fact is a memory-pollution vector.
+ * Truncate to bound the blast radius; a real durable fact fits comfortably.
+ */
+const MAX_FACT_CHARS = 240;
+
 const SYSTEM_PROMPT =
   'You extract durable facts from a single conversation turn for long-term memory. ' +
   'Record only DURABLE facts about the user (identity, preferences, relationships, ' +
@@ -76,8 +84,10 @@ export function parseFacts(text: string): CaptureFact[] {
     // FACT may itself contain `|`; rejoin the tail.
     const factText = parts.slice(2).join('|').trim();
     if (factText.length === 0) continue;
+    // Cap length to bound the memory-pollution blast radius (see MAX_FACT_CHARS).
+    const capped = factText.length > MAX_FACT_CHARS ? factText.slice(0, MAX_FACT_CHARS) : factText;
 
-    facts.push({ store, text: factText, hint });
+    facts.push({ store, text: capped, hint });
   }
   return facts;
 }

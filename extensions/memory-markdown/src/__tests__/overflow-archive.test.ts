@@ -34,5 +34,26 @@ describe('MarkdownFileMemoryProvider — 512KB overflow routes to archive (§2.3
     expect(archive).not.toBeNull();
     expect(archive).toContain('UNIQUE_MARKER_0');
     expect(archive).toContain('overflow-archived');
+
+    // Byte conservation: strip the archive's `<!-- overflow-archived … -->`
+    // stamp lines, then prove every payload byte we wrote survives across
+    // (MEMORY.md + archive) — nothing was dropped, only relocated. We assert
+    // EXACT conservation of the padding bytes and every marker rather than a
+    // whole-file byte-count equality, because the overflow trim normalizes a
+    // single structural separator newline (`trimEnd` on the dropped prefix),
+    // which is a formatting byte, not payload.
+    const strippedArchive = (archive ?? '')
+      .split('\n')
+      .filter((line) => !line.startsWith('<!-- overflow-archived '))
+      .join('\n');
+    const countY = (s: string) => (s.match(/y/g) ?? []).length;
+    expect(countY(content) + countY(strippedArchive)).toBe(6 * 100 * 1024);
+    for (let i = 0; i < 6; i++) {
+      const marker = `UNIQUE_MARKER_${i}`;
+      const inLive = content.includes(marker);
+      const inArchive = strippedArchive.includes(marker);
+      // Each marker survives in exactly one of the two files (none lost).
+      expect(inLive !== inArchive).toBe(true);
+    }
   });
 });

@@ -1088,6 +1088,9 @@ importers:
       '@ethosagent/memory-markdown':
         specifier: workspace:*
         version: link:../memory-markdown
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../packages/safety/injection
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs

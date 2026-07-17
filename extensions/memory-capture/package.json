@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@ethosagent/memory-markdown": "workspace:*",
+    "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*"
   }
 }

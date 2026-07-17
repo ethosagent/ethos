@@ -96,4 +96,30 @@ describe('HistoryMemoryProvider — write behaviour matches the raw provider', (
     expect(entries[0]?.source).toBe('global-entry');
     expect(entries[0]?.key).toBe('MEMORY.md');
   });
+
+  it('leaves the original global entry intact when the atomic write fails', async () => {
+    const storage = new InMemoryStorage();
+    const base = new MarkdownFileMemoryProvider({ dir: DATA, storage });
+    const history = new HistoryStore({ dataDir: DATA, storage });
+    const provider = withHistory(base, history, { source: 'tool' });
+
+    // Establish a durable v1 through the real atomic path.
+    await provider.writeGlobalEntry('memory', 'original v1');
+    expect((await provider.readGlobalEntry('memory')).content).toContain('original v1');
+
+    // Now make the atomic write fail mid-flight for the global file.
+    const origAtomic = storage.writeAtomic.bind(storage);
+    storage.writeAtomic = async (p, content, opts) => {
+      if (p.endsWith('MEMORY.md')) throw new Error('disk full');
+      return origAtomic(p, content, opts);
+    };
+
+    await expect(provider.writeGlobalEntry('memory', 'clobbering v2')).rejects.toThrow('disk full');
+
+    // Original content survives (atomic write is all-or-nothing) and no history
+    // entry was recorded for the failed mutation.
+    expect((await provider.readGlobalEntry('memory')).content).toContain('original v1');
+    expect((await provider.readGlobalEntry('memory')).content).not.toContain('clobbering v2');
+    expect((await history.read('global')).entries).toHaveLength(1); // only the v1 write
+  });
 });

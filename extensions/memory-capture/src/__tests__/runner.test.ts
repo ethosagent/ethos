@@ -1,6 +1,10 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { HistoryStore } from '@ethosagent/memory-history';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
-import { InMemoryStorage } from '@ethosagent/storage-fs';
+import { sanitize } from '@ethosagent/safety-injection';
+import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
 import type {
   AgentDonePayload,
   HookRegistry,
@@ -9,13 +13,18 @@ import type {
   MemoryContext,
   Session,
   SessionStore,
+  Storage,
 } from '@ethosagent/types';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { hashFact } from '../dedup';
 import { MemoryCaptureRunner, type MemoryCaptureRunnerOptions } from '../runner';
 import type { CaptureJob } from '../types';
 
 const DATA = '/root/.ethos';
+const tmpDirs: string[] = [];
+afterAll(async () => {
+  await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true })));
+});
 const LONG =
   'My daughter Priya was born in 2019 and I work as a staff engineer at Acme Corp, and I love tea.';
 const FACT = 'USER|0.8|Has a daughter named Priya, born 2019.';
@@ -61,7 +70,7 @@ function ctx(scopeId = 'personality:muse'): MemoryContext {
 
 interface Harness {
   runner: MemoryCaptureRunner;
-  storage: InMemoryStorage;
+  storage: Storage;
   history: HistoryStore;
   provider: MarkdownFileMemoryProvider;
   llmCalls: string[];
@@ -71,7 +80,7 @@ function makeHarness(
   over: Partial<MemoryCaptureRunnerOptions> = {},
   llmResponse: string | (() => string) = FACT,
   shared?: {
-    storage: InMemoryStorage;
+    storage: Storage;
     history: HistoryStore;
     provider: MarkdownFileMemoryProvider;
   },
@@ -290,5 +299,49 @@ describe('MemoryCaptureRunner', () => {
     const h = makeHarness(undefined, 'NONE');
     await capture(h.runner);
     expect((await h.history.read('personality:muse')).entries).toHaveLength(0);
+  });
+
+  it('only ever issues add-only MemoryUpdates (never replace/remove/delete)', async () => {
+    // Two facts across BOTH stores so write() builds updates for each key.
+    const h = makeHarness(undefined, 'USER|0.8|Likes tea.\nMEMORY|0.6|Ships on Fridays.');
+    const syncSpy = vi.spyOn(h.provider, 'sync');
+    await capture(h.runner);
+    expect(syncSpy).toHaveBeenCalled();
+    for (const [updates] of syncSpy.mock.calls) {
+      for (const u of updates) expect(u.action).toBe('add');
+    }
+  });
+
+  it('applies the same write-path sanitize as memory_write (no capture bypass)', async () => {
+    // memory_write writes `sanitize(content)` (from @ethosagent/safety-injection);
+    // capture must write byte-identically through its injected sanitize so it is
+    // not a softer path. Credential redaction is a READ-time concern (redactString)
+    // for BOTH paths — neither redacts on write — so this proves parity, not that
+    // the raw secret is scrubbed at rest.
+    const secretFact = `sk-ant-${'a'.repeat(100)} — key pasted above`;
+    const h = makeHarness({ sanitize }, `USER|0.6|${secretFact}`);
+    await capture(h.runner);
+    const userContent = (await h.provider.read('USER.md', ctx()))?.content ?? '';
+    expect(userContent).toContain(`- ${sanitize(secretFact)}`);
+  });
+
+  it('derives dedup + rate-limit from on-disk history across a restart (FsStorage)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ethos-capture-restart-'));
+    tmpDirs.push(dir);
+    const storage = new FsStorage();
+    const provider = new MarkdownFileMemoryProvider({ dir, storage });
+    const history = new HistoryStore({ dataDir: dir, storage });
+
+    // First "process": a fresh runner captures the fact.
+    const procA = makeHarness(undefined, FACT, { storage, history, provider });
+    await capture(procA.runner);
+    expect((await history.read('personality:muse', { source: 'capture' })).entries).toHaveLength(1);
+
+    // Second "process": a BRAND-NEW runner (no shared in-memory dedup state),
+    // reading the SAME on-disk history, must still dedup the restated fact.
+    const procB = makeHarness(undefined, FACT, { storage, history, provider });
+    await capture(procB.runner);
+    expect(procB.llmCalls).toHaveLength(1); // extraction ran…
+    expect((await history.read('personality:muse', { source: 'capture' })).entries).toHaveLength(1); // …no second write
   });
 });

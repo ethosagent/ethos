@@ -73,6 +73,45 @@ describe('HistoryStore.record', () => {
   });
 });
 
+describe('HistoryStore.record — diff-cap boundary (strict >)', () => {
+  const before = 'A'.repeat(500);
+  const after = 'B'.repeat(500);
+
+  // Measure the untruncated diff length so we can pin the cap to the exact
+  // boundary instead of guessing at patch-header overhead.
+  async function diffLen(): Promise<number> {
+    const { store } = make(10_000_000);
+    const e = await store.record(base({ before, after, actions: ['replace'] }));
+    return Buffer.byteLength(e?.diff ?? '');
+  }
+
+  it('diff exactly at the cap stays inline (no blob)', async () => {
+    const L = await diffLen();
+    const { store } = make(L); // L > L === false
+    const e = await store.record(base({ before, after, actions: ['replace'] }));
+    expect(e?.blob).toBeUndefined();
+    expect(e?.diff).not.toContain('[diff truncated');
+  });
+
+  it('diff one below the cap stays inline (no blob)', async () => {
+    const L = await diffLen();
+    const { store } = make(L + 1); // L > L+1 === false
+    const e = await store.record(base({ before, after, actions: ['replace'] }));
+    expect(e?.blob).toBeUndefined();
+    expect(e?.diff).not.toContain('[diff truncated');
+  });
+
+  it('diff one above the cap spills to a blob, recovered byte-for-byte', async () => {
+    const L = await diffLen();
+    const { store } = make(L - 1); // L > L-1 === true
+    const e = await store.record(base({ before, after, actions: ['replace'] }));
+    expect(e?.blob).toBeDefined();
+    expect(e?.diff).toContain('[diff truncated; before-state in blob');
+    const recovered = await store.readBlob(SCOPE, e?.blob ?? '');
+    expect(recovered).toBe(before);
+  });
+});
+
 describe('HistoryStore.read — tolerant reader', () => {
   it('skips a torn line and reports corruptLines', async () => {
     const { storage, store } = make();
@@ -84,6 +123,21 @@ describe('HistoryStore.read — tolerant reader', () => {
     const { entries, corruptLines } = await store.read(SCOPE);
     expect(entries).toHaveLength(2);
     expect(corruptLines).toBe(1);
+  });
+
+  it('counts valid-JSON-but-missing-required-fields and {} as corrupt', async () => {
+    const { storage, store } = make();
+    await store.record(base({ before: '', after: 'one\n' }));
+    // Valid JSON, wrong shape: missing `source` (and `{}` missing everything).
+    await storage.append(
+      store.historyPath(SCOPE),
+      '{"ts":123,"scopeId":"personality:muse","key":"MEMORY.md"}\n',
+    );
+    await storage.append(store.historyPath(SCOPE), '{}\n');
+
+    const { entries, corruptLines } = await store.read(SCOPE);
+    expect(entries).toHaveLength(1);
+    expect(corruptLines).toBe(2);
   });
 
   it('filters by key, source and since, and limits to the most recent', async () => {
@@ -140,5 +194,72 @@ describe('HistoryStore.rotate', () => {
     // Reader merges live + archives.
     const { entries } = await store.read(SCOPE);
     expect(entries).toHaveLength(2);
+  });
+
+  it('never clobbers appends that land while rotate runs (rename-then-split)', async () => {
+    const { storage, store } = make();
+    await storage.mkdir(store.scopeDir(SCOPE));
+
+    // Seed OLD-month entries so rotate has real work and must move the inode.
+    const janTs = new Date(2020, 0, 15).getTime();
+    const OLD = 5;
+    const oldLine = (i: number) =>
+      `${JSON.stringify({
+        ts: janTs,
+        scopeId: SCOPE,
+        key: 'MEMORY.md',
+        actions: ['add'],
+        source: 'tool',
+        sessionId: '',
+        sessionKey: '',
+        beforeHash: 'sha256:x',
+        afterHash: 'sha256:y',
+        diff: `old-${i}`,
+        sizeBefore: 0,
+        sizeAfter: 1,
+      })}\n`;
+    for (let i = 0; i < OLD; i++) await storage.append(store.historyPath(SCOPE), oldLine(i));
+
+    // N workers each append K current-month entries concurrently WITH rotate.
+    // Under InMemoryStorage the awaits interleave, so appends land in the
+    // read→rename→re-append window that read-modify-writeAtomic would clobber.
+    const nowD = new Date(2020, 1, 20);
+    const nowTs = nowD.getTime();
+    const N = 4;
+    const K = 25;
+    const curLine = (w: number, k: number) =>
+      `${JSON.stringify({
+        ts: nowTs,
+        scopeId: SCOPE,
+        key: 'MEMORY.md',
+        actions: ['add'],
+        source: 'capture',
+        sessionId: '',
+        sessionKey: '',
+        beforeHash: 'sha256:x',
+        afterHash: 'sha256:y',
+        diff: `w${w}-k${k}`,
+        sizeBefore: 0,
+        sizeAfter: 1,
+      })}\n`;
+    const worker = async (w: number) => {
+      for (let k = 0; k < K; k++) await storage.append(store.historyPath(SCOPE), curLine(w, k));
+    };
+
+    await Promise.all([
+      store.rotate(SCOPE, nowD),
+      ...Array.from({ length: N }, (_, w) => worker(w)),
+    ]);
+
+    const { entries } = await store.read(SCOPE);
+    // Every OLD entry (archived) + every concurrently-appended current entry
+    // survives — nothing dropped by the rotation.
+    expect(entries).toHaveLength(OLD + N * K);
+    const diffs = new Set(entries.map((e) => e.diff));
+    for (let w = 0; w < N; w++) {
+      for (let k = 0; k < K; k++) expect(diffs.has(`w${w}-k${k}`)).toBe(true);
+    }
+    // The temporary snapshot is cleaned up.
+    expect(await storage.exists(`${store.historyPath(SCOPE)}.rotating`)).toBe(false);
   });
 });

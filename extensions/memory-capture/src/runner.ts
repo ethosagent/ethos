@@ -236,7 +236,17 @@ export class MemoryCaptureRunner {
       const content = `\n${appendText}`;
 
       const before = (await this.opts.provider.read(key, ctx))?.content ?? '';
-      const updates: MemoryUpdate[] = [{ action: 'add', key, content }];
+      // Capture is ADD-ONLY (§3): it never replaces or removes durable memory —
+      // a bad extraction can add noise, consolidation later distills it. The
+      // narrowed element type makes any future `replace`/`remove`/`delete` here
+      // a compile error, not just a runtime convention.
+      const updates: Array<Extract<MemoryUpdate, { action: 'add' }>> = [
+        { action: 'add', key, content },
+      ];
+      // Durable write FIRST, history record AFTER — fail-open per invariant #7.
+      // A crash between the two leaves the appended fact durable with no history
+      // entry (before-state unrecoverable for that mutation); capture is a
+      // best-effort side effect, so this window is accepted, not guarded.
       await this.opts.provider.sync(updates, ctx);
       const after = (await this.opts.provider.read(key, ctx))?.content ?? '';
 

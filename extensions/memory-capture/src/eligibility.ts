@@ -35,15 +35,33 @@ export interface EligibilityResult {
 const CHILD_SEGMENTS = [':sub:', ':moa:', ':job:', ':mesh:'];
 
 /**
- * A synthetic background-job wake is injected as a `[background job … finished]`
- * envelope wrapping the child's summary in an `<untrusted tool="background_job_summary">`
- * block (see `Gateway.buildWakeNotice`). The wake body is untrusted child output;
- * capturing from it would let hostile content a child read reach durable memory.
+ * Anchored match for the untrusted background-job wrapper: the opening tag of an
+ * `<untrusted source="…" tool="background_job_summary">` block emitted by
+ * `wrapUntrusted` (see `packages/safety/injection/src/wrap.ts`). Matching the
+ * tag structure (rather than a bare `includes`) means a hostile child echoing
+ * the literal attribute in prose still trips it — over-exclusion is safe — while
+ * the check stays pinned to the real envelope shape.
+ */
+const BACKGROUND_JOB_UNTRUSTED_TAG = /<untrusted\b[^>]*\btool="background_job_summary"/;
+
+/**
+ * A synthetic background-job wake is a `[background job … finished]` envelope
+ * wrapping the child's summary in an `<untrusted tool="background_job_summary">`
+ * block (see `Gateway.buildWakeNotice`). The wake body is untrusted child output.
+ *
+ * This is DEFENCE-IN-DEPTH, not the primary guarantee. Today no path re-ingests
+ * a wake as a parent turn: the gateway sends the notice outbound via
+ * `adapter.send` and the CLI prints it at the idle prompt ("no auto-turn"), so a
+ * wake never fires `agent_done` with a parent's sessionKey. Every child turn
+ * that DOES fire `agent_done` carries a derived child sessionKey (`:job:` /
+ * `:sub:` / `:moa:` / `:mesh:`) and is excluded structurally below, regardless
+ * of its content. This content check only guards a hypothetical future path that
+ * injects wake text as a parent turn; it must never be relied on as the sole
+ * barrier, because content markers are attacker-influenceable.
  */
 function isWakeTurn(initialPrompt: string): boolean {
   return (
-    initialPrompt.startsWith('[background job ') ||
-    initialPrompt.includes('tool="background_job_summary"')
+    initialPrompt.startsWith('[background job ') || BACKGROUND_JOB_UNTRUSTED_TAG.test(initialPrompt)
   );
 }
 
@@ -52,6 +70,10 @@ export function evaluateEligibility(input: EligibilityInput): EligibilityResult 
 
   const sessionKey = input.sessionKey;
   if (sessionKey.startsWith('dream:')) return { eligible: false, reason: 'dream-session' };
+  // PRIMARY guarantee: any child/background turn is excluded by the STRUCTURAL
+  // shape of its derived sessionKey, independent of (attacker-influenceable)
+  // content. This is what actually keeps untrusted child output out of durable
+  // memory. The content-based `isWakeTurn` check below is belt-and-braces.
   for (const seg of CHILD_SEGMENTS) {
     if (sessionKey.includes(seg)) return { eligible: false, reason: 'child-session' };
   }

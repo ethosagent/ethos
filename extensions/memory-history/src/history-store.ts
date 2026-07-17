@@ -189,12 +189,23 @@ export class HistoryStore {
   }
 
   /**
-   * Month-rotation (§2.2). Moves every live-file entry from a month strictly
-   * before `now`'s month into `memory-history-<month>.jsonl` and rewrites the
-   * live file with only the current month's lines. Single-rotator: only the
-   * nightly pass calls this. Rotated files are never auto-deleted (open
-   * question 3); content-addressed blobs stay in the shared `history-blobs/`
-   * dir and travel with no month, since nothing is pruned.
+   * Month-rotation (§2.2). Moves every entry from a month strictly before
+   * `now`'s month into `memory-history-<month>.jsonl` and leaves the live file
+   * with only the current month's lines.
+   *
+   * Rename-then-split, NOT read-modify-writeAtomic: a naive rotate that reads
+   * the live file and later `writeAtomic`s the survivors back would clobber any
+   * append (dream turn, background capture, in-flight `sync()`) that landed on
+   * the live inode between the read and the atomic replace — the rename swaps
+   * the inode and those bytes are lost. Instead we rename the live file aside
+   * FIRST, so any concurrent append lands on a FRESH live file, then split the
+   * immutable snapshot and re-append (never writeAtomic) the current-month
+   * lines back. The reader sorts by `ts`, so re-append ordering is irrelevant.
+   *
+   * Single-rotator per scope: only the nightly pass calls this, so the fixed
+   * `.rotating` snapshot name never collides. Rotated files are never
+   * auto-deleted (open question 3); content-addressed blobs stay in the shared
+   * `history-blobs/` dir and travel with no month, since nothing is pruned.
    */
   async rotate(scopeId: string, now = new Date()): Promise<{ rotated: number }> {
     const path = this.historyPath(scopeId);
@@ -202,11 +213,25 @@ export class HistoryStore {
     if (raw === null) return { rotated: 0 };
 
     const currentMonth = monthKey(now.getTime());
+
+    // Cheap peek: if nothing predates the current month there is nothing to
+    // rotate. Concurrent appenders only ever add current-month entries (their
+    // `ts` is `Date.now()`), so a write landing after this read cannot turn a
+    // "nothing to rotate" verdict into "something to rotate" — we skip the
+    // rename entirely and leave the live file untouched (zero race surface).
+    if (!hasOldMonthLine(raw, currentMonth)) return { rotated: 0 };
+
     const scopeDir = this.scopeDir(scopeId);
+    const snapshotPath = join(scopeDir, `${HISTORY_FILE}.rotating`);
+    // Move the live file aside atomically. New appends now create/extend a
+    // fresh live file at `path`; the snapshot we split below is immutable.
+    await this.storage.rename(path, snapshotPath);
+    const snapshot = await this.storage.read(snapshotPath);
+    if (snapshot === null) return { rotated: 0 }; // defensive — rename just moved it
+
     const keep: string[] = [];
     const byMonth = new Map<string, string[]>();
-
-    for (const line of raw.split('\n')) {
+    for (const line of snapshot.split('\n')) {
       if (line.trim().length === 0) continue;
       const parsed = parseEntry(line);
       // Malformed lines are kept in the live file — the tolerant reader copes,
@@ -225,8 +250,6 @@ export class HistoryStore {
       }
     }
 
-    if (byMonth.size === 0) return { rotated: 0 };
-
     let rotated = 0;
     for (const [month, lines] of byMonth) {
       await this.storage.append(
@@ -235,9 +258,26 @@ export class HistoryStore {
       );
       rotated += lines.length;
     }
-    await this.storage.writeAtomic(path, keep.length > 0 ? `${keep.join('\n')}\n` : '');
+
+    // Re-append current-month survivors to the live file. It may already hold
+    // entries a concurrent writer appended after the rename — APPEND, never
+    // writeAtomic, so those concurrent bytes are preserved rather than clobbered.
+    if (keep.length > 0) {
+      await this.storage.append(path, `${keep.join('\n')}\n`);
+    }
+    await this.storage.remove(snapshotPath);
     return { rotated };
   }
+}
+
+/** True if any well-formed line carries a month strictly before `currentMonth`. */
+function hasOldMonthLine(raw: string, currentMonth: string): boolean {
+  for (const line of raw.split('\n')) {
+    if (line.trim().length === 0) continue;
+    const parsed = parseEntry(line);
+    if (parsed !== null && monthKey(parsed.ts) < currentMonth) return true;
+  }
+  return false;
 }
 
 function sha256(content: string): string {

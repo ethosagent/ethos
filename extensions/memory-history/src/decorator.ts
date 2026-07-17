@@ -28,6 +28,21 @@ export interface WithHistoryOptions {
  * recording one history entry per (key, batch). `prefetch` / `read` / `search`
  * / `list` / `readGlobalEntry` pass through untouched, so read behaviour and
  * tool-visible write behaviour stay byte-identical (M-T10 regression).
+ *
+ * Recoverability caveat (invariant #6 vs #7): the mutation is made durable
+ * FIRST (`inner.sync()`), then the history entry is appended. A crash in that
+ * narrow window leaves the mutation on disk with NO history entry, so the
+ * before-state of THAT one mutation is not recoverable. This is the fail-open
+ * posture of invariant #7 (history is a best-effort side effect on the
+ * void-hook model): the durable memory write must never be blocked or lost
+ * waiting on the audit log. The "every pre-mutation byte is recoverable"
+ * guarantee (§2.1, proven in recover.property.test) therefore holds for every
+ * RECORDED entry — never for a mutation whose record was interrupted mid-crash.
+ * We deliberately do NOT write a preliminary intent entry before `inner.sync()`
+ * (option A): it would double every history write, force the tolerant reader
+ * and rotate/dedup logic to reconcile intent-vs-final pairs, and put audit I/O
+ * on the critical path of a durable memory write — a worse trade than the
+ * documented fail-open window.
  */
 export class HistoryMemoryProvider implements MemoryProvider, GlobalMemoryStore {
   constructor(
@@ -64,6 +79,9 @@ export class HistoryMemoryProvider implements MemoryProvider, GlobalMemoryStore 
     const before = new Map<string, string>();
     for (const key of keys) before.set(key, (await this.inner.read(key, ctx))?.content ?? '');
 
+    // Durable write FIRST, history entry AFTER (fail-open, invariant #7). A
+    // crash between these two leaves the mutation durable with no history line;
+    // see the class docstring for why we accept that window over an intent entry.
     await this.inner.sync(updates, ctx);
 
     // Dream turns write through the same tool handle; distinguish them by the
