@@ -76,6 +76,22 @@ describe('ChatService', () => {
     }
   });
 
+  it('a refreshPersonalities that rejects does not abort send (serves last-good)', async () => {
+    const loop = makeStubAgentLoop({ events: [{ type: 'done', text: 'ok', turnCount: 1 }] });
+    const service = new ChatService({
+      loop,
+      sessions,
+      buffer,
+      defaults: { model: 'claude-test', provider: 'anthropic' },
+      refreshPersonalities: async () => {
+        throw new Error('malformed personality YAML on disk');
+      },
+    });
+    const result = await service.send({ clientId: 'tab-1', text: 'hi' });
+    expect(result.sessionId).toMatch(/^.+/);
+    expect(result.turnId).toMatch(/^.+/);
+  });
+
   it('subscribe receives bridge events as SseEvents (text_delta + done)', async () => {
     const service = makeService();
     const events: SseEvent[] = [];

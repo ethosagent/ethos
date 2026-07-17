@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   assertSafeId,
   type DreamingConfig,
@@ -603,6 +603,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
   remove(id: string): void {
     this.personalities.delete(id);
+    this.mcpPolicies.delete(id);
     this.mcpWarningsMap.delete(id);
     // Also drop fingerprint entries for that id's directory so a
     // subsequent re-create with the same id rebuilds cleanly. We
@@ -617,7 +618,21 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
 
   async loadFromDirectory(dir: string): Promise<void> {
     const entries = await this.storage.list(dir);
-    if (entries.length === 0) return;
+    const observed = new Set(entries);
+
+    // Reconcile deletions: drop any personality previously loaded from THIS
+    // directory whose sub-directory no longer exists on disk, so a removed
+    // personality stops resolving with its stale toolset / fs_reach allowlist /
+    // mcp policy. Scoped by parent dir (fingerprint-cache keys ARE the
+    // personality dirs) so built-ins loaded from the package data dir are never
+    // evicted. Snapshot the keys — remove() mutates the fingerprint cache. This
+    // runs even when `entries` is empty, so deleting the LAST personality in a
+    // dir collapses the cache correctly rather than leaving stale entries.
+    for (const cachedDir of [...this.fingerprintCache.keys()]) {
+      if (dirname(cachedDir) === dir && !observed.has(basename(cachedDir))) {
+        this.remove(basename(cachedDir));
+      }
+    }
 
     await Promise.all(
       entries.map(async (entry) => {

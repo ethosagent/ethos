@@ -453,12 +453,31 @@ export async function runGatewayStart(): Promise<void> {
     // Configured default not on disk — keep the registry's built-in default.
   }
   const personalityRefreshers = [refreshSystemPersonalities, ...botPersonalityRefreshers];
+  // Debounce window: at burst scale, re-scan disk at most once per interval. The
+  // mtime-fingerprint cache already makes a no-change scan cheap (~stat per
+  // file), and this bounds the per-turn syscall cost when many turns land in
+  // quick succession. A dropped/edited personality becomes visible within one
+  // window (sub-second), which is well inside human command latency.
+  const REFRESH_DEBOUNCE_MS = 300;
+  let lastRefreshMs = 0;
   const personalityDirectory = {
     refresh: async (): Promise<void> => {
-      await Promise.all([
+      const now = Date.now();
+      if (now - lastRefreshMs < REFRESH_DEBOUNCE_MS) return;
+      lastRefreshMs = now;
+      // allSettled, not all: one malformed personality directory (bad YAML) must
+      // not sink every other registry's refresh. Log the rejected arm count once
+      // and proceed — each surviving registry serves last-good.
+      const results = await Promise.allSettled([
         seamPersonalities.loadFromDirectory(personalitiesDir),
         ...personalityRefreshers.map((fn) => fn()),
       ]);
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        console.warn(
+          `[gateway] personality refresh: ${failed}/${results.length} registries failed to reload (serving last-good)`,
+        );
+      }
     },
     has: (id: string): boolean => seamPersonalities.get(id) != null,
     list: (): Array<{ id: string; name: string; isDefault: boolean }> => {

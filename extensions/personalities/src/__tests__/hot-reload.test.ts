@@ -88,6 +88,48 @@ describe('personality hot-reload — refresh-on-resolve', () => {
     expect(resolved?.name).toBe('Nova');
   });
 
+  it('criterion 7 — delete-then-refresh: a removed personality stops resolving (config + mcp policy); other-dir personalities survive', async () => {
+    const storage = new InMemoryStorage();
+    const registry = new FilePersonalityRegistry(storage);
+
+    // A "built-in"-style personality loaded from a SEPARATE directory (a
+    // different parent than the user dir — mirrors the package data dir). It
+    // must survive a reconciliation scoped to the user dir.
+    const BUILTIN_DIR = '/builtins';
+    await storage.mkdir(join(BUILTIN_DIR, 'sage'));
+    await storage.write(
+      join(BUILTIN_DIR, 'sage', 'config.yaml'),
+      'name: Sage\ndescription: test\n',
+    );
+    await storage.write(join(BUILTIN_DIR, 'sage', 'SOUL.md'), '# Sage\n');
+    await registry.loadFromDirectory(BUILTIN_DIR);
+    expect(registry.get('sage')).toBeDefined();
+
+    // A user personality that also ships an mcp.yaml, so we can assert the
+    // policy is dropped on deletion (the ghost-policy bug).
+    await writePersonality(storage, 'ephemeral', { name: 'Ephemeral' });
+    await storage.write(
+      join(DIR, 'ephemeral', 'mcp.yaml'),
+      'servers:\n  linear:\n    tools:\n      - list_issues\n',
+    );
+    await registry.loadFromDirectory(DIR);
+    expect(registry.get('ephemeral')).toBeDefined();
+    expect(registry.getMcpPolicy('ephemeral')).toBeDefined();
+
+    // Delete the ONLY user personality directory, then refresh. The dir is now
+    // empty — reconciliation must still run (no early return).
+    await storage.remove(join(DIR, 'ephemeral'), { recursive: true });
+    await registry.loadFromDirectory(DIR);
+
+    // Removed everywhere: config AND the sibling mcp policy.
+    expect(registry.get('ephemeral')).toBeUndefined();
+    expect(registry.getMcpPolicy('ephemeral')).toBeUndefined();
+
+    // The other-dir personality survived the user-dir refresh — built-ins are
+    // never nuked by a user-dir reconciliation.
+    expect(registry.get('sage')).toBeDefined();
+  });
+
   it('criterion 6 — fingerprint fast path: a no-change refresh performs no read() and no re-parse', async () => {
     const storage = new InMemoryStorage();
     await writePersonality(storage, 'atlas', { name: 'Atlas' });

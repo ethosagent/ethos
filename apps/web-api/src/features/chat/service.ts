@@ -173,8 +173,16 @@ export class ChatService {
 
     // Refresh the loop's personality registry from disk before the turn runs so
     // a hot-dropped or edited personality resolves without a restart. No-op when
-    // no closure is wired (tests, embedders).
-    await this.opts.refreshPersonalities?.();
+    // no closure is wired (tests, embedders). Fail-open: a refresh that throws
+    // (e.g. malformed personality YAML on disk) must not abort the turn — serve
+    // the last-good registry (stale-but-alive beats a dead turn).
+    try {
+      await this.opts.refreshPersonalities?.();
+    } catch (err) {
+      console.warn(
+        `[chat] personality refresh failed (serving last-good): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // Fire and forget — the bridge streams events through our subscription
     // and persists messages via the agent loop. `chat.send` returns as soon

@@ -1082,8 +1082,11 @@ export class Gateway {
 
     if (cmdType === 'personality') {
       // Refresh from disk before resolving so a newly dropped or edited
-      // personality is visible to this command. Seam absent → no-op.
-      await this.personalityDirectory?.refresh();
+      // personality is visible to this command. Seam absent → no-op. Fail-open:
+      // a refresh that throws (e.g. malformed personality YAML on disk) must not
+      // abort the command — the seam impl logs; we proceed with the last-good
+      // registry (stale-but-alive beats a dead command).
+      await this.personalityDirectory?.refresh().catch(() => {});
       const arg = text.split(/\s+/).slice(1).join(' ').trim();
       const current = this.activePersonalityFor(laneKey, bot);
 
@@ -1138,11 +1141,19 @@ export class Gateway {
         return;
       }
 
-      // Validate against the (just-refreshed) registry before storing the id.
-      // Unknown ids must never be stored — turn-setup's `?? getDefault()`
-      // would then silently run the default personality. Seam absent → skip
-      // validation (standalone/test posture unchanged).
-      if (this.personalityDirectory && !this.personalityDirectory.has(arg)) {
+      // Validate against the registry before storing the id. Unknown ids must
+      // never be stored — turn-setup's `?? getDefault()` would then silently run
+      // the default personality. With the seam wired, validate against the
+      // just-refreshed seam registry; without it (standalone/test), fall back to
+      // this bot's own loop registry so validation is never skipped. If neither
+      // can validate, treat the id as unknown (surface not-found, store nothing)
+      // rather than storing an unverified id.
+      const known = this.personalityDirectory
+        ? this.personalityDirectory.has(arg)
+        : typeof bot.loop.getPersonalityIds === 'function'
+          ? bot.loop.getPersonalityIds().includes(arg)
+          : false;
+      if (!known) {
         await adapter
           .send(message.chatId, {
             text: `Personality '${arg}' not found — /personality list to see what's available.`,
@@ -1583,7 +1594,10 @@ export class Gateway {
     // Refresh every loop registry from disk before resolving which personality
     // this turn runs as, so a hot-dropped or edited directory takes effect on
     // the next turn without a restart. Seam absent (tests, standalone) → no-op.
-    await this.personalityDirectory?.refresh();
+    // Fail-open: a refresh that throws (e.g. malformed YAML on disk) must not
+    // abort the turn — the seam impl logs; we proceed with the last-good
+    // registry (stale-but-alive beats a dead turn).
+    await this.personalityDirectory?.refresh().catch(() => {});
     const personalityId =
       bot.binding.type === 'team'
         ? undefined

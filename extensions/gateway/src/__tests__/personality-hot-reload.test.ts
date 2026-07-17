@@ -121,6 +121,60 @@ describe('gateway /personality — validate-on-switch (criterion 4)', () => {
   });
 });
 
+describe('gateway /personality — validate-on-switch without the seam (review fix)', () => {
+  function makeLoopWithIds(ids: string[]): AgentLoop & { runArgs: Array<string | undefined> } {
+    const loop = makeFakeLoop();
+    (loop as unknown as { getPersonalityIds: () => string[] }).getPersonalityIds = () => ids;
+    return loop;
+  }
+
+  it('rejects an unknown id via the loop registry when no seam is wired (stores nothing)', async () => {
+    const loop = makeLoopWithIds(['researcher', 'engineer']);
+    const adapter = makeFakeAdapter();
+    const gateway = makeGateway(loop); // no personalityDirectory seam
+
+    await gateway.handleMessage(inbound('/personality nope'), adapter);
+    expect(adapter.sentMessages[0]).toBe(
+      "Personality 'nope' not found — /personality list to see what's available.",
+    );
+
+    // Unverified id was NOT stored — the next turn still runs the binding.
+    await gateway.handleMessage(inbound('hello'), adapter);
+    expect(loop.runArgs.at(-1)).toBe('researcher');
+  });
+
+  it('accepts a known id via the loop registry when no seam is wired', async () => {
+    const loop = makeLoopWithIds(['researcher', 'engineer']);
+    const adapter = makeFakeAdapter();
+    const gateway = makeGateway(loop);
+
+    await gateway.handleMessage(inbound('/personality engineer'), adapter);
+    expect(adapter.sentMessages[0]).toContain('Switched to engineer');
+
+    await gateway.handleMessage(inbound('hello'), adapter);
+    expect(loop.runArgs.at(-1)).toBe('engineer');
+  });
+});
+
+describe('gateway personality refresh — fail-open (review fix)', () => {
+  it('a refresh that rejects does not abort the turn; the loop still runs', async () => {
+    const loop = makeFakeLoop();
+    const adapter = makeFakeAdapter();
+    const gateway = makeGateway(loop, {
+      refresh: async () => {
+        throw new Error('malformed personality YAML on disk');
+      },
+      has: () => true,
+      list: () => [],
+    });
+
+    await gateway.handleMessage(inbound('hello'), adapter);
+
+    // Despite refresh throwing, the turn resolved and ran with the binding.
+    expect(loop.runArgs.at(-1)).toBe('researcher');
+  });
+});
+
 describe('gateway /personality list — real registry render (criterion 5)', () => {
   it('renders personalityDirectory.list(); the hardcoded builtins string is gone', async () => {
     const loop = makeFakeLoop();

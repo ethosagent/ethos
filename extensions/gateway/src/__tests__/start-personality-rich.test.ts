@@ -4,11 +4,14 @@ import type { DeliveryResult, InboundMessage, PlatformAdapter } from '@ethosagen
 import { describe, expect, it, vi } from 'vitest';
 import { Gateway } from '../index';
 
-// Minimal fake loop — yields done immediately.
+// Minimal fake loop — yields done immediately. getPersonalityIds is present so
+// the no-seam `/personality <id>` path (which validates against the loop's own
+// registry) can resolve known ids like 'researcher' and 'rich'.
 function makeFakeLoop(): AgentLoop {
   const hooks = new DefaultHookRegistry();
   return {
     hooks,
+    getPersonalityIds: () => ['researcher', 'rich'],
     async *run() {
       yield { type: 'done' as const, text: '', turnCount: 1 };
     },

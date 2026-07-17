@@ -185,8 +185,16 @@ export class CompletionsService {
   ): Promise<{ sessionKey: string; lastUserText: string; attachments?: Attachment[] }> {
     // Refresh the loop's personality registry from disk before the turn runs so
     // a hot-dropped or edited personality resolves without a restart. No-op when
-    // no closure is wired (tests, embedders).
-    await this.opts.refreshPersonalities?.();
+    // no closure is wired (tests, embedders). Fail-open: a refresh that throws
+    // (e.g. malformed personality YAML on disk) must not abort the turn — serve
+    // the last-good registry (stale-but-alive beats a dead turn).
+    try {
+      await this.opts.refreshPersonalities?.();
+    } catch (err) {
+      console.warn(
+        `[completions] personality refresh failed (serving last-good): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     const lastUser = finalUserMessage(input.req.messages);
     if (!lastUser) {
       throw new EthosError({
