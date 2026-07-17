@@ -28,6 +28,12 @@ export interface ConfigGetResult {
   debugPanelEnabled: boolean;
   debugPanelModel: string | null;
   adminEnabled: boolean;
+  streamingEdits: 'off' | 'dms' | 'all';
+  autoCompact: boolean;
+  memoryConsolidationEnabled: boolean;
+  memoryCaptureEnabled: boolean;
+  memoryCaptureModel: string | null;
+  memoryNotices: boolean;
   voiceProvider: string | null;
   voiceApiKeyPreview: string | null;
   voiceBaseUrl: string | null;
@@ -61,6 +67,12 @@ export interface ConfigUpdateInput {
   debugPanelEnabled?: boolean;
   debugPanelModel?: string | null;
   adminEnabled?: boolean;
+  streamingEdits?: 'off' | 'dms' | 'all';
+  autoCompact?: boolean;
+  memoryConsolidationEnabled?: boolean;
+  memoryCaptureEnabled?: boolean;
+  memoryCaptureModel?: string;
+  memoryNotices?: boolean;
   voiceProvider?: string;
   voiceApiKey?: string;
   voiceBaseUrl?: string;
@@ -115,6 +127,12 @@ export class ConfigService {
       debugPanelEnabled: raw.debugPanelEnabled ?? false,
       debugPanelModel: raw.debugPanelModel ?? null,
       adminEnabled: raw.passthrough['admin.enabled'] === 'true',
+      streamingEdits: parseStreamingEdits(raw.passthrough['display.streaming_edits']),
+      autoCompact: raw.passthrough['compaction.autoCompact'] === 'true',
+      memoryConsolidationEnabled: raw.passthrough['memoryConsolidation.enabled'] === 'true',
+      memoryCaptureEnabled: raw.passthrough['memoryCapture.enabled'] === 'true',
+      memoryCaptureModel: raw.passthrough['memoryCapture.model'] || null,
+      memoryNotices: raw.passthrough['display.memory_notices'] === 'true',
       voiceProvider: raw.voiceProvider ?? null,
       voiceApiKeyPreview: raw.voiceApiKey ? redactKey(raw.voiceApiKey) : null,
       voiceBaseUrl: raw.voiceBaseUrl ?? null,
@@ -189,14 +207,44 @@ export class ConfigService {
     const cleaned: typeof patch = { ...patch };
     if (cleaned.apiKey !== undefined && cleaned.apiKey === '') delete cleaned.apiKey;
 
-    // `admin.enabled` is a passthrough key, not a typed config field. Translate
-    // the toggle into a passthrough write and strip the field so it doesn't
-    // reach the repository (which has no `adminEnabled` on its update type).
-    const passthrough =
-      patch.adminEnabled !== undefined
-        ? { 'admin.enabled': patch.adminEnabled ? 'true' : 'false' }
-        : undefined;
+    // These behavior flags are flat config keys (`admin.enabled`,
+    // `display.streaming_edits`, `compaction.autoCompact`, …), not typed fields
+    // on the repository's RawConfig. Translate each into a passthrough write and
+    // strip it from the patch so it doesn't reach the repository. Passthrough
+    // merges add/overwrite only, so writing `memoryConsolidation.enabled` here
+    // preserves the sibling `memoryConsolidation.*` decay-tuning keys.
+    const passthroughPatch: Record<string, string> = {};
+    if (patch.adminEnabled !== undefined) {
+      passthroughPatch['admin.enabled'] = patch.adminEnabled ? 'true' : 'false';
+    }
+    if (patch.streamingEdits !== undefined) {
+      passthroughPatch['display.streaming_edits'] = patch.streamingEdits;
+    }
+    if (patch.autoCompact !== undefined) {
+      passthroughPatch['compaction.autoCompact'] = patch.autoCompact ? 'true' : 'false';
+    }
+    if (patch.memoryConsolidationEnabled !== undefined) {
+      passthroughPatch['memoryConsolidation.enabled'] = patch.memoryConsolidationEnabled
+        ? 'true'
+        : 'false';
+    }
+    if (patch.memoryCaptureEnabled !== undefined) {
+      passthroughPatch['memoryCapture.enabled'] = patch.memoryCaptureEnabled ? 'true' : 'false';
+    }
+    if (patch.memoryCaptureModel !== undefined) {
+      passthroughPatch['memoryCapture.model'] = patch.memoryCaptureModel;
+    }
+    if (patch.memoryNotices !== undefined) {
+      passthroughPatch['display.memory_notices'] = patch.memoryNotices ? 'true' : 'false';
+    }
+    const passthrough = Object.keys(passthroughPatch).length > 0 ? passthroughPatch : undefined;
     delete cleaned.adminEnabled;
+    delete cleaned.streamingEdits;
+    delete cleaned.autoCompact;
+    delete cleaned.memoryConsolidationEnabled;
+    delete cleaned.memoryCaptureEnabled;
+    delete cleaned.memoryCaptureModel;
+    delete cleaned.memoryNotices;
 
     // Convert providers to repository format when present.
     let repoProviders: RawProviderEntry[] | undefined;
@@ -244,6 +292,12 @@ export class ConfigService {
 // `${secrets:ref}` — same indirection syntax the CLI's config loader
 // resolves (apps/ethos/src/config.ts).
 const SECRETS_REF_RE = /\$\{secrets:([^}]+)\}/g;
+
+/** Coerce the stored `display.streaming_edits` value to the enum. Unset or
+ *  unrecognized falls back to the effective default, `'dms'`. */
+function parseStreamingEdits(value: string | undefined): 'off' | 'dms' | 'all' {
+  return value === 'off' || value === 'all' ? value : 'dms';
+}
 
 // ---------------------------------------------------------------------------
 // API-key redaction

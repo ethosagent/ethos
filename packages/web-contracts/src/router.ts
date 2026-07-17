@@ -749,6 +749,18 @@ const ConfigGetOutput = z.object({
   debugPanelEnabled: z.boolean(),
   debugPanelModel: z.string().nullable(),
   adminEnabled: z.boolean(),
+  /** Channel streaming draft edits (display.streaming_edits). */
+  streamingEdits: z.enum(['off', 'dms', 'all']),
+  /** Auto-compact long sessions near the model window (compaction.autoCompact). */
+  autoCompact: z.boolean(),
+  /** Silent memory-flush turn (memoryConsolidation.enabled). */
+  memoryConsolidationEnabled: z.boolean(),
+  /** Proactive mid-conversation fact capture (memoryCapture.enabled). */
+  memoryCaptureEnabled: z.boolean(),
+  /** Cheap model for capture extraction (memoryCapture.model); null = default. */
+  memoryCaptureModel: z.string().nullable(),
+  /** CLI "· remembered: …" capture notice (display.memory_notices). */
+  memoryNotices: z.boolean(),
   voiceProvider: z.string().nullable(),
   voiceApiKeyPreview: z.string().nullable(),
   voiceBaseUrl: z.string().nullable(),
@@ -786,6 +798,12 @@ const ConfigUpdateInput = z.object({
   debugPanelEnabled: z.boolean().optional(),
   debugPanelModel: z.string().nullable().optional(),
   adminEnabled: z.boolean().optional(),
+  streamingEdits: z.enum(['off', 'dms', 'all']).optional(),
+  autoCompact: z.boolean().optional(),
+  memoryConsolidationEnabled: z.boolean().optional(),
+  memoryCaptureEnabled: z.boolean().optional(),
+  memoryCaptureModel: z.string().optional(),
+  memoryNotices: z.boolean().optional(),
   voiceProvider: z.string().optional(),
   voiceApiKey: z.string().optional(),
   voiceBaseUrl: z.string().optional(),

@@ -194,6 +194,12 @@ interface FormShape {
   debugPanelEnabled: boolean;
   debugPanelModel: string;
   adminEnabled: boolean;
+  streamingEdits: 'off' | 'dms' | 'all';
+  autoCompact: boolean;
+  memoryConsolidationEnabled: boolean;
+  memoryCaptureEnabled: boolean;
+  memoryCaptureModel: string;
+  memoryNotices: boolean;
   voiceEnabled: boolean;
   voiceProvider: string;
   voiceApiKey: string;
@@ -249,6 +255,12 @@ export function Settings() {
         debugPanelEnabled: configQuery.data.debugPanelEnabled,
         debugPanelModel: configQuery.data.debugPanelModel ?? '',
         adminEnabled: configQuery.data.adminEnabled,
+        streamingEdits: configQuery.data.streamingEdits,
+        autoCompact: configQuery.data.autoCompact,
+        memoryConsolidationEnabled: configQuery.data.memoryConsolidationEnabled,
+        memoryCaptureEnabled: configQuery.data.memoryCaptureEnabled,
+        memoryCaptureModel: configQuery.data.memoryCaptureModel ?? '',
+        memoryNotices: configQuery.data.memoryNotices,
         voiceEnabled: Boolean(configQuery.data.voiceProvider),
         voiceProvider: configQuery.data.voiceProvider ?? '',
         voiceApiKey: '',
@@ -363,6 +375,12 @@ export function Settings() {
       debugPanelEnabled: values.debugPanelEnabled,
       debugPanelModel: values.debugPanelModel || null,
       adminEnabled: values.adminEnabled,
+      streamingEdits: values.streamingEdits,
+      autoCompact: values.autoCompact,
+      memoryConsolidationEnabled: values.memoryConsolidationEnabled,
+      memoryCaptureEnabled: values.memoryCaptureEnabled,
+      memoryCaptureModel: values.memoryCaptureModel,
+      memoryNotices: values.memoryNotices,
       ...(!values.voiceEnabled
         ? configQuery.data?.voiceProvider || configQuery.data?.voiceTtsProvider
           ? { voiceProvider: '', voiceTtsProvider: '' }
@@ -583,6 +601,50 @@ export function Settings() {
               <Radio.Button value="vector">Vector</Radio.Button>
             </Radio.Group>
           </Form.Item>
+
+          <Form.Item
+            label="Consolidate memory between turns"
+            name="memoryConsolidationEnabled"
+            valuePropName="checked"
+            extra="Silently distill durable facts into memory before long sessions compact (default off)."
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item
+            label="Capture facts proactively"
+            name="memoryCaptureEnabled"
+            valuePropName="checked"
+            extra="Notice durable facts mid-conversation and record them without being asked (default off)."
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, cur) => prev.memoryCaptureEnabled !== cur.memoryCaptureEnabled}
+          >
+            {({ getFieldValue }) =>
+              getFieldValue('memoryCaptureEnabled') ? (
+                <Form.Item
+                  label="Capture model"
+                  name="memoryCaptureModel"
+                  extra="Cheap model that extracts the fact. Leave blank to reuse the cheapest configured model."
+                >
+                  <Input placeholder="claude-haiku-4-5-20251001" />
+                </Form.Item>
+              ) : null
+            }
+          </Form.Item>
+
+          <Form.Item
+            label="Show 'remembered' notices"
+            name="memoryNotices"
+            valuePropName="checked"
+            extra="Print the dim '· remembered: …' line in the CLI after a capture."
+          >
+            <Switch />
+          </Form.Item>
         </Card>
 
         <Card title="Approval Mode" size="small" style={{ marginBottom: 16 }}>
@@ -626,6 +688,20 @@ export function Settings() {
               ]}
             />
           </Form.Item>
+
+          <Form.Item
+            label="Stream draft edits"
+            name="streamingEdits"
+            extra="Whether channel replies (Telegram, Slack) grow in place as they're written. DMs only, everywhere, or off."
+          >
+            <Select
+              options={[
+                { value: 'dms', label: 'Direct messages only' },
+                { value: 'all', label: 'DMs and group chats' },
+                { value: 'off', label: 'Off' },
+              ]}
+            />
+          </Form.Item>
         </Card>
 
         <Card title="Context" size="small" style={{ marginBottom: 16 }}>
@@ -635,6 +711,15 @@ export function Settings() {
             extra="Include previous session summaries for deeper context across conversations."
           >
             <Checkbox>Enable context layering</Checkbox>
+          </Form.Item>
+
+          <Form.Item
+            label="Auto-compaction"
+            name="autoCompact"
+            valuePropName="checked"
+            extra="Compact long sessions automatically near ~80% of the model's context window (default off)."
+          >
+            <Switch />
           </Form.Item>
         </Card>
 

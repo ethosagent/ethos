@@ -166,4 +166,101 @@ describe('ConfigService', () => {
     written = await storage.read(join(DATA, 'config.yaml'));
     expect(written).toContain('admin.enabled: false');
   });
+
+  it('get returns behavior-flag defaults when the keys are absent', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: sk-keep', 'personality: researcher'].join('\n'),
+    );
+
+    const result = await service.get();
+    expect(result.streamingEdits).toBe('dms');
+    expect(result.autoCompact).toBe(false);
+    expect(result.memoryConsolidationEnabled).toBe(false);
+    expect(result.memoryCaptureEnabled).toBe(false);
+    expect(result.memoryCaptureModel).toBeNull();
+    expect(result.memoryNotices).toBe(false);
+  });
+
+  it('get reads the behavior flags from their flat config keys', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk-keep',
+        'personality: researcher',
+        'display.streaming_edits: all',
+        'compaction.autoCompact: true',
+        'memoryConsolidation.enabled: true',
+        'memoryCapture.enabled: true',
+        'memoryCapture.model: claude-haiku-4-5-20251001',
+        'display.memory_notices: true',
+      ].join('\n'),
+    );
+
+    const result = await service.get();
+    expect(result.streamingEdits).toBe('all');
+    expect(result.autoCompact).toBe(true);
+    expect(result.memoryConsolidationEnabled).toBe(true);
+    expect(result.memoryCaptureEnabled).toBe(true);
+    expect(result.memoryCaptureModel).toBe('claude-haiku-4-5-20251001');
+    expect(result.memoryNotices).toBe(true);
+  });
+
+  it('update persists each behavior flag to its flat config key', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: sk-keep', 'personality: researcher'].join('\n'),
+    );
+
+    await service.update({
+      streamingEdits: 'off',
+      autoCompact: true,
+      memoryConsolidationEnabled: true,
+      memoryCaptureEnabled: true,
+      memoryCaptureModel: 'claude-haiku-4-5-20251001',
+      memoryNotices: true,
+    });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('display.streaming_edits: off');
+    expect(written).toContain('compaction.autoCompact: true');
+    expect(written).toContain('memoryConsolidation.enabled: true');
+    expect(written).toContain('memoryCapture.enabled: true');
+    expect(written).toContain('memoryCapture.model: claude-haiku-4-5-20251001');
+    expect(written).toContain('display.memory_notices: true');
+
+    // Round-trips back through get.
+    const result = await service.get();
+    expect(result.streamingEdits).toBe('off');
+    expect(result.autoCompact).toBe(true);
+    expect(result.memoryCaptureModel).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('update memoryConsolidationEnabled preserves sibling memoryConsolidation.* keys', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk-keep',
+        'personality: researcher',
+        'memoryConsolidation.halfLifeDays: 45',
+        'memoryConsolidation.threshold: 0.1',
+        'memoryConsolidation.exemptUser: false',
+        'memoryConsolidation.flushThreshold: 0.6',
+      ].join('\n'),
+    );
+
+    await service.update({ memoryConsolidationEnabled: true });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('memoryConsolidation.enabled: true');
+    // The decay-tuning + flush siblings must survive the round-trip untouched.
+    expect(written).toContain('memoryConsolidation.halfLifeDays: 45');
+    expect(written).toContain('memoryConsolidation.threshold: 0.1');
+    expect(written).toContain('memoryConsolidation.exemptUser: false');
+    expect(written).toContain('memoryConsolidation.flushThreshold: 0.6');
+  });
 });
