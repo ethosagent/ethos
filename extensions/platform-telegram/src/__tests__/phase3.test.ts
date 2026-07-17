@@ -164,6 +164,7 @@ describe('3.1 — Inbound file support', () => {
     });
 
     const msg = captured[0];
+    expect(msg.botKey).toBe('test-bot');
     expect(msg.text).toBe('my photo');
     expect(msg.attachments).toHaveLength(1);
     const att = msg.attachments?.[0];

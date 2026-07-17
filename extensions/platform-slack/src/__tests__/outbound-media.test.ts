@@ -63,6 +63,43 @@ describe('SlackAdapter outbound media (W3.2)', () => {
     expect((uploads[0]?.file as Buffer).toString()).toBe('FILEBYTES');
   });
 
+  it('returns {ok:false,error} and does not double-send when uploadV2 rejects', async () => {
+    const { adapter } = makeAdapter();
+    const uploadV2 = vi.fn(async () => {
+      throw new Error('file_upload_failed');
+    });
+    const postMessage = vi.fn().mockResolvedValue({ ts: '1' });
+    (adapter as unknown as { client: unknown }).client = {
+      files: { uploadV2 },
+      chat: { postMessage },
+      reactions: { add: vi.fn(), remove: vi.fn() },
+    } as never;
+
+    const res = await adapter.send('C123', { text: 'here you go', attachments: [imageAtt] });
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('file_upload_failed');
+    // No fallback text post — a failed upload must not double-send.
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(uploadV2).toHaveBeenCalledTimes(1);
+  });
+
+  it('gracefully returns ok with no messageId when uploadV2 yields no files', async () => {
+    const { adapter } = makeAdapter();
+    const uploadV2 = vi.fn(async () => ({ files: [] }));
+    const postMessage = vi.fn().mockResolvedValue({ ts: '1' });
+    (adapter as unknown as { client: unknown }).client = {
+      files: { uploadV2 },
+      chat: { postMessage },
+      reactions: { add: vi.fn(), remove: vi.fn() },
+    } as never;
+
+    const res = await adapter.send('C123', { text: 'here you go', attachments: [imageAtt] });
+    expect(res.ok).toBe(true);
+    expect(res.messageId).toBeUndefined();
+    // No post-upload confirm send.
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
   it('text-only sends do not touch the upload path', async () => {
     const { adapter, uploadV2 } = makeAdapter();
     // No attachments → falls through to chat.postMessage. Stub it to avoid network.

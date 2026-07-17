@@ -30,7 +30,11 @@ import type {
   TtsProviderRegistry,
 } from '@ethosagent/types';
 import { MessageDedupCache } from './dedup';
-import { attachmentsFromStructured, type OutboundMediaCaps } from './media';
+import {
+  attachmentsFromStructured,
+  OUTBOUND_MEDIA_MAX_BYTES,
+  type OutboundMediaCaps,
+} from './media';
 import { DraftStreamer } from './streaming';
 import {
   buildTranscriptText,
@@ -2102,7 +2106,17 @@ export class Gateway {
       // otherwise degrade to the text body (nothing attached).
       const attachments =
         media !== undefined
-          ? attachmentsFromStructured(media, this.outboundMediaCaps(adapter))
+          ? attachmentsFromStructured(
+              media,
+              this.outboundMediaCaps(adapter),
+              OUTBOUND_MEDIA_MAX_BYTES,
+              (rejectedPath) =>
+                this.observability?.recordSafetyBlock({
+                  code: 'gateway.media_path_rejected',
+                  cause: 'rejected unsafe path-based media source (traversal or symlink)',
+                  details: { platform, path: rejectedPath },
+                }),
+            )
           : [];
       const result = await adapter.send(target, {
         text: body,

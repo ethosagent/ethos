@@ -1,3 +1,6 @@
+import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   attachmentsFromStructured,
@@ -92,6 +95,97 @@ describe('attachmentsFromStructured', () => {
 
   it('exposes a default cap that is a sane positive size', () => {
     expect(OUTBOUND_MEDIA_MAX_BYTES).toBeGreaterThan(0);
+  });
+
+  // Boundary tests at the REAL 20 MiB cap using exact-sized payloads. base64 of
+  // Buffer.alloc(n) decodes to exactly n bytes, so the true decoded length —
+  // not the padding-inflated upper bound — must decide the drop.
+  describe('base64 size cap boundary (true decoded length)', () => {
+    const b64OfSize = (n: number) => Buffer.alloc(n).toString('base64');
+
+    it('accepts a payload exactly at the cap', () => {
+      const out = attachmentsFromStructured(
+        {
+          kind: 'file',
+          base64: b64OfSize(OUTBOUND_MEDIA_MAX_BYTES),
+          mimeType: 'application/octet-stream',
+        },
+        CAPS_ALL,
+      );
+      expect(out).toHaveLength(1);
+      expect(out[0]?.sizeBytes).toBe(OUTBOUND_MEDIA_MAX_BYTES);
+    });
+
+    it('accepts a payload just under the cap', () => {
+      const out = attachmentsFromStructured(
+        {
+          kind: 'file',
+          base64: b64OfSize(OUTBOUND_MEDIA_MAX_BYTES - 1),
+          mimeType: 'application/octet-stream',
+        },
+        CAPS_ALL,
+      );
+      expect(out).toHaveLength(1);
+      expect(out[0]?.sizeBytes).toBe(OUTBOUND_MEDIA_MAX_BYTES - 1);
+    });
+
+    it('drops a payload just over the cap', () => {
+      const out = attachmentsFromStructured(
+        {
+          kind: 'file',
+          base64: b64OfSize(OUTBOUND_MEDIA_MAX_BYTES + 1),
+          mimeType: 'application/octet-stream',
+        },
+        CAPS_ALL,
+      );
+      expect(out).toEqual([]);
+    });
+  });
+});
+
+describe('attachmentsFromStructured — path-safety guard (exfiltration)', () => {
+  it('degrades to text-only for a parent-traversal path', () => {
+    const out = attachmentsFromStructured(
+      { kind: 'file', path: '/tmp/../etc/passwd', mimeType: 'text/plain' },
+      CAPS_ALL,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('degrades to text-only for a symlinked path', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-media-'));
+    const target = join(dir, 'secret.txt');
+    writeFileSync(target, 'secret');
+    const link = join(dir, 'link.txt');
+    symlinkSync(target, link);
+    const out = attachmentsFromStructured(
+      { kind: 'file', path: link, mimeType: 'text/plain' },
+      CAPS_ALL,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('invokes onReject with the rejected path', () => {
+    const rejected: string[] = [];
+    attachmentsFromStructured(
+      { kind: 'file', path: '/tmp/../x', mimeType: 'text/plain' },
+      CAPS_ALL,
+      OUTBOUND_MEDIA_MAX_BYTES,
+      (p) => rejected.push(p),
+    );
+    expect(rejected).toEqual(['/tmp/../x']);
+  });
+
+  it('allows a plain regular-file path', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-media-'));
+    const f = join(dir, 'ok.png');
+    writeFileSync(f, 'x');
+    const out = attachmentsFromStructured(
+      { kind: 'image', path: f, mimeType: 'image/png' },
+      CAPS_ALL,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.url).toBe(f);
   });
 });
 

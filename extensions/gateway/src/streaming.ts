@@ -169,14 +169,19 @@ export class DraftStreamer {
   }
 
   /**
-   * Land the true final content. Returns `true` if the streamer delivered the
-   * reply (caller must NOT also `send()`), `false` if nothing was ever
-   * delivered (caller falls back to a normal send). Always registers the final
-   * content in the dedup cache when it delivered.
+   * Land the true final content. Registers the final content in the dedup cache
+   * ONLY when it actually reached the user — either the terminal edit succeeded
+   * or `finalText` was already the on-screen body. A non-flood edit failure
+   * leaves the cache un-stamped so a later non-streaming `send()` of the same
+   * content is NOT silently suppressed. Callers gate their own delivery on
+   * `hasDelivered`, so this returns nothing.
    */
-  async finalize(finalText: string): Promise<boolean> {
+  async finalize(finalText: string): Promise<void> {
     await this.chain;
-    if (this.messageId === undefined) return false;
+    if (this.messageId === undefined) return;
+    // The final content is already on screen when it equals the last rendered
+    // body (an earlier send/edit landed it) — that counts as delivered.
+    let finalRendered = finalText === this.lastRenderedBody;
     if (finalText && finalText !== this.lastRenderedBody && this.adapter.editMessage) {
       let attempts = 0;
       // Try the final edit; honor a single flood-wait so the true final lands.
@@ -184,6 +189,7 @@ export class DraftStreamer {
         const res = await this.adapter.editMessage(this.chatId, this.messageId, finalText);
         if (res.ok) {
           this.lastRenderedBody = finalText;
+          finalRendered = true;
           break;
         }
         const retry = parseRetryAfterSeconds(res.error);
@@ -193,9 +199,10 @@ export class DraftStreamer {
         await this.sleep(retry * 1000);
       }
     }
-    // Register the final content so a later duplicate send() is suppressed.
-    this.dedup.record(this.sessionKey, finalText);
-    return true;
+    // Register the final content so a later duplicate send() is suppressed —
+    // but only when the user actually saw it. Stamping the cache on a failed
+    // final edit would drop a legitimate fallback send of the same content.
+    if (finalRendered) this.dedup.record(this.sessionKey, finalText);
   }
 
   private enqueue(fn: () => Promise<void>): Promise<void> {
@@ -249,7 +256,13 @@ export class DraftStreamer {
         return;
       }
       const retry = parseRetryAfterSeconds(res.error);
-      if (retry === null) return; // non-flood error — drop this edit, keep going
+      if (retry === null) {
+        // Non-flood error — drop this edit and keep going. Reset the flood
+        // counter so only truly BACK-TO-BACK flood-waits (no success and no
+        // other error between them) trip the disable.
+        this.consecutiveFloodWaits = 0;
+        return;
+      }
       this.consecutiveFloodWaits++;
       if (this.consecutiveFloodWaits >= 2) {
         // Two consecutive flood-waits → give up streaming for this chat.

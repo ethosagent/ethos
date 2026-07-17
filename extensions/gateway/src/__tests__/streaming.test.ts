@@ -128,8 +128,8 @@ describe('DraftStreamer', () => {
     expect(adapter.editMessage).not.toHaveBeenCalled();
 
     // finalize lands the true final content byte-identical.
-    const delivered = await streamer.finalize('Hello world');
-    expect(delivered).toBe(true);
+    await streamer.finalize('Hello world');
+    expect(streamer.hasDelivered).toBe(true);
     expect(adapter.edits.at(-1)?.text).toBe('Hello world');
     // Final content registered in dedup.
     expect(dedup.shouldSend('sess-1', 'Hello world')).toBe(false);
@@ -195,8 +195,73 @@ describe('DraftStreamer', () => {
     const clock = fakeClock();
     const { streamer } = makeStreamer(adapter, clock);
     // No pushText at all.
-    const delivered = await streamer.finalize('never streamed');
-    expect(delivered).toBe(false);
+    await streamer.finalize('never streamed');
+    expect(streamer.hasDelivered).toBe(false);
     expect(adapter.send).not.toHaveBeenCalled();
+  });
+
+  it('does NOT stamp the dedup cache when the final edit fails with a non-flood error', async () => {
+    const adapter = fakeAdapter({ editResult: () => ({ ok: false, error: 'message not found' }) });
+    const clock = fakeClock();
+    const { streamer, dedup } = makeStreamer(adapter, clock);
+
+    await streamer.pushText('draft'); // first send lands 'draft'
+    await streamer.finalize('final answer'); // terminal edit fails (non-flood)
+
+    // The user never saw 'final answer' — a later non-streaming send of it must
+    // still go through, so the cache must NOT claim it was delivered.
+    expect(dedup.shouldSend('sess-1', 'final answer')).toBe(true);
+  });
+
+  it('does NOT disable when a success falls between two flood-waits (counter stays at 1)', async () => {
+    // flood → success → flood: the success resets the run, so the two floods
+    // are not consecutive and streaming stays enabled.
+    const results: DeliveryResult[] = [
+      { ok: false, error: '429: Too Many Requests: retry after 3' }, // edit #1 flood
+      { ok: true, messageId: 'x' }, // edit #2 success (resets)
+      { ok: false, error: '429: Too Many Requests: retry after 3' }, // edit #3 flood
+    ];
+    let i = 0;
+    const adapter = fakeAdapter({ editResult: () => results[i++] ?? { ok: true, messageId: 'x' } });
+    const clock = fakeClock();
+    const onFloodDisable = vi.fn();
+    const { streamer } = makeStreamer(adapter, clock, { onFloodDisable });
+
+    await streamer.pushText('a'); // first send
+    clock.advance(3000);
+    await streamer.pushText('a b'); // edit #1 → flood
+    clock.advance(3000);
+    await streamer.pushText('a b c'); // edit #2 → success
+    clock.advance(3000);
+    await streamer.pushText('a b c d'); // edit #3 → flood
+
+    expect(onFloodDisable).not.toHaveBeenCalled();
+    expect(streamer.isDegraded).toBe(false);
+  });
+
+  it('does NOT disable when a non-flood error falls between two flood-waits', async () => {
+    // flood → non-flood error → flood: the non-flood error resets the run too,
+    // so the two floods are not counted as consecutive.
+    const results: DeliveryResult[] = [
+      { ok: false, error: '429: Too Many Requests: retry after 3' }, // edit #1 flood
+      { ok: false, error: 'message not found' }, // edit #2 non-flood (resets)
+      { ok: false, error: '429: Too Many Requests: retry after 3' }, // edit #3 flood
+    ];
+    let i = 0;
+    const adapter = fakeAdapter({ editResult: () => results[i++] ?? { ok: true, messageId: 'x' } });
+    const clock = fakeClock();
+    const onFloodDisable = vi.fn();
+    const { streamer } = makeStreamer(adapter, clock, { onFloodDisable });
+
+    await streamer.pushText('a'); // first send
+    clock.advance(3000);
+    await streamer.pushText('a b'); // edit #1 → flood
+    clock.advance(3000);
+    await streamer.pushText('a b c'); // edit #2 → non-flood error
+    clock.advance(3000);
+    await streamer.pushText('a b c d'); // edit #3 → flood
+
+    expect(onFloodDisable).not.toHaveBeenCalled();
+    expect(streamer.isDegraded).toBe(false);
   });
 });

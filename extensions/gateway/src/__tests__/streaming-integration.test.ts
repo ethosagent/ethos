@@ -139,6 +139,33 @@ describe('gateway streaming draft edits (W3.1)', () => {
     expect(adapter.sends.every((s) => s.text === 'pong')).toBe(true);
   });
 
+  it('records a safety block with the exact cause when repeated flood-waits disable streaming', async () => {
+    const recordSafetyBlock = vi.fn();
+    const loop = loopYielding([
+      { type: 'text_delta', text: 'a' }, // first send
+      { type: 'text_delta', text: 'a b' }, // edit #1 → flood
+      { type: 'text_delta', text: 'a b c' }, // edit #2 → flood → disable
+      { type: 'done', text: 'a b c', turnCount: 1 },
+    ]);
+    const gw = gatewayWith(loop, { observability: { recordSafetyBlock } });
+    const adapter = editAdapter({
+      editMessage: vi.fn(
+        async (): Promise<DeliveryResult> => ({
+          ok: false,
+          error: '429: Too Many Requests: retry after 0',
+        }),
+      ),
+    } as Partial<PlatformAdapter>);
+
+    await gw.handleMessage(msg({ chatId: 'chat-flood' }), adapter);
+
+    expect(recordSafetyBlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cause: 'streaming disabled for chat chat-flood after repeated flood-waits',
+      }),
+    );
+  });
+
   it('non-streaming path (group chat, default off) sends a single final message', async () => {
     const loop = loopYielding([
       { type: 'text_delta', text: 'group reply' },
