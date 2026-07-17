@@ -641,7 +641,7 @@ export function Settings() {
             label="Show 'remembered' notices"
             name="memoryNotices"
             valuePropName="checked"
-            extra="Print the dim '· remembered: …' line in the CLI after a capture."
+            extra="Show the dim '· remembered: …' notice after a capture — in the CLI, and as a quiet toast in the web app."
           >
             <Switch />
           </Form.Item>

@@ -267,7 +267,7 @@ export class MemoryCaptureRunner {
     const summary = facts.map((f) => f.text).join('; ');
     for (const cb of this.captureListeners) {
       try {
-        cb({ scopeId: ctx.scopeId, summary });
+        cb({ scopeId: ctx.scopeId, sessionId: ctx.sessionId, summary });
       } catch {
         // A misbehaving surface listener must not break capture.
       }

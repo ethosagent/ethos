@@ -160,6 +160,16 @@ export const NotificationEventSchema = z.object({
   source: z.string().optional(),
 });
 
+// Proactive memory capture landed a durable fact (memory-experience §3.3).
+// Pushed (not a turn event) because capture completes AFTER the turn's chat
+// stream closes — it's queued post-`done` and runs a cheap extraction pass, so
+// it can't ride the turn SSE as an AgentEvent. The web UI surfaces it as a
+// quiet "· remembered: …" toast, the same live feedback the CLI already prints.
+export const MemoryCapturedEventSchema = z.object({
+  type: z.literal('memory.captured'),
+  summary: z.string(),
+});
+
 export const DryRunToolPlanSchema = z.object({
   toolCallId: z.string(),
   toolName: z.string(),
@@ -209,6 +219,7 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   EvolveSkillPendingEventSchema,
   EvolveSkillAppliedEventSchema,
   NotificationEventSchema,
+  MemoryCapturedEventSchema,
   DryRunSummaryEventSchema,
   RunStartEventSchema,
   ProtocolUpgradeRequiredEventSchema,

@@ -146,6 +146,7 @@ describe('SSE event union', () => {
       proposedAt: new Date().toISOString(),
     },
     { type: 'protocol.upgrade_required', serverVersion: '0.2.0', clientVersionExpected: '0.1.x' },
+    { type: 'memory.captured', summary: 'daughter Priya (b. 2019)' },
   ])('accepts %j', (event) => {
     expect(SseEventSchema.parse(event)).toEqual(event);
   });

@@ -64,6 +64,10 @@ export const DEFAULT_CAPTURE_CONFIG: CaptureConfig = {
 /** Payload for the `onCaptured` surface callback (§3.3). */
 export interface CaptureNotice {
   scopeId: string;
+  /** Session the capturing turn belonged to. Lets a surface route the notice
+   *  to the right live stream (e.g. the web SSE session that fired it). The CLI
+   *  consumer ignores it. */
+  sessionId: string;
   /** Human summary of what was remembered, e.g. `daughter Priya (b. 2019)`. */
   summary: string;
 }

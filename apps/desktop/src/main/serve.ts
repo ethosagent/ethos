@@ -47,12 +47,19 @@ export async function startServer(port: number): Promise<number> {
     ...(baseUrl ? { baseUrl } : {}),
   };
 
-  const { loop, toolRegistry, sttProviders, ttsProviders, voiceConfig, refreshPersonalities } =
-    await createAgentLoop(wiringConfig, {
-      dataDir,
-      profile: 'web',
-      disableDocker: true,
-    });
+  const {
+    loop,
+    toolRegistry,
+    sttProviders,
+    ttsProviders,
+    voiceConfig,
+    refreshPersonalities,
+    onMemoryCaptured,
+  } = await createAgentLoop(wiringConfig, {
+    dataDir,
+    profile: 'web',
+    disableDocker: true,
+  });
 
   const session = createSessionStore({ dataDir });
 
@@ -122,6 +129,7 @@ export async function startServer(port: number): Promise<number> {
     refreshPersonalities,
     chatDefaults: { model, provider },
     dangerPredicate: createDangerPredicate(),
+    ...(onMemoryCaptured ? { onMemoryCaptured } : {}),
     toolRegistry,
     // F1 — the desktop runs the in-process backend with Docker disabled, so the
     // character sheet must render the honest local (un-sandboxed) posture rather

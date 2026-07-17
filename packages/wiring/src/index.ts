@@ -678,7 +678,9 @@ export interface CreateAgentLoopResult {
    * "· remembered: …" line; channel adapters do not subscribe. Returns an
    * unsubscribe fn.
    */
-  onMemoryCaptured?: (cb: (n: { scopeId: string; summary: string }) => void) => () => void;
+  onMemoryCaptured?: (
+    cb: (n: { sessionId: string; scopeId: string; summary: string }) => void,
+  ) => () => void;
   /** v2.2 — Notification router for registering per-session adapters.
    *  CLI/TUI/web-api register a NotificationAdapter on this router so plugin
    *  monitors can deliver messages to the active surface. */

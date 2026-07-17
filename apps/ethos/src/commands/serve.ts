@@ -279,6 +279,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let setOnSkillProposed:
     | ((fn: (skillId: string, personalityId: string) => void) => void)
     | undefined;
+  let onMemoryCaptured:
+    | import('@ethosagent/wiring').CreateAgentLoopResult['onMemoryCaptured']
+    | undefined;
   let goalRunner: import('@ethosagent/goal-runner').GoalRunner | undefined;
   let jobStore: import('@ethosagent/types').JobStore | undefined;
   let backgroundExecutor:
@@ -395,6 +398,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
+    onMemoryCaptured = result.onMemoryCaptured;
     goalRunner = result.goalRunner;
     jobStore = result.jobStore;
     backgroundExecutor = result.backgroundExecutor;
@@ -437,6 +441,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
     setOnSkillProposed = result.setOnSkillProposed;
+    onMemoryCaptured = result.onMemoryCaptured;
     goalRunner = result.goalRunner;
     jobStore = result.jobStore;
     backgroundExecutor = result.backgroundExecutor;
@@ -839,6 +844,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(webDist ? { webDist } : {}),
     ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
     ...(setOnSkillProposed ? { setOnSkillProposed } : {}),
+    ...(onMemoryCaptured ? { onMemoryCaptured } : {}),
+    memoryNoticesEnabled: config.displayMemoryNotices !== false,
     ...(goalRunner ? { goalRunner } : {}),
     ...(jobStore ? { jobStore } : {}),
     ...(sttProviders ? { sttProviderRegistry: sttProviders } : {}),

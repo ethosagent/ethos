@@ -220,6 +220,25 @@ export interface CreateWebApiOptions {
    * the improvement fork auto-promotes a skill to the live library.
    */
   setOnSkillApplied?: (fn: (skillId: string, personalityId: string) => void) => void;
+  /**
+   * Subscribe closure from `CreateAgentLoopResult.onMemoryCaptured` (memory-
+   * experience §3.3). Present only when proactive capture is enabled. When
+   * provided and `memoryNoticesEnabled !== false`, `createWebApi` registers a
+   * listener that broadcasts a `memory.captured` SSE event to the capturing
+   * session so the web UI can show a quiet "· remembered: …" toast — the same
+   * live feedback the CLI already prints. Capture completes after the turn's
+   * chat stream closes, so this is a push event, not an AgentEvent.
+   */
+  onMemoryCaptured?: (
+    cb: (n: { sessionId: string; scopeId: string; summary: string }) => void,
+  ) => () => void;
+  /**
+   * Secondary mute for the `memory.captured` broadcast, resolved from
+   * `display.memory_notices` (default on). Capture itself is already gated
+   * default-off by `memoryCapture.enabled`; this lets a user keep capture on
+   * but silence the surfaced notice. Defaults to `true` when omitted.
+   */
+  memoryNoticesEnabled?: boolean;
   /** Notification router for delivering process completion alerts to web sessions via SSE. */
   notificationRouter?: import('@ethosagent/types').NotificationRouter;
   /**
@@ -604,6 +623,16 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       appliedAt: new Date().toISOString(),
     });
   });
+
+  // memory-experience §3.3 — proactive-capture notice. Capture runs AFTER the
+  // turn's chat stream closes (queued post-`done`), so it can't ride the turn
+  // SSE as an AgentEvent — broadcast it as its own push event, scoped to the
+  // capturing session. Gated by `display.memory_notices` (default on).
+  if (opts.onMemoryCaptured && opts.memoryNoticesEnabled !== false) {
+    opts.onMemoryCaptured((n) => {
+      chatService.broadcast(n.sessionId, { type: 'memory.captured', summary: n.summary });
+    });
+  }
 
   // Register the web `before_tool_call` hook on the loop. CLI/TUI/ACP
   // profiles get the synchronous terminal guard from `@ethosagent/wiring`;

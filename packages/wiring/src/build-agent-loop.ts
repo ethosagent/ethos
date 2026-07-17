@@ -678,7 +678,7 @@ export async function buildAgentLoop(
   // memory-experience pillar B — proactive capture (default-off, §3)
   // -------------------------------------------------------------------------
   let onMemoryCapturedFn:
-    | ((cb: (n: { scopeId: string; summary: string }) => void) => () => void)
+    | ((cb: (n: { sessionId: string; scopeId: string; summary: string }) => void) => () => void)
     | undefined;
   if (config.memoryCapture?.enabled && memoryName === 'markdown') {
     const captureConfig = config.memoryCapture;
