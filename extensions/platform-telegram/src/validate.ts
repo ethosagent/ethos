@@ -1,8 +1,11 @@
 /** Liveness classification for a failed probe (W1.2 semantics):
  *  - `rejected`    — the credential was DEFINITIVELY refused (401/403 / bad token).
- *  - `unreachable` — the platform could not be reached (timeout/DNS/5xx/429);
- *                    the token is unverified, not necessarily invalid. */
-export type ValidationReason = 'rejected' | 'unreachable';
+ *  - `unreachable` — the platform could not be reached (timeout/DNS/5xx);
+ *                    the token is unverified, not necessarily invalid.
+ *  - `unverified`  — a rate limit (429) blocked the probe. Distinct from
+ *                    `unreachable` so a bad token seen during a 429 burst is
+ *                    never silently persisted as a settled/clean verdict. */
+export type ValidationReason = 'rejected' | 'unreachable' | 'unverified';
 
 export interface ValidationResult {
   ok: boolean;
@@ -20,7 +23,10 @@ export async function validateTelegramToken(token: string): Promise<ValidationRe
     if (res.status === 401 || res.status === 403) {
       return { ok: false, error: 'Invalid token', reason: 'rejected' };
     }
-    if (res.status === 429 || res.status >= 500) {
+    if (res.status === 429) {
+      return { ok: false, error: 'Telegram returned 429 (rate limited)', reason: 'unverified' };
+    }
+    if (res.status >= 500) {
       return { ok: false, error: `Telegram returned ${res.status}`, reason: 'unreachable' };
     }
     const data = (await res.json()) as { ok: boolean; result?: { username?: string } };

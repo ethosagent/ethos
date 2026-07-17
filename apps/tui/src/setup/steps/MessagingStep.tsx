@@ -66,7 +66,9 @@ function classify(result: {
   ok: boolean;
   label?: string;
   error?: string;
-  reason?: 'rejected' | 'unreachable';
+  // `unverified` (rate-limited) is treated as unreachable here — saved but
+  // never claimed "Connected".
+  reason?: 'rejected' | 'unreachable' | 'unverified';
 }): PlatformValidation {
   if (result.ok) return { kind: 'ok', label: result.label };
   if (result.reason === 'rejected')

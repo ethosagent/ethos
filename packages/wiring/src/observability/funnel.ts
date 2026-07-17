@@ -15,6 +15,17 @@
 //     `legacy`; the event carries `legacy: true` and no `msSinceSetup`, so
 //     TTFM statistics can exclude it.
 //
+// Cross-process write safety (not exactly-once — that needs an advisory lock):
+// three writers (CLI, gateway, web-api) can interleave. `writeAtomic` alone
+// prevents a torn file but NOT a lost update. So `commit()` RE-READS disk
+// immediately before writing, merges (earliest-wins + presence-OR),
+// RECOMPUTES `legacy` from the MERGED disk state — never the stale pre-load
+// snapshot — and reads back to converge if a sibling wrote in the window.
+// The net guarantee is at-most-once-per-process with earliest-wins and no
+// false-legacy: a concurrent setup stamp is never clobbered and a completed
+// install is never mis-marked legacy. This is the right bar for fail-open
+// telemetry; true exactly-once across processes would require a lock.
+//
 // Emission is wiring/app-layer only: apps construct one tracker and call the
 // record methods from their turn-completion seams. The tracker is fail-open —
 // a storage or observability error must never break a turn.
@@ -53,7 +64,15 @@ export interface FunnelObservability {
     msSinceSetup?: number;
     legacy?: boolean;
   }): void;
+  /** Fail-open error sink — a funnel persistence failure (read-only mount,
+   *  full disk) routes here instead of vanishing silently. */
+  recordError(opts: { code?: string; cause?: string }): void;
 }
+
+/** Bounded read-back re-merge attempts after a write, to converge with a
+ *  sibling process that wrote in the same window. Earliest-wins is idempotent
+ *  so a few attempts suffice; the cap stops a pathological writer spinning us. */
+const COMMIT_MAX_RETRIES = 3;
 
 export interface FunnelTrackerOptions {
   storage: Storage;
@@ -130,31 +149,34 @@ export class FunnelTracker {
   }): Promise<void> {
     return this.enqueue(async () => {
       const state = await this.load();
-      if (state.setupCompletedAt !== undefined) return; // earliest wins
-      const next = mergeFunnelState(state, {
+      if (state.setupCompletedAt !== undefined) return; // earliest wins (fast no-op gate)
+      const { before } = await this.commit({
         setupCompletedAt: this.now(),
         setupProvider: opts.provider,
         setupChannels: opts.channels,
         setupWizardPath: opts.wizardPath,
       });
-      await this.persist(next);
-      this.observability.recordFunnelSetupCompleted(opts);
+      // Only the process that transitioned setup absent→present emits — a
+      // sibling that stamped it first (seen on the pre-write re-read) does not.
+      if (before.setupCompletedAt === undefined) {
+        this.observability.recordFunnelSetupCompleted(opts);
+      }
     });
   }
 
   async recordFirstReply(): Promise<void> {
     return this.enqueue(async () => {
       const state = await this.load();
-      if (state.firstReplyAt !== undefined) return; // emits exactly once
-      const now = this.now();
-      const legacy = state.setupCompletedAt === undefined;
-      const next = mergeFunnelState(state, {
-        firstReplyAt: now,
-        ...(legacy ? { legacy: true } : {}),
-      });
-      await this.persist(next);
+      if (state.firstReplyAt !== undefined) return; // emits exactly once (fast no-op gate)
+      const { merged, before } = await this.commit({ firstReplyAt: this.now() });
+      if (before.firstReplyAt !== undefined) return; // a sibling already stamped it
+      // legacy is recomputed from the MERGED disk state, so a setup stamp that
+      // landed concurrently keeps this reply out of the legacy bucket.
+      const setupAt = merged.setupCompletedAt;
       this.observability.recordFunnelFirstReply(
-        legacy ? { legacy: true } : { msSinceSetup: now - (state.setupCompletedAt as number) },
+        setupAt === undefined
+          ? { legacy: true }
+          : { msSinceSetup: (merged.firstReplyAt as number) - setupAt },
       );
     });
   }
@@ -163,26 +185,36 @@ export class FunnelTracker {
     return this.enqueue(async () => {
       const state = await this.load();
       if (state.channelFirstReplyAt?.[platform] !== undefined) return; // once per platform
-      const now = this.now();
-      const legacy = state.setupCompletedAt === undefined;
-      const next = mergeFunnelState(state, {
-        channelFirstReplyAt: { [platform]: now },
-        ...(legacy ? { legacy: true } : {}),
+      const { merged, before } = await this.commit({
+        channelFirstReplyAt: { [platform]: this.now() },
       });
-      await this.persist(next);
+      if (before.channelFirstReplyAt?.[platform] !== undefined) return; // sibling stamped it
+      const setupAt = merged.setupCompletedAt;
+      const ts = merged.channelFirstReplyAt?.[platform] as number;
       this.observability.recordFunnelChannelFirstReply(
-        legacy
+        setupAt === undefined
           ? { platform, legacy: true }
-          : { platform, msSinceSetup: now - (state.setupCompletedAt as number) },
+          : { platform, msSinceSetup: ts - setupAt },
       );
     });
   }
 
   // ── internals ────────────────────────────────────────────────────────────
 
-  /** Chain onto the queue; swallow errors so funnel never breaks a turn. */
+  /** Chain onto the queue; route errors to the observability sink so a
+   *  read-only mount / full disk surfaces, but never reject (funnel telemetry
+   *  must not break a turn). */
   private enqueue(op: () => Promise<void>): Promise<void> {
-    const next = this.queue.then(op).catch(() => {});
+    const next = this.queue.then(op).catch((err: unknown) => {
+      try {
+        this.observability.recordError({
+          code: 'funnel.persist_failed',
+          cause: err instanceof Error ? err.message : String(err),
+        });
+      } catch {
+        // Even the error sink is best-effort — swallow so the turn continues.
+      }
+    });
     this.queue = next;
     return next;
   }
@@ -199,9 +231,52 @@ export class FunnelTracker {
     return this.cached;
   }
 
-  private async persist(state: FunnelState): Promise<void> {
+  /**
+   * Merge `patch` into the CURRENT disk state and persist. Re-reads disk right
+   * before writing so a sibling process's stamp is never clobbered, recomputes
+   * `legacy` from the merged disk state, and reads back to converge if a
+   * sibling wrote in the window. Returns the merged state plus the disk state
+   * as it was BEFORE this process wrote, so callers decide emission from
+   * presence (absent→present flip) rather than a stale pre-load snapshot.
+   */
+  private async commit(patch: FunnelState): Promise<{ merged: FunnelState; before: FunnelState }> {
     await this.storage.mkdir(dirname(this.path));
-    await this.storage.writeAtomic(this.path, JSON.stringify(state, null, 2));
-    this.cached = state;
+    const before = (await this.readState()) ?? {};
+    let merged = this.mergeAndRecomputeLegacy(before, patch);
+    await this.storage.writeAtomic(this.path, JSON.stringify(merged, null, 2));
+    for (let attempt = 0; attempt < COMMIT_MAX_RETRIES; attempt++) {
+      const after = (await this.readState()) ?? {};
+      if (this.survives(after, merged)) break;
+      merged = this.mergeAndRecomputeLegacy(after, merged);
+      await this.storage.writeAtomic(this.path, JSON.stringify(merged, null, 2));
+    }
+    this.cached = merged;
+    return { merged, before };
+  }
+
+  /** Merge, then set `legacy` iff a reply is present with NO setup stamp on the
+   *  merged disk state. Setup present ⇒ never legacy (strips a stale flag). */
+  private mergeAndRecomputeLegacy(disk: FunnelState, patch: FunnelState): FunnelState {
+    const merged = mergeFunnelState(disk, patch);
+    const hasReply =
+      merged.firstReplyAt !== undefined || Object.keys(merged.channelFirstReplyAt ?? {}).length > 0;
+    if (merged.setupCompletedAt !== undefined) {
+      delete merged.legacy;
+    } else if (hasReply) {
+      merged.legacy = true;
+    }
+    return merged;
+  }
+
+  /** True when every stamp `merged` carries still exists on `after` — i.e. a
+   *  sibling write didn't drop any of our contribution. Presence-only: earlier
+   *  values from the sibling are fine (earliest-wins). */
+  private survives(after: FunnelState, merged: FunnelState): boolean {
+    if (merged.setupCompletedAt !== undefined && after.setupCompletedAt === undefined) return false;
+    if (merged.firstReplyAt !== undefined && after.firstReplyAt === undefined) return false;
+    for (const platform of Object.keys(merged.channelFirstReplyAt ?? {})) {
+      if (after.channelFirstReplyAt?.[platform] === undefined) return false;
+    }
+    return true;
   }
 }

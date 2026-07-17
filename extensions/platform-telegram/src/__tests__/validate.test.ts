@@ -33,11 +33,29 @@ describe('validateTelegramToken', () => {
     expect(result).toEqual({ ok: false, error: 'Invalid token', reason: 'rejected' });
   });
 
-  it('classifies a 429 / 5xx as unreachable', async () => {
+  it('classifies a 403 as rejected', async () => {
+    vi.stubGlobal('fetch', async () => ({ status: 403, json: async () => ({}) }));
+
+    const result = await validateTelegramToken('bad-token');
+    expect(result).toEqual({ ok: false, error: 'Invalid token', reason: 'rejected' });
+  });
+
+  it('classifies a 429 as unverified (rate-limited, not a settled verdict)', async () => {
     vi.stubGlobal('fetch', async () => ({ status: 429, json: async () => ({}) }));
 
     const result = await validateTelegramToken('any-token');
-    expect(result).toEqual({ ok: false, error: 'Telegram returned 429', reason: 'unreachable' });
+    expect(result).toEqual({
+      ok: false,
+      error: 'Telegram returned 429 (rate limited)',
+      reason: 'unverified',
+    });
+  });
+
+  it('classifies a 5xx as unreachable', async () => {
+    vi.stubGlobal('fetch', async () => ({ status: 503, json: async () => ({}) }));
+
+    const result = await validateTelegramToken('any-token');
+    expect(result).toEqual({ ok: false, error: 'Telegram returned 503', reason: 'unreachable' });
   });
 
   it('classifies a network failure as unreachable', async () => {

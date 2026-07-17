@@ -314,7 +314,9 @@ async function checkGatewayHealth(storage: Storage): Promise<GatewayHealthResult
     const stale = !Number.isFinite(ageSec) || ageSec > 30;
     return {
       status: stale ? 'stale' : 'ok',
-      adapters: hb.adapters ?? [],
+      // Guard against a malformed heartbeat file where `adapters` is present
+      // but not an array — iterating a non-array below would throw.
+      adapters: Array.isArray(hb.adapters) ? hb.adapters : [],
       lastHeartbeatAgeSec: Number.isFinite(ageSec) ? Math.round(ageSec) : null,
     };
   } catch {
@@ -325,7 +327,7 @@ async function checkGatewayHealth(storage: Storage): Promise<GatewayHealthResult
 interface ChannelProbeResult {
   platform: 'telegram' | 'slack' | 'discord';
   ok: boolean;
-  reason?: 'rejected' | 'unreachable';
+  reason?: 'rejected' | 'unreachable' | 'unverified';
   label?: string;
   error?: string;
 }
@@ -362,6 +364,9 @@ function channelProbeLine(p: ChannelProbeResult): string {
       return 'telegram: token rejected (401) — regenerate with @BotFather.';
     }
     return `${p.platform}: token rejected — regenerate the token in the platform settings.`;
+  }
+  if (p.reason === 'unverified') {
+    return `${p.platform}: rate-limited (429) — token unverified, retry later (not a settled verdict).`;
   }
   if (p.platform === 'telegram') {
     return 'telegram: unreachable (timeout) — token unverified, not necessarily invalid.';
@@ -459,7 +464,12 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
       : await readConfig(storage, await getSecretsResolver());
     const channels = skipChannelProbe ? [] : await probeConfiguredChannels(resolvedConfig);
     const channelRejected = channels.some((c) => !c.ok && c.reason === 'rejected');
-    const channelUnreachable = channels.some((c) => !c.ok && c.reason === 'unreachable');
+    // `unverified` (rate-limited) shares the warn exit with `unreachable` — the
+    // distinct reason is still surfaced per-channel in the JSON below, so a 429
+    // is never reported as a settled/clean verdict.
+    const channelUnreachable = channels.some(
+      (c) => !c.ok && (c.reason === 'unreachable' || c.reason === 'unverified'),
+    );
 
     const exitCode = computeDoctorExit({
       coreFailure: coreFailures.length > 0,
@@ -755,7 +765,9 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
   const coreFailures = coreResults.filter((r) => !r.ok);
   const configuredButMissing = channelResults.filter((r) => !r.ok && r.inUse);
   const channelRejected = channelProbes.some((p) => !p.ok && p.reason === 'rejected');
-  const channelUnreachable = channelProbes.some((p) => !p.ok && p.reason === 'unreachable');
+  const channelUnreachable = channelProbes.some(
+    (p) => !p.ok && (p.reason === 'unreachable' || p.reason === 'unverified'),
+  );
 
   let exitCode = 0;
 
@@ -815,8 +827,9 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
 // ---------------------------------------------------------------------------
 
 async function runDoctorFix(): Promise<void> {
+  // chmod stays raw node:fs — Storage has no permissions API (keys.json /
+  // config.yaml owner-restriction is the whole point of this repair step).
   const { chmod } = await import('node:fs/promises');
-  const { existsSync } = await import('node:fs');
   const storage = getStorage();
   const dir = ethosDir();
   let exitCode = 0;
@@ -847,7 +860,7 @@ async function runDoctorFix(): Promise<void> {
 
   // 3. Fix keys.json permissions (should be 0o600)
   const keysPath = join(dir, 'keys.json');
-  if (existsSync(keysPath)) {
+  if (await storage.exists(keysPath)) {
     try {
       await chmod(keysPath, 0o600);
       console.log(`  ${c.green}✓ Fixed:${c.reset}  Set ${keysPath} to 0600`);
@@ -859,7 +872,7 @@ async function runDoctorFix(): Promise<void> {
 
   // 4. Fix config.yaml permissions (may contain secret refs; restrict to owner)
   const configPath = join(dir, 'config.yaml');
-  if (existsSync(configPath)) {
+  if (await storage.exists(configPath)) {
     try {
       await chmod(configPath, 0o600);
       console.log(`  ${c.green}✓ Fixed:${c.reset}  Set ${configPath} to 0600`);
@@ -982,7 +995,7 @@ async function runProviderProbe(jsonMode: boolean): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** Format a millisecond delta as a compact human duration, e.g. "2m 8s". */
-function formatFunnelDuration(ms: number): string {
+export function formatFunnelDuration(ms: number): string {
   const totalSec = Math.round(ms / 1000);
   if (totalSec < 60) return `${totalSec}s`;
   const totalMin = Math.floor(totalSec / 60);
@@ -993,7 +1006,7 @@ function formatFunnelDuration(ms: number): string {
   return min > 0 ? `${hours}h ${min}m` : `${hours}h`;
 }
 
-async function runFunnelReport(jsonMode: boolean): Promise<void> {
+export async function runFunnelReport(jsonMode: boolean): Promise<void> {
   // Local palette honoring NO_COLOR (plan requirement for all funnel surfaces).
   const noColor = Boolean(process.env.NO_COLOR);
   const fc = noColor

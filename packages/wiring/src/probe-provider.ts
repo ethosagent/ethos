@@ -48,8 +48,13 @@ export function classifyProbeError(err: unknown): 'rejected' | 'unreachable' {
   if (status === 401 || status === 403) return 'rejected';
   if (status === 429 || (status !== undefined && status >= 500)) return 'unreachable';
   const m = errorMessage(err).toLowerCase();
+  // Only KEY-SPECIFIC phrases count as rejected. Bare `forbidden` /
+  // `authentication` / `permission_denied` are dropped on purpose: providers
+  // return them for feature-flag and regional denials on a perfectly valid
+  // key, and misclassifying those as `rejected` makes `--from-env` abort a
+  // good deploy.
   if (
-    /\b401\b|\b403\b|unauthorized|forbidden|authentication|invalid[_ ]?api[_ ]?key|invalid x-api-key|permission_denied/.test(
+    /\b401\b|\b403\b|\bunauthorized\b|\binvalid[_ ]?api[_ ]?key\b|invalid x-api-key|\bauthentication[_ ]?failed\b/.test(
       m,
     )
   ) {

@@ -69,9 +69,11 @@ export class PlatformsService {
     ok: boolean;
     label?: string;
     error?: string;
-    reason?: 'rejected' | 'unreachable';
+    reason?: 'rejected' | 'unreachable' | 'unverified';
   }): { status: 'ok' | 'rejected' | 'unreachable'; label: string | null; error: string | null } {
     if (result.ok) return { status: 'ok', label: result.label ?? null, error: null };
+    // The RPC contract exposes only rejected/unreachable; a rate-limited
+    // `unverified` collapses to unreachable (saved-unverified in the UI).
     const status = result.reason === 'rejected' ? 'rejected' : 'unreachable';
     return { status, label: null, error: result.error ?? null };
   }

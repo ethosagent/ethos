@@ -21,6 +21,7 @@
 import { type EthosConfig, readRawConfig, writeConfig } from '@ethosagent/config';
 import { probeProvider } from '@ethosagent/wiring';
 import { getProvider } from '@ethosagent/wiring/provider-catalog';
+import { redactErrorMessage } from '../redact-error';
 import { getFunnelTracker, getSecretsResolver, getStorage } from '../wiring';
 import { scaffoldEthosDir } from './setup';
 
@@ -148,8 +149,13 @@ export async function runSetupFromEnv(): Promise<void> {
       fail(providerRejectedLine(prov.envVar));
     }
     if (!outcome.ok) {
+      // Redact: the SDK error can echo the key (Gemini `?key=`, openai-compat
+      // base URL) right into docker compose logs.
       console.warn(
-        `WARNING: could not reach ${prov.provider} — key unverified, proceeding (${outcome.error}).`,
+        `WARNING: could not reach ${prov.provider} — key unverified, proceeding (${redactErrorMessage(
+          outcome.error,
+          prov.apiKey,
+        )}).`,
       );
     }
   }
@@ -171,7 +177,10 @@ export async function runSetupFromEnv(): Promise<void> {
       }
       if (!v.ok) {
         console.warn(
-          `WARNING: could not reach Telegram — token unverified, proceeding (${v.error}).`,
+          `WARNING: could not reach Telegram — token unverified, proceeding (${redactErrorMessage(
+            v.error ?? '',
+            telegramToken,
+          )}).`,
         );
       }
     }

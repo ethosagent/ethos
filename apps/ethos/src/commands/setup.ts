@@ -11,6 +11,7 @@ import type { WizardStepId } from '@ethosagent/tui/setup';
 import { probeProvider } from '@ethosagent/wiring';
 import { fetchLocalModels } from '@ethosagent/wiring/local-models';
 import { getProvider } from '@ethosagent/wiring/provider-catalog';
+import { redactErrorMessage } from '../redact-error';
 import { getFunnelTracker, getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
@@ -291,7 +292,10 @@ async function runReadlineFallback({
       }
       if (outcome.reason === 'unreachable') {
         console.log(
-          `${c.yellow}⚠ Couldn't reach ${provider} — saved unverified.${c.reset} ${c.dim}(${outcome.error})${c.reset}`,
+          `${c.yellow}⚠ Couldn't reach ${provider} — saved unverified.${c.reset} ${c.dim}(${redactErrorMessage(
+            outcome.error,
+            apiKey,
+          )})${c.reset}`,
         );
         break;
       }

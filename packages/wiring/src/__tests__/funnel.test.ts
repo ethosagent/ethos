@@ -23,6 +23,9 @@ function makeSpyObservability() {
     recordFunnelChannelFirstReply(opts) {
       calls.push({ method: 'channel_first_reply', opts });
     },
+    recordError(opts) {
+      calls.push({ method: 'error', opts });
+    },
   };
   return { observability, calls };
 }
@@ -150,17 +153,58 @@ describe('FunnelTracker', () => {
     expect(second.calls).toHaveLength(0);
   });
 
-  it('is fail-open — a storage error never rejects', async () => {
+  it('is fail-open — a storage error never rejects but routes to recordError', async () => {
     const storage = new InMemoryStorage();
     const broken = {
       ...storage,
       read: () => Promise.reject(new Error('disk on fire')),
       writeAtomic: () => Promise.reject(new Error('disk on fire')),
+      mkdir: () => Promise.reject(new Error('disk on fire')),
     } as unknown as InMemoryStorage;
-    const { observability } = makeSpyObservability();
+    const { observability, calls } = makeSpyObservability();
     const tracker = new FunnelTracker({ storage: broken, dataDir: DATA_DIR, observability });
 
     await expect(tracker.recordFirstReply()).resolves.toBeUndefined();
+    // The failure must SURFACE (a read-only mount / full disk can't be silent).
+    expect(calls).toContainEqual({
+      method: 'error',
+      opts: { code: 'funnel.persist_failed', cause: 'disk on fire' },
+    });
+  });
+
+  it('cross-process race: a concurrent setup stamp is not clobbered and never marks legacy', async () => {
+    // Three trackers share one Storage, standing in for CLI + gateway + web-api
+    // all racing on the same funnel-state.json.
+    const storage = new InMemoryStorage();
+    const setupTracker = makeTracker({ storage, now: () => 1_000 });
+    const replyA = makeTracker({ storage, now: () => 2_000 });
+    const replyB = makeTracker({ storage, now: () => 3_000 });
+
+    // Setup completes while two other processes record a first reply, all
+    // interleaved on the shared store.
+    await Promise.all([
+      setupTracker.tracker.recordSetupCompleted({
+        provider: 'anthropic',
+        channels: ['telegram'],
+        wizardPath: 'env',
+      }),
+      replyA.tracker.recordFirstReply(),
+      replyB.tracker.recordFirstReply(),
+    ]);
+
+    const stamp = await readStamp(storage);
+    // The setup stamp survived the concurrent reply writes...
+    expect(stamp.setupCompletedAt).toBe(1_000);
+    // ...and because setup is present on disk, the install is NOT legacy.
+    expect(stamp.legacy).toBeFalsy();
+    expect(stamp.firstReplyAt).toBeDefined();
+
+    // The setup event is emitted exactly once by the single process that owns it.
+    const setupEmits = setupTracker.calls.filter((call) => call.method === 'setup_completed');
+    expect(setupEmits).toHaveLength(1);
+    // Neither reply-process double-counts its own first_reply event.
+    expect(replyA.calls.filter((c) => c.method === 'first_reply').length).toBeLessThanOrEqual(1);
+    expect(replyB.calls.filter((c) => c.method === 'first_reply').length).toBeLessThanOrEqual(1);
   });
 
   it('readState returns null when no stamp file exists', async () => {
