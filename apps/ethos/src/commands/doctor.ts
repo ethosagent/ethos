@@ -17,12 +17,12 @@
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type EthosConfig, ethosDir, readRawConfig } from '@ethosagent/config';
+import { type EthosConfig, ethosDir, readConfig, readRawConfig } from '@ethosagent/config';
 import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
 import type { Skill } from '@ethosagent/types';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { buildVersionInfo } from '../version-info';
-import { createLLM, getSecretsResolver, getStorage } from '../wiring';
+import { createLLM, getFunnelTracker, getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -224,6 +224,156 @@ async function checkAwsSecrets(
   }
 }
 
+// ---------------------------------------------------------------------------
+// W2.3 — DB / gateway-heartbeat / channel-token liveness checks.
+//
+// Exit-code contract: a HARD failure (rejected credential, stale heartbeat,
+// unopenable sessions.db) exits 1; an UNREACHABLE-but-not-rejected channel
+// probe exits with a DISTINCT warn code (2) so CI can tell "bad token" from
+// "the platform is down" (W1.2 liveness).
+// ---------------------------------------------------------------------------
+
+const WARN_EXIT = 2;
+
+export interface DoctorFailFlags {
+  coreFailure: boolean;
+  configuredMissing: boolean;
+  awsFailed: boolean;
+  requiredSecretMissing: boolean;
+  dbUnopenable: boolean;
+  gatewayStale: boolean;
+  channelRejected: boolean;
+  /** Unreachable-but-not-rejected — warn only, never a hard fail. */
+  channelUnreachable: boolean;
+}
+
+/** Exit-code matrix: any hard failure → 1; else an unreachable channel probe →
+ *  the DISTINCT warn code (2), so CI tells "bad token" from "platform down";
+ *  else 0. Hard failures always outrank the warn. */
+export function computeDoctorExit(f: DoctorFailFlags): number {
+  const hardFail =
+    f.coreFailure ||
+    f.configuredMissing ||
+    f.awsFailed ||
+    f.requiredSecretMissing ||
+    f.dbUnopenable ||
+    f.gatewayStale ||
+    f.channelRejected;
+  if (hardFail) return 1;
+  if (f.channelUnreachable) return WARN_EXIT;
+  return 0;
+}
+
+type Storage = ReturnType<typeof getStorage>;
+
+interface DbCheckResult {
+  /** false only when the DB exists but cannot be opened/queried. */
+  ok: boolean;
+  /** true when the file has not been created yet — a healthy fresh-install state. */
+  absent: boolean;
+  error?: string;
+}
+
+async function checkSessionsDb(storage: Storage): Promise<DbCheckResult> {
+  const dbPath = join(ethosDir(), 'sessions.db');
+  if (!(await storage.exists(dbPath))) {
+    return { ok: true, absent: true };
+  }
+  try {
+    const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+    const store = new SQLiteSessionStore(dbPath);
+    try {
+      // Trivial query — exercises open + read path; surfaces WAL/corruption.
+      await store.getMessages('__doctor_probe__', { limit: 1 });
+      return { ok: true, absent: false };
+    } finally {
+      store.close();
+    }
+  } catch (err) {
+    return { ok: false, absent: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+interface GatewayHealthResult {
+  status: 'ok' | 'stale' | 'down';
+  adapters: Array<{ name: string; ok: boolean }>;
+  lastHeartbeatAgeSec: number | null;
+}
+
+/** Mirrors the web-api `/healthz` heartbeat semantics (30s staleness). */
+async function checkGatewayHealth(storage: Storage): Promise<GatewayHealthResult> {
+  const healthPath = join(homedir(), '.ethos', 'gateway-health.json');
+  try {
+    const raw = await storage.read(healthPath);
+    if (!raw) return { status: 'down', adapters: [], lastHeartbeatAgeSec: null };
+    const hb = JSON.parse(raw) as {
+      updatedAt: string;
+      adapters?: Array<{ name: string; ok: boolean }>;
+    };
+    const ageSec = (Date.now() - new Date(hb.updatedAt).getTime()) / 1000;
+    const stale = !Number.isFinite(ageSec) || ageSec > 30;
+    return {
+      status: stale ? 'stale' : 'ok',
+      // Guard against a malformed heartbeat file where `adapters` is present
+      // but not an array — iterating a non-array below would throw.
+      adapters: Array.isArray(hb.adapters) ? hb.adapters : [],
+      lastHeartbeatAgeSec: Number.isFinite(ageSec) ? Math.round(ageSec) : null,
+    };
+  } catch {
+    return { status: 'down', adapters: [], lastHeartbeatAgeSec: null };
+  }
+}
+
+interface ChannelProbeResult {
+  platform: 'telegram' | 'slack' | 'discord';
+  ok: boolean;
+  reason?: 'rejected' | 'unreachable' | 'unverified';
+  label?: string;
+  error?: string;
+}
+
+/** Live-probe every configured channel token. `config` must be RESOLVED
+ *  (actual tokens, not `${secrets:…}` refs). */
+async function probeConfiguredChannels(config: EthosConfig | null): Promise<ChannelProbeResult[]> {
+  if (!config) return [];
+  const out: ChannelProbeResult[] = [];
+  if (config.telegramToken) {
+    const { validateTelegramToken } = await import('@ethosagent/platform-telegram/validate');
+    const v = await validateTelegramToken(config.telegramToken);
+    out.push({ platform: 'telegram', ok: v.ok, reason: v.reason, label: v.label, error: v.error });
+  }
+  if (config.slackBotToken) {
+    const { validateSlackToken } = await import('@ethosagent/platform-slack/validate');
+    const v = await validateSlackToken(config.slackBotToken);
+    out.push({ platform: 'slack', ok: v.ok, reason: v.reason, label: v.label, error: v.error });
+  }
+  if (config.discordToken) {
+    const { validateDiscordToken } = await import('@ethosagent/platform-discord/validate');
+    const v = await validateDiscordToken(config.discordToken);
+    out.push({ platform: 'discord', ok: v.ok, reason: v.reason, label: v.label, error: v.error });
+  }
+  return out;
+}
+
+/** Load-bearing doctor line for a channel probe (W2.3 / Z-T15). Telegram
+ *  strings are verbatim; other platforms follow the same grammar. */
+function channelProbeLine(p: ChannelProbeResult): string {
+  if (p.ok) return `${p.platform}: ok${p.label ? ` (${p.label})` : ''}`;
+  if (p.reason === 'rejected') {
+    if (p.platform === 'telegram') {
+      return 'telegram: token rejected (401) — regenerate with @BotFather.';
+    }
+    return `${p.platform}: token rejected — regenerate the token in the platform settings.`;
+  }
+  if (p.reason === 'unverified') {
+    return `${p.platform}: rate-limited (429) — token unverified, retry later (not a settled verdict).`;
+  }
+  if (p.platform === 'telegram') {
+    return 'telegram: unreachable (timeout) — token unverified, not necessarily invalid.';
+  }
+  return `${p.platform}: unreachable — token unverified, not necessarily invalid.`;
+}
+
 export interface DoctorOptions {
   /** v2.2 — Optional plugin loader for running plugin health checks.
    *  When provided (e.g. from a running gateway), doctor displays plugin
@@ -254,6 +404,11 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
   if (args.includes('--check-provider')) {
     const jsonMode = args.includes('--json');
     await runProviderProbe(jsonMode);
+    return;
+  }
+
+  if (args.includes('--funnel')) {
+    await runFunnelReport(args.includes('--json'));
     return;
   }
 
@@ -298,10 +453,34 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
 
     const awsSecretsStatus = await checkAwsSecrets(config);
     const awsFailed = awsSecretsStatus.enabled && awsSecretsStatus.reachable === false;
-    const exitCode =
-      coreFailures.length > 0 || configuredMissing.length > 0 || awsFailed || requiredSecretMissing
-        ? 1
-        : 0;
+
+    // W2.3 — DB, gateway heartbeat, and channel-token liveness.
+    const db = await checkSessionsDb(storage);
+    const gateway = await checkGatewayHealth(storage);
+    const skipChannelProbe =
+      args.includes('--skip-channel-probe') || process.env.ETHOS_SKIP_VALIDATION === '1';
+    const resolvedConfig = skipChannelProbe
+      ? null
+      : await readConfig(storage, await getSecretsResolver());
+    const channels = skipChannelProbe ? [] : await probeConfiguredChannels(resolvedConfig);
+    const channelRejected = channels.some((c) => !c.ok && c.reason === 'rejected');
+    // `unverified` (rate-limited) shares the warn exit with `unreachable` — the
+    // distinct reason is still surfaced per-channel in the JSON below, so a 429
+    // is never reported as a settled/clean verdict.
+    const channelUnreachable = channels.some(
+      (c) => !c.ok && (c.reason === 'unreachable' || c.reason === 'unverified'),
+    );
+
+    const exitCode = computeDoctorExit({
+      coreFailure: coreFailures.length > 0,
+      configuredMissing: configuredMissing.length > 0,
+      awsFailed,
+      requiredSecretMissing,
+      dbUnopenable: !db.ok,
+      gatewayStale: gateway.status === 'stale',
+      channelRejected,
+      channelUnreachable,
+    });
 
     const result = {
       version: buildVersionInfo(),
@@ -316,6 +495,14 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
       })),
       skillCliIssues: await buildSkillsCliJson(),
       awsSecrets: awsSecretsStatus,
+      db: { ok: db.ok, absent: db.absent, ...(db.error ? { error: db.error } : {}) },
+      gateway,
+      channels: channels.map((c) => ({
+        platform: c.platform,
+        ok: c.ok,
+        ...(c.reason ? { reason: c.reason } : {}),
+        ...(c.label ? { label: c.label } : {}),
+      })),
       exit: exitCode,
     };
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -508,11 +695,79 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
   }
 
   // -------------------------------------------------------------------------
+  // Sessions database (W2.3)
+  // -------------------------------------------------------------------------
+
+  console.log(`${c.bold}Sessions database${c.reset}`);
+  const db = await checkSessionsDb(storage);
+  if (db.absent) {
+    console.log(`  ${c.dim}–  Not created yet (built on first chat).${c.reset}`);
+  } else if (db.ok) {
+    console.log(`  ${c.green}✓${c.reset}  sessions.db opens and queries cleanly`);
+  } else {
+    console.log(`  ${c.red}✗${c.reset}  sessions.db failed to open: ${c.dim}${db.error}${c.reset}`);
+  }
+  console.log('');
+
+  // -------------------------------------------------------------------------
+  // Gateway heartbeat (W2.3) — mirrors web-api /healthz semantics
+  // -------------------------------------------------------------------------
+
+  console.log(`${c.bold}Gateway heartbeat${c.reset}`);
+  const gateway = await checkGatewayHealth(storage);
+  if (gateway.status === 'ok') {
+    console.log(
+      `  ${c.green}✓${c.reset}  fresh (${gateway.lastHeartbeatAgeSec}s ago), ${gateway.adapters.length} adapter(s)`,
+    );
+  } else if (gateway.status === 'stale') {
+    console.log(
+      `  ${c.red}✗${c.reset}  stale heartbeat (${gateway.lastHeartbeatAgeSec}s ago — gateway may have died)`,
+    );
+  } else {
+    console.log(`  ${c.dim}–  No heartbeat file (gateway not running).${c.reset}`);
+  }
+  for (const a of gateway.adapters) {
+    const icon = a.ok ? `${c.green}✓${c.reset}` : `${c.yellow}⚠${c.reset}`;
+    console.log(`      ${icon} ${a.name}`);
+  }
+  console.log('');
+
+  // -------------------------------------------------------------------------
+  // Channel-token liveness (W2.3) — live probe per configured channel
+  // -------------------------------------------------------------------------
+
+  const skipChannelProbe =
+    args.includes('--skip-channel-probe') || process.env.ETHOS_SKIP_VALIDATION === '1';
+  const channelProbes = skipChannelProbe
+    ? []
+    : await probeConfiguredChannels(await readConfig(storage, await getSecretsResolver()));
+  console.log(`${c.bold}Channel tokens${c.reset}`);
+  if (skipChannelProbe) {
+    console.log(`  ${c.dim}–  Skipped (--skip-channel-probe / ETHOS_SKIP_VALIDATION).${c.reset}`);
+  } else if (channelProbes.length === 0) {
+    console.log(`  ${c.dim}–  No channels configured.${c.reset}`);
+  } else {
+    for (const p of channelProbes) {
+      const icon = p.ok
+        ? `${c.green}✓${c.reset}`
+        : p.reason === 'rejected'
+          ? `${c.red}✗${c.reset}`
+          : `${c.yellow}⚠${c.reset}`;
+      console.log(`  ${icon}  ${channelProbeLine(p)}`);
+    }
+  }
+  console.log('');
+
+  // -------------------------------------------------------------------------
   // Verdict
   // -------------------------------------------------------------------------
 
   const coreFailures = coreResults.filter((r) => !r.ok);
   const configuredButMissing = channelResults.filter((r) => !r.ok && r.inUse);
+  const channelRejected = channelProbes.some((p) => !p.ok && p.reason === 'rejected');
+  const channelUnreachable = channelProbes.some(
+    (p) => !p.ok && (p.reason === 'unreachable' || p.reason === 'unverified'),
+  );
 
   let exitCode = 0;
 
@@ -537,12 +792,34 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     console.log(`${c.red}✗ Required secret missing — see Secrets section above.${c.reset}`);
     exitCode = 1;
   }
+  if (!db.ok) {
+    console.log(
+      `${c.red}✗ sessions.db could not be opened — see Sessions database above.${c.reset}`,
+    );
+    exitCode = 1;
+  }
+  if (gateway.status === 'stale') {
+    console.log(
+      `${c.red}✗ Gateway heartbeat is stale — the gateway process may have died.${c.reset}`,
+    );
+    exitCode = 1;
+  }
+  if (channelRejected) {
+    console.log(`${c.red}✗ A channel token was rejected — see Channel tokens above.${c.reset}`);
+    exitCode = 1;
+  }
+  // Unreachable-but-not-rejected → DISTINCT warn exit code (2), so CI can tell a
+  // bad token from an outage. Hard failures still take precedence.
+  if (exitCode === 0 && channelUnreachable) {
+    console.log(
+      `${c.yellow}⚠ A channel token could not be verified (platform unreachable) — see above.${c.reset}`,
+    );
+    exitCode = WARN_EXIT;
+  }
   if (exitCode > 0) {
     process.exit(exitCode);
   }
-  if (coreFailures.length === 0 && configuredButMissing.length === 0 && !requiredSecretMissing) {
-    console.log(`${c.green}✓ Healthy.${c.reset}`);
-  }
+  console.log(`${c.green}✓ Healthy.${c.reset}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -550,8 +827,9 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
 // ---------------------------------------------------------------------------
 
 async function runDoctorFix(): Promise<void> {
+  // chmod stays raw node:fs — Storage has no permissions API (keys.json /
+  // config.yaml owner-restriction is the whole point of this repair step).
   const { chmod } = await import('node:fs/promises');
-  const { existsSync } = await import('node:fs');
   const storage = getStorage();
   const dir = ethosDir();
   let exitCode = 0;
@@ -582,7 +860,7 @@ async function runDoctorFix(): Promise<void> {
 
   // 3. Fix keys.json permissions (should be 0o600)
   const keysPath = join(dir, 'keys.json');
-  if (existsSync(keysPath)) {
+  if (await storage.exists(keysPath)) {
     try {
       await chmod(keysPath, 0o600);
       console.log(`  ${c.green}✓ Fixed:${c.reset}  Set ${keysPath} to 0600`);
@@ -594,7 +872,7 @@ async function runDoctorFix(): Promise<void> {
 
   // 4. Fix config.yaml permissions (may contain secret refs; restrict to owner)
   const configPath = join(dir, 'config.yaml');
-  if (existsSync(configPath)) {
+  if (await storage.exists(configPath)) {
     try {
       await chmod(configPath, 0o600);
       console.log(`  ${c.green}✓ Fixed:${c.reset}  Set ${configPath} to 0600`);
@@ -710,6 +988,87 @@ async function runProviderProbe(jsonMode: boolean): Promise<void> {
   }
 
   if (exit > 0) process.exit(exit);
+}
+
+// ---------------------------------------------------------------------------
+// --funnel: local adoption-funnel report (W4.2)
+// ---------------------------------------------------------------------------
+
+/** Format a millisecond delta as a compact human duration, e.g. "2m 8s". */
+export function formatFunnelDuration(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const totalMin = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (totalMin < 60) return sec > 0 ? `${totalMin}m ${sec}s` : `${totalMin}m`;
+  const hours = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  return min > 0 ? `${hours}h ${min}m` : `${hours}h`;
+}
+
+export async function runFunnelReport(jsonMode: boolean): Promise<void> {
+  // Local palette honoring NO_COLOR (plan requirement for all funnel surfaces).
+  const noColor = Boolean(process.env.NO_COLOR);
+  const fc = noColor
+    ? { reset: '', dim: '', bold: '', green: '' }
+    : { reset: c.reset, dim: c.dim, bold: c.bold, green: c.green };
+
+  const state = await getFunnelTracker().readState();
+
+  if (jsonMode) {
+    process.stdout.write(`${JSON.stringify(state ?? {})}\n`);
+    return;
+  }
+
+  console.log(`\n${fc.bold}ethos doctor --funnel${fc.reset}\n`);
+
+  // Legacy / pre-tracking install: no setup stamp means every recorded time
+  // is meaningless for TTFM — say so instead of printing garbage numbers.
+  if (!state || state.setupCompletedAt === undefined) {
+    console.log('No funnel data — this install predates funnel tracking (legacy).');
+    if (state?.firstReplyAt !== undefined) {
+      console.log(
+        `${fc.dim}(a first reply was recorded on ${new Date(state.firstReplyAt).toLocaleString()} after upgrading — excluded from TTFM stats)${fc.reset}`,
+      );
+    }
+    console.log('');
+    return;
+  }
+
+  const setupAt = state.setupCompletedAt;
+  const setupMeta = [
+    state.setupWizardPath ? `${state.setupWizardPath} wizard` : null,
+    state.setupProvider ? `provider ${state.setupProvider}` : null,
+    state.setupChannels && state.setupChannels.length > 0
+      ? `channels: ${state.setupChannels.join(', ')}`
+      : 'no channels configured',
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  console.log(
+    `Setup completed:      ${fc.green}✓${fc.reset} ${new Date(setupAt).toLocaleString()} ${fc.dim}(${setupMeta})${fc.reset}`,
+  );
+
+  if (state.firstReplyAt !== undefined) {
+    console.log(
+      `First reply:          ${fc.green}✓${fc.reset} ${new Date(state.firstReplyAt).toLocaleString()} ${fc.dim}(+${formatFunnelDuration(state.firstReplyAt - setupAt)} after setup)${fc.reset}`,
+    );
+  } else {
+    console.log(`First reply:          ${fc.dim}not yet recorded${fc.reset}`);
+  }
+
+  const channels = Object.entries(state.channelFirstReplyAt ?? {});
+  if (channels.length > 0) {
+    for (const [platform, ts] of channels) {
+      console.log(
+        `First channel reply:  ${fc.green}✓${fc.reset} ${platform} — ${new Date(ts).toLocaleString()} ${fc.dim}(+${formatFunnelDuration(ts - setupAt)} after setup)${fc.reset}`,
+      );
+    }
+  } else {
+    console.log(`First channel reply:  ${fc.dim}not yet recorded${fc.reset}`);
+  }
+  console.log('');
 }
 
 // ---------------------------------------------------------------------------

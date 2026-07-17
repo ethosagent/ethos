@@ -61,6 +61,7 @@ import {
   createAgentLoop,
   createTeamAgentLoop,
   getEthosObservability,
+  getFunnelTracker,
   getSecretsResolver,
   getStorage,
 } from '../wiring';
@@ -246,7 +247,14 @@ export async function runGatewaySetup(): Promise<void> {
 // ethos gateway start
 // ---------------------------------------------------------------------------
 
-export async function runGatewayStart(): Promise<void> {
+export interface GatewayStartOptions {
+  /** Fired once the gateway is fully up and listening — used by the setup
+   *  three-way close (W2.5) to print the `t.me` deep-link success block after
+   *  the "Starting the Telegram bot…" line. */
+  onReady?: () => void;
+}
+
+export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<void> {
   // Load config through the strict path so parse-time errors (typos in
   // bind.type, missing bot tokens) surface here instead of silently
   // booting zero bots. The strict loader also applies the legacy →
@@ -671,6 +679,19 @@ export async function runGatewayStart(): Promise<void> {
     }
   }
 
+  // W4.1 — funnel stamps at gateway turn completion. The tracker no-ops once
+  // stamped, so this is one cheap callback per turn after the first.
+  const onTurnComplete = ({ platform }: { platform: string }): void => {
+    const funnel = getFunnelTracker();
+    void funnel.recordFirstReply();
+    void funnel.recordChannelFirstReply(platform);
+  };
+
+  // W3.1 — channel streaming draft edits. `display.streaming_edits` in
+  // config.yaml (default `dms`: stream in DMs, not group chats).
+  const streamingMode = config.displayStreamingEdits ?? 'dms';
+  const streamingEdits = { dm: streamingMode !== 'off', group: streamingMode === 'all' };
+
   const gateway: Gateway =
     bots.length === 0
       ? // No platform configured — idle gateway. Every configured platform
@@ -693,6 +714,8 @@ export async function runGatewayStart(): Promise<void> {
           ttsProviderConfig: voiceConfig.ttsProviderConfig,
           voiceSecretsResolver: voiceConfig.secretsResolver,
           personalityDirectory,
+          onTurnComplete,
+          streamingEdits,
           ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
           ...(pairingDb ? { pairingDb } : {}),
         })
@@ -713,6 +736,8 @@ export async function runGatewayStart(): Promise<void> {
           ttsProviderConfig: voiceConfig.ttsProviderConfig,
           voiceSecretsResolver: voiceConfig.secretsResolver,
           personalityDirectory,
+          onTurnComplete,
+          streamingEdits,
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),
@@ -937,6 +962,10 @@ export async function runGatewayStart(): Promise<void> {
 
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
+
+  // Gateway is fully up and listening — let the caller print its own ready
+  // banner (the W2.5 t.me success block) after all the adapter/health lines.
+  opts.onReady?.();
 
   // Keep the process alive (adapter polling runs async)
   await new Promise(() => {});

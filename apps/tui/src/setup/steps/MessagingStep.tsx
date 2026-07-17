@@ -27,11 +27,16 @@ interface FieldDef {
   sensitive: boolean;
 }
 
-interface ValidationResult {
-  ok: boolean;
-  label?: string;
-  error?: string;
-}
+// W2.6 honesty split — a never-probed credential must never render "Connected".
+//   ok          → validator confirmed the token (renders "✓ Connected")
+//   rejected    → 401/403, definitively bad (no save-anyway path)
+//   unreachable → outage; saved unverified and allowed through (W1.2)
+//   unvalidated → module-missing or email; saved but never probed
+type PlatformValidation =
+  | { kind: 'ok'; label?: string }
+  | { kind: 'rejected'; error: string }
+  | { kind: 'unreachable'; error: string }
+  | { kind: 'unvalidated' };
 
 function getFields(platform: Platform): FieldDef[] {
   switch (platform) {
@@ -57,29 +62,43 @@ function getFields(platform: Platform): FieldDef[] {
   }
 }
 
+function classify(result: {
+  ok: boolean;
+  label?: string;
+  error?: string;
+  // `unverified` (rate-limited) is treated as unreachable here — saved but
+  // never claimed "Connected".
+  reason?: 'rejected' | 'unreachable' | 'unverified';
+}): PlatformValidation {
+  if (result.ok) return { kind: 'ok', label: result.label };
+  if (result.reason === 'rejected')
+    return { kind: 'rejected', error: result.error ?? 'Invalid token' };
+  return { kind: 'unreachable', error: result.error ?? 'Could not reach platform' };
+}
+
 async function validatePlatform(
   platform: Platform,
   values: Record<string, string>,
-): Promise<ValidationResult> {
+): Promise<PlatformValidation> {
   try {
     if (platform === 'telegram') {
       const { validateTelegramToken } = await import('@ethosagent/platform-telegram/validate');
-      return validateTelegramToken(values.telegramToken ?? '');
+      return classify(await validateTelegramToken(values.telegramToken ?? ''));
     }
     if (platform === 'discord') {
       const { validateDiscordToken } = await import('@ethosagent/platform-discord/validate');
-      return validateDiscordToken(values.discordToken ?? '');
+      return classify(await validateDiscordToken(values.discordToken ?? ''));
     }
     if (platform === 'slack') {
       const { validateSlackToken } = await import('@ethosagent/platform-slack/validate');
-      return validateSlackToken(values.slackBotToken ?? '');
+      return classify(await validateSlackToken(values.slackBotToken ?? ''));
     }
   } catch {
-    // Validator module not available — save anyway
-    return { ok: true };
+    // Validator module not available — save but never claim "Connected".
+    return { kind: 'unvalidated' };
   }
-  // email: no live validation (IMAP open is too slow for a wizard step)
-  return { ok: true };
+  // email: no live validation (IMAP open is too slow for a wizard step).
+  return { kind: 'unvalidated' };
 }
 
 export function MessagingStep() {
@@ -88,7 +107,7 @@ export function MessagingStep() {
   const [selected, setSelected] = useState(0);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [activeField, setActiveField] = useState(0);
-  const [validation, setValidation] = useState<ValidationResult | null>(null);
+  const [validation, setValidation] = useState<PlatformValidation | null>(null);
 
   const selectedPlatform = PLATFORMS[selected];
 
@@ -151,8 +170,25 @@ export function MessagingStep() {
         setFieldValues((v) => ({ ...v, [currentFieldKey]: (v[currentFieldKey] ?? '') + input }));
       }
     } else if (phase === 'validated') {
-      if (key.return) {
-        dispatch({ type: 'next', patch: fieldValues });
+      const rejected = validation?.kind === 'rejected';
+      // No save-anyway path for a DEFINITIVELY rejected credential (W2.6):
+      // Enter is inert; the only ways forward are re-enter (Esc) or skip (S).
+      if (key.return && !rejected) {
+        // Carry the validated Telegram @username forward so the LaunchStep can
+        // gate the "Start the Telegram bot now" option and print the success
+        // block with the real handle (W2.5).
+        const telegramUsername =
+          selectedPlatform?.id === 'telegram' && validation?.kind === 'ok'
+            ? validation.label
+            : undefined;
+        dispatch({
+          type: 'next',
+          patch: telegramUsername ? { ...fieldValues, telegramUsername } : fieldValues,
+        });
+      }
+      if (rejected && (input === 's' || input === 'S')) {
+        // Skip this platform — advance without saving the rejected credential.
+        dispatch({ type: 'next', patch: {} });
       }
       if (key.escape) {
         setPhase('configure');
@@ -203,26 +239,40 @@ export function MessagingStep() {
   }
 
   if (phase === 'validated' && validation) {
+    const platformLabel = selectedPlatform?.label ?? '';
     return (
       <Box flexDirection="column" gap={1}>
         <Text color={DESIGN.textPrimary} bold>
-          {`${selectedPlatform?.label ?? ''} credentials:`}
+          {`${platformLabel} credentials:`}
         </Text>
-        {validation.ok ? (
-          <Text color={DESIGN.success}>
-            {`  ${GLYPHS.toolOk} Connected${validation.label ? ` · ${validation.label}` : ''}`}
-          </Text>
-        ) : (
-          <Text
-            color={DESIGN.error}
-          >{`  ${GLYPHS.toolFail} ${validation.error ?? 'Validation failed'}`}</Text>
+
+        {validation.kind === 'ok' && (
+          <>
+            <Text color={DESIGN.success}>
+              {`  ${GLYPHS.toolOk} Connected${validation.label ? ` · ${validation.label}` : ''}`}
+            </Text>
+            <Text color={DESIGN.textTertiary}>{'  Enter to continue'}</Text>
+          </>
         )}
-        {!validation.ok && (
-          <Text color={DESIGN.textTertiary}>
-            {'  Esc to re-enter credentials   Enter to save anyway'}
+
+        {validation.kind === 'unvalidated' && (
+          <>
+            <Text color={DESIGN.success}>{`  ${GLYPHS.toolOk} Saved (not validated)`}</Text>
+            <Text color={DESIGN.textTertiary}>{'  Enter to continue'}</Text>
+          </>
+        )}
+
+        {validation.kind === 'unreachable' && (
+          <Text color={DESIGN.warning}>
+            {`  Couldn't reach ${platformLabel} — saved unverified. Enter to continue`}
           </Text>
         )}
-        {validation.ok && <Text color={DESIGN.textTertiary}>{'  Enter to continue'}</Text>}
+
+        {validation.kind === 'rejected' && (
+          <Text color={DESIGN.error}>
+            {'  Token rejected — Esc to re-enter, S to skip this platform'}
+          </Text>
+        )}
       </Box>
     );
   }

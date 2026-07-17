@@ -867,6 +867,15 @@ export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolv
 // Re-export the resolver so callers don't need a separate import.
 export { resolveModelTarget } from './model-resolver';
 
+// Shared live provider-credential probe (W2.2 / W2.4) with W1.2 liveness
+// classification — used by the readline fallback, TUI AuthStep, and --from-env.
+export {
+  classifyProbeError,
+  type ProbeProviderConfig,
+  type ProbeProviderOutcome,
+  probeProvider,
+} from './probe-provider';
+
 // ---------------------------------------------------------------------------
 // Ethos observability adapter
 // ---------------------------------------------------------------------------
@@ -879,6 +888,15 @@ export {
   EthosObservability,
   type EthosTraceKind,
 } from './observability/ethos-observability';
+export {
+  FUNNEL_STATE_FILE,
+  type FunnelObservability,
+  type FunnelState,
+  FunnelTracker,
+  type FunnelTrackerOptions,
+  type FunnelWizardPath,
+  mergeFunnelState,
+} from './observability/funnel';
 export { resolveExecutionBackendName } from './resolve-execution-backend';
 export {
   type BuildExecutionPostureInput,

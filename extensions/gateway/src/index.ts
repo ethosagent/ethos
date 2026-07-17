@@ -13,7 +13,7 @@ import { shortPatternCheck, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactPii } from '@ethosagent/safety-redact';
 import { SessionLane } from '@ethosagent/session-lane';
 import type Database from '@ethosagent/sqlite';
-import { createEventTranslator } from '@ethosagent/surface-kit';
+import { createEventTranslator, shouldSurfaceProgress } from '@ethosagent/surface-kit';
 import type {
   AttachmentCache,
   BackgroundJob,
@@ -31,6 +31,12 @@ import type {
 } from '@ethosagent/types';
 import { MessageDedupCache } from './dedup';
 import {
+  attachmentsFromStructured,
+  OUTBOUND_MEDIA_MAX_BYTES,
+  type OutboundMediaCaps,
+} from './media';
+import { DraftStreamer } from './streaming';
+import {
   buildTranscriptText,
   DEFAULT_VOICE_MODE,
   hasAudioAttachments,
@@ -43,6 +49,20 @@ import {
 export { SessionLane } from '@ethosagent/session-lane';
 export { MessageDedupCache } from './dedup';
 export { DreamExecutor } from './dream-executor';
+export {
+  attachmentsFromStructured,
+  decodeDataUrl,
+  isOutboundMediaSource,
+  OUTBOUND_MEDIA_MAX_BYTES,
+  type OutboundMediaCaps,
+  type OutboundMediaSource,
+} from './media';
+export {
+  closeUnbalancedMarkup,
+  DraftStreamer,
+  parseRetryAfterSeconds,
+  type StreamAdapter,
+} from './streaming';
 export { type CapturingAdapter, createCapturingAdapter } from './webhook-adapter';
 
 const noopLogger: Logger = {
@@ -304,6 +324,14 @@ export interface GatewayConfig {
    */
   observability?: GatewayObservability;
   /**
+   * Optional hook fired after a turn completes with a delivered reply (not
+   * aborted, not errored, non-empty response). The caller decides what to do
+   * with it — e.g. the CLI gateway command records the W4.1 funnel stamps
+   * (`funnel.first_reply` / `funnel.channel_first_reply`) here, keeping
+   * funnel emission in the app layer instead of this library.
+   */
+  onTurnComplete?: (info: { platform: string }) => void;
+  /**
    * Optional hook called when a sender is approved via `/allow <code>` so the
    * caller can persist the updated allowlist back to config.yaml.
    */
@@ -411,6 +439,22 @@ export interface GatewayConfig {
   };
   /** Notification router for delivering process completion alerts to channels. */
   notificationRouter?: import('@ethosagent/types').NotificationRouter;
+  /**
+   * Streaming draft-edit config (W3.1). When enabled for a chat and the
+   * adapter can edit messages, a turn's reply is delivered as throttled
+   * `editMessage` updates that grow in place (the first throttled chunk is the
+   * first message — there is NO turn-start placeholder). Sourced from
+   * `display.streaming_edits` in `~/.ethos/config.yaml` (NOT PersonalityConfig,
+   * which is frozen). Defaults: DMs on, group chats off, since draft edits
+   * multiply API calls per turn.
+   */
+  streamingEdits?: { dm?: boolean; group?: boolean };
+  /**
+   * Minimum ms between successive draft edits (the first send is never
+   * throttled). Defaults to 2500 (~1 edit / 2.5s). Set to 0 in tests to flush
+   * every chunk.
+   */
+  streamingEditIntervalMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +534,14 @@ export class Gateway {
   private readonly dedupWindow: number;
   /** Outbound-message dedup cache. Suppresses `(sessionId, content)` within TTL. */
   private readonly outboundDedup: MessageDedupCache;
+  /** Streaming draft edits enabled for DMs / group chats (W3.1). */
+  private readonly streamingDm: boolean;
+  private readonly streamingGroup: boolean;
+  /** Minimum ms between draft edits. */
+  private readonly streamingEditIntervalMs: number;
+  /** Chats (`${platform}:${chatId}`) where streaming was disabled after
+   *  repeated flood-waits — future turns there fall back to non-streaming. */
+  private readonly streamingDisabledChats = new Set<string>();
   /** Active turns by laneKey — used by graceful shutdown to notify users. */
   private readonly activeTurns = new Map<string, { adapter: PlatformAdapter; chatId: string }>();
   /** Active steer sinks by laneKey — inbound messages during a turn push here. */
@@ -532,6 +584,8 @@ export class Gateway {
   private readonly pairingDb: Database.Database | undefined;
   /** Observability adapter for audit events. */
   private readonly observability: GatewayObservability | undefined;
+  /** Hook fired after a turn completes with a delivered reply. */
+  private readonly onTurnComplete: ((info: { platform: string }) => void) | undefined;
   /** Global limiter on simultaneous turns (`maxConcurrentSessions` quota). */
   private readonly concurrency: TurnSemaphore;
   /** Per-lane queue cap — beyond this, saturated lanes get a busy rejection. */
@@ -654,6 +708,7 @@ export class Gateway {
     this.channelFilter = config.channelFilter;
     this.pairingDb = config.pairingDb;
     this.observability = config.observability;
+    this.onTurnComplete = config.onTurnComplete;
     // Global turn budget. Unset / non-positive => Infinity permits (unbounded,
     // preserving today's behavior). A positive value is the enforced quota.
     this.concurrency = new TurnSemaphore(
@@ -678,6 +733,10 @@ export class Gateway {
         });
       },
     });
+    // Streaming draft edits: DMs on, groups off, unless config overrides.
+    this.streamingDm = config.streamingEdits?.dm ?? true;
+    this.streamingGroup = config.streamingEdits?.group ?? false;
+    this.streamingEditIntervalMs = config.streamingEditIntervalMs ?? 2500;
     this.onAllowlistChange = config.onAllowlistChange;
     this.clarifyCorrelator = config.clarifyMessageCorrelator;
     this.personalityCardReader = config.personalityCardReader;
@@ -1618,6 +1677,19 @@ export class Gateway {
     });
   }
 
+  /**
+   * Whether this turn's reply should stream as live draft edits. Requires the
+   * chat class (DM/group) to be enabled, the adapter to support editing, and
+   * the chat not to have been flood-disabled earlier this run.
+   */
+  private shouldStream(message: InboundMessage, adapter: PlatformAdapter): boolean {
+    const enabled = message.isDm ? this.streamingDm : this.streamingGroup;
+    if (!enabled) return false;
+    if (!adapter.canEditMessage || typeof adapter.editMessage !== 'function') return false;
+    if (this.streamingDisabledChats.has(`${message.platform}:${message.chatId}`)) return false;
+    return true;
+  }
+
   private async runTurn(
     laneKey: string,
     _lane: SessionLane,
@@ -1731,6 +1803,26 @@ export class Gateway {
           ? await this.resolveUserIdFn(message.platform, message.userId, message.username)
           : undefined;
 
+      // W3.1 — live draft-edit streamer, gated by chat class + adapter caps.
+      const streamer = this.shouldStream(message, adapter)
+        ? new DraftStreamer({
+            adapter,
+            chatId: message.chatId,
+            threadId,
+            sessionKey,
+            dedup: this.outboundDedup,
+            minEditIntervalMs: this.streamingEditIntervalMs,
+            onFloodDisable: () => {
+              this.streamingDisabledChats.add(`${message.platform}:${message.chatId}`);
+              this.observability?.recordSafetyBlock({
+                code: 'gateway.streaming_disabled',
+                cause: `streaming disabled for chat ${message.chatId} after repeated flood-waits`,
+                details: { platform: message.platform, chatId: message.chatId },
+              });
+            },
+          })
+        : undefined;
+
       const translator = createEventTranslator();
       for await (const event of bot.loop.run(loopText, {
         sessionKey,
@@ -1742,6 +1834,16 @@ export class Gateway {
         origin: `${message.platform}:${message.chatId}`,
       })) {
         translator.push(event);
+        // Feed the live draft. Progress folds in only for `audience:'user'`
+        // (W3.3) — the framework never opts a tool in. Fire-and-forget: the
+        // streamer serializes internally and finalize() awaits it.
+        if (streamer && !signal.aborted) {
+          if (event.type === 'text_delta') {
+            void streamer.pushText(translator.text);
+          } else if (event.type === 'tool_progress' && shouldSurfaceProgress(event)) {
+            void streamer.pushProgress(event.message);
+          }
+        }
         if (event.type === 'usage') {
           const u = this.usageStore.get(laneKey) ?? {
             inputTokens: 0,
@@ -1761,20 +1863,37 @@ export class Gateway {
       }
       responseText = translator.text;
 
+      // Did the live streamer already deliver (at least a first chunk)? If so,
+      // the final content lands as a draft edit (registered in dedup via
+      // record()) instead of a fresh send — no duplicate message.
+      const streamed = streamer?.hasDelivered ?? false;
+
       if (signal.aborted) {
-        // /stop or shutdown — caller already notified the user.
+        // /stop or shutdown — caller already notified the user. Any partial
+        // draft is left as-is.
       } else if (errored) {
         const note =
           responseText.trim().length > 0
             ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
             : `⚠ Error: ${errored.error}`;
         const sanitizedNote = stripAnsiEscapes(note);
-        if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
+        if (streamer && streamed) {
+          // Fold the interruption into the existing draft rather than sending
+          // a second message that duplicates the streamed text.
+          await streamer.finalize(sanitizedNote);
+        } else if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
           await adapter.send(message.chatId, { text: sanitizedNote, threadId }).catch(() => {});
         }
       } else if (responseText) {
         const sanitized = stripAnsiEscapes(responseText);
-        if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
+        // Streaming path lands the final via editMessage; non-streaming path
+        // gates a fresh send on dedup. `delivered` decides whether the voice
+        // pipeline runs (it runs on either delivery route).
+        let delivered = false;
+        if (streamer && streamed) {
+          await streamer.finalize(sanitized);
+          delivered = true;
+        } else if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
           await adapter
             .send(message.chatId, {
               text: sanitized,
@@ -1782,7 +1901,10 @@ export class Gateway {
               threadId,
             })
             .catch(() => {});
+          delivered = true;
+        }
 
+        if (delivered) {
           // --- Voice pipeline: post-turn TTS synthesis ---
           const voiceMode = this.voiceModes.get(laneKey) ?? this.defaultVoiceMode;
           const hadAudio = this.lastInboundHadAudio.get(laneKey) ?? false;
@@ -1831,6 +1953,14 @@ export class Gateway {
               }
             }
           }
+        }
+      }
+
+      if (!signal.aborted && !errored && responseText) {
+        try {
+          this.onTurnComplete?.({ platform: message.platform });
+        } catch {
+          // App-layer callback errors must never break the turn.
         }
       }
     } finally {
@@ -2049,6 +2179,7 @@ export class Gateway {
     platform: string,
     target: string,
     body: string,
+    media?: unknown,
   ): Promise<{ ok: boolean; error?: string }> {
     const adapter = this.adapterRegistry.get(platform);
     if (!adapter) {
@@ -2062,7 +2193,27 @@ export class Gateway {
       if (!this.outboundDedup.shouldSend(dedupKey, body)) {
         return { ok: true }; // silently deduplicated
       }
-      const result = await adapter.send(target, { text: body });
+      // W3.2 — outbound media convention. Map a recognized `structured`
+      // payload to native attachments when the adapter's caps allow;
+      // otherwise degrade to the text body (nothing attached).
+      const attachments =
+        media !== undefined
+          ? attachmentsFromStructured(
+              media,
+              this.outboundMediaCaps(adapter),
+              OUTBOUND_MEDIA_MAX_BYTES,
+              (rejectedPath) =>
+                this.observability?.recordSafetyBlock({
+                  code: 'gateway.media_path_rejected',
+                  cause: 'rejected unsafe path-based media source (traversal or symlink)',
+                  details: { platform, path: rejectedPath },
+                }),
+            )
+          : [];
+      const result = await adapter.send(target, {
+        text: body,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      });
       if (!result.ok) {
         return { ok: false, error: result.error ?? 'Adapter send failed' };
       }
@@ -2070,6 +2221,17 @@ export class Gateway {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /**
+   * Outbound media capabilities for an adapter (W3.2). Prefers the v2
+   * `ChannelCapabilities.media` manifest when present; otherwise falls back to
+   * the legacy `canSendFiles` boolean, which gates both images and files.
+   */
+  private outboundMediaCaps(adapter: PlatformAdapter): OutboundMediaCaps {
+    const media = adapter.caps?.media;
+    if (media) return { imagesOut: media.imagesOut, filesOut: media.filesOut };
+    return { imagesOut: adapter.canSendFiles, filesOut: adapter.canSendFiles };
   }
 
   private getOrCreateLane(key: string): SessionLane {

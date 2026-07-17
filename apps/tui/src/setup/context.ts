@@ -41,7 +41,14 @@ export interface WizardAnswers {
   emailSmtpPort?: number;
   rotationKeys?: Array<{ apiKey: string; priority: number }>;
   providers?: Array<{ provider: string; apiKey: string; model?: string; baseUrl?: string }>;
-  launchChat?: boolean;
+  /** W2.5 three-way close outcome, set by LaunchStep:
+   *   'gateway' → start the channel gateway; 'chat' → open CLI chat;
+   *   'done' → exit. `undefined` until the launch step confirms. */
+  launch?: 'gateway' | 'chat' | 'done';
+  /** The validated Telegram `@username` (from the MessagingStep probe), reused
+   *  in the LaunchStep gateway success block. Present only when a Telegram
+   *  token validated during setup. */
+  telegramUsername?: string;
 }
 
 export interface WizardAction {

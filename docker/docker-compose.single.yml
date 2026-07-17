@@ -1,0 +1,47 @@
+# Single-service "just talk to it" profile (W1.4, zero-friction-first-hour).
+#
+# One service, ETHOS_MODE=all (web UI + gateway under one supervisor), one
+# volume. Put an API key in .env next to this file, then:
+#
+#   docker compose -f docker-compose.single.yml up
+#
+# Web UI: http://localhost:3000 — the entrypoint runs `ethos setup --from-env`
+# (ETHOS_PROVISION_FROM_ENV=1) at boot, so config lands in the volume before the
+# web UI serves and the SPA opens DIRECTLY in chat — never re-asking for the key
+# already in .env. config.yaml is written once; secrets re-sync every boot.
+# The post-publish CI smoke gate (.github/workflows/docker-publish.yml)
+# targets exactly this file. The three-service operator topology lives in
+# docker-compose.yml.
+#
+# ETHOS_IMAGE pins a specific published tag (the smoke gate sets it to the
+# just-published version). ETHOS_DATA_DIR relocates the state volume.
+
+services:
+  ethos:
+    image: ${ETHOS_IMAGE:-ethosagent/ethos:latest}
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      ETHOS_MODE: all
+      ETHOS_WEB_HOST: 0.0.0.0
+      ETHOS_PROVISION_FROM_ENV: "1"
+      ANTHROPIC_API_KEY:
+      OPENAI_API_KEY:
+      OPENROUTER_API_KEY:
+      OPENROUTER_MODEL:
+      GOOGLE_API_KEY:
+      AZURE_API_KEY:
+      AZURE_ENDPOINT:
+      AZURE_MODEL:
+      AZURE_API_VERSION:
+      TELEGRAM_BOT_TOKEN:
+      TELEGRAM_OWNER_ID:
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${ETHOS_DATA_DIR:-./ethos-data}:/home/ethos/.ethos
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped

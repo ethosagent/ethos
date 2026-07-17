@@ -84,6 +84,9 @@ describe('EthosObservability', () => {
       expect(ETHOS_EVENT_CATEGORIES).toContain('a2a.auth');
       expect(ETHOS_EVENT_CATEGORIES).toContain('a2a.rpc');
       expect(ETHOS_EVENT_CATEGORIES).toContain('a2a.task');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('funnel.setup_completed');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('funnel.first_reply');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('funnel.channel_first_reply');
     });
 
     it('ETHOS_TRACE_KINDS enumerates ethos trace kinds', () => {
@@ -259,6 +262,49 @@ describe('EthosObservability', () => {
       >;
       obs[method]?.({ code: 'k' });
       expect(events[0]?.category).toBe(category);
+    });
+  });
+
+  describe('funnel typed helpers (W4.1 — category + helper in the same commit)', () => {
+    it('recordFunnelSetupCompleted emits funnel.setup_completed with structured details', () => {
+      const { writer, events } = makeFakeWriter();
+      const obs = new EthosObservability(writer);
+      obs.recordFunnelSetupCompleted({
+        provider: 'anthropic',
+        channels: ['telegram'],
+        wizardPath: 'tui',
+      });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        category: 'funnel.setup_completed',
+        severity: 'info',
+        details: { provider: 'anthropic', channels: ['telegram'], wizardPath: 'tui' },
+      });
+    });
+
+    it('recordFunnelFirstReply emits msSinceSetup, or legacy without timing', () => {
+      const { writer, events } = makeFakeWriter();
+      const obs = new EthosObservability(writer);
+      obs.recordFunnelFirstReply({ msSinceSetup: 42_000 });
+      obs.recordFunnelFirstReply({ legacy: true });
+
+      expect(events[0]).toMatchObject({
+        category: 'funnel.first_reply',
+        details: { msSinceSetup: 42_000 },
+      });
+      expect(events[1]?.details).toEqual({ legacy: true });
+    });
+
+    it('recordFunnelChannelFirstReply emits platform + msSinceSetup', () => {
+      const { writer, events } = makeFakeWriter();
+      const obs = new EthosObservability(writer);
+      obs.recordFunnelChannelFirstReply({ platform: 'telegram', msSinceSetup: 9_000 });
+
+      expect(events[0]).toMatchObject({
+        category: 'funnel.channel_first_reply',
+        details: { platform: 'telegram', msSinceSetup: 9_000 },
+      });
     });
   });
 

@@ -329,3 +329,48 @@ describe('parseConfigYaml — storage backend', () => {
     expect(cfg.storage?.backend).toBeUndefined();
   });
 });
+
+describe('parseConfigYaml — display.streaming_edits', () => {
+  const base = [
+    'provider: anthropic',
+    'model: claude-opus-4-7',
+    'apiKey: sk',
+    'personality: researcher',
+  ];
+
+  it('parses off/dms/all verbatim', async () => {
+    for (const mode of ['off', 'dms', 'all'] as const) {
+      const cfg = await loadYaml([...base, `display.streaming_edits: ${mode}`].join('\n'));
+      expect(cfg.displayStreamingEdits).toBe(mode);
+    }
+  });
+
+  it('leaves displayStreamingEdits undefined when absent (default dms applied by the gateway consumer)', async () => {
+    const cfg = await loadYaml(base.join('\n'));
+    expect(cfg.displayStreamingEdits).toBeUndefined();
+  });
+
+  it('omits an invalid display.streaming_edits value', async () => {
+    const cfg = await loadYaml([...base, 'display.streaming_edits: garbage'].join('\n'));
+    expect(cfg.displayStreamingEdits).toBeUndefined();
+  });
+
+  it('round-trips through writeConfig and back', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+      displayStreamingEdits: 'all',
+    };
+    await writeConfig(storage, original);
+
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('display.streaming_edits: all');
+
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.displayStreamingEdits).toBe('all');
+  });
+});

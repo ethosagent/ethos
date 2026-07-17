@@ -129,7 +129,8 @@ Bots are bound to a personality at config time. The default binding locks `/pers
 | [Why Ethos?](https://ethosagent.ai/docs/getting-started/why-ethos) | Honest comparison vs. LangChain, CrewAI, OpenClaw, Hermes — when each fits, when each doesn't. |
 | [Architecture in 90 seconds](https://ethosagent.ai/docs/getting-started/architecture-90-seconds) | The 12-step `AgentLoop.run()` cycle, the four extension points, what's frozen vs. plug-in. |
 | [Glossary](https://ethosagent.ai/docs/getting-started/glossary) | Every domain term in one place: personality, skill, tool, hook, session, memory scope, audience boundary. |
-| [Using Ethos — Quickstart](https://ethosagent.ai/docs/using/quickstart) | Install → first chat → ship a Telegram bot. Five minutes. |
+| [Using Ethos — Quickstart](https://ethosagent.ai/docs/using/quickstart) | Install the CLI, configure one provider, and get your first streamed reply. |
+| [Run Ethos in Docker](https://ethosagent.ai/docs/using/how-to/run-in-docker) | One API key, one `docker compose up`, a talking web UI on `localhost:3000`. |
 | [Building on Ethos — Quickstart](https://ethosagent.ai/docs/building/quickstart) | Write a tool, add a provider, build a channel adapter, publish a plugin. Ten minutes. |
 | [Built-in personalities](https://ethosagent.ai/docs/using/explanation/built-in-personalities) | What each of the five does, when to pick which, how to compose your own. |
 | [Memory model](https://ethosagent.ai/docs/using/explanation/memory-model) | `MEMORY.md` vs `USER.md`, per-personality vs. global scope, team memory. |

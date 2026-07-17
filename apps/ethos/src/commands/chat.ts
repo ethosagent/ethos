@@ -39,7 +39,7 @@ import {
   makeTuiSlashCommands,
 } from '../lib/tui-capabilities';
 import { isVerbosity, nextVerbosity, projectEvent, type Verbosity } from '../lib/verbosity';
-import { getStorage, resolveActiveLoop } from '../wiring';
+import { getFunnelTracker, getStorage, resolveActiveLoop } from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
@@ -812,6 +812,8 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
 
       if (event.type === 'done') {
         clearSpinner();
+        // W4.1 — first-ever completed turn stamps funnel.first_reply (no-op after).
+        void getFunnelTracker().recordFirstReply();
         if (state.verbosity === 'verbose' || state.verbosity === 'debug') {
           const summary = formatVerboseSummary({
             turnStart,

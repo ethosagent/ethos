@@ -4,10 +4,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        DOLLAR='$$'
         STATE_DIR="$${ETHOS_STATE_DIR:-/home/ethos/.ethos}"
-        CONFIG_FILE="$$STATE_DIR/config.yaml"
-        ENV_FILE="$$STATE_DIR/.env"
 
         # Install plugins from ETHOS_PLUGINS (comma/space-separated pkg@version specs)
         if [ -n "$${ETHOS_PLUGINS}" ]; then
@@ -28,106 +25,14 @@ services:
           done
         fi
 
-        if [ -f "$$CONFIG_FILE" ]; then
-          echo "config.yaml already exists at $$CONFIG_FILE, skipping init."
-          exit 0
-        fi
-
-        if [ -n "$$AZURE_API_KEY" ]; then
-          PROVIDER="azure"
-          API_KEY="$$AZURE_API_KEY"
-          ENDPOINT="$$AZURE_ENDPOINT"
-          MODEL="$$AZURE_MODEL"
-          [ -z "$$MODEL" ] && MODEL="gpt-4o"
-          API_VERSION="$$AZURE_API_VERSION"
-          [ -z "$$API_VERSION" ] && API_VERSION="2024-12-01-preview"
-          APIKEY_REF="$$DOLLAR{secrets:providers/azure/apiKey}"
-        elif [ -n "$$ANTHROPIC_API_KEY" ]; then
-          PROVIDER="anthropic"
-          API_KEY="$$ANTHROPIC_API_KEY"
-          APIKEY_REF="$$DOLLAR{secrets:providers/anthropic/apiKey}"
-        elif [ -n "$$OPENAI_API_KEY" ]; then
-          PROVIDER="openai"
-          API_KEY="$$OPENAI_API_KEY"
-          APIKEY_REF="$$DOLLAR{secrets:providers/openai/apiKey}"
-        elif [ -n "$$OPENROUTER_API_KEY" ]; then
-          PROVIDER="openrouter"
-          API_KEY="$$OPENROUTER_API_KEY"
-          MODEL="$$OPENROUTER_MODEL"
-          APIKEY_REF="$$DOLLAR{secrets:providers/openrouter/apiKey}"
-        elif [ -n "$$GOOGLE_API_KEY" ]; then
-          PROVIDER="gemini"
-          API_KEY="$$GOOGLE_API_KEY"
-          APIKEY_REF="$$DOLLAR{secrets:providers/gemini/apiKey}"
-        else
-          echo "ERROR: No provider API key found." >&2
-          echo "Set one of: AZURE_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GOOGLE_API_KEY" >&2
-          exit 1
-        fi
-
-        mkdir -p "$$STATE_DIR"
-        chmod 700 "$$STATE_DIR"
-
-        {
-          [ -n "$$AZURE_API_KEY" ]      && echo "AZURE_API_KEY=$$AZURE_API_KEY"
-          [ -n "$$ANTHROPIC_API_KEY" ]  && echo "ANTHROPIC_API_KEY=$$ANTHROPIC_API_KEY"
-          [ -n "$$OPENAI_API_KEY" ]     && echo "OPENAI_API_KEY=$$OPENAI_API_KEY"
-          [ -n "$$OPENROUTER_API_KEY" ] && echo "OPENROUTER_API_KEY=$$OPENROUTER_API_KEY"
-          [ -n "$$GOOGLE_API_KEY" ]     && echo "GEMINI_API_KEY=$$GOOGLE_API_KEY"
-          [ -n "$$TELEGRAM_BOT_TOKEN" ] && echo "TELEGRAM_BOT_TOKEN=$$TELEGRAM_BOT_TOKEN"
-        } > "$$ENV_FILE"
-        chmod 600 "$$ENV_FILE"
-
-        # Write to file-based secrets store (FileSecretsResolver reads these directly)
-        case "$$PROVIDER" in
-          azure)      _SECRET_DIR="$$STATE_DIR/secrets/providers/azure" ;;
-          anthropic)  _SECRET_DIR="$$STATE_DIR/secrets/providers/anthropic" ;;
-          openai)     _SECRET_DIR="$$STATE_DIR/secrets/providers/openai" ;;
-          openrouter) _SECRET_DIR="$$STATE_DIR/secrets/providers/openrouter" ;;
-          gemini)     _SECRET_DIR="$$STATE_DIR/secrets/providers/gemini" ;;
-          *)          _SECRET_DIR="" ;;
-        esac
-        if [ -n "$$_SECRET_DIR" ]; then
-          mkdir -p "$$_SECRET_DIR"
-          printf '%s\n' "$$API_KEY" > "$$_SECRET_DIR/apiKey"
-          chmod 600 "$$_SECRET_DIR/apiKey"
-        fi
-        if [ -n "$$TELEGRAM_BOT_TOKEN" ] && [ -n "$$TELEGRAM_OWNER_ID" ]; then
-          mkdir -p "$$STATE_DIR/secrets/channels/telegram/default"
-          printf '%s\n' "$$TELEGRAM_BOT_TOKEN" > "$$STATE_DIR/secrets/channels/telegram/default/botToken"
-          chmod 600 "$$STATE_DIR/secrets/channels/telegram/default/botToken"
-        elif [ -n "$$TELEGRAM_BOT_TOKEN" ]; then
-          echo "WARNING: TELEGRAM_OWNER_ID not set — Telegram bot will not be configured (set TELEGRAM_OWNER_ID to enable)" >&2
-        fi
-        [ -d "$$STATE_DIR/secrets" ] && chmod 700 "$$STATE_DIR/secrets"
-
-        if [ "$$PROVIDER" = "azure" ] && [ -z "$$ENDPOINT" ]; then
-          echo "ERROR: AZURE_ENDPOINT is required when using Azure provider." >&2
-          exit 1
-        fi
-
-        {
-          echo "schemaVersion: 1"
-          echo "provider: $$PROVIDER"
-          echo "apiKey: $$APIKEY_REF"
-          echo "personality: $${ETHOS_PERSONALITY:-researcher}"
-          if [ "$$PROVIDER" = "azure" ]; then
-            echo "model: $$MODEL"
-            echo "baseUrl: \"$$ENDPOINT\""
-            echo "apiVersion: $$API_VERSION"
-          elif [ "$$PROVIDER" = "openrouter" ] && [ -n "$$MODEL" ]; then
-            echo "model: $$MODEL"
-          fi
-          if [ -n "$$TELEGRAM_BOT_TOKEN" ] && [ -n "$$TELEGRAM_OWNER_ID" ]; then
-            TGREF="$$DOLLAR{secrets:channels/telegram/default/botToken}"
-            echo "telegramToken: $$TGREF"
-            echo "channel_filter.telegram.ownerUserId: $$TELEGRAM_OWNER_ID"
-          fi
-        } > "$$CONFIG_FILE"
-
-        chmod 600 "$$CONFIG_FILE"
-
-        echo "config.yaml created with provider: $$PROVIDER"
+        # Config + secrets are provisioned by the CLI, not re-implemented in sh.
+        # `ethos setup --from-env` validates the provider key (and Telegram
+        # token) before writing, is Storage-abstraction clean, and is the single
+        # config writer — replacing the old ~130-line shell re-implementation.
+        # Idempotent: config.yaml is written once, secrets re-sync from env every
+        # boot. It emits the init last-line contract (✓ on success / an
+        # actionable error as the final line before a non-zero exit).
+        exec ethos setup --from-env
     env_file:
       - path: ./.env
         required: false

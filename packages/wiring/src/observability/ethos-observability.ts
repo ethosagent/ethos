@@ -52,6 +52,9 @@ export const ETHOS_EVENT_CATEGORIES = [
   'a2a.auth',
   'a2a.rpc',
   'a2a.task',
+  'funnel.setup_completed',
+  'funnel.first_reply',
+  'funnel.channel_first_reply',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
 
@@ -358,6 +361,44 @@ export class EthosObservability {
       jobId: opts.jobId,
       decision: opts.decision,
       delivered: opts.delivered,
+    });
+  }
+
+  // ── Funnel events (W4.1 — adoption funnel; local-only, never phone-home) ──
+  //
+  // Exempt from retention/pruning by construction: `retention.ts` prunes only
+  // its enumerated category patterns, and `funnel.%` is intentionally not one
+  // of them — one-shot install-lifecycle data, bytes in size, must survive so
+  // `ethos doctor --funnel` works months later.
+
+  recordFunnelSetupCompleted(
+    opts: EventBase & {
+      provider: string;
+      channels: string[];
+      wizardPath: 'tui' | 'web' | 'readline' | 'env';
+    },
+  ): void {
+    this.emit('funnel.setup_completed', 'info', opts, {
+      provider: opts.provider,
+      channels: opts.channels,
+      wizardPath: opts.wizardPath,
+    });
+  }
+
+  recordFunnelFirstReply(opts: EventBase & { msSinceSetup?: number; legacy?: boolean }): void {
+    this.emit('funnel.first_reply', 'info', opts, {
+      ...(opts.msSinceSetup !== undefined ? { msSinceSetup: opts.msSinceSetup } : {}),
+      ...(opts.legacy ? { legacy: true } : {}),
+    });
+  }
+
+  recordFunnelChannelFirstReply(
+    opts: EventBase & { platform: string; msSinceSetup?: number; legacy?: boolean },
+  ): void {
+    this.emit('funnel.channel_first_reply', 'info', opts, {
+      platform: opts.platform,
+      ...(opts.msSinceSetup !== undefined ? { msSinceSetup: opts.msSinceSetup } : {}),
+      ...(opts.legacy ? { legacy: true } : {}),
     });
   }
 

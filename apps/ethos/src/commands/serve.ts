@@ -63,6 +63,7 @@ import {
   createLLM,
   createTeamAgentLoop,
   getEthosObservability,
+  getFunnelTracker,
   getObservabilityStore,
   getSecretsResolver,
   getStorage,
@@ -196,6 +197,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // the tool catalog and plugin tools are live before the first chat.
       onSetupComplete: () => {
         void bootRealLoop();
+      },
+      // W4.1 — first completed web turn stamps funnel.first_reply.
+      onTurnDone: () => {
+        void getFunnelTracker().recordFirstReply();
       },
       secureCookie: !isLoopbackBind,
       trustProxy,
@@ -843,6 +848,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     ...(voiceConfig?.ttsProviderName ? { ttsProviderName: voiceConfig.ttsProviderName } : {}),
     ...(voiceConfig ? { ttsProviderConfig: voiceConfig.ttsProviderConfig } : {}),
     ...(titleFn ? { titleFn } : {}),
+    // W4.1 — first completed web turn stamps funnel.first_reply.
+    onTurnDone: () => {
+      void getFunnelTracker().recordFirstReply();
+    },
     routeModules: a2aRouteModules,
     a2aPeering,
     a2aControl: { isEnabled: isA2aEnabled, setEnabled: setA2aEnabled },

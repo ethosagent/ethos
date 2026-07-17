@@ -261,6 +261,11 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   const mcpStartRateLimit = rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false });
   app.use(mcpRpcPath('start'), mcpStartRateLimit);
 
+  // Rate-limit platforms.validate — it fires an outbound live token probe to
+  // Telegram/Slack/Discord. Cookie auth alone doesn't stop an authed caller
+  // from looping it as an SSRF-adjacent outbound-probe amplifier, so cap it.
+  app.use('/rpc/platforms/validate', rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false }));
+
   app.route(
     '/rpc',
     rpcRoutes({

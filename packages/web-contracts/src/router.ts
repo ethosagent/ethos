@@ -987,11 +987,29 @@ const PlatformsSetOutput = z.object({ platform: PlatformStatusSchema });
 const PlatformsClearInput = z.object({ id: PlatformIdSchema });
 const PlatformsClearOutput = z.object({ platform: PlatformStatusSchema });
 
+// W2.1 — live token probe. Runs the per-platform validator server-side and
+// returns a W1.2 liveness verdict so onboarding can distinguish a rejected
+// token (Continue disabled) from an unreachable platform (saved unverified).
+const PlatformsValidateInput = z.object({
+  id: PlatformIdSchema,
+  fields: z.record(z.string(), z.string()),
+});
+const PlatformsValidateOutput = z.object({
+  /** `ok` — token accepted; `rejected` — definitively bad (401/403);
+   *  `unreachable` — outage (timeout/DNS/5xx/429); `unsupported` — no probe
+   *  exists for this platform (e.g. email). */
+  status: z.enum(['ok', 'rejected', 'unreachable', 'unsupported']),
+  /** `@botname` / workspace name on success, else null. */
+  label: z.string().nullable(),
+  error: z.string().nullable(),
+});
+
 /** @experimental */
 const platforms = {
   list: oc.output(PlatformsListOutput),
   set: oc.input(PlatformsSetInput).output(PlatformsSetOutput),
   clear: oc.input(PlatformsClearInput).output(PlatformsClearOutput),
+  validate: oc.input(PlatformsValidateInput).output(PlatformsValidateOutput),
   botsListTelegram: oc.output(z.object({ bots: z.array(TelegramBotEntrySchema) })),
   botsAddTelegram: oc
     .input(

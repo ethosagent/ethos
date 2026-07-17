@@ -14,7 +14,9 @@ export interface RunSetupWizardOpts {
 
 export interface RunSetupWizardResult {
   answers: WizardAnswers;
-  launchChat: boolean;
+  /** W2.5 three-way close outcome. `answers.telegramUsername` carries the
+   *  validated `@username` for the gateway success block. */
+  launch: 'gateway' | 'chat' | 'done';
 }
 
 export function runSetupWizard(opts: RunSetupWizardOpts): Promise<RunSetupWizardResult | null> {

@@ -3,20 +3,23 @@ import { useState } from 'react';
 import { DESIGN, GLYPHS } from '../../skin';
 import type { WizardAnswers } from '../context';
 import { useWizardContext } from '../context';
+import { type LaunchChoice, launchOptions } from './launch-options';
 
 export interface LaunchStepProps {
-  onComplete: (result: { answers: WizardAnswers; launchChat: boolean } | null) => void;
+  onComplete: (result: { answers: WizardAnswers; launch: LaunchChoice } | null) => void;
 }
 
 export function LaunchStep(_props: LaunchStepProps) {
-  const { accent, dispatch } = useWizardContext();
-  const [choice, setChoice] = useState<'yes' | 'no'>('yes');
+  const { accent, answers, dispatch } = useWizardContext();
+  const options = launchOptions(Boolean(answers.telegramUsername));
+  const [selected, setSelected] = useState(0);
 
   useInput((input, key) => {
-    if (key.leftArrow || input === 'h' || input === 'y') setChoice('yes');
-    if (key.rightArrow || input === 'l' || input === 'n') setChoice('no');
+    if (key.upArrow || input === 'k') setSelected((s) => Math.max(0, s - 1));
+    if (key.downArrow || input === 'j') setSelected((s) => Math.min(options.length - 1, s + 1));
     if (key.return) {
-      dispatch({ type: 'next', patch: { launchChat: choice === 'yes' } });
+      const choice = options[selected]?.id ?? 'done';
+      dispatch({ type: 'next', patch: { launch: choice } });
     }
     if (key.escape) dispatch({ type: 'back' });
   });
@@ -24,21 +27,26 @@ export function LaunchStep(_props: LaunchStepProps) {
   return (
     <Box flexDirection="column" gap={1}>
       <Text color={DESIGN.textPrimary} bold>
-        Launch chat now?
+        What next?
       </Text>
-      <Box flexDirection="row" gap={2} marginLeft={2}>
-        <Text color={choice === 'yes' ? accent : DESIGN.textTertiary} bold={choice === 'yes'}>
-          {choice === 'yes' ? `${GLYPHS.prompt} Y` : '  Y'}
-        </Text>
-        <Text color={DESIGN.textTertiary}>{'/'}</Text>
-        <Text color={choice === 'no' ? accent : DESIGN.textTertiary} bold={choice === 'no'}>
-          {choice === 'no' ? `${GLYPHS.prompt} n` : '  n'}
-        </Text>
+      <Box flexDirection="column">
+        {options.map((option, i) => {
+          const isSelected = i === selected;
+          const cursor = isSelected ? GLYPHS.prompt : ' ';
+          return (
+            <Box key={option.id} flexDirection="row" gap={1}>
+              <Text color={isSelected ? accent : DESIGN.textTertiary}>{` ${cursor} `}</Text>
+              <Text
+                color={isSelected ? DESIGN.textPrimary : DESIGN.textSecondary}
+                bold={isSelected}
+              >
+                {option.label}
+              </Text>
+            </Box>
+          );
+        })}
       </Box>
-      <Text color={DESIGN.textTertiary}>{'  ←/→ or y/n   Enter confirm   Esc back'}</Text>
-      {choice === 'no' && (
-        <Text color={DESIGN.textTertiary}>{'  Run `ethos` to start chatting.'}</Text>
-      )}
+      <Text color={DESIGN.textTertiary}>{'  ↑↓ select   Enter confirm   Esc back'}</Text>
     </Box>
   );
 }

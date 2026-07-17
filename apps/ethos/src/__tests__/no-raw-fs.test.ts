@@ -48,6 +48,14 @@
 //                                 symlink-refusal on an arbitrary project path
 //                                 requires raw lstat (Storage.mtime follows symlinks).
 //
+//   extensions/gateway/          lstat refuses symlinked path-based outbound media
+//   src/media.ts                 (W3.2) before it reaches an adapter — an
+//                                 exfiltration guard on an ARBITRARY tool-produced
+//                                 path, not ~/.ethos/. Same rationale as the skills
+//                                 file-context-injector: Storage scopes to ~/.ethos/
+//                                 and follows symlinks, so symlink-refusal on an
+//                                 arbitrary path needs raw lstat.
+//
 // If you need to add a new exception, document WHY here and in CLAUDE.md before
 // adding it to ALLOWED_PATHS below. The default answer for code on the
 // personality boundary is "use Storage."
@@ -86,6 +94,7 @@ const ALLOWED_FILES = new Set([
   'extensions/claw-migrate/src/index.ts',
   'extensions/skills/src/skill-compat.ts',
   'extensions/skills/src/file-context-injector.ts',
+  'extensions/gateway/src/media.ts',
   'extensions/skills/src/env-resolver.ts',
   'extensions/execution-docker/src/index.ts',
   'extensions/goal-store/src/index.ts',

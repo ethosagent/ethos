@@ -9,6 +9,10 @@ export const platformsRouter = {
 
   clear: os.platforms.clear.handler(({ input, context }) => context.platforms.clear(input.id)),
 
+  validate: os.platforms.validate.handler(({ input, context }) =>
+    context.platforms.validate(input.id, input.fields),
+  ),
+
   botsListTelegram: os.platforms.botsListTelegram.handler(({ context }) =>
     context.platforms.listTelegramBots(),
   ),

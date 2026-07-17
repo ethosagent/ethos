@@ -76,12 +76,45 @@ export class MessageDedupCache {
       this.entries.delete(key); // expired — drop so re-insert refreshes order
     }
 
-    this.entries.set(key, now + this.ttlMs);
+    this.setEntry(key);
+    return true;
+  }
+
+  /**
+   * Insert (or refresh) `key` with a fresh TTL and enforce the size cap by
+   * evicting the oldest entry. Shared by `shouldSend` and `record` so the
+   * eviction policy — a security-adjacent primitive — lives in one place.
+   */
+  private setEntry(key: string): void {
+    // Refresh insertion order so the size cap evicts truly-oldest entries.
+    this.entries.delete(key);
+    this.entries.set(key, Date.now() + this.ttlMs);
     if (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next().value;
       if (oldest !== undefined) this.entries.delete(oldest);
     }
-    return true;
+  }
+
+  /**
+   * Register `content` as already-sent for `sessionId` WITHOUT going through
+   * the check side of `shouldSend`. A later `shouldSend(sessionId, content)`
+   * with the same content inside the TTL then returns `false`.
+   *
+   * This exists for the streaming draft-edit path (W3.1): a streamed reply
+   * delivers its FINAL content via `editMessage`, which bypasses `shouldSend`
+   * entirely, so a subsequent duplicate `send()` of the same content (e.g. a
+   * retry or a notification echo) would double-deliver. The streaming path
+   * calls `record()` when the last edit lands so the dedup cache still knows
+   * the content was delivered.
+   *
+   * No-op on the disabled (legacy) path and for empty content, mirroring
+   * `shouldSend`. Never fires `onDrop` — recording is not a dropped send.
+   */
+  record(sessionId: string, content: string): void {
+    if (this.disabled) return;
+    if (!content) return;
+    const hash = createHash('sha256').update(content).digest('hex');
+    this.setEntry(`${sessionId}:${hash}`);
   }
 
   /** Forget every key associated with `sessionId` (called by `/new`). */

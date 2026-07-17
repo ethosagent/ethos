@@ -157,6 +157,55 @@ describe('MessageDedupCache — onDrop observability (P5.4)', () => {
   });
 });
 
+describe('MessageDedupCache — record() (W3.1 streaming-final registration)', () => {
+  const originalEnv = process.env.ETHOS_DEDUP_LEGACY;
+  afterEach(() => {
+    if (originalEnv === undefined) delete process.env.ETHOS_DEDUP_LEGACY;
+    else process.env.ETHOS_DEDUP_LEGACY = originalEnv;
+  });
+
+  it('a recorded (sessionId, content) is then suppressed by shouldSend (REGRESSION)', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+
+    // Streaming path delivers the final via editMessage (bypasses shouldSend),
+    // then registers it. A subsequent duplicate send() must be suppressed.
+    cache.record('s1', 'the full final reply');
+    expect(cache.shouldSend('s1', 'the full final reply')).toBe(false);
+  });
+
+  it('record does not fire onDrop and does not suppress different content', () => {
+    const drops: DedupDropInfo[] = [];
+    const cache = new MessageDedupCache({ ttlMs: 60_000, onDrop: (i) => drops.push(i) });
+
+    cache.record('s1', 'final');
+    expect(drops).toHaveLength(0);
+    // Different content is still sendable.
+    expect(cache.shouldSend('s1', 'other')).toBe(true);
+    // The recorded content is suppressed (this shouldSend does fire onDrop).
+    expect(cache.shouldSend('s1', 'final')).toBe(false);
+    expect(drops).toHaveLength(1);
+  });
+
+  it('record is a no-op for empty content and on the legacy path', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+    cache.record('s1', '');
+    expect(cache.shouldSend('s1', '')).toBe(true); // empty never deduped
+
+    process.env.ETHOS_DEDUP_LEGACY = '1';
+    const legacy = new MessageDedupCache({ ttlMs: 60_000 });
+    legacy.record('s1', 'final');
+    expect(legacy.shouldSend('s1', 'final')).toBe(true); // legacy disables dedup
+  });
+
+  it('a recorded entry is honored by clearSession', () => {
+    const cache = new MessageDedupCache({ ttlMs: 60_000 });
+    cache.record('chat:9', 'reply');
+    expect(cache.shouldSend('chat:9', 'reply')).toBe(false);
+    cache.clearSession('chat:9');
+    expect(cache.shouldSend('chat:9', 'reply')).toBe(true);
+  });
+});
+
 describe('MessageDedupCache — sessionId persists across `/new`', () => {
   beforeEach(() => {
     delete process.env.ETHOS_DEDUP_LEGACY;

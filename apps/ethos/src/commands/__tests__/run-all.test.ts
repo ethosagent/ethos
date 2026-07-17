@@ -139,5 +139,9 @@ describe('run-all — pure helpers', () => {
     it('shutdown grace is 5 seconds — enough for child SIGTERM cleanup', () => {
       expect(__testing__.SHUTDOWN_GRACE_MS).toBe(5_000);
     });
+
+    it('default health port is 3004 (moved off 3003 to avoid the gateway webhook collision)', () => {
+      expect(__testing__.DEFAULT_HEALTH_PORT).toBe(3004);
+    });
   });
 });

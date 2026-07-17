@@ -1,11 +1,11 @@
 ---
 title: "Quickstart"
-description: "Install the Ethos CLI, configure one provider, send your first message in five minutes — no YAML before first success."
+description: "Install the Ethos CLI, configure one provider, and send your first message — no YAML to hand-edit before first success."
 kind: tutorial
 audience: user
 slug: quickstart
 time: "5 min"
-updated: 2026-06-09
+updated: 2026-07-17
 ---
 
 Install the CLI, paste one API key, send one message. No config files to hand-edit before the first reply.
@@ -215,13 +215,14 @@ Everything else (`mcp.json`, `communications.json`, `keys.json`, `skills/`) is c
 
 ## Beyond the CLI
 
-The CLI is one of several ways to interact with Ethos. `ethos serve` starts a local [web dashboard](./how-to/use-web-dashboard.md) for managing personalities, memory, skills, cron jobs, and sessions from the browser. An [Electron desktop app](../platforms/desktop.md) wraps the same dashboard as a native application. For messaging, channel adapters bring [Telegram](../platforms/telegram.md), [Slack](../platforms/slack.md), [Discord](../platforms/discord.md), and Email into the same agent — the [first Telegram deploy tutorial](./tutorials/first-deploy-telegram.md) walks through the setup, starting from `ethos setup messaging` or `ethos gateway setup`. The quickstart focuses on the CLI because it is the fastest path to a working session; the other surfaces build on top of the same config and sessions.
+The CLI is one of several ways to interact with Ethos. `ethos serve` starts a local [web dashboard](./how-to/use-web-dashboard.md) for managing personalities, memory, skills, cron jobs, and sessions from the browser. An [Electron desktop app](../platforms/desktop.md) wraps the same dashboard as a native application. To skip the local install entirely, [Run Ethos in Docker](./how-to/run-in-docker.md) brings up a talking web UI with one API key and one `docker compose up`. For messaging, channel adapters bring [Telegram](../platforms/telegram.md), [Slack](../platforms/slack.md), [Discord](../platforms/discord.md), and Email into the same agent — the [first Telegram deploy tutorial](./tutorials/first-deploy-telegram.md) walks through the setup, starting from `ethos setup messaging` or `ethos gateway setup`. The quickstart focuses on the CLI because it is the fastest path to a working session; the other surfaces build on top of the same config and sessions.
 
 ## Next step
 
 You have a working agent. The next tutorial walks you through the turn cycle conceptually while you do it: send three messages, watch tool calls render, check usage, exit and reopen to verify session persistence, switch personality.
 
 - [Build your first agent](./tutorials/first-agent.md) — three messages, two personalities, ten minutes.
+- [Run Ethos in Docker](./how-to/run-in-docker.md) — one API key, one `docker compose up`, a web UI you can talk to.
 - [Install on Windows](./how-to/install-on-windows.md) — native Windows install via PowerShell, no WSL or admin rights needed.
 - [Install on Windows (WSL2)](./how-to/install-on-windows-wsl2.md) — WSL2 path for the dashboard terminal pane and a full POSIX environment.
 - [Deploy in production](./how-to/deploy-in-production.md) — bots and dashboard running on a mini PC or VPS, surviving reboots, in three commands.

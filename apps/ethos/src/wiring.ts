@@ -27,6 +27,7 @@ import type {
 import {
   type CreateAgentLoopResult,
   EthosObservability,
+  FunnelTracker,
   createAgentLoop as packageCreateAgentLoop,
   createLLM as packageCreateLLM,
   type WiringConfig,
@@ -131,6 +132,25 @@ export function getEthosObservability(): EthosObservability {
   }
   if (!ethosObsSingleton) throw new Error('ethos observability adapter not initialised');
   return ethosObsSingleton;
+}
+
+let funnelSingleton: FunnelTracker | undefined;
+
+/**
+ * Process-wide funnel tracker (W4.1). Owns the `~/.ethos/funnel-state.json`
+ * stamp file; every emission site (setup, chat done, gateway turn completion,
+ * web-api done pipeline) records through this so each funnel event fires
+ * exactly once per install.
+ */
+export function getFunnelTracker(): FunnelTracker {
+  if (!funnelSingleton) {
+    funnelSingleton = new FunnelTracker({
+      storage: getStorage(),
+      dataDir: ethosDir(),
+      observability: getEthosObservability(),
+    });
+  }
+  return funnelSingleton;
 }
 
 /**

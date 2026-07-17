@@ -1,14 +1,14 @@
 ---
 title: Run Ethos in Docker
-description: Run Ethos via Docker Compose with provider API keys — web UI on localhost:3000, optional gateway, config auto-generated.
+description: Run Ethos via Docker Compose — one API key and one command for a talking web UI on localhost:3000, or the three-service operator topology.
 kind: how-to
 audience: user
 slug: run-in-docker
 time: 10 min
-updated: 2026-06-16
+updated: 2026-07-16
 ---
 
-Run Ethos via Docker Compose. Pass a provider API key, bring up the stack, and open the web UI. The `init` service auto-generates `config.yaml` on first boot so there is no interactive setup.
+Run Ethos via Docker Compose. Set one provider API key, run one command, and get a web UI you can talk to. Config is provisioned by the CLI (`ethos setup --from-env`), which validates your key before writing it — no interactive setup, no hand-edited YAML.
 
 ## Task
 
@@ -16,22 +16,42 @@ Run Ethos via Docker Compose with at least one provider API key.
 
 ## Result
 
-Web UI at `http://localhost:3000`, optional channel gateway, `config.yaml` auto-generated into a named volume. Config and session data persist across restarts.
+Web UI at `http://localhost:3000` that opens directly in chat, config validated and written into a named volume. Config and session data persist across restarts.
 
 ## Prerequisites
 
 - Docker 24+ with Compose v2 (`docker compose` subcommand, not the legacy `docker-compose` binary).
-- At least one provider API key (Anthropic, OpenAI, OpenRouter, or Google).
+- At least one provider API key (Anthropic, OpenAI, OpenRouter, Google, or Azure).
 
-## Quick start
+## Quick start (single service)
+
+The single-service profile is the fastest path: one service, one volume, one command. Put a key in `.env` next to the compose file, then bring it up.
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-… docker compose -f docker/docker-compose.yml up
+echo "ANTHROPIC_API_KEY=sk-ant-…" > docker/.env
+docker compose -f docker/docker-compose.single.yml up
 ```
 
-Open `http://localhost:3000`.
+Watch for the final line from the boot output:
 
-On first run the `init` service detects your provider key, writes a minimal `config.yaml` into the `ethos-data` volume, and exits. Subsequent runs skip init if the config already exists.
+```
+✓ Config validated — web UI: http://localhost:3000
+```
+
+Open `http://localhost:3000`. The SPA lands directly in chat — the key from `.env` is already validated and written, so you are never re-asked for it. Type a message and the first reply streams back.
+
+At boot the entrypoint runs `ethos setup --from-env` (gated by `ETHOS_PROVISION_FROM_ENV=1`): it validates the provider key, writes `config.yaml` into the volume once, and re-syncs secrets from `.env` on every restart. A rejected key (401) stops the boot with an actionable final line — for example `ANTHROPIC_API_KEY rejected (401) — check the key in .env and re-run docker compose up`.
+
+## Three-service topology (operators)
+
+For separate web and gateway processes — the operator setup — use the three-service compose file. It runs a one-shot `init` service, then long-running `ethos-web` (port 3000) and `ethos-gateway` services.
+
+```bash
+echo "ANTHROPIC_API_KEY=sk-ant-…" > docker/.env
+docker compose -f docker/docker-compose.yml up
+```
+
+The `init` service runs the same `ethos setup --from-env` provisioning, validates the key, writes `config.yaml`, then exits. Both runtime services wait for it (`depends_on: service_completed_successfully`) so they never start against a missing config. Subsequent runs re-sync secrets from `.env` and preserve any edits you made to `config.yaml` in the volume.
 
 ## Verify
 
@@ -49,14 +69,31 @@ docker compose -f docker/docker-compose.yml ps init
 
 ## Required env vars
 
-At least one must be set. The init service uses the first one it finds, in priority order:
+At least one must be set. `ethos setup --from-env` uses the first one it finds, in priority order:
 
-| Variable | Provider |
-|---|---|
-| `ANTHROPIC_API_KEY` | Anthropic (Claude) |
-| `OPENAI_API_KEY` | OpenAI |
-| `OPENROUTER_API_KEY` | OpenRouter |
-| `GOOGLE_API_KEY` | Google (Gemini) |
+| Variable | Provider | Notes |
+|---|---|---|
+| `AZURE_API_KEY` | Azure OpenAI | requires `AZURE_ENDPOINT` |
+| `ANTHROPIC_API_KEY` | Anthropic (Claude) | — |
+| `OPENAI_API_KEY` | OpenAI | — |
+| `OPENROUTER_API_KEY` | OpenRouter | — |
+| `GOOGLE_API_KEY` | Google (Gemini) | — |
+
+Set `TELEGRAM_BOT_TOKEN` (and optionally `TELEGRAM_OWNER_ID`) to provision a Telegram bot in the same pass. Tokens are validated before they are written: a rejected token (401) stops the boot; an unreachable endpoint is saved unverified with a warning. Set `ETHOS_SKIP_VALIDATION=1` to bypass all probes on air-gapped boots.
+
+## Mode-aware healthcheck
+
+The image bakes one healthcheck script (`docker-healthcheck.sh`) that probes the right endpoint for the container's `ETHOS_MODE`, so both Compose services and raw `docker run` users get a check that can actually pass.
+
+| `ETHOS_MODE` | Probe | Serves |
+|---|---|---|
+| `all` (default) | `:3000/healthz` | web UI + supervised gateway |
+| `ui` | `:3000/healthz` | web UI only |
+| `gateway` | `:3002/healthz` | gateway's own health server |
+
+A hardcoded `:3000` check could never pass in `gateway` mode — nothing listens there. The script fixes that.
+
+Liveness is deliberate: only a definitive local failure flips a container unhealthy. A running process with an upstream outage (a Telegram blip, an adapter reporting not-ok) reports `degraded` over HTTP 503 but stays **healthy** — an upstream hiccup must not fail a fresh `compose up`. In `all` mode the check also fails if the supervised gateway's heartbeat goes stale or missing, which catches the gateway child dying while the web process stays up. This chains the existing gateway heartbeat — it is not a second health mechanism.
 
 ## Gateway opt-in
 
@@ -104,7 +141,7 @@ See [config.yaml reference](../reference/config-yaml.md) for every supported fie
 
 ## Advanced: manual docker run
 
-If you prefer not to use Compose, run the image directly. Both services bind to `127.0.0.1` inside the container by default, so you must set `ETHOS_WEB_HOST=0.0.0.0` (web dashboard, port 3000) and `ETHOS_SERVE_HOST=0.0.0.0` (the `run-all` health server, port 3003) for `-p` to reach them from the host.
+If you prefer not to use Compose, run the image directly. Both services bind to `127.0.0.1` inside the container by default, so you must set `ETHOS_WEB_HOST=0.0.0.0` (web dashboard, port 3000) and `ETHOS_SERVE_HOST=0.0.0.0` (the `run-all` health server, port 3004) for `-p` to reach them from the host.
 
 ### Option A — run the published image (recommended)
 

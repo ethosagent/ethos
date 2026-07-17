@@ -1,6 +1,6 @@
 # Releasing Ethos
 
-> **Channel in scope: npm only.** Docker, Homebrew, and single-binary distribution are not in scope — revisit when there is customer demand.
+> **Primary channel: npm.** The seven `@ethosagent/*` packages publish in lockstep (below). The **Docker image** (`ethosagent/ethos`) publishes automatically after a successful npm release — see [Docker image release](#docker-image-release). Homebrew and single-binary distribution are not in scope — revisit when there is customer demand.
 
 ## Version source of truth
 
@@ -162,6 +162,28 @@ make smoke
 If any step fails, subsequent steps do not run. Already-published packages stay published (no rollback), but the tag and GH release may be missing — see [Recovery runbook](#recovery-runbook).
 
 Release notes on the GitHub Release page are auto-generated from Conventional Commit PR titles (`feat:`, `fix:`, etc.) since the previous tag — that's the de-facto changelog. There is no `CHANGELOG.md` in the repo.
+
+---
+
+## Docker image release
+
+The Docker image (`ethosagent/ethos`) is a deployment artifact of the npm-published CLI, not a separate build. [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) publishes it automatically:
+
+- It triggers on a **successful `release` run** and reads the version from that commit's `VERSION` file, so the image tag can never drift from npm.
+- It waits for `@ethosagent/cli@<version>` to appear on npm (the image installs the CLI from the registry), then builds `linux/amd64,linux/arm64`.
+- A **post-publish smoke gate** pulls the just-published image, brings up the single-service profile (`docker/docker-compose.single.yml`), polls `/healthz`, and asserts a real web-UI reply (RPC) plus an `ethos -z` CLI reply. `latest` is promoted only after the gate passes; prereleases are never promoted.
+
+No manual step is required for the routine path. `workflow_dispatch` with an explicit version is the override (also republishes an existing tag).
+
+## Time-to-first-message (TTFM) targets
+
+Each release, confirm the adoption-funnel targets still hold and record the numbers in the GitHub Release notes. One is enforced in CI; the other two are clean-machine dogfood runs (measured locally with `ethos doctor --funnel` — Ethos ships no phone-home telemetry).
+
+- [ ] **Docker path < 5 min** (`.env` → `docker compose up` → first web-UI reply) — **enforced in CI**: the `docker-publish` smoke gate fails the release if this path exceeds a 300s wall-clock budget. Confirm the gate was green.
+- [ ] **First CLI reply < 10 min** on a clean machine (install → `ethos setup` → first streamed reply). Run the [quickstart](docs/content/using/quickstart.md) on a fresh machine or container; read the elapsed time back with `ethos doctor --funnel` and record it.
+- [ ] **First channel reply < 30 min** including a validated, replying channel bot (`ethos setup` → validated Telegram token → "Start the Telegram bot now" → the bot replies). Read `channel_first_reply` back with `ethos doctor --funnel` and record it.
+
+If a target regresses, treat it as a release blocker for the affected surface — the first hour is the product.
 
 ---
 

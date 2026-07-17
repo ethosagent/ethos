@@ -31,6 +31,11 @@ const RESTART_WINDOW_MS = 5 * 60_000;
 const SHUTDOWN_GRACE_MS = 5_000;
 const LOG_ROTATION_INTERVAL_MS = 60_000;
 
+// Default health-endpoint port. 3004, not 3003 — 3003 collided with the
+// gateway webhook server's default (ETHOS_WEBHOOK_PORT, gateway.ts). Health is
+// the newer, less user-configured endpoint, so it's the one that moved.
+const DEFAULT_HEALTH_PORT = 3004;
+
 const DEFAULT_LOG_ROTATION: LogRotationConfig = {
   maxBytes: 10 * 1024 * 1024,
   maxFiles: 5,
@@ -216,7 +221,7 @@ export async function runAll(opts: RunAllOptions = {}): Promise<void> {
     startChild(sc, entryPoint, logsDir, spawn, log, onChildReady, rotation);
   }
 
-  const healthPort = Number(process.env.ETHOS_RUNALL_HEALTH_PORT) || 3003;
+  const healthPort = Number(process.env.ETHOS_RUNALL_HEALTH_PORT) || DEFAULT_HEALTH_PORT;
   const healthHost = process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
   healthServer = createHealthServer(healthPort, healthHost, () => {
     const childStatuses = children.map((child) => ({
@@ -369,4 +374,5 @@ export const __testing__ = {
   SHUTDOWN_GRACE_MS,
   LOG_ROTATION_INTERVAL_MS,
   DEFAULT_LOG_ROTATION,
+  DEFAULT_HEALTH_PORT,
 };

@@ -38,6 +38,10 @@ describe('ethos doctor --json output shape', () => {
       config: { present: false, path: '/home/user/.ethos/config.yaml' },
       personalities: { dir: '/home/user/.ethos/personalities', loadable: false },
       skillCliIssues: [],
+      // W2.3 — DB, gateway heartbeat, and channel-token liveness blocks.
+      db: { ok: true, absent: true },
+      gateway: { status: 'down', adapters: [], lastHeartbeatAgeSec: null },
+      channels: [],
       exit: 0,
     };
     expect(shape).toHaveProperty('version');
@@ -45,7 +49,37 @@ describe('ethos doctor --json output shape', () => {
     expect(shape).toHaveProperty('config');
     expect(shape).toHaveProperty('personalities');
     expect(shape).toHaveProperty('skillCliIssues');
+    expect(shape).toHaveProperty('db');
+    expect(shape).toHaveProperty('gateway');
+    expect(shape).toHaveProperty('channels');
     expect(shape).toHaveProperty('exit');
+  });
+
+  it('db block shape (W2.3)', () => {
+    const db = { ok: true, absent: false } as { ok: boolean; absent: boolean; error?: string };
+    expect(typeof db.ok).toBe('boolean');
+    expect(typeof db.absent).toBe('boolean');
+    expect(db.error === undefined || typeof db.error === 'string').toBe(true);
+  });
+
+  it('gateway block shape (W2.3)', () => {
+    const gateway = {
+      status: 'ok' as 'ok' | 'stale' | 'down',
+      adapters: [{ name: 'telegram', ok: true }],
+      lastHeartbeatAgeSec: 3,
+    };
+    expect(['ok', 'stale', 'down']).toContain(gateway.status);
+    expect(Array.isArray(gateway.adapters)).toBe(true);
+    expect(
+      gateway.lastHeartbeatAgeSec === null || typeof gateway.lastHeartbeatAgeSec === 'number',
+    ).toBe(true);
+  });
+
+  it('channel entry shape carries a liveness reason (W2.3)', () => {
+    const channel = { platform: 'telegram', ok: false, reason: 'unverified' as const };
+    expect(['telegram', 'slack', 'discord']).toContain(channel.platform);
+    expect(typeof channel.ok).toBe('boolean');
+    expect(['rejected', 'unreachable', 'unverified']).toContain(channel.reason);
   });
 
   it('skillCliIssues entry shape', () => {

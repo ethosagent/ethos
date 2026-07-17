@@ -8,9 +8,11 @@ import {
   writeKeys,
 } from '@ethosagent/config';
 import type { WizardStepId } from '@ethosagent/tui/setup';
+import { probeProvider } from '@ethosagent/wiring';
 import { fetchLocalModels } from '@ethosagent/wiring/local-models';
 import { getProvider } from '@ethosagent/wiring/provider-catalog';
-import { getSecretsResolver, getStorage } from '../wiring';
+import { redactErrorMessage } from '../redact-error';
+import { getFunnelTracker, getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -27,7 +29,11 @@ function ask(rl: ReturnType<typeof createInterface>, question: string): Promise<
 
 export interface SetupResult {
   config: EthosConfig;
-  launchChat: boolean;
+  /** W2.5 three-way close outcome from the TUI LaunchStep. The readline
+   *  fallback has no launch step, so it always returns 'done'. */
+  launch: 'gateway' | 'chat' | 'done';
+  /** Validated Telegram `@username`, reused in the gateway success block. */
+  telegramUsername?: string;
 }
 
 /** Providers that run against a local OpenAI-compatible endpoint: default the
@@ -130,14 +136,39 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
       await writeKeys(storage, answers.rotationKeys);
     }
 
-    return { config, launchChat: result.launchChat };
+    await recordSetupFunnel(config, 'tui');
+
+    return { config, launch: result.launch, telegramUsername: answers.telegramUsername };
   }
 
   const config = await runReadlineFallback({ storage, existing: existingConfig });
-  return config ? { config, launchChat: false } : null;
+  if (config) await recordSetupFunnel(config, 'readline');
+  return config ? { config, launch: 'done' } : null;
 }
 
-async function scaffoldEthosDir(storage: ReturnType<typeof getStorage>) {
+/** W4.1 — funnel.setup_completed fires at the end of runSetup. Best-effort. */
+async function recordSetupFunnel(config: EthosConfig, wizardPath: 'tui' | 'readline') {
+  try {
+    await getFunnelTracker().recordSetupCompleted({
+      provider: config.provider,
+      channels: configuredChannels(config),
+      wizardPath,
+    });
+  } catch {
+    // Funnel instrumentation must never fail setup.
+  }
+}
+
+function configuredChannels(config: EthosConfig): string[] {
+  const channels: string[] = [];
+  if (config.telegramToken) channels.push('telegram');
+  if (config.discordToken) channels.push('discord');
+  if (config.slackBotToken) channels.push('slack');
+  if (config.emailImapHost && config.emailUser) channels.push('email');
+  return channels;
+}
+
+export async function scaffoldEthosDir(storage: ReturnType<typeof getStorage>) {
   const dir = ethosDir();
   await storage.mkdir(join(dir, 'personalities'));
   for (const filename of ['MEMORY.md', 'USER.md']) {
@@ -243,6 +274,42 @@ async function runReadlineFallback({
       baseUrl =
         (await ask(rl, 'Base URL (https://openrouter.ai/api/v1): ')).trim() ||
         'https://openrouter.ai/api/v1';
+    }
+  }
+
+  // W2.2 — validate the provider key with a live 1-token probe before writing
+  // config. A DEFINITIVELY rejected key (401/403) never reaches disk: re-prompt
+  // up to 3 times, then exit non-zero (non-TTY stdin can't loop forever). An
+  // unreachable endpoint (timeout/DNS/5xx/429) warns and proceeds (W1.2).
+  if (apiKey && !LOCAL_PROVIDERS.has(provider)) {
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; ; attempt++) {
+      console.log(`${c.dim}Validating ${provider} key…${c.reset}`);
+      const outcome = await probeProvider({ provider, model, apiKey, baseUrl, apiVersion });
+      if (outcome.ok) {
+        console.log(`${c.green}✓ API key validated${c.reset}`);
+        break;
+      }
+      if (outcome.reason === 'unreachable') {
+        console.log(
+          `${c.yellow}⚠ Couldn't reach ${provider} — saved unverified.${c.reset} ${c.dim}(${redactErrorMessage(
+            outcome.error,
+            apiKey,
+          )})${c.reset}`,
+        );
+        break;
+      }
+      if (attempt >= MAX_ATTEMPTS) {
+        rl.close();
+        console.error(
+          'API key rejected after 3 attempts — get a key at console.anthropic.com and re-run ethos setup.',
+        );
+        process.exit(1);
+      }
+      console.log(
+        `${c.yellow}✗ API key rejected (attempt ${attempt}/${MAX_ATTEMPTS}).${c.reset} ${c.dim}Re-enter it.${c.reset}`,
+      );
+      apiKey = (await ask(rl, 'API key: ')).trim();
     }
   }
 

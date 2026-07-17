@@ -63,7 +63,9 @@ interface WizardProps {
   startAtStep?: WizardStepId;
   /** When true, exit immediately after the first step confirms — section re-entry. */
   singleStep?: boolean;
-  onComplete: (result: { answers: WizardAnswers; launchChat: boolean } | null) => void;
+  onComplete: (
+    result: { answers: WizardAnswers; launch: 'gateway' | 'chat' | 'done' } | null,
+  ) => void;
 }
 
 export function Wizard({ existing, startAtStep, singleStep, onComplete }: WizardProps) {
@@ -88,7 +90,7 @@ export function Wizard({ existing, startAtStep, singleStep, onComplete }: Wizard
   const isDone =
     state.aborted ||
     state.singleStepDone !== null ||
-    (state.step === 'launch' && state.answers.launchChat !== undefined);
+    (state.step === 'launch' && state.answers.launch !== undefined);
 
   // Defer onComplete out of the render path to avoid nested-update warnings
   useEffect(() => {
@@ -96,9 +98,9 @@ export function Wizard({ existing, startAtStep, singleStep, onComplete }: Wizard
     if (state.aborted) {
       onComplete(null);
     } else if (state.singleStepDone) {
-      onComplete({ answers: state.singleStepDone, launchChat: false });
+      onComplete({ answers: state.singleStepDone, launch: 'done' });
     } else {
-      onComplete({ answers: state.answers, launchChat: Boolean(state.answers.launchChat) });
+      onComplete({ answers: state.answers, launch: state.answers.launch ?? 'done' });
     }
   }, [isDone, onComplete, state.aborted, state.singleStepDone, state.answers]);
 

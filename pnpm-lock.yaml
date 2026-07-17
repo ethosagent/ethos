@@ -523,6 +523,15 @@ importers:
       '@ethosagent/personalities':
         specifier: workspace:*
         version: link:../../extensions/personalities
+      '@ethosagent/platform-discord':
+        specifier: workspace:*
+        version: link:../../extensions/platform-discord
+      '@ethosagent/platform-slack':
+        specifier: workspace:*
+        version: link:../../extensions/platform-slack
+      '@ethosagent/platform-telegram':
+        specifier: workspace:*
+        version: link:../../extensions/platform-telegram
       '@ethosagent/plugin-contract':
         specifier: workspace:*
         version: link:../../packages/plugin-contract

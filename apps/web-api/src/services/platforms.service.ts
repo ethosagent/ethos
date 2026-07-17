@@ -38,6 +38,46 @@ export class PlatformsService {
     return { platform: await this.opts.repo.clear(id) };
   }
 
+  // W2.1 — server-side live token probe. Dispatches to the per-platform
+  // validator and maps the W1.2 liveness classification onto the RPC verdict.
+  // Email has no probe (`unsupported`); WhatsApp pairs out-of-band via QR.
+  async validate(
+    id: PlatformId,
+    fields: Record<string, string>,
+  ): Promise<{
+    status: 'ok' | 'rejected' | 'unreachable' | 'unsupported';
+    label: string | null;
+    error: string | null;
+  }> {
+    if (id === 'telegram') {
+      const { validateTelegramToken } = await import('@ethosagent/platform-telegram/validate');
+      return this.mapResult(await validateTelegramToken(fields.token ?? ''));
+    }
+    if (id === 'discord') {
+      const { validateDiscordToken } = await import('@ethosagent/platform-discord/validate');
+      return this.mapResult(await validateDiscordToken(fields.token ?? ''));
+    }
+    if (id === 'slack') {
+      const { validateSlackToken } = await import('@ethosagent/platform-slack/validate');
+      return this.mapResult(await validateSlackToken(fields.botToken ?? ''));
+    }
+    // email / whatsapp — no live credential probe.
+    return { status: 'unsupported', label: null, error: null };
+  }
+
+  private mapResult(result: {
+    ok: boolean;
+    label?: string;
+    error?: string;
+    reason?: 'rejected' | 'unreachable' | 'unverified';
+  }): { status: 'ok' | 'rejected' | 'unreachable'; label: string | null; error: string | null } {
+    if (result.ok) return { status: 'ok', label: result.label ?? null, error: null };
+    // The RPC contract exposes only rejected/unreachable; a rate-limited
+    // `unverified` collapses to unreachable (saved-unverified in the UI).
+    const status = result.reason === 'rejected' ? 'rejected' : 'unreachable';
+    return { status, label: null, error: result.error ?? null };
+  }
+
   async listTelegramBots(): Promise<{ bots: TelegramBotEntry[] }> {
     return { bots: await this.opts.repo.listTelegramBots() };
   }
