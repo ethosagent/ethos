@@ -10,12 +10,19 @@ describe('Orchestrator guardrails', () => {
     const content = readFileSync(agentLoopFile, 'utf-8');
     const lineCount = content.split('\n').length;
     // Phase 9 threshold — the orchestrator should stay lean. Ratcheted as the
-    // loop legitimately grows (735 → 750 → 754 → 759 → 761); §5 added the
-    // compaction gate config field, §2 added the promptBudget config field + its
-    // constructor/deps threading (5 irreducible lines, compressed to one-line
+    // loop legitimately grows (735 → 750 → 754 → 759 → 761 → 782 → 783); §5 added
+    // the compaction gate config field, §2 added the promptBudget config field +
+    // its constructor/deps threading (5 irreducible lines, compressed to one-line
     // shapes to keep the growth minimal); background sub-agents added the
-    // rootSessionKey seam on RunOptions (field + its threading to ToolContext).
-    expect(lineCount).toBeLessThanOrEqual(762);
+    // rootSessionKey seam on RunOptions; the context-compaction phase added the
+    // public `compact()` method (a thin delegator to `compactSession`).
+    // Phase 3 (memory-flush + auto-compaction) added two turn dispatch seams —
+    // the overflow→compact-and-retry decision and the post-`done` turn-end
+    // maintenance call — plus the `memoryConsolidation` config field and its
+    // constructor/deps threading. All substantive logic lives in
+    // agent-loop/overflow.ts and agent-loop/turn-end.ts; only the wiring +
+    // dispatch remain here.
+    expect(lineCount).toBeLessThanOrEqual(840);
   });
 
   it('no stage file exceeds 700 lines', () => {

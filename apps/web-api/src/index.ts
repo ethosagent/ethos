@@ -257,6 +257,16 @@ export interface CreateWebApiOptions {
    * (later stage) — threaded through here.
    */
   a2aControl?: import('./routes/route-module').A2aControl;
+  /**
+   * Phase 0 — resolves the per-session context anatomy from observability.db
+   * `llm_call` spans, backing `sessions.contextAnatomy` (the web Activity tab's
+   * context panel). Boot code (serve) builds this over the shared
+   * `SQLiteObservabilityStore`. Omitted → the RPC returns null and the panel
+   * hides itself.
+   */
+  contextAnatomyFn?: (
+    sessionId: string,
+  ) => import('@ethosagent/web-contracts').ContextAnatomyWire | null;
 }
 
 export interface CreateWebApiResult {
@@ -329,7 +339,10 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const systemBus = new SystemEventBus();
 
   // --- Services (business logic) ---
-  const sessionsService = new SessionsService({ sessions: sessionsRepo });
+  const sessionsService = new SessionsService({
+    sessions: sessionsRepo,
+    ...(opts.contextAnatomyFn ? { contextAnatomy: opts.contextAnatomyFn } : {}),
+  });
   const sharedMcpJsonStore = new McpJsonStore(storage);
   const personalitiesService = new PersonalitiesService({
     personalities: opts.personalities,

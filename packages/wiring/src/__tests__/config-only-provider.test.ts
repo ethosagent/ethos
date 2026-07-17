@@ -122,8 +122,8 @@ describe('M1b — catalog context-window lookup', () => {
   };
 
   it('lookupContextWindow returns the catalog window on a hit', () => {
-    // Ollama's llama3.2 is an 8k-context local model in the catalog.
-    expect(lookupContextWindow('ollama', 'llama3.2')).toBe(8_192);
+    // Ollama's llama3.2 declares a realistic 128k context window in the catalog.
+    expect(lookupContextWindow('ollama', 'llama3.2')).toBe(131_072);
   });
 
   it('lookupContextWindow returns undefined on a miss', () => {

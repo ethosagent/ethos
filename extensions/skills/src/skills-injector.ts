@@ -205,14 +205,19 @@ export class SkillsInjector implements ContextInjector {
 
     // Determine injection mode for global-pool skills.
     // 'index' (default) injects a compact table; 'full' injects complete bodies.
-    const injectionMode: 'full' | 'index' = personality.skills?.injection_mode ?? 'index';
+    // Phase 4 small-window mode forces index for BOTH pools regardless of the
+    // personality setting — skills are a fixed cost a small window can't afford.
+    const forceIndex = ctx.skillsIndexMode === true;
+    const injectionMode: 'full' | 'index' = forceIndex
+      ? 'index'
+      : (personality.skills?.injection_mode ?? 'index');
     // Per-personality `skillsDirs` skills honor an EXPLICIT `injection_mode:
     // index` (become stubs, reachable via `get_skill`). Absent/`full` keeps the
     // historical always-inline behavior for the hand-curated library — the
     // global-pool default of `index` does not silently stub a personality's own
     // skills. `get_skill` resolves a stubbed personality skill via
     // `loadSkillBody()`.
-    const personalityIndex = personality.skills?.injection_mode === 'index';
+    const personalityIndex = forceIndex || personality.skills?.injection_mode === 'index';
 
     // 1. Per-personality skills — hand-curated library.
     for (const r of resolved) {

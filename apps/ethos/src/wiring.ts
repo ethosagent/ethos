@@ -90,6 +90,7 @@ async function initSecrets(): Promise<SecretsResolver> {
 
 let obsSingleton: ObservabilityService | undefined;
 let ethosObsSingleton: EthosObservability | undefined;
+let obsStoreSingleton: SQLiteObservabilityStore | undefined;
 
 /**
  * The CLI's process-wide ObservabilityService. Creates the SQLite store and
@@ -102,6 +103,7 @@ export function getObservabilityService(): ObservabilityService {
     const dir = ethosDir();
     const storage = getStorage();
     const store = new SQLiteObservabilityStore(join(dir, 'observability.db'));
+    obsStoreSingleton = store;
     const blobStore = new BlobStore(join(dir, 'blobs'), storage);
     const killSwitchPath = join(dir, '.observability.disabled');
     obsSingleton = new ObservabilityService(store, blobStore, () => existsSync(killSwitchPath));
@@ -110,6 +112,16 @@ export function getObservabilityService(): ObservabilityService {
     setMeshObservabilityService(ethosObsSingleton);
   }
   return obsSingleton;
+}
+
+/**
+ * The underlying SQLite observability store (Phase 0 — backs the per-session
+ * context anatomy read). Initialised alongside the ObservabilityService.
+ */
+export function getObservabilityStore(): SQLiteObservabilityStore {
+  if (!obsStoreSingleton) getObservabilityService();
+  if (!obsStoreSingleton) throw new Error('ethos observability store not initialised');
+  return obsStoreSingleton;
 }
 
 export function getEthosObservability(): EthosObservability {

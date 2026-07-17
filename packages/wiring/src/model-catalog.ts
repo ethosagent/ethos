@@ -226,7 +226,10 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     providerId: 'ollama',
     modelId: 'llama3.2',
     label: '3B, fast',
-    contextWindow: 8_192,
+    // Llama 3.2 (1B/3B) supports a 128k context window. Kept realistic so the
+    // default local model clears the Phase 1d 16k agentic-tool-use floor (a
+    // silently-tiny Ollama num_ctx still fails loudly at provider init).
+    contextWindow: 131_072,
     default: true,
   },
   { providerId: 'ollama', modelId: 'mistral', label: '7B', contextWindow: 32_768 },
@@ -455,6 +458,78 @@ export function resolveCompactionGate(
     ...(target !== undefined ? { target } : {}),
     ...(charsPerToken !== undefined ? { charsPerToken } : {}),
   };
+}
+
+/**
+ * Window (tokens) at or above which a model counts as "frontier" for the
+ * purpose of picking a default context engine. Below it — mid / small / local —
+ * we never DEFAULT to LLM self-summarization; deterministic `drop_oldest` (plus
+ * the always-on Phase 1 tool-result aging) carries the load instead.
+ */
+export const FRONTIER_WINDOW_TOKENS = 128_000;
+
+/**
+ * Phase 3 — per-model-class default context engine, used only when the
+ * personality declares no `context_engine`. Frontier models with a wired
+ * summarizer (`auxiliary.compression.model`) default to `semantic_summary`;
+ * everything else — mid, small, and local models — defaults to `drop_oldest`.
+ * This keeps weak/local models on deterministic reductions.
+ */
+export function resolveDefaultContextEngine(
+  contextWindow: number | undefined,
+  summarizerWired: boolean,
+): 'semantic_summary' | 'drop_oldest' {
+  const window = contextWindow ?? 0;
+  if (summarizerWired && window >= FRONTIER_WINDOW_TOKENS) return 'semantic_summary';
+  return 'drop_oldest';
+}
+
+/**
+ * Phase 4 — a model at or below this window always enters small-window mode.
+ * Below ~32k the fixed prompt overhead (SOUL + tools) leaves too little room
+ * for history; the mode swaps to index-not-content memory, a compact prelude,
+ * forced-index skills, and a scaled history limit.
+ */
+export const SMALL_WINDOW_MAX_TOKENS = 32_000;
+
+/**
+ * Phase 4 — ratio trigger. On a LARGER window, small-window mode still activates
+ * when the measured static sections (system + tools) exceed this fraction of the
+ * window — the "big SOUL / big toolset on a mid model" case a fixed 32k cutoff
+ * would miss.
+ */
+export const SMALL_WINDOW_STATIC_RATIO = 0.4;
+
+/**
+ * Phase 4 — decide whether small-window mode is active. Pure and static-input
+ * only (window + measured static overhead), so the decision is resolved ONCE per
+ * loop and never varies per turn — the prompt prefix stays byte-stable.
+ * `override` from config forces the mode on/off; `auto` (default) applies the
+ * window + ratio triggers.
+ */
+export function resolveSmallWindowMode(opts: {
+  contextWindow: number | undefined;
+  staticTokens: number;
+  override?: 'auto' | 'on' | 'off';
+}): boolean {
+  if (opts.override === 'on') return true;
+  if (opts.override === 'off') return false;
+  const window = opts.contextWindow ?? 0;
+  if (window <= 0) return false;
+  if (window <= SMALL_WINDOW_MAX_TOKENS) return true;
+  return opts.staticTokens / window > SMALL_WINDOW_STATIC_RATIO;
+}
+
+/**
+ * Phase 4 — scale the history message limit to the window. Frontier windows keep
+ * the default 200; smaller windows get proportionally fewer messages
+ * (~1 per 400 tokens), clamped to [40, 200] so a tiny window still keeps a
+ * usable recent tail.
+ */
+export function scaleHistoryLimit(contextWindow: number | undefined): number {
+  const window = contextWindow ?? 0;
+  if (window <= 0 || window >= FRONTIER_WINDOW_TOKENS) return 200;
+  return Math.min(200, Math.max(40, Math.round(window / 400)));
 }
 
 export function getDefaultModel(providerId: string): ModelCatalogEntry | undefined {

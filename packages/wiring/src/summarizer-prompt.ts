@@ -39,6 +39,17 @@ Rules:
 - Do not invent facts. If something is unclear in the input, say so under Open questions.`;
 
 /**
+ * Build the summarizer system prompt, optionally biased by `/compact <focus…>`
+ * guidance. The focus directive is appended (not substituted) so the structured
+ * headings and verbatim-preservation rules always apply.
+ */
+export function buildSummarizerSystemPrompt(instructions?: string): string {
+  const focus = instructions?.trim();
+  if (!focus) return SUMMARIZER_SYSTEM_PROMPT;
+  return `${SUMMARIZER_SYSTEM_PROMPT}\n\n## Focus\nThe reader asked you to pay special attention to: ${focus}\nKeep detail relevant to that focus; you may compress the rest more aggressively, but never drop file paths, identifiers, or error strings.`;
+}
+
+/**
  * Serialize the middle messages into a single plain-text block for the
  * summarizer's user turn. Tool calls and tool results are rendered explicitly
  * so the summarizer can report tool outcomes accurately.

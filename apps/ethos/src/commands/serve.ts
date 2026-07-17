@@ -27,6 +27,7 @@ import {
 import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
+import { computeContextAnatomy } from '@ethosagent/observability-sqlite';
 import {
   createPersonalityRegistry,
   PersonalityA2aIdentityProvider,
@@ -62,6 +63,7 @@ import {
   createLLM,
   createTeamAgentLoop,
   getEthosObservability,
+  getObservabilityStore,
   getSecretsResolver,
   getStorage,
 } from '../wiring';
@@ -836,6 +838,15 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     routeModules: a2aRouteModules,
     a2aPeering,
     a2aControl: { isEnabled: isA2aEnabled, setEnabled: setA2aEnabled },
+    // Phase 0 — per-session context anatomy for the web Activity tab, read from
+    // the shared observability store's llm_call spans (never the message rows).
+    contextAnatomyFn: (sessionId: string) => {
+      try {
+        return computeContextAnatomy(getObservabilityStore().getLlmCallSpansForSession(sessionId));
+      } catch {
+        return null;
+      }
+    },
   });
   chatService = created.chatService;
   const webApp = created.app;

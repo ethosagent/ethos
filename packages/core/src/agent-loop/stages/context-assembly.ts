@@ -6,9 +6,74 @@ import {
   resolveTextAttachment,
   sanitizeFilename,
 } from '../../attachment-text-resolver';
+import { estimateMessagesTokens, estimateTokens } from '../../context-engines/token-estimator';
 import { maybeCompact } from '../compaction';
 import { dedupHistory, toLLMMessages } from '../history';
+import {
+  COMPACTION_TAIL_KEEP,
+  computeKeptTailBoundary,
+  reconstructFromWatermark,
+  selectActiveWatermark,
+} from '../manual-compact';
+import {
+  type AgingState,
+  advanceAgingState,
+  applyAgingToView,
+  DEFAULT_AGING_STATE,
+} from '../tool-result-aging';
 import type { AssembledContext, LoopDeps, TurnSetup } from '../turn-context';
+
+// Phase 1a — aging state is persisted per session so the batched-at-crossings
+// invariant survives across turns. Best-effort: any storage error degrades to
+// the default (no aging) rather than breaking the turn.
+function agingStatePath(dataDir: string, sessionId: string): string {
+  return `${dataDir}/aging/${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
+}
+
+function parseAgingState(raw: string): AgingState {
+  try {
+    const v = JSON.parse(raw) as Partial<AgingState>;
+    const level = v.level === 'soft' || v.level === 'hard' ? v.level : 'none';
+    const soft = Array.isArray(v.soft)
+      ? v.soft.filter((s): s is string => typeof s === 'string')
+      : [];
+    const hard = Array.isArray(v.hard)
+      ? v.hard.filter((s): s is string => typeof s === 'string')
+      : [];
+    return { level, soft, hard };
+  } catch {
+    return DEFAULT_AGING_STATE;
+  }
+}
+
+async function loadAgingState(
+  storage: LoopDeps['storage'],
+  dataDir: string | undefined,
+  sessionId: string,
+): Promise<AgingState> {
+  if (!storage || !dataDir) return DEFAULT_AGING_STATE;
+  try {
+    const raw = await storage.read(agingStatePath(dataDir, sessionId));
+    return raw ? parseAgingState(raw) : DEFAULT_AGING_STATE;
+  } catch {
+    return DEFAULT_AGING_STATE;
+  }
+}
+
+async function saveAgingState(
+  storage: LoopDeps['storage'],
+  dataDir: string | undefined,
+  sessionId: string,
+  state: AgingState,
+): Promise<void> {
+  if (!storage || !dataDir) return;
+  try {
+    await storage.mkdir(`${dataDir}/aging`);
+    await storage.writeAtomic(agingStatePath(dataDir, sessionId), JSON.stringify(state));
+  } catch {
+    // Best-effort — a persistence miss just re-derives the state next turn.
+  }
+}
 
 /**
  * Context-assembly stage: PII redaction, user message persistence, history
@@ -168,6 +233,18 @@ export async function* assembleContext(
   const allMessages = await deps.session.getMessages(sessionId, { limit: deps.historyLimit });
   const history = allMessages.filter((m) => m.role !== 'system');
 
+  // Phase 2 — compaction watermark read-back. When a prior compaction persisted
+  // a boundary, reconstruct the LLM-facing history from it (summary + verbatim
+  // tail) instead of shipping the raw prefix again. This is what makes the
+  // cooldown ship the COMPACTED view and `/compact` durable across turns. The
+  // raw `history` still drives injectors/hooks; only the LLM view is compacted.
+  const activeWatermark = selectActiveWatermark(await deps.session.listCompressions(sessionId));
+  const reconstructed = activeWatermark
+    ? reconstructFromWatermark(history, activeWatermark)
+    : { history, applied: false };
+  const replayHistory = reconstructed.history;
+  const watermarkApplied = reconstructed.applied;
+
   // Step 5: Prefetch memory.
   //
   // Per-personality memory backend: if the personality declares a `memory.provider`,
@@ -215,7 +292,12 @@ export async function* assembleContext(
         entries: [{ key: 'USER.md', content: userEntry.content }],
       };
       if (memSnapshot) {
-        memSnapshot = { entries: [...userSnapshot.entries, ...memSnapshot.entries] };
+        // Phase 1b — USER.md double-injection fix. The personality-scope
+        // prefetch above may ALSO have returned a USER.md entry; the user-scope
+        // read is the canonical per-user profile, so drop the prefetched copy
+        // and keep exactly one "About You" block in the built prompt.
+        const withoutUser = memSnapshot.entries.filter((e) => e.key !== 'USER.md');
+        memSnapshot = { entries: [...userSnapshot.entries, ...withoutUser] };
       } else {
         memSnapshot = userSnapshot;
       }
@@ -244,6 +326,9 @@ export async function* assembleContext(
     isDm: true,
     turnNumber: allMessages.length,
     personalityId: personality.id,
+    // Phase 4 — small-window mode forces skills into index form. Derived from
+    // static inputs (resolved once at wiring), constant across turns.
+    ...(deps.promptBudget?.skillsIndexMode ? { skillsIndexMode: true } : {}),
   };
 
   const systemParts: string[] = [];
@@ -305,7 +390,26 @@ export async function* assembleContext(
   // old MarkdownFileMemoryProvider enforced internally. Without this,
   // a long-running session's MEMORY.md grows unbounded and silently
   // explodes the system prompt token bill.
-  if (memSnapshot && memSnapshot.entries.length > 0) {
+  if (memSnapshot && memSnapshot.entries.length > 0 && deps.promptBudget?.memoryIndexMode) {
+    // Phase 4 small-window — index-not-content. Only the names of the stored
+    // memory notes ship in the prompt; the agent loads their content on demand
+    // via `memory_read`. Mirrors the team-memory index injector pattern. The
+    // index is byte-stable across turns while the key set is unchanged, so
+    // prefix caching still holds; the (large) content stays out of the prompt.
+    const labels: Record<string, string> = { 'USER.md': 'About You', 'MEMORY.md': 'Memory' };
+    const names = [...memSnapshot.entries]
+      .filter((e) => e.content.trim().length > 0)
+      .sort((a, b) => {
+        const rank = (k: string) => (k === 'USER.md' ? 0 : k === 'MEMORY.md' ? 1 : 2);
+        return rank(a.key) - rank(b.key);
+      })
+      .map((e) => `- ${labels[e.key] ?? e.key} (\`${e.key}\`)`);
+    if (names.length > 0) {
+      systemParts.push(
+        `## Memory\n\nStored notes are available on demand — call \`memory_read\` to load them:\n${names.join('\n')}`,
+      );
+    }
+  } else if (memSnapshot && memSnapshot.entries.length > 0) {
     const blocks: string[] = [];
     const orderHints: Record<string, string> = {
       'USER.md': 'About You',
@@ -367,11 +471,52 @@ export async function* assembleContext(
   // Step 8: Agentic loop — LLM call → tool use → LLM call → ...
   // Q1 — collapse exact-duplicate tool results before building the
   // LLM-facing history, so re-reads of the same file don't burn tokens.
-  let llmMessages = toLLMMessages(dedupHistory(history));
+  // `replayHistory` carries any active compaction watermark (summary + tail).
+  let llmMessages = toLLMMessages(dedupHistory(replayHistory));
+  // Phase 1c — actuals-first gate signal. The most recent assistant turn's
+  // real input tokens (+ measured static sections system+tools) were persisted
+  // by Phase 0; prefer them over the chars/4 estimate. Absent on the first
+  // turn → the gate falls back to the estimator.
+  let lastActualInputTokens: number | undefined;
+  let staticTokens: number | undefined;
+  for (let i = allMessages.length - 1; i >= 0; i--) {
+    const m = allMessages[i];
+    if (m?.role === 'assistant' && m.usage?.inputTokens) {
+      lastActualInputTokens = m.usage.inputTokens;
+      const rt = m.usage.requestTokens;
+      if (rt) staticTokens = rt.system + rt.tools;
+      break;
+    }
+  }
+  // Phase 1a — tool-result aging (assembled view only). Recompute the aged set
+  // ONLY when context pressure crosses 0.3 / 0.5; between crossings the persisted
+  // state is reused so the aged prefix stays byte-identical (cache holds).
+  let agingCacheBreakpoint: number | undefined;
+  {
+    const window = deps.llm.maxContextTokens || 200_000;
+    const prevState = await loadAgingState(deps.storage, deps.dataDir, sessionId);
+    const usageEstimate =
+      lastActualInputTokens ??
+      estimateTokens(systemPrompt ?? '') + estimateMessagesTokens(llmMessages);
+    const ratio = window > 0 ? usageEstimate / window : 0;
+    const advanced = advanceAgingState(prevState, llmMessages, ratio);
+    if (advanced.changed) {
+      await saveAgingState(deps.storage, deps.dataDir, sessionId, advanced.state);
+    }
+    const aged = applyAgingToView(llmMessages, advanced.state);
+    llmMessages = aged.messages;
+    agingCacheBreakpoint = aged.cacheBreakpoint;
+  }
   // E4 — pre-LLM compaction. If estimated context usage already exceeds
   // the personality's pressure threshold (80% of the model's window by
   // default), the resolved context engine compacts before we hand the
   // history to the provider.
+  //
+  // Phase 2 — when the auto gate fires, persist a watermark boundary so the
+  // compaction survives into later turns (and the cooldown ships the compacted
+  // view, not raw history). The boundary keeps the newest stored messages of the
+  // replay history verbatim; older messages are represented by the summary.
+  const autoBoundary = computeKeptTailBoundary(replayHistory, COMPACTION_TAIL_KEEP);
   const compacted = await maybeCompact(
     {
       llm: deps.llm,
@@ -390,6 +535,12 @@ export async function* assembleContext(
       ...(deps.compaction?.charsPerToken !== undefined
         ? { charsPerToken: deps.compaction.charsPerToken }
         : {}),
+      ...(deps.compaction?.gateDelta !== undefined ? { gateDelta: deps.compaction.gateDelta } : {}),
+      ...(deps.compaction?.defaultEngine !== undefined
+        ? { defaultEngine: deps.compaction.defaultEngine }
+        : {}),
+      ...(lastActualInputTokens !== undefined ? { lastActualInputTokens } : {}),
+      ...(staticTokens !== undefined ? { staticTokens } : {}),
     },
     llmMessages,
     systemPrompt ?? '',
@@ -399,12 +550,26 @@ export async function* assembleContext(
       sessionKey,
       turnNumber,
       lastCompactionTurn,
+      ...(autoBoundary.index > 0 && autoBoundary.keptFromMessageId
+        ? { keptFromMessageId: autoBoundary.keptFromMessageId }
+        : {}),
     },
   );
   llmMessages = compacted.messages;
   // F2 — cache breakpoints from the compaction, forwarded to every provider
-  // call this turn so the prompt cache survives the compacted prefix.
-  const cacheBreakpoints = compacted.cacheBreakpoints;
+  // call this turn so the prompt cache survives the compacted prefix. When no
+  // compaction ran, fall back to the aging boundary (Phase 1a) so the prompt
+  // cache re-anchors just after the batched aged region. Compaction reshapes the
+  // array (shifting indices), so its breakpoints take precedence when present.
+  // Phase 2 — when a watermark was replayed (no fresh compaction this turn), the
+  // summary sits at index 0 as a stable prefix, so re-anchor the cache there.
+  const cacheBreakpoints =
+    compacted.cacheBreakpoints ??
+    (watermarkApplied && !compacted.notice
+      ? [0]
+      : agingCacheBreakpoint !== undefined
+        ? [agingCacheBreakpoint]
+        : undefined);
   // V1 — surface a one-line in-chat compaction notice. Emitted once, before
   // any response text, via the `tool_progress` + `audience: 'user'` channel
   // the framework already uses for `_budget` / `_watcher` notices.
@@ -427,5 +592,6 @@ export async function* assembleContext(
     injectionDefenseEnabled,
     baseMessageCount: allMessages.length,
     userScopeId,
+    compactedThisTurn: compacted.notice !== undefined,
   };
 }

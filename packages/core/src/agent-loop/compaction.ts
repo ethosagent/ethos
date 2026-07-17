@@ -15,6 +15,10 @@ import {
 } from '../context-engines/token-estimator';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
 
+// Phase 2 watermark helpers (selectActiveWatermark, reconstructFromWatermark,
+// computeKeptTailBoundary, runManualCompaction, compactSession) live in
+// ./manual-compact. This module owns only the pressure-gated auto path below.
+
 export interface CompactionDeps {
   llm: LLMProvider;
   contextEngines: ContextEngineRegistry;
@@ -52,6 +56,103 @@ export interface CompactionDeps {
    * inflating it would double-count). Absent → char/4 + small-window factor.
    */
   charsPerToken?: number;
+  /**
+   * Phase 1c — actuals-first gate signal: the previous turn's REAL input-token
+   * count (persisted by Phase 0). When present it replaces the chars/4 estimate
+   * as `current` usage — the estimator apparatus already mispredicted (est
+   * <157k vs API-reported 180k). Absent on the first turn → the estimator
+   * fallback applies. Added to `gateDelta` to account for this turn's growth.
+   */
+  lastActualInputTokens?: number;
+  /**
+   * Phase 1c — measured static sections (system + tools) in tokens from the
+   * previous turn. The gate subtracts this from the window so pressure applies
+   * to the MESSAGES slice, not the whole estimate — a model whose static
+   * overhead alone approaches the window is then handled correctly. Absent → 0
+   * (gate is byte-identical to before).
+   */
+  staticTokens?: number;
+  /**
+   * Phase 1c — configurable headroom (tokens) added to `lastActualInputTokens`
+   * so the gate fires slightly BEFORE the next turn actually reaches pressure.
+   * Only consulted on the actuals path. Defaults to 0.
+   */
+  gateDelta?: number;
+  /**
+   * Phase 3 — per-model-class default context engine, applied when the
+   * personality does NOT declare `context_engine`. Frontier models resolve to
+   * `semantic_summary` (when a summarizer is wired), local/weak models to
+   * `drop_oldest`. Absent → `drop_oldest` (unchanged).
+   */
+  defaultEngine?: string;
+  /**
+   * Phase 3 — force the compaction through regardless of the pressure gate and
+   * the anti-thrashing cooldown. Set by the overflow→compact-and-retry path,
+   * where the provider already rejected the request for being too long, so
+   * gating on an estimate is moot. Absent/false → the normal gated path.
+   */
+  force?: boolean;
+}
+
+/**
+ * Phase 3 — pure evaluation of the model-aware pressure gate. Extracted from
+ * `maybeCompact` so the turn-end trigger (flush at 70% / compact at 80%) shares
+ * the exact same arithmetic (output reserve, static-slice subtraction, small-
+ * window safety factor, charsPerToken, actuals-first floor). Returns whole-
+ * context token figures; callers derive a threshold with {@link gateThreshold}.
+ */
+export interface GateEval {
+  /** Estimated (or actuals-floored) whole-context usage in tokens. */
+  current: number;
+  /** Model window after the output reserve is subtracted. */
+  window: number;
+  /** `window` minus the measured static (system+tools) slice. */
+  messagesWindow: number;
+  /** Measured static (system+tools) tokens, clamped to `[0, window]`. */
+  staticTokens: number;
+}
+
+export function evaluateGate(
+  deps: Pick<
+    CompactionDeps,
+    | 'llm'
+    | 'reservedOutputTokens'
+    | 'staticTokens'
+    | 'charsPerToken'
+    | 'lastActualInputTokens'
+    | 'gateDelta'
+  >,
+  messages: Message[],
+  systemPrompt: string,
+): GateEval {
+  const rawWindow = deps.llm.maxContextTokens || 200_000;
+  const requestedOutput = deps.reservedOutputTokens ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
+  const outputReserve = Math.min(Math.max(0, requestedOutput), Math.floor(rawWindow / 2));
+  const window = rawWindow - outputReserve;
+
+  const staticTokens = Math.max(0, Math.min(deps.staticTokens ?? 0, window));
+  const messagesWindow = window - staticTokens;
+
+  const charsPerToken = deps.charsPerToken;
+  let estimate: number;
+  if (charsPerToken !== undefined) {
+    estimate = Math.ceil((systemPrompt.length + estimateMessagesChars(messages)) / charsPerToken);
+  } else {
+    const safetyFactor = rawWindow <= SMALL_WINDOW_THRESHOLD ? SMALL_WINDOW_SAFETY_FACTOR : 1;
+    estimate = Math.ceil(
+      (estimateTokens(systemPrompt) + estimateMessagesTokens(messages)) * safetyFactor,
+    );
+  }
+  const current =
+    deps.lastActualInputTokens !== undefined
+      ? Math.max(estimate, deps.lastActualInputTokens + Math.max(0, deps.gateDelta ?? 0))
+      : estimate;
+  return { current, window, messagesWindow, staticTokens };
+}
+
+/** Whole-context token threshold for a pressure fraction `f` in (0,1]. */
+export function gateThreshold(g: GateEval, fraction: number): number {
+  return g.staticTokens + Math.floor(g.messagesWindow * fraction);
 }
 
 // T3 — gate-hardening constants (generic, no per-model config).
@@ -86,64 +187,56 @@ export async function maybeCompact(
     sessionKey: string;
     turnNumber: number;
     lastCompactionTurn: number;
+    /**
+     * Phase 2 — watermark boundary. The id of the first stored message to keep
+     * verbatim; recorded on the compression row so the compaction is replayed
+     * into later turns instead of being re-derived from raw history. Absent →
+     * the row is not a replayable watermark (legacy ephemeral behavior).
+     */
+    keptFromMessageId?: string;
   },
 ): Promise<{
   messages: Message[];
   cacheBreakpoints?: number[];
   notice?: { engineName: string; droppedCount: number; summaryTokens: number };
 }> {
-  const rawWindow = deps.llm.maxContextTokens || 200_000;
-
-  // T3.1 — reserve headroom for the pending completion's output. The next
-  // provider call generates up to `maxTokens`; gating on input alone lets the
-  // *response* push the request past the window. Subtract the output reserve
-  // from the window before computing pressure. Never reserve more than half the
-  // window, else no input ever fits on a tiny local window.
-  const requestedOutput = deps.reservedOutputTokens ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
-  const outputReserve = Math.min(Math.max(0, requestedOutput), Math.floor(rawWindow / 2));
-  const window = rawWindow - outputReserve;
-
   // §5 — effective gate/target fractions. Resolved upstream (per-model profile >
   // global config); the hardcoded 0.8/0.7 defaults live here so an unset caller
   // is byte-identical to before.
   const pressureFraction = deps.pressure ?? 0.8;
   const targetFraction = deps.target ?? 0.7;
-  const target = Math.floor(window * targetFraction);
-  const pressureGate = Math.floor(window * pressureFraction);
 
-  // §5 — usage estimate. When the model carries an accurate `charsPerToken`,
-  // divide the true char total by it and skip the small-window safety factor
-  // (stacking the generic factor on an already-accurate divisor would
-  // double-count). Otherwise keep the char/4 estimate + small-window factor.
-  let current: number;
-  const charsPerToken = deps.charsPerToken;
-  if (charsPerToken !== undefined) {
-    current = Math.ceil((systemPrompt.length + estimateMessagesChars(messages)) / charsPerToken);
-  } else {
-    // T3.2 — conservative safety factor for small windows (see constant docs).
-    const safetyFactor = rawWindow <= SMALL_WINDOW_THRESHOLD ? SMALL_WINDOW_SAFETY_FACTOR : 1;
-    current = Math.ceil(
-      (estimateTokens(systemPrompt) + estimateMessagesTokens(messages)) * safetyFactor,
-    );
-  }
-  if (current <= pressureGate) return { messages };
+  // Phase 3 — the gate arithmetic is shared with the turn-end trigger via
+  // `evaluateGate` (output reserve, static-slice subtraction, small-window
+  // factor, charsPerToken, actuals-first floor all live there).
+  const g = evaluateGate(deps, messages, systemPrompt);
+  const { current, window, messagesWindow } = g;
+  const target = Math.floor(messagesWindow * targetFraction);
+  const pressureGate = gateThreshold(g, pressureFraction);
 
-  // Q2 — anti-thrashing cooldown. After a compaction, skip the next few
-  // turns of *normal* pressure: re-compacting immediately would summarize the
-  // summary, degrading meaning. `lastCompactionTurn === 0` means "never
-  // compacted" — the first compaction is always allowed through. The cooldown
-  // is bypassed under hard overflow (>95% of the window): its job is to
-  // prevent summary churn, not to disable context-limit protection.
-  const cooldownTurns = 5;
-  const hardOverflowGate = Math.floor(window * 0.95);
-  const inCooldown =
-    sessionMetadata.lastCompactionTurn > 0 &&
-    sessionMetadata.turnNumber - sessionMetadata.lastCompactionTurn < cooldownTurns;
-  if (inCooldown && current <= hardOverflowGate) {
-    return { messages };
+  // Phase 3 — `force` skips both the pressure gate and the cooldown (used by the
+  // overflow→compact-and-retry path, where the provider already rejected the
+  // request for being too long).
+  if (!deps.force) {
+    if (current <= pressureGate) return { messages };
+
+    // Q2 — anti-thrashing cooldown. After a compaction, skip the next few
+    // turns of *normal* pressure: re-compacting immediately would summarize the
+    // summary, degrading meaning. `lastCompactionTurn === 0` means "never
+    // compacted" — the first compaction is always allowed through. The cooldown
+    // is bypassed under hard overflow (>95% of the window): its job is to
+    // prevent summary churn, not to disable context-limit protection.
+    const cooldownTurns = 5;
+    const hardOverflowGate = Math.floor(window * 0.95);
+    const inCooldown =
+      sessionMetadata.lastCompactionTurn > 0 &&
+      sessionMetadata.turnNumber - sessionMetadata.lastCompactionTurn < cooldownTurns;
+    if (inCooldown && current <= hardOverflowGate) {
+      return { messages };
+    }
   }
 
-  const engineName = personality.context_engine ?? 'drop_oldest';
+  const engineName = personality.context_engine ?? deps.defaultEngine ?? 'drop_oldest';
   const engine = deps.contextEngines.get(engineName) ?? deps.contextEngines.get('drop_oldest');
   if (!engine) return { messages };
 
@@ -191,6 +284,9 @@ export async function maybeCompact(
           originalCount: messages.length,
           keptCount: result.messages.length,
           ...(result.summaryText !== undefined ? { summaryText: result.summaryText } : {}),
+          ...(sessionMetadata.keptFromMessageId
+            ? { keptFromMessageId: sessionMetadata.keptFromMessageId }
+            : {}),
           summaryTokens,
           preTotalTokens: current,
           postTotalTokens: estimateTokens(systemPrompt) + estimateMessagesTokens(result.messages),

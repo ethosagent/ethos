@@ -177,6 +177,15 @@ export class SQLiteSessionStore implements SessionStore {
     if (!msgCols.some((c) => c.name === 'deleted_at')) {
       this.db.exec('ALTER TABLE messages ADD COLUMN deleted_at TEXT');
     }
+
+    // Context-compaction Phase 2: watermark boundary. The id of the first
+    // stored message kept verbatim after a compaction; drives the cross-turn
+    // read-back so a compaction survives past the turn it fired on. Nullable —
+    // legacy rows and non-summarizing engines leave it NULL.
+    const compCols = this.db.pragma('table_info(compressions)') as Array<{ name: string }>;
+    if (!compCols.some((c) => c.name === 'kept_from_message_id')) {
+      this.db.exec('ALTER TABLE compressions ADD COLUMN kept_from_message_id TEXT');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -466,8 +475,9 @@ export class SQLiteSessionStore implements SessionStore {
       .prepare(
         `INSERT INTO compressions
          (id, session_id, created_at, engine_name, original_count, kept_count,
-          summary_text, summary_tokens, pre_total_tokens, post_total_tokens, duration_ms)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          summary_text, kept_from_message_id, summary_tokens, pre_total_tokens,
+          post_total_tokens, duration_ms)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
@@ -477,6 +487,7 @@ export class SQLiteSessionStore implements SessionStore {
         event.originalCount,
         event.keptCount,
         event.summaryText ?? null,
+        event.keptFromMessageId ?? null,
         event.summaryTokens,
         event.preTotalTokens,
         event.postTotalTokens,
@@ -679,6 +690,7 @@ interface CompressionRow {
   original_count: number;
   kept_count: number;
   summary_text: string | null;
+  kept_from_message_id: string | null;
   summary_tokens: number;
   pre_total_tokens: number;
   post_total_tokens: number;
@@ -744,6 +756,7 @@ function rowToCompression(r: CompressionRow): CompressionEvent {
     originalCount: r.original_count,
     keptCount: r.kept_count,
     summaryText: r.summary_text ?? undefined,
+    keptFromMessageId: r.kept_from_message_id ?? undefined,
     summaryTokens: r.summary_tokens,
     preTotalTokens: r.pre_total_tokens,
     postTotalTokens: r.post_total_tokens,

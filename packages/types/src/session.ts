@@ -78,6 +78,16 @@ export interface CompressionEvent {
   keptCount: number;
   /** The synthetic summary text, when the engine produced one. */
   summaryText?: string;
+  /**
+   * Compaction watermark boundary. The id of the FIRST stored message kept
+   * verbatim after this compaction — everything strictly older is represented
+   * by `summaryText` (or dropped, for engines that don't summarize). When set,
+   * the row is a replayable watermark: subsequent turns reconstruct the
+   * LLM-facing history as `[summary, ...messages from this id onward]` instead
+   * of shipping the raw prefix again. Absent on legacy rows and on engines that
+   * produced no stable boundary.
+   */
+  keptFromMessageId?: string;
   /** Estimated token count of the summary message (0 when there is no summary). */
   summaryTokens: number;
   /** Estimated total context tokens (system + messages) before compaction. */

@@ -15,6 +15,7 @@ import type {
 } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { handleChunk } from '../chunk-handler';
+import { isContextOverflowError } from '../overflow';
 import type { WatcherTap } from '../turn-context';
 import { resolveModelWithTier } from '../turn-context';
 
@@ -51,6 +52,11 @@ export type StreamStepResult =
       fullTextDelta: string;
       usageSink: UsageSink;
     }
+  // Phase 3 — the provider rejected the request for exceeding the context
+  // window. No `error` event is emitted here so the orchestrator can
+  // compact-and-retry; if the retry is disabled or already spent, the caller
+  // surfaces a `context_overflow` error itself.
+  | { outcome: 'overflow'; error: string }
   | { outcome: 'fatal' };
 
 // ---------------------------------------------------------------------------
@@ -240,9 +246,15 @@ export async function* streamStep(
       }
     }
     disarmWatchdog();
+    // Phase 0 — persist the per-slice {system, tools, messages} breakdown and
+    // cache stats onto the llm_call span so the context anatomy is attributable
+    // to named sections. Best-effort: attrs merge into the span at close.
     deps.observability?.endSpan(llmSpanId ?? '', 'ok', {
       inputTokens: llmInputTokens,
       outputTokens: llmOutputTokens,
+      cacheReadTokens: llmCacheReadTokens,
+      cacheCreationTokens: llmCacheCreationTokens,
+      ...(llmRequestTokens ? { requestTokens: llmRequestTokens } : {}),
     });
 
     if (watchdogController.signal.aborted && !ctx.abortSignal.aborted) {
@@ -269,6 +281,18 @@ export async function* streamStep(
       return { outcome: 'fatal' };
     }
     const msg = err instanceof Error ? err.message : String(err);
+    // Phase 3 — a context-overflow rejection is recoverable: hand it back to the
+    // orchestrator (no `error` event) so it can compact-and-retry. The assistant
+    // message was NOT persisted (this catch precedes appendMessage), so the retry
+    // starts from a clean history.
+    if (isContextOverflowError(err)) {
+      deps.observability?.recordCompaction({
+        severity: 'warn',
+        code: 'context_overflow_retry',
+        cause: msg,
+      });
+      return { outcome: 'overflow', error: msg };
+    }
     deps.observability?.endTrace(ctx.traceId ?? '', 'error');
     deps.observability?.flush();
     yield { type: 'error', error: msg, code: 'llm_error' };
@@ -313,6 +337,18 @@ export async function* streamStep(
         input: tc.args ?? {},
       })),
     }),
+    // Phase 0 — fold this turn's actual usage into the same message-persist
+    // transaction (columns already exist, previously always NULL). The gate's
+    // actuals-first signal (Phase 1c) reads back the most recent assistant
+    // message's `inputTokens`.
+    usage: {
+      inputTokens: llmInputTokens,
+      outputTokens: llmOutputTokens,
+      cacheReadTokens: llmCacheReadTokens,
+      cacheCreationTokens: llmCacheCreationTokens,
+      estimatedCostUsd: llmEstimatedCostUsd,
+      ...(llmRequestTokens ? { requestTokens: llmRequestTokens } : {}),
+    },
   });
 
   // Fire after_llm_call — content gated by personality observability config

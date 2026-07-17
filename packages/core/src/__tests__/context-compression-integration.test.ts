@@ -209,7 +209,7 @@ describe('V1 + Q2 — compaction notice and anti-thrashing cooldown', () => {
     expect(compactionNotice(turn2)).toBeUndefined();
   });
 
-  it('Q2 — hard overflow bypasses the cooldown so context never overruns', async () => {
+  it('Q2/Phase2 — a compaction persists a watermark that bounds later turns', async () => {
     const session = new InMemorySessionStore();
     const s = await session.createSession({
       key: 'cli:overflow',
@@ -233,8 +233,16 @@ describe('V1 + Q2 — compaction notice and anti-thrashing cooldown', () => {
 
     const turn1 = await collect(loop.run('first', { sessionKey: 'cli:overflow' }));
     expect(compactionNotice(turn1)).toBeDefined();
-    // Within the cooldown window, but over the hard gate → compaction still fires.
-    const turn2 = await collect(loop.run('second', { sessionKey: 'cli:overflow' }));
-    expect(compactionNotice(turn2)).toBeDefined();
+    // A watermark was persisted, not just an ephemeral view change.
+    const wm = await session.listCompressions(s.id);
+    expect(wm.at(-1)?.keptFromMessageId).toBeTruthy();
+
+    // Phase 2 — the NEXT turn replays the persisted compaction rather than
+    // re-shipping the full raw history: the oldest overflowing turn is dropped,
+    // so the request stays within the window instead of overrunning it again.
+    await collect(loop.run('second', { sessionKey: 'cli:overflow' }));
+    const turn2Sent = JSON.stringify(captured.at(-1));
+    expect(turn2Sent).not.toContain('turn 0 ');
+    expect(turn2Sent).toContain('second');
   });
 });

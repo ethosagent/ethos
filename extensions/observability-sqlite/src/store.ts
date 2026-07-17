@@ -174,7 +174,28 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
       );
   }
 
-  closeSpan(spanId: string, status: 'ok' | 'error' | 'blocked'): void {
+  closeSpan(
+    spanId: string,
+    status: 'ok' | 'error' | 'blocked',
+    attrs?: Record<string, unknown>,
+    extraRedactPatterns?: string[],
+  ): void {
+    // Phase 0 — merge close-time attrs (e.g. per-slice llm_call token counts)
+    // into whatever the span was opened with. Without this the numbers a span
+    // learns only at completion (usage, requestTokens) would be lost.
+    if (attrs && Object.keys(attrs).length > 0) {
+      const existingRow = this.db
+        .prepare('SELECT attrs FROM spans WHERE span_id = ?')
+        .get(spanId) as { attrs: string | null } | undefined;
+      const existing = existingRow?.attrs
+        ? (JSON.parse(existingRow.attrs) as Record<string, unknown>)
+        : {};
+      const merged = { ...existing, ...redactJson(attrs, extraRedactPatterns) };
+      this.db
+        .prepare(`UPDATE spans SET end_ts = ?, status = ?, attrs = ? WHERE span_id = ?`)
+        .run(Date.now(), status, JSON.stringify(merged), spanId);
+      return;
+    }
     this.db
       .prepare(`UPDATE spans SET end_ts = ?, status = ? WHERE span_id = ?`)
       .run(Date.now(), status, spanId);
@@ -184,6 +205,23 @@ export class SQLiteObservabilityStore implements ObservabilityStore {
     const rows = this.db
       .prepare('SELECT * FROM spans WHERE trace_id = ? ORDER BY start_ts ASC')
       .all(traceId);
+    return (rows as SpanRow[]).map(rowToSpan);
+  }
+
+  /**
+   * Phase 0 — all `llm_call` spans for a session, oldest first. Joins spans to
+   * their trace so callers reach spans by `session_id` (spans carry only a
+   * `trace_id`). Backs the per-session context anatomy view.
+   */
+  getLlmCallSpansForSession(sessionId: string): Span[] {
+    const rows = this.db
+      .prepare(
+        `SELECT s.* FROM spans s
+         JOIN traces t ON t.trace_id = s.trace_id
+         WHERE t.session_id = ? AND s.kind = 'llm_call'
+         ORDER BY s.start_ts ASC`,
+      )
+      .all(sessionId);
     return (rows as SpanRow[]).map(rowToSpan);
   }
 

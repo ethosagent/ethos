@@ -17,6 +17,8 @@ import type {
 } from '@ethosagent/types';
 import type { IdenticalStreak } from './agent-loop/budgets';
 import { checkTurnBudgets, updateIdenticalStreak } from './agent-loop/budgets';
+import { compactSession, type ManualCompactionResult } from './agent-loop/manual-compact';
+import { applyOverflowRetry } from './agent-loop/overflow';
 import { applySamplingDefaults, type ModelSamplingDefaults } from './agent-loop/sampling';
 import { assembleContext } from './agent-loop/stages/context-assembly';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
@@ -25,6 +27,7 @@ import { processTools } from './agent-loop/stages/tool-processing';
 import { finalizeTurn } from './agent-loop/stages/turn-finalizer';
 import { setupTurn } from './agent-loop/stages/turn-setup';
 import type { LoopDeps } from './agent-loop/turn-context';
+import { buildTurnEndCtx, maybeConsolidateAtTurnEnd } from './agent-loop/turn-end';
 import { createWatcherTap } from './agent-loop/watcher-tap';
 import type { ClarifyBridge } from './clarify/clarify-bridge';
 import { DefaultContextEngineRegistry } from './context-engines/registry';
@@ -98,9 +101,12 @@ export interface AgentLoopConfig {
   // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
   modelRouting?: Record<string, string>;
   modelSampling?: ModelSamplingDefaults; // §7 — applied when the per-call value is unset
-  compaction?: { pressure?: number; target?: number; charsPerToken?: number };
-  // biome-ignore format: §2 prompt-economy knobs (docs on LoopDeps.promptBudget); one line keeps agent-loop.ts under the size guardrail.
-  promptBudget?: { compactPrelude?: boolean; memorySnapshotCap?: number; suppressMemoryGuidance?: boolean };
+  // biome-ignore format: §5 gate + Phase 3 turn-end/overflow/engine knobs; one line keeps agent-loop.ts under the size guardrail.
+  compaction?: { pressure?: number; target?: number; charsPerToken?: number; gateDelta?: number; autoCompact?: boolean; retryOnOverflow?: boolean; defaultEngine?: string };
+  // biome-ignore format: Phase 3 silent memory-flush knobs (docs on LoopDeps.memoryConsolidation); one line keeps agent-loop.ts under the size guardrail.
+  memoryConsolidation?: { enabled?: boolean; flushThreshold?: number; timeboxMs?: number; maxTokens?: number; maxDeltaChars?: number; minMessagesSinceFlush?: number };
+  // biome-ignore format: §2/Phase 4 prompt-economy knobs (docs on LoopDeps.promptBudget); one line keeps agent-loop.ts under the size guardrail.
+  promptBudget?: { compactPrelude?: boolean; memorySnapshotCap?: number; suppressMemoryGuidance?: boolean; memoryIndexMode?: boolean; skillsIndexMode?: boolean };
   /**
    * Per-personality memory provider registry. Maps provider names ('markdown',
    * 'vector', plugin-registered names) to factory functions. When a personality
@@ -299,6 +305,7 @@ export class AgentLoop {
   private readonly modelRouting: Record<string, string>;
   private readonly modelSampling?: AgentLoopConfig['modelSampling'];
   private readonly compaction?: AgentLoopConfig['compaction'];
+  private readonly memoryConsolidation?: AgentLoopConfig['memoryConsolidation'];
   private readonly promptBudget?: AgentLoopConfig['promptBudget'];
   private readonly memoryProviders: Map<
     string,
@@ -356,6 +363,7 @@ export class AgentLoop {
     this.modelRouting = config.modelRouting ?? {};
     this.modelSampling = config.modelSampling;
     if (config.compaction) this.compaction = config.compaction;
+    if (config.memoryConsolidation) this.memoryConsolidation = config.memoryConsolidation;
     if (config.promptBudget) this.promptBudget = config.promptBudget;
     this.memoryProviders = config.memoryProviders ?? new Map();
     if (config.storage) this.storage = config.storage;
@@ -411,6 +419,26 @@ export class AgentLoop {
     this.sessionCosts.delete(sessionKey);
   }
 
+  /** Manual `/compact` — force a compaction outside a turn (delegates to
+   *  `compactSession`; the wired summarizer, if any, comes from `llmHandle`). */
+  async compact(
+    sessionKey: string,
+    opts: { instructions?: string; personalityId?: string } = {},
+  ): Promise<ManualCompactionResult> {
+    const summarizer = this.llmHandle?.summarize;
+    return compactSession(
+      {
+        session: this.session,
+        personalities: this.personalities,
+        historyLimit: this.historyLimit,
+        ...(summarizer ? { summarizer } : {}),
+        ...(this.observability ? { observability: this.observability } : {}),
+      },
+      sessionKey,
+      opts,
+    );
+  }
+
   /** Dependency bag passed to extracted stage functions. */
   private get deps(): LoopDeps {
     return {
@@ -434,6 +462,7 @@ export class AgentLoop {
       streamingTimeoutMs: this.streamingTimeoutMs,
       modelRouting: this.modelRouting,
       compaction: this.compaction,
+      memoryConsolidation: this.memoryConsolidation,
       promptBudget: this.promptBudget,
       memoryProviders: this.memoryProviders,
       storage: this.storage,
@@ -455,6 +484,9 @@ export class AgentLoop {
     };
   }
 
+  /** Drive one user turn. Callers MUST drain to completion (not stop at `done`):
+   *  turn-end maintenance — silent memory flush + auto-compaction — runs AFTER
+   *  `done` while the lane is held, so breaking on `done` skips it. */
   async *run(text: string, opts: RunOptions = {}): AsyncGenerator<AgentEvent> {
     // Stage 1: Turn setup (session, personality, tier, tools, hooks, credential gate)
     const setupResult = yield* setupTurn(this.deps, text, opts);
@@ -467,13 +499,19 @@ export class AgentLoop {
     const {
       systemPrompt,
       llmMessages: initialLlmMessages,
-      cacheBreakpoints,
+      cacheBreakpoints: initialCacheBreakpoints,
       activeSkillFiles,
       injectionDefenseEnabled,
       baseMessageCount,
       userScopeId,
+      compactedThisTurn,
     } = assembled;
     const llmMessages = initialLlmMessages;
+    // Phase 3 — mutable so the overflow→compact-and-retry path can re-anchor the
+    // prompt cache after it shrinks the in-memory history.
+    let cacheBreakpoints = initialCacheBreakpoints;
+    // Phase 3 — one emergency compaction per turn on a context-overflow rejection.
+    let overflowRetried = false;
 
     // Destructure setup for loop usage
     const {
@@ -482,6 +520,8 @@ export class AgentLoop {
       personality,
       obsConfig,
       traceId,
+      turnNumber,
+      lastCompactionTurn,
       activeTier,
       effectiveModel,
       modelOverride: setupModelOverride,
@@ -633,6 +673,28 @@ export class AgentLoop {
         tierEscalationRef,
       );
 
+      // Phase 3 — a context-overflow rejection is recoverable (the assistant
+      // message was NOT persisted): compact the in-memory history and retry once.
+      if (stepResult.outcome === 'overflow') {
+        const canRetry = !overflowRetried && this.compaction?.retryOnOverflow !== false;
+        overflowRetried = true;
+        const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn };
+        if (
+          canRetry &&
+          (await applyOverflowRetry(this.deps, llmMessages, systemPrompt ?? '', personality, meta))
+        ) {
+          cacheBreakpoints = undefined; // history reshaped — drop stale breakpoints
+          iteration--; // retry this iteration with the shrunk history
+          continue;
+        }
+        yield { type: 'error', error: stepResult.error, code: 'context_overflow' };
+        if (traceId) {
+          this.observability?.endTrace(traceId, 'error');
+          this.observability?.flush();
+        }
+        return;
+      }
+
       if (stepResult.outcome === 'fatal') return;
 
       fullText += stepResult.fullTextDelta;
@@ -738,6 +800,20 @@ export class AgentLoop {
       dryRunCapped: dryRunState.capped,
       isDryRun: opts.dryRun ?? false,
     });
+
+    // Phase 3 — turn-end context maintenance (silent memory flush at 70%,
+    // auto-compaction at 80%). Runs AFTER `done`, lane still held, so it cannot
+    // race the next inbound turn. No-op unless opted in via config.
+    const turnEndExtras = {
+      userScopeId,
+      compactedThisTurn,
+      abortSignal,
+      systemPrompt: systemPrompt ?? '',
+      ...(opts.maxCompletionTokens !== undefined
+        ? { maxCompletionTokens: opts.maxCompletionTokens }
+        : {}),
+    };
+    yield* maybeConsolidateAtTurnEnd(this.deps, buildTurnEndCtx(setup, turnEndExtras));
   }
 
   /**

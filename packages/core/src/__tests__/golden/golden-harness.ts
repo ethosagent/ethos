@@ -96,12 +96,18 @@ function normalize(result: GoldenResult): GoldenResult {
     return e;
   });
 
-  const messages = result.messages.map((m) => ({
-    ...m,
-    id: 'normalized',
-    timestamp: new Date('2000-01-01T00:00:00.000Z').toISOString(),
-    sessionId: 'normalized',
-  }));
+  const messages = result.messages.map((m) => {
+    // Phase 0 — assistant messages now persist per-turn `usage` telemetry
+    // (token counts from the mock). It's not conversation structure, so strip
+    // it from the characterization snapshot to keep goldens content-focused.
+    const { usage: _usage, ...rest } = m as typeof m & { usage?: unknown };
+    return {
+      ...rest,
+      id: 'normalized',
+      timestamp: new Date('2000-01-01T00:00:00.000Z').toISOString(),
+      sessionId: 'normalized',
+    };
+  });
 
   const llmInputs = result.llmInputs.map((call) => ({
     messages: call.messages,

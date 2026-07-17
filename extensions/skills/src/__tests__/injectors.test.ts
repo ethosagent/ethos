@@ -392,6 +392,21 @@ describe('SkillsInjector — per-personality injection_mode (§2)', () => {
     expect(result?.content).not.toContain('## Available Skills');
   });
 
+  // Phase 4 — small-window mode forces index even when the personality asked
+  // for full mode. The skill becomes a stub reachable via get_skill.
+  it('ctx.skillsIndexMode → forces index even over full mode', async () => {
+    await writePersonalitySkill();
+    const injector = new SkillsInjector(makeRegistryWithMode([testDir], 'full'), {
+      storage: new FsStorage(),
+      globalSkillsDir: testDir,
+      scanner: hermeticScanner(),
+    });
+    const result = await injector.inject({ ...makeCtx(testDir), skillsIndexMode: true });
+    expect(result?.content).toContain('## Available Skills');
+    expect(result?.content).toContain('`my-skill`');
+    expect(result?.content).not.toContain('FULL BODY HERE.');
+  });
+
   it('unset mode → personality skill stays inlined (historical behavior preserved)', async () => {
     await writePersonalitySkill();
     const injector = new SkillsInjector(makeRegistryWithMode([testDir], undefined), {

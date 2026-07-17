@@ -10,8 +10,10 @@ import type {
   ProviderCapabilities,
   ToolDefinitionLite,
 } from '@ethosagent/types';
+import { reduceToolSchemas } from './tool-schema';
 import { type AnthropicStreamParams, streamAnthropicMessages } from './transport';
 
+export { attributeToolSchemaBytes, reduceToolSchemas } from './tool-schema';
 export { streamAnthropicMessages } from './transport';
 export type { AnthropicStreamParams };
 
@@ -253,7 +255,10 @@ export class AnthropicProvider implements LLMProvider {
       );
     }
 
-    const anthropicTools: Anthropic.Tool[] = tools.map((t) => ({
+    // Phase 5 — trim the fixed tool-schema cost at the serialization boundary:
+    // strip unused `$defs` and normalize description whitespace. Safe/lossless
+    // by default; `requestTokens.tools` below then reflects the reduced size.
+    const anthropicTools: Anthropic.Tool[] = reduceToolSchemas(tools).map((t) => ({
       name: t.name,
       description: t.description,
       input_schema: t.parameters as Anthropic.Tool['input_schema'],

@@ -10,6 +10,11 @@ export interface PromptContext {
   isDm: boolean;
   turnNumber: number;
   personalityId?: string;
+  /** Phase 4 — small-window mode. When true, injectors that support an index /
+   *  content split (e.g. skills) must emit the compact index form. Derived from
+   *  static inputs (model window + fixed overhead), constant across turns, so it
+   *  does not break prefix caching. */
+  skillsIndexMode?: boolean;
   // Mutable side-channel: injectors write metadata here; AgentLoop emits it as context_meta event.
   meta?: Record<string, unknown>;
 }

@@ -153,6 +153,23 @@ const SessionExportOutput = z.object({
 const SessionPinInput = z.object({ id: z.string() });
 const SessionPinOutput = z.object({ session: SessionSchema });
 
+// Phase 0 — per-session context anatomy, aggregated from observability.db
+// `llm_call` spans (never the sessions.db message rows, so nothing
+// double-counts). Null when there is no span data yet.
+const ContextAnatomySchema = z.object({
+  system: z.number(),
+  tools: z.number(),
+  messages: z.number(),
+  total: z.number(),
+  inputTokens: z.number(),
+  cacheReadTokens: z.number(),
+  cacheHitRate: z.number(),
+  llmCallCount: z.number(),
+});
+const SessionContextAnatomyInput = z.object({ id: z.string() });
+const SessionContextAnatomyOutput = z.object({ anatomy: ContextAnatomySchema.nullable() });
+export type ContextAnatomyWire = z.infer<typeof ContextAnatomySchema>;
+
 /** @stable v1 */
 const sessions = {
   list: oc.input(SessionListInput).output(SessionListOutput),
@@ -163,9 +180,23 @@ const sessions = {
   export: oc.input(SessionExportInput).output(SessionExportOutput),
   pin: oc.input(SessionPinInput).output(SessionPinOutput),
   unpin: oc.input(SessionPinInput).output(SessionPinOutput),
+  contextAnatomy: oc.input(SessionContextAnatomyInput).output(SessionContextAnatomyOutput),
   undoTurns: oc
     .input(z.object({ id: z.string(), n: z.number().int().min(1).default(1) }))
     .output(z.object({ removed: z.number() })),
+  // Phase 2 — manual `/compact`. Forces a compaction outside a turn and persists
+  // a watermark so it survives into later turns. `instructions` is the optional
+  // `/compact <focus…>` hint threaded into the summarizer.
+  compact: oc.input(z.object({ id: z.string(), instructions: z.string().optional() })).output(
+    z.object({
+      ok: z.boolean(),
+      engineName: z.string(),
+      droppedCount: z.number(),
+      preTotalTokens: z.number(),
+      postTotalTokens: z.number(),
+      summariesEnabled: z.boolean(),
+    }),
+  ),
 };
 
 // ---------------------------------------------------------------------------

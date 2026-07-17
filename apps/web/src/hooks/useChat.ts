@@ -74,6 +74,16 @@ export interface UseChatResult {
   /** Soft-delete the last N user+assistant turn pairs. Returns the
    *  number of pairs actually removed. */
   undoTurns: (n?: number) => Promise<number>;
+  /** Force a server-side compaction (`/compact`). Returns pre/post token
+   *  counts, or null when there's no session or the RPC failed. */
+  compact: (instructions?: string) => Promise<{
+    ok: boolean;
+    engineName: string;
+    droppedCount: number;
+    preTotalTokens: number;
+    postTotalTokens: number;
+    summariesEnabled: boolean;
+  } | null>;
 }
 
 type Reducer = (state: ChatState, op: ReducerOp) => ChatState;
@@ -286,6 +296,33 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     [currentSessionId],
   );
 
+  // Phase 2 — manual `/compact`. Forces a server-side compaction (which persists
+  // a watermark) and returns pre/post token counts so the caller can toast a
+  // confirmation. No-op when there's no session yet.
+  const compact = useCallback(
+    async (
+      instructions?: string,
+    ): Promise<{
+      ok: boolean;
+      engineName: string;
+      droppedCount: number;
+      preTotalTokens: number;
+      postTotalTokens: number;
+      summariesEnabled: boolean;
+    } | null> => {
+      if (!currentSessionId) return null;
+      try {
+        return await rpc.sessions.compact({
+          id: currentSessionId,
+          ...(instructions ? { instructions } : {}),
+        });
+      } catch {
+        return null;
+      }
+    },
+    [currentSessionId],
+  );
+
   return {
     state,
     currentSessionId,
@@ -295,5 +332,6 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     switchSession,
     resetSession,
     undoTurns,
+    compact,
   };
 }

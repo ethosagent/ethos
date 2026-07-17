@@ -1,6 +1,11 @@
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ethosDir } from '@ethosagent/config';
+import {
+  type ContextAnatomy,
+  computeContextAnatomy,
+  SQLiteObservabilityStore,
+} from '@ethosagent/observability-sqlite';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { SearchResult, Session, SessionUsage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
@@ -167,6 +172,24 @@ export function formatSessionCost(usage: SessionUsage): SessionCostSummary {
   return { tokenLine, costLine, cacheSavingsPct };
 }
 
+/**
+ * Read the per-session context anatomy from observability.db (llm_call spans
+ * only — never the sessions.db message rows, so nothing double-counts). Returns
+ * null when there is no span data yet. Best-effort: an observability read
+ * failure never breaks `sessions show`.
+ */
+function readContextAnatomy(sessionId: string): ContextAnatomy | null {
+  let obs: SQLiteObservabilityStore | undefined;
+  try {
+    obs = new SQLiteObservabilityStore(join(ethosDir(), 'observability.db'));
+    return computeContextAnatomy(obs.getLlmCallSpansForSession(sessionId));
+  } catch {
+    return null;
+  } finally {
+    obs?.close();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // ethos session show <id> — exported for routing from index.ts if needed
 // ---------------------------------------------------------------------------
@@ -197,6 +220,7 @@ export async function runSessionShow(argv: string[]): Promise<void> {
     const { tokenLine, costLine } = formatSessionCost(session.usage);
     const compactionCount = compressions.length;
     const firstCompaction = compressions[0];
+    const anatomy = readContextAnatomy(sessionId);
 
     if (jsonMode) {
       process.stdout.write(
@@ -207,6 +231,7 @@ export async function runSessionShow(argv: string[]): Promise<void> {
           turns: session.usage.apiCallCount,
           usage: session.usage,
           compactionCount,
+          contextAnatomy: anatomy,
         })}\n`,
       );
       return;
@@ -226,8 +251,23 @@ export async function runSessionShow(argv: string[]): Promise<void> {
         `${bold('Turns:')}   ${session.usage.apiCallCount}\n` +
         `${bold('Tokens:')}  ${tokenLine}\n` +
         `${bold('Cost:')}    ${costLine}\n` +
-        `${bold('Compactions:')} ${compactionCount}${compactionSuffix}\n\n`,
+        `${bold('Compactions:')} ${compactionCount}${compactionSuffix}\n`,
     );
+
+    if (anatomy) {
+      const n = (v: number) => v.toLocaleString();
+      const hitPct = Math.round(anatomy.cacheHitRate * 100);
+      process.stdout.write(
+        `\n${bold('Context anatomy')} ${dim(`(latest of ${anatomy.llmCallCount} llm call${anatomy.llmCallCount === 1 ? '' : 's'})`)}\n` +
+          `  ${'system'.padEnd(10)}${n(anatomy.system)} tok\n` +
+          `  ${'tools'.padEnd(10)}${n(anatomy.tools)} tok\n` +
+          `  ${'messages'.padEnd(10)}${n(anatomy.messages)} tok\n` +
+          `  ${dim('─────────')}\n` +
+          `  ${'total'.padEnd(10)}${n(anatomy.total)} tok\n` +
+          `  ${'cache hit'.padEnd(10)}${hitPct}%\n`,
+      );
+    }
+    process.stdout.write('\n');
   } finally {
     store.close();
   }

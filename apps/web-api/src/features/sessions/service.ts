@@ -1,5 +1,6 @@
 import { EthosError } from '@ethosagent/types';
 import type {
+  ContextAnatomyWire,
   Session as WireSession,
   StoredMessage as WireStoredMessage,
 } from '@ethosagent/web-contracts';
@@ -13,6 +14,10 @@ import type { SessionsRepository } from './repository';
 
 export interface SessionsServiceOptions {
   sessions: SessionsRepository;
+  /** Phase 0 — resolves the per-session context anatomy from observability.db
+   *  `llm_call` spans. Injected by boot code (serve). Absent in contexts with
+   *  no observability store (onboarding, tests) → the RPC returns null. */
+  contextAnatomy?: (sessionId: string) => ContextAnatomyWire | null;
 }
 
 export interface ListInput {
@@ -47,6 +52,12 @@ export class SessionsService {
       session: toWireSession(session),
       messages: messages.map(toWireMessage),
     };
+  }
+
+  async contextAnatomy(id: string): Promise<{ anatomy: ContextAnatomyWire | null }> {
+    const session = await this.opts.sessions.get(id);
+    if (!session) throw notFound(id);
+    return { anatomy: this.opts.contextAnatomy?.(id) ?? null };
   }
 
   async fork(id: string, personalityId?: string): Promise<{ session: WireSession }> {
