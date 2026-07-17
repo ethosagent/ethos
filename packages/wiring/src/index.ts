@@ -175,6 +175,11 @@ export interface WiringConfig {
   };
   /** tools-web — web_search backend preference. Auto-detect from env when unset. */
   webSearchBackend?: 'exa' | 'tavily' | 'brave';
+  /** Global FALLBACK layer for per-personality tool config (`web_search` in
+   *  v1). The personality's own `tools.yaml` is the source of truth; this fills
+   *  the gap for personalities that don't declare the tool. Keyed by
+   *  personality ID (or `_default`). */
+  toolSettings?: import('@ethosagent/config').ToolSettingsMap;
   /** Voice STT provider. auxiliary.asr in config.yaml. */
   auxiliaryAsr?: {
     provider: string;

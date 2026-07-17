@@ -8,6 +8,15 @@ export interface ToolCapabilities {
   network?: {
     allowedHosts: string[];
   };
+  /**
+   * Secret refs this tool may resolve. An entry is either an EXACT ref
+   * (`providers/exa/apiKey`) or a PREFIX GLOB ending in `/*`
+   * (`providers/exa/*`), which grants every named secret whose leading path
+   * segments equal the prefix's segments — letting a tool bind personality-
+   * chosen named secrets inside its own namespaces without a per-binding
+   * runtime grant. The match is segment-wise (see `ScopedSecretsImpl`), so a
+   * traversal ref never escapes the grant.
+   */
   secrets?: SecretRef[];
   storage?: {
     scope: StorageScope;

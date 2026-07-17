@@ -36,7 +36,13 @@ export * from './plugin-ui';
 export * from './retention';
 export * from './safety';
 export * from './sandbox';
-export { SecretNotFoundError, type SecretRef, type SecretsResolver } from './secrets';
+export {
+  isValidSecretName,
+  SECRET_NAME_RE,
+  SecretNotFoundError,
+  type SecretRef,
+  type SecretsResolver,
+} from './secrets';
 export * from './session';
 export * from './skill';
 export * from './steer';

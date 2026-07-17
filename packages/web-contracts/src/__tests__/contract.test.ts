@@ -242,6 +242,7 @@ describe('contract router', () => {
       'mesh',
       'meta',
       'models',
+      'namedSecrets',
       'onboarding',
       'personalities',
       'platforms',
@@ -250,6 +251,7 @@ describe('contract router', () => {
       'skills',
       'slashCommands',
       'tasks',
+      'toolSettings',
       'tools',
       'voice',
     ]);

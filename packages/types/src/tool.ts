@@ -152,6 +152,58 @@ export interface CacheOptions {
   keyFn?: (args: unknown) => string;
 }
 
+/**
+ * Phase 2 (web-search-provider-selection) — optional per-personality tool
+ * config contract. A tool that declares a `settingsSchema` becomes
+ * configurable per personality: the web personality-settings UI renders a
+ * form FROM this schema (it reads the schema, not tool-specific code) and
+ * writes the resulting binding to the personality's `tools.yaml` (custom
+ * personality) or the global `toolSettings` fallback (read-only built-in).
+ *
+ * Deliberately minimal — exactly TWO field kinds:
+ *   • `enum`           — a fixed choice (e.g. the web_search provider).
+ *   • `secret-binding` — a reference to a global NAMED secret. The binding
+ *                        stores the secret NAME only; the value stays in the
+ *                        vault and never travels to a personality directory or
+ *                        back to the client. `secretKind` types the picker so
+ *                        a tool can never be pointed at a secret of the wrong
+ *                        category (e.g. an LLM key).
+ *
+ * This is NOT a universal form language — add field kinds only when a second
+ * tool needs one. `web_search` is the sole consumer in v1.
+ */
+export interface ToolSettingsEnumField {
+  kind: 'enum';
+  /** Key written into the tool's settings map. */
+  key: string;
+  /** Human-readable label for the form control. */
+  label: string;
+  /** Allowed values, each with an optional display label. */
+  options: Array<{ value: string; label?: string }>;
+  /** Selection applied when the personality hasn't chosen one. */
+  default?: string;
+  required?: boolean;
+}
+
+export interface ToolSettingsSecretBindingField {
+  kind: 'secret-binding';
+  key: string;
+  label: string;
+  /**
+   * The category of named secret this binding accepts. The SecretPicker
+   * filters the global vault to secrets of this kind so, e.g., a search tool
+   * can never be bound to an LLM key. `web_search` uses `'web-search'`.
+   */
+  secretKind: string;
+  required?: boolean;
+}
+
+export type ToolSettingsField = ToolSettingsEnumField | ToolSettingsSecretBindingField;
+
+export interface ToolSettingsSchema {
+  fields: ToolSettingsField[];
+}
+
 export interface Tool<TArgs = unknown> {
   name: string;
   description: string;
@@ -159,6 +211,12 @@ export interface Tool<TArgs = unknown> {
   toolset?: string;
   maxResultChars?: number;
   capabilities: import('./tool-capabilities').ToolCapabilities;
+  /**
+   * Optional per-personality config contract. When present, the personality-
+   * settings UI renders a config form from it. Additive/optional — tools
+   * without a schema behave exactly as before. See `ToolSettingsSchema`.
+   */
+  settingsSchema?: ToolSettingsSchema;
   execute: (args: TArgs, ctx: ToolContext) => Promise<ToolResult>;
   isAvailable?: () => boolean;
   /**

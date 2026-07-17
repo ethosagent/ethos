@@ -29,6 +29,7 @@ import { memoryRouter } from './memory';
 import { meshRouter } from './mesh';
 import { metaRouter } from './meta';
 import { modelsRouter } from './models';
+import { namedSecretsRouter } from './named-secrets';
 import { onboardingRouter } from './onboarding';
 import { personalitiesRouter } from './personalities';
 import { platformsRouter } from './platforms';
@@ -36,6 +37,7 @@ import { pluginsRouter } from './plugins';
 import { skillsRouter } from './skills';
 import { slashCommandsRouter } from './slash-commands';
 import { tasksRouter } from './tasks';
+import { toolSettingsRouter } from './tool-settings';
 import { toolsRouter } from './tools';
 import { voiceRouter } from './voice';
 
@@ -109,6 +111,8 @@ export const apiRouter = {
   digest: digestRouter,
   voice: voiceRouter,
   a2a: a2aRouter,
+  namedSecrets: namedSecretsRouter,
+  toolSettings: toolSettingsRouter,
 };
 
 export type ApiRouter = typeof apiRouter;

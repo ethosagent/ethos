@@ -79,19 +79,23 @@ describe('createWebTools', () => {
 });
 
 describe('web_search', () => {
-  it('isAvailable returns false when ETHOS_EXA_API_KEY is not set', () => {
-    const saved = process.env.ETHOS_EXA_API_KEY;
-    delete process.env.ETHOS_EXA_API_KEY;
-    expect(webSearchTool.isAvailable?.()).toBe(false);
-    if (saved) process.env.ETHOS_EXA_API_KEY = saved;
-  });
-
-  it('isAvailable returns true when ETHOS_EXA_API_KEY is set', () => {
-    const saved = process.env.ETHOS_EXA_API_KEY;
-    process.env.ETHOS_EXA_API_KEY = 'test-key';
+  it('isAvailable stays true with no provider env vars — a vault-only user still gets the tool', () => {
+    // A key can arrive from the named-secrets vault via a personality binding,
+    // which is not reachable at filter time; env-only gating would wrongly
+    // filter web_search out of toDefinitions for a vault-only onboarding.
+    const saved = {
+      EXA_API_KEY: process.env.EXA_API_KEY,
+      TAVILY_API_KEY: process.env.TAVILY_API_KEY,
+      BRAVE_API_KEY: process.env.BRAVE_API_KEY,
+    };
+    delete process.env.EXA_API_KEY;
+    delete process.env.TAVILY_API_KEY;
+    delete process.env.BRAVE_API_KEY;
     expect(webSearchTool.isAvailable?.()).toBe(true);
-    if (saved) process.env.ETHOS_EXA_API_KEY = saved;
-    else delete process.env.ETHOS_EXA_API_KEY;
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   });
 
   it('returns not_available when capability backends are missing', async () => {
@@ -215,7 +219,7 @@ function makeRecordingFetch(responseBody: unknown, status = 200) {
   return { scopedFetch: { fetch }, calls };
 }
 
-const SEARCH_ENV_KEYS = ['ETHOS_EXA_API_KEY', 'TAVILY_API_KEY', 'BRAVE_API_KEY'] as const;
+const SEARCH_ENV_KEYS = ['EXA_API_KEY', 'TAVILY_API_KEY', 'BRAVE_API_KEY'] as const;
 
 function saveSearchEnv(): Record<string, string | undefined> {
   const saved: Record<string, string | undefined> = {};
@@ -247,7 +251,7 @@ function ctxWith(scopedFetch: ScopedFetchLike) {
 describe('web_search — multi-provider', () => {
   it('exa: correct URL, method, x-api-key header, body shape', async () => {
     const saved = saveSearchEnv();
-    setOnly('ETHOS_EXA_API_KEY');
+    setOnly('EXA_API_KEY');
     try {
       const rec = makeRecordingFetch({
         results: [
@@ -339,7 +343,7 @@ describe('web_search — multi-provider', () => {
 
   it('auto-detect: exa-only → exa', async () => {
     const saved = saveSearchEnv();
-    setOnly('ETHOS_EXA_API_KEY');
+    setOnly('EXA_API_KEY');
     try {
       const rec = makeRecordingFetch({ results: [] });
       await createWebTools({})[0].execute({ query: 'q' }, ctxWith(rec.scopedFetch));
@@ -379,7 +383,7 @@ describe('web_search — multi-provider', () => {
     const saved = saveSearchEnv();
     for (const k of SEARCH_ENV_KEYS) delete process.env[k];
     process.env.BRAVE_API_KEY = 'test-key';
-    process.env.ETHOS_EXA_API_KEY = 'test-key';
+    process.env.EXA_API_KEY = 'test-key';
     try {
       const rec = makeRecordingFetch({ web: { results: [] } });
       await createWebTools({ searchBackend: 'brave' })[0].execute(
@@ -404,6 +408,151 @@ describe('web_search — multi-provider', () => {
       if (!result.ok) expect(result.code).toBe('not_available');
     } finally {
       restoreSearchEnv(saved);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// web_search — per-personality provider + named-secret resolution
+// ---------------------------------------------------------------------------
+
+function makeRecordingSecrets(value = 'bound-key') {
+  const refs: string[] = [];
+  return {
+    refs,
+    get: async (ref: string): Promise<string> => {
+      refs.push(ref);
+      return value;
+    },
+  };
+}
+
+function ctxFor(
+  scopedFetch: ScopedFetchLike,
+  personalityId: string | undefined,
+  secrets: { get: (ref: string) => Promise<string> },
+) {
+  return {
+    ...ctx,
+    scopedFetch,
+    secretsResolver: secrets,
+    ...(personalityId ? { personalityId } : {}),
+  };
+}
+
+describe('web_search — provider + named-secret resolution', () => {
+  it('personality tools.yaml wins over global toolSettings', async () => {
+    const rec = makeRecordingFetch({ results: [] });
+    const secrets = makeRecordingSecrets();
+    const tool = createWebTools({
+      resolvePersonalitySetting: (pid) =>
+        pid === 'researcher' ? { provider: 'exa', secret: 'exa-main' } : undefined,
+      toolSettings: {
+        researcher: { web_search: { provider: 'tavily', secret: 'tav' } },
+        _default: { web_search: { provider: 'brave', secret: 'br' } },
+      },
+    })[0];
+    const result = await tool.execute(
+      { query: 'q' },
+      ctxFor(rec.scopedFetch, 'researcher', secrets),
+    );
+    expect(result.ok).toBe(true);
+    expect(rec.calls[0]?.url).toBe('https://api.exa.ai/search');
+    expect(secrets.refs).toContain('providers/exa/exa-main');
+  });
+
+  it('built-in with no file falls back to global toolSettings[personalityId]', async () => {
+    const rec = makeRecordingFetch({ web: { results: [] } });
+    const secrets = makeRecordingSecrets();
+    const tool = createWebTools({
+      toolSettings: {
+        scout: { web_search: { provider: 'brave', secret: 'brave-main' } },
+        _default: { web_search: { provider: 'tavily', secret: 'tav' } },
+      },
+    })[0];
+    await tool.execute({ query: 'q' }, ctxFor(rec.scopedFetch, 'scout', secrets));
+    expect(rec.calls[0]?.url.startsWith('https://api.search.brave.com')).toBe(true);
+    expect(secrets.refs).toContain('providers/brave/brave-main');
+  });
+
+  it('falls through to _default when no personality-specific slot exists', async () => {
+    const rec = makeRecordingFetch({ results: [] });
+    const secrets = makeRecordingSecrets();
+    const tool = createWebTools({
+      toolSettings: { _default: { web_search: { provider: 'tavily', secret: 'tav' } } },
+    })[0];
+    await tool.execute({ query: 'q' }, ctxFor(rec.scopedFetch, 'nobody', secrets));
+    expect(rec.calls[0]?.url.startsWith('https://api.tavily.com/search')).toBe(true);
+    expect(secrets.refs).toContain('providers/tavily/tav');
+  });
+
+  it('provider binding without a secret name uses the default-named secret', async () => {
+    const rec = makeRecordingFetch({ results: [] });
+    const secrets = makeRecordingSecrets();
+    const tool = createWebTools({
+      resolvePersonalitySetting: () => ({ provider: 'exa' }),
+    })[0];
+    await tool.execute({ query: 'q' }, ctxFor(rec.scopedFetch, 'researcher', secrets));
+    expect(secrets.refs).toContain('providers/exa/apiKey');
+  });
+
+  it('bound-secret read succeeds and the tool never reads a raw value from the personality dir', async () => {
+    // The personality setting carries only a NAME; the VALUE is read from the
+    // vault (secretsResolver) via a providers/<provider>/<name> ref.
+    const rec = makeRecordingFetch({
+      results: [{ title: 'T', url: 'https://e.com', text: 'body' }],
+    });
+    const secrets = makeRecordingSecrets('super-secret-value');
+    const tool = createWebTools({
+      resolvePersonalitySetting: () => ({ provider: 'exa', secret: 'exa-main' }),
+    })[0];
+    const result = await tool.execute(
+      { query: 'q' },
+      ctxFor(rec.scopedFetch, 'researcher', secrets),
+    );
+    expect(result.ok).toBe(true);
+    // Only a vault ref was resolved — never a literal value.
+    expect(secrets.refs).toEqual(['providers/exa/exa-main']);
+    expect(new Headers(rec.calls[0]?.init?.headers).get('x-api-key')).toBe('super-secret-value');
+  });
+
+  it('backward compat: nothing specified anywhere → first-available (unchanged)', async () => {
+    const saved = saveSearchEnv();
+    setOnly('TAVILY_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      const tool = createWebTools({})[0];
+      await tool.execute({ query: 'q' }, ctxFor(rec.scopedFetch, 'researcher', mockSecrets));
+      expect(rec.calls[0]?.url.startsWith('https://api.tavily.com/search')).toBe(true);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Exa availability — aligned on EXA_API_KEY (not the stale ETHOS_EXA_API_KEY)
+// ---------------------------------------------------------------------------
+
+describe('web_search — Exa availability env fix', () => {
+  it('ETHOS_EXA_API_KEY (stale name) does not auto-select exa', async () => {
+    // The tool itself is now always registered (a key can come from the vault),
+    // so availability no longer keys off env. But the env-based AUTO-SELECT path
+    // must still honor only the canonical `EXA_API_KEY` — the stale
+    // `ETHOS_EXA_API_KEY` name must not resolve a backend. With no personality
+    // binding and only the stale name set, execute finds no backend.
+    const saved = saveSearchEnv();
+    const savedLegacy = process.env.ETHOS_EXA_API_KEY;
+    for (const k of SEARCH_ENV_KEYS) delete process.env[k];
+    process.env.ETHOS_EXA_API_KEY = 'legacy';
+    try {
+      const result = await createWebTools({})[0].execute({ query: 'q' }, ctx);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('not_available');
+    } finally {
+      restoreSearchEnv(saved);
+      if (savedLegacy === undefined) delete process.env.ETHOS_EXA_API_KEY;
+      else process.env.ETHOS_EXA_API_KEY = savedLegacy;
     }
   });
 });
@@ -511,5 +660,20 @@ describe('web_extract — summarization', () => {
       expect(result.code).toBe('execution_failed');
       expect(result.error).toMatch(/too large/);
     }
+  });
+});
+
+describe('web_search settingsSchema (Phase 2 contract)', () => {
+  it('declares a minimal provider enum + secret-binding schema', () => {
+    const schema = webSearchTool.settingsSchema;
+    if (!schema) throw new Error('expected web_search to declare a settingsSchema');
+    expect(schema.fields.map((f) => f.kind)).toEqual(['enum', 'secret-binding']);
+    const provider = schema.fields[0];
+    if (provider?.kind !== 'enum') throw new Error('expected provider enum field');
+    expect(provider.key).toBe('provider');
+    expect(provider.options.map((o) => o.value)).toEqual(['exa', 'tavily', 'brave']);
+    const secret = schema.fields[1];
+    if (secret?.kind !== 'secret-binding') throw new Error('expected secret-binding field');
+    expect(secret.secretKind).toBe('web-search');
   });
 });

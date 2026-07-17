@@ -87,6 +87,22 @@ export interface ActiveContext {
   name: string;
 }
 
+/** A personality's binding for the `web_search` tool. `secret` is a NAME
+ *  only (e.g. `exa-main`) — resolves to `providers/<provider>/<name>` in the
+ *  vault. Never a value (§V S9). */
+export interface WebSearchToolSetting {
+  provider?: 'exa' | 'tavily' | 'brave';
+  secret?: string;
+}
+
+/** Per-personality tool config. Only `web_search` is modeled in v1. */
+export interface PersonalityToolSettings {
+  web_search?: WebSearchToolSetting;
+}
+
+/** Global FALLBACK map: personality ID (or `_default`) → per-tool config. */
+export type ToolSettingsMap = Record<string, PersonalityToolSettings>;
+
 /**
  * Per-bot routing binding. The bot's external identity (@handle, OAuth app)
  * is fixed to one destination — either a single personality or a team's
@@ -315,6 +331,14 @@ export interface EthosConfig {
   apiVersion?: string;
   // Per-personality model overrides: maps personality ID → model ID string
   modelRouting?: Record<string, string>;
+  /**
+   * Global FALLBACK layer for per-personality tool config. Keyed by
+   * personality ID (or `_default`). The personality's own `tools.yaml` is the
+   * source of truth; this map only fills the gap for personalities (especially
+   * read-only built-ins) that don't declare a tool. Only secret NAMES live
+   * here — never values (§V S9). `web_search` is the sole consumer in v1.
+   */
+  toolSettings?: ToolSettingsMap;
   /**
    * §7 — per-model config profile overrides, merged OVER the catalog profile
    * for the same `(providerId, modelId)`. Keyed by `<providerId>/<modelId>`
@@ -697,6 +721,13 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       lines.push(`modelRouting.${id}: ${model}`);
     }
   }
+  if (config.toolSettings) {
+    for (const [id, settings] of Object.entries(config.toolSettings)) {
+      const ws = settings.web_search;
+      if (ws?.provider) lines.push(`toolSettings.${id}.web_search.provider: ${ws.provider}`);
+      if (ws?.secret) lines.push(`toolSettings.${id}.web_search.secret: ${ws.secret}`);
+    }
+  }
   if (config.models) {
     for (const [modelKey, profile] of Object.entries(config.models)) {
       if (profile.sampling) {
@@ -1016,6 +1047,7 @@ export async function resolveConfigSecrets(
 function parseConfigYaml(src: string): EthosConfig {
   const kv: Record<string, string> = {};
   const modelRouting: Record<string, string> = {};
+  const toolSettings: ToolSettingsMap = {};
   const activeContextKv: Record<string, string> = {};
   const providersKv: Record<number, Record<string, string>> = {};
   const retentionKv: Record<string, string> = {};
@@ -1241,6 +1273,23 @@ function parseConfigYaml(src: string): EthosConfig {
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
     if (mr) {
       modelRouting[mr[1].trim()] = mr[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // toolSettings.<personality|_default>.web_search.<provider|secret>: <value>
+    const tsMatch = line.match(/^toolSettings\.([^.]+)\.web_search\.(provider|secret):\s*(.+)$/);
+    if (tsMatch) {
+      const id = tsMatch[1].trim();
+      const field = tsMatch[2];
+      const val = tsMatch[3].trim().replace(/^["']|["']$/g, '');
+      const slot = toolSettings[id] ?? {};
+      toolSettings[id] = slot;
+      const ws = slot.web_search ?? {};
+      slot.web_search = ws;
+      if (field === 'provider') {
+        if (val === 'exa' || val === 'tavily' || val === 'brave') ws.provider = val;
+      } else {
+        ws.secret = val;
+      }
       continue;
     }
     // activeContext.type / activeContext.name
@@ -1483,6 +1532,7 @@ function parseConfigYaml(src: string): EthosConfig {
     baseUrl: kv.baseUrl,
     apiVersion: kv.apiVersion,
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
+    toolSettings: Object.keys(toolSettings).length > 0 ? toolSettings : undefined,
     models,
     compaction,
     activeContext,
