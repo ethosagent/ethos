@@ -25,6 +25,8 @@ const srcAliases = {
   '@ethosagent/safety-watcher': resolve('./packages/safety/watcher/src'),
   '@ethosagent/tools-file': resolve('./extensions/tools-file/src'),
   '@ethosagent/tools-mcp': resolve('./extensions/tools-mcp/src'),
+  '@ethosagent/tools-voice': resolve('./extensions/tools-voice/src'),
+  '@ethosagent/platform-voice': resolve('./extensions/platform-voice/src'),
   '@ethosagent/agent-bridge': resolve('./packages/agent-bridge/src'),
   '@ethosagent/plugin-loader': resolve('./extensions/plugin-loader/src'),
   '@ethosagent/execution-local': resolve('./extensions/execution-local/src'),

@@ -195,6 +195,33 @@ export interface VoiceLiveKitConfig {
   apiSecret: string;
 }
 
+/**
+ * SIP trunk config for telephony (plan/phases/gap-voice-realtime.md §4 Phase C).
+ * A rented PSTN number + SIP trunk (Twilio/Telnyx/…) is pointed at LiveKit SIP,
+ * so an inbound/outbound phone call becomes just another LiveKit participant
+ * bridged into a room. This block holds the trunk-level connection facts; the
+ * per-number → personality routing reuses `voice.bots[]` (a bot's `match` is an
+ * E.164 number/pattern, its `bind` names the personality/team — no separate
+ * mapping structure).
+ *
+ * `provider` + `trunkId` are required together. `password`, like
+ * `voice.livekit.apiSecret`, is read as a literal — the concrete SIP binding
+ * (`livekit-server-sdk` SIP API) is supplied at the app layer, not committed.
+ */
+export interface VoiceTrunkConfig {
+  /** Telephony trunk provider bridged into LiveKit SIP. Informational — the
+   *  app-layer binding selects the concrete SDK/credentials shape. */
+  provider: 'twilio' | 'telnyx' | 'generic';
+  /** LiveKit SIP trunk id the number is attached to (inbound + outbound). */
+  trunkId: string;
+  /** Caller-ID number presented on outbound `call` (E.164). Optional. */
+  fromNumber?: string;
+  /** SIP registrar/auth username for outbound trunk auth. Optional. */
+  username?: string;
+  /** SIP auth password/token. Optional; read as a literal (like apiSecret). */
+  password?: string;
+}
+
 export interface ProviderConfig {
   provider: string;
   apiKey: string;
@@ -569,9 +596,10 @@ export interface EthosConfig {
    *   voice.bots.0.match: +15551234567
    *   voice.bots.0.bind.type: personality
    *   voice.bots.0.bind.name: receptionist
-   * LiveKit transport keys live alongside the bots under `voice.livekit.*`.
+   * LiveKit transport keys live alongside the bots under `voice.livekit.*`;
+   * SIP trunk keys (telephony) live under `voice.trunk.*`.
    */
-  voice?: { bots: VoiceBotConfig[]; livekit?: VoiceLiveKitConfig };
+  voice?: { bots: VoiceBotConfig[]; livekit?: VoiceLiveKitConfig; trunk?: VoiceTrunkConfig };
   // Email platform
   emailImapHost?: string;
   emailImapPort?: number;
@@ -1086,6 +1114,14 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       lines.push(`voice.livekit.apiKey: ${config.voice.livekit.apiKey}`);
       lines.push(`voice.livekit.apiSecret: ${config.voice.livekit.apiSecret}`);
     }
+    if (config.voice.trunk) {
+      const t = config.voice.trunk;
+      lines.push(`voice.trunk.provider: ${t.provider}`);
+      lines.push(`voice.trunk.trunkId: ${t.trunkId}`);
+      if (t.fromNumber) lines.push(`voice.trunk.fromNumber: ${t.fromNumber}`);
+      if (t.username) lines.push(`voice.trunk.username: ${t.username}`);
+      if (t.password) lines.push(`voice.trunk.password: ${t.password}`);
+    }
   }
   if (config.teams) {
     for (const [name, tcfg] of Object.entries(config.teams)) {
@@ -1353,6 +1389,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const whatsappKv: Record<number, Record<string, string>> = {};
   const voiceBotsKv: Record<number, Record<string, string>> = {};
   const voiceLiveKitKv: Record<string, string> = {};
+  const voiceTrunkKv: Record<string, string> = {};
   const teamsKv: Record<string, Record<string, string>> = {};
   const webhooksKv: Record<string, Record<string, string>> = {};
   // FW-16 — quick_commands.<name>.<field>: <value>
@@ -1428,6 +1465,12 @@ function parseConfigYaml(src: string): EthosConfig {
     const vlk = line.match(/^voice\.livekit\.(\w+):\s*(.+)$/);
     if (vlk) {
       voiceLiveKitKv[vlk[1]] = vlk[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // voice.trunk.<field>: <value>
+    const vtr = line.match(/^voice\.trunk\.(\w+):\s*(.+)$/);
+    if (vtr) {
+      voiceTrunkKv[vtr[1]] = vtr[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // teams.<name>.<field>: <value>
@@ -1841,11 +1884,13 @@ function parseConfigYaml(src: string): EthosConfig {
   const whatsappResult = buildWhatsApps(whatsappKv);
   const voiceResult = buildVoiceBots(voiceBotsKv);
   const voiceLiveKitResult = buildVoiceLiveKit(voiceLiveKitKv);
+  const voiceTrunkResult = buildVoiceTrunk(voiceTrunkKv);
   const voiceSection =
-    voiceResult.bots.length > 0 || voiceLiveKitResult.livekit
+    voiceResult.bots.length > 0 || voiceLiveKitResult.livekit || voiceTrunkResult.trunk
       ? {
           bots: voiceResult.bots,
           ...(voiceLiveKitResult.livekit ? { livekit: voiceLiveKitResult.livekit } : {}),
+          ...(voiceTrunkResult.trunk ? { trunk: voiceTrunkResult.trunk } : {}),
         }
       : undefined;
   const teams = buildTeamsConfig(teamsKv);
@@ -1858,6 +1903,7 @@ function parseConfigYaml(src: string): EthosConfig {
     ...whatsappResult.errors,
     ...voiceResult.errors,
     ...voiceLiveKitResult.errors,
+    ...voiceTrunkResult.errors,
     ...webhooksResult.errors,
   ];
 
@@ -2500,6 +2546,36 @@ function buildVoiceLiveKit(kv: Record<string, string>): {
     return { errors };
   }
   return { livekit: { url, apiKey, apiSecret }, errors: [] };
+}
+
+const VOICE_TRUNK_PROVIDERS = ['twilio', 'telnyx', 'generic'] as const;
+
+function buildVoiceTrunk(kv: Record<string, string>): {
+  trunk?: VoiceTrunkConfig;
+  errors: string[];
+} {
+  // Absent block is valid — SIP trunk keys are optional.
+  if (Object.keys(kv).length === 0) return { errors: [] };
+  const errors: string[] = [];
+  const { provider, trunkId, fromNumber, username, password } = kv;
+  if (!provider) errors.push("voice.trunk: missing required field 'provider'.");
+  else if (!(VOICE_TRUNK_PROVIDERS as readonly string[]).includes(provider)) {
+    errors.push(
+      `voice.trunk: invalid provider '${provider}' (expected one of: ${VOICE_TRUNK_PROVIDERS.join(', ')}).`,
+    );
+  }
+  if (!trunkId) errors.push("voice.trunk: missing required field 'trunkId'.");
+  if (errors.length > 0) return { errors };
+  return {
+    trunk: {
+      provider: provider as VoiceTrunkConfig['provider'],
+      trunkId,
+      ...(fromNumber ? { fromNumber } : {}),
+      ...(username ? { username } : {}),
+      ...(password ? { password } : {}),
+    },
+    errors: [],
+  };
 }
 
 function buildTeamsConfig(

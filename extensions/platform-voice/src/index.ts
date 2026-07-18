@@ -24,4 +24,17 @@ export {
   type LiveKitVoiceTransportDeps,
   resamplePcm,
 } from './livekit/transport';
+export {
+  createInboundDispatcher,
+  type InboundDispatchDeps,
+  matchesVoicePattern,
+  resolveVoiceBot,
+} from './sip/inbound-dispatch';
+export { createPostCallSummary, type PostCallSummaryDeps } from './sip/post-call-summary';
+export type {
+  InboundSipCall,
+  OutboundCallHandle,
+  OutboundCallRequest,
+  SipTrunkClient,
+} from './sip/trunk-client';
 export type { OutboundAudioFrame, VoiceTransport } from './transport';

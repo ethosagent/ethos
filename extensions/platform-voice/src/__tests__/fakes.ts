@@ -9,6 +9,7 @@ import type {
   StreamingTtsProvider,
 } from '@ethosagent/types';
 import type { AgentTurnRunner, Vad } from '@ethosagent/voice-session';
+import type { OutboundCallHandle, OutboundCallRequest, SipTrunkClient } from '../sip/trunk-client';
 import type { OutboundAudioFrame, VoiceTransport } from '../transport';
 
 export class FakeVoiceTransport implements VoiceTransport {
@@ -43,6 +44,19 @@ export class FakeVoiceTransport implements VoiceTransport {
   /** Test driver: simulate one inbound audio frame from the participant. */
   emit(chunk: PcmChunk): void {
     for (const handler of this.handlers) handler(chunk);
+  }
+}
+
+/** In-memory SipTrunkClient — records outbound calls without any real SIP
+ *  trunk. `calls` is the assertion surface (empty ⇒ no call was placed). */
+export class FakeSipTrunkClient implements SipTrunkClient {
+  readonly calls: OutboundCallRequest[] = [];
+  private seq = 0;
+
+  async createOutboundCall(req: OutboundCallRequest): Promise<OutboundCallHandle> {
+    this.calls.push(req);
+    this.seq += 1;
+    return { callId: `call-${this.seq}`, roomName: req.roomName, toNumber: req.toNumber };
   }
 }
 

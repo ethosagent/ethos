@@ -113,3 +113,70 @@ in CI.
    `scripts/voice-latency-bench.ts` per-stage timings.
 7. **Barge-in**: speak over the reply and confirm playout stops within ~300ms and
    history records `[interrupted]`.
+
+## Telephony (SIP) — `src/sip/`
+
+A SIP phone call is just another LiveKit participant. A rented PSTN number + SIP
+trunk (Twilio/Telnyx/…) is pointed at LiveKit SIP, which bridges the call into a
+LiveKit room; from there the **same** `LiveKitVoiceTransport → VoiceChannelAdapter
+→ VoiceSession` stack handles the audio. Phase C adds only the trunk/dispatch and
+outbound-call layer *around* that stack — it does not fork it.
+
+- **`sip/trunk-client.ts`** — `SipTrunkClient`: the isolated boundary for
+  `createOutboundCall({ toNumber, roomName, … })` plus the `InboundSipCall`
+  shape. The production binding wraps `livekit-server-sdk`'s SIP API (`SipClient`
+  — `createSIPParticipant` for outbound, inbound trunk + dispatch rules for
+  inbound). **`livekit-server-sdk` is NOT installed in-repo** (same rationale as
+  `@livekit/rtc-node` — an unverifiable server binding); everything here binds
+  only to the interface, so it unit-tests against `FakeSipTrunkClient`.
+- **`sip/inbound-dispatch.ts`** — `createInboundDispatcher`: resolves an inbound
+  call's dialed DID (`toNumber`) against the `voice.bots[]` patterns
+  (`resolveVoiceBot` / `matchesVoicePattern`) to pick the bound personality, then
+  delegates to an injected `buildAdapter` to compose the transport→adapter→session.
+  The caller's number (`fromNumber`) becomes the adapter `callerId`, so the lane
+  key `voice:<botKey>:<callerId>` gives a repeat caller their own session —
+  cross-call memory with no new machinery.
+- **`sip/post-call-summary.ts`** — `createPostCallSummary`: on call end, builds a
+  summary from the adapter's honest transcript (`lastReplyText()`) and posts it via
+  `adapter.sendArtifactMessage()` → the gateway's deduped `send()` gate. Same
+  dedup path as every outbound message — never a new dedup layer.
+
+The outbound `call` **tool** lives in `@ethosagent/tools-voice`. It is marked
+`requiresApproval: true`, so AgentLoop gates it on the approval surface before a
+number is ever dialed — an autonomous turn cannot place a call without approval.
+
+Config: `voice.trunk.*` (provider, `trunkId`, optional `fromNumber`/`username`/
+`password`) + the existing `voice.bots[]` (DID → personality) + `voice.livekit.*`.
+
+### Telephony (SIP) manual verification checklist (real bindings + rented number)
+
+NOT run in CI — this exercises the native SIP path end to end.
+
+1. **Rent a number + SIP trunk** from Twilio or Telnyx and point its origination
+   at your LiveKit SIP endpoint (LiveKit Cloud or self-hosted
+   `livekit-server` + the SIP service). Register the inbound/outbound trunk with
+   LiveKit and note the trunk id.
+2. **Configure** `~/.ethos/config.yaml`:
+   ```
+   voice.livekit.url: wss://<your-livekit>
+   voice.livekit.apiKey: <key>
+   voice.livekit.apiSecret: <secret>
+   voice.trunk.provider: twilio        # or telnyx / generic
+   voice.trunk.trunkId: <livekit-sip-trunk-id>
+   voice.trunk.fromNumber: +1<your-rented-number>
+   voice.bots.0.match: +1<your-rented-number>   # DID -> personality
+   voice.bots.0.bind.type: personality
+   voice.bots.0.bind.name: <a voice-capable personality>
+   ```
+3. **Implement the app-layer SIP binding**: a `SipTrunkClient` wrapping
+   `livekit-server-sdk`'s `SipClient.createSIPParticipant` (outbound) and an
+   inbound webhook/dispatch-rule callback that delivers an `InboundSipCall`
+   (`fromNumber`, dialed `toNumber`, `roomName`) into `createInboundDispatcher`.
+   Inject the app-layer `LiveKitRoomClient`/`LiveKitTokenMinter` factory (see
+   above) as the per-caller `buildAdapter`.
+4. **Inbound**: dial the number, converse, hang up. Verify the post-call summary
+   was posted to the paired text channel, then **call again from the same number**
+   and confirm the agent recalls prior context (per-caller lane memory).
+5. **Outbound**: ask the agent to place a `call`; approve the `call` tool at the
+   approval prompt and confirm it dials the destination and connects into the room.
+   Confirm that *denying* the approval places no call.

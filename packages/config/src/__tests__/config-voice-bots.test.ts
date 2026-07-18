@@ -256,6 +256,108 @@ describe('parseConfigYaml — voice.livekit.*', () => {
   });
 });
 
+describe('parseConfigYaml — voice.trunk.*', () => {
+  it('parses a full SIP trunk block alongside bots + livekit', async () => {
+    const cfg = await load(
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk',
+        'personality: researcher',
+        'voice.bots.0.match: +15551234567',
+        'voice.bots.0.bind.type: personality',
+        'voice.bots.0.bind.name: researcher',
+        'voice.trunk.provider: twilio',
+        'voice.trunk.trunkId: TK123',
+        'voice.trunk.fromNumber: +15550000000',
+        'voice.trunk.username: sipuser',
+        'voice.trunk.password: sippass',
+      ].join('\n'),
+    );
+
+    expect(cfg.voice?.trunk).toEqual({
+      provider: 'twilio',
+      trunkId: 'TK123',
+      fromNumber: '+15550000000',
+      username: 'sipuser',
+      password: 'sippass',
+    });
+    expect(cfg.voice?.bots).toHaveLength(1);
+  });
+
+  it('parses a minimal trunk block (provider + trunkId only)', async () => {
+    const cfg = await load(
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk',
+        'personality: researcher',
+        'voice.trunk.provider: telnyx',
+        'voice.trunk.trunkId: trunk-1',
+      ].join('\n'),
+    );
+
+    expect(cfg.voice?.trunk).toEqual({ provider: 'telnyx', trunkId: 'trunk-1' });
+    expect(cfg.voice?.bots).toEqual([]);
+  });
+
+  it('round-trips the trunk block through writeConfig -> readRawConfig', async () => {
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'm',
+      apiKey: 'sk',
+      personality: 'researcher',
+      voice: {
+        bots: [{ match: '+1555', bind: { type: 'personality', name: 'researcher' } }],
+        trunk: {
+          provider: 'twilio',
+          trunkId: 'TK123',
+          fromNumber: '+15550000000',
+          username: 'sipuser',
+          password: 'sippass',
+        },
+      },
+    };
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await writeConfig(storage, original);
+    const reloaded = await readRawConfig(storage);
+
+    expect(reloaded?.voice).toEqual(original.voice);
+  });
+
+  it('surfaces a parse error for a trunk block missing trunkId', async () => {
+    const result = await loadStrict(
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk',
+        'personality: researcher',
+        'voice.trunk.provider: twilio',
+      ].join('\n'),
+    );
+    expect(result?.parseErrors.some((e) => e.includes("missing required field 'trunkId'"))).toBe(
+      true,
+    );
+    expect(result?.config.voice?.trunk).toBeUndefined();
+  });
+
+  it('surfaces a parse error for an invalid trunk provider', async () => {
+    const result = await loadStrict(
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk',
+        'personality: researcher',
+        'voice.trunk.provider: vonage',
+        'voice.trunk.trunkId: TK123',
+      ].join('\n'),
+    );
+    expect(result?.parseErrors.some((e) => e.includes("invalid provider 'vonage'"))).toBe(true);
+    expect(result?.config.voice?.trunk).toBeUndefined();
+  });
+});
+
 describe('validateBotBindings — voice.bots[]', () => {
   const deps = {
     personalityIds: new Set(['researcher']),
