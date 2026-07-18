@@ -1116,6 +1116,9 @@ importers:
       '@ethosagent/memory-markdown':
         specifier: workspace:*
         version: link:../memory-markdown
+      '@ethosagent/nightly-loop':
+        specifier: workspace:*
+        version: link:../nightly-loop
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../../packages/safety/injection

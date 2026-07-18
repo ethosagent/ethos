@@ -498,6 +498,18 @@ try {
         break;
       }
 
+      if (sub === 'supersede') {
+        const { runMemorySupersede } = await import('./commands/memory-supersede');
+        await runMemorySupersede(args.slice(2));
+        break;
+      }
+
+      if (sub === 'retract') {
+        const { runMemoryRetract } = await import('./commands/memory-retract');
+        await runMemoryRetract(args.slice(2));
+        break;
+      }
+
       const config = await readConfig(getStorage(), await getSecretsResolver());
 
       if (config?.memory === 'vector') {
@@ -605,7 +617,8 @@ try {
           console.log('Memory cleared.');
         } else {
           console.log(
-            'Usage: ethos memory [show | add "<text>" | clear | history | restore <slug>]',
+            'Usage: ethos memory [show | add "<text>" | clear | history | restore <slug> | ' +
+              'supersede <slug> --by <slug> | retract <slug>]',
           );
         }
       }

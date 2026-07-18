@@ -931,6 +931,10 @@ export {
   withPendingGate,
 } from '@ethosagent/memory-approval';
 
+// Content-normalized fact hash — the tombstone key shared by capture dedup and
+// the L4 `ethos memory retract` op, so a retracted fact is never re-proposed.
+export { hashFact } from '@ethosagent/memory-capture';
+
 export {
   type HistoryEntry,
   type HistoryReadFilter,

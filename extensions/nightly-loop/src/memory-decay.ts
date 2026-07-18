@@ -24,12 +24,28 @@ export interface MetaEntry {
   importance: number;
   /** epoch-ms this slug was first seen; preserved across rewords (§4.1). */
   lastSeen: number;
+  /**
+   * Fact lifecycle state (L4, §3c). Absent ≡ 'active' — existing sidecars (and
+   * every slug the nightly decay pass tracks) carry no `state` and read as
+   * active. Only explicit lifecycle ops (`ethos memory supersede|retract`) set
+   * 'superseded' / 'retracted'; those sections have left the live file for the
+   * archive, so they never reappear as a scored consolidation section.
+   */
+  state?: 'active' | 'superseded' | 'retracted';
+  /** For a superseded section: the slug that replaced it (L4, §3c). */
+  supersededBy?: string;
 }
 
 /** Sidecar shape — `memory-meta.json` per scope. `keys[file][slug] = entry`. */
 export interface MemoryMeta {
   version: 1;
   keys: Record<string, Record<string, MetaEntry>>;
+  /**
+   * Fact-hashes retracted via `ethos memory retract` (L4, §3c). The DURABLE
+   * capture-skip list is the append-only `TombstoneStore` capture consults; this
+   * sidecar field is the lifecycle ledger, carried forward across nightly passes.
+   */
+  retractedHashes?: string[];
 }
 
 /** Tuning knobs; the orchestrator resolves defaults via `resolveDecayParams`. */
@@ -97,12 +113,24 @@ export function parseMemoryMeta(raw: string | null): MemoryMeta {
       if (!entry || typeof entry !== 'object') continue;
       const e = entry as Record<string, unknown>;
       if (typeof e.importance === 'number' && typeof e.lastSeen === 'number') {
-        out[slug] = { importance: e.importance, lastSeen: e.lastSeen };
+        const parsedEntry: MetaEntry = { importance: e.importance, lastSeen: e.lastSeen };
+        if (e.state === 'superseded' || e.state === 'retracted' || e.state === 'active') {
+          parsedEntry.state = e.state;
+        }
+        if (typeof e.supersededBy === 'string') parsedEntry.supersededBy = e.supersededBy;
+        out[slug] = parsedEntry;
       }
     }
     if (Object.keys(out).length > 0) keys[key] = out;
   }
-  return { version: 1, keys };
+  const retractedHashes = Array.isArray(obj.retractedHashes)
+    ? obj.retractedHashes.filter((h): h is string => typeof h === 'string')
+    : [];
+  return {
+    version: 1,
+    keys,
+    ...(retractedHashes.length > 0 ? { retractedHashes } : {}),
+  };
 }
 
 export interface ConsolidationPlan {
@@ -205,6 +233,26 @@ export function planConsolidation(args: {
       });
       archivedSlugs.push(section.slug);
     }
+  }
+
+  // L4: preserve the lifecycle ledger across the nightly rebuild. Superseded /
+  // retracted slugs have left the live files, so they never surface as a scored
+  // section above — carry their sidecar entries (and the retracted-hash list)
+  // forward verbatim. Active importance is rebuilt from the scored sections;
+  // lifecycle state is copied, not recomputed. This is the single-writer's half
+  // of the L4 coexistence contract: the nightly pass never drops a state an
+  // explicit lifecycle op recorded (see extensions/nightly-loop/memory-lifecycle).
+  for (const [fileKey, slugMap] of Object.entries(meta.keys)) {
+    for (const [slug, entry] of Object.entries(slugMap)) {
+      if (entry.state === 'superseded' || entry.state === 'retracted') {
+        const carried = nextMeta.keys[fileKey] ?? {};
+        carried[slug] = entry;
+        nextMeta.keys[fileKey] = carried;
+      }
+    }
+  }
+  if (meta.retractedHashes && meta.retractedHashes.length > 0) {
+    nextMeta.retractedHashes = [...meta.retractedHashes];
   }
 
   return { updates, nextMeta, archivedSlugs };

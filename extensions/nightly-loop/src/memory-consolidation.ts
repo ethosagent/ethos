@@ -60,6 +60,11 @@ const SYSTEM_PROMPT =
   'Organise BOTH files into short sections, each under a `### <slug>` heading. ' +
   'A slug is a short lowercase-hyphen identifier (e.g. `daughter-priya`, `project-ethos`); ' +
   'REUSE the same slug for the same topic across runs so it stays stable. ' +
+  'When a newer fact REPLACES an older one, keep only the newer section and drop the ' +
+  'stale/contradicted one (a superseded fact is a candidate for `ethos memory supersede`); ' +
+  'never keep two sections that contradict each other. ' +
+  'Render recurring proper nouns — people, projects, places — as `[[wikilinks]]` ' +
+  '(e.g. `[[Priya]]`, `[[Project Ethos]]`) so entities cross-link. ' +
   'Then rate each section from 0.0 to 1.0 by how durable and important it is ' +
   '(1.0 = crown-jewel identity, 0.0 = passing trivia). ' +
   'Output exactly three labelled blocks and nothing else:\n' +

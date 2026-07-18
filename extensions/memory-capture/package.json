@@ -20,6 +20,7 @@
   "devDependencies": {
     "@ethosagent/memory-approval": "workspace:*",
     "@ethosagent/memory-markdown": "workspace:*",
+    "@ethosagent/nightly-loop": "workspace:*",
     "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*"
   }

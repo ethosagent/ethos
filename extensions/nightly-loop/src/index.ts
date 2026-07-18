@@ -26,6 +26,12 @@ export {
   renderSection,
   resolveDecayParams,
 } from './memory-decay';
+export type {
+  LifecycleResult,
+  RetractDeps,
+  SupersedeDeps,
+} from './memory-lifecycle';
+export { retractSlug, supersedeSlug } from './memory-lifecycle';
 export type { RestoreResult } from './memory-restore';
 export { restoreArchivedSlug } from './memory-restore';
 export type {
