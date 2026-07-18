@@ -2,8 +2,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
-import { FsStorage } from '@ethosagent/storage-fs';
-import { createMemoryProvider, HistoryStore } from '@ethosagent/wiring';
+import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
+import {
+  createMemoryProvider,
+  createPendingMemoryStore,
+  HistoryStore,
+  type PendingMemoryStore,
+  type TombstoneStore,
+} from '@ethosagent/wiring';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MemoryService } from '../../services/memory.service';
 
@@ -194,5 +200,107 @@ describe('MemoryService.history / restore (Timeline)', () => {
     const personalityDir = join(dir, 'personalities', PERSONALITY_ID);
     await writeFile(join(personalityDir, 'memory-archive.md'), '');
     await expect(service.restore(PERSONALITY_ID, 'nope')).rejects.toThrow();
+  });
+});
+
+describe('MemoryService.pending (approve-before-store, L3)', () => {
+  const scopeId = `personality:${PERSONALITY_ID}`;
+  const dataDir = '/data';
+  let storage: InMemoryStorage;
+  let store: PendingMemoryStore;
+  let tombstones: TombstoneStore;
+  let history: HistoryStore;
+  let service: MemoryService;
+
+  beforeEach(() => {
+    storage = new InMemoryStorage();
+    const pending = createPendingMemoryStore({ dataDir, storage });
+    store = pending.store;
+    tombstones = pending.tombstones;
+    history = new HistoryStore({ dataDir, storage });
+    service = new MemoryService({
+      memory: new MarkdownFileMemoryProvider({ dir: dataDir, storage }),
+      history,
+      pending: store,
+    });
+  });
+
+  it('pendingList surfaces a parked candidate with its source + update', async () => {
+    await store.propose({
+      scopeId,
+      source: 'capture',
+      factHash: 'h1',
+      update: { action: 'add', key: 'MEMORY.md', content: 'user prefers dark mode' },
+    });
+    const { pending } = await service.pendingList(PERSONALITY_ID);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.source).toBe('capture');
+    expect(pending[0]?.factHash).toBe('h1');
+    expect(pending[0]?.update).toEqual({
+      action: 'add',
+      key: 'MEMORY.md',
+      content: 'user prefers dark mode',
+    });
+  });
+
+  it('approve writes through under the original source + approvedBy, then clears the queue', async () => {
+    const entry = await store.propose({
+      scopeId,
+      source: 'capture',
+      factHash: 'h1',
+      update: { action: 'add', key: 'MEMORY.md', content: 'ships on fridays' },
+    });
+
+    const res = await service.pendingApprove(PERSONALITY_ID, entry.id);
+    expect(res.ok).toBe(true);
+
+    // Durable memory now holds the approved fact.
+    const { file } = await service.get('memory', PERSONALITY_ID);
+    expect(file.content).toContain('ships on fridays');
+
+    // Queue is emptied.
+    const { pending } = await service.pendingList(PERSONALITY_ID);
+    expect(pending).toHaveLength(0);
+
+    // History records it under the ORIGINAL source plus approvedBy: 'web'.
+    const { entries } = await history.read(scopeId, {});
+    const rec = entries.find((e) => e.source === 'capture');
+    expect(rec).toBeDefined();
+    expect(rec?.approvedBy).toBe('web');
+  });
+
+  it('reject tombstones the fact-hash, writes nothing, and clears the queue', async () => {
+    const entry = await store.propose({
+      scopeId,
+      source: 'capture',
+      factHash: 'h-reject',
+      update: { action: 'add', key: 'MEMORY.md', content: 'a bad inference' },
+    });
+
+    const res = await service.pendingReject(PERSONALITY_ID, entry.id);
+    expect(res.ok).toBe(true);
+
+    expect(await tombstones.has(scopeId, 'h-reject')).toBe(true);
+
+    const { pending } = await service.pendingList(PERSONALITY_ID);
+    expect(pending).toHaveLength(0);
+
+    // Nothing reached durable memory.
+    const { file } = await service.get('memory', PERSONALITY_ID);
+    expect(file.content).toBe('');
+  });
+
+  it('approve / reject of an unknown id throws NOT_FOUND', async () => {
+    await expect(service.pendingApprove(PERSONALITY_ID, 'nope')).rejects.toThrow();
+    await expect(service.pendingReject(PERSONALITY_ID, 'nope')).rejects.toThrow();
+  });
+
+  it('degrades to empty / NOT_CONFIGURED when no queue is wired', async () => {
+    const bare = new MemoryService({
+      memory: new MarkdownFileMemoryProvider({ dir: dataDir, storage }),
+    });
+    expect(await bare.pendingList(PERSONALITY_ID)).toEqual({ pending: [] });
+    await expect(bare.pendingApprove(PERSONALITY_ID, 'x')).rejects.toThrow();
+    await expect(bare.pendingReject(PERSONALITY_ID, 'x')).rejects.toThrow();
   });
 });

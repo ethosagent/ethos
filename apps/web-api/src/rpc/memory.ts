@@ -37,4 +37,16 @@ export const memoryRouter = {
   restore: os.memory.restore.handler(({ input, context }) =>
     context.memory.restore(input.personalityId, input.slug),
   ),
+
+  pendingList: os.memory.pendingList.handler(({ input, context }) =>
+    context.memory.pendingList(input.personalityId),
+  ),
+
+  pendingApprove: os.memory.pendingApprove.handler(({ input, context }) =>
+    context.memory.pendingApprove(input.personalityId, input.id),
+  ),
+
+  pendingReject: os.memory.pendingReject.handler(({ input, context }) =>
+    context.memory.pendingReject(input.personalityId, input.id),
+  ),
 };

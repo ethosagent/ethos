@@ -4,8 +4,15 @@ import type {
   MemoryHistoryEntry,
   MemoryHistorySource,
   MemoryStoreId,
+  PendingMemory,
 } from '@ethosagent/web-contracts';
-import { type HistoryStore, type IdentityMap, restoreArchivedSlug } from '@ethosagent/wiring';
+import {
+  type HistoryStore,
+  type IdentityMap,
+  type PendingEntry,
+  type PendingMemoryStore,
+  restoreArchivedSlug,
+} from '@ethosagent/wiring';
 
 export interface MemoryServiceOptions {
   memory: MemoryProvider;
@@ -15,6 +22,9 @@ export interface MemoryServiceOptions {
   history?: HistoryStore;
   /** A `restore`-labelled memory handle. Absent → restore is unavailable. */
   restoreMemory?: Pick<MemoryProvider, 'read' | 'sync'>;
+  /** Approve-before-store queue (L3). Absent → the Pending procedures return
+   *  empty / NOT_CONFIGURED. */
+  pending?: PendingMemoryStore;
 }
 
 interface HistoryQuery {
@@ -169,6 +179,63 @@ export class MemoryService {
     return { ok: true, restoredTo: result.restoredTo };
   }
 
+  /**
+   * Pending approve-before-store queue for a personality's scope (L3 §3b).
+   * Returns live (non-expired) candidates oldest-first; empty when no queue is
+   * wired. `list()` prunes expired entries as a side effect (auto-reject).
+   */
+  async pendingList(personalityId: string): Promise<{ pending: PendingMemory[] }> {
+    const store = this.opts.pending;
+    if (!store) return { pending: [] };
+    const entries = await store.list(`personality:${personalityId}`);
+    return { pending: entries.map(toWirePending) };
+  }
+
+  /**
+   * Approve one parked candidate: replays it through the history-recording write
+   * path under its ORIGINAL source plus `approvedBy: 'web'`, then removes it from
+   * the queue.
+   */
+  async pendingApprove(personalityId: string, id: string): Promise<{ ok: true }> {
+    const result = await this.requirePending().approve(`personality:${personalityId}`, id, 'web');
+    if (!result.ok) {
+      throw new EthosError({
+        code: 'NOT_FOUND',
+        cause: `No pending candidate with id "${id}".`,
+        action: 'It may have already been approved, rejected, or expired.',
+      });
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Reject one parked candidate: tombstones its fact-hash (so capture never
+   * re-proposes it) and removes it from the queue.
+   */
+  async pendingReject(personalityId: string, id: string): Promise<{ ok: true }> {
+    const result = await this.requirePending().reject(`personality:${personalityId}`, id, 'web');
+    if (!result.ok) {
+      throw new EthosError({
+        code: 'NOT_FOUND',
+        cause: `No pending candidate with id "${id}".`,
+        action: 'It may have already been approved, rejected, or expired.',
+      });
+    }
+    return { ok: true };
+  }
+
+  private requirePending(): PendingMemoryStore {
+    const store = this.opts.pending;
+    if (!store) {
+      throw new EthosError({
+        code: 'NOT_CONFIGURED',
+        cause: 'No approve-before-store queue is wired.',
+        action: 'Approval is available when the server runs with a data directory.',
+      });
+    }
+    return store;
+  }
+
   private async readEntry(
     store: MemoryStoreId,
     personalityId: string,
@@ -203,6 +270,22 @@ function parseCursor(cursor: string | null | undefined): number {
   if (!cursor) return 0;
   const n = Number.parseInt(cursor, 10);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Project a parked candidate onto the wire schema. `update` and `source` are
+ *  structurally identical to the wire union/enum, so they pass through; optional
+ *  fields are omitted when absent to satisfy exact-optional typing. */
+function toWirePending(e: PendingEntry): PendingMemory {
+  return {
+    id: e.id,
+    scopeId: e.scopeId,
+    update: e.update,
+    source: e.source,
+    proposedAt: e.proposedAt,
+    ...(e.factHash ? { factHash: e.factHash } : {}),
+    ...(e.sessionId ? { sessionId: e.sessionId } : {}),
+    ...(e.sessionKey ? { sessionKey: e.sessionKey } : {}),
+  };
 }
 
 /** Project a stored history entry onto the wire schema — the capture dedup

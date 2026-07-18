@@ -69,6 +69,7 @@ import {
   MissedRunPolicySchema,
   ModelTierConfigSchema,
   OnboardingStepSchema,
+  PendingMemorySchema,
   PendingSkillSchema,
   PersonalitySchema,
   PersonalitySkillSchema,
@@ -1335,6 +1336,22 @@ const MemoryRestoreOutput = z.object({
   restoredTo: z.string(),
 });
 
+// Pending sub-view (approve-before-store, L3 §3b). Mirrors the skill-evolver
+// pending contract: list the parked candidates for a personality's scope,
+// approve (replay through durable memory under the original source + approvedBy)
+// or reject (tombstone the fact-hash so capture never re-proposes it).
+const MemoryPendingListInput = z.object({
+  personalityId: z.string().min(1),
+});
+const MemoryPendingListOutput = z.object({ pending: z.array(PendingMemorySchema) });
+
+const MemoryPendingActionInput = z.object({
+  personalityId: z.string().min(1),
+  /** Opaque queue id from a `pendingList` entry. */
+  id: z.string().min(1),
+});
+const MemoryPendingActionOutput = z.object({ ok: z.literal(true) });
+
 /** @stable v1 */
 const memory = {
   list: oc.input(MemoryListInput).output(MemoryListOutput),
@@ -1344,6 +1361,9 @@ const memory = {
   history: oc.input(MemoryHistoryInput).output(MemoryHistoryOutput),
   historyBlob: oc.input(MemoryHistoryBlobInput).output(MemoryHistoryBlobOutput),
   restore: oc.input(MemoryRestoreInput).output(MemoryRestoreOutput),
+  pendingList: oc.input(MemoryPendingListInput).output(MemoryPendingListOutput),
+  pendingApprove: oc.input(MemoryPendingActionInput).output(MemoryPendingActionOutput),
+  pendingReject: oc.input(MemoryPendingActionInput).output(MemoryPendingActionOutput),
 };
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,9 @@
-import type { MemoryFile, MemoryHistoryEntry, MemoryStoreId } from '@ethosagent/web-contracts';
+import type {
+  MemoryFile,
+  MemoryHistoryEntry,
+  MemoryStoreId,
+  PendingMemory,
+} from '@ethosagent/web-contracts';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App as AntApp,
@@ -18,7 +23,7 @@ import { useEffect, useState } from 'react';
 import { rpc } from '../rpc';
 
 type MemoryHistorySource = MemoryHistoryEntry['source'];
-type MemoryView = 'files' | 'timeline';
+type MemoryView = 'files' | 'timeline' | 'pending';
 
 export function Memory() {
   const [view, setView] = useState<MemoryView>('files');
@@ -166,6 +171,13 @@ export function Memory() {
             label: 'Timeline',
             children: effectivePersonalityId ? (
               <MemoryTimeline personalityId={effectivePersonalityId} />
+            ) : null,
+          },
+          {
+            key: 'pending',
+            label: 'Pending',
+            children: effectivePersonalityId ? (
+              <MemoryPending personalityId={effectivePersonalityId} />
             ) : null,
           },
         ]}
@@ -651,6 +663,181 @@ function diffLineColor(line: string, token: ReturnType<typeof theme.useToken>['t
   if (line.startsWith('+') && !line.startsWith('+++')) return token.colorSuccess;
   if (line.startsWith('-') && !line.startsWith('---')) return token.colorError;
   return token.colorTextSecondary;
+}
+
+// --- Pending sub-view (approve-before-store, L3 §3b) -------------------------
+
+/** One-line preview of a parked candidate's mutation for the queue row. */
+function pendingPreview(update: PendingMemory['update']): string {
+  if (update.action === 'add' || update.action === 'replace') return update.content.trim();
+  if (update.action === 'remove') return `remove lines matching "${update.substringMatch}"`;
+  return `delete ${update.key}`;
+}
+
+function MemoryPending({ personalityId }: { personalityId: string }) {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+
+  const pendingQuery = useQuery({
+    queryKey: ['memory', 'pending', personalityId],
+    queryFn: () => rpc.memory.pendingList({ personalityId }),
+    enabled: !!personalityId,
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['memory', 'pending', personalityId] });
+    // An approved candidate flows into durable memory + its history.
+    qc.invalidateQueries({ queryKey: ['memory', 'list'] });
+    qc.invalidateQueries({ queryKey: ['memory', 'history', personalityId] });
+  };
+
+  const approveMut = useMutation({
+    mutationFn: (id: string) => rpc.memory.pendingApprove({ personalityId, id }),
+    onSuccess: () => {
+      invalidate();
+      notification.success({ message: 'Approved — written to memory', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Approve failed', description: (err as Error).message }),
+  });
+
+  const rejectMut = useMutation({
+    mutationFn: (id: string) => rpc.memory.pendingReject({ personalityId, id }),
+    onSuccess: () => {
+      invalidate();
+      notification.info({ message: 'Rejected — will not be re-proposed', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({ message: 'Reject failed', description: (err as Error).message }),
+  });
+
+  const entries = pendingQuery.data?.pending ?? [];
+  const busyId =
+    (approveMut.isPending && approveMut.variables) || (rejectMut.isPending && rejectMut.variables);
+
+  if (pendingQuery.isLoading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: 160 }}>
+        <Spin />
+      </div>
+    );
+  }
+  if (pendingQuery.error) {
+    return (
+      <Typography.Text type="danger">
+        Failed to load pending queue: {(pendingQuery.error as Error).message}
+      </Typography.Text>
+    );
+  }
+  if (entries.length === 0) {
+    return (
+      <Typography.Text type="secondary">
+        No pending memory. Captured facts awaiting your approval appear here.
+      </Typography.Text>
+    );
+  }
+
+  return (
+    <div className="memory-pending">
+      {entries.map((e) => (
+        <PendingRow
+          key={e.id}
+          entry={e}
+          busy={busyId === e.id}
+          onApprove={() => approveMut.mutate(e.id)}
+          onReject={() => rejectMut.mutate(e.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PendingRow({
+  entry,
+  busy,
+  onApprove,
+  onReject,
+}: {
+  entry: PendingMemory;
+  busy: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const { token } = theme.useToken();
+  const [expanded, setExpanded] = useState(false);
+  const preview = pendingPreview(entry.update);
+  const hasBody = entry.update.action === 'add' || entry.update.action === 'replace';
+
+  return (
+    <div style={{ borderBottom: `1px solid ${token.colorBorderSecondary}`, padding: '10px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          disabled={!hasBody}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: hasBody ? 'pointer' : 'default',
+            padding: 0,
+            color: token.colorTextTertiary,
+            fontFamily: 'Geist Mono, monospace',
+            fontSize: 12,
+            width: 14,
+            visibility: hasBody ? 'visible' : 'hidden',
+          }}
+        >
+          {expanded ? '▾' : '▸'}
+        </button>
+        <Typography.Text
+          type="secondary"
+          style={{
+            fontFamily: 'Geist Mono, monospace',
+            fontSize: 12,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {formatTimestamp(entry.proposedAt)}
+        </Typography.Text>
+        <Tag color={SOURCE_COLOR[entry.source]} style={{ marginInlineEnd: 0 }}>
+          {SOURCE_LABEL[entry.source]}
+        </Tag>
+        <Typography.Text style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12.5 }}>
+          {entry.update.key}
+        </Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+          [{entry.update.action}]
+        </Typography.Text>
+        {entry.sessionKey ? (
+          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+            · {entry.sessionKey}
+          </Typography.Text>
+        ) : null}
+        <span style={{ flex: 1 }} />
+        <Button size="small" onClick={onReject} loading={busy}>
+          Reject
+        </Button>
+        <Button size="small" type="primary" onClick={onApprove} loading={busy}>
+          Approve
+        </Button>
+      </div>
+
+      {!expanded ? (
+        <Typography.Paragraph
+          type="secondary"
+          ellipsis={{ rows: 2 }}
+          style={{ margin: '6px 0 0 22px', fontSize: 12.5 }}
+        >
+          {preview}
+        </Typography.Paragraph>
+      ) : (
+        <div style={{ marginTop: 8, marginLeft: 22 }}>
+          <DiffBlock diff={preview} token={token} plain />
+        </div>
+      )}
+    </div>
+  );
 }
 
 function formatTimestamp(ts: number): string {

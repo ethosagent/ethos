@@ -855,6 +855,38 @@ export const MemoryHistoryEntrySchema = z.object({
 });
 export type MemoryHistoryEntry = z.infer<typeof MemoryHistoryEntrySchema>;
 
+// Approve-before-store pending queue (memory-lifecycle L3, §3b). One parked
+// candidate write awaiting an approve/reject decision — the wire projection of
+// `PendingEntry` from `@ethosagent/memory-approval`. The capture dedup fact-hash
+// is carried so the queue can render provenance, but is otherwise a server-side
+// tombstone key.
+export const MemoryUpdateSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('add'), key: z.string(), content: z.string() }),
+  z.object({ action: z.literal('replace'), key: z.string(), content: z.string() }),
+  z.object({ action: z.literal('remove'), key: z.string(), substringMatch: z.string() }),
+  z.object({ action: z.literal('delete'), key: z.string() }),
+]);
+export type MemoryUpdateWire = z.infer<typeof MemoryUpdateSchema>;
+
+export const PendingMemorySchema = z.object({
+  /** Opaque queue id (uuid). */
+  id: z.string(),
+  /** Memory scope the write targets (`personality:<id>` / `team:<id>` / …). */
+  scopeId: z.string(),
+  /** The single candidate mutation, replayed verbatim on approve. */
+  update: MemoryUpdateSchema,
+  /** Original writer, so approve records honest provenance. */
+  source: MemoryHistorySourceSchema,
+  /** Normalized fact-hash for a capture candidate (tombstone key on reject). */
+  factHash: z.string().optional(),
+  /** Session the candidate originated in. */
+  sessionId: z.string().optional(),
+  sessionKey: z.string().optional(),
+  /** epoch-ms the candidate was queued. */
+  proposedAt: z.number(),
+});
+export type PendingMemory = z.infer<typeof PendingMemorySchema>;
+
 export const IdentityMapEntrySchema = z.object({
   userId: z.string(),
   displayLabel: z.string(),

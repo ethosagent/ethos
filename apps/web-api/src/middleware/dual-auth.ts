@@ -82,6 +82,9 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     history: 'memory:read',
     historyBlob: 'memory:read',
     restore: 'memory:write',
+    pendingList: 'memory:read',
+    pendingApprove: 'memory:write',
+    pendingReject: 'memory:write',
   },
   tools: { approve: 'tools:approve', deny: 'tools:approve', catalog: 'tools:approve' },
 };

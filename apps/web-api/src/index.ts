@@ -22,7 +22,12 @@ import type {
   Storage,
 } from '@ethosagent/types';
 import type { SseEvent } from '@ethosagent/web-contracts';
-import { createMemoryProvider, HistoryStore, type IdentityMap } from '@ethosagent/wiring';
+import {
+  createMemoryProvider,
+  createPendingMemoryStore,
+  HistoryStore,
+  type IdentityMap,
+} from '@ethosagent/wiring';
 import type { Hono } from 'hono';
 import { ChatRepository } from './features/chat/repository';
 import { type ChatDefaults, ChatService } from './features/chat/service';
@@ -413,6 +418,10 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       storage,
       source: 'restore',
     }),
+    // Approve-before-store queue (L3). Reads the same `memory-pending.jsonl`
+    // the runtime gate writes and the CLI `ethos memory pending` drives; approve
+    // replays through the provenance history under the original source.
+    pending: createPendingMemoryStore({ dataDir: opts.dataDir, storage }).store,
   });
   const kanbanService = new KanbanService({ mesh });
   const tasksService = new TasksService(opts.jobStore ? { store: opts.jobStore } : {});
