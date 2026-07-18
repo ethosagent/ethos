@@ -63,6 +63,12 @@ export interface HistoryEntry {
    * the capture runner; absent on every other source.
    */
   captureHashes?: string[];
+  /**
+   * Attribution for a write that landed via the approve-before-store gate
+   * (memory-lifecycle L2): the identity that approved the parked candidate. Set
+   * only on approve-replayed entries; absent on every direct write.
+   */
+  approvedBy?: string;
   sizeBefore: number;
   sizeAfter: number;
 }

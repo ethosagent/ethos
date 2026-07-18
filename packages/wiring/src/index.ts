@@ -9,6 +9,11 @@ import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { TrustPolicy } from '@ethosagent/kanban-store';
 import { AuthRotatingProvider } from '@ethosagent/llm-anthropic';
+import {
+  type PendingGateObservability,
+  PendingMemoryStore,
+  TombstoneStore,
+} from '@ethosagent/memory-approval';
 import { type HistorySource, HistoryStore, withHistory } from '@ethosagent/memory-history';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
@@ -21,6 +26,7 @@ import type {
   GlobalMemoryStore,
   LLMProvider,
   Logger,
+  MemoryContext,
   MemoryProvider,
   ModelProfile,
   SecretsResolver,
@@ -236,6 +242,18 @@ export interface WiringConfig {
     baseUrl?: string;
     maxPerHour?: number;
     maxPerDay?: number;
+  };
+  /**
+   * Approve-before-store gate (memory-lifecycle L2). Default-off. When
+   * `mode !== 'off'`, gated writers (`capture`, `dream`, and — in `all` mode —
+   * explicit tool writes) park candidates in a per-scope pending queue instead
+   * of writing durably; approve replays through the provenance history. Mapped
+   * from `EthosConfig.memoryApproval`.
+   */
+  memoryApproval?: {
+    mode?: 'off' | 'automated' | 'all';
+    cap?: number;
+    ttlDays?: number;
   };
   /**
    * Nightly-pass scheduler flag (mapped from `EthosConfig.nightlyPass`). Read
@@ -850,6 +868,68 @@ export function createMemoryProvider(
   const history = new HistoryStore({ dataDir: opts.dataDir, storage: opts.storage });
   return withHistory(base, history, { source: opts.source ?? 'tool' });
 }
+
+export interface CreatePendingMemoryStoreOptions {
+  /** Root data directory (typically `~/.ethos`). */
+  dataDir: string;
+  storage: Storage;
+  /** Per-scope queue hard cap. Default 200. */
+  cap?: number;
+  /** Pending candidate TTL in ms. Default 30 days. */
+  ttlMs?: number;
+  observability?: PendingGateObservability;
+  /** Test seam. */
+  now?: () => number;
+}
+
+/**
+ * Assemble a `PendingMemoryStore` (memory-lifecycle L2) over the markdown
+ * backend, with the approve-replay `apply` wired to the provenance history so an
+ * approved candidate records under its ORIGINAL source plus `approvedBy`. Used
+ * by the CLI `ethos memory pending` command and (L3) the web RPC service — the
+ * runtime write path composes the gate inline in `build-infrastructure`.
+ */
+export function createPendingMemoryStore(opts: CreatePendingMemoryStoreOptions): {
+  store: PendingMemoryStore;
+  tombstones: TombstoneStore;
+} {
+  const base = new MarkdownFileMemoryProvider({ dir: opts.dataDir, storage: opts.storage });
+  const history = new HistoryStore({ dataDir: opts.dataDir, storage: opts.storage });
+  const tombstones = new TombstoneStore({ storage: opts.storage, dataDir: opts.dataDir });
+  const store = new PendingMemoryStore({
+    storage: opts.storage,
+    dataDir: opts.dataDir,
+    tombstones,
+    ...(opts.cap !== undefined ? { cap: opts.cap } : {}),
+    ...(opts.ttlMs !== undefined ? { ttlMs: opts.ttlMs } : {}),
+    ...(opts.observability ? { observability: opts.observability } : {}),
+    ...(opts.now ? { now: opts.now } : {}),
+    apply: async (entry, approvedBy) => {
+      const handle = withHistory(base, history, { source: entry.source, approvedBy });
+      const ctx: MemoryContext = {
+        scopeId: entry.scopeId,
+        sessionId: entry.sessionId ?? '',
+        sessionKey: entry.sessionKey ?? 'cli',
+        platform: 'cli',
+        workingDir: '',
+      };
+      await handle.sync([entry.update], ctx);
+    },
+  });
+  return { store, tombstones };
+}
+
+export {
+  isGated,
+  type MemoryApprovalMode,
+  type PendingEntry,
+  type PendingGateObservability,
+  PendingMemoryGate,
+  PendingMemoryStore,
+  type ProposeInput,
+  TombstoneStore,
+  withPendingGate,
+} from '@ethosagent/memory-approval';
 
 export {
   type HistoryEntry,

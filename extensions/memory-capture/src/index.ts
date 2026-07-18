@@ -12,4 +12,7 @@ export {
   type CaptureJob,
   type CaptureNotice,
   DEFAULT_CAPTURE_CONFIG,
+  type MemoryProposal,
+  type ProposeFn,
+  type TombstoneChecker,
 } from './types';

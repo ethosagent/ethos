@@ -1,5 +1,5 @@
 {
-  "name": "@ethosagent/memory-capture",
+  "name": "@ethosagent/memory-approval",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,9 +18,7 @@
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {
-    "@ethosagent/memory-approval": "workspace:*",
     "@ethosagent/memory-markdown": "workspace:*",
-    "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*"
   }
 }

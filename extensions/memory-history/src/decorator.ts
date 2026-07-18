@@ -16,6 +16,13 @@ import type { HistorySource } from './types';
 export interface WithHistoryOptions {
   /** Source label baked into every entry this handle records. */
   source: HistorySource;
+  /**
+   * Approver identity, recorded on every entry this handle writes. Set by the
+   * approve-before-store gate (memory-lifecycle L2) when it replays an approved
+   * candidate, so the provenance log names who approved it. Absent for direct
+   * write handles.
+   */
+  approvedBy?: string;
 }
 
 /**
@@ -49,6 +56,7 @@ export class HistoryMemoryProvider implements MemoryProvider, GlobalMemoryStore 
     private readonly inner: MemoryProvider & GlobalMemoryStore,
     private readonly history: HistoryStore,
     private readonly source: HistorySource,
+    private readonly approvedBy?: string,
   ) {}
 
   prefetch(ctx: MemoryContext): Promise<MemorySnapshot | null> {
@@ -102,6 +110,7 @@ export class HistoryMemoryProvider implements MemoryProvider, GlobalMemoryStore 
         sessionKey: ctx.sessionKey,
         before: before.get(key) ?? '',
         after,
+        ...(this.approvedBy ? { approvedBy: this.approvedBy } : {}),
       });
     }
   }
@@ -137,5 +146,5 @@ export function withHistory(
   history: HistoryStore,
   opts: WithHistoryOptions,
 ): MemoryProvider & GlobalMemoryStore {
-  return new HistoryMemoryProvider(inner, history, opts.source);
+  return new HistoryMemoryProvider(inner, history, opts.source, opts.approvedBy);
 }

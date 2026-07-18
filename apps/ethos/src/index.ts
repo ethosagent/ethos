@@ -492,6 +492,12 @@ try {
         break;
       }
 
+      if (sub === 'pending') {
+        const { runMemoryPending } = await import('./commands/memory-pending');
+        await runMemoryPending(args.slice(2));
+        break;
+      }
+
       const config = await readConfig(getStorage(), await getSecretsResolver());
 
       if (config?.memory === 'vector') {

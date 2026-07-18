@@ -266,6 +266,27 @@ export interface MemoryVaultConfig {
 }
 
 /**
+ * Approve-before-store gate (memory-lifecycle L2, §3b). Default-OFF: absent or
+ * `mode: off` means every memory write lands durably as before (opt-in for one
+ * release, matching the capture/dedup-hatch precedent). Parsed from flat
+ * `memoryApproval.<field>` keys:
+ *   memoryApproval.mode: automated   # off | automated | all
+ *   memoryApproval.cap: 200          # per-scope queue hard cap
+ *   memoryApproval.ttlDays: 30       # pending candidates auto-reject after N days
+ *
+ * `automated` gates the autonomous writers (`capture`, `dream`); `all` also
+ * gates explicit tool/consolidation writes. Approved candidates replay through
+ * the provenance history under their original source plus `approvedBy`.
+ */
+export interface MemoryApprovalConfig {
+  mode?: 'off' | 'automated' | 'all';
+  /** Per-scope pending-queue hard cap. At cap the oldest is dropped. Default 200. */
+  cap?: number;
+  /** Pending candidate TTL in days; expired candidates auto-reject. Default 30. */
+  ttlDays?: number;
+}
+
+/**
  * Importance scoring + decay tuning (memory-experience pillar C, §4.2/§4.3).
  * All optional — the nightly pass applies defaults (30-day half-life, 0.05
  * archive threshold, USER.md exempt). Parsed from flat `memoryConsolidation.<field>`
@@ -802,6 +823,11 @@ export interface EthosConfig {
    */
   memoryVault?: MemoryVaultConfig;
   /**
+   * Approve-before-store gate (memory-lifecycle L2). Default-off. See
+   * `MemoryApprovalConfig`. Parsed from flat `memoryApproval.<field>` keys.
+   */
+  memoryApproval?: MemoryApprovalConfig;
+  /**
    * Importance scoring + decay tuning (memory-experience pillar C). Defaults
    * applied by the nightly pass when absent. See `MemoryConsolidationConfig`.
    * Parsed from flat `memoryConsolidation.<field>` keys.
@@ -1192,6 +1218,12 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       lines.push(`memoryVault.prefetch: ${mv.prefetch.join(', ')}`);
     if (mv.exclude && mv.exclude.length > 0)
       lines.push(`memoryVault.exclude: ${mv.exclude.join(', ')}`);
+  }
+  if (config.memoryApproval) {
+    const ma = config.memoryApproval;
+    if (ma.mode !== undefined) lines.push(`memoryApproval.mode: ${ma.mode}`);
+    if (ma.cap !== undefined) lines.push(`memoryApproval.cap: ${ma.cap}`);
+    if (ma.ttlDays !== undefined) lines.push(`memoryApproval.ttlDays: ${ma.ttlDays}`);
   }
   if (config.memoryConsolidation) {
     const mco = config.memoryConsolidation;
@@ -1648,6 +1680,12 @@ function parseConfigYaml(src: string): EthosConfig {
       kv[`memoryVault.${mvault[1]}`] = mvault[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // memoryApproval.<field>: <value>
+    const mappr = line.match(/^memoryApproval\.(\w+):\s*(.+)$/);
+    if (mappr) {
+      kv[`memoryApproval.${mappr[1]}`] = mappr[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // memoryConsolidation.<field>: <value>
     const mcon = line.match(/^memoryConsolidation\.(\w+):\s*(.+)$/);
     if (mcon) {
@@ -1931,6 +1969,7 @@ function parseConfigYaml(src: string): EthosConfig {
         : undefined,
     memoryCapture: buildMemoryCaptureConfig(kv),
     memoryVault: buildMemoryVaultConfig(kv),
+    memoryApproval: buildMemoryApprovalConfig(kv),
     memoryConsolidation: (() => {
       // Union of the silent memory-flush turn (context-compaction) and the
       // decay/importance tuning (memory-experience) — disjoint field sets, one key.
@@ -2232,6 +2271,32 @@ function buildMemoryVaultConfig(kv: Record<string, string>): MemoryVaultConfig |
     ...(kv['memoryVault.agentDir'] ? { agentDir: kv['memoryVault.agentDir'] } : {}),
     ...(prefetch.length > 0 ? { prefetch } : {}),
     ...(exclude.length > 0 ? { exclude } : {}),
+  };
+}
+
+function buildMemoryApprovalConfig(kv: Record<string, string>): MemoryApprovalConfig | undefined {
+  const present = Object.keys(kv).some((k) => k.startsWith('memoryApproval.'));
+  if (!present) return undefined;
+  const mode = kv['memoryApproval.mode'];
+  if (mode !== undefined && mode !== 'off' && mode !== 'automated' && mode !== 'all') {
+    throw new Error(`Invalid memoryApproval.mode "${mode}". Expected one of: off, automated, all.`);
+  }
+  const cap = Number.parseInt(kv['memoryApproval.cap'] ?? '', 10);
+  const ttlDays = Number.parseInt(kv['memoryApproval.ttlDays'] ?? '', 10);
+  if (kv['memoryApproval.cap'] !== undefined && (!Number.isFinite(cap) || cap <= 0)) {
+    throw new Error(
+      `Invalid memoryApproval.cap "${kv['memoryApproval.cap']}". Expected a positive integer.`,
+    );
+  }
+  if (kv['memoryApproval.ttlDays'] !== undefined && (!Number.isFinite(ttlDays) || ttlDays <= 0)) {
+    throw new Error(
+      `Invalid memoryApproval.ttlDays "${kv['memoryApproval.ttlDays']}". Expected a positive integer.`,
+    );
+  }
+  return {
+    ...(mode !== undefined ? { mode: mode as MemoryApprovalConfig['mode'] } : {}),
+    ...(Number.isFinite(cap) && cap > 0 ? { cap } : {}),
+    ...(Number.isFinite(ttlDays) && ttlDays > 0 ? { ttlDays } : {}),
   };
 }
 

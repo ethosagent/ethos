@@ -46,6 +46,7 @@ import {
   activate as activateOpenaiCompat,
   PROVIDER_CONTRACT_MAJOR as OPENAI_COMPAT_CONTRACT,
 } from '@ethosagent/llm-openai-compat';
+import { PendingMemoryStore, TombstoneStore, withPendingGate } from '@ethosagent/memory-approval';
 import { HistoryStore, withHistory } from '@ethosagent/memory-history';
 import { compose as composeMemory } from '@ethosagent/memory-markdown/compose';
 import { VaultMemoryProvider } from '@ethosagent/memory-vault';
@@ -70,6 +71,7 @@ import type {
   ExecutionBackendRegistry,
   HookRegistry,
   LLMProviderRegistry,
+  MemoryContext,
   MemoryProviderRegistry,
   PersonalityConfig,
   StorageRegistry,
@@ -194,7 +196,44 @@ export async function buildInfrastructure(
     // decorator so every mutation is auditable. Dream turns write through the
     // same handle and are relabelled from their `dream:` sessionKey (§2.1).
     const history = new HistoryStore({ dataDir: dir, storage: wiringCtx.storage });
-    return withHistory(memoryProvider, history, { source: 'tool' });
+    const approvalMode = config.memoryApproval?.mode ?? 'off';
+    if (approvalMode === 'off') {
+      return withHistory(memoryProvider, history, { source: 'tool' });
+    }
+    // Approve-before-store gate (memory-lifecycle L2). Compose HISTORY OUTSIDE
+    // GATE: a gated write parks in the pending queue and touches no bytes, so the
+    // outer history sees before === after and records nothing; a non-gated write
+    // flows through to the provider and is recorded once. Approve replays through
+    // `apply` (a fresh history handle carrying the ORIGINAL source + approvedBy),
+    // so an approved candidate is recorded exactly once, on apply.
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const tombstones = new TombstoneStore({ storage: wiringCtx.storage, dataDir: dir });
+    const pending = new PendingMemoryStore({
+      storage: wiringCtx.storage,
+      dataDir: dir,
+      tombstones,
+      ...(config.memoryApproval?.cap !== undefined ? { cap: config.memoryApproval.cap } : {}),
+      ...(config.memoryApproval?.ttlDays !== undefined
+        ? { ttlMs: config.memoryApproval.ttlDays * DAY_MS }
+        : {}),
+      apply: async (entry, approvedBy) => {
+        const handle = withHistory(memoryProvider, history, { source: entry.source, approvedBy });
+        const ctx: MemoryContext = {
+          scopeId: entry.scopeId,
+          sessionId: entry.sessionId ?? '',
+          sessionKey: entry.sessionKey ?? 'cli',
+          platform: 'cli',
+          workingDir: '',
+        };
+        await handle.sync([entry.update], ctx);
+      },
+    });
+    const gate = withPendingGate(memoryProvider, {
+      store: pending,
+      mode: approvalMode,
+      source: 'tool',
+    });
+    return withHistory(gate, history, { source: 'tool' });
   });
   memoryProviders.register('vector', ({ dataDir: dir }) => {
     return new VectorMemoryProvider({ dir, storage: wiringCtx.storage });

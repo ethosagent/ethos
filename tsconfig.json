@@ -24,6 +24,7 @@
       "@ethosagent/memory-vault": ["./extensions/memory-vault/src"],
       "@ethosagent/memory-history": ["./extensions/memory-history/src"],
       "@ethosagent/memory-capture": ["./extensions/memory-capture/src"],
+      "@ethosagent/memory-approval": ["./extensions/memory-approval/src"],
       "@ethosagent/personalities": ["./extensions/personalities/src"],
       "@ethosagent/session-sqlite": ["./extensions/session-sqlite/src"],
       "@ethosagent/goal-store": ["./extensions/goal-store/src"],

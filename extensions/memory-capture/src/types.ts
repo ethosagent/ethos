@@ -61,6 +61,35 @@ export const DEFAULT_CAPTURE_CONFIG: CaptureConfig = {
   consolidationCountThreshold: 50,
 };
 
+/**
+ * A capture candidate handed to the approve-before-store gate (memory-lifecycle
+ * L2) instead of being written durably. Structurally matches
+ * `@ethosagent/memory-approval`'s `ProposeInput`; declared here so the runner
+ * stays free of a hard dependency on the gate package.
+ */
+export interface MemoryProposal {
+  scopeId: string;
+  /** A single add of one fact line — one proposal per fact so the hash is exact. */
+  update: import('@ethosagent/types').MemoryUpdate;
+  source: 'capture';
+  /** Exact normalized fact-hash; the tombstone key written on reject. */
+  factHash: string;
+  sessionId?: string;
+  sessionKey?: string;
+}
+
+/** Park a capture candidate for approval instead of writing it durably (L2). */
+export type ProposeFn = (proposal: MemoryProposal) => Promise<void>;
+
+/**
+ * Reject-tombstone reader (memory-lifecycle L2). The runner consults it so a
+ * rejected/expired fact is never re-proposed — the behavioural difference vs a
+ * plain delete. Satisfied structurally by `memory-approval`'s `TombstoneStore`.
+ */
+export interface TombstoneChecker {
+  has(scopeId: string, factHash: string): Promise<boolean>;
+}
+
 /** Payload for the `onCaptured` surface callback (§3.3). */
 export interface CaptureNotice {
   scopeId: string;

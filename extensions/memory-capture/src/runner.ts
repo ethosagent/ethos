@@ -28,6 +28,8 @@ import {
   type CaptureJob,
   type CaptureNotice,
   DEFAULT_CAPTURE_CONFIG,
+  type ProposeFn,
+  type TombstoneChecker,
 } from './types';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -51,6 +53,20 @@ export interface MemoryCaptureRunnerOptions {
   nightlyConfigured: boolean;
   /** Injected inline consolidation; omitted when unavailable. */
   consolidate?: ConsolidateFn;
+  /**
+   * Approve-before-store gate (memory-lifecycle L2). When present, capture
+   * PROPOSES each fresh fact to the pending queue instead of writing it durably;
+   * the fact only reaches memory once approved. When absent, capture writes
+   * directly (add-only) as before.
+   */
+  propose?: ProposeFn;
+  /**
+   * Reject-tombstone reader (L2). Facts whose hash is tombstoned are dropped
+   * before proposal/write so a rejected fact is never re-proposed. Consulted
+   * regardless of `propose`, so a fact rejected while gating was on stays
+   * rejected even after approval is later disabled.
+   */
+  tombstones?: TombstoneChecker;
   /** Stamped into the MemoryContext; routing ignores it, kept for contract shape. */
   platform?: string;
   workingDir?: string;
@@ -182,6 +198,14 @@ export class MemoryCaptureRunner {
       const fresh = await this.dedup(scopeId, facts);
       if (fresh.length === 0) return;
 
+      if (this.opts.propose) {
+        // L2: the approval gate is active — park each fact instead of writing.
+        // No durable write, no history entry, no "remembered" notice: nothing
+        // was remembered yet. Approval replays it through the history path.
+        await this.propose(ctx, fresh);
+        return;
+      }
+
       await this.write(ctx, fresh);
       await this.maybeConsolidate(ctx);
     } finally {
@@ -216,9 +240,33 @@ export class MemoryCaptureRunner {
       const h = hashFact(fact.text);
       if (seen.has(h)) continue;
       seen.add(h); // also dedup within this batch
+      // L2: a rejected/expired fact is tombstoned — never re-propose it.
+      if (await this.opts.tombstones?.has(scopeId, h)) continue;
       fresh.push(fact);
     }
     return fresh;
+  }
+
+  /**
+   * L2 propose path: park each fact as its own single-add candidate so the
+   * queue entry carries the EXACT `hashFact(fact.text)` — the tombstone key used
+   * on reject. One proposal per fact keeps the hash 1:1 with the parked update.
+   */
+  private async propose(ctx: MemoryContext, facts: CaptureFact[]): Promise<void> {
+    const proposeFn = this.opts.propose;
+    if (!proposeFn) return;
+    for (const fact of facts) {
+      const key = fact.store === 'memory' ? 'MEMORY.md' : 'USER.md';
+      const content = `\n- ${this.opts.sanitize(fact.text)}`;
+      await proposeFn({
+        scopeId: ctx.scopeId,
+        update: { action: 'add', key, content },
+        source: 'capture',
+        factHash: hashFact(fact.text),
+        sessionId: ctx.sessionId,
+        sessionKey: ctx.sessionKey,
+      });
+    }
   }
 
   /** Add-only write, one history entry per key with hint + capture hashes. */

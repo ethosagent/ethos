@@ -37,6 +37,8 @@ export interface RecordInput {
   hint?: number;
   /** Normalized-fact hashes — set only by the capture runner (pillar B). */
   captureHashes?: string[];
+  /** Approver identity — set only when the write landed via the L2 approval gate. */
+  approvedBy?: string;
 }
 
 /**
@@ -122,6 +124,7 @@ export class HistoryStore {
     if (input.captureHashes && input.captureHashes.length > 0) {
       entry.captureHashes = input.captureHashes;
     }
+    if (input.approvedBy) entry.approvedBy = input.approvedBy;
 
     if (Buffer.byteLength(diffText) > this.diffCap) {
       // Spill the FULL before-content to a content-addressed blob so the

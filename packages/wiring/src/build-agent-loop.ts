@@ -6,7 +6,12 @@ import { registerBuiltinExtractors } from '@ethosagent/document-extractors';
 import { GoalRunner } from '@ethosagent/goal-runner';
 import { BackgroundExecutor } from '@ethosagent/job-runner';
 import { SQLiteJobStore } from '@ethosagent/job-store';
-import { type ConsolidateFn, MemoryCaptureRunner } from '@ethosagent/memory-capture';
+import { PendingMemoryStore, TombstoneStore } from '@ethosagent/memory-approval';
+import {
+  type ConsolidateFn,
+  MemoryCaptureRunner,
+  type ProposeFn,
+} from '@ethosagent/memory-capture';
 import { HistoryStore, withHistory } from '@ethosagent/memory-history';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { buildConsolidationUpdates, consolidateMemory } from '@ethosagent/nightly-loop';
@@ -20,7 +25,12 @@ import {
 import { createMemoryTools } from '@ethosagent/tools-memory';
 import { createVisionTools } from '@ethosagent/tools-vision';
 import { createWebTools } from '@ethosagent/tools-web';
-import type { LLMProvider, MemoryProvider, RequestDumpStore } from '@ethosagent/types';
+import type {
+  LLMProvider,
+  MemoryContext,
+  MemoryProvider,
+  RequestDumpStore,
+} from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
 import type {
@@ -738,6 +748,46 @@ export async function buildAgentLoop(
       if (updates.length > 0) await consolidationHandle.sync(updates, ctx);
     };
 
+    // Approve-before-store gate (memory-lifecycle L2). When approval gates the
+    // `capture` source, the runner PROPOSES each fresh fact to the pending queue
+    // (with its exact fact-hash) instead of writing durably; approval replays it
+    // through the history-recording path. The tombstone store is passed
+    // unconditionally so a fact rejected while gating was on stays skipped even
+    // if approval is later disabled.
+    const approvalMode = config.memoryApproval?.mode ?? 'off';
+    const captureGated = approvalMode === 'automated' || approvalMode === 'all';
+    const captureTombstones = new TombstoneStore({ storage: wiringCtx.storage, dataDir });
+    let capturePropose: ProposeFn | undefined;
+    if (captureGated) {
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const pending = new PendingMemoryStore({
+        storage: wiringCtx.storage,
+        dataDir,
+        tombstones: captureTombstones,
+        ...(config.memoryApproval?.cap !== undefined ? { cap: config.memoryApproval.cap } : {}),
+        ...(config.memoryApproval?.ttlDays !== undefined
+          ? { ttlMs: config.memoryApproval.ttlDays * DAY_MS }
+          : {}),
+        apply: async (entry, approvedBy) => {
+          const handle = withHistory(captureBase, captureHistory, {
+            source: entry.source,
+            approvedBy,
+          });
+          const ctx: MemoryContext = {
+            scopeId: entry.scopeId,
+            sessionId: entry.sessionId ?? '',
+            sessionKey: entry.sessionKey ?? 'cli',
+            platform: 'cli',
+            workingDir: '',
+          };
+          await handle.sync([entry.update], ctx);
+        },
+      });
+      capturePropose = async (proposal) => {
+        await pending.propose(proposal);
+      };
+    }
+
     const captureRunner = new MemoryCaptureRunner({
       provider: captureBase,
       history: captureHistory,
@@ -747,6 +797,8 @@ export async function buildAgentLoop(
       logger: log,
       nightlyConfigured,
       consolidate,
+      tombstones: captureTombstones,
+      ...(capturePropose ? { propose: capturePropose } : {}),
       config: {
         ...(captureConfig.maxPerHour !== undefined ? { maxPerHour: captureConfig.maxPerHour } : {}),
         ...(captureConfig.maxPerDay !== undefined ? { maxPerDay: captureConfig.maxPerDay } : {}),

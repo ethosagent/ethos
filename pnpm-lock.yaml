@@ -1085,6 +1085,22 @@ importers:
         specifier: ^6.37.0
         version: 6.42.0(ws@8.21.0)(zod@4.4.3)
 
+  extensions/memory-approval:
+    dependencies:
+      '@ethosagent/memory-history':
+        specifier: workspace:*
+        version: link:../memory-history
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/memory-markdown':
+        specifier: workspace:*
+        version: link:../memory-markdown
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+
   extensions/memory-capture:
     dependencies:
       '@ethosagent/memory-history':
@@ -1094,6 +1110,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
     devDependencies:
+      '@ethosagent/memory-approval':
+        specifier: workspace:*
+        version: link:../memory-approval
       '@ethosagent/memory-markdown':
         specifier: workspace:*
         version: link:../memory-markdown
@@ -2046,6 +2065,9 @@ importers:
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../logger
+      '@ethosagent/memory-approval':
+        specifier: workspace:*
+        version: link:../../extensions/memory-approval
       '@ethosagent/memory-capture':
         specifier: workspace:*
         version: link:../../extensions/memory-capture
