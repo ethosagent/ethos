@@ -158,6 +158,28 @@ export interface WhatsAppConfig {
   piiRedaction?: boolean;
 }
 
+/**
+ * Real-time voice bot binding (plan/phases/gap-voice-realtime.md §3(b),(e)).
+ * Mirrors `telegram.bots[]`: one entry binds a personality/team to the voice
+ * lane the bot answers. `match` is the room name or E.164 number pattern the
+ * concrete transport routes on — it replaces `token`, since a voice bot has no
+ * chat-platform token. The botKey derives from `id` (explicit) or `match`,
+ * feeding the lane key `voice:<botKey>:<callerId>`.
+ *
+ * LiveKit / SIP-trunk connection keys are deliberately NOT modeled here yet;
+ * they land with the concrete transport under `voice.livekit.*` / `voice.trunk.*`
+ * in a later, isolated step. This step adds only the personality↔voice-bot
+ * binding shape.
+ */
+export interface VoiceBotConfig {
+  /** Stable identifier used in lane keys + logs. Defaults to a short
+   *  sha256 of `match` when omitted. */
+  id?: string;
+  /** Room name or E.164 phone-number pattern this bot answers. */
+  match: string;
+  bind: BotBinding;
+}
+
 export interface ProviderConfig {
   provider: string;
   apiKey: string;
@@ -485,6 +507,15 @@ export interface EthosConfig {
   /** Per-team runtime knobs. Keyed by team manifest name (same identifier rules). */
   teams?: Record<string, TeamRuntimeConfig>;
   whatsapp?: WhatsAppConfig[];
+  /**
+   * Real-time voice bot routing (plan/phases/gap-voice-realtime.md §3(b)).
+   * Same indexed-key shape as `telegram.bots`, but keyed on a room/number
+   * `match` pattern instead of a token. Example:
+   *   voice.bots.0.match: +15551234567
+   *   voice.bots.0.bind.type: personality
+   *   voice.bots.0.bind.name: receptionist
+   */
+  voice?: { bots: VoiceBotConfig[] };
   // Email platform
   emailImapHost?: string;
   emailImapPort?: number;
@@ -973,6 +1004,17 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       }
     }
   }
+  if (config.voice?.bots.length) {
+    for (const [i, bot] of config.voice.bots.entries()) {
+      if (bot.id) lines.push(`voice.bots.${i}.id: ${bot.id}`);
+      lines.push(`voice.bots.${i}.match: ${bot.match}`);
+      lines.push(`voice.bots.${i}.bind.type: ${bot.bind.type}`);
+      lines.push(`voice.bots.${i}.bind.name: ${bot.bind.name}`);
+      if (bot.bind.allowSlashSwitch) {
+        lines.push(`voice.bots.${i}.bind.allowSlashSwitch: true`);
+      }
+    }
+  }
   if (config.teams) {
     for (const [name, tcfg] of Object.entries(config.teams)) {
       if (tcfg.autoStop) lines.push(`teams.${name}.autoStop: true`);
@@ -1222,6 +1264,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const telegramBotsKv: Record<number, Record<string, string>> = {};
   const slackAppsKv: Record<number, Record<string, string>> = {};
   const whatsappKv: Record<number, Record<string, string>> = {};
+  const voiceBotsKv: Record<number, Record<string, string>> = {};
   const teamsKv: Record<string, Record<string, string>> = {};
   const webhooksKv: Record<string, Record<string, string>> = {};
   // FW-16 — quick_commands.<name>.<field>: <value>
@@ -1275,6 +1318,22 @@ function parseConfigYaml(src: string): EthosConfig {
       const idx = Number(wa[1]);
       whatsappKv[idx] ??= {};
       whatsappKv[idx][wa[2]] = wa[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // voice.bots.<index>.bind.<field>: <value>
+    const vbind = line.match(/^voice\.bots\.(\d+)\.bind\.(\S+):\s*(.+)$/);
+    if (vbind) {
+      const idx = Number(vbind[1]);
+      voiceBotsKv[idx] ??= {};
+      voiceBotsKv[idx][`bind.${vbind[2]}`] = vbind[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // voice.bots.<index>.<field>: <value>
+    const vbot = line.match(/^voice\.bots\.(\d+)\.(\S+):\s*(.+)$/);
+    if (vbot) {
+      const idx = Number(vbot[1]);
+      voiceBotsKv[idx] ??= {};
+      voiceBotsKv[idx][vbot[2]] = vbot[3].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // teams.<name>.<field>: <value>
@@ -1674,6 +1733,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const telegramResult = buildTelegramBots(telegramBotsKv);
   const slackResult = buildSlackApps(slackAppsKv);
   const whatsappResult = buildWhatsApps(whatsappKv);
+  const voiceResult = buildVoiceBots(voiceBotsKv);
   const teams = buildTeamsConfig(teamsKv);
   const webhooksResult = buildWebhooks(webhooksKv);
   const quick_commands = buildQuickCommands(qcKv);
@@ -1682,6 +1742,7 @@ function parseConfigYaml(src: string): EthosConfig {
     ...telegramResult.errors,
     ...slackResult.errors,
     ...whatsappResult.errors,
+    ...voiceResult.errors,
     ...webhooksResult.errors,
   ];
 
@@ -1734,6 +1795,7 @@ function parseConfigYaml(src: string): EthosConfig {
     telegram: telegramResult.bots.length > 0 ? { bots: telegramResult.bots } : undefined,
     slack: slackResult.apps.length > 0 ? { apps: slackResult.apps } : undefined,
     whatsapp: whatsappResult.apps.length > 0 ? whatsappResult.apps : undefined,
+    voice: voiceResult.bots.length > 0 ? { bots: voiceResult.bots } : undefined,
     teams,
     evolverCronEnabled: evolverKv.cron_enabled === 'true' ? true : undefined,
     evolverSchedule: evolverKv.schedule || undefined,
@@ -2227,6 +2289,31 @@ function buildWhatsApps(kv: Record<number, Record<string, string>>): {
   return { apps, errors };
 }
 
+function buildVoiceBots(kv: Record<number, Record<string, string>>): {
+  bots: VoiceBotConfig[];
+  errors: string[];
+} {
+  const bots: VoiceBotConfig[] = [];
+  const errors: string[] = [];
+  for (const idx of sortedIndexes(kv)) {
+    const entry = kv[idx];
+    if (!entry) continue;
+    const label = `voice.bots[${idx}]`;
+    if (!entry.match) {
+      errors.push(`${label}: missing required field 'match'.`);
+      continue;
+    }
+    const result = buildBotBinding(entry, label);
+    if (result.errors.length > 0) {
+      errors.push(...result.errors);
+      continue;
+    }
+    if (!result.bind) continue;
+    bots.push({ match: entry.match, bind: result.bind, ...(entry.id ? { id: entry.id } : {}) });
+  }
+  return { bots, errors };
+}
+
 function buildTeamsConfig(
   kv: Record<string, Record<string, string>>,
 ): Record<string, TeamRuntimeConfig> | undefined {
@@ -2424,6 +2511,11 @@ export function validateBotBindings(
     // token, so derive the botKey from the explicit id (positional fallback).
     if (!wa.bind) continue;
     checkBind(`whatsapp[${i}]`, wa.id, wa.bind, wa.id ?? `whatsapp[${i}]`);
+  }
+  for (const [i, vb] of (config.voice?.bots ?? []).entries()) {
+    // Voice bots have no token — derive the botKey from the explicit id or the
+    // room/number `match` seed (same primitive every adapter/config uses).
+    checkBind(`voice.bots[${i}]`, vb.id, vb.bind, vb.id ?? deriveBotKeyFromSeed(vb.match));
   }
   for (const name of Object.keys(config.teams ?? {})) {
     rejectUnsafeIdent(`teams.<key>`, name, errors);

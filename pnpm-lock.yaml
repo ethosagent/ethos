@@ -1300,6 +1300,18 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
 
+  extensions/platform-voice:
+    dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@ethosagent/voice-session':
+        specifier: workspace:*
+        version: link:../voice-session
+
   extensions/platform-whatsapp:
     dependencies:
       '@ethosagent/types':
@@ -1744,6 +1756,12 @@ importers:
         version: link:../../packages/types
 
   extensions/voice-providers:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/voice-session:
     dependencies:
       '@ethosagent/types':
         specifier: workspace:*

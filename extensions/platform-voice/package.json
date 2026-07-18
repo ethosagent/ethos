@@ -1,0 +1,16 @@
+{
+  "name": "@ethosagent/platform-voice",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@ethosagent/core": "workspace:*",
+    "@ethosagent/types": "workspace:*",
+    "@ethosagent/voice-session": "workspace:*"
+  }
+}
