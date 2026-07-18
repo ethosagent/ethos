@@ -76,7 +76,19 @@ export interface WiringConfig {
   model: string;
   apiKey: string;
   personality?: string;
-  memory?: 'markdown' | 'vector';
+  memory?: 'markdown' | 'vector' | 'vault';
+  /**
+   * Bring-your-own-vault backend settings (mapped from `EthosConfig.memoryVault`).
+   * Read only when `memory === 'vault'`: `path` is the vault root, `agentDir`
+   * the subtree the agent owns (default `Ethos`), `prefetch` the keys pulled
+   * into the prompt tail, `exclude` extra names hidden from list/search.
+   */
+  memoryVault?: {
+    path?: string;
+    agentDir?: string;
+    prefetch?: string[];
+    exclude?: string[];
+  };
   baseUrl?: string;
   /** Azure-only: REST API version (e.g. `2024-10-21`). Required when
    *  `provider === 'azure'`; ignored otherwise. */

@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   applySafeMode,
   BUILTIN_PERSONALITY_IDS,
@@ -48,12 +48,19 @@ import {
 } from '@ethosagent/llm-openai-compat';
 import { HistoryStore, withHistory } from '@ethosagent/memory-history';
 import { compose as composeMemory } from '@ethosagent/memory-markdown/compose';
+import { VaultMemoryProvider } from '@ethosagent/memory-vault';
 import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import type { PersonalityCompose } from '@ethosagent/personalities/compose';
 import { compose as composePersonalities } from '@ethosagent/personalities/compose';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { compose as composeSession } from '@ethosagent/session-sqlite/compose';
-import { FsAttachmentCache, FsStorage, REF_TO_ENV } from '@ethosagent/storage-fs';
+import {
+  defaultAlwaysDeny,
+  FsAttachmentCache,
+  FsStorage,
+  REF_TO_ENV,
+  ScopedStorage,
+} from '@ethosagent/storage-fs';
 import { readFileReducer } from '@ethosagent/tools-code/reducers/read-file';
 import { kanbanListReducer } from '@ethosagent/tools-kanban/reducers/kanban-list';
 import { bashReducer } from '@ethosagent/tools-terminal/reducers/bash';
@@ -191,6 +198,31 @@ export async function buildInfrastructure(
   });
   memoryProviders.register('vector', ({ dataDir: dir }) => {
     return new VectorMemoryProvider({ dir, storage: wiringCtx.storage });
+  });
+  memoryProviders.register('vault', () => {
+    const vault = config.memoryVault;
+    if (!vault?.path) {
+      throw new Error('memory: vault requires memoryVault.path to be set in config.');
+    }
+    const vaultRoot = resolve(vault.path);
+    const agentDir = vault.agentDir ?? 'Ethos';
+    const agentRoot = join(vaultRoot, agentDir);
+    // Confine the memory system to the vault: read the whole vault (so search
+    // can find the user's notes), but write only inside the agent's own
+    // subtree. The sensitive-path floor still applies beneath the allowlist.
+    const scoped = new ScopedStorage(wiringCtx.storage, {
+      read: [`${vaultRoot}/`],
+      write: [`${agentRoot}/`],
+      alwaysDeny: defaultAlwaysDeny(),
+    });
+    return new VaultMemoryProvider({
+      vaultRoot,
+      agentDir,
+      storage: scoped,
+      logger: log,
+      ...(vault.prefetch && vault.prefetch.length > 0 ? { prefetchKeys: vault.prefetch } : {}),
+      ...(vault.exclude && vault.exclude.length > 0 ? { exclude: vault.exclude } : {}),
+    });
   });
 
   // Storage backend registry — built-ins registered here; plugins add more

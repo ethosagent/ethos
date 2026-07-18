@@ -54,6 +54,7 @@
     "@ethosagent/memory-capture": "workspace:*",
     "@ethosagent/memory-history": "workspace:*",
     "@ethosagent/memory-markdown": "workspace:*",
+    "@ethosagent/memory-vault": "workspace:*",
     "@ethosagent/memory-vector": "workspace:*",
     "@ethosagent/nightly-loop": "workspace:*",
     "@ethosagent/oauth": "workspace:*",

@@ -27,7 +27,7 @@ export interface WizardAnswers {
    *  only carries an override entered during setup. */
   apiVersion?: string;
   personality?: string;
-  memory?: 'markdown' | 'vector';
+  memory?: 'markdown' | 'vector' | 'vault';
   telegramToken?: string;
   discordToken?: string;
   slackBotToken?: string;

@@ -21,6 +21,7 @@
       "@ethosagent/llm-codex": ["./extensions/llm-codex/src"],
       "@ethosagent/llm-gemini-native": ["./extensions/llm-gemini/src"],
       "@ethosagent/memory-markdown": ["./extensions/memory-markdown/src"],
+      "@ethosagent/memory-vault": ["./extensions/memory-vault/src"],
       "@ethosagent/memory-history": ["./extensions/memory-history/src"],
       "@ethosagent/memory-capture": ["./extensions/memory-capture/src"],
       "@ethosagent/personalities": ["./extensions/personalities/src"],

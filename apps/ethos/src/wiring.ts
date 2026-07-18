@@ -236,6 +236,7 @@ export async function createAgentLoop(
     ...(config.auxiliary?.asr ? { auxiliaryAsr: config.auxiliary.asr } : {}),
     ...(config.auxiliary?.tts ? { auxiliaryTts: config.auxiliary.tts } : {}),
     ...(config.memoryCapture ? { memoryCapture: config.memoryCapture } : {}),
+    ...(config.memoryVault ? { memoryVault: config.memoryVault } : {}),
     ...(config.nightlyPass ? { nightlyPass: config.nightlyPass } : {}),
     ...(config.displayMemoryNotices !== undefined
       ? { displayMemoryNotices: config.displayMemoryNotices }

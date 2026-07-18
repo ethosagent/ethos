@@ -232,6 +232,25 @@ export interface MemoryCaptureConfig {
 }
 
 /**
+ * Bring-your-own-vault memory backend (memory-lifecycle L1). Read only when
+ * `memory: vault`. Parsed from flat `memoryVault.<field>` keys:
+ *   memoryVault.path: /Users/you/Documents/ObsidianVault
+ *   memoryVault.agentDir: Ethos
+ *   memoryVault.prefetch: MEMORY.md, USER.md
+ *   memoryVault.exclude: Archive, Templates
+ */
+export interface MemoryVaultConfig {
+  /** Absolute path to the vault root (the Obsidian folder). */
+  path?: string;
+  /** Subtree the agent owns; scopes route beneath it. Default `Ethos`. */
+  agentDir?: string;
+  /** Keys prefetched into the prompt tail. Default `MEMORY.md`, `USER.md`. */
+  prefetch?: string[];
+  /** Directory / file names hidden from list + search. */
+  exclude?: string[];
+}
+
+/**
  * Importance scoring + decay tuning (memory-experience pillar C, §4.2/§4.3).
  * All optional — the nightly pass applies defaults (30-day half-life, 0.05
  * archive threshold, USER.md exempt). Parsed from flat `memoryConsolidation.<field>`
@@ -399,8 +418,8 @@ export interface EthosConfig {
   model: string;
   apiKey: string;
   personality: string;
-  /** Memory backend: 'markdown' (default) or 'vector' (semantic retrieval) */
-  memory?: 'markdown' | 'vector';
+  /** Memory backend: 'markdown' (default), 'vector' (semantic retrieval), or 'vault' (bring-your-own external directory) */
+  memory?: 'markdown' | 'vector' | 'vault';
   baseUrl?: string;
   /** Azure-only: REST API version (e.g. `2024-10-21`). Required when
    *  `provider === 'azure'`; ignored otherwise. */
@@ -760,6 +779,12 @@ export interface EthosConfig {
    * `MemoryCaptureConfig`. Parsed from flat `memoryCapture.<field>` keys.
    */
   memoryCapture?: MemoryCaptureConfig;
+  /**
+   * Bring-your-own-vault backend settings (memory-lifecycle L1). Read only
+   * when `memory: vault`. See `MemoryVaultConfig`. Parsed from flat
+   * `memoryVault.<field>` keys.
+   */
+  memoryVault?: MemoryVaultConfig;
   /**
    * Importance scoring + decay tuning (memory-experience pillar C). Defaults
    * applied by the nightly pass when absent. See `MemoryConsolidationConfig`.
@@ -1137,6 +1162,15 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
     if (mc.baseUrl) lines.push(`memoryCapture.baseUrl: ${mc.baseUrl}`);
     if (mc.maxPerHour !== undefined) lines.push(`memoryCapture.maxPerHour: ${mc.maxPerHour}`);
     if (mc.maxPerDay !== undefined) lines.push(`memoryCapture.maxPerDay: ${mc.maxPerDay}`);
+  }
+  if (config.memoryVault) {
+    const mv = config.memoryVault;
+    if (mv.path) lines.push(`memoryVault.path: ${mv.path}`);
+    if (mv.agentDir) lines.push(`memoryVault.agentDir: ${mv.agentDir}`);
+    if (mv.prefetch && mv.prefetch.length > 0)
+      lines.push(`memoryVault.prefetch: ${mv.prefetch.join(', ')}`);
+    if (mv.exclude && mv.exclude.length > 0)
+      lines.push(`memoryVault.exclude: ${mv.exclude.join(', ')}`);
   }
   if (config.memoryConsolidation) {
     const mco = config.memoryConsolidation;
@@ -1580,6 +1614,12 @@ function parseConfigYaml(src: string): EthosConfig {
       kv[`memoryCapture.${mcap[1]}`] = mcap[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // memoryVault.<field>: <value>
+    const mvault = line.match(/^memoryVault\.(\w+):\s*(.+)$/);
+    if (mvault) {
+      kv[`memoryVault.${mvault[1]}`] = mvault[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // memoryConsolidation.<field>: <value>
     const mcon = line.match(/^memoryConsolidation\.(\w+):\s*(.+)$/);
     if (mcon) {
@@ -1759,7 +1799,14 @@ function parseConfigYaml(src: string): EthosConfig {
     model: kv.model ?? 'claude-opus-4-7',
     apiKey: kv.apiKey ?? '',
     personality: kv.personality ?? 'researcher',
-    memory: kv.memory === 'vector' ? 'vector' : kv.memory === 'markdown' ? 'markdown' : undefined,
+    memory:
+      kv.memory === 'vector'
+        ? 'vector'
+        : kv.memory === 'vault'
+          ? 'vault'
+          : kv.memory === 'markdown'
+            ? 'markdown'
+            : undefined,
     baseUrl: kv.baseUrl,
     apiVersion: kv.apiVersion,
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
@@ -1846,6 +1893,7 @@ function parseConfigYaml(src: string): EthosConfig {
           }
         : undefined,
     memoryCapture: buildMemoryCaptureConfig(kv),
+    memoryVault: buildMemoryVaultConfig(kv),
     memoryConsolidation: (() => {
       // Union of the silent memory-flush turn (context-compaction) and the
       // decay/importance tuning (memory-experience) — disjoint field sets, one key.
@@ -2135,6 +2183,27 @@ function buildMemoryCaptureConfig(kv: Record<string, string>): MemoryCaptureConf
     ...(Number.isFinite(maxPerHour) ? { maxPerHour } : {}),
     ...(Number.isFinite(maxPerDay) ? { maxPerDay } : {}),
   };
+}
+
+function buildMemoryVaultConfig(kv: Record<string, string>): MemoryVaultConfig | undefined {
+  const present = Object.keys(kv).some((k) => k.startsWith('memoryVault.'));
+  if (!present) return undefined;
+  const prefetch = splitList(kv['memoryVault.prefetch']);
+  const exclude = splitList(kv['memoryVault.exclude']);
+  return {
+    ...(kv['memoryVault.path'] ? { path: kv['memoryVault.path'] } : {}),
+    ...(kv['memoryVault.agentDir'] ? { agentDir: kv['memoryVault.agentDir'] } : {}),
+    ...(prefetch.length > 0 ? { prefetch } : {}),
+    ...(exclude.length > 0 ? { exclude } : {}),
+  };
+}
+
+function splitList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 function buildMemoryConsolidationConfig(

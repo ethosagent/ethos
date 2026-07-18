@@ -1132,6 +1132,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/memory-vault:
+    dependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/memory-vector:
     dependencies:
       '@ethosagent/sqlite':
@@ -2046,6 +2055,9 @@ importers:
       '@ethosagent/memory-markdown':
         specifier: workspace:*
         version: link:../../extensions/memory-markdown
+      '@ethosagent/memory-vault':
+        specifier: workspace:*
+        version: link:../../extensions/memory-vault
       '@ethosagent/memory-vector':
         specifier: workspace:*
         version: link:../../extensions/memory-vector
