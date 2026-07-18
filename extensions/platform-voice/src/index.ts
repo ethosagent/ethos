@@ -9,4 +9,19 @@ export {
   VoiceChannelAdapter,
   type VoiceChannelAdapterDeps,
 } from './adapter';
+export type {
+  LiveKitAudioFrame,
+  LiveKitConnectOptions,
+  LiveKitRoomClient,
+  LiveKitTokenMinter,
+} from './livekit/room-client';
+export {
+  createLiveKitTransport,
+  type LiveKitRoomBinding,
+  type LiveKitTransportFactoryDeps,
+  LiveKitVoiceTransport,
+  type LiveKitVoiceTransportConfig,
+  type LiveKitVoiceTransportDeps,
+  resamplePcm,
+} from './livekit/transport';
 export type { OutboundAudioFrame, VoiceTransport } from './transport';

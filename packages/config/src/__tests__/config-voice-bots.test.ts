@@ -175,6 +175,87 @@ describe('loadConfigStrict — voice.bots malformed entries surface as parseErro
   });
 });
 
+describe('parseConfigYaml — voice.livekit.*', () => {
+  it('parses the LiveKit transport block alongside bots', async () => {
+    const cfg = await load(
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk',
+        'personality: researcher',
+        'voice.bots.0.match: room-*',
+        'voice.bots.0.bind.type: personality',
+        'voice.bots.0.bind.name: researcher',
+        'voice.livekit.url: wss://live.example.com',
+        'voice.livekit.apiKey: LK_KEY',
+        'voice.livekit.apiSecret: LK_SECRET',
+      ].join('\n'),
+    );
+
+    expect(cfg.voice?.livekit).toEqual({
+      url: 'wss://live.example.com',
+      apiKey: 'LK_KEY',
+      apiSecret: 'LK_SECRET',
+    });
+    expect(cfg.voice?.bots).toHaveLength(1);
+  });
+
+  it('parses a LiveKit block with no bots', async () => {
+    const cfg = await load(
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk',
+        'personality: researcher',
+        'voice.livekit.url: wss://live.example.com',
+        'voice.livekit.apiKey: LK_KEY',
+        'voice.livekit.apiSecret: LK_SECRET',
+      ].join('\n'),
+    );
+
+    expect(cfg.voice?.livekit?.url).toBe('wss://live.example.com');
+    expect(cfg.voice?.bots).toEqual([]);
+  });
+
+  it('round-trips the LiveKit block through writeConfig -> readRawConfig', async () => {
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'm',
+      apiKey: 'sk',
+      personality: 'researcher',
+      voice: {
+        bots: [{ match: 'room-*', bind: { type: 'personality', name: 'researcher' } }],
+        livekit: { url: 'wss://live.example.com', apiKey: 'LK_KEY', apiSecret: 'LK_SECRET' },
+      },
+    };
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await writeConfig(storage, original);
+    const reloaded = await readRawConfig(storage);
+
+    expect(reloaded?.voice).toEqual(original.voice);
+  });
+
+  it('surfaces a parse error for a partial LiveKit block', async () => {
+    const result = await loadStrict(
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk',
+        'personality: researcher',
+        'voice.livekit.url: wss://live.example.com',
+      ].join('\n'),
+    );
+    expect(result?.parseErrors.some((e) => e.includes("missing required field 'apiKey'"))).toBe(
+      true,
+    );
+    expect(result?.parseErrors.some((e) => e.includes("missing required field 'apiSecret'"))).toBe(
+      true,
+    );
+    expect(result?.config.voice?.livekit).toBeUndefined();
+  });
+});
+
 describe('validateBotBindings — voice.bots[]', () => {
   const deps = {
     personalityIds: new Set(['researcher']),

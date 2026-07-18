@@ -180,6 +180,21 @@ export interface VoiceBotConfig {
   bind: BotBinding;
 }
 
+/**
+ * LiveKit connection keys for the real-time voice transport
+ * (plan/phases/gap-voice-realtime.md §3(b)). `url` is the LiveKit server/room
+ * URL; `apiKey`/`apiSecret` are the LiveKit project credentials the token
+ * minter signs access tokens with. All three are required together — a partial
+ * block surfaces as a parse error. The concrete transport
+ * (`@ethosagent/platform-voice`) consumes these; the native `@livekit/rtc-node`
+ * / `livekit-server-sdk` bindings are supplied at the app layer, not committed.
+ */
+export interface VoiceLiveKitConfig {
+  url: string;
+  apiKey: string;
+  apiSecret: string;
+}
+
 export interface ProviderConfig {
   provider: string;
   apiKey: string;
@@ -533,8 +548,9 @@ export interface EthosConfig {
    *   voice.bots.0.match: +15551234567
    *   voice.bots.0.bind.type: personality
    *   voice.bots.0.bind.name: receptionist
+   * LiveKit transport keys live alongside the bots under `voice.livekit.*`.
    */
-  voice?: { bots: VoiceBotConfig[] };
+  voice?: { bots: VoiceBotConfig[]; livekit?: VoiceLiveKitConfig };
   // Email platform
   emailImapHost?: string;
   emailImapPort?: number;
@@ -1029,7 +1045,7 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       }
     }
   }
-  if (config.voice?.bots.length) {
+  if (config.voice) {
     for (const [i, bot] of config.voice.bots.entries()) {
       if (bot.id) lines.push(`voice.bots.${i}.id: ${bot.id}`);
       lines.push(`voice.bots.${i}.match: ${bot.match}`);
@@ -1038,6 +1054,11 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       if (bot.bind.allowSlashSwitch) {
         lines.push(`voice.bots.${i}.bind.allowSlashSwitch: true`);
       }
+    }
+    if (config.voice.livekit) {
+      lines.push(`voice.livekit.url: ${config.voice.livekit.url}`);
+      lines.push(`voice.livekit.apiKey: ${config.voice.livekit.apiKey}`);
+      lines.push(`voice.livekit.apiSecret: ${config.voice.livekit.apiSecret}`);
     }
   }
   if (config.teams) {
@@ -1299,6 +1320,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const slackAppsKv: Record<number, Record<string, string>> = {};
   const whatsappKv: Record<number, Record<string, string>> = {};
   const voiceBotsKv: Record<number, Record<string, string>> = {};
+  const voiceLiveKitKv: Record<string, string> = {};
   const teamsKv: Record<string, Record<string, string>> = {};
   const webhooksKv: Record<string, Record<string, string>> = {};
   // FW-16 — quick_commands.<name>.<field>: <value>
@@ -1368,6 +1390,12 @@ function parseConfigYaml(src: string): EthosConfig {
       const idx = Number(vbot[1]);
       voiceBotsKv[idx] ??= {};
       voiceBotsKv[idx][vbot[2]] = vbot[3].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+    // voice.livekit.<field>: <value>
+    const vlk = line.match(/^voice\.livekit\.(\w+):\s*(.+)$/);
+    if (vlk) {
+      voiceLiveKitKv[vlk[1]] = vlk[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
     // teams.<name>.<field>: <value>
@@ -1774,6 +1802,14 @@ function parseConfigYaml(src: string): EthosConfig {
   const slackResult = buildSlackApps(slackAppsKv);
   const whatsappResult = buildWhatsApps(whatsappKv);
   const voiceResult = buildVoiceBots(voiceBotsKv);
+  const voiceLiveKitResult = buildVoiceLiveKit(voiceLiveKitKv);
+  const voiceSection =
+    voiceResult.bots.length > 0 || voiceLiveKitResult.livekit
+      ? {
+          bots: voiceResult.bots,
+          ...(voiceLiveKitResult.livekit ? { livekit: voiceLiveKitResult.livekit } : {}),
+        }
+      : undefined;
   const teams = buildTeamsConfig(teamsKv);
   const webhooksResult = buildWebhooks(webhooksKv);
   const quick_commands = buildQuickCommands(qcKv);
@@ -1783,6 +1819,7 @@ function parseConfigYaml(src: string): EthosConfig {
     ...slackResult.errors,
     ...whatsappResult.errors,
     ...voiceResult.errors,
+    ...voiceLiveKitResult.errors,
     ...webhooksResult.errors,
   ];
 
@@ -1842,7 +1879,7 @@ function parseConfigYaml(src: string): EthosConfig {
     telegram: telegramResult.bots.length > 0 ? { bots: telegramResult.bots } : undefined,
     slack: slackResult.apps.length > 0 ? { apps: slackResult.apps } : undefined,
     whatsapp: whatsappResult.apps.length > 0 ? whatsappResult.apps : undefined,
-    voice: voiceResult.bots.length > 0 ? { bots: voiceResult.bots } : undefined,
+    voice: voiceSection,
     teams,
     evolverCronEnabled: evolverKv.cron_enabled === 'true' ? true : undefined,
     evolverSchedule: evolverKv.schedule || undefined,
@@ -2381,6 +2418,23 @@ function buildVoiceBots(kv: Record<number, Record<string, string>>): {
     bots.push({ match: entry.match, bind: result.bind, ...(entry.id ? { id: entry.id } : {}) });
   }
   return { bots, errors };
+}
+
+function buildVoiceLiveKit(kv: Record<string, string>): {
+  livekit?: VoiceLiveKitConfig;
+  errors: string[];
+} {
+  // Absent block is valid — LiveKit keys are optional.
+  if (Object.keys(kv).length === 0) return { errors: [] };
+  const errors: string[] = [];
+  const { url, apiKey, apiSecret } = kv;
+  if (!url || !apiKey || !apiSecret) {
+    if (!url) errors.push("voice.livekit: missing required field 'url'.");
+    if (!apiKey) errors.push("voice.livekit: missing required field 'apiKey'.");
+    if (!apiSecret) errors.push("voice.livekit: missing required field 'apiSecret'.");
+    return { errors };
+  }
+  return { livekit: { url, apiKey, apiSecret }, errors: [] };
 }
 
 function buildTeamsConfig(
