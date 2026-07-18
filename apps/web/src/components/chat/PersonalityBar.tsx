@@ -1,6 +1,6 @@
 import { personalityAccent } from '@ethosagent/design-tokens';
 import { Input } from 'antd';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { PersonalityRingAvatar } from '../ui/PersonalityRingAvatar';
 import { PersonalitySwitcher } from './PersonalitySwitcher';
 
@@ -24,6 +24,9 @@ export interface PersonalityBarProps {
   sessionTitle?: string | null;
   /** Called after the user confirms a new title (empty string → pass null to clear). */
   onRenameSession?: (title: string | null) => void;
+  /** Opaque extra control rendered at the head of the actions cluster (e.g. the
+   *  talk-mode toggle). The bar stays agnostic about what it holds. */
+  actionsSlot?: ReactNode;
 }
 
 export function PersonalityBar({
@@ -34,6 +37,7 @@ export function PersonalityBar({
   onNewSession,
   sessionTitle,
   onRenameSession,
+  actionsSlot,
 }: PersonalityBarProps) {
   const accent = personalityAccent(personalityId);
   const displayName = name ?? capitalize(personalityId);
@@ -102,6 +106,7 @@ export function PersonalityBar({
         </div>
 
         <div className="personality-bar-actions">
+          {actionsSlot}
           <button
             type="button"
             className="personality-bar-new"

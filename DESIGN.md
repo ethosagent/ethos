@@ -156,6 +156,24 @@ Three-state dot (8px circle, `border-radius: 9999px`):
 Web surface: rendered in TopBar right-hand side alongside `{provider} · {model}` mono label.
 Desktop surface: rendered in sidebar bottom as an 8px dot inside a 20px glow ring (`border: 1.5px solid rgba(74,222,128,0.4)`).
 
+### In-call speaking indicator
+
+Talk-mode (real-time voice) needs a glanceable "who is speaking now" signal in
+the in-call control strip. Two states, reusing existing vocabulary — no new color
+or motion primitives:
+
+- **User speaking (listening):** reuse the composer's `AudioBars` mic meter (red
+  `--error` bars) — the mic is live/recording, same as voice-note capture.
+- **Agent speaking:** a single 10px dot in the active personality's `--accent`,
+  pulsing via the existing `status-dot-pulse` keyframe. Accent (not a semantic
+  color) because it says "this personality is talking" — the same identity
+  affordance as the personality bar. `prefers-reduced-motion` stops the pulse.
+
+Rationale: mirrors the connection-status dot vocabulary (colored pulsing dot) but
+in accent, so the speaking cue reads as identity, not status. The call strip is a
+slim bar on the existing Chat — no new full-screen surface ("cards earn
+existence").
+
 ## Sidebar
 
 ### Icons
@@ -314,3 +332,4 @@ The web UI specifically must avoid these patterns. Code review checks for them.
 | 2026-05-29 | Empty chat state with suggestion pills | "Start the conversation." placeholder is undesigned. Personality mark + pills sets context and invites the first message. |
 | 2026-06-11 | Personality marks → circular frame (accent ring + circle-clipped cells) | New circular ring logo; marks follow the logo's geometry. User-directed. Docs `PersonalityMark` updated; `apps/web/src/components/ui/PersonalityMark.tsx` and `packages/web-contracts/src/marks.ts` are follow-ups to keep cross-surface parity. |
 | 2026-07-16 | Docs landing page: personality icon → annulus ring (logo geometry); landing shows 3 specialists with cross-provider model routing | User-directed during landing-page 3D redesign (hero-demos hybrid). Scope: docs landing page; app surfaces still use the generative grid mark pending a follow-up decision. |
+| 2026-07-19 | In-call speaking indicator (talk-mode) | Phase B browser talk-mode needs a "who's speaking" cue. Reuses `AudioBars` for the user mic and an accent `status-dot-pulse` dot for the agent — accent, not a semantic color, so the cue reads as personality identity. No new primitives. |

@@ -11,8 +11,13 @@ import { MessageList } from '../components/chat/MessageList';
 import { PersonalityBar } from '../components/chat/PersonalityBar';
 import { useGoalCreate } from '../features/goals/api/mutations';
 import { useGoalDetection } from '../features/goals/useGoalDetection';
+import { usePersonalityGet } from '../features/personalities/api/queries';
 import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useSessionGet } from '../features/sessions/api/queries';
+import { personalityCanTalk } from '../features/voice/gating';
+import { TalkModeCallBar, TalkModeToggle } from '../features/voice/TalkMode';
+import { useVoiceCall } from '../features/voice/useVoiceCall';
+import { voiceTranscriptToMessages } from '../features/voice/voice-call-reducer';
 import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
@@ -311,6 +316,24 @@ export function Chat() {
   const pendingApproval = state.pendingApprovals[0];
   const pendingClarify = state.pendingClarifies[0];
 
+  // Talk-mode (Phase B). The call affordance is gated on the active
+  // personality's toolset (§3(e)) — voice availability is a personality
+  // capability, not a config field. The live-call client is injected; until
+  // `livekit-client` is wired (see features/voice/README.md) the default client
+  // reports the manual step honestly instead of connecting.
+  const personalityQuery = usePersonalityGet(personalityId);
+  const canTalk = personalityCanTalk(personalityQuery.data?.personality.toolset);
+  const voice = useVoiceCall();
+  const inCall = voice.status !== 'idle' && voice.status !== 'ended';
+  const voiceMessages =
+    voice.transcript.length > 0 ? voiceTranscriptToMessages(voice.transcript) : [];
+
+  useEffect(() => {
+    if (voice.error) {
+      notification.info({ message: 'Voice', description: voice.error, placement: 'topRight' });
+    }
+  }, [voice.error, notification]);
+
   const handleSwitchPersonality = async (newId: string) => {
     // No-op: same personality clicked.
     if (newId === personalityId) return;
@@ -361,7 +384,25 @@ export function Chat() {
           onNewSession={handleNewSession}
           sessionTitle={sessionTitle}
           onRenameSession={handleRenameSession}
+          actionsSlot={
+            <TalkModeToggle
+              canTalk={canTalk}
+              personalityName={capitalize(personalityId)}
+              inCall={inCall}
+              onToggle={voice.start}
+            />
+          }
         />
+        {inCall ? (
+          <TalkModeCallBar
+            status={voice.status}
+            micLevels={voice.micLevels}
+            muted={voice.muted}
+            error={voice.error}
+            onToggleMute={voice.toggleMute}
+            onHangUp={voice.hangUp}
+          />
+        ) : null}
         <GoalIntakeModal
           open={intakeOpen}
           onClose={() => setIntakeOpen(false)}
@@ -377,7 +418,9 @@ export function Chat() {
           <ClarifyCard key={pendingClarify.requestId} request={pendingClarify} />
         ) : null}
         <MessageList
-          messages={state.messages}
+          messages={
+            voiceMessages.length > 0 ? [...state.messages, ...voiceMessages] : state.messages
+          }
           currentTurn={state.currentTurn}
           personalityId={personalityId}
           model={model}

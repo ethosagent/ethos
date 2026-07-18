@@ -2441,6 +2441,130 @@ textarea {
   min-height: 32px;
 }
 
+/* Talk-mode (Phase B) — the call toggle in the personality bar, the in-call
+   control strip, and the speaking indicator. Reuses existing tokens and the
+   composer's AudioBars meter; the accent agent-speaking pulse is the one new
+   pattern (see DESIGN.md "In-call speaking indicator"). */
+.talk-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ethos-text-dim);
+  cursor: pointer;
+  transition: background-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.talk-toggle-btn:hover:not(:disabled) {
+  background: var(--ethos-hover);
+  color: var(--ethos-text);
+}
+
+.talk-toggle-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.talk-toggle-btn.talk-toggle-active {
+  color: var(--accent, var(--ethos-info));
+}
+
+.talk-toggle-btn:focus-visible {
+  outline: 2px solid var(--accent, var(--ethos-info));
+  outline-offset: 1px;
+}
+
+.talk-call-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--ethos-bg-overlay);
+  border-bottom: 1px solid var(--ethos-border);
+}
+
+.talk-indicator {
+  display: flex;
+  align-items: center;
+  width: 120px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.talk-indicator-muted {
+  opacity: 0.4;
+}
+
+.talk-agent-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--accent, var(--ethos-info));
+  animation: status-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.talk-status-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--ethos-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.talk-call-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.talk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border-strong);
+  color: var(--ethos-text);
+  cursor: pointer;
+  transition: background-color 80ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.talk-btn:hover {
+  background: var(--ethos-hover);
+}
+
+.talk-btn.talk-btn-active {
+  color: var(--ethos-text-dim);
+}
+
+.talk-btn:focus-visible {
+  outline: 2px solid var(--accent, var(--ethos-info));
+  outline-offset: 1px;
+}
+
+.talk-hangup-btn {
+  background: var(--error, var(--ethos-error));
+  border-color: transparent;
+  color: #fff;
+}
+
+.talk-hangup-btn:hover {
+  background: var(--ethos-error);
+  opacity: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .talk-agent-pulse {
+    animation: none;
+  }
+}
+
 .composer-actions {
   display: flex;
   align-items: center;
