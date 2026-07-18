@@ -45,6 +45,7 @@
       "@ethosagent/tools-debug": ["./extensions/tools-debug/src"],
       "@ethosagent/gateway": ["./extensions/gateway/src"],
       "@ethosagent/platform-voice": ["./extensions/platform-voice/src"],
+      "@ethosagent/platform-meeting": ["./extensions/platform-meeting/src"],
       "@ethosagent/platform-discord": ["./extensions/platform-discord/src"],
       "@ethosagent/platform-discord/validate": ["./extensions/platform-discord/src/validate"],
       "@ethosagent/platform-discord/clarify-surface": [
@@ -169,6 +170,7 @@
       "@ethosagent/tools-skills": ["./extensions/tools-skills/src"],
       "@ethosagent/tools-tts": ["./extensions/tools-tts/src"],
       "@ethosagent/tools-voice": ["./extensions/tools-voice/src"],
+      "@ethosagent/tools-meeting": ["./extensions/tools-meeting/src"],
       "@ethosagent/voice-providers": ["./extensions/voice-providers/src"],
       "@ethosagent/voice-session": ["./extensions/voice-session/src"],
       "@ethosagent/example-mission-control": ["./examples/mission-control/src"],
