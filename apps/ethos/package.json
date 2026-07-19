@@ -90,6 +90,7 @@
     "@ethosagent/config": "workspace:*",
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/digest": "workspace:*",
+    "@ethosagent/execution-local": "workspace:*",
     "@ethosagent/gateway": "workspace:*",
     "@ethosagent/goal-runner": "workspace:*",
     "@ethosagent/goal-store": "workspace:*",

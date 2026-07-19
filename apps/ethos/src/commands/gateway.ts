@@ -17,6 +17,7 @@ import {
 } from '@ethosagent/config';
 import { type AgentLoop, deriveBotKey as deriveBotKeyFromSeed } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
+import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { createCapturingAdapter, Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { registerGoalNotifications } from '@ethosagent/goal-runner';
 import { ConsoleLogger } from '@ethosagent/logger';
@@ -346,6 +347,13 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const scheduler = new CronScheduler({
     storage: getStorage(),
     logger: new ConsoleLogger(),
+    // Script/precheck jobs execute through the same local backend class the
+    // execution tools use — never raw child_process in the scheduler.
+    executionBackend: new LocalExecutionBackend({
+      config: {},
+      secrets,
+      logger: new ConsoleLogger(),
+    }),
     systemTasks: buildSystemTaskHandlers(config),
     onDecision: (job, d) => {
       try {

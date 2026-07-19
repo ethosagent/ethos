@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -11,22 +11,31 @@ import { CronScheduler, isValidCronExpression, nextRun, nextRunAfter } from '../
 // ---------------------------------------------------------------------------
 
 let testDir: string;
+let scriptsDir: string;
 
 beforeEach(async () => {
   testDir = join(tmpdir(), `ethos-cron-test-${Date.now()}`);
-  await mkdir(testDir, { recursive: true });
+  scriptsDir = join(testDir, 'scripts');
+  await mkdir(scriptsDir, { recursive: true });
 });
 
 afterEach(async () => {
   await rm(testDir, { recursive: true, force: true });
 });
 
+/** Drop an operator-authored fixture script into the temp scripts dir. */
+async function writeScript(name: string, body: string): Promise<void> {
+  await writeFile(join(scriptsDir, name), body, 'utf-8');
+}
+
 function makeScheduler(opts?: {
   runJob?: (job: CronJob) => Promise<CronRunResult>;
   deliver?: (job: CronJob, output: string) => Promise<void>;
+  onDecision?: CronSchedulerConfig['onDecision'];
 }) {
   return new CronScheduler({
     cronDir: testDir,
+    scriptsDir,
     tickIntervalMs: 999_999, // don't auto-tick in tests
     storage: new FsStorage(),
     runJob:
@@ -38,6 +47,7 @@ function makeScheduler(opts?: {
         sessionKey: `cron:${job.id}`,
       })),
     ...(opts?.deliver ? { deliver: opts.deliver } : {}),
+    ...(opts?.onDecision ? { onDecision: opts.onDecision } : {}),
   });
 }
 
@@ -391,7 +401,7 @@ describe('CronScheduler updateJob', () => {
     });
 
     await expect(scheduler.updateJob('empty-update', {})).rejects.toThrow(
-      'At least one of name, schedule, prompt, or script is required',
+      'At least one of name, schedule, prompt, script, or precheck is required',
     );
   });
 
@@ -1040,18 +1050,20 @@ describe('CronScheduler system jobs', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Script jobs — zero-LLM operator-authored shell commands
+// Script jobs — zero-LLM, operator-authored files under the scripts dir,
+// executed through the ExecutionBackend
 // ---------------------------------------------------------------------------
 
 describe('CronScheduler script jobs', () => {
   it('rejects a job with both script and prompt', async () => {
+    await writeScript('ok.sh', 'echo hi');
     const scheduler = makeScheduler();
     await expect(
       scheduler.createJob({
         name: 'Both Set',
         schedule: '0 8 * * *',
         prompt: 'a prompt',
-        script: 'echo hi',
+        script: { file: 'ok.sh' },
         personalityId: 'test',
         missedRunPolicy: 'skip',
       }),
@@ -1059,12 +1071,13 @@ describe('CronScheduler script jobs', () => {
   });
 
   it('rejects script on system-source jobs', async () => {
+    await writeScript('ok.sh', 'echo hi');
     const scheduler = makeScheduler();
     await expect(
       scheduler.createJob({
         name: 'System Script',
         schedule: '0 8 * * *',
-        script: 'echo hi',
+        script: { file: 'ok.sh' },
         personalityId: 'system',
         source: 'system',
         missedRunPolicy: 'skip',
@@ -1073,25 +1086,108 @@ describe('CronScheduler script jobs', () => {
   });
 
   it('accepts a script-only job — prompt is not required', async () => {
+    await writeScript('ok.sh', 'echo hi');
     const scheduler = makeScheduler();
     const job = await scheduler.createJob({
       name: 'Script Only',
       schedule: '0 8 * * *',
-      script: 'echo hi',
+      script: { file: 'ok.sh' },
       personalityId: 'test',
       missedRunPolicy: 'skip',
     });
-    expect(job.script).toBe('echo hi');
+    expect(job.script).toEqual({ file: 'ok.sh' });
     expect(job.prompt).toBeUndefined();
     expect(job.status).toBe('active');
   });
 
+  it('rejects absolute script paths at create time', async () => {
+    await writeScript('ok.sh', 'echo hi');
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Absolute',
+        schedule: '0 8 * * *',
+        script: { file: join(scriptsDir, 'ok.sh') },
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/must be relative/i);
+  });
+
+  it('rejects .. traversal at create time', async () => {
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Traversal',
+        schedule: '0 8 * * *',
+        script: { file: '../evil.sh' },
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/escapes the scripts directory/i);
+  });
+
+  it('rejects unsupported extensions at create time', async () => {
+    await writeScript('notes.txt', 'echo hi');
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Bad Ext',
+        schedule: '0 8 * * *',
+        script: { file: 'notes.txt' },
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/unsupported extension/i);
+  });
+
+  it('rejects a script file that does not exist at create time', async () => {
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Ghost',
+        schedule: '0 8 * * *',
+        script: { file: 'ghost.sh' },
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it('rejects out-of-range timeoutSeconds at create time', async () => {
+    await writeScript('ok.sh', 'echo hi');
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Too Long',
+        schedule: '0 8 * * *',
+        script: { file: 'ok.sh', timeoutSeconds: 601 },
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/timeoutSeconds/);
+  });
+
+  it('accepts a .py script at create time without executing it', async () => {
+    await writeScript('check.py', 'print("hi")');
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Py Job',
+      schedule: '0 8 * * *',
+      script: { file: 'check.py' },
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    expect(job.script?.file).toBe('check.py');
+  });
+
   it('rejects an update that would leave both script and prompt set', async () => {
+    await writeScript('ok.sh', 'echo hi');
     const scheduler = makeScheduler();
     const job = await scheduler.createJob({
       name: 'Script Then Prompt',
       schedule: '0 8 * * *',
-      script: 'echo hi',
+      script: { file: 'ok.sh' },
       personalityId: 'test',
       missedRunPolicy: 'skip',
     });
@@ -1099,25 +1195,28 @@ describe('CronScheduler script jobs', () => {
       /mutually exclusive/i,
     );
     // Setting one while explicitly clearing the other stays allowed.
-    const updated = await scheduler.updateJob(job.id, { prompt: 'a prompt', script: '' });
+    const updated = await scheduler.updateJob(job.id, { prompt: 'a prompt', script: null });
     expect(updated.prompt).toBe('a prompt');
-    expect(updated.script).toBe('');
+    expect(updated.script).toBeUndefined();
   });
 
   it('rejects adding script to a system job via update', async () => {
+    await writeScript('ok.sh', 'echo hi');
     const scheduler = makeScheduler();
     const job = await scheduler.seedSystemJob({
       name: 'System No Script',
       schedule: '0 3 * * *',
       systemTask: 'test-task',
     });
-    await expect(scheduler.updateJob(job.id, { script: 'echo hi' })).rejects.toThrow(
+    await expect(scheduler.updateJob(job.id, { script: { file: 'ok.sh' } })).rejects.toThrow(
       /not allowed on system jobs/i,
     );
   });
 
-  it('executes the script with zero LLM involvement', async () => {
+  it('executes the script with zero LLM involvement and delivers stdout verbatim', async () => {
+    await writeScript('disk.sh', 'echo hello-from-script');
     const runJobCalls: string[] = [];
+    const delivered: string[] = [];
     const scheduler = makeScheduler({
       runJob: async (job) => {
         runJobCalls.push(job.id);
@@ -1128,22 +1227,61 @@ describe('CronScheduler script jobs', () => {
           sessionKey: 'k',
         };
       },
+      deliver: async (_job, output) => {
+        delivered.push(output);
+      },
     });
     const job = await scheduler.createJob({
       name: 'Disk Check',
       schedule: '0 8 * * *',
-      script: 'echo hello-from-script',
+      script: { file: 'disk.sh' },
       personalityId: 'test',
+      origin: { platform: 'telegram', chatId: '42' },
       missedRunPolicy: 'skip',
     });
 
     const result = await scheduler.runJobNow(job.id);
     expect(runJobCalls).toHaveLength(0);
-    expect(result.output).toContain('hello-from-script');
+    expect(result.output).toBe('hello-from-script');
     expect(result.sessionKey).toBe(`cron:script:${job.id}`);
+    expect(delivered).toEqual(['hello-from-script']);
+
+    // Run output persisted to the same history as prompt jobs.
+    const runs = await scheduler.listRuns(job.id);
+    expect(runs).toHaveLength(1);
+    const body = await scheduler.readRunOutput(runs[0]?.outputPath ?? '');
+    expect(body).toContain('hello-from-script');
   });
 
-  it('persists script output and delivers it to the origin channel', async () => {
+  it('empty stdout is a silent tick audited as script-silent', async () => {
+    await writeScript('quiet.sh', 'exit 0');
+    const delivered: string[] = [];
+    const decisions: Array<{ action: string; delivered: boolean }> = [];
+    const scheduler = makeScheduler({
+      deliver: async (_job, output) => {
+        delivered.push(output);
+      },
+      onDecision: (_job, d) => {
+        decisions.push({ action: d.action, delivered: d.delivered });
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Quiet',
+      schedule: '0 8 * * *',
+      script: { file: 'quiet.sh' },
+      personalityId: 'test',
+      origin: { platform: 'telegram', chatId: '42' },
+      missedRunPolicy: 'skip',
+    });
+
+    const result = await scheduler.runJobNow(job.id);
+    expect(result.output).toBe('');
+    expect(delivered).toHaveLength(0);
+    expect(decisions).toEqual([{ action: 'script-silent', delivered: false }]);
+  });
+
+  it('non-zero exit records lastError and delivers a failure notice', async () => {
+    await writeScript('boom.sh', 'echo boom >&2; exit 3');
     const delivered: string[] = [];
     const scheduler = makeScheduler({
       deliver: async (_job, output) => {
@@ -1151,37 +1289,18 @@ describe('CronScheduler script jobs', () => {
       },
     });
     const job = await scheduler.createJob({
-      name: 'Script Deliver',
-      schedule: '0 8 * * *',
-      script: 'echo delivered-output',
-      personalityId: 'test',
-      origin: { platform: 'telegram', chatId: '42' },
-      missedRunPolicy: 'skip',
-    });
-
-    await scheduler.runJobNow(job.id);
-
-    const runs = await scheduler.listRuns(job.id);
-    expect(runs).toHaveLength(1);
-    const latest = runs[0];
-    expect(latest).toBeDefined();
-    const body = await scheduler.readRunOutput(latest?.outputPath ?? '');
-    expect(body).toContain('delivered-output');
-    expect(delivered).toHaveLength(1);
-    expect(delivered[0]).toContain('delivered-output');
-  });
-
-  it('failing script throws on runJobNow and records lastError on tick', async () => {
-    const scheduler = makeScheduler();
-    const job = await scheduler.createJob({
       name: 'Failing Script',
       schedule: '0 8 * * *',
-      script: 'echo boom >&2; exit 3',
+      script: { file: 'boom.sh' },
       personalityId: 'test',
+      origin: { platform: 'telegram', chatId: '42' },
       missedRunPolicy: 'run-once',
     });
 
     await expect(scheduler.runJobNow(job.id)).rejects.toThrow(/exited with code 3/);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toMatch(/exited with code 3/);
+    expect(delivered[0]).toContain('boom');
 
     // Tick path: due job fails → lastError recorded, job not stuck.
     // biome-ignore lint/suspicious/noExplicitAny: test access to private method
@@ -1195,5 +1314,241 @@ describe('CronScheduler script jobs', () => {
     expect(updated?.lastError).toMatch(/exited with code 3/);
     expect(updated?.status).toBe('active');
     expect(updated?.nextRunAt).toBeTruthy();
+  });
+
+  it('timeout is a failure — notice delivered, runJobNow rejects', async () => {
+    await writeScript('slow.sh', 'sleep 5');
+    const delivered: string[] = [];
+    const scheduler = makeScheduler({
+      deliver: async (_job, output) => {
+        delivered.push(output);
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Slow Script',
+      schedule: '0 8 * * *',
+      script: { file: 'slow.sh', timeoutSeconds: 1 },
+      personalityId: 'test',
+      origin: { platform: 'telegram', chatId: '42' },
+      missedRunPolicy: 'skip',
+    });
+
+    await expect(scheduler.runJobNow(job.id)).rejects.toThrow(/timed out after 1s/);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toMatch(/timed out/);
+  });
+
+  it('a script deleted after create is treated as a run-time failure', async () => {
+    await writeScript('gone.sh', 'echo hi');
+    const delivered: string[] = [];
+    const scheduler = makeScheduler({
+      deliver: async (_job, output) => {
+        delivered.push(output);
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Gone Script',
+      schedule: '0 8 * * *',
+      script: { file: 'gone.sh' },
+      personalityId: 'test',
+      origin: { platform: 'telegram', chatId: '42' },
+      missedRunPolicy: 'skip',
+    });
+
+    await unlink(join(scriptsDir, 'gone.sh'));
+    await expect(scheduler.runJobNow(job.id)).rejects.toThrow(/not found/);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toMatch(/not found/);
+  });
+
+  it('redacts secrets from script stdout before delivery', async () => {
+    await writeScript('leak.sh', 'echo "password=hunter2hunter2hunter2hunter2"');
+    const delivered: string[] = [];
+    const scheduler = makeScheduler({
+      deliver: async (_job, output) => {
+        delivered.push(output);
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Leaky',
+      schedule: '0 8 * * *',
+      script: { file: 'leak.sh' },
+      personalityId: 'test',
+      origin: { platform: 'telegram', chatId: '42' },
+      missedRunPolicy: 'skip',
+    });
+
+    await scheduler.runJobNow(job.id);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).not.toContain('hunter2hunter2');
+    expect(delivered[0]).toContain('[REDACTED');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Precheck gate — deterministic script decides whether the LLM turn runs
+// ---------------------------------------------------------------------------
+
+describe('CronScheduler precheck gate', () => {
+  it('rejects precheck on script jobs and system jobs', async () => {
+    await writeScript('ok.sh', 'echo hi');
+    await writeScript('pre.sh', 'exit 0');
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Precheck On Script',
+        schedule: '0 8 * * *',
+        script: { file: 'ok.sh' },
+        precheck: { file: 'pre.sh' },
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/only allowed on prompt jobs/i);
+    await expect(
+      scheduler.createJob({
+        name: 'Precheck On System',
+        schedule: '0 8 * * *',
+        precheck: { file: 'pre.sh' },
+        personalityId: 'system',
+        source: 'system',
+        systemTask: 'x',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/not allowed on system jobs/i);
+  });
+
+  it('applies the same path guards as script jobs', async () => {
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Traversal Precheck',
+        schedule: '0 8 * * *',
+        prompt: 'check things',
+        precheck: { file: '../evil.sh' },
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/escapes the scripts directory/i);
+  });
+
+  it('exit 78 skips the turn entirely — zero runJob calls, precheck-skip audit', async () => {
+    await writeScript('skip.sh', 'exit 78');
+    const runJobCalls: string[] = [];
+    const decisions: Array<{ action: string }> = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        runJobCalls.push(job.id);
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: 'llm output',
+          sessionKey: 'k',
+        };
+      },
+      onDecision: (_job, d) => {
+        decisions.push({ action: d.action });
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Gated',
+      schedule: '0 8 * * *',
+      prompt: 'analyze the diff',
+      precheck: { file: 'skip.sh' },
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    const result = await scheduler.runJobNow(job.id);
+    expect(runJobCalls).toHaveLength(0);
+    expect(result.output).toBe('');
+    expect(result.sessionKey).toBe(`cron:precheck-skip:${job.id}`);
+    expect(decisions).toEqual([{ action: 'precheck-skip' }]);
+  });
+
+  it('exit 0 runs the turn with stdout injected as untrusted context', async () => {
+    await writeScript('ctx.sh', 'echo new-commits-found');
+    const prompts: string[] = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        prompts.push(job.prompt ?? '');
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: 'llm output',
+          sessionKey: 'k',
+        };
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'With Context',
+      schedule: '0 8 * * *',
+      prompt: 'analyze the diff',
+      precheck: { file: 'ctx.sh' },
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    await scheduler.runJobNow(job.id);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('new-commits-found');
+    expect(prompts[0]).toContain('analyze the diff');
+    expect(prompts[0]).toContain('<untrusted');
+  });
+
+  it('a failing precheck fails open — the turn still runs, without context', async () => {
+    await writeScript('preboom.sh', 'echo broken >&2; exit 1');
+    const prompts: string[] = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        prompts.push(job.prompt ?? '');
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: 'llm output',
+          sessionKey: 'k',
+        };
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Broken Gate',
+      schedule: '0 8 * * *',
+      prompt: 'analyze the diff',
+      precheck: { file: 'preboom.sh' },
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    await scheduler.runJobNow(job.id);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('analyze the diff');
+    expect(prompts[0]).not.toContain('<untrusted');
+  });
+
+  it('a timed-out precheck fails open too', async () => {
+    await writeScript('preslow.sh', 'sleep 5');
+    const prompts: string[] = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        prompts.push(job.prompt ?? '');
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: 'llm output',
+          sessionKey: 'k',
+        };
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Slow Gate',
+      schedule: '0 8 * * *',
+      prompt: 'analyze the diff',
+      precheck: { file: 'preslow.sh', timeoutSeconds: 1 },
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    await scheduler.runJobNow(job.id);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('analyze the diff');
   });
 });

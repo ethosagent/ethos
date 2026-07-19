@@ -352,7 +352,7 @@ export class EthosObservability {
     opts: EventBase & {
       personalityId?: string;
       jobId: string;
-      decision: 'escalate' | 'silent';
+      decision: 'escalate' | 'silent' | 'script-silent' | 'precheck-skip';
       delivered: boolean;
     },
   ): void {

@@ -26,6 +26,7 @@ import {
 } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import { CronScheduler } from '@ethosagent/cron';
+import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { computeContextAnatomy } from '@ethosagent/observability-sqlite';
 import {
@@ -316,6 +317,13 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   cronScheduler = new CronScheduler({
     storage: getStorage(),
     logger: new ConsoleLogger(),
+    // Script/precheck jobs execute through the same local backend class the
+    // execution tools use — never raw child_process in the scheduler.
+    executionBackend: new LocalExecutionBackend({
+      config: {},
+      secrets: await getSecretsResolver(),
+      logger: new ConsoleLogger(),
+    }),
     systemTasks: buildSystemTaskHandlers(config),
     onDecision: (job, d) => {
       try {

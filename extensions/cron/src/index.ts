@@ -1,11 +1,12 @@
-import { spawn } from 'node:child_process';
 import { open, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { noopLogger } from '@ethosagent/logger';
-import { sanitize } from '@ethosagent/safety-injection';
-import type { Logger, Storage } from '@ethosagent/types';
-import { decideEscalation, type HeartbeatDecision } from './heartbeat';
+import { sanitize, wrapUntrusted } from '@ethosagent/safety-injection';
+import { redactString } from '@ethosagent/safety-redact';
+import type { ExecutionBackend, Logger, SecretsResolver, Storage } from '@ethosagent/types';
+import { decideEscalation, type HeartbeatAction } from './heartbeat';
 import { isOneShotSchedule, isValidSchedule, nextRunForSchedule } from './schedule';
 
 // ---------------------------------------------------------------------------
@@ -27,6 +28,21 @@ export interface JobOrigin {
   chatId: string;
 }
 
+/**
+ * Reference to an operator-authored script under the scripts directory
+ * (default ~/.ethos/scripts/). `file` is relative to that directory —
+ * absolute paths and `..` traversal are rejected at create AND run time.
+ * The interpreter is fixed by extension (`.sh` → bash, `.py` → python3);
+ * shebangs are deliberately not honored. The file must already exist at
+ * create time — an agent cannot write-then-schedule its own script.
+ */
+export interface ScriptRef {
+  /** Path relative to the scripts directory. Only .sh and .py are allowed. */
+  file: string;
+  /** Wall-clock limit in seconds. Default 60, max 600. */
+  timeoutSeconds?: number;
+}
+
 export interface CronJob {
   id: string;
   name: string;
@@ -34,10 +50,18 @@ export interface CronJob {
   schedule: string;
   /** Prompt the agent will run. Optional for source:'system' jobs (they use systemTask handlers). */
   prompt?: string;
-  /** Operator-authored shell command executed with zero LLM involvement.
-   *  Channel/LLM text is never interpolated into it (plan R3). Mutually
-   *  exclusive with `prompt`; not allowed on source:'system' jobs. */
-  script?: string;
+  /** Script-mode job: the script IS the job, zero LLM involvement.
+   *  Mutually exclusive with `prompt`; not allowed on source:'system' jobs.
+   *  Semantics: exit 0 + non-empty stdout → stdout delivered verbatim;
+   *  exit 0 + empty stdout → silent tick (audited as 'script-silent');
+   *  non-zero exit / timeout → lastError + a delivered failure notice. */
+  script?: ScriptRef;
+  /** Precheck gate on prompt jobs: runs before the LLM turn. Exit 0 →
+   *  run the turn with stdout prepended as sanitized untrusted context;
+   *  exit 78 → skip the turn entirely (zero LLM calls, audited as
+   *  'precheck-skip'); any other exit / timeout → fail-open (turn runs
+   *  without the context). Only allowed on user prompt jobs. */
+  precheck?: ScriptRef;
   personalityId: string;
   /** Channel origin captured at create time; absent means file-only. */
   origin?: JobOrigin;
@@ -61,7 +85,15 @@ export interface CronJob {
   createdAt: string;
 }
 
-export type CronJobUpdate = Partial<Pick<CronJob, 'name' | 'schedule' | 'prompt' | 'script'>>;
+export interface CronJobUpdate {
+  name?: string;
+  schedule?: string;
+  prompt?: string;
+  /** An object sets the script block; `null` clears it. */
+  script?: ScriptRef | null;
+  /** An object sets the precheck gate; `null` clears it. */
+  precheck?: ScriptRef | null;
+}
 
 export interface CronRunResult {
   jobId: string;
@@ -93,11 +125,27 @@ export interface CronSchedulerConfig {
   deliver?: (job: CronJob, output: string) => Promise<void>;
   /** source:'system' jobs dispatch here by systemTask name instead of runJob. */
   systemTasks?: Record<string, (job: CronJob) => Promise<{ output: string }>>;
+  /** Directory holding operator-authored scripts referenced by `script`/
+   *  `precheck` blocks. Defaults to ~/.ethos/scripts/. */
+  scriptsDir?: string;
+  /** Execution backend for `script`/`precheck` runs. Injected at wiring
+   *  time so the operator's execution posture applies to cron scripts;
+   *  falls back to a lazily-constructed local backend when absent. */
+  executionBackend?: ExecutionBackend;
   /** Fired after every executed run with the escalate-vs-silent decision — the heartbeat audit record. Failures are swallowed (audit is fail-open, never breaks the run). */
   onDecision?: (
     job: CronJob,
-    decision: HeartbeatDecision & { ranAt: string; delivered: boolean },
+    decision: CronDecision & { ranAt: string; delivered: boolean },
   ) => void;
+}
+
+/** Audit actions: heartbeat escalate/silent plus the script-job outcomes. */
+export type CronDecisionAction = HeartbeatAction | 'script-silent' | 'precheck-skip';
+
+export interface CronDecision {
+  action: CronDecisionAction;
+  /** The run output (delivered verbatim when action === 'escalate'). */
+  output: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,50 +178,55 @@ async function withLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Script runner — zero-LLM `script:` jobs. Uses raw `node:child_process`
-// (process spawning is not a Storage concern).
+// Script execution — zero-LLM `script:` jobs and `precheck` gates. All
+// execution flows through an ExecutionBackend (never raw child_process) so
+// the operator's sandbox posture applies to cron scripts too.
 // ---------------------------------------------------------------------------
 
-const SCRIPT_TIMEOUT_MS = 30_000;
+export const DEFAULT_SCRIPT_TIMEOUT_SECONDS = 60;
+export const MAX_SCRIPT_TIMEOUT_SECONDS = 600;
+/** A precheck exiting with this code skips the LLM turn entirely. */
+export const PRECHECK_SKIP_EXIT_CODE = 78;
 
-interface ScriptResult {
-  /** Combined stdout + stderr. */
-  output: string;
-  exitCode: number;
-  timedOut: boolean;
+/** Interpreter fixed by extension — shebangs deliberately NOT honored. */
+const SCRIPT_INTERPRETERS: Record<string, string> = {
+  '.sh': 'bash',
+  '.py': 'python3',
+};
+
+interface ScriptRunOutcome {
+  /** True when the script ran to completion (any exit code). False on
+   *  timeout, spawn failure, or a missing/invalid script file. */
+  ok: boolean;
+  exitCode: number | null;
+  /** Secret-redacted stdout. */
+  stdout: string;
+  /** Secret-redacted stderr. */
+  stderr: string;
+  /** Human-readable reason, set only when ok === false. */
+  failure?: string;
 }
 
-function runScript(command: string, timeoutMs = SCRIPT_TIMEOUT_MS): Promise<ScriptResult> {
-  return new Promise((resolvePromise) => {
-    const child = spawn('sh', ['-c', command], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: timeoutMs,
-      killSignal: 'SIGKILL',
-    });
-    let output = '';
-    let settled = false;
-    child.stdout.on('data', (chunk: Buffer) => {
-      output += chunk.toString();
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      output += chunk.toString();
-    });
-    child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      resolvePromise({ output: `${output}${String(err)}`, exitCode: 1, timedOut: false });
-    });
-    child.on('close', (code, signal) => {
-      if (settled) return;
-      settled = true;
-      resolvePromise({
-        output,
-        exitCode: typeof code === 'number' ? code : 1,
-        timedOut: signal !== null,
-      });
-    });
-  });
+function shellQuote(p: string): string {
+  return `'${p.replace(/'/g, `'\\''`)}'`;
 }
+
+function errorCode(err: unknown): string | undefined {
+  if (err && typeof err === 'object' && 'code' in err) {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === 'string') return code;
+  }
+  return undefined;
+}
+
+/** The local backend ignores its construction context entirely — this noop
+ *  resolver only satisfies the factory contract for the internal fallback. */
+const noopSecrets: SecretsResolver = {
+  get: () => Promise.resolve(null),
+  set: () => Promise.resolve(),
+  delete: () => Promise.resolve(),
+  list: () => Promise.resolve([]),
+};
 
 // ---------------------------------------------------------------------------
 // CronScheduler
@@ -190,9 +243,11 @@ export class CronScheduler {
   private readonly logger: Logger;
   private readonly deliver?: (job: CronJob, output: string) => Promise<void>;
   private readonly systemTasks: Record<string, (job: CronJob) => Promise<{ output: string }>>;
+  private readonly scriptsDir: string;
+  private executionBackend: ExecutionBackend | null;
   private readonly onDecision?: (
     job: CronJob,
-    decision: HeartbeatDecision & { ranAt: string; delivered: boolean },
+    decision: CronDecision & { ranAt: string; delivered: boolean },
   ) => void;
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -207,6 +262,8 @@ export class CronScheduler {
     this.logger = config.logger ?? noopLogger;
     this.deliver = config.deliver;
     this.systemTasks = config.systemTasks ?? {};
+    this.scriptsDir = config.scriptsDir ?? join(homedir(), '.ethos', 'scripts');
+    this.executionBackend = config.executionBackend ?? null;
     this.onDecision = config.onDecision;
   }
 
@@ -251,10 +308,22 @@ export class CronScheduler {
       throw new Error('script is not allowed on system jobs — use systemTask');
     }
 
+    if (params.precheck) {
+      if (params.source === 'system') {
+        throw new Error('precheck is not allowed on system jobs');
+      }
+      if (params.script || !params.prompt) {
+        throw new Error('precheck is only allowed on prompt jobs');
+      }
+    }
+
     // prompt is required for user jobs unless a script is set; system jobs use systemTask
     if (params.source !== 'system' && !params.prompt && !params.script) {
       throw new Error('prompt is required for user jobs');
     }
+
+    if (params.script) await this.validateScriptRef(params.script, 'script');
+    if (params.precheck) await this.validateScriptRef(params.precheck, 'precheck');
 
     const now = new Date();
     const repeat: RepeatPolicy =
@@ -335,9 +404,19 @@ export class CronScheduler {
   }
 
   async updateJob(id: string, patch: CronJobUpdate): Promise<CronJob> {
-    if (!patch.name && !patch.schedule && !patch.prompt && !patch.script) {
-      throw new Error('At least one of name, schedule, prompt, or script is required');
+    if (
+      !patch.name &&
+      !patch.schedule &&
+      patch.prompt === undefined &&
+      patch.script === undefined &&
+      patch.precheck === undefined
+    ) {
+      throw new Error('At least one of name, schedule, prompt, script, or precheck is required');
     }
+
+    // Path/extension/existence guards run before the lock — same rules as create.
+    if (patch.script) await this.validateScriptRef(patch.script, 'script');
+    if (patch.precheck) await this.validateScriptRef(patch.precheck, 'precheck');
 
     let updatedJob: CronJob | undefined;
 
@@ -349,12 +428,25 @@ export class CronScheduler {
       // Same exclusivity rules as createJob, validated against the merged state
       // so a patch cannot leave a job with both script and prompt set.
       const nextPrompt = patch.prompt !== undefined ? patch.prompt : existing.prompt;
-      const nextScript = patch.script !== undefined ? patch.script : existing.script;
+      const nextScript = patch.script !== undefined ? (patch.script ?? undefined) : existing.script;
+      const nextPrecheck =
+        patch.precheck !== undefined ? (patch.precheck ?? undefined) : existing.precheck;
       if (nextPrompt && nextScript) {
         throw new Error('script and prompt are mutually exclusive — set one, not both');
       }
       if (nextScript && existing.source === 'system') {
         throw new Error('script is not allowed on system jobs — use systemTask');
+      }
+      if (nextPrecheck) {
+        if (existing.source === 'system') {
+          throw new Error('precheck is not allowed on system jobs');
+        }
+        if (nextScript || !nextPrompt) {
+          throw new Error('precheck is only allowed on prompt jobs');
+        }
+      }
+      if (existing.source !== 'system' && !nextPrompt && !nextScript) {
+        throw new Error('user jobs require a prompt or a script');
       }
 
       if (patch.schedule) {
@@ -371,7 +463,14 @@ export class CronScheduler {
       }
       if (patch.name !== undefined) existing.name = patch.name;
       if (patch.prompt !== undefined) existing.prompt = patch.prompt;
-      if (patch.script !== undefined) existing.script = patch.script;
+      if (patch.script !== undefined) {
+        if (patch.script === null) delete existing.script;
+        else existing.script = patch.script;
+      }
+      if (patch.precheck !== undefined) {
+        if (patch.precheck === null) delete existing.precheck;
+        else existing.precheck = patch.precheck;
+      }
 
       jobs[idx] = existing;
       updatedJob = existing;
@@ -595,31 +694,234 @@ export class CronScheduler {
       return { jobId: job.id, ranAt, output, sessionKey: `cron:system:${job.id}` };
     }
 
-    // Script jobs run an operator-authored shell command — zero LLM involvement.
-    // Failures throw so the tick's lastError/retry handling stays uniform.
+    // Script jobs run an operator-authored script file — zero LLM involvement.
     if (job.script) {
-      const result = await runScript(job.script);
-      const ranAt = new Date().toISOString();
-      if (result.timedOut) {
-        throw new Error(`Script timed out after ${SCRIPT_TIMEOUT_MS}ms`);
+      return this.executeScriptJob(job, job.script);
+    }
+
+    // Precheck gate: a deterministic script decides whether the LLM turn runs
+    // at all. Exit 78 skips the turn (zero tokens); exit 0 injects stdout as
+    // untrusted context; any other outcome fails open (a broken check must
+    // not mute a watchdog).
+    let precheckContext = '';
+    if (job.precheck) {
+      const pre = await this.runScriptRef(job.precheck, 'precheck');
+      if (pre.ok && pre.exitCode === PRECHECK_SKIP_EXIT_CODE) {
+        const ranAt = new Date().toISOString();
+        this.notifyDecision(job, { action: 'precheck-skip', output: '' }, ranAt, false);
+        return { jobId: job.id, ranAt, output: '', sessionKey: `cron:precheck-skip:${job.id}` };
       }
-      if (result.exitCode !== 0) {
-        throw new Error(
-          `Script exited with code ${result.exitCode}: ${result.output.trim().slice(0, 500)}`,
+      if (pre.ok && pre.exitCode === 0) {
+        const stdout = pre.stdout.trim();
+        if (stdout) {
+          const wrapped = wrapUntrusted({
+            content: stdout,
+            toolName: 'cron_precheck',
+            source: job.precheck.file,
+          });
+          precheckContext = `${wrapped.content}\n\n`;
+        }
+      } else {
+        const reason =
+          pre.failure ?? `precheck "${job.precheck.file}" exited with code ${pre.exitCode}`;
+        this.logger.error(
+          `[cron] Precheck failed for job "${job.id}" — running the turn without precheck context`,
+          { component: 'cron', jobId: job.id, error: reason },
         );
       }
-      const output = result.output.trimEnd() || '(no output)';
-      await this.persistAndDeliver(job, output, ranAt);
-      return { jobId: job.id, ranAt, output, sessionKey: `cron:script:${job.id}` };
     }
 
     // The context prefix carries prior-run outputs (external content) — run the
     // whole effective prompt through the injection guard before the LLM sees it.
     const contextPrefix = await this.resolveContext(job);
-    const effectivePrompt = sanitize(contextPrefix + (job.prompt ?? ''));
+    const effectivePrompt = sanitize(precheckContext + contextPrefix + (job.prompt ?? ''));
     const result = await this.runJob({ ...job, prompt: effectivePrompt });
     await this.persistAndDeliver(job, result.output, result.ranAt);
     return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Script execution — through the injected ExecutionBackend, never raw
+  // child_process. Path guards re-run at execution time.
+  // ---------------------------------------------------------------------------
+
+  /** Hermes-compatible script-job semantics: exit 0 + stdout → deliver
+   *  verbatim; exit 0 + empty stdout → silent tick ('script-silent'); any
+   *  failure → lastError + a delivered failure notice (never silent). */
+  private async executeScriptJob(job: CronJob, script: ScriptRef): Promise<CronRunResult> {
+    const ranAt = new Date().toISOString();
+    const outcome = await this.runScriptRef(script);
+
+    const failureReason = !outcome.ok
+      ? (outcome.failure ?? `script "${script.file}" failed`)
+      : outcome.exitCode !== 0
+        ? `script "${script.file}" exited with code ${outcome.exitCode}${
+            outcome.stderr.trim() ? `: ${outcome.stderr.trim().slice(0, 500)}` : ''
+          }`
+        : null;
+
+    if (failureReason) {
+      await this.persistRun(job, `[script failed] ${failureReason}`, ranAt);
+      const notice = `Cron job "${job.name}" ${failureReason}`;
+      const delivered = await this.deliverTo(job, notice);
+      this.notifyDecision(job, { action: 'escalate', output: notice }, ranAt, delivered);
+      // Throw so the tick's lastError handling stays uniform and runJobNow
+      // surfaces the failure to its caller.
+      throw new Error(failureReason);
+    }
+
+    const output = outcome.stdout.trimEnd();
+    if (output.trim() === '') {
+      // Silent tick — the script's contract replaces [SILENT] prompt discipline.
+      await this.persistRun(job, '(no output)', ranAt);
+      this.notifyDecision(job, { action: 'script-silent', output: '' }, ranAt, false);
+      return { jobId: job.id, ranAt, output: '', sessionKey: `cron:script:${job.id}` };
+    }
+
+    // Non-empty stdout is delivered VERBATIM — no [SILENT] escalation gate.
+    await this.persistRun(job, output, ranAt);
+    const delivered = await this.deliverTo(job, output);
+    this.notifyDecision(job, { action: 'escalate', output }, ranAt, delivered);
+    return { jobId: job.id, ranAt, output, sessionKey: `cron:script:${job.id}` };
+  }
+
+  /** Resolve a script ref against the scripts directory with hard guards:
+   *  no absolute paths, no `..` traversal, interpreter fixed by extension. */
+  private resolveScript(
+    ref: ScriptRef,
+    label: 'script' | 'precheck',
+  ): { absPath: string; interpreter: string } {
+    if (!ref.file) throw new Error(`${label}.file is required`);
+    if (ref.timeoutSeconds !== undefined) {
+      if (
+        !Number.isInteger(ref.timeoutSeconds) ||
+        ref.timeoutSeconds < 1 ||
+        ref.timeoutSeconds > MAX_SCRIPT_TIMEOUT_SECONDS
+      ) {
+        throw new Error(
+          `${label}.timeoutSeconds must be an integer between 1 and ${MAX_SCRIPT_TIMEOUT_SECONDS}`,
+        );
+      }
+    }
+    if (isAbsolute(ref.file)) {
+      throw new Error(`${label} path must be relative to the scripts directory: "${ref.file}"`);
+    }
+    const absPath = resolve(this.scriptsDir, ref.file);
+    const rel = relative(this.scriptsDir, absPath);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(`${label} path escapes the scripts directory: "${ref.file}"`);
+    }
+    const interpreter = SCRIPT_INTERPRETERS[extname(absPath)];
+    if (!interpreter) {
+      throw new Error(
+        `${label} "${ref.file}" has an unsupported extension — only .sh (bash) and .py (python3) scripts are allowed`,
+      );
+    }
+    return { absPath, interpreter };
+  }
+
+  /** Create/update-time validation: path guards plus must-already-exist
+   *  (an agent can schedule an operator-authored script but cannot
+   *  write-then-schedule its own — plan §5.1c). */
+  private async validateScriptRef(ref: ScriptRef, label: 'script' | 'precheck'): Promise<void> {
+    const { absPath } = this.resolveScript(ref, label);
+    if (!(await this.storage.exists(absPath))) {
+      throw new Error(
+        `${label} file not found: "${ref.file}" — scripts must already exist in ${this.scriptsDir}`,
+      );
+    }
+  }
+
+  /** Run a script through the execution backend. Never throws — outcomes
+   *  (including timeout and missing file) are returned for the caller to
+   *  apply job-specific semantics. Output is secret-redacted. */
+  private async runScriptRef(
+    ref: ScriptRef,
+    label: 'script' | 'precheck' = 'script',
+  ): Promise<ScriptRunOutcome> {
+    let absPath: string;
+    let interpreter: string;
+    try {
+      ({ absPath, interpreter } = this.resolveScript(ref, label));
+    } catch (err) {
+      return {
+        ok: false,
+        exitCode: null,
+        stdout: '',
+        stderr: '',
+        failure: err instanceof Error ? err.message : String(err),
+      };
+    }
+    if (!(await this.storage.exists(absPath))) {
+      return {
+        ok: false,
+        exitCode: null,
+        stdout: '',
+        stderr: '',
+        failure: `script "${ref.file}" not found in ${this.scriptsDir}`,
+      };
+    }
+
+    const timeoutSeconds = ref.timeoutSeconds ?? DEFAULT_SCRIPT_TIMEOUT_SECONDS;
+    let stdout = '';
+    let stderr = '';
+    let exitCode: number | null = null;
+    try {
+      const backend = this.getExecutionBackend();
+      const cmd = `${interpreter} ${shellQuote(absPath)}`;
+      for await (const chunk of backend.exec(cmd, { timeoutMs: timeoutSeconds * 1000 })) {
+        if (chunk.stream === 'stdout') stdout += chunk.data;
+        else if (chunk.stream === 'stderr') stderr += chunk.data;
+        else if (chunk.stream === 'exit') exitCode = chunk.code;
+      }
+    } catch (err) {
+      const timedOut = errorCode(err) === 'EXEC_TIMEOUT';
+      return {
+        ok: false,
+        exitCode: null,
+        stdout: redactString(stdout),
+        stderr: redactString(stderr),
+        failure: timedOut
+          ? `script "${ref.file}" timed out after ${timeoutSeconds}s`
+          : `script "${ref.file}" failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return {
+      ok: true,
+      exitCode: exitCode ?? -1,
+      stdout: redactString(stdout),
+      stderr: redactString(stderr),
+    };
+  }
+
+  private getExecutionBackend(): ExecutionBackend {
+    if (!this.executionBackend) {
+      // Standalone/test fallback — local execution; the ctx is ignored by
+      // LocalExecutionBackend but required by the factory contract.
+      this.executionBackend = new LocalExecutionBackend({
+        config: {},
+        secrets: noopSecrets,
+        logger: this.logger,
+      });
+    }
+    return this.executionBackend;
+  }
+
+  /** Deliver to the origin channel when configured; returns delivered flag. */
+  private async deliverTo(job: CronJob, text: string): Promise<boolean> {
+    if (!job.origin || !this.deliver) return false;
+    try {
+      await this.deliver(job, text);
+      return true;
+    } catch (err) {
+      this.logger.error(`[cron] Delivery failed for job "${job.id}"`, {
+        component: 'cron',
+        jobId: job.id,
+        error: String(err),
+      });
+      return false;
+    }
   }
 
   /** Shared post-run path: persist run output to
@@ -627,32 +929,25 @@ export class CronScheduler {
    *  channel per the escalation decision (silent outputs are audited and
    *  persisted but never delivered), and fire the heartbeat audit. */
   private async persistAndDeliver(job: CronJob, output: string, ranAt: string): Promise<void> {
+    await this.persistRun(job, output, ranAt);
+
+    const decision = decideEscalation(output);
+    const delivered = decision.action === 'escalate' ? await this.deliverTo(job, output) : false;
+    this.notifyDecision(job, decision, ranAt, delivered);
+  }
+
+  /** Write the run body to <cronDir>/output/<jobId>/<ts>.md. */
+  private async persistRun(job: CronJob, output: string, ranAt: string): Promise<void> {
     const ts = ranAt.replace(/[:.]/g, '-').replace('Z', 'Z');
     const outPath = join(this.outputDir, job.id, `${ts}.md`);
     await this.storage.mkdir(dirname(outPath));
     await this.storage.write(outPath, `# ${job.name}\n\n${output}\n`);
-
-    const decision = decideEscalation(output);
-    let delivered = false;
-    if (job.origin && this.deliver && decision.action === 'escalate') {
-      try {
-        await this.deliver(job, output);
-        delivered = true;
-      } catch (err) {
-        this.logger.error(`[cron] Delivery failed for job "${job.id}"`, {
-          component: 'cron',
-          jobId: job.id,
-          error: String(err),
-        });
-      }
-    }
-    this.notifyDecision(job, decision, ranAt, delivered);
   }
 
   /** Heartbeat audit callback — fail-open, a throwing observer never breaks the run. */
   private notifyDecision(
     job: CronJob,
-    decision: HeartbeatDecision,
+    decision: CronDecision,
     ranAt: string,
     delivered: boolean,
   ): void {

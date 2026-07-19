@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CronJob, CronRunResult } from '@ethosagent/cron';
@@ -13,10 +13,12 @@ import { createCronTool } from '../index';
 // ---------------------------------------------------------------------------
 
 let testDir: string;
+let scriptsDir: string;
 
 beforeEach(async () => {
   testDir = join(tmpdir(), `ethos-cron-tool-test-${Date.now()}`);
-  await mkdir(testDir, { recursive: true });
+  scriptsDir = join(testDir, 'scripts');
+  await mkdir(scriptsDir, { recursive: true });
 });
 
 afterEach(async () => {
@@ -26,6 +28,7 @@ afterEach(async () => {
 function makeScheduler(opts?: { runJob?: (job: CronJob) => Promise<CronRunResult> }) {
   return new CronScheduler({
     cronDir: testDir,
+    scriptsDir,
     tickIntervalMs: 999_999,
     storage: new FsStorage(),
     runJob:
@@ -185,5 +188,117 @@ describe('cron tool safety scan', () => {
     );
 
     expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Script-file jobs — the tool references operator scripts that must exist
+// ---------------------------------------------------------------------------
+
+describe('cron tool script jobs', () => {
+  it('creates a script job referencing an existing operator script', async () => {
+    await writeFile(join(scriptsDir, 'disk.sh'), 'echo ok', 'utf-8');
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+
+    const result = await tool.execute(
+      {
+        action: 'create',
+        name: 'Disk Check',
+        schedule: '0 8 * * *',
+        script_file: 'disk.sh',
+        timeout_seconds: 30,
+      },
+      makeCtx(),
+    );
+
+    expect(result.ok).toBe(true);
+    const job = await scheduler.getJob('disk-check');
+    expect(job?.script).toEqual({ file: 'disk.sh', timeoutSeconds: 30 });
+    expect(job?.prompt).toBeUndefined();
+  });
+
+  it('rejects create with both prompt and script_file', async () => {
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+
+    const result = await tool.execute(
+      {
+        action: 'create',
+        name: 'Both',
+        schedule: '0 8 * * *',
+        prompt: 'a prompt',
+        script_file: 'disk.sh',
+      },
+      makeCtx(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/mutually exclusive/i);
+  });
+
+  it('rejects a script_file that does not exist (agent cannot write-then-schedule)', async () => {
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+
+    const result = await tool.execute(
+      {
+        action: 'create',
+        name: 'Ghost Script',
+        schedule: '0 8 * * *',
+        script_file: 'ghost.sh',
+      },
+      makeCtx(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/not found/i);
+  });
+
+  it('creates a prompt job with a precheck gate', async () => {
+    await writeFile(join(scriptsDir, 'gate.sh'), 'exit 78', 'utf-8');
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+
+    const result = await tool.execute(
+      {
+        action: 'create',
+        name: 'Gated Job',
+        schedule: '0 8 * * *',
+        prompt: 'analyze the diff',
+        precheck_file: 'gate.sh',
+      },
+      makeCtx(),
+    );
+
+    expect(result.ok).toBe(true);
+    const job = await scheduler.getJob('gated-job');
+    expect(job?.precheck).toEqual({ file: 'gate.sh' });
+  });
+
+  it('rejects precheck_file without a prompt', async () => {
+    await writeFile(join(scriptsDir, 'gate.sh'), 'exit 78', 'utf-8');
+    await writeFile(join(scriptsDir, 'disk.sh'), 'echo ok', 'utf-8');
+    const scheduler = makeScheduler();
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+
+    const result = await tool.execute(
+      {
+        action: 'create',
+        name: 'Bad Gate',
+        schedule: '0 8 * * *',
+        script_file: 'disk.sh',
+        precheck_file: 'gate.sh',
+      },
+      makeCtx(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/prompt/i);
   });
 });

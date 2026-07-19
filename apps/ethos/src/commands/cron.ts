@@ -1,7 +1,13 @@
 import { join } from 'node:path';
 import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
-import { CronScheduler, isValidSchedule, nextRunForSchedule } from '@ethosagent/cron';
+import {
+  type CronJobUpdate,
+  CronScheduler,
+  isValidSchedule,
+  nextRunForSchedule,
+  type ScriptRef,
+} from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { EthosError } from '@ethosagent/types';
@@ -17,6 +23,12 @@ const c = {
   red: '\x1b[31m',
   yellow: '\x1b[33m',
 };
+
+/** Build a ScriptRef from CLI flags; the scheduler validates path + timeout. */
+function toScriptRef(file?: string, timeout?: string): ScriptRef | undefined {
+  if (!file) return undefined;
+  return { file, ...(timeout !== undefined ? { timeoutSeconds: Number(timeout) } : {}) };
+}
 
 function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup: () => void } {
   let loop: AgentLoop | null = null;
@@ -128,7 +140,8 @@ export async function runCronCommand(
           console.log(`    Personality : ${pers}`);
           console.log(`    Next run    : ${next}`);
           const preview =
-            j.script ?? j.prompt ?? (j.systemTask ? `[system: ${j.systemTask}]` : '—');
+            (j.script ? `[script: ${j.script.file}]` : j.prompt) ??
+            (j.systemTask ? `[system: ${j.systemTask}]` : '—');
           console.log(
             `    ${j.script ? 'Script' : 'Prompt'}      : ${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}`,
           );
@@ -185,8 +198,11 @@ export async function runCronCommand(
           `  Last run    : ${j.lastRunAt ? new Date(j.lastRunAt).toLocaleString() : 'never'}`,
         );
         console.log(
-          `  ${j.script ? 'Script' : 'Prompt'}      : ${j.script ?? j.prompt ?? (j.systemTask ? `[system: ${j.systemTask}]` : '—')}`,
+          `  ${j.script ? 'Script' : 'Prompt'}      : ${(j.script ? `[script: ${j.script.file}]` : j.prompt) ?? (j.systemTask ? `[system: ${j.systemTask}]` : '—')}`,
         );
+        if (j.precheck) {
+          console.log(`  Precheck    : ${j.precheck.file}`);
+        }
         console.log();
       } finally {
         cleanup();
@@ -195,12 +211,14 @@ export async function runCronCommand(
     }
 
     case 'create': {
-      // ethos cron create --name "..." --schedule "..." (--prompt "..." | --script "...") [--personality X]
+      // ethos cron create --name "..." --schedule "..." (--prompt "..." | --script file.sh)
+      //   [--script-timeout <sec>] [--precheck file.sh] [--precheck-timeout <sec>] [--personality X]
       const params = parseFlags(args);
       const name = params.name ?? params.n;
       const schedule = params.schedule ?? params.s;
       const prompt = params.prompt ?? params.p;
-      const script = params.script;
+      const script = toScriptRef(params.script, params['script-timeout']);
+      const precheck = toScriptRef(params.precheck, params['precheck-timeout']);
       const personality = params.personality;
 
       if (prompt && script) {
@@ -208,9 +226,17 @@ export async function runCronCommand(
         return;
       }
 
+      if (precheck && !prompt) {
+        console.log(`${c.red}--precheck is only allowed on prompt jobs${c.reset}`);
+        return;
+      }
+
       if (!name || !schedule || (!prompt && !script)) {
         console.log(
-          'Usage: ethos cron create --name "Job name" --schedule "0 8 * * *" (--prompt "Your prompt" | --script "shell command")',
+          'Usage: ethos cron create --name "Job name" --schedule "0 8 * * *" (--prompt "Your prompt" | --script file.sh)',
+        );
+        console.log(
+          `${c.dim}Script files are relative to ~/.ethos/scripts/ and must already exist (.sh or .py).${c.reset}`,
         );
         return;
       }
@@ -240,8 +266,9 @@ export async function runCronCommand(
         const job = await scheduler.createJob({
           name,
           schedule,
-          prompt,
-          script,
+          ...(prompt ? { prompt } : {}),
+          ...(script ? { script } : {}),
+          ...(precheck ? { precheck } : {}),
           personalityId: personality ?? config.personality,
           repeat: { kind: 'forever' },
           missedRunPolicy: 'skip',
@@ -259,18 +286,24 @@ export async function runCronCommand(
       const id = args[0];
       if (!id) {
         console.log(
-          'Usage: ethos cron update <id> [--name "..."] [--schedule "..."] [--prompt "..."]',
+          'Usage: ethos cron update <id> [--name "..."] [--schedule "..."] [--prompt "..."] [--script file.sh] [--precheck file.sh]',
         );
         return;
       }
       const params = parseFlags(args.slice(1));
-      const patch: Record<string, string> = {};
+      const patch: CronJobUpdate = {};
       if (params.name) patch.name = params.name;
       if (params.schedule) patch.schedule = params.schedule;
       if (params.prompt) patch.prompt = params.prompt;
+      const scriptPatch = toScriptRef(params.script, params['script-timeout']);
+      if (scriptPatch) patch.script = scriptPatch;
+      const precheckPatch = toScriptRef(params.precheck, params['precheck-timeout']);
+      if (precheckPatch) patch.precheck = precheckPatch;
 
       if (Object.keys(patch).length === 0) {
-        console.log('At least one of --name, --schedule, or --prompt is required');
+        console.log(
+          'At least one of --name, --schedule, --prompt, --script, or --precheck is required',
+        );
         return;
       }
 

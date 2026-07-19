@@ -4,6 +4,7 @@ import type {
   CronRunInfo,
   JobOrigin,
   RepeatPolicy,
+  ScriptRef,
 } from '@ethosagent/cron';
 import { type CronScheduler, isValidSchedule, nextRunForSchedule } from '@ethosagent/cron';
 import { shortPatternCheck } from '@ethosagent/safety-injection';
@@ -63,12 +64,30 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
             description:
               'Schedule: cron ("0 8 * * 1-5"), relative delay ("30m"), recurring interval ("every 2h"), or ISO timestamp ("2026-06-01T09:00:00Z"). All cron times are local (create, update).',
           },
-          // CronJob.script is deliberately NOT exposed here — script jobs are
-          // operator-only (CLI `ethos cron create --script`); the LLM must not
-          // author shell commands via cron (plan gap-context-economy R3).
           prompt: {
             type: 'string',
             description: 'The prompt the agent will run on each execution (create, update).',
+          },
+          // Script jobs reference operator-authored files in ~/.ethos/scripts/.
+          // The LLM can schedule an EXISTING script but cannot author shell —
+          // the referenced file must already exist (plan gap-event-triggers §5.1c).
+          script_file: {
+            type: 'string',
+            description:
+              'Zero-LLM script job: filename relative to the operator scripts directory (~/.ethos/scripts/). The file must already exist; only .sh (bash) and .py (python3) are allowed. Mutually exclusive with prompt (create, update).',
+          },
+          timeout_seconds: {
+            type: 'number',
+            description: 'Script timeout in seconds. Default 60, max 600 (with script_file).',
+          },
+          precheck_file: {
+            type: 'string',
+            description:
+              'Precheck gate for prompt jobs: script filename relative to ~/.ethos/scripts/ (must already exist; .sh or .py). Runs before the LLM turn — exit 0 injects its stdout as context, exit 78 skips the turn entirely (create, update).',
+          },
+          precheck_timeout_seconds: {
+            type: 'number',
+            description: 'Precheck timeout in seconds. Default 60, max 600 (with precheck_file).',
           },
           missed_run_policy: {
             type: 'string',
@@ -112,6 +131,10 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
           name,
           schedule,
           prompt,
+          script_file,
+          timeout_seconds,
+          precheck_file,
+          precheck_timeout_seconds,
           missed_run_policy,
           context_from,
           repeat,
@@ -123,6 +146,10 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
           name?: string;
           schedule?: string;
           prompt?: string;
+          script_file?: string;
+          timeout_seconds?: number;
+          precheck_file?: string;
+          precheck_timeout_seconds?: number;
           missed_run_policy?: 'run-once' | 'skip';
           context_from?: string[];
           repeat?: RepeatPolicy;
@@ -137,6 +164,10 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
               name,
               schedule,
               prompt,
+              script_file,
+              timeout_seconds,
+              precheck_file,
+              precheck_timeout_seconds,
               missed_run_policy,
               context_from,
               repeat,
@@ -148,7 +179,16 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
           case 'read_run':
             return handleReadRun(scheduler, { id, at });
           case 'update':
-            return handleUpdate(scheduler, { id, name, schedule, prompt });
+            return handleUpdate(scheduler, {
+              id,
+              name,
+              schedule,
+              prompt,
+              script_file,
+              timeout_seconds,
+              precheck_file,
+              precheck_timeout_seconds,
+            });
           case 'pause':
             return handlePause(scheduler, { id });
           case 'resume':
@@ -193,6 +233,12 @@ function extractOrigin(ctx: { platform: string; sessionKey: string }): JobOrigin
   return undefined;
 }
 
+/** Build a ScriptRef from tool params; undefined when no file was given. */
+function toScriptRef(file?: string, timeoutSeconds?: number): ScriptRef | undefined {
+  if (!file) return undefined;
+  return { file, ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}) };
+}
+
 async function handleCreate(
   scheduler: CronScheduler,
   ctx: ToolContext,
@@ -200,16 +246,38 @@ async function handleCreate(
     name?: string;
     schedule?: string;
     prompt?: string;
+    script_file?: string;
+    timeout_seconds?: number;
+    precheck_file?: string;
+    precheck_timeout_seconds?: number;
     missed_run_policy?: 'run-once' | 'skip';
     context_from?: string[];
     repeat?: RepeatPolicy;
   },
 ): Promise<ToolResult> {
   const { name, schedule, prompt, missed_run_policy, context_from, repeat } = args;
+  const script = toScriptRef(args.script_file, args.timeout_seconds);
+  const precheck = toScriptRef(args.precheck_file, args.precheck_timeout_seconds);
 
   if (!name) return { ok: false, error: 'name is required', code: 'input_invalid' };
   if (!schedule) return { ok: false, error: 'schedule is required', code: 'input_invalid' };
-  if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
+  if (prompt && script) {
+    return {
+      ok: false,
+      error: 'prompt and script_file are mutually exclusive — set one, not both',
+      code: 'input_invalid',
+    };
+  }
+  if (!prompt && !script) {
+    return { ok: false, error: 'prompt or script_file is required', code: 'input_invalid' };
+  }
+  if (precheck && !prompt) {
+    return {
+      ok: false,
+      error: 'precheck_file is only allowed on prompt jobs',
+      code: 'input_invalid',
+    };
+  }
 
   const callerPersonality = ctx.personalityId;
   if (!callerPersonality) {
@@ -229,23 +297,29 @@ async function handleCreate(
   }
 
   // Safety scan: reject prompts that look like injection attempts
-  const safetyResult = shortPatternCheck(prompt);
-  if (safetyResult.containsInstructions) {
-    const reasons = safetyResult.hits.map((h) => h.rule).join(', ');
-    return {
-      ok: false,
-      error: `Prompt rejected by safety scan: ${reasons}`,
-      code: 'input_invalid',
-    };
+  if (prompt) {
+    const safetyResult = shortPatternCheck(prompt);
+    if (safetyResult.containsInstructions) {
+      const reasons = safetyResult.hits.map((h) => h.rule).join(', ');
+      return {
+        ok: false,
+        error: `Prompt rejected by safety scan: ${reasons}`,
+        code: 'input_invalid',
+      };
+    }
   }
 
   const origin = extractOrigin(ctx);
 
   try {
+    // scheduler.createJob enforces the scripts-dir path guards and the
+    // must-already-exist rule for script/precheck files (plan §5.1c).
     const job = await scheduler.createJob({
       name,
       schedule,
-      prompt,
+      ...(prompt ? { prompt } : {}),
+      ...(script ? { script } : {}),
+      ...(precheck ? { precheck } : {}),
       personalityId: callerPersonality,
       missedRunPolicy: missed_run_policy ?? 'skip',
       repeat: repeat ?? { kind: 'forever' },
@@ -354,13 +428,22 @@ async function handleReadRun(
 
 async function handleUpdate(
   scheduler: CronScheduler,
-  args: { id?: string; name?: string; schedule?: string; prompt?: string },
+  args: {
+    id?: string;
+    name?: string;
+    schedule?: string;
+    prompt?: string;
+    script_file?: string;
+    timeout_seconds?: number;
+    precheck_file?: string;
+    precheck_timeout_seconds?: number;
+  },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
-  if (!args.name && !args.schedule && !args.prompt) {
+  if (!args.name && !args.schedule && !args.prompt && !args.script_file && !args.precheck_file) {
     return {
       ok: false,
-      error: 'At least one of name, schedule, or prompt is required',
+      error: 'At least one of name, schedule, prompt, script_file, or precheck_file is required',
       code: 'input_invalid',
     };
   }
@@ -383,6 +466,10 @@ async function handleUpdate(
     if (args.name) patch.name = args.name;
     if (args.schedule) patch.schedule = args.schedule;
     if (args.prompt) patch.prompt = args.prompt;
+    const script = toScriptRef(args.script_file, args.timeout_seconds);
+    if (script) patch.script = script;
+    const precheck = toScriptRef(args.precheck_file, args.precheck_timeout_seconds);
+    if (precheck) patch.precheck = precheck;
 
     const updated = await scheduler.updateJob(args.id, patch);
     return {

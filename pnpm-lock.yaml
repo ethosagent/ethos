@@ -259,6 +259,9 @@ importers:
       '@ethosagent/digest':
         specifier: workspace:*
         version: link:../../extensions/digest
+      '@ethosagent/execution-local':
+        specifier: workspace:*
+        version: link:../../extensions/execution-local
       '@ethosagent/gateway':
         specifier: workspace:*
         version: link:../../extensions/gateway
@@ -810,12 +813,18 @@ importers:
 
   extensions/cron:
     dependencies:
+      '@ethosagent/execution-local':
+        specifier: workspace:*
+        version: link:../execution-local
       '@ethosagent/logger':
         specifier: workspace:*
         version: link:../../packages/logger
       '@ethosagent/safety-injection':
         specifier: workspace:*
         version: link:../../packages/safety/injection
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs

@@ -13,8 +13,10 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/execution-local": "workspace:*",
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/safety-injection": "workspace:*",
+    "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "croner": "^9.0.0"

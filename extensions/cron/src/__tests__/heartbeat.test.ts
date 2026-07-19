@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CronJob, CronRunResult, CronSchedulerConfig, HeartbeatDecision } from '../index';
+import type { CronDecision, CronJob, CronRunResult, CronSchedulerConfig } from '../index';
 import { CronScheduler, decideEscalation } from '../index';
 
 // The lock file uses raw node:fs, so the cron dir must exist on the real
@@ -19,7 +19,7 @@ afterEach(async () => {
   await rm(testDir, { recursive: true, force: true });
 });
 
-type RecordedDecision = HeartbeatDecision & { ranAt: string; delivered: boolean };
+type RecordedDecision = CronDecision & { ranAt: string; delivered: boolean };
 
 function makeScheduler(opts: Partial<CronSchedulerConfig> = {}): CronScheduler {
   return new CronScheduler({
