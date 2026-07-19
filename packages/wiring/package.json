@@ -97,6 +97,8 @@
     "@ethosagent/tools-process": "workspace:*",
     "@ethosagent/tools-terminal": "workspace:*",
     "@ethosagent/tools-vision": "workspace:*",
+    "@ethosagent/tools-watchers": "workspace:*",
+    "@ethosagent/watchers": "workspace:*",
     "@ethosagent/goal-runner": "workspace:*",
     "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/job-runner": "workspace:*",

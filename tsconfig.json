@@ -42,6 +42,8 @@
       "@ethosagent/acp-server": ["./apps/acp-server/src"],
       "@ethosagent/cron": ["./extensions/cron/src"],
       "@ethosagent/tools-cron": ["./extensions/tools-cron/src"],
+      "@ethosagent/watchers": ["./extensions/watchers/src"],
+      "@ethosagent/tools-watchers": ["./extensions/tools-watchers/src"],
       "@ethosagent/tools-debug": ["./extensions/tools-debug/src"],
       "@ethosagent/gateway": ["./extensions/gateway/src"],
       "@ethosagent/platform-voice": ["./extensions/platform-voice/src"],
@@ -132,6 +134,7 @@
       "@ethosagent/tools-process/compose": ["./extensions/tools-process/src/compose"],
       "@ethosagent/tools-skills/compose": ["./extensions/tools-skills/src/compose"],
       "@ethosagent/tools-cron/compose": ["./extensions/tools-cron/src/compose"],
+      "@ethosagent/tools-watchers/compose": ["./extensions/tools-watchers/src/compose"],
       "@ethosagent/tools-personality-design/compose": [
         "./extensions/tools-personality-design/src/compose"
       ],

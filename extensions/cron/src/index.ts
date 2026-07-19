@@ -512,6 +512,19 @@ export class CronScheduler {
     });
   }
 
+  /**
+   * Framework-level removal of a `source:'system'` job — the deregistration
+   * path for watcher-backed ticks and other dynamically-managed system jobs.
+   * Deliberately bypasses the user-facing `deleteJob` guard (which refuses
+   * system jobs); never exposed through agent tools. Idempotent: a missing
+   * id, or an id owned by a user job, is a no-op.
+   */
+  async removeSystemJob(id: string): Promise<void> {
+    await this.withJobsLock(async (jobs) =>
+      jobs.filter((j) => !(j.id === id && j.source === 'system')),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Run history — read-only access to <cronDir>/output/<jobId>/<ts>.md
   // ---------------------------------------------------------------------------

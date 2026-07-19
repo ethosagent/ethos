@@ -1,0 +1,24 @@
+{
+  "name": "@ethosagent/tools-watchers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "production": "./dist/index.js"
+    },
+    "./compose": {
+      "import": "./src/compose.ts",
+      "types": "./src/compose.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*",
+    "@ethosagent/watchers": "workspace:*"
+  }
+}

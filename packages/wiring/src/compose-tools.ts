@@ -62,6 +62,7 @@ import { compose as composeTodo } from '@ethosagent/tools-todo/compose';
 import { createTtsTools } from '@ethosagent/tools-tts';
 import { buildUiTools } from '@ethosagent/tools-ui';
 import { createVoiceTools } from '@ethosagent/tools-voice';
+import { compose as composeWatchers } from '@ethosagent/tools-watchers/compose';
 import type {
   ContextInjector,
   ExecutionBackend,
@@ -597,6 +598,12 @@ export async function composeAllTools(
   // Cron tool — registered only when a CronScheduler was threaded through.
   if (opts.cronScheduler) {
     for (const tool of composeCron(wiringCtx, { scheduler: opts.cronScheduler }).tools)
+      tools.register(tool);
+  }
+
+  // Watcher tools — registered only when a WatcherManager was threaded through.
+  if (opts.watcherManager) {
+    for (const tool of composeWatchers(wiringCtx, { manager: opts.watcherManager }).tools)
       tools.register(tool);
   }
 

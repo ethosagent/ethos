@@ -103,6 +103,7 @@
     "@ethosagent/personalities": "workspace:*",
     "@ethosagent/personality-judge": "workspace:*",
     "@ethosagent/safety-channel": "workspace:*",
+    "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/safety-redact": "workspace:*",
     "@ethosagent/safety-scanner": "workspace:*",
     "@ethosagent/secrets-aws": "workspace:*",
@@ -115,6 +116,7 @@
     "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/tools-a2a": "workspace:*",
     "@ethosagent/tools-process": "workspace:*",
+    "@ethosagent/watchers": "workspace:*",
     "@ethosagent/web-api": "workspace:*",
     "@ethosagent/wiring": "workspace:*"
   },

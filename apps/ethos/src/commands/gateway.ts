@@ -27,6 +27,7 @@ import {
   PersonalityA2aIdentityProvider,
 } from '@ethosagent/personalities';
 import { initPairingDb } from '@ethosagent/safety-channel';
+import { wrapUntrusted } from '@ethosagent/safety-injection';
 import { bundledSkillsSource, createInjectors } from '@ethosagent/skills';
 import Database from '@ethosagent/sqlite';
 import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
@@ -47,6 +48,11 @@ import {
   resolveModelDisplay,
   type ToolRegistry,
 } from '@ethosagent/types';
+import {
+  type WatcherDeliverTarget,
+  WatcherManager,
+  type WatcherWakeEvent,
+} from '@ethosagent/watchers';
 import {
   createDangerPredicate,
   createMemoryProvider,
@@ -344,6 +350,24 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   let cronDeliverFn:
     | ((job: import('@ethosagent/cron').CronJob, output: string) => Promise<void>)
     | null = null;
+  // Watcher manager — constructed BEFORE the scheduler so its systemTask
+  // handler can be merged into the scheduler's `systemTasks` config (watcher
+  // ticks piggyback on the cron scheduler as source:'system' jobs — no
+  // second ticker). Deliver/wake are forward-referenced like `cronDeliverFn`:
+  // bound after the Gateway + bots exist, fired only once the scheduler runs.
+  let watcherDeliverFn: ((target: WatcherDeliverTarget, text: string) => Promise<void>) | null =
+    null;
+  let watcherWakeFn: ((event: WatcherWakeEvent) => Promise<void>) | null = null;
+  const watcherManager = new WatcherManager({
+    storage: getStorage(),
+    logger: new ConsoleLogger(),
+    deliver: async (target, text) => {
+      if (watcherDeliverFn) await watcherDeliverFn(target, text);
+    },
+    wake: async (event) => {
+      if (watcherWakeFn) await watcherWakeFn(event);
+    },
+  });
   const scheduler = new CronScheduler({
     storage: getStorage(),
     logger: new ConsoleLogger(),
@@ -354,7 +378,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       secrets,
       logger: new ConsoleLogger(),
     }),
-    systemTasks: buildSystemTaskHandlers(config),
+    systemTasks: { ...buildSystemTaskHandlers(config), ...watcherManager.systemTasks() },
     onDecision: (job, d) => {
       try {
         getEthosObservability().recordHeartbeatDecision({
@@ -404,6 +428,11 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     },
   });
 
+  // Late-bind the scheduler into the watcher manager (the manager was
+  // constructed first so its systemTask handler could ride the scheduler
+  // config above). Backing jobs are seeded by `watcherManager.start()` later.
+  watcherManager.attachScheduler(scheduler);
+
   // Build one AgentLoop per configured bot. Personality bots use
   // `createAgentLoop`; team bots use `createTeamAgentLoop`. Each loop
   // receives the shared `scheduler` so its `cron` tool lands in the
@@ -414,7 +443,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     notificationRouters: botNotificationRouters,
     toolRegistries: botToolRegistries,
     refreshers: botPersonalityRefreshers,
-  } = await buildGatewayBots(config, scheduler);
+  } = await buildGatewayBots(config, scheduler, watcherManager);
 
   // Phase 3: for each team-bound bot, ensure the supervisor is running.
   const supervisorDeps: TeamSupervisorDeps = {
@@ -454,7 +483,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     ttsProviders,
     voiceConfig,
     refreshPersonalities: refreshSystemPersonalities,
-  } = await createAgentLoop(config, { cronScheduler: scheduler });
+  } = await createAgentLoop(config, { cronScheduler: scheduler, watcherManager });
   systemLoop = systemLoopReady;
 
   // Personality-directory seam for hot-reload. `refresh()` reloads every loop
@@ -821,6 +850,49 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     await gateway.sendTo(job.origin.platform, job.origin.chatId, output);
   };
 
+  // Watcher deliver → the gateway's sendTo path. sendTo already routes
+  // through the outbound dedup cache — the watcher layer adds NO dedup of
+  // its own (CLAUDE.md adapter contract). Targets are explicit
+  // platform+chatId, never a captured origin.
+  watcherDeliverFn = async (target, text) => {
+    await gateway.sendTo(target.platform, target.chatId, text);
+  };
+
+  // Watcher wake → synthesize an InboundMessage into the owning
+  // personality's lane, the way webhook wake does. The diff summary is
+  // external observation — wrap it as untrusted content before it enters
+  // a prompt. The capturing adapter's reply is intentionally discarded:
+  // a woken agent acts through its tools (send_message etc.), not through
+  // the synthetic inbound's reply surface.
+  watcherWakeFn = async (event) => {
+    const bot = bots.find(
+      (b) => b.binding.type === 'personality' && b.binding.name === event.personalityId,
+    );
+    if (!bot) {
+      console.error(
+        `[watcher] wake dropped for "${event.watcherId}" — no bot bound to personality "${event.personalityId}"`,
+      );
+      return;
+    }
+    const wrapped = wrapUntrusted({
+      content: event.summary,
+      toolName: 'watcher',
+      source: `${event.watcherId}:${event.target}`,
+    });
+    const msg: InboundMessage = {
+      platform: 'watcher',
+      chatId: `watcher:${event.watcherId}`,
+      text: `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`,
+      isDm: true,
+      isGroupMention: false,
+      botKey: bot.botKey,
+      messageId: `watcher-${event.watcherId}-${Date.now()}`,
+      raw: { watcherId: event.watcherId, target: event.target },
+    };
+    const { adapter } = createCapturingAdapter();
+    await gateway.handleMessage(msg, adapter);
+  };
+
   // Index bots by botKey so health-check lines can show the binding inline.
   const botByKey = new Map(bots.map((b) => [b.botKey, b]));
 
@@ -855,6 +927,12 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // `runJob` closure can safely run.
   scheduler.start();
   console.log(`${c.dim}Cron scheduler running (checks every 60s)${c.reset}`);
+
+  // Load watchers.json and seed the backing `source:'system'` tick jobs.
+  // Idempotent — existing jobs are re-registered so interval edits apply.
+  void watcherManager.start().catch((err) => {
+    console.error('[watcher] failed to start watcher manager:', err);
+  });
 
   // Seed system cron jobs into the scheduler's persistent store. Each call
   // is idempotent — existing jobs are returned as-is. The handlers were
@@ -1083,7 +1161,11 @@ function emailBotKey(user: string, imapHost: string): string {
 async function buildGatewayBots(
   config: EthosConfig,
   scheduler: CronScheduler,
+  watcherManager: WatcherManager,
 ): Promise<BuildGatewayBotsResult> {
+  // Every personality loop gets the same scheduler + watcher manager so
+  // agent-callable cron/watcher tools land in the shared stores.
+  const loopOpts = { cronScheduler: scheduler, watcherManager };
   const out: GatewayBotConfig[] = [];
   const setters: Array<(fn: MessagingSendFn) => void> = [];
   const routers: NotificationRouter[] = [];
@@ -1103,10 +1185,7 @@ async function buildGatewayBots(
       // Per-bot personality loop. Threads the shared scheduler so
       // `create_cron_job` etc. lands in the same store as the
       // system-loop's jobs.
-      const result = await createAgentLoop(
-        { ...config, personality: bot.bind.name },
-        { cronScheduler: scheduler },
-      );
+      const result = await createAgentLoop({ ...config, personality: bot.bind.name }, loopOpts);
       loop = result.loop;
       jobStore = result.jobStore;
       backgroundExecutor = result.backgroundExecutor;
@@ -1146,10 +1225,7 @@ async function buildGatewayBots(
       routers.push(team.notificationRouter);
       registries.push(team.toolRegistry);
     } else {
-      const result = await createAgentLoop(
-        { ...config, personality: bind.name },
-        { cronScheduler: scheduler },
-      );
+      const result = await createAgentLoop({ ...config, personality: bind.name }, loopOpts);
       loop = result.loop;
       jobStore = result.jobStore;
       backgroundExecutor = result.backgroundExecutor;
@@ -1171,10 +1247,7 @@ async function buildGatewayBots(
   // so POST /webhook/<hookId> drives the same gateway/session machinery as a
   // channel bot. botKey matches what the webhook server stamps on inbounds.
   for (const [hookId, hook] of Object.entries(config.webhooks ?? {})) {
-    const result = await createAgentLoop(
-      { ...config, personality: hook.personalityId },
-      { cronScheduler: scheduler },
-    );
+    const result = await createAgentLoop({ ...config, personality: hook.personalityId }, loopOpts);
     out.push({
       botKey: `webhook:${hookId}`,
       loop: result.loop,
@@ -1192,7 +1265,7 @@ async function buildGatewayBots(
   // resolves to a loop instead of dropping at the unknown-botKey gate. The
   // botKey MUST match what `buildAdapters` passes the DiscordAdapter.
   if (config.discordToken) {
-    const result = await createAgentLoop(config, { cronScheduler: scheduler });
+    const result = await createAgentLoop(config, loopOpts);
     out.push({
       botKey: discordBotKey(config.discordToken),
       loop: result.loop,
@@ -1207,7 +1280,7 @@ async function buildGatewayBots(
   }
   // Legacy scalar Email — same treatment as Discord.
   if (config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost) {
-    const result = await createAgentLoop(config, { cronScheduler: scheduler });
+    const result = await createAgentLoop(config, loopOpts);
     out.push({
       botKey: emailBotKey(config.emailUser, config.emailImapHost),
       loop: result.loop,

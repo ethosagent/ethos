@@ -298,6 +298,9 @@ importers:
       '@ethosagent/safety-channel':
         specifier: workspace:*
         version: link:../../packages/safety/channel
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../packages/safety/injection
       '@ethosagent/safety-redact':
         specifier: workspace:*
         version: link:../../packages/safety/redact
@@ -334,6 +337,9 @@ importers:
       '@ethosagent/tools-process':
         specifier: workspace:*
         version: link:../../extensions/tools-process
+      '@ethosagent/watchers':
+        specifier: workspace:*
+        version: link:../../extensions/watchers
       '@ethosagent/web-api':
         specifier: workspace:*
         version: link:../web-api
@@ -1810,6 +1816,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-watchers:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@ethosagent/watchers':
+        specifier: workspace:*
+        version: link:../watchers
+
   extensions/tools-web:
     dependencies:
       '@ethosagent/safety-network':
@@ -1827,6 +1842,15 @@ importers:
 
   extensions/voice-session:
     dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  extensions/watchers:
+    dependencies:
+      '@ethosagent/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2260,6 +2284,9 @@ importers:
       '@ethosagent/tools-voice':
         specifier: workspace:*
         version: link:../../extensions/tools-voice
+      '@ethosagent/tools-watchers':
+        specifier: workspace:*
+        version: link:../../extensions/tools-watchers
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../../extensions/tools-web
@@ -2269,6 +2296,9 @@ importers:
       '@ethosagent/voice-providers':
         specifier: workspace:*
         version: link:../../extensions/voice-providers
+      '@ethosagent/watchers':
+        specifier: workspace:*
+        version: link:../../extensions/watchers
     devDependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0

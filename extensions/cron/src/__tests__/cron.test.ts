@@ -1047,6 +1047,33 @@ describe('CronScheduler system jobs', () => {
     });
     await expect(scheduler.runJobNow(job.id)).rejects.toThrow(/not registered/i);
   });
+
+  it('removeSystemJob removes a system job that deleteJob refuses, and skips user jobs', async () => {
+    const scheduler = makeSystemScheduler();
+    const systemJob = await scheduler.seedSystemJob({
+      name: 'Watcher Backing Job',
+      schedule: 'every 60s',
+      systemTask: 'watcher-tick',
+    });
+    await expect(scheduler.deleteJob(systemJob.id)).rejects.toThrow(/cannot delete system job/i);
+
+    await scheduler.removeSystemJob(systemJob.id);
+    expect(await scheduler.getJob(systemJob.id)).toBeNull();
+
+    // Idempotent on a missing id
+    await scheduler.removeSystemJob(systemJob.id);
+
+    // A user job with the same id is untouched
+    const userJob = await scheduler.createJob({
+      name: 'User Kept Job',
+      schedule: '0 9 * * *',
+      prompt: 'keep me',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    await scheduler.removeSystemJob(userJob.id);
+    expect(await scheduler.getJob(userJob.id)).not.toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

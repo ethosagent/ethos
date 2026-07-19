@@ -216,6 +216,13 @@ export async function createAgentLoop(
      */
     cronScheduler?: import('@ethosagent/cron').CronScheduler;
     /**
+     * Shared WatcherManager so the agent-callable `watcher_*` tools land
+     * in the same watchers.json the ticking manager reads. Pass the
+     * gateway's / serve's manager instance; omit for ephemeral CLI chat
+     * sessions where a watcher couldn't tick past process exit.
+     */
+    watcherManager?: import('@ethosagent/watchers').WatcherManager;
+    /**
      * App-layer slash command registry (chat REPL). Threaded through to
      * plugin loading so plugin-registered slash commands show up in
      * autocomplete and /help.
@@ -261,6 +268,7 @@ export async function createAgentLoop(
     meshRegistryPath: opts.meshRegistryPath,
     observability: getEthosObservability(),
     ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
+    ...(opts.watcherManager ? { watcherManager: opts.watcherManager } : {}),
     ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
   });
 

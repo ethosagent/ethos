@@ -33,12 +33,14 @@ import {
   createPersonalityRegistry,
   PersonalityA2aIdentityProvider,
 } from '@ethosagent/personalities';
+import { wrapUntrusted } from '@ethosagent/safety-injection';
 import { SessionLane } from '@ethosagent/session-lane';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import { createA2aTools } from '@ethosagent/tools-a2a';
 import type { McpManager } from '@ethosagent/tools-mcp';
 import { EthosError, type ToolRegistry } from '@ethosagent/types';
+import { WatcherManager } from '@ethosagent/watchers';
 import {
   type ChatService,
   createWebApi,
@@ -314,6 +316,39 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // ready is a silent no-op for the SSE push.
   let chatService: ChatService | null = null;
   let cronPersonalities: Awaited<ReturnType<typeof createPersonalityRegistry>> | null = null;
+  // Watcher manager — constructed BEFORE the scheduler so its systemTask
+  // handler rides the scheduler's `systemTasks` config (watcher ticks
+  // piggyback on the cron scheduler; no second ticker). `ethos serve` has
+  // no channel adapters, so `deliver` targets are unreachable here — log
+  // loudly instead of dropping silently. `wake` drives the loop directly,
+  // mirroring how cron prompt jobs run in this process.
+  const watcherLogger = new ConsoleLogger();
+  const watcherManager = new WatcherManager({
+    storage: getStorage(),
+    logger: watcherLogger,
+    deliver: async (target) => {
+      watcherLogger.warn(
+        `[watcher] deliver to ${target.platform}:${target.chatId} unavailable — 'ethos serve' has no channel adapters; run 'ethos gateway' for channel delivery`,
+      );
+    },
+    wake: async (event) => {
+      if (!loop) return;
+      const wrapped = wrapUntrusted({
+        content: event.summary,
+        toolName: 'watcher',
+        source: `${event.watcherId}:${event.target}`,
+      });
+      const prompt = `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`;
+      const sessionKey = `watcher:${event.watcherId}:${new Date().toISOString()}`;
+      for await (const _event of loop.run(prompt, {
+        sessionKey,
+        personalityId: event.personalityId,
+      })) {
+        // Drain — a woken agent acts through its tools; no surface consumes
+        // this stream in `ethos serve`.
+      }
+    },
+  });
   cronScheduler = new CronScheduler({
     storage: getStorage(),
     logger: new ConsoleLogger(),
@@ -324,7 +359,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       secrets: await getSecretsResolver(),
       logger: new ConsoleLogger(),
     }),
-    systemTasks: buildSystemTaskHandlers(config),
+    systemTasks: { ...buildSystemTaskHandlers(config), ...watcherManager.systemTasks() },
     onDecision: (job, d) => {
       try {
         getEthosObservability().recordHeartbeatDecision({
@@ -384,6 +419,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       return { jobId: job.id, ranAt, output, sessionKey };
     },
   });
+  // Late-bind the scheduler into the watcher manager (the manager was
+  // constructed first so its systemTask handler could ride the scheduler
+  // config above). Backing jobs are seeded by `watcherManager.start()` later.
+  watcherManager.attachScheduler(cronScheduler);
 
   if (teamFlag && personalityOverride) {
     // Plan B member spawn — supervisor spawns each member with
@@ -398,6 +437,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         profile: loopProfile,
         meshRegistryPath: meshRegistryPath(activeMeshName),
         ...(cronScheduler ? { cronScheduler } : {}),
+        watcherManager,
       },
     );
     loop = result.loop;
@@ -442,6 +482,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       profile: loopProfile,
       meshRegistryPath: meshRegistryPath(activeMeshName),
       ...(cronScheduler ? { cronScheduler } : {}),
+      watcherManager,
     });
     loop = result.loop;
     toolRegistry = result.toolRegistry;
@@ -570,6 +611,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // Start the cron scheduler now — `loop` is assigned, and we'll bind
   // `chatService` to the value returned by createWebApi below.
   if (cronScheduler) cronScheduler.start();
+
+  // Load watchers.json and seed the backing `source:'system'` tick jobs.
+  // Idempotent — existing jobs are re-registered so interval edits apply.
+  void watcherManager.start().catch((err) => {
+    console.error('[watcher] failed to start watcher manager:', err);
+  });
 
   // Seed system cron jobs into the scheduler's persistent store. Each call
   // is idempotent — existing jobs are returned as-is. The handlers were

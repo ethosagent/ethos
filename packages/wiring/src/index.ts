@@ -372,6 +372,17 @@ export interface CreateAgentLoopOptions {
    */
   cronScheduler?: CronScheduler;
   /**
+   * Shared WatcherManager for agent-callable watcher tools. When provided,
+   * the 5 tools from `@ethosagent/tools-watchers` (`watcher_create`,
+   * `watcher_list`, `watcher_pause`, `watcher_resume`, `watcher_delete`)
+   * are registered on this AgentLoop's tool registry (toolset `watchers`).
+   * Ticks piggyback on the shared CronScheduler as `source:'system'` jobs —
+   * long-lived surfaces (`ethos gateway`, `ethos serve`) pass the manager
+   * they wired next to their scheduler; CLI/standalone profiles leave it
+   * unset and the tools are not registered.
+   */
+  watcherManager?: import('@ethosagent/watchers').WatcherManager;
+  /**
    * App-layer slash command registry. When provided, plugins that call
    * `registerSlashCommand` during loading land their commands here so the
    * CLI's autocomplete and /help can surface them. Omit for surfaces with
