@@ -128,16 +128,15 @@ function rowsFromConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Record editors (webhooks, quick commands, channel toolsets, retention) —
-// local row state hydrated from config.get like the provider chain, sent back
-// as FULL-REPLACEMENT records on Save: entries removed here are deleted from
-// config.yaml. Webhook secrets are write-only; omitting one keeps (or, for a
-// new hook, generates) the stored secret.
+// Record editors (quick commands, channel toolsets, retention) — local row
+// state hydrated from config.get like the provider chain, sent back as
+// FULL-REPLACEMENT records on Save: entries removed here are deleted from
+// config.yaml. (Webhooks are edited per personality on the Personality page's
+// Triggers section, not here.)
 // ---------------------------------------------------------------------------
 
 type ConfigUpdatePatch = Parameters<typeof rpc.config.update>[0];
 type ConfigGetData = Awaited<ReturnType<typeof rpc.config.get>>;
-type WebhookPatch = NonNullable<ConfigUpdatePatch['webhooks']>[string];
 type QuickCommandPatch = NonNullable<ConfigUpdatePatch['quickCommands']>[string];
 type RetentionSubkey = keyof ConfigGetData['retention'];
 
@@ -157,19 +156,6 @@ const RETENTION_SUBKEYS: readonly RetentionSubkey[] = [
   'events.channel',
   'events.install',
 ];
-
-interface WebhookRow {
-  _id: number;
-  hookId: string;
-  personalityId: string;
-  /** New secret typed by the user; empty keeps the stored one. */
-  secret: string;
-  secretPreview: string;
-  sessionKey: string;
-  prefilter: string;
-  prefilterTimeoutSeconds: number | null;
-  mode: 'sync' | 'ack';
-}
 
 interface QuickCommandRow {
   _id: number;
@@ -193,22 +179,6 @@ interface RetentionRow {
   personalityId: string;
   subkey: RetentionSubkey;
   duration: string;
-}
-
-function webhookRowsFromConfig(webhooks: ConfigGetData['webhooks']): WebhookRow[] {
-  return Object.entries(webhooks)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([hookId, h]) => ({
-      _id: nextRowId++,
-      hookId,
-      personalityId: h.personalityId,
-      secret: '',
-      secretPreview: h.secretPreview,
-      sessionKey: h.sessionKey ?? '',
-      prefilter: h.prefilter ?? '',
-      prefilterTimeoutSeconds: h.prefilterTimeoutSeconds,
-      mode: h.mode,
-    }));
 }
 
 function quickCommandRowsFromConfig(commands: ConfigGetData['quickCommands']): QuickCommandRow[] {
@@ -702,7 +672,6 @@ export function Settings() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [form] = Form.useForm<FormShape>();
   const [providerRows, setProviderRows] = useState<ProviderRow[]>([emptyRow()]);
-  const [webhookRows, setWebhookRows] = useState<WebhookRow[]>([]);
   const [quickCommandRows, setQuickCommandRows] = useState<QuickCommandRow[]>([]);
   const [channelToolsetRows, setChannelToolsetRows] = useState<ChannelToolsetRow[]>([]);
   const [retentionRows, setRetentionRows] = useState<RetentionRow[]>([]);
@@ -811,7 +780,6 @@ export function Settings() {
             configQuery.data.baseUrl,
           ),
         );
-        setWebhookRows(webhookRowsFromConfig(configQuery.data.webhooks));
         setQuickCommandRows(quickCommandRowsFromConfig(configQuery.data.quickCommands));
         setChannelToolsetRows(channelToolsetRowsFromConfig(configQuery.data.channelToolsets));
         setRetentionRows(
@@ -893,33 +861,6 @@ export function Settings() {
 
     // -- Record-editor validation (mirrors the contract's Zod bounds) --------
     const fail = (message: string) => notification.error({ message });
-
-    const webhooks: Record<string, WebhookPatch> = {};
-    for (const row of webhookRows) {
-      const id = row.hookId.trim();
-      if (!RECORD_KEY_RE.test(id)) {
-        return fail(`Webhook id "${id}" must use only letters, digits, hyphens, or underscores.`);
-      }
-      if (webhooks[id]) return fail(`Duplicate webhook id "${id}".`);
-      if (!row.personalityId) return fail(`Webhook "${id}" needs a personality.`);
-      if (row.secret && row.secret.length < 8) {
-        return fail(`Webhook "${id}": secret must be at least 8 characters.`);
-      }
-      const prefilter = row.prefilter.trim();
-      if (row.prefilterTimeoutSeconds !== null && !prefilter) {
-        return fail(`Webhook "${id}": prefilter timeout requires a prefilter script.`);
-      }
-      webhooks[id] = {
-        personalityId: row.personalityId,
-        mode: row.mode,
-        ...(row.secret ? { secret: row.secret } : {}),
-        ...(row.sessionKey.trim() ? { sessionKey: row.sessionKey.trim() } : {}),
-        ...(prefilter ? { prefilter } : {}),
-        ...(prefilter && row.prefilterTimeoutSeconds !== null
-          ? { prefilterTimeoutSeconds: row.prefilterTimeoutSeconds }
-          : {}),
-      };
-    }
 
     const quickCommands: Record<string, QuickCommandPatch> = {};
     for (const row of quickCommandRows) {
@@ -1072,9 +1013,10 @@ export function Settings() {
       providers,
       // -- Settings-page additions ------------------------------------------
       // Scalars: null clears the config.yaml key back to its built-in default.
-      // Records (webhooks, quickCommands, channelToolsets, retention,
-      // personalityRetention) are full replacements. Secrets are write-only —
-      // included only when the user typed a fresh value.
+      // Records (quickCommands, channelToolsets, retention,
+      // personalityRetention) are full replacements; `webhooks` is omitted —
+      // hooks are edited on each Personality page's Triggers section. Secrets
+      // are write-only — included only when the user typed a fresh value.
       displayVerbosity: values.displayVerbosity,
       displayBusyInputMode: values.displayBusyInputMode,
       displayToolPreviewLength: values.displayToolPreviewLength ?? null,
@@ -1163,7 +1105,6 @@ export function Settings() {
       webBaseUrl: strOrNull(values.webBaseUrl),
       retention,
       personalityRetention,
-      webhooks,
       quickCommands,
       channelToolsets,
     };
@@ -2060,8 +2001,6 @@ export function Settings() {
           </Form.Item>
         </Card>
 
-        <WebhooksCard rows={webhookRows} setRows={setWebhookRows} personalities={personalities} />
-
         <AutomationCard
           qcRows={quickCommandRows}
           setQcRows={setQuickCommandRows}
@@ -2144,166 +2083,6 @@ export function Settings() {
 
       {isDesktop ? <DesktopSettings /> : null}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Webhooks — full-replacement record editor for `webhooks.<hookId>.*`.
-// Rows are plain local state (like the provider chain); the page Save button
-// submits them with the rest of the form.
-// ---------------------------------------------------------------------------
-
-function WebhooksCard({
-  rows,
-  setRows,
-  personalities,
-}: {
-  rows: WebhookRow[];
-  setRows: Dispatch<SetStateAction<WebhookRow[]>>;
-  personalities: PersonalityOption[];
-}) {
-  const update = (index: number, patch: Partial<WebhookRow>) =>
-    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
-  const remove = (index: number) => setRows((prev) => prev.filter((_, i) => i !== index));
-  const add = () =>
-    setRows((prev) => [
-      ...prev,
-      {
-        _id: nextRowId++,
-        hookId: '',
-        personalityId: '',
-        secret: '',
-        secretPreview: '',
-        sessionKey: '',
-        prefilter: '',
-        prefilterTimeoutSeconds: null,
-        mode: 'sync',
-      },
-    ]);
-
-  return (
-    <Card title="Webhooks" size="small" style={{ marginBottom: 16 }}>
-      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-        Inbound HTTP triggers (webhooks.&lt;id&gt; in config.yaml). A POST to the hook URL with the
-        bearer secret runs a turn as the chosen personality. Saving replaces the whole set — removed
-        hooks are deleted.
-      </Typography.Paragraph>
-      {rows.map((row, idx) => (
-        <div key={row._id} style={ROW_BOX_STYLE}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 8,
-            }}
-          >
-            <Typography.Text style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}>
-              /webhook/{row.hookId || '<id>'}
-            </Typography.Text>
-            <Button size="small" danger onClick={() => remove(idx)}>
-              Remove
-            </Button>
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <div style={{ flex: 1 }}>
-              <RowLabel>Hook id</RowLabel>
-              <Input
-                size="small"
-                placeholder="github_ci"
-                value={row.hookId}
-                onChange={(e) => update(idx, { hookId: e.target.value })}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <RowLabel>Personality</RowLabel>
-              <Select
-                size="small"
-                style={{ width: '100%' }}
-                placeholder="Select…"
-                value={row.personalityId || undefined}
-                onChange={(v: string) => update(idx, { personalityId: v })}
-                options={personalities.map((p) => ({ label: p.name, value: p.id }))}
-                showSearch
-                optionFilterProp="label"
-              />
-            </div>
-          </div>
-          <div style={{ marginBottom: 8 }}>
-            <RowLabel>Secret</RowLabel>
-            <Input.Password
-              size="small"
-              autoComplete="off"
-              placeholder={row.secretPreview || 'generated on save'}
-              value={row.secret}
-              onChange={(e) => update(idx, { secret: e.target.value })}
-            />
-            {row.secretPreview && !row.secret ? (
-              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                Active: {row.secretPreview} — leave blank to keep it.
-              </Typography.Text>
-            ) : (
-              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                {row.secret
-                  ? 'At least 8 characters.'
-                  : 'Leave blank and the server generates one on save.'}
-              </Typography.Text>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <div style={{ flex: 1 }}>
-              <RowLabel>Session key (optional)</RowLabel>
-              <Input
-                size="small"
-                placeholder="webhook:github"
-                value={row.sessionKey}
-                onChange={(e) => update(idx, { sessionKey: e.target.value })}
-              />
-            </div>
-            <div style={{ width: 180 }}>
-              <RowLabel>Mode</RowLabel>
-              <Select
-                size="small"
-                style={{ width: '100%' }}
-                value={row.mode}
-                onChange={(v: 'sync' | 'ack') => update(idx, { mode: v })}
-                options={[
-                  { value: 'sync', label: 'sync — wait for reply' },
-                  { value: 'ack', label: 'ack — 202 instantly' },
-                ]}
-              />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <div style={{ flex: 1 }}>
-              <RowLabel>Prefilter script (optional, under ~/.ethos/scripts/)</RowLabel>
-              <Input
-                size="small"
-                placeholder="filter.sh"
-                value={row.prefilter}
-                onChange={(e) => update(idx, { prefilter: e.target.value })}
-              />
-            </div>
-            <div style={{ width: 180 }}>
-              <RowLabel>Prefilter timeout (s)</RowLabel>
-              <InputNumber
-                size="small"
-                style={{ width: '100%' }}
-                min={1}
-                max={600}
-                precision={0}
-                value={row.prefilterTimeoutSeconds}
-                onChange={(v) => update(idx, { prefilterTimeoutSeconds: v ?? null })}
-                disabled={!row.prefilter.trim()}
-              />
-            </div>
-          </div>
-        </div>
-      ))}
-      <Button type="dashed" size="small" onClick={add} style={{ width: '100%' }}>
-        Add webhook
-      </Button>
-    </Card>
   );
 }
 

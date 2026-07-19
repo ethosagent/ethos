@@ -18,6 +18,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
 import { A2aPeersSection } from '../components/personality/A2aPeersSection';
 import { CharacterSheetView } from '../components/personality/CharacterSheetView';
+import { TriggersSection } from '../components/personality/TriggersSection';
 import { ToolSettingsForm } from '../components/tool-settings/ToolSettingsForm';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { useToolSettingsSetForPersonality } from '../features/settings/api/mutations';
@@ -841,6 +842,8 @@ export function PersonalityDetail() {
       <ToolSettingsSection personalityId={id} toolset={personality.toolset ?? []} />
 
       {!personality.builtin && <McpSection personalityId={id} mcpPolicy={data.mcpPolicy} />}
+
+      <TriggersSection personalityId={id} />
 
       <A2aPeersSection personalityId={id} />
 
