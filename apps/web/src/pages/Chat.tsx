@@ -9,15 +9,18 @@ import { Composer } from '../components/chat/Composer';
 import { GoalIntakeModal } from '../components/chat/GoalIntakeModal';
 import { MessageList } from '../components/chat/MessageList';
 import { PersonalityBar } from '../components/chat/PersonalityBar';
+import { useConfig } from '../features/config/api/queries';
 import { useGoalCreate } from '../features/goals/api/mutations';
 import { useGoalDetection } from '../features/goals/useGoalDetection';
 import { usePersonalityGet } from '../features/personalities/api/queries';
 import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useSessionGet } from '../features/sessions/api/queries';
+import { createBatchVoiceCallClient } from '../features/voice/batch-voice-call-client';
+import { runVoiceAgentTurn } from '../features/voice/chat-voice-runner';
 import { personalityCanTalk } from '../features/voice/gating';
 import { TalkModeCallBar, TalkModeToggle } from '../features/voice/TalkMode';
 import { useVoiceCall } from '../features/voice/useVoiceCall';
-import { voiceTranscriptToMessages } from '../features/voice/voice-call-reducer';
+import type { VoiceCallClient } from '../features/voice/voice-call-client';
 import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
@@ -323,10 +326,59 @@ export function Chat() {
   // reports the manual step honestly instead of connecting.
   const personalityQuery = usePersonalityGet(personalityId);
   const canTalk = personalityCanTalk(personalityQuery.data?.personality.toolset);
-  const voice = useVoiceCall();
+
+  // Voice config gates the live call. STT is required; TTS is optional (no TTS →
+  // the reply is surfaced as text only, synthesis skipped).
+  const configQuery = useConfig();
+  const sttConfigured = Boolean(configQuery.data?.voiceProvider);
+  const ttsConfigured = Boolean(configQuery.data?.voiceTtsProvider);
+  const ttsVoice = configQuery.data?.voiceTtsVoice ?? undefined;
+
+  // The active session id read lazily by the voice runner — it can change
+  // between turns (fork, new session) without rebuilding the client.
+  const sessionIdRef = useRef(currentSessionId);
+  sessionIdRef.current = currentSessionId;
+
+  const createVoiceClient = useCallback(
+    (): VoiceCallClient =>
+      createBatchVoiceCallClient({
+        transcribe: (audioBase64, mimeType) =>
+          rpc.voice.transcribe({ audio: audioBase64, mimeType }).then((r) => r.transcript),
+        // Reuse the existing chat send + stream so the spoken turn shares the
+        // active chat session (same personality, same persisted history).
+        runAgentTurn: (text, signal) =>
+          runVoiceAgentTurn(text, signal, {
+            sessionId: () => sessionIdRef.current,
+            sendMessage,
+            abortTurn,
+          }),
+        ...(ttsConfigured
+          ? {
+              synthesize: (text, voice) =>
+                rpc.voice
+                  .synthesize({ text, ...(voice ? { voice } : {}) })
+                  .then((r) => ({ audioBase64: r.audio, mimeType: r.mimeType })),
+            }
+          : {}),
+        ...(ttsVoice ? { voice: ttsVoice } : {}),
+      }),
+    [ttsConfigured, ttsVoice, sendMessage, abortTurn],
+  );
+
+  const voice = useVoiceCall({ createClient: createVoiceClient });
   const inCall = voice.status !== 'idle' && voice.status !== 'ended';
-  const voiceMessages =
-    voice.transcript.length > 0 ? voiceTranscriptToMessages(voice.transcript) : [];
+
+  const handleTalkToggle = useCallback(() => {
+    if (!sttConfigured) {
+      notification.info({
+        message: 'Voice',
+        description: 'Configure STT/TTS in Settings → Voice to talk.',
+        placement: 'topRight',
+      });
+      return;
+    }
+    voice.start();
+  }, [sttConfigured, voice.start, notification]);
 
   useEffect(() => {
     if (voice.error) {
@@ -389,7 +441,7 @@ export function Chat() {
               canTalk={canTalk}
               personalityName={capitalize(personalityId)}
               inCall={inCall}
-              onToggle={voice.start}
+              onToggle={handleTalkToggle}
             />
           }
         />
@@ -418,9 +470,7 @@ export function Chat() {
           <ClarifyCard key={pendingClarify.requestId} request={pendingClarify} />
         ) : null}
         <MessageList
-          messages={
-            voiceMessages.length > 0 ? [...state.messages, ...voiceMessages] : state.messages
-          }
+          messages={state.messages}
           currentTurn={state.currentTurn}
           personalityId={personalityId}
           model={model}
