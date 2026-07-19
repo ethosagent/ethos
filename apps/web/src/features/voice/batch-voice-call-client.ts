@@ -19,6 +19,40 @@ export interface UtteranceCapture {
 }
 
 /**
+ * Live-tunable VAD / barge-in parameters for the default browser driver. Every
+ * field is a raw driver constant surfaced to the user (Settings → Voice →
+ * Advanced voice tuning) so endpointing and interrupt behavior can be adjusted
+ * without editing code.
+ */
+export interface VoiceTuning {
+  /** Trailing silence (ms) that ends an utterance. */
+  endpointSilenceMs: number;
+  /** RMS bar during agent playout before a barge-in can fire (echo tolerance). */
+  bargeThreshold: number;
+  /** Sustained speech (ms) over playout before barge-in fires. */
+  bargeSustainMs: number;
+  /** RMS to count as speech while listening. */
+  speechThreshold: number;
+  /** Minimum speech (ms) before an utterance counts. */
+  speechMinMs: number;
+}
+
+/**
+ * The single source of truth for the driver's VAD / barge-in defaults. The
+ * browser driver falls back to these per-field, and Settings/Chat import them so
+ * the UI defaults never drift from the driver. The web-api ConfigService keeps a
+ * byte-equal copy (it cannot import this browser module) — see
+ * `VOICE_TUNING_DEFAULTS` there.
+ */
+export const DEFAULT_VOICE_TUNING: VoiceTuning = {
+  endpointSilenceMs: 700,
+  bargeThreshold: 0.06,
+  bargeSustainMs: 250,
+  speechThreshold: 0.02,
+  speechMinMs: 150,
+};
+
+/**
  * The browser-audio boundary. The client core drives these primitives; the real
  * implementation wraps getUserMedia / AudioContext / MediaRecorder / `<audio>`.
  * Tests inject a fake so no real media APIs are touched.
@@ -85,6 +119,12 @@ export interface BatchVoiceCallDeps {
    * the thinking gap silent.
    */
   chime?: boolean;
+  /**
+   * Override the default driver's VAD / barge-in tuning (from the
+   * `display.voice_*` config keys). Each field falls back to
+   * {@link DEFAULT_VOICE_TUNING}. Ignored when `createDriver` is supplied.
+   */
+  tuning?: Partial<VoiceTuning>;
   /** Monotonic clock for the default driver's VAD timing. Defaults to perf clock. */
   now?: () => number;
   /** Override the browser-audio driver (tests inject a fake). */
@@ -169,7 +209,7 @@ export function createBatchVoiceCallClient(deps: BatchVoiceCallDeps): VoiceCallC
 
   const driver = deps.createDriver
     ? deps.createDriver()
-    : createBrowserVoiceIoDriver({ now: deps.now });
+    : createBrowserVoiceIoDriver({ now: deps.now, tuning: deps.tuning });
 
   const chimeEnabled = deps.chime ?? true;
   const disconnectController = new AbortController();
@@ -342,15 +382,23 @@ function pickRecorderMime(): string {
  * echoCancellation on the mic keeps the agent's own audio from re-triggering the
  * VAD, and barge-in uses a higher threshold during playout as a second guard.
  */
-export function createBrowserVoiceIoDriver(opts: { now?: () => number } = {}): VoiceIoDriver {
+export function createBrowserVoiceIoDriver(
+  opts: { now?: () => number; tuning?: Partial<VoiceTuning> } = {},
+): VoiceIoDriver {
   const now =
     opts.now ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
 
-  const SPEECH_THRESHOLD = 0.02; // RMS to count as speech while listening
-  const BARGE_THRESHOLD = 0.06; // higher bar during playout (echo tolerance)
-  const SILENCE_MS = 700; // trailing silence that ends an utterance
-  const SPEECH_MIN_MS = 150; // minimum speech before an utterance counts
-  const BARGE_SUSTAIN_MS = 250; // sustained speech before barge-in fires
+  const tuning = opts.tuning ?? {};
+  // RMS to count as speech while listening.
+  const SPEECH_THRESHOLD = tuning.speechThreshold ?? DEFAULT_VOICE_TUNING.speechThreshold;
+  // Higher bar during playout (echo tolerance).
+  const BARGE_THRESHOLD = tuning.bargeThreshold ?? DEFAULT_VOICE_TUNING.bargeThreshold;
+  // Trailing silence that ends an utterance.
+  const SILENCE_MS = tuning.endpointSilenceMs ?? DEFAULT_VOICE_TUNING.endpointSilenceMs;
+  // Minimum speech before an utterance counts.
+  const SPEECH_MIN_MS = tuning.speechMinMs ?? DEFAULT_VOICE_TUNING.speechMinMs;
+  // Sustained speech before barge-in fires.
+  const BARGE_SUSTAIN_MS = tuning.bargeSustainMs ?? DEFAULT_VOICE_TUNING.bargeSustainMs;
 
   let stream: MediaStream | null = null;
   let audioCtx: AudioContext | null = null;

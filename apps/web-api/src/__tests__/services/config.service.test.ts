@@ -238,6 +238,74 @@ describe('ConfigService', () => {
     expect(result.memoryCaptureModel).toBe('claude-haiku-4-5-20251001');
   });
 
+  it('get returns voice-tuning defaults when the keys are absent', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: sk-keep', 'personality: researcher'].join('\n'),
+    );
+
+    const result = await service.get();
+    expect(result.voiceEndpointSilenceMs).toBe(700);
+    expect(result.voiceBargeThreshold).toBe(0.06);
+    expect(result.voiceBargeSustainMs).toBe(250);
+    expect(result.voiceSpeechThreshold).toBe(0.02);
+    expect(result.voiceSpeechMinMs).toBe(150);
+  });
+
+  it('get reads voice-tuning values from their flat config keys', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk-keep',
+        'personality: researcher',
+        'display.voice_endpoint_silence_ms: 900',
+        'display.voice_barge_threshold: 0.08',
+        'display.voice_speech_min_ms: 200',
+      ].join('\n'),
+    );
+
+    const result = await service.get();
+    expect(result.voiceEndpointSilenceMs).toBe(900);
+    expect(result.voiceBargeThreshold).toBe(0.08);
+    expect(result.voiceSpeechMinMs).toBe(200);
+    // Untouched keys still resolve to their defaults.
+    expect(result.voiceBargeSustainMs).toBe(250);
+    expect(result.voiceSpeechThreshold).toBe(0.02);
+  });
+
+  it('update writes voice-tuning values to their flat config keys and round-trips', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: sk-keep', 'personality: researcher'].join('\n'),
+    );
+
+    await service.update({ voiceEndpointSilenceMs: 1000, voiceSpeechMinMs: 300 });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('display.voice_endpoint_silence_ms: 1000');
+    expect(written).toContain('display.voice_speech_min_ms: 300');
+
+    const result = await service.get();
+    expect(result.voiceEndpointSilenceMs).toBe(1000);
+    expect(result.voiceSpeechMinMs).toBe(300);
+  });
+
+  it('update clamps out-of-range voice-tuning values to the allowed bounds', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: sk-keep', 'personality: researcher'].join('\n'),
+    );
+
+    // Below min (300) and above max (0.2) respectively.
+    await service.update({ voiceEndpointSilenceMs: 50, voiceBargeThreshold: 5 });
+
+    const result = await service.get();
+    expect(result.voiceEndpointSilenceMs).toBe(300);
+    expect(result.voiceBargeThreshold).toBe(0.2);
+  });
+
   it('update memoryConsolidationEnabled preserves sibling memoryConsolidation.* keys', async () => {
     await storage.write(
       join(DATA, 'config.yaml'),

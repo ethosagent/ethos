@@ -6,6 +6,65 @@ import type { ConfigRepository, RawProviderEntry } from '../repositories/config.
 // (`sk-…abc1`) so the UI can show "which key is active" without leaking
 // it. `update` accepts a fresh key but does not echo it back.
 
+// Voice VAD / barge-in tuning surfaced as flat `display.voice_*` passthrough
+// keys. These defaults MUST stay byte-equal to `DEFAULT_VOICE_TUNING` in
+// apps/web/src/features/voice/batch-voice-call-client.ts (the driver's single
+// source of truth) — web-api can't import the browser bundle, so the values are
+// duplicated here. `min`/`max` mirror the Zod bounds on ConfigUpdateInput; the
+// service clamps to them so a direct (non-RPC) caller can't persist out-of-range.
+type VoiceTuningField =
+  | 'voiceEndpointSilenceMs'
+  | 'voiceBargeThreshold'
+  | 'voiceBargeSustainMs'
+  | 'voiceSpeechThreshold'
+  | 'voiceSpeechMinMs';
+interface VoiceTuningSpec {
+  field: VoiceTuningField;
+  default: number;
+  min: number;
+  max: number;
+}
+const VOICE_TUNING = {
+  'display.voice_endpoint_silence_ms': {
+    field: 'voiceEndpointSilenceMs',
+    default: 700,
+    min: 300,
+    max: 1500,
+  },
+  'display.voice_barge_threshold': {
+    field: 'voiceBargeThreshold',
+    default: 0.06,
+    min: 0.02,
+    max: 0.2,
+  },
+  'display.voice_barge_sustain_ms': {
+    field: 'voiceBargeSustainMs',
+    default: 250,
+    min: 100,
+    max: 800,
+  },
+  'display.voice_speech_threshold': {
+    field: 'voiceSpeechThreshold',
+    default: 0.02,
+    min: 0.005,
+    max: 0.1,
+  },
+  'display.voice_speech_min_ms': { field: 'voiceSpeechMinMs', default: 150, min: 100, max: 500 },
+} satisfies Record<string, VoiceTuningSpec>;
+
+/** Resolve a stored `display.voice_*` value to a number, falling back to its
+ *  default when unset or unparseable. */
+function readVoiceTuning(
+  passthrough: Record<string, string>,
+  key: string,
+  fallback: number,
+): number {
+  const raw = passthrough[key];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export interface ConfigGetResult {
   provider: string;
   model: string;
@@ -35,6 +94,11 @@ export interface ConfigGetResult {
   memoryCaptureModel: string | null;
   memoryNotices: boolean;
   voiceChime: boolean;
+  voiceEndpointSilenceMs: number;
+  voiceBargeThreshold: number;
+  voiceBargeSustainMs: number;
+  voiceSpeechThreshold: number;
+  voiceSpeechMinMs: number;
   voiceProvider: string | null;
   voiceApiKeyPreview: string | null;
   voiceBaseUrl: string | null;
@@ -75,6 +139,11 @@ export interface ConfigUpdateInput {
   memoryCaptureModel?: string;
   memoryNotices?: boolean;
   voiceChime?: boolean;
+  voiceEndpointSilenceMs?: number;
+  voiceBargeThreshold?: number;
+  voiceBargeSustainMs?: number;
+  voiceSpeechThreshold?: number;
+  voiceSpeechMinMs?: number;
   voiceProvider?: string;
   voiceApiKey?: string;
   voiceBaseUrl?: string;
@@ -137,6 +206,31 @@ export class ConfigService {
       memoryNotices: raw.passthrough['display.memory_notices'] === 'true',
       // Default ON — the talk-mode chime plays unless explicitly disabled.
       voiceChime: raw.passthrough['display.voice_chime'] !== 'false',
+      voiceEndpointSilenceMs: readVoiceTuning(
+        raw.passthrough,
+        'display.voice_endpoint_silence_ms',
+        VOICE_TUNING['display.voice_endpoint_silence_ms'].default,
+      ),
+      voiceBargeThreshold: readVoiceTuning(
+        raw.passthrough,
+        'display.voice_barge_threshold',
+        VOICE_TUNING['display.voice_barge_threshold'].default,
+      ),
+      voiceBargeSustainMs: readVoiceTuning(
+        raw.passthrough,
+        'display.voice_barge_sustain_ms',
+        VOICE_TUNING['display.voice_barge_sustain_ms'].default,
+      ),
+      voiceSpeechThreshold: readVoiceTuning(
+        raw.passthrough,
+        'display.voice_speech_threshold',
+        VOICE_TUNING['display.voice_speech_threshold'].default,
+      ),
+      voiceSpeechMinMs: readVoiceTuning(
+        raw.passthrough,
+        'display.voice_speech_min_ms',
+        VOICE_TUNING['display.voice_speech_min_ms'].default,
+      ),
       voiceProvider: raw.voiceProvider ?? null,
       voiceApiKeyPreview: raw.voiceApiKey ? redactKey(raw.voiceApiKey) : null,
       voiceBaseUrl: raw.voiceBaseUrl ?? null,
@@ -243,6 +337,16 @@ export class ConfigService {
     }
     if (patch.voiceChime !== undefined) {
       passthroughPatch['display.voice_chime'] = patch.voiceChime ? 'true' : 'false';
+    }
+    // Voice tuning: clamp each provided value to its range and persist as a
+    // string under its flat `display.voice_*` key. Clamp defends direct callers;
+    // the RPC layer already rejects out-of-range via the Zod bounds.
+    for (const [key, spec] of Object.entries(VOICE_TUNING)) {
+      const value = patch[spec.field];
+      if (value === undefined) continue;
+      const clamped = Math.min(spec.max, Math.max(spec.min, value));
+      passthroughPatch[key] = String(clamped);
+      delete cleaned[spec.field];
     }
     const passthrough = Object.keys(passthroughPatch).length > 0 ? passthroughPatch : undefined;
     delete cleaned.adminEnabled;

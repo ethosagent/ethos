@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type BatchVoiceCallDeps,
   createBatchVoiceCallClient,
+  createBrowserVoiceIoDriver,
   type SynthesizedClip,
   splitSentences,
   type UtteranceCapture,
@@ -295,5 +296,67 @@ describe('createBatchVoiceCallClient — barge-in', () => {
     // Recovers hands-free: the loop listens for the next utterance.
     await vi.waitFor(() => expect(driver.captureCalls).toBeGreaterThanOrEqual(2));
     await client.disconnect();
+  });
+});
+
+describe('createBrowserVoiceIoDriver — tuning injection', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('uses the injected barge-in tuning instead of the built-in default', async () => {
+    vi.useFakeTimers();
+    // A constant byte level fed to the analyser: 128 = silence, 200 = speech
+    // (rms ≈ 0.56, above any threshold used here).
+    let level = 128;
+    const analyser = {
+      fftSize: 2048,
+      getByteTimeDomainData: (data: Uint8Array) => data.fill(level),
+    };
+    const track = { enabled: true, stop: () => {} };
+    const stream = { getAudioTracks: () => [track], getTracks: () => [track] };
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: () => Promise.resolve(stream) },
+    });
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        state = 'running';
+        currentTime = 0;
+        createMediaStreamSource() {
+          return { connect() {} };
+        }
+        createAnalyser() {
+          return analyser;
+        }
+        close() {
+          return Promise.resolve();
+        }
+      },
+    );
+
+    // bargeSustainMs 400 (default is 250). The barge monitor ticks every 80ms and
+    // accumulates while speech stays above threshold.
+    const driver = createBrowserVoiceIoDriver({
+      tuning: { bargeSustainMs: 400, bargeThreshold: 0.05 },
+    });
+    await driver.start();
+    let fired = 0;
+    driver.onBargeIn(() => {
+      fired++;
+    });
+    level = 200; // sustained speech
+    driver.setBargeInEnabled(true);
+
+    // At 320ms the DEFAULT (250ms) would already have fired — the injected 400ms
+    // must not.
+    vi.advanceTimersByTime(320);
+    expect(fired).toBe(0);
+    // The injected 400ms threshold is reached on the next tick.
+    vi.advanceTimersByTime(80);
+    expect(fired).toBe(1);
+
+    await driver.stop();
   });
 });

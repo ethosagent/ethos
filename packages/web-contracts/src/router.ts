@@ -764,6 +764,16 @@ const ConfigGetOutput = z.object({
   memoryNotices: z.boolean(),
   /** Talk-mode processing chime / earcon (display.voice_chime); default true. */
   voiceChime: z.boolean(),
+  /** VAD endpoint silence in ms (display.voice_endpoint_silence_ms); default 700. */
+  voiceEndpointSilenceMs: z.number(),
+  /** Barge-in RMS threshold during playout (display.voice_barge_threshold); default 0.06. */
+  voiceBargeThreshold: z.number(),
+  /** Sustained-speech ms before barge-in (display.voice_barge_sustain_ms); default 250. */
+  voiceBargeSustainMs: z.number(),
+  /** Listening speech RMS threshold (display.voice_speech_threshold); default 0.02. */
+  voiceSpeechThreshold: z.number(),
+  /** Minimum speech ms before an utterance counts (display.voice_speech_min_ms); default 150. */
+  voiceSpeechMinMs: z.number(),
   voiceProvider: z.string().nullable(),
   voiceApiKeyPreview: z.string().nullable(),
   voiceBaseUrl: z.string().nullable(),
@@ -808,6 +818,11 @@ const ConfigUpdateInput = z.object({
   memoryCaptureModel: z.string().optional(),
   memoryNotices: z.boolean().optional(),
   voiceChime: z.boolean().optional(),
+  voiceEndpointSilenceMs: z.number().min(300).max(1500).optional(),
+  voiceBargeThreshold: z.number().min(0.02).max(0.2).optional(),
+  voiceBargeSustainMs: z.number().min(100).max(800).optional(),
+  voiceSpeechThreshold: z.number().min(0.005).max(0.1).optional(),
+  voiceSpeechMinMs: z.number().min(100).max(500).optional(),
   voiceProvider: z.string().optional(),
   voiceApiKey: z.string().optional(),
   voiceBaseUrl: z.string().optional(),

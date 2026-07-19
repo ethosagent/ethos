@@ -7,11 +7,13 @@ import {
   Button,
   Card,
   Checkbox,
+  Collapse,
   Form,
   Input,
   Modal,
   Radio,
   Select,
+  Slider,
   Space,
   Spin,
   Switch,
@@ -35,6 +37,7 @@ import {
   useToolSettingsDefault,
   useToolSettingsSchemas,
 } from '../features/settings/api/queries';
+import { DEFAULT_VOICE_TUNING } from '../features/voice/batch-voice-call-client';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { isDesktop } from '../lib/desktop';
 import { rpc } from '../rpc';
@@ -204,6 +207,11 @@ interface FormShape {
   memoryNotices: boolean;
   voiceEnabled: boolean;
   voiceChime: boolean;
+  voiceEndpointSilenceMs: number;
+  voiceBargeThreshold: number;
+  voiceBargeSustainMs: number;
+  voiceSpeechThreshold: number;
+  voiceSpeechMinMs: number;
   voiceProvider: string;
   voiceApiKey: string;
   voiceBaseUrl: string;
@@ -227,6 +235,77 @@ const TTS_PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> 
 
 // Fixed phrase the "Test TTS" button synthesizes so the check is deterministic.
 const VOICE_TEST_PHRASE = 'Hello — this is an Ethos voice test.';
+
+// Advanced VAD / barge-in tuning sliders. `name` is the FormShape/config field,
+// `defaultKey` maps to DEFAULT_VOICE_TUNING for the reset affordance, and the
+// range/step mirror the Zod bounds on ConfigUpdateInput. `unit` renders the
+// slider tooltip so the raw number reads clearly.
+const VOICE_TUNING_CONTROLS: Array<{
+  name:
+    | 'voiceEndpointSilenceMs'
+    | 'voiceBargeThreshold'
+    | 'voiceBargeSustainMs'
+    | 'voiceSpeechThreshold'
+    | 'voiceSpeechMinMs';
+  defaultKey: keyof typeof DEFAULT_VOICE_TUNING;
+  label: string;
+  extra: string;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+}> = [
+  {
+    name: 'voiceEndpointSilenceMs',
+    defaultKey: 'endpointSilenceMs',
+    label: 'Response delay',
+    extra: 'How long you pause before the agent replies.',
+    min: 300,
+    max: 1500,
+    step: 50,
+    unit: 'ms',
+  },
+  {
+    name: 'voiceBargeThreshold',
+    defaultKey: 'bargeThreshold',
+    label: 'Interrupt sensitivity',
+    extra: 'Lower = easier to interrupt the agent while it speaks.',
+    min: 0.02,
+    max: 0.2,
+    step: 0.005,
+    unit: '',
+  },
+  {
+    name: 'voiceBargeSustainMs',
+    defaultKey: 'bargeSustainMs',
+    label: 'Interrupt hold',
+    extra: 'How long you must keep talking to cut in.',
+    min: 100,
+    max: 800,
+    step: 40,
+    unit: 'ms',
+  },
+  {
+    name: 'voiceSpeechThreshold',
+    defaultKey: 'speechThreshold',
+    label: 'Mic sensitivity',
+    extra: 'Lower = picks up quieter speech.',
+    min: 0.005,
+    max: 0.1,
+    step: 0.005,
+    unit: '',
+  },
+  {
+    name: 'voiceSpeechMinMs',
+    defaultKey: 'speechMinMs',
+    label: 'Min speech',
+    extra: 'Ignore blips shorter than this.',
+    min: 100,
+    max: 500,
+    step: 20,
+    unit: 'ms',
+  },
+];
 
 // Fields whose edits mean the saved config a test would exercise is stale.
 const STT_TEST_DIRTY_FIELDS: (keyof FormShape)[] = [
@@ -417,6 +496,11 @@ export function Settings() {
         memoryNotices: configQuery.data.memoryNotices,
         voiceEnabled: Boolean(configQuery.data.voiceProvider),
         voiceChime: configQuery.data.voiceChime,
+        voiceEndpointSilenceMs: configQuery.data.voiceEndpointSilenceMs,
+        voiceBargeThreshold: configQuery.data.voiceBargeThreshold,
+        voiceBargeSustainMs: configQuery.data.voiceBargeSustainMs,
+        voiceSpeechThreshold: configQuery.data.voiceSpeechThreshold,
+        voiceSpeechMinMs: configQuery.data.voiceSpeechMinMs,
         voiceProvider: configQuery.data.voiceProvider ?? '',
         voiceApiKey: '',
         voiceBaseUrl: configQuery.data.voiceBaseUrl ?? '',
@@ -537,6 +621,11 @@ export function Settings() {
       memoryCaptureModel: values.memoryCaptureModel,
       memoryNotices: values.memoryNotices,
       voiceChime: values.voiceChime,
+      voiceEndpointSilenceMs: values.voiceEndpointSilenceMs,
+      voiceBargeThreshold: values.voiceBargeThreshold,
+      voiceBargeSustainMs: values.voiceBargeSustainMs,
+      voiceSpeechThreshold: values.voiceSpeechThreshold,
+      voiceSpeechMinMs: values.voiceSpeechMinMs,
       ...(!values.voiceEnabled
         ? configQuery.data?.voiceProvider || configQuery.data?.voiceTtsProvider
           ? { voiceProvider: '', voiceTtsProvider: '' }
@@ -920,6 +1009,46 @@ export function Settings() {
           >
             <Switch />
           </Form.Item>
+          <Collapse
+            ghost
+            size="small"
+            style={{ marginBottom: 16 }}
+            items={[
+              {
+                key: 'voice-tuning',
+                label: 'Advanced voice tuning',
+                children: (
+                  <>
+                    {VOICE_TUNING_CONTROLS.map((c) => (
+                      <Form.Item key={c.name} name={c.name} label={c.label} extra={c.extra}>
+                        <Slider
+                          min={c.min}
+                          max={c.max}
+                          step={c.step}
+                          tooltip={{ formatter: (v) => `${v ?? ''}${c.unit}` }}
+                        />
+                      </Form.Item>
+                    ))}
+                    <Button
+                      size="small"
+                      onClick={() =>
+                        form.setFieldsValue(
+                          Object.fromEntries(
+                            VOICE_TUNING_CONTROLS.map((c) => [
+                              c.name,
+                              DEFAULT_VOICE_TUNING[c.defaultKey],
+                            ]),
+                          ),
+                        )
+                      }
+                    >
+                      Reset to defaults
+                    </Button>
+                  </>
+                ),
+              },
+            ]}
+          />
           <Form.Item noStyle shouldUpdate={(prev, cur) => prev.voiceEnabled !== cur.voiceEnabled}>
             {({ getFieldValue }) =>
               getFieldValue('voiceEnabled') ? (

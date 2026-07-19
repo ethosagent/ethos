@@ -335,6 +335,13 @@ export function Chat() {
   const ttsVoice = configQuery.data?.voiceTtsVoice ?? undefined;
   // Talk-mode "thinking" chime — on unless explicitly disabled in Settings.
   const voiceChime = configQuery.data?.voiceChime ?? true;
+  // Live VAD / barge-in tuning from Settings → Voice → Advanced. Each field is a
+  // resolved number (default when unset); the driver falls back per-field.
+  const voiceEndpointSilenceMs = configQuery.data?.voiceEndpointSilenceMs;
+  const voiceBargeThreshold = configQuery.data?.voiceBargeThreshold;
+  const voiceBargeSustainMs = configQuery.data?.voiceBargeSustainMs;
+  const voiceSpeechThreshold = configQuery.data?.voiceSpeechThreshold;
+  const voiceSpeechMinMs = configQuery.data?.voiceSpeechMinMs;
 
   // The active session id read lazily by the voice runner — it can change
   // between turns (fork, new session) without rebuilding the client.
@@ -364,8 +371,28 @@ export function Chat() {
           : {}),
         ...(ttsVoice ? { voice: ttsVoice } : {}),
         chime: voiceChime,
+        tuning: {
+          ...(voiceEndpointSilenceMs !== undefined
+            ? { endpointSilenceMs: voiceEndpointSilenceMs }
+            : {}),
+          ...(voiceBargeThreshold !== undefined ? { bargeThreshold: voiceBargeThreshold } : {}),
+          ...(voiceBargeSustainMs !== undefined ? { bargeSustainMs: voiceBargeSustainMs } : {}),
+          ...(voiceSpeechThreshold !== undefined ? { speechThreshold: voiceSpeechThreshold } : {}),
+          ...(voiceSpeechMinMs !== undefined ? { speechMinMs: voiceSpeechMinMs } : {}),
+        },
       }),
-    [ttsConfigured, ttsVoice, voiceChime, sendMessage, abortTurn],
+    [
+      ttsConfigured,
+      ttsVoice,
+      voiceChime,
+      voiceEndpointSilenceMs,
+      voiceBargeThreshold,
+      voiceBargeSustainMs,
+      voiceSpeechThreshold,
+      voiceSpeechMinMs,
+      sendMessage,
+      abortTurn,
+    ],
   );
 
   const voice = useVoiceCall({ createClient: createVoiceClient });
