@@ -35,6 +35,8 @@ describe('toolset categories', () => {
     expect(categorizeGroup('Memory')).toBe('files-memory');
     expect(categorizeGroup('Web')).toBe('web-network');
     expect(categorizeGroup('Kanban')).toBe('other');
+    expect(categorizeGroup('Voice')).toBe('other');
+    expect(categorizeGroup('Meeting')).toBe('other');
   });
 
   it('an unknown group falls back to "other" rather than throwing', () => {

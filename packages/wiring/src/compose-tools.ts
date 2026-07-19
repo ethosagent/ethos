@@ -47,6 +47,7 @@ import {
 } from '@ethosagent/tools-kanban';
 import { compose as composeKanban } from '@ethosagent/tools-kanban/compose';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
+import { createMeetingTools } from '@ethosagent/tools-meeting';
 import { createTeamMemoryTools, isSafeTopicKey } from '@ethosagent/tools-memory';
 import type { MessagingSendFn } from '@ethosagent/tools-messaging';
 import { compose as composeMessaging } from '@ethosagent/tools-messaging/compose';
@@ -60,6 +61,7 @@ import { createThinkDeeperTool } from '@ethosagent/tools-tier';
 import { compose as composeTodo } from '@ethosagent/tools-todo/compose';
 import { createTtsTools } from '@ethosagent/tools-tts';
 import { buildUiTools } from '@ethosagent/tools-ui';
+import { createVoiceTools } from '@ethosagent/tools-voice';
 import type {
   ContextInjector,
   ExecutionBackend,
@@ -600,6 +602,17 @@ export async function composeAllTools(
 
   // TTS tool — registers as unavailable when provider is null (no TTS configured).
   for (const tool of createTtsTools({ provider: null })) tools.register(tool);
+
+  // Voice tools — `voice_session` is the always-available capability marker that
+  // makes a personality selectable for real-time voice (browser talk-mode /
+  // telephony); the web talk-mode gate keys off its presence in the toolset. The
+  // outbound `call` tool self-reports unavailable until a SIP trunk is wired
+  // (the live LiveKit/SIP binding is app-layer/manual, not wired here).
+  for (const tool of createVoiceTools()) tools.register(tool);
+
+  // Meeting tool — `meet_join` self-reports unavailable until a MeetingClient is
+  // wired (the Playwright/browser binding is app-layer/manual, not wired here).
+  for (const tool of createMeetingTools()) tools.register(tool);
 
   // -------------------------------------------------------------------------
   // Phase B compose — skills (depends on personalities)

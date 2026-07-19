@@ -36,6 +36,60 @@ async function runGated(tool: Tool, args: unknown, approved: boolean) {
   return tool.execute(args, ctx);
 }
 
+function voiceSessionTool(): Tool {
+  const tool = createVoiceTools().find((t) => t.name === 'voice_session');
+  if (!tool) throw new Error('voice_session tool not registered');
+  return tool;
+}
+
+describe('voice_session capability tool', () => {
+  it('is exported from the factory even with no trunk configured', () => {
+    const names = createVoiceTools().map((t) => t.name);
+    expect(names).toContain('voice_session');
+  });
+
+  it('is grouped under the voice toolset', () => {
+    expect(voiceSessionTool().toolset).toBe('voice');
+  });
+
+  it('is ALWAYS available regardless of live infra (it is a selectable gate)', () => {
+    expect(voiceSessionTool().isAvailable?.()).toBe(true);
+    // Even with a trunk wired, the capability marker stays available.
+    const withTrunk = createVoiceTools({ trunk: new FakeSipTrunkClient() }).find(
+      (t) => t.name === 'voice_session',
+    );
+    expect(withTrunk?.isAvailable?.()).toBe(true);
+  });
+
+  it('does not require approval — it is not a live action', () => {
+    expect(voiceSessionTool().requiresApproval).toBeFalsy();
+  });
+
+  it('a stray model call is harmless and explains the session is channel-managed', async () => {
+    const result = await voiceSessionTool().execute({}, ctx);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toMatch(/channel|managed/i);
+  });
+});
+
+describe('call tool — availability gating', () => {
+  it('reports unavailable when no trunk is configured', () => {
+    const tool = createVoiceTools().find((t) => t.name === 'call');
+    expect(tool?.isAvailable?.()).toBe(false);
+  });
+
+  it('reports available once a trunk is configured', () => {
+    expect(callTool(new FakeSipTrunkClient()).isAvailable?.()).toBe(true);
+  });
+
+  it('refuses to dial with not_available when executed without a trunk', async () => {
+    const tool = createVoiceTools().find((t) => t.name === 'call');
+    const result = await tool?.execute({ to_number: '+15551234567' }, ctx);
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) expect(result.code).toBe('not_available');
+  });
+});
+
 describe('call tool — approval gating', () => {
   it('is marked requiresApproval so AgentLoop gates it', () => {
     expect(callTool(new FakeSipTrunkClient()).requiresApproval).toBe(true);

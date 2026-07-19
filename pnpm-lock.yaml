@@ -1298,6 +1298,12 @@ importers:
         specifier: ^6.4.17
         version: 6.4.23
 
+  extensions/platform-meeting:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/platform-slack:
     dependencies:
       '@ethosagent/core':
@@ -1676,6 +1682,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web-contracts
 
+  extensions/tools-meeting:
+    dependencies:
+      '@ethosagent/platform-meeting':
+        specifier: workspace:*
+        version: link:../platform-meeting
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-memory:
     dependencies:
       '@ethosagent/core':
@@ -1776,6 +1791,15 @@ importers:
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
+
+  extensions/tools-voice:
+    dependencies:
+      '@ethosagent/platform-voice':
+        specifier: workspace:*
+        version: link:../platform-voice
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
 
   extensions/tools-web:
     dependencies:
@@ -2188,6 +2212,9 @@ importers:
       '@ethosagent/tools-mcp':
         specifier: workspace:*
         version: link:../../extensions/tools-mcp
+      '@ethosagent/tools-meeting':
+        specifier: workspace:*
+        version: link:../../extensions/tools-meeting
       '@ethosagent/tools-memory':
         specifier: workspace:*
         version: link:../../extensions/tools-memory
@@ -2221,6 +2248,9 @@ importers:
       '@ethosagent/tools-vision':
         specifier: workspace:*
         version: link:../../extensions/tools-vision
+      '@ethosagent/tools-voice':
+        specifier: workspace:*
+        version: link:../../extensions/tools-voice
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../../extensions/tools-web

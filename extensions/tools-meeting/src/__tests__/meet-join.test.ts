@@ -85,6 +85,28 @@ function meetJoinTool(meetingClient: MeetingClient, memory: MemoryProvider): Too
 
 const ac = new AbortController();
 
+describe('meet_join tool — availability gating', () => {
+  it('reports unavailable when no meeting client is configured', () => {
+    const tool = createMeetingTools().find((t) => t.name === 'meet_join');
+    expect(tool?.isAvailable?.()).toBe(false);
+  });
+
+  it('reports available once a meeting client and memory are configured', () => {
+    const tool = meetJoinTool(new FakeMeetingClient(() => {}), new RecordingMemory());
+    expect(tool.isAvailable?.()).toBe(true);
+  });
+
+  it('refuses to join with not_available when executed without a client', async () => {
+    const tool = createMeetingTools().find((t) => t.name === 'meet_join');
+    const result = await tool?.execute(
+      { meeting_url: 'https://meet.google.com/abc-defg-hij' },
+      ctxWith(new AbortController().signal),
+    );
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) expect(result.code).toBe('not_available');
+  });
+});
+
 describe('meet_join tool — approval gating', () => {
   it('is marked requiresApproval so AgentLoop gates it', () => {
     const tool = meetJoinTool(new FakeMeetingClient(() => {}), new RecordingMemory());

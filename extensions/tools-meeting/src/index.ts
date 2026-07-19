@@ -31,15 +31,20 @@ import type {
 } from '@ethosagent/types';
 
 export interface MeetingToolsOptions {
-  /** Meeting boundary used to join and scrape captions. */
-  meetingClient: MeetingClient;
+  /**
+   * Meeting boundary used to join and scrape captions. Optional: default
+   * installs wire no meeting client (the Playwright/browser binding is
+   * app-layer/manual), so `meet_join` reports itself unavailable until one is
+   * configured.
+   */
+  meetingClient?: MeetingClient;
   /** Store the transcript is written to (via `MemoryProvider.sync`). */
-  memory: MemoryProvider;
+  memory?: MemoryProvider;
   /** Display name the bot shows in the meeting roster. Defaults to `Ethos`. */
   displayName?: string;
 }
 
-export function createMeetingTools(opts: MeetingToolsOptions): Tool[] {
+export function createMeetingTools(opts: MeetingToolsOptions = {}): Tool[] {
   return [makeMeetJoinTool(opts)];
 }
 
@@ -60,6 +65,7 @@ function makeMeetJoinTool(opts: MeetingToolsOptions): Tool {
     maxResultChars: 1024,
     capabilities: {},
     requiresApproval: true,
+    isAvailable: () => opts.meetingClient !== undefined && opts.memory !== undefined,
     schema: {
       type: 'object',
       properties: {
@@ -81,6 +87,15 @@ async function executeMeetJoin(
   ctx: ToolContext,
   opts: MeetingToolsOptions,
 ): Promise<ToolResult> {
+  if (!opts.meetingClient || !opts.memory) {
+    return {
+      ok: false,
+      code: 'not_available',
+      error: 'Meeting attendance is not configured — no meeting client is wired.',
+    };
+  }
+  const meetingClient = opts.meetingClient;
+  const memory = opts.memory;
   const url = args.meeting_url?.trim();
   if (!url || !MEET_URL_RE.test(url)) {
     return {
@@ -92,10 +107,10 @@ async function executeMeetJoin(
   }
 
   const parser = new CaptionParser();
-  const unsubscribe = opts.meetingClient.onCaption((fragment) => parser.push(fragment));
+  const unsubscribe = meetingClient.onCaption((fragment) => parser.push(fragment));
 
   try {
-    await opts.meetingClient.join({ url, displayName: opts.displayName ?? 'Ethos' });
+    await meetingClient.join({ url, displayName: opts.displayName ?? 'Ethos' });
     // Transcribe until the turn is stopped (abortSignal) — the honest signal a
     // meeting has ended / the agent should leave. The injected transport can
     // also drain and let this resolve immediately (see FakeMeetingClient).
@@ -109,12 +124,12 @@ async function executeMeetJoin(
     };
   } finally {
     unsubscribe();
-    await opts.meetingClient.leave();
+    await meetingClient.leave();
   }
 
   const entries = parser.transcript();
   const artifact = buildTranscriptArtifact({ meetingUrl: url, entries });
-  const writer = createMemoryTranscriptWriter(opts.memory, buildMeetingMemoryContext(ctx));
+  const writer = createMemoryTranscriptWriter(memory, buildMeetingMemoryContext(ctx));
   await writer.write(artifact);
 
   return {

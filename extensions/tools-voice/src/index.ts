@@ -22,8 +22,13 @@ import type {
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 export interface VoiceToolsOptions {
-  /** SIP trunk boundary used to place the call. */
-  trunk: SipTrunkClient;
+  /**
+   * SIP trunk boundary used to place the call. Optional: default installs wire
+   * no trunk (the live LiveKit/SIP binding is app-layer/manual), so the `call`
+   * tool reports itself unavailable until one is configured. The
+   * `voice_session` capability tool stays available regardless.
+   */
+  trunk?: SipTrunkClient;
   /**
    * LiveKit room the outbound call is bridged into, derived from the
    * destination number. Defaults to `call-<sanitized toNumber>`. The agent
@@ -34,8 +39,44 @@ export interface VoiceToolsOptions {
   fromNumber?: string;
 }
 
-export function createVoiceTools(opts: VoiceToolsOptions): Tool[] {
-  return [makeCallTool(opts)];
+export function createVoiceTools(opts: VoiceToolsOptions = {}): Tool[] {
+  return [makeVoiceSessionTool(), makeCallTool(opts)];
+}
+
+/**
+ * `voice_session` is the availability *capability* that marks a personality as
+ * engageable in a real-time voice session (browser talk-mode / telephony). The
+ * live session is driven by the voice channel adapter, NOT invoked by the model
+ * — this tool exists so the capability appears in the toolset catalog/picker and
+ * the web talk-mode gate (`personalityCanTalk`) can key off it. It is therefore
+ * ALWAYS available: selecting it is how an operator opts a personality into
+ * voice, independent of whether live LiveKit infra is wired. A stray model call
+ * is harmless — it just explains that the session is channel-managed.
+ */
+function makeVoiceSessionTool(): Tool {
+  return {
+    name: 'voice_session',
+    description:
+      'Capability marker: this personality can be engaged in a real-time voice session ' +
+      '(browser talk-mode or telephony). The live session is managed by the voice channel, ' +
+      'not invoked by the model — calling this tool does nothing but confirm that.',
+    toolset: 'voice',
+    maxResultChars: 256,
+    capabilities: {},
+    isAvailable: () => true,
+    schema: {
+      type: 'object',
+      properties: {},
+    },
+    async execute(): Promise<ToolResult> {
+      return {
+        ok: true,
+        value:
+          'voice_session is a capability marker — the real-time voice session is managed by the ' +
+          'voice channel adapter (browser talk-mode / telephony), not started from here.',
+      };
+    },
+  };
 }
 
 interface CallArgs {
@@ -53,6 +94,7 @@ function makeCallTool(opts: VoiceToolsOptions): Tool {
     maxResultChars: 512,
     capabilities: {},
     requiresApproval: true,
+    isAvailable: () => opts.trunk !== undefined,
     schema: {
       type: 'object',
       properties: {
@@ -79,6 +121,13 @@ async function executeCall(
   _ctx: ToolContext,
   opts: VoiceToolsOptions,
 ): Promise<ToolResult> {
+  if (!opts.trunk) {
+    return {
+      ok: false,
+      code: 'not_available',
+      error: 'Outbound calling is not configured — no SIP trunk is wired.',
+    };
+  }
   const toNumber = args.to_number?.trim();
   if (!toNumber || !/^\+[1-9]\d{6,14}$/.test(toNumber)) {
     return {
