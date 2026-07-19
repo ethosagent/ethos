@@ -175,7 +175,8 @@ describe('ConfigService', () => {
 
     const result = await service.get();
     expect(result.streamingEdits).toBe('dms');
-    expect(result.autoCompact).toBe(false);
+    // Context-economy Phase 2 — autoCompact defaults ON when the key is absent.
+    expect(result.autoCompact).toBe(true);
     expect(result.memoryConsolidationEnabled).toBe(false);
     expect(result.memoryCaptureEnabled).toBe(false);
     expect(result.memoryCaptureModel).toBeNull();

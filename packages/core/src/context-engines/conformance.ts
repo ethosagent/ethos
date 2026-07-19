@@ -5,6 +5,7 @@ import type {
   Message,
   PersonalityConfig,
 } from '@ethosagent/types';
+import { isStandingInstruction, messageDirectiveText } from './standing-instructions';
 
 export interface ConformanceResult {
   passed: boolean;
@@ -222,7 +223,47 @@ export async function validateContextEngine(engine: ContextEngine): Promise<Conf
     failures.push(`with-handles: engine threw: ${msg}`);
   }
 
-  // Scenario 4: shouldCompact check
+  // Scenario 4: standing-instruction preservation (context-economy Phase 2,
+  // §3.4.2) — a durable user directive sits in the compactable middle. When the
+  // engine compacts directive-bearing user messages away AND produces a
+  // summaryText, the directive must either survive verbatim among the output
+  // messages (carry-forward) or be covered by a "Standing instructions" section
+  // in the summary. Engines that drop without summarizing (no summaryText) are
+  // exempt — the rule targets lossy summarization, not plain trimming.
+  const directive = 'From now on, always answer in French.';
+  const directiveMessages: Message[] = longMessages.map((m, i) =>
+    i === 9 ? userMsg(directive) : m,
+  );
+
+  try {
+    const output = await engine.compact({
+      messages: directiveMessages,
+      currentSystem: '',
+      targetTokens: 500,
+      personality,
+      sessionMetadata,
+    });
+    validateOutput(output, directiveMessages, failures, 'standing-instruction');
+    if (Array.isArray(output.messages) && typeof output.summaryText === 'string') {
+      const outputTexts = output.messages.map((m) => messageDirectiveText(m));
+      const lost = directiveMessages.filter((m) => {
+        if (m.role !== 'user') return false;
+        const text = messageDirectiveText(m).trim();
+        if (text.length === 0 || !isStandingInstruction(text)) return false;
+        return !outputTexts.some((t) => t.includes(text));
+      });
+      if (lost.length > 0 && !output.summaryText.includes('Standing instructions')) {
+        failures.push(
+          `standing-instruction: directive "${directive}" was compacted away with no verbatim carry-forward and no "Standing instructions" section in summaryText`,
+        );
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    failures.push(`standing-instruction: engine threw: ${msg}`);
+  }
+
+  // Scenario 5: shouldCompact check
   if (engine.shouldCompact) {
     try {
       const underBudgetInput: ContextEngineCompactInput = {

@@ -199,7 +199,9 @@ export class ConfigService {
       debugPanelModel: raw.debugPanelModel ?? null,
       adminEnabled: raw.passthrough['admin.enabled'] === 'true',
       streamingEdits: parseStreamingEdits(raw.passthrough['display.streaming_edits']),
-      autoCompact: raw.passthrough['compaction.autoCompact'] === 'true',
+      // Default ON since the context-economy Phase 2 flip — off only when
+      // explicitly disabled.
+      autoCompact: raw.passthrough['compaction.autoCompact'] !== 'false',
       memoryConsolidationEnabled: raw.passthrough['memoryConsolidation.enabled'] === 'true',
       memoryCaptureEnabled: raw.passthrough['memoryCapture.enabled'] === 'true',
       memoryCaptureModel: raw.passthrough['memoryCapture.model'] || null,

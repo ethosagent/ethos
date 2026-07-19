@@ -32,7 +32,7 @@ The dataset is a starter set — a handful of cases per category, tagged by an `
 | `json-discipline` | The model returns exactly the requested JSON — no prose, no code fences. |
 | `planning` | The model decomposes a task into a coherent multi-step plan. |
 | `coding` | The model produces a correct small code edit. |
-| `compaction-survival` | A needle-in-a-long-note case: the answer must survive context compaction on a small-window model. |
+| `compaction-survival` | Needle-in-a-long-note and standing-instruction cases: the answer (or a durable directive) must survive context compaction on a small-window model. |
 
 ## Steps
 
@@ -49,12 +49,12 @@ Omit `--model` to score the model already configured in `~/.ethos/config.yaml`. 
 ```
 Pass rates by category
   coding                 100% (2/2)
-  compaction-survival    100% (1/1)
+  compaction-survival    100% (3/3)
   json-discipline         50% (1/2)
   planning               100% (2/2)
   tool-calling            67% (2/3)
 
-Overall  8 passed  2 failed  avg 80%
+Overall  10 passed  2 failed  avg 83%
 ```
 
 A low rate in one category is a targeted signal — `json-discipline` misses usually mean the model wraps JSON in prose or fences; `tool-calling` misses mean the model picked the wrong tool or fumbled its arguments.

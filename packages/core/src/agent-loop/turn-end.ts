@@ -33,7 +33,8 @@ import type { LoopDeps, TurnSetup } from './turn-context';
 //     the NEXT turn and emits a one-line user-visible notice. Reuses the manual
 //     `/compact` machinery so there is exactly one compaction writer.
 //
-// Both are config-gated (opt-in) and share the compaction cooldown.
+// Auto-compaction is default ON (`compaction.autoCompact: false` disables it);
+// the memory flush stays opt-in. Both share the compaction cooldown.
 // ---------------------------------------------------------------------------
 
 const COMPACTION_COOLDOWN_TURNS = 5;
@@ -189,7 +190,9 @@ export async function* maybeConsolidateAtTurnEnd(
   deps: LoopDeps,
   ctx: TurnEndCtx,
 ): AsyncGenerator<AgentEvent> {
-  const autoCompact = deps.compaction?.autoCompact === true;
+  // Context-economy Phase 2 — autoCompact is default ON (eval-gated flip);
+  // only an explicit `autoCompact: false` disables the turn-end trigger.
+  const autoCompact = deps.compaction?.autoCompact !== false;
   const flushEnabled = deps.memoryConsolidation?.enabled === true;
   if (!autoCompact && !flushEnabled) return;
   if (ctx.abortSignal.aborted) return;

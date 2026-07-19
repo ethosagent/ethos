@@ -8,3 +8,5 @@
 {"id":"coding/reverse-python","expected":"s[::-1]","match":"contains"}
 {"id":"coding/sum-list","expected":"sum(xs)","match":"contains"}
 {"id":"compaction-survival/passphrase","expected":"ETHOS-ZEBRA-42","match":"contains"}
+{"id":"compaction-survival/standing-directive","expected":"ORCHID","match":"contains"}
+{"id":"compaction-survival/pinned-codename","expected":"BLUE-HERON-7","match":"contains"}

@@ -803,7 +803,8 @@ export class AgentLoop {
 
     // Phase 3 — turn-end context maintenance (silent memory flush at 70%,
     // auto-compaction at 80%). Runs AFTER `done`, lane still held, so it cannot
-    // race the next inbound turn. No-op unless opted in via config.
+    // race the next inbound turn. Auto-compaction is default on (set
+    // compaction.autoCompact: false to disable); the memory flush is opt-in.
     const turnEndExtras = {
       userScopeId,
       compactedThisTurn,

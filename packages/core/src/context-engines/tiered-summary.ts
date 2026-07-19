@@ -13,6 +13,7 @@ import type {
   Message,
   MessageContent,
 } from '@ethosagent/types';
+import { partitionStandingInstructions } from './standing-instructions';
 import { estimateMessagesTokens, estimateMessageTokens } from './token-estimator';
 
 interface TieredSummaryOptions {
@@ -51,13 +52,25 @@ export class TieredSummaryEngine implements ContextEngine {
       return { messages: opts.messages, notes: 'no compaction needed' };
     }
 
+    // §3.4.1 — standing-instruction carry-forward: durable user directives in
+    // the middle are excluded from the summarized content and carried verbatim
+    // ahead of the summary. The FULL middle (directives included) is still
+    // paged to the store below, so the raw range stays recoverable.
+    const { carried, carriedIndices, rest } = partitionStandingInstructions(middle);
+    if (rest.length === 0) {
+      return {
+        messages: [...front, ...carried, ...tail],
+        notes: `carried ${carried.length} standing instruction(s); nothing to summarize`,
+      };
+    }
+
     // --- Summarize middle ---
     const summaryTarget = Math.max(200, Math.floor(target * 0.15));
     let summaryText: string;
     if (opts.llm) {
-      summaryText = await opts.llm.summarize(middle, summaryTarget);
+      summaryText = await opts.llm.summarize(rest, summaryTarget);
     } else {
-      summaryText = `[summary] ${middle.length} earlier message(s) elided to fit context budget.`;
+      summaryText = `[summary] ${rest.length} earlier message(s) elided to fit context budget.`;
     }
 
     // --- Page middle to store ---
@@ -75,10 +88,12 @@ export class TieredSummaryEngine implements ContextEngine {
       : opts.store
         ? 'paged_out'
         : 'trimmed';
-    const removed: ContextEngineRemovedEntry[] = middle.map((_, i) => ({
-      index: preserveFront + i,
-      reason,
-    }));
+    // Carried standing instructions stay in the output — no removed entry.
+    const removed: ContextEngineRemovedEntry[] = [];
+    for (let i = 0; i < middle.length; i++) {
+      if (carriedIndices.has(i)) continue;
+      removed.push({ index: preserveFront + i, reason });
+    }
 
     const summaryMessage: Message = {
       role: 'assistant',
@@ -88,11 +103,13 @@ export class TieredSummaryEngine implements ContextEngine {
     // Cache breakpoints: end of front, the summary message.
     const cacheBreakpoints: number[] = [];
     if (front.length > 0) cacheBreakpoints.push(front.length - 1);
-    cacheBreakpoints.push(front.length);
+    cacheBreakpoints.push(front.length + carried.length);
 
+    const carriedNote =
+      carried.length > 0 ? `; carried ${carried.length} standing instruction(s)` : '';
     return {
-      messages: [...front, summaryMessage, ...tail],
-      notes: `summarized ${middle.length} message(s) → ${estimateMessageTokens(summaryMessage)} tokens`,
+      messages: [...front, ...carried, summaryMessage, ...tail],
+      notes: `summarized ${rest.length} message(s) → ${estimateMessageTokens(summaryMessage)} tokens${carriedNote}`,
       summaryText,
       cacheBreakpoints,
       removed,
@@ -100,7 +117,7 @@ export class TieredSummaryEngine implements ContextEngine {
         { text: summaryText, sourceRange: [preserveFront, preserveFront + middle.length] },
       ],
       externalWrites: externalWrites.length > 0 ? externalWrites : undefined,
-      cacheAnchor: front.length,
+      cacheAnchor: front.length + carried.length,
     };
   }
 

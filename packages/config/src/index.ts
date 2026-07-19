@@ -533,11 +533,12 @@ export interface EthosConfig {
    * added to the previous turn's actual input tokens so the gate fires slightly
    * before the next turn reaches pressure.
    *
-   * Phase 3 — `autoCompact` enables the turn-end auto-compaction trigger
-   * (default off — gated behind the Phase 0 cache-hit go/no-go). `retryOnOverflow`
+   * Phase 3 — `autoCompact` gates the turn-end auto-compaction trigger
+   * (default on since the context-economy Phase 2 eval-gated flip; set false
+   * to disable). `retryOnOverflow`
    * (default on) turns a provider context-overflow rejection into a
    * compact-and-retry instead of a surfaced error. Flat-key config shape:
-   *   compaction.autoCompact: true
+   *   compaction.autoCompact: false
    *   compaction.retryOnOverflow: false
    *
    * Phase 4 — `smallWindow` overrides small-window-mode auto-detection. `auto`

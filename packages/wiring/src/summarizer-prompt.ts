@@ -18,6 +18,9 @@ Write the summary under these exact headings, in this order. Omit a heading only
 ## Open task / goal
 What the user is ultimately trying to accomplish, in plain prose.
 
+## Standing instructions
+Bullet list of durable user directives that apply beyond a single turn — "always…", "never…", "from now on…", "going forward…", pinned notes. Copy each directive VERBATIM. Omit this heading only when there are none.
+
 ## Decisions made
 Bullet list. Each bullet: the decision, then its rationale.
 

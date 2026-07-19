@@ -15,6 +15,7 @@ import type {
   Message,
   MessageContent,
 } from '@ethosagent/types';
+import { partitionStandingInstructions } from './standing-instructions';
 import { estimateMessagesTokens, estimateMessageTokens } from './token-estimator';
 
 export type SummarizerFn = (
@@ -62,14 +63,25 @@ export class SemanticSummaryEngine implements ContextEngine {
       return { messages: opts.messages, notes: 'no compaction needed' };
     }
 
+    // §3.4.1 — standing-instruction carry-forward: durable user directives in
+    // the middle are excluded from the summarized content and carried verbatim
+    // ahead of the summary (a third preserved class beside front and tail).
+    const { carried, rest } = partitionStandingInstructions(middle);
+    if (rest.length === 0) {
+      return {
+        messages: [...front, ...carried, ...tail],
+        notes: `carried ${carried.length} standing instruction(s); nothing to summarize`,
+      };
+    }
+
     let summaryText: string;
     const summarizer = opts.llm?.summarize ?? this.summarize;
     if (summarizer) {
-      summaryText = await summarizer(middle, summaryTarget, opts.instructions);
+      summaryText = await summarizer(rest, summaryTarget, opts.instructions);
     } else {
       // Fallback: synthesise a deterministic placeholder. Loses information
       // but preserves history shape so downstream replay still works.
-      summaryText = `[summary] ${middle.length} earlier message(s) elided to fit context budget.`;
+      summaryText = `[summary] ${rest.length} earlier message(s) elided to fit context budget.`;
     }
 
     const summaryMessage: Message = {
@@ -82,11 +94,13 @@ export class SemanticSummaryEngine implements ContextEngine {
     // itself (stable until the next compaction).
     const cacheBreakpoints: number[] = [];
     if (front.length > 0) cacheBreakpoints.push(front.length - 1);
-    cacheBreakpoints.push(front.length);
+    cacheBreakpoints.push(front.length + carried.length);
 
+    const carriedNote =
+      carried.length > 0 ? `; carried ${carried.length} standing instruction(s)` : '';
     return {
-      messages: [...front, summaryMessage, ...tail],
-      notes: `summarized ${middle.length} message(s) → ${estimateMessageTokens(summaryMessage)} tokens`,
+      messages: [...front, ...carried, summaryMessage, ...tail],
+      notes: `summarized ${rest.length} message(s) → ${estimateMessageTokens(summaryMessage)} tokens${carriedNote}`,
       summaryText,
       cacheBreakpoints,
     };

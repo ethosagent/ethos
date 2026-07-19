@@ -49,7 +49,8 @@ export interface LoopDeps {
   modelRouting: Record<string, string>;
   /** §5 — resolved compaction gate config (pressure/target fractions +
    *  per-model charsPerToken). Undefined → gate uses its 0.8/0.7 + char/4
-   *  defaults. Phase 3 adds `autoCompact` (turn-end trigger, default off),
+   *  defaults. Phase 3 adds `autoCompact` (turn-end trigger; default on since
+   *  the context-economy Phase 2 eval-gated flip — set false to disable),
    *  `retryOnOverflow` (compact-and-retry on a context-overflow rejection,
    *  default on), and `defaultEngine` (per-model-class default when the
    *  personality declares no `context_engine`). */

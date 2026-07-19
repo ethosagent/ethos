@@ -11,6 +11,7 @@ describe('SUMMARIZER_SYSTEM_PROMPT', () => {
   it('demands the structured handoff headings', () => {
     for (const heading of [
       '## Open task / goal',
+      '## Standing instructions',
       '## Decisions made',
       '## Files touched',
       '## Identifiers introduced',

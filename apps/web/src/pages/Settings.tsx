@@ -962,7 +962,7 @@ export function Settings() {
             label="Auto-compaction"
             name="autoCompact"
             valuePropName="checked"
-            extra="Compact long sessions automatically near ~80% of the model's context window (default off)."
+            extra="Compact long sessions automatically near ~80% of the model's context window (default on)."
           >
             <Switch />
           </Form.Item>

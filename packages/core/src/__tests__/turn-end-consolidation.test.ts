@@ -187,7 +187,27 @@ describe('Phase 3 — auto-compaction fires at turn end, never mid-task', () => 
     expect(wm.at(-1)?.keptFromMessageId).toBeTruthy();
   });
 
-  it('does nothing at turn end when autoCompact is off (default)', async () => {
+  it('fires by default — autoCompact undefined means ON (context-economy Phase 2 flip)', async () => {
+    const session = new InMemorySessionStore();
+    const s = await seedShortSession(session, 'cli:default-on', 8);
+    const llm = makeLLM(() => ({
+      chunks: [
+        { type: 'text_delta', text: 'ok' },
+        usageChunk(170_000),
+        { type: 'done', finishReason: 'end_turn' },
+      ],
+    }));
+    // No compaction config at all — the default must be ON.
+    const loop = new AgentLoop({ llm, session, safety: createTestSafety() });
+    const events = await collect(loop.run('next', { sessionKey: 'cli:default-on' }));
+    expect(events.some((e) => e.type === 'tool_progress' && e.toolName === '_compaction')).toBe(
+      true,
+    );
+    const wm = await session.listCompressions(s.id);
+    expect(wm.length).toBeGreaterThan(0);
+  });
+
+  it('does nothing at turn end when autoCompact is explicitly false', async () => {
     const session = new InMemorySessionStore();
     const s = await seedShortSession(session, 'cli:off', 8);
     const log: CompleteCall[] = [];
@@ -201,7 +221,12 @@ describe('Phase 3 — auto-compaction fires at turn end, never mid-task', () => 
       }),
       log,
     );
-    const loop = new AgentLoop({ llm, session, safety: createTestSafety() });
+    const loop = new AgentLoop({
+      llm,
+      session,
+      safety: createTestSafety(),
+      compaction: { autoCompact: false },
+    });
     const events = await collect(loop.run('next', { sessionKey: 'cli:off' }));
     expect(events.some((e) => e.type === 'tool_progress' && e.toolName === '_compaction')).toBe(
       false,
