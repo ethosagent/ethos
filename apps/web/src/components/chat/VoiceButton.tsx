@@ -10,7 +10,7 @@ export function formatElapsed(ms: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
+export async function blobToBase64(blob: Blob): Promise<string> {
   const buf = await blob.arrayBuffer();
   const bytes = new Uint8Array(buf);
   let binary = '';

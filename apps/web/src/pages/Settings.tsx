@@ -23,6 +23,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { blobToBase64 } from '../components/chat/VoiceButton';
 import { AddSecretModal } from '../components/tool-settings/SecretPicker';
 import { ToolSettingsForm } from '../components/tool-settings/ToolSettingsForm';
 import {
@@ -34,6 +35,7 @@ import {
   useToolSettingsDefault,
   useToolSettingsSchemas,
 } from '../features/settings/api/queries';
+import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { isDesktop } from '../lib/desktop';
 import { rpc } from '../rpc';
 import { DesktopSettings } from './DesktopSettings';
@@ -221,6 +223,157 @@ const STT_PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> 
 const TTS_PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
   'local-tts': { baseUrl: 'http://localhost:8880/v1', model: 'kokoro' },
 };
+
+// Fixed phrase the "Test TTS" button synthesizes so the check is deterministic.
+const VOICE_TEST_PHRASE = 'Hello — this is an Ethos voice test.';
+
+// Fields whose edits mean the saved config a test would exercise is stale.
+const STT_TEST_DIRTY_FIELDS: (keyof FormShape)[] = [
+  'voiceProvider',
+  'voiceModel',
+  'voiceBaseUrl',
+  'voiceApiKey',
+];
+const TTS_TEST_DIRTY_FIELDS: (keyof FormShape)[] = [
+  'voiceTtsProvider',
+  'voiceTtsModel',
+  'voiceTtsBaseUrl',
+  'voiceTtsVoice',
+  'voiceTtsApiKey',
+];
+
+// Synthesizes a fixed phrase via the saved TTS provider and plays it back.
+function TtsTest({ disabled, dirty }: { disabled: boolean; dirty: boolean }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'playing'>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const urlRef = useRef<string | null>(null);
+
+  useEffect(
+    () => () => {
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    },
+    [],
+  );
+
+  const handleClick = useCallback(async () => {
+    if (state === 'playing') {
+      audioRef.current?.pause();
+      setState('idle');
+      return;
+    }
+    setError(null);
+    setState('loading');
+    try {
+      const result = await rpc.voice.synthesize({ text: VOICE_TEST_PHRASE });
+      const bytes = Uint8Array.from(atob(result.audio), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: result.mimeType });
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+      const url = URL.createObjectURL(blob);
+      urlRef.current = url;
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => setState('idle');
+      audio.onerror = () => setState('idle');
+      setState('playing');
+      await audio.play().catch(() => setState('idle'));
+    } catch (err) {
+      setState('idle');
+      setError(err instanceof Error ? err.message : 'Text-to-speech failed');
+    }
+  }, [state]);
+
+  return (
+    <Space direction="vertical" size="small" style={{ marginTop: 8 }}>
+      <Button size="small" onClick={handleClick} loading={state === 'loading'} disabled={disabled}>
+        {state === 'playing' ? 'Stop' : 'Test TTS'}
+      </Button>
+      {dirty ? (
+        <Typography.Text type="secondary">Save to test the latest settings.</Typography.Text>
+      ) : error ? (
+        <Typography.Text type="danger">{error}</Typography.Text>
+      ) : null}
+    </Space>
+  );
+}
+
+// Records a short mic clip and transcribes it via the saved STT provider.
+function SttTest({ disabled, dirty }: { disabled: boolean; dirty: boolean }) {
+  const { isRecording, error: recorderError, startRecording, stopRecording } = useVoiceRecorder();
+  const [state, setState] = useState<'idle' | 'transcribing'>('idle');
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const capRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearCap = useCallback(() => {
+    if (capRef.current) {
+      clearTimeout(capRef.current);
+      capRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearCap, [clearCap]);
+
+  const finish = useCallback(async () => {
+    clearCap();
+    const blob = await stopRecording();
+    if (!blob) return;
+    setState('transcribing');
+    setError(null);
+    try {
+      const audio = await blobToBase64(blob);
+      const result = await rpc.voice.transcribe({ audio, mimeType: blob.type });
+      setTranscript(result.transcript);
+    } catch (err) {
+      setTranscript(null);
+      setError(err instanceof Error ? err.message : 'Transcription failed');
+    } finally {
+      setState('idle');
+    }
+  }, [clearCap, stopRecording]);
+
+  const handleClick = useCallback(() => {
+    if (state === 'transcribing') return;
+    if (isRecording) {
+      void finish();
+      return;
+    }
+    setTranscript(null);
+    setError(null);
+    void startRecording();
+    capRef.current = setTimeout(() => void finish(), 4000);
+  }, [state, isRecording, finish, startRecording]);
+
+  const label = isRecording
+    ? 'Stop & transcribe'
+    : state === 'transcribing'
+      ? 'Transcribing…'
+      : 'Test STT';
+  const shownError = error ?? recorderError;
+
+  return (
+    <Space direction="vertical" size="small" style={{ marginTop: 8 }}>
+      <Button
+        size="small"
+        onClick={handleClick}
+        loading={state === 'transcribing'}
+        disabled={disabled}
+        danger={isRecording}
+      >
+        {label}
+      </Button>
+      {dirty ? (
+        <Typography.Text type="secondary">Save to test the latest settings.</Typography.Text>
+      ) : shownError ? (
+        <Typography.Text type="danger">{shownError}</Typography.Text>
+      ) : transcript ? (
+        <Typography.Text type="secondary">Heard: “{transcript}”</Typography.Text>
+      ) : isRecording ? (
+        <Typography.Text type="secondary">Recording… tap to stop (4s max).</Typography.Text>
+      ) : null}
+    </Space>
+  );
+}
 
 export function Settings() {
   const qc = useQueryClient();
@@ -783,11 +936,20 @@ export function Settings() {
                     />
                   </Form.Item>
                   <Form.Item
-                    name="voiceBaseUrl"
-                    label="STT Base URL"
-                    extra="OpenAI-compatible endpoint. Leave blank for the provider default."
+                    noStyle
+                    shouldUpdate={(prev, cur) => prev.voiceProvider !== cur.voiceProvider}
                   >
-                    <Input placeholder="http://localhost:8000/v1" />
+                    {({ getFieldValue: getStt }) =>
+                      getStt('voiceProvider') === 'local-stt' ? (
+                        <Form.Item
+                          name="voiceBaseUrl"
+                          label="STT Base URL"
+                          extra="Endpoint for your local (OpenAI-compatible) server. Leave blank for the default."
+                        >
+                          <Input placeholder="http://localhost:8000/v1" />
+                        </Form.Item>
+                      ) : null
+                    }
                   </Form.Item>
                   <Form.Item
                     name="voiceModel"
@@ -806,6 +968,22 @@ export function Settings() {
                     }
                   >
                     <Input.Password placeholder="Enter API key..." />
+                  </Form.Item>
+                  <Form.Item
+                    noStyle
+                    shouldUpdate={(prev, cur) =>
+                      STT_TEST_DIRTY_FIELDS.some((k) => prev[k] !== cur[k])
+                    }
+                  >
+                    {({ getFieldValue: getStt }) => {
+                      const saved = configQuery.data;
+                      const dirty =
+                        (getStt('voiceProvider') ?? '') !== (saved?.voiceProvider ?? '') ||
+                        (getStt('voiceModel') ?? '') !== (saved?.voiceModel ?? '') ||
+                        (getStt('voiceBaseUrl') ?? '') !== (saved?.voiceBaseUrl ?? '') ||
+                        Boolean(getStt('voiceApiKey'));
+                      return <SttTest disabled={!saved?.voiceProvider} dirty={dirty} />;
+                    }}
                   </Form.Item>
                   <Form.Item
                     name="voiceTtsProvider"
@@ -838,13 +1016,15 @@ export function Settings() {
                     {({ getFieldValue: getTts }) =>
                       getTts('voiceTtsProvider') ? (
                         <>
-                          <Form.Item
-                            name="voiceTtsBaseUrl"
-                            label="TTS Base URL"
-                            extra="OpenAI-compatible endpoint. Leave blank for the provider default."
-                          >
-                            <Input placeholder="http://localhost:8880/v1" />
-                          </Form.Item>
+                          {getTts('voiceTtsProvider') === 'local-tts' ? (
+                            <Form.Item
+                              name="voiceTtsBaseUrl"
+                              label="TTS Base URL"
+                              extra="Endpoint for your local (OpenAI-compatible) server. Leave blank for the default."
+                            >
+                              <Input placeholder="http://localhost:8880/v1" />
+                            </Form.Item>
+                          ) : null}
                           <Form.Item
                             name="voiceTtsModel"
                             label="TTS Model"
@@ -869,6 +1049,27 @@ export function Settings() {
                             extra="Free-form — every server names voices differently (e.g. Kokoro af_bella, OpenAI nova)."
                           >
                             <Input placeholder="e.g. af_bella" />
+                          </Form.Item>
+                          <Form.Item
+                            noStyle
+                            shouldUpdate={(prev, cur) =>
+                              TTS_TEST_DIRTY_FIELDS.some((k) => prev[k] !== cur[k])
+                            }
+                          >
+                            {({ getFieldValue: getTtsField }) => {
+                              const saved = configQuery.data;
+                              const dirty =
+                                (getTtsField('voiceTtsProvider') ?? '') !==
+                                  (saved?.voiceTtsProvider ?? '') ||
+                                (getTtsField('voiceTtsModel') ?? '') !==
+                                  (saved?.voiceTtsModel ?? '') ||
+                                (getTtsField('voiceTtsBaseUrl') ?? '') !==
+                                  (saved?.voiceTtsBaseUrl ?? '') ||
+                                (getTtsField('voiceTtsVoice') ?? '') !==
+                                  (saved?.voiceTtsVoice ?? '') ||
+                                Boolean(getTtsField('voiceTtsApiKey'));
+                              return <TtsTest disabled={!saved?.voiceTtsProvider} dirty={dirty} />;
+                            }}
                           </Form.Item>
                         </>
                       ) : null
