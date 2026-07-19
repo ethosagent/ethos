@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { open, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -33,6 +34,10 @@ export interface CronJob {
   schedule: string;
   /** Prompt the agent will run. Optional for source:'system' jobs (they use systemTask handlers). */
   prompt?: string;
+  /** Operator-authored shell command executed with zero LLM involvement.
+   *  Channel/LLM text is never interpolated into it (plan R3). Mutually
+   *  exclusive with `prompt`; not allowed on source:'system' jobs. */
+  script?: string;
   personalityId: string;
   /** Channel origin captured at create time; absent means file-only. */
   origin?: JobOrigin;
@@ -125,6 +130,52 @@ async function withLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
 }
 
 // ---------------------------------------------------------------------------
+// Script runner — zero-LLM `script:` jobs. Uses raw `node:child_process`
+// (process spawning is not a Storage concern).
+// ---------------------------------------------------------------------------
+
+const SCRIPT_TIMEOUT_MS = 30_000;
+
+interface ScriptResult {
+  /** Combined stdout + stderr. */
+  output: string;
+  exitCode: number;
+  timedOut: boolean;
+}
+
+function runScript(command: string, timeoutMs = SCRIPT_TIMEOUT_MS): Promise<ScriptResult> {
+  return new Promise((resolvePromise) => {
+    const child = spawn('sh', ['-c', command], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
+    });
+    let output = '';
+    let settled = false;
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise({ output: `${output}${String(err)}`, exitCode: 1, timedOut: false });
+    });
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise({
+        output,
+        exitCode: typeof code === 'number' ? code : 1,
+        timedOut: signal !== null,
+      });
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // CronScheduler
 // ---------------------------------------------------------------------------
 
@@ -192,8 +243,16 @@ export class CronScheduler {
       throw new Error(`Invalid schedule: "${params.schedule}"`);
     }
 
-    // prompt is required for user jobs but optional for system jobs
-    if (params.source !== 'system' && !params.prompt) {
+    if (params.script && params.prompt) {
+      throw new Error('script and prompt are mutually exclusive — set one, not both');
+    }
+
+    if (params.script && params.source === 'system') {
+      throw new Error('script is not allowed on system jobs — use systemTask');
+    }
+
+    // prompt is required for user jobs unless a script is set; system jobs use systemTask
+    if (params.source !== 'system' && !params.prompt && !params.script) {
       throw new Error('prompt is required for user jobs');
     }
 
@@ -520,31 +579,26 @@ export class CronScheduler {
       }
       const { output } = await handler(job);
       const ranAt = new Date().toISOString();
-
-      // Persist output to the same run-history path as user jobs
-      const ts = ranAt.replace(/[:.]/g, '-').replace('Z', 'Z');
-      const outPath = join(this.outputDir, job.id, `${ts}.md`);
-      await this.storage.mkdir(dirname(outPath));
-      await this.storage.write(outPath, `# ${job.name}\n\n${output}\n`);
-
-      // Deliver to originating channel when origin is present
-      const decision = decideEscalation(output);
-      let delivered = false;
-      if (job.origin && this.deliver && decision.action === 'escalate') {
-        try {
-          await this.deliver(job, output);
-          delivered = true;
-        } catch (err) {
-          this.logger.error(`[cron] Delivery failed for job "${job.id}"`, {
-            component: 'cron',
-            jobId: job.id,
-            error: String(err),
-          });
-        }
-      }
-      this.notifyDecision(job, decision, ranAt, delivered);
-
+      await this.persistAndDeliver(job, output, ranAt);
       return { jobId: job.id, ranAt, output, sessionKey: `cron:system:${job.id}` };
+    }
+
+    // Script jobs run an operator-authored shell command — zero LLM involvement.
+    // Failures throw so the tick's lastError/retry handling stays uniform.
+    if (job.script) {
+      const result = await runScript(job.script);
+      const ranAt = new Date().toISOString();
+      if (result.timedOut) {
+        throw new Error(`Script timed out after ${SCRIPT_TIMEOUT_MS}ms`);
+      }
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `Script exited with code ${result.exitCode}: ${result.output.trim().slice(0, 500)}`,
+        );
+      }
+      const output = result.output.trimEnd() || '(no output)';
+      await this.persistAndDeliver(job, output, ranAt);
+      return { jobId: job.id, ranAt, output, sessionKey: `cron:script:${job.id}` };
     }
 
     // The context prefix carries prior-run outputs (external content) — run the
@@ -552,20 +606,25 @@ export class CronScheduler {
     const contextPrefix = await this.resolveContext(job);
     const effectivePrompt = sanitize(contextPrefix + (job.prompt ?? ''));
     const result = await this.runJob({ ...job, prompt: effectivePrompt });
+    await this.persistAndDeliver(job, result.output, result.ranAt);
+    return result;
+  }
 
-    // Persist output to ~/.ethos/cron/output/<id>/<timestamp>.md
-    const ts = result.ranAt.replace(/[:.]/g, '-').replace('Z', 'Z');
+  /** Shared post-run path: persist run output to
+   *  ~/.ethos/cron/output/<id>/<timestamp>.md, deliver to the originating
+   *  channel per the escalation decision (silent outputs are audited and
+   *  persisted but never delivered), and fire the heartbeat audit. */
+  private async persistAndDeliver(job: CronJob, output: string, ranAt: string): Promise<void> {
+    const ts = ranAt.replace(/[:.]/g, '-').replace('Z', 'Z');
     const outPath = join(this.outputDir, job.id, `${ts}.md`);
     await this.storage.mkdir(dirname(outPath));
-    await this.storage.write(outPath, `# ${job.name}\n\n${result.output}\n`);
+    await this.storage.write(outPath, `# ${job.name}\n\n${output}\n`);
 
-    // Deliver to originating channel when origin is present; silent outputs
-    // are audited and persisted but never delivered.
-    const decision = decideEscalation(result.output);
+    const decision = decideEscalation(output);
     let delivered = false;
     if (job.origin && this.deliver && decision.action === 'escalate') {
       try {
-        await this.deliver(job, result.output);
+        await this.deliver(job, output);
         delivered = true;
       } catch (err) {
         this.logger.error(`[cron] Delivery failed for job "${job.id}"`, {
@@ -575,9 +634,7 @@ export class CronScheduler {
         });
       }
     }
-    this.notifyDecision(job, decision, result.ranAt, delivered);
-
-    return result;
+    this.notifyDecision(job, decision, ranAt, delivered);
   }
 
   /** Heartbeat audit callback — fail-open, a throwing observer never breaks the run. */

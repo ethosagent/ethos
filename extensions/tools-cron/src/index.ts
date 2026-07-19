@@ -63,6 +63,9 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
             description:
               'Schedule: cron ("0 8 * * 1-5"), relative delay ("30m"), recurring interval ("every 2h"), or ISO timestamp ("2026-06-01T09:00:00Z"). All cron times are local (create, update).',
           },
+          // CronJob.script is deliberately NOT exposed here — script jobs are
+          // operator-only (CLI `ethos cron create --script`); the LLM must not
+          // author shell commands via cron (plan gap-context-economy R3).
           prompt: {
             type: 'string',
             description: 'The prompt the agent will run on each execution (create, update).',

@@ -1038,3 +1038,132 @@ describe('CronScheduler system jobs', () => {
     await expect(scheduler.runJobNow(job.id)).rejects.toThrow(/not registered/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Script jobs — zero-LLM operator-authored shell commands
+// ---------------------------------------------------------------------------
+
+describe('CronScheduler script jobs', () => {
+  it('rejects a job with both script and prompt', async () => {
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Both Set',
+        schedule: '0 8 * * *',
+        prompt: 'a prompt',
+        script: 'echo hi',
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/mutually exclusive/i);
+  });
+
+  it('rejects script on system-source jobs', async () => {
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'System Script',
+        schedule: '0 8 * * *',
+        script: 'echo hi',
+        personalityId: 'system',
+        source: 'system',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/not allowed on system jobs/i);
+  });
+
+  it('accepts a script-only job — prompt is not required', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Script Only',
+      schedule: '0 8 * * *',
+      script: 'echo hi',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    expect(job.script).toBe('echo hi');
+    expect(job.prompt).toBeUndefined();
+    expect(job.status).toBe('active');
+  });
+
+  it('executes the script with zero LLM involvement', async () => {
+    const runJobCalls: string[] = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        runJobCalls.push(job.id);
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: 'llm output',
+          sessionKey: 'k',
+        };
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Disk Check',
+      schedule: '0 8 * * *',
+      script: 'echo hello-from-script',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+
+    const result = await scheduler.runJobNow(job.id);
+    expect(runJobCalls).toHaveLength(0);
+    expect(result.output).toContain('hello-from-script');
+    expect(result.sessionKey).toBe(`cron:script:${job.id}`);
+  });
+
+  it('persists script output and delivers it to the origin channel', async () => {
+    const delivered: string[] = [];
+    const scheduler = makeScheduler({
+      deliver: async (_job, output) => {
+        delivered.push(output);
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Script Deliver',
+      schedule: '0 8 * * *',
+      script: 'echo delivered-output',
+      personalityId: 'test',
+      origin: { platform: 'telegram', chatId: '42' },
+      missedRunPolicy: 'skip',
+    });
+
+    await scheduler.runJobNow(job.id);
+
+    const runs = await scheduler.listRuns(job.id);
+    expect(runs).toHaveLength(1);
+    const latest = runs[0];
+    expect(latest).toBeDefined();
+    const body = await scheduler.readRunOutput(latest?.outputPath ?? '');
+    expect(body).toContain('delivered-output');
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toContain('delivered-output');
+  });
+
+  it('failing script throws on runJobNow and records lastError on tick', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Failing Script',
+      schedule: '0 8 * * *',
+      script: 'echo boom >&2; exit 3',
+      personalityId: 'test',
+      missedRunPolicy: 'run-once',
+    });
+
+    await expect(scheduler.runJobNow(job.id)).rejects.toThrow(/exited with code 3/);
+
+    // Tick path: due job fails → lastError recorded, job not stuck.
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).patchJob(job.id, {
+      nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).tick();
+
+    const updated = await scheduler.getJob(job.id);
+    expect(updated?.lastError).toMatch(/exited with code 3/);
+    expect(updated?.status).toBe('active');
+    expect(updated?.nextRunAt).toBeTruthy();
+  });
+});

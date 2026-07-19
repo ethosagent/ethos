@@ -104,6 +104,7 @@ export async function runCronCommand(
               personalityId: j.personalityId,
               nextRun: j.nextRunAt ? new Date(j.nextRunAt).toISOString() : null,
               prompt: j.prompt,
+              script: j.script,
             })),
           );
           return;
@@ -126,9 +127,10 @@ export async function runCronCommand(
           console.log(`    Schedule    : ${j.schedule}`);
           console.log(`    Personality : ${pers}`);
           console.log(`    Next run    : ${next}`);
-          const promptPreview = j.prompt ?? (j.systemTask ? `[system: ${j.systemTask}]` : '—');
+          const preview =
+            j.script ?? j.prompt ?? (j.systemTask ? `[system: ${j.systemTask}]` : '—');
           console.log(
-            `    Prompt      : ${promptPreview.slice(0, 80)}${promptPreview.length > 80 ? '…' : ''}`,
+            `    ${j.script ? 'Script' : 'Prompt'}      : ${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}`,
           );
           console.log();
         }
@@ -160,6 +162,7 @@ export async function runCronCommand(
             schedule: j.schedule,
             personalityId: j.personalityId,
             prompt: j.prompt,
+            script: j.script,
             lastRun: j.lastRunAt ? new Date(j.lastRunAt).toISOString() : null,
           });
           return;
@@ -182,7 +185,7 @@ export async function runCronCommand(
           `  Last run    : ${j.lastRunAt ? new Date(j.lastRunAt).toLocaleString() : 'never'}`,
         );
         console.log(
-          `  Prompt      : ${j.prompt ?? (j.systemTask ? `[system: ${j.systemTask}]` : '—')}`,
+          `  ${j.script ? 'Script' : 'Prompt'}      : ${j.script ?? j.prompt ?? (j.systemTask ? `[system: ${j.systemTask}]` : '—')}`,
         );
         console.log();
       } finally {
@@ -192,16 +195,22 @@ export async function runCronCommand(
     }
 
     case 'create': {
-      // ethos cron create --name "..." --schedule "..." --prompt "..." [--personality X]
+      // ethos cron create --name "..." --schedule "..." (--prompt "..." | --script "...") [--personality X]
       const params = parseFlags(args);
       const name = params.name ?? params.n;
       const schedule = params.schedule ?? params.s;
       const prompt = params.prompt ?? params.p;
+      const script = params.script;
       const personality = params.personality;
 
-      if (!name || !schedule || !prompt) {
+      if (prompt && script) {
+        console.log(`${c.red}--prompt and --script are mutually exclusive${c.reset}`);
+        return;
+      }
+
+      if (!name || !schedule || (!prompt && !script)) {
         console.log(
-          'Usage: ethos cron create --name "Job name" --schedule "0 8 * * *" --prompt "Your prompt"',
+          'Usage: ethos cron create --name "Job name" --schedule "0 8 * * *" (--prompt "Your prompt" | --script "shell command")',
         );
         return;
       }
@@ -232,6 +241,7 @@ export async function runCronCommand(
           name,
           schedule,
           prompt,
+          script,
           personalityId: personality ?? config.personality,
           repeat: { kind: 'forever' },
           missedRunPolicy: 'skip',
