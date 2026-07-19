@@ -28,6 +28,10 @@ This command generates static content into the `build` directory and can be serv
 
 ## Deployment
 
+The production docs site ([https://ethosagent.ai](https://ethosagent.ai)) is served via Cloudflare Pages. Deploys are triggered automatically by commits landing on `main` — no manual deploy step is needed.
+
+The commands below are the Docusaurus defaults for GitHub Pages hosting and are not used for production.
+
 Using SSH:
 
 ```bash
