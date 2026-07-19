@@ -61,7 +61,7 @@ export interface CronJob {
   createdAt: string;
 }
 
-export type CronJobUpdate = Partial<Pick<CronJob, 'name' | 'schedule' | 'prompt'>>;
+export type CronJobUpdate = Partial<Pick<CronJob, 'name' | 'schedule' | 'prompt' | 'script'>>;
 
 export interface CronRunResult {
   jobId: string;
@@ -335,8 +335,8 @@ export class CronScheduler {
   }
 
   async updateJob(id: string, patch: CronJobUpdate): Promise<CronJob> {
-    if (!patch.name && !patch.schedule && !patch.prompt) {
-      throw new Error('At least one of name, schedule, or prompt is required');
+    if (!patch.name && !patch.schedule && !patch.prompt && !patch.script) {
+      throw new Error('At least one of name, schedule, prompt, or script is required');
     }
 
     let updatedJob: CronJob | undefined;
@@ -345,6 +345,17 @@ export class CronScheduler {
       const idx = jobs.findIndex((j) => j.id === id);
       const existing = idx >= 0 ? jobs[idx] : undefined;
       if (!existing) throw new Error(`Job not found: ${id}`);
+
+      // Same exclusivity rules as createJob, validated against the merged state
+      // so a patch cannot leave a job with both script and prompt set.
+      const nextPrompt = patch.prompt !== undefined ? patch.prompt : existing.prompt;
+      const nextScript = patch.script !== undefined ? patch.script : existing.script;
+      if (nextPrompt && nextScript) {
+        throw new Error('script and prompt are mutually exclusive — set one, not both');
+      }
+      if (nextScript && existing.source === 'system') {
+        throw new Error('script is not allowed on system jobs — use systemTask');
+      }
 
       if (patch.schedule) {
         if (!isValidSchedule(patch.schedule)) {
@@ -360,6 +371,7 @@ export class CronScheduler {
       }
       if (patch.name !== undefined) existing.name = patch.name;
       if (patch.prompt !== undefined) existing.prompt = patch.prompt;
+      if (patch.script !== undefined) existing.script = patch.script;
 
       jobs[idx] = existing;
       updatedJob = existing;

@@ -391,7 +391,7 @@ describe('CronScheduler updateJob', () => {
     });
 
     await expect(scheduler.updateJob('empty-update', {})).rejects.toThrow(
-      'At least one of name, schedule, or prompt is required',
+      'At least one of name, schedule, prompt, or script is required',
     );
   });
 
@@ -1084,6 +1084,36 @@ describe('CronScheduler script jobs', () => {
     expect(job.script).toBe('echo hi');
     expect(job.prompt).toBeUndefined();
     expect(job.status).toBe('active');
+  });
+
+  it('rejects an update that would leave both script and prompt set', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Script Then Prompt',
+      schedule: '0 8 * * *',
+      script: 'echo hi',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    await expect(scheduler.updateJob(job.id, { prompt: 'a prompt' })).rejects.toThrow(
+      /mutually exclusive/i,
+    );
+    // Setting one while explicitly clearing the other stays allowed.
+    const updated = await scheduler.updateJob(job.id, { prompt: 'a prompt', script: '' });
+    expect(updated.prompt).toBe('a prompt');
+    expect(updated.script).toBe('');
+  });
+
+  it('rejects adding script to a system job via update', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.seedSystemJob({
+      name: 'System No Script',
+      schedule: '0 3 * * *',
+      systemTask: 'test-task',
+    });
+    await expect(scheduler.updateJob(job.id, { script: 'echo hi' })).rejects.toThrow(
+      /not allowed on system jobs/i,
+    );
   });
 
   it('executes the script with zero LLM involvement', async () => {
