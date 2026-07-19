@@ -258,7 +258,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   for (const [name, qc] of Object.entries(quickCommands)) {
     registry.register({
       name,
-      description: `Run: ${qc.command}`,
+      description: qc.type === 'exec' ? `Run: ${qc.command}` : `Reply: ${qc.reply}`,
       usage: `/${name}`,
       prefix: '[quick]',
     });
@@ -1537,6 +1537,11 @@ async function handleSlashCommand(
       if (cmd?.prefix === '[quick]') {
         const qcfg = ctx.quickCommands[name];
         if (!qcfg) break;
+        if (qcfg.type === 'reply') {
+          // Canned reply — no shell involved, so no consent gate.
+          out(`${qcfg.reply}\n`);
+          break;
+        }
         if (!ctx.isQuickConsentGiven()) {
           state.awaitingConsent = true;
           process.stdout.write(

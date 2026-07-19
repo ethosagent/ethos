@@ -161,6 +161,34 @@ export interface BeforeDispatchResult {
   handled: boolean;
 }
 
+/**
+ * Context-economy Phase 1 — fired by the Gateway for every accepted inbound
+ * channel message AFTER the bot/lane is resolved but BEFORE an agent turn is
+ * enqueued. A handler that returns `{ handled: true }` claims the message:
+ * no agent turn runs (zero LLM tokens), and an optional `reply` is sent back
+ * through the gateway's normal outbound dedup path.
+ *
+ * Security stance: `text` is untrusted channel input. Handlers must NEVER
+ * interpolate any part of it into shell commands or other privileged sinks —
+ * match it exactly against operator-owned config and act on the config, not
+ * the text.
+ */
+export interface GatewayMessagePayload {
+  platform: string;
+  chatId: string;
+  botKey?: string;
+  userId?: string;
+  text: string;
+  isDm: boolean;
+}
+
+export interface GatewayMessageResult {
+  /** true = this handler claims the message; the gateway skips the agent turn. */
+  handled: boolean;
+  /** Optional canned reply, sent via the adapter through the outbound dedup gate. */
+  reply?: string;
+}
+
 export interface BeforeTicketCompletePayload {
   taskId: string;
   /** The completion summary the assignee submitted (the "ticket output" a verifier checks). */
@@ -278,6 +306,10 @@ export interface ModifyingHooks {
 export interface ClaimingHooks {
   inbound_claim: [InboundClaimPayload, InboundClaimResult];
   before_dispatch: [BeforeDispatchPayload, BeforeDispatchResult];
+  // Deterministic pre-LLM shortcut at the gateway (context-economy Phase 1).
+  // First handler to return `{ handled: true }` wins; no handler registered →
+  // `fireClaiming` returns `{ handled: false }` and the turn proceeds unchanged.
+  gateway_message: [GatewayMessagePayload, GatewayMessageResult];
   // The plan's conceptual `{ rejected: true, reason }` maps onto the existing
   // claiming contract as `{ handled: true, reason }` — `handled: true` means
   // "completion rejected". `fireClaiming` returns `{ handled: false }` when no

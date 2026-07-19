@@ -314,6 +314,17 @@ export interface GatewayConfig {
    */
   channelFilter?: ChannelFilterConfig;
   /**
+   * Context-economy Phase 1 — static per-channel toolset narrowing. Keys are
+   * platform identifiers (e.g. 'whatsapp'), values the tool names allowed on
+   * that channel. Passed as `RunOptions.toolsetNarrow` on lane turns, so it
+   * can only SHRINK the personality toolset (intersect-only at turn-setup) —
+   * economy config, never a security boundary. MUST be resolved from static
+   * config only: computing it per turn would mutate the tool list and
+   * invalidate the prefix cache (plan R1). Platforms without an entry are
+   * unaffected.
+   */
+  channelToolsets?: Record<string, string[]>;
+  /**
    * SQLite database used to store pairing codes when `dmPolicy: 'pairing'` is
    * configured. Must be initialised with `initPairingDb(db)` before passing.
    * Required when any platform uses pairing; optional otherwise.
@@ -580,6 +591,8 @@ export class Gateway {
   private clarifySweepTimer: ReturnType<typeof setInterval> | undefined;
   /** Chapter 1 safety: per-platform sender allowlist + pairing config. */
   private readonly channelFilter: ChannelFilterConfig | undefined;
+  /** Static per-channel toolset narrowing (platform → allowed tool names). */
+  private readonly channelToolsets: Record<string, string[]> | undefined;
   /** SQLite DB for pairing codes. */
   private readonly pairingDb: Database.Database | undefined;
   /** Observability adapter for audit events. */
@@ -706,6 +719,7 @@ export class Gateway {
     this.dedupWindow = config.dedupWindow ?? 1024;
     this.maxChats = config.maxChats ?? 4096;
     this.channelFilter = config.channelFilter;
+    this.channelToolsets = config.channelToolsets;
     this.pairingDb = config.pairingDb;
     this.observability = config.observability;
     this.onTurnComplete = config.onTurnComplete;
@@ -1610,6 +1624,48 @@ export class Gateway {
       }
     }
 
+    // --- Deterministic pre-LLM shortcut: gateway_message claiming hook ---
+    // Fired after the bot/lane is resolved and every built-in / plugin slash
+    // command has had its shot, but BEFORE any session/turn cost (steer,
+    // backpressure, enqueue) — a claimed message never starts an agent turn
+    // and never steers into a running one. No handler registered →
+    // fireClaiming returns { handled: false } and behavior is unchanged.
+    // The stub-loop guard (`typeof … === 'function'`) keeps loops without a
+    // full HookRegistry (tests) on the unchanged path.
+    if (typeof bot.loop.hooks?.fireClaiming === 'function') {
+      const claim = await bot.loop.hooks
+        .fireClaiming('gateway_message', {
+          platform: message.platform,
+          chatId: message.chatId,
+          botKey: bot.botKey,
+          ...(message.userId !== undefined ? { userId: message.userId } : {}),
+          text,
+          isDm: message.isDm,
+        })
+        .catch((): { handled: boolean; reply?: string } => ({ handled: false }));
+      if (claim.handled) {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.message_claimed',
+          details: {
+            platform: message.platform,
+            chatId: message.chatId,
+            botKey: bot.botKey,
+            hasReply: typeof claim.reply === 'string' && claim.reply.length > 0,
+          },
+        });
+        const reply = claim.reply;
+        if (typeof reply === 'string' && reply.length > 0) {
+          // Same outbound path as normal turn replies: session-keyed dedup
+          // gate, then the adapter.
+          const claimSessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+          if (this.outboundDedup.shouldSend(claimSessionKey, reply)) {
+            await adapter.send(message.chatId, { text: reply, threadId }).catch(() => {});
+          }
+        }
+        return;
+      }
+    }
+
     // --- Auto-steer: if a turn is already running, push into its steer sink ---
     const activeSink = this.activeSinks.get(laneKey);
     if (activeSink) {
@@ -1823,6 +1879,11 @@ export class Gateway {
           })
         : undefined;
 
+      // Static per-channel toolset narrowing (context-economy Phase 1).
+      // Resolved from static config only — never computed per turn — so the
+      // tool list stays byte-stable across turns on this lane (plan R1).
+      const toolsetNarrow = this.channelToolsets?.[message.platform];
+
       const translator = createEventTranslator();
       for await (const event of bot.loop.run(loopText, {
         sessionKey,
@@ -1832,6 +1893,7 @@ export class Gateway {
         userId,
         steerSink,
         origin: `${message.platform}:${message.chatId}`,
+        ...(toolsetNarrow ? { toolsetNarrow } : {}),
       })) {
         translator.push(event);
         // Feed the live draft. Progress folds in only for `audience:'user'`

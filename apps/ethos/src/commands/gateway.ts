@@ -37,6 +37,8 @@ import { createA2aTools } from '@ethosagent/tools-a2a';
 import {
   type ClarifyResponse,
   EthosError,
+  type GatewayMessagePayload,
+  type GatewayMessageResult,
   type InboundMessage,
   type MemoryContext,
   type NotificationRouter,
@@ -52,6 +54,7 @@ import {
 } from '@ethosagent/wiring';
 import { ApprovalCoordinator, createSlackApprovalHook } from '../approval-coordinator';
 import { createHealthServer } from '../health-server';
+import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
 import { notifyReady, startWatchdog } from '../sd-notify';
@@ -692,6 +695,38 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const streamingMode = config.displayStreamingEdits ?? 'dms';
   const streamingEdits = { dm: streamingMode !== 'off', group: streamingMode === 'all' };
 
+  // Context-economy Phase 1 — deterministic pre-LLM quick commands. Register
+  // ONE `gateway_message` claiming handler per loop the gateway can dispatch
+  // to (each bot loop; the system loop only on the single-loop fallback path).
+  // Only commands explicitly marked `gateway: true` are exposed to channels,
+  // optionally restricted to the platforms in `channels`. Matching is EXACT
+  // (`/<name>`, case-sensitive) and the executed command string comes solely
+  // from operator config — channel text is never interpolated into the shell.
+  const gatewayQuickCommands = Object.entries(config.quick_commands ?? {}).filter(
+    ([, qc]) => qc.gateway === true,
+  );
+  if (gatewayQuickCommands.length > 0) {
+    const quickCommandHandler = async (
+      payload: GatewayMessagePayload,
+    ): Promise<GatewayMessageResult> => {
+      const text = payload.text.trim();
+      for (const [name, qc] of gatewayQuickCommands) {
+        if (text !== `/${name}`) continue;
+        if (qc.channels && !qc.channels.includes(payload.platform)) continue;
+        if (qc.type === 'reply') return { handled: true, reply: qc.reply };
+        // type 'exec' — runs the operator-authored command, zero LLM tokens.
+        const result = runQuickCommand(qc.command);
+        return { handled: true, reply: formatQuickCommandOutput(result) };
+      }
+      return { handled: false };
+    };
+    const quickCommandLoops =
+      bots.length > 0 ? new Set(bots.map((b) => b.loop)) : new Set([systemLoopReady]);
+    for (const loop of quickCommandLoops) {
+      loop.hooks.registerClaiming('gateway_message', quickCommandHandler);
+    }
+  }
+
   const gateway: Gateway =
     bots.length === 0
       ? // No platform configured — idle gateway. Every configured platform
@@ -716,6 +751,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
           personalityDirectory,
           onTurnComplete,
           streamingEdits,
+          ...(config.channelToolsets ? { channelToolsets: config.channelToolsets } : {}),
           ...(config.channelFilter ? { channelFilter: config.channelFilter } : {}),
           ...(pairingDb ? { pairingDb } : {}),
         })
@@ -738,6 +774,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
           personalityDirectory,
           onTurnComplete,
           streamingEdits,
+          ...(config.channelToolsets ? { channelToolsets: config.channelToolsets } : {}),
           ...(clarifyMessageCorrelator ? { clarifyMessageCorrelator } : {}),
           ...(telegramCardReader ? { personalityCardReader: telegramCardReader } : {}),
           ...(telegramGreetingProvider ? { greetingProvider: telegramGreetingProvider } : {}),

@@ -232,10 +232,18 @@ export interface ProviderConfig {
   apiVersion?: string;
 }
 
-export interface QuickCommandConfig {
-  type: 'exec';
-  command: string;
-}
+/**
+ * FW-16 / context-economy Phase 1 — user-defined `/name` shortcuts.
+ * `exec` runs an operator-authored shell command; `reply` returns a canned
+ * string with no shell involved. `gateway: true` (default false) exposes the
+ * command to channel messages via the `gateway_message` claiming hook;
+ * `channels` optionally restricts that exposure to the listed platforms.
+ * Channel text is only ever exact-matched against `/name` — it is never
+ * interpolated into `command`.
+ */
+export type QuickCommandConfig =
+  | { type: 'exec'; command: string; gateway?: boolean; channels?: string[] }
+  | { type: 'reply'; reply: string; gateway?: boolean; channels?: string[] };
 
 /**
  * Auxiliary model wiring for non-primary work. Today the only consumer is
@@ -668,8 +676,17 @@ export interface EthosConfig {
    * Config format:
    *   quick_commands.status.type: exec
    *   quick_commands.status.command: git status
+   *   quick_commands.status.gateway: true
+   *   quick_commands.status.channels: telegram,slack
    */
   quick_commands?: Record<string, QuickCommandConfig>;
+  /**
+   * Context-economy Phase 1 — static per-channel toolset narrowing for the
+   * gateway (platform → allowed tool names, intersect-only with the
+   * personality toolset). Config format:
+   *   channel_toolsets.whatsapp: read_file,memory_read
+   */
+  channelToolsets?: Record<string, string[]>;
   /** Global retention settings. Per-category TTLs. */
   retention?: RetentionConfig;
   /**
@@ -1131,7 +1148,20 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
   if (config.quick_commands) {
     for (const [name, qc] of Object.entries(config.quick_commands)) {
       lines.push(`quick_commands.${name}.type: ${qc.type}`);
-      lines.push(`quick_commands.${name}.command: ${qc.command}`);
+      if (qc.type === 'exec') {
+        lines.push(`quick_commands.${name}.command: ${qc.command}`);
+      } else {
+        lines.push(`quick_commands.${name}.reply: ${qc.reply}`);
+      }
+      if (qc.gateway) lines.push(`quick_commands.${name}.gateway: true`);
+      if (qc.channels && qc.channels.length > 0) {
+        lines.push(`quick_commands.${name}.channels: ${qc.channels.join(',')}`);
+      }
+    }
+  }
+  if (config.channelToolsets) {
+    for (const [platform, tools] of Object.entries(config.channelToolsets)) {
+      lines.push(`channel_toolsets.${platform}: ${tools.join(',')}`);
     }
   }
   if (config.channelFilter) {
@@ -1394,6 +1424,8 @@ function parseConfigYaml(src: string): EthosConfig {
   const webhooksKv: Record<string, Record<string, string>> = {};
   // FW-16 — quick_commands.<name>.<field>: <value>
   const qcKv: Record<string, Record<string, string>> = {};
+  // Context-economy Phase 1 — channel_toolsets.<platform>: <tool,list>
+  const channelToolsetsKv: Record<string, string> = {};
   // Chapter 1 safety: channel_filter.<platform>.<field>: <value>
   const channelFilterKv: Record<string, Record<string, string>> = {};
   for (const line of src.split('\n')) {
@@ -1669,6 +1701,12 @@ function parseConfigYaml(src: string): EthosConfig {
       (qcKv[qname] as Record<string, string>)[qc[2]] = qc[3].trim().replace(/^["']|["']$/g, '');
       continue;
     }
+    // channel_toolsets.<platform>: <comma-separated tool names>
+    const ct = line.match(/^channel_toolsets\.([^.:\s]+):\s*(.+)$/);
+    if (ct) {
+      channelToolsetsKv[ct[1]] = ct[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
     // storage.<field>: <value>
     const stg = line.match(/^storage\.([\w.]+):\s*(.+)$/);
     if (stg) {
@@ -1896,6 +1934,7 @@ function parseConfigYaml(src: string): EthosConfig {
   const teams = buildTeamsConfig(teamsKv);
   const webhooksResult = buildWebhooks(webhooksKv);
   const quick_commands = buildQuickCommands(qcKv);
+  const channelToolsets = buildChannelToolsets(channelToolsetsKv);
   const channelFilter = buildChannelFilter(channelFilterKv);
   const parseErrors = [
     ...telegramResult.errors,
@@ -1982,6 +2021,7 @@ function parseConfigYaml(src: string): EthosConfig {
     displayDebugPanelModel: displayKv.debug_panel_model || undefined,
     displayStreamingEdits: parseStreamingEdits(displayKv.streaming_edits),
     quick_commands,
+    channelToolsets,
     channelFilter,
     auxiliary:
       auxiliaryCompression || auxiliaryVision || auxiliaryWeb || auxiliaryAsr || auxiliaryTts
@@ -2792,9 +2832,33 @@ function buildQuickCommands(
 ): Record<string, QuickCommandConfig> | undefined {
   const result: Record<string, QuickCommandConfig> = {};
   for (const [name, fields] of Object.entries(kv)) {
+    const channels = fields.channels
+      ? fields.channels
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
+    const shared = {
+      ...(fields.gateway === 'true' ? { gateway: true } : {}),
+      ...(channels && channels.length > 0 ? { channels } : {}),
+    };
     if (fields.type === 'exec' && fields.command) {
-      result[name] = { type: 'exec', command: fields.command };
+      result[name] = { type: 'exec', command: fields.command, ...shared };
+    } else if (fields.type === 'reply' && fields.reply) {
+      result[name] = { type: 'reply', reply: fields.reply, ...shared };
     }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function buildChannelToolsets(kv: Record<string, string>): Record<string, string[]> | undefined {
+  const result: Record<string, string[]> = {};
+  for (const [platform, raw] of Object.entries(kv)) {
+    const tools = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (tools.length > 0) result[platform] = tools;
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }
