@@ -96,9 +96,19 @@ export async function* runVoiceAgentTurn(
   const existingId = deps.sessionId();
   let tap = existingId ? tapSessionReply(existingId) : null;
 
+  // `sendMessage` resolves only when the ENTIRE turn completes, so awaiting it
+  // before consuming the tap would buffer every delta and yield them all at the
+  // end. When the tap is already open (existing session, the common case), fire
+  // the send WITHOUT awaiting and consume the tap concurrently, so each delta is
+  // yielded as it streams in. The send is settled after the loop.
+  let sendPromise: Promise<void> | null = null;
+
   try {
-    await deps.sendMessage(text);
-    if (!tap) {
+    if (tap) {
+      sendPromise = deps.sendMessage(text);
+    } else {
+      // No existing session: await the send to learn the created id, then tap.
+      await deps.sendMessage(text);
       const createdId = deps.sessionId();
       if (createdId) tap = tapSessionReply(createdId);
     }
@@ -108,6 +118,10 @@ export async function* runVoiceAgentTurn(
       yield chunk;
     }
   } finally {
+    // Settle the un-awaited send so a rejection isn't unhandled. The stream's
+    // end is driven by SSE 'done'/'error', not by this promise; a transport
+    // failure surfaces via the SSE 'error' path, so we only swallow here.
+    await sendPromise?.catch(() => {});
     tap?.close();
     signal.removeEventListener('abort', onAbort);
   }

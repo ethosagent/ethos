@@ -203,6 +203,7 @@ interface FormShape {
   memoryCaptureModel: string;
   memoryNotices: boolean;
   voiceEnabled: boolean;
+  voiceChime: boolean;
   voiceProvider: string;
   voiceApiKey: string;
   voiceBaseUrl: string;
@@ -415,6 +416,7 @@ export function Settings() {
         memoryCaptureModel: configQuery.data.memoryCaptureModel ?? '',
         memoryNotices: configQuery.data.memoryNotices,
         voiceEnabled: Boolean(configQuery.data.voiceProvider),
+        voiceChime: configQuery.data.voiceChime,
         voiceProvider: configQuery.data.voiceProvider ?? '',
         voiceApiKey: '',
         voiceBaseUrl: configQuery.data.voiceBaseUrl ?? '',
@@ -534,6 +536,7 @@ export function Settings() {
       memoryCaptureEnabled: values.memoryCaptureEnabled,
       memoryCaptureModel: values.memoryCaptureModel,
       memoryNotices: values.memoryNotices,
+      voiceChime: values.voiceChime,
       ...(!values.voiceEnabled
         ? configQuery.data?.voiceProvider || configQuery.data?.voiceTtsProvider
           ? { voiceProvider: '', voiceTtsProvider: '' }
@@ -908,6 +911,14 @@ export function Settings() {
             extra="Enable the voice recording button in the chat bar."
           >
             <Switch checkedChildren="On" unCheckedChildren="Off" />
+          </Form.Item>
+          <Form.Item
+            label="Processing chime"
+            name="voiceChime"
+            valuePropName="checked"
+            extra="Play a short sound while the agent is thinking (after you stop speaking)."
+          >
+            <Switch />
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(prev, cur) => prev.voiceEnabled !== cur.voiceEnabled}>
             {({ getFieldValue }) =>

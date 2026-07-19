@@ -34,6 +34,7 @@ export interface ConfigGetResult {
   memoryCaptureEnabled: boolean;
   memoryCaptureModel: string | null;
   memoryNotices: boolean;
+  voiceChime: boolean;
   voiceProvider: string | null;
   voiceApiKeyPreview: string | null;
   voiceBaseUrl: string | null;
@@ -73,6 +74,7 @@ export interface ConfigUpdateInput {
   memoryCaptureEnabled?: boolean;
   memoryCaptureModel?: string;
   memoryNotices?: boolean;
+  voiceChime?: boolean;
   voiceProvider?: string;
   voiceApiKey?: string;
   voiceBaseUrl?: string;
@@ -133,6 +135,8 @@ export class ConfigService {
       memoryCaptureEnabled: raw.passthrough['memoryCapture.enabled'] === 'true',
       memoryCaptureModel: raw.passthrough['memoryCapture.model'] || null,
       memoryNotices: raw.passthrough['display.memory_notices'] === 'true',
+      // Default ON — the talk-mode chime plays unless explicitly disabled.
+      voiceChime: raw.passthrough['display.voice_chime'] !== 'false',
       voiceProvider: raw.voiceProvider ?? null,
       voiceApiKeyPreview: raw.voiceApiKey ? redactKey(raw.voiceApiKey) : null,
       voiceBaseUrl: raw.voiceBaseUrl ?? null,
@@ -237,6 +241,9 @@ export class ConfigService {
     if (patch.memoryNotices !== undefined) {
       passthroughPatch['display.memory_notices'] = patch.memoryNotices ? 'true' : 'false';
     }
+    if (patch.voiceChime !== undefined) {
+      passthroughPatch['display.voice_chime'] = patch.voiceChime ? 'true' : 'false';
+    }
     const passthrough = Object.keys(passthroughPatch).length > 0 ? passthroughPatch : undefined;
     delete cleaned.adminEnabled;
     delete cleaned.streamingEdits;
@@ -245,6 +252,7 @@ export class ConfigService {
     delete cleaned.memoryCaptureEnabled;
     delete cleaned.memoryCaptureModel;
     delete cleaned.memoryNotices;
+    delete cleaned.voiceChime;
 
     // Convert providers to repository format when present.
     let repoProviders: RawProviderEntry[] | undefined;

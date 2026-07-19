@@ -333,6 +333,8 @@ export function Chat() {
   const sttConfigured = Boolean(configQuery.data?.voiceProvider);
   const ttsConfigured = Boolean(configQuery.data?.voiceTtsProvider);
   const ttsVoice = configQuery.data?.voiceTtsVoice ?? undefined;
+  // Talk-mode "thinking" chime — on unless explicitly disabled in Settings.
+  const voiceChime = configQuery.data?.voiceChime ?? true;
 
   // The active session id read lazily by the voice runner — it can change
   // between turns (fork, new session) without rebuilding the client.
@@ -361,8 +363,9 @@ export function Chat() {
             }
           : {}),
         ...(ttsVoice ? { voice: ttsVoice } : {}),
+        chime: voiceChime,
       }),
-    [ttsConfigured, ttsVoice, sendMessage, abortTurn],
+    [ttsConfigured, ttsVoice, voiceChime, sendMessage, abortTurn],
   );
 
   const voice = useVoiceCall({ createClient: createVoiceClient });

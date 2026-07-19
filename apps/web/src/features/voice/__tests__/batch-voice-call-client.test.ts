@@ -16,6 +16,7 @@ class FakeVoiceIoDriver implements VoiceIoDriver {
   readonly utterances: UtteranceCapture[] = [];
   readonly playCalls: string[] = [];
   captureCalls = 0;
+  earconCalls = 0;
   started = false;
   stopped = false;
   blockPlayback = false;
@@ -56,6 +57,10 @@ class FakeVoiceIoDriver implements VoiceIoDriver {
         once: true,
       });
     });
+  }
+
+  playEarcon(): void {
+    this.earconCalls++;
   }
 
   onBargeIn(listener: () => void): () => void {
@@ -178,6 +183,62 @@ describe('createBatchVoiceCallClient — full turn cycle', () => {
     await vi.waitFor(() => expect(driver.captureCalls).toBeGreaterThanOrEqual(2));
     expect(events.some((e) => e.type === 'utterance_committed')).toBe(false);
     expect(runAgentTurn).not.toHaveBeenCalled();
+    // The earcon still fired — the utterance was captured, just transcribed to
+    // nothing. Acknowledgement happens on capture, before transcription.
+    expect(driver.earconCalls).toBe(1);
+    await client.disconnect();
+  });
+
+  it('fires the processing earcon once per captured utterance, before transcription', async () => {
+    const driver = new FakeVoiceIoDriver();
+    driver.utterances.push({ audioBase64: 'UTTER', mimeType: 'audio/webm' });
+
+    let earconAtTranscribe = -1;
+    const client = createBatchVoiceCallClient({
+      transcribe: () => {
+        earconAtTranscribe = driver.earconCalls;
+        return Promise.resolve('hello');
+      },
+      runAgentTurn: async function* () {
+        yield 'Hi.';
+      },
+      createDriver: () => driver,
+    });
+    const events = collect(client);
+    await client.connect();
+
+    await vi.waitFor(() => expect(events.some((e) => e.type === 'reply_complete')).toBe(true));
+    // Exactly one earcon for the one captured utterance...
+    expect(driver.earconCalls).toBe(1);
+    // ...and it fired BEFORE transcription began.
+    expect(earconAtTranscribe).toBe(1);
+    await client.disconnect();
+  });
+
+  it('does not fire the earcon when chime is disabled, but still runs the turn', async () => {
+    const driver = new FakeVoiceIoDriver();
+    driver.utterances.push({ audioBase64: 'UTTER', mimeType: 'audio/webm' });
+
+    const client = createBatchVoiceCallClient({
+      transcribe: () => Promise.resolve('hello'),
+      runAgentTurn: async function* () {
+        yield 'Hi.';
+      },
+      createDriver: () => driver,
+      chime: false,
+    });
+    const events = collect(client);
+    await client.connect();
+
+    await vi.waitFor(() => expect(events.some((e) => e.type === 'reply_complete')).toBe(true));
+    // The earcon never fired for the captured utterance...
+    expect(driver.earconCalls).toBe(0);
+    // ...but the rest of the turn still ran: committed and replied.
+    expect(events.find((e) => e.type === 'utterance_committed')).toEqual({
+      type: 'utterance_committed',
+      text: 'hello',
+    });
+    expect(texts(events, 'reply_sentence')).toEqual(['Hi.']);
     await client.disconnect();
   });
 

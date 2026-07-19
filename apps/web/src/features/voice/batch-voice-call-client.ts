@@ -41,6 +41,12 @@ export interface VoiceIoDriver {
    * `signal` aborts (barge-in / hang-up) mid-playout.
    */
   play(audioBase64: string, mimeType: string, signal: AbortSignal): Promise<void>;
+  /**
+   * Play a brief synthetic "processing" earcon (fire-and-forget). Acknowledges a
+   * captured utterance while transcription + the agent turn run. Must be quiet
+   * enough not to trip barge-in against itself.
+   */
+  playEarcon(): void;
   /** Fire the listener once when sustained user speech is detected over playout. */
   onBargeIn(listener: () => void): () => void;
   /** Enable barge-in monitoring (only during agent playout). */
@@ -73,6 +79,12 @@ export interface BatchVoiceCallDeps {
   runAgentTurn(text: string, signal: AbortSignal): AsyncIterable<string>;
   /** Optional TTS voice id passed through to `synthesize`. */
   voice?: string;
+  /**
+   * Play the brief "processing" earcon after each captured utterance. Defaults
+   * to true; set false (from the `display.voice_chime` config toggle) to keep
+   * the thinking gap silent.
+   */
+  chime?: boolean;
   /** Monotonic clock for the default driver's VAD timing. Defaults to perf clock. */
   now?: () => number;
   /** Override the browser-audio driver (tests inject a fake). */
@@ -159,6 +171,7 @@ export function createBatchVoiceCallClient(deps: BatchVoiceCallDeps): VoiceCallC
     ? deps.createDriver()
     : createBrowserVoiceIoDriver({ now: deps.now });
 
+  const chimeEnabled = deps.chime ?? true;
   const disconnectController = new AbortController();
   let running = false;
   let disposed = false;
@@ -245,6 +258,17 @@ export function createBatchVoiceCallClient(deps: BatchVoiceCallDeps): VoiceCallC
         break;
       }
       if (!capture || disposed) break;
+
+      // Acknowledge the captured utterance the instant it endpoints, covering
+      // the transcribe → LLM → first-audio gap. Fire-and-forget: never blocks or
+      // fails the turn. Gated by the `chime` dep (display.voice_chime toggle).
+      if (chimeEnabled) {
+        try {
+          driver.playEarcon();
+        } catch {
+          // best-effort acknowledgement
+        }
+      }
 
       let transcript: string;
       try {
@@ -462,6 +486,34 @@ export function createBrowserVoiceIoDriver(opts: { now?: () => number } = {}): V
           resolve();
         });
       });
+    },
+
+    playEarcon(): void {
+      try {
+        if (!audioCtx) audioCtx = new AudioContext();
+        const ctx = audioCtx;
+        if (ctx.state === 'suspended') void ctx.resume();
+        const NOTE_S = 0.12; // ~120ms per note
+        const PEAK = 0.15; // low peak so it won't self-trip the VAD / barge-in
+        const notes = [880, 1175]; // ascending "ting ting"
+        notes.forEach((freq, i) => {
+          const startAt = ctx.currentTime + i * NOTE_S;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          // Quick attack, linear decay to silence — a clean, subtle blip.
+          gain.gain.setValueAtTime(0, startAt);
+          gain.gain.linearRampToValueAtTime(PEAK, startAt + 0.01);
+          gain.gain.linearRampToValueAtTime(0, startAt + NOTE_S);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(startAt);
+          osc.stop(startAt + NOTE_S);
+        });
+      } catch {
+        // Web Audio unavailable / blocked — the earcon is best-effort.
+      }
     },
 
     onBargeIn(listener: () => void): () => void {

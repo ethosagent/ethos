@@ -762,6 +762,8 @@ const ConfigGetOutput = z.object({
   memoryCaptureModel: z.string().nullable(),
   /** CLI "· remembered: …" capture notice (display.memory_notices). */
   memoryNotices: z.boolean(),
+  /** Talk-mode processing chime / earcon (display.voice_chime); default true. */
+  voiceChime: z.boolean(),
   voiceProvider: z.string().nullable(),
   voiceApiKeyPreview: z.string().nullable(),
   voiceBaseUrl: z.string().nullable(),
@@ -805,6 +807,7 @@ const ConfigUpdateInput = z.object({
   memoryCaptureEnabled: z.boolean().optional(),
   memoryCaptureModel: z.string().optional(),
   memoryNotices: z.boolean().optional(),
+  voiceChime: z.boolean().optional(),
   voiceProvider: z.string().optional(),
   voiceApiKey: z.string().optional(),
   voiceBaseUrl: z.string().optional(),
