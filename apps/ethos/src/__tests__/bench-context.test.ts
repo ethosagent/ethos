@@ -1,0 +1,67 @@
+import { DefaultToolRegistry } from '@ethosagent/core';
+import type { PersonalityConfig, Tool } from '@ethosagent/types';
+import { describe, expect, it } from 'vitest';
+import { measurePersonalityStatic } from '../commands/bench';
+
+const makeTool = (name: string, description = `Test tool ${name}`): Tool => ({
+  name,
+  description,
+  schema: { type: 'object', properties: { path: { type: 'string' } } },
+  capabilities: {},
+  execute: async () => ({ ok: true, value: name }),
+});
+
+const makePersonality = (id: string, toolset?: string[]): PersonalityConfig => ({
+  id,
+  name: id,
+  ...(toolset ? { toolset } : {}),
+});
+
+describe('measurePersonalityStatic', () => {
+  it('counts SOUL chars and only the tools in the personality toolset', () => {
+    const registry = new DefaultToolRegistry();
+    registry.register(makeTool('read_file'));
+    registry.register(makeTool('write_file'));
+    registry.register(makeTool('web_search'));
+
+    const soul = 'I am a reader.';
+    const row = measurePersonalityStatic(makePersonality('reader', ['read_file']), soul, registry);
+
+    expect(row.id).toBe('reader');
+    expect(row.soulChars).toBe(soul.length);
+    expect(row.toolCount).toBe(1);
+    const expectedChars = JSON.stringify(registry.toDefinitions(['read_file'])).length;
+    expect(row.toolSchemaChars).toBe(expectedChars);
+    expect(row.estStaticTokens).toBe(Math.ceil((soul.length + expectedChars) / 4));
+  });
+
+  it('an unrestricted toolset sees every registered tool', () => {
+    const registry = new DefaultToolRegistry();
+    registry.register(makeTool('a'));
+    registry.register(makeTool('b'));
+
+    const row = measurePersonalityStatic(makePersonality('open'), '', registry);
+    expect(row.toolCount).toBe(2);
+    expect(row.soulChars).toBe(0);
+    expect(row.toolSchemaChars).toBe(JSON.stringify(registry.toDefinitions(undefined)).length);
+  });
+
+  it('a bigger schema costs more estimated tokens than a smaller one', () => {
+    const registry = new DefaultToolRegistry();
+    registry.register(makeTool('tiny', 'x'));
+    registry.register(makeTool('verbose', 'A long description. '.repeat(50)));
+
+    const tiny = measurePersonalityStatic(makePersonality('p1', ['tiny']), '', registry);
+    const verbose = measurePersonalityStatic(makePersonality('p2', ['verbose']), '', registry);
+    expect(verbose.toolSchemaChars).toBeGreaterThan(tiny.toolSchemaChars);
+    expect(verbose.estStaticTokens).toBeGreaterThan(tiny.estStaticTokens);
+  });
+
+  it('degrades without a tool registry: toolset name count, zero schema chars', () => {
+    const soul = 'soul body';
+    const row = measurePersonalityStatic(makePersonality('bare', ['read_file', 'terminal']), soul);
+    expect(row.toolCount).toBe(2);
+    expect(row.toolSchemaChars).toBe(0);
+    expect(row.estStaticTokens).toBe(Math.ceil(soul.length / 4));
+  });
+});

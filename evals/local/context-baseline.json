@@ -1,0 +1,61 @@
+{
+  "generatedAt": "2026-07-19T09:04:50.598Z",
+  "static": [
+    {
+      "id": "swing-trader",
+      "soulChars": 15691,
+      "toolCount": 67,
+      "toolSchemaChars": 36501,
+      "estStaticTokens": 13048
+    },
+    {
+      "id": "engineer",
+      "soulChars": 1184,
+      "toolCount": 72,
+      "toolSchemaChars": 42736,
+      "estStaticTokens": 10980
+    },
+    {
+      "id": "researcher",
+      "soulChars": 1267,
+      "toolCount": 62,
+      "toolSchemaChars": 33596,
+      "estStaticTokens": 8716
+    },
+    {
+      "id": "reviewer",
+      "soulChars": 1262,
+      "toolCount": 57,
+      "toolSchemaChars": 31280,
+      "estStaticTokens": 8136
+    },
+    {
+      "id": "personality-architect",
+      "soulChars": 7764,
+      "toolCount": 50,
+      "toolSchemaChars": 23651,
+      "estStaticTokens": 7854
+    },
+    {
+      "id": "team-architect",
+      "soulChars": 5778,
+      "toolCount": 53,
+      "toolSchemaChars": 24959,
+      "estStaticTokens": 7685
+    },
+    {
+      "id": "debug",
+      "soulChars": 1733,
+      "toolCount": 48,
+      "toolSchemaChars": 22926,
+      "estStaticTokens": 6165
+    },
+    {
+      "id": "em",
+      "soulChars": 30,
+      "toolCount": 49,
+      "toolSchemaChars": 23794,
+      "estStaticTokens": 5956
+    }
+  ]
+}
