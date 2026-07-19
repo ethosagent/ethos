@@ -732,13 +732,118 @@ const onboarding = {
 // is active without leaking it to the browser.
 // ---------------------------------------------------------------------------
 
+// -- Settings sub-schemas (Settings page groups without another UI home) ----
+
+/** Retention duration grammar (extensions/observability-sqlite `parseDuration`):
+ *  `forever` or `<n>` + d(ays) | w(eeks) | m(onths) | y(ears), e.g. `90d`. */
+const RetentionDurationSchema = z.string().regex(/^(forever|\d+[dwmy])$/);
+
+/** Flat retention subkeys — the `<subkey>` in `retention.<subkey>` and
+ *  `personalities.<id>.retention.<subkey>` config.yaml keys. */
+const RetentionSubkeySchema = z.enum([
+  'messages',
+  'traces',
+  'spans',
+  'blobs',
+  'archive',
+  'events.error',
+  'events.audit',
+  'events.channel',
+  'events.install',
+]);
+
+/** Record keys written as `<prefix>.<key>.<field>` config.yaml lines must
+ *  round-trip through the line-based format — same identifier rule as bot ids. */
+const ConfigRecordKeySchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
+
+/** One inbound webhook as returned by `config.get` (`webhooks.<hookId>.*`).
+ *  The bearer secret NEVER round-trips — only a redacted preview. */
+const WebhookGetSchema = z.object({
+  /** config.yaml: `webhooks.<hookId>.personalityId` */
+  personalityId: z.string(),
+  /** Redacted preview of `webhooks.<hookId>.secret` (e.g. "abc…wxyz"). */
+  secretPreview: z.string(),
+  /** config.yaml: `webhooks.<hookId>.sessionKey` */
+  sessionKey: z.string().nullable(),
+  /** config.yaml: `webhooks.<hookId>.prefilter` (script under ~/.ethos/scripts/) */
+  prefilter: z.string().nullable(),
+  /** config.yaml: `webhooks.<hookId>.prefilterTimeoutSeconds` (1-600) */
+  prefilterTimeoutSeconds: z.number().nullable(),
+  /** config.yaml: `webhooks.<hookId>.mode` — default 'sync'. */
+  mode: z.enum(['sync', 'ack']),
+});
+
+/** One inbound webhook as accepted by `config.update`. `secret` is write-only:
+ *  omit it to keep the stored secret (a brand-new hook gets a generated one). */
+const WebhookUpdateSchema = z
+  .object({
+    personalityId: z.string().min(1),
+    /** Write-only bearer secret; never echoed back. Omit to keep/generate. */
+    secret: z.string().min(8).optional(),
+    sessionKey: z.string().optional(),
+    prefilter: z.string().optional(),
+    prefilterTimeoutSeconds: z.number().int().min(1).max(600).optional(),
+    mode: z.enum(['sync', 'ack']).optional(),
+  })
+  .refine((h) => h.prefilterTimeoutSeconds === undefined || h.prefilter !== undefined, {
+    message: "prefilterTimeoutSeconds requires 'prefilter'",
+  });
+
+/** One `/name` quick command (`quick_commands.<name>.*`). `exec` runs an
+ *  operator-authored shell command; `reply` returns a canned string. */
+const QuickCommandGetSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('exec'),
+    command: z.string(),
+    gateway: z.boolean(),
+    channels: z.array(z.string()),
+  }),
+  z.object({
+    type: z.literal('reply'),
+    reply: z.string(),
+    gateway: z.boolean(),
+    channels: z.array(z.string()),
+  }),
+]);
+const QuickCommandUpdateSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('exec'),
+    command: z.string().min(1),
+    gateway: z.boolean().optional(),
+    channels: z.array(z.string()).optional(),
+  }),
+  z.object({
+    type: z.literal('reply'),
+    reply: z.string().min(1),
+    gateway: z.boolean().optional(),
+    channels: z.array(z.string()).optional(),
+  }),
+]);
+
+/** Auxiliary model wiring (`auxiliary.<slot>.*` where slot is compression /
+ *  vision / web). API key never round-trips — preview only. */
+const AuxModelGetSchema = z.object({
+  model: z.string().nullable(),
+  provider: z.string().nullable(),
+  apiKeyPreview: z.string().nullable(),
+  baseUrl: z.string().nullable(),
+});
+/** Update shape for an auxiliary model slot. `null` clears the stored key. */
+const AuxModelUpdateSchema = z.object({
+  model: z.string().nullable().optional(),
+  provider: z.string().nullable().optional(),
+  /** Write-only; never echoed back. Null deletes the stored key. */
+  apiKey: z.string().nullable().optional(),
+  baseUrl: z.string().nullable().optional(),
+});
+
 const ConfigGetOutput = z.object({
   provider: z.string(),
   model: z.string(),
   apiKeyPreview: z.string(), // e.g. "sk-…abc1"
   baseUrl: z.string().nullable(),
   personality: z.string(),
-  memory: z.enum(['markdown', 'vector']),
+  memory: z.enum(['markdown', 'vector', 'vault']),
   modelRouting: z.record(z.string(), z.string()),
   /** Currently selected skin (one of the BUILTIN_SKINS names). */
   skin: z.string(),
@@ -783,15 +888,191 @@ const ConfigGetOutput = z.object({
   voiceTtsVoice: z.string().nullable(),
   voiceTtsBaseUrl: z.string().nullable(),
   voiceTtsModel: z.string().nullable(),
+  // -- Settings-page additions (keys with no other UI home) ------------------
+  /** Azure-only REST API version (`apiVersion`); null when unset. */
+  apiVersion: z.string().nullable(),
+  /** Per-turn timing summary after every response (`verbose`); default false. */
+  verbose: z.boolean(),
+  /** Chat-surface verbosity (`display.verbosity`); default 'default'. */
+  displayVerbosity: z.enum(['quiet', 'default', 'verbose', 'debug']),
+  /** What Enter does mid-turn (`display.busy_input_mode`); default 'interrupt'. */
+  displayBusyInputMode: z.enum(['interrupt', 'queue', 'steer']),
+  /** Tool feed arg truncation, 0 = none (`display.tool_preview_length`); default 0. */
+  displayToolPreviewLength: z.number(),
+  /** Show resume hint on chat exit (`display.resume_hint`); default true. */
+  displayResumeHint: z.boolean(),
+  /** Turn pairs in the resume recap panel, 0 disables (`display.resume_recap_turns`); default 3. */
+  displayResumeRecapTurns: z.number(),
+  /** Terminal bell when a background task finishes (`display.bell_on_complete`); default false. */
+  displayBellOnComplete: z.boolean(),
+  /** Context-compaction gate thresholds (`compaction.*`). `autoCompact` is the
+   *  sibling top-level field above; the rest of the group lives here. */
+  compaction: z.object({
+    /** `compaction.pressure` — gate fraction in (0,1]; null = 0.8 default. */
+    pressure: z.number().nullable(),
+    /** `compaction.target` — shrink-to fraction in (0,1]; null = 0.7 default. */
+    target: z.number().nullable(),
+    /** `compaction.gateDelta` — token headroom, integer >= 0; null = unset. */
+    gateDelta: z.number().nullable(),
+    /** `compaction.retryOnOverflow` — compact-and-retry on overflow; default true. */
+    retryOnOverflow: z.boolean(),
+    /** `compaction.smallWindow` — small-window-mode override; default 'auto'. */
+    smallWindow: z.enum(['auto', 'on', 'off']),
+  }),
+  /** Bring-your-own-vault backend (`memoryVault.*`); read when memory = 'vault'. */
+  memoryVault: z.object({
+    /** `memoryVault.path` — absolute vault root; null = unset. */
+    path: z.string().nullable(),
+    /** `memoryVault.agentDir` — subtree the agent owns; null = 'Ethos' default. */
+    agentDir: z.string().nullable(),
+    /** `memoryVault.prefetch` — keys prefetched into the prompt tail. */
+    prefetch: z.array(z.string()),
+    /** `memoryVault.exclude` — names hidden from list + search. */
+    exclude: z.array(z.string()),
+  }),
+  /** Approve-before-store gate (`memoryApproval.*`). */
+  memoryApproval: z.object({
+    /** `memoryApproval.mode` — default 'off'. */
+    mode: z.enum(['off', 'automated', 'all']),
+    /** `memoryApproval.cap` — per-scope pending-queue cap; default 200. */
+    cap: z.number(),
+    /** `memoryApproval.ttlDays` — pending-candidate TTL; default 30. */
+    ttlDays: z.number(),
+  }),
+  /** Decay tuning + silent-flush tunables (`memoryConsolidation.*`). The
+   *  `enabled` flag is the sibling `memoryConsolidationEnabled` field above. */
+  memoryConsolidation: z.object({
+    /** `memoryConsolidation.halfLifeDays` — recency half-life; default 30. */
+    halfLifeDays: z.number(),
+    /** `memoryConsolidation.threshold` — archive-below weight; default 0.05. */
+    threshold: z.number(),
+    /** `memoryConsolidation.exemptUser` — exempt USER.md from decay; default true. */
+    exemptUser: z.boolean(),
+    /** `memoryConsolidation.flushThreshold` — flush trigger fraction; default 0.7. */
+    flushThreshold: z.number(),
+    /** `memoryConsolidation.timeboxMs` — flush-turn timebox; default 30000. */
+    timeboxMs: z.number(),
+    /** `memoryConsolidation.maxTokens` — flush-turn token cap; default 1024. */
+    maxTokens: z.number(),
+    /** `memoryConsolidation.maxDeltaChars` — max chars written per flush; default 4000. */
+    maxDeltaChars: z.number(),
+    /** `memoryConsolidation.minMessagesSinceFlush` — flush spacing; default 8. */
+    minMessagesSinceFlush: z.number(),
+  }),
+  /** Proactive capture wiring (`memoryCapture.*`). `enabled`/`model` are the
+   *  sibling `memoryCaptureEnabled`/`memoryCaptureModel` fields above. */
+  memoryCapture: z.object({
+    /** `memoryCapture.provider` — aux provider; null = primary provider. */
+    provider: z.string().nullable(),
+    /** Redacted preview of `memoryCapture.apiKey`; null when unset. */
+    apiKeyPreview: z.string().nullable(),
+    /** `memoryCapture.baseUrl`; null = primary baseUrl. */
+    baseUrl: z.string().nullable(),
+    /** `memoryCapture.maxPerHour` — captures/hour per scope; default 6. */
+    maxPerHour: z.number(),
+    /** `memoryCapture.maxPerDay` — captures/day per scope; default 30. */
+    maxPerDay: z.number(),
+  }),
+  /** Background sub-agent job pool (`background.<snake_case>` keys). */
+  background: z.object({
+    /** `background.enabled`; default false. */
+    enabled: z.boolean(),
+    /** `background.max_concurrent_jobs`; default 2. */
+    maxConcurrentJobs: z.number(),
+    /** `background.max_jobs_per_root`; default 3. */
+    maxJobsPerRoot: z.number(),
+    /** `background.max_jobs_per_personality`; default 5. */
+    maxJobsPerPersonality: z.number(),
+    /** `background.default_max_cost_usd`; default 1. */
+    defaultMaxCostUsd: z.number(),
+    /** `background.max_root_background_usd`; default 5. */
+    maxRootBackgroundUsd: z.number(),
+    /** `background.queued_ttl_ms`; default 900000. */
+    queuedTtlMs: z.number(),
+    /** `background.stale_ms`; default 90000. */
+    staleMs: z.number(),
+    /** `background.heartbeat_ms`; default 30000. */
+    heartbeatMs: z.number(),
+    /** `background.retention_days`; default 30. */
+    retentionDays: z.number(),
+  }),
+  /** Global retention TTLs (`retention.<subkey>`), only the keys actually set. */
+  retention: z.partialRecord(RetentionSubkeySchema, RetentionDurationSchema),
+  /** Per-personality retention overrides (`personalities.<id>.retention.<subkey>`). */
+  personalityRetention: z.record(
+    z.string(),
+    z.partialRecord(RetentionSubkeySchema, RetentionDurationSchema),
+  ),
+  /** Inbound webhooks (`webhooks.<hookId>.*`); secrets redacted. */
+  webhooks: z.record(z.string(), WebhookGetSchema),
+  /** User-defined `/name` shortcuts (`quick_commands.<name>.*`). */
+  quickCommands: z.record(z.string(), QuickCommandGetSchema),
+  /** Per-channel toolset narrowing (`channel_toolsets.<platform>`). */
+  channelToolsets: z.record(z.string(), z.array(z.string())),
+  /** Governed-learning nightly pass (`nightlyPass.*`). */
+  nightlyPass: z.object({
+    /** `nightlyPass.enabled`; default false. */
+    enabled: z.boolean(),
+    /** `nightlyPass.cron` — 5-field cron; default '0 3 * * *'. */
+    cron: z.string(),
+  }),
+  /** Weekly governed-learning digest (`weeklyDigest.*`). */
+  weeklyDigest: z.object({
+    /** `weeklyDigest.enabled`; default false. */
+    enabled: z.boolean(),
+    /** `weeklyDigest.cron`; default '0 9 * * 1'. */
+    cron: z.string(),
+    /** `weeklyDigest.recipients` — email allowlist for --email delivery. */
+    recipients: z.array(z.string()),
+  }),
+  /** Remote model catalog (`modelCatalog.*`); per-provider URL overrides stay file-only. */
+  modelCatalog: z.object({
+    /** `modelCatalog.enabled`; default true. */
+    enabled: z.boolean(),
+    /** `modelCatalog.url`; null = built-in endpoint. */
+    url: z.string().nullable(),
+    /** `modelCatalog.ttlHours`; default 24. */
+    ttlHours: z.number(),
+  }),
+  /** Error-log rotation (`logs.rotation.*`). */
+  logsRotation: z.object({
+    /** `logs.rotation.enabled`; default true. */
+    enabled: z.boolean(),
+    /** `logs.rotation.maxBytes`; null = built-in default. */
+    maxBytes: z.number().nullable(),
+    /** `logs.rotation.maxFiles`; null = built-in default. */
+    maxFiles: z.number().nullable(),
+  }),
+  /** `web.search_backend` — web_search backend; null = auto. */
+  webSearchBackend: z.enum(['exa', 'tavily', 'brave']).nullable(),
+  /** `web.extract_backend` — web_extract backend; null = auto. */
+  webExtractBackend: z.enum(['htmltext']).nullable(),
+  /** Context-compression summarizer model (`auxiliary.compression.*`). */
+  auxCompression: AuxModelGetSchema,
+  /** Vision fallback model (`auxiliary.vision.*`). */
+  auxVision: AuxModelGetSchema,
+  /** web_extract summarizer model (`auxiliary.web.*`). */
+  auxWeb: AuxModelGetSchema,
+  /** Agent-to-Agent surface gate (`a2a.enabled`); default false. */
+  a2aEnabled: z.boolean(),
+  /** Auto-install plugins from plugins.lock (`plugins.auto_install`); null = unset. */
+  pluginsAutoInstall: z.boolean().nullable(),
+  /** Public web UI URL, OAuth redirect base (`webBaseUrl`); null = localhost default. */
+  webBaseUrl: z.string().nullable(),
 });
 
+// For the Settings-page additions below, every scalar accepts `null` meaning
+// "delete the config.yaml key and fall back to the built-in default" —
+// `undefined`/omitted always means "leave unchanged". Record fields
+// (webhooks, quickCommands, channelToolsets, retention, personalityRetention)
+// are full replacements: entries absent from the provided record are removed.
 const ConfigUpdateInput = z.object({
   provider: z.string().optional(),
   model: z.string().optional(),
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   personality: z.string().optional(),
-  memory: z.enum(['markdown', 'vector']).optional(),
+  memory: z.enum(['markdown', 'vector', 'vault']).optional(),
   modelRouting: z.record(z.string(), z.string()).optional(),
   skin: z.string().optional(),
   providers: z
@@ -832,6 +1113,156 @@ const ConfigUpdateInput = z.object({
   voiceTtsVoice: z.string().optional(),
   voiceTtsBaseUrl: z.string().optional(),
   voiceTtsModel: z.string().optional(),
+  // -- Settings-page additions (see the null-clears note above) --------------
+  /** Azure-only REST API version (`apiVersion`). */
+  apiVersion: z.string().nullable().optional(),
+  /** Per-turn timing summary (`verbose`). */
+  verbose: z.boolean().nullable().optional(),
+  /** `display.verbosity` */
+  displayVerbosity: z.enum(['quiet', 'default', 'verbose', 'debug']).nullable().optional(),
+  /** `display.busy_input_mode` */
+  displayBusyInputMode: z.enum(['interrupt', 'queue', 'steer']).nullable().optional(),
+  /** `display.tool_preview_length` — integer >= 0 (0 = no truncation). */
+  displayToolPreviewLength: z.number().int().min(0).nullable().optional(),
+  /** `display.resume_hint` */
+  displayResumeHint: z.boolean().nullable().optional(),
+  /** `display.resume_recap_turns` — integer 0-10. */
+  displayResumeRecapTurns: z.number().int().min(0).max(10).nullable().optional(),
+  /** `display.bell_on_complete` */
+  displayBellOnComplete: z.boolean().nullable().optional(),
+  /** `compaction.*` thresholds. Per-field merge; null clears one key. */
+  compaction: z
+    .object({
+      /** `compaction.pressure` — fraction in (0,1]. */
+      pressure: z.number().gt(0).max(1).nullable().optional(),
+      /** `compaction.target` — fraction in (0,1]. */
+      target: z.number().gt(0).max(1).nullable().optional(),
+      /** `compaction.gateDelta` — integer >= 0. */
+      gateDelta: z.number().int().min(0).nullable().optional(),
+      /** `compaction.retryOnOverflow` */
+      retryOnOverflow: z.boolean().nullable().optional(),
+      /** `compaction.smallWindow` */
+      smallWindow: z.enum(['auto', 'on', 'off']).nullable().optional(),
+    })
+    .optional(),
+  /** `memoryVault.*`. Per-field merge; null / empty array clears one key. */
+  memoryVault: z
+    .object({
+      path: z.string().nullable().optional(),
+      agentDir: z.string().nullable().optional(),
+      prefetch: z.array(z.string()).nullable().optional(),
+      exclude: z.array(z.string()).nullable().optional(),
+    })
+    .optional(),
+  /** `memoryApproval.*`. Per-field merge; null clears one key. */
+  memoryApproval: z
+    .object({
+      mode: z.enum(['off', 'automated', 'all']).nullable().optional(),
+      /** Positive integer. */
+      cap: z.number().int().min(1).nullable().optional(),
+      /** Positive integer. */
+      ttlDays: z.number().int().min(1).nullable().optional(),
+    })
+    .optional(),
+  /** `memoryConsolidation.*` decay + flush tunables. Per-field merge. */
+  memoryConsolidation: z
+    .object({
+      halfLifeDays: z.number().gt(0).nullable().optional(),
+      threshold: z.number().min(0).max(1).nullable().optional(),
+      exemptUser: z.boolean().nullable().optional(),
+      /** Fraction in (0,1]. */
+      flushThreshold: z.number().gt(0).max(1).nullable().optional(),
+      timeboxMs: z.number().int().min(0).nullable().optional(),
+      maxTokens: z.number().int().min(0).nullable().optional(),
+      maxDeltaChars: z.number().int().min(0).nullable().optional(),
+      minMessagesSinceFlush: z.number().int().min(0).nullable().optional(),
+    })
+    .optional(),
+  /** `memoryCapture.*` aux wiring + rate caps. `apiKey` is write-only. */
+  memoryCapture: z
+    .object({
+      provider: z.string().nullable().optional(),
+      /** Write-only; never echoed back. Null deletes the stored key. */
+      apiKey: z.string().nullable().optional(),
+      baseUrl: z.string().nullable().optional(),
+      maxPerHour: z.number().int().min(1).nullable().optional(),
+      maxPerDay: z.number().int().min(1).nullable().optional(),
+    })
+    .optional(),
+  /** `background.<snake_case>` job-pool caps. Per-field merge. */
+  background: z
+    .object({
+      enabled: z.boolean().nullable().optional(),
+      maxConcurrentJobs: z.number().int().min(1).nullable().optional(),
+      maxJobsPerRoot: z.number().int().min(1).nullable().optional(),
+      maxJobsPerPersonality: z.number().int().min(1).nullable().optional(),
+      defaultMaxCostUsd: z.number().min(0).nullable().optional(),
+      maxRootBackgroundUsd: z.number().min(0).nullable().optional(),
+      queuedTtlMs: z.number().int().min(0).nullable().optional(),
+      staleMs: z.number().int().min(0).nullable().optional(),
+      heartbeatMs: z.number().int().min(0).nullable().optional(),
+      retentionDays: z.number().int().min(1).nullable().optional(),
+    })
+    .optional(),
+  /** Global retention TTLs — full replacement of all `retention.<subkey>` keys. */
+  retention: z.partialRecord(RetentionSubkeySchema, RetentionDurationSchema).optional(),
+  /** Per-personality retention — full replacement of `personalities.<id>.retention.*`. */
+  personalityRetention: z
+    .record(ConfigRecordKeySchema, z.partialRecord(RetentionSubkeySchema, RetentionDurationSchema))
+    .optional(),
+  /** Inbound webhooks — full replacement of `webhooks.*` (secrets preserved per hook). */
+  webhooks: z.record(ConfigRecordKeySchema, WebhookUpdateSchema).optional(),
+  /** Quick commands — full replacement of `quick_commands.*`. */
+  quickCommands: z.record(ConfigRecordKeySchema, QuickCommandUpdateSchema).optional(),
+  /** Channel toolsets — full replacement of `channel_toolsets.*`. */
+  channelToolsets: z.record(ConfigRecordKeySchema, z.array(z.string())).optional(),
+  /** `nightlyPass.*`. Per-field merge; null clears one key. */
+  nightlyPass: z
+    .object({
+      enabled: z.boolean().nullable().optional(),
+      cron: z.string().min(1).nullable().optional(),
+    })
+    .optional(),
+  /** `weeklyDigest.*`. Per-field merge; null / empty array clears one key. */
+  weeklyDigest: z
+    .object({
+      enabled: z.boolean().nullable().optional(),
+      cron: z.string().min(1).nullable().optional(),
+      recipients: z.array(z.string()).nullable().optional(),
+    })
+    .optional(),
+  /** `modelCatalog.*` scalars. Per-field merge; null clears one key. */
+  modelCatalog: z
+    .object({
+      enabled: z.boolean().nullable().optional(),
+      url: z.string().nullable().optional(),
+      ttlHours: z.number().gt(0).nullable().optional(),
+    })
+    .optional(),
+  /** `logs.rotation.*`. Per-field merge; null clears one key. */
+  logsRotation: z
+    .object({
+      enabled: z.boolean().nullable().optional(),
+      maxBytes: z.number().int().min(1).nullable().optional(),
+      maxFiles: z.number().int().min(1).nullable().optional(),
+    })
+    .optional(),
+  /** `web.search_backend` */
+  webSearchBackend: z.enum(['exa', 'tavily', 'brave']).nullable().optional(),
+  /** `web.extract_backend` */
+  webExtractBackend: z.enum(['htmltext']).nullable().optional(),
+  /** `auxiliary.compression.*` */
+  auxCompression: AuxModelUpdateSchema.optional(),
+  /** `auxiliary.vision.*` */
+  auxVision: AuxModelUpdateSchema.optional(),
+  /** `auxiliary.web.*` */
+  auxWeb: AuxModelUpdateSchema.optional(),
+  /** `a2a.enabled` */
+  a2aEnabled: z.boolean().nullable().optional(),
+  /** `plugins.auto_install` */
+  pluginsAutoInstall: z.boolean().nullable().optional(),
+  /** `webBaseUrl` */
+  webBaseUrl: z.string().nullable().optional(),
 });
 const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
 

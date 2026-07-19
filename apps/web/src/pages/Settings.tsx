@@ -10,6 +10,7 @@ import {
   Collapse,
   Form,
   Input,
+  InputNumber,
   Modal,
   Radio,
   Select,
@@ -23,6 +24,7 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { blobToBase64 } from '../components/chat/VoiceButton';
@@ -126,6 +128,186 @@ function rowsFromConfig(
 }
 
 // ---------------------------------------------------------------------------
+// Record editors (webhooks, quick commands, channel toolsets, retention) —
+// local row state hydrated from config.get like the provider chain, sent back
+// as FULL-REPLACEMENT records on Save: entries removed here are deleted from
+// config.yaml. Webhook secrets are write-only; omitting one keeps (or, for a
+// new hook, generates) the stored secret.
+// ---------------------------------------------------------------------------
+
+type ConfigUpdatePatch = Parameters<typeof rpc.config.update>[0];
+type ConfigGetData = Awaited<ReturnType<typeof rpc.config.get>>;
+type WebhookPatch = NonNullable<ConfigUpdatePatch['webhooks']>[string];
+type QuickCommandPatch = NonNullable<ConfigUpdatePatch['quickCommands']>[string];
+type RetentionSubkey = keyof ConfigGetData['retention'];
+
+/** Mirrors ConfigRecordKeySchema in @ethosagent/web-contracts. */
+const RECORD_KEY_RE = /^[A-Za-z0-9_-]+$/;
+/** Mirrors RetentionDurationSchema — 'forever' or <n> followed by d|w|m|y. */
+const RETENTION_DURATION_RE = /^(forever|\d+[dwmy])$/;
+
+const RETENTION_SUBKEYS: readonly RetentionSubkey[] = [
+  'messages',
+  'traces',
+  'spans',
+  'blobs',
+  'archive',
+  'events.error',
+  'events.audit',
+  'events.channel',
+  'events.install',
+];
+
+interface WebhookRow {
+  _id: number;
+  hookId: string;
+  personalityId: string;
+  /** New secret typed by the user; empty keeps the stored one. */
+  secret: string;
+  secretPreview: string;
+  sessionKey: string;
+  prefilter: string;
+  prefilterTimeoutSeconds: number | null;
+  mode: 'sync' | 'ack';
+}
+
+interface QuickCommandRow {
+  _id: number;
+  name: string;
+  type: 'exec' | 'reply';
+  command: string;
+  reply: string;
+  gateway: boolean;
+  channels: string[];
+}
+
+interface ChannelToolsetRow {
+  _id: number;
+  platform: string;
+  toolsets: string[];
+}
+
+interface RetentionRow {
+  _id: number;
+  /** '' = global `retention.<subkey>`; otherwise `personalities.<id>.retention.<subkey>`. */
+  personalityId: string;
+  subkey: RetentionSubkey;
+  duration: string;
+}
+
+function webhookRowsFromConfig(webhooks: ConfigGetData['webhooks']): WebhookRow[] {
+  return Object.entries(webhooks)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([hookId, h]) => ({
+      _id: nextRowId++,
+      hookId,
+      personalityId: h.personalityId,
+      secret: '',
+      secretPreview: h.secretPreview,
+      sessionKey: h.sessionKey ?? '',
+      prefilter: h.prefilter ?? '',
+      prefilterTimeoutSeconds: h.prefilterTimeoutSeconds,
+      mode: h.mode,
+    }));
+}
+
+function quickCommandRowsFromConfig(commands: ConfigGetData['quickCommands']): QuickCommandRow[] {
+  return Object.entries(commands)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, qc]) => ({
+      _id: nextRowId++,
+      name,
+      type: qc.type,
+      command: qc.type === 'exec' ? qc.command : '',
+      reply: qc.type === 'reply' ? qc.reply : '',
+      gateway: qc.gateway,
+      channels: qc.channels,
+    }));
+}
+
+function channelToolsetRowsFromConfig(map: ConfigGetData['channelToolsets']): ChannelToolsetRow[] {
+  return Object.entries(map)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([platform, toolsets]) => ({ _id: nextRowId++, platform, toolsets }));
+}
+
+function retentionRowsFromConfig(
+  retention: ConfigGetData['retention'],
+  personalityRetention: ConfigGetData['personalityRetention'],
+): RetentionRow[] {
+  const rows: RetentionRow[] = [];
+  for (const subkey of RETENTION_SUBKEYS) {
+    const duration = retention[subkey];
+    if (duration !== undefined)
+      rows.push({ _id: nextRowId++, personalityId: '', subkey, duration });
+  }
+  for (const [pid, map] of Object.entries(personalityRetention).sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    for (const subkey of RETENTION_SUBKEYS) {
+      const duration = map[subkey];
+      if (duration !== undefined) {
+        rows.push({ _id: nextRowId++, personalityId: pid, subkey, duration });
+      }
+    }
+  }
+  return rows;
+}
+
+/** '' / whitespace → null (clear-to-default for nullable config scalars). */
+function strOrNull(s: string): string | null {
+  const t = s.trim();
+  return t ? t : null;
+}
+
+interface AuxModelFormShape {
+  model: string;
+  provider: string;
+  /** New key typed by the user; empty keeps the stored one. */
+  apiKey: string;
+  baseUrl: string;
+}
+
+function auxFormFromConfig(aux: ConfigGetData['auxCompression']): AuxModelFormShape {
+  return {
+    model: aux.model ?? '',
+    provider: aux.provider ?? '',
+    apiKey: '',
+    baseUrl: aux.baseUrl ?? '',
+  };
+}
+
+function auxPatchFromForm(a: AuxModelFormShape): NonNullable<ConfigUpdatePatch['auxCompression']> {
+  return {
+    model: strOrNull(a.model),
+    provider: strOrNull(a.provider),
+    baseUrl: strOrNull(a.baseUrl),
+    ...(a.apiKey ? { apiKey: a.apiKey } : {}),
+  };
+}
+
+/** Same bordered-box style the provider-chain rows use. */
+const ROW_BOX_STYLE: CSSProperties = {
+  border: '1px solid var(--ethos-border, #d9d9d9)',
+  borderRadius: 6,
+  padding: 12,
+  marginBottom: 12,
+};
+
+function RowLabel({ children }: { children: ReactNode }) {
+  return (
+    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+      {children}
+    </Typography.Text>
+  );
+}
+
+interface PersonalityOption {
+  id: string;
+  name: string;
+}
+
+// ---------------------------------------------------------------------------
 // Inline test button for a single provider row
 // ---------------------------------------------------------------------------
 
@@ -190,7 +372,7 @@ function RowTestButton({
 
 interface FormShape {
   personality: string;
-  memory: 'markdown' | 'vector';
+  memory: 'markdown' | 'vector' | 'vault';
   skin: string;
   approvalMode: 'manual' | 'smart' | 'off';
   verbosity: 'concise' | 'balanced' | 'verbose';
@@ -221,6 +403,64 @@ interface FormShape {
   voiceTtsVoice: string;
   voiceTtsBaseUrl: string;
   voiceTtsModel: string;
+  // -- Settings-page additions (config.get/config.update passthrough keys) ----
+  displayVerbosity: 'quiet' | 'default' | 'verbose' | 'debug';
+  displayBusyInputMode: 'interrupt' | 'queue' | 'steer';
+  displayToolPreviewLength: number | null;
+  displayResumeHint: boolean;
+  displayResumeRecapTurns: number | null;
+  displayBellOnComplete: boolean;
+  compaction: {
+    pressure: number | null;
+    target: number | null;
+    gateDelta: number | null;
+    retryOnOverflow: boolean;
+    smallWindow: 'auto' | 'on' | 'off';
+  };
+  memoryVault: { path: string; agentDir: string; prefetch: string[]; exclude: string[] };
+  memoryApproval: { mode: 'off' | 'automated' | 'all'; cap: number | null; ttlDays: number | null };
+  memoryConsolidation: {
+    halfLifeDays: number | null;
+    threshold: number | null;
+    exemptUser: boolean;
+    flushThreshold: number | null;
+    timeboxMs: number | null;
+    maxTokens: number | null;
+    maxDeltaChars: number | null;
+    minMessagesSinceFlush: number | null;
+  };
+  memoryCapture: {
+    provider: string;
+    apiKey: string;
+    baseUrl: string;
+    maxPerHour: number | null;
+    maxPerDay: number | null;
+  };
+  background: {
+    enabled: boolean;
+    maxConcurrentJobs: number | null;
+    maxJobsPerRoot: number | null;
+    maxJobsPerPersonality: number | null;
+    defaultMaxCostUsd: number | null;
+    maxRootBackgroundUsd: number | null;
+    queuedTtlMs: number | null;
+    staleMs: number | null;
+    heartbeatMs: number | null;
+    retentionDays: number | null;
+  };
+  nightlyPass: { enabled: boolean; cron: string };
+  weeklyDigest: { enabled: boolean; cron: string; recipients: string[] };
+  modelCatalog: { enabled: boolean; url: string; ttlHours: number | null };
+  logsRotation: { enabled: boolean; maxBytes: number | null; maxFiles: number | null };
+  webSearchBackend: '' | 'exa' | 'tavily' | 'brave';
+  webExtractBackend: '' | 'htmltext';
+  auxCompression: AuxModelFormShape;
+  auxVision: AuxModelFormShape;
+  auxWeb: AuxModelFormShape;
+  apiVersion: string;
+  verbose: boolean;
+  pluginsAutoInstall: 'default' | 'on' | 'off';
+  webBaseUrl: string;
 }
 
 // Sensible defaults prefilled when a local (OpenAI-compatible) voice provider
@@ -462,6 +702,10 @@ export function Settings() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [form] = Form.useForm<FormShape>();
   const [providerRows, setProviderRows] = useState<ProviderRow[]>([emptyRow()]);
+  const [webhookRows, setWebhookRows] = useState<WebhookRow[]>([]);
+  const [quickCommandRows, setQuickCommandRows] = useState<QuickCommandRow[]>([]);
+  const [channelToolsetRows, setChannelToolsetRows] = useState<ChannelToolsetRow[]>([]);
+  const [retentionRows, setRetentionRows] = useState<RetentionRow[]>([]);
   const hydratedRef = useRef(false);
 
   const configQuery = useQuery({
@@ -510,6 +754,51 @@ export function Settings() {
         voiceTtsVoice: configQuery.data.voiceTtsVoice ?? '',
         voiceTtsBaseUrl: configQuery.data.voiceTtsBaseUrl ?? '',
         voiceTtsModel: configQuery.data.voiceTtsModel ?? '',
+        displayVerbosity: configQuery.data.displayVerbosity,
+        displayBusyInputMode: configQuery.data.displayBusyInputMode,
+        displayToolPreviewLength: configQuery.data.displayToolPreviewLength,
+        displayResumeHint: configQuery.data.displayResumeHint,
+        displayResumeRecapTurns: configQuery.data.displayResumeRecapTurns,
+        displayBellOnComplete: configQuery.data.displayBellOnComplete,
+        compaction: { ...configQuery.data.compaction },
+        memoryVault: {
+          path: configQuery.data.memoryVault.path ?? '',
+          agentDir: configQuery.data.memoryVault.agentDir ?? '',
+          prefetch: configQuery.data.memoryVault.prefetch,
+          exclude: configQuery.data.memoryVault.exclude,
+        },
+        memoryApproval: { ...configQuery.data.memoryApproval },
+        memoryConsolidation: { ...configQuery.data.memoryConsolidation },
+        memoryCapture: {
+          provider: configQuery.data.memoryCapture.provider ?? '',
+          apiKey: '',
+          baseUrl: configQuery.data.memoryCapture.baseUrl ?? '',
+          maxPerHour: configQuery.data.memoryCapture.maxPerHour,
+          maxPerDay: configQuery.data.memoryCapture.maxPerDay,
+        },
+        background: { ...configQuery.data.background },
+        nightlyPass: { ...configQuery.data.nightlyPass },
+        weeklyDigest: { ...configQuery.data.weeklyDigest },
+        modelCatalog: {
+          enabled: configQuery.data.modelCatalog.enabled,
+          url: configQuery.data.modelCatalog.url ?? '',
+          ttlHours: configQuery.data.modelCatalog.ttlHours,
+        },
+        logsRotation: { ...configQuery.data.logsRotation },
+        webSearchBackend: configQuery.data.webSearchBackend ?? '',
+        webExtractBackend: configQuery.data.webExtractBackend ?? '',
+        auxCompression: auxFormFromConfig(configQuery.data.auxCompression),
+        auxVision: auxFormFromConfig(configQuery.data.auxVision),
+        auxWeb: auxFormFromConfig(configQuery.data.auxWeb),
+        apiVersion: configQuery.data.apiVersion ?? '',
+        verbose: configQuery.data.verbose,
+        pluginsAutoInstall:
+          configQuery.data.pluginsAutoInstall === null
+            ? 'default'
+            : configQuery.data.pluginsAutoInstall
+              ? 'on'
+              : 'off',
+        webBaseUrl: configQuery.data.webBaseUrl ?? '',
       });
       // Only hydrate provider rows on first load or when data changes identity
       if (!hydratedRef.current) {
@@ -520,6 +809,15 @@ export function Settings() {
             configQuery.data.model,
             configQuery.data.apiKeyPreview,
             configQuery.data.baseUrl,
+          ),
+        );
+        setWebhookRows(webhookRowsFromConfig(configQuery.data.webhooks));
+        setQuickCommandRows(quickCommandRowsFromConfig(configQuery.data.quickCommands));
+        setChannelToolsetRows(channelToolsetRowsFromConfig(configQuery.data.channelToolsets));
+        setRetentionRows(
+          retentionRowsFromConfig(
+            configQuery.data.retention,
+            configQuery.data.personalityRetention,
           ),
         );
         hydratedRef.current = true;
@@ -582,11 +880,122 @@ export function Settings() {
 
   const personalities = personalitiesQuery.data?.items ?? [];
 
-  const onFinish = (values: FormShape) => {
+  const onFinish = () => {
+    // Advanced-gated fields unmount while "Show advanced" is off; the store
+    // still holds their hydrated values, so read the whole store rather than
+    // the registered-fields subset onFinish would hand us.
+    const values: FormShape = form.getFieldsValue(true);
     const primary = providerRows[0];
     if (!primary?.provider || !primary.model) {
       notification.error({ message: 'Primary provider and model are required.' });
       return;
+    }
+
+    // -- Record-editor validation (mirrors the contract's Zod bounds) --------
+    const fail = (message: string) => notification.error({ message });
+
+    const webhooks: Record<string, WebhookPatch> = {};
+    for (const row of webhookRows) {
+      const id = row.hookId.trim();
+      if (!RECORD_KEY_RE.test(id)) {
+        return fail(`Webhook id "${id}" must use only letters, digits, hyphens, or underscores.`);
+      }
+      if (webhooks[id]) return fail(`Duplicate webhook id "${id}".`);
+      if (!row.personalityId) return fail(`Webhook "${id}" needs a personality.`);
+      if (row.secret && row.secret.length < 8) {
+        return fail(`Webhook "${id}": secret must be at least 8 characters.`);
+      }
+      const prefilter = row.prefilter.trim();
+      if (row.prefilterTimeoutSeconds !== null && !prefilter) {
+        return fail(`Webhook "${id}": prefilter timeout requires a prefilter script.`);
+      }
+      webhooks[id] = {
+        personalityId: row.personalityId,
+        mode: row.mode,
+        ...(row.secret ? { secret: row.secret } : {}),
+        ...(row.sessionKey.trim() ? { sessionKey: row.sessionKey.trim() } : {}),
+        ...(prefilter ? { prefilter } : {}),
+        ...(prefilter && row.prefilterTimeoutSeconds !== null
+          ? { prefilterTimeoutSeconds: row.prefilterTimeoutSeconds }
+          : {}),
+      };
+    }
+
+    const quickCommands: Record<string, QuickCommandPatch> = {};
+    for (const row of quickCommandRows) {
+      const name = row.name.trim();
+      if (!RECORD_KEY_RE.test(name)) {
+        return fail(
+          `Quick command "${name}" must use only letters, digits, hyphens, or underscores.`,
+        );
+      }
+      if (quickCommands[name]) return fail(`Duplicate quick command "/${name}".`);
+      if (row.type === 'exec' && !row.command.trim()) {
+        return fail(`Quick command /${name} needs a shell command.`);
+      }
+      if (row.type === 'reply' && !row.reply.trim()) {
+        return fail(`Quick command /${name} needs a reply text.`);
+      }
+      quickCommands[name] =
+        row.type === 'exec'
+          ? {
+              type: 'exec',
+              command: row.command.trim(),
+              gateway: row.gateway,
+              channels: row.channels,
+            }
+          : {
+              type: 'reply',
+              reply: row.reply.trim(),
+              gateway: row.gateway,
+              channels: row.channels,
+            };
+    }
+
+    const channelToolsets: Record<string, string[]> = {};
+    for (const row of channelToolsetRows) {
+      const platform = row.platform.trim();
+      if (!RECORD_KEY_RE.test(platform)) {
+        return fail(
+          `Channel toolsets: platform "${platform}" must use only letters, digits, hyphens, or underscores.`,
+        );
+      }
+      if (channelToolsets[platform])
+        return fail(`Duplicate channel-toolset platform "${platform}".`);
+      if (row.toolsets.length === 0) {
+        return fail(
+          `Channel toolsets: "${platform}" needs at least one toolset (or remove the row).`,
+        );
+      }
+      channelToolsets[platform] = row.toolsets;
+    }
+
+    const retention: Partial<Record<RetentionSubkey, string>> = {};
+    const personalityRetention: Record<string, Partial<Record<RetentionSubkey, string>>> = {};
+    for (const row of retentionRows) {
+      const duration = row.duration.trim();
+      if (!RETENTION_DURATION_RE.test(duration)) {
+        return fail(
+          `Retention for "${row.subkey}": use "forever" or a number plus d/w/m/y (e.g. 90d).`,
+        );
+      }
+      if (row.personalityId) {
+        if (!RECORD_KEY_RE.test(row.personalityId)) {
+          return fail(
+            `Retention: personality id "${row.personalityId}" must use only letters, digits, hyphens, or underscores.`,
+          );
+        }
+        const map = personalityRetention[row.personalityId] ?? {};
+        if (map[row.subkey]) {
+          return fail(`Duplicate retention rule for ${row.personalityId} / ${row.subkey}.`);
+        }
+        map[row.subkey] = duration;
+        personalityRetention[row.personalityId] = map;
+      } else {
+        if (retention[row.subkey])
+          return fail(`Duplicate global retention rule for ${row.subkey}.`);
+        retention[row.subkey] = duration;
+      }
     }
 
     // Build the providers array for the update
@@ -661,6 +1070,102 @@ export function Settings() {
         ),
       ),
       providers,
+      // -- Settings-page additions ------------------------------------------
+      // Scalars: null clears the config.yaml key back to its built-in default.
+      // Records (webhooks, quickCommands, channelToolsets, retention,
+      // personalityRetention) are full replacements. Secrets are write-only —
+      // included only when the user typed a fresh value.
+      displayVerbosity: values.displayVerbosity,
+      displayBusyInputMode: values.displayBusyInputMode,
+      displayToolPreviewLength: values.displayToolPreviewLength ?? null,
+      displayResumeHint: values.displayResumeHint,
+      displayResumeRecapTurns: values.displayResumeRecapTurns ?? null,
+      displayBellOnComplete: values.displayBellOnComplete,
+      compaction: {
+        pressure: values.compaction.pressure ?? null,
+        target: values.compaction.target ?? null,
+        gateDelta: values.compaction.gateDelta ?? null,
+        retryOnOverflow: values.compaction.retryOnOverflow,
+        smallWindow: values.compaction.smallWindow,
+      },
+      ...(values.memory === 'vault'
+        ? {
+            memoryVault: {
+              path: strOrNull(values.memoryVault.path),
+              agentDir: strOrNull(values.memoryVault.agentDir),
+              prefetch: values.memoryVault.prefetch,
+              exclude: values.memoryVault.exclude,
+            },
+          }
+        : {}),
+      memoryApproval: {
+        mode: values.memoryApproval.mode,
+        cap: values.memoryApproval.cap ?? null,
+        ttlDays: values.memoryApproval.ttlDays ?? null,
+      },
+      memoryConsolidation: {
+        halfLifeDays: values.memoryConsolidation.halfLifeDays ?? null,
+        threshold: values.memoryConsolidation.threshold ?? null,
+        exemptUser: values.memoryConsolidation.exemptUser,
+        flushThreshold: values.memoryConsolidation.flushThreshold ?? null,
+        timeboxMs: values.memoryConsolidation.timeboxMs ?? null,
+        maxTokens: values.memoryConsolidation.maxTokens ?? null,
+        maxDeltaChars: values.memoryConsolidation.maxDeltaChars ?? null,
+        minMessagesSinceFlush: values.memoryConsolidation.minMessagesSinceFlush ?? null,
+      },
+      memoryCapture: {
+        provider: strOrNull(values.memoryCapture.provider),
+        baseUrl: strOrNull(values.memoryCapture.baseUrl),
+        maxPerHour: values.memoryCapture.maxPerHour ?? null,
+        maxPerDay: values.memoryCapture.maxPerDay ?? null,
+        ...(values.memoryCapture.apiKey ? { apiKey: values.memoryCapture.apiKey } : {}),
+      },
+      background: {
+        enabled: values.background.enabled,
+        maxConcurrentJobs: values.background.maxConcurrentJobs ?? null,
+        maxJobsPerRoot: values.background.maxJobsPerRoot ?? null,
+        maxJobsPerPersonality: values.background.maxJobsPerPersonality ?? null,
+        defaultMaxCostUsd: values.background.defaultMaxCostUsd ?? null,
+        maxRootBackgroundUsd: values.background.maxRootBackgroundUsd ?? null,
+        queuedTtlMs: values.background.queuedTtlMs ?? null,
+        staleMs: values.background.staleMs ?? null,
+        heartbeatMs: values.background.heartbeatMs ?? null,
+        retentionDays: values.background.retentionDays ?? null,
+      },
+      nightlyPass: {
+        enabled: values.nightlyPass.enabled,
+        cron: strOrNull(values.nightlyPass.cron),
+      },
+      weeklyDigest: {
+        enabled: values.weeklyDigest.enabled,
+        cron: strOrNull(values.weeklyDigest.cron),
+        recipients: values.weeklyDigest.recipients,
+      },
+      modelCatalog: {
+        enabled: values.modelCatalog.enabled,
+        url: strOrNull(values.modelCatalog.url),
+        ttlHours: values.modelCatalog.ttlHours ?? null,
+      },
+      logsRotation: {
+        enabled: values.logsRotation.enabled,
+        maxBytes: values.logsRotation.maxBytes ?? null,
+        maxFiles: values.logsRotation.maxFiles ?? null,
+      },
+      webSearchBackend: values.webSearchBackend === '' ? null : values.webSearchBackend,
+      webExtractBackend: values.webExtractBackend === '' ? null : values.webExtractBackend,
+      auxCompression: auxPatchFromForm(values.auxCompression),
+      auxVision: auxPatchFromForm(values.auxVision),
+      auxWeb: auxPatchFromForm(values.auxWeb),
+      apiVersion: strOrNull(values.apiVersion),
+      verbose: values.verbose,
+      pluginsAutoInstall:
+        values.pluginsAutoInstall === 'default' ? null : values.pluginsAutoInstall === 'on',
+      webBaseUrl: strOrNull(values.webBaseUrl),
+      retention,
+      personalityRetention,
+      webhooks,
+      quickCommands,
+      channelToolsets,
     };
     if (primary.apiKey) patch.apiKey = primary.apiKey;
     if (primary.baseUrl !== undefined) patch.baseUrl = primary.baseUrl;
@@ -839,13 +1344,112 @@ export function Settings() {
           <Form.Item
             label="Memory mode"
             name="memory"
-            extra="Markdown is human-editable in ~/.ethos/MEMORY.md. Vector uses local embeddings."
+            extra="Markdown is human-editable in ~/.ethos/MEMORY.md. Vector uses local embeddings. Vault targets an external directory (memoryVault.path)."
           >
             <Radio.Group>
               <Radio.Button value="markdown">Markdown</Radio.Button>
               <Radio.Button value="vector">Vector</Radio.Button>
+              <Radio.Button value="vault">Vault</Radio.Button>
             </Radio.Group>
           </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.memory !== cur.memory}>
+            {({ getFieldValue }) =>
+              getFieldValue('memory') === 'vault' ? (
+                <>
+                  <Form.Item
+                    label="Vault path"
+                    name={['memoryVault', 'path']}
+                    rules={[{ required: true, message: 'Vault path is required for vault memory' }]}
+                    extra="Absolute path of the vault directory the agent reads and writes (memoryVault.path)."
+                  >
+                    <Input placeholder="/Users/you/Documents/MyVault" />
+                  </Form.Item>
+                  <Form.Item
+                    label="Agent directory"
+                    name={['memoryVault', 'agentDir']}
+                    extra="Subtree inside the vault the agent owns (memoryVault.agentDir). Blank = Ethos."
+                  >
+                    <Input placeholder="Ethos" />
+                  </Form.Item>
+                  <Form.Item
+                    label="Prefetch notes"
+                    name={['memoryVault', 'prefetch']}
+                    extra="Note names loaded into every prompt (memoryVault.prefetch). Press Enter after each name."
+                  >
+                    <Select
+                      mode="tags"
+                      open={false}
+                      suffixIcon={null}
+                      tokenSeparators={[',']}
+                      placeholder="MEMORY, USER"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label="Excluded notes"
+                    name={['memoryVault', 'exclude']}
+                    extra="Note names hidden from list and search (memoryVault.exclude)."
+                  >
+                    <Select
+                      mode="tags"
+                      open={false}
+                      suffixIcon={null}
+                      tokenSeparators={[',']}
+                      placeholder="Private, Journal"
+                    />
+                  </Form.Item>
+                </>
+              ) : null
+            }
+          </Form.Item>
+
+          <Form.Item
+            label="Memory approval"
+            name={['memoryApproval', 'mode']}
+            extra="Approve-before-store gate for new memories (memoryApproval.mode)."
+          >
+            <Radio.Group>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <Radio value="off">
+                  <span style={{ fontWeight: 500 }}>Off</span>
+                  <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--ethos-text-dim)' }}>
+                    Memories are stored immediately.
+                  </span>
+                </Radio>
+                <Radio value="automated">
+                  <span style={{ fontWeight: 500 }}>Automated</span>
+                  <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--ethos-text-dim)' }}>
+                    Agent-initiated writes wait for your review; explicit asks store directly.
+                  </span>
+                </Radio>
+                <Radio value="all">
+                  <span style={{ fontWeight: 500 }}>All</span>
+                  <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--ethos-text-dim)' }}>
+                    Every memory write waits for your review.
+                  </span>
+                </Radio>
+              </div>
+            </Radio.Group>
+          </Form.Item>
+
+          {showAdvanced && (
+            <>
+              <Form.Item
+                label="Pending queue cap"
+                name={['memoryApproval', 'cap']}
+                extra="Max pending candidates per scope (memoryApproval.cap, default 200)."
+              >
+                <InputNumber min={1} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Pending TTL (days)"
+                name={['memoryApproval', 'ttlDays']}
+                extra="Days before an unreviewed candidate expires (memoryApproval.ttlDays, default 30)."
+              >
+                <InputNumber min={1} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </>
+          )}
 
           <Form.Item
             label="Consolidate memory between turns"
@@ -855,6 +1459,68 @@ export function Settings() {
           >
             <Switch />
           </Form.Item>
+
+          {showAdvanced && (
+            <>
+              <Form.Item
+                label="Flush threshold"
+                name={['memoryConsolidation', 'flushThreshold']}
+                extra="Context-window fraction that triggers the silent flush (memoryConsolidation.flushThreshold, default 0.7)."
+              >
+                <InputNumber min={0.01} max={1} step={0.05} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Flush timebox (ms)"
+                name={['memoryConsolidation', 'timeboxMs']}
+                extra="Max time the flush turn may run (memoryConsolidation.timeboxMs, default 30000)."
+              >
+                <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Flush token cap"
+                name={['memoryConsolidation', 'maxTokens']}
+                extra="Token budget for the flush turn (memoryConsolidation.maxTokens, default 1024)."
+              >
+                <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Max characters per flush"
+                name={['memoryConsolidation', 'maxDeltaChars']}
+                extra="Most characters one flush may write (memoryConsolidation.maxDeltaChars, default 4000)."
+              >
+                <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Messages between flushes"
+                name={['memoryConsolidation', 'minMessagesSinceFlush']}
+                extra="Minimum messages before another flush may run (memoryConsolidation.minMessagesSinceFlush, default 8)."
+              >
+                <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Decay half-life (days)"
+                name={['memoryConsolidation', 'halfLifeDays']}
+                extra="Recency half-life for memory decay (memoryConsolidation.halfLifeDays, default 30)."
+              >
+                <InputNumber min={0.1} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Decay archive threshold"
+                name={['memoryConsolidation', 'threshold']}
+                extra="Entries weighted below this get archived (memoryConsolidation.threshold, default 0.05)."
+              >
+                <InputNumber min={0} max={1} step={0.01} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Exempt USER.md from decay"
+                name={['memoryConsolidation', 'exemptUser']}
+                valuePropName="checked"
+                extra="Keep the persistent user profile out of decay (memoryConsolidation.exemptUser, default on)."
+              >
+                <Switch />
+              </Form.Item>
+            </>
+          )}
 
           <Form.Item
             label="Capture facts proactively"
@@ -871,13 +1537,63 @@ export function Settings() {
           >
             {({ getFieldValue }) =>
               getFieldValue('memoryCaptureEnabled') ? (
-                <Form.Item
-                  label="Capture model"
-                  name="memoryCaptureModel"
-                  extra="Cheap model that extracts the fact. Leave blank to reuse the cheapest configured model."
-                >
-                  <Input placeholder="claude-haiku-4-5-20251001" />
-                </Form.Item>
+                <>
+                  <Form.Item
+                    label="Capture model"
+                    name="memoryCaptureModel"
+                    extra="Cheap model that extracts the fact. Leave blank to reuse the cheapest configured model."
+                  >
+                    <Input placeholder="claude-haiku-4-5-20251001" />
+                  </Form.Item>
+                  <Form.Item
+                    label="Captures per hour"
+                    name={['memoryCapture', 'maxPerHour']}
+                    extra="Hourly capture cap per memory scope (memoryCapture.maxPerHour, default 6)."
+                  >
+                    <InputNumber min={1} precision={0} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item
+                    label="Captures per day"
+                    name={['memoryCapture', 'maxPerDay']}
+                    extra="Daily capture cap per memory scope (memoryCapture.maxPerDay, default 30)."
+                  >
+                    <InputNumber min={1} precision={0} style={{ width: '100%' }} />
+                  </Form.Item>
+                  {showAdvanced && (
+                    <>
+                      <Form.Item
+                        label="Capture provider"
+                        name={['memoryCapture', 'provider']}
+                        extra="Auxiliary provider for capture extraction (memoryCapture.provider). Blank = primary provider."
+                      >
+                        <Input placeholder="openrouter" />
+                      </Form.Item>
+                      <Form.Item
+                        label="Capture API key"
+                        name={['memoryCapture', 'apiKey']}
+                        extra={
+                          configQuery.data?.memoryCapture.apiKeyPreview
+                            ? `Current: ${configQuery.data.memoryCapture.apiKeyPreview} — sent only when you type a new key (memoryCapture.apiKey).`
+                            : 'Sent only when you type a key (memoryCapture.apiKey). Blank = primary key.'
+                        }
+                      >
+                        <Input.Password
+                          autoComplete="off"
+                          placeholder={
+                            configQuery.data?.memoryCapture.apiKeyPreview ?? 'paste new key'
+                          }
+                        />
+                      </Form.Item>
+                      <Form.Item
+                        label="Capture base URL"
+                        name={['memoryCapture', 'baseUrl']}
+                        extra="Endpoint for the capture model (memoryCapture.baseUrl). Blank = primary base URL."
+                      >
+                        <Input placeholder="https://openrouter.ai/api/v1" />
+                      </Form.Item>
+                    </>
+                  )}
+                </>
               ) : null
             }
           </Form.Item>
@@ -947,6 +1663,70 @@ export function Settings() {
               ]}
             />
           </Form.Item>
+
+          <Form.Item
+            label="Surface verbosity"
+            name="displayVerbosity"
+            extra="How much tool and status detail chat surfaces render (display.verbosity)."
+          >
+            <Select
+              options={[
+                { value: 'quiet', label: 'Quiet' },
+                { value: 'default', label: 'Default' },
+                { value: 'verbose', label: 'Verbose' },
+                { value: 'debug', label: 'Debug' },
+              ]}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Enter while busy"
+            name="displayBusyInputMode"
+            extra="What pressing Enter mid-turn does (display.busy_input_mode)."
+          >
+            <Select
+              options={[
+                { value: 'interrupt', label: 'Interrupt the turn' },
+                { value: 'queue', label: 'Queue for the next turn' },
+                { value: 'steer', label: 'Steer the current turn' },
+              ]}
+            />
+          </Form.Item>
+
+          {showAdvanced && (
+            <>
+              <Form.Item
+                label="Tool preview length"
+                name="displayToolPreviewLength"
+                extra="Truncate tool arguments in the feed to this many characters; 0 = no truncation (display.tool_preview_length)."
+              >
+                <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Resume hint"
+                name="displayResumeHint"
+                valuePropName="checked"
+                extra="Show the resume hint when leaving CLI chat (display.resume_hint, default on)."
+              >
+                <Switch />
+              </Form.Item>
+              <Form.Item
+                label="Resume recap turns"
+                name="displayResumeRecapTurns"
+                extra="Turn pairs recapped when resuming a session; 0 disables (display.resume_recap_turns, default 3)."
+              >
+                <InputNumber min={0} max={10} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Bell on completion"
+                name="displayBellOnComplete"
+                valuePropName="checked"
+                extra="Ring the terminal bell when a background task finishes (display.bell_on_complete, default off)."
+              >
+                <Switch />
+              </Form.Item>
+            </>
+          )}
         </Card>
 
         <Card title="Context" size="small" style={{ marginBottom: 16 }}>
@@ -966,6 +1746,65 @@ export function Settings() {
           >
             <Switch />
           </Form.Item>
+
+          {showAdvanced && (
+            <>
+              <Form.Item
+                label="Compaction pressure"
+                name={['compaction', 'pressure']}
+                extra="Context-window fraction that triggers compaction (compaction.pressure, default 0.8). Blank = default."
+              >
+                <InputNumber
+                  min={0.01}
+                  max={1}
+                  step={0.05}
+                  style={{ width: '100%' }}
+                  placeholder="0.8"
+                />
+              </Form.Item>
+              <Form.Item
+                label="Compaction target"
+                name={['compaction', 'target']}
+                extra="Fraction the session is shrunk down to (compaction.target, default 0.7). Blank = default."
+              >
+                <InputNumber
+                  min={0.01}
+                  max={1}
+                  step={0.05}
+                  style={{ width: '100%' }}
+                  placeholder="0.7"
+                />
+              </Form.Item>
+              <Form.Item
+                label="Gate delta (tokens)"
+                name={['compaction', 'gateDelta']}
+                extra="Extra token headroom before the compaction gate fires (compaction.gateDelta). Blank = unset."
+              >
+                <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="Retry on overflow"
+                name={['compaction', 'retryOnOverflow']}
+                valuePropName="checked"
+                extra="Compact and retry once when a request overflows the window (compaction.retryOnOverflow, default on)."
+              >
+                <Switch />
+              </Form.Item>
+              <Form.Item
+                label="Small-window mode"
+                name={['compaction', 'smallWindow']}
+                extra="Force small-window handling for local models (compaction.smallWindow, default auto)."
+              >
+                <Select
+                  options={[
+                    { value: 'auto', label: 'Auto' },
+                    { value: 'on', label: 'On' },
+                    { value: 'off', label: 'Off' },
+                  ]}
+                />
+              </Form.Item>
+            </>
+          )}
         </Card>
 
         <Card title="Developer" size="small" style={{ marginBottom: 16 }}>
@@ -1221,6 +2060,15 @@ export function Settings() {
           </Form.Item>
         </Card>
 
+        <WebhooksCard rows={webhookRows} setRows={setWebhookRows} personalities={personalities} />
+
+        <AutomationCard
+          qcRows={quickCommandRows}
+          setQcRows={setQuickCommandRows}
+          ctRows={channelToolsetRows}
+          setCtRows={setChannelToolsetRows}
+        />
+
         {showAdvanced ? (
           <Card title="Model routing" size="small" style={{ marginBottom: 16 }}>
             <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
@@ -1230,6 +2078,28 @@ export function Settings() {
             <ModelRoutingView routing={configQuery.data?.modelRouting ?? {}} />
           </Card>
         ) : null}
+
+        {showAdvanced && <BackgroundJobsCard />}
+
+        {showAdvanced && (
+          <RetentionCard
+            rows={retentionRows}
+            setRows={setRetentionRows}
+            personalities={personalities}
+          />
+        )}
+
+        {showAdvanced && (
+          <ModelsBackendsCard
+            auxPreviews={{
+              compression: configQuery.data?.auxCompression.apiKeyPreview ?? null,
+              vision: configQuery.data?.auxVision.apiKeyPreview ?? null,
+              web: configQuery.data?.auxWeb.apiKeyPreview ?? null,
+            }}
+          />
+        )}
+
+        {showAdvanced && <AdvancedMiscCard />}
 
         {showAdvanced && (
           <Card title="Admin" size="small" style={{ marginBottom: 16 }}>
@@ -1274,6 +2144,795 @@ export function Settings() {
 
       {isDesktop ? <DesktopSettings /> : null}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Webhooks — full-replacement record editor for `webhooks.<hookId>.*`.
+// Rows are plain local state (like the provider chain); the page Save button
+// submits them with the rest of the form.
+// ---------------------------------------------------------------------------
+
+function WebhooksCard({
+  rows,
+  setRows,
+  personalities,
+}: {
+  rows: WebhookRow[];
+  setRows: Dispatch<SetStateAction<WebhookRow[]>>;
+  personalities: PersonalityOption[];
+}) {
+  const update = (index: number, patch: Partial<WebhookRow>) =>
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  const remove = (index: number) => setRows((prev) => prev.filter((_, i) => i !== index));
+  const add = () =>
+    setRows((prev) => [
+      ...prev,
+      {
+        _id: nextRowId++,
+        hookId: '',
+        personalityId: '',
+        secret: '',
+        secretPreview: '',
+        sessionKey: '',
+        prefilter: '',
+        prefilterTimeoutSeconds: null,
+        mode: 'sync',
+      },
+    ]);
+
+  return (
+    <Card title="Webhooks" size="small" style={{ marginBottom: 16 }}>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        Inbound HTTP triggers (webhooks.&lt;id&gt; in config.yaml). A POST to the hook URL with the
+        bearer secret runs a turn as the chosen personality. Saving replaces the whole set — removed
+        hooks are deleted.
+      </Typography.Paragraph>
+      {rows.map((row, idx) => (
+        <div key={row._id} style={ROW_BOX_STYLE}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 8,
+            }}
+          >
+            <Typography.Text style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}>
+              /webhook/{row.hookId || '<id>'}
+            </Typography.Text>
+            <Button size="small" danger onClick={() => remove(idx)}>
+              Remove
+            </Button>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <RowLabel>Hook id</RowLabel>
+              <Input
+                size="small"
+                placeholder="github_ci"
+                value={row.hookId}
+                onChange={(e) => update(idx, { hookId: e.target.value })}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <RowLabel>Personality</RowLabel>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                placeholder="Select…"
+                value={row.personalityId || undefined}
+                onChange={(v: string) => update(idx, { personalityId: v })}
+                options={personalities.map((p) => ({ label: p.name, value: p.id }))}
+                showSearch
+                optionFilterProp="label"
+              />
+            </div>
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <RowLabel>Secret</RowLabel>
+            <Input.Password
+              size="small"
+              autoComplete="off"
+              placeholder={row.secretPreview || 'generated on save'}
+              value={row.secret}
+              onChange={(e) => update(idx, { secret: e.target.value })}
+            />
+            {row.secretPreview && !row.secret ? (
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                Active: {row.secretPreview} — leave blank to keep it.
+              </Typography.Text>
+            ) : (
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                {row.secret
+                  ? 'At least 8 characters.'
+                  : 'Leave blank and the server generates one on save.'}
+              </Typography.Text>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <RowLabel>Session key (optional)</RowLabel>
+              <Input
+                size="small"
+                placeholder="webhook:github"
+                value={row.sessionKey}
+                onChange={(e) => update(idx, { sessionKey: e.target.value })}
+              />
+            </div>
+            <div style={{ width: 180 }}>
+              <RowLabel>Mode</RowLabel>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                value={row.mode}
+                onChange={(v: 'sync' | 'ack') => update(idx, { mode: v })}
+                options={[
+                  { value: 'sync', label: 'sync — wait for reply' },
+                  { value: 'ack', label: 'ack — 202 instantly' },
+                ]}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <RowLabel>Prefilter script (optional, under ~/.ethos/scripts/)</RowLabel>
+              <Input
+                size="small"
+                placeholder="filter.sh"
+                value={row.prefilter}
+                onChange={(e) => update(idx, { prefilter: e.target.value })}
+              />
+            </div>
+            <div style={{ width: 180 }}>
+              <RowLabel>Prefilter timeout (s)</RowLabel>
+              <InputNumber
+                size="small"
+                style={{ width: '100%' }}
+                min={1}
+                max={600}
+                precision={0}
+                value={row.prefilterTimeoutSeconds}
+                onChange={(v) => update(idx, { prefilterTimeoutSeconds: v ?? null })}
+                disabled={!row.prefilter.trim()}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+      <Button type="dashed" size="small" onClick={add} style={{ width: '100%' }}>
+        Add webhook
+      </Button>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Automation — quick commands + channel toolsets (full-replacement records)
+// plus the nightly-pass / weekly-digest schedule fields.
+// ---------------------------------------------------------------------------
+
+function AutomationCard({
+  qcRows,
+  setQcRows,
+  ctRows,
+  setCtRows,
+}: {
+  qcRows: QuickCommandRow[];
+  setQcRows: Dispatch<SetStateAction<QuickCommandRow[]>>;
+  ctRows: ChannelToolsetRow[];
+  setCtRows: Dispatch<SetStateAction<ChannelToolsetRow[]>>;
+}) {
+  const updateQc = (index: number, patch: Partial<QuickCommandRow>) =>
+    setQcRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  const removeQc = (index: number) => setQcRows((prev) => prev.filter((_, i) => i !== index));
+  const addQc = () =>
+    setQcRows((prev) => [
+      ...prev,
+      {
+        _id: nextRowId++,
+        name: '',
+        type: 'reply',
+        command: '',
+        reply: '',
+        gateway: false,
+        channels: [],
+      },
+    ]);
+
+  const updateCt = (index: number, patch: Partial<ChannelToolsetRow>) =>
+    setCtRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  const removeCt = (index: number) => setCtRows((prev) => prev.filter((_, i) => i !== index));
+  const addCt = () =>
+    setCtRows((prev) => [...prev, { _id: nextRowId++, platform: '', toolsets: [] }]);
+
+  return (
+    <Card title="Automation" size="small" style={{ marginBottom: 16 }}>
+      <Typography.Text strong style={{ fontSize: 13 }}>
+        Quick commands
+      </Typography.Text>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 4 }}>
+        Deterministic /name shortcuts (quick_commands.&lt;name&gt;) answered without the LLM — a
+        canned reply or an operator-authored shell command. Saving replaces the whole set.
+      </Typography.Paragraph>
+      {qcRows.map((row, idx) => (
+        <div key={row._id} style={ROW_BOX_STYLE}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 8,
+            }}
+          >
+            <Typography.Text style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}>
+              /{row.name || '<name>'}
+            </Typography.Text>
+            <Button size="small" danger onClick={() => removeQc(idx)}>
+              Remove
+            </Button>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <RowLabel>Name</RowLabel>
+              <Input
+                size="small"
+                prefix="/"
+                placeholder="status"
+                value={row.name}
+                onChange={(e) => updateQc(idx, { name: e.target.value })}
+              />
+            </div>
+            <div style={{ width: 180 }}>
+              <RowLabel>Type</RowLabel>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                value={row.type}
+                onChange={(v: 'exec' | 'reply') => updateQc(idx, { type: v })}
+                options={[
+                  { value: 'reply', label: 'reply — canned text' },
+                  { value: 'exec', label: 'exec — shell command' },
+                ]}
+              />
+            </div>
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            {row.type === 'exec' ? (
+              <>
+                <RowLabel>
+                  Shell command (runs verbatim — channel text is never interpolated)
+                </RowLabel>
+                <Input
+                  size="small"
+                  style={{ fontFamily: 'Geist Mono, monospace' }}
+                  placeholder="uptime"
+                  value={row.command}
+                  onChange={(e) => updateQc(idx, { command: e.target.value })}
+                />
+              </>
+            ) : (
+              <>
+                <RowLabel>Reply text</RowLabel>
+                <Input
+                  size="small"
+                  placeholder="All systems nominal."
+                  value={row.reply}
+                  onChange={(e) => updateQc(idx, { reply: e.target.value })}
+                />
+              </>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <div>
+              <Checkbox
+                checked={row.gateway}
+                onChange={(e) => updateQc(idx, { gateway: e.target.checked })}
+              >
+                <span style={{ fontSize: 12 }}>Expose on channels</span>
+              </Checkbox>
+            </div>
+            <div style={{ flex: 1 }}>
+              <RowLabel>Limit to platforms (blank = all)</RowLabel>
+              <Select
+                size="small"
+                mode="tags"
+                open={false}
+                suffixIcon={null}
+                tokenSeparators={[',']}
+                style={{ width: '100%' }}
+                placeholder="telegram, slack"
+                value={row.channels}
+                onChange={(v: string[]) => updateQc(idx, { channels: v })}
+                disabled={!row.gateway}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+      <Button
+        type="dashed"
+        size="small"
+        onClick={addQc}
+        style={{ width: '100%', marginBottom: 16 }}
+      >
+        Add quick command
+      </Button>
+
+      <Typography.Text strong style={{ fontSize: 13 }}>
+        Channel toolsets
+      </Typography.Text>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 4 }}>
+        Per-platform toolset narrowing (channel_toolsets.&lt;platform&gt;). Messages from that
+        platform see only the listed toolsets. Saving replaces the whole set.
+      </Typography.Paragraph>
+      {ctRows.map((row, idx) => (
+        <div
+          key={row._id}
+          style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-end' }}
+        >
+          <div style={{ width: 160 }}>
+            <RowLabel>Platform</RowLabel>
+            <Input
+              size="small"
+              placeholder="telegram"
+              value={row.platform}
+              onChange={(e) => updateCt(idx, { platform: e.target.value })}
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <RowLabel>Toolsets</RowLabel>
+            <Select
+              size="small"
+              mode="tags"
+              open={false}
+              suffixIcon={null}
+              tokenSeparators={[',']}
+              style={{ width: '100%' }}
+              placeholder="memory, web"
+              value={row.toolsets}
+              onChange={(v: string[]) => updateCt(idx, { toolsets: v })}
+            />
+          </div>
+          <Button size="small" danger onClick={() => removeCt(idx)}>
+            Remove
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="dashed"
+        size="small"
+        onClick={addCt}
+        style={{ width: '100%', marginBottom: 16 }}
+      >
+        Add platform
+      </Button>
+
+      <Form.Item
+        label="Nightly learning pass"
+        name={['nightlyPass', 'enabled']}
+        valuePropName="checked"
+        extra="Governed-learning pass that runs overnight (nightlyPass.enabled, default off)."
+      >
+        <Switch />
+      </Form.Item>
+      <Form.Item
+        noStyle
+        shouldUpdate={(prev, cur) => prev.nightlyPass?.enabled !== cur.nightlyPass?.enabled}
+      >
+        {({ getFieldValue }) =>
+          getFieldValue(['nightlyPass', 'enabled']) ? (
+            <Form.Item
+              label="Nightly pass schedule"
+              name={['nightlyPass', 'cron']}
+              extra="5-field cron (nightlyPass.cron). Blank = 0 3 * * *."
+            >
+              <Input style={{ fontFamily: 'Geist Mono, monospace' }} placeholder="0 3 * * *" />
+            </Form.Item>
+          ) : null
+        }
+      </Form.Item>
+
+      <Form.Item
+        label="Weekly digest"
+        name={['weeklyDigest', 'enabled']}
+        valuePropName="checked"
+        extra="Weekly governed-learning digest (weeklyDigest.enabled, default off)."
+      >
+        <Switch />
+      </Form.Item>
+      <Form.Item
+        noStyle
+        shouldUpdate={(prev, cur) => prev.weeklyDigest?.enabled !== cur.weeklyDigest?.enabled}
+      >
+        {({ getFieldValue }) =>
+          getFieldValue(['weeklyDigest', 'enabled']) ? (
+            <>
+              <Form.Item
+                label="Digest schedule"
+                name={['weeklyDigest', 'cron']}
+                extra="5-field cron (weeklyDigest.cron). Blank = 0 9 * * 1."
+              >
+                <Input style={{ fontFamily: 'Geist Mono, monospace' }} placeholder="0 9 * * 1" />
+              </Form.Item>
+              <Form.Item
+                label="Digest recipients"
+                name={['weeklyDigest', 'recipients']}
+                extra="Email allowlist for --email delivery (weeklyDigest.recipients). Press Enter after each address."
+              >
+                <Select
+                  mode="tags"
+                  open={false}
+                  suffixIcon={null}
+                  tokenSeparators={[',']}
+                  placeholder="you@example.com"
+                />
+              </Form.Item>
+            </>
+          ) : null
+        }
+      </Form.Item>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Background jobs (advanced) — the `background.*` sub-agent pool caps.
+// ---------------------------------------------------------------------------
+
+function BackgroundJobsCard() {
+  const numberField = (
+    name: keyof FormShape['background'],
+    label: string,
+    extra: string,
+    opts: { min: number; integer?: boolean } = { min: 0, integer: true },
+  ) => (
+    <Form.Item label={label} name={['background', name]} extra={extra}>
+      <InputNumber
+        min={opts.min}
+        {...(opts.integer === false ? {} : { precision: 0 })}
+        style={{ width: '100%' }}
+      />
+    </Form.Item>
+  );
+
+  return (
+    <Card title="Background jobs" size="small" style={{ marginBottom: 16 }}>
+      <Form.Item
+        label="Enable background sub-agents"
+        name={['background', 'enabled']}
+        valuePropName="checked"
+        extra="Allow spawning background jobs (background.enabled, default off)."
+      >
+        <Switch />
+      </Form.Item>
+      {numberField(
+        'maxConcurrentJobs',
+        'Max concurrent jobs',
+        'Jobs running at once (background.max_concurrent_jobs, default 2).',
+        { min: 1 },
+      )}
+      {numberField(
+        'maxJobsPerRoot',
+        'Max jobs per root session',
+        'Cap per root session (background.max_jobs_per_root, default 3).',
+        { min: 1 },
+      )}
+      {numberField(
+        'maxJobsPerPersonality',
+        'Max jobs per personality',
+        'Cap per personality (background.max_jobs_per_personality, default 5).',
+        { min: 1 },
+      )}
+      {numberField(
+        'defaultMaxCostUsd',
+        'Default job budget (USD)',
+        'Per-job spend cap (background.default_max_cost_usd, default 1).',
+        { min: 0, integer: false },
+      )}
+      {numberField(
+        'maxRootBackgroundUsd',
+        'Root budget (USD)',
+        'Total background spend per root session (background.max_root_background_usd, default 5).',
+        { min: 0, integer: false },
+      )}
+      {numberField(
+        'queuedTtlMs',
+        'Queued TTL (ms)',
+        'How long a queued job may wait before expiring (background.queued_ttl_ms, default 900000).',
+        { min: 0 },
+      )}
+      {numberField(
+        'staleMs',
+        'Stale after (ms)',
+        'A job with no heartbeat for this long counts as stale (background.stale_ms, default 90000).',
+        { min: 0 },
+      )}
+      {numberField(
+        'heartbeatMs',
+        'Heartbeat interval (ms)',
+        'How often running jobs report liveness (background.heartbeat_ms, default 30000).',
+        { min: 0 },
+      )}
+      {numberField(
+        'retentionDays',
+        'Job retention (days)',
+        'Days finished job records are kept (background.retention_days, default 30).',
+        { min: 1 },
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Data retention (advanced) — full-replacement editor for `retention.<subkey>`
+// and `personalities.<id>.retention.<subkey>` TTLs.
+// ---------------------------------------------------------------------------
+
+function RetentionCard({
+  rows,
+  setRows,
+  personalities,
+}: {
+  rows: RetentionRow[];
+  setRows: Dispatch<SetStateAction<RetentionRow[]>>;
+  personalities: PersonalityOption[];
+}) {
+  const update = (index: number, patch: Partial<RetentionRow>) =>
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  const remove = (index: number) => setRows((prev) => prev.filter((_, i) => i !== index));
+  const add = () =>
+    setRows((prev) => [
+      ...prev,
+      { _id: nextRowId++, personalityId: '', subkey: 'messages', duration: '' },
+    ]);
+
+  return (
+    <Card title="Data retention" size="small" style={{ marginBottom: 16 }}>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        TTLs for stored data (retention.&lt;subkey&gt;, or
+        personalities.&lt;id&gt;.retention.&lt;subkey&gt; to override for one personality). Duration
+        is &quot;forever&quot; or a number plus d/w/m/y, e.g. 90d. Unlisted subkeys keep the
+        built-in default; saving replaces the whole set.
+      </Typography.Paragraph>
+      {rows.map((row, idx) => (
+        <div
+          key={row._id}
+          style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-end' }}
+        >
+          <div style={{ flex: 1 }}>
+            <RowLabel>Scope</RowLabel>
+            <Select
+              size="small"
+              style={{ width: '100%' }}
+              value={row.personalityId}
+              onChange={(v: string) => update(idx, { personalityId: v })}
+              options={[
+                { value: '', label: 'Global' },
+                ...personalities.map((p) => ({ value: p.id, label: p.name })),
+              ]}
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <RowLabel>Data</RowLabel>
+            <Select
+              size="small"
+              style={{ width: '100%' }}
+              value={row.subkey}
+              onChange={(v: RetentionSubkey) => update(idx, { subkey: v })}
+              options={RETENTION_SUBKEYS.map((s) => ({ value: s, label: s }))}
+            />
+          </div>
+          <div style={{ width: 110 }}>
+            <RowLabel>Duration</RowLabel>
+            <Input
+              size="small"
+              placeholder="90d"
+              value={row.duration}
+              onChange={(e) => update(idx, { duration: e.target.value })}
+            />
+          </div>
+          <Button size="small" danger onClick={() => remove(idx)}>
+            Remove
+          </Button>
+        </div>
+      ))}
+      <Button type="dashed" size="small" onClick={add} style={{ width: '100%' }}>
+        Add retention rule
+      </Button>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Models & backends (advanced) — model catalog, web tool backends, and the
+// three auxiliary model slots. Aux API keys are write-only (preview shown).
+// ---------------------------------------------------------------------------
+
+function AuxModelFields({
+  slot,
+  label,
+  help,
+  preview,
+}: {
+  slot: 'auxCompression' | 'auxVision' | 'auxWeb';
+  label: string;
+  help: string;
+  preview: string | null;
+}) {
+  return (
+    <div style={ROW_BOX_STYLE}>
+      <Typography.Text strong style={{ fontSize: 13 }}>
+        {label}
+      </Typography.Text>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
+        {help} Blank fields fall back to the primary provider.
+      </Typography.Paragraph>
+      <Form.Item label="Model" name={[slot, 'model']} style={{ marginBottom: 8 }}>
+        <Input size="small" placeholder="claude-haiku-4-5-20251001" />
+      </Form.Item>
+      <Form.Item label="Provider" name={[slot, 'provider']} style={{ marginBottom: 8 }}>
+        <Input size="small" placeholder="anthropic | openrouter | ollama" />
+      </Form.Item>
+      <Form.Item
+        label="API key"
+        name={[slot, 'apiKey']}
+        style={{ marginBottom: 8 }}
+        extra={preview ? `Current: ${preview} — sent only when you type a new key.` : undefined}
+      >
+        <Input.Password size="small" autoComplete="off" placeholder={preview ?? 'paste new key'} />
+      </Form.Item>
+      <Form.Item label="Base URL" name={[slot, 'baseUrl']} style={{ marginBottom: 0 }}>
+        <Input size="small" placeholder="https://openrouter.ai/api/v1" />
+      </Form.Item>
+    </div>
+  );
+}
+
+function ModelsBackendsCard({
+  auxPreviews,
+}: {
+  auxPreviews: { compression: string | null; vision: string | null; web: string | null };
+}) {
+  return (
+    <Card title="Models & backends" size="small" style={{ marginBottom: 16 }}>
+      <Form.Item
+        label="Remote model catalog"
+        name={['modelCatalog', 'enabled']}
+        valuePropName="checked"
+        extra="Fetch the remote model catalog for model pickers (modelCatalog.enabled, default on)."
+      >
+        <Switch />
+      </Form.Item>
+      <Form.Item
+        label="Catalog URL"
+        name={['modelCatalog', 'url']}
+        extra="Override the catalog endpoint (modelCatalog.url). Blank = built-in endpoint."
+      >
+        <Input placeholder="https://…" />
+      </Form.Item>
+      <Form.Item
+        label="Catalog TTL (hours)"
+        name={['modelCatalog', 'ttlHours']}
+        extra="Cache lifetime for the fetched catalog (modelCatalog.ttlHours, default 24)."
+      >
+        <InputNumber min={0.1} style={{ width: '100%' }} />
+      </Form.Item>
+      <Form.Item
+        label="Web search backend"
+        name="webSearchBackend"
+        extra="Force the web_search tool's backend (web.search_backend). Auto picks from available keys — key bindings live under Web-search defaults."
+      >
+        <Select
+          options={[
+            { value: '', label: 'Auto' },
+            { value: 'exa', label: 'Exa' },
+            { value: 'tavily', label: 'Tavily' },
+            { value: 'brave', label: 'Brave' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item
+        label="Web extract backend"
+        name="webExtractBackend"
+        extra="Force the web_extract tool's backend (web.extract_backend)."
+      >
+        <Select
+          options={[
+            { value: '', label: 'Auto' },
+            { value: 'htmltext', label: 'htmltext' },
+          ]}
+        />
+      </Form.Item>
+      <AuxModelFields
+        slot="auxCompression"
+        label="Compression model"
+        help="Summarizer used for context compaction (auxiliary.compression.*)."
+        preview={auxPreviews.compression}
+      />
+      <AuxModelFields
+        slot="auxVision"
+        label="Vision model"
+        help="Fallback for image inputs when the primary model lacks vision (auxiliary.vision.*)."
+        preview={auxPreviews.vision}
+      />
+      <AuxModelFields
+        slot="auxWeb"
+        label="Web summarizer"
+        help="Summarizer for web_extract output (auxiliary.web.*)."
+        preview={auxPreviews.web}
+      />
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Advanced misc (advanced) — log rotation, plugin auto-install, base URLs.
+// `a2a.enabled` is deliberately NOT here: the live A2A card below the form
+// already toggles the same key through the running gate.
+// ---------------------------------------------------------------------------
+
+function AdvancedMiscCard() {
+  return (
+    <Card title="Advanced" size="small" style={{ marginBottom: 16 }}>
+      <Form.Item
+        label="Log rotation"
+        name={['logsRotation', 'enabled']}
+        valuePropName="checked"
+        extra="Rotate the ~/.ethos error logs (logs.rotation.enabled, default on)."
+      >
+        <Switch />
+      </Form.Item>
+      <Form.Item
+        label="Max log size (bytes)"
+        name={['logsRotation', 'maxBytes']}
+        extra="Rotate when a log exceeds this size (logs.rotation.maxBytes). Blank = built-in default."
+      >
+        <InputNumber min={1} precision={0} style={{ width: '100%' }} />
+      </Form.Item>
+      <Form.Item
+        label="Rotated files kept"
+        name={['logsRotation', 'maxFiles']}
+        extra="Rotated log files to keep (logs.rotation.maxFiles). Blank = built-in default."
+      >
+        <InputNumber min={1} precision={0} style={{ width: '100%' }} />
+      </Form.Item>
+      <Form.Item
+        label="Auto-install plugins"
+        name="pluginsAutoInstall"
+        extra="Install plugins from plugins.lock on startup (plugins.auto_install). Default leaves the key unset."
+      >
+        <Select
+          options={[
+            { value: 'default', label: 'Default (unset)' },
+            { value: 'on', label: 'On' },
+            { value: 'off', label: 'Off' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item
+        label="Web base URL"
+        name="webBaseUrl"
+        extra="Public URL of this web UI, used as the OAuth redirect base (webBaseUrl). Blank = localhost."
+      >
+        <Input placeholder="https://ethos.example.com" />
+      </Form.Item>
+      <Form.Item
+        label="Azure API version"
+        name="apiVersion"
+        extra="REST API version for the azure provider (apiVersion). Blank = provider default."
+      >
+        <Input placeholder="2024-06-01" />
+      </Form.Item>
+      <Form.Item
+        label="Per-turn timing summary"
+        name="verbose"
+        valuePropName="checked"
+        extra="Print a timing and cost line after every CLI response (verbose, default off)."
+      >
+        <Switch />
+      </Form.Item>
+    </Card>
   );
 }
 

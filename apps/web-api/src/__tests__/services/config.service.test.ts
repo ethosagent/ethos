@@ -307,6 +307,19 @@ describe('ConfigService', () => {
     expect(result.voiceBargeThreshold).toBe(0.2);
   });
 
+  it('accepts memory: vault and round-trips it', async () => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      ['provider: anthropic', 'model: m', 'apiKey: sk-keep-this1', 'personality: researcher'].join(
+        '\n',
+      ),
+    );
+    await service.update({ memory: 'vault' });
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('memory: vault');
+    expect((await service.get()).memory).toBe('vault');
+  });
+
   it('update memoryConsolidationEnabled preserves sibling memoryConsolidation.* keys', async () => {
     await storage.write(
       join(DATA, 'config.yaml'),
@@ -331,5 +344,378 @@ describe('ConfigService', () => {
     expect(written).toContain('memoryConsolidation.threshold: 0.1');
     expect(written).toContain('memoryConsolidation.exemptUser: false');
     expect(written).toContain('memoryConsolidation.flushThreshold: 0.6');
+  });
+});
+
+describe('ConfigService — settings passthrough groups', () => {
+  let storage: InMemoryStorage;
+  let repo: ConfigRepository;
+  let service: ConfigService;
+
+  const writeBase = async (extra: string[] = []) => {
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: m',
+        'apiKey: sk-keep-this1',
+        'personality: researcher',
+        ...extra,
+      ].join('\n'),
+    );
+  };
+
+  beforeEach(async () => {
+    storage = new InMemoryStorage();
+    await storage.mkdir(DATA);
+    repo = new ConfigRepository({ dataDir: DATA, storage });
+    service = new ConfigService({ config: repo });
+  });
+
+  it('get returns settings defaults when the keys are absent', async () => {
+    await writeBase();
+    const r = await service.get();
+    expect(r.compaction).toEqual({
+      pressure: null,
+      target: null,
+      gateDelta: null,
+      retryOnOverflow: true,
+      smallWindow: 'auto',
+    });
+    expect(r.memoryApproval).toEqual({ mode: 'off', cap: 200, ttlDays: 30 });
+    expect(r.memoryConsolidation.halfLifeDays).toBe(30);
+    expect(r.memoryConsolidation.exemptUser).toBe(true);
+    expect(r.memoryCapture.maxPerHour).toBe(6);
+    expect(r.background.maxConcurrentJobs).toBe(2);
+    expect(r.background.enabled).toBe(false);
+    expect(r.displayVerbosity).toBe('default');
+    expect(r.displayResumeHint).toBe(true);
+    expect(r.displayResumeRecapTurns).toBe(3);
+    expect(r.verbose).toBe(false);
+    expect(r.nightlyPass).toEqual({ enabled: false, cron: '0 3 * * *' });
+    expect(r.weeklyDigest).toEqual({ enabled: false, cron: '0 9 * * 1', recipients: [] });
+    expect(r.modelCatalog).toEqual({ enabled: true, url: null, ttlHours: 24 });
+    expect(r.logsRotation).toEqual({ enabled: true, maxBytes: null, maxFiles: null });
+    expect(r.retention).toEqual({});
+    expect(r.personalityRetention).toEqual({});
+    expect(r.webhooks).toEqual({});
+    expect(r.quickCommands).toEqual({});
+    expect(r.channelToolsets).toEqual({});
+    expect(r.webSearchBackend).toBeNull();
+    expect(r.auxCompression).toEqual({
+      model: null,
+      provider: null,
+      apiKeyPreview: null,
+      baseUrl: null,
+    });
+    expect(r.a2aEnabled).toBe(false);
+    expect(r.pluginsAutoInstall).toBeNull();
+    expect(r.webBaseUrl).toBeNull();
+    expect(r.apiVersion).toBeNull();
+  });
+
+  it('round-trips compaction, display, and misc scalars', async () => {
+    await writeBase();
+    await service.update({
+      compaction: {
+        pressure: 0.85,
+        target: 0.7,
+        gateDelta: 2000,
+        retryOnOverflow: false,
+        smallWindow: 'on',
+      },
+      displayVerbosity: 'quiet',
+      displayBusyInputMode: 'queue',
+      displayResumeRecapTurns: 5,
+      displayBellOnComplete: true,
+      verbose: true,
+      apiVersion: '2024-10-21',
+      a2aEnabled: true,
+      pluginsAutoInstall: false,
+      webSearchBackend: 'exa',
+      webBaseUrl: 'https://ethos.example.com',
+    });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('compaction.pressure: 0.85');
+    expect(written).toContain('compaction.gateDelta: 2000');
+    expect(written).toContain('compaction.retryOnOverflow: false');
+    expect(written).toContain('compaction.smallWindow: on');
+    expect(written).toContain('display.verbosity: quiet');
+    expect(written).toContain('display.busy_input_mode: queue');
+    expect(written).toContain('display.resume_recap_turns: 5');
+    expect(written).toContain('display.bell_on_complete: true');
+    expect(written).toContain('verbose: true');
+    expect(written).toContain('a2a.enabled: true');
+    expect(written).toContain('plugins.auto_install: false');
+    expect(written).toContain('web.search_backend: exa');
+
+    const r = await service.get();
+    expect(r.compaction).toEqual({
+      pressure: 0.85,
+      target: 0.7,
+      gateDelta: 2000,
+      retryOnOverflow: false,
+      smallWindow: 'on',
+    });
+    expect(r.displayVerbosity).toBe('quiet');
+    expect(r.displayBusyInputMode).toBe('queue');
+    expect(r.displayResumeRecapTurns).toBe(5);
+    expect(r.displayBellOnComplete).toBe(true);
+    expect(r.verbose).toBe(true);
+    expect(r.apiVersion).toBe('2024-10-21');
+    expect(r.a2aEnabled).toBe(true);
+    expect(r.pluginsAutoInstall).toBe(false);
+    expect(r.webSearchBackend).toBe('exa');
+    expect(r.webBaseUrl).toBe('https://ethos.example.com');
+  });
+
+  it('null clears a scalar key back to its default', async () => {
+    await writeBase(['compaction.pressure: 0.9', 'display.verbosity: quiet']);
+    await service.update({ compaction: { pressure: null }, displayVerbosity: null });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).not.toContain('compaction.pressure');
+    expect(written).not.toContain('display.verbosity');
+    const r = await service.get();
+    expect(r.compaction.pressure).toBeNull();
+    expect(r.displayVerbosity).toBe('default');
+  });
+
+  it('round-trips the memory groups and masks the capture key', async () => {
+    await writeBase();
+    await service.update({
+      memory: 'vault',
+      memoryVault: {
+        path: '/vaults/obsidian',
+        agentDir: 'Ethos',
+        prefetch: ['MEMORY.md', 'USER.md'],
+        exclude: ['Archive'],
+      },
+      memoryApproval: { mode: 'automated', cap: 100, ttlDays: 14 },
+      memoryConsolidation: { halfLifeDays: 45, flushThreshold: 0.6 },
+      memoryCapture: { provider: 'openrouter', apiKey: 'sk-or-capturekey-1234', maxPerHour: 10 },
+    });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('memoryVault.path: /vaults/obsidian');
+    expect(written).toContain('memoryVault.prefetch: MEMORY.md, USER.md');
+    expect(written).toContain('memoryApproval.mode: automated');
+    expect(written).toContain('memoryConsolidation.halfLifeDays: 45');
+    expect(written).toContain('memoryCapture.maxPerHour: 10');
+
+    const r = await service.get();
+    expect(r.memory).toBe('vault');
+    expect(r.memoryVault).toEqual({
+      path: '/vaults/obsidian',
+      agentDir: 'Ethos',
+      prefetch: ['MEMORY.md', 'USER.md'],
+      exclude: ['Archive'],
+    });
+    expect(r.memoryApproval).toEqual({ mode: 'automated', cap: 100, ttlDays: 14 });
+    expect(r.memoryConsolidation.halfLifeDays).toBe(45);
+    expect(r.memoryConsolidation.flushThreshold).toBe(0.6);
+    expect(r.memoryCapture.provider).toBe('openrouter');
+    expect(r.memoryCapture.maxPerHour).toBe(10);
+    expect(r.memoryCapture.apiKeyPreview).toBe('sk-…1234');
+    expect(JSON.stringify(r)).not.toContain('capturekey');
+  });
+
+  it('round-trips background job-pool caps under their snake_case keys', async () => {
+    await writeBase();
+    await service.update({
+      background: { enabled: true, maxConcurrentJobs: 4, defaultMaxCostUsd: 2.5 },
+    });
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('background.enabled: true');
+    expect(written).toContain('background.max_concurrent_jobs: 4');
+    expect(written).toContain('background.default_max_cost_usd: 2.5');
+    const r = await service.get();
+    expect(r.background.enabled).toBe(true);
+    expect(r.background.maxConcurrentJobs).toBe(4);
+    expect(r.background.defaultMaxCostUsd).toBe(2.5);
+    // Untouched caps resolve to their defaults.
+    expect(r.background.maxJobsPerRoot).toBe(3);
+  });
+
+  it('webhooks: generates a secret when absent, masks it in get, preserves it across updates', async () => {
+    await writeBase();
+    await service.update({
+      webhooks: {
+        alerts: {
+          personalityId: 'researcher',
+          prefilter: 'filter.sh',
+          prefilterTimeoutSeconds: 45,
+          mode: 'ack',
+        },
+      },
+    });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    const secretMatch = written?.match(/webhooks\.alerts\.secret: (\S+)/);
+    const secret = secretMatch?.[1] ?? '';
+    expect(secret.length).toBeGreaterThanOrEqual(8);
+    expect(written).toContain('webhooks.alerts.personalityId: researcher');
+    expect(written).toContain('webhooks.alerts.prefilterTimeoutSeconds: 45');
+    expect(written).toContain('webhooks.alerts.mode: ack');
+
+    const r = await service.get();
+    expect(r.webhooks.alerts?.personalityId).toBe('researcher');
+    expect(r.webhooks.alerts?.prefilter).toBe('filter.sh');
+    expect(r.webhooks.alerts?.prefilterTimeoutSeconds).toBe(45);
+    expect(r.webhooks.alerts?.mode).toBe('ack');
+    // The raw secret never leaves the service.
+    expect(JSON.stringify(r)).not.toContain(secret);
+
+    // Second update omits `secret` → the stored one survives; omitted fields
+    // are removed (records are full replacements).
+    await service.update({ webhooks: { alerts: { personalityId: 'engineer' } } });
+    const written2 = await storage.read(join(DATA, 'config.yaml'));
+    expect(written2).toContain(`webhooks.alerts.secret: ${secret}`);
+    expect(written2).toContain('webhooks.alerts.personalityId: engineer');
+    expect(written2).not.toContain('webhooks.alerts.prefilter');
+
+    // Empty record removes every hook.
+    await service.update({ webhooks: {} });
+    const written3 = await storage.read(join(DATA, 'config.yaml'));
+    expect(written3).not.toContain('webhooks.');
+  });
+
+  it('round-trips quick commands, channel toolsets, and retention with replace semantics', async () => {
+    await writeBase();
+    await service.update({
+      quickCommands: {
+        status: { type: 'exec', command: 'git status', gateway: true, channels: ['telegram'] },
+        hi: { type: 'reply', reply: 'hello' },
+      },
+      channelToolsets: { whatsapp: ['read_file', 'memory_read'] },
+      retention: { messages: '180d', 'events.error': '30d' },
+      personalityRetention: { researcher: { messages: '30d' } },
+    });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('quick_commands.status.type: exec');
+    expect(written).toContain('quick_commands.status.gateway: true');
+    expect(written).toContain('quick_commands.status.channels: telegram');
+    expect(written).toContain('quick_commands.hi.reply: hello');
+    expect(written).toContain('channel_toolsets.whatsapp: read_file,memory_read');
+    expect(written).toContain('retention.messages: 180d');
+    expect(written).toContain('retention.events.error: 30d');
+    expect(written).toContain('personalities.researcher.retention.messages: 30d');
+
+    const r = await service.get();
+    expect(r.quickCommands.status).toEqual({
+      type: 'exec',
+      command: 'git status',
+      gateway: true,
+      channels: ['telegram'],
+    });
+    expect(r.quickCommands.hi).toEqual({
+      type: 'reply',
+      reply: 'hello',
+      gateway: false,
+      channels: [],
+    });
+    expect(r.channelToolsets).toEqual({ whatsapp: ['read_file', 'memory_read'] });
+    expect(r.retention).toEqual({ messages: '180d', 'events.error': '30d' });
+    expect(r.personalityRetention).toEqual({ researcher: { messages: '30d' } });
+
+    // Replacement drops entries absent from the new record.
+    await service.update({ retention: { traces: '7d' } });
+    const written2 = await storage.read(join(DATA, 'config.yaml'));
+    expect(written2).not.toContain('retention.messages: 180d');
+    expect(written2).toContain('retention.traces: 7d');
+    // Per-personality retention was NOT part of the patch — untouched.
+    expect(written2).toContain('personalities.researcher.retention.messages: 30d');
+    expect((await service.get()).retention).toEqual({ traces: '7d' });
+  });
+
+  it('round-trips hyphenated record keys (kebab-case webhook and personality ids)', async () => {
+    await writeBase();
+    await service.update({
+      webhooks: {
+        'github-prs': { personalityId: 'my-agent', secret: 'hook-secret-1234', mode: 'sync' },
+      },
+      personalityRetention: { 'my-agent': { messages: '14d' } },
+    });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('webhooks.github-prs.personalityId: my-agent');
+    expect(written).toContain('personalities.my-agent.retention.messages: 14d');
+
+    const r = await service.get();
+    expect(r.webhooks['github-prs']?.personalityId).toBe('my-agent');
+    expect(r.webhooks['github-prs']?.mode).toBe('sync');
+    expect(r.personalityRetention).toEqual({ 'my-agent': { messages: '14d' } });
+  });
+
+  it('round-trips nightlyPass, weeklyDigest, modelCatalog, logsRotation, and aux slots', async () => {
+    await writeBase();
+    await service.update({
+      nightlyPass: { enabled: true, cron: '0 4 * * *' },
+      weeklyDigest: { enabled: true, recipients: ['a@x.com', 'b@y.com'] },
+      modelCatalog: { enabled: false, ttlHours: 12 },
+      logsRotation: { maxBytes: 1048576, maxFiles: 3 },
+      auxCompression: { model: 'claude-haiku-4-5', apiKey: 'sk-aux-compkey-9999' },
+    });
+
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('nightlyPass.enabled: true');
+    // Values with YAML-special chars are emitted quoted; reads strip quotes.
+    expect(written).toContain('nightlyPass.cron: "0 4 * * *"');
+    expect(written).toContain('modelCatalog.enabled: false');
+    expect(written).toContain('logs.rotation.maxBytes: 1048576');
+    expect(written).toContain('auxiliary.compression.model: claude-haiku-4-5');
+
+    const r = await service.get();
+    expect(r.nightlyPass).toEqual({ enabled: true, cron: '0 4 * * *' });
+    expect(r.weeklyDigest).toEqual({
+      enabled: true,
+      cron: '0 9 * * 1',
+      recipients: ['a@x.com', 'b@y.com'],
+    });
+    expect(r.modelCatalog).toEqual({ enabled: false, url: null, ttlHours: 12 });
+    expect(r.logsRotation).toEqual({ enabled: true, maxBytes: 1048576, maxFiles: 3 });
+    expect(r.auxCompression.model).toBe('claude-haiku-4-5');
+    expect(r.auxCompression.apiKeyPreview).toBe('sk-…9999');
+    expect(JSON.stringify(r)).not.toContain('compkey');
+  });
+
+  it('rejects invalid values with CONFIG_INVALID', async () => {
+    await writeBase();
+    // Bad approval mode (simulating an untyped direct caller).
+    await expect(
+      service.update({ memoryApproval: { mode: 'sometimes' as 'off' } }),
+    ).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
+    // Webhook timeout out of range (max 600).
+    await expect(
+      service.update({
+        webhooks: { h: { personalityId: 'r', prefilter: 'f.sh', prefilterTimeoutSeconds: 601 } },
+      }),
+    ).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
+    // Webhook timeout without a prefilter.
+    await expect(
+      service.update({ webhooks: { h: { personalityId: 'r', prefilterTimeoutSeconds: 30 } } }),
+    ).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
+    // Compaction pressure outside (0,1].
+    await expect(service.update({ compaction: { pressure: 1.5 } })).rejects.toMatchObject({
+      code: 'CONFIG_INVALID',
+    });
+    // Resume recap turns above 10.
+    await expect(service.update({ displayResumeRecapTurns: 11 })).rejects.toMatchObject({
+      code: 'CONFIG_INVALID',
+    });
+    // Bad retention duration grammar.
+    await expect(service.update({ retention: { messages: 'yearly' } })).rejects.toMatchObject({
+      code: 'CONFIG_INVALID',
+    });
+    // Record key that can't survive the line-based config format.
+    await expect(
+      service.update({ webhooks: { 'bad id': { personalityId: 'r' } } }),
+    ).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
+    // Nothing was persisted by the rejected updates.
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).not.toContain('memoryApproval');
+    expect(written).not.toContain('webhooks.');
   });
 });

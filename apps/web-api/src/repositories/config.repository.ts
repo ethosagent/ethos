@@ -34,7 +34,7 @@ export interface RawConfig {
   model?: string;
   apiKey?: string;
   personality?: string;
-  memory?: 'markdown' | 'vector';
+  memory?: 'markdown' | 'vector' | 'vault';
   baseUrl?: string;
   /** Active skin name (default | mono | paper, or future custom skins). */
   skin?: string;
@@ -177,7 +177,7 @@ export class ConfigRepository {
         }
         continue;
       }
-      const kv = line.match(/^([\w.]+):\s*(.+)$/);
+      const kv = line.match(/^([\w.-]+):\s*(.+)$/);
       if (!kv) continue;
       const key = kv[1]?.trim();
       const value = kv[2] !== undefined ? stripQuotes(kv[2].trim()) : '';
@@ -198,7 +198,7 @@ export class ConfigRepository {
             config.personality = value;
             break;
           case 'memory':
-            config.memory = value === 'vector' ? 'vector' : 'markdown';
+            config.memory = value === 'vector' || value === 'vault' ? value : 'markdown';
             break;
           case 'baseUrl':
             config.baseUrl = value;
