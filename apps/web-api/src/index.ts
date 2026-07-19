@@ -27,6 +27,7 @@ import {
   createPendingMemoryStore,
   HistoryStore,
   type IdentityMap,
+  type MemoryBackendSelection,
 } from '@ethosagent/wiring';
 import type { Hono } from 'hono';
 import { ChatRepository } from './features/chat/repository';
@@ -90,6 +91,14 @@ export interface CreateWebApiOptions {
   /** Identity map for resolving platform users to opaque userIds.
    *  Optional — when omitted, `memory.listUsers` returns empty. */
   identityMap?: IdentityMap;
+  /**
+   * Memory backend selection (the `memory` / `memoryVault` slice of the app
+   * config). Threaded into the approve-before-store queue so a web approve
+   * replays into the configured backend (`memory: vault` → the vault, history
+   * under `.ethos-meta`) instead of assuming markdown at `dataDir`. Omitted →
+   * markdown (previous behavior).
+   */
+  memoryBackend?: MemoryBackendSelection;
   /** Agent loop the chat surface drives. Must already be wired with tools,
    *  hooks, providers etc. (typically via `@ethosagent/wiring`). When omitted
    *  (onboarding mode), a stub loop that yields a SETUP_REQUIRED error is used. */
@@ -420,8 +429,13 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     }),
     // Approve-before-store queue (L3). Reads the same `memory-pending.jsonl`
     // the runtime gate writes and the CLI `ethos memory pending` drives; approve
-    // replays through the provenance history under the original source.
-    pending: createPendingMemoryStore({ dataDir: opts.dataDir, storage }).store,
+    // replays through the provenance history under the original source, into
+    // the configured backend when a selection is threaded through.
+    pending: createPendingMemoryStore({
+      dataDir: opts.dataDir,
+      storage,
+      ...(opts.memoryBackend ? { config: opts.memoryBackend } : {}),
+    }).store,
   });
   const kanbanService = new KanbanService({ mesh });
   const tasksService = new TasksService(opts.jobStore ? { store: opts.jobStore } : {});

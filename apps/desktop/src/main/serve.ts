@@ -123,6 +123,9 @@ export async function startServer(port: number): Promise<number> {
       storage: new FsStorage(),
       source: 'web-editor',
     }),
+    // Backend selection for the approve-before-store queue — a web approve
+    // replays into the configured backend (vault under memory: vault).
+    memoryBackend: wiringConfig,
     identityMap,
     agentLoop: loop,
     personalities,

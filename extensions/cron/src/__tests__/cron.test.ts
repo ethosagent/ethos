@@ -1227,6 +1227,21 @@ describe('CronScheduler script jobs', () => {
     expect(updated.script).toBeUndefined();
   });
 
+  it('rejects script on a system job at create time', async () => {
+    await writeScript('ok.sh', 'echo hi');
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'System With Script',
+        schedule: '0 3 * * *',
+        script: { file: 'ok.sh' },
+        source: 'system',
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+      }),
+    ).rejects.toThrow(/not allowed on system jobs/i);
+  });
+
   it('rejects adding script to a system job via update', async () => {
     await writeScript('ok.sh', 'echo hi');
     const scheduler = makeScheduler();

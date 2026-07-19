@@ -27,7 +27,7 @@ import {
   PersonalityA2aIdentityProvider,
 } from '@ethosagent/personalities';
 import { initPairingDb } from '@ethosagent/safety-channel';
-import { wrapUntrusted } from '@ethosagent/safety-injection';
+import { sanitize, wrapUntrusted } from '@ethosagent/safety-injection';
 import { bundledSkillsSource, createInjectors } from '@ethosagent/skills';
 import Database from '@ethosagent/sqlite';
 import { readRuntime, removeRuntime } from '@ethosagent/team-supervisor';
@@ -860,8 +860,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
 
   // Watcher wake → synthesize an InboundMessage into the owning
   // personality's lane, the way webhook wake does. The diff summary is
-  // external observation — wrap it as untrusted content before it enters
-  // a prompt. The capturing adapter's reply is intentionally discarded:
+  // external observation — wrap it as untrusted content and sanitize the
+  // assembled prompt before it enters the loop (same treatment as the cron
+  // precheck path). The capturing adapter's reply is intentionally discarded:
   // a woken agent acts through its tools (send_message etc.), not through
   // the synthetic inbound's reply surface.
   watcherWakeFn = async (event) => {
@@ -882,7 +883,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     const msg: InboundMessage = {
       platform: 'watcher',
       chatId: `watcher:${event.watcherId}`,
-      text: `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`,
+      text: sanitize(
+        `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`,
+      ),
       isDm: true,
       isGroupMention: false,
       botKey: bot.botKey,

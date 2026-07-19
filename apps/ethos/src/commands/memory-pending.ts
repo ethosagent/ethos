@@ -34,6 +34,9 @@ export async function runMemoryPending(args: string[]): Promise<void> {
   const { store } = createPendingMemoryStore({
     dataDir: ethosDir(),
     storage: getStorage(),
+    // Backend selection — approve replays into the configured backend (vault
+    // under memory: vault), not an assumed markdown root.
+    ...(config ? { config } : {}),
     ...(config?.memoryApproval?.cap !== undefined ? { cap: config.memoryApproval.cap } : {}),
     ...(config?.memoryApproval?.ttlDays !== undefined
       ? { ttlMs: config.memoryApproval.ttlDays * DAY_MS }

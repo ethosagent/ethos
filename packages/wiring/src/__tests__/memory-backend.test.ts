@@ -9,6 +9,7 @@
 import { join } from 'node:path';
 import { DefaultHookRegistry } from '@ethosagent/core';
 import { MemoryCaptureRunner } from '@ethosagent/memory-capture';
+import { HistoryStore } from '@ethosagent/memory-history';
 import { emptyMeta, planConsolidation, resolveDecayParams } from '@ethosagent/nightly-loop';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type {
@@ -20,6 +21,7 @@ import type {
   SessionStore,
 } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
+import { createPendingMemoryStore } from '../index';
 import {
   composeGatedMemory,
   createMemoryProviderFromConfig,
@@ -198,6 +200,47 @@ describe('composeGatedMemory over the vault backend (gate + history stack)', () 
       ctx({ sessionKey: 'dream:muse' }),
     );
     expect(drops).toEqual([{ scopeId: 'personality:muse', cap: 1 }]);
+  });
+});
+
+describe('createPendingMemoryStore — CLI/web approve path is backend-aware', () => {
+  it('under memory: vault, approve replays into the vault (history in .ethos-meta); queue stays at ~/.ethos', async () => {
+    const storage = new InMemoryStorage();
+    const { store } = createPendingMemoryStore({
+      dataDir: DATA,
+      storage,
+      config: VAULT_CONFIG,
+    });
+    const entry = await store.propose({
+      scopeId: 'personality:muse',
+      source: 'capture',
+      factHash: 'h-cli',
+      update: { action: 'add', key: 'MEMORY.md', content: 'prefers metric units' },
+    });
+
+    // Queue machinery parked at ~/.ethos; no vault bytes yet.
+    expect(
+      await storage.read(join(DATA, 'personalities', 'muse', 'memory-pending.jsonl')),
+    ).toContain('prefers metric units');
+    expect(await storage.read(join(SCOPE_DIR, 'MEMORY.md'))).toBeNull();
+
+    const result = await store.approve('personality:muse', entry.id, 'cli');
+    expect(result.ok).toBe(true);
+
+    // Approved fact landed in the vault scope dir, history in .ethos-meta
+    // under the ORIGINAL source plus approvedBy.
+    expect(await storage.read(join(SCOPE_DIR, 'MEMORY.md'))).toContain('prefers metric units');
+    const metaHistory = new HistoryStore({ dataDir: join(AGENT_ROOT, '.ethos-meta'), storage });
+    const { entries } = await metaHistory.read('personality:muse');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.source).toBe('capture');
+    expect(entries[0]?.approvedBy).toBe('cli');
+
+    // Nothing landed under ~/.ethos memory files.
+    expect(await storage.read(join(DATA, 'personalities', 'muse', 'MEMORY.md'))).toBeNull();
+    expect(
+      await storage.read(join(DATA, 'personalities', 'muse', 'memory-history.jsonl')),
+    ).toBeNull();
   });
 });
 

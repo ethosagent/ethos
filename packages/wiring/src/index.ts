@@ -42,6 +42,7 @@ import { buildWiringContext } from './build-context';
 import { buildInfrastructure } from './build-infrastructure';
 import { composeAllTools } from './compose-tools';
 import { loadPlugins } from './load-plugins';
+import { createUndecoratedBackend, type MemoryBackendSelection } from './memory-backend';
 import { lookupContextWindow, lookupProfile, mergeModelProfile } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 import { registerBuiltinProviders } from './register-builtin-providers';
@@ -884,6 +885,14 @@ export interface CreatePendingMemoryStoreOptions {
   /** Root data directory (typically `~/.ethos`). */
   dataDir: string;
   storage: Storage;
+  /**
+   * Backend selection (`memory` / `memoryVault` slice of the app config).
+   * With `memory: 'vault'`, approve replays through the vault provider with
+   * provenance history under `<vaultRoot>/<agentDir>/.ethos-meta`. The pending
+   * queue + tombstones stay at `dataDir` regardless of backend. Omitted →
+   * markdown at `dataDir` (previous behavior).
+   */
+  config?: MemoryBackendSelection;
   /** Per-scope queue hard cap. Default 200. */
   cap?: number;
   /** Pending candidate TTL in ms. Default 30 days. */
@@ -894,7 +903,7 @@ export interface CreatePendingMemoryStoreOptions {
 }
 
 /**
- * Assemble a `PendingMemoryStore` (memory-lifecycle L2) over the markdown
+ * Assemble a `PendingMemoryStore` (memory-lifecycle L2) over the configured
  * backend, with the approve-replay `apply` wired to the provenance history so an
  * approved candidate records under its ORIGINAL source plus `approvedBy`. Used
  * by the CLI `ethos memory pending` command and (L3) the web RPC service — the
@@ -904,8 +913,11 @@ export function createPendingMemoryStore(opts: CreatePendingMemoryStoreOptions):
   store: PendingMemoryStore;
   tombstones: TombstoneStore;
 } {
-  const base = new MarkdownFileMemoryProvider({ dir: opts.dataDir, storage: opts.storage });
-  const history = new HistoryStore({ dataDir: opts.dataDir, storage: opts.storage });
+  const { base, history } = createUndecoratedBackend({
+    selection: opts.config ?? {},
+    dataDir: opts.dataDir,
+    storage: opts.storage,
+  });
   const tombstones = new TombstoneStore({ storage: opts.storage, dataDir: opts.dataDir });
   const store = new PendingMemoryStore({
     storage: opts.storage,

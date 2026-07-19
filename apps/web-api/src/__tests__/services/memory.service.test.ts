@@ -290,6 +290,54 @@ describe('MemoryService.pending (approve-before-store, L3)', () => {
     expect(file.content).toBe('');
   });
 
+  it('under memory: vault, approve replays into the vault (history in .ethos-meta), not dataDir', async () => {
+    const vaultStorage = new InMemoryStorage();
+    const vaultPending = createPendingMemoryStore({
+      dataDir,
+      storage: vaultStorage,
+      config: { memory: 'vault', memoryVault: { path: '/vault' } },
+    });
+    const vaultService = new MemoryService({
+      memory: new MarkdownFileMemoryProvider({ dir: dataDir, storage: vaultStorage }),
+      pending: vaultPending.store,
+    });
+    const entry = await vaultPending.store.propose({
+      scopeId,
+      source: 'capture',
+      factHash: 'h-vault',
+      update: { action: 'add', key: 'MEMORY.md', content: 'lives in Bengaluru' },
+    });
+
+    const res = await vaultService.pendingApprove(PERSONALITY_ID, entry.id);
+    expect(res.ok).toBe(true);
+
+    // Approved fact landed in the vault agent dir, not under dataDir.
+    const agentRoot = join('/vault', 'Ethos');
+    const scopeDir = join(agentRoot, 'personalities', PERSONALITY_ID);
+    expect(await vaultStorage.read(join(scopeDir, 'MEMORY.md'))).toContain('lives in Bengaluru');
+    expect(
+      await vaultStorage.read(join(dataDir, 'personalities', PERSONALITY_ID, 'MEMORY.md')),
+    ).toBeNull();
+    const { file } = await vaultService.get('memory', PERSONALITY_ID);
+    expect(file.content).toBe('');
+
+    // Provenance history recorded under the vault's .ethos-meta, with the
+    // ORIGINAL source plus approvedBy: 'web' — and none at dataDir.
+    const metaHistory = new HistoryStore({
+      dataDir: join(agentRoot, '.ethos-meta'),
+      storage: vaultStorage,
+    });
+    const { entries } = await metaHistory.read(scopeId, {});
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.source).toBe('capture');
+    expect(entries[0]?.approvedBy).toBe('web');
+    expect(
+      await vaultStorage.read(
+        join(dataDir, 'personalities', PERSONALITY_ID, 'memory-history.jsonl'),
+      ),
+    ).toBeNull();
+  });
+
   it('approve / reject of an unknown id throws NOT_FOUND', async () => {
     await expect(service.pendingApprove(PERSONALITY_ID, 'nope')).rejects.toThrow();
     await expect(service.pendingReject(PERSONALITY_ID, 'nope')).rejects.toThrow();

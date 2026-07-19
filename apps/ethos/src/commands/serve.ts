@@ -33,7 +33,7 @@ import {
   createPersonalityRegistry,
   PersonalityA2aIdentityProvider,
 } from '@ethosagent/personalities';
-import { wrapUntrusted } from '@ethosagent/safety-injection';
+import { sanitize, wrapUntrusted } from '@ethosagent/safety-injection';
 import { SessionLane } from '@ethosagent/session-lane';
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
@@ -338,7 +338,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         toolName: 'watcher',
         source: `${event.watcherId}:${event.target}`,
       });
-      const prompt = `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`;
+      const prompt = sanitize(
+        `${event.promptPrefix ?? 'A watcher you own detected a change.'}\n\n${wrapped.content}`,
+      );
       const sessionKey = `watcher:${event.watcherId}:${new Date().toISOString()}`;
       for await (const _event of loop.run(prompt, {
         sessionKey,
@@ -871,6 +873,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       storage: getStorage(),
       source: 'web-editor',
     }),
+    // Backend selection for the approve-before-store queue — a web approve
+    // replays into the configured backend (vault under memory: vault).
+    memoryBackend: config,
     identityMap,
     agentLoop: loop,
     // The same registry the agent loop loaded above is reused so mtime
