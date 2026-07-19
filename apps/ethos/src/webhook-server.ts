@@ -14,7 +14,44 @@ export interface WebhookConfig {
   personalityId: string;
   secret: string;
   sessionKey?: string;
+  /** Prefilter script file (scripts-dir relative, .sh/.py) run with the raw
+   *  request body on stdin before any turn is dispatched. Exit 0 → stdout
+   *  replaces the prompt (empty stdout keeps the body-derived prompt);
+   *  exit 78 → request filtered, no turn; anything else → 500, no turn. */
+  prefilter?: string;
+  /** Wall-clock limit for the prefilter in seconds. Default 30, max 600. */
+  prefilterTimeoutSeconds?: number;
+  /** 'sync' (default) holds the connection for the agent's reply;
+   *  'ack' responds 202 immediately and runs the turn detached. */
+  mode?: 'sync' | 'ack';
 }
+
+/** Outcome of a prefilter script run. Structurally matches `ScriptRunOutcome`
+ *  from `@ethosagent/cron` — redeclared locally so this file keeps its
+ *  types-only import surface (see `WebhookGateway` doctrine note below). */
+export interface PrefilterOutcome {
+  /** True when the script ran to completion (any exit code). False on
+   *  timeout, spawn failure, or a missing/invalid script file. */
+  ok: boolean;
+  exitCode: number | null;
+  /** Script stdout — the runner secret-redacts it before returning. */
+  stdout: string;
+  /** Human-readable reason, set only when ok === false. */
+  failure?: string;
+}
+
+/** Injected by the gateway command (which owns the concrete
+ *  `@ethosagent/cron` import) — runs a scripts-dir script with the raw
+ *  request body on stdin, applying the shared path guards + redaction. */
+export type PrefilterRunner = (
+  file: string,
+  opts: { stdin: string; timeoutSeconds: number },
+) => Promise<PrefilterOutcome>;
+
+/** Matches PRECHECK_SKIP_EXIT_CODE in `@ethosagent/cron` (not importable
+ *  here — types-only import surface). */
+const PREFILTER_FILTERED_EXIT_CODE = 78;
+const DEFAULT_PREFILTER_TIMEOUT_SECONDS = 30;
 
 /**
  * Minimal slice of the Gateway this server drives. Kept local — and the
@@ -67,7 +104,10 @@ function authorized(header: string | undefined, secret: string): boolean {
  * Inbound webhook listener. Exposes `POST /webhook/<hookId>`: an external caller
  * supplies a bearer secret and a prompt; the handler synthesizes an
  * `InboundMessage` and drives the mapped personality through the existing
- * `Gateway.handleMessage` path, returning the agent's reply synchronously.
+ * `Gateway.handleMessage` path, returning the agent's reply synchronously
+ * (or a 202 ack with a detached turn when the hook sets `mode: 'ack'`).
+ * An optional per-hook prefilter script gates/transforms the request before
+ * any turn is dispatched.
  */
 export function createWebhookServer(
   port: number,
@@ -75,6 +115,7 @@ export function createWebhookServer(
   gateway: WebhookGateway,
   webhooks: Record<string, WebhookConfig>,
   createCapturingAdapter: CaptureFactory,
+  runPrefilter?: PrefilterRunner,
 ): Server {
   const server = createServer(async (req, res) => {
     const match = req.url ? WEBHOOK_PATH.exec(req.url) : null;
@@ -95,24 +136,92 @@ export function createWebhookServer(
       return;
     }
 
-    let raw: unknown;
+    let rawBody: string;
     try {
-      raw = JSON.parse(await readBody(req));
+      rawBody = await readBody(req);
     } catch {
       sendJson(res, 400, { error: 'invalid JSON body' });
       return;
     }
-    const parsed = WebhookBody.safeParse(raw);
-    if (!parsed.success) {
-      sendJson(res, 400, { error: 'invalid JSON body' });
-      return;
+
+    // Prefilter — a deterministic operator script decides whether this POST
+    // becomes a turn at all (plan gap-event-triggers §3d). Fail-closed: an
+    // inbound POST is untrusted input, so any script failure rejects the
+    // request instead of waking the agent (the asymmetry with cron's
+    // fail-open precheck is deliberate — plan §5 risk 2).
+    let prefilteredPrompt: string | undefined;
+    if (hook.prefilter) {
+      const file = hook.prefilter;
+      const timeoutSeconds = hook.prefilterTimeoutSeconds ?? DEFAULT_PREFILTER_TIMEOUT_SECONDS;
+      let outcome: PrefilterOutcome;
+      if (!runPrefilter) {
+        outcome = { ok: false, exitCode: null, stdout: '', failure: 'no prefilter runner wired' };
+      } else {
+        try {
+          outcome = await runPrefilter(file, { stdin: rawBody, timeoutSeconds });
+        } catch (err) {
+          outcome = {
+            ok: false,
+            exitCode: null,
+            stdout: '',
+            failure: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+      if (outcome.ok && outcome.exitCode === PREFILTER_FILTERED_EXIT_CODE) {
+        console.log(`[webhook] ${hookId}: filtered by prefilter "${file}" — no turn`);
+        sendJson(res, 200, { filtered: true });
+        return;
+      }
+      if (!outcome.ok || outcome.exitCode !== 0) {
+        console.error(
+          `[webhook] ${hookId}: prefilter "${file}" failed — request rejected:`,
+          outcome.failure ?? `exit code ${outcome.exitCode}`,
+        );
+        sendJson(res, 500, { error: 'prefilter failed' });
+        return;
+      }
+      // Exit 0: non-empty stdout replaces the body-derived prompt; empty
+      // stdout keeps it. Stdout is secret-redacted by the runner but is still
+      // untrusted webhook input — it gets exactly the body prompt's treatment.
+      const replaced = outcome.stdout.trim();
+      if (replaced) prefilteredPrompt = replaced;
     }
-    const body = parsed.data;
-    // TODO v2: attachments
-    const prompt = body.prompt ?? body.text;
-    if (!prompt || prompt.trim().length === 0) {
-      sendJson(res, 400, { error: "missing 'prompt'" });
-      return;
+
+    let raw: unknown;
+    let parseFailed = false;
+    try {
+      raw = JSON.parse(rawBody);
+    } catch {
+      parseFailed = true;
+    }
+
+    let prompt: string;
+    let msgRaw: unknown;
+    if (prefilteredPrompt !== undefined) {
+      prompt = prefilteredPrompt;
+      // A prefilter may accept non-JSON payloads — the original body rides
+      // along as `raw` in whatever form it arrived.
+      msgRaw = parseFailed ? rawBody : raw;
+    } else {
+      if (parseFailed) {
+        sendJson(res, 400, { error: 'invalid JSON body' });
+        return;
+      }
+      const parsed = WebhookBody.safeParse(raw);
+      if (!parsed.success) {
+        sendJson(res, 400, { error: 'invalid JSON body' });
+        return;
+      }
+      const body = parsed.data;
+      // TODO v2: attachments
+      const bodyPrompt = body.prompt ?? body.text;
+      if (!bodyPrompt || bodyPrompt.trim().length === 0) {
+        sendJson(res, 400, { error: "missing 'prompt'" });
+        return;
+      }
+      prompt = bodyPrompt;
+      msgRaw = body;
     }
 
     const msg: InboundMessage = {
@@ -123,10 +232,22 @@ export function createWebhookServer(
       isGroupMention: false,
       botKey: `webhook:${hookId}`,
       messageId: `${Date.now()}-${requestCounter++}`,
-      raw: body,
+      raw: msgRaw,
     };
 
     const { adapter, getReply } = createCapturingAdapter();
+
+    // mode 'ack' — 202 immediately, turn runs detached. Fixes the
+    // held-connection problem for GitHub/Stripe-style callers that enforce
+    // short delivery timeouts (plan gap-event-triggers §3d).
+    if (hook.mode === 'ack') {
+      console.log(`[webhook] ${hookId}: accepted (ack mode) — turn running detached`);
+      sendJson(res, 202, { accepted: true });
+      void gateway.handleMessage(msg, adapter).catch((err) => {
+        console.error(`[webhook] ${hookId}: detached turn error:`, err);
+      });
+      return;
+    }
     // Per-request read so tests (and operators) can override the timeout at
     // runtime, not just at module load.
     const timeoutMs = Number(process.env.ETHOS_WEBHOOK_TIMEOUT_MS) || 60_000;

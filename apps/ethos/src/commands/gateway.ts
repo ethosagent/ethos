@@ -16,7 +16,7 @@ import {
   writeConfig,
 } from '@ethosagent/config';
 import { type AgentLoop, deriveBotKey as deriveBotKeyFromSeed } from '@ethosagent/core';
-import { CronScheduler } from '@ethosagent/cron';
+import { CronScheduler, runScriptFile } from '@ethosagent/cron';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { createCapturingAdapter, Gateway, type GatewayBotConfig } from '@ethosagent/gateway';
 import { registerGoalNotifications } from '@ethosagent/goal-runner';
@@ -65,7 +65,7 @@ import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
 import { notifyReady, startWatchdog } from '../sd-notify';
-import { createWebhookServer } from '../webhook-server';
+import { createWebhookServer, type PrefilterRunner } from '../webhook-server';
 import {
   buildSystemTaskHandlers,
   createAgentLoop,
@@ -1019,6 +1019,25 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // Inbound webhooks — opt-in: only listen when at least one hook is configured.
   const webhookPort = Number(process.env.ETHOS_WEBHOOK_PORT) || 3003;
   const webhookHost = process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
+  // Prefilter scripts run through the same guarded machinery as cron script
+  // jobs (`runScriptFile`: ~/.ethos/scripts/ confinement, fixed interpreters,
+  // secret-redacted output). Injected as a seam so webhook-server.ts keeps
+  // its types-only top-level import surface (daemon-free doctrine).
+  const webhookPrefilterBackend = new LocalExecutionBackend({
+    config: {},
+    secrets,
+    logger: new ConsoleLogger(),
+  });
+  const runWebhookPrefilter: PrefilterRunner = (file, opts) =>
+    runScriptFile(
+      { file, timeoutSeconds: opts.timeoutSeconds },
+      {
+        storage: getStorage(),
+        executionBackend: webhookPrefilterBackend,
+        stdin: opts.stdin,
+        label: 'prefilter',
+      },
+    );
   const webhookServer =
     config.webhooks && Object.keys(config.webhooks).length > 0
       ? createWebhookServer(
@@ -1027,6 +1046,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
           gateway,
           config.webhooks,
           createCapturingAdapter,
+          runWebhookPrefilter,
         )
       : undefined;
   if (webhookServer && config.webhooks) {

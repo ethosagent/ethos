@@ -58,6 +58,72 @@ describe('parseConfigYaml — webhooks', () => {
     expect(result?.config.webhooks).toBeUndefined();
   });
 
+  it('parses prefilter, prefilterTimeoutSeconds, and mode', async () => {
+    const cfg = await load(
+      [
+        ...base,
+        'webhooks.h.personalityId: researcher',
+        'webhooks.h.secret: x',
+        'webhooks.h.prefilter: gate.sh',
+        'webhooks.h.prefilterTimeoutSeconds: 15',
+        'webhooks.h.mode: ack',
+      ].join('\n'),
+    );
+    expect(cfg.webhooks?.h).toEqual({
+      personalityId: 'researcher',
+      secret: 'x',
+      prefilter: 'gate.sh',
+      prefilterTimeoutSeconds: 15,
+      mode: 'ack',
+    });
+  });
+
+  it('rejects an unknown mode as a parseError', async () => {
+    const result = await loadStrict(
+      [
+        ...base,
+        'webhooks.h.personalityId: researcher',
+        'webhooks.h.secret: x',
+        'webhooks.h.mode: async',
+      ].join('\n'),
+    );
+    expect(result?.parseErrors.some((e) => e.includes("mode must be 'sync' or 'ack'"))).toBe(true);
+    expect(result?.config.webhooks).toBeUndefined();
+  });
+
+  it('rejects an out-of-range prefilterTimeoutSeconds as a parseError', async () => {
+    const result = await loadStrict(
+      [
+        ...base,
+        'webhooks.h.personalityId: researcher',
+        'webhooks.h.secret: x',
+        'webhooks.h.prefilter: gate.sh',
+        'webhooks.h.prefilterTimeoutSeconds: 601',
+      ].join('\n'),
+    );
+    expect(
+      result?.parseErrors.some((e) =>
+        e.includes('prefilterTimeoutSeconds must be an integer between 1 and 600'),
+      ),
+    ).toBe(true);
+    expect(result?.config.webhooks).toBeUndefined();
+  });
+
+  it('rejects prefilterTimeoutSeconds without prefilter as a parseError', async () => {
+    const result = await loadStrict(
+      [
+        ...base,
+        'webhooks.h.personalityId: researcher',
+        'webhooks.h.secret: x',
+        'webhooks.h.prefilterTimeoutSeconds: 30',
+      ].join('\n'),
+    );
+    expect(
+      result?.parseErrors.some((e) => e.includes("prefilterTimeoutSeconds requires 'prefilter'")),
+    ).toBe(true);
+    expect(result?.config.webhooks).toBeUndefined();
+  });
+
   it('round-trips through writeConfig → readRawConfig', async () => {
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());
@@ -69,6 +135,13 @@ describe('parseConfigYaml — webhooks', () => {
       webhooks: {
         hook1: { personalityId: 'researcher', secret: 's3cret', sessionKey: 'stable-key' },
         hook2: { personalityId: 'coder', secret: 'abc' },
+        hook3: {
+          personalityId: 'ops',
+          secret: 'def',
+          prefilter: 'gate.sh',
+          prefilterTimeoutSeconds: 45,
+          mode: 'ack',
+        },
       },
     };
     await writeConfig(storage, original);

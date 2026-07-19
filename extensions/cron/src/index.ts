@@ -194,7 +194,7 @@ const SCRIPT_INTERPRETERS: Record<string, string> = {
   '.py': 'python3',
 };
 
-interface ScriptRunOutcome {
+export interface ScriptRunOutcome {
   /** True when the script ran to completion (any exit code). False on
    *  timeout, spawn failure, or a missing/invalid script file. */
   ok: boolean;
@@ -217,6 +217,124 @@ function errorCode(err: unknown): string | undefined {
     if (typeof code === 'string') return code;
   }
   return undefined;
+}
+
+/** Resolve a script ref against the scripts directory with hard guards:
+ *  no absolute paths, no `..` traversal, interpreter fixed by extension. */
+function resolveScriptFile(
+  ref: ScriptRef,
+  scriptsDir: string,
+  label: string,
+): { absPath: string; interpreter: string } {
+  if (!ref.file) throw new Error(`${label}.file is required`);
+  if (ref.timeoutSeconds !== undefined) {
+    if (
+      !Number.isInteger(ref.timeoutSeconds) ||
+      ref.timeoutSeconds < 1 ||
+      ref.timeoutSeconds > MAX_SCRIPT_TIMEOUT_SECONDS
+    ) {
+      throw new Error(
+        `${label}.timeoutSeconds must be an integer between 1 and ${MAX_SCRIPT_TIMEOUT_SECONDS}`,
+      );
+    }
+  }
+  if (isAbsolute(ref.file)) {
+    throw new Error(`${label} path must be relative to the scripts directory: "${ref.file}"`);
+  }
+  const absPath = resolve(scriptsDir, ref.file);
+  const rel = relative(scriptsDir, absPath);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`${label} path escapes the scripts directory: "${ref.file}"`);
+  }
+  const interpreter = SCRIPT_INTERPRETERS[extname(absPath)];
+  if (!interpreter) {
+    throw new Error(
+      `${label} "${ref.file}" has an unsupported extension — only .sh (bash) and .py (python3) scripts are allowed`,
+    );
+  }
+  return { absPath, interpreter };
+}
+
+export interface RunScriptFileOpts {
+  storage: Storage;
+  executionBackend: ExecutionBackend;
+  /** Directory the script ref resolves against. Defaults to ~/.ethos/scripts/. */
+  scriptsDir?: string;
+  /** Raw text piped to the script's stdin (e.g. a webhook request body). */
+  stdin?: string;
+  /** Label used in error messages: 'script' | 'precheck' | 'prefilter'. */
+  label?: string;
+}
+
+/**
+ * Run an operator-authored script from the scripts directory through an
+ * ExecutionBackend. Shared by cron `script:` jobs / `precheck` gates and the
+ * webhook prefilter — same path guards, same fixed-interpreter rule, same
+ * secret redaction. Never throws — outcomes (including timeout and missing
+ * file) are returned for the caller to apply its own semantics.
+ */
+export async function runScriptFile(
+  ref: ScriptRef,
+  opts: RunScriptFileOpts,
+): Promise<ScriptRunOutcome> {
+  const scriptsDir = opts.scriptsDir ?? join(homedir(), '.ethos', 'scripts');
+  const label = opts.label ?? 'script';
+  let absPath: string;
+  let interpreter: string;
+  try {
+    ({ absPath, interpreter } = resolveScriptFile(ref, scriptsDir, label));
+  } catch (err) {
+    return {
+      ok: false,
+      exitCode: null,
+      stdout: '',
+      stderr: '',
+      failure: err instanceof Error ? err.message : String(err),
+    };
+  }
+  if (!(await opts.storage.exists(absPath))) {
+    return {
+      ok: false,
+      exitCode: null,
+      stdout: '',
+      stderr: '',
+      failure: `script "${ref.file}" not found in ${scriptsDir}`,
+    };
+  }
+
+  const timeoutSeconds = ref.timeoutSeconds ?? DEFAULT_SCRIPT_TIMEOUT_SECONDS;
+  let stdout = '';
+  let stderr = '';
+  let exitCode: number | null = null;
+  try {
+    const cmd = `${interpreter} ${shellQuote(absPath)}`;
+    for await (const chunk of opts.executionBackend.exec(cmd, {
+      timeoutMs: timeoutSeconds * 1000,
+      ...(opts.stdin !== undefined ? { stdin: opts.stdin } : {}),
+    })) {
+      if (chunk.stream === 'stdout') stdout += chunk.data;
+      else if (chunk.stream === 'stderr') stderr += chunk.data;
+      else if (chunk.stream === 'exit') exitCode = chunk.code;
+    }
+  } catch (err) {
+    const timedOut = errorCode(err) === 'EXEC_TIMEOUT';
+    return {
+      ok: false,
+      exitCode: null,
+      stdout: redactString(stdout),
+      stderr: redactString(stderr),
+      failure: timedOut
+        ? `script "${ref.file}" timed out after ${timeoutSeconds}s`
+        : `script "${ref.file}" failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  return {
+    ok: true,
+    exitCode: exitCode ?? -1,
+    stdout: redactString(stdout),
+    stderr: redactString(stderr),
+  };
 }
 
 /** The local backend ignores its construction context entirely — this noop
@@ -798,46 +916,11 @@ export class CronScheduler {
     return { jobId: job.id, ranAt, output, sessionKey: `cron:script:${job.id}` };
   }
 
-  /** Resolve a script ref against the scripts directory with hard guards:
-   *  no absolute paths, no `..` traversal, interpreter fixed by extension. */
-  private resolveScript(
-    ref: ScriptRef,
-    label: 'script' | 'precheck',
-  ): { absPath: string; interpreter: string } {
-    if (!ref.file) throw new Error(`${label}.file is required`);
-    if (ref.timeoutSeconds !== undefined) {
-      if (
-        !Number.isInteger(ref.timeoutSeconds) ||
-        ref.timeoutSeconds < 1 ||
-        ref.timeoutSeconds > MAX_SCRIPT_TIMEOUT_SECONDS
-      ) {
-        throw new Error(
-          `${label}.timeoutSeconds must be an integer between 1 and ${MAX_SCRIPT_TIMEOUT_SECONDS}`,
-        );
-      }
-    }
-    if (isAbsolute(ref.file)) {
-      throw new Error(`${label} path must be relative to the scripts directory: "${ref.file}"`);
-    }
-    const absPath = resolve(this.scriptsDir, ref.file);
-    const rel = relative(this.scriptsDir, absPath);
-    if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
-      throw new Error(`${label} path escapes the scripts directory: "${ref.file}"`);
-    }
-    const interpreter = SCRIPT_INTERPRETERS[extname(absPath)];
-    if (!interpreter) {
-      throw new Error(
-        `${label} "${ref.file}" has an unsupported extension — only .sh (bash) and .py (python3) scripts are allowed`,
-      );
-    }
-    return { absPath, interpreter };
-  }
-
   /** Create/update-time validation: path guards plus must-already-exist
    *  (an agent can schedule an operator-authored script but cannot
    *  write-then-schedule its own — plan §5.1c). */
   private async validateScriptRef(ref: ScriptRef, label: 'script' | 'precheck'): Promise<void> {
-    const { absPath } = this.resolveScript(ref, label);
+    const { absPath } = resolveScriptFile(ref, this.scriptsDir, label);
     if (!(await this.storage.exists(absPath))) {
       throw new Error(
         `${label} file not found: "${ref.file}" — scripts must already exist in ${this.scriptsDir}`,
@@ -845,67 +928,18 @@ export class CronScheduler {
     }
   }
 
-  /** Run a script through the execution backend. Never throws — outcomes
-   *  (including timeout and missing file) are returned for the caller to
-   *  apply job-specific semantics. Output is secret-redacted. */
-  private async runScriptRef(
+  /** Run a script through the execution backend — delegates to the shared
+   *  `runScriptFile` (path guards, fixed interpreters, secret redaction). */
+  private runScriptRef(
     ref: ScriptRef,
     label: 'script' | 'precheck' = 'script',
   ): Promise<ScriptRunOutcome> {
-    let absPath: string;
-    let interpreter: string;
-    try {
-      ({ absPath, interpreter } = this.resolveScript(ref, label));
-    } catch (err) {
-      return {
-        ok: false,
-        exitCode: null,
-        stdout: '',
-        stderr: '',
-        failure: err instanceof Error ? err.message : String(err),
-      };
-    }
-    if (!(await this.storage.exists(absPath))) {
-      return {
-        ok: false,
-        exitCode: null,
-        stdout: '',
-        stderr: '',
-        failure: `script "${ref.file}" not found in ${this.scriptsDir}`,
-      };
-    }
-
-    const timeoutSeconds = ref.timeoutSeconds ?? DEFAULT_SCRIPT_TIMEOUT_SECONDS;
-    let stdout = '';
-    let stderr = '';
-    let exitCode: number | null = null;
-    try {
-      const backend = this.getExecutionBackend();
-      const cmd = `${interpreter} ${shellQuote(absPath)}`;
-      for await (const chunk of backend.exec(cmd, { timeoutMs: timeoutSeconds * 1000 })) {
-        if (chunk.stream === 'stdout') stdout += chunk.data;
-        else if (chunk.stream === 'stderr') stderr += chunk.data;
-        else if (chunk.stream === 'exit') exitCode = chunk.code;
-      }
-    } catch (err) {
-      const timedOut = errorCode(err) === 'EXEC_TIMEOUT';
-      return {
-        ok: false,
-        exitCode: null,
-        stdout: redactString(stdout),
-        stderr: redactString(stderr),
-        failure: timedOut
-          ? `script "${ref.file}" timed out after ${timeoutSeconds}s`
-          : `script "${ref.file}" failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-
-    return {
-      ok: true,
-      exitCode: exitCode ?? -1,
-      stdout: redactString(stdout),
-      stderr: redactString(stderr),
-    };
+    return runScriptFile(ref, {
+      storage: this.storage,
+      executionBackend: this.getExecutionBackend(),
+      scriptsDir: this.scriptsDir,
+      label,
+    });
   }
 
   private getExecutionBackend(): ExecutionBackend {

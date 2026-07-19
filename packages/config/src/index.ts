@@ -411,6 +411,21 @@ export interface AwsConfig {
   secrets?: AwsSecretsConfig;
 }
 
+/** Per-hook inbound webhook config (`webhooks.<hookId>.*` keys). */
+export interface WebhookHookConfig {
+  personalityId: string;
+  secret: string;
+  sessionKey?: string;
+  /** Prefilter script (scripts-dir relative, .sh/.py) run with the raw
+   *  request body on stdin before any turn is dispatched. */
+  prefilter?: string;
+  /** Wall-clock limit for the prefilter in seconds. Default 30, max 600. */
+  prefilterTimeoutSeconds?: number;
+  /** 'sync' (default) holds the connection for the agent's reply;
+   *  'ack' responds 202 immediately and runs the turn detached. */
+  mode?: 'sync' | 'ack';
+}
+
 /**
  * On-disk schema version for `~/.ethos/config.yaml`. Bump on a breaking
  * field rename, type change, or required-field addition; do NOT bump on
@@ -779,8 +794,11 @@ export interface EthosConfig {
    *   webhooks.<hookId>.personalityId: researcher
    *   webhooks.<hookId>.secret: <bearer-secret>
    *   webhooks.<hookId>.sessionKey: <optional-stable-session-key>
+   *   webhooks.<hookId>.prefilter: <script under ~/.ethos/scripts/, .sh or .py>
+   *   webhooks.<hookId>.prefilterTimeoutSeconds: 30   (max 600)
+   *   webhooks.<hookId>.mode: sync | ack              (default sync)
    */
-  webhooks?: Record<string, { personalityId: string; secret: string; sessionKey?: string }>;
+  webhooks?: Record<string, WebhookHookConfig>;
   /**
    * Remote model catalog configuration. Controls how Ethos fetches and caches
    * the centralized model metadata catalog (capabilities, context windows, pricing).
@@ -1231,6 +1249,10 @@ export async function writeConfig(storage: Storage, config: EthosConfig): Promis
       lines.push(`webhooks.${hookId}.personalityId: ${hook.personalityId}`);
       lines.push(`webhooks.${hookId}.secret: ${hook.secret}`);
       if (hook.sessionKey) lines.push(`webhooks.${hookId}.sessionKey: ${hook.sessionKey}`);
+      if (hook.prefilter) lines.push(`webhooks.${hookId}.prefilter: ${hook.prefilter}`);
+      if (hook.prefilterTimeoutSeconds !== undefined)
+        lines.push(`webhooks.${hookId}.prefilterTimeoutSeconds: ${hook.prefilterTimeoutSeconds}`);
+      if (hook.mode) lines.push(`webhooks.${hookId}.mode: ${hook.mode}`);
     }
   }
   if (config.modelCatalog) {
@@ -2636,15 +2658,12 @@ function buildTeamsConfig(
 }
 
 function buildWebhooks(kv: Record<string, Record<string, string>>): {
-  webhooks:
-    | Record<string, { personalityId: string; secret: string; sessionKey?: string }>
-    | undefined;
+  webhooks: Record<string, WebhookHookConfig> | undefined;
   errors: string[];
 } {
   const ids = Object.keys(kv);
   if (ids.length === 0) return { webhooks: undefined, errors: [] };
-  const webhooks: Record<string, { personalityId: string; secret: string; sessionKey?: string }> =
-    {};
+  const webhooks: Record<string, WebhookHookConfig> = {};
   const errors: string[] = [];
   for (const hookId of ids) {
     const entry = kv[hookId];
@@ -2657,10 +2676,32 @@ function buildWebhooks(kv: Record<string, Record<string, string>>): {
       errors.push(`webhooks.${hookId}: missing required field 'secret'.`);
       continue;
     }
+    if (entry.mode !== undefined && entry.mode !== 'sync' && entry.mode !== 'ack') {
+      errors.push(`webhooks.${hookId}: mode must be 'sync' or 'ack'.`);
+      continue;
+    }
+    let prefilterTimeoutSeconds: number | undefined;
+    if (entry.prefilterTimeoutSeconds !== undefined) {
+      if (!entry.prefilter) {
+        errors.push(`webhooks.${hookId}: prefilterTimeoutSeconds requires 'prefilter'.`);
+        continue;
+      }
+      const n = Number(entry.prefilterTimeoutSeconds);
+      if (!Number.isInteger(n) || n < 1 || n > 600) {
+        errors.push(
+          `webhooks.${hookId}: prefilterTimeoutSeconds must be an integer between 1 and 600.`,
+        );
+        continue;
+      }
+      prefilterTimeoutSeconds = n;
+    }
     webhooks[hookId] = {
       personalityId: entry.personalityId,
       secret: entry.secret,
       ...(entry.sessionKey ? { sessionKey: entry.sessionKey } : {}),
+      ...(entry.prefilter ? { prefilter: entry.prefilter } : {}),
+      ...(prefilterTimeoutSeconds !== undefined ? { prefilterTimeoutSeconds } : {}),
+      ...(entry.mode ? { mode: entry.mode } : {}),
     };
   }
   return { webhooks: Object.keys(webhooks).length > 0 ? webhooks : undefined, errors };
