@@ -1,4 +1,4 @@
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import {
   applySafeMode,
   BUILTIN_PERSONALITY_IDS,
@@ -46,22 +46,14 @@ import {
   activate as activateOpenaiCompat,
   PROVIDER_CONTRACT_MAJOR as OPENAI_COMPAT_CONTRACT,
 } from '@ethosagent/llm-openai-compat';
-import { PendingMemoryStore, TombstoneStore, withPendingGate } from '@ethosagent/memory-approval';
-import { HistoryStore, withHistory } from '@ethosagent/memory-history';
+import { HistoryStore } from '@ethosagent/memory-history';
 import { compose as composeMemory } from '@ethosagent/memory-markdown/compose';
-import { VaultMemoryProvider } from '@ethosagent/memory-vault';
 import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import type { PersonalityCompose } from '@ethosagent/personalities/compose';
 import { compose as composePersonalities } from '@ethosagent/personalities/compose';
 import { DockerSandbox } from '@ethosagent/sandbox-docker';
 import { compose as composeSession } from '@ethosagent/session-sqlite/compose';
-import {
-  defaultAlwaysDeny,
-  FsAttachmentCache,
-  FsStorage,
-  REF_TO_ENV,
-  ScopedStorage,
-} from '@ethosagent/storage-fs';
+import { FsAttachmentCache, FsStorage, REF_TO_ENV } from '@ethosagent/storage-fs';
 import { readFileReducer } from '@ethosagent/tools-code/reducers/read-file';
 import { kanbanListReducer } from '@ethosagent/tools-kanban/reducers/kanban-list';
 import { bashReducer } from '@ethosagent/tools-terminal/reducers/bash';
@@ -71,7 +63,6 @@ import type {
   ExecutionBackendRegistry,
   HookRegistry,
   LLMProviderRegistry,
-  MemoryContext,
   MemoryProviderRegistry,
   PersonalityConfig,
   StorageRegistry,
@@ -87,6 +78,7 @@ import {
 } from '@ethosagent/voice-providers';
 import { activateFirstPartyPlugins } from './activate-first-party';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
+import { buildVaultBackend, composeGatedMemory } from './memory-backend';
 import { registerRemainingBuiltinProviders } from './register-builtin-providers';
 import type { WiringContext } from './types';
 
@@ -189,79 +181,60 @@ export async function buildInfrastructure(
 
   // Memory provider registry — built-ins registered here; plugins add more via
   // registerMemoryProvider.
+  //
+  // The `markdown` and `vault` factories compose the SAME decorator stack
+  // (history + approve-before-store gate) via composeGatedMemory — the backend
+  // decides where content + history live; the pending queue and tombstones stay
+  // rooted at ~/.ethos in both cases (gate machinery, not memory content).
+  //
+  // Cap drops must be audible (the Curator lesson, plan §3b): the pending queue
+  // signals every at-cap drop through this seam — logged, plus an observability
+  // event when an adapter is wired.
+  const pendingCapObservability = {
+    onCapExceeded: (info: { scopeId: string; droppedId: string; cap: number }) => {
+      log.warn(
+        `memory pending queue at cap (${info.cap}) for ${info.scopeId} — dropped oldest candidate ${info.droppedId}`,
+      );
+      opts.observability?.recordMemoryPendingCapDrop({ details: { ...info } });
+    },
+  };
   const memoryProviders = new DefaultMemoryProviderRegistry();
   memoryProviders.register('markdown', ({ dataDir: dir }) => {
+    // Agent tool writes flow through this provider; composeGatedMemory wraps it
+    // in the history decorator so every mutation is auditable. Dream turns write
+    // through the same handle and are relabelled from their `dream:` sessionKey
+    // (§2.1).
     const { memoryProvider } = composeMemory({ ...wiringCtx, dataDir: dir });
-    // Agent tool writes flow through this provider; wrap it in the history
-    // decorator so every mutation is auditable. Dream turns write through the
-    // same handle and are relabelled from their `dream:` sessionKey (§2.1).
     const history = new HistoryStore({ dataDir: dir, storage: wiringCtx.storage });
-    const approvalMode = config.memoryApproval?.mode ?? 'off';
-    if (approvalMode === 'off') {
-      return withHistory(memoryProvider, history, { source: 'tool' });
-    }
-    // Approve-before-store gate (memory-lifecycle L2). Compose HISTORY OUTSIDE
-    // GATE: a gated write parks in the pending queue and touches no bytes, so the
-    // outer history sees before === after and records nothing; a non-gated write
-    // flows through to the provider and is recorded once. Approve replays through
-    // `apply` (a fresh history handle carrying the ORIGINAL source + approvedBy),
-    // so an approved candidate is recorded exactly once, on apply.
-    const DAY_MS = 24 * 60 * 60 * 1000;
-    const tombstones = new TombstoneStore({ storage: wiringCtx.storage, dataDir: dir });
-    const pending = new PendingMemoryStore({
-      storage: wiringCtx.storage,
+    return composeGatedMemory({
+      base: memoryProvider,
+      history,
+      ...(config.memoryApproval ? { approval: config.memoryApproval } : {}),
       dataDir: dir,
-      tombstones,
-      ...(config.memoryApproval?.cap !== undefined ? { cap: config.memoryApproval.cap } : {}),
-      ...(config.memoryApproval?.ttlDays !== undefined
-        ? { ttlMs: config.memoryApproval.ttlDays * DAY_MS }
-        : {}),
-      apply: async (entry, approvedBy) => {
-        const handle = withHistory(memoryProvider, history, { source: entry.source, approvedBy });
-        const ctx: MemoryContext = {
-          scopeId: entry.scopeId,
-          sessionId: entry.sessionId ?? '',
-          sessionKey: entry.sessionKey ?? 'cli',
-          platform: 'cli',
-          workingDir: '',
-        };
-        await handle.sync([entry.update], ctx);
-      },
-    });
-    const gate = withPendingGate(memoryProvider, {
-      store: pending,
-      mode: approvalMode,
-      source: 'tool',
-    });
-    return withHistory(gate, history, { source: 'tool' });
+      storage: wiringCtx.storage,
+      observability: pendingCapObservability,
+    }).provider;
   });
   memoryProviders.register('vector', ({ dataDir: dir }) => {
     return new VectorMemoryProvider({ dir, storage: wiringCtx.storage });
   });
-  memoryProviders.register('vault', () => {
-    const vault = config.memoryVault;
-    if (!vault?.path) {
-      throw new Error('memory: vault requires memoryVault.path to be set in config.');
-    }
-    const vaultRoot = resolve(vault.path);
-    const agentDir = vault.agentDir ?? 'Ethos';
-    const agentRoot = join(vaultRoot, agentDir);
-    // Confine the memory system to the vault: read the whole vault (so search
-    // can find the user's notes), but write only inside the agent's own
-    // subtree. The sensitive-path floor still applies beneath the allowlist.
-    const scoped = new ScopedStorage(wiringCtx.storage, {
-      read: [`${vaultRoot}/`],
-      write: [`${agentRoot}/`],
-      alwaysDeny: defaultAlwaysDeny(),
-    });
-    return new VaultMemoryProvider({
-      vaultRoot,
-      agentDir,
-      storage: scoped,
+  memoryProviders.register('vault', ({ dataDir: dir }) => {
+    // ScopedStorage confinement + `.ethos-meta` history live in
+    // buildVaultBackend; the gate stack composes identically to markdown, with
+    // approve replaying through the VAULT provider handle.
+    const { base, history } = buildVaultBackend({
+      vault: config.memoryVault,
+      storage: wiringCtx.storage,
       logger: log,
-      ...(vault.prefetch && vault.prefetch.length > 0 ? { prefetchKeys: vault.prefetch } : {}),
-      ...(vault.exclude && vault.exclude.length > 0 ? { exclude: vault.exclude } : {}),
     });
+    return composeGatedMemory({
+      base,
+      history,
+      ...(config.memoryApproval ? { approval: config.memoryApproval } : {}),
+      dataDir: dir,
+      storage: wiringCtx.storage,
+      observability: pendingCapObservability,
+    }).provider;
   });
 
   // Storage backend registry — built-ins registered here; plugins add more

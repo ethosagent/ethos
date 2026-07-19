@@ -12,8 +12,7 @@ import {
   MemoryCaptureRunner,
   type ProposeFn,
 } from '@ethosagent/memory-capture';
-import { HistoryStore, withHistory } from '@ethosagent/memory-history';
-import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
+import { withHistory } from '@ethosagent/memory-history';
 import { buildConsolidationUpdates, consolidateMemory } from '@ethosagent/nightly-loop';
 import { sanitize } from '@ethosagent/safety-injection';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -40,6 +39,7 @@ import type {
   WiringProfile,
 } from './index';
 import type { LoadPluginsResult } from './load-plugins';
+import { createUndecoratedBackend } from './memory-backend';
 import {
   lookupProfile,
   mergeModelProfile,
@@ -690,16 +690,19 @@ export async function buildAgentLoop(
   let onMemoryCapturedFn:
     | ((cb: (n: { sessionId: string; scopeId: string; summary: string }) => void) => () => void)
     | undefined;
-  if (config.memoryCapture?.enabled && memoryName === 'markdown') {
+  if (config.memoryCapture?.enabled && (memoryName === 'markdown' || memoryName === 'vault')) {
     const captureConfig = config.memoryCapture;
     // Undecorated write provider + its own HistoryStore: the runner records
     // history itself (with hint + capture hashes), so it must not double-record
-    // through a decorated handle.
-    const captureBase = new MarkdownFileMemoryProvider({
-      dir: dataDir,
+    // through a decorated handle. Backend-aware: under `memory: vault` the base
+    // is a ScopedStorage-confined VaultMemoryProvider and the history roots at
+    // the vault's `.ethos-meta`; tombstones (below) stay at ~/.ethos.
+    const { base: captureBase, history: captureHistory } = createUndecoratedBackend({
+      selection: config,
+      dataDir,
       storage: wiringCtx.storage,
+      logger: log,
     });
-    const captureHistory = new HistoryStore({ dataDir, storage: wiringCtx.storage });
 
     // Extraction model: dedicated cheap aux model when configured, else reuse
     // the primary provider (open-question 2 — zero-config installs pay primary).
@@ -768,6 +771,16 @@ export async function buildAgentLoop(
         ...(config.memoryApproval?.ttlDays !== undefined
           ? { ttlMs: config.memoryApproval.ttlDays * DAY_MS }
           : {}),
+        // Cap drops must be audible (Curator lesson, plan §3b) — same seam as
+        // the build-infrastructure write path.
+        observability: {
+          onCapExceeded: (info) => {
+            log.warn(
+              `memory pending queue at cap (${info.cap}) for ${info.scopeId} — dropped oldest candidate ${info.droppedId}`,
+            );
+            opts.observability?.recordMemoryPendingCapDrop({ details: { ...info } });
+          },
+        },
         apply: async (entry, approvedBy) => {
           const handle = withHistory(captureBase, captureHistory, {
             source: entry.source,

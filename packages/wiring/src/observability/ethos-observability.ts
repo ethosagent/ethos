@@ -49,6 +49,7 @@ export const ETHOS_EVENT_CATEGORIES = [
   'tier.escalation',
   'tier.override',
   'heartbeat.decision',
+  'memory.pending_cap',
   'a2a.auth',
   'a2a.rpc',
   'a2a.task',
@@ -362,6 +363,12 @@ export class EthosObservability {
       decision: opts.decision,
       delivered: opts.delivered,
     });
+  }
+
+  /** A pending-memory candidate was dropped because the per-scope queue hit its
+   *  hard cap (memory-lifecycle L2 back-pressure — drops must be audible). */
+  recordMemoryPendingCapDrop(opts: EventBase & { severity?: EventSeverity }): void {
+    this.emit('memory.pending_cap', 'warn', opts);
   }
 
   // ── Funnel events (W4.1 — adoption funnel; local-only, never phone-home) ──

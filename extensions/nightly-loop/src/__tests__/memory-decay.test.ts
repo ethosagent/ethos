@@ -202,4 +202,105 @@ describe('parseMemoryMeta — tolerant validation', () => {
     const meta = parseMemoryMeta(raw);
     expect(meta.keys['MEMORY.md']).toEqual({ good: { importance: 0.7, lastSeen: 123 } });
   });
+
+  it('round-trips the user-removed lifecycle state (§5 reconciliation)', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      keys: {
+        'MEMORY.md': { gone: { importance: 0.6, lastSeen: 123, state: 'user-removed' } },
+      },
+    });
+    const meta = parseMemoryMeta(raw);
+    expect(meta.keys['MEMORY.md']?.gone?.state).toBe('user-removed');
+  });
+});
+
+describe('planConsolidation — §5 sidecar-drift reconciliation (user-removed)', () => {
+  it('marks an active slug user-removed when its section vanished from the live file', () => {
+    const meta: MemoryMeta = {
+      version: 1,
+      keys: {
+        'MEMORY.md': {
+          kept: { importance: 0.9, lastSeen: NOW },
+          gone: { importance: 0.8, lastSeen: NOW },
+        },
+      },
+    };
+    // The user hand-deleted `### gone` in the live file; only `kept` remains
+    // and only `kept` is scored.
+    const res = result([memSection('kept', 0.9)]);
+    const plan = planConsolidation({
+      current: { memory: '### kept\nbody-kept', user: '' },
+      result: res,
+      meta,
+      params: params(),
+    });
+
+    expect(plan.userRemovedSlugs).toEqual(['gone']);
+    expect(plan.nextMeta.keys['MEMORY.md']?.gone).toEqual({
+      importance: 0.8,
+      lastSeen: NOW,
+      state: 'user-removed',
+    });
+    // The removal is never resurrected: no update re-adds the section, and the
+    // slug is not archived (the bytes are the user's deletion, not a demotion).
+    expect(plan.archivedSlugs).toEqual([]);
+    for (const u of plan.updates) expect(contentOf(u)).not.toContain('gone');
+  });
+
+  it('carries a user-removed entry forward without re-recording it', () => {
+    const meta: MemoryMeta = {
+      version: 1,
+      keys: {
+        'MEMORY.md': {
+          kept: { importance: 0.9, lastSeen: NOW },
+          gone: { importance: 0.8, lastSeen: NOW, state: 'user-removed' },
+        },
+      },
+    };
+    const plan = planConsolidation({
+      current: { memory: '### kept\nbody-kept', user: '' },
+      result: result([memSection('kept', 0.9)]),
+      meta,
+      params: params(),
+    });
+    expect(plan.userRemovedSlugs).toEqual([]);
+    expect(plan.nextMeta.keys['MEMORY.md']?.gone?.state).toBe('user-removed');
+  });
+
+  it('a hand-re-added section is re-scored and the fresh active entry wins', () => {
+    const meta: MemoryMeta = {
+      version: 1,
+      keys: {
+        'MEMORY.md': { gone: { importance: 0.8, lastSeen: NOW - DAY, state: 'user-removed' } },
+      },
+    };
+    const plan = planConsolidation({
+      current: { memory: '### gone\nback by hand', user: '' },
+      result: result([memSection('gone', 0.7, 'back by hand')]),
+      meta,
+      params: params(),
+    });
+    expect(plan.userRemovedSlugs).toEqual([]);
+    expect(plan.nextMeta.keys['MEMORY.md']?.gone?.state).toBeUndefined();
+    expect(plan.nextMeta.keys['MEMORY.md']?.gone?.importance).toBe(0.7);
+  });
+
+  it('a slug archived this pass is a demotion, not user-removal', () => {
+    const meta: MemoryMeta = {
+      version: 1,
+      keys: { 'MEMORY.md': { trivia: { importance: 0.5, lastSeen: NOW - 120 * DAY } } },
+    };
+    // The model still scored `trivia` (it is in the live text) but decay
+    // archives it — reconciliation must not double-mark it.
+    const plan = planConsolidation({
+      current: { memory: '### trivia\nbody-trivia', user: '' },
+      result: result([memSection('trivia', 0.5)]),
+      meta,
+      params: params(),
+    });
+    expect(plan.archivedSlugs).toEqual(['trivia']);
+    expect(plan.userRemovedSlugs).toEqual([]);
+    expect(plan.nextMeta.keys['MEMORY.md']?.trivia).toBeUndefined();
+  });
 });

@@ -86,6 +86,15 @@ export interface NightlyPassDeps {
   // The nightly pass is the SINGLE writer of `memory-meta.json`.
   readMemoryMeta?(id: string): Promise<MemoryMeta>;
   writeMemoryMeta?(id: string, meta: MemoryMeta): Promise<void>;
+  /**
+   * §5 sidecar-drift reconciliation. Called after the sidecar is persisted when
+   * the pass marked hand-deleted sections 'user-removed', so the caller can
+   * history-record the transition. OPTIONAL — absent means no record.
+   */
+  onSidecarReconciled?(
+    id: string,
+    args: { userRemovedSlugs: string[]; before: MemoryMeta; after: MemoryMeta },
+  ): Promise<void>;
   /** Decay tuning (§4.2/§4.3). Defaults applied by `resolveDecayParams`. */
   memoryDecay?: DecayConfig;
   /** Injected clock for decay recency; defaults to Date.now. */
@@ -276,6 +285,14 @@ export async function runNightlyPass(
         // Single writer: only the nightly pass persists the sidecar.
         await deps.writeMemoryMeta(personalityId, plan.nextMeta);
         if (plan.archivedSlugs.length > 0) detailSuffix = `, archived ${plan.archivedSlugs.length}`;
+        if (plan.userRemovedSlugs.length > 0) {
+          detailSuffix += `, reconciled ${plan.userRemovedSlugs.length} user-removed`;
+          await deps.onSidecarReconciled?.(personalityId, {
+            userRemovedSlugs: plan.userRemovedSlugs,
+            before: meta,
+            after: plan.nextMeta,
+          });
+        }
       } else {
         updates = buildConsolidationUpdates(cur, next);
       }

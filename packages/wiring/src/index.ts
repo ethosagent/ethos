@@ -941,11 +941,9 @@ export {
   TombstoneStore,
   withPendingGate,
 } from '@ethosagent/memory-approval';
-
 // Content-normalized fact hash — the tombstone key shared by capture dedup and
 // the L4 `ethos memory retract` op, so a retracted fact is never re-proposed.
 export { hashFact } from '@ethosagent/memory-capture';
-
 export {
   type HistoryEntry,
   type HistoryReadFilter,
@@ -954,11 +952,20 @@ export {
   HistoryStore,
   withHistory,
 } from '@ethosagent/memory-history';
-
 // Shared archive-restore path (pillar C, §4.2) — re-exported so the web-api
 // MemoryService can call the exact function the CLI `ethos memory restore`
 // uses, without depending on `apps/ethos`.
 export { type RestoreResult, restoreArchivedSlug } from '@ethosagent/nightly-loop';
+// Backend-aware sibling of createMemoryProvider (memory-lifecycle vault gaps):
+// returns a history-decorated handle for the CONFIGURED backend (`memory:
+// vault` → the vault; anything else → markdown at dataDir) plus the history
+// store and sidecar root/storage out-of-loop writers (nightly) need.
+export {
+  type ConfiguredMemoryBackend,
+  type CreateMemoryProviderFromConfigOptions,
+  createMemoryProviderFromConfig,
+  type MemoryBackendSelection,
+} from './memory-backend';
 
 // ---------------------------------------------------------------------------
 // Danger predicate (shared between CLI guard + web approval flow)

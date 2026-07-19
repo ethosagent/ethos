@@ -14,7 +14,7 @@
 // `memory-meta.json` is written by the nightly pass ONLY (single writer, §4.1).
 
 import type { MemoryUpdate } from '@ethosagent/types';
-import type { ConsolidationResult, ScoredSection } from './memory-consolidation';
+import { type ConsolidationResult, type ScoredSection, slugify } from './memory-consolidation';
 
 const ARCHIVE_KEY = 'memory-archive.md';
 
@@ -30,8 +30,12 @@ export interface MetaEntry {
    * active. Only explicit lifecycle ops (`ethos memory supersede|retract`) set
    * 'superseded' / 'retracted'; those sections have left the live file for the
    * archive, so they never reappear as a scored consolidation section.
+   * 'user-removed' (§5 sidecar-drift reconciliation) is set by the nightly pass
+   * when an active slug's `### <slug>` section vanished from the live file
+   * without a lifecycle op — the user hand-deleted it. Carried forward like
+   * 'retracted'; the section is never resurrected.
    */
-  state?: 'active' | 'superseded' | 'retracted';
+  state?: 'active' | 'superseded' | 'retracted' | 'user-removed';
   /** For a superseded section: the slug that replaced it (L4, §3c). */
   supersededBy?: string;
 }
@@ -114,7 +118,12 @@ export function parseMemoryMeta(raw: string | null): MemoryMeta {
       const e = entry as Record<string, unknown>;
       if (typeof e.importance === 'number' && typeof e.lastSeen === 'number') {
         const parsedEntry: MetaEntry = { importance: e.importance, lastSeen: e.lastSeen };
-        if (e.state === 'superseded' || e.state === 'retracted' || e.state === 'active') {
+        if (
+          e.state === 'superseded' ||
+          e.state === 'retracted' ||
+          e.state === 'active' ||
+          e.state === 'user-removed'
+        ) {
           parsedEntry.state = e.state;
         }
         if (typeof e.supersededBy === 'string') parsedEntry.supersededBy = e.supersededBy;
@@ -140,6 +149,12 @@ export interface ConsolidationPlan {
   nextMeta: MemoryMeta;
   /** Slugs demoted to the archive this pass (for the step log). */
   archivedSlugs: string[];
+  /**
+   * Slugs newly marked 'user-removed' this pass (§5 reconciliation) — the
+   * caller history-records the sidecar transition so a hand-deletion leaves an
+   * auditable trace.
+   */
+  userRemovedSlugs: string[];
 }
 
 interface FileInput {
@@ -167,7 +182,11 @@ export function planConsolidation(args: {
   const { current, result, meta, params } = args;
   const updates: MemoryUpdate[] = [];
   const archivedSlugs: string[] = [];
+  const userRemovedSlugs: string[] = [];
   const nextMeta = emptyMeta();
+  /** Slugs the model produced this pass (kept OR archived), per file — these
+   *  went through the scoring path above and are never drift candidates. */
+  const scoredSlugsByKey = new Map<string, Set<string>>();
 
   const files: FileInput[] = [
     {
@@ -185,6 +204,7 @@ export function planConsolidation(args: {
   ];
 
   for (const file of files) {
+    scoredSlugsByKey.set(file.key, new Set(file.sections.map((s) => s.slug)));
     if (file.sections.length === 0) continue;
 
     const prior = meta.keys[file.key] ?? {};
@@ -242,12 +262,44 @@ export function planConsolidation(args: {
   // lifecycle state is copied, not recomputed. This is the single-writer's half
   // of the L4 coexistence contract: the nightly pass never drops a state an
   // explicit lifecycle op recorded (see extensions/nightly-loop/memory-lifecycle).
+  //
+  // §5 sidecar-drift reconciliation rides the same sweep: an ACTIVE entry whose
+  // `### <slug>` section is no longer in the live file's PRE-PASS text was
+  // hand-deleted by the user (a model reword still carries the heading; a
+  // model drop leaves the heading in the pre-pass text). Mark it 'user-removed'
+  // and carry it forward like a retraction — never resurrect the section. If
+  // the user later re-adds the section by hand it is re-scored above and the
+  // fresh active entry wins.
+  const liveSlugsByKey = new Map<string, Set<string>>([
+    ['MEMORY.md', liveSlugs(current.memory)],
+    ['USER.md', liveSlugs(current.user)],
+  ]);
   for (const [fileKey, slugMap] of Object.entries(meta.keys)) {
     for (const [slug, entry] of Object.entries(slugMap)) {
       if (entry.state === 'superseded' || entry.state === 'retracted') {
         const carried = nextMeta.keys[fileKey] ?? {};
         carried[slug] = entry;
         nextMeta.keys[fileKey] = carried;
+        continue;
+      }
+      if (nextMeta.keys[fileKey]?.[slug]) continue; // re-scored this pass — active wins
+      if (entry.state === 'user-removed') {
+        const carried = nextMeta.keys[fileKey] ?? {};
+        carried[slug] = entry;
+        nextMeta.keys[fileKey] = carried;
+        continue;
+      }
+      // Drift test: an active entry counts as hand-deleted only when the model
+      // did NOT score the slug this pass (a scored slug was kept or archived
+      // above — both legitimate) AND its `### <slug>` heading is absent from
+      // the PRE-PASS live text.
+      if (scoredSlugsByKey.get(fileKey)?.has(slug)) continue;
+      const live = liveSlugsByKey.get(fileKey);
+      if (live !== undefined && !live.has(slug)) {
+        const carried = nextMeta.keys[fileKey] ?? {};
+        carried[slug] = { ...entry, state: 'user-removed' };
+        nextMeta.keys[fileKey] = carried;
+        userRemovedSlugs.push(slug);
       }
     }
   }
@@ -255,12 +307,24 @@ export function planConsolidation(args: {
     nextMeta.retractedHashes = [...meta.retractedHashes];
   }
 
-  return { updates, nextMeta, archivedSlugs };
+  return { updates, nextMeta, archivedSlugs, userRemovedSlugs };
 }
 
 /** Render a section as `### <slug>\n<content>`. */
 export function renderSection(section: ScoredSection): string {
   return `### ${section.slug}\n${section.content.trim()}`;
+}
+
+/** Slugs of the `### <heading>` sections present in a live file's text. */
+function liveSlugs(text: string): Set<string> {
+  const out = new Set<string>();
+  const re = /^###\s+(.+?)\s*$/gm;
+  let m: RegExpExecArray | null = re.exec(text);
+  while (m !== null) {
+    out.add(slugify(m[1] ?? ''));
+    m = re.exec(text);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

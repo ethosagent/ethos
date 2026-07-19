@@ -292,6 +292,43 @@ describe('runNightlyPass', () => {
       expect(Object.keys(stored.keys['MEMORY.md'] ?? {})).toEqual(['keep']);
     });
 
+    it('§5 drift reconciliation: hand-deleted section → user-removed + onSidecarReconciled', async () => {
+      let stored: MemoryMeta = {
+        version: 1,
+        keys: {
+          'MEMORY.md': {
+            keep: { importance: 0.9, lastSeen: 1_800_000_000_000 },
+            gone: { importance: 0.8, lastSeen: 1_800_000_000_000 },
+          },
+        },
+      };
+      const onSidecarReconciled = vi.fn(async () => {});
+      const { deps } = makeDeps({
+        // `### gone` was hand-deleted from the live file before this pass.
+        readMemory: async () => ({ memory: '### keep\nx', user: '' }),
+        consolidate: async () => scored([{ slug: 'keep', content: 'x reworded', score: 0.9 }]),
+        readMemoryMeta: async () => stored,
+        writeMemoryMeta: async (_id, m) => {
+          stored = m;
+        },
+        onSidecarReconciled,
+        now: () => 1_800_000_000_000,
+      });
+
+      const res = await runNightlyPass('sage', deps);
+      expect(res.steps.find((s) => s.step === 'memory')?.detail).toContain(
+        'reconciled 1 user-removed',
+      );
+      expect(stored.keys['MEMORY.md']?.gone?.state).toBe('user-removed');
+      expect(onSidecarReconciled).toHaveBeenCalledTimes(1);
+      const args = onSidecarReconciled.mock.calls[0] as unknown as [
+        string,
+        { userRemovedSlugs: string[] },
+      ];
+      expect(args[0]).toBe('sage');
+      expect(args[1].userRemovedSlugs).toEqual(['gone']);
+    });
+
     it('scoring failure (scored=false): no decay, meta untouched', async () => {
       const writeMemoryMeta = vi.fn(async () => {});
       const { deps, spies } = makeDeps({

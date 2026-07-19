@@ -25,7 +25,13 @@ import {
   scorePersonality,
 } from '@ethosagent/personality-judge';
 import { draftExpressionUpdate, proposeSkillFromEvidence } from '@ethosagent/skill-evolver';
-import { formatError, type LLMProvider, type MemoryUpdate, toEthosError } from '@ethosagent/types';
+import {
+  formatError,
+  type LLMProvider,
+  type MemoryUpdate,
+  type Storage,
+  toEthosError,
+} from '@ethosagent/types';
 import { createLLM, getStorage } from '../wiring';
 import {
   buildEvidenceDigest,
@@ -98,16 +104,28 @@ async function writeNightlyState(ethosDir: string, id: string, state: NightlySta
 
 // Read the importance/decay sidecar (M3, §4.1). Tolerant: a missing or corrupt
 // file yields an empty meta so slugs are treated as fresh rather than crashing.
-async function readMemoryMeta(ethosDir: string, id: string): Promise<MemoryMeta> {
-  const path = join(ethosDir, 'personalities', id, 'memory-meta.json');
-  return parseMemoryMeta(await getStorage().read(path));
+// `memoryRoot`/`storage` come from the configured backend: `~/.ethos` for
+// markdown, `<vaultRoot>/<agentDir>` (via its ScopedStorage) for the vault —
+// the sidecar lives beside the MEMORY.md it describes.
+async function readMemoryMeta(
+  memoryRoot: string,
+  storage: Storage,
+  id: string,
+): Promise<MemoryMeta> {
+  const path = join(memoryRoot, 'personalities', id, 'memory-meta.json');
+  return parseMemoryMeta(await storage.read(path));
 }
 
 // Single writer: only the nightly pass persists `memory-meta.json`.
-async function writeMemoryMeta(ethosDir: string, id: string, meta: MemoryMeta): Promise<void> {
-  const dir = join(ethosDir, 'personalities', id);
-  await getStorage().mkdir(dir);
-  await getStorage().writeAtomic(join(dir, 'memory-meta.json'), JSON.stringify(meta, null, 2));
+async function writeMemoryMeta(
+  memoryRoot: string,
+  storage: Storage,
+  id: string,
+  meta: MemoryMeta,
+): Promise<void> {
+  const dir = join(memoryRoot, 'personalities', id);
+  await storage.mkdir(dir);
+  await storage.writeAtomic(join(dir, 'memory-meta.json'), JSON.stringify(meta, null, 2));
 }
 
 // Build the real per-personality dependency object the orchestrator drives.
@@ -118,8 +136,14 @@ function buildDeps(args: {
   reg: import('@ethosagent/personalities').FilePersonalityRegistry;
   llm: LLMProvider;
   memory: import('@ethosagent/types').MemoryProvider;
+  /** Backend root for memory files + the `memory-meta.json` sidecar. */
+  memoryRoot: string;
+  /** Storage confined to the backend (the vault's ScopedStorage under `memory: vault`). */
+  memoryStorage: Storage;
+  /** Backend history store — records the §5 sidecar reconciliation. */
+  history: import('@ethosagent/wiring').HistoryStore;
 }): NightlyPassDeps {
-  const { config, ethosDir, reg, llm, memory } = args;
+  const { config, ethosDir, reg, llm, memory, memoryRoot, memoryStorage, history } = args;
 
   // The Judge's writeJudgeStreak needs the JudgeResult, but the orchestrator's
   // dep signature only carries (id, lowStreak). Capture the last scored result
@@ -237,11 +261,27 @@ function buildDeps(args: {
     },
 
     readMemoryMeta(id) {
-      return readMemoryMeta(ethosDir, id);
+      return readMemoryMeta(memoryRoot, memoryStorage, id);
     },
 
     writeMemoryMeta(id, meta) {
-      return writeMemoryMeta(ethosDir, id, meta);
+      return writeMemoryMeta(memoryRoot, memoryStorage, id, meta);
+    },
+
+    // §5 sidecar-drift reconciliation: a hand-deleted section was marked
+    // 'user-removed' in the sidecar — history-record the transition so the
+    // change is auditable even though no memory file's bytes moved.
+    async onSidecarReconciled(id, { before, after }) {
+      await history.record({
+        scopeId: `personality:${id}`,
+        key: 'memory-meta.json',
+        actions: ['user-removed'],
+        source: 'consolidation',
+        sessionId: '',
+        sessionKey: 'nightly',
+        before: JSON.stringify(before, null, 2),
+        after: JSON.stringify(after, null, 2),
+      });
     },
 
     // Decay tuning from `memoryConsolidation.*`; undefined → all defaults
@@ -274,7 +314,7 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
   const id = opts?.id;
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
   const { ethosDir } = await import('@ethosagent/config');
-  const { createMemoryProvider } = await import('@ethosagent/wiring');
+  const { createMemoryProviderFromConfig } = await import('@ethosagent/wiring');
 
   const storage = getStorage();
   const dir = ethosDir();
@@ -305,15 +345,26 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
   const llm = await createLLM(config);
   // Consolidation writes are labelled `consolidation` in the provenance
   // history (§2.1). The nightly pass is also the single rotator of the
-  // history JSONL (§2.2) — no other process renames it.
-  const { HistoryStore } = await import('@ethosagent/wiring');
-  const memory = createMemoryProvider({
+  // history JSONL (§2.2) — no other process renames it. Backend-aware: under
+  // `memory: vault` the provider, history (at `<agentRoot>/.ethos-meta`), and
+  // the `memory-meta.json` sidecar all resolve inside the vault, so the pass
+  // consolidates the store the agent actually reads from.
+  const backend = createMemoryProviderFromConfig({
+    config,
     dataDir: dir,
     storage: getStorage(),
     source: 'consolidation',
   });
-  const history = new HistoryStore({ dataDir: dir, storage: getStorage() });
-  const deps = buildDeps({ config, ethosDir: dir, reg, llm, memory });
+  const deps = buildDeps({
+    config,
+    ethosDir: dir,
+    reg,
+    llm,
+    memory: backend.provider,
+    memoryRoot: backend.memoryRoot,
+    memoryStorage: backend.storage,
+    history: backend.history,
+  });
 
   for (const target of targets) {
     const nightly = reg.get(target)?.nightly;
@@ -337,7 +388,7 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
         console.log(`  ${step.step.padEnd(12)} ${step.status.padEnd(8)} ${step.detail}`);
       }
       // Single-rotator: roll last month's history out of the live JSONL.
-      await history.rotate(`personality:${target}`);
+      await backend.history.rotate(`personality:${target}`);
     } catch (err) {
       const e = toEthosError(err);
       console.error(`\n✗ Nightly pass failed for ${target}: ${e.cause}`);
