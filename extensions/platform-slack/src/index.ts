@@ -27,6 +27,7 @@ export type {
   SessionUnfurlData,
 } from './blocks/unfurl';
 export { chunkText, reflowChunks } from './chunking';
+export { classifyChannelError } from './classify-error';
 export type { KanbanReader, MemoryReader } from './commands';
 export {
   type Binding,

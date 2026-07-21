@@ -8,7 +8,10 @@ import type {
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import * as nodemailer from 'nodemailer';
+import { classifyChannelError, isAuthFailure } from './classify-error';
 import { toNativeMarkdown } from './format';
+
+export { classifyChannelError, isAuthFailure } from './classify-error';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -82,6 +85,7 @@ export class EmailAdapter implements PlatformAdapter {
   private readonly pollIntervalMs: number;
   readonly botKey: string;
   private messageHandler?: (msg: InboundMessage) => void;
+  private fatalErrorHandler?: (error: unknown) => void;
   private pollTimer?: ReturnType<typeof setInterval>;
 
   // chatId → thread state needed to reply correctly
@@ -110,9 +114,15 @@ export class EmailAdapter implements PlatformAdapter {
   // ---------------------------------------------------------------------------
 
   async start(): Promise<void> {
-    // First poll immediately, then schedule
-    await this.poll();
+    // First poll immediately, then schedule. The first poll propagates
+    // connect/auth failures so a misconfigured mailbox surfaces at startup
+    // (classified) instead of silently retrying forever.
+    await this.poll({ propagateErrors: true });
     this.pollTimer = setInterval(() => void this.poll(), this.pollIntervalMs);
+  }
+
+  onFatalError(handler: (error: unknown) => void): void {
+    this.fatalErrorHandler = handler;
   }
 
   async stop(): Promise<void> {
@@ -176,7 +186,7 @@ export class EmailAdapter implements PlatformAdapter {
   // Poll — opens INBOX, fetches unseen messages, emits InboundMessage events
   // ---------------------------------------------------------------------------
 
-  async poll(): Promise<void> {
+  async poll(opts: { propagateErrors?: boolean } = {}): Promise<void> {
     if (!this.messageHandler) return;
 
     const client = this.createImapClient(this.config);
@@ -205,8 +215,21 @@ export class EmailAdapter implements PlatformAdapter {
       } finally {
         lock.release();
       }
-    } catch {
-      // IMAP errors are transient — log silently and retry next poll
+    } catch (err) {
+      if (opts.propagateErrors) {
+        // Startup verification path — surface a classified error to the host.
+        throw classifyChannelError(err) ?? err;
+      }
+      if (isAuthFailure(err) && this.fatalErrorHandler) {
+        // Credentials went bad mid-run (revoked app password). Retrying the
+        // same login forever is pointless — stop polling and tell the host.
+        if (this.pollTimer !== undefined) {
+          clearInterval(this.pollTimer);
+          this.pollTimer = undefined;
+        }
+        this.fatalErrorHandler(classifyChannelError(err) ?? err);
+      }
+      // Other IMAP errors are transient — stay silent and retry next poll
     } finally {
       try {
         await client.logout();

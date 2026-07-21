@@ -118,6 +118,16 @@ export interface PlatformAdapter {
   sendTyping?(chatId: string): Promise<void>;
   editMessage?(chatId: string, messageId: string, text: string): Promise<DeliveryResult>;
   onMessage(handler: (message: InboundMessage) => void): void;
+  /**
+   * Register a handler for fatal, non-recoverable failures that surface
+   * AFTER `start()` resolved — a WS rejection for disallowed intents, a
+   * revoked token mid-run, a logged-out session. Adapters that implement
+   * this MUST classify provider-side misconfigurations (ideally into a
+   * `CHANNEL_CONFIG` EthosError) before invoking the handler, and MUST NOT
+   * throw or crash the process for these conditions. The host (gateway)
+   * logs the error and disables the adapter; other channels keep running.
+   */
+  onFatalError?(handler: (error: unknown) => void): void;
   health(): Promise<{ ok: boolean; latencyMs?: number }>;
   registerCommands?(cmds: { name: string; description: string }[]): Promise<void>;
 }

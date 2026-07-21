@@ -39,9 +39,11 @@ import { createA2aTools } from '@ethosagent/tools-a2a';
 import {
   type ClarifyResponse,
   EthosError,
+  formatError,
   type GatewayMessagePayload,
   type GatewayMessageResult,
   type InboundMessage,
+  isEthosError,
   type MemoryContext,
   type NotificationRouter,
   type PlatformAdapter,
@@ -127,6 +129,91 @@ export async function buildGatewayHeartbeat(
 
 function gatewayHealthPath(): string {
   return join(ethosDir(), 'gateway-health.json');
+}
+
+// ---------------------------------------------------------------------------
+// Adapter failure isolation
+//
+// One misconfigured channel (Discord without the Message Content intent, a
+// revoked Telegram token, a bad IMAP password) must not kill the gateway.
+// Adapter start() failures — and late fatal errors surfaced through the
+// optional `onFatalError` seam — are classified, logged loudly, and the
+// adapter is disabled for the run while every other channel plus cron,
+// watchers, and webhooks keep running.
+// ---------------------------------------------------------------------------
+
+export interface AdapterStartFailure {
+  adapterId: string;
+  error: EthosError;
+}
+
+/**
+ * Normalize an adapter failure for rendering. Classified `EthosError`s
+ * (CHANNEL_CONFIG from the adapter packages) pass through untouched; raw
+ * errors keep the INTERNAL path but gain the platform prefix so the log
+ * attributes the failure to the right channel.
+ */
+export function wrapAdapterError(displayName: string, err: unknown): EthosError {
+  if (isEthosError(err)) return err;
+  const cause = err instanceof Error ? err.message : String(err);
+  return new EthosError({
+    code: 'INTERNAL',
+    cause: `${displayName} adapter failed: ${cause || 'Unknown error'}`,
+    action: 'Re-run with the same inputs. If the error repeats, file an issue with the message.',
+    details: err instanceof Error ? { name: err.name, stack: err.stack } : { value: err },
+  });
+}
+
+/** Render the loud two-part failure block: the classified error plus one
+ *  unmissable line stating the channel is disabled for this run. */
+export function renderAdapterFailure(displayName: string, error: EthosError): string {
+  return [
+    formatError(error, { color: true }),
+    `${c.red}✗ ${c.bold}${displayName} DISABLED for this run${c.reset}${c.red} — other channels continue.${c.reset}`,
+  ].join('\n');
+}
+
+/**
+ * Start every adapter, isolating failures: a rejecting `start()` is reported
+ * through `onFailure` and recorded, and the remaining adapters still start.
+ * The failed adapter is stopped best-effort to release any half-open clients.
+ */
+export async function startAdaptersGuarded(
+  adapters: PlatformAdapter[],
+  onFailure: (adapter: PlatformAdapter, error: EthosError) => void,
+): Promise<{ started: PlatformAdapter[]; failures: AdapterStartFailure[] }> {
+  const started: PlatformAdapter[] = [];
+  const failures: AdapterStartFailure[] = [];
+  await Promise.all(
+    adapters.map(async (adapter) => {
+      try {
+        await adapter.start();
+        started.push(adapter);
+      } catch (err) {
+        const error = wrapAdapterError(adapter.displayName, err);
+        failures.push({ adapterId: adapter.id, error });
+        onFailure(adapter, error);
+      }
+    }),
+  );
+  return { started, failures };
+}
+
+/**
+ * Attach the late-async failure seam: adapters that expose `onFatalError`
+ * (Discord WS close 4014/4004 after login, Telegram 409 mid-run, IMAP auth
+ * revoked, WhatsApp logged out) report through `onFatal` instead of crashing
+ * the process. Adapters without the seam are unchanged.
+ */
+export function wireAdapterFatalHandlers(
+  adapters: PlatformAdapter[],
+  onFatal: (adapter: PlatformAdapter, error: EthosError) => void,
+): void {
+  for (const adapter of adapters) {
+    adapter.onFatalError?.((err) => {
+      onFatal(adapter, wrapAdapterError(adapter.displayName, err));
+    });
+  }
 }
 
 // Best-effort dynamic import. Returns null and logs a clear warning if the
@@ -970,8 +1057,32 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   };
   void seedSystemJobs();
 
-  // Start all adapters
-  await Promise.all(adapters.map((a) => a.start()));
+  // Adapter failure isolation: a misconfigured channel is loudly disabled
+  // for the run — classified error + DISABLED line — while every other
+  // channel, cron, watchers, and webhooks keep running. `disableAdapter`
+  // is idempotent so a start() rejection and a late fatal event for the
+  // same adapter never double-log.
+  const disabledAdapterIds = new Set<string>();
+  const liveAdapters = () => adapters.filter((a) => !disabledAdapterIds.has(a.id));
+  const disableAdapter = (adapter: PlatformAdapter, error: EthosError): void => {
+    if (disabledAdapterIds.has(adapter.id)) return;
+    disabledAdapterIds.add(adapter.id);
+    console.error(renderAdapterFailure(adapter.displayName, error));
+    void adapter.stop().catch(() => {});
+  };
+
+  // Late-async failures (post-start WS rejections, mid-run token revocations)
+  // arrive through the adapters' onFatalError seam — wired BEFORE start so a
+  // failure that races startup is still caught.
+  wireAdapterFatalHandlers(adapters, disableAdapter);
+
+  // Start all adapters — guarded per adapter.
+  await startAdaptersGuarded(adapters, disableAdapter);
+  if (adapters.length > 0 && disabledAdapterIds.size === adapters.length) {
+    console.error(
+      `${c.yellow}⚠ All ${adapters.length} configured channel(s) failed to start — gateway continues with cron, watchers, and webhooks only.${c.reset}`,
+    );
+  }
 
   // Plugins finished loading inside createAgentLoop above; now that the
   // adapters are constructed and started, push plugin slash commands to each
@@ -980,7 +1091,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
 
   // Health checks — include botKey and binding for multi-bot adapters so the
   // startup log shows exactly which bot is live and what it's bound to.
-  for (const adapter of adapters) {
+  // Disabled adapters are excluded — their failure block already printed.
+  for (const adapter of liveAdapters()) {
     const health = await adapter.health();
     // adapter.id is `${platform}:${botKey}` for telegram/slack; the botKey is
     // everything after the first colon.
@@ -1006,7 +1118,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const healthPort = Number(process.env.ETHOS_GATEWAY_HEALTH_PORT) || 3002;
   const healthHost = process.env.ETHOS_SERVE_HOST ?? '127.0.0.1';
   const healthServer = createHealthServer(healthPort, healthHost, async () => {
-    const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+    const hb = await buildGatewayHeartbeat(liveAdapters(), heartbeatStartedAt);
     const allOk = hb.adapters.length > 0 && hb.adapters.every((a) => a.ok);
     return {
       status: allOk ? 'ok' : 'degraded',
@@ -1072,7 +1184,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     if (heartbeatInFlight) return;
     heartbeatInFlight = true;
     try {
-      const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+      const hb = await buildGatewayHeartbeat(liveAdapters(), heartbeatStartedAt);
       await storage.writeAtomic(gatewayHealthPath(), JSON.stringify(hb));
     } catch {
       // Best-effort — a missed tick is harmless; the consumer treats stale

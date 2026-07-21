@@ -47,6 +47,8 @@ export type EthosErrorCode =
   // MCP
   | 'MCP_TRANSPORT_INVALID'
   | 'MCP_SERVER_NOT_FOUND'
+  // Channel adapters (provider-side configuration, not an Ethos bug)
+  | 'CHANNEL_CONFIG'
   // Secrets
   | 'SECRETS_UNAVAILABLE'
   // Network / registry
@@ -126,6 +128,24 @@ export function toEthosError(err: unknown, fallbackCode: EthosErrorCode = 'INTER
     cause: cause || 'Unknown error',
     action: 'Re-run with the same inputs. If the error repeats, file an issue with the message.',
     details: err instanceof Error ? { name: err.name, stack: err.stack } : { value: err },
+  });
+}
+
+/**
+ * Build a `CHANNEL_CONFIG` error for a provider-side misconfiguration
+ * (Discord intents, bad bot tokens, IMAP auth, Slack scopes, …).
+ *
+ * The cause leads with source attribution so the terminal rendering reads
+ * "✗ CHANNEL_CONFIG: Discord configuration problem (not an Ethos issue): …"
+ * instead of an INTERNAL retry suggestion. `reason` and `action` should be
+ * one-line, imperative, markdown-free — they land in a terminal log.
+ */
+export function channelConfigError(platform: string, reason: string, action: string): EthosError {
+  return new EthosError({
+    code: 'CHANNEL_CONFIG',
+    cause: `${platform} configuration problem (not an Ethos issue): ${reason}`,
+    action,
+    details: { platform },
   });
 }
 

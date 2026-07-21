@@ -12,11 +12,14 @@ import type {
   Storage,
 } from '@ethosagent/types';
 import { Bot, InlineKeyboard, InputFile, webhookCallback } from 'grammy';
+import { classifyChannelError } from './classify-error';
 import { type ChannelMode, DEFAULT_CHANNEL_MODE } from './config';
 import { chunkHash, markdownToTelegramHtml } from './format';
 import { shouldRespond } from './routing/channel-mode';
 import { ChannelOverrideStore } from './store/channel-overrides';
 import { ThreadStateStore } from './store/thread-state';
+
+export { classifyChannelError } from './classify-error';
 
 // ---------------------------------------------------------------------------
 // Clarify interactive shapes — used by the Telegram clarify surface to post
@@ -366,6 +369,7 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
   private readonly receiptReaction: string;
   private readonly parseMode: 'html' | 'plain';
   private messageHandler?: (message: InboundMessage) => void;
+  private fatalErrorHandler?: (error: unknown) => void;
   /** Registered by the clarify surface to receive inline-keyboard taps. */
   private callbackQueryHandler?: (event: CallbackQueryEvent) => void;
   /** Approval-card button-click handler, wired by the approval coordinator. */
@@ -679,10 +683,23 @@ export class TelegramAdapter implements PlatformAdapter, ApprovalCapableAdapter 
       // the whole gateway and any other adapters running with it. Attach a
       // handler so a bad Telegram token degrades to a logged warning instead.
       this.bot.start({ drop_pending_updates: this.dropPendingUpdates }).catch((err) => {
+        // Terminal polling failure. Classify provider-side misconfigurations
+        // (401 bad token, 409 second consumer) and hand them to the host's
+        // fatal-error handler so it can disable this adapter loudly without
+        // killing the process. Without a registered handler, fall back to the
+        // pre-existing log line.
+        if (this.fatalErrorHandler) {
+          this.fatalErrorHandler(classifyChannelError(err) ?? err);
+          return;
+        }
         const detail = err instanceof Error ? err.message : String(err);
         console.error(`[telegram] bot polling stopped: ${detail}`);
       });
     }
+  }
+
+  onFatalError(handler: (error: unknown) => void): void {
+    this.fatalErrorHandler = handler;
   }
 
   async stop(): Promise<void> {

@@ -9,9 +9,11 @@ import type {
   PlatformAdapter,
   Storage,
 } from '@ethosagent/types';
+import { channelConfigError } from '@ethosagent/types';
 import { Client, GatewayIntentBits, type Interaction, Partials, REST, Routes } from 'discord.js';
 import { chunkText, reflowChunks } from './chunking';
 import type { clarifyModalPayload } from './clarify-blocks';
+import { classifyChannelError, classifyDiscordCloseCode } from './classify-error';
 import type { CommandContext, CommandPayload } from './commands';
 import { COMMAND_DEFINITIONS, dispatch } from './commands';
 import type { Binding, ChannelMode } from './config';
@@ -25,6 +27,7 @@ import { ThreadStateStore } from './store/thread-state';
 import type { DiscordClarifyInteraction } from './types';
 
 export { chunkText, reflowChunks } from './chunking';
+export { classifyChannelError, classifyDiscordCloseCode } from './classify-error';
 export type { DiscordClarifyInteraction } from './types';
 export type { DiscordAdapterConfig };
 
@@ -114,6 +117,8 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly backfillState?: BackfillStateStore;
 
   private messageHandler?: (message: InboundMessage) => void;
+  private fatalErrorHandler?: (error: unknown) => void;
+  private fatalErrorFired = false;
   private clarifyInteractionHandler?: (raw: DiscordClarifyInteraction) => void;
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
   private commandContext?: CommandContext;
@@ -210,7 +215,39 @@ export class DiscordAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       await this.registerSlashCommands();
     }
 
-    await this.client.login(this.token);
+    // Late fatal failures — the WS session can die AFTER login resolved
+    // (revoked token, intents toggled off, session invalidated). Route them
+    // to the host's fatal-error handler as classified errors instead of
+    // letting them escape as raw rejections.
+    this.client.on('shardDisconnect', (closeEvent) => {
+      const classified = classifyDiscordCloseCode(closeEvent.code);
+      if (classified) this.fireFatalError(classified);
+    });
+    this.client.on('invalidated', () => {
+      this.fireFatalError(
+        channelConfigError(
+          'Discord',
+          'Discord invalidated this bot session and the client stopped.',
+          'Check the bot token in the Discord Developer Portal (Bot > Reset Token if revoked), update ~/.ethos/config.yaml, then restart the gateway.',
+        ),
+      );
+    });
+
+    try {
+      await this.client.login(this.token);
+    } catch (err) {
+      throw classifyChannelError(err) ?? err;
+    }
+  }
+
+  onFatalError(handler: (error: unknown) => void): void {
+    this.fatalErrorHandler = handler;
+  }
+
+  private fireFatalError(error: unknown): void {
+    if (this.fatalErrorFired) return;
+    this.fatalErrorFired = true;
+    this.fatalErrorHandler?.(error);
   }
 
   async stop(): Promise<void> {

@@ -34,6 +34,7 @@ import {
 } from './blocks/clarify';
 import { plaintextFallback } from './blocks/shared';
 import { chunkText, reflowChunks } from './chunking';
+import { classifyChannelError } from './classify-error';
 import {
   dispatch as dispatchSlash,
   type KanbanReader,
@@ -233,6 +234,7 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
   private readonly cache: AttachmentCache | undefined;
   private readonly botToken: string;
   private messageHandler?: (message: InboundMessage) => void;
+  private fatalErrorHandler?: (error: unknown) => void;
   /** Approval-card button-click handler, wired by the approval coordinator. */
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
   /** Clarify-card button-click handler, wired by the Slack clarify surface. */
@@ -574,7 +576,32 @@ export class SlackAdapter implements PlatformAdapter, ApprovalCapableAdapter {
       personality: this.personalityUnfurl,
     });
 
-    await this.app.start();
+    // Late fatal failures — Bolt surfaces post-start errors (token revoked
+    // mid-run, scope removed) through `app.error`. Classify provider-side
+    // misconfigurations and hand them to the host's fatal-error handler;
+    // everything else stays on the adapter logger (Bolt reconnects transient
+    // socket-mode drops on its own).
+    // Guarded structurally — test doubles stub App without `error`.
+    if (typeof this.app.error === 'function') {
+      this.app.error(async (err) => {
+        const classified = classifyChannelError(err);
+        if (classified && this.fatalErrorHandler) {
+          this.fatalErrorHandler(classified);
+          return;
+        }
+        this.logger.error(`Slack app error: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+
+    try {
+      await this.app.start();
+    } catch (err) {
+      throw classifyChannelError(err) ?? err;
+    }
+  }
+
+  onFatalError(handler: (error: unknown) => void): void {
+    this.fatalErrorHandler = handler;
   }
 
   async stop(): Promise<void> {

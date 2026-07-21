@@ -4,7 +4,7 @@ description: "Error catalogue for Ethos — common failure modes by symptom, wit
 kind: reference
 audience: shared
 slug: troubleshooting
-updated: 2026-05-22
+updated: 2026-07-21
 ---
 
 When something goes wrong, the CLI prints a three-line block: a code, a one-line cause, and a one-line action. Search this page for the code or the symptom you saw. Each entry follows the same shape: **Cause**, **Fix**, **Prevent** (when applicable).
@@ -218,6 +218,17 @@ Cause · The bot's token is invalid or the bot is not added to the channel. Bad 
 
 Fix · Re-run `ethos setup messaging` and paste a fresh token. Check `~/.ethos/logs/gateway.log`. Confirm the bot is in the target chat with the required permissions.
 
+### `CHANNEL_CONFIG` {#channel-config}
+
+Cause · A channel provider rejected the adapter for a configuration reason on their side — Discord refusing the connection because the Message Content privileged intent is off, Telegram returning 401 (bad token) or 409 (a second `getUpdates` consumer), Slack `invalid_auth` / `missing_scope`, an IMAP login rejection, or a logged-out WhatsApp session. The gateway prints the classified error, disables that adapter for the run, and keeps every other channel plus cron, watchers, and webhooks running.
+
+Fix ·
+1. Read the printed action line — it names the exact provider-side fix (portal toggle, token regeneration, scope to add, app password).
+2. Apply the fix in the provider's console (Discord Developer Portal, @BotFather, Slack app settings, mail provider).
+3. Restart the gateway. The disabled adapter is re-enabled on the next start.
+
+Prevent · After rotating a token or changing app permissions, restart the gateway and confirm each adapter's `✓` health line appears in the startup log.
+
 ### `TEAM_MANIFEST_INVALID` {#team-manifest-invalid}
 
 Cause · `team.yaml` failed to parse or failed schema validation. The offending field is named in the cause.
@@ -269,6 +280,7 @@ The full list of registered codes. Every code shipped in `@ethosagent/types` `Et
 | `CRON_INVALID` | Cron expression failed validation. | Use a valid 5-field expression (see `crontab.guru`). |
 | `CRON_PERSONALITY_MISSING` | The personality named on a cron job no longer exists. | Update the job to a current personality id. |
 | `MCP_TRANSPORT_INVALID` | An MCP server entry is missing `command` (stdio) or `url` (sse). | Edit the MCP server entry in `~/.ethos/config.yaml`. |
+| `CHANNEL_CONFIG` | A channel provider rejected the adapter's configuration (intents, tokens, scopes, mail auth). The adapter is disabled for the run; other channels continue. | Apply the provider-side fix named in the action line, then restart the gateway. |
 | `REGISTRY_FETCH_FAILED` | `ethos upgrade` could not reach `registry.npmjs.org`. | Check network. Install manually: `npm i -g @ethosagent/cli@latest`. |
 | `NETWORK_ERROR` | A non-registry network call failed. | Re-run. Check your connection. |
 | `SKILL_INSTALL_FAILED` | `ethos skills install` did not complete. | Re-run; verify the source slug. |

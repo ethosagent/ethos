@@ -6,9 +6,12 @@ import type {
   OutboundMessage,
   PlatformAdapter,
 } from '@ethosagent/types';
+import { loggedOutError } from './classify-error';
 import { downloadMedia } from './media';
 import { hasMedia, parseInboundMessage, type RawWhatsAppMessage } from './message-parser';
 import { resolveSessionDir } from './session-store';
+
+export { classifyChannelError, loggedOutError } from './classify-error';
 
 export interface WhatsAppAdapterConfig {
   id?: string;
@@ -54,6 +57,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
 
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private messageHandler?: (message: InboundMessage) => void;
+  private fatalErrorHandler?: (error: unknown) => void;
   private botJid = '';
   private readonly config: WhatsAppAdapterConfig;
   private readonly pendingReactions = new Map<string, string>();
@@ -137,6 +141,14 @@ export class WhatsAppAdapter implements PlatformAdapter {
       if (update.connection === 'close') {
         const code = update.lastDisconnect?.error?.output?.statusCode;
         const registered = sock.authState.creds.registered;
+        if (code === DisconnectReason.loggedOut && !this.stopped) {
+          // Permanent until the user relinks — do not reconnect-spiral.
+          // Surface a classified error so the host can disable this adapter
+          // loudly while other channels keep running.
+          this.stopped = true;
+          this.fatalErrorHandler?.(loggedOutError(sessionDir));
+          return;
+        }
         if (code !== DisconnectReason.loggedOut && !this.stopped) {
           this.reconnectAttempts += 1;
           if (!registered && this.reconnectAttempts > 4) {
@@ -247,6 +259,10 @@ export class WhatsAppAdapter implements PlatformAdapter {
     });
 
     this.sock = sock;
+  }
+
+  onFatalError(handler: (error: unknown) => void): void {
+    this.fatalErrorHandler = handler;
   }
 
   async stop(): Promise<void> {
