@@ -16,6 +16,6 @@
   "dependencies": {
     "@ethosagent/plugin-sdk": "workspace:*",
     "@ethosagent/types": "workspace:*",
-    "openai": "^6.48.0"
+    "openai": "^7.3.0"
   }
 }
