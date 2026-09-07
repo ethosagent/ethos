@@ -112,6 +112,7 @@ import {
   type ContainerizedDetectionInput,
   constitutionForbidsLocal,
   formatSshTarget,
+  hasExecTool,
   resolveExecutionPosture,
 } from './resolve-execution-posture';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
@@ -1089,16 +1090,60 @@ export async function composeAllTools(
   // Whether host execution is forbidden for the DEPLOYMENT DEFAULT. Read by the
   // `check: run` probe and the boot log; every tool reads the per-turn router
   // instead. See `resolveExecRefusal` for the three postures that refuse.
-  const hostExecForbidden = resolveExecRefusal(posture, executionBackend !== undefined).forbidden;
+  const execRefusal = resolveExecRefusal(posture, executionBackend !== undefined);
+  const hostExecForbidden = execRefusal.forbidden;
   if (hostExecForbidden) {
+    // The posture's OWN wording when it has one (`resolveExecRefusal` supplies
+    // it for the `none` posture and for both ssh refusals). The generic
+    // sentence asserts that a sandbox/remote backend was REQUIRED and missing,
+    // which is false for a `none` posture — the personality declares no
+    // execution tools, so nothing was required — and blaming an absent daemon
+    // sends an operator to install Docker for a deployment that never asked
+    // for one.
     log.warn(
-      'execution posture: sandbox/remote backend required but none available; host exec forbidden',
+      execRefusal.message ??
+        'execution posture: sandbox/remote backend required but none available; host exec forbidden',
       {
         personalityId: activePerson.id,
         backend: posture.backend,
         disableDocker: opts.disableDocker === true,
       },
     );
+  }
+
+  // `run_code.isAvailable()` reads `backendWired` below, which is a PROCESS-level
+  // fact: the `Tool` contract's gate is sync and has no turn context, so it
+  // reports the backend resolved at BOOT for the DEPLOYMENT DEFAULT personality
+  // — for every personality this process serves, whatever posture their own turn
+  // resolves. Two consequences follow that nothing else says out loud, and an
+  // operator meets both as a bare "tool X is not callable":
+  //   - `run_code` is filtered out of `toDefinitions()` on every turn, so no
+  //     personality is ever offered it;
+  //   - `scriptCallableFor` (packages/core/src/script-safe.ts) gates the WHOLE
+  //     script-tool surface on `run_code` being in `getAvailable()`, so
+  //     `ToolContext.scriptTools` is empty for every tool that reads it — the
+  //     personality's own toolset never enters into it.
+  // Logged only when some OTHER personality declares an execution tool: without
+  // that the state is unremarkable (a chat-only deployment wires no backend by
+  // design) and a warning on every normal boot is one operators learn to skip.
+  if (executionBackend === undefined) {
+    const execBearing = personalities
+      .list()
+      .filter((p) => p.id !== activePerson.id && hasExecTool(p))
+      .map((p) => p.id);
+    if (execBearing.length > 0) {
+      log.warn(
+        'execution: no backend was built for the default personality, so run_code reports ' +
+          'not-available process-wide and the script-tool surface (ToolContext.scriptTools) is ' +
+          'empty for every personality — including these, whose own posture would resolve one',
+        {
+          defaultPersonalityId: activePerson.id,
+          defaultPosture: posture.backend,
+          execBearingPersonalities: execBearing,
+          disableDocker: opts.disableDocker === true,
+        },
+      );
+    }
   }
 
   // -------------------------------------------------------------------------

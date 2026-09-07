@@ -144,6 +144,66 @@ function modelFitSection(fit: CharacterSheetModelFit): string[] {
 }
 
 /**
+ * Lane 5(i) follow-on — WHICH MODEL A TURN ACTUALLY SENDS, as PLAIN DATA.
+ *
+ * A personality's declared `model` is not automatically the model that runs.
+ * `resolveModelWithTier` (`packages/core/src/agent-loop/turn-context.ts`)
+ * honours a personality's tier map only when its declared `provider` matches
+ * the active LLM's name, and it reads a tier MAP only — a plain `model:`
+ * string is never applied. Everything else falls through to the deployment's
+ * global model. Without this block the sheet printed the DECLARED value as
+ * fact, so a deployment running `codex` still read `claude-sonnet-4-6`.
+ *
+ * Computed by `resolveCharacterSheetRouting()` in `@ethosagent/wiring` (which
+ * calls that same resolver, so this cannot drift from the guard) and passed in
+ * here; the personalities package never reaches up into wiring. Absent → the
+ * sheet renders the declared value exactly as it did before, which is all a
+ * caller that cannot see the active LLM is entitled to claim.
+ */
+export interface CharacterSheetRouting {
+  /** `LLMProvider.name` of the active LLM — the value the guard compares
+   *  `personality.provider` against. */
+  activeProvider: string;
+  /** The model a turn will actually send. */
+  effectiveModel: string;
+  /** Where `effectiveModel` came from. */
+  source: 'personality' | 'global' | 'routing-override';
+  /** Set when the personality declares a model the active LLM will ignore:
+   *  what it declared, and why nothing reads it. */
+  inert?: { declared: string; reason: string };
+}
+
+const ROUTING_SOURCE_LABEL: Record<CharacterSheetRouting['source'], string> = {
+  personality: "this personality's model tier map",
+  global: 'deployment default',
+  'routing-override': 'modelRouting override in config.yaml',
+};
+
+/** Render the `- Model:` / `- Provider:` pair of `## Routing`. Pure. */
+function routingLines(
+  config: PersonalityConfig,
+  routing: CharacterSheetRouting | undefined,
+): string[] {
+  if (!routing) {
+    return [
+      `- Model: ${resolveModelDisplay(config.model, '(engine default)')}`,
+      `- Provider: ${config.provider ?? '(engine default)'}`,
+    ];
+  }
+  const lines = [`- Model: ${routing.effectiveModel} (${ROUTING_SOURCE_LABEL[routing.source]})`];
+  if (routing.inert) {
+    lines.push(`- Declared model: ${routing.inert.declared} — INERT: ${routing.inert.reason}`);
+  }
+  const declaredProvider = config.provider ?? '(engine default)';
+  lines.push(
+    config.provider === routing.activeProvider
+      ? `- Provider: ${declaredProvider}`
+      : `- Provider: ${declaredProvider} (active LLM: ${routing.activeProvider})`,
+  );
+  return lines;
+}
+
+/**
  * Optional context for the `## Execution` section. The renderer is pure: it
  * formats whatever posture the caller resolved (via the wiring posture
  * resolver) and the constitution enforcement it loaded. When `posture` is
@@ -739,6 +799,9 @@ function voiceSection(
  * `boundary` sharpens the `## Boundary` section's applicability verdicts; the
  * section renders without it, it just never says "not applicable" for a
  * guarantee it cannot see the reach of.
+ *
+ * `routing` is the EFFECTIVE model — see {@link CharacterSheetRouting}. Absent
+ * → `## Routing` prints the declared model, unqualified, as it always did.
  */
 export function renderCharacterSheet(
   config: PersonalityConfig,
@@ -748,6 +811,7 @@ export function renderCharacterSheet(
   scriptSurface?: CharacterSheetScriptSurface,
   renderers?: readonly string[],
   boundary?: CharacterSheetBoundary,
+  routing?: CharacterSheetRouting,
 ): string {
   const lines: string[] = [`# ${config.id} — ${config.name}`, ''];
 
@@ -757,8 +821,7 @@ export function renderCharacterSheet(
   if (prose) lines.push(prose, '');
 
   lines.push('## Routing');
-  lines.push(`- Model: ${resolveModelDisplay(config.model, '(engine default)')}`);
-  lines.push(`- Provider: ${config.provider ?? '(engine default)'}`);
+  lines.push(...routingLines(config, routing));
   lines.push(`- Dreaming: ${config.dreaming?.enable ? 'on' : 'off'}`);
   lines.push('');
 
@@ -797,10 +860,25 @@ export function renderCharacterSheet(
   // when the personality can run scripts at all. The exclusion list mirrors
   // the categories in core's SCRIPT_SAFE policy (script-safe.ts).
   if (toolset.includes('run_code') && scriptSurface) {
-    lines.push(
-      `- Script-callable (run_code): ${scriptSurface.callable.length} of ${toolset.length} tools ` +
-        '(excluded: code, delegation, MCP, plugins, clarify, credential-bearing terminal/debug)',
-    );
+    // An EMPTY surface gets its own sentence, because the exclusion list is the
+    // reason the count is lower than the toolset, not the reason it is ZERO —
+    // printing it there reads as "the policy ate all 20 tools". Reaching zero
+    // with `run_code` declared means every OTHER allowed tool is either in an
+    // excluded category or unavailable in this process: `scriptCallableFor`
+    // (packages/core/src/script-safe.ts) gates on the toolset, so a missing
+    // execution backend no longer empties the surface.
+    if (scriptSurface.callable.length === 0) {
+      lines.push(
+        `- Script-callable (run_code): none of ${toolset.length} tools — the script-tool surface ` +
+          'is empty. Every other allowed tool is either excluded (code, delegation, MCP, plugins, ' +
+          'clarify, credential-bearing terminal/debug) or unavailable in this process.',
+      );
+    } else {
+      lines.push(
+        `- Script-callable (run_code): ${scriptSurface.callable.length} of ${toolset.length} tools ` +
+          '(excluded: code, delegation, MCP, plugins, clarify, credential-bearing terminal/debug)',
+      );
+    }
   }
   lines.push('');
 

@@ -57,6 +57,7 @@ import { ToolDetailModal } from '../components/personality/ToolDetailModal';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
 import { TeamRing } from '../components/ui/TeamRing';
+import { useConfig } from '../features/config/api/queries';
 import { useTeamMembership } from '../features/teams/api/queries';
 import { teamAccents } from '../features/teams/lib/membership';
 import { useCreateFlag } from '../hooks/useCreateFlag';
@@ -87,6 +88,57 @@ export function modelOptionsForProvider(
 // narrows the suggestion list. AutoComplete still accepts arbitrary input.
 export const modelFilterOption = (input: string, option?: { value: string; label: string }) =>
   (option?.value ?? '').toLowerCase().includes(input.toLowerCase());
+
+// Every provider the editor knows how to name. Which of them it OFFERS is a
+// separate question — see `providerOptionsFor`.
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  codex: 'Codex',
+  openrouter: 'OpenRouter',
+  'openai-compat': 'OpenAI Compatible',
+  ollama: 'Ollama',
+  azure: 'Azure',
+};
+
+/**
+ * Providers this deployment can actually reach: the primary `provider` plus
+ * every entry of the fallback chain, as `config.get` reports them. Offering the
+ * rest is how the editor ended up suggesting `claude-opus-4-7` to a deployment
+ * with no Anthropic key.
+ */
+export function configuredProviderIds(
+  config: { provider: string; providers: { provider: string }[] } | undefined,
+): string[] {
+  if (!config) return [];
+  return [...new Set([config.provider, ...config.providers.map((p) => p.provider)])].filter(
+    (id) => id.length > 0,
+  );
+}
+
+/**
+ * Provider options for the personality editor, narrowed to what is configured.
+ * `current` — the value already on the personality — is always kept, flagged
+ * when it is not configured: dropping it would blank the control and the next
+ * save would silently erase a provider the user set by hand.
+ *
+ * An EMPTY `configured` (config not loaded yet, or the RPC failed) offers every
+ * known provider rather than none: a picker with nothing in it is worse than
+ * today's behaviour, and the character sheet still tells the truth either way.
+ */
+export function providerOptionsFor(
+  configured: readonly string[],
+  current?: string,
+): { label: string; value: string }[] {
+  const ids = configured.length > 0 ? configured : Object.keys(PROVIDER_LABELS);
+  const shown = current && !ids.includes(current) ? [...ids, current] : ids;
+  return shown.map((id) => ({
+    value: id,
+    label:
+      (PROVIDER_LABELS[id] ?? id) +
+      (configured.length > 0 && !configured.includes(id) ? ' (not configured)' : ''),
+  }));
+}
 
 // Personalities tab — v1.
 //
@@ -1230,7 +1282,15 @@ function WizardConfigTab({
     queryKey: ['models', 'catalog'],
     queryFn: () => rpc.models.catalog(),
   });
-  const modelOptions = modelOptionsForProvider(catalogQuery.data, state.provider || undefined);
+  // The catalog lists every model Ethos knows; this deployment can only reach
+  // the providers it has configured. Suggest against the provider this
+  // personality will ACTUALLY run on — its own when it declares one, otherwise
+  // the deployment's — never against a provider with no credentials.
+  const configQuery = useConfig();
+  const configured = configuredProviderIds(configQuery.data);
+  const effectiveProvider = state.provider || configQuery.data?.provider || undefined;
+  const modelOptions = modelOptionsForProvider(catalogQuery.data, effectiveProvider);
+  const modelPlaceholder = modelOptions[0]?.value ?? 'model id';
   return (
     <Form layout="vertical">
       <Typography.Paragraph type="secondary">
@@ -1258,30 +1318,30 @@ function WizardConfigTab({
         </div>
         {state.modelTiered ? (
           <>
-            <Form.Item label="Trivial" help="e.g. claude-haiku-4-5">
+            <Form.Item label="Trivial">
               <AutoComplete
                 value={state.modelTrivial}
-                placeholder="claude-haiku-4-5"
+                placeholder={modelPlaceholder}
                 options={modelOptions}
                 filterOption={modelFilterOption}
                 onChange={(val) => setState((prev) => ({ ...prev, modelTrivial: val }))}
                 style={{ width: '100%' }}
               />
             </Form.Item>
-            <Form.Item label="Default" help="e.g. claude-sonnet-4-6">
+            <Form.Item label="Default">
               <AutoComplete
                 value={state.modelDefault}
-                placeholder="claude-sonnet-4-6"
+                placeholder={modelPlaceholder}
                 options={modelOptions}
                 filterOption={modelFilterOption}
                 onChange={(val) => setState((prev) => ({ ...prev, modelDefault: val }))}
                 style={{ width: '100%' }}
               />
             </Form.Item>
-            <Form.Item label="Deep" help="e.g. claude-opus-4-7">
+            <Form.Item label="Deep">
               <AutoComplete
                 value={state.modelDeep}
-                placeholder="claude-opus-4-7"
+                placeholder={modelPlaceholder}
                 options={modelOptions}
                 filterOption={modelFilterOption}
                 onChange={(val) => setState((prev) => ({ ...prev, modelDeep: val }))}
@@ -1294,10 +1354,10 @@ function WizardConfigTab({
             </Typography.Text>
           </>
         ) : (
-          <Form.Item label="Model" help="e.g. claude-opus-4-7, gpt-4o, moonshotai/kimi-k2.6">
+          <Form.Item label="Model">
             <AutoComplete
               value={state.model}
-              placeholder="claude-opus-4-7"
+              placeholder={modelPlaceholder}
               options={modelOptions}
               filterOption={modelFilterOption}
               onChange={(val) => setState((prev) => ({ ...prev, model: val }))}
@@ -1315,15 +1375,7 @@ function WizardConfigTab({
           placeholder="engine default"
           value={state.provider || undefined}
           onChange={(val) => setState((s) => ({ ...s, provider: val ?? '' }))}
-          options={[
-            { label: 'Anthropic', value: 'anthropic' },
-            { label: 'OpenAI', value: 'openai' },
-            { label: 'Codex', value: 'codex' },
-            { label: 'OpenRouter', value: 'openrouter' },
-            { label: 'OpenAI Compatible', value: 'openai-compat' },
-            { label: 'Ollama', value: 'ollama' },
-            { label: 'Azure', value: 'azure' },
-          ]}
+          options={providerOptionsFor(configured, state.provider || undefined)}
         />
       </Form.Item>
       <Form.Item
@@ -2050,7 +2102,15 @@ export function ConfigEditor({
     queryFn: () => rpc.models.catalog(),
   });
   const watchedProvider = Form.useWatch('provider', form);
-  const modelOptions = modelOptionsForProvider(catalogQuery.data, watchedProvider || undefined);
+  // Same narrowing the wizard does: suggest against the provider this
+  // personality will actually run on, and offer only configured providers.
+  const configQuery = useConfig();
+  const configured = configuredProviderIds(configQuery.data);
+  const modelOptions = modelOptionsForProvider(
+    catalogQuery.data,
+    watchedProvider || configQuery.data?.provider || undefined,
+  );
+  const modelPlaceholder = modelOptions[0]?.value ?? 'model id';
 
   useEffect(() => {
     const m = personality.model;
@@ -2286,15 +2346,7 @@ export function ConfigEditor({
         <Select
           allowClear
           placeholder="engine default"
-          options={[
-            { label: 'Anthropic', value: 'anthropic' },
-            { label: 'OpenAI', value: 'openai' },
-            { label: 'Codex', value: 'codex' },
-            { label: 'OpenRouter', value: 'openrouter' },
-            { label: 'OpenAI Compatible', value: 'openai-compat' },
-            { label: 'Ollama', value: 'ollama' },
-            { label: 'Azure', value: 'azure' },
-          ]}
+          options={providerOptionsFor(configured, watchedProvider || undefined)}
         />
       </Form.Item>
       <div style={{ marginBottom: 16 }}>
@@ -2320,7 +2372,7 @@ export function ConfigEditor({
           <>
             <Form.Item label="Trivial" name="modelTrivial" style={{ marginBottom: 8 }}>
               <AutoComplete
-                placeholder="e.g. claude-haiku-4-5"
+                placeholder={modelPlaceholder}
                 options={modelOptions}
                 filterOption={modelFilterOption}
                 style={{ width: '100%' }}
@@ -2328,7 +2380,7 @@ export function ConfigEditor({
             </Form.Item>
             <Form.Item label="Default" name="modelDefault" style={{ marginBottom: 8 }}>
               <AutoComplete
-                placeholder="e.g. claude-sonnet-4-6"
+                placeholder={modelPlaceholder}
                 options={modelOptions}
                 filterOption={modelFilterOption}
                 style={{ width: '100%' }}
@@ -2336,7 +2388,7 @@ export function ConfigEditor({
             </Form.Item>
             <Form.Item label="Deep" name="modelDeep" style={{ marginBottom: 8 }}>
               <AutoComplete
-                placeholder="e.g. claude-opus-4-7"
+                placeholder={modelPlaceholder}
                 options={modelOptions}
                 filterOption={modelFilterOption}
                 style={{ width: '100%' }}

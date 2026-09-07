@@ -3,6 +3,7 @@ import { declaredWorkdirs } from '@ethosagent/core';
 import {
   type CharacterSheetBoundary,
   type CharacterSheetModelFit,
+  type CharacterSheetRouting,
   type CharacterSheetScriptSurface,
   type CreatePersonalityInput,
   type DescribedPersonality,
@@ -221,6 +222,26 @@ export class PersonalitiesService {
     // path to the injector, so the sheet's claim and the RPC the web renderer
     // gates on are literally the same call. Already fail-closed to `[]`.
     const { renderers } = await this.renderers(id);
+    // Which model a turn on this personality ACTUALLY sends. The declared
+    // `model:` is only honoured when the personality's `provider` matches the
+    // active LLM (`resolveModelWithTier`,
+    // packages/core/src/agent-loop/turn-context.ts), so the tab printed a model
+    // that never executed on every mismatched personality. Same resolver the
+    // CLI `personality show` calls — one generator, one verdict. No config
+    // repository (onboarding mode, tests) → the sheet renders as before.
+    const raw = (await this.opts.config?.read()) ?? null;
+    let routing: CharacterSheetRouting | undefined;
+    if (raw?.provider && raw.model) {
+      const { resolveActiveLlmName, resolveCharacterSheetRouting } = await import(
+        '@ethosagent/wiring'
+      );
+      routing = resolveCharacterSheetRouting(
+        described.config,
+        resolveActiveLlmName({ provider: raw.provider, providers: raw.providers }),
+        raw.model,
+        raw.modelRouting,
+      );
+    }
     const dataDir = this.opts.dataDir;
     if (!dataDir) {
       return {
@@ -232,6 +253,7 @@ export class PersonalitiesService {
           scriptSurface,
           renderers,
           boundary,
+          routing,
         ),
         posture: null,
       };
@@ -239,7 +261,7 @@ export class PersonalitiesService {
     // `execution.ssh.*` — the deployment's single remote execution target. Read
     // from the same file the compose path reads, so the sheet's claim about
     // WHERE this personality executes matches what will actually happen.
-    const passthrough = (await this.opts.config?.read())?.passthrough ?? {};
+    const passthrough = raw?.passthrough ?? {};
     const sshHost = passthrough['execution.ssh.host'];
     const sshUser = passthrough['execution.ssh.user'];
     const sshPortRaw = passthrough['execution.ssh.port'];
@@ -273,6 +295,7 @@ export class PersonalitiesService {
         scriptSurface,
         renderers,
         boundary,
+        routing,
       ),
       posture,
     };

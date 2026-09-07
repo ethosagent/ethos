@@ -1625,6 +1625,11 @@ export {
   type ResolveExecutionPostureInput,
   resolveExecutionPosture,
 } from './resolve-execution-posture';
+export {
+  evaluateTierMismatch,
+  resolveActiveLlmName,
+  resolveCharacterSheetRouting,
+} from './tier-diagnostics';
 
 // ---------------------------------------------------------------------------
 // OAuth service factory

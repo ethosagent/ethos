@@ -43,6 +43,7 @@ export {
   type CharacterSheetBoundary,
   type CharacterSheetExecution,
   type CharacterSheetModelFit,
+  type CharacterSheetRouting,
   type CharacterSheetScriptSurface,
   firstParagraph,
   renderCharacterSheet,

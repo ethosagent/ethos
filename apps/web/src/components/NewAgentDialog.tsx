@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, AutoComplete, Button, Form, Input, Modal } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useConfig } from '../features/config/api/queries';
 import { usePersonalityList } from '../features/personalities/api/queries';
 import { buildWorkspaceChatPath } from '../lib/workspaceRoutes';
 import {
@@ -86,21 +87,21 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
     setState((s) => ({ ...s, avatarSelection: { kind: 'file', file } }));
   }
 
-  // No provider field in the fast path (that's an advanced/wizard concern),
-  // so suggestions are gathered across every provider in the catalog rather
-  // than filtered to one — same `modelOptionsForProvider` mapping the full
-  // wizard uses per-provider, just applied to each provider and concatenated.
+  // No provider field in the fast path (that's an advanced/wizard concern), so
+  // the personality this creates runs on the DEPLOYMENT's provider — and that
+  // is the only provider whose models may be suggested. Gathering them across
+  // every provider in the catalog offered `claude-opus-4-7` to a deployment
+  // with no Anthropic key. Same `modelOptionsForProvider` mapping the wizard
+  // uses, pointed at the configured provider.
   const catalogQuery = useQuery({
     queryKey: ['models', 'catalog'],
     queryFn: () => rpc.models.catalog(),
   });
-  const modelOptions = useMemo(() => {
-    const catalog = catalogQuery.data;
-    if (!catalog) return [];
-    return Object.keys(catalog.providers).flatMap((provider) =>
-      modelOptionsForProvider(catalog, provider),
-    );
-  }, [catalogQuery.data]);
+  const configQuery = useConfig();
+  const modelOptions = useMemo(
+    () => modelOptionsForProvider(catalogQuery.data, configQuery.data?.provider),
+    [catalogQuery.data, configQuery.data?.provider],
+  );
 
   const createMut = useMutation({
     mutationFn: () =>
@@ -271,7 +272,7 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
         >
           <AutoComplete
             value={state.model}
-            placeholder="claude-opus-4-7"
+            placeholder={modelOptions[0]?.value ?? 'model id'}
             options={modelOptions}
             filterOption={modelFilterOption}
             onChange={(val) => setState((s) => ({ ...s, model: val }))}

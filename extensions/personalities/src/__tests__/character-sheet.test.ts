@@ -5,6 +5,7 @@ import { type ExecutionPosture, GUARANTEE_IDS, type PersonalityConfig } from '@e
 import { describe, expect, it } from 'vitest';
 import {
   type CharacterSheetModelFit,
+  type CharacterSheetRouting,
   type CharacterSheetScriptSurface,
   renderCharacterSheet,
 } from '../character-sheet';
@@ -579,6 +580,19 @@ describe('renderCharacterSheet — script-callable surface (Lane G)', () => {
     );
   });
 
+  it('does not blame the exclusion policy when the surface is empty', () => {
+    const sheet = renderCharacterSheet(scriptConfig, soulMd, undefined, undefined, {
+      callable: [],
+    });
+    expect(sheet).toContain(
+      '- Script-callable (run_code): none of 4 tools — the script-tool surface is empty.',
+    );
+    expect(sheet).toContain('or unavailable in this process');
+    // The `N of M (excluded: …)` wording must NOT appear: the exclusion list
+    // explains a reduced count, never a zero one.
+    expect(sheet).not.toContain('0 of 4 tools');
+  });
+
   it('omits the line when the personality has no run_code (the gate is the toolset)', () => {
     const sheet = renderCharacterSheet(fullConfig, soulMd, undefined, undefined, surface);
     expect(sheet).not.toContain('Script-callable');
@@ -966,5 +980,145 @@ describe('renderCharacterSheet — fs_reach.workdir', () => {
     );
     expect(workdirLine(sheet)).toBeNull();
     expect(sheet).not.toContain('undefined');
+  });
+});
+
+// The model a personality DECLARES is not the model its turns send.
+// `resolveModelWithTier` (packages/core/src/agent-loop/turn-context.ts) honours
+// a tier map only when the declared `provider` matches the active LLM, and
+// reads a tier MAP only — a plain `model:` string is never applied. The sheet
+// used to print the declared value as fact, so a deployment running `codex`
+// read `claude-sonnet-4-6` on seven of its nine personalities.
+describe('renderCharacterSheet — ## Routing effective model', () => {
+  const routingLine = (sheet: string) =>
+    sheet.split('\n').find((l) => l.startsWith('- Model: ')) ?? null;
+  const declaredLine = (sheet: string) =>
+    sheet.split('\n').find((l) => l.startsWith('- Declared model: ')) ?? null;
+  const providerLine = (sheet: string) =>
+    sheet.split('\n').find((l) => l.startsWith('- Provider: ')) ?? null;
+
+  const mismatched: CharacterSheetRouting = {
+    activeProvider: 'codex',
+    effectiveModel: 'gpt-5.6-terra',
+    source: 'global',
+    inert: {
+      declared: 'default=claude-sonnet-4-6',
+      reason: 'declares provider "anthropic", active LLM is "codex"',
+    },
+  };
+
+  it('shows the model that will actually run, not the one the personality declares', () => {
+    const sheet = renderCharacterSheet(
+      { ...fullConfig, model: { default: 'claude-sonnet-4-6' } },
+      soulMd,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mismatched,
+    );
+    expect(routingLine(sheet)).toBe('- Model: gpt-5.6-terra (deployment default)');
+  });
+
+  it('marks a declaration the active LLM ignores as INERT, with the reason', () => {
+    const sheet = renderCharacterSheet(
+      { ...fullConfig, model: { default: 'claude-sonnet-4-6' } },
+      soulMd,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mismatched,
+    );
+    expect(declaredLine(sheet)).toBe(
+      '- Declared model: default=claude-sonnet-4-6 — INERT: declares provider "anthropic", active LLM is "codex"',
+    );
+  });
+
+  it('names the active LLM beside a declared provider that is not it', () => {
+    const sheet = renderCharacterSheet(
+      fullConfig,
+      soulMd,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mismatched,
+    );
+    expect(providerLine(sheet)).toBe('- Provider: anthropic (active LLM: codex)');
+  });
+
+  it('renders the personality model plainly when the active LLM does honour it', () => {
+    const sheet = renderCharacterSheet(
+      { ...fullConfig, model: { default: 'claude-sonnet-4-6' } },
+      soulMd,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        activeProvider: 'anthropic',
+        effectiveModel: 'claude-sonnet-4-6',
+        source: 'personality',
+      },
+    );
+    expect(routingLine(sheet)).toBe(
+      "- Model: claude-sonnet-4-6 (this personality's model tier map)",
+    );
+    expect(declaredLine(sheet)).toBeNull();
+    expect(providerLine(sheet)).toBe('- Provider: anthropic');
+  });
+
+  it('shows the deployment model for a personality that declares none', () => {
+    const sheet = renderCharacterSheet(
+      { id: 'plain', name: 'Plain' },
+      '# Plain\n\nA plain personality.\n',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { activeProvider: 'codex', effectiveModel: 'gpt-5.6-terra', source: 'global' },
+    );
+    expect(routingLine(sheet)).toBe('- Model: gpt-5.6-terra (deployment default)');
+    expect(sheet).not.toContain('Model: (engine default)');
+    expect(declaredLine(sheet)).toBeNull();
+    expect(providerLine(sheet)).toBe('- Provider: (engine default) (active LLM: codex)');
+  });
+
+  it('names a modelRouting override as the source', () => {
+    const sheet = renderCharacterSheet(
+      fullConfig,
+      soulMd,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        activeProvider: 'anthropic',
+        effectiveModel: 'claude-opus-4-7',
+        source: 'routing-override',
+        inert: {
+          declared: 'claude-sonnet-4-6',
+          reason: '`modelRouting.engineer` in config.yaml overrides it',
+        },
+      },
+    );
+    expect(routingLine(sheet)).toBe(
+      '- Model: claude-opus-4-7 (modelRouting override in config.yaml)',
+    );
+    expect(declaredLine(sheet)).toContain('INERT: `modelRouting.engineer`');
+  });
+
+  it('degrades to the declared value when no routing is injected', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
+    expect(routingLine(sheet)).toBe('- Model: claude-sonnet-4-6');
+    expect(declaredLine(sheet)).toBeNull();
+    expect(providerLine(sheet)).toBe('- Provider: anthropic');
   });
 });
