@@ -926,6 +926,14 @@ export async function buildAgentLoop(
       ...(config.toolLoop?.maxIdenticalToolCallsWarnAt !== undefined
         ? { maxIdenticalToolCallsWarnAt: config.toolLoop.maxIdenticalToolCallsWarnAt }
         : {}),
+      // Hard caps — only passed when configured, so an unconfigured loop keeps
+      // its own defaults (1000 / 25).
+      ...(config.toolLoop?.maxToolCallsPerTurn !== undefined
+        ? { maxToolCallsPerTurn: config.toolLoop.maxToolCallsPerTurn }
+        : {}),
+      ...(config.toolLoop?.maxIdenticalToolCalls !== undefined
+        ? { maxIdenticalToolCalls: config.toolLoop.maxIdenticalToolCalls }
+        : {}),
     },
   });
 

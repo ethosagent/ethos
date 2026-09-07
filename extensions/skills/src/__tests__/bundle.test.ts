@@ -56,6 +56,11 @@ describe('@ethosagent/skills bundle', () => {
       // platform). Added with the first one advertised in BUNDLED_SKILL_IDS
       // (`platform-integration/xurl`).
       'platform-integration',
+      // `social-media` covers read-only research against a social platform's
+      // public/community content — distinct from `platform-integration`, which
+      // acts under the user's OWN authenticated account. Added with the first
+      // one advertised in BUNDLED_SKILL_IDS (`social-media/reddit-research`).
+      'social-media',
     ]);
     for (const id of BUNDLED_SKILL_IDS) {
       const raw = readFileSync(join(SOURCE.dir, id, 'SKILL.md'), 'utf8');

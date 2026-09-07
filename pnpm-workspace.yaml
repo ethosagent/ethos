@@ -3,6 +3,7 @@ packages:
   - "packages/safety/*"
   - "extensions/*"
   - "apps/*"
+  - "plugins/*"
   - "examples/plugins/*"
   - "examples/mission-control"
   - "docs"

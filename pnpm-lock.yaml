@@ -1926,6 +1926,12 @@ importers:
         specifier: ^4.12.15
         version: 4.12.23
 
+  extensions/tools-answer-engines:
+    dependencies:
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-browser:
     dependencies:
       '@anthropic-ai/sdk':
@@ -2754,6 +2760,9 @@ importers:
       '@ethosagent/storage-s3':
         specifier: workspace:*
         version: link:../../extensions/storage-s3
+      '@ethosagent/tools-answer-engines':
+        specifier: workspace:*
+        version: link:../../extensions/tools-answer-engines
       '@ethosagent/tools-browser':
         specifier: workspace:*
         version: link:../../extensions/tools-browser

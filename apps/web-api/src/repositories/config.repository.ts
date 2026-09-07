@@ -82,7 +82,11 @@ export interface RawConfig {
    */
   toolSettings: Record<
     string,
-    { web_search?: { provider?: string; secret?: string }; x_search?: { secret?: string } }
+    {
+      web_search?: { provider?: string; secret?: string };
+      x_search?: { secret?: string };
+      engine_ask?: { secret?: string };
+    }
   >;
   /** Ordered provider chain for ChainedProvider failover. */
   providers: RawProviderEntry[];
@@ -213,6 +217,18 @@ export class ConfigRepository {
           const slot = config.toolSettings[pid] ?? {};
           config.toolSettings[pid] = slot;
           slot.x_search = { secret: value };
+        }
+        continue;
+      }
+      // `toolSettings.<personality|_default>.engine_ask.secret: <name>`
+      const ea = line.match(/^toolSettings\.([^.]+)\.engine_ask\.secret:\s*(.+)$/);
+      if (ea) {
+        const pid = ea[1]?.trim();
+        const value = ea[2] !== undefined ? stripQuotes(ea[2].trim()) : '';
+        if (pid && value) {
+          const slot = config.toolSettings[pid] ?? {};
+          config.toolSettings[pid] = slot;
+          slot.engine_ask = { secret: value };
         }
         continue;
       }
@@ -480,6 +496,10 @@ export class ConfigRepository {
       const xs = settings.x_search;
       if (xs?.secret) {
         lines.push(`toolSettings.${yamlScalar(pid)}.x_search.secret: ${yamlScalar(xs.secret)}`);
+      }
+      const ea = settings.engine_ask;
+      if (ea?.secret) {
+        lines.push(`toolSettings.${yamlScalar(pid)}.engine_ask.secret: ${yamlScalar(ea.secret)}`);
       }
     }
     for (let i = 0; i < config.providers.length; i++) {

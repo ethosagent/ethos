@@ -38,6 +38,7 @@ import { type SkillsInjector, SkillsLibrary, type UniversalScanner } from '@etho
 import { compose as composeSkills } from '@ethosagent/skills/compose';
 import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsStorage } from '@ethosagent/storage-fs';
+import { createEngineAskTool } from '@ethosagent/tools-answer-engines';
 import { compose as composeBrowser } from '@ethosagent/tools-browser/compose';
 import { compose as composeCode } from '@ethosagent/tools-code/compose';
 import { compose as composeCron } from '@ethosagent/tools-cron/compose';
@@ -1157,6 +1158,13 @@ export async function composeAllTools(
       // the global fallback layer — the same two layers web_search resolves.
       resolvePersonalitySetting: (personalityId) =>
         personalities.getToolsConfig(personalityId)?.x_search,
+      ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),
+    }),
+  );
+  tools.register(
+    createEngineAskTool({
+      resolvePersonalitySetting: (personalityId) =>
+        personalities.getToolsConfig(personalityId)?.engine_ask,
       ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),
     }),
   );

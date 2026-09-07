@@ -170,9 +170,13 @@ export const KEY_CATALOG: readonly KeyCatalogEntry[] = [
     getKeyUrl: 'https://www.reddit.com/prefs/apps',
   },
   {
+    // One key, three consumers: `image_generate`, the `engine_ask` answer-engine
+    // tool, and the OpenAI LLM provider. Same shape as `tools.xai` above: the
+    // Models pane writes this exact ref for the LLM side, so the row stays
+    // directly editable here rather than `reflectsNamedSecret` (reflect-only).
     id: 'tools.openai',
     category: 'tools',
-    label: 'OpenAI (image generation)',
+    label: 'OpenAI (image generation, answer engine)',
     refPattern: 'providers/openai/apiKey',
     shape: { kind: 'single', field: 'apiKey' },
     getKeyUrl: 'https://platform.openai.com/api-keys',

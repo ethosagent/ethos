@@ -1769,13 +1769,15 @@ const RecipeFsReachSchema = z.object({
  *
  * `exa` / `tavily` / `brave` are `web_search` keys; `xai` is the xAI key
  * `x_search` binds; `x` is an X API bearer token for the native X search
- * backend (planned).
+ * backend (planned); `openai` is the OpenAI key `engine_ask` binds — it shares
+ * the `providers/openai/*` namespace with the OpenAI LLM provider and
+ * `image_generate`.
  */
-export const NamedSecretProviderSchema = z.enum(['exa', 'tavily', 'brave', 'xai', 'x']);
+export const NamedSecretProviderSchema = z.enum(['exa', 'tavily', 'brave', 'xai', 'x', 'openai']);
 export type NamedSecretProvider = z.infer<typeof NamedSecretProviderSchema>;
 
 /** The category a `secret-binding` field's `secretKind` selects on. */
-export const NamedSecretKindSchema = z.enum(['web-search', 'x-search', 'x-api']);
+export const NamedSecretKindSchema = z.enum(['web-search', 'x-search', 'x-api', 'answer-engine']);
 export type NamedSecretKind = z.infer<typeof NamedSecretKindSchema>;
 
 /** provider → kind. The one mapping the vault service and the SecretPicker share. */
@@ -1785,6 +1787,7 @@ export const NAMED_SECRET_PROVIDER_KINDS: Record<NamedSecretProvider, NamedSecre
   brave: 'web-search',
   xai: 'x-search',
   x: 'x-api',
+  openai: 'answer-engine',
 };
 
 /** Mirrors the bundle's `safety.network` — declared reach, not a new capability. */

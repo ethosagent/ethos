@@ -89,6 +89,7 @@ export class ToolSettingsService {
     await this.opts.personalities.writeToolsConfig(personalityId, {
       web_search: toWebSearch(values),
       x_search: toXSearch(values),
+      engine_ask: toEngineAsk(values),
     });
     return { ok: true, storage: 'personality' };
   }
@@ -96,7 +97,13 @@ export class ToolSettingsService {
   private async writeGlobalSlot(pid: string, values: ToolSettingsValues): Promise<void> {
     assertSafeSlotKey(pid);
     await this.opts.config.update({
-      toolSettings: { [pid]: { web_search: toWebSearch(values), x_search: toXSearch(values) } },
+      toolSettings: {
+        [pid]: {
+          web_search: toWebSearch(values),
+          x_search: toXSearch(values),
+          engine_ask: toEngineAsk(values),
+        },
+      },
     });
   }
 }
@@ -123,7 +130,11 @@ function assertSafeSlotKey(pid: string): void {
  *  fields so the UI shows "unset" rather than blank strings. */
 function fromSlot(
   slot:
-    | { web_search?: { provider?: string; secret?: string }; x_search?: { secret?: string } }
+    | {
+        web_search?: { provider?: string; secret?: string };
+        x_search?: { secret?: string };
+        engine_ask?: { secret?: string };
+      }
     | undefined,
 ): ToolSettingsValues {
   const out: ToolSettingsValues = {};
@@ -135,6 +146,7 @@ function fromSlot(
     if (Object.keys(fields).length > 0) out.web_search = fields;
   }
   if (slot?.x_search?.secret) out.x_search = { secret: slot.x_search.secret };
+  if (slot?.engine_ask?.secret) out.engine_ask = { secret: slot.engine_ask.secret };
   return out;
 }
 
@@ -142,6 +154,13 @@ function fromSlot(
  *  NAME only, validated with the same rule the vault enforces. */
 function toXSearch(values: ToolSettingsValues): { secret?: string } {
   const secret = values.x_search?.secret?.trim();
+  return secret && isValidSecretName(secret) ? { secret } : {};
+}
+
+/** Same narrowing for the `engine_ask` binding — one provider (OpenAI), so a
+ *  secret NAME only. */
+function toEngineAsk(values: ToolSettingsValues): { secret?: string } {
+  const secret = values.engine_ask?.secret?.trim();
   return secret && isValidSecretName(secret) ? { secret } : {};
 }
 

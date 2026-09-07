@@ -46,6 +46,10 @@ const PROVIDER_GROUPS: Array<{ label: string; providers: Array<[NamedSecretProvi
       ['x', 'X API (bearer token)'],
     ],
   },
+  {
+    label: 'Answer engines',
+    providers: [['openai', 'OpenAI (ChatGPT answer engine)']],
+  },
 ];
 
 function asNamedSecretProvider(v: string | undefined): NamedSecretProvider | undefined {

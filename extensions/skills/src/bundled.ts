@@ -34,6 +34,7 @@ export const BUNDLED_SKILL_IDS = [
   'framework/codebase-inspection',
   'writer/no-ai-slop',
   'platform-integration/xurl',
+  'social-media/reddit-research',
 ] as const;
 
 export type BundledSkillId = (typeof BUNDLED_SKILL_IDS)[number];

@@ -160,6 +160,30 @@ describe('ToolSettingsService', () => {
     expect((await service.getForPersonality('mine')).values).toEqual(values);
   });
 
+  it('engine_ask binding round-trips beside the others in both stores', async () => {
+    const values: ToolSettingsValues = {
+      web_search: { provider: 'exa', secret: 'exa-main' },
+      x_search: { secret: 'xai-main' },
+      engine_ask: { secret: 'openai-brand' },
+    };
+    await service.setForPersonality('scout', values);
+    expect(await storage.read('/data/config.yaml')).toContain(
+      'toolSettings.scout.engine_ask.secret: openai-brand',
+    );
+    expect((await service.getForPersonality('scout')).values).toEqual(values);
+
+    await service.setForPersonality('mine', values);
+    const toolsYaml = (await storage.read('/data/personalities/mine/tools.yaml')) ?? '';
+    expect(toolsYaml).toContain('engine_ask: { secret: openai-brand }');
+    expect((await service.getForPersonality('mine')).values).toEqual(values);
+  });
+
+  it('drops an unsafe engine_ask secret name instead of persisting it', async () => {
+    await service.setForPersonality('mine', { engine_ask: { secret: '../xai/apiKey' } });
+    expect(await storage.exists('/data/personalities/mine/tools.yaml')).toBe(false);
+    expect((await service.getForPersonality('mine')).values).toEqual({});
+  });
+
   it('drops an unsafe x_search secret name instead of persisting it', async () => {
     await service.setForPersonality('mine', { x_search: { secret: '../openai/apiKey' } });
     expect(await storage.exists('/data/personalities/mine/tools.yaml')).toBe(false);

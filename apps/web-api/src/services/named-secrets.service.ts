@@ -10,7 +10,7 @@ import {
 // A named secret is stored at `providers/<provider>/<name>` in the secrets
 // vault — the same namespace a consuming tool's capability prefix grant
 // (`providers/{exa,tavily,brave}/*` for `web_search`, `providers/xai/*` for
-// `x_search`) allows. A personality only ever stores the secret NAME (a
+// `x_search`, `providers/openai/*` for `engine_ask`) allows. A personality only ever stores the secret NAME (a
 // reference); the VALUE lives here and NEVER round-trips back to the client —
 // reads are masked previews only.
 //
@@ -40,6 +40,11 @@ export const NAMED_SECRET_PROVIDERS: readonly NamedSecretProviderEntry[] = (
       provider: 'x',
       label: 'X API (bearer token)',
       getKeyUrl: 'https://developer.x.com/en/portal/dashboard',
+    },
+    {
+      provider: 'openai',
+      label: 'OpenAI (ChatGPT answer engine)',
+      getKeyUrl: 'https://platform.openai.com/api-keys',
     },
   ] satisfies Omit<NamedSecretProviderEntry, 'kind'>[]
 ).map((e) => ({ ...e, kind: NAMED_SECRET_PROVIDER_KINDS[e.provider] }));
@@ -185,6 +190,13 @@ async function probeProvider(
   try {
     if (provider === 'xai') {
       const res = await fetch('https://api.x.ai/v1/models', {
+        headers: { Accept: 'application/json', Authorization: `Bearer ${key}` },
+        signal: controller.signal,
+      });
+      return interpret(res.status);
+    }
+    if (provider === 'openai') {
+      const res = await fetch('https://api.openai.com/v1/models', {
         headers: { Accept: 'application/json', Authorization: `Bearer ${key}` },
         signal: controller.signal,
       });

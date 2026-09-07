@@ -115,6 +115,7 @@
       "@ethosagent/execution-coding-agents": ["./extensions/execution-coding-agents/src"],
       "@ethosagent/execution-process-backend": ["./extensions/execution-process-backend/src"],
       "@ethosagent/execution-ssh": ["./extensions/execution-ssh/src"],
+      "@ethosagent/tools-answer-engines": ["./extensions/tools-answer-engines/src"],
       "@ethosagent/tools-browser": ["./extensions/tools-browser/src"],
       "@ethosagent/tools-code": ["./extensions/tools-code/src"],
       "@ethosagent/tools-code/reducers/read-file": [
@@ -215,6 +216,8 @@
     "packages/safety/*/src/**/*",
     "extensions/*/src/**/*",
     "apps/*/src/**/*",
+    "plugins/*/src/**/*",
+    "plugins/*/test/**/*",
     "vitest.config.ts"
   ],
   "exclude": [

@@ -36,6 +36,11 @@ export const srcAliases = {
   '@ethosagent/platform-meeting': resolve('./extensions/platform-meeting/src'),
   '@ethosagent/agent-bridge': resolve('./packages/agent-bridge/src'),
   '@ethosagent/plugin-loader': resolve('./extensions/plugin-loader/src'),
+  // Test-only. `plugins/brand-identity` has no workspace link to this package —
+  // its `src/` may not import an `@ethosagent/*` package at runtime — but its
+  // emit-personality test reads the generated personality directory back with the
+  // REAL loader, which is here.
+  '@ethosagent/personalities': resolve('./extensions/personalities/src'),
   '@ethosagent/execution-local': resolve('./extensions/execution-local/src'),
   '@ethosagent/execution-docker': resolve('./extensions/execution-docker/src'),
   '@ethosagent/execution-process-backend': resolve('./extensions/execution-process-backend/src'),
@@ -75,6 +80,8 @@ export default defineConfig({
       'extensions/*/src/**/*.test.ts',
       'apps/*/src/**/*.test.ts',
       'examples/plugins/*/src/**/*.test.ts',
+      'plugins/*/src/**/*.test.ts',
+      'plugins/*/test/**/*.test.ts',
       'skills/src/**/*.test.ts',
     ],
     // Real-socket integration tests (plan T1.8) boot actual servers on real

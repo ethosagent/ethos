@@ -166,10 +166,15 @@ export interface WiringConfig {
     kanban?: { checks?: boolean; allowedCheckCommands?: string[] };
   };
   /**
-   * Tool-loop soft-warn tiers (mapped from `EthosConfig.toolLoop`). Forwarded
-   * to `AgentLoopConfig.options`; absent = no warn tier.
+   * Tool-loop hard caps and soft-warn tiers (mapped from `EthosConfig.toolLoop`).
+   * Forwarded to `AgentLoopConfig.options`; absent = loop defaults, no warn tier.
    */
-  toolLoop?: { maxToolCallsWarnAt?: number; maxIdenticalToolCallsWarnAt?: number };
+  toolLoop?: {
+    maxToolCallsWarnAt?: number;
+    maxIdenticalToolCallsWarnAt?: number;
+    maxToolCallsPerTurn?: number;
+    maxIdenticalToolCalls?: number;
+  };
   /**
    * The deployment's public web UI address — `EthosConfig.webBaseUrl`
    * verbatim (which already resolves `ETHOS_PUBLIC_URL` ahead of the

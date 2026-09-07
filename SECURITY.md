@@ -14,7 +14,7 @@ Scope is defined by **what we published as a guarantee**, not by which directory
      ids: G-TOOLS, G-CAP, G-FS, G-NET, G-INJ, G-SEC, G-RED, G-APP, G-EXEC, G-WATCH, G-CHAN, G-AUDIT
 -->
 - **The guarantee register** — twelve named guarantees, each with the `file:line` that enforces it, in [docs/content/security/security-boundary.md](docs/content/security/security-boundary.md#register). Anything not in the register is not guaranteed.
-- **The tier roster** — every workspace package carries a tier in [`.architecture-state.yaml`](.architecture-state.yaml), committed and dated before any report arrives. 141 packages: 11 at Tier 0, 27 at Tier 1, 103 at Tier 2.
+- **The tier roster** — every workspace package carries a tier in [`.architecture-state.yaml`](.architecture-state.yaml), committed and dated before any report arrives. 142 packages: 11 at Tier 0, 27 at Tier 1, 104 at Tier 2.
 
 | Tier | What we promise | Disclosure treatment |
 |---|---|---|

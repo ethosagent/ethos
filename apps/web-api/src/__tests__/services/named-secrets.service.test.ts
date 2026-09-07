@@ -55,9 +55,11 @@ describe('NamedSecretsService', () => {
     await service.create({ provider: 'exa', name: 'main', value: 'sk-exa-1234567890' });
     await service.create({ provider: 'xai', name: 'grok', value: 'xai-1234567890abcd' });
     await service.create({ provider: 'x', name: 'bearer', value: 'AAAA-bearer-1234567890' });
+    await service.create({ provider: 'openai', name: 'brand', value: 'sk-openai-1234567890' });
     const { secrets: list } = await service.list();
     expect(list.map((r) => [r.provider, r.name, r.kind])).toEqual([
       ['exa', 'main', 'web-search'],
+      ['openai', 'brand', 'answer-engine'],
       ['x', 'bearer', 'x-api'],
       ['xai', 'grok', 'x-search'],
     ]);
@@ -79,7 +81,7 @@ describe('NamedSecretsService', () => {
 
   it('rejects providers outside the named-secret namespaces', async () => {
     try {
-      await service.create({ provider: 'openai', name: 'main', value: 'x' });
+      await service.create({ provider: 'anthropic', name: 'main', value: 'x' });
       throw new Error('expected throw');
     } catch (err) {
       expect(isEthosError(err)).toBe(true);
@@ -162,6 +164,19 @@ describe('NamedSecretsService', () => {
       expect(res).toEqual({ ok: true });
       expect(seen?.url).toBe('https://api.x.ai/v1/models');
       expect(seen?.auth).toBe('Bearer xai-1234567890abcd');
+    });
+
+    it('probes an openai key against /v1/models with a bearer header (200 → ok)', async () => {
+      await service.create({ provider: 'openai', name: 'brand', value: 'sk-openai-1234567890' });
+      let seen: { url: string; auth: string | null } | undefined;
+      globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+        seen = { url: String(url), auth: new Headers(init?.headers).get('Authorization') };
+        return new Response('{"data":[]}', { status: 200 });
+      }) as typeof fetch;
+      const res = await service.testKey({ provider: 'openai', name: 'brand' });
+      expect(res).toEqual({ ok: true });
+      expect(seen?.url).toBe('https://api.openai.com/v1/models');
+      expect(seen?.auth).toBe('Bearer sk-openai-1234567890');
     });
 
     it('maps an xai 401 to an unauthorized result', async () => {

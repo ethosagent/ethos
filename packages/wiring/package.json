@@ -97,6 +97,7 @@
     "@ethosagent/storage-crypto": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*",
     "@ethosagent/storage-s3": "workspace:*",
+    "@ethosagent/tools-answer-engines": "workspace:*",
     "@ethosagent/tools-browser": "workspace:*",
     "@ethosagent/tools-callcapture": "workspace:*",
     "@ethosagent/tools-code": "workspace:*",

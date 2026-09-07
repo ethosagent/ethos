@@ -360,10 +360,18 @@ export interface XSearchToolSetting {
   secret?: string;
 }
 
+/** A personality's binding for the `engine_ask` tool — one provider (OpenAI),
+ *  so only the secret NAME. Resolves to `providers/openai/<name>`; absent →
+ *  the default `providers/openai/apiKey`. */
+export interface EngineAskToolSetting {
+  secret?: string;
+}
+
 /** Per-personality tool config. */
 export interface PersonalityToolSettings {
   web_search?: WebSearchToolSetting;
   x_search?: XSearchToolSetting;
+  engine_ask?: EngineAskToolSetting;
 }
 
 /** Global FALLBACK map: personality ID (or `_default`) → per-tool config. */
@@ -2180,15 +2188,25 @@ export interface EthosConfig {
    * turn — that stays the job of the hard caps in `AgentLoopConfig.options`.
    * Absent = no warn, unchanged behaviour.
    *
+   * The hard caps themselves are also settable here: a warn tier set at or
+   * above its cap can never fire, so `buildToolLoop` drops it. Absent = the
+   * loop defaults (1000 / 25).
+   *
    * Config format:
    *   toolLoop.maxToolCallsWarnAt: 40
    *   toolLoop.maxIdenticalToolCallsWarnAt: 10
+   *   toolLoop.maxToolCallsPerTurn: 1000
+   *   toolLoop.maxIdenticalToolCalls: 25
    */
   toolLoop?: {
     /** Total tool calls in one turn at which to nudge. Positive integer. */
     maxToolCallsWarnAt?: number;
     /** Per-tool-name repeat count at which to nudge. Positive integer. */
     maxIdenticalToolCallsWarnAt?: number;
+    /** Hard cap on total tool calls in one turn. Positive integer. */
+    maxToolCallsPerTurn?: number;
+    /** Hard cap on per-tool-name repeats in one turn. Positive integer. */
+    maxIdenticalToolCalls?: number;
   };
   /**
    * Board-wide work-in-progress caps. Distinct from `kanbanPoll` (poll cadence)
@@ -2936,6 +2954,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
       if (ws?.secret) lines.push(`toolSettings.${id}.web_search.secret: ${ws.secret}`);
       const xs = settings.x_search;
       if (xs?.secret) lines.push(`toolSettings.${id}.x_search.secret: ${xs.secret}`);
+      const ea = settings.engine_ask;
+      if (ea?.secret) lines.push(`toolSettings.${id}.engine_ask.secret: ${ea.secret}`);
     }
   }
   if (config.models) {
@@ -3527,6 +3547,10 @@ function serializeConfigLines(config: EthosConfig): string[] {
       lines.push(
         `toolLoop.maxIdenticalToolCallsWarnAt: ${config.toolLoop.maxIdenticalToolCallsWarnAt}`,
       );
+    if (config.toolLoop.maxToolCallsPerTurn !== undefined)
+      lines.push(`toolLoop.maxToolCallsPerTurn: ${config.toolLoop.maxToolCallsPerTurn}`);
+    if (config.toolLoop.maxIdenticalToolCalls !== undefined)
+      lines.push(`toolLoop.maxIdenticalToolCalls: ${config.toolLoop.maxIdenticalToolCalls}`);
   }
   if (config.cron) {
     // KNOWN HAZARD, mirrored not fixed: `cron.fireUrl` may have arrived from
@@ -3907,7 +3931,7 @@ function parseConfigYaml(src: string): EthosConfig {
   // collide on a shared field name.
   const groundingKv: Record<string, string> = {};
   const groundingKanbanKv: Record<string, string> = {};
-  // toolLoop.<field>: <n> — soft-warn tiers under the loop's hard tool caps.
+  // toolLoop.<field>: <n> — the loop's hard tool caps and their soft-warn tiers.
   const toolLoopKv: Record<string, string> = {};
   // browser.<field>: <value> — Playwright budgets plus launch posture. The
   // nested keys are stored under their DOTTED sub-path (`proxy.server`,
@@ -4517,6 +4541,15 @@ function parseConfigYaml(src: string): EthosConfig {
       slot.x_search = { secret: xsMatch[2].trim().replace(/^["']|["']$/g, '') };
       continue;
     }
+    // toolSettings.<personality|_default>.engine_ask.secret: <name>
+    const eaMatch = line.match(/^toolSettings\.([^.]+)\.engine_ask\.secret:\s*(.+)$/);
+    if (eaMatch) {
+      const id = eaMatch[1].trim();
+      const slot = toolSettings[id] ?? {};
+      toolSettings[id] = slot;
+      slot.engine_ask = { secret: eaMatch[2].trim().replace(/^["']|["']$/g, '') };
+      continue;
+    }
     // activeContext.type / activeContext.name
     const ac = line.match(/^activeContext\.(\S+):\s*(.+)$/);
     if (ac) {
@@ -4603,8 +4636,10 @@ function parseConfigYaml(src: string): EthosConfig {
       kv[`channelDigest.${cd[1]}`] = cd[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
-    // toolLoop.<field>: <value>  (soft-warn tiers; the hard caps are not config)
-    const tl = line.match(/^toolLoop\.(maxToolCallsWarnAt|maxIdenticalToolCallsWarnAt):\s*(.+)$/);
+    // toolLoop.<field>: <value>  (hard caps and their soft-warn tiers)
+    const tl = line.match(
+      /^toolLoop\.(maxToolCallsWarnAt|maxIdenticalToolCallsWarnAt|maxToolCallsPerTurn|maxIdenticalToolCalls):\s*(.+)$/,
+    );
     if (tl) {
       toolLoopKv[tl[1]] = tl[2].trim().replace(/^["']|["']$/g, '');
       continue;
@@ -7564,18 +7599,33 @@ function buildCompaction(kv: Record<string, string>): EthosConfig['compaction'] 
 }
 
 /**
- * Tool-loop soft-warn tiers from the flat `toolLoop.<field>` keys. Positive
- * integers — `0` would nudge on every turn before a single tool ran, which is a
- * typo, not a setting. Returns `undefined` when nothing survives, leaving the
- * loop with no warn tier at all.
+ * Tool-loop hard caps and soft-warn tiers from the flat `toolLoop.<field>`
+ * keys. Positive integers — `0` would nudge on every turn before a single tool
+ * ran (or stop the turn before it), which is a typo, not a setting. A warn tier
+ * at or above its hard cap can never fire (the cap halts the turn first), so it
+ * is dropped and the cap kept. Returns `undefined` when nothing survives,
+ * leaving the loop with its defaults and no warn tier at all.
  */
 function buildToolLoop(kv: Record<string, string>): EthosConfig['toolLoop'] | undefined {
   const result: NonNullable<EthosConfig['toolLoop']> = {};
-  for (const key of ['maxToolCallsWarnAt', 'maxIdenticalToolCallsWarnAt'] as const) {
+  for (const key of [
+    'maxToolCallsWarnAt',
+    'maxIdenticalToolCallsWarnAt',
+    'maxToolCallsPerTurn',
+    'maxIdenticalToolCalls',
+  ] as const) {
     const raw = kv[key];
     if (raw === undefined) continue;
     const n = Number(raw);
     if (Number.isFinite(n) && n > 0) result[key] = Math.floor(n);
+  }
+  for (const [warn, cap] of [
+    ['maxToolCallsWarnAt', 'maxToolCallsPerTurn'],
+    ['maxIdenticalToolCallsWarnAt', 'maxIdenticalToolCalls'],
+  ] as const) {
+    const w = result[warn];
+    const c = result[cap];
+    if (w !== undefined && c !== undefined && w >= c) delete result[warn];
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }

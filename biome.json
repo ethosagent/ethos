@@ -3,7 +3,20 @@
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!dist/", "!node_modules/", "!.turbo/", "!**/*.svg"]
+    "includes": [
+      "**",
+      "!dist/",
+      "!node_modules/",
+      "!.turbo/",
+      "!**/*.svg",
+      "!plugins/*/src/data/vocabulary-baseline.json",
+      "!plugins/*/test/fixtures/**/*.html",
+      "!plugins/*/test/fixtures/**/*.css",
+      "!plugins/*/test/fixtures/**/*.xml",
+      "!plugins/*/test/fixtures/**/*.txt",
+      "!plugins/*/test/fixtures/**/*.csv",
+      "!plugins/*/test/fixtures/**/*.json"
+    ]
   },
   "formatter": {
     "enabled": true,

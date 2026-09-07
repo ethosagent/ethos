@@ -4,7 +4,7 @@ description: "Every field in a personality's config.yaml and toolset.yaml — mo
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-09-05
+updated: 2026-09-07
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -15,14 +15,18 @@ A [personality](../../getting-started/glossary.md#personality) is a directory at
 | `config.yaml` | Flat `key: value` config — fields documented below. Dotted keys (e.g. `fs_reach.read`) express nested structure. |
 | `toolset.yaml` | Flat YAML list of [tool](../../getting-started/glossary.md#tool) names this personality is allowed to call. |
 
-An optional sibling file `tools.yaml` configures a tool per personality. It is **not** a field on the frozen `PersonalityConfig` schema (like `mcp.yaml`, it is a sibling artifact loaded by the registry), so it does not touch `.personality-field-count`. In v1 only `web_search` is configurable — it binds a provider and a **named secret**:
+An optional sibling file `tools.yaml` configures a tool per personality. It is **not** a field on the frozen `PersonalityConfig` schema (like `mcp.yaml`, it is a sibling artifact loaded by the registry), so it does not touch `.personality-field-count`. Three tools are configurable, each binding a **named secret**:
 
 ```yaml
 # ~/.ethos/personalities/researcher/tools.yaml
 web_search: { provider: exa, secret: exa-main }
+x_search: { secret: xai-main }
+engine_ask: { secret: openai-brand }
 ```
 
-`secret` is a NAME only (resolving to `providers/<provider>/<name>` in the vault) — never a value — so the directory stays shareable and committable ([§V S9](https://github.com/ethosagent/ethos/blob/main/ARCHITECTURE.md)). The personality's own `tools.yaml` is the source of truth; the global `~/.ethos/config.yaml` `toolSettings` map is a fallback layer for personalities (especially read-only built-ins) that don't declare the tool. Resolution order: `tools.yaml` → `toolSettings.<id>` → `toolSettings._default` → first backend with a key present.
+`web_search` binds a provider and a named secret. `x_search` binds an xAI named secret (`providers/xai/<name>`). `engine_ask` binds an OpenAI named secret (`providers/openai/<name>` — the same namespace the OpenAI model provider uses; absent, it falls back to `providers/openai/apiKey`).
+
+`secret` is a NAME only (resolving to `providers/<provider>/<name>` in the vault) — never a value — so the directory stays shareable and committable ([§V S9](https://github.com/ethosagent/ethos/blob/main/ARCHITECTURE.md)). The personality's own `tools.yaml` is the source of truth; the global `~/.ethos/config.yaml` `toolSettings` map is a fallback layer for personalities (especially read-only built-ins) that don't declare the tool. Resolution order: `tools.yaml` → `toolSettings.<id>` → `toolSettings._default` → the tool's default key.
 
 ## Source {#source}
 

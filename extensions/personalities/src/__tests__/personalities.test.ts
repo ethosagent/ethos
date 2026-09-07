@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createPersonalityRegistry, FilePersonalityRegistry } from '../index';
+import {
+  createPersonalityRegistry,
+  FilePersonalityRegistry,
+  parseToolsYaml,
+  renderToolsYaml,
+} from '../index';
 
 let testDir: string;
 
@@ -195,6 +200,55 @@ describe('FilePersonalityRegistry', () => {
         x_search: { secret: 'xai-main' },
       });
       expect(registry.getToolsConfig('alone')).toEqual({ x_search: { secret: 'xai-block' } });
+    });
+
+    it('parses an engine_ask binding beside the others, and alone in block form', async () => {
+      const both = join(testDir, 'engines-both');
+      await mkdir(both);
+      await writeFile(join(both, 'config.yaml'), 'name: Both\n');
+      await writeFile(join(both, 'SOUL.md'), '# Both');
+      await writeFile(
+        join(both, 'tools.yaml'),
+        'web_search: { provider: exa, secret: exa-main }\nx_search: { secret: xai-main }\nengine_ask: { secret: openai-brand }\n',
+      );
+      const alone = join(testDir, 'engines-alone');
+      await mkdir(alone);
+      await writeFile(join(alone, 'config.yaml'), 'name: Alone\n');
+      await writeFile(join(alone, 'SOUL.md'), '# Alone');
+      await writeFile(join(alone, 'tools.yaml'), 'engine_ask:\n  secret: openai-block\n');
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('engines-both')).toEqual({
+        web_search: { provider: 'exa', secret: 'exa-main' },
+        x_search: { secret: 'xai-main' },
+        engine_ask: { secret: 'openai-brand' },
+      });
+      expect(registry.getToolsConfig('engines-alone')).toEqual({
+        engine_ask: { secret: 'openai-block' },
+      });
+    });
+
+    it('renders an engine_ask binding back to the form it parses', () => {
+      const config = {
+        web_search: { provider: 'exa' as const, secret: 'exa-main' },
+        x_search: { secret: 'xai-main' },
+        engine_ask: { secret: 'openai-brand' },
+      };
+      const rendered = renderToolsYaml(config);
+      expect(rendered).toContain('engine_ask: { secret: openai-brand }');
+      expect(parseToolsYaml(rendered)).toEqual(config);
+    });
+
+    it('drops an engine_ask binding whose secret name is unsafe', async () => {
+      const dir = join(testDir, 'evilengine');
+      await mkdir(dir);
+      await writeFile(join(dir, 'config.yaml'), 'name: EvilEngine\n');
+      await writeFile(join(dir, 'SOUL.md'), '# EvilEngine');
+      await writeFile(join(dir, 'tools.yaml'), 'engine_ask: { secret: ../xai/apiKey }\n');
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('evilengine')).toBeUndefined();
     });
 
     it('drops an x_search binding whose secret name is unsafe', async () => {
