@@ -85,19 +85,45 @@ export function scriptExclusionError(toolName: string, category: ScriptExclusion
 
 /**
  * Pure derivation of the script-callable surface for a personality:
- * `personality.toolset ∩ SCRIPT_SAFE`, gated on `run_code` itself being
- * reachable — a personality that cannot run a script has no script surface
- * at all. Returns sorted tool names.
+ * `personality.toolset ∩ SCRIPT_SAFE`, gated on the personality DECLARING
+ * `run_code` — one that never asked for a script surface has none. Returns
+ * sorted tool names.
  *
  * The allowlist rule mirrors `toDefinitions`/`executeParallel`: the toolset
  * gates built-in tools by exact name; MCP and plugin tools bypass the name
  * allowlist but are excluded by the policy above anyway.
+ *
+ * The gate is DELIBERATELY not `run_code` being AVAILABLE.
+ * `run_code.isAvailable()` (`extensions/tools-code/src/index.ts`) returns the
+ * `backendWired` flag it was constructed with, set once at composition from
+ * whether an execution backend was built for the DEPLOYMENT DEFAULT
+ * personality (`composeAllTools` in `packages/wiring/src/compose-tools.ts`,
+ * `backendWired: executionBackend !== undefined`). Gating on it emptied the
+ * surface for every personality in a chat-only-default process — including one
+ * that declares `run_code` and resolves an execution posture of its own
+ * (execution IS routed per turn, `createExecutionRouting.resolveTurn`), and
+ * including consumers that never enter a container at all: an in-process
+ * plugin reaching `ToolContext.scriptTools`.
+ *
+ * Widening the gate does not widen the surface. The names are still
+ * `registry.getAvailable()` ∩ toolset − `scriptExclusionFor`, so a tool whose
+ * own `isAvailable()` is false stays absent and the result stays a subset of
+ * what the agent itself may call this turn.
+ *
+ * Two edge cases, both deliberate. A personality with NO `toolset` is
+ * unrestricted — the same reading of `allowed` the filter below and
+ * `toDefinitions` use, and the shape `ScriptToolBridge` passes for an
+ * unrestricted turn — so it gets a surface. And `run_code` missing from the
+ * registry entirely does not empty the surface either: the gate asks what the
+ * personality declared, not what the process composed. Both are pinned in
+ * `packages/core/src/__tests__/script-safe.test.ts`.
  */
 export function scriptCallableFor(
   personality: Pick<PersonalityConfig, 'toolset'>,
   registry: Pick<ToolRegistry, 'getAvailable' | 'getPluginId'>,
 ): string[] {
   const allowed = personality.toolset;
+  if (allowed && !allowed.includes('run_code')) return [];
   const permitted = registry.getAvailable().filter((tool) => {
     const isMcpOrPluginTool =
       tool.name.startsWith('mcp__') || registry.getPluginId?.(tool.name) !== undefined;
@@ -106,7 +132,6 @@ export function scriptCallableFor(
     }
     return true;
   });
-  if (!permitted.some((tool) => tool.name === 'run_code')) return [];
   return permitted
     .filter(
       (tool) =>

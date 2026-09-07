@@ -69,10 +69,54 @@ describe('scriptCallableFor', () => {
     expect(scriptCallableFor(personality, registry)).toEqual([]);
   });
 
-  it('returns an empty surface when run_code is not registered at all', () => {
+  it('run_code missing from the registry does not empty the surface', () => {
+    // The gate asks what the personality DECLARED, not what the process
+    // composed. Nothing unregistered leaks in either way: the names still come
+    // from `registry.getAvailable()`.
     const registry = new DefaultToolRegistry();
     registry.register(makeTool('read_file', 'file'));
-    expect(scriptCallableFor(makePersonality(['read_file', 'run_code']), registry)).toEqual([]);
+    expect(scriptCallableFor(makePersonality(['read_file', 'run_code']), registry)).toEqual([
+      'read_file',
+    ]);
+  });
+
+  it('derives the surface when run_code is not AVAILABLE — the gate is the toolset', () => {
+    // The defect the gate was changed for. `run_code.isAvailable()` returns the
+    // `backendWired` flag set once at composition from the DEPLOYMENT DEFAULT
+    // personality (`composeAllTools`, `packages/wiring/src/compose-tools.ts`),
+    // so gating on it emptied the surface for every personality in a
+    // chat-only-default process — including in-process consumers (a plugin
+    // reaching `ToolContext.scriptTools`) that never touch a container.
+    const registry = new DefaultToolRegistry();
+    registry.registerAll([
+      makeTool('read_file', 'file'),
+      makeTool('web_search', 'web'),
+      { ...makeTool('run_code', 'code'), isAvailable: () => false },
+    ]);
+    const personality = makePersonality(['read_file', 'web_search', 'run_code']);
+    expect(scriptCallableFor(personality, registry)).toEqual(['read_file', 'web_search']);
+    // `run_code`'s own availability changes nothing, in either direction.
+    const wired = new DefaultToolRegistry();
+    wired.registerAll([
+      makeTool('read_file', 'file'),
+      makeTool('web_search', 'web'),
+      { ...makeTool('run_code', 'code'), isAvailable: () => true },
+    ]);
+    expect(scriptCallableFor(personality, wired)).toEqual(['read_file', 'web_search']);
+  });
+
+  it('still excludes a tool whose own isAvailable() is false', () => {
+    // Only the `run_code` gate lost its availability requirement. A tool the
+    // process cannot serve (x_search with no API key) is still absent from the
+    // surface, because the names come from `registry.getAvailable()`.
+    const registry = new DefaultToolRegistry();
+    registry.registerAll([
+      makeTool('read_file', 'file'),
+      { ...makeTool('x_search', 'web'), isAvailable: () => false },
+      { ...makeTool('run_code', 'code'), isAvailable: () => false },
+    ]);
+    const personality = makePersonality(['read_file', 'x_search', 'run_code']);
+    expect(scriptCallableFor(personality, registry)).toEqual(['read_file']);
   });
 
   it('an unrestricted personality (no toolset) still excludes every SCRIPT_SAFE category', () => {

@@ -190,6 +190,22 @@ describe.each(backends)('Storage conformance — $name', ({ setup }) => {
     expect(names.filter((n) => n.includes('.tmp.'))).toEqual([]);
   });
 
+  it('concurrent writeAtomic to one path: none reject, content is one whole value', async () => {
+    const path = join(root, 'concurrent.json');
+    // Distinct lengths as well as distinct bodies, so a torn or interleaved
+    // result cannot pass by coincidentally matching another writer's value.
+    const values = Array.from({ length: 20 }, (_, i) => `writer-${i}:${'x'.repeat(i * 500)}`);
+    // Every call derives its temp path synchronously, so all 20 share one
+    // Date.now() reading — a temp name built from pid + clock alone collides
+    // here and the losing rename fails ENOENT. A rejection fails this test.
+    await Promise.all(values.map((v) => storage.writeAtomic(path, v)));
+    // Last rename wins; which one is inherent to the contract. What is
+    // guaranteed is that the survivor is exactly one writer's bytes.
+    expect(values).toContain(await storage.read(path));
+    const names = await storage.list(root);
+    expect(names.filter((n) => n.includes('.tmp.'))).toEqual([]);
+  });
+
   // --- Directories -------------------------------------------------
 
   it('mkdir creates a single directory', async () => {

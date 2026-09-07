@@ -27,6 +27,17 @@ export interface LocalToolTransportLiveCtx {
    * must be re-attached to the reconstructed ctx.
    */
   scriptTools?: import('@ethosagent/types').ScriptToolsApi;
+  /**
+   * Turn-scoped LLM handle. Closes over the turn's usage sink (built in
+   * `agent-loop/stages/tool-processing.ts`), so — like `a2aDelegation` and
+   * `scriptTools` — it cannot ride the serializable `ToolExecuteRequest` and
+   * must be re-attached to the reconstructed ctx here.
+   *
+   * A non-local `ToolTransport` (remote/A2A) legitimately cannot carry this
+   * handle across its boundary, so `ctx.llm` stays optional and tools must
+   * degrade when it is absent. That is intended, not a gap.
+   */
+  llm?: import('@ethosagent/types').SimpleCompletion;
 }
 
 export class LocalToolTransport implements ToolTransport {
@@ -68,6 +79,7 @@ export class LocalToolTransport implements ToolTransport {
       storage: live?.storage,
       a2aDelegation: live?.a2aDelegation,
       scriptTools: live?.scriptTools,
+      llm: live?.llm,
     };
 
     if (tool.capabilities && this.backends) {

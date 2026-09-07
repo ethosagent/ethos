@@ -327,6 +327,7 @@ export class DefaultToolRegistry implements ToolRegistry {
       inboundAttachments: turnAttachments,
       a2aDelegation: ctx.a2aDelegation,
       scriptTools: ctx.scriptTools,
+      llm: ctx.llm,
     };
 
     // A4 — one clock per call. The batch used to be timed by a single timer in

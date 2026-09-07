@@ -18,6 +18,17 @@ import type {
   StorageWriteOptions,
 } from '@ethosagent/types';
 
+/** Per-process sequence for `writeAtomic` temp names. `Date.now()` has
+ *  millisecond resolution, so two concurrent writeAtomic calls to the same
+ *  path derive their temp path in the same tick and would otherwise pick the
+ *  same name: the winner's rename moves the inode, the loser's rename fails
+ *  ENOENT, and whichever renames second can publish the other writer's bytes.
+ *  A counter is deterministic and cheap where a wider clock cannot be made
+ *  safe. Racing on WHICH content wins is inherent to the contract and stays;
+ *  only the temp name is made unshared. Pinned by 'concurrent writeAtomic to
+ *  one path' in __tests__/conformance.test.ts. */
+let tmpSeq = 0;
+
 export class FsStorage implements Storage {
   async read(path: string): Promise<string | null> {
     try {
@@ -128,7 +139,8 @@ export class FsStorage implements Storage {
     content: string | Uint8Array,
     opts?: StorageWriteOptions,
   ): Promise<void> {
-    const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
+    tmpSeq += 1;
+    const tmp = `${path}.tmp.${process.pid}.${Date.now()}.${tmpSeq}`;
     const isBinary = typeof content !== 'string';
     if (opts?.mode !== undefined) {
       await writeFile(
