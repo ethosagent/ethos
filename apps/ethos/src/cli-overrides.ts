@@ -1,6 +1,6 @@
-// FW-8 — CLI override flags: --model, --provider, --toolsets, -s
+// FW-8 — CLI override flags: --model, --provider, --personality, --toolsets, -s
 //
-// Parses the four non-persistent override flags from process.argv and applies
+// Parses the five non-persistent override flags from process.argv and applies
 // them to the loaded EthosConfig. Validation errors throw EthosError with
 // registered codes so the top-level handler in index.ts renders them cleanly.
 //
@@ -50,6 +50,7 @@ export const VALID_PROVIDERS = [
 export interface CliOverrideFlags {
   model?: string;
   provider?: string;
+  personality?: string;
   toolsets?: string[];
   skills?: string[];
   /**
@@ -82,6 +83,9 @@ export function parseCliOverrideFlags(argv: string[]): CliOverrideFlags {
     } else if (a === '--provider') {
       flags.provider = nextArg(i);
       if (flags.provider !== undefined) i++;
+    } else if (a === '--personality') {
+      flags.personality = nextArg(i);
+      if (flags.personality !== undefined) i++;
     } else if (a === '--toolsets') {
       const val = nextArg(i);
       if (val) {
@@ -113,9 +117,10 @@ export function parseCliOverrideFlags(argv: string[]): CliOverrideFlags {
  * Apply CLI override flags to a loaded config and validate their values.
  * Returns a new config object — never mutates the input.
  *
- * @throws {EthosError} INVALID_PROVIDER — unknown --provider value
- * @throws {EthosError} INVALID_TOOLSET  — unknown --toolsets item
- * @throws {EthosError} MISSING_SKILL    — skill file not found for -s item
+ * @throws {EthosError} INVALID_PROVIDER      — unknown --provider value
+ * @throws {EthosError} PERSONALITY_NOT_FOUND — unknown --personality id
+ * @throws {EthosError} INVALID_TOOLSET       — unknown --toolsets item
+ * @throws {EthosError} MISSING_SKILL         — skill file not found for -s item
  */
 export async function applyCliOverrides(
   config: EthosConfig,
@@ -140,6 +145,28 @@ export async function applyCliOverrides(
       });
     }
     result.provider = flags.provider;
+  }
+
+  // --personality: validate against the same registry `ethos personality show`
+  // resolves against — built-ins plus ~/.ethos/personalities/ — so an unknown
+  // id is refused by name instead of silently running the default.
+  //
+  // `activeContext` is set alongside `personality` because that is what
+  // `resolveActiveLoop` (apps/ethos/src/wiring.ts) reads first: a deployment
+  // with an active team or personality context would otherwise ignore the flag.
+  if (flags.personality !== undefined) {
+    const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+    const registry = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
+    await registry.loadFromDirectory(join(ethosDir(), 'personalities'));
+    if (!registry.get(flags.personality)) {
+      throw new EthosError({
+        code: 'PERSONALITY_NOT_FOUND',
+        cause: `Unknown personality: ${flags.personality}`,
+        action: 'Run `ethos personality list` to see available ids.',
+      });
+    }
+    result.personality = flags.personality;
+    result.activeContext = { type: 'personality', name: flags.personality };
   }
 
   // --toolsets: validate each item against the known toolset names

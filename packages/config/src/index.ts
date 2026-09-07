@@ -2803,13 +2803,87 @@ export async function writeConfig(
   // than re-implemented so the write and boot checks can never disagree.
   validateNoPlaintextSecrets(config);
   await storage.mkdir(ethosDir());
+  const path = join(ethosDir(), 'config.yaml');
+  const lines = serializeConfigLines(config);
+  const existing = await storage.read(path);
+  if (existing !== null) lines.push(...unexpressibleLines(existing, lines));
+  await storage.write(path, `${lines.join('\n')}\n`, { mode: 0o600 });
+}
+
+/** The `key` of a flat `key: value` config line; `null` for blanks and comments. */
+function configLineKey(line: string): string | null {
+  const i = line.indexOf(':');
+  if (i <= 0) return null;
+  const key = line.slice(0, i);
+  if (key.startsWith('#') || /\s/.test(key)) return null;
+  return key;
+}
+
+/**
+ * The lines of `existing` that `serializeConfigLines` cannot produce, returned
+ * verbatim so a write that changes one key keeps the rest of the operator's
+ * file. Two classes reach here: keys this module models nowhere (`approvalMode`,
+ * `debugMode`, `contextLayering` and the `display.voice_*` block are written by
+ * `apps/web-api`'s ConfigRepository, which round-trips unknown keys through its
+ * own `passthrough` map; operators hand-write more), and keys it parses but
+ * only serializes at their non-default value (`display.resume_hint: true`,
+ * `logs.rotation.enabled: true`). Both used to be deleted by every command that
+ * persists config — `ethos personality set`, `ethos set`, `ethos retention`,
+ * `ethos fallback` and the rest.
+ *
+ * The comparison is against a round-trip of the file ITSELF, not a fixed key
+ * list: a key the serializer WOULD have emitted for the on-disk config but did
+ * not emit for this one is a key the caller cleared on purpose, so
+ * `writeConfig(storage, { ...cfg, retention: undefined })` still deletes it.
+ * Pinned by `packages/config/src/__tests__/config-write-preserves-keys.test.ts`.
+ *
+ * Limits, both pre-existing: comments and blank lines are still dropped, and a
+ * preserved credential is not externalized into the vault (nothing parses the
+ * key, so `externalizeConfigSecrets` never sees it) — it stays exactly as the
+ * writer that put it there left it.
+ */
+function unexpressibleLines(existing: string, emitted: readonly string[]): string[] {
+  const covered = new Set<string>();
+  for (const line of emitted) {
+    const key = configLineKey(line);
+    if (key) covered.add(key);
+  }
+  let baseline: string[];
+  try {
+    baseline = serializeConfigLines(parseConfigYaml(existing));
+  } catch {
+    // The file on disk does not parse — `parseConfigYaml` rejects a handful of
+    // out-of-range values (`backup.keep: 0`), and `ethos setup` over such a
+    // file is the reachable case, since every other caller read it first and
+    // would have thrown already. Nothing can then be said about which of its
+    // keys this serializer expresses, so preserve none rather than block the
+    // write: that is exactly what happened before anything was preserved.
+    return [];
+  }
+  for (const line of baseline) {
+    const key = configLineKey(line);
+    if (key) covered.add(key);
+  }
+  const kept: string[] = [];
+  for (const line of existing.split('\n')) {
+    const key = configLineKey(line);
+    if (key === null || covered.has(key)) continue;
+    kept.push(line);
+  }
+  return kept;
+}
+
+/** Pure `EthosConfig` → `config.yaml` lines. No I/O, no secret externalization. */
+function serializeConfigLines(config: EthosConfig): string[] {
   const lines = [
     `schemaVersion: ${config.schemaVersion ?? CURRENT_ETHOS_CONFIG_SCHEMA_VERSION}`,
     `provider: ${config.provider}`,
     `model: ${config.model}`,
-    `apiKey: ${config.apiKey}`,
-    `personality: ${config.personality}`,
   ];
+  // `apiKey` is typed required but is absent from real files (the vault holds
+  // it), and an unguarded template literal wrote the string `undefined` back.
+  if (config.apiKey) lines.push(`apiKey: ${config.apiKey}`);
+  lines.push(`personality: ${config.personality}`);
   if (config.memory) lines.push(`memory: ${config.memory}`);
   if (config.memoryCharLimits) {
     if (config.memoryCharLimits.memory !== undefined) {
@@ -3258,7 +3332,7 @@ export async function writeConfig(
   if (config.providers && config.providers.length > 0) {
     for (const [i, p] of config.providers.entries()) {
       lines.push(`providers.${i}.provider: ${p.provider}`);
-      lines.push(`providers.${i}.apiKey: ${p.apiKey}`);
+      if (p.apiKey) lines.push(`providers.${i}.apiKey: ${p.apiKey}`);
       if (p.model) lines.push(`providers.${i}.model: ${p.model}`);
       if (p.baseUrl) lines.push(`providers.${i}.baseUrl: ${p.baseUrl}`);
       if (p.apiVersion) lines.push(`providers.${i}.apiVersion: ${p.apiVersion}`);
@@ -3580,7 +3654,7 @@ export async function writeConfig(
     if (lf.publicKey) lines.push(`telemetry.export.langfuse.publicKey: ${lf.publicKey}`);
     if (lf.secretKey) lines.push(`telemetry.export.langfuse.secretKey: ${lf.secretKey}`);
   }
-  await storage.write(join(ethosDir(), 'config.yaml'), `${lines.join('\n')}\n`, { mode: 0o600 });
+  return lines;
 }
 
 export async function resolveConfigSecrets(

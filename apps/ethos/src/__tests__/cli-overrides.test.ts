@@ -1,16 +1,16 @@
-// FW-8 — CLI override flags: --model, --provider, --toolsets, -s
+// FW-8 — CLI override flags: --model, --provider, --personality, --toolsets, -s
 //
 // These flags override ~/.ethos/config.yaml for a single invocation and must
 // NOT persist. Validation errors throw EthosError with the documented codes.
 //
-// All four flags work for chat, -q, -c, -r, and --continue subcommands; the
+// All five flags work for chat, -q, -c, -r, and --continue subcommands; the
 // tests exercise the parsing and validation layer directly rather than spawning
 // a full CLI process.
 
 import type { EthosConfig } from '@ethosagent/config';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { EthosError } from '@ethosagent/types';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyCliOverrides, parseCliOverrideFlags, VALID_PROVIDERS } from '../cli-overrides';
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,11 @@ describe('parseCliOverrideFlags', () => {
   it('extracts --provider from argv', () => {
     const flags = parseCliOverrideFlags(['chat', '--provider', 'openrouter']);
     expect(flags.provider).toBe('openrouter');
+  });
+
+  it('extracts --personality from argv', () => {
+    const flags = parseCliOverrideFlags(['chat', '--personality', 'brand-guide']);
+    expect(flags.personality).toBe('brand-guide');
   });
 
   it('extracts --toolsets from argv (comma-separated)', () => {
@@ -234,6 +239,70 @@ describe('applyCliOverrides', () => {
         ),
       ).rejects.toSatisfy((err: unknown) => {
         return err instanceof EthosError && err.code === 'MISSING_SKILL';
+      });
+    });
+  });
+
+  describe('--personality', () => {
+    // The registry resolves built-ins plus <ETHOS_STATE_DIR>/personalities/;
+    // with an InMemoryStorage the built-in data dir lists empty, so the seeded
+    // directory below is the whole roster.
+    const STATE_DIR = '/home/user/.ethos';
+    let previousStateDir: string | undefined;
+
+    beforeEach(() => {
+      previousStateDir = process.env.ETHOS_STATE_DIR;
+      process.env.ETHOS_STATE_DIR = STATE_DIR;
+    });
+
+    afterEach(() => {
+      if (previousStateDir === undefined) delete process.env.ETHOS_STATE_DIR;
+      else process.env.ETHOS_STATE_DIR = previousStateDir;
+    });
+
+    async function seedBrandGuide(): Promise<InMemoryStorage> {
+      const storage = new InMemoryStorage();
+      const dir = `${STATE_DIR}/personalities/brand-guide`;
+      await storage.mkdir(dir);
+      await storage.write(`${dir}/config.yaml`, 'name: Brand Guide\ndescription: Brand voice.\n');
+      await storage.write(`${dir}/SOUL.md`, '# Brand Guide\n\nI keep the brand consistent.\n');
+      await storage.write(`${dir}/toolset.yaml`, '- read_file\n');
+      return storage;
+    }
+
+    it('reaches the personality resolveActiveLoop reads', async () => {
+      const storage = await seedBrandGuide();
+      const flags = parseCliOverrideFlags(['chat', '--personality', 'brand-guide']);
+      const result = await applyCliOverrides({ ...BASE_CONFIG }, flags, storage);
+
+      expect(result.personality).toBe('brand-guide');
+      // Mirrors resolveActiveLoop() in apps/ethos/src/wiring.ts, which reads
+      // activeContext.name first — setting only `personality` would be ignored
+      // whenever a context is set.
+      expect(result.activeContext?.name ?? result.personality).toBe('brand-guide');
+      expect(BASE_CONFIG.personality).toBe('researcher');
+    });
+
+    it('overrides an active team context for this invocation', async () => {
+      const storage = await seedBrandGuide();
+      const result = await applyCliOverrides(
+        { ...BASE_CONFIG, activeContext: { type: 'team', name: 'marketing' } },
+        { personality: 'brand-guide' },
+        storage,
+      );
+      expect(result.activeContext).toEqual({ type: 'personality', name: 'brand-guide' });
+    });
+
+    it('throws EthosError(PERSONALITY_NOT_FOUND) naming an unknown id', async () => {
+      const storage = await seedBrandGuide();
+      await expect(
+        applyCliOverrides({ ...BASE_CONFIG }, { personality: 'ghost-guide' }, storage),
+      ).rejects.toSatisfy((err: unknown) => {
+        return (
+          err instanceof EthosError &&
+          err.code === 'PERSONALITY_NOT_FOUND' &&
+          err.message.includes('ghost-guide')
+        );
       });
     });
   });

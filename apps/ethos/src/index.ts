@@ -337,9 +337,17 @@ try {
       if (sub === 'list' || sub === '') {
         const jsonMode = args.includes('--json');
         const { createPersonalityRegistry } = await import('@ethosagent/personalities');
-        const reg = await createPersonalityRegistry(getStorage());
+        const reg = await createPersonalityRegistry({
+          storage: getStorage(),
+          userPersonalitiesDir: ethosDir(),
+        });
+        // `list` loaded built-ins only, so every personality under
+        // ~/.ethos/personalities/ was absent from the command that `show` and
+        // `set` tell you to run "to see available ids" — while `show`, `set`,
+        // `duplicate` and `create` all load that directory. Same call they make.
+        await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
+        const defaultId = reg.getDefault().id;
         if (jsonMode) {
-          const defaultId = reg.getDefault().id;
           writeJson(
             reg.list().map((p) => ({
               id: p.id,
@@ -349,10 +357,19 @@ try {
           );
           break;
         }
+        const described = reg.describeAll();
+        const printRows = (rows: typeof described) => {
+          for (const { config } of rows) {
+            const def = defaultId === config.id ? ' (default)' : '';
+            console.log(`  ${config.id.padEnd(14)} ${config.description ?? ''}${def}`);
+          }
+        };
         console.log('\nBuilt-in personalities:\n');
-        for (const p of reg.list()) {
-          const def = reg.getDefault().id === p.id ? ' (default)' : '';
-          console.log(`  ${p.id.padEnd(14)} ${p.description ?? ''}${def}`);
+        printRows(described.filter((d) => d.builtin));
+        const userPersonalities = described.filter((d) => !d.builtin);
+        if (userPersonalities.length > 0) {
+          console.log('\nYour personalities:\n');
+          printRows(userPersonalities);
         }
         console.log();
       } else if (sub === 'create') {
@@ -1258,15 +1275,35 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
   // Resolve the execution posture so `## Execution` renders on the sheet
   // (Phase 2a, lane E1). Read-only — no daemon probe here; the static posture
   // (backend / network / memory / mounts / macOS caveat) is what `show` audits.
-  const { buildExecutionPosture, formatSshTarget, resolvePersonalityModelFit } = await import(
-    '@ethosagent/wiring'
-  );
+  const {
+    buildExecutionPosture,
+    formatSshTarget,
+    resolveActiveLlmName,
+    resolveCharacterSheetRouting,
+    resolvePersonalityModelFit,
+  } = await import('@ethosagent/wiring');
   const posture = await buildExecutionPosture({
     personality: described.config,
     substitutionVars: { ethosHome: ethosDir(), cwd: process.cwd() },
     sshConfigured: sshCfg?.host !== undefined,
     ...(sshCfg ? { sshTarget: formatSshTarget(sshCfg) } : {}),
   });
+
+  // Which model this personality's turns ACTUALLY send. Declared and executed
+  // routinely differ — `resolveModelWithTier`
+  // (packages/core/src/agent-loop/turn-context.ts) honours a tier map only when
+  // the declared `provider` matches the active LLM — so the sheet prints the
+  // executed model and names an ignored declaration as inert. Computed OUTSIDE
+  // the loop-construction block below: it is pure config arithmetic, and an
+  // unbuildable loop must not cost the sheet its routing line.
+  const routing = cfg
+    ? resolveCharacterSheetRouting(
+        described.config,
+        resolveActiveLlmName(cfg),
+        cfg.model,
+        cfg.modelRouting ?? {},
+      )
+    : undefined;
 
   // Lane 6 — the arithmetic model-fit verdict, rendered as the sheet's
   // `## Model fit` section. The window resolution probes LIVE and rewrites the
@@ -1331,6 +1368,7 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
       scriptSurface,
       renderers,
       boundary,
+      routing,
     )}`,
   );
 
