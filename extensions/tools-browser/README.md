@@ -10,6 +10,7 @@ Headless Chromium tools for navigating, clicking, and typing on web pages, expos
 | `browser_click` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
 | `browser_type` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
 | `browser_screenshot` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
+| `browser_computed_style` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
 | `browser_vision_click` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
 | `browser_vision_type` | `{ allowedHosts: ['*'] }` | — | — | — | `{ allowedBinaries: ['docker'] }` |
 
@@ -25,6 +26,7 @@ Headless Chromium tools for navigating, clicking, and typing on web pages, expos
 | `browser_click` | `browser` | Click an element by its `@e{n}` reference and return the updated tree. |
 | `browser_type` | `browser` | Type text (optionally pressing Enter) into an element by `@e{n}`. |
 | `browser_screenshot` | `browser` | Capture a base64 PNG screenshot of the current page. |
+| `browser_computed_style` | `browser` | Load a URL and return `getComputedStyle` for the real rendered elements, one record per element. |
 | `browser_vision_click` | `browser` | Click an element described in natural language (a11y-first, vision fallback). |
 | `browser_vision_type` | `browser` | Type into an element described in natural language (a11y-first, vision fallback). |
 
@@ -41,6 +43,10 @@ After every navigation, click, or type, `snapshotPage` calls Playwright's `page.
 `browser_click` and `browser_type` look up the ref on the session, then locate via `page.getByRole(ref.role, { name: ref.name }).first()` with a 10 s timeout. After clicking, the tools `waitForTimeout(500)` to let navigation/re-render settle before snapshotting again. On error, `browse_url` closes the session (`closeSession` at `src/index.ts:160`); the click and type tools leave the session intact so the agent can retry.
 
 `buildA11yTree` is a parallel, JSON-tree based formatter exposed for tests and for callers that want to format raw `RawA11yNode` data.
+
+## Computed styles
+
+`browser_computed_style` is the only tool here that reports CSS. The accessibility tree carries roles and names but no styling, and a screenshot carries pixels an agent has to guess at, so a question like "how many elements carry this colour" had no evidence behind it. The tool loads a URL, then evaluates a fixed closure (`collectComputedStyles`, `src/browser-computed-style.ts`) that reads `getComputedStyle` per element. Elements, not roles — the count is the point. Only allowlisted property names cross into the page (`COMPUTED_STYLE_PROPERTIES`; a request for anything else is refused with `input_invalid`), the selector list is bounded on count and length, elements the layout does not draw are skipped, and whole records are dropped from the tail to keep the JSON inside the result budget (`considered` vs `returned` reports the difference).
 
 ## Gotchas
 
@@ -74,6 +80,7 @@ Vision calls incur cost. The cost is reported as `cost_usd` on the `ToolResult` 
 | `src/a11y.ts` | `INTERACTIVE_ROLES`, `parseAriaSnapshot`, `buildA11yTree`. |
 | `src/vision-resolver.ts` | `resolveByA11y` (text-similarity scoring), `resolveByVision` (LLM vision call + cost). |
 | `src/browser-screenshot.ts` | `browser_screenshot` tool. |
+| `src/browser-computed-style.ts` | `browser_computed_style` tool, its property allowlist, and the in-page collector. |
 | `src/browser-vision-click.ts` | `browser_vision_click` tool factory. |
 | `src/browser-vision-type.ts` | `browser_vision_type` tool factory. |
 | `src/__tests__/` | Tests for snapshot parsing, ref injection, and tree building. |

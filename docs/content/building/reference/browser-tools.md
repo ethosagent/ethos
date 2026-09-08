@@ -4,16 +4,16 @@ description: "Browser tools for navigation, interaction, screenshots and vision-
 kind: reference
 audience: developer
 slug: browser-tools
-updated: 2026-09-05
+updated: 2026-09-07
 ---
 
 # Browser tools
 
-Ethos ships a Playwright-backed browser surface covering navigation, interaction by accessibility ref, vision-click, page-state introspection, and browser session management — **thirteen tools**, plus `browser_request_takeover` in any deployment that has an interactive surface to hand a browser to. Personality lockdown gates which tools are visible per personality via the `toolset.yaml` allowlist.
+Ethos ships a Playwright-backed browser surface covering navigation, interaction by accessibility ref, vision-click, page-state introspection, and browser session management — **fourteen tools**, plus `browser_request_takeover` in any deployment that has an interactive surface to hand a browser to. Personality lockdown gates which tools are visible per personality via the `toolset.yaml` allowlist.
 
 ## Source {#source}
 
-Factory: [`extensions/tools-browser/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-browser/src/index.ts) — `createBrowserTools`. Per-tool implementations split across `browser-actions.ts`, `browser-screenshot.ts`, `browser-takeover.ts`, `browser-vision-click.ts`, `browser-vision-type.ts`, `snapshot.ts`, `sessions.ts`, `launch-options.ts`, `block-detector.ts`, `a11y.ts`. Wiring at [`packages/wiring/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/index.ts).
+Factory: [`extensions/tools-browser/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-browser/src/index.ts) — `createBrowserTools`. Per-tool implementations split across `browser-actions.ts`, `browser-computed-style.ts`, `browser-screenshot.ts`, `browser-takeover.ts`, `browser-vision-click.ts`, `browser-vision-type.ts`, `snapshot.ts`, `sessions.ts`, `launch-options.ts`, `block-detector.ts`, `a11y.ts`. Wiring at [`packages/wiring/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/index.ts).
 
 ## Tools {#tools}
 
@@ -28,6 +28,7 @@ Factory: [`extensions/tools-browser/src/index.ts`](https://github.com/ethosagent
 | `browser_back` | Navigate browser history back one step. Returns updated snapshot. | none |
 | `browser_console` | Dump recent console messages and JS errors collected since session start. | none |
 | `browser_get_images` | List every `<img>` on the page with `src` + `alt` text. | none |
+| `browser_computed_style` | Load a URL and report `getComputedStyle` per rendered element — colour, background, typography, border, shadow. Answers what a page *looks like*, where the snapshot answers what it *is*. | `network: { allowedHosts: ['*'] }` |
 | `browser_dialog` | Accept / dismiss / answer a JS alert / confirm / prompt that's blocking the page. | none |
 | `browser_screenshot` | Capture the viewport as a base64 JPEG. Use for `vision_analyze` composition. | none |
 | `browser_vision_click` | Single tool that screenshots → vision model identifies the element → clicks. For pages with poor accessibility trees. | `vision: true` (transitively via `vision_analyze`) |

@@ -14,6 +14,7 @@ import {
   createBrowserBackTool,
   createBrowserNavigateTool,
 } from './browser-actions';
+import { createBrowserComputedStyleTool } from './browser-computed-style';
 import { browserScreenshotTool } from './browser-screenshot';
 import { createBrowserTakeoverTool } from './browser-takeover';
 import { createBrowserVisionClickTool } from './browser-vision-click';
@@ -452,6 +453,7 @@ export function createBrowserTools(opts?: BrowserToolsOptions): Tool[] {
     browserGetImagesTool,
     browserDialogTool,
     createBrowserNavigateTool(timeouts, launchCfg, escalationTool),
+    createBrowserComputedStyleTool(timeouts, launchCfg, escalationTool),
     browserScreenshotTool,
     createBrowserVisionClickTool(visionOpts, timeouts),
     createBrowserVisionTypeTool(visionOpts, timeouts),
@@ -531,6 +533,12 @@ export function createBrowserTakeoverRegistry(): BrowserTakeoverRegistry {
 export type { A11yRef, A11yResult, RawA11yNode } from './a11y';
 export { buildA11yTree, parseAriaSnapshot } from './a11y';
 export { type BlockSignal, describeBlock, detectBlock } from './block-detector';
+export {
+  COMPUTED_STYLE_PROPERTIES,
+  type ComputedStyleElement,
+  createBrowserComputedStyleTool,
+  DEFAULT_SELECTORS,
+} from './browser-computed-style';
 export { createBrowserTakeoverTool } from './browser-takeover';
 export {
   type BrowserLaunchConfig,
