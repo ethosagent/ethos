@@ -50,6 +50,10 @@ const PROVIDER_GROUPS: Array<{ label: string; providers: Array<[NamedSecretProvi
     label: 'Answer engines',
     providers: [['openai', 'OpenAI (ChatGPT answer engine)']],
   },
+  {
+    label: 'YouTube',
+    providers: [['google', 'Google (YouTube Data API)']],
+  },
 ];
 
 function asNamedSecretProvider(v: string | undefined): NamedSecretProvider | undefined {

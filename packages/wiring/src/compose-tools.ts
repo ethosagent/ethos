@@ -66,6 +66,12 @@ import { createProcessGuardHook, isAlive } from '@ethosagent/tools-process';
 import { compose as composeProcess } from '@ethosagent/tools-process/compose';
 import { createRedditSearchTool, createRedditThreadTool } from '@ethosagent/tools-reddit';
 import { compose as composeSkillsTools } from '@ethosagent/tools-skills/compose';
+import {
+  createLinkedInSearchTool,
+  createQuoraSearchTool,
+  createYouTubeCommentsTool,
+  createYouTubeSearchTool,
+} from '@ethosagent/tools-social-search';
 import { createTerminalGuardHook, createTerminalTools } from '@ethosagent/tools-terminal';
 import { createThinkDeeperTool } from '@ethosagent/tools-tier';
 import { compose as composeTodo } from '@ethosagent/tools-todo/compose';
@@ -1168,6 +1174,26 @@ export async function composeAllTools(
       ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),
     }),
   );
+  const youtubeToolOptions = {
+    resolvePersonalitySetting: (personalityId: string) =>
+      personalities.getToolsConfig(personalityId)?.youtube,
+    ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),
+  };
+  tools.register(createYouTubeSearchTool(youtubeToolOptions));
+  tools.register(createYouTubeCommentsTool(youtubeToolOptions));
+  // quora_search / linkedin_search read web_search's EXISTING binding rather
+  // than a tools.yaml key of their own (plan D3a) — same two layers
+  // web_search itself resolves, plus the same construction-time backend
+  // preference and SearXNG rung createWebTools receives in build-agent-loop.ts.
+  const siteSearchToolOptions = {
+    resolvePersonalitySetting: (personalityId: string) =>
+      personalities.getToolsConfig(personalityId)?.web_search,
+    ...(config.webSearchBackend ? { searchBackend: config.webSearchBackend } : {}),
+    ...(config.searxngUrl ? { searxngUrl: config.searxngUrl } : {}),
+    ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),
+  };
+  tools.register(createQuoraSearchTool(siteSearchToolOptions));
+  tools.register(createLinkedInSearchTool(siteSearchToolOptions));
   tools.register(createRedditSearchTool());
   tools.register(createRedditThreadTool());
   for (const tool of createTerminalTools({ route: execRoute })) tools.register(tool);

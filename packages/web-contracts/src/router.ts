@@ -4464,7 +4464,7 @@ const KeyEntryViewSchema = z.object({
   canClear: z.boolean(),
   getKeyUrl: z.string().optional(),
   /** Present only where a real live probe exists today. */
-  probe: z.enum(['exa', 'tavily', 'brave']).optional(),
+  probe: z.enum(['exa', 'tavily', 'brave', 'google']).optional(),
 });
 
 const KeyCategoryViewSchema = z.object({

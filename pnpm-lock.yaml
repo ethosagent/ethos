@@ -2187,6 +2187,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-social-search:
+    dependencies:
+      '@ethosagent/tools-web':
+        specifier: workspace:*
+        version: link:../tools-web
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-terminal:
     dependencies:
       '@ethosagent/storage-fs':
@@ -2820,6 +2829,9 @@ importers:
       '@ethosagent/tools-skills':
         specifier: workspace:*
         version: link:../../extensions/tools-skills
+      '@ethosagent/tools-social-search':
+        specifier: workspace:*
+        version: link:../../extensions/tools-social-search
       '@ethosagent/tools-terminal':
         specifier: workspace:*
         version: link:../../extensions/tools-terminal

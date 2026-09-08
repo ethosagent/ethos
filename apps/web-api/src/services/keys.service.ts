@@ -68,7 +68,7 @@ export interface KeyEntryView {
    *  owns it. A `blob` IS clearable: that is the "Disconnect" action. */
   canClear: boolean;
   getKeyUrl?: string;
-  probe?: 'exa' | 'tavily' | 'brave';
+  probe?: 'exa' | 'tavily' | 'brave' | 'google';
 }
 
 export interface KeyCategoryView {

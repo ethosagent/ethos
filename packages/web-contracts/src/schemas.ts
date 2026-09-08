@@ -1771,13 +1771,30 @@ const RecipeFsReachSchema = z.object({
  * `x_search` binds; `x` is an X API bearer token for the native X search
  * backend (planned); `openai` is the OpenAI key `engine_ask` binds — it shares
  * the `providers/openai/*` namespace with the OpenAI LLM provider and
- * `image_generate`.
+ * `image_generate`; `google` is a YouTube Data API key `youtube_search` and
+ * `youtube_comments` bind — a separate namespace from `providers/gemini/*`
+ * (the LLM provider key), since a YouTube-scoped Cloud key and a Gemini key
+ * are different credentials with different quotas and failure modes.
  */
-export const NamedSecretProviderSchema = z.enum(['exa', 'tavily', 'brave', 'xai', 'x', 'openai']);
+export const NamedSecretProviderSchema = z.enum([
+  'exa',
+  'tavily',
+  'brave',
+  'xai',
+  'x',
+  'openai',
+  'google',
+]);
 export type NamedSecretProvider = z.infer<typeof NamedSecretProviderSchema>;
 
 /** The category a `secret-binding` field's `secretKind` selects on. */
-export const NamedSecretKindSchema = z.enum(['web-search', 'x-search', 'x-api', 'answer-engine']);
+export const NamedSecretKindSchema = z.enum([
+  'web-search',
+  'x-search',
+  'x-api',
+  'answer-engine',
+  'youtube-api-key',
+]);
 export type NamedSecretKind = z.infer<typeof NamedSecretKindSchema>;
 
 /** provider → kind. The one mapping the vault service and the SecretPicker share. */
@@ -1788,6 +1805,7 @@ export const NAMED_SECRET_PROVIDER_KINDS: Record<NamedSecretProvider, NamedSecre
   xai: 'x-search',
   x: 'x-api',
   openai: 'answer-engine',
+  google: 'youtube-api-key',
 };
 
 /** Mirrors the bundle's `safety.network` — declared reach, not a new capability. */

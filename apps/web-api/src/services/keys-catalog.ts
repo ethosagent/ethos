@@ -43,9 +43,9 @@ export interface KeyCatalogEntry {
   shape: KeyFieldShape;
   /** Where the operator goes to obtain this credential. */
   getKeyUrl?: string;
-  /** Closed union — only these three have a real live probe today
+  /** Closed union — only these have a real live probe today
    *  (`NamedSecretsService.testKey`). Adding others is an explicit non-goal. */
-  probe?: 'exa' | 'tavily' | 'brave';
+  probe?: 'exa' | 'tavily' | 'brave' | 'google';
   /** `refPattern` carries a `<n>` placeholder standing for ONE ref segment —
    *  a per-bot key, a per-app key, a roster entry name, a webhook id. The
    *  entry is expanded by `expandEntry` against what `secrets.list()` actually
@@ -188,6 +188,23 @@ export const KEY_CATALOG: readonly KeyCatalogEntry[] = [
     refPattern: 'providers/replicate/apiToken',
     shape: { kind: 'single', field: 'apiToken' },
     getKeyUrl: 'https://replicate.com/account/api-tokens',
+  },
+  {
+    // One key, two consumers: `youtube_search` and `youtube_comments`. A
+    // separate namespace from `providers/gemini/*` (the LLM provider key) —
+    // a YouTube-scoped Cloud key and a Gemini key are different credentials
+    // with different quotas and failure modes. Reflected from the
+    // named-secrets vault (provider `google`), same shape as `tools.exa` /
+    // `tools.tavily` / `tools.brave` — no Models pane owns this ref the way
+    // it owns `tools.xai` / `tools.openai`.
+    id: 'tools.youtube',
+    category: 'tools',
+    label: 'Google (YouTube Data API)',
+    refPattern: 'providers/google/apiKey',
+    shape: { kind: 'single', field: 'apiKey' },
+    getKeyUrl: 'https://console.cloud.google.com/apis/credentials',
+    probe: 'google',
+    reflectsNamedSecret: true,
   },
 
   // --- Voice -------------------------------------------------------------

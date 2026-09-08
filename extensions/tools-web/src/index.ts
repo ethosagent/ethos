@@ -1,10 +1,5 @@
-import type { LLMProvider, SecretRef, Tool, ToolContext, ToolResult } from '@ethosagent/types';
-import {
-  ALL_BACKENDS,
-  createSearxngBackend,
-  type KeylessSearchBackend,
-  type SearchBackend,
-} from './search-backends';
+import type { LLMProvider, Tool, ToolContext, ToolResult } from '@ethosagent/types';
+import { createSearxngBackend, type SelectedBackend, selectSearchBackend } from './search-backends';
 import { checkSsrf } from './ssrf';
 import { summarizeBySize } from './summarize';
 
@@ -59,41 +54,24 @@ interface WebSearchSelectionOptions {
   toolSettings?: Record<string, { web_search?: WebSearchSetting } | undefined>;
 }
 
-type Selected =
-  | { backend: SearchBackend; secretRef: SecretRef }
-  | { searxng: KeylessSearchBackend };
-
 function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
   const { searchBackend, resolvePersonalitySetting, toolSettings } = opts;
   const searxng = opts.searxngUrl ? createSearxngBackend(opts.searxngUrl) : null;
 
-  // 5-step resolution: personality tools.yaml → global toolSettings[pid] →
-  // global toolSettings._default → first backend with a key present → the
-  // keyless SearXNG rung, when one is configured.
-  function selectBackend(ctx: ToolContext): Selected | null {
+  // Rungs 1-3 are tool-specific (the `web_search` key in tools.yaml /
+  // toolSettings) and stay a local `??` chain, same pattern as
+  // `selectSecretRef` in extensions/tools-x-search/src/index.ts. Rungs 4-6
+  // (explicit provider → construction-time preference → first-available →
+  // keyless SearXNG) are generic over any backend-dispatching tool and live
+  // in the shared `selectSearchBackend` (search-backends.ts).
+  function selectBackend(ctx: ToolContext): SelectedBackend | null {
     const pid = ctx.personalityId;
     const setting =
       (pid ? resolvePersonalitySetting?.(pid) : undefined) ??
       (pid ? toolSettings?.[pid]?.web_search : undefined) ??
       toolSettings?._default?.web_search;
 
-    if (setting?.provider) {
-      const backend = ALL_BACKENDS.find((b) => b.id === setting.provider);
-      if (backend) {
-        const name = setting.secret?.trim();
-        const secretRef = name ? `providers/${backend.id}/${name}` : backend.secretRef;
-        return { backend, secretRef };
-      }
-    }
-
-    // Backward compat: construction-time preference, then first-available.
-    if (searchBackend) {
-      const pref = ALL_BACKENDS.find((b) => b.id === searchBackend);
-      if (pref?.isAvailable()) return { backend: pref, secretRef: pref.secretRef };
-    }
-    const first = ALL_BACKENDS.find((b) => b.isAvailable());
-    if (first) return { backend: first, secretRef: first.secretRef };
-    return searxng ? { searxng } : null;
+    return selectSearchBackend({ bindings: [setting], searchBackend, searxng });
   }
 
   return {
@@ -386,4 +364,17 @@ export function createWebTools(opts: CreateWebToolsOptions = {}): Tool[] {
 export const webSearchTool = makeWebSearchTool();
 export const webExtractTool = makeWebExtractTool();
 
+// Re-exported for other extensions that dispatch across the same keyed
+// backends (quora_search / linkedin_search in @ethosagent/tools-social-search,
+// plan/phases/social-search-tools.md D3) rather than duplicating the Exa /
+// Tavily / Brave adapters. Implementation lives in ./search-backends.ts.
+export type {
+  KeylessSearchBackend,
+  SearchBackend,
+  SearchHit,
+  SearchProviderBinding,
+  SelectBackendInput,
+  SelectedBackend,
+} from './search-backends';
+export { ALL_BACKENDS, createSearxngBackend, selectSearchBackend } from './search-backends';
 export { checkSsrf } from './ssrf';

@@ -285,9 +285,15 @@ export interface PersonalityToolsConfig {
   x_search?: { secret?: string };
   /** One provider (OpenAI) — the name resolves to `providers/openai/<name>`. */
   engine_ask?: { secret?: string };
+  /**
+   * One provider (Google) — the name resolves to `providers/google/<name>`.
+   * Shared by both `youtube_search` and `youtube_comments`: same API, same
+   * project, same daily quota pool.
+   */
+  youtube?: { secret?: string };
 }
 
-const TOOLS_YAML_KEYS = ['web_search', 'x_search', 'engine_ask'] as const;
+const TOOLS_YAML_KEYS = ['web_search', 'x_search', 'engine_ask', 'youtube'] as const;
 type ToolsYamlKey = (typeof TOOLS_YAML_KEYS)[number];
 
 function isToolsYamlKey(k: string): k is ToolsYamlKey {
@@ -318,6 +324,7 @@ function parseInlineToolMap(s: string): Record<string, string> {
  *   web_search: { provider: exa, secret: exa-main }
  *   x_search: { secret: xai-main }
  *   engine_ask: { secret: openai-brand }
+ *   youtube: { secret: yt-main }
  *   # or
  *   web_search:
  *     provider: exa
@@ -367,6 +374,10 @@ export function parseToolsYaml(src: string): PersonalityToolsConfig {
       if (entry.secret) out.engine_ask = { secret: entry.secret };
       continue;
     }
+    if (tool === 'youtube') {
+      if (entry.secret) out.youtube = { secret: entry.secret };
+      continue;
+    }
     const ws: NonNullable<PersonalityToolsConfig['web_search']> = {};
     if (entry.provider === 'exa' || entry.provider === 'tavily' || entry.provider === 'brave') {
       ws.provider = entry.provider;
@@ -393,6 +404,7 @@ export function renderToolsYaml(config: PersonalityToolsConfig): string {
   }
   if (config.x_search?.secret) lines.push(`x_search: { secret: ${config.x_search.secret} }`);
   if (config.engine_ask?.secret) lines.push(`engine_ask: { secret: ${config.engine_ask.secret} }`);
+  if (config.youtube?.secret) lines.push(`youtube: { secret: ${config.youtube.secret} }`);
   return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
 }
 
@@ -1809,7 +1821,9 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     let toolsConfig: PersonalityToolsConfig | undefined;
     if (toolsSrc) {
       const parsed = parseToolsYaml(toolsSrc);
-      if (parsed.web_search || parsed.x_search || parsed.engine_ask) toolsConfig = parsed;
+      if (parsed.web_search || parsed.x_search || parsed.engine_ask || parsed.youtube) {
+        toolsConfig = parsed;
+      }
     }
     return { config, mcpPolicy, mcpWarnings, toolsConfig };
   }

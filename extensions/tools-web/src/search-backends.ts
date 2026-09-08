@@ -239,3 +239,65 @@ export function createSearxngBackend(instanceUrl: string): KeylessSearchBackend 
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// selectSearchBackend — the provider-agnostic tail of backend resolution.
+//
+// Any tool that dispatches over these same three keyed backends (web_search
+// today; quora_search / linkedin_search later) needs the same rungs 4-6:
+// an explicit provider choice, then the construction-time preference (if
+// available), then the first available backend, then the keyless SearXNG
+// rung. Rungs 1-3 — which key names the binding, e.g. `web_search` vs.
+// `quora_search` in a personality's tools.yaml / toolSettings — are
+// tool-specific and stay a local `??` chain at each call site (see
+// `selectSecretRef` in extensions/tools-x-search/src/index.ts for the same
+// pattern). This function only takes the already-resolved result of that
+// chain, as an ordered list where the first defined entry wins.
+// ---------------------------------------------------------------------------
+
+/** The shape of a resolved provider+secret binding, independent of which
+ *  tool's tools.yaml key produced it. `WebSearchSetting` in ./index.ts is
+ *  structurally identical and is passed here without conversion. */
+export interface SearchProviderBinding {
+  provider?: SearchBackend['id'];
+  secret?: string;
+}
+
+export type SelectedBackend =
+  | { backend: SearchBackend; secretRef: SecretRef }
+  | { searxng: KeylessSearchBackend };
+
+export interface SelectBackendInput {
+  /** The tool's binding layers, most specific first — e.g. [personality
+   *  tools.yaml, toolSettings[personalityId], toolSettings._default]. The
+   *  first defined entry wins, exactly like the `??` chain it replaces. */
+  bindings: ReadonlyArray<SearchProviderBinding | undefined>;
+  /** Construction-time preference, honoured only when available (backward
+   *  compat with tools built before per-personality bindings existed). */
+  searchBackend?: SearchBackend['id'];
+  /** The keyless SearXNG rung, or null/undefined when not configured. */
+  searxng?: KeylessSearchBackend | null;
+}
+
+export function selectSearchBackend(input: SelectBackendInput): SelectedBackend | null {
+  const { bindings, searchBackend, searxng } = input;
+  const setting = bindings.find((b) => b !== undefined);
+
+  if (setting?.provider) {
+    const backend = ALL_BACKENDS.find((b) => b.id === setting.provider);
+    if (backend) {
+      const name = setting.secret?.trim();
+      const secretRef: SecretRef = name ? `providers/${backend.id}/${name}` : backend.secretRef;
+      return { backend, secretRef };
+    }
+  }
+
+  // Backward compat: construction-time preference, then first-available.
+  if (searchBackend) {
+    const pref = ALL_BACKENDS.find((b) => b.id === searchBackend);
+    if (pref?.isAvailable()) return { backend: pref, secretRef: pref.secretRef };
+  }
+  const first = ALL_BACKENDS.find((b) => b.isAvailable());
+  if (first) return { backend: first, secretRef: first.secretRef };
+  return searxng ? { searxng } : null;
+}

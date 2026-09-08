@@ -46,6 +46,11 @@ export const NAMED_SECRET_PROVIDERS: readonly NamedSecretProviderEntry[] = (
       label: 'OpenAI (ChatGPT answer engine)',
       getKeyUrl: 'https://platform.openai.com/api-keys',
     },
+    {
+      provider: 'google',
+      label: 'Google (YouTube Data API)',
+      getKeyUrl: 'https://console.cloud.google.com/apis/credentials',
+    },
   ] satisfies Omit<NamedSecretProviderEntry, 'kind'>[]
 ).map((e) => ({ ...e, kind: NAMED_SECRET_PROVIDER_KINDS[e.provider] }));
 
@@ -181,6 +186,13 @@ export function redactSecret(value: string | null | undefined): string {
 // and treats a 2xx (or a non-auth error) as "the key is accepted".
 // ---------------------------------------------------------------------------
 
+/**
+ * A well-formed, real YouTube video id used purely to shape a minimal
+ * `videos.list` probe request — the key check depends only on whether the
+ * API accepts the key, not on the video existing.
+ */
+const GOOGLE_PROBE_VIDEO_ID = 'dQw4w9WgXcQ';
+
 async function probeProvider(
   provider: Exclude<NamedSecretProvider, 'x'>,
   key: string,
@@ -194,15 +206,13 @@ async function probeProvider(
         signal: controller.signal,
       });
       return interpret(res.status);
-    }
-    if (provider === 'openai') {
+    } else if (provider === 'openai') {
       const res = await fetch('https://api.openai.com/v1/models', {
         headers: { Accept: 'application/json', Authorization: `Bearer ${key}` },
         signal: controller.signal,
       });
       return interpret(res.status);
-    }
-    if (provider === 'exa') {
+    } else if (provider === 'exa') {
       const res = await fetch('https://api.exa.ai/search', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': key },
@@ -210,8 +220,7 @@ async function probeProvider(
         signal: controller.signal,
       });
       return interpret(res.status);
-    }
-    if (provider === 'tavily') {
+    } else if (provider === 'tavily') {
       const res = await fetch('https://api.tavily.com/search', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -219,18 +228,63 @@ async function probeProvider(
         signal: controller.signal,
       });
       return interpret(res.status);
+    } else if (provider === 'google') {
+      // YouTube Data API v3 keys travel on the query string, not a header.
+      // Unlike every other provider here, YouTube reports keyInvalid,
+      // quotaExceeded and accessNotConfigured all as HTTP 403 — `interpret()`
+      // would flatten all three to one generic "Key rejected" message, which
+      // is wrong for quotaExceeded (the key IS valid) and for
+      // accessNotConfigured (a per-project setting, not the key). Read
+      // `error.errors[0].reason` from the body first and only fall back to
+      // `interpret()` when the reason is absent or unrecognized.
+      const res = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=id&id=${GOOGLE_PROBE_VIDEO_ID}&key=${encodeURIComponent(key)}`,
+        { headers: { Accept: 'application/json' }, signal: controller.signal },
+      );
+      if (res.status === 403) {
+        const reason = await readGoogleErrorReason(res);
+        if (reason === 'quotaExceeded') {
+          return {
+            ok: true,
+            error: 'Key accepted — the YouTube Data API daily quota is currently exhausted.',
+          };
+        }
+        if (reason === 'accessNotConfigured') {
+          return {
+            ok: false,
+            error:
+              'Key rejected — the YouTube Data API v3 is not enabled for this Google Cloud project.',
+          };
+        }
+      }
+      return interpret(res.status);
+    } else if (provider === 'brave') {
+      const res = await fetch(
+        'https://api.search.brave.com/res/v1/web/search?q=ethos%20key%20check&count=1',
+        {
+          headers: { Accept: 'application/json', 'X-Subscription-Token': key },
+          signal: controller.signal,
+        },
+      );
+      return interpret(res.status);
+    } else {
+      // Exhaustiveness guard: a provider added to NamedSecretProviderSchema
+      // without a branch above fails to typecheck here instead of silently
+      // falling through to Brave's endpoint (the failure this replaces).
+      const exhaustiveCheck: never = provider;
+      throw new Error(`No key probe implemented for provider "${exhaustiveCheck}"`);
     }
-    // brave
-    const res = await fetch(
-      'https://api.search.brave.com/res/v1/web/search?q=ethos%20key%20check&count=1',
-      {
-        headers: { Accept: 'application/json', 'X-Subscription-Token': key },
-        signal: controller.signal,
-      },
-    );
-    return interpret(res.status);
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function readGoogleErrorReason(res: Response): Promise<string | undefined> {
+  try {
+    const body = (await res.json()) as { error?: { errors?: Array<{ reason?: string }> } };
+    return body.error?.errors?.[0]?.reason;
+  } catch {
+    return undefined;
   }
 }
 

@@ -92,6 +92,7 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
           web_search: { provider: 'brave', secret: 'brave-main' },
           x_search: { secret: 'xai-main' },
           engine_ask: { secret: 'openai-brand' },
+          youtube: { secret: 'yt-main' },
         },
       },
     };
@@ -104,6 +105,7 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
     expect(raw).toContain('toolSettings.scout.web_search.secret: brave-main');
     expect(raw).toContain('toolSettings.scout.x_search.secret: xai-main');
     expect(raw).toContain('toolSettings.scout.engine_ask.secret: openai-brand');
+    expect(raw).toContain('toolSettings.scout.youtube.secret: yt-main');
 
     const roundTripped = await readRawConfig(storage);
     expect(roundTripped?.toolSettings).toEqual(original.toolSettings);

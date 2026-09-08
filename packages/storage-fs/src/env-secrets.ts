@@ -19,6 +19,7 @@ export const ENV_TO_REF: Record<string, string> = {
   TAVILY_API_KEY: 'providers/tavily/apiKey',
   BRAVE_API_KEY: 'providers/brave/apiKey',
   REPLICATE_API_TOKEN: 'providers/replicate/apiToken',
+  YOUTUBE_API_KEY: 'providers/google/apiKey',
 
   TELEGRAM_BOT_TOKEN: 'channels/telegram/default/botToken',
   SLACK_BOT_TOKEN: 'channels/slack/default/botToken',

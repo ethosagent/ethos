@@ -367,11 +367,20 @@ export interface EngineAskToolSetting {
   secret?: string;
 }
 
+/** A personality's binding for `youtube_search` / `youtube_comments` — one
+ *  provider (Google), shared by both tools, so only the secret NAME.
+ *  Resolves to `providers/google/<name>`; absent → the default
+ *  `providers/google/apiKey`. */
+export interface YouTubeToolSetting {
+  secret?: string;
+}
+
 /** Per-personality tool config. */
 export interface PersonalityToolSettings {
   web_search?: WebSearchToolSetting;
   x_search?: XSearchToolSetting;
   engine_ask?: EngineAskToolSetting;
+  youtube?: YouTubeToolSetting;
 }
 
 /** Global FALLBACK map: personality ID (or `_default`) → per-tool config. */
@@ -2956,6 +2965,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
       if (xs?.secret) lines.push(`toolSettings.${id}.x_search.secret: ${xs.secret}`);
       const ea = settings.engine_ask;
       if (ea?.secret) lines.push(`toolSettings.${id}.engine_ask.secret: ${ea.secret}`);
+      const yt = settings.youtube;
+      if (yt?.secret) lines.push(`toolSettings.${id}.youtube.secret: ${yt.secret}`);
     }
   }
   if (config.models) {
@@ -4548,6 +4559,15 @@ function parseConfigYaml(src: string): EthosConfig {
       const slot = toolSettings[id] ?? {};
       toolSettings[id] = slot;
       slot.engine_ask = { secret: eaMatch[2].trim().replace(/^["']|["']$/g, '') };
+      continue;
+    }
+    // toolSettings.<personality|_default>.youtube.secret: <name>
+    const ytMatch = line.match(/^toolSettings\.([^.]+)\.youtube\.secret:\s*(.+)$/);
+    if (ytMatch) {
+      const id = ytMatch[1].trim();
+      const slot = toolSettings[id] ?? {};
+      toolSettings[id] = slot;
+      slot.youtube = { secret: ytMatch[2].trim().replace(/^["']|["']$/g, '') };
       continue;
     }
     // activeContext.type / activeContext.name

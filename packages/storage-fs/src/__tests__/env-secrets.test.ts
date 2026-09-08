@@ -42,6 +42,7 @@ describe('resolveEnvKey', () => {
     expect(resolveEnvKey('EXA_API_KEY')).toBe('providers/exa/apiKey');
     expect(resolveEnvKey('REPLICATE_API_TOKEN')).toBe('providers/replicate/apiToken');
     expect(resolveEnvKey('XAI_API_KEY')).toBe('providers/xai/apiKey');
+    expect(resolveEnvKey('YOUTUBE_API_KEY')).toBe('providers/google/apiKey');
   });
 
   it('returns null for unknown env keys', () => {
@@ -95,6 +96,10 @@ describe('REF_TO_ENV', () => {
 
   it('maps providers/xai/apiKey → XAI_API_KEY', () => {
     expect(REF_TO_ENV.get('providers/xai/apiKey')).toBe('XAI_API_KEY');
+  });
+
+  it('maps providers/google/apiKey → YOUTUBE_API_KEY', () => {
+    expect(REF_TO_ENV.get('providers/google/apiKey')).toBe('YOUTUBE_API_KEY');
   });
 
   it('has an entry for every key in ENV_TO_REF', () => {
@@ -163,6 +168,12 @@ describe('EnvSecretsResolver.get', () => {
   it('returns null — not an empty string — when XAI_API_KEY is unset', async () => {
     const resolver = new EnvSecretsResolver();
     expect(await resolver.get('providers/xai/apiKey')).toBeNull();
+  });
+
+  it('resolves providers/google/apiKey from YOUTUBE_API_KEY', async () => {
+    process.env.YOUTUBE_API_KEY = 'yt-test';
+    const resolver = new EnvSecretsResolver();
+    expect(await resolver.get('providers/google/apiKey')).toBe('yt-test');
   });
 
   it('reads from process.env at call time (not at construction time)', async () => {

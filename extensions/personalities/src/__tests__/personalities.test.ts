@@ -262,6 +262,55 @@ describe('FilePersonalityRegistry', () => {
       expect(registry.getToolsConfig('evilx')).toBeUndefined();
     });
 
+    it('parses a youtube binding beside the others, and alone in block form', async () => {
+      const both = join(testDir, 'youtube-both');
+      await mkdir(both);
+      await writeFile(join(both, 'config.yaml'), 'name: Both\n');
+      await writeFile(join(both, 'SOUL.md'), '# Both');
+      await writeFile(
+        join(both, 'tools.yaml'),
+        'web_search: { provider: exa, secret: exa-main }\nx_search: { secret: xai-main }\nengine_ask: { secret: openai-brand }\nyoutube: { secret: yt-main }\n',
+      );
+      const alone = join(testDir, 'youtube-alone');
+      await mkdir(alone);
+      await writeFile(join(alone, 'config.yaml'), 'name: Alone\n');
+      await writeFile(join(alone, 'SOUL.md'), '# Alone');
+      await writeFile(join(alone, 'tools.yaml'), 'youtube:\n  secret: yt-block\n');
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('youtube-both')).toEqual({
+        web_search: { provider: 'exa', secret: 'exa-main' },
+        x_search: { secret: 'xai-main' },
+        engine_ask: { secret: 'openai-brand' },
+        youtube: { secret: 'yt-main' },
+      });
+      expect(registry.getToolsConfig('youtube-alone')).toEqual({
+        youtube: { secret: 'yt-block' },
+      });
+    });
+
+    it('renders a youtube binding back to the form it parses', () => {
+      const config = {
+        x_search: { secret: 'xai-main' },
+        youtube: { secret: 'yt-main' },
+      };
+      const rendered = renderToolsYaml(config);
+      expect(rendered).toContain('youtube: { secret: yt-main }');
+      expect(parseToolsYaml(rendered)).toEqual(config);
+    });
+
+    it('drops a youtube binding whose secret name is unsafe', async () => {
+      const dir = join(testDir, 'evilyoutube');
+      await mkdir(dir);
+      await writeFile(join(dir, 'config.yaml'), 'name: EvilYoutube\n');
+      await writeFile(join(dir, 'SOUL.md'), '# EvilYoutube');
+      await writeFile(join(dir, 'tools.yaml'), 'youtube: { secret: ../google/apiKey }\n');
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('evilyoutube')).toBeUndefined();
+    });
+
     it('getToolsConfig is undefined for a personality with no tools.yaml', async () => {
       const personalityDir = join(testDir, 'nofile');
       await mkdir(personalityDir);

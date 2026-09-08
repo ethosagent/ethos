@@ -72,6 +72,15 @@ describe('NamedSecretsService', () => {
     expect(await secrets.get('providers/x/k')).toBe('AAAA-bearer-1234567890');
   });
 
+  it('accepts the google provider namespace and stamps kind youtube-api-key', async () => {
+    await service.create({ provider: 'google', name: 'main', value: 'AIza1234567890abcd' });
+    expect(await secrets.get('providers/google/main')).toBe('AIza1234567890abcd');
+    const { secrets: list } = await service.list();
+    expect(list).toEqual([
+      { provider: 'google', name: 'main', kind: 'youtube-api-key', preview: 'AIz…abcd' },
+    ]);
+  });
+
   it('delete removes the secret from the vault', async () => {
     await service.create({ provider: 'brave', name: 'k1', value: 'brave-xxxxxxxx' });
     await service.delete({ provider: 'brave', name: 'k1' });
@@ -184,6 +193,51 @@ describe('NamedSecretsService', () => {
       globalThis.fetch = (async () => new Response('', { status: 401 })) as typeof fetch;
       const res = await service.testKey({ provider: 'xai', name: 'grok' });
       expect(res).toEqual({ ok: false, error: 'Key rejected (unauthorized).' });
+    });
+
+    it('probes a google key against videos.list with the key on the query string (200 → ok)', async () => {
+      await service.create({ provider: 'google', name: 'main', value: 'AIza1234567890abcd' });
+      let seenUrl: string | undefined;
+      globalThis.fetch = (async (url: string | URL | Request) => {
+        seenUrl = String(url);
+        return new Response('{"items":[]}', { status: 200 });
+      }) as typeof fetch;
+      const res = await service.testKey({ provider: 'google', name: 'main' });
+      expect(res).toEqual({ ok: true });
+      expect(seenUrl).toContain('https://www.googleapis.com/youtube/v3/videos?part=id&id=');
+      expect(seenUrl).toContain('key=AIza1234567890abcd');
+    });
+
+    it('maps a google 403 keyInvalid to an unauthorized result', async () => {
+      await service.create({ provider: 'google', name: 'main', value: 'AIza1234567890abcd' });
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: { errors: [{ reason: 'keyInvalid' }] } }), {
+          status: 403,
+        })) as typeof fetch;
+      const res = await service.testKey({ provider: 'google', name: 'main' });
+      expect(res).toEqual({ ok: false, error: 'Key rejected (unauthorized).' });
+    });
+
+    it('maps a google 403 quotaExceeded to ok — the key is valid, just out of quota', async () => {
+      await service.create({ provider: 'google', name: 'main', value: 'AIza1234567890abcd' });
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: { errors: [{ reason: 'quotaExceeded' }] } }), {
+          status: 403,
+        })) as typeof fetch;
+      const res = await service.testKey({ provider: 'google', name: 'main' });
+      expect(res.ok).toBe(true);
+      expect(res.error).toMatch(/quota/i);
+    });
+
+    it('maps a google 403 accessNotConfigured to a distinct rejection', async () => {
+      await service.create({ provider: 'google', name: 'main', value: 'AIza1234567890abcd' });
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: { errors: [{ reason: 'accessNotConfigured' }] } }), {
+          status: 403,
+        })) as typeof fetch;
+      const res = await service.testKey({ provider: 'google', name: 'main' });
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/not enabled/i);
     });
 
     it('does not probe an x bearer token (a search call is billable) — reports tested: false', async () => {

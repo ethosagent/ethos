@@ -117,6 +117,7 @@
     "@ethosagent/tools-process": "workspace:*",
     "@ethosagent/tools-reddit": "workspace:*",
     "@ethosagent/tools-skills": "workspace:*",
+    "@ethosagent/tools-social-search": "workspace:*",
     "@ethosagent/tools-terminal": "workspace:*",
     "@ethosagent/tools-tier": "workspace:*",
     "@ethosagent/tools-todo": "workspace:*",
