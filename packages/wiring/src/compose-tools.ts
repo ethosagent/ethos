@@ -69,6 +69,7 @@ import { compose as composeSkillsTools } from '@ethosagent/tools-skills/compose'
 import {
   createLinkedInSearchTool,
   createQuoraSearchTool,
+  createRedditWebSearchTool,
   createYouTubeCommentsTool,
   createYouTubeSearchTool,
 } from '@ethosagent/tools-social-search';
@@ -1181,10 +1182,11 @@ export async function composeAllTools(
   };
   tools.register(createYouTubeSearchTool(youtubeToolOptions));
   tools.register(createYouTubeCommentsTool(youtubeToolOptions));
-  // quora_search / linkedin_search read web_search's EXISTING binding rather
-  // than a tools.yaml key of their own (plan D3a) — same two layers
-  // web_search itself resolves, plus the same construction-time backend
-  // preference and SearXNG rung createWebTools receives in build-agent-loop.ts.
+  // quora_search / linkedin_search / reddit_web_search read web_search's
+  // EXISTING binding rather than a tools.yaml key of their own (plan D3a) —
+  // same two layers web_search itself resolves, plus the same
+  // construction-time backend preference and SearXNG rung createWebTools
+  // receives in build-agent-loop.ts.
   const siteSearchToolOptions = {
     resolvePersonalitySetting: (personalityId: string) =>
       personalities.getToolsConfig(personalityId)?.web_search,
@@ -1194,6 +1196,9 @@ export async function composeAllTools(
   };
   tools.register(createQuoraSearchTool(siteSearchToolOptions));
   tools.register(createLinkedInSearchTool(siteSearchToolOptions));
+  // The credential-free rung under reddit_search below: same site-constrained
+  // shape, no Reddit OAuth pair required.
+  tools.register(createRedditWebSearchTool(siteSearchToolOptions));
   tools.register(createRedditSearchTool());
   tools.register(createRedditThreadTool());
   for (const tool of createTerminalTools({ route: execRoute })) tools.register(tool);

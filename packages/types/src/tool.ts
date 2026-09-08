@@ -227,7 +227,7 @@ export interface CacheOptions {
  * writes the resulting binding to the personality's `tools.yaml` (custom
  * personality) or the global `toolSettings` fallback (read-only built-in).
  *
- * Deliberately minimal — exactly TWO field kinds:
+ * Deliberately minimal — exactly THREE field kinds:
  *   • `enum`           — a fixed choice (e.g. the web_search provider).
  *   • `secret-binding` — a reference to a global NAMED secret. The binding
  *                        stores the secret NAME only; the value stays in the
@@ -235,9 +235,13 @@ export interface CacheOptions {
  *                        back to the client. `secretKind` types the picker so
  *                        a tool can never be pointed at a secret of the wrong
  *                        category (e.g. an LLM key).
+ *   • `info`           — a static disclosure. No key, no control, no value:
+ *                        it exists so a tool that needs a credential it does
+ *                        NOT bind itself can still say so where an operator
+ *                        looks for credentials.
  *
  * This is NOT a universal form language — add field kinds only when a second
- * tool needs one. `web_search` is the sole consumer in v1.
+ * tool needs one.
  */
 export interface ToolSettingsEnumField {
   kind: 'enum';
@@ -267,7 +271,31 @@ export interface ToolSettingsSecretBindingField {
   helpText?: string;
 }
 
-export type ToolSettingsField = ToolSettingsEnumField | ToolSettingsSecretBindingField;
+/**
+ * A read-only row in the settings form. Deliberately has NO `key`: nothing is
+ * read from it, nothing is written back through it, and it can never reach the
+ * tool's settings map.
+ *
+ * It exists for the tool that requires a credential it does not bind itself —
+ * `quora_search`, `linkedin_search` and `reddit_web_search` read the
+ * personality's `web_search` binding rather than holding a key of their own
+ * (plan/completed/social-search-tools.md D3a). Without a row of some kind those
+ * tools present an operator with no credential requirement at all, then refuse
+ * at execution time. A `secret-binding` would be worse than nothing: the picker
+ * would look functional while the tool ignored what it wrote.
+ */
+export interface ToolSettingsInfoField {
+  kind: 'info';
+  /** Row heading, rendered like any other field's label. */
+  label: string;
+  /** The disclosure itself — a static, non-interactive paragraph. */
+  text: string;
+}
+
+export type ToolSettingsField =
+  | ToolSettingsEnumField
+  | ToolSettingsSecretBindingField
+  | ToolSettingsInfoField;
 
 export interface ToolSettingsSchema {
   fields: ToolSettingsField[];

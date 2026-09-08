@@ -4,6 +4,7 @@ import { DefaultToolRegistry } from '@ethosagent/core';
 import {
   createLinkedInSearchTool,
   createQuoraSearchTool,
+  createRedditWebSearchTool,
   createYouTubeCommentsTool,
   createYouTubeSearchTool,
 } from '@ethosagent/tools-social-search';
@@ -111,9 +112,83 @@ describe('quora_search / linkedin_search — shape (M3)', () => {
     expect(createLinkedInSearchTool().name).toBe('linkedin_search');
   });
 
-  it('declares no settingsSchema (D3a) — no tools.yaml key of their own', () => {
-    expect(createQuoraSearchTool().settingsSchema).toBeUndefined();
-    expect(createLinkedInSearchTool().settingsSchema).toBeUndefined();
+  it('declares exactly one read-only info field and NO secret-binding (D3a)', () => {
+    // The D3a guard. A `secret-binding` field here would let an operator point
+    // quora_search at a different key from web_search — and the picker would
+    // look functional while the tool ignored it, because `resolveSetting` reads
+    // web_search's binding and never its own. The `info` field is the
+    // disclosure that replaces it; `text` is asserted below, not here.
+    for (const tool of [createQuoraSearchTool(), createLinkedInSearchTool()]) {
+      const fields = tool.settingsSchema?.fields ?? [];
+      expect(fields.map((f) => f.kind)).toEqual(['info']);
+      expect(fields.some((f) => f.kind === 'secret-binding')).toBe(false);
+    }
+  });
+
+  it('the info field names web_search, the env fallbacks, and the tool itself', () => {
+    for (const [tool, name] of [
+      [createQuoraSearchTool(), 'quora_search'],
+      [createLinkedInSearchTool(), 'linkedin_search'],
+    ] as const) {
+      const field = tool.settingsSchema?.fields[0];
+      if (field?.kind !== 'info') throw new Error('expected an info field');
+      expect(field.label).toBe('Web search credential');
+      expect(field.text).toContain('web_search');
+      expect(field.text).toContain(name);
+      for (const env of ['EXA_API_KEY', 'TAVILY_API_KEY', 'BRAVE_API_KEY']) {
+        expect(field.text).toContain(env);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reddit_web_search — the credential-free rung under reddit_search, same
+// site-constrained shape and the same D3a binding as the two above. It
+// reaches the SEARCH BACKEND's API, never reddit.com itself, so its
+// host/secret grants are identical to quora_search's and linkedin_search's.
+// ---------------------------------------------------------------------------
+
+describe('compose-tools.ts wires reddit_web_search', () => {
+  it('imports the factory and registers it with the shared site-search options (D3a)', async () => {
+    const root = join(import.meta.dirname, '..', '..', '..', '..');
+    const src = await readFile(join(root, 'packages/wiring/src/compose-tools.ts'), 'utf8');
+    expect(src).toMatch(/createRedditWebSearchTool/);
+    expect(src).toMatch(/tools\.register\(createRedditWebSearchTool\(siteSearchToolOptions\)\)/);
+  });
+});
+
+describe('reddit_web_search — shape', () => {
+  it('matches the other two site tools: toolset web, untrusted output, a 15,000-char budget, the same host/secret grants, and the same disclosure-only settingsSchema', () => {
+    const tool = createRedditWebSearchTool();
+    expect(tool.name).toBe('reddit_web_search');
+    expect(tool.toolset).toBe('web');
+    expect(tool.outputIsUntrusted).toBe(true);
+    expect(tool.maxResultChars).toBe(15_000);
+    expect(tool.capabilities.network?.allowedHosts).toEqual(
+      createQuoraSearchTool().capabilities.network?.allowedHosts,
+    );
+    expect(tool.capabilities.secrets).toEqual(createLinkedInSearchTool().capabilities.secrets);
+    expect(tool.isAvailable?.()).toBe(true);
+  });
+
+  it('declares exactly one read-only info field and NO secret-binding (D3a)', () => {
+    const fields = createRedditWebSearchTool().settingsSchema?.fields ?? [];
+    expect(fields.map((f) => f.kind)).toEqual(['info']);
+    expect(fields.some((f) => f.kind === 'secret-binding')).toBe(false);
+    const field = fields[0];
+    if (field?.kind !== 'info') throw new Error('expected an info field');
+    expect(field.label).toBe('Web search credential');
+    expect(field.text).toContain('web_search');
+    expect(field.text).toContain('reddit_web_search');
+    for (const env of ['EXA_API_KEY', 'TAVILY_API_KEY', 'BRAVE_API_KEY']) {
+      expect(field.text).toContain(env);
+    }
+  });
+
+  it('never grants reddit.com itself — it reaches the search backend, not Reddit', () => {
+    const hosts = createRedditWebSearchTool().capabilities.network?.allowedHosts ?? [];
+    expect(hosts).toEqual(['api.exa.ai', 'api.tavily.com', 'api.search.brave.com']);
   });
 });
 

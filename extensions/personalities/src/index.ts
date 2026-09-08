@@ -280,7 +280,11 @@ function parseToolsetYaml(src: string): string[] {
 // ---------------------------------------------------------------------------
 
 export interface PersonalityToolsConfig {
-  web_search?: { provider?: 'exa' | 'tavily' | 'brave'; secret?: string };
+  /**
+   * `recency` is a default `max_age` for `web_search` (and the site tools that
+   * share this binding) — a duration string like `30d`, `6m`, `1y`.
+   */
+  web_search?: { provider?: 'exa' | 'tavily' | 'brave'; secret?: string; recency?: string };
   /** One provider (xAI) — the name resolves to `providers/xai/<name>`. */
   x_search?: { secret?: string };
   /** One provider (OpenAI) — the name resolves to `providers/openai/<name>`. */
@@ -291,6 +295,25 @@ export interface PersonalityToolsConfig {
    * project, same daily quota pool.
    */
   youtube?: { secret?: string };
+}
+
+const RECENCY_SHAPE = /^\d{1,4}[dwmy]$/;
+
+/**
+ * Normalize a hand-written `web_search.recency` value, or `null` if it is not a
+ * duration at all. Trims and lowercases first, then shape-tests, and returns the
+ * NORMALIZED form — so a `tools.yaml` written by hand as `recency: 30D` persists
+ * as `30d` rather than vanishing without a word.
+ *
+ * Private twin of `normalizeWebSearchRecency` in `@ethosagent/config`; the two
+ * MUST change together. Not imported from there because this package does not
+ * depend on `@ethosagent/config` and a workspace dependency for one regex costs
+ * more than the duplication. See `parseToolsYaml` for what this does and does
+ * not enforce relative to `parseMaxAge`.
+ */
+function normalizeRecency(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  return RECENCY_SHAPE.test(normalized) ? normalized : null;
 }
 
 const TOOLS_YAML_KEYS = ['web_search', 'x_search', 'engine_ask', 'youtube'] as const;
@@ -383,7 +406,26 @@ export function parseToolsYaml(src: string): PersonalityToolsConfig {
       ws.provider = entry.provider;
     }
     if (entry.secret) ws.secret = entry.secret;
-    if (ws.provider || ws.secret) out.web_search = ws;
+    // `recency` is a duration string (`30d`, `6m`, `1y`). This is a LEXICAL
+    // boundary check: it applies `parseMaxAge`'s trim/lowercase and shape, and
+    // stores the NORMALIZED form, so a hand-written `recency: 30D` survives as
+    // `30d` instead of being silently dropped. It does NOT apply `parseMaxAge`'s
+    // rejection of a zero quantity — `0d` persists here and is ignored at read
+    // time, which keeps that one rule in one place. `parseMaxAge` in
+    // `@ethosagent/tools-web` (`src/max-age.ts`) remains the semantic authority
+    // and the two MUST change together. It is not imported here — the layer
+    // model (types <- core <- extensions <- apps, ARCHITECTURE.md §II) does not
+    // let a persistence boundary reach for another extension's parser, so the
+    // check is duplicated at each boundary the same way the lexical ssh
+    // known-hosts check is (see CLAUDE.md's execution-ssh carve-out).
+    //
+    // Note the asymmetry with `secret` above: an out-of-shape secret drops the
+    // WHOLE binding, because a provider without its intended key would silently
+    // fall back to a DIFFERENT key. A recency that is not a duration drops only
+    // THIS FIELD — a missing default filter, not a wrong credential.
+    const recency = entry.recency ? normalizeRecency(entry.recency) : null;
+    if (recency) ws.recency = recency;
+    if (ws.provider || ws.secret || ws.recency) out.web_search = ws;
   }
   return out;
 }
@@ -400,6 +442,7 @@ export function renderToolsYaml(config: PersonalityToolsConfig): string {
     const parts: string[] = [];
     if (ws.provider) parts.push(`provider: ${ws.provider}`);
     if (ws.secret) parts.push(`secret: ${ws.secret}`);
+    if (ws.recency) parts.push(`recency: ${ws.recency}`);
     if (parts.length > 0) lines.push(`web_search: { ${parts.join(', ')} }`);
   }
   if (config.x_search?.secret) lines.push(`x_search: { secret: ${config.x_search.secret} }`);

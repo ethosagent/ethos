@@ -2,6 +2,7 @@
 // Pure of the serve command's wiring (loop and session store are injected) so
 // the routing rule and the failure path are unit-testable.
 
+import { CronProgressRecorder, type CronRunProgress } from '@ethosagent/cron';
 import { type AgentEvent, EthosError } from '@ethosagent/types';
 
 /** The slice of `AgentLoop` a cron firing needs. */
@@ -33,6 +34,10 @@ export interface CronTurnResult {
   output: string;
   /** True when the turn ran in the originating web chat's session. */
   reusedWebOrigin: boolean;
+  /** `audience: 'user'` tool progress observed during the turn, capped by
+   *  `CronProgressRecorder`. Separate from `output` on purpose — see
+   *  `CronRunResult.progress` in `@ethosagent/cron`. */
+  progress: CronRunProgress[];
 }
 
 /**
@@ -65,6 +70,7 @@ export async function runCronTurn(input: CronTurnInput): Promise<CronTurnResult>
 
   let output = '';
   let failure: string | undefined;
+  const progress = new CronProgressRecorder();
   for await (const event of loop.run(prompt, {
     sessionKey,
     personalityId,
@@ -72,6 +78,8 @@ export async function runCronTurn(input: CronTurnInput): Promise<CronTurnResult>
   })) {
     if (event.type === 'text_delta') output += event.text;
     else if (event.type === 'error') failure = `[${event.code}] ${event.error}`;
+    // Records only `audience: 'user'` events; the recorder is the gate.
+    else progress.record(event);
   }
   if (failure) {
     throw new EthosError({
@@ -81,5 +89,5 @@ export async function runCronTurn(input: CronTurnInput): Promise<CronTurnResult>
     });
   }
 
-  return { sessionKey, output, reusedWebOrigin };
+  return { sessionKey, output, reusedWebOrigin, progress: progress.snapshot() };
 }

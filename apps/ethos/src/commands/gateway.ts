@@ -32,6 +32,7 @@ import {
 } from '@ethosagent/core';
 import {
   buildCronTriggers,
+  CronProgressRecorder,
   CronScheduler,
   type CronTriggers,
   runScriptFile,
@@ -654,14 +655,26 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
 
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
       let output = '';
+      // Progress is collected separately from `output` — never appended to it.
+      // `output` is delivered verbatim and `decideEscalation` tests it with a
+      // start-anchored `[SILENT]` regex. The recorder gates on
+      // `audience: 'user'`; internal progress stays internal.
+      const progress = new CronProgressRecorder();
       for await (const event of systemLoop.run(job.prompt ?? '', {
         sessionKey,
         personalityId: pid,
         toolsetOverride,
       })) {
         if (event.type === 'text_delta') output += event.text;
+        else progress.record(event);
       }
-      return { jobId: job.id, ranAt: new Date().toISOString(), output, sessionKey };
+      return {
+        jobId: job.id,
+        ranAt: new Date().toISOString(),
+        output,
+        sessionKey,
+        progress: progress.snapshot(),
+      };
     },
   });
 

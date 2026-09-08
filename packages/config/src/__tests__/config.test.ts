@@ -87,9 +87,9 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
       apiKey: 'sk',
       personality: 'researcher',
       toolSettings: {
-        _default: { web_search: { provider: 'tavily', secret: 'tavily-main' } },
+        _default: { web_search: { provider: 'tavily', secret: 'tavily-main', recency: '30d' } },
         scout: {
-          web_search: { provider: 'brave', secret: 'brave-main' },
+          web_search: { provider: 'brave', secret: 'brave-main', recency: '6m' },
           x_search: { secret: 'xai-main' },
           engine_ask: { secret: 'openai-brand' },
           youtube: { secret: 'yt-main' },
@@ -103,12 +103,70 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
     expect(raw).toContain('toolSettings._default.web_search.secret: tavily-main');
     expect(raw).toContain('toolSettings.scout.web_search.provider: brave');
     expect(raw).toContain('toolSettings.scout.web_search.secret: brave-main');
+    expect(raw).toContain('toolSettings._default.web_search.recency: 30d');
+    expect(raw).toContain('toolSettings.scout.web_search.recency: 6m');
     expect(raw).toContain('toolSettings.scout.x_search.secret: xai-main');
     expect(raw).toContain('toolSettings.scout.engine_ask.secret: openai-brand');
     expect(raw).toContain('toolSettings.scout.youtube.secret: yt-main');
 
     const roundTripped = await readRawConfig(storage);
     expect(roundTripped?.toolSettings).toEqual(original.toolSettings);
+  });
+
+  it('drops an out-of-shape web_search recency, keeping the rest of the binding', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      join(ethosDir(), 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'personality: researcher',
+        'toolSettings.scout.web_search.provider: brave',
+        'toolSettings.scout.web_search.secret: brave-main',
+        'toolSettings.scout.web_search.recency: 30x',
+        'toolSettings.other.web_search.provider: exa',
+        'toolSettings.other.web_search.recency: abc',
+        '',
+      ].join('\n'),
+    );
+
+    const parsed = await readRawConfig(storage);
+    // Belt: the lexical shape guard. (The braces is `parseMaxAge` at read time
+    // in @ethosagent/tools-web, which ignores a stored value it cannot parse.)
+    expect(parsed?.toolSettings).toEqual({
+      scout: { web_search: { provider: 'brave', secret: 'brave-main' } },
+      other: { web_search: { provider: 'exa' } },
+    });
+  });
+
+  it('normalizes a hand-written web_search recency instead of dropping it', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      join(ethosDir(), 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'personality: researcher',
+        'toolSettings.scout.web_search.provider: brave',
+        'toolSettings.scout.web_search.recency: 30D',
+        'toolSettings._default.web_search.recency:   6M  ',
+        '',
+      ].join('\n'),
+    );
+
+    const parsed = await readRawConfig(storage);
+    expect(parsed?.toolSettings).toEqual({
+      scout: { web_search: { provider: 'brave', recency: '30d' } },
+      _default: { web_search: { recency: '6m' } },
+    });
+
+    // The normalized form is what gets written back.
+    await writeConfig(storage, parsed as EthosConfig, new InMemorySecretsResolver());
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('toolSettings.scout.web_search.recency: 30d');
+    expect(raw).not.toContain('30D');
   });
 
   it('round-trips phone_number for phone-number pairing', async () => {

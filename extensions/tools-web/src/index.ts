@@ -1,5 +1,12 @@
 import type { LLMProvider, Tool, ToolContext, ToolResult } from '@ethosagent/types';
-import { createSearxngBackend, type SelectedBackend, selectSearchBackend } from './search-backends';
+import { filterByMaxAge, MAX_AGE_GRAMMAR_HINT, maxAgePhrase, parseMaxAge } from './max-age';
+import {
+  createSearxngBackend,
+  recencyLimitationNote,
+  type SelectedBackend,
+  selectSearchBackend,
+  toIsoDate,
+} from './search-backends';
 import { checkSsrf } from './ssrf';
 import { summarizeBySize } from './summarize';
 
@@ -32,10 +39,14 @@ function htmlToText(html: string): string {
  * named secret. `secret` is a NAME only (e.g. `exa-main`) — never a value —
  * that resolves to `providers/<provider>/<name>` in the vault. Absent `secret`
  * falls back to the provider's default-named secret (`providers/<id>/apiKey`).
+ *
+ * `recency` is the stored default for the `max_age` call argument — same
+ * grammar, same parser (`parseMaxAge`), so the setting is not a second grammar.
  */
 export interface WebSearchSetting {
   provider?: 'exa' | 'tavily' | 'brave';
   secret?: string;
+  recency?: string;
 }
 
 interface WebSearchSelectionOptions {
@@ -64,20 +75,23 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
   // (explicit provider → construction-time preference → first-available →
   // keyless SearXNG) are generic over any backend-dispatching tool and live
   // in the shared `selectSearchBackend` (search-backends.ts).
-  function selectBackend(ctx: ToolContext): SelectedBackend | null {
+  function resolveSetting(ctx: ToolContext): WebSearchSetting | undefined {
     const pid = ctx.personalityId;
-    const setting =
+    return (
       (pid ? resolvePersonalitySetting?.(pid) : undefined) ??
       (pid ? toolSettings?.[pid]?.web_search : undefined) ??
-      toolSettings?._default?.web_search;
+      toolSettings?._default?.web_search
+    );
+  }
 
-    return selectSearchBackend({ bindings: [setting], searchBackend, searxng });
+  function selectBackend(ctx: ToolContext): SelectedBackend | null {
+    return selectSearchBackend({ bindings: [resolveSetting(ctx)], searchBackend, searxng });
   }
 
   return {
     name: 'web_search',
     description:
-      'Search the web for current information. Returns titles, URLs, and text snippets. Requires one of EXA_API_KEY, TAVILY_API_KEY, or BRAVE_API_KEY, or a configured SearXNG instance.',
+      "Search the web for current information. Returns titles, URLs, text snippets, and the publication date as ISO YYYY-MM-DD when the backend supplied one (omitted when it did not — a missing date is never guessed). Optionally restrict results to a recency window with max_age, a duration like 30d, 6m or 1y; omit it for no recency filter. On the Tavily backend the window matches a page's publish date OR its last-updated date, so a stale page edited yesterday can match a short window. Requires one of EXA_API_KEY, TAVILY_API_KEY, or BRAVE_API_KEY, or a configured SearXNG instance.",
     toolset: 'web',
     maxResultChars: 15_000,
     capabilities: {
@@ -120,6 +134,30 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
           label: 'API key',
           secretKind: 'web-search',
         },
+        // The stored default for `max_age` (D8). Every value here is a valid
+        // `max_age`, so one `parseMaxAge` covers both the call argument and the
+        // binding — the setting is not a second grammar. The five options are a
+        // deliberately CLOSED subset of the open `<number><d|w|m|y>` grammar:
+        // `ToolSettingsField` has exactly two kinds, `enum` and
+        // `secret-binding`, so there is no free-text control to render an
+        // arbitrary duration into, and adding one would be a change to a
+        // deliberately-two-kind contract in `packages/types` for a dropdown.
+        // No "none" option and no `default`: like `provider` above, unset means
+        // unset — the form's Select is `allowClear` and `ToolSettingsForm`
+        // deletes an empty field, so clearing this restores "no recency
+        // filter".
+        {
+          kind: 'enum',
+          key: 'recency',
+          label: 'Recency',
+          options: [
+            { value: '7d', label: 'Last 7 days' },
+            { value: '30d', label: 'Last 30 days' },
+            { value: '90d', label: 'Last 90 days' },
+            { value: '6m', label: 'Last 6 months' },
+            { value: '1y', label: 'Last year' },
+          ],
+        },
       ],
     },
     // web_search is always registered. A key can arrive from an env var OR from
@@ -140,13 +178,33 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
           type: 'number',
           description: 'Number of results to return (default 5, max 10)',
         },
+        max_age: {
+          type: 'string',
+          description:
+            'Only return results published within this window, as a duration: <number><d|w|m|y>, e.g. 30d, 2w, 6m, 1y. Omit for no recency filter.',
+        },
       },
       required: ['query'],
     },
     async execute(args, ctx): Promise<ToolResult> {
-      const { query, num_results } = args as { query: string; num_results?: number };
+      const { query, num_results, max_age } = args as {
+        query: string;
+        num_results?: number;
+        max_age?: string;
+      };
 
       if (!query) return { ok: false, error: 'query is required', code: 'input_invalid' };
+
+      // Refused, not ignored: an unparseable window that quietly fell through
+      // would return unfiltered results to a caller who believes it filtered.
+      const argMaxAge = max_age === undefined ? null : parseMaxAge(max_age);
+      if (max_age !== undefined && !argMaxAge) {
+        return {
+          ok: false,
+          error: `${MAX_AGE_GRAMMAR_HINT} (got ${JSON.stringify(max_age)})`,
+          code: 'input_invalid',
+        };
+      }
 
       const secrets = ctx.secretsResolver;
       const net = ctx.scopedFetch;
@@ -169,28 +227,57 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
       }
       const numResults = Math.min(num_results ?? 5, 10);
 
+      // Precedence: call argument → binding `recency` → unset. A binding value
+      // that fails the grammar is IGNORED, not refused — asymmetric with the
+      // call argument on purpose. A bad call argument is the caller's own
+      // mistake, made in this request, and refusing it is how the caller learns
+      // the grammar; a bad stored setting was made once, elsewhere, and
+      // refusing it would break every search the personality ever runs.
+      const maxAge = argMaxAge ?? parseMaxAge(resolveSetting(ctx)?.recency);
+
+      const options = maxAge ? { maxAge } : undefined;
+
       try {
         const providerId = 'searxng' in selected ? selected.searxng.id : selected.backend.id;
         const hits =
           'searxng' in selected
-            ? await selected.searxng.search(query, numResults, ctx)
-            : await selected.backend.search(query, numResults, ctx, selected.secretRef);
+            ? await selected.searxng.search(query, numResults, ctx, options)
+            : await selected.backend.search(query, numResults, ctx, selected.secretRef, options);
 
-        if (!hits.length) {
-          return { ok: true, value: `No results found for: ${query}` };
+        // The window is enforced HERE, not by the provider parameter — see
+        // `filterByMaxAge`. Applied before the empty check so a window that
+        // filters everything out reports the window rather than nothing.
+        const filtered = maxAge ? filterByMaxAge(hits, maxAge) : hits;
+
+        if (!filtered.length) {
+          // The window is named because a model that has forgotten it set a
+          // filter reads a bare "no results" as a fact about the web, and its
+          // next move is to rephrase the query against the same constraint
+          // rather than to widen the window.
+          return {
+            ok: true,
+            value: maxAge
+              ? `No results found for: ${query} in the ${maxAgePhrase(maxAge)} (via ${providerId})`
+              : `No results found for: ${query}`,
+          };
         }
 
-        const formatted = hits
+        const formatted = filtered
           .map((r, i) => {
-            const date = r.publishedDate ? ` (${r.publishedDate.slice(0, 10)})` : '';
+            const iso = toIsoDate(r.publishedDate);
+            const date = iso ? ` (${iso})` : '';
             const snippet = r.text?.trim().slice(0, 400) ?? '';
             return `${i + 1}. **${r.title ?? 'Untitled'}**${date}\n   ${r.url}\n   ${snippet}`;
           })
           .join('\n\n');
 
+        const window = maxAge ? ` — ${maxAgePhrase(maxAge)}` : '';
+        const note = maxAge ? recencyLimitationNote(providerId, maxAge) : null;
+        const header = `Search results for "${query}"${window} (via ${providerId}):`;
+
         return {
           ok: true,
-          value: `Search results for "${query}" (via ${providerId}):\n\n${formatted}`,
+          value: `${header}${note ? `\nNote: ${note}.` : ''}\n\n${formatted}`,
         };
       } catch (err) {
         return {
@@ -368,13 +455,29 @@ export const webExtractTool = makeWebExtractTool();
 // backends (quora_search / linkedin_search in @ethosagent/tools-social-search,
 // plan/phases/social-search-tools.md D3) rather than duplicating the Exa /
 // Tavily / Brave adapters. Implementation lives in ./search-backends.ts.
+export type { MaxAge, MaxAgeUnit } from './max-age';
+export {
+  filterByMaxAge,
+  MAX_AGE_GRAMMAR_HINT,
+  maxAgePhrase,
+  maxAgeSince,
+  parseMaxAge,
+} from './max-age';
 export type {
   KeylessSearchBackend,
   SearchBackend,
   SearchHit,
+  SearchOptions,
   SearchProviderBinding,
   SelectBackendInput,
   SelectedBackend,
 } from './search-backends';
-export { ALL_BACKENDS, createSearxngBackend, selectSearchBackend } from './search-backends';
+export {
+  ALL_BACKENDS,
+  createSearxngBackend,
+  recencyLimitationNote,
+  searxngTimeRange,
+  selectSearchBackend,
+  toIsoDate,
+} from './search-backends';
 export { checkSsrf } from './ssrf';

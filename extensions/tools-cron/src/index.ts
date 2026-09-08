@@ -6,7 +6,12 @@ import type {
   RepeatPolicy,
   ScriptRef,
 } from '@ethosagent/cron';
-import { type CronScheduler, isValidSchedule, nextRunForSchedule } from '@ethosagent/cron';
+import {
+  type CronScheduler,
+  formatRunProgress,
+  isValidSchedule,
+  nextRunForSchedule,
+} from '@ethosagent/cron';
 import { shortPatternCheck } from '@ethosagent/safety-injection';
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
@@ -416,7 +421,14 @@ async function handleReadRun(
 
   try {
     const output = await scheduler.readRunOutput(match.outputPath);
-    return { ok: true, value: output };
+    // Progress is appended to the TOOL RESULT the agent reads, never to the
+    // run's `output` — that string is what `decideEscalation` tests and what
+    // gets delivered to the originating channel. Reading is fail-open: a run
+    // with no sidecar (every run persisted before progress capture existed)
+    // yields '' and the value is byte-identical to what it was before.
+    const progress = await scheduler.readRunProgress(match.outputPath).catch(() => []);
+    const rendered = formatRunProgress(progress);
+    return { ok: true, value: rendered ? `${output}\n\n${rendered}\n` : output };
   } catch (err) {
     return {
       ok: false,

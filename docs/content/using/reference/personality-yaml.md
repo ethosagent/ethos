@@ -19,17 +19,38 @@ An optional sibling file `tools.yaml` configures a tool per personality. It is *
 
 ```yaml
 # ~/.ethos/personalities/researcher/tools.yaml
-web_search: { provider: exa, secret: exa-main }
+web_search: { provider: exa, secret: exa-main, recency: 30d }
 x_search: { secret: xai-main }
 engine_ask: { secret: openai-brand }
 youtube: { secret: yt-main }
 ```
 
-`web_search` binds a provider and a named secret. `x_search` binds an xAI named secret (`providers/xai/<name>`). `engine_ask` binds an OpenAI named secret (`providers/openai/<name>` — the same namespace the OpenAI model provider uses; absent, it falls back to `providers/openai/apiKey`). `youtube` binds a Google named secret (`providers/google/<name>`) shared by `youtube_search` and `youtube_comments` — the same API key, the same daily quota; absent, it falls back to `providers/google/apiKey`.
+`web_search` binds a provider, a named secret, and an optional `recency` default (documented below). `x_search` binds an xAI named secret (`providers/xai/<name>`). `engine_ask` binds an OpenAI named secret (`providers/openai/<name>` — the same namespace the OpenAI model provider uses; absent, it falls back to `providers/openai/apiKey`). `youtube` binds a Google named secret (`providers/google/<name>`) shared by `youtube_search` and `youtube_comments` — the same API key, the same daily quota; absent, it falls back to `providers/google/apiKey`.
 
 `secret` is a NAME only (resolving to `providers/<provider>/<name>` in the vault) — never a value — so the directory stays shareable and committable ([§V S9](https://github.com/ethosagent/ethos/blob/main/ARCHITECTURE.md)). The personality's own `tools.yaml` is the source of truth; the global `~/.ethos/config.yaml` `toolSettings` map is a fallback layer for personalities (especially read-only built-ins) that don't declare the tool. Resolution order: `tools.yaml` → `toolSettings.<id>` → `toolSettings._default` → the tool's default key.
 
-`quora_search` and `linkedin_search` are listed in [`toolset.yaml`](#toolset-yaml) like any other tool, but take no key here — they read the `web_search` binding above instead of one of their own. A personality that binds `web_search` gets Quora and LinkedIn search under the same credential for free; binding a `quora_search:` or `linkedin_search:` key in `tools.yaml` has no effect, because nothing reads it.
+`quora_search`, `linkedin_search`, and `reddit_web_search` are listed in [`toolset.yaml`](#toolset-yaml) like any other tool, but take no key here — they read the `web_search` binding above instead of one of their own. A personality that binds `web_search` gets Quora, LinkedIn, and Reddit search under the same credential for free; binding a `quora_search:`, `linkedin_search:`, or `reddit_web_search:` key in `tools.yaml` has no effect, because nothing reads it.
+
+All three, and `web_search` itself, render a hit's publication date as ISO `YYYY-MM-DD` at the end of its heading line when the backend supplied one, and render no date at all when it did not — a missing date is never defaulted, guessed, or filled with today's. All four also accept an optional `max_age` argument: a duration written `<number><d|w|m|y>` — `30d`, `2w`, `6m`, `1y`. The grammar is calendar-naive (`d` is 1 day, `w` 7, `m` 30, `y` 365), so the same argument means the same window on every date. `parseMaxAge` in [`extensions/tools-web/src/max-age.ts`](../../../../extensions/tools-web/src/max-age.ts) is the only parser: it trims and lowercases, and rejects a quantity below 1. Each of the four tools turns a rejected argument into an `input_invalid` error rather than searching unfiltered — a dropped filter would return unfiltered results to a caller who believes one is on.
+
+The window is requested upstream in whatever form the chosen backend accepts, mapped in [`extensions/tools-web/src/search-backends.ts`](../../../../extensions/tools-web/src/search-backends.ts):
+
+| Backend | Parameter sent | Exact? |
+|---|---|---|
+| Exa | `startPublishedDate`, an ISO 8601 instant | Yes — expresses any duration. |
+| Tavily | `start_date`, a `YYYY-MM-DD` floor | Yes, to the day. Tavily matches publish date **or** last-updated date, so a stale page edited yesterday can match a short window. |
+| Brave | `freshness` as a `YYYY-MM-DDtoYYYY-MM-DD` range | Yes, to the day. The `pd`/`pw`/`pm`/`py` buckets are not used — they could only approximate. |
+| SearXNG | `time_range`, buckets `day` / `month` / `year` only | No. Widened to the smallest bucket containing the window, never narrowed; past a year no `time_range` is sent at all. |
+
+SearXNG is the only approximation, and it is disclosed rather than silent: `recencyLimitationNote` (same file) prints a `Note:` line in the rendered output for both inexact cases. Its accuracy is bounded further by a limitation Ethos cannot check — `time_range` support in SearXNG varies with the engines an instance enables, so the bucket is sent but the upstream is not verified to have honoured it.
+
+Whichever backend answered, the window is enforced locally by `filterByMaxAge` (`max-age.ts`), which drops every hit whose publication date reads as outside it. **Hits carrying no readable date pass through.** That is a deliberate limitation: Brave's `page_age` and SearXNG's `publishedDate` are frequently absent, and dropping undated hits would empty the result set exactly where the upstream filter is weakest. A `max_age` result means "nothing dated outside the window", not "everything here is inside it".
+
+The window also takes a persistent default: `recency` on the `web_search` binding, or `toolSettings.<id>.web_search.recency` in `~/.ethos/config.yaml`, written in the same grammar and read by the same `parseMaxAge`. All four tools honour it — the three site tools resolve it from the shared `web_search` binding through their own `resolveSetting`, down the chain they already used for `provider` and `secret`: `tools.yaml` → `toolSettings.<id>` → `toolSettings._default`. Precedence is uniform: call argument `max_age` → bound `recency` → no filter. A stored value that fails the grammar is **ignored**, falling through to no filter — asymmetric with the call argument on purpose, since refusing a bad setting made once elsewhere would break every search the personality runs.
+
+A hand-written `recency` is normalized before it is stored, so `recency: 30D` in `tools.yaml` persists as `30d` rather than being dropped without a word — `normalizeRecency` in [`extensions/personalities/src/index.ts`](../../../../extensions/personalities/src/index.ts) and its twin `normalizeWebSearchRecency` in [`packages/config/src/index.ts`](../../../../packages/config/src/index.ts). Only `web_search` carries a Settings UI control for the key: a closed dropdown (`7d`, `30d`, `90d`, `6m`, `1y`) that clears back to no filter, from the `settingsSchema` on the tool in [`extensions/tools-web/src/index.ts`](../../../../extensions/tools-web/src/index.ts). `quora_search`, `linkedin_search`, and `reddit_web_search` declare no `settingsSchema` of their own, so they are configured through `web_search`'s binding rather than one of theirs; the open grammar stays available to the per-call argument on all four.
+
+`reddit_web_search` is the credential-free route to Reddit: it searches through the `web_search` backend constrained to `reddit.com` and returns post titles, subreddits, URLs, snippets, and whatever publication date the search index recorded — no scores, no comment counts. `reddit_search` and `reddit_thread` speak Reddit's official API instead, which buys engagement counts, subreddit scoping, and a per-post timestamp on every result rather than only on the ones a search index happened to date; they need a Reddit `client_id`/`client_secret` pair bound under Settings > Named Secrets, not a `tools.yaml` key.
 
 ## Source {#source}
 

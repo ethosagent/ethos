@@ -735,17 +735,25 @@ function ToolSettingsSection({
   if (configurable.length === 0) return null;
 
   const storage = settingQuery.data?.storage;
+  // A tool whose whole schema is `info` fields declares a disclosure, not a
+  // setting: there is nothing to write, so neither the save button nor the note
+  // about where writes land belongs on a section made only of those.
+  const anyWritable = configurable.some((t) =>
+    t.settingsSchema.fields.some((f) => f.kind !== 'info'),
+  );
 
   return (
     <div style={{ marginBottom: 32 }}>
       <Typography.Title level={5} style={{ marginBottom: 4 }}>
         Tool settings
       </Typography.Title>
-      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-        {storage === 'personality'
-          ? "Saved to this personality's tools.yaml — travels when you export it."
-          : 'Built-in personality — saved to your local config (its files are read-only).'}
-      </Typography.Paragraph>
+      {anyWritable ? (
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          {storage === 'personality'
+            ? "Saved to this personality's tools.yaml — travels when you export it."
+            : 'Built-in personality — saved to your local config (its files are read-only).'}
+        </Typography.Paragraph>
+      ) : null}
       {configurable.map((tool) => (
         <div key={tool.name} style={{ marginBottom: 20 }}>
           <Typography.Text
@@ -769,13 +777,15 @@ function ToolSettingsSection({
           />
         </div>
       ))}
-      <Button
-        type="primary"
-        loading={saveMut.isPending}
-        onClick={() => saveMut.mutate(values, { onSuccess: () => setDirty(false) })}
-      >
-        Save tool settings
-      </Button>
+      {anyWritable ? (
+        <Button
+          type="primary"
+          loading={saveMut.isPending}
+          onClick={() => saveMut.mutate(values, { onSuccess: () => setDirty(false) })}
+        >
+          Save tool settings
+        </Button>
+      ) : null}
     </div>
   );
 }

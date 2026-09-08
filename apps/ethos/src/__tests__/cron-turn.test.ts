@@ -149,3 +149,59 @@ describe('runCronTurn failure reporting', () => {
     ).rejects.toThrow(/provider exploded/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Progress capture — the audience boundary, and the guarantee that `output`
+// is untouched by it (see extensions/cron/src/progress.ts).
+// ---------------------------------------------------------------------------
+
+describe('runCronTurn progress capture', () => {
+  it('records audience:user tool progress without touching output', async () => {
+    const loop = makeLoop(() => [
+      { type: 'tool_progress', toolName: 'harvest', message: 'reddit', audience: 'user' },
+      { type: 'text_delta', text: '[SILENT] nothing to report' },
+      {
+        type: 'tool_progress',
+        toolName: 'harvest',
+        message: 'hn degraded',
+        percent: 60,
+        audience: 'user',
+      },
+      { type: 'done', text: '[SILENT] nothing to report', turnCount: 1 },
+    ]);
+
+    const result = await runCronTurn({
+      loop,
+      sessions: makeSessions({}),
+      jobId: 'job-p1',
+      prompt: 'go',
+      personalityId: 'researcher',
+    });
+
+    expect(result.progress.map((p) => p.message)).toEqual(['reddit', 'hn degraded']);
+    expect(result.progress[1]?.percent).toBe(60);
+    // `output` is exactly the concatenated text deltas — the [SILENT] prefix
+    // is still at position 0, which is what decideEscalation tests.
+    expect(result.output).toBe('[SILENT] nothing to report');
+    expect(result.output.startsWith('[SILENT]')).toBe(true);
+  });
+
+  it('drops audience:internal tool progress', async () => {
+    const loop = makeLoop(() => [
+      { type: 'tool_progress', toolName: 'read_file', message: 'chunk 3', audience: 'internal' },
+      { type: 'text_delta', text: 'done' },
+      { type: 'done', text: 'done', turnCount: 1 },
+    ]);
+
+    const result = await runCronTurn({
+      loop,
+      sessions: makeSessions({}),
+      jobId: 'job-p2',
+      prompt: 'go',
+      personalityId: 'researcher',
+    });
+
+    expect(result.progress).toEqual([]);
+    expect(result.output).toBe('done');
+  });
+});

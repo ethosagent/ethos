@@ -290,6 +290,66 @@ describe('FilePersonalityRegistry', () => {
       });
     });
 
+    it('round-trips a web_search recency default in both flow-map and block form', async () => {
+      const flow = join(testDir, 'recency-flow');
+      await mkdir(flow);
+      await writeFile(join(flow, 'config.yaml'), 'name: Flow\n');
+      await writeFile(join(flow, 'SOUL.md'), '# Flow');
+      await writeFile(
+        join(flow, 'tools.yaml'),
+        'web_search: { provider: exa, secret: exa-main, recency: 30d }\n',
+      );
+      const block = join(testDir, 'recency-block');
+      await mkdir(block);
+      await writeFile(join(block, 'config.yaml'), 'name: Block\n');
+      await writeFile(join(block, 'SOUL.md'), '# Block');
+      await writeFile(join(block, 'tools.yaml'), 'web_search:\n  provider: brave\n  recency: 6m\n');
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('recency-flow')).toEqual({
+        web_search: { provider: 'exa', secret: 'exa-main', recency: '30d' },
+      });
+      expect(registry.getToolsConfig('recency-block')).toEqual({
+        web_search: { provider: 'brave', recency: '6m' },
+      });
+
+      const config = {
+        web_search: { provider: 'exa' as const, secret: 'exa-main', recency: '1y' },
+      };
+      const rendered = renderToolsYaml(config);
+      expect(rendered).toContain('web_search: { provider: exa, secret: exa-main, recency: 1y }');
+      expect(parseToolsYaml(rendered)).toEqual(config);
+    });
+
+    it('drops an out-of-shape recency but keeps provider and secret', () => {
+      // Unlike `secret`, a bad `recency` is a missing default filter, not a
+      // wrong credential — so the binding survives without that one field.
+      for (const bad of ['30x', '30', 'month', '1.5m', 'abc', '10000d', '']) {
+        expect(
+          parseToolsYaml(`web_search: { provider: exa, secret: exa-main, recency: ${bad} }`),
+        ).toEqual({ web_search: { provider: 'exa', secret: 'exa-main' } });
+      }
+    });
+
+    it('normalizes a hand-written recency rather than dropping it', () => {
+      // A value a person typed into tools.yaml must not vanish for casing or
+      // stray spaces — the boundary applies parseMaxAge's own trim/lowercase and
+      // stores the normalized form.
+      for (const written of ['30D', ' 30d ', '  30D  ', '30d']) {
+        const parsed = parseToolsYaml(`web_search: { provider: exa, recency: ${written} }`);
+        expect(parsed.web_search?.recency).toBe('30d');
+      }
+      // Block form takes the same path.
+      expect(parseToolsYaml('web_search:\n  provider: exa\n  recency: 6M\n')).toEqual({
+        web_search: { provider: 'exa', recency: '6m' },
+      });
+      // And the normalized form round-trips.
+      const rendered = renderToolsYaml(parseToolsYaml('web_search: { recency: 1Y }'));
+      expect(rendered).toBe('web_search: { recency: 1y }\n');
+      expect(parseToolsYaml(rendered)).toEqual({ web_search: { recency: '1y' } });
+    });
+
     it('renders a youtube binding back to the form it parses', () => {
       const config = {
         x_search: { secret: 'xai-main' },

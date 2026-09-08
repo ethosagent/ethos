@@ -1,7 +1,7 @@
 import { type NetworkPolicy, safeFetch } from '@ethosagent/safety-network';
 import type { LLMProvider } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { createWebTools, webExtractTool, webSearchTool } from '../index';
+import { createWebTools, parseMaxAge, toIsoDate, webExtractTool, webSearchTool } from '../index';
 import { chunkText, summarizeBySize } from '../summarize';
 
 // ---------------------------------------------------------------------------
@@ -663,11 +663,507 @@ describe('web_extract — summarization', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// max_age → each backend's own native recency parameter.
+//
+// The regression these pin is silent: a wrong parameter name is IGNORED by the
+// provider, which returns unfiltered results while the caller believes the
+// filter is on. Each assertion is against the request the backend actually
+// builds, and each name was confirmed against the provider's current docs:
+//   exa     startPublishedDate (ISO 8601)  https://exa.ai/docs/reference/search
+//   tavily  start_date (YYYY-MM-DD)
+//           https://docs.tavily.com/documentation/api-reference/endpoint/search
+//   brave   freshness (YYYY-MM-DDtoYYYY-MM-DD range form)
+//           https://api-dashboard.search.brave.com/app/documentation/web-search/query
+//   searxng time_range (day|month|year — no week, no date form)
+//           https://docs.searxng.org/dev/search_api.html
+//
+// Three of the four take an absolute instant, so an arbitrary duration reaches
+// them exactly. Only SearXNG buckets, and only it ever widens.
+// ---------------------------------------------------------------------------
+
+const DAY = 86_400_000;
+
+/** `YYYY-MM-DD`, `days` before `at`. Assertions accept the value computed from
+ *  either side of the call so a midnight boundary cannot flake the test. */
+function ymdBack(days: number, at: number): string {
+  return new Date(at - days * DAY).toISOString().slice(0, 10);
+}
+
+describe('web_search — max_age maps to each backend\u2019s native parameter', () => {
+  it('exa: startPublishedDate, ISO 8601, the exact requested instant', async () => {
+    const saved = saveSearchEnv();
+    setOnly('EXA_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      // Bracketed on BOTH sides: the backend samples its own `Date.now()` at
+      // call time, so a single `before` sample would only hold if zero
+      // milliseconds elapsed during the call. The cutoff must land inside the
+      // window the two samples allow — exact, and immune to call duration.
+      const before = Date.now();
+      await createWebTools({ searchBackend: 'exa' })[0].execute(
+        { query: 'q', max_age: '30d' },
+        ctxWith(rec.scopedFetch),
+      );
+      const after = Date.now();
+      const body = JSON.parse(String(rec.calls[0]?.init?.body));
+      expect(typeof body.startPublishedDate).toBe('string');
+      expect(body.startPublishedDate).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      const cutoff = Date.parse(body.startPublishedDate);
+      expect(cutoff).toBeGreaterThanOrEqual(before - 30 * DAY);
+      expect(cutoff).toBeLessThanOrEqual(after - 30 * DAY);
+      // The deprecated crawl-date fields are never sent.
+      expect(body.startCrawlDate).toBeUndefined();
+      expect(body.endCrawlDate).toBeUndefined();
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('exa: no startPublishedDate at all when max_age is omitted', async () => {
+    const saved = saveSearchEnv();
+    setOnly('EXA_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      await createWebTools({ searchBackend: 'exa' })[0].execute(
+        { query: 'q' },
+        ctxWith(rec.scopedFetch),
+      );
+      const body = JSON.parse(String(rec.calls[0]?.init?.body));
+      expect('startPublishedDate' in body).toBe(false);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it.each([
+    ['1d', 1],
+    ['2w', 14],
+    ['6m', 180], // not expressible as any enum window — the point of the grammar
+    ['1y', 365],
+  ] as const)('exa: %s → startPublishedDate %d days back', async (maxAge, days) => {
+    const saved = saveSearchEnv();
+    setOnly('EXA_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      // Bracketed on both sides for the reason given above: a single `before`
+      // sample makes the assertion depend on the call taking zero milliseconds.
+      const before = Date.now();
+      await createWebTools({ searchBackend: 'exa' })[0].execute(
+        { query: 'q', max_age: maxAge },
+        ctxWith(rec.scopedFetch),
+      );
+      const after = Date.now();
+      const body = JSON.parse(String(rec.calls[0]?.init?.body));
+      const cutoff = Date.parse(body.startPublishedDate);
+      expect(cutoff).toBeGreaterThanOrEqual(before - days * DAY);
+      expect(cutoff).toBeLessThanOrEqual(after - days * DAY);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it.each([
+    ['30d', 30],
+    ['6m', 180],
+  ] as const)('tavily: %s → start_date YYYY-MM-DD, %d days back', async (maxAge, days) => {
+    const saved = saveSearchEnv();
+    setOnly('TAVILY_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      const before = Date.now();
+      await createWebTools({ searchBackend: 'tavily' })[0].execute(
+        { query: 'q', max_age: maxAge },
+        ctxWith(rec.scopedFetch),
+      );
+      const after = Date.now();
+      const body = JSON.parse(String(rec.calls[0]?.init?.body));
+      expect(body.start_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect([ymdBack(days, before), ymdBack(days, after)]).toContain(body.start_date);
+      // The coarser bucket parameter is NOT sent alongside it.
+      expect('time_range' in body).toBe(false);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('tavily: no start_date or time_range key at all when max_age is omitted', async () => {
+    const saved = saveSearchEnv();
+    setOnly('TAVILY_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      await createWebTools({ searchBackend: 'tavily' })[0].execute(
+        { query: 'q' },
+        ctxWith(rec.scopedFetch),
+      );
+      const body = JSON.parse(String(rec.calls[0]?.init?.body));
+      expect('start_date' in body).toBe(false);
+      expect('time_range' in body).toBe(false);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it.each([
+    ['30d', 30],
+    ['6m', 180],
+  ] as const)('brave: %s → freshness=<date>to<date>, %d days back', async (maxAge, days) => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ web: { results: [] } });
+      const before = Date.now();
+      await createWebTools({ searchBackend: 'brave' })[0].execute(
+        { query: 'q', max_age: maxAge },
+        ctxWith(rec.scopedFetch),
+      );
+      const after = Date.now();
+      const freshness = new URL(rec.calls[0]?.url ?? '').searchParams.get('freshness') ?? '';
+      expect(freshness).toMatch(/^\d{4}-\d{2}-\d{2}to\d{4}-\d{2}-\d{2}$/);
+      const [from, to] = freshness.split('to');
+      expect([ymdBack(days, before), ymdBack(days, after)]).toContain(from);
+      expect([ymdBack(0, before), ymdBack(0, after)]).toContain(to);
+      // Never the coarse buckets, which could only approximate the window.
+      expect(freshness).not.toMatch(/^p[dwmy]$/);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('brave: no freshness param at all when max_age is omitted', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ web: { results: [] } });
+      await createWebTools({ searchBackend: 'brave' })[0].execute(
+        { query: 'q' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(new URL(rec.calls[0]?.url ?? '').searchParams.has('freshness')).toBe(false);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it.each([
+    ['1d', 'day'],
+    ['30d', 'month'],
+    ['6m', 'year'],
+    ['1y', 'year'],
+  ] as const)('searxng: %s → time_range=%s (never narrower)', async (maxAge, mapped) => {
+    const saved = saveSearchEnv();
+    for (const k of SEARCH_ENV_KEYS) delete process.env[k];
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      await createWebTools({ searxngUrl: 'https://searx.internal' })[0].execute(
+        { query: 'q', max_age: maxAge },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(new URL(rec.calls[0]?.url ?? '').searchParams.get('time_range')).toBe(mapped);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('searxng: past a year, no time_range at all — every bucket would narrow', async () => {
+    const saved = saveSearchEnv();
+    for (const k of SEARCH_ENV_KEYS) delete process.env[k];
+    try {
+      const rec = makeRecordingFetch({
+        results: [{ title: 'T', url: 'https://a.example/1', content: 'body' }],
+      });
+      const result = await createWebTools({ searxngUrl: 'https://searx.internal' })[0].execute(
+        { query: 'q', max_age: '2y' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(new URL(rec.calls[0]?.url ?? '').searchParams.has('time_range')).toBe(false);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toContain('could not be requested upstream at all');
+        expect(result.value).toContain('no publication date are included');
+      }
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('searxng: a widened bucket is applied AND disclosed', async () => {
+    const saved = saveSearchEnv();
+    for (const k of SEARCH_ENV_KEYS) delete process.env[k];
+    try {
+      const rec = makeRecordingFetch({
+        results: [{ title: 'T', url: 'https://a.example/1', content: 'body' }],
+      });
+      const result = await createWebTools({ searxngUrl: 'https://searx.internal' })[0].execute(
+        { query: 'q', max_age: '30d' },
+        ctxWith(rec.scopedFetch),
+      );
+      // Widened, not dropped: `month` is a superset of 30 days, so nothing the
+      // caller wanted is lost — and `filterByMaxAge` trims the tail locally.
+      expect(new URL(rec.calls[0]?.url ?? '').searchParams.get('time_range')).toBe('month');
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toContain('last 30 days');
+        expect(result.value).toContain("requested upstream as 'month'");
+      }
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('searxng: no time_range param at all when max_age is omitted', async () => {
+    const saved = saveSearchEnv();
+    for (const k of SEARCH_ENV_KEYS) delete process.env[k];
+    try {
+      const rec = makeRecordingFetch({ results: [] });
+      await createWebTools({ searxngUrl: 'https://searx.internal' })[0].execute(
+        { query: 'q' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(new URL(rec.calls[0]?.url ?? '').searchParams.has('time_range')).toBe(false);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('a backend that CAN express the window adds no note', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({
+        web: { results: [{ title: 'B', url: 'https://b.com', description: 'x' }] },
+      });
+      const result = await createWebTools({ searchBackend: 'brave' })[0].execute(
+        { query: 'q', max_age: '6m' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toContain('— last 6 months (via brave)');
+        expect(result.value).not.toContain('Note:');
+      }
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('refuses an unparseable window rather than silently searching unfiltered', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ web: { results: [] } });
+      const result = await createWebTools({ searchBackend: 'brave' })[0].execute(
+        { query: 'q', max_age: '30x' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('input_invalid');
+        // The refusal names the grammar, not just the bad value.
+        expect(result.error).toContain('d|w|m|y');
+      }
+      expect(rec.calls).toHaveLength(0);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The local post-filter is what ENFORCES the window (D5); the provider
+// parameter is only the request. Brave here stands in for any backend.
+// ---------------------------------------------------------------------------
+
+describe('web_search — the window is enforced locally', () => {
+  it('drops a dated hit outside the window and keeps an undated one', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({
+        web: {
+          results: [
+            {
+              title: 'Fresh',
+              url: 'https://b.com/1',
+              description: 'x',
+              page_age: ymdBack(1, Date.now()),
+            },
+            { title: 'Stale', url: 'https://b.com/2', description: 'y', page_age: '2020-01-01' },
+            { title: 'Undated', url: 'https://b.com/3', description: 'z' },
+          ],
+        },
+      });
+      const result = await createWebTools({ searchBackend: 'brave' })[0].execute(
+        { query: 'q', max_age: '30d' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toContain('**Fresh**');
+        expect(result.value).not.toContain('**Stale**');
+        // Undated hits are KEPT — the stated limitation, not an oversight.
+        expect(result.value).toContain('**Undated**');
+      }
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('an emptied result set names the window instead of reading as a fact about the web', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({
+        web: {
+          results: [
+            { title: 'Stale', url: 'https://b.com/2', description: 'y', page_age: '2020-01-01' },
+          ],
+        },
+      });
+      const result = await createWebTools({ searchBackend: 'brave' })[0].execute(
+        { query: 'q', max_age: '30d' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toBe('No results found for: q in the last 30 days (via brave)');
+      }
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('an empty result with no window set is worded exactly as before', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ web: { results: [] } });
+      const result = await createWebTools({ searchBackend: 'brave' })[0].execute(
+        { query: 'q' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value).toBe('No results found for: q');
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D8 precedence — call argument → binding `recency` → unset.
+// ---------------------------------------------------------------------------
+
+describe('web_search — recency binding precedence', () => {
+  function braveWith(recency: string) {
+    return createWebTools({
+      searchBackend: 'brave',
+      toolSettings: { _default: { web_search: { recency } } },
+    })[0];
+  }
+
+  it('applies the binding when the call argument is absent', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ web: { results: [] } });
+      const before = Date.now();
+      await braveWith('7d').execute({ query: 'q' }, ctxWith(rec.scopedFetch));
+      const after = Date.now();
+      const freshness = new URL(rec.calls[0]?.url ?? '').searchParams.get('freshness') ?? '';
+      expect([ymdBack(7, before), ymdBack(7, after)]).toContain(freshness.split('to')[0]);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('the call argument beats the binding', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({ web: { results: [] } });
+      const before = Date.now();
+      await braveWith('7d').execute({ query: 'q', max_age: '1y' }, ctxWith(rec.scopedFetch));
+      const after = Date.now();
+      const freshness = new URL(rec.calls[0]?.url ?? '').searchParams.get('freshness') ?? '';
+      expect([ymdBack(365, before), ymdBack(365, after)]).toContain(freshness.split('to')[0]);
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+
+  it('an INVALID binding value is ignored, not refused — a stale stored setting must not break every search', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({
+        web: { results: [{ title: 'B', url: 'https://b.com', description: 'x' }] },
+      });
+      const result = await braveWith('fortnight').execute({ query: 'q' }, ctxWith(rec.scopedFetch));
+      expect(result.ok).toBe(true);
+      expect(new URL(rec.calls[0]?.url ?? '').searchParams.has('freshness')).toBe(false);
+      if (result.ok) expect(result.value).not.toContain('last');
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Date rendering — never invented, never defaulted, never today.
+// ---------------------------------------------------------------------------
+
+describe('toIsoDate', () => {
+  it('normalizes every shape the backends actually send to YYYY-MM-DD', () => {
+    expect(toIsoDate('2024-01-02T00:00:00Z')).toBe('2024-01-02'); // exa
+    expect(toIsoDate('2024-03-04')).toBe('2024-03-04'); // tavily (plain)
+    expect(toIsoDate('Mon, 09 Feb 2025 00:00:00 GMT')).toBe('2025-02-09'); // tavily (RFC 1123)
+    expect(toIsoDate('2024-05-06T12:34:56')).toBe('2024-05-06'); // brave page_age
+  });
+
+  it('returns null — never a fabricated or today’s date — for absent or unreadable input', () => {
+    expect(toIsoDate(undefined)).toBeNull();
+    expect(toIsoDate('')).toBeNull();
+    expect(toIsoDate('   ')).toBeNull();
+    expect(toIsoDate('sometime last year')).toBeNull();
+  });
+});
+
+describe('web_search — date rendering', () => {
+  it('renders the backend’s date as ISO, and nothing when there is none', async () => {
+    const saved = saveSearchEnv();
+    setOnly('BRAVE_API_KEY');
+    try {
+      const rec = makeRecordingFetch({
+        web: {
+          results: [
+            { title: 'Dated', url: 'https://b.com/1', description: 'x', page_age: '2024-05-06' },
+            { title: 'Undated', url: 'https://b.com/2', description: 'y' },
+          ],
+        },
+      });
+      const result = await createWebTools({ searchBackend: 'brave' })[0].execute(
+        { query: 'q' },
+        ctxWith(rec.scopedFetch),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toContain('1. **Dated** (2024-05-06)');
+        expect(result.value).toContain('2. **Undated**\n');
+        // No parenthesised date anywhere on the undated entry's heading line.
+        expect(result.value).not.toMatch(/2\. \*\*Undated\*\* \(/);
+      }
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  });
+});
+
 describe('web_search settingsSchema (Phase 2 contract)', () => {
   it('declares a minimal provider enum + secret-binding schema', () => {
     const schema = webSearchTool.settingsSchema;
     if (!schema) throw new Error('expected web_search to declare a settingsSchema');
-    expect(schema.fields.map((f) => f.kind)).toEqual(['enum', 'secret-binding']);
+    expect(schema.fields.map((f) => f.kind)).toEqual(['enum', 'secret-binding', 'enum']);
     const provider = schema.fields[0];
     if (provider?.kind !== 'enum') throw new Error('expected provider enum field');
     expect(provider.key).toBe('provider');
@@ -675,5 +1171,27 @@ describe('web_search settingsSchema (Phase 2 contract)', () => {
     const secret = schema.fields[1];
     if (secret?.kind !== 'secret-binding') throw new Error('expected secret-binding field');
     expect(secret.secretKind).toBe('web-search');
+  });
+
+  it('declares a recency enum whose every option parses under parseMaxAge', () => {
+    const schema = webSearchTool.settingsSchema;
+    if (!schema) throw new Error('expected web_search to declare a settingsSchema');
+    const recency = schema.fields[2];
+    if (recency?.kind !== 'enum') throw new Error('expected recency enum field');
+    expect(recency.key).toBe('recency');
+    expect(recency.options.map((o) => o.value)).toEqual(['7d', '30d', '90d', '6m', '1y']);
+
+    // The point of this assertion: the dropdown's values ARE `max_age` values,
+    // so the stored default cannot drift into a second grammar. Every option
+    // round-trips through the same parser the call argument uses.
+    for (const option of recency.options) {
+      expect(parseMaxAge(option.value)?.raw).toBe(option.value);
+      expect(option.label).toBeTruthy();
+    }
+
+    // Unset is unset — no "none"/empty-string option, and no default, so an
+    // unchosen (or cleared) binding means no recency filter.
+    expect(recency.default).toBeUndefined();
+    expect(recency.options.some((o) => o.value === '')).toBe(false);
   });
 });

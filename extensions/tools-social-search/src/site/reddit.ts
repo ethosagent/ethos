@@ -12,19 +12,27 @@ import {
   type WebSearchSetting,
 } from '@ethosagent/tools-web';
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
-import { filterAndDedupe, overFetchCount, QUORA_PROFILE } from './filter';
+import { filterAndDedupe, overFetchCount, REDDIT_PROFILE } from './filter';
 
 // ---------------------------------------------------------------------------
-// quora_search — Quora has no API at any tier (plan §1), so this searches
-// through the personality's EXISTING web_search backend (Exa/Tavily/Brave,
-// or SearXNG) constrained to quora.com. No tools.yaml key of its own (plan
-// D3a): a personality that already binds web_search gets Quora search for
-// free, and the shared binding is a disclosure — an operator sees
-// quora_search draw on the web_search credential and learns, from the
-// configuration itself, that these hits carry search fidelity (no answer
-// counts, no vote counts, and a publication date only when the search index
-// happened to record one), not the structured fidelity of a first-class
-// platform API. See plan/phases/social-search-tools.md §6, §9, D3a.
+// reddit_web_search — the credential-free rung under `reddit_search`
+// (extensions/tools-reddit/). That tool speaks Reddit's official OAuth API
+// and needs a client_id/client_secret pair Reddit now grants by manual
+// review; its own no-credentials message already names the workaround ("in
+// the meantime, web_search with a site:reddit.com query works with no
+// setup"). This tool IS that workaround, made narrow: a personality can hold
+// reddit_web_search without holding web_search, and its reach stays one
+// platform. That narrowing is the whole reason it is a tool rather than a
+// prompt instruction — same argument as quora_search / linkedin_search
+// (plan/completed/social-search-tools.md D2).
+//
+// Same D3a rationale as those two: no tools.yaml key of its own, it reads the
+// personality's EXISTING web_search binding, and that shared binding is a
+// disclosure — an operator sees reddit_web_search drawing on the web_search
+// credential and learns from the configuration itself that these hits carry
+// SEARCH fidelity (no scores, no comment counts, no subreddit metadata, and a
+// publication date only when the search index happened to record one), not the
+// structured fidelity reddit_search returns.
 // ---------------------------------------------------------------------------
 
 const DEFAULT_NUM_RESULTS = 5;
@@ -39,9 +47,9 @@ const NO_BACKEND_MESSAGE =
 // The settings-form counterpart of NO_BACKEND_MESSAGE: said BEFORE the refusal,
 // where an operator looks for a tool's credentials, rather than after.
 const BINDING_DISCLOSURE =
-  "quora_search searches through this personality's web_search binding and has no key of its own by design, so there is nothing to bind here. Give web_search a provider and key — in this personality's tool settings, or under Settings > Web-search defaults — or set EXA_API_KEY, TAVILY_API_KEY or BRAVE_API_KEY in the environment; until one is set, every quora_search call refuses.";
+  "reddit_web_search searches through this personality's web_search binding and has no key of its own by design, so there is nothing to bind here. Give web_search a provider and key — in this personality's tool settings, or under Settings > Web-search defaults — or set EXA_API_KEY, TAVILY_API_KEY or BRAVE_API_KEY in the environment; until one is set, every reddit_web_search call refuses.";
 
-export interface CreateQuoraSearchToolOptions {
+export interface CreateRedditWebSearchToolOptions {
   searchBackend?: 'exa' | 'tavily' | 'brave';
   /** `web.searxng.url` — the same keyless rung web_search offers. */
   searxngUrl?: string;
@@ -58,26 +66,43 @@ function clampInt(value: number | undefined, fallback: number, max: number): num
   return Math.min(Math.max(Math.floor(value), 1), max);
 }
 
+/** The subreddit a hit's URL is on, read off the URL itself — structural, not
+ *  invented (plan D10). `null` for the bare `/comments/<id>` form, which
+ *  names no subreddit. */
+function subredditOf(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).pathname.match(/^\/r\/([^/]+)\//)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Search backends commonly title a Reddit hit "<post title> : r/<sub>" or
+ *  "<post title> - Reddit". The subreddit is rendered from the URL, so strip
+ *  the decoration rather than print it twice. */
+const TITLE_DECORATION_RE = /\s*[-:|]\s*(?:r\/[A-Za-z0-9_]+|Reddit)\s*$/i;
+
 function formatHit(hit: SearchHit, index: number): string {
-  const title = hit.title?.trim() || 'Untitled question';
+  const title = hit.title?.replace(TITLE_DECORATION_RE, '').trim() || 'Untitled post';
+  const sub = subredditOf(hit.url);
   const snippet = hit.text?.trim().slice(0, SNIPPET_MAX_CHARS) ?? '';
   // ` (YYYY-MM-DD)` closes the heading line, or nothing at all when the backend
   // supplied no readable date — `toIsoDate` never invents one (plan D10).
   const iso = toIsoDate(hit.publishedDate);
-  const lines = [`${index + 1}. **${title}**${iso ? ` (${iso})` : ''}`, `   ${hit.url}`];
+  const lines = [
+    `${index + 1}. **${title}**${sub ? ` — r/${sub}` : ''}${iso ? ` (${iso})` : ''}`,
+    `   ${hit.url}`,
+  ];
   if (snippet) lines.push(`   ${snippet}`);
   return lines.join('\n');
 }
 
-export function createQuoraSearchTool(opts: CreateQuoraSearchToolOptions = {}): Tool {
+export function createRedditWebSearchTool(opts: CreateRedditWebSearchToolOptions = {}): Tool {
   const searxng = opts.searxngUrl ? createSearxngBackend(opts.searxngUrl) : null;
 
   // web_search's binding, read WHOLE (plan D3a — this tool has no key of its
   // own): `provider`/`secret` pick the backend, `recency` is the stored
-  // `max_age` default. Same rung shape as web_search's own resolveSetting
-  // (extensions/tools-web/src/index.ts): rungs 1-3 (which key names the
-  // binding) are tool-specific and stay a local `??` chain; rungs 4-6 live
-  // in the shared `selectSearchBackend`.
+  // `max_age` default. Same rung shape as quora_search's own resolveSetting.
   function resolveSetting(ctx: ToolContext): WebSearchSetting | undefined {
     const pid = ctx.personalityId;
     return (
@@ -96,9 +121,9 @@ export function createQuoraSearchTool(opts: CreateQuoraSearchToolOptions = {}): 
   }
 
   return {
-    name: 'quora_search',
+    name: 'reddit_web_search',
     description:
-      "Search Quora questions via the personality's web-search backend, constrained to quora.com. Search fidelity only — no answer counts and no vote counts. A question's publication date is rendered as ISO YYYY-MM-DD when the backend supplied one, and omitted entirely when it did not; a missing date is never guessed. Optionally restrict results to a recency window with max_age, a duration like 30d, 6m or 1y; omit it for no recency filter. Shares the web_search credential binding rather than a key of its own.",
+      "Search Reddit posts via the personality's web-search backend, constrained to reddit.com. Needs no Reddit credentials, unlike reddit_search. Search fidelity only — no scores and no comment counts. A post's publication date is rendered as ISO YYYY-MM-DD when the backend supplied one, and omitted entirely when it did not; a missing date is never guessed. Optionally restrict results to a recency window with max_age, a duration like 30d, 6m or 1y; omit it for no recency filter. Shares the web_search credential binding rather than a key of its own.",
     toolset: 'web',
     maxResultChars: 15_000,
     capabilities: {
@@ -113,18 +138,11 @@ export function createQuoraSearchTool(opts: CreateQuoraSearchToolOptions = {}): 
       secrets: ['providers/exa/*', 'providers/tavily/*', 'providers/brave/*'],
     },
     outputIsUntrusted: true,
-    // Deliberately no `secret-binding` field (plan D3a): this tool has no
-    // tools.yaml key of its own, it reads web_search's existing binding, so a
-    // picker here would look functional and bind a key nothing reads. What it
-    // declares instead is one read-only `info` field — otherwise an operator
-    // holding this tool without web_search in the same toolset sees no
-    // credential requirement anywhere, then meets NO_BACKEND_MESSAGE.
+    // No `secret-binding` field (plan D3a) — deliberate, see quora_search;
+    // one read-only `info` field discloses the web_search binding it reads.
     settingsSchema: {
       fields: [{ kind: 'info', label: 'Web search credential', text: BINDING_DISCLOSURE }],
     },
-    // Always registered — the vault is not visible at filter time (no
-    // ToolContext in isAvailable). execute() surfaces a clear "no provider
-    // configured" error. Same reasoning as web_search / the YouTube pair.
     isAvailable() {
       return true;
     },
@@ -134,12 +152,12 @@ export function createQuoraSearchTool(opts: CreateQuoraSearchToolOptions = {}): 
         query: { type: 'string', description: 'Search query' },
         num_results: {
           type: 'number',
-          description: `Number of questions to return (default ${DEFAULT_NUM_RESULTS}, max ${MAX_NUM_RESULTS})`,
+          description: `Number of posts to return (default ${DEFAULT_NUM_RESULTS}, max ${MAX_NUM_RESULTS})`,
         },
         max_age: {
           type: 'string',
           description:
-            'Only return questions published within this window, as a duration: <number><d|w|m|y>, e.g. 30d, 2w, 6m, 1y. Omit for no recency filter.',
+            'Only return posts published within this window, as a duration: <number><d|w|m|y>, e.g. 30d, 2w, 6m, 1y. Omit for no recency filter.',
         },
       },
       required: ['query'],
@@ -182,7 +200,7 @@ export function createQuoraSearchTool(opts: CreateQuoraSearchToolOptions = {}): 
       const fetchCount = overFetchCount(numResults);
       // The site: operator is a hint (not every backend honours it) — the
       // filter below is the actual guarantee (plan §9).
-      const siteQuery = `${query} ${QUORA_PROFILE.siteOperator}`;
+      const siteQuery = `${query} ${REDDIT_PROFILE.siteOperator}`;
 
       // Precedence: call argument → the shared binding's `recency` → unset. An
       // invalid STORED value is ignored where an invalid call argument is
@@ -210,7 +228,7 @@ export function createQuoraSearchTool(opts: CreateQuoraSearchToolOptions = {}): 
         // hits first lets in-window hits further down the over-fetched list
         // fill the caller's num_results, instead of the window silently
         // shortening the list while in-window hits were available.
-        const deduped = filterAndDedupe(hits, QUORA_PROFILE);
+        const deduped = filterAndDedupe(hits, REDDIT_PROFILE);
         const filtered = (maxAge ? filterByMaxAge(deduped, maxAge) : deduped).slice(0, numResults);
         if (filtered.length === 0) {
           // The window is named because a model that has forgotten it set a
@@ -227,7 +245,7 @@ export function createQuoraSearchTool(opts: CreateQuoraSearchToolOptions = {}): 
         const formatted = filtered.map((hit, i) => formatHit(hit, i)).join('\n\n');
         const window = maxAge ? ` — ${maxAgePhrase(maxAge)}` : '';
         const note = maxAge ? recencyLimitationNote(providerId, maxAge) : null;
-        const header = `Quora questions for "${query}"${window}:`;
+        const header = `Reddit posts for "${query}"${window}:`;
         return { ok: true, value: `${header}${note ? `\nNote: ${note}.` : ''}\n\n${formatted}` };
       } catch (err) {
         return {
@@ -240,4 +258,4 @@ export function createQuoraSearchTool(opts: CreateQuoraSearchToolOptions = {}): 
   };
 }
 
-export const quoraSearchTool = createQuoraSearchTool();
+export const redditWebSearchTool = createRedditWebSearchTool();

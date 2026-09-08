@@ -11,7 +11,13 @@ type SchemasResult = Awaited<ReturnType<typeof rpc.toolSettings.schemas>>;
 export type ToolSettingsSchemaWire = SchemasResult['tools'][number]['settingsSchema'];
 export type ToolSettingsFieldWire = ToolSettingsSchemaWire['fields'][number];
 
-/** A resolved form control — `enum` → Select, `secret` → SecretPicker. */
+/** A resolved form control — `enum` → Select, `secret` → SecretPicker,
+ *  `info` → a static paragraph.
+ *
+ *  Every control carries a `key` so the form can render one list. For `info`
+ *  it is a synthetic, position-derived id used only as a React key: an `info`
+ *  field has no settings key by design, so it must never index the values map.
+ */
 export type ToolSettingsControl =
   | {
       kind: 'enum';
@@ -20,12 +26,16 @@ export type ToolSettingsControl =
       options: Array<{ value: string; label: string }>;
       default?: string;
     }
-  | { kind: 'secret'; key: string; label: string; secretKind: string; helpText?: string };
+  | { kind: 'secret'; key: string; label: string; secretKind: string; helpText?: string }
+  | { kind: 'info'; key: string; label: string; text: string };
 
 /** Map a tool's `settingsSchema` into the list of controls the form renders.
- *  Exactly two kinds are supported today (enum, secret-binding). */
+ *  Three kinds are supported today (enum, secret-binding, info). */
 export function describeToolSettingsFields(schema: ToolSettingsSchemaWire): ToolSettingsControl[] {
-  return schema.fields.map((field): ToolSettingsControl => {
+  return schema.fields.map((field, index): ToolSettingsControl => {
+    if (field.kind === 'info') {
+      return { kind: 'info', key: `info:${index}`, label: field.label, text: field.text };
+    }
     if (field.kind === 'enum') {
       return {
         kind: 'enum',

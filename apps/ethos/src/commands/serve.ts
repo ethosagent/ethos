@@ -519,7 +519,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       const webOrigin =
         job.origin?.platform === 'web' && job.origin.chatId ? job.origin.chatId : null;
       const ranAt = new Date().toISOString();
-      const { sessionKey, output, reusedWebOrigin } = await runCronTurn({
+      const { sessionKey, output, reusedWebOrigin, progress } = await runCronTurn({
         loop,
         sessions: session,
         jobId: job.id,
@@ -539,7 +539,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           ...(reusedWebOrigin && webOrigin ? { sessionKey: webOrigin } : {}),
         });
       }
-      return { jobId: job.id, ranAt, output, sessionKey };
+      return { jobId: job.id, ranAt, output, sessionKey, progress };
     },
   });
   // Late-bind the scheduler into the watcher manager (the manager was

@@ -7,7 +7,26 @@ import { sanitize, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactString } from '@ethosagent/safety-redact';
 import type { ExecutionBackend, Logger, SecretsResolver, Storage } from '@ethosagent/types';
 import { decideEscalation, type HeartbeatAction } from './heartbeat';
+import {
+  type CronRunProgress,
+  PROGRESS_SUFFIX,
+  parseRunProgress,
+  progressPathFor,
+} from './progress';
 import { isOneShotSchedule, isValidSchedule, nextRunForSchedule } from './schedule';
+
+export {
+  CronProgressRecorder,
+  type CronRunProgress,
+  formatRunProgress,
+  PROGRESS_ELISION_TOOL,
+  PROGRESS_HEAD_LIMIT,
+  PROGRESS_MESSAGE_MAX_CHARS,
+  PROGRESS_SUFFIX,
+  PROGRESS_TAIL_LIMIT,
+  parseRunProgress,
+  progressPathFor,
+} from './progress';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -109,6 +128,15 @@ export interface CronRunResult {
   ranAt: string;
   output: string;
   sessionKey: string;
+  /**
+   * `audience: 'user'` tool progress observed during the run, collected by a
+   * `CronProgressRecorder` in the job runner. Deliberately NOT part of
+   * `output`: `output` is delivered verbatim to the originating channel and
+   * `decideEscalation` tests it with a start-anchored `[SILENT]` regex, so
+   * anything prepended or interleaved there would both add noise to every
+   * delivered message and break silent-job suppression. See ./progress.ts.
+   */
+  progress?: CronRunProgress[];
 }
 
 export interface CronRunInfo {
@@ -116,6 +144,12 @@ export interface CronRunInfo {
   ranAt: string;
   /** Absolute path to the persisted markdown output. */
   outputPath: string;
+  /**
+   * Absolute path to the run's progress sidecar, present only when the run
+   * recorded any. Runs persisted before progress capture existed have no
+   * sidecar and simply omit this — `readRunProgress` returns `[]` either way.
+   */
+  progressPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -863,25 +897,49 @@ export class CronScheduler {
     }
     const dir = join(this.outputDir, jobId);
     const names = await this.storage.list(dir);
+    // Sidecars are detected from the SAME listing rather than an exists()
+    // per run — the names are already in hand.
+    const sidecars = new Set(names.filter((n) => n.endsWith(PROGRESS_SUFFIX)));
     return names
       .filter((n) => n.endsWith('.md'))
-      .map((name) => ({
-        ranAt: filenameToIso(name),
-        outputPath: join(dir, name),
-      }))
+      .map((name) => {
+        const sidecar = `${name.slice(0, -'.md'.length)}${PROGRESS_SUFFIX}`;
+        return {
+          ranAt: filenameToIso(name),
+          outputPath: join(dir, name),
+          ...(sidecars.has(sidecar) ? { progressPath: join(dir, sidecar) } : {}),
+        };
+      })
       .sort((a, b) => (a.ranAt < b.ranAt ? 1 : -1))
       .slice(0, limit);
   }
 
   /** Read the full output body for a single run. */
   async readRunOutput(outputPath: string): Promise<string> {
-    const rel = relative(this.outputDir, resolve(outputPath));
+    const out = await this.storage.read(this.assertInOutputDir(outputPath));
+    if (out === null) throw new Error(`Run output not found: ${outputPath}`);
+    return out;
+  }
+
+  /**
+   * Read the recorded `audience: 'user'` tool progress for a single run,
+   * given that run's OUTPUT path. Returns `[]` when the run predates progress
+   * capture, recorded none, or left an unparseable sidecar — missing progress
+   * is the common case, not an error, and must never fail a run read.
+   */
+  async readRunProgress(outputPath: string): Promise<CronRunProgress[]> {
+    const resolved = this.assertInOutputDir(outputPath);
+    return parseRunProgress(await this.storage.read(progressPathFor(resolved)));
+  }
+
+  /** Guard: refuse any run path that escapes the output directory. */
+  private assertInOutputDir(outputPath: string): string {
+    const resolved = resolve(outputPath);
+    const rel = relative(this.outputDir, resolved);
     if (rel.startsWith('..') || isAbsolute(rel)) {
       throw new Error(`Path outside output directory: ${outputPath}`);
     }
-    const out = await this.storage.read(outputPath);
-    if (out === null) throw new Error(`Run output not found: ${outputPath}`);
-    return out;
+    return resolved;
   }
 
   // ---------------------------------------------------------------------------
@@ -1134,7 +1192,7 @@ export class CronScheduler {
     const contextPrefix = await this.resolveContext(job);
     const effectivePrompt = sanitize(precheckContext + contextPrefix + (job.prompt ?? ''));
     const result = await this.runJob({ ...job, prompt: effectivePrompt });
-    await this.persistAndDeliver(job, result.output, result.ranAt);
+    await this.persistAndDeliver(job, result.output, result.ranAt, result.progress);
     return result;
   }
 
@@ -1248,20 +1306,38 @@ export class CronScheduler {
    *  ~/.ethos/cron/output/<id>/<timestamp>.md, deliver to the originating
    *  channel per the escalation decision (silent outputs are audited and
    *  persisted but never delivered), and fire the heartbeat audit. */
-  private async persistAndDeliver(job: CronJob, output: string, ranAt: string): Promise<void> {
-    await this.persistRun(job, output, ranAt);
+  private async persistAndDeliver(
+    job: CronJob,
+    output: string,
+    ranAt: string,
+    progress?: CronRunProgress[],
+  ): Promise<void> {
+    await this.persistRun(job, output, ranAt, progress);
 
+    // `output` is passed to `decideEscalation` and `deliverTo` EXACTLY as the
+    // runner produced it. Progress never joins it — see CronRunResult.progress.
     const decision = decideEscalation(output);
     const delivered = decision.action === 'escalate' ? await this.deliverTo(job, output) : false;
     this.notifyDecision(job, decision, ranAt, delivered);
   }
 
-  /** Write the run body to <cronDir>/output/<jobId>/<ts>.md. */
-  private async persistRun(job: CronJob, output: string, ranAt: string): Promise<void> {
+  /** Write the run body to <cronDir>/output/<jobId>/<ts>.md, and any recorded
+   *  progress to the sibling <ts>.progress.json. The sidecar is written only
+   *  when there is progress, so a run that recorded none leaves exactly the
+   *  files it always did. */
+  private async persistRun(
+    job: CronJob,
+    output: string,
+    ranAt: string,
+    progress?: CronRunProgress[],
+  ): Promise<void> {
     const ts = ranAt.replace(/[:.]/g, '-').replace('Z', 'Z');
     const outPath = join(this.outputDir, job.id, `${ts}.md`);
     await this.storage.mkdir(dirname(outPath));
     await this.storage.write(outPath, `# ${job.name}\n\n${output}\n`);
+    if (progress && progress.length > 0) {
+      await this.storage.write(progressPathFor(outPath), JSON.stringify(progress, null, 2));
+    }
   }
 
   /** Heartbeat audit callback — fail-open, a throwing observer never breaks the run. */

@@ -351,6 +351,42 @@ export interface ActiveContext {
 export interface WebSearchToolSetting {
   provider?: 'exa' | 'tavily' | 'brave';
   secret?: string;
+  /** Default `max_age` for the tool — a duration string like `30d`, `6m`, `1y`. */
+  recency?: string;
+}
+
+const WEB_SEARCH_RECENCY_SHAPE = /^\d{1,4}[dwmy]$/;
+
+/**
+ * Normalize a hand-written `web_search.recency` value, or `null` if it is not
+ * a duration at all. Trims and lowercases first, then shape-tests, and returns
+ * the NORMALIZED form — so `' 30D '` persists as `30d` rather than vanishing.
+ *
+ * `parseMaxAge` in `@ethosagent/tools-web` (`src/max-age.ts`) is the SEMANTIC
+ * authority for this grammar and the two MUST change together. It is
+ * deliberately not imported: the layer model runs types <- core <- extensions
+ * <- apps (ARCHITECTURE.md §II), so `packages/config` importing from
+ * `extensions/` is an upward import. A duplicated lexical check at the
+ * persistence boundary is the precedent CLAUDE.md records for the ssh
+ * known-hosts check.
+ *
+ * What this boundary enforces, precisely: the same trim/lowercase and the same
+ * `^\d{1,4}[dwmy]$` shape `parseMaxAge` applies. What it does NOT enforce is
+ * `parseMaxAge`'s rejection of a zero quantity — `0d` persists here and is
+ * ignored at read time, which costs nothing and keeps one grammar rule in one
+ * place. The boundary is the belt; `parseMaxAge` falling through to "no filter"
+ * on a value it cannot use is the braces.
+ *
+ * Exported so apps/web-api's two hand-written persistence boundaries
+ * (`repositories/config.repository.ts` and `services/tool-settings.service.ts`)
+ * share this one copy rather than minting their own. `extensions/personalities`
+ * keeps a private twin, `normalizeRecency` — it does not depend on
+ * `@ethosagent/config` and a workspace dependency for one regex costs more than
+ * the duplication; that copy and this one must change together.
+ */
+export function normalizeWebSearchRecency(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  return WEB_SEARCH_RECENCY_SHAPE.test(normalized) ? normalized : null;
 }
 
 /** A personality's binding for the `x_search` tool — one provider (xAI), so
@@ -2961,6 +2997,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
       const ws = settings.web_search;
       if (ws?.provider) lines.push(`toolSettings.${id}.web_search.provider: ${ws.provider}`);
       if (ws?.secret) lines.push(`toolSettings.${id}.web_search.secret: ${ws.secret}`);
+      if (ws?.recency) lines.push(`toolSettings.${id}.web_search.recency: ${ws.recency}`);
       const xs = settings.x_search;
       if (xs?.secret) lines.push(`toolSettings.${id}.x_search.secret: ${xs.secret}`);
       const ea = settings.engine_ask;
@@ -4526,8 +4563,10 @@ function parseConfigYaml(src: string): EthosConfig {
       modelRouting[mr[1].trim()] = mr[2].trim().replace(/^["']|["']$/g, '');
       continue;
     }
-    // toolSettings.<personality|_default>.web_search.<provider|secret>: <value>
-    const tsMatch = line.match(/^toolSettings\.([^.]+)\.web_search\.(provider|secret):\s*(.+)$/);
+    // toolSettings.<personality|_default>.web_search.<provider|secret|recency>: <value>
+    const tsMatch = line.match(
+      /^toolSettings\.([^.]+)\.web_search\.(provider|secret|recency):\s*(.+)$/,
+    );
     if (tsMatch) {
       const id = tsMatch[1].trim();
       const field = tsMatch[2];
@@ -4538,6 +4577,14 @@ function parseConfigYaml(src: string): EthosConfig {
       slot.web_search = ws;
       if (field === 'provider') {
         if (val === 'exa' || val === 'tavily' || val === 'brave') ws.provider = val;
+      } else if (field === 'recency') {
+        // Normalized shape guard (see normalizeWebSearchRecency): `30D` is
+        // stored as `30d`, and a value that is not a duration at all is DROPPED
+        // — the binding itself survives, unlike `secret`, where a wrong value
+        // would bind a different credential rather than merely lose a default
+        // filter.
+        const recency = normalizeWebSearchRecency(val);
+        if (recency) ws.recency = recency;
       } else {
         ws.secret = val;
       }

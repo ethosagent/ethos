@@ -302,3 +302,66 @@ describe('cron tool script jobs', () => {
     if (!result.ok) expect(result.error).toMatch(/prompt/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// read_run — output plus any recorded audience:'user' tool progress
+// ---------------------------------------------------------------------------
+
+describe('cron read_run progress', () => {
+  async function runOnce(runJob: (job: CronJob) => Promise<CronRunResult>) {
+    const scheduler = makeScheduler({ runJob });
+    const [tool] = createCronTool(scheduler);
+    if (!tool) throw new Error('expected tool');
+    const job = await scheduler.createJob({
+      name: 'Harvest',
+      schedule: 'every 1h',
+      prompt: 'harvest',
+      personalityId: 'test-personality',
+      missedRunPolicy: 'skip',
+    });
+    const result = await scheduler.runJobNow(job.id);
+    const runs = await scheduler.listRuns(job.id);
+    const at = runs[0]?.ranAt;
+    const read = await tool.execute({ action: 'read_run', id: job.id, at }, makeCtx());
+    return { read, ranOutput: result.output };
+  }
+
+  it('appends a Progress section when the run recorded progress', async () => {
+    const { read } = await runOnce(async (job) => ({
+      jobId: job.id,
+      ranAt: new Date().toISOString(),
+      output: 'harvest complete',
+      sessionKey: `cron:${job.id}`,
+      progress: [
+        { at: '2026-09-08T01:00:00.000Z', toolName: 'harvest', message: 'reddit: 42 posts' },
+        {
+          at: '2026-09-08T01:02:00.000Z',
+          toolName: 'harvest',
+          message: 'hn: degraded',
+          percent: 60,
+        },
+      ],
+    }));
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value).toContain('harvest complete');
+    expect(read.value).toContain('## Progress');
+    expect(read.value).toContain('- 2026-09-08T01:00:00.000Z harvest: reddit: 42 posts');
+    expect(read.value).toContain('- 2026-09-08T01:02:00.000Z harvest (60%): hn: degraded');
+  });
+
+  it('returns the body unchanged when the run recorded no progress', async () => {
+    const { read } = await runOnce(async (job) => ({
+      jobId: job.id,
+      ranAt: new Date().toISOString(),
+      output: 'nothing to see',
+      sessionKey: `cron:${job.id}`,
+    }));
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value).toBe('# Harvest\n\nnothing to see\n');
+    expect(read.value).not.toContain('## Progress');
+  });
+});

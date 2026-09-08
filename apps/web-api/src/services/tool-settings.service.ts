@@ -1,3 +1,4 @@
+import { normalizeWebSearchRecency } from '@ethosagent/config';
 import {
   EthosError,
   isValidSecretName,
@@ -131,7 +132,7 @@ function assertSafeSlotKey(pid: string): void {
 function fromSlot(
   slot:
     | {
-        web_search?: { provider?: string; secret?: string };
+        web_search?: { provider?: string; secret?: string; recency?: string };
         x_search?: { secret?: string };
         engine_ask?: { secret?: string };
       }
@@ -143,6 +144,10 @@ function fromSlot(
     const fields: Record<string, string> = {};
     if (ws.provider) fields.provider = ws.provider;
     if (ws.secret) fields.secret = ws.secret;
+    // Read side of the `recency` binding. `fromSlot` builds `fields` key by
+    // key, so a key omitted here never reaches the UI however faithfully it was
+    // written — the write narrowing in `toWebSearch` is only half the round trip.
+    if (ws.recency) fields.recency = ws.recency;
     if (Object.keys(fields).length > 0) out.web_search = fields;
   }
   if (slot?.x_search?.secret) out.x_search = { secret: slot.x_search.secret };
@@ -169,9 +174,10 @@ function toEngineAsk(values: ToolSettingsValues): { secret?: string } {
 function toWebSearch(values: ToolSettingsValues): {
   provider?: WebSearchProvider;
   secret?: string;
+  recency?: string;
 } {
   const fields = values.web_search ?? {};
-  const out: { provider?: WebSearchProvider; secret?: string } = {};
+  const out: { provider?: WebSearchProvider; secret?: string; recency?: string } = {};
   const provider = fields.provider?.trim();
   if (provider && (WEB_SEARCH_PROVIDERS as readonly string[]).includes(provider)) {
     out.provider = provider as WebSearchProvider;
@@ -181,5 +187,22 @@ function toWebSearch(values: ToolSettingsValues): {
   // name can never reach the personality's tools.yaml or the config slot.
   const secret = fields.secret?.trim();
   if (secret && isValidSecretName(secret)) out.secret = secret;
+  // `recency` is a default `max_age` duration (`30d`, `6m`, `1y`). LEXICAL
+  // boundary check, shared with packages/config, which persists the same key: it
+  // applies `parseMaxAge`'s trim/lowercase and shape and stores the NORMALIZED
+  // form (`30D` -> `30d`), but NOT `parseMaxAge`'s rejection of a zero quantity
+  // — `0d` persists and is ignored at read time. `parseMaxAge` in
+  // `@ethosagent/tools-web` (`src/max-age.ts`) remains the SEMANTIC authority
+  // and the two MUST change together; it is not imported because the layer model
+  // runs types <- core <- extensions <- apps and web-api has no dependency on
+  // the tools-web extension. A duplicated lexical check at a persistence
+  // boundary is the precedent CLAUDE.md records for the ssh known-hosts check.
+  //
+  // Unlike `secret`, a value that is not a duration drops only THIS FIELD and
+  // leaves the rest of the binding intact: a malformed secret name would
+  // silently bind a DIFFERENT key, while a malformed recency is just a missing
+  // default filter.
+  const recency = fields.recency ? normalizeWebSearchRecency(fields.recency) : null;
+  if (recency) out.recency = recency;
   return out;
 }

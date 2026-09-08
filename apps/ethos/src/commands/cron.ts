@@ -3,6 +3,7 @@ import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import {
   type CronJobUpdate,
+  CronProgressRecorder,
   CronScheduler,
   isValidSchedule,
   nextRunForSchedule,
@@ -78,15 +79,27 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
       const pers = personalities.get(pid);
       const toolsetOverride = pers?.toolset?.filter((t: string) => t !== 'cron');
 
+      // Progress is collected separately from `output` — never appended to it.
+      // `output` is delivered verbatim and `decideEscalation` tests it with a
+      // start-anchored `[SILENT]` regex. The recorder gates on
+      // `audience: 'user'`; internal progress stays internal.
+      const progress = new CronProgressRecorder();
       for await (const event of loop.run(job.prompt ?? '', {
         sessionKey,
         personalityId: pid,
         toolsetOverride,
       })) {
         if (event.type === 'text_delta') output += event.text;
+        else progress.record(event);
       }
 
-      return { jobId: job.id, ranAt: new Date().toISOString(), output, sessionKey };
+      return {
+        jobId: job.id,
+        ranAt: new Date().toISOString(),
+        output,
+        sessionKey,
+        progress: progress.snapshot(),
+      };
     },
   });
 

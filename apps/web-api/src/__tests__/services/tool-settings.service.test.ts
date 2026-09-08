@@ -190,6 +190,72 @@ describe('ToolSettingsService', () => {
     expect((await service.getForPersonality('mine')).values).toEqual({});
   });
 
+  it('web_search recency survives write-then-read in both stores', async () => {
+    const values: ToolSettingsValues = {
+      web_search: { provider: 'exa', secret: 'exa-main', recency: '30d' },
+    };
+
+    // Built-in → the global config slot.
+    await service.setForPersonality('scout', values);
+    expect(await storage.read('/data/config.yaml')).toContain(
+      'toolSettings.scout.web_search.recency: 30d',
+    );
+    expect((await service.getForPersonality('scout')).values).toEqual(values);
+
+    // Custom → its own tools.yaml.
+    await service.setForPersonality('mine', values);
+    const toolsYaml = (await storage.read('/data/personalities/mine/tools.yaml')) ?? '';
+    expect(toolsYaml).toContain('recency: 30d');
+    expect((await service.getForPersonality('mine')).values).toEqual(values);
+
+    // And the global default slot.
+    await service.setDefault(values);
+    expect(await storage.read('/data/config.yaml')).toContain(
+      'toolSettings._default.web_search.recency: 30d',
+    );
+    expect((await service.getDefault()).values).toEqual(values);
+  });
+
+  it('drops an out-of-shape recency without losing the rest of the binding', async () => {
+    for (const bad of ['last month', '30x', 'abc', '']) {
+      await service.setForPersonality('mine', {
+        web_search: { provider: 'exa', secret: 'exa-main', recency: bad },
+      });
+      const toolsYaml = (await storage.read('/data/personalities/mine/tools.yaml')) ?? '';
+      expect(toolsYaml).not.toContain('recency');
+      expect((await service.getForPersonality('mine')).values.web_search).toEqual({
+        provider: 'exa',
+        secret: 'exa-main',
+      });
+    }
+  });
+
+  it('normalizes a recency instead of dropping it, in every store', async () => {
+    // A value that reaches the service with stray casing or spaces (a
+    // hand-edited config, or a client that did not trim) must survive as the
+    // normalized form rather than vanishing.
+    const written: ToolSettingsValues = {
+      web_search: { provider: 'exa', secret: 'exa-main', recency: ' 30D ' },
+    };
+    const stored = { provider: 'exa', secret: 'exa-main', recency: '30d' };
+
+    await service.setForPersonality('scout', written);
+    expect(await storage.read('/data/config.yaml')).toContain(
+      'toolSettings.scout.web_search.recency: 30d',
+    );
+    expect((await service.getForPersonality('scout')).values.web_search).toEqual(stored);
+
+    await service.setForPersonality('mine', written);
+    expect(await storage.read('/data/personalities/mine/tools.yaml')).toContain('recency: 30d');
+    expect((await service.getForPersonality('mine')).values.web_search).toEqual(stored);
+
+    await service.setDefault({ web_search: { recency: '6M' } });
+    expect(await storage.read('/data/config.yaml')).toContain(
+      'toolSettings._default.web_search.recency: 6m',
+    );
+    expect((await service.getDefault()).values.web_search).toEqual({ recency: '6m' });
+  });
+
   it('rejects a reserved / unsafe personality id used as a config slot key', async () => {
     // A built-in id flows straight into `toolSettings[<id>]` as a computed key.
     // `__proto__` and friends must never become serialized own-keys (a

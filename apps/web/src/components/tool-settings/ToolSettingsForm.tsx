@@ -8,8 +8,13 @@ import {
 import { SecretPicker } from './SecretPicker';
 
 // Schema-driven tool-settings form. Renders FROM a tool's `settingsSchema` with
-// no tool-specific knowledge: `enum` → Select, `secret-binding` → SecretPicker.
+// no tool-specific knowledge: `enum` → Select, `secret-binding` → SecretPicker,
+// `info` → a static paragraph.
 // Reused for the global default (Settings) and the per-personality panel.
+//
+// An `info` row is READ-ONLY: no input, no state, and nothing written back into
+// `value`. It is how a tool discloses a credential it does not bind itself (see
+// `ToolSettingsInfoField` in @ethosagent/types).
 //
 // The one documented coupling: a `secret-binding` field is filtered by the
 // value of a sibling `provider` enum when present, so the picker only offers
@@ -55,7 +60,11 @@ export function ToolSettingsForm({ schema, value, onChange, disabled }: ToolSett
               </Popover>
             ) : null}
           </Typography.Text>
-          {control.kind === 'enum' ? (
+          {control.kind === 'info' ? (
+            <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 0 }}>
+              {control.text}
+            </Typography.Paragraph>
+          ) : control.kind === 'enum' ? (
             <Select
               style={{ minWidth: 220, width: '100%' }}
               value={value[control.key] ?? control.default ?? undefined}

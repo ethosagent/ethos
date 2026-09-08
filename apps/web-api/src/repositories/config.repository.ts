@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
 import {
   externalizeSecret,
+  normalizeWebSearchRecency,
   type SecretRefContext,
   secretRefForConfigKey,
 } from '@ethosagent/config';
@@ -83,7 +84,7 @@ export interface RawConfig {
   toolSettings: Record<
     string,
     {
-      web_search?: { provider?: string; secret?: string };
+      web_search?: { provider?: string; secret?: string; recency?: string };
       x_search?: { secret?: string };
       engine_ask?: { secret?: string };
     }
@@ -190,10 +191,12 @@ export class ConfigRepository {
         continue;
       }
 
-      // `toolSettings.<personality|_default>.web_search.<provider|secret>: <value>`
+      // `toolSettings.<personality|_default>.web_search.<provider|secret|recency>: <value>`
       // — global FALLBACK layer. Parsed explicitly (not via passthrough) so the
       // service reads/writes it typed; the on-disk format matches packages/config.
-      const ts = line.match(/^toolSettings\.([^.]+)\.web_search\.(provider|secret):\s*(.+)$/);
+      const ts = line.match(
+        /^toolSettings\.([^.]+)\.web_search\.(provider|secret|recency):\s*(.+)$/,
+      );
       if (ts) {
         const pid = ts[1]?.trim();
         const field = ts[2];
@@ -204,7 +207,23 @@ export class ConfigRepository {
           const ws = slot.web_search ?? {};
           slot.web_search = ws;
           if (field === 'provider') ws.provider = value;
-          else ws.secret = value;
+          // `recency` is a default `max_age` duration (`30d`, `6m`, `1y`).
+          // LEXICAL boundary check, shared with packages/config, which writes
+          // the same key: it applies `parseMaxAge`'s trim/lowercase and shape,
+          // stores the NORMALIZED form (`30D` -> `30d`), and does NOT apply
+          // `parseMaxAge`'s rejection of a zero quantity — `0d` persists and is
+          // ignored at read time. `parseMaxAge` in `@ethosagent/tools-web`
+          // (`src/max-age.ts`) remains the SEMANTIC authority and the two MUST
+          // change together; it is not imported because the layer model runs
+          // types <- core <- extensions <- apps and web-api has no dependency on
+          // the tools-web extension. A value that is not a duration at all drops
+          // only this field and the rest of the binding survives, unlike
+          // `secret`, where a wrong value would bind a DIFFERENT credential
+          // rather than merely lose a default filter.
+          else if (field === 'recency') {
+            const recency = normalizeWebSearchRecency(value);
+            if (recency) ws.recency = recency;
+          } else ws.secret = value;
         }
         continue;
       }
@@ -492,6 +511,9 @@ export class ConfigRepository {
       }
       if (ws?.secret) {
         lines.push(`toolSettings.${yamlScalar(pid)}.web_search.secret: ${yamlScalar(ws.secret)}`);
+      }
+      if (ws?.recency) {
+        lines.push(`toolSettings.${yamlScalar(pid)}.web_search.recency: ${yamlScalar(ws.recency)}`);
       }
       const xs = settings.x_search;
       if (xs?.secret) {

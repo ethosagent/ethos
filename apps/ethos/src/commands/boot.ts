@@ -422,7 +422,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       const webOrigin =
         job.origin?.platform === 'web' && job.origin.chatId ? job.origin.chatId : null;
       const ranAt = new Date().toISOString();
-      const { sessionKey, output, reusedWebOrigin } = await runCronTurn({
+      const { sessionKey, output, reusedWebOrigin, progress } = await runCronTurn({
         loop,
         sessions: session,
         jobId: job.id,
@@ -438,7 +438,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         outputPath: null,
         ...(reusedWebOrigin && webOrigin ? { sessionKey: webOrigin } : {}),
       });
-      return { jobId: job.id, ranAt, output, sessionKey };
+      return { jobId: job.id, ranAt, output, sessionKey, progress };
     },
   });
   watcherManager.attachScheduler(scheduler);

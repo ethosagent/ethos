@@ -4506,11 +4506,20 @@ const ToolSettingsSecretBindingFieldSchema = z.object({
   required: z.boolean().optional(),
   helpText: z.string().optional(),
 });
+/** A static disclosure row — no key, so nothing round-trips through it. Mirrors
+ *  `ToolSettingsInfoField` in `@ethosagent/types`; a tool that needs a
+ *  credential it does not bind itself says so here. */
+const ToolSettingsInfoFieldSchema = z.object({
+  kind: z.literal('info'),
+  label: z.string(),
+  text: z.string(),
+});
 const ToolSettingsSchemaSchema = z.object({
   fields: z.array(
     z.discriminatedUnion('kind', [
       ToolSettingsEnumFieldSchema,
       ToolSettingsSecretBindingFieldSchema,
+      ToolSettingsInfoFieldSchema,
     ]),
   ),
 });

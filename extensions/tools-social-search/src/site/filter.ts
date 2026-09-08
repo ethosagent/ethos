@@ -20,6 +20,12 @@ export interface SiteProfile {
   denyPathPrefixes: readonly string[];
   /** When non-empty, a hit's pathname MUST start with one of these. */
   allowPathPrefixes: readonly string[];
+  /** Optional extra shape test, applied after the prefix lists. Reddit needs
+   *  it: a post lives at `/r/<subreddit>/comments/<id>/<slug>`, and the
+   *  required `/comments/` segment sits AFTER a segment that varies, which a
+   *  prefix list cannot express. Must be flagless (no `g`/`y`) — `test()` on
+   *  a stateful regex would alternate hit-by-hit. */
+  allowPathPattern?: RegExp;
   /** Stable identity of the underlying question/post, for de-duplication.
    *  `null` when no identity is derivable — such a hit is kept and deduped
    *  by its raw URL instead of being dropped. */
@@ -47,6 +53,7 @@ function hostMatches(hostname: string, hosts: readonly string[]): boolean {
 
 function pathAllowed(pathname: string, profile: SiteProfile): boolean {
   if (profile.denyPathPrefixes.some((p) => pathname.startsWith(p))) return false;
+  if (profile.allowPathPattern && !profile.allowPathPattern.test(pathname)) return false;
   if (profile.allowPathPrefixes.length === 0) return true;
   return profile.allowPathPrefixes.some((p) => pathname.startsWith(p));
 }
@@ -126,4 +133,58 @@ export const LINKEDIN_PROFILE: SiteProfile = {
   denyPathPrefixes: ['/company/', '/school/', '/jobs/', '/in/', '/learning/', '/showcase/'],
   allowPathPrefixes: ['/posts/', '/pulse/'],
   dedupKey: linkedInDedupKey,
+};
+
+// ---------------------------------------------------------------------------
+// Reddit — a post is `/r/<subreddit>/comments/<id>/<slug>`, and the base-36
+// `<id>` is the post's identity: it is the same across slug text, across
+// `www.`/`old.`/`np.`/`sh.` hosts, and across a comment permalink
+// (`/comments/<id>/<slug>/<commentId>/`), so all of those collapse to one
+// entry. The bare `/comments/<id>` form (no subreddit segment) is a real
+// canonical Reddit URL and carries the same id, so it is admitted and
+// collapses with the rest.
+//
+// Hosts: `reddit.com` alone already admits every `*.reddit.com` subdomain
+// through `hostMatches`'s subdomain rule, so `www.`/`old.`/`np.` are listed
+// for the record, not for reach — `sh.reddit.com` and anything else Reddit
+// invents is admitted too, and dedupes onto the same post id. `redd.it`
+// shortlinks are a DIFFERENT registrable domain and are dropped: they carry
+// an id but no post shape, and resolving one would need a network fetch this
+// tool does not make. Media hosts (`i.redd.it`, `preview.redd.it`) are
+// dropped for the same reason — a picture is not a conversation.
+//
+// Paths: a subreddit listing page (`/r/askscience/`, `/r/askscience/top/`)
+// is a directory of conversations, not one, so `/comments/` is REQUIRED. A
+// prefix list cannot say that — the required segment sits after `<subreddit>`,
+// which varies — hence `allowPathPattern`. The deny list is kept alongside it
+// even though the pattern already excludes every entry: a redundant deny is
+// free and documents what was deliberately excluded. Note `/r/<sub>/wiki/…`
+// is NOT caught by the `/wiki/` deny (that prefix matches the site-level wiki
+// only); the pattern is what drops it.
+// ---------------------------------------------------------------------------
+
+function redditDedupKey(url: URL): string | null {
+  const id = url.pathname.match(/\/comments\/([A-Za-z0-9]+)/)?.[1];
+  // Reddit ids are base-36 and case-insensitive in a URL; lowercase so two
+  // spellings of the same post do not read as two posts.
+  return id ? `post:${id.toLowerCase()}` : null;
+}
+
+export const REDDIT_PROFILE: SiteProfile = {
+  siteOperator: 'site:reddit.com',
+  hosts: ['reddit.com', 'www.reddit.com', 'old.reddit.com', 'np.reddit.com'],
+  denyPathPrefixes: [
+    '/user/',
+    '/u/',
+    '/search',
+    '/wiki/',
+    '/settings',
+    '/subreddits',
+    '/submit',
+    '/login',
+    '/message/',
+  ],
+  allowPathPrefixes: ['/r/', '/comments/'],
+  allowPathPattern: /^\/(?:r\/[^/]+\/)?comments\/[A-Za-z0-9]+/,
+  dedupKey: redditDedupKey,
 };
