@@ -62,10 +62,70 @@ const sourceFiles = (dir) => {
   return out;
 };
 
+// Remove `//` and `/* */` comments. Prose in a comment is not an import: a JSDoc
+// line reading `from "unset"` (packages/web-contracts/src/schemas.ts) is a valid
+// bare specifier as far as `toModuleName` can tell, so it has to be gone before
+// the extraction regexes run.
+//
+// A character scanner rather than a regex, because a regex that deletes from `//`
+// to end-of-line also deletes the `//` inside "https://…" and every import after
+// it on that line — a false NEGATIVE on this gate, which is the failure that
+// actually ships a broken package. String and template-literal bodies are copied
+// through untouched, so anything the old extraction found inside a string it
+// still finds.
+//
+// Not handled: regex literals. A regex containing a quote (`/["']/`) is read as
+// the start of a string. Quoted-string state ends at an unescaped newline, so
+// that misread can never reach past the line the regex is on; a backtick or a
+// `/*` inside one is the only way it could, and neither occurs in this repo —
+// the module set this walk produces is unchanged by this function apart from
+// the dropped `unset`.
+const stripComments = (code) => {
+  let out = '';
+  let i = 0;
+  while (i < code.length) {
+    const c = code[i];
+    const next = code[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < code.length && code[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) {
+        if (code[i] === '\n') out += '\n'; // keep line structure for the ^import pattern
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      out += c;
+      i++;
+      while (i < code.length) {
+        const s = code[i];
+        if (s === '\\') {
+          out += code.slice(i, i + 2); // escape: consume both chars, quote can't close
+          i += 2;
+          continue;
+        }
+        out += s;
+        i++;
+        if (s === c) break;
+        if (s === '\n' && c !== '`') break; // unterminated — don't run past the line
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+};
+
 // Extract bare import specifiers from one file (static, side-effect, dynamic, require).
 const specifiers = (file) => {
   // Type-only imports are erased by tsup — they never reach the bundle.
-  const code = readFileSync(file, 'utf8')
+  const code = stripComments(readFileSync(file, 'utf8'))
     .replace(/\b(?:import|export)\s+type\b[\s\S]{0,500}?from\s*["'][^"']*["']/g, '');
   const found = [];
   const patterns = [
