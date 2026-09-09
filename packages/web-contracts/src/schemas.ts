@@ -1774,7 +1774,13 @@ const RecipeFsReachSchema = z.object({
  * `image_generate`; `google` is a YouTube Data API key `youtube_search` and
  * `youtube_comments` bind — a separate namespace from `providers/gemini/*`
  * (the LLM provider key), since a YouTube-scoped Cloud key and a Gemini key
- * are different credentials with different quotas and failure modes.
+ * are different credentials with different quotas and failure modes;
+ * `google-search-console` is a whole service-account JSON key `gsc_sites` and
+ * `gsc_queries` bind — a separate namespace from `providers/google/*` for the
+ * same reason `google` is separate from `gemini`, and more so: it is an RSA
+ * identity granted per property by a verified owner inside Search Console, not
+ * an API key metered by a Cloud quota, so the two share no quota, no failure
+ * modes and no rotation story.
  */
 export const NamedSecretProviderSchema = z.enum([
   'exa',
@@ -1784,6 +1790,7 @@ export const NamedSecretProviderSchema = z.enum([
   'x',
   'openai',
   'google',
+  'google-search-console',
 ]);
 export type NamedSecretProvider = z.infer<typeof NamedSecretProviderSchema>;
 
@@ -1794,6 +1801,7 @@ export const NamedSecretKindSchema = z.enum([
   'x-api',
   'answer-engine',
   'youtube-api-key',
+  'gsc-service-account',
 ]);
 export type NamedSecretKind = z.infer<typeof NamedSecretKindSchema>;
 
@@ -1806,6 +1814,7 @@ export const NAMED_SECRET_PROVIDER_KINDS: Record<NamedSecretProvider, NamedSecre
   x: 'x-api',
   openai: 'answer-engine',
   google: 'youtube-api-key',
+  'google-search-console': 'gsc-service-account',
 };
 
 /** Mirrors the bundle's `safety.network` — declared reach, not a new capability. */

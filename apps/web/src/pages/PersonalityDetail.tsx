@@ -27,6 +27,7 @@ import {
   useToolSettingsSchemas,
 } from '../features/settings/api/queries';
 import { canRetirePersonality, retireConfirmCopy } from '../lib/personalityIdentityActions';
+import { groupToolSettings } from '../lib/tool-settings-form';
 import { buildIdentityRedirectPath } from '../lib/workspaceRoutes';
 import { rpc } from '../rpc';
 import {
@@ -725,22 +726,25 @@ function ToolSettingsSection({
   const [values, setValues] = useState<Record<string, Record<string, string>>>({});
   const [dirty, setDirty] = useState(false);
 
-  const configurable = (schemasQuery.data?.tools ?? []).filter((t) => toolset.includes(t.name));
+  // One form per settings SLOT, not per tool: tools that share a credential
+  // (youtube_search / youtube_comments) declare the same `settingsKey` and get
+  // one form, because they read and write one stored binding.
+  const groups = groupToolSettings(
+    (schemasQuery.data?.tools ?? []).filter((t) => toolset.includes(t.name)),
+  );
 
   useEffect(() => {
     if (!dirty && settingQuery.data) setValues(settingQuery.data.values);
   }, [settingQuery.data, dirty]);
 
   // No configurable tool in this personality's toolset — render nothing.
-  if (configurable.length === 0) return null;
+  if (groups.length === 0) return null;
 
   const storage = settingQuery.data?.storage;
   // A tool whose whole schema is `info` fields declares a disclosure, not a
   // setting: there is nothing to write, so neither the save button nor the note
   // about where writes land belongs on a section made only of those.
-  const anyWritable = configurable.some((t) =>
-    t.settingsSchema.fields.some((f) => f.kind !== 'info'),
-  );
+  const anyWritable = groups.some((g) => g.schema.fields.some((f) => f.kind !== 'info'));
 
   return (
     <div style={{ marginBottom: 32 }}>
@@ -754,8 +758,10 @@ function ToolSettingsSection({
             : 'Built-in personality — saved to your local config (its files are read-only).'}
         </Typography.Paragraph>
       ) : null}
-      {configurable.map((tool) => (
-        <div key={tool.name} style={{ marginBottom: 20 }}>
+      {groups.map((group) => (
+        <div key={group.key} style={{ marginBottom: 20 }}>
+          {/* Every tool the one form covers, so an operator setting the shared
+              Google key can see it reaches both YouTube tools. */}
           <Typography.Text
             strong
             style={{
@@ -765,13 +771,13 @@ function ToolSettingsSection({
               marginBottom: 8,
             }}
           >
-            {tool.name}
+            {group.toolNames.join(', ')}
           </Typography.Text>
           <ToolSettingsForm
-            schema={tool.settingsSchema}
-            value={values[tool.name] ?? {}}
+            schema={group.schema}
+            value={values[group.key] ?? {}}
             onChange={(next) => {
-              setValues((prev) => ({ ...prev, [tool.name]: next }));
+              setValues((prev) => ({ ...prev, [group.key]: next }));
               setDirty(true);
             }}
           />

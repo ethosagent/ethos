@@ -1,3 +1,4 @@
+import { probeServiceAccountKey } from '@ethosagent/tools-search-console';
 import { EthosError, isValidSecretName, type SecretsResolver } from '@ethosagent/types';
 import {
   NAMED_SECRET_PROVIDER_KINDS,
@@ -50,6 +51,11 @@ export const NAMED_SECRET_PROVIDERS: readonly NamedSecretProviderEntry[] = (
       provider: 'google',
       label: 'Google (YouTube Data API)',
       getKeyUrl: 'https://console.cloud.google.com/apis/credentials',
+    },
+    {
+      provider: 'google-search-console',
+      label: 'Google Search Console (service account)',
+      getKeyUrl: 'https://console.cloud.google.com/iam-admin/serviceaccounts',
     },
   ] satisfies Omit<NamedSecretProviderEntry, 'kind'>[]
 ).map((e) => ({ ...e, kind: NAMED_SECRET_PROVIDER_KINDS[e.provider] }));
@@ -258,6 +264,17 @@ async function probeProvider(
         }
       }
       return interpret(res.status);
+    } else if (provider === 'google-search-console') {
+      // The only credential here that is not a bearer string: a service-account
+      // JSON whose private key has to be RS256-signed into a JWT assertion and
+      // exchanged for an access token before anything can be called. That
+      // crypto — and the two error mappers that make a failure actionable —
+      // live in the extension that already owns them, so the Keys pane and the
+      // tools can never disagree about what went wrong (plan D19, §18). The
+      // apps → extensions edge is the direction the layer model allows and is
+      // already precedented by `@ethosagent/tools-mcp` / `tools-ui` /
+      // `tools-voice` above.
+      return await probeServiceAccountKey(key, { signal: controller.signal });
     } else if (provider === 'brave') {
       const res = await fetch(
         'https://api.search.brave.com/res/v1/web/search?q=ethos%20key%20check&count=1',

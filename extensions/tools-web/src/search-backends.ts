@@ -410,10 +410,11 @@ export function createSearxngBackend(instanceUrl: string): KeylessSearchBackend 
 // available), then the first available backend, then the keyless SearXNG
 // rung. Rungs 1-3 — which key names the binding, e.g. `web_search` vs.
 // `quora_search` in a personality's tools.yaml / toolSettings — are
-// tool-specific and stay a local `??` chain at each call site (see
-// `selectSecretRef` in extensions/tools-x-search/src/index.ts for the same
-// pattern). This function only takes the already-resolved result of that
-// chain, as an ordered list where the first defined entry wins.
+// tool-specific and stay a local `??` chain at each call site (tools that
+// resolve a bare secret ref instead share `resolveToolSecretRef`,
+// packages/core/src/tool-secret-ref.ts). This function only takes the
+// already-resolved result of that chain, as an ordered list where the first
+// defined entry wins.
 // ---------------------------------------------------------------------------
 
 /** The shape of a resolved provider+secret binding, independent of which

@@ -34,6 +34,33 @@ const webSearchStub: Tool = {
   },
 };
 
+// The two YouTube tools share ONE Google key, so both declare the same
+// `settingsKey` and the settings UI renders a single form. Stand-ins here for
+// the same reason as above; the real declarations are pinned in
+// packages/wiring/src/__tests__/social-search-tools.test.ts.
+const youtubeSecretSchema: Tool['settingsSchema'] = {
+  fields: [
+    {
+      kind: 'secret-binding',
+      key: 'secret',
+      label: 'Google API key (YouTube)',
+      secretKind: 'youtube-api-key',
+    },
+  ],
+};
+const youtubeSearchStub: Tool = {
+  name: 'youtube_search',
+  description: 'stub',
+  schema: {},
+  capabilities: {},
+  settingsKey: 'youtube',
+  settingsSchema: youtubeSecretSchema,
+  async execute() {
+    return { ok: true, value: '' };
+  },
+};
+const youtubeCommentsStub: Tool = { ...youtubeSearchStub, name: 'youtube_comments' };
+
 describe('ToolSettingsService', () => {
   let storage: InMemoryStorage;
   let config: ConfigRepository;
@@ -254,6 +281,130 @@ describe('ToolSettingsService', () => {
       'toolSettings._default.web_search.recency: 6m',
     );
     expect((await service.getDefault()).values.web_search).toEqual({ recency: '6m' });
+  });
+
+  // -------------------------------------------------------------------------
+  // Partial payload × whole-slot replace — the erasure bug (D23).
+  //
+  // The Security pane owns ONE form and sends `{ web_search: … }` and nothing
+  // else (`apps/web/src/pages/settings/panes/security.tsx`). It never reads the
+  // other bindings, so it cannot resend them. A test that round-trips the FULL
+  // values object — the shape PersonalityDetail sends, because it seeds its
+  // state from the full read — passes whatever the write side does with the
+  // keys the payload omits, so it cannot catch this. Every test below sends a
+  // partial payload on purpose.
+  // -------------------------------------------------------------------------
+
+  it('a single-key web_search save keeps the other global default bindings', async () => {
+    await service.setDefault({
+      web_search: { provider: 'exa', secret: 'exa-main' },
+      x_search: { secret: 'xai-main' },
+      engine_ask: { secret: 'openai-main' },
+    });
+
+    // Exactly what the Security pane sends: its own form's values, alone.
+    await service.setDefault({ web_search: { provider: 'brave', secret: 'brave-main' } });
+
+    const got = await service.getDefault();
+    expect(got.values).toEqual({
+      web_search: { provider: 'brave', secret: 'brave-main' },
+      x_search: { secret: 'xai-main' },
+      engine_ask: { secret: 'openai-main' },
+    });
+    const raw = (await storage.read('/data/config.yaml')) ?? '';
+    expect(raw).toContain('toolSettings._default.x_search.secret: xai-main');
+    expect(raw).toContain('toolSettings._default.engine_ask.secret: openai-main');
+  });
+
+  it('a single-key save keeps the other bindings in a built-in personality slot', async () => {
+    await service.setForPersonality('scout', {
+      web_search: { provider: 'exa', secret: 'exa-main' },
+      x_search: { secret: 'xai-main' },
+      youtube: { secret: 'google-main' },
+    });
+
+    await service.setForPersonality('scout', { engine_ask: { secret: 'openai-main' } });
+
+    expect((await service.getForPersonality('scout')).values).toEqual({
+      web_search: { provider: 'exa', secret: 'exa-main' },
+      x_search: { secret: 'xai-main' },
+      engine_ask: { secret: 'openai-main' },
+      youtube: { secret: 'google-main' },
+    });
+  });
+
+  it("a single-key save keeps a custom personality's other tools.yaml lines", async () => {
+    await service.setForPersonality('mine', {
+      youtube: { secret: 'google-main' },
+      x_search: { secret: 'xai-main' },
+    });
+    expect(await storage.read('/data/personalities/mine/tools.yaml')).toContain(
+      'youtube: { secret: google-main }',
+    );
+
+    // Save one unrelated binding — the youtube line must survive a whole-file
+    // re-render that only ever sees the incoming payload.
+    await service.setForPersonality('mine', {
+      web_search: { provider: 'exa', secret: 'exa-mine' },
+    });
+
+    const toolsYaml = (await storage.read('/data/personalities/mine/tools.yaml')) ?? '';
+    expect(toolsYaml).toContain('youtube: { secret: google-main }');
+    expect(toolsYaml).toContain('x_search: { secret: xai-main }');
+    expect((await service.getForPersonality('mine')).values).toEqual({
+      web_search: { provider: 'exa', secret: 'exa-mine' },
+      x_search: { secret: 'xai-main' },
+      youtube: { secret: 'google-main' },
+    });
+  });
+
+  it('a key the payload DOES carry still clears when its value is empty or invalid', async () => {
+    // Merge semantics must not turn into "never clears": a form the operator
+    // emptied has to unset the binding, and an unsafe name still drops.
+    await service.setForPersonality('mine', {
+      web_search: { provider: 'exa', secret: 'exa-mine' },
+      x_search: { secret: 'xai-main' },
+    });
+
+    await service.setForPersonality('mine', { x_search: { secret: '' } });
+    expect((await service.getForPersonality('mine')).values).toEqual({
+      web_search: { provider: 'exa', secret: 'exa-mine' },
+    });
+
+    await service.setForPersonality('mine', { web_search: { provider: '', secret: '' } });
+    expect(await storage.exists('/data/personalities/mine/tools.yaml')).toBe(false);
+  });
+
+  it('a youtube binding survives the global slot and reaches the UI shape', async () => {
+    // Modelled in storage and rendered to tools.yaml, but `fromSlot` never read
+    // it and the config repository never parsed it — so the binding could not
+    // be displayed or re-saved from either store.
+    await service.setDefault({ youtube: { secret: 'google-main' } });
+    expect(await storage.read('/data/config.yaml')).toContain(
+      'toolSettings._default.youtube.secret: google-main',
+    );
+    expect((await service.getDefault()).values).toEqual({ youtube: { secret: 'google-main' } });
+  });
+
+  it('drops an unsafe youtube secret name instead of persisting it', async () => {
+    await service.setForPersonality('mine', { youtube: { secret: '../openai/apiKey' } });
+    expect(await storage.exists('/data/personalities/mine/tools.yaml')).toBe(false);
+    expect((await service.getForPersonality('mine')).values).toEqual({});
+  });
+
+  it('schemas() reports a tool settingsKey so the UI can group shared credentials', () => {
+    const registry = new DefaultToolRegistry();
+    registry.register(webSearchStub);
+    registry.register(youtubeSearchStub);
+    registry.register(youtubeCommentsStub);
+    const grouped = new ToolSettingsService({ config, personalities, toolRegistry: registry });
+
+    const { tools } = grouped.schemas();
+    expect(tools.find((t) => t.name === 'youtube_search')?.settingsKey).toBe('youtube');
+    expect(tools.find((t) => t.name === 'youtube_comments')?.settingsKey).toBe('youtube');
+    // A tool that does not declare one omits the field entirely — the client
+    // falls back to the tool name.
+    expect(tools.find((t) => t.name === 'web_search')).not.toHaveProperty('settingsKey');
   });
 
   it('rejects a reserved / unsafe personality id used as a config slot key', async () => {

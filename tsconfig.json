@@ -116,6 +116,7 @@
       "@ethosagent/execution-process-backend": ["./extensions/execution-process-backend/src"],
       "@ethosagent/execution-ssh": ["./extensions/execution-ssh/src"],
       "@ethosagent/tools-answer-engines": ["./extensions/tools-answer-engines/src"],
+      "@ethosagent/tools-search-console": ["./extensions/tools-search-console/src"],
       "@ethosagent/tools-social-search": ["./extensions/tools-social-search/src"],
       "@ethosagent/tools-browser": ["./extensions/tools-browser/src"],
       "@ethosagent/tools-code": ["./extensions/tools-code/src"],

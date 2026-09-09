@@ -1,5 +1,5 @@
 {
-  "name": "@ethosagent/tools-x-search",
+  "name": "@ethosagent/tools-search-console",
   "version": "0.0.0",
   "private": true,
   "type": "module",

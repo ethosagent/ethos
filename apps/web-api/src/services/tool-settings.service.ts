@@ -1,11 +1,16 @@
 import { normalizeWebSearchRecency } from '@ethosagent/config';
+import type { PersonalityToolsConfig } from '@ethosagent/personalities';
 import {
   EthosError,
   isValidSecretName,
   type ToolRegistry,
   type ToolSettingsSchema,
 } from '@ethosagent/types';
-import type { ConfigRepository } from '../repositories/config.repository';
+import {
+  type ConfigRepository,
+  SECRET_ONLY_TOOL_KEYS,
+  type ToolSettingsSlot,
+} from '../repositories/config.repository';
 import type { PersonalitiesService } from './personalities.service';
 
 // Generic per-tool settings surface (Phase 2, web-search-provider-selection).
@@ -19,8 +24,21 @@ import type { PersonalitiesService } from './personalities.service';
 // Only a secret NAME is ever persisted — never a value (§V S9). `web_search` is
 // the sole consumer in v1.
 
-/** Wire shape: toolName → fieldKey → string value. Schema-driven and generic;
- *  only fields a tool's `settingsSchema` declares are meaningful. */
+/**
+ * Wire shape: settings key → fieldKey → string value. Schema-driven and
+ * generic; only fields a tool's `settingsSchema` declares are meaningful.
+ *
+ * The settings key is the tool's `settingsKey` when it declares one, otherwise
+ * its name — so two tools sharing one credential (`youtube_search` /
+ * `youtube_comments`) address ONE entry here, the same way they address one
+ * stored binding. A key the write side does not know (`TOOLS_YAML_KEYS`) is
+ * ignored.
+ *
+ * A payload is a PATCH: a key it omits keeps whatever is stored, and a key it
+ * carries with an empty or invalid value clears that binding. The Security
+ * pane sends `{ web_search: … }` and nothing else, so a whole-slot replace
+ * here erased every other binding the operator had set.
+ */
 export type ToolSettingsValues = Record<string, Record<string, string>>;
 
 const WEB_SEARCH_PROVIDERS = ['exa', 'tavily', 'brave'] as const;
@@ -38,11 +56,22 @@ export class ToolSettingsService {
 
   /** Every configurable tool's schema, so the UI can render forms without any
    *  tool-specific knowledge. */
-  schemas(): { tools: Array<{ name: string; settingsSchema: ToolSettingsSchema }> } {
+  schemas(): {
+    tools: Array<{ name: string; settingsKey?: string; settingsSchema: ToolSettingsSchema }>;
+  } {
     const tools = this.opts.toolRegistry?.getAvailable() ?? [];
-    const out: Array<{ name: string; settingsSchema: ToolSettingsSchema }> = [];
+    const out: Array<{ name: string; settingsKey?: string; settingsSchema: ToolSettingsSchema }> =
+      [];
     for (const t of tools) {
-      if (t.settingsSchema) out.push({ name: t.name, settingsSchema: t.settingsSchema });
+      if (!t.settingsSchema) continue;
+      // `settingsKey` travels so the UI can group tools that share one
+      // credential into one form. Omitted when the tool does not declare one —
+      // the client's `settingsKey ?? name` fallback is the default.
+      out.push({
+        name: t.name,
+        ...(t.settingsKey ? { settingsKey: t.settingsKey } : {}),
+        settingsSchema: t.settingsSchema,
+      });
     }
     return { tools: out };
   }
@@ -87,24 +116,23 @@ export class ToolSettingsService {
       return { ok: true, storage: 'global' };
     }
     // requirePersonality + built-in guard live in the service method.
-    await this.opts.personalities.writeToolsConfig(personalityId, {
-      web_search: toWebSearch(values),
-      x_search: toXSearch(values),
-      engine_ask: toEngineAsk(values),
-    });
+    // `writeToolsConfig` re-renders the WHOLE tools.yaml with no merge of its
+    // own, so the merge has to happen here against what is already on disk.
+    const existing = this.opts.personalities.getToolsConfig(personalityId);
+    await this.opts.personalities.writeToolsConfig(personalityId, mergeSlot(existing, values));
     return { ok: true, storage: 'personality' };
   }
 
   private async writeGlobalSlot(pid: string, values: ToolSettingsValues): Promise<void> {
     assertSafeSlotKey(pid);
+    // `ConfigRepository.update` replaces a slot wholesale (its own comment says
+    // "slot-level replace, patch wins"), so read the slot and patch it here.
+    // Limitation: this read sits OUTSIDE `update`'s write chain, so two saves
+    // racing on the same slot can still have the later one merge onto a stale
+    // read. Nothing here serializes that; the chain only orders the writes.
+    const raw = await this.opts.config.read();
     await this.opts.config.update({
-      toolSettings: {
-        [pid]: {
-          web_search: toWebSearch(values),
-          x_search: toXSearch(values),
-          engine_ask: toEngineAsk(values),
-        },
-      },
+      toolSettings: { [pid]: mergeSlot(raw?.toolSettings[pid], values) },
     });
   }
 }
@@ -127,17 +155,33 @@ function assertSafeSlotKey(pid: string): void {
   }
 }
 
+/**
+ * Patch a stored slot with an incoming payload. A key the payload OMITS keeps
+ * whatever is stored; a key it carries replaces that binding, clearing it when
+ * the value is empty or fails narrowing.
+ *
+ * Both stores need this: `ConfigRepository.update` replaces a `toolSettings`
+ * slot wholesale, and `writeToolsConfig` re-renders the whole tools.yaml. With
+ * a single-key payload (which is what the Security pane's web-search form
+ * sends) a whole-slot write erases every binding the form does not own.
+ */
+function mergeSlot(
+  existing: ToolSettingsSlot | undefined,
+  values: ToolSettingsValues,
+): PersonalityToolsConfig {
+  const next: PersonalityToolsConfig = {};
+  const ws = toWebSearch(values.web_search ?? existing?.web_search);
+  if (Object.keys(ws).length > 0) next.web_search = ws;
+  for (const key of SECRET_ONLY_TOOL_KEYS) {
+    const binding = toSecretBinding(values[key] ?? existing?.[key]);
+    if (binding.secret) next[key] = binding;
+  }
+  return next;
+}
+
 /** Map the on-disk / stored bindings to the generic wire shape, omitting empty
  *  fields so the UI shows "unset" rather than blank strings. */
-function fromSlot(
-  slot:
-    | {
-        web_search?: { provider?: string; secret?: string; recency?: string };
-        x_search?: { secret?: string };
-        engine_ask?: { secret?: string };
-      }
-    | undefined,
-): ToolSettingsValues {
+function fromSlot(slot: ToolSettingsSlot | undefined): ToolSettingsValues {
   const out: ToolSettingsValues = {};
   const ws = slot?.web_search;
   if (ws) {
@@ -150,33 +194,31 @@ function fromSlot(
     if (ws.recency) fields.recency = ws.recency;
     if (Object.keys(fields).length > 0) out.web_search = fields;
   }
-  if (slot?.x_search?.secret) out.x_search = { secret: slot.x_search.secret };
-  if (slot?.engine_ask?.secret) out.engine_ask = { secret: slot.engine_ask.secret };
+  // Every remaining roster key, so a binding the write side can store is one
+  // the UI can display. `youtube` was modelled in storage and rendered to
+  // tools.yaml but missing here, so it could never be shown or re-saved.
+  for (const key of SECRET_ONLY_TOOL_KEYS) {
+    const secret = slot?.[key]?.secret;
+    if (secret) out[key] = { secret };
+  }
   return out;
 }
 
-/** Narrow the generic wire values into the typed x_search binding — a secret
- *  NAME only, validated with the same rule the vault enforces. */
-function toXSearch(values: ToolSettingsValues): { secret?: string } {
-  const secret = values.x_search?.secret?.trim();
-  return secret && isValidSecretName(secret) ? { secret } : {};
-}
-
-/** Same narrowing for the `engine_ask` binding — one provider (OpenAI), so a
- *  secret NAME only. */
-function toEngineAsk(values: ToolSettingsValues): { secret?: string } {
-  const secret = values.engine_ask?.secret?.trim();
+/** Narrow a binding whose only field is a secret NAME, validated with the same
+ *  rule the vault enforces. Shared by `x_search`, `engine_ask`, `youtube` and
+ *  every future roster key shaped like them. */
+function toSecretBinding(source: { secret?: string } | undefined): { secret?: string } {
+  const secret = source?.secret?.trim();
   return secret && isValidSecretName(secret) ? { secret } : {};
 }
 
 /** Narrow the generic wire values into the typed web_search binding. Unknown
  *  providers and empty strings are dropped (treated as unset). */
-function toWebSearch(values: ToolSettingsValues): {
+function toWebSearch(fields: { provider?: string; secret?: string; recency?: string } = {}): {
   provider?: WebSearchProvider;
   secret?: string;
   recency?: string;
 } {
-  const fields = values.web_search ?? {};
   const out: { provider?: WebSearchProvider; secret?: string; recency?: string } = {};
   const provider = fields.provider?.trim();
   if (provider && (WEB_SEARCH_PROVIDERS as readonly string[]).includes(provider)) {

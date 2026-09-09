@@ -49,6 +49,7 @@
     "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/team-supervisor": "workspace:*",
     "@ethosagent/tools-mcp": "workspace:*",
+    "@ethosagent/tools-search-console": "workspace:*",
     "@ethosagent/tools-ui": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/voice-session": "workspace:*",

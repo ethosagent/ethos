@@ -411,12 +411,21 @@ export interface YouTubeToolSetting {
   secret?: string;
 }
 
+/** A personality's binding for `gsc_sites` / `gsc_queries` — one Google
+ *  service account, shared by both tools, so only the secret NAME. Resolves to
+ *  `providers/google-search-console/<name>`; absent → the default
+ *  `providers/google-search-console/serviceAccount`. */
+export interface SearchConsoleToolSetting {
+  secret?: string;
+}
+
 /** Per-personality tool config. */
 export interface PersonalityToolSettings {
   web_search?: WebSearchToolSetting;
   x_search?: XSearchToolSetting;
   engine_ask?: EngineAskToolSetting;
   youtube?: YouTubeToolSetting;
+  search_console?: SearchConsoleToolSetting;
 }
 
 /** Global FALLBACK map: personality ID (or `_default`) → per-tool config. */

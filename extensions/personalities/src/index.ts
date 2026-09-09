@@ -295,6 +295,13 @@ export interface PersonalityToolsConfig {
    * project, same daily quota pool.
    */
   youtube?: { secret?: string };
+  /**
+   * One provider (a Google service account) — the name resolves to
+   * `providers/google-search-console/<name>`. Shared by both `gsc_sites` and
+   * `gsc_queries`: one credential, one grant, one Cloud project. A separate
+   * namespace from `youtube` above, which is an API key, not an RSA identity.
+   */
+  search_console?: { secret?: string };
 }
 
 const RECENCY_SHAPE = /^\d{1,4}[dwmy]$/;
@@ -316,8 +323,24 @@ function normalizeRecency(value: string): string | null {
   return RECENCY_SHAPE.test(normalized) ? normalized : null;
 }
 
-const TOOLS_YAML_KEYS = ['web_search', 'x_search', 'engine_ask', 'youtube'] as const;
-type ToolsYamlKey = (typeof TOOLS_YAML_KEYS)[number];
+/**
+ * Every binding key `tools.yaml` (and the global `toolSettings` fallback slot)
+ * can carry. This tuple is the SOLE gate on the read side — `isToolsYamlKey`
+ * below is called from `parseToolsYaml`, so a key absent from it is silently
+ * dropped on parse — which makes it the single source of truth for the write
+ * side too. Exported so `apps/web-api`'s tool-settings service and config
+ * repository derive their roster from it instead of hand-maintaining literals
+ * that go stale the next time a tool is added (plan/phases/search-console.md
+ * D23). Every key but `web_search` carries a secret NAME and nothing else.
+ */
+export const TOOLS_YAML_KEYS = [
+  'web_search',
+  'x_search',
+  'engine_ask',
+  'youtube',
+  'search_console',
+] as const;
+export type ToolsYamlKey = (typeof TOOLS_YAML_KEYS)[number];
 
 function isToolsYamlKey(k: string): k is ToolsYamlKey {
   return (TOOLS_YAML_KEYS as readonly string[]).includes(k);
@@ -401,6 +424,10 @@ export function parseToolsYaml(src: string): PersonalityToolsConfig {
       if (entry.secret) out.youtube = { secret: entry.secret };
       continue;
     }
+    if (tool === 'search_console') {
+      if (entry.secret) out.search_console = { secret: entry.secret };
+      continue;
+    }
     const ws: NonNullable<PersonalityToolsConfig['web_search']> = {};
     if (entry.provider === 'exa' || entry.provider === 'tavily' || entry.provider === 'brave') {
       ws.provider = entry.provider;
@@ -448,6 +475,9 @@ export function renderToolsYaml(config: PersonalityToolsConfig): string {
   if (config.x_search?.secret) lines.push(`x_search: { secret: ${config.x_search.secret} }`);
   if (config.engine_ask?.secret) lines.push(`engine_ask: { secret: ${config.engine_ask.secret} }`);
   if (config.youtube?.secret) lines.push(`youtube: { secret: ${config.youtube.secret} }`);
+  if (config.search_console?.secret) {
+    lines.push(`search_console: { secret: ${config.search_console.secret} }`);
+  }
   return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
 }
 
@@ -1864,7 +1894,16 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     let toolsConfig: PersonalityToolsConfig | undefined;
     if (toolsSrc) {
       const parsed = parseToolsYaml(toolsSrc);
-      if (parsed.web_search || parsed.x_search || parsed.engine_ask || parsed.youtube) {
+      // Roster-driven, NOT a hardcoded list: this guard was once a hand-written
+      // `parsed.web_search || parsed.x_search || ...` chain, and `search_console`
+      // was added to `TOOLS_YAML_KEYS` (and to parse/render) without being added
+      // here — so a tools.yaml carrying only that binding parsed correctly and
+      // was then silently discarded. `parseToolsYaml` only sets a key when it
+      // holds a real field, so "any roster key present" IS "any binding at all".
+      // An empty parse stays `undefined` rather than `{}`: `getToolsConfig`
+      // documents undefined as "no bindings", and it is what the unsafe-secret
+      // tests below assert.
+      if (TOOLS_YAML_KEYS.some((key) => parsed[key])) {
         toolsConfig = parsed;
       }
     }

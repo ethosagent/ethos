@@ -1,3 +1,4 @@
+import { resolveToolSecretRef } from '@ethosagent/core';
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -170,14 +171,19 @@ export function createXSearchTool(opts: CreateXSearchToolOptions = {}): Tool {
 
   // Same resolution order as web_search: personality tools.yaml → global
   // toolSettings[pid] → global toolSettings._default → the default-named key.
+  // A rung whose name is blank or fails isValidSecretName falls through to the
+  // next one — see resolveToolSecretRef (packages/core/src/tool-secret-ref.ts).
   function selectSecretRef(ctx: ToolContext): string {
     const pid = ctx.personalityId;
-    const setting =
-      (pid ? resolvePersonalitySetting?.(pid) : undefined) ??
-      (pid ? toolSettings?.[pid]?.x_search : undefined) ??
-      toolSettings?._default?.x_search;
-    const name = setting?.secret?.trim();
-    return name ? `${SECRET_PREFIX}${name}` : DEFAULT_SECRET_REF;
+    return resolveToolSecretRef({
+      rungs: [
+        pid ? resolvePersonalitySetting?.(pid) : undefined,
+        pid ? toolSettings?.[pid]?.x_search : undefined,
+        toolSettings?._default?.x_search,
+      ],
+      prefix: SECRET_PREFIX,
+      defaultRef: DEFAULT_SECRET_REF,
+    });
   }
 
   return {

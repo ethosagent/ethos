@@ -314,6 +314,17 @@ export interface Tool<TArgs = unknown> {
    * without a schema behave exactly as before. See `ToolSettingsSchema`.
    */
   settingsSchema?: ToolSettingsSchema;
+  /**
+   * The storage slot this tool's settings live in; defaults to the tool name.
+   * Two tools sharing one credential declare the same key — `youtube_search`
+   * and `youtube_comments` both declare `youtube`, because one Google API key,
+   * one project and one daily quota pool back both of them. The settings UI
+   * groups configurable tools by `settingsKey ?? name` and renders ONE form per
+   * group; without it the operator gets two identical credential forms writing
+   * two wire keys against one storage key, and whatever they type in the second
+   * is silently discarded (plan/phases/search-console.md D24).
+   */
+  settingsKey?: string;
   execute: (args: TArgs, ctx: ToolContext) => Promise<ToolResult>;
   isAvailable?: () => boolean;
   /**

@@ -8,6 +8,7 @@ import {
   FilePersonalityRegistry,
   parseToolsYaml,
   renderToolsYaml,
+  TOOLS_YAML_KEYS,
 } from '../index';
 
 let testDir: string;
@@ -358,6 +359,103 @@ describe('FilePersonalityRegistry', () => {
       const rendered = renderToolsYaml(config);
       expect(rendered).toContain('youtube: { secret: yt-main }');
       expect(parseToolsYaml(rendered)).toEqual(config);
+    });
+
+    it('round-trips a hand-written search_console binding', () => {
+      // The two Google bindings are separate keys on purpose: `youtube` is an
+      // API key, `search_console` a service-account identity (plan D3).
+      const config = {
+        youtube: { secret: 'yt-main' },
+        search_console: { secret: 'clientAcme' },
+      };
+      expect(parseToolsYaml('search_console: { secret: clientAcme }\n')).toEqual({
+        search_console: { secret: 'clientAcme' },
+      });
+      const rendered = renderToolsYaml(config);
+      expect(rendered).toContain('search_console: { secret: clientAcme }');
+      expect(parseToolsYaml(rendered)).toEqual(config);
+    });
+
+    it('keeps a tools.yaml whose only binding is search_console', async () => {
+      // Regression: the round-trip test above passes because it calls
+      // parseToolsYaml DIRECTLY. buildConfig re-checked the parse result against
+      // a hardcoded list of the four earlier roster keys, so a search_console-only
+      // tools.yaml parsed correctly and was then silently discarded —
+      // gsc_sites/gsc_queries fell back to the default secret ref instead of the
+      // operator's named binding.
+      const dir = join(testDir, 'gsc-alone');
+      await mkdir(dir);
+      await writeFile(join(dir, 'config.yaml'), 'name: GscAlone\n');
+      await writeFile(join(dir, 'SOUL.md'), '# GscAlone');
+      await writeFile(join(dir, 'tools.yaml'), 'search_console: { secret: clientAcme }\n');
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('gsc-alone')?.search_console?.secret).toBe('clientAcme');
+    });
+
+    it('keeps a tools.yaml whose only binding is any one roster key', async () => {
+      const cases = [
+        {
+          key: 'web_search',
+          yaml: 'web_search: { provider: exa, secret: exa-solo }\n',
+          expected: { web_search: { provider: 'exa', secret: 'exa-solo' } },
+        },
+        {
+          key: 'x_search',
+          yaml: 'x_search: { secret: xai-solo }\n',
+          expected: { x_search: { secret: 'xai-solo' } },
+        },
+        {
+          key: 'engine_ask',
+          yaml: 'engine_ask: { secret: openai-solo }\n',
+          expected: { engine_ask: { secret: 'openai-solo' } },
+        },
+        {
+          key: 'youtube',
+          yaml: 'youtube: { secret: yt-solo }\n',
+          expected: { youtube: { secret: 'yt-solo' } },
+        },
+        {
+          key: 'search_console',
+          yaml: 'search_console: { secret: gsc-solo }\n',
+          expected: { search_console: { secret: 'gsc-solo' } },
+        },
+      ];
+      // Exhaustive over the roster, so a key added to TOOLS_YAML_KEYS without a
+      // case here fails loudly instead of going untested at this layer — which
+      // is exactly how search_console slipped past the buildConfig guard.
+      expect(cases.map((c) => c.key)).toEqual([...TOOLS_YAML_KEYS]);
+
+      for (const c of cases) {
+        const dir = join(testDir, `solo-${c.key}`);
+        await mkdir(dir);
+        await writeFile(join(dir, 'config.yaml'), `name: Solo ${c.key}\n`);
+        await writeFile(join(dir, 'SOUL.md'), `# Solo ${c.key}`);
+        await writeFile(join(dir, 'tools.yaml'), c.yaml);
+      }
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      for (const c of cases) {
+        expect(registry.getToolsConfig(`solo-${c.key}`)).toEqual(c.expected);
+      }
+    });
+
+    it('getToolsConfig is undefined for a tools.yaml with no recognised binding', async () => {
+      // An empty parse result stays undefined rather than becoming `{}` —
+      // undefined is what "this personality has no bindings" means to every
+      // caller (compose-tools' resolvePersonalitySetting, web-api's
+      // tool-settings service).
+      const dir = join(testDir, 'nokeys');
+      await mkdir(dir);
+      await writeFile(join(dir, 'config.yaml'), 'name: NoKeys\n');
+      await writeFile(join(dir, 'SOUL.md'), '# NoKeys');
+      await writeFile(join(dir, 'tools.yaml'), '# no bindings yet\nbogus_tool: { secret: main }\n');
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('nokeys')).toBeUndefined();
     });
 
     it('drops a youtube binding whose secret name is unsafe', async () => {

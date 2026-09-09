@@ -694,6 +694,9 @@ importers:
       '@ethosagent/tools-mcp':
         specifier: workspace:*
         version: link:../../extensions/tools-mcp
+      '@ethosagent/tools-search-console':
+        specifier: workspace:*
+        version: link:../../extensions/tools-search-console
       '@ethosagent/tools-ui':
         specifier: workspace:*
         version: link:../../extensions/tools-ui
@@ -1928,6 +1931,9 @@ importers:
 
   extensions/tools-answer-engines:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2181,6 +2187,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/tools-search-console:
+    dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+
   extensions/tools-skills:
     dependencies:
       '@ethosagent/types':
@@ -2189,6 +2204,9 @@ importers:
 
   extensions/tools-social-search:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/tools-web':
         specifier: workspace:*
         version: link:../tools-web
@@ -2280,6 +2298,9 @@ importers:
 
   extensions/tools-x-search:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2826,6 +2847,9 @@ importers:
       '@ethosagent/tools-reddit':
         specifier: workspace:*
         version: link:../../extensions/tools-reddit
+      '@ethosagent/tools-search-console':
+        specifier: workspace:*
+        version: link:../../extensions/tools-search-console
       '@ethosagent/tools-skills':
         specifier: workspace:*
         version: link:../../extensions/tools-skills

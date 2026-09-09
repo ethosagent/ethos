@@ -54,6 +54,10 @@ const PROVIDER_GROUPS: Array<{ label: string; providers: Array<[NamedSecretProvi
     label: 'YouTube',
     providers: [['google', 'Google (YouTube Data API)']],
   },
+  {
+    label: 'Search Console',
+    providers: [['google-search-console', 'Google Search Console (service account)']],
+  },
 ];
 
 function asNamedSecretProvider(v: string | undefined): NamedSecretProvider | undefined {

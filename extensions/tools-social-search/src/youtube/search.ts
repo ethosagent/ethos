@@ -120,6 +120,10 @@ export function createYouTubeSearchTool(opts: CreateYouTubeToolOptions = {}): To
       secrets: ['providers/google/*'],
     },
     outputIsUntrusted: true,
+    // One credential, two tools: the settings UI groups by this key and renders
+    // a single form covering `youtube_search` and `youtube_comments`, and the
+    // binding is stored under `youtube` in both stores.
+    settingsKey: 'youtube',
     settingsSchema: {
       fields: [
         {

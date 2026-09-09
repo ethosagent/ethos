@@ -1,3 +1,4 @@
+import { resolveToolSecretRef } from '@ethosagent/core';
 import type { ToolContext, ToolResult } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -53,15 +54,20 @@ export interface CreateYouTubeToolOptions {
 
 /** Same resolution order as `x_search`'s `selectSecretRef`: personality
  *  tools.yaml → global toolSettings[pid] → global toolSettings._default →
- *  the default-named key. */
+ *  the default-named key. A rung whose name is blank or fails
+ *  `isValidSecretName` falls through to the next one — see
+ *  `resolveToolSecretRef` (packages/core/src/tool-secret-ref.ts). */
 export function selectYouTubeSecretRef(ctx: ToolContext, opts: CreateYouTubeToolOptions): string {
   const pid = ctx.personalityId;
-  const setting =
-    (pid ? opts.resolvePersonalitySetting?.(pid) : undefined) ??
-    (pid ? opts.toolSettings?.[pid]?.youtube : undefined) ??
-    opts.toolSettings?._default?.youtube;
-  const name = setting?.secret?.trim();
-  return name ? `${SECRET_PREFIX}${name}` : DEFAULT_SECRET_REF;
+  return resolveToolSecretRef({
+    rungs: [
+      pid ? opts.resolvePersonalitySetting?.(pid) : undefined,
+      pid ? opts.toolSettings?.[pid]?.youtube : undefined,
+      opts.toolSettings?._default?.youtube,
+    ],
+    prefix: SECRET_PREFIX,
+    defaultRef: DEFAULT_SECRET_REF,
+  });
 }
 
 async function readErrorReason(response: Response): Promise<string | undefined> {

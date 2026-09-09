@@ -4524,8 +4524,8 @@ const ToolSettingsSchemaSchema = z.object({
   ),
 });
 
-/** toolName → fieldKey → string value. Only a secret NAME is ever carried for
- *  a secret-binding field — never a value. */
+/** settings key (`settingsKey ?? toolName`) → fieldKey → string value. Only a
+ *  secret NAME is ever carried for a secret-binding field — never a value. */
 const ToolSettingsValuesSchema = z.record(z.string(), z.record(z.string(), z.string()));
 const ToolStorageSchema = z.enum(['personality', 'global']);
 
@@ -4533,7 +4533,16 @@ const ToolStorageSchema = z.enum(['personality', 'global']);
 const toolSettings = {
   schemas: oc.output(
     z.object({
-      tools: z.array(z.object({ name: z.string(), settingsSchema: ToolSettingsSchemaSchema })),
+      tools: z.array(
+        z.object({
+          name: z.string(),
+          /** Storage slot the tool's settings live in; absent → the tool name.
+           *  Two tools sharing one credential report the same key, and the UI
+           *  renders ONE form per key. Mirrors `Tool.settingsKey`. */
+          settingsKey: z.string().optional(),
+          settingsSchema: ToolSettingsSchemaSchema,
+        }),
+      ),
     }),
   ),
   getDefault: oc.output(z.object({ values: ToolSettingsValuesSchema })),

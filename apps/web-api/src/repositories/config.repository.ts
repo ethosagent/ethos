@@ -6,6 +6,7 @@ import {
   secretRefForConfigKey,
 } from '@ethosagent/config';
 import { deriveBotKey } from '@ethosagent/core';
+import { TOOLS_YAML_KEYS, type ToolsYamlKey } from '@ethosagent/personalities';
 import type {
   RealtimeProviderEntry,
   SecretsResolver,
@@ -38,6 +39,27 @@ export interface ConfigRepositoryOptions {
    */
   secrets: SecretsResolver;
 }
+
+/**
+ * The keys in a `toolSettings` slot that carry a secret NAME and nothing else —
+ * everything on the roster except `web_search`, which also carries a provider
+ * and a default recency. Derived from `TOOLS_YAML_KEYS` rather than restated,
+ * so a tool added there parses and renders here with no second edit
+ * (plan/phases/search-console.md D23).
+ */
+export const SECRET_ONLY_TOOL_KEYS = TOOLS_YAML_KEYS.filter(
+  (k): k is Exclude<ToolsYamlKey, 'web_search'> => k !== 'web_search',
+);
+
+function isSecretOnlyToolKey(k: string): k is Exclude<ToolsYamlKey, 'web_search'> {
+  return (SECRET_ONLY_TOOL_KEYS as readonly string[]).includes(k);
+}
+
+/** One personality's (or `_default`'s) tool bindings, as they sit in
+ *  config.yaml. Only secret NAMES live here — never values (§V S9). */
+export type ToolSettingsSlot = {
+  web_search?: { provider?: string; secret?: string; recency?: string };
+} & Partial<Record<Exclude<ToolsYamlKey, 'web_search'>, { secret?: string }>>;
 
 /** A single entry in the provider chain (providers.N.* lines in config.yaml). */
 export interface RawProviderEntry {
@@ -81,14 +103,7 @@ export interface RawConfig {
    * here — never values (§V S9). Mirrors the flat-key format
    * packages/config writes/parses.
    */
-  toolSettings: Record<
-    string,
-    {
-      web_search?: { provider?: string; secret?: string; recency?: string };
-      x_search?: { secret?: string };
-      engine_ask?: { secret?: string };
-    }
-  >;
+  toolSettings: Record<string, ToolSettingsSlot>;
   /** Ordered provider chain for ChainedProvider failover. */
   providers: RawProviderEntry[];
   /** Every other top-level key the file contained (telegramToken etc.).
@@ -227,27 +242,21 @@ export class ConfigRepository {
         }
         continue;
       }
-      // `toolSettings.<personality|_default>.x_search.secret: <name>`
-      const xs = line.match(/^toolSettings\.([^.]+)\.x_search\.secret:\s*(.+)$/);
-      if (xs) {
-        const pid = xs[1]?.trim();
-        const value = xs[2] !== undefined ? stripQuotes(xs[2].trim()) : '';
+      // `toolSettings.<personality|_default>.<tool>.secret: <name>` — every
+      // roster key but `web_search`, which the branch above handles. One
+      // roster-driven branch rather than one hand-written branch per tool: the
+      // literals this replaced omitted `youtube`, so a YouTube binding written
+      // to a built-in's slot fell through to `passthrough` and never reached
+      // the settings surface that wrote it.
+      const other = line.match(/^toolSettings\.([^.]+)\.([A-Za-z0-9_]+)\.secret:\s*(.+)$/);
+      const otherTool = other?.[2];
+      if (other && otherTool && isSecretOnlyToolKey(otherTool)) {
+        const pid = other[1]?.trim();
+        const value = other[3] !== undefined ? stripQuotes(other[3].trim()) : '';
         if (pid && value) {
           const slot = config.toolSettings[pid] ?? {};
           config.toolSettings[pid] = slot;
-          slot.x_search = { secret: value };
-        }
-        continue;
-      }
-      // `toolSettings.<personality|_default>.engine_ask.secret: <name>`
-      const ea = line.match(/^toolSettings\.([^.]+)\.engine_ask\.secret:\s*(.+)$/);
-      if (ea) {
-        const pid = ea[1]?.trim();
-        const value = ea[2] !== undefined ? stripQuotes(ea[2].trim()) : '';
-        if (pid && value) {
-          const slot = config.toolSettings[pid] ?? {};
-          config.toolSettings[pid] = slot;
-          slot.engine_ask = { secret: value };
+          slot[otherTool] = { secret: value };
         }
         continue;
       }
@@ -515,13 +524,11 @@ export class ConfigRepository {
       if (ws?.recency) {
         lines.push(`toolSettings.${yamlScalar(pid)}.web_search.recency: ${yamlScalar(ws.recency)}`);
       }
-      const xs = settings.x_search;
-      if (xs?.secret) {
-        lines.push(`toolSettings.${yamlScalar(pid)}.x_search.secret: ${yamlScalar(xs.secret)}`);
-      }
-      const ea = settings.engine_ask;
-      if (ea?.secret) {
-        lines.push(`toolSettings.${yamlScalar(pid)}.engine_ask.secret: ${yamlScalar(ea.secret)}`);
+      for (const tool of SECRET_ONLY_TOOL_KEYS) {
+        const secret = settings[tool]?.secret;
+        if (secret) {
+          lines.push(`toolSettings.${yamlScalar(pid)}.${tool}.secret: ${yamlScalar(secret)}`);
+        }
       }
     }
     for (let i = 0; i < config.providers.length; i++) {

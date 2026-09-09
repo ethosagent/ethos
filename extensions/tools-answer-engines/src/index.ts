@@ -1,4 +1,5 @@
-import { isValidSecretName, type Tool, type ToolContext, type ToolResult } from '@ethosagent/types';
+import { resolveToolSecretRef } from '@ethosagent/core';
+import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 import { DEFAULT_MODEL } from './engines/chatgpt';
 import { ALL_ENGINES, findEngine } from './engines/roster';
 import {
@@ -77,19 +78,19 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
 
   // Same resolution order as x_search: personality tools.yaml → global
   // toolSettings[pid] → global toolSettings._default → the default-named key.
-  // A name that fails isValidSecretName falls through to the next rung.
+  // A rung whose name is blank or fails isValidSecretName falls through to the
+  // next one — see resolveToolSecretRef (packages/core/src/tool-secret-ref.ts).
   function selectSecretRef(ctx: ToolContext, engine: AnswerEngine): string {
     const pid = ctx.personalityId;
-    const rungs = [
-      pid ? resolvePersonalitySetting?.(pid) : undefined,
-      pid ? toolSettings?.[pid]?.engine_ask : undefined,
-      toolSettings?._default?.engine_ask,
-    ];
-    for (const setting of rungs) {
-      const name = setting?.secret?.trim();
-      if (name && isValidSecretName(name)) return `${engine.secretPrefix}${name}`;
-    }
-    return engine.defaultSecretRef;
+    return resolveToolSecretRef({
+      rungs: [
+        pid ? resolvePersonalitySetting?.(pid) : undefined,
+        pid ? toolSettings?.[pid]?.engine_ask : undefined,
+        toolSettings?._default?.engine_ask,
+      ],
+      prefix: engine.secretPrefix,
+      defaultRef: engine.defaultSecretRef,
+    });
   }
 
   return {

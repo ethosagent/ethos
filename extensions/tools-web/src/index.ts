@@ -70,8 +70,11 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
   const searxng = opts.searxngUrl ? createSearxngBackend(opts.searxngUrl) : null;
 
   // Rungs 1-3 are tool-specific (the `web_search` key in tools.yaml /
-  // toolSettings) and stay a local `??` chain, same pattern as
-  // `selectSecretRef` in extensions/tools-x-search/src/index.ts. Rungs 4-6
+  // toolSettings) and stay a local `??` chain here, because this tool resolves
+  // a whole SETTING (provider + secret) rather than a secret ref — unlike
+  // `selectSecretRef` in extensions/tools-x-search/src/index.ts, which now
+  // delegates to `resolveToolSecretRef` (packages/core/src/tool-secret-ref.ts)
+  // and therefore falls through on a blank or malformed name. Rungs 4-6
   // (explicit provider → construction-time preference → first-available →
   // keyless SearXNG) are generic over any backend-dispatching tool and live
   // in the shared `selectSearchBackend` (search-backends.ts).

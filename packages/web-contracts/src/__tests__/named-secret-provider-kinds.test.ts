@@ -25,4 +25,18 @@ describe('NAMED_SECRET_PROVIDER_KINDS', () => {
   it('maps google to youtube-api-key', () => {
     expect(NAMED_SECRET_PROVIDER_KINDS.google).toBe('youtube-api-key');
   });
+
+  it('maps google-search-console to gsc-service-account', () => {
+    expect(NAMED_SECRET_PROVIDER_KINDS['google-search-console']).toBe('gsc-service-account');
+  });
+
+  // The two Google namespaces are deliberately distinct: a YouTube Data API key
+  // and a Search Console service-account JSON are different credentials with
+  // different quotas, failure modes and rotation stories (plan D3). A picker
+  // filtered by one kind must never offer the other's secrets.
+  it('keeps the two google namespaces on separate kinds', () => {
+    expect(NAMED_SECRET_PROVIDER_KINDS.google).not.toBe(
+      NAMED_SECRET_PROVIDER_KINDS['google-search-console'],
+    );
+  });
 });

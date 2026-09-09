@@ -319,6 +319,32 @@ describe('youtube_search — named-secret binding resolution', () => {
     await youtubeSearchTool.execute({ query: 'q' }, ctxWith(rec.scopedFetch, secrets));
     expect(secrets.refs).toEqual(['providers/google/apiKey']);
   });
+
+  // Behaviour CHANGE, search-console.md §13 PR0: selectYouTubeSecretRef used
+  // to take the first rung whose setting object existed and land on
+  // DEFAULT_SECRET_REF if its name was blank or malformed, skipping the rungs
+  // below. It now shares engine_ask's per-rung validation via
+  // resolveToolSecretRef. Covers youtube_comments too — one shared resolver.
+  it('an invalid secret name falls through to the next rung instead of escaping the prefix', async () => {
+    const rec = makeQueueFetch([{ body: { items: [] } }, { body: { items: [] } }]);
+    const secrets = makeRecordingSecrets();
+    const tool = createYouTubeSearchTool({
+      resolvePersonalitySetting: () => ({ secret: '../xai/apiKey' }),
+      toolSettings: {
+        scout: { youtube: { secret: 'has space' } },
+        _default: { youtube: { secret: 'from-default' } },
+      },
+    });
+    await tool.execute({ query: 'q' }, withPersonality(rec.scopedFetch, secrets, 'scout'));
+    expect(secrets.refs).toEqual(['providers/google/from-default']);
+
+    const allInvalid = createYouTubeSearchTool({
+      resolvePersonalitySetting: () => ({ secret: 'a/b' }),
+      toolSettings: { _default: { youtube: { secret: '' } } },
+    });
+    await allInvalid.execute({ query: 'q' }, withPersonality(rec.scopedFetch, secrets, 'scout'));
+    expect(secrets.refs.at(-1)).toBe('providers/google/apiKey');
+  });
 });
 
 describe('youtube_search — uses ctx.scopedFetch, never globalThis.fetch', () => {

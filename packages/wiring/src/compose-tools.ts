@@ -65,6 +65,7 @@ import { compose as composePersonalityDesign } from '@ethosagent/tools-personali
 import { createProcessGuardHook, isAlive } from '@ethosagent/tools-process';
 import { compose as composeProcess } from '@ethosagent/tools-process/compose';
 import { createRedditSearchTool, createRedditThreadTool } from '@ethosagent/tools-reddit';
+import { createGscQueriesTool, createGscSitesTool } from '@ethosagent/tools-search-console';
 import { compose as composeSkillsTools } from '@ethosagent/tools-skills/compose';
 import {
   createLinkedInSearchTool,
@@ -1182,6 +1183,15 @@ export async function composeAllTools(
   };
   tools.register(createYouTubeSearchTool(youtubeToolOptions));
   tools.register(createYouTubeCommentsTool(youtubeToolOptions));
+  // One service-account credential, two tools — same shape as the YouTube pair
+  // above, and the reason both declare `settingsKey: 'search_console'`.
+  const searchConsoleToolOptions = {
+    resolvePersonalitySetting: (personalityId: string) =>
+      personalities.getToolsConfig(personalityId)?.search_console,
+    ...(config.toolSettings ? { toolSettings: config.toolSettings } : {}),
+  };
+  tools.register(createGscSitesTool(searchConsoleToolOptions));
+  tools.register(createGscQueriesTool(searchConsoleToolOptions));
   // quora_search / linkedin_search / reddit_web_search read web_search's
   // EXISTING binding rather than a tools.yaml key of their own (plan D3a) —
   // same two layers web_search itself resolves, plus the same

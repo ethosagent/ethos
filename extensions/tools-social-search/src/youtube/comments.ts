@@ -104,6 +104,8 @@ export function createYouTubeCommentsTool(opts: CreateYouTubeToolOptions = {}): 
       secrets: ['providers/google/*'],
     },
     outputIsUntrusted: true,
+    // Same shared `youtube` credential as `youtube_search` — see that tool.
+    settingsKey: 'youtube',
     settingsSchema: {
       fields: [
         {

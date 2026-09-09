@@ -195,6 +195,31 @@ describe('x_search — named-secret binding', () => {
     expect(secrets.refs).toEqual(['providers/xai/apiKey']);
   });
 
+  // Behaviour CHANGE, search-console.md §13 PR0: x_search used to take the
+  // first rung whose setting object existed and land on DEFAULT_SECRET_REF if
+  // its name was blank or malformed, skipping the rungs below. It now shares
+  // engine_ask's per-rung validation via resolveToolSecretRef.
+  it('an invalid secret name falls through to the next rung instead of escaping the prefix', async () => {
+    const rec = makeRecordingFetch({ output: [], citations: [] });
+    const secrets = makeRecordingSecrets();
+    const tool = createXSearchTool({
+      resolvePersonalitySetting: () => ({ secret: '../openai/apiKey' }),
+      toolSettings: {
+        scout: { x_search: { secret: 'has space' } },
+        _default: { x_search: { secret: 'from-default' } },
+      },
+    });
+    await tool.execute({ query: 'q' }, withPersonality(rec.scopedFetch, secrets, 'scout'));
+    expect(secrets.refs).toEqual(['providers/xai/from-default']);
+
+    const allInvalid = createXSearchTool({
+      resolvePersonalitySetting: () => ({ secret: 'a/b' }),
+      toolSettings: { _default: { x_search: { secret: '' } } },
+    });
+    await allInvalid.execute({ query: 'q' }, withPersonality(rec.scopedFetch, secrets, 'scout'));
+    expect(secrets.refs.at(-1)).toBe('providers/xai/apiKey');
+  });
+
   it('a bound name that resolves to nothing names the exact dialog to fix it', async () => {
     const rec = makeRecordingFetch({});
     const tool = createXSearchTool({ resolvePersonalitySetting: () => ({ secret: 'missing' }) });

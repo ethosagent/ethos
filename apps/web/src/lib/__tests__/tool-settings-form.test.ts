@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { describeToolSettingsFields, type ToolSettingsSchemaWire } from '../tool-settings-form';
+import {
+  describeToolSettingsFields,
+  groupToolSettings,
+  type ToolSettingsSchemaWire,
+} from '../tool-settings-form';
 
 // The per-tool config form renders FROM a tool's settingsSchema. This exercises
 // the pure schema→control mapping (DOM-free) — the same function the form uses.
@@ -64,5 +68,49 @@ describe('describeToolSettingsFields', () => {
     expect(info.text).toBe('Uses the web_search binding.');
     expect(info.key).toBe('info:1');
     expect(info.key).not.toBe(controls[0]?.key);
+  });
+});
+
+// `ToolSettingsValues` is keyed by the STORAGE slot, not the tool name. Two
+// tools sharing one credential must therefore collapse into one form writing
+// one key — otherwise the operator sees two identical credential forms, the
+// second one's value is written under a key nothing reads, and whatever they
+// typed there is silently discarded (plan/phases/search-console.md D24).
+describe('groupToolSettings', () => {
+  const youtubeSchema: ToolSettingsSchemaWire = {
+    fields: [
+      {
+        kind: 'secret-binding',
+        key: 'secret',
+        label: 'Google API key (YouTube)',
+        secretKind: 'youtube-api-key',
+      },
+    ],
+  };
+
+  it('renders one form per settingsKey, naming every tool it covers', () => {
+    const groups = groupToolSettings([
+      { name: 'web_search', settingsSchema: webSearchSchema },
+      { name: 'youtube_search', settingsKey: 'youtube', settingsSchema: youtubeSchema },
+      { name: 'youtube_comments', settingsKey: 'youtube', settingsSchema: youtubeSchema },
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toEqual({
+      key: 'web_search',
+      toolNames: ['web_search'],
+      schema: webSearchSchema,
+    });
+    // One wire key for both tools, and the label says which two it configures.
+    expect(groups[1]?.key).toBe('youtube');
+    expect(groups[1]?.toolNames).toEqual(['youtube_search', 'youtube_comments']);
+  });
+
+  it('falls back to the tool name when no settingsKey is declared', () => {
+    const groups = groupToolSettings([
+      { name: 'web_search', settingsSchema: webSearchSchema },
+      { name: 'x_search', settingsSchema: youtubeSchema },
+    ]);
+    expect(groups.map((g) => g.key)).toEqual(['web_search', 'x_search']);
   });
 });

@@ -8,8 +8,47 @@ import type { rpc } from '../rpc';
 // cast) so they cannot drift from the contract.
 
 type SchemasResult = Awaited<ReturnType<typeof rpc.toolSettings.schemas>>;
-export type ToolSettingsSchemaWire = SchemasResult['tools'][number]['settingsSchema'];
+export type ConfigurableToolWire = SchemasResult['tools'][number];
+export type ToolSettingsSchemaWire = ConfigurableToolWire['settingsSchema'];
 export type ToolSettingsFieldWire = ToolSettingsSchemaWire['fields'][number];
+
+/** One form's worth of settings: the storage key it reads and writes, every
+ *  tool that key covers, and the schema to render. */
+export interface ToolSettingsGroup {
+  /** The settings-map key — `settingsKey` when the tool declares one, else its
+   *  name. Also what the service stores the binding under. */
+  key: string;
+  /** Names of the tools this one form configures, in registry order. */
+  toolNames: string[];
+  schema: ToolSettingsSchemaWire;
+}
+
+/**
+ * Group configurable tools by the settings slot they write, so tools sharing
+ * one credential get ONE form rather than one each.
+ *
+ * `youtube_search` and `youtube_comments` both declare `settingsKey: 'youtube'`
+ * — one Google API key, one project, one quota pool — so two forms would write
+ * two wire keys against one stored binding and silently discard whatever was
+ * typed into the second. The first tool in a group supplies the schema; tools
+ * that share a key share a credential and so declare the same fields.
+ */
+export function groupToolSettings(tools: ConfigurableToolWire[]): ToolSettingsGroup[] {
+  const groups: ToolSettingsGroup[] = [];
+  const byKey = new Map<string, ToolSettingsGroup>();
+  for (const tool of tools) {
+    const key = tool.settingsKey ?? tool.name;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.toolNames.push(tool.name);
+      continue;
+    }
+    const group: ToolSettingsGroup = { key, toolNames: [tool.name], schema: tool.settingsSchema };
+    byKey.set(key, group);
+    groups.push(group);
+  }
+  return groups;
+}
 
 /** A resolved form control — `enum` → Select, `secret` → SecretPicker,
  *  `info` → a static paragraph.
