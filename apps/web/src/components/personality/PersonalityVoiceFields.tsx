@@ -384,7 +384,7 @@ export function PersonalityVoiceFields({
       </Form.Item>
       <Form.Item
         label="Fast-lane model"
-        help="The model the voice lane routes to. Conversational latency and agentic depth want different models; this is how a personality says which one talks. Blank uses its normal model. It is stored and resolved today, but fast-lane routing for spoken pipeline turns has not landed — setting it does not yet change which model answers."
+        help="The model that answers on the voice lane. Conversational latency and agentic depth want different models; this is how a personality says which one talks. Blank uses its normal model. The fast-lane model is pinned onto the lane directly, so it wins over the tier and provider routing the agentic path goes through."
       >
         <Input
           placeholder="claude-haiku-4-5"
