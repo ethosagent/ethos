@@ -108,10 +108,10 @@ describe('backup scopes: WAL store drift gate', () => {
     }
   });
 
-  it('resolves the 20 sites to 15 distinct database files', () => {
+  it('resolves the 21 sites to 16 distinct database files', () => {
     const files = new Set(WAL_STORES.map((s) => s.database));
-    expect(WAL_STORES.reduce((n, s) => n + s.sites, 0)).toBe(20);
-    expect(files.size).toBe(15);
+    expect(WAL_STORES.reduce((n, s) => n + s.sites, 0)).toBe(21);
+    expect(files.size).toBe(16);
   });
 });
 
@@ -169,6 +169,17 @@ describe('backup scopes: classification', () => {
   it('archives the channel digest cursors with the transcript they index', () => {
     expect(classifyPath('channel-transcript.db').scope).toBe('state');
     expect(classifyPath('channel-digest-watermarks.json').scope).toBe('state');
+  });
+
+  // B-T1. The nightly pass stopped applying Expression changes to personalities
+  // in `user` mode and queues the draft here instead. The queued file is the
+  // ONLY copy of a decision the operator has not made yet, and the evidence
+  // window it was drafted from has rolled off by the time a restore happens —
+  // nothing can reproduce it. This test IS the gate: drop the `learning` rule
+  // and a restore silently loses every pending approval.
+  it('archives the pending-Expression queue as state', () => {
+    expect(classifyPath('learning/pending-expression/sage.json').scope).toBe('state');
+    expect(classifyPath('learning').scope).toBe('state');
   });
 
   // Its lock is the opposite case, and the `*.lock` exclusion already gets it

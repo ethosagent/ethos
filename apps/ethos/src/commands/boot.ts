@@ -104,6 +104,7 @@ import {
   type WebBindTarget,
 } from '../config-reload';
 import { createHealthServer } from '../health-server';
+import { type CronDeliverJob, createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
@@ -129,6 +130,7 @@ import {
 import { runCronTurn } from './cron-turn';
 import {
   adapterRegistries,
+  buildChannelSpeakers,
   buildGateway,
   buildGatewayAdapters,
   buildGatewayBots,
@@ -358,9 +360,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   const logger = new ConsoleLogger({}, cfg.logs?.level);
   let sharedLoop: AgentLoop | null = null;
   let chatServiceRef: import('@ethosagent/web-api').ChatService | null = null;
-  let cronDeliverFn:
-    | ((job: { origin?: { platform: string; chatId: string } }, output: string) => Promise<void>)
-    | null = null;
+  let cronDeliverFn: ((job: CronDeliverJob, output: string) => Promise<void>) | null = null;
   let watcherDeliverFn:
     | ((target: { platform: string; chatId: string }, text: string) => Promise<void>)
     | null = null;
@@ -835,15 +835,22 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   gatewayRef = gateway;
 
   // Wire the send paths now that the Gateway exists.
-  const gatewayMessagingSend: MessagingSendFn = async (platform, target, body) =>
-    gateway.sendTo(platform, target, body);
+  //
+  // `sendAsBot`, not `sendTo` (B-T4): the tool call comes out of a turn, and a
+  // turn on a channel lane names the bot it speaks as. `sendTo` would resolve
+  // the platform's FIRST adapter, so with two Telegram bots configured one
+  // agent's `send_message` leaves through the other's identity.
+  const gatewayMessagingSend: MessagingSendFn = async (platform, target, body, botKey) =>
+    gateway.sendAsBot(platform, target, body, botKey);
   shared.setMessagingSend(gatewayMessagingSend);
   // Per-bot messaging setters are called by `registerBotLive` below, with every
   // other per-bot registration.
-  cronDeliverFn = async (job, output) => {
-    if (!job.origin) return;
-    await gateway.sendTo(job.origin.platform, job.origin.chatId, output);
-  };
+  //
+  // The SAME cron delivery path `ethos gateway start` runs (B-T5): a job whose
+  // bot left config delivers nothing, and a failed send throws so the scheduler
+  // records `lastError`. This used to be a second, shorter copy that did
+  // neither.
+  cronDeliverFn = createCronDeliver({ gateway, speaksFor: buildChannelSpeakers(cfg) });
   watcherDeliverFn = async (target, text) => {
     await gateway.sendTo(target.platform, target.chatId, text);
   };

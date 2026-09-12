@@ -1,10 +1,22 @@
-import type { AgentEvent, AgentLoop } from '@ethosagent/core';
-import { answerSuffix } from '@ethosagent/types';
+import { randomUUID } from 'node:crypto';
+import type { AgentLoop } from '@ethosagent/core';
+import { collectTurnResult, type TurnFailure } from '../turn-result';
+
+/** `conversation` is a client-chosen label, not a session key. */
+const CONVERSATION_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export interface AskPersonalityArgs {
   personality_id: string;
   prompt: string;
-  session_key?: string;
+  /**
+   * Optional conversation label. Omit for a fresh conversation — the returned
+   * `conversation` continues it. There is deliberately no `session_key`: each
+   * surface owns its own session-key namespace (CLAUDE.md, "Session key
+   * convention"; A2A's server-built `a2a:<personalityId>:<peerFingerprint>` in
+   * `packages/a2a/src/rpc.ts` is the precedent), so a client cannot name
+   * `cli:ethos` and continue someone else's session.
+   */
+  conversation?: string;
 }
 
 export interface AskPersonalityResult {
@@ -12,6 +24,28 @@ export interface AskPersonalityResult {
   turnCount: number;
   inputTokens: number;
   outputTokens: number;
+  /** Pass back as `conversation` to continue this conversation. */
+  conversation: string;
+  /** The key the server built: `mcp-console:<personality_id>:<conversation>`. */
+  sessionKey: string;
+  /** Set when the turn was refused or halted — the caller renders `isError`. */
+  error?: TurnFailure;
+}
+
+/** Thrown for a malformed `conversation`; the server renders it as `isError`. */
+export class InvalidConversationError extends Error {
+  readonly code = 'input_invalid' as const;
+  constructor(value: string) {
+    super(
+      `input_invalid: conversation must match ${CONVERSATION_PATTERN.source} (got ${JSON.stringify(value)})`,
+    );
+    this.name = 'InvalidConversationError';
+  }
+}
+
+/** The session key this surface owns. Never client-supplied. */
+export function mcpConsoleSessionKey(personalityId: string, conversation: string): string {
+  return `mcp-console:${personalityId}:${conversation}`;
 }
 
 /** Runs the agent loop for a given personality and collects the final response. */
@@ -19,41 +53,23 @@ export async function askPersonality(
   loop: AgentLoop,
   args: AskPersonalityArgs,
 ): Promise<AskPersonalityResult> {
-  const sessionKey = args.session_key ?? `mcp:${args.personality_id}:${Date.now()}`;
-
-  let text = '';
-  let turnCount = 0;
-  let inputTokens = 0;
-  let outputTokens = 0;
-
-  const gen = loop.run(args.prompt, {
-    sessionKey,
-    personalityId: args.personality_id,
-  });
-
-  for await (const event of gen) {
-    const ev = event as AgentEvent;
-    if (ev.type === 'text_delta') {
-      text += ev.text;
-    } else if (ev.type === 'usage') {
-      inputTokens += ev.inputTokens;
-      outputTokens += ev.outputTokens;
-    } else if (ev.type === 'done') {
-      // A `returnDirect` tool's answer arrives only as `done.text`, after any
-      // preamble that streamed: `answerSuffix` (@ethosagent/types) is what the
-      // stream still owes — the caller gets the whole reply, not one half.
-      text += answerSuffix(text, ev.text);
-      turnCount = ev.turnCount;
-    }
+  const conversation = args.conversation ?? randomUUID();
+  if (!CONVERSATION_PATTERN.test(conversation)) {
+    throw new InvalidConversationError(conversation);
   }
+  const sessionKey = mcpConsoleSessionKey(args.personality_id, conversation);
 
-  return { text, turnCount, inputTokens, outputTokens };
+  const turn = await collectTurnResult(
+    loop.run(args.prompt, { sessionKey, personalityId: args.personality_id }),
+  );
+
+  return { ...turn, conversation, sessionKey };
 }
 
 export const askPersonalityToolDef = {
   name: 'ask_personality',
   description:
-    'Run a prompt through a specific Ethos personality and return the response. Each personality has a distinct identity, toolset, and memory scope.',
+    'Run a prompt through a specific Ethos personality and return the response. Each personality has a distinct identity, toolset, and memory scope. The reply is the first content block; the second is JSON carrying the `conversation` id — pass it back to continue the same conversation.',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -65,10 +81,11 @@ export const askPersonalityToolDef = {
         type: 'string',
         description: 'The message to send to the personality',
       },
-      session_key: {
+      conversation: {
         type: 'string',
         description:
-          'Optional session key for conversation continuity. Omit to start a fresh session.',
+          'Optional conversation id from a previous call, to continue it. Letters, digits, hyphen and underscore, 1-64 characters. Omit to start a fresh conversation and receive a generated id.',
+        pattern: CONVERSATION_PATTERN.source,
       },
     },
     required: ['personality_id', 'prompt'],

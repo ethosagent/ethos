@@ -11,5 +11,9 @@
     "@ethosagent/core": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@ethosagent/storage-fs": "workspace:*",
+    "@ethosagent/wiring": "workspace:*"
   }
 }

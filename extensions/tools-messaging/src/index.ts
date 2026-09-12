@@ -1,3 +1,4 @@
+import { laneKeyBotKey } from '@ethosagent/core';
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 
 /**
@@ -30,6 +31,35 @@ export type MessagingSendFn = (
 export interface MessagingToolsOptions {
   send: MessagingSendFn;
   getAllowedTargets?: (personalityId?: string) => string[] | null;
+}
+
+/**
+ * The bot this turn is speaking as, when it can send on `targetPlatform` at all.
+ *
+ * A channel turn runs in a lane keyed `${platform}:${botKey}:${chatId}`
+ * (CLAUDE.md, "Channel adapter contract"), so the lane itself names the sender.
+ * Reading it back is what binds an outbound `send_message` to the bot whose
+ * conversation produced it instead of to whichever adapter registered first for
+ * the platform — the failure B-T4 (plan/phases/trust-before-reach.md) closes.
+ *
+ * `undefined` when this turn's identity says nothing about `targetPlatform`:
+ *
+ *  - a CLI or web turn — its session key carries no botKey segment;
+ *  - a turn on a DIFFERENT platform — a Telegram bot's key is not a Slack
+ *    sender, and Slack has its own bots to choose between.
+ *
+ * `undefined` is not permission to fall back: the send path resolves it as
+ * "no bot named", which is a refusal wherever the platform has more than one.
+ * See `Gateway.sendAsBot`. The lane-key parse is `laneKeyBotKey` in
+ * `@ethosagent/core` — the gateway's own lane bookkeeping decodes through the
+ * same function.
+ */
+export function laneSenderBotKey(
+  ctx: { platform?: string; sessionKey?: string },
+  targetPlatform: string,
+): string | undefined {
+  if (!ctx.sessionKey || ctx.platform !== targetPlatform) return undefined;
+  return laneKeyBotKey(ctx.sessionKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +160,7 @@ async function executeSendMessage(
   }
 
   try {
-    const result = await opts.send(platform, target, body);
+    const result = await opts.send(platform, target, body, laneSenderBotKey(ctx, platform));
     if (!result.ok) {
       return { ok: false, error: result.error ?? 'Send failed', code: 'execution_failed' };
     }

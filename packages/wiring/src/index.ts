@@ -1122,6 +1122,11 @@ async function createLLMFromRegistry(
 // without pulling in the heavy plugin-loader / docker / mcp dependency chain.
 export { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
 
+// Tool-scope helper — turns an allowlist into the `toolsetExclude` denylist
+// that also reaches MCP, plugin and `alwaysInclude` tools. Separate file, no
+// heavy imports, so a caller can take it without the composition chain.
+export { complementExclude } from './tool-scope';
+
 // ---------------------------------------------------------------------------
 // AgentLoop assembly
 // ---------------------------------------------------------------------------

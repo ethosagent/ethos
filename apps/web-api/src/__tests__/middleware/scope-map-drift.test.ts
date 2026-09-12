@@ -1,4 +1,4 @@
-import { ApiKeyScopeSchema } from '@ethosagent/web-contracts';
+import { ApiKeyStaticScopeSchema } from '@ethosagent/web-contracts';
 import { describe, expect, it } from 'vitest';
 import { COOKIE_ONLY, SCOPE_MAP } from '../../middleware/dual-auth';
 import { apiRouter } from '../../rpc/router';
@@ -11,7 +11,10 @@ import { apiRouter } from '../../rpc/router';
 // mappings pointing at renamed/removed methods.
 
 const router = apiRouter as unknown as Record<string, Record<string, unknown>>;
-const validScopes = new Set<string>(ApiKeyScopeSchema.options);
+// SCOPE_MAP gates fixed surfaces, so its values are drawn from the static
+// enum half of the scope vocabulary. The open-ended `mcp:<id>` family is not
+// a SCOPE_MAP concern and has no enumerable list.
+const validScopes = new Set<string>(ApiKeyStaticScopeSchema.options);
 
 describe('SCOPE_MAP drift — router methods ⊆ SCOPE_MAP per mapped namespace', () => {
   for (const ns of Object.keys(SCOPE_MAP)) {

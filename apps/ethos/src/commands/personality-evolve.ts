@@ -20,6 +20,7 @@ import { draftExpressionUpdate } from '@ethosagent/skill-evolver';
 import { formatError, toEthosError } from '@ethosagent/types';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createLLM, getStorage } from '../wiring';
+import { offerPendingExpression } from './pending-expression';
 
 async function confirm(question: string): Promise<boolean> {
   const rl = createInterface({ input: stdin, output: stdout });
@@ -39,6 +40,30 @@ function oneLine(content: string): string {
 function surface(err: unknown): never {
   process.stderr.write(`\n${formatError(toEthosError(err), { color: process.stderr.isTTY })}\n`);
   process.exit(1);
+}
+
+// Rationale + diff, the way `evolve` has always shown them. Shared so a draft
+// the nightly pass queued is reviewed with exactly the same surface as one
+// drafted in-session (plan `trust-before-reach.md` B-T1).
+async function printExpressionProposal(
+  currentExpression: string,
+  newExpression: string,
+  rationale: string,
+): Promise<void> {
+  console.log('=== Rationale ===');
+  console.log(rationale || '(no rationale provided)');
+  console.log('=== Proposed Expression change ===');
+  if (currentExpression.trim() === '') {
+    console.log(
+      'This soul has no Expression region yet; this will create one (Core stays untouched).',
+    );
+    console.log(newExpression);
+    return;
+  }
+  const { unifiedDiff } = await import('../index');
+  console.log(
+    unifiedDiff(currentExpression, newExpression, 'expression (current)', 'expression (proposed)'),
+  );
 }
 
 export interface RecentPrompts {
@@ -318,6 +343,44 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
     }
 
     const autoMode = described.config.evolution_approval_mode === 'auto';
+    const soul = await reg.readLivingSoul(id);
+
+    // A draft the nightly pass queued instead of applying (B-T1) is offered
+    // first, and before any evidence gathering: a queued draft must stay
+    // reachable on a personality with no NEW sessions to draft from. `auto`
+    // never queues, so it never has one to offer.
+    if (!autoMode) {
+      const offered = await offerPendingExpression({
+        storage,
+        dataDir: ethosDir(),
+        personalityId: id,
+        currentExpression: soul.expression,
+        async confirm(pending) {
+          console.log(
+            `=== Queued Expression draft (${pending.evidenceRef || 'no evidence ref'}) ===`,
+          );
+          if (pending.at) console.log(`drafted ${pending.at}`);
+          await printExpressionProposal(soul.expression, pending.newExpression, pending.rationale);
+          return confirm('Apply this queued Expression update? [y/N] ');
+        },
+        async apply(pending) {
+          const { entry } = await reg.evolveExpression(id, pending.newExpression, {
+            summary: pending.rationale.slice(0, 120) || 'queued expression update',
+            evidenceRef: pending.evidenceRef || `queued:${new Date().toISOString()}`,
+          });
+          return { revisionId: entry.revisionId };
+        },
+        log: (msg) => console.log(msg),
+      });
+      if (offered.outcome === 'applied') {
+        console.log(`✓ Expression updated (revision ${offered.revisionId}).`);
+        console.log('Undo with `ethos personality revert <id>`.');
+        return;
+      }
+      // Declined: the user just said no to this personality's Expression
+      // changing. Drafting a fresh one and asking again would be arguing.
+      if (offered.outcome === 'declined') return;
+    }
 
     // Gather both the raw USER prompts (for the Judge) and the newest-first
     // user+assistant evidence digest (for drafting) in a single store open.
@@ -343,7 +406,6 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
       store.close();
     }
 
-    const soul = await reg.readLivingSoul(id);
     const llm = await createLLM(config);
 
     if (autoMode) {
@@ -406,25 +468,7 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
     }
     console.log('=== Evidence (recent interactions) ===');
     console.log(evidence);
-    console.log('=== Rationale ===');
-    console.log(draft.rationale || '(no rationale provided)');
-    console.log('=== Proposed Expression change ===');
-    if (soul.expression.trim() === '') {
-      console.log(
-        'This soul has no Expression region yet; this will create one (Core stays untouched).',
-      );
-      console.log(draft.newExpression);
-    } else {
-      const { unifiedDiff } = await import('../index');
-      console.log(
-        unifiedDiff(
-          soul.expression,
-          draft.newExpression,
-          'expression (current)',
-          'expression (proposed)',
-        ),
-      );
-    }
+    await printExpressionProposal(soul.expression, draft.newExpression, draft.rationale);
 
     const ok = await confirm('Apply this Expression update? [y/N] ');
     if (!ok) {

@@ -2,6 +2,7 @@ import type { A2aTaskRunner } from '@ethosagent/a2a';
 import type { AgentLoop } from '@ethosagent/core';
 import { resolveA2aSkillTools } from '@ethosagent/personalities';
 import type { PersonalityConfig, Storage } from '@ethosagent/types';
+import { complementExclude } from '@ethosagent/wiring';
 
 // The A2A task runner (plan T0.2). Extracted from `runServe` so the
 // fail-closed tool-narrowing logic is unit-testable without booting a real
@@ -12,11 +13,29 @@ import type { PersonalityConfig, Storage } from '@ethosagent/types';
 // discarded: the runner used to hand the model the personality's ENTIRE
 // toolset regardless of which skill was invoked. This resolves the named
 // skill's `required_tools` (walking the SAME `skillsDirs` the card builder
-// walks, parsing SKILL.md with the SAME reader — D8) and sets
-// `RunOptions.toolsetNarrow`, so an inbound turn's tools are exactly
-// `personality.toolset ∩ required_tools` (the intersection itself happens
-// downstream in `setupTurn`, already tested at
-// `packages/core/src/agent-loop/stages/__tests__/turn-setup-narrow.test.ts`).
+// walks, parsing SKILL.md with the SAME reader — D8) and scopes the turn with
+// BOTH `RunOptions` gates:
+//
+//   - `toolsetNarrow` = the declared `required_tools`. `setupTurn` intersects
+//     it with the personality toolset (already tested at
+//     `packages/core/src/agent-loop/stages/__tests__/turn-setup-narrow.test.ts`).
+//     That gate covers BUILT-IN tools only — `mcp__*`, plugin-registered and
+//     `alwaysInclude` tools are let past the name allowlist by design
+//     (`DefaultToolRegistry.toDefinitions` / `executeParallel`).
+//   - `toolsetExclude` = `complementExclude(registered, required_tools)`
+//     (`@ethosagent/wiring`), the complement that closes exactly that gap:
+//     `excludeTools` is the one filter reaching MCP, plugin and `alwaysInclude`
+//     tools (`passesFilter`, `packages/core/src/tool-registry.ts`). It is
+//     recomputed per turn from `loop.getAvailableTools()`, so a tool registered
+//     after boot (a late MCP server) is covered by the next turn.
+//
+// Together the turn's tools are `personality.toolset ∩ required_tools`, over
+// every kind of registered tool. Enforced by `complementExclude`
+// (`packages/wiring/src/tool-scope.ts`, unit-tested at
+// `packages/wiring/src/__tests__/tool-scope.test.ts`) and pinned end-to-end
+// against a real `DefaultToolRegistry` in
+// `./__tests__/serve-a2a-runner.test.ts` ("an mcp__, a plugin and an
+// alwaysInclude tool").
 //
 // Fails closed (D2): a missing SKILL.md, or one with no `required_tools` key
 // at all, refuses the turn — yielding a typed, auditable `error` AgentEvent
@@ -32,6 +51,7 @@ export interface A2aRunnerPersonalitySource {
 }
 
 export interface CreateA2aRunnerDeps {
+  /** Runs the turn, and (via `getAvailableTools`) names what is registered now. */
   loop: AgentLoop;
   personalities: A2aRunnerPersonalitySource;
   storage: Storage;
@@ -45,6 +65,7 @@ export function createA2aRunner(deps: CreateA2aRunnerDeps): A2aTaskRunner {
       const delegation = opts?.delegation;
       const skillName = opts?.skill;
       let toolsetNarrow: string[] | undefined;
+      let toolsetExclude: string[] | undefined;
 
       if (skillName !== undefined) {
         const config = deps.personalities.get(personalityId);
@@ -62,12 +83,20 @@ export function createA2aRunner(deps: CreateA2aRunnerDeps): A2aTaskRunner {
           return;
         }
         toolsetNarrow = resolution.requiredTools;
+        // Computed here, not at construction: the registry gains tools after
+        // boot (MCP servers connect lazily), and an exclusion built once would
+        // not name them.
+        toolsetExclude = complementExclude(
+          deps.loop.getAvailableTools().map((tool) => tool.name),
+          toolsetNarrow,
+        );
       }
 
       yield* deps.loop.run(text, {
         personalityId,
         ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
         ...(toolsetNarrow ? { toolsetNarrow } : {}),
+        ...(toolsetExclude ? { toolsetExclude } : {}),
         ...(delegation
           ? {
               a2aDelegation: {

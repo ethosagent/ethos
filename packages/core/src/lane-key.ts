@@ -16,13 +16,40 @@
 // history orphan — that's the cost of choosing an unusual botKey, not a
 // regression in the common case.
 //
-// Treat the returned string as opaque. Nothing decodes it; collisions only
-// matter at construction time, and this file is the single point of truth for
-// what a lane key looks like.
+// Treat the returned string as opaque everywhere except `laneKeyBotKey` below:
+// collisions only matter at construction time, and this file is the single
+// point of truth for what a lane key looks like — including how to read the one
+// segment callers legitimately need back out of it.
 
 /** Join `segments` into a lane key, URL-encoding each one. */
 export function buildLaneKey(...segments: string[]): string {
   return segments.map(encodeURIComponent).join(':');
+}
+
+/**
+ * The botKey a channel lane key names, or `undefined` when it names none.
+ *
+ * A channel lane key is `buildLaneKey(platform, botKey, chatId[, threadId])`,
+ * so segment 1 is the encoded botKey. The one decoder — `Gateway`'s lane
+ * bookkeeping and `send_message`'s sender binding (`laneSenderBotKey` in
+ * `@ethosagent/tools-messaging`) both resolve "which bot is this turn speaking
+ * as" through here, because two parsers is two ways to disagree about which bot
+ * owns a conversation.
+ *
+ * Returns `undefined` for anything that is not a channel lane key: a CLI or web
+ * session key (`cli:<cwd>`, a web session id) has no botKey segment, and a
+ * caller must refuse or fall back rather than treat segment 1 as a bot. A
+ * malformed percent-escape decodes to `undefined` for the same reason — the key
+ * did not come from `buildLaneKey`, so its segment 1 is not a botKey.
+ */
+export function laneKeyBotKey(laneKey: string): string | undefined {
+  const segment = laneKey.split(':')[1];
+  if (!segment) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

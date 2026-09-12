@@ -43,6 +43,7 @@ export {
   renderNewSkillPrompt,
   renderRewritePrompt,
 } from './prompts';
+export { liveSkillDir } from './skill-dir';
 export { draftSoulSplit, type SoulSplitProposal } from './soul-split';
 export { createSkillProposeTool, createSkillReadTool } from './tools';
 export type {

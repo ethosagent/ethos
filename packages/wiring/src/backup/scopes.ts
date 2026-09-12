@@ -76,8 +76,8 @@ export interface WalStoreRecord {
 }
 
 /**
- * Every WAL store in the repo. 20 pragma sites across 19 modules, resolving to
- * 15 distinct database files — `sessions.db` has FIVE tenants sharing one file
+ * Every WAL store in the repo. 21 pragma sites across 20 modules, resolving to
+ * 16 distinct database files — `sessions.db` has FIVE tenants sharing one file
  * and `pairing.db` is opened from two commands.
  *
  * Five, not four, and the difference is that tenants are not modules:
@@ -238,6 +238,15 @@ export const WAL_STORES: readonly WalStoreRecord[] = [
     scope: null,
     reason: 'Pending notifications for a process that is no longer running.',
   },
+  {
+    source: 'extensions/outbox/src/store.ts',
+    sites: 1,
+    database: 'outbox.db',
+    scope: null,
+    reason:
+      'Publications approved to go out from THIS machine, as THIS bot. Restoring approved rows ' +
+      'elsewhere posts old messages to real people (same exclusion as delivery-ledger).',
+  },
 ];
 
 /**
@@ -321,6 +330,16 @@ const RULES: readonly ScopeRule[] = [
   // this is that design being handed the largest duplicate it can produce.
   // Tiny, one JSON object of integers, so it costs the archive nothing.
   { path: 'channel-digest-watermarks.json', kind: 'file', scope: 'state' },
+  // Governed-learning drafts waiting on the operator. Today that is the
+  // pending-Expression queue (`learning/pending-expression/<id>.json`), which
+  // the nightly pass writes instead of applying whenever
+  // `evolution_approval_mode` is not `auto` — a draft nobody has approved yet,
+  // and the only copy of it. Losing it in a restore loses the approval
+  // decision, not a derived artifact: the evidence window it was drafted from
+  // has rolled off by then, so nothing can reproduce it. `state` rather than
+  // `identity` because the file is pending work, not who the agent is — the
+  // Expression it proposes is not part of the personality until approved.
+  { path: 'learning', kind: 'dir', scope: 'state' },
   // Plugin pins: what npm installed under the `plugins/` prefix, not the tree.
   { path: 'plugins/package.json', kind: 'file', scope: 'state' },
   { path: 'plugins/package-lock.json', kind: 'file', scope: 'state' },

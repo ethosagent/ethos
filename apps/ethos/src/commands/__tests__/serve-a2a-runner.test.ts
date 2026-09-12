@@ -39,14 +39,22 @@ function personality(overrides: Partial<PersonalityConfig> = {}): PersonalityCon
   };
 }
 
-/** A stub AgentLoop-shaped `run` that records the options it was called with. */
-function stubLoop(script: AgentEvent[] = [{ type: 'done', text: 'ok', turnCount: 1 }]) {
+/**
+ * A stub AgentLoop-shaped `run` that records the options it was called with.
+ * `registered` is what `getAvailableTools()` reports — B-T6 reads it per turn
+ * to build the exclusion complement.
+ */
+function stubLoop(
+  script: AgentEvent[] = [{ type: 'done', text: 'ok', turnCount: 1 }],
+  registered: Tool[] = [],
+) {
   const calls: Array<{ text: string; opts: unknown }> = [];
   const loop = {
     run: async function* (text: string, opts: unknown) {
       calls.push({ text, opts });
       for (const e of script) yield e;
     },
+    getAvailableTools: () => registered,
   };
   // biome-ignore lint/suspicious/noExplicitAny: structural stub of AgentLoop.run for the test
   return { loop: loop as any, calls };
@@ -62,6 +70,23 @@ async function collect(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]>
 function narrowFromFirstCall(calls: Array<{ text: string; opts: unknown }>): string[] | undefined {
   const opts = calls[0]?.opts as { toolsetNarrow?: string[] } | undefined;
   return opts?.toolsetNarrow;
+}
+
+/** The `toolsetExclude` the FIRST recorded `loop.run` call received, if any. */
+function excludeFromFirstCall(calls: Array<{ text: string; opts: unknown }>): string[] | undefined {
+  const opts = calls[0]?.opts as { toolsetExclude?: string[] } | undefined;
+  return opts?.toolsetExclude;
+}
+
+function stubTool(name: string, extra: Partial<Tool> = {}): Tool {
+  return {
+    name,
+    description: `${name} tool`,
+    schema: { type: 'object' },
+    capabilities: {},
+    execute: async () => ({ ok: true, value: `${name} ran` }) satisfies ToolResult,
+    ...extra,
+  };
 }
 
 describe('createA2aRunner — turn-time tool narrowing (T0.2)', () => {
@@ -224,5 +249,171 @@ describe('createA2aRunner — turn-time tool narrowing (T0.2)', () => {
     expect(rejected.ok).toBe(false); // web_search: outside the narrowed set
     expect(rejected.code).toBe('not_available');
     expect(rejected.error).toMatch(/not permitted/);
+  });
+});
+
+describe('createA2aRunner — the exclusion complement (B-T6)', () => {
+  // `toolsetNarrow` gates BUILT-IN tools only: `mcp__*`, plugin-registered and
+  // `alwaysInclude` tools walk past the name allowlist by design
+  // (DefaultToolRegistry.toDefinitions / executeParallel). The runner therefore
+  // also sends `toolsetExclude = complementExclude(registered, required_tools)`.
+  // These tests drive the REAL registry with the options the runner recorded,
+  // filterOpts assembled exactly as `setupTurn` assembles them
+  // (packages/core/src/agent-loop/stages/turn-setup.ts).
+
+  const readFile = stubTool('read_file');
+  const writeFile = stubTool('write_file');
+  const mcpTool = stubTool('mcp__x__y');
+  const pluginTool = stubTool('brand_lookup');
+  const alwaysTool = stubTool('always_on', { alwaysInclude: true });
+
+  /** A registry holding all five, with `brand_lookup` registered by a plugin. */
+  function registryWithAll(): DefaultToolRegistry {
+    const registry = new DefaultToolRegistry();
+    registry.register(readFile);
+    registry.register(writeFile);
+    registry.register(mcpTool);
+    registry.register(pluginTool, { pluginId: 'brand' });
+    registry.register(alwaysTool);
+    return registry;
+  }
+
+  const scopedPersonality = () =>
+    personality({
+      toolset: ['read_file', 'write_file'],
+      mcp_servers: ['x'],
+      plugins: ['brand'],
+    });
+
+  /** `setupTurn`'s allowedTools: personality toolset ∩ toolsetNarrow. */
+  function allowedToolsFor(narrow: string[] | undefined): string[] | undefined {
+    const base = scopedPersonality().toolset;
+    if (!base) return narrow;
+    return narrow ? base.filter((t) => narrow.includes(t)) : base;
+  }
+
+  function toolCtx(): ToolContext {
+    return {
+      sessionId: 's1',
+      sessionKey: 'a2a:researcher:peer',
+      platform: 'a2a',
+      workingDir: '/tmp',
+      currentTurn: 1,
+      messageCount: 1,
+      abortSignal: new AbortController().signal,
+      emit: () => {},
+      resultBudgetChars: 10_000,
+    };
+  }
+
+  /** Drive the runner for a skill declaring `required_tools: [read_file]`. */
+  async function runScopedTurn() {
+    const storage = new InMemoryStorage();
+    await seedSkill(storage, 'reader', 'required_tools: [read_file]');
+    const registry = registryWithAll();
+    const { loop, calls } = stubLoop(undefined, registry.getAvailable());
+    const runner = createA2aRunner({
+      loop,
+      personalities: { get: () => scopedPersonality() },
+      storage,
+      reserveOutbound: () => true,
+    });
+    await collect(runner.run('researcher', 'hi', { skill: 'reader' }));
+    return { registry, calls };
+  }
+
+  it('excludes every registered tool outside required_tools — MCP, plugin and alwaysInclude included', async () => {
+    const { calls } = await runScopedTurn();
+    expect(narrowFromFirstCall(calls)).toEqual(['read_file']);
+    expect(excludeFromFirstCall(calls)).toEqual([
+      'always_on',
+      'brand_lookup',
+      'mcp__x__y',
+      'write_file',
+    ]);
+  });
+
+  it('without the exclusion the three DO reach the model — the gap this closes', async () => {
+    const { registry, calls } = await runScopedTurn();
+    const allowedTools = allowedToolsFor(narrowFromFirstCall(calls));
+    // Same filterOpts minus excludeTools: what the runner sent before B-T6.
+    const names = registry
+      .toDefinitions(allowedTools, { allowedMcpServers: ['x'], allowedPlugins: ['brand'] })
+      .map((d) => d.name)
+      .sort();
+    expect(names).toEqual(['always_on', 'brand_lookup', 'mcp__x__y', 'read_file']);
+  });
+
+  it('none of the three appears in that turn’s definitions', async () => {
+    const { registry, calls } = await runScopedTurn();
+    const names = registry
+      .toDefinitions(allowedToolsFor(narrowFromFirstCall(calls)), {
+        allowedMcpServers: ['x'],
+        allowedPlugins: ['brand'],
+        excludeTools: excludeFromFirstCall(calls),
+      })
+      .map((d) => d.name);
+    expect(names).toEqual(['read_file']);
+  });
+
+  it('a forced call to each of the three is rejected on the real execution path', async () => {
+    const { registry, calls } = await runScopedTurn();
+    const results = await registry.executeParallel(
+      [
+        { toolCallId: 'c1', name: 'read_file', args: {} },
+        { toolCallId: 'c2', name: 'mcp__x__y', args: {} },
+        { toolCallId: 'c3', name: 'brand_lookup', args: {} },
+        { toolCallId: 'c4', name: 'always_on', args: {} },
+      ],
+      toolCtx(),
+      allowedToolsFor(narrowFromFirstCall(calls)),
+      {
+        allowedMcpServers: ['x'],
+        allowedPlugins: ['brand'],
+        excludeTools: excludeFromFirstCall(calls),
+      },
+    );
+    expect(results[0]?.result.ok).toBe(true); // read_file: the one declared tool
+    for (const i of [1, 2, 3]) {
+      const rejected = results[i]?.result as Extract<ToolResult, { ok: false }>;
+      expect(rejected.ok).toBe(false);
+      expect(rejected.code).toBe('not_available');
+      expect(rejected.error).toMatch(/not available on this surface/);
+    }
+  });
+
+  it('sends no exclusion when no skill is named — unnarrowed turns are unchanged', async () => {
+    const storage = new InMemoryStorage();
+    const registry = registryWithAll();
+    const { loop, calls } = stubLoop(undefined, registry.getAvailable());
+    const runner = createA2aRunner({
+      loop,
+      personalities: { get: () => scopedPersonality() },
+      storage,
+      reserveOutbound: () => true,
+    });
+    await collect(runner.run('researcher', 'hi', {}));
+    expect(excludeFromFirstCall(calls)).toBeUndefined();
+  });
+
+  it('excludes everything registered for an explicit required_tools: [] grant', async () => {
+    const storage = new InMemoryStorage();
+    await seedSkill(storage, 'echo-status', 'required_tools: []');
+    const registry = registryWithAll();
+    const { loop, calls } = stubLoop(undefined, registry.getAvailable());
+    const runner = createA2aRunner({
+      loop,
+      personalities: { get: () => scopedPersonality() },
+      storage,
+      reserveOutbound: () => true,
+    });
+    await collect(runner.run('researcher', 'hi', { skill: 'echo-status' }));
+    expect(excludeFromFirstCall(calls)).toEqual([
+      'always_on',
+      'brand_lookup',
+      'mcp__x__y',
+      'read_file',
+      'write_file',
+    ]);
   });
 });

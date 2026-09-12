@@ -10,6 +10,13 @@
  * zero or more lowercase letters, digits, underscores, or hyphens.
  * Specifically excludes: path separators, dots (no `..`), uppercase,
  * spaces, and any special characters.
+ *
+ * COPIED into `MCP_EXPORT_SCOPE_REGEX` in
+ * `packages/web-contracts/src/schemas.ts`, as the id half of the
+ * `mcp:<personality-id>` API-key scope. That package is a zero-dependency
+ * contract package and cannot import this one (ARCHITECTURE.md Law 1,
+ * dependency direction), so the two are duplicated on purpose and MUST change
+ * together.
  */
 const SAFE_ID_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
 

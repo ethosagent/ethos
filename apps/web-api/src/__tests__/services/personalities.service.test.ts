@@ -674,14 +674,14 @@ describe('PersonalitiesService', () => {
     const PENDING = join(DATA, 'skills', '.pending', 'agent');
     const LIVE = join(DATA, 'skills');
 
-    async function makeCandidateService(): Promise<{
+    async function makeCandidateService(configExtra = ''): Promise<{
       service: PersonalitiesService;
       storage: InMemoryStorage;
     }> {
       const storage = new InMemoryStorage();
       const dir = join(DATA, 'personalities', 'agent');
       await storage.mkdir(dir);
-      await storage.write(join(dir, 'config.yaml'), 'name: Agent\n');
+      await storage.write(join(dir, 'config.yaml'), `name: Agent\n${configExtra}`);
       await storage.write(join(dir, 'SOUL.md'), '# Core\nx\n');
       const registry = new FilePersonalityRegistry(storage, DATA);
       await registry.loadFromDirectory(join(DATA, 'personalities'));
@@ -723,6 +723,40 @@ describe('PersonalitiesService', () => {
       expect(result).toEqual({ ok: true, promotedTo: join(LIVE, 'nightly-a.md') });
       expect(await storage.read(join(LIVE, 'nightly-a.md'))).toContain('body a');
       expect(await storage.exists(join(PENDING, 'nightly-a.md'))).toBe(false);
+    });
+
+    // B-T7 — `skill_evolution.scope: personality` means the per-personality
+    // skills dir. Promoting into the shared dir would widen a personality-only
+    // skill to every personality. Enforced by `liveSkillDir`
+    // (@ethosagent/skill-evolver), the same helper the nightly promoter uses.
+    it("approve honours skill_evolution.scope='personality'", async () => {
+      const { service, storage } = await makeCandidateService(
+        'skill_evolution.scope: personality\n',
+      );
+      await storage.mkdir(PENDING);
+      await storage.write(join(PENDING, 'nightly-a.md'), '# A\nbody a\n');
+
+      const scopedDir = join(DATA, 'personalities', 'agent', 'skills');
+      const result = await service.skillCandidateApprove('agent', 'nightly-a.md');
+
+      expect(result).toEqual({ ok: true, promotedTo: join(scopedDir, 'nightly-a.md') });
+      expect(await storage.read(join(scopedDir, 'nightly-a.md'))).toContain('body a');
+      expect(await storage.exists(join(LIVE, 'nightly-a.md'))).toBe(false);
+      expect(await storage.exists(join(PENDING, 'nightly-a.md'))).toBe(false);
+    });
+
+    it("approve with skill_evolution.scope='shared' writes the shared dir", async () => {
+      const { service, storage } = await makeCandidateService('skill_evolution.scope: shared\n');
+      await storage.mkdir(PENDING);
+      await storage.write(join(PENDING, 'nightly-a.md'), '# A\nbody a\n');
+
+      const result = await service.skillCandidateApprove('agent', 'nightly-a.md');
+
+      expect(result).toEqual({ ok: true, promotedTo: join(LIVE, 'nightly-a.md') });
+      expect(await storage.read(join(LIVE, 'nightly-a.md'))).toContain('body a');
+      expect(
+        await storage.exists(join(DATA, 'personalities', 'agent', 'skills', 'nightly-a.md')),
+      ).toBe(false);
     });
 
     it('approve on a missing candidate throws SKILL_NOT_FOUND', async () => {

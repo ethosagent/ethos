@@ -67,21 +67,57 @@ describe('ethos api-key create --scopes validation', () => {
     expect(loggedText()).toMatch(/Unknown scopes: nope, alsonope/);
   });
 
-  it('accepts every member of the schema', async () => {
-    const { ApiKeyScopeSchema } = await import('@ethosagent/web-contracts');
+  it('accepts every member of the static enum', async () => {
+    const { ApiKeyStaticScopeSchema } = await import('@ethosagent/web-contracts');
     const { runApiKey } = await import('../commands/api-key');
     await runApiKey([
       'create',
       '--name',
       'all-scopes',
       '--scopes',
-      ApiKeyScopeSchema.options.join(','),
+      ApiKeyStaticScopeSchema.options.join(','),
       '--json',
     ]);
 
     const output = String(writeSpy.mock.calls[0]?.[0] ?? '');
     const parsed = JSON.parse(output) as { scopes: string[] };
-    expect(parsed.scopes).toEqual([...ApiKeyScopeSchema.options]);
+    expect(parsed.scopes).toEqual([...ApiKeyStaticScopeSchema.options]);
+  });
+
+  // M-T4 (trust-before-reach, Part 3) — `mcp:<personality-id>` is the one
+  // open-ended scope, so `--scopes` cannot validate it by list membership and
+  // the "valid scopes" line cannot enumerate it.
+  it('accepts an `mcp:<personality-id>` export scope', async () => {
+    const { runApiKey } = await import('../commands/api-key');
+    await runApiKey([
+      'create',
+      '--name',
+      'reviewer-export',
+      '--scopes',
+      'mcp:reviewer,chat',
+      '--json',
+    ]);
+
+    const output = String(writeSpy.mock.calls[0]?.[0] ?? '');
+    const parsed = JSON.parse(output) as { scopes: string[] };
+    expect(parsed.scopes).toEqual(['mcp:reviewer', 'chat']);
+  });
+
+  it('rejects a traversal-shaped export id and names the `mcp:` shape', async () => {
+    const { runApiKey } = await import('../commands/api-key');
+    await expect(
+      runApiKey(['create', '--name', 'bad-export', '--scopes', 'mcp:../x']),
+    ).rejects.toThrow(/process.exit\(1\)/);
+
+    const output = loggedText();
+    expect(output).toMatch(/Unknown scope: mcp:\.\.\/x/);
+    // The hint has to name the open-ended form, or the enumerated list reads
+    // as exhaustive when it is not.
+    expect(output).toMatch(/mcp:<personality-id>/);
+
+    const store = new SqliteApiKeyStore(join(tempDir, 'sessions.db'));
+    expect(await store.list()).toEqual([]);
+    store.close();
   });
 
   it('defaults to `chat`, the scope /v1/* requires', async () => {

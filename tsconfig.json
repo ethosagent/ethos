@@ -39,6 +39,7 @@
       "@ethosagent/session-cards": ["./extensions/session-cards/src"],
       "@ethosagent/call-log": ["./extensions/call-log/src"],
       "@ethosagent/kanban-store": ["./extensions/kanban-store/src"],
+      "@ethosagent/learning-inbox": ["./extensions/learning-inbox/src"],
       "@ethosagent/dashboard": ["./extensions/dashboard/src"],
       "@ethosagent/tools-kanban": ["./extensions/tools-kanban/src"],
       "@ethosagent/tools-kanban/reducers/kanban-list": [
@@ -46,6 +47,7 @@
       ],
       "@ethosagent/agent-mesh": ["./extensions/agent-mesh/src"],
       "@ethosagent/notify-queue": ["./extensions/notify-queue/src"],
+      "@ethosagent/outbox": ["./extensions/outbox/src"],
       "@ethosagent/team-supervisor": ["./extensions/team-supervisor/src"],
       "@ethosagent/acp-server": ["./apps/acp-server/src"],
       "@ethosagent/cron": ["./extensions/cron/src"],

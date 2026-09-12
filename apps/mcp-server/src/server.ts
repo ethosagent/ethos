@@ -1,10 +1,9 @@
 import { type FSWatcher, watch } from 'node:fs';
-import { createServer as createHttpServer } from 'node:http';
+import { join } from 'node:path';
 import type { AgentLoop } from '@ethosagent/core';
-import type { MemoryProvider, SessionStore } from '@ethosagent/types';
+import type { MemoryProvider, SessionStore, Storage } from '@ethosagent/types';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   GetPromptRequestSchema,
@@ -15,9 +14,10 @@ import {
   SubscribeRequestSchema,
   UnsubscribeRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { type McpHttpHandle, serveMcpHttp } from './http-session';
 import type { McpLogger } from './logger';
 import { getPromptMessages, PROMPTS } from './prompts';
-import { listResources, readResource } from './resources';
+import { listResources, type ResourceDeps, readResource } from './resources';
 import { askPersonality, askPersonalityToolDef } from './tools/ask-personality';
 import { getMessages, getMessagesToolDef } from './tools/get-messages';
 import { getSession, getSessionToolDef } from './tools/get-session';
@@ -31,9 +31,12 @@ import { writeMemory, writeMemoryToolDef } from './tools/write-memory';
 export interface EthosMcpServerConfig {
   loop: AgentLoop;
   dataDir: string;
+  /** Reads under `dataDir` go through this — CLAUDE.md, "Storage abstraction". */
+  storage: Storage;
   logger: McpLogger;
   version?: string;
   sessionStore?: SessionStore;
+  /** Absent → the memory tools and memory resources are not exposed. */
   memoryProvider?: MemoryProvider;
   enableMemoryWrite?: boolean;
 }
@@ -42,10 +45,59 @@ export class EthosMcpServer {
   private _server: Server;
   private _config: EthosMcpServerConfig;
   private _watchers: FSWatcher[] = [];
+  /** Live per-HTTP-session servers, for resource-update broadcast. */
+  private _sessionServers = new Set<Server>();
+  private _http: McpHttpHandle | null = null;
 
   constructor(config: EthosMcpServerConfig) {
     this._config = config;
-    this._server = new Server(
+    this._server = this._createServer();
+
+    if (config.memoryProvider) {
+      // `watch` has no Storage equivalent — it is a change notification, not a
+      // read; no bytes reach this process through it. Personality memory lives
+      // at `<dataDir>/personalities/<id>/`, so the watch is recursive and the
+      // notified URI names the personality (`resources.ts`).
+      try {
+        const watcher = watch(
+          join(config.dataDir, 'personalities'),
+          { recursive: true },
+          (_event, filename) => {
+            if (!filename) return;
+            const match = filename.match(/^([^/\\]+)[/\\]([^/\\]+\.md)$/);
+            if (!match) return;
+            this._broadcastResourceUpdated(`ethos://memory/${match[1]}/${match[2]}`);
+          },
+        );
+        this._watchers.push(watcher);
+      } catch {
+        // personalities dir may not exist yet
+      }
+    }
+  }
+
+  private _broadcastResourceUpdated(uri: string): void {
+    for (const server of [this._server, ...this._sessionServers]) {
+      // Throws when that server has no transport connected (stdio server while
+      // serving HTTP, and vice versa) — not an error worth surfacing.
+      server.sendResourceUpdated({ uri }).catch(() => {});
+    }
+  }
+
+  private _resourceDeps(): ResourceDeps {
+    const { dataDir, storage, memoryProvider } = this._config;
+    return { dataDir, storage, ...(memoryProvider ? { memoryProvider } : {}) };
+  }
+
+  /**
+   * Build one MCP `Server` with every handler registered.
+   *
+   * One per transport session, never shared: SDK 1.29.0's `Protocol.connect`
+   * throws `Already connected to a transport` on a second call (`http-session.ts`).
+   */
+  private _createServer(): Server {
+    const config = this._config;
+    const server = new Server(
       { name: 'ethos', version: config.version ?? 'dev' },
       {
         capabilities: {
@@ -55,24 +107,11 @@ export class EthosMcpServer {
         },
       },
     );
-    this._registerHandlers();
-
-    if (config.memoryProvider) {
-      const memoryFiles = new Set(['MEMORY.md', 'USER.md']);
-      try {
-        const watcher = watch(config.dataDir, (_event, filename) => {
-          if (filename && memoryFiles.has(filename)) {
-            this._server.sendResourceUpdated({ uri: `ethos://memory/${filename}` });
-          }
-        });
-        this._watchers.push(watcher);
-      } catch {
-        // dataDir may not exist yet
-      }
-    }
+    this._registerHandlers(server);
+    return server;
   }
 
-  private _registerHandlers(): void {
+  private _registerHandlers(server: Server): void {
     const { loop, dataDir, logger, sessionStore, memoryProvider, enableMemoryWrite } = this._config;
 
     const sessionToolDefs = sessionStore
@@ -80,20 +119,19 @@ export class EthosMcpServer {
       : [];
 
     const memoryToolDefs = memoryProvider
-      ? [readMemoryToolDef, ...(enableMemoryWrite ? [writeMemoryToolDef] : [])]
+      ? [searchMemoryToolDef, readMemoryToolDef, ...(enableMemoryWrite ? [writeMemoryToolDef] : [])]
       : [];
 
-    this._server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         askPersonalityToolDef,
         listPersonalitiesToolDef,
-        searchMemoryToolDef,
         ...sessionToolDefs,
         ...memoryToolDefs,
       ],
     }));
 
-    this._server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
       const safeArgs = (args ?? {}) as Record<string, string>;
 
@@ -104,15 +142,26 @@ export class EthosMcpServer {
           const result = await askPersonality(loop, {
             personality_id: safeArgs.personality_id ?? '',
             prompt: safeArgs.prompt ?? '',
-            session_key: safeArgs.session_key,
+            ...(safeArgs.conversation !== undefined ? { conversation: safeArgs.conversation } : {}),
           });
+          // The conversation id rides along so the client can continue this
+          // conversation without naming a session key of its own.
+          const handle = {
+            type: 'text' as const,
+            text: JSON.stringify({ conversation: result.conversation }),
+          };
+          if (result.error) {
+            return {
+              content: [
+                { type: 'text' as const, text: `${result.error.code}: ${result.error.message}` },
+                ...(result.text ? [{ type: 'text' as const, text: result.text }] : []),
+                handle,
+              ],
+              isError: true,
+            };
+          }
           return {
-            content: [
-              {
-                type: 'text' as const,
-                text: result.text,
-              },
-            ],
+            content: [{ type: 'text' as const, text: result.text }, handle],
           };
         }
 
@@ -129,11 +178,17 @@ export class EthosMcpServer {
         }
 
         if (name === 'search_memory') {
+          if (!memoryProvider) {
+            return {
+              content: [{ type: 'text' as const, text: 'Memory provider not configured' }],
+              isError: true,
+            };
+          }
           const results = await searchMemory(
-            dataDir,
+            memoryProvider,
+            safeArgs.personality_id ?? '',
             safeArgs.query ?? '',
             safeArgs.scope as 'memory' | 'user' | 'all' | undefined,
-            memoryProvider,
           );
           return {
             content: [
@@ -152,7 +207,11 @@ export class EthosMcpServer {
               isError: true,
             };
           }
-          const result = await readMemory(memoryProvider, safeArgs.key ?? '');
+          const result = await readMemory(
+            memoryProvider,
+            safeArgs.personality_id ?? '',
+            safeArgs.key ?? '',
+          );
           return { content: [{ type: 'text' as const, text: result }] };
         }
 
@@ -165,6 +224,7 @@ export class EthosMcpServer {
           }
           const result = await writeMemory(
             memoryProvider,
+            safeArgs.personality_id ?? '',
             safeArgs.action as 'add' | 'replace' | 'remove' | 'delete',
             safeArgs.key ?? '',
             safeArgs.content,
@@ -259,24 +319,24 @@ export class EthosMcpServer {
       }
     });
 
-    this._server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-      resources: listResources(dataDir),
+    server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+      resources: await listResources(this._resourceDeps()),
     }));
 
-    this._server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const { uri } = request.params;
       logger.info('resource_read', { uri });
-      const text = await readResource(uri, dataDir, memoryProvider);
+      const text = await readResource(uri, this._resourceDeps());
       return {
         contents: [{ uri, mimeType: 'text/plain', text }],
       };
     });
 
-    this._server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    server.setRequestHandler(ListPromptsRequestSchema, async () => ({
       prompts: PROMPTS,
     }));
 
-    this._server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    server.setRequestHandler(GetPromptRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
       const safeArgs = (args ?? {}) as Record<string, string>;
       logger.info('prompt_get', { name });
@@ -284,9 +344,9 @@ export class EthosMcpServer {
       return { messages };
     });
 
-    if (memoryProvider) {
-      this._server.setRequestHandler(SubscribeRequestSchema, async () => ({}));
-      this._server.setRequestHandler(UnsubscribeRequestSchema, async () => ({}));
+    if (this._config.memoryProvider) {
+      server.setRequestHandler(SubscribeRequestSchema, async () => ({}));
+      server.setRequestHandler(UnsubscribeRequestSchema, async () => ({}));
     }
   }
 
@@ -295,6 +355,14 @@ export class EthosMcpServer {
       w.close();
     }
     this._watchers = [];
+    if (this._http) {
+      await this._http.close();
+      this._http = null;
+    }
+    for (const server of [...this._sessionServers]) {
+      await server.close().catch(() => {});
+    }
+    this._sessionServers.clear();
     await this._server.close();
   }
 
@@ -304,53 +372,24 @@ export class EthosMcpServer {
     this._config.logger.info('mcp_server_started', { transport: 'stdio' });
   }
 
-  async serveHttp(opts: { port: number; host?: string }): Promise<void> {
-    const host = opts.host ?? '127.0.0.1';
-    if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
-      throw new Error(
-        'MCP HTTP server only binds to loopback (127.0.0.1). Non-loopback binds are not supported until an auth story ships.',
-      );
-    }
-
-    const transports = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
-
-    const httpServer = createHttpServer(async (req, res) => {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      if (url.pathname === '/mcp') {
-        const sessionId = req.headers['mcp-session-id'] as string | undefined;
-        let transport: InstanceType<typeof StreamableHTTPServerTransport>;
-        if (sessionId && transports.has(sessionId)) {
-          transport = transports.get(sessionId) as typeof transport;
-        } else {
-          const id = crypto.randomUUID();
-          transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => id });
-          transports.set(id, transport);
-          await this._server.connect(transport);
-          transport.onclose = () => transports.delete(id);
-        }
-        await transport.handleRequest(req, res);
-        return;
-      }
-      // Health check
-      if (url.pathname === '/health' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok' }));
-        return;
-      }
-      res.writeHead(404);
-      res.end('Not Found');
+  /**
+   * Serve over Streamable HTTP. One `Server` per session, DNS-rebinding
+   * protection on — both live in `http-session.ts`, which the per-personality
+   * MCP export shares.
+   */
+  async serveHttp(opts: { port: number; host?: string }): Promise<McpHttpHandle> {
+    const handle = await serveMcpHttp({
+      port: opts.port,
+      ...(opts.host ? { host: opts.host } : {}),
+      logger: this._config.logger,
+      serverFactory: () => {
+        const server = this._createServer();
+        this._sessionServers.add(server);
+        server.onclose = () => this._sessionServers.delete(server);
+        return server;
+      },
     });
-
-    return new Promise((resolve, reject) => {
-      httpServer.on('error', reject);
-      httpServer.listen(opts.port, host, () => {
-        this._config.logger.info('mcp_server_started', {
-          transport: 'streamable-http',
-          host,
-          port: opts.port,
-        });
-        resolve();
-      });
-    });
+    this._http = handle;
+    return handle;
   }
 }

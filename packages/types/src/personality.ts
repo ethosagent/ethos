@@ -520,9 +520,22 @@ export interface PersonalityConfig {
    * `safety.approvalMode` (which gates tool calls, not evolution). Do NOT
    * overload safety.approvalMode.
    *   `user` (default when absent): every Expression change is drafted and
-   *     applied only on explicit user approval.
-   *   `auto`: reserved for phase-3b (requires the Personality Judge); inert
-   *     for now — treat the same as `user` until 3b wires it.
+   *     applied only on explicit user approval. Two drafters honour this.
+   *     `runPersonalityEvolve` (apps/ethos/src/commands/personality-evolve.ts)
+   *     shows the rationale and diff and applies on `y`. The nightly pass does
+   *     NOT apply: `runNightlyPass` step 3
+   *     (extensions/nightly-loop/src/orchestrator.ts) routes the draft to its
+   *     `queueExpression` dep, which parks it at
+   *     `~/.ethos/learning/pending-expression/<id>.json`
+   *     (`queuePendingExpression`, apps/ethos/src/commands/pending-expression.ts),
+   *     and the next `ethos personality evolve <id>` offers it.
+   *   `auto`: the Personality Judge is the approver instead of the user. An
+   *     Expression scoring below `GOOD_ALIGNMENT_THRESHOLD` is applied with no
+   *     prompt, by both drafters above.
+   * No longer inert — it was, before phase 3b wired the Judge. What the two
+   * readers do with each value is pinned by
+   * extensions/nightly-loop/src/__tests__/orchestrator.test.ts and
+   * apps/ethos/src/commands/__tests__/pending-expression.test.ts.
    * Counts as ONE field for the schema-freeze gate.
    */
   evolution_approval_mode?: 'auto' | 'user';

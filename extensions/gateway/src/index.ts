@@ -6,6 +6,7 @@ import {
   DEFAULT_ESCALATION_DELAY_MS,
   deriveBotKey,
   LaneVoiceModeStore,
+  laneKeyBotKey,
   resolveSttProviderForPersonality,
   resolveTtsProviderForPersonality,
   resolveVoicePreferences,
@@ -340,13 +341,16 @@ export function adapterRegistries(adapters: Iterable<PlatformAdapter>): {
 }
 
 /**
- * The botKey segment of a lane key. `buildLaneKey` joins
- * `(platform, botKey, chatId[, threadId])` with `:` after
- * `encodeURIComponent`, so segment 1 is the encoded botKey.
+ * The botKey segment of a lane key, or `''` when the key names no bot.
+ *
+ * The parse itself is `laneKeyBotKey` in `@ethosagent/core` — the same decoder
+ * `send_message` resolves its sender through (`laneSenderBotKey` in
+ * `@ethosagent/tools-messaging`) — so the gateway and the tool cannot disagree
+ * about which bot owns a lane. `''` only ever feeds equality tests against a
+ * real botKey, which it can never match.
  */
 function botKeyOfLaneKey(laneKey: string): string {
-  const segment = laneKey.split(':')[1];
-  return segment === undefined ? '' : decodeURIComponent(segment);
+  return laneKeyBotKey(laneKey) ?? '';
 }
 
 /**
@@ -4717,6 +4721,92 @@ export class Gateway {
     if (!adapter) {
       return { ok: false, error: `No adapter registered for platform "${platform}"` };
     }
+    return await this.sendThrough(adapter, platform, target, body, media);
+  }
+
+  /**
+   * Every adapter this process runs on `platform`, deduplicated by identity.
+   *
+   * `botAdapters` is keyed by the botKey each adapter speaks as, so its values
+   * ARE the platform's bots — unlike `adapterRegistry`, which keeps only the
+   * first one per platform. One adapter filed under two keys (a legacy alias)
+   * is one candidate, not two.
+   */
+  private adaptersOnPlatform(platform: string): PlatformAdapter[] {
+    const seen = new Set<PlatformAdapter>();
+    for (const adapter of this.botAdapters.values()) {
+      if (platformOfAdapterId(adapter.id) === platform) seen.add(adapter);
+    }
+    return [...seen];
+  }
+
+  /**
+   * Send AS a named bot — the agent-initiated counterpart to `adapterForBot`
+   * (B-T4, plan/phases/trust-before-reach.md).
+   *
+   * `sendTo` resolves by platform alone: the first adapter registered for it.
+   * That is right for a send the OPERATOR aimed at a platform, and wrong for
+   * one an agent turn produced, because a turn runs in a lane that names the
+   * bot it is speaking as. With two Telegram bots configured, a
+   * platform-resolved `send_message` from SupportBot's lane leaves through
+   * SalesBot's adapter — the reply arrives from the wrong identity, and the
+   * two failures below are why this refuses instead of guessing:
+   *
+   *  - `botKey` given but no adapter speaks for it here (the bot was removed
+   *    from config, or lives in another process) → refuse. Falling back to the
+   *    platform default is exactly the wrong-identity send.
+   *  - No `botKey` (a CLI or web turn: its lane names no bot) → the platform
+   *    default is used ONLY when that platform has exactly one bot, which is
+   *    what every single-bot deployment has. With several, nothing in the turn
+   *    says which one, so the send is refused as an ambiguous sender rather
+   *    than silently attributed to whichever adapter registered first.
+   */
+  async sendAsBot(
+    platform: string,
+    target: string,
+    body: string,
+    botKey?: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (botKey) {
+      const adapter = this.adapterForBot(botKey, platform);
+      if (!adapter) {
+        return {
+          ok: false,
+          error:
+            `CRON_TARGET_NOT_ALLOWED: no ${platform} bot "${botKey}" is configured here — ` +
+            'nothing was sent. Another bot must not speak in its place.',
+        };
+      }
+      return await this.sendThrough(adapter, platform, target, body, undefined);
+    }
+    const candidates = this.adaptersOnPlatform(platform);
+    const only = candidates[0];
+    if (!only) {
+      return {
+        ok: false,
+        error: `CRON_TARGET_NOT_ALLOWED: no ${platform} bot is configured here — nothing was sent.`,
+      };
+    }
+    if (candidates.length > 1) {
+      return {
+        ok: false,
+        error:
+          `ambiguous sender: ${candidates.length} ${platform} bots are configured and this ` +
+          'turn does not run as any of them. Send from a lane on that platform, or remove ' +
+          'the extra bots.',
+      };
+    }
+    return await this.sendThrough(only, platform, target, body, undefined);
+  }
+
+  /** The shared body of `sendTo` / `sendAsBot`: dedup, media mapping, send. */
+  private async sendThrough(
+    adapter: PlatformAdapter,
+    platform: string,
+    target: string,
+    body: string,
+    media: unknown,
+  ): Promise<{ ok: boolean; error?: string }> {
     try {
       // Route through outbound dedup — same path as normal responses.
       // Use target as the session key for dedup so repeated sends to the

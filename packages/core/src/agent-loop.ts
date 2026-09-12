@@ -308,6 +308,19 @@ export interface RunOptions {
   modelOverride?: string;
   /** Opaque user id (from IdentityMap). When present, USER.md is read from `user:<userId>` scope. */
   userId?: string;
+  /**
+   * Skip the context-assembly memory prefetch for this run — Step 5 of
+   * `./agent-loop/stages/context-assembly`, in full: the personality-scope
+   * `prefetch`, its `search` fallback, AND the `user:<userId>` scope `read`
+   * that `userId` would otherwise trigger. No `MemoryProvider` method is
+   * called and no memory section is built into the system prompt.
+   *
+   * A read gate, not a write gate: turn-end memory flushes are a separate
+   * concern and this flag does not touch them. Set by a host that must serve a
+   * personality with its memory withheld. Enforced in `assembleContext`;
+   * pinned by `packages/core/src/__tests__/skip-memory-prefetch.test.ts`.
+   */
+  skipMemoryPrefetch?: boolean;
   dryRun?: boolean;
   dryRunMaxToolCalls?: number;
   /**

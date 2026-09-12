@@ -40,6 +40,7 @@ function makeDeps(overrides: Partial<NightlyPassDeps> = {}): {
   deps: NightlyPassDeps;
   spies: {
     applyExpression: ReturnType<typeof vi.fn>;
+    queueExpression: ReturnType<typeof vi.fn>;
     applyMemoryUpdates: ReturnType<typeof vi.fn>;
     draftExpression: ReturnType<typeof vi.fn>;
     scoreAlignment: ReturnType<typeof vi.fn>;
@@ -49,6 +50,7 @@ function makeDeps(overrides: Partial<NightlyPassDeps> = {}): {
   let state: NightlyState | null = null;
 
   const applyExpression = vi.fn(async () => ({ revisionId: 'rev-1' }));
+  const queueExpression = vi.fn(async () => {});
   const applyMemoryUpdates = vi.fn(async () => {});
   const draftExpression = vi.fn(async () => ({
     newExpression: 'new expression',
@@ -64,6 +66,11 @@ function makeDeps(overrides: Partial<NightlyPassDeps> = {}): {
     writeJudgeStreak: async () => {},
     draftExpression,
     applyExpression,
+    // `auto` by default so the pre-B-T1 tests below keep exercising the APPLY
+    // path they were written for. The gate's own behaviour — absent and `user`
+    // queue instead — is covered by the `evolution_approval_mode` block.
+    expressionApprovalMode: () => 'auto',
+    queueExpression,
     readMemory: async () => ({ memory: 'old memory', user: 'old user' }),
     consolidate: async () => ({ memory: 'new memory', user: 'new user' }),
     applyMemoryUpdates,
@@ -76,7 +83,13 @@ function makeDeps(overrides: Partial<NightlyPassDeps> = {}): {
 
   return {
     deps: base,
-    spies: { applyExpression, applyMemoryUpdates, draftExpression, scoreAlignment },
+    spies: {
+      applyExpression,
+      queueExpression,
+      applyMemoryUpdates,
+      draftExpression,
+      scoreAlignment,
+    },
     getState: () => state,
   };
 }
@@ -254,6 +267,79 @@ describe('runNightlyPass', () => {
       expect(expr?.detail).toBe('expression disabled');
       expect(spies.draftExpression).not.toHaveBeenCalled();
       expect(spies.applyExpression).not.toHaveBeenCalled();
+    });
+  });
+
+  // B-T1. `evolution_approval_mode` promises that `user` — the default when the
+  // field is absent — applies an Expression change only on explicit user
+  // approval. Before this, there was no mode check anywhere on the nightly
+  // path, so every personality not set to `auto` got unapproved SOUL.md
+  // rewrites on every run. These tests ARE the gate.
+  describe('evolution_approval_mode gate (B-T1)', () => {
+    it('mode absent: queues the draft and never applies it', async () => {
+      const { deps, spies } = makeDeps({ expressionApprovalMode: () => undefined });
+      const res = await runNightlyPass('sage', deps);
+
+      const expr = res.steps.find((s) => s.step === 'expression');
+      expect(expr?.status).toBe('ran');
+      expect(expr?.detail).toContain('queued for approval');
+      expect(spies.applyExpression).not.toHaveBeenCalled();
+      expect(spies.queueExpression).toHaveBeenCalledTimes(1);
+      expect(spies.queueExpression).toHaveBeenCalledWith(
+        'sage',
+        { newExpression: 'new expression', rationale: 'because evidence shows X' },
+        {
+          evidenceRef: `nightly:0.60@${EVIDENCE.windowEnd}`,
+          baseExpression: 'expression text',
+        },
+      );
+    });
+
+    it("mode 'user': queues the draft and never applies it", async () => {
+      const { deps, spies } = makeDeps({ expressionApprovalMode: () => 'user' });
+      const res = await runNightlyPass('sage', deps);
+
+      expect(res.steps.find((s) => s.step === 'expression')?.detail).toContain(
+        'queued for approval',
+      );
+      expect(spies.applyExpression).not.toHaveBeenCalled();
+      expect(spies.queueExpression).toHaveBeenCalledTimes(1);
+    });
+
+    it("mode 'auto': applies as today, nothing queued", async () => {
+      const { deps, spies } = makeDeps({ expressionApprovalMode: () => 'auto' });
+      const res = await runNightlyPass('sage', deps);
+
+      expect(res.steps.find((s) => s.step === 'expression')?.detail).toContain('applied');
+      expect(spies.applyExpression).toHaveBeenCalledTimes(1);
+      expect(spies.queueExpression).not.toHaveBeenCalled();
+    });
+
+    it('a queued draft completes the step, so the same window does not re-queue', async () => {
+      const { deps, spies, getState } = makeDeps({ expressionApprovalMode: () => 'user' });
+      await runNightlyPass('sage', deps);
+      expect(getState()?.completed).toContain('expression');
+
+      await runNightlyPass('sage', deps);
+      expect(spies.queueExpression).toHaveBeenCalledTimes(1);
+    });
+
+    it('a failing queue write is recorded failed and does not complete the step', async () => {
+      const queueExpression = vi.fn(async () => {
+        throw new Error('disk full');
+      });
+      const { deps, spies, getState } = makeDeps({
+        expressionApprovalMode: () => 'user',
+        queueExpression,
+      });
+      const res = await runNightlyPass('sage', deps);
+
+      const expr = res.steps.find((s) => s.step === 'expression');
+      expect(expr?.status).toBe('failed');
+      expect(expr?.detail).toBe('disk full');
+      expect(getState()?.completed).not.toContain('expression');
+      expect(spies.applyExpression).not.toHaveBeenCalled();
+      expect(stepStatus(res.steps, 'memory')).toBe('ran');
     });
   });
 

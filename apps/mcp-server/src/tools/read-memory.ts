@@ -1,25 +1,25 @@
 import type { MemoryProvider } from '@ethosagent/types';
+import { personalityMemoryContext } from '../memory-scope';
 
 export const readMemoryToolDef = {
   name: 'read_memory',
-  description: 'Read the content of a memory key via the MemoryProvider.',
+  description:
+    "Read one memory key from a personality's memory scope (~/.ethos/personalities/<id>/).",
   inputSchema: {
     type: 'object' as const,
     properties: {
-      key: { type: 'string', description: 'Memory key, e.g. "MEMORY.md" or "architecture.md"' },
+      personality_id: { type: 'string', description: 'The personality whose memory to read' },
+      key: { type: 'string', description: 'Memory key, e.g. "MEMORY.md" or "USER.md"' },
     },
-    required: ['key'],
+    required: ['personality_id', 'key'],
   },
 };
 
-export async function readMemory(provider: MemoryProvider, key: string): Promise<string> {
-  const ctx = {
-    scopeId: 'memory',
-    sessionId: '',
-    sessionKey: '',
-    platform: 'mcp',
-    workingDir: '',
-  };
-  const entry = await provider.read(key, ctx);
+export async function readMemory(
+  provider: MemoryProvider,
+  personalityId: string,
+  key: string,
+): Promise<string> {
+  const entry = await provider.read(key, personalityMemoryContext(personalityId));
   return entry ? entry.content : `No content found for key: ${key}`;
 }

@@ -1,63 +1,45 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { MemoryProvider } from '@ethosagent/types';
+import { personalityMemoryContext } from '../memory-scope';
 
 export interface MemorySearchResult {
-  store: 'memory' | 'user';
+  /** The memory key the snippet came from, e.g. `MEMORY.md`. */
+  key: string;
   snippet: string;
 }
 
-/** Simple substring search over MEMORY.md and USER.md. */
+/** Which keys a `scope` filter admits. */
+function admits(key: string, scope?: 'memory' | 'user' | 'all'): boolean {
+  if (scope === 'memory') return key === 'MEMORY.md';
+  if (scope === 'user') return key === 'USER.md';
+  return true;
+}
+
+/**
+ * Substring search over one personality's memory, through the provider — the
+ * same bytes the agent reads (`personality:<id>` scope, `memory-scope.ts`).
+ * Matching lines come back with one line of context either side.
+ */
 export async function searchMemory(
-  dataDir: string,
+  provider: MemoryProvider,
+  personalityId: string,
   query: string,
   scope?: 'memory' | 'user' | 'all',
-  provider?: MemoryProvider,
   limit = 10,
 ): Promise<MemorySearchResult[]> {
-  if (provider) {
-    const ctx = {
-      scopeId: 'memory',
-      sessionId: '',
-      sessionKey: '',
-      platform: 'mcp',
-      workingDir: '',
-    };
-    const entries = await provider.search(query, ctx, { limit });
-    return entries
-      .filter((entry) => {
-        if (scope === 'memory') return entry.key !== 'USER.md';
-        if (scope === 'user') return entry.key === 'USER.md';
-        return true;
-      })
-      .map((entry) => ({
-        store: (entry.key === 'USER.md' ? 'user' : 'memory') as 'memory' | 'user',
-        snippet: entry.content,
-      }));
-  }
-
+  const entries = await provider.search(query, personalityMemoryContext(personalityId), { limit });
+  const needle = query.toLowerCase();
   const results: MemorySearchResult[] = [];
-  const lower = query.toLowerCase();
 
-  const files: { store: 'memory' | 'user'; path: string }[] = [];
-  if (!scope || scope === 'all' || scope === 'memory')
-    files.push({ store: 'memory', path: join(dataDir, 'MEMORY.md') });
-  if (!scope || scope === 'all' || scope === 'user')
-    files.push({ store: 'user', path: join(dataDir, 'USER.md') });
-
-  for (const { store, path } of files) {
-    if (!existsSync(path)) continue;
-    const content = readFileSync(path, 'utf8');
-    const lines = content.split('\n');
-
+  for (const entry of entries) {
+    if (!admits(entry.key, scope)) continue;
+    const lines = entry.content.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (!line) continue;
-      if (!line.toLowerCase().includes(lower)) continue;
-
+      if (!line.toLowerCase().includes(needle)) continue;
       const start = Math.max(0, i - 1);
       const end = Math.min(lines.length, i + 2);
-      results.push({ store, snippet: lines.slice(start, end).join('\n').trim() });
+      results.push({ key: entry.key, snippet: lines.slice(start, end).join('\n').trim() });
     }
   }
 
@@ -67,10 +49,14 @@ export async function searchMemory(
 export const searchMemoryToolDef = {
   name: 'search_memory',
   description:
-    'Search Ethos agent memory files (MEMORY.md and USER.md) for entries matching a query. Returns matching snippets with surrounding context.',
+    "Search one personality's memory (~/.ethos/personalities/<id>/: MEMORY.md, USER.md and any other topic files) for entries matching a query. Returns matching snippets with surrounding context.",
   inputSchema: {
     type: 'object' as const,
     properties: {
+      personality_id: {
+        type: 'string',
+        description: 'The personality whose memory to search',
+      },
       query: {
         type: 'string',
         description: 'Search term or phrase',
@@ -78,9 +64,9 @@ export const searchMemoryToolDef = {
       scope: {
         type: 'string',
         enum: ['memory', 'user', 'all'],
-        description: 'Which memory file to search. Defaults to "all".',
+        description: 'Restrict to MEMORY.md, USER.md, or search every key. Defaults to "all".',
       },
     },
-    required: ['query'],
+    required: ['personality_id', 'query'],
   },
 };

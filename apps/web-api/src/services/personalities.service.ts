@@ -13,7 +13,7 @@ import {
   SYSTEM_PERSONALITY_IDS,
   type UpdatePersonalityPatch,
 } from '@ethosagent/personalities';
-import { draftExpressionUpdate, draftSoulSplit } from '@ethosagent/skill-evolver';
+import { draftExpressionUpdate, draftSoulSplit, liveSkillDir } from '@ethosagent/skill-evolver';
 import type { PersonalitySkillRecord, SkillsInjector, SkillsLibrary } from '@ethosagent/skills';
 import { type McpJsonStore, mcpTokenSecretRef } from '@ethosagent/tools-mcp';
 import {
@@ -522,7 +522,12 @@ export class PersonalitiesService {
     if (!storage || !dataDir) throw storageNotConfigured();
     this.assertCandidateFileName(fileName);
     const pendingPath = join(dataDir, 'skills', '.pending', personalityId, fileName);
-    const liveDir = join(dataDir, 'skills');
+    // Honour `skill_evolution.scope`: a personality-scoped skill must land in
+    // that personality's own skills dir, not the shared one. Same helper the
+    // nightly promoter uses (`liveSkillDir` in @ethosagent/skill-evolver), so
+    // the two paths cannot drift apart again.
+    const scope = this.opts.personalities.describe(personalityId)?.config.skill_evolution?.scope;
+    const liveDir = liveSkillDir(dataDir, personalityId, scope);
     const livePath = join(liveDir, fileName);
     const body = await storage.read(pendingPath);
     if (body === null) throw candidateNotFound(personalityId, fileName);

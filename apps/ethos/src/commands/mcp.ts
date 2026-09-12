@@ -36,6 +36,7 @@ import {
   storeEnvSecrets,
 } from '@ethosagent/tools-mcp';
 import type { SecretsResolver } from '@ethosagent/types';
+import { createMemoryProviderFromConfig } from '@ethosagent/wiring';
 import { writeJson } from '../json-output';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
@@ -139,11 +140,24 @@ async function runServe(argv: string[]): Promise<void> {
   }
   const runtime = await createAgentLoop(config);
   const sessionStore = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+  // The memory tools read and write through the SAME backend the agent does
+  // (`createMemoryProviderFromConfig`, packages/wiring/src/memory-backend.ts);
+  // scope comes from the caller's `personality_id` (`personalityMemoryContext`,
+  // apps/mcp-server/src/memory-scope.ts). This console is full trust and
+  // installed explicitly, so writes are on.
+  const memory = createMemoryProviderFromConfig({
+    config,
+    dataDir: ethosDir(),
+    storage,
+  });
   const server = new EthosMcpServer({
     loop: runtime.loop,
     dataDir: ethosDir(),
+    storage,
     logger: mcpLogger,
     sessionStore,
+    memoryProvider: memory.provider,
+    enableMemoryWrite: true,
   });
 
   // `ethos mcp serve` runs until its client goes away, so the only shutdown it
@@ -625,15 +639,16 @@ function runInspect(argv: string[]): void {
       tools: [
         { name: 'ask_personality', description: 'Run a prompt through a specific personality' },
         { name: 'list_personalities', description: 'List all available personalities' },
-        { name: 'search_memory', description: 'Search MEMORY.md and USER.md' },
         { name: 'list_sessions', description: 'List recent sessions with metadata' },
         { name: 'get_session', description: 'Get session metadata and first page of messages' },
         { name: 'get_messages', description: 'Get messages from a session' },
         { name: 'search_sessions', description: 'Full-text search across session messages' },
+        { name: 'search_memory', description: "Search one personality's memory" },
+        { name: 'read_memory', description: "Read one key from a personality's memory" },
+        { name: 'write_memory', description: "Write one key in a personality's memory" },
       ],
       resources: [
-        { uri: 'ethos://memory/MEMORY.md', description: 'Agent memory' },
-        { uri: 'ethos://memory/USER.md', description: 'User context' },
+        { uri: 'ethos://memory/<id>/<key>', description: "A personality's memory key" },
         { uri: 'ethos://sessions/recent', description: 'Recent sessions' },
         { uri: 'ethos://personalities/<id>/SOUL.md', description: 'Personality identity' },
       ],
@@ -650,16 +665,17 @@ function runInspect(argv: string[]): void {
   console.log('Tools:\n');
   console.log('  ask_personality     Run a prompt through a specific personality');
   console.log('  list_personalities  List all available personalities');
-  console.log('  search_memory       Search MEMORY.md and USER.md');
   console.log('  list_sessions       List recent sessions with metadata');
   console.log('  get_session         Get session metadata and first page of messages');
   console.log('  get_messages        Get messages from a session');
   console.log('  search_sessions     Full-text search across session messages');
+  console.log("  search_memory       Search one personality's memory");
+  console.log("  read_memory         Read one key from a personality's memory");
+  console.log("  write_memory        Write one key in a personality's memory");
 
   console.log('\nResources:\n');
-  console.log('  ethos://memory/MEMORY.md          Agent memory');
-  console.log('  ethos://memory/USER.md             User context');
-  console.log('  ethos://sessions/recent            Recent sessions');
+  console.log("  ethos://memory/<id>/<key>           A personality's memory key");
+  console.log('  ethos://sessions/recent             Recent sessions');
   console.log('  ethos://personalities/<id>/SOUL.md  Personality identity');
 
   console.log('\nPrompts:\n');

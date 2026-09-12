@@ -461,6 +461,13 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@4.4.3)
+    devDependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+      '@ethosagent/wiring':
+        specifier: workspace:*
+        version: link:../../packages/wiring
 
   apps/tui:
     dependencies:
@@ -1272,6 +1279,19 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
 
+  extensions/learning-inbox:
+    dependencies:
+      '@ethosagent/safety-groundtruth':
+        specifier: workspace:*
+        version: link:../../packages/safety/groundtruth
+      '@ethosagent/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+    devDependencies:
+      '@ethosagent/storage-fs':
+        specifier: workspace:*
+        version: link:../../packages/storage-fs
+
   extensions/llm-anthropic:
     dependencies:
       '@anthropic-ai/sdk':
@@ -1552,6 +1572,12 @@ importers:
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
+
+  extensions/outbox:
+    dependencies:
+      '@ethosagent/sqlite':
+        specifier: workspace:*
+        version: link:../../packages/sqlite
 
   extensions/pause-clock:
     dependencies:
@@ -2152,6 +2178,9 @@ importers:
 
   extensions/tools-messaging:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

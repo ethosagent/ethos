@@ -1,4 +1,10 @@
-import type { AgentEvent, Attachment, MemoryContext, PromptContext } from '@ethosagent/types';
+import type {
+  AgentEvent,
+  Attachment,
+  MemoryContext,
+  MemorySnapshot,
+  PromptContext,
+} from '@ethosagent/types';
 import { buildAttachmentAnnotation } from '../../attachment-annotation';
 import { canInlineNatively, encodeNativeBlocks } from '../../attachment-blocks';
 import { classifyAttachment, unsupportedTypeError } from '../../attachment-classifier';
@@ -99,6 +105,9 @@ export async function* assembleContext(
     attachments?: Attachment[];
     userId?: string;
     dryRun?: boolean;
+    /** Skip Step 5 entirely — no memory provider call, no memory section.
+     *  See `RunOptions.skipMemoryPrefetch` in `../../agent-loop`. */
+    skipMemoryPrefetch?: boolean;
     /** T3 — max output tokens for the pending completion; reserved from the
      *  context window by compaction so the response can't overflow. */
     maxCompletionTokens?: number;
@@ -326,59 +335,71 @@ export async function* assembleContext(
 
   // Step 5: Prefetch memory.
   //
-  // Per-personality memory backend: if the personality declares a `memory.provider`,
-  // resolve it from the registry. Otherwise fall back to the global provider.
-  const activeMemory = personality.memory?.provider
-    ? ((await deps.memoryProviders.get(personality.memory.provider)?.(
-        personality.memory.options,
-      )) ?? deps.memory)
-    : deps.memory;
-
-  const memCtx: MemoryContext = {
-    scopeId: memScopeId,
-    sessionId,
-    sessionKey,
-    platform: deps.platform,
-    workingDir,
-  };
-  let memSnapshot = await activeMemory.prefetch(memCtx);
-
-  // Providers that don't support bulk prefetch (e.g. VectorMemoryProvider)
-  // return null. Fall back to a semantic search on the current user text so
-  // those backends still inject relevant context into the system prompt —
-  // restoring the query-driven retrieval the old two-method contract did
-  // internally inside prefetch().
-  if (!memSnapshot && text.trim()) {
-    const hits = await activeMemory.search(text, memCtx, { limit: 5 });
-    if (hits.length > 0) {
-      memSnapshot = { entries: hits.map((h) => ({ key: h.key, content: h.content })) };
-    }
-  }
-
-  // Per-user profile prefetch
+  // `opts.skipMemoryPrefetch` (`RunOptions.skipMemoryPrefetch`) skips this step
+  // WHOLE — the personality-scope `prefetch`, its `search` fallback and the
+  // `user:` scope `read` below. No provider method is called and `memSnapshot`
+  // stays null, so no memory section reaches the prompt. Hosts that expose a
+  // personality with memory withheld set it. `userScopeId` is still derived: it
+  // is a string, not a provider call, and turn-end writes are a separate
+  // concern from this read. Pinned by
+  // `packages/core/src/__tests__/skip-memory-prefetch.test.ts`.
   const userScopeId = opts.userId ? `user:${opts.userId}` : undefined;
-  if (userScopeId) {
-    const userCtx: MemoryContext = {
-      scopeId: userScopeId,
+  let memSnapshot: MemorySnapshot | null = null;
+
+  if (!opts.skipMemoryPrefetch) {
+    // Per-personality memory backend: if the personality declares a `memory.provider`,
+    // resolve it from the registry. Otherwise fall back to the global provider.
+    const activeMemory = personality.memory?.provider
+      ? ((await deps.memoryProviders.get(personality.memory.provider)?.(
+          personality.memory.options,
+        )) ?? deps.memory)
+      : deps.memory;
+
+    const memCtx: MemoryContext = {
+      scopeId: memScopeId,
       sessionId,
       sessionKey,
       platform: deps.platform,
       workingDir,
     };
-    const userEntry = await activeMemory.read('USER.md', userCtx);
-    if (userEntry?.content.trim()) {
-      const userSnapshot = {
-        entries: [{ key: 'USER.md', content: userEntry.content }],
+    memSnapshot = await activeMemory.prefetch(memCtx);
+
+    // Providers that don't support bulk prefetch (e.g. VectorMemoryProvider)
+    // return null. Fall back to a semantic search on the current user text so
+    // those backends still inject relevant context into the system prompt —
+    // restoring the query-driven retrieval the old two-method contract did
+    // internally inside prefetch().
+    if (!memSnapshot && text.trim()) {
+      const hits = await activeMemory.search(text, memCtx, { limit: 5 });
+      if (hits.length > 0) {
+        memSnapshot = { entries: hits.map((h) => ({ key: h.key, content: h.content })) };
+      }
+    }
+
+    // Per-user profile prefetch
+    if (userScopeId) {
+      const userCtx: MemoryContext = {
+        scopeId: userScopeId,
+        sessionId,
+        sessionKey,
+        platform: deps.platform,
+        workingDir,
       };
-      if (memSnapshot) {
-        // Phase 1b — USER.md double-injection fix. The personality-scope
-        // prefetch above may ALSO have returned a USER.md entry; the user-scope
-        // read is the canonical per-user profile, so drop the prefetched copy
-        // and keep exactly one "About You" block in the built prompt.
-        const withoutUser = memSnapshot.entries.filter((e) => e.key !== 'USER.md');
-        memSnapshot = { entries: [...userSnapshot.entries, ...withoutUser] };
-      } else {
-        memSnapshot = userSnapshot;
+      const userEntry = await activeMemory.read('USER.md', userCtx);
+      if (userEntry?.content.trim()) {
+        const userSnapshot = {
+          entries: [{ key: 'USER.md', content: userEntry.content }],
+        };
+        if (memSnapshot) {
+          // Phase 1b — USER.md double-injection fix. The personality-scope
+          // prefetch above may ALSO have returned a USER.md entry; the user-scope
+          // read is the canonical per-user profile, so drop the prefetched copy
+          // and keep exactly one "About You" block in the built prompt.
+          const withoutUser = memSnapshot.entries.filter((e) => e.key !== 'USER.md');
+          memSnapshot = { entries: [...userSnapshot.entries, ...withoutUser] };
+        } else {
+          memSnapshot = userSnapshot;
+        }
       }
     }
   }

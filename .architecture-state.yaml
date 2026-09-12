@@ -315,7 +315,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 144 packages: 11 at Tier 0, 27 at Tier 1, 106 at Tier 2.
+# apps/ carries a tier. 146 packages: 11 at Tier 0, 27 at Tier 1, 108 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -804,6 +804,11 @@ tiers:
     tier: 2
     assigned: 2026-08-12
 
+  extensions/learning-inbox:
+    package: "@ethosagent/learning-inbox"
+    tier: 2
+    assigned: 2026-09-12
+
   extensions/llm-anthropic:
     package: "@ethosagent/llm-anthropic"
     tier: 2
@@ -888,6 +893,18 @@ tiers:
     package: "@ethosagent/openclaw-compat"
     tier: 2
     assigned: 2026-08-12
+
+  # The approval outbox holds publications a human has approved and the binding
+  # that says WHICH text to WHICH destination that approval covers. Tier 2 for
+  # the same reason notify-queue is: it is a durable store with no subprocess,
+  # no mount derivation and no boundary of its own to implement. The binding it
+  # enforces is a correctness property of this store's own conditional UPDATEs,
+  # not a kernel guarantee anything else rests on, and the gate that decides a
+  # send is gated at all lives in extensions/tools-messaging.
+  extensions/outbox:
+    package: "@ethosagent/outbox"
+    tier: 2
+    assigned: 2026-09-12
 
   extensions/pause-clock:
     package: "@ethosagent/pause-clock"

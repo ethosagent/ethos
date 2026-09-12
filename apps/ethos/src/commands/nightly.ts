@@ -33,6 +33,7 @@ import {
   toEthosError,
 } from '@ethosagent/types';
 import { createLLM, getStorage } from '../wiring';
+import { expressionHash, queuePendingExpression } from './pending-expression';
 import {
   buildEvidenceDigest,
   buildJudgeRunner,
@@ -217,6 +218,27 @@ function buildDeps(args: {
     async applyExpression(id, newExpression, opts) {
       const { entry } = await reg.evolveExpression(id, newExpression, opts);
       return { revisionId: entry.revisionId };
+    },
+
+    // The approval gate the orchestrator consults before step 3 writes
+    // anything. Absent === `user` === queue, per the `evolution_approval_mode`
+    // contract in packages/types/src/personality.ts.
+    expressionApprovalMode(id) {
+      return reg.get(id)?.evolution_approval_mode;
+    },
+
+    async queueExpression(id, draft, meta) {
+      await queuePendingExpression(getStorage(), ethosDir, {
+        personalityId: id,
+        newExpression: draft.newExpression,
+        rationale: draft.rationale,
+        evidenceRef: meta.evidenceRef,
+        baseHash: expressionHash(meta.baseExpression),
+        at: new Date().toISOString(),
+      });
+      console.log(
+        `  queued Expression draft for ${id} — approve with \`ethos personality evolve ${id}\``,
+      );
     },
 
     async createSkills(id, evidence): Promise<number> {

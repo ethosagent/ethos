@@ -186,6 +186,7 @@ extensions/channel-transcript-sqlite/ — SQLiteChannelTranscriptStore opens a r
 packages/a2a/src/sqlite-task-store.ts — SQLiteA2aTaskStore opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir (same rationale as job-store/delivery-ledger/session-cards/call-log); the A2A async task store, so a task's terminal state and idempotency key survive an `ethos serve` restart
 extensions/agent-mesh/src/index.ts acquireRegistryLock — mkdirSync/writeFileSync/statSync/unlinkSync for an advisory `wx`-flag sentinel file guarding the mesh registry.json write; the registry CONTENT itself already goes through the injected Storage (plan a2a-spec-compat T1.1 / D12 — confirmed the only raw `node:fs` in this module). A lock is a primitive Storage cannot express, same category as delivery-ledger's atomic claim
 extensions/notify-queue/ — SQLiteNotifyQueue opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir; its `readAndConsume` is a SELECT then UPDATE inside one transaction, the same shape as delivery-ledger's atomic claim, which no Storage interface can express (same rationale as job-store/delivery-ledger/session-cards/call-log)
+extensions/outbox/ — SQLiteOutboxStore opens a raw path via @ethosagent/sqlite and mkdirSync's the db's parent dir; the bound approve and the delivery claim are conditional UPDATEs whose affected-row count IS the answer, which no Storage interface can express — same rationale as delivery-ledger/notify-queue
 apps/ethos/src/error-log.ts — sync crash logger; must flush before process exit
 apps/ethos/tsup.config.ts and other build-time tooling
 extensions/skills/src/skill-compat.ts statSync — walks $PATH, not ~/.ethos/
@@ -235,6 +236,7 @@ What the trade is, per [sqlite.org](https://www.sqlite.org/pragma.html#pragma_sy
 | `extensions/delivery-ledger/` | Its whole purpose. An obligation is written `pending` BEFORE the platform call so the sweep can redeliver; losing that row loses the reply for good. | No — ~2 commits per reply. |
 | `extensions/job-store/` | A `queued` row is often the only record that work is owed, and the user was told the job started. | No — a few commits per job; heartbeat is 30s. |
 | `extensions/notify-queue/` | A queued wake notice is work owed to a person; a lost enqueue is never retried. | No — one commit per notification. |
+| `extensions/outbox/` | A pending publication is work owed to a person; a lost approve silently drops it. | No — a handful of commits per publication. |
 | `extensions/inbound-dedup/` | It IS the durable half of dedup. A power cut is the one restart that can roll back the last sightings, and a platform retry afterwards is a second billed LLM turn replying to an answered message. | No — `seen()` runs only on an in-memory Set miss. |
 | `extensions/call-log/` | `ringing`/`live` rows are LIVE STATE, not history — nothing deletes them however old they look. | No — a few commits per phone call. |
 | `packages/a2a/src/sqlite-task-store.ts` | The idempotency key surviving a restart is the point of the store; losing it re-runs a task that already ran. | No — writes at task boundaries. |

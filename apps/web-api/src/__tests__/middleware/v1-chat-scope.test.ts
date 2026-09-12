@@ -1,5 +1,5 @@
 import { SqliteApiKeyStore } from '@ethosagent/session-sqlite';
-import { ApiKeyScopeSchema } from '@ethosagent/web-contracts';
+import { ApiKeyScopeSchema, ApiKeyStaticScopeSchema } from '@ethosagent/web-contracts';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bearerAuth } from '../../middleware/bearer-auth';
@@ -54,7 +54,7 @@ describe('/v1/* requires the `chat` scope', () => {
 
   it('`chat:send` remains a distinct member — neither scope subsumes the other', () => {
     expect(ApiKeyScopeSchema.safeParse('chat:send').success).toBe(true);
-    expect(ApiKeyScopeSchema.options).toContain('chat');
-    expect(ApiKeyScopeSchema.options).toContain('chat:send');
+    expect(ApiKeyStaticScopeSchema.options).toContain('chat');
+    expect(ApiKeyStaticScopeSchema.options).toContain('chat:send');
   });
 });

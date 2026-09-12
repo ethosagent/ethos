@@ -36,7 +36,9 @@ describe('send_message — platform roster', () => {
       ctx,
     );
     expect(result.ok).toBe(true);
-    expect(send).toHaveBeenCalledWith('whatsapp', '123@g.us', 'hi');
+    // The 4th argument is the sender binding (B-T4). This context is not a
+    // channel lane, so it names no bot.
+    expect(send).toHaveBeenCalledWith('whatsapp', '123@g.us', 'hi', undefined);
   });
 
   it('rejects an unknown platform with a message naming all five', async () => {

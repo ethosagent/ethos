@@ -131,6 +131,7 @@ import {
   createSlackApprovalHook,
 } from '../approval-coordinator';
 import { createHealthServer, type MetricsAuthCheck } from '../health-server';
+import { createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { openFileMemory } from '../lib/file-memory';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
@@ -460,8 +461,14 @@ export async function resolveTelephonyMedia(
  * removed from config would silently deliver through some other agent's bot.
  * The binding predicate itself lives in `@ethosagent/config` so this and the
  * web API's delivery-target resolver cannot drift apart.
+ *
+ * Exported for `ethos boot`, which runs the same gateway role through the same
+ * `createCronDeliver` (apps/ethos/src/lib/cron-deliver.ts) and must gate on the
+ * same answer — a second copy of this is what B-T5 removed.
  */
-function buildChannelSpeakers(config: EthosConfig): (platform: string, id: string) => boolean {
+export function buildChannelSpeakers(
+  config: EthosConfig,
+): (platform: string, id: string) => boolean {
   const bots: Array<{ platform: string; bind: BotBinding }> = [
     ...(config.telegram?.bots ?? []).map((b) => ({ platform: 'telegram', bind: b.bind })),
     ...(config.slack?.apps ?? []).map((a) => ({ platform: 'slack', bind: a.bind })),
@@ -1134,42 +1141,24 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
 
   // Wire send_message tool to the real Gateway send path.
   // Each loop's messaging send function is scoped — set on all active loops.
-  const gatewayMessagingSend: MessagingSendFn = async (platform, target, body) =>
-    gateway.sendTo(platform, target, body);
+  //
+  // `sendAsBot`, not `sendTo` (B-T4): the tool call comes out of a turn, and a
+  // turn on a channel lane names the bot it speaks as. `sendTo` would resolve
+  // the platform's FIRST adapter, so with two Telegram bots configured one
+  // agent's `send_message` leaves through the other's identity.
+  const gatewayMessagingSend: MessagingSendFn = async (platform, target, body, botKey) =>
+    gateway.sendAsBot(platform, target, body, botKey);
   setSystemMessagingSend(gatewayMessagingSend);
   for (const setter of botMessagingSetters) {
     setter(gatewayMessagingSend);
   }
 
   // Wire cron delivery through the gateway's sendTo path so origin-bearing
-  // jobs route output back to the channel they were created from.
-  //
-  // `sendTo` resolves an adapter by PLATFORM, so on a platform with several
-  // bots it would happily deliver a job through whichever adapter happens to be
-  // registered. A job whose bot has since been removed from config must deliver
-  // NOTHING rather than fall back to a different agent's bot
-  // (plan/phases/recipes-gallery.md §1) — so re-check the binding first, and
-  // throw so `deliverTo` records `lastError` instead of failing silently.
+  // jobs route output back to the channel they were created from. The binding
+  // re-check and the throw-on-failure rule live in `createCronDeliver` — ONE
+  // module, shared with `ethos boot` (B-T5).
   const speaksFor = buildChannelSpeakers(config);
-  cronDeliverFn = async (job, output) => {
-    if (!job.origin) return;
-    const { platform, chatId } = job.origin;
-    if (platform !== 'web' && !speaksFor(platform, job.personalityId)) {
-      throw new EthosError({
-        code: 'CRON_TARGET_NOT_ALLOWED',
-        cause: `no ${platform} bot is bound to personality "${job.personalityId}" — output was not delivered`,
-        action: `Re-add a ${platform} bot bound to "${job.personalityId}", or point the job somewhere else.`,
-      });
-    }
-    const result = await gateway.sendTo(platform, chatId, output);
-    if (!result.ok) {
-      throw new EthosError({
-        code: 'NETWORK_ERROR',
-        cause: result.error ?? `${platform} delivery failed`,
-        action: 'Check the bot credentials and that the chat is still reachable.',
-      });
-    }
-  };
+  cronDeliverFn = createCronDeliver({ gateway, speaksFor });
 
   // Watcher deliver → the gateway's sendTo path. sendTo already routes
   // through the outbound dedup cache — the watcher layer adds NO dedup of

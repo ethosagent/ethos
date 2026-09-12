@@ -32,6 +32,7 @@
 //   extensions/call-log/          delivery-ledger's atomic redelivery claim is a
 //   extensions/notify-queue/      conditional UPDATE and session-cards derives its
 //   extensions/inbound-dedup/     per-session `seq` with MAX()+1 inside the insert
+//   extensions/outbox/
 //   extensions/channel-transcript-sqlite/
 //                                 — both need a real transaction, not file IO.
 //                                 notify-queue's read-and-consume is the same shape:
@@ -43,7 +44,13 @@
 //                                 additionally existsSyncs the db file so a prune on
 //                                 a deployment that never enabled observe mode is a
 //                                 no-op rather than a call that CREATES an empty
-//                                 database on every machine.)
+//                                 database on every machine.
+//                                 outbox's bound approve and delivery claim are
+//                                 conditional UPDATEs whose affected-row count IS
+//                                 the answer — "did this approval still match what
+//                                 the approver saw", "did this process win the
+//                                 claim" — which a read-then-write through Storage
+//                                 cannot express.)
 //
 //   packages/a2a/                Same rationale as the SQLite stores above:
 //   src/sqlite-task-store.ts     SQLiteA2aTaskStore (T1.6) opens a raw path via
@@ -292,6 +299,7 @@ const ALLOWED_PREFIXES = [
   'extensions/session-cards/',
   'extensions/call-log/',
   'extensions/notify-queue/',
+  'extensions/outbox/',
   'extensions/inbound-dedup/',
   'extensions/channel-transcript-sqlite/',
   'extensions/voice-providers/',

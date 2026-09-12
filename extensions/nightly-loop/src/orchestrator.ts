@@ -3,7 +3,9 @@
 //
 // runNightlyPass() runs five ordered, individually-checkpointed steps for one
 // personality: gather evidence → judge alignment → (maybe) evolve Expression →
-// (maybe) create skills → consolidate memory. Every external effect is an
+// (maybe) create skills → consolidate memory. Step 3 writes SOUL.md only under
+// `evolution_approval_mode: auto`; every other mode queues the draft through
+// `queueExpression` for explicit approval (plan `trust-before-reach.md` B-T1). Every external effect is an
 // injected plain function (NightlyPassDeps), so the pass is unit-testable with
 // stubs — no AgentLoop, no real LLM, no Storage.
 //
@@ -73,6 +75,30 @@ export interface NightlyPassDeps {
     newExpression: string,
     opts: { summary: string; evidenceRef: string },
   ): Promise<{ revisionId: string }>;
+  /**
+   * Governance gate for step 3 (plan `trust-before-reach.md` B-T1). Reads
+   * `PersonalityConfig.evolution_approval_mode`, whose contract says `user` —
+   * the default when the field is absent — applies an Expression change "only
+   * on explicit user approval". Anything other than `'auto'` therefore routes
+   * the draft to `queueExpression` and NEVER to `applyExpression`.
+   *
+   * Required, not optional: an omittable gate is not a gate, and a host that
+   * forgot to wire it would resume applying unapproved changes silently, which
+   * is the exact bug this dep exists to close.
+   */
+  expressionApprovalMode(id: string): 'auto' | 'user' | undefined;
+  /**
+   * Park a drafted Expression for explicit approval instead of applying it.
+   * `meta.baseExpression` is the Expression the draft was written against, so
+   * the approval surface can refuse a draft the Expression has moved out from
+   * under. In the CLI this is `queuePendingExpression`
+   * (apps/ethos/src/commands/pending-expression.ts).
+   */
+  queueExpression(
+    id: string,
+    draft: { newExpression: string; rationale: string },
+    meta: { evidenceRef: string; baseExpression: string },
+  ): Promise<void>;
   createSkills?(id: string, evidence: NightlyEvidence): Promise<number>; // 3d hook; OPTIONAL — absent = step noop
   readMemory(id: string): Promise<{ memory: string; user: string }>;
   consolidate(input: {
@@ -221,15 +247,31 @@ export async function runNightlyPass(
           currentExpression: soul.expression,
           evidence: evidence.evidenceDigest,
         });
-        const applied = await deps.applyExpression(personalityId, draft.newExpression, {
-          summary: draft.rationale.slice(0, 120) || 'nightly expression update',
-          evidenceRef: `nightly:${result.alignmentScore.toFixed(2)}@${evidence.windowEnd}`,
-        });
-        steps.push({
-          step: 'expression',
-          status: 'ran',
-          detail: `applied (alignment ${pct}%, revision ${applied.revisionId})`,
-        });
+        const evidenceRef = `nightly:${result.alignmentScore.toFixed(2)}@${evidence.windowEnd}`;
+        // The approval gate. Only `auto` writes SOUL.md here; `user` (and the
+        // absent default, which IS `user`) queues the draft and waits for
+        // `ethos personality evolve <id>` to offer it.
+        if (deps.expressionApprovalMode(personalityId) === 'auto') {
+          const applied = await deps.applyExpression(personalityId, draft.newExpression, {
+            summary: draft.rationale.slice(0, 120) || 'nightly expression update',
+            evidenceRef,
+          });
+          steps.push({
+            step: 'expression',
+            status: 'ran',
+            detail: `applied (alignment ${pct}%, revision ${applied.revisionId})`,
+          });
+        } else {
+          await deps.queueExpression(personalityId, draft, {
+            evidenceRef,
+            baseExpression: soul.expression,
+          });
+          steps.push({
+            step: 'expression',
+            status: 'ran',
+            detail: `queued for approval (alignment ${pct}%)`,
+          });
+        }
         await markDone('expression');
       } catch (err) {
         steps.push({ step: 'expression', status: 'failed', detail: errMessage(err) });

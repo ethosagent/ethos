@@ -5,7 +5,12 @@ import {
   type ApiKeyRecord,
   SqliteApiKeyStore,
 } from '@ethosagent/session-sqlite';
-import { type ApiKeyScope, ApiKeyScopeSchema } from '@ethosagent/web-contracts';
+import {
+  type ApiKeyScope,
+  ApiKeyScopeSchema,
+  type ApiKeyStaticScope,
+  ApiKeyStaticScopeSchema,
+} from '@ethosagent/web-contracts';
 
 // `ethos api-key` — manage bearer-token credentials for the OpenAI-compat
 // `/v1/*` surface. Keys live alongside session state in `sessions.db` so
@@ -22,10 +27,10 @@ const c = {
 };
 
 // `chat` is the `/v1/*` scope, and the default because that surface is the
-// only reason this command exists. Typed against `ApiKeyScope` so the CLI and
-// `ApiKeyScopeSchema` cannot drift: keys minted here and keys minted through
-// the web UI's `apiKeys.create` RPC must draw from one vocabulary.
-const DEFAULT_SCOPES: ApiKeyScope[] = ['chat'];
+// only reason this command exists. Typed against `ApiKeyStaticScope` so the CLI
+// and `ApiKeyStaticScopeSchema` cannot drift: keys minted here and keys minted
+// through the web UI's `apiKeys.create` RPC must draw from one vocabulary.
+const DEFAULT_SCOPES: ApiKeyStaticScope[] = ['chat'];
 const USAGE =
   'Usage: ethos api-key [create --name <label> [--scopes <a,b>] [--json] | list [--json] | revoke <prefix>]';
 
@@ -149,6 +154,16 @@ function formatKey(k: ApiKeyRecord): string {
   return `${scopes}  ${c.dim}${lastUsed}${c.reset}  ${status}`;
 }
 
+// `mcp:<id>` is open-ended — one scope per exported personality — so it cannot
+// be listed the way the fixed enum can. Name its SHAPE alongside the list, or
+// the "valid scopes" line reads as exhaustive when it is not.
+const MCP_SCOPE_HINT = 'mcp:<personality-id>  (one exported personality per key)';
+
+function printValidScopes(): void {
+  console.log(`${c.dim}Valid scopes: ${ApiKeyStaticScopeSchema.options.join(', ')}${c.reset}`);
+  console.log(`${c.dim}           or ${MCP_SCOPE_HINT}${c.reset}`);
+}
+
 /**
  * Validate `--scopes a,b` against `ApiKeyScopeSchema`. Unknown scopes used to
  * be accepted verbatim — `SqliteApiKeyStore.create` stores whatever it is
@@ -162,7 +177,7 @@ function parseScopes(raw: string): ApiKeyScope[] {
     .filter(Boolean);
   if (requested.length === 0) {
     console.log(`${c.red}--scopes was empty. Pass at least one scope.${c.reset}`);
-    console.log(`${c.dim}Valid scopes: ${ApiKeyScopeSchema.options.join(', ')}${c.reset}`);
+    printValidScopes();
     process.exit(1);
   }
   const scopes: ApiKeyScope[] = [];
@@ -175,7 +190,7 @@ function parseScopes(raw: string): ApiKeyScope[] {
   if (unknown.length > 0) {
     const label = unknown.length === 1 ? 'scope' : 'scopes';
     console.log(`${c.red}Unknown ${label}: ${unknown.join(', ')}${c.reset}`);
-    console.log(`${c.dim}Valid scopes: ${ApiKeyScopeSchema.options.join(', ')}${c.reset}`);
+    printValidScopes();
     process.exit(1);
   }
   return scopes;

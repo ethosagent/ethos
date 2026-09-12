@@ -22,6 +22,7 @@
 import { join } from 'node:path';
 import type { LLMProvider, Message, Storage } from '@ethosagent/types';
 import { parseNewSkillResponse, renderNewSkillPrompt } from './prompts';
+import { liveSkillDir } from './skill-dir';
 import type { TaskSummary } from './types';
 
 export type ApprovalMode = 'auto' | 'user';
@@ -96,10 +97,7 @@ export async function proposeSkillFromEvidence(
 ): Promise<NightlySkillProposalResult> {
   const fileName = candidateFileName(input.windowEnd);
   const pendingDir = join(input.dataDir, 'skills', '.pending', input.personalityId);
-  const liveDir =
-    input.scope === 'personality'
-      ? join(input.dataDir, 'personalities', input.personalityId, 'skills')
-      : join(input.dataDir, 'skills');
+  const liveDir = liveSkillDir(input.dataDir, input.personalityId, input.scope);
   const pendingPath = join(pendingDir, fileName);
   const livePath = join(liveDir, fileName);
 
