@@ -482,6 +482,87 @@ export interface GatewayBotConfig {
   jobStore?: import('@ethosagent/types').JobStore;
 }
 
+/**
+ * "Does bot `botKey` still speak for `personalityId`?"
+ *
+ * The botKey-level generalisation of `buildChannelSpeakers`
+ * (`apps/ethos/src/commands/gateway.ts`), which answers the same question for a
+ * whole platform. Injected rather than computed here because resolving a TEAM
+ * binding means reading that team's manifest, which is config-layer knowledge
+ * the gateway does not carry.
+ */
+export type PublicationSpeaksFor = (botKey: string, personalityId: string) => boolean;
+
+/**
+ * One approved outbox item, as {@link Gateway.deliverPublication} needs it.
+ *
+ * Structural on purpose: `OutboxItem` (`@ethosagent/outbox`) plus its approved
+ * revision's text satisfies it, and the gateway takes no dependency on the
+ * outbox package to deliver for it.
+ */
+export interface PublicationRequest {
+  /** The outbox item id. Becomes the ledger session `outbox:<id>` and the
+   *  dedup key, so one item is one conversation as far as both are concerned. */
+  itemId: string;
+  /** The personality that drafted it — re-checked against `botKey`. */
+  personalityId: string;
+  /** The bot that will speak. Fixed at propose, approved by a human. */
+  botKey: string;
+  platform: string;
+  chatId: string;
+  threadId?: string;
+  /**
+   * The approved revision's text, BYTE-EXACT. It is handed to the adapter
+   * unchanged — no trimming, no normalisation — because the content hash the
+   * human approved binds these exact bytes.
+   */
+  text: string;
+}
+
+/**
+ * Why nothing was sent. The code is what the dispatcher branches on, because
+ * the two failures are not the same fact about the item:
+ *
+ * - `bot_not_served` / `no_adapter` / `no_binding_check` — this PROCESS cannot
+ *   publish it. The item goes back to `approved` and another process (or this
+ *   one, once its bot is up) delivers it. Nothing about the approval is stale.
+ * - `not_bound` — the bot no longer speaks for the personality. The approval
+ *   itself is void: a human approved a post from a bot that would now be
+ *   speaking out of turn. The item goes to `failed` for a person to look at.
+ * - `deduplicated` — the identical bytes passed the outbound chokepoint under
+ *   this item's own key inside the dedup TTL. Either a peer is publishing this
+ *   item right now, or a failed attempt is being retried seconds later. Keep
+ *   the item `approved`: a later tick gets through once the TTL lapses, and
+ *   until then a second copy is the thing worth not sending. Reporting it as
+ *   sent would be a claim this call cannot support — the cache remembers that
+ *   the bytes reached the chokepoint, not that the platform took them.
+ */
+export type PublicationRefusalCode =
+  | 'bot_not_served'
+  | 'no_adapter'
+  | 'no_binding_check'
+  | 'not_bound'
+  | 'deduplicated';
+
+/** The outcome of one {@link Gateway.deliverPublication} call. */
+export interface PublicationResult {
+  /**
+   * The platform CONFIRMED (`DeliveryResult.ok === true`). "Resolved without
+   * throwing" is not confirmation — every shipped adapter catches platform
+   * failures and returns `{ ok: false }`.
+   */
+  confirmed: boolean;
+  /**
+   * The ledger obligation this send is filed under, or `null` when no ledger is
+   * wired (and on a refusal, where nothing was written). `confirmed: false`
+   * with an id means the row is `pending` and `sweepPendingDeliveries()` owns
+   * the retry from here — the outbox must never resend it itself.
+   */
+  obligationId: string | null;
+  /** Present only when NOTHING was sent. */
+  refusal?: { code: PublicationRefusalCode; message: string };
+}
+
 export interface GatewayConfig {
   /**
    * Multi-bot routing: one entry per bot. The Gateway keys its lane state
@@ -547,6 +628,25 @@ export interface GatewayConfig {
    * having its replies delivered.
    */
   deliveryLedger?: DeliveryLedger;
+  /**
+   * "Does bot `botKey` still speak for `personalityId`?" — the binding re-check
+   * {@link Gateway.deliverPublication} runs before it publishes an approved
+   * outbox item (O-T5, plan/phases/trust-before-reach.md).
+   *
+   * botKey-level, not platform-level, on purpose. Cron's check
+   * (`createCronDeliver`, `apps/ethos/src/lib/cron-deliver.ts`) asks whether
+   * ANY bot on the platform is bound, which is the right question for a send
+   * addressed at a platform. A publication names the exact bot that will speak,
+   * approved by a human who saw that bot's name on the card; if that bot has
+   * since been rebound, a platform-level "yes" would publish in a voice nobody
+   * approved.
+   *
+   * Absent → `deliverPublication` REFUSES every publication rather than
+   * assuming the binding still holds. A publication is the one send where
+   * guessing costs a post to real people in the wrong agent's name, and an
+   * unwired check is a deployment gap, not permission.
+   */
+  publicationSpeaksFor?: PublicationSpeaksFor;
   /**
    * Durable backstop for the in-memory inbound dedup `Set`
    * (plan/phases/telegram-slack-webhook-mode.md §5). Consulted only when the
@@ -981,6 +1081,8 @@ export class Gateway {
   private readonly outboundDedup: MessageDedupCache;
   /** Durable delivery-obligation ledger (item 9). Absent → no durability. */
   private readonly deliveryLedger: DeliveryLedger | undefined;
+  /** Binding re-check for {@link deliverPublication}. Absent → it refuses. */
+  private readonly publicationSpeaksFor: PublicationSpeaksFor | undefined;
   /** Accumulated host-pause duration discounted from the stale-obligation
    *  abandon window. See `applyPauseOffset`. */
   private pauseOffsetMs = 0;
@@ -1255,6 +1357,7 @@ export class Gateway {
       },
     });
     this.deliveryLedger = config.deliveryLedger;
+    this.publicationSpeaksFor = config.publicationSpeaksFor;
     // Streaming draft edits: DMs on, groups off, unless config overrides.
     this.streamingDm = config.streamingEdits?.dm ?? true;
     this.streamingGroup = config.streamingEdits?.group ?? false;
@@ -4002,6 +4105,31 @@ export class Gateway {
     },
     message: OutboundMessage,
   ): Promise<boolean> {
+    return (await this.sendTrackedDetailed(target, message)).confirmed;
+  }
+
+  /**
+   * {@link sendTracked}, with the obligation id the caller filed under.
+   *
+   * Same single path — this IS the body, and `sendTracked` is the boolean
+   * shorthand over it. Only a caller that must hand the obligation to someone
+   * else needs the id: `deliverPublication` stores it on the outbox item so the
+   * UI can show the ledger row's live status for an unconfirmed publication,
+   * and so the outbox knows the ledger owns the retry.
+   *
+   * `null` means no obligation exists — no ledger is wired, or the ledger write
+   * itself failed (which is surfaced, not thrown). The send still happens.
+   */
+  private async sendTrackedDetailed(
+    target: {
+      adapter: PlatformAdapter;
+      botKey: string;
+      platform: string;
+      chatId: string;
+      sessionKey: string;
+    },
+    message: OutboundMessage,
+  ): Promise<{ confirmed: boolean; obligationId: string | null }> {
     const binding = this.deliveryBinding(target.botKey, target.platform);
     const obligationId = await beginDelivery(binding, {
       chatId: target.chatId,
@@ -4020,7 +4148,7 @@ export class Gateway {
     );
     if (result?.ok === true) {
       await confirmDelivery(binding, obligationId);
-      return true;
+      return { confirmed: true, obligationId };
     }
     // Leave the row `pending` — the next boot sweep redelivers it. Surface the
     // failure too: before this, a failed send was completely invisible.
@@ -4035,7 +4163,7 @@ export class Gateway {
         durable: obligationId !== null,
       },
     });
-    return false;
+    return { confirmed: false, obligationId };
   }
 
   /**
@@ -4107,6 +4235,109 @@ export class Gateway {
         sessionKey: target.sessionKey ?? `${target.platform}:${target.chatId}`,
       },
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
+    );
+  }
+
+  /**
+   * Publish ONE approved outbox item (O-T5, plan/phases/trust-before-reach.md).
+   *
+   * The whole point of this method is that a publication goes out as the bot a
+   * human approved it for, or it does not go out. Every other outbound path can
+   * afford to be addressed at a platform; this one cannot, because the card the
+   * approver tapped named the sending bot, and with two bots on one platform a
+   * platform-resolved send publishes B's post in A's voice to A's audience.
+   *
+   * In order:
+   *  1. The bot must be served here and have its OWN adapter on the platform
+   *     ({@link adapterForBot}, F08 — a sibling's adapter is never borrowed).
+   *     No adapter means this process refuses and the item stays `approved`
+   *     for the process that does own that bot; it never falls back.
+   *  2. The bot must STILL speak for the personality
+   *     ({@link GatewayConfig.publicationSpeaksFor}) — the same re-check cron
+   *     does (`createCronDeliver`), at bot granularity. Approval happened in the
+   *     past; a rebinding since then voids it.
+   *  3. `outboundDedup.shouldSend('outbox:<id>', text)` — the single outbound
+   *     chokepoint. The outbox adds NO dedup of its own (CLAUDE.md channel
+   *     adapter contract).
+   *  4. {@link sendTrackedDetailed} with ledger session `outbox:<id>`, so an
+   *     unconfirmed publication leaves a `pending` row that
+   *     {@link sweepPendingDeliveries} redelivers — through the same bot, since
+   *     the row carries its botKey.
+   *
+   * `text` reaches the adapter byte-identical to the approved revision. No
+   * trimming, no normalisation: the content hash the human approved binds those
+   * exact bytes, and anything else publishes something nobody approved.
+   *
+   * Never throws for a delivery failure — an adapter that throws folds into
+   * `confirmed: false` inside `sendTrackedDetailed`, leaving the obligation
+   * `pending`.
+   */
+  async deliverPublication(request: PublicationRequest): Promise<PublicationResult> {
+    const refuse = (code: PublicationRefusalCode, message: string): PublicationResult => {
+      this.observability?.recordSafetyBlock({
+        code: 'outbox.publication_refused',
+        cause: message,
+        details: {
+          reason: code,
+          itemId: request.itemId,
+          personalityId: request.personalityId,
+          botKey: request.botKey,
+          platform: request.platform,
+          chatId: request.chatId,
+        },
+      });
+      return { confirmed: false, obligationId: null, refusal: { code, message } };
+    };
+
+    if (!this.bots.has(request.botKey)) {
+      return refuse(
+        'bot_not_served',
+        `bot "${request.botKey}" is not served by this process — nothing was sent`,
+      );
+    }
+    const adapter = this.adapterForBot(request.botKey, request.platform);
+    if (!adapter) {
+      return refuse(
+        'no_adapter',
+        `no ${request.platform} adapter is registered for bot "${request.botKey}" here — ` +
+          'nothing was sent. Another bot must not publish in its place.',
+      );
+    }
+
+    const speaksFor = this.publicationSpeaksFor;
+    if (!speaksFor) {
+      return refuse(
+        'no_binding_check',
+        'no publicationSpeaksFor check is wired into this gateway — a publication is not ' +
+          'sent on the assumption that its bot is still bound',
+      );
+    }
+    if (!speaksFor(request.botKey, request.personalityId)) {
+      return refuse(
+        'not_bound',
+        `bot "${request.botKey}" no longer speaks for personality "${request.personalityId}" — ` +
+          'the approval named that bot, so nothing was sent',
+      );
+    }
+
+    const sessionKey = `outbox:${request.itemId}`;
+    if (!this.outboundDedup.shouldSend(sessionKey, request.text)) {
+      return refuse(
+        'deduplicated',
+        `identical text already passed the outbound chokepoint for ${sessionKey} within the ` +
+          'dedup window — nothing was sent by this call',
+      );
+    }
+
+    return this.sendTrackedDetailed(
+      {
+        adapter,
+        botKey: request.botKey,
+        platform: request.platform,
+        chatId: request.chatId,
+        sessionKey,
+      },
+      { text: request.text, ...(request.threadId ? { threadId: request.threadId } : {}) },
     );
   }
 

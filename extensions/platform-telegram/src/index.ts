@@ -50,6 +50,144 @@ export interface CallbackQueryEvent {
   answer: (text?: string) => Promise<void>;
 }
 
+// ---------------------------------------------------------------------------
+// Outbox approval cards (Part 2, O-T8)
+//
+// A publication a gated personality wants to send is DM'd to the operator as a
+// card carrying the full text and two buttons. The adapter renders and routes;
+// every policy decision — who is allowed to tap, whether the tapped revision is
+// still current, what happens next — belongs to the outbox wiring
+// (`apps/ethos/src/lib/outbox-wiring.ts`), which holds the store. Same division
+// as `postApprovalCard` / `approvalDecisionHandler`.
+// ---------------------------------------------------------------------------
+
+/** Where a publication is headed. Rendered as `name (platform:chatId)`. */
+export interface OutboxCardDestination {
+  /** Human-readable chat title, when the wiring knows one. */
+  name?: string;
+  platform: string;
+  chatId: string;
+}
+
+/** The advisory reviewer's verdict, when a review ran. Rendered verbatim — the
+ *  adapter does not interpret a verdict, it shows the one it was handed. */
+export interface OutboxCardReview {
+  /** The approver personality's id, e.g. `brand-editor`. */
+  reviewer: string;
+  /** e.g. `PASS` / `FAIL` / `UNCLEAR` / `UNAVAILABLE`. */
+  verdict: string;
+  reasons?: string;
+}
+
+export interface OutboxCardInput {
+  /** The operator's DM chat. */
+  chatId: string;
+  threadId?: string;
+  itemId: string;
+  revision: number;
+  /** The personality that wants to publish, e.g. `cmo`. */
+  personalityId: string;
+  destination: OutboxCardDestination;
+  /** The sending bot as the operator recognises it, e.g. `@EthosMarketingBot`. */
+  sender: string;
+  /** The publication, byte-exact. Never truncated — see `postOutboxCard`. */
+  text: string;
+  review?: OutboxCardReview;
+}
+
+/** What a posted card was: the full publication, or the notice that it was too
+ *  long to show here. A notice cannot be tapped, so the wiring should not wait
+ *  on one. */
+export type OutboxCardKind = 'card' | 'notice';
+
+/** The states a posted card can be edited into once it is no longer awaiting a
+ *  decision. */
+export type OutboxCardStatus =
+  | { kind: 'approved'; by: string }
+  | { kind: 'sent'; at: string }
+  | { kind: 'rejected'; by: string; reason?: string }
+  | { kind: 'superseded'; revision: number }
+  | { kind: 'expired' };
+
+/** An operator tap on an outbox card, surfaced to the outbox wiring. */
+export interface OutboxDecisionEvent {
+  itemId: string;
+  /** The revision the tapped card was posted for. The wiring compares it to
+   *  the item's current revision and answers "superseded" when it is stale. */
+  revision: number;
+  decision: 'approve' | 'reject';
+  /** The tapping Telegram user. The wiring compares it to
+   *  `channel_filter.telegram.ownerUserId` — the adapter enforces nothing. */
+  userId: string | undefined;
+  username: string | undefined;
+  /** The chat and message of the card that was tapped, so the wiring can edit
+   *  it in place. */
+  chatId: string;
+  messageId: string;
+  /** Dismiss the tapping client's spinner, optionally with a toast. If the
+   *  handler does not call this, the adapter answers for it. */
+  answer: (text?: string) => Promise<void>;
+}
+
+/** Parse `obx:a:<id>:<rev>` / `obx:r:<id>:<rev>`. Returns null for anything
+ *  else; a malformed payload is answered and dropped, never thrown. Item ids
+ *  are `obx_<hex>` and carry no colon, so a fixed 4-field split is exact. */
+function parseOutboxCallback(
+  data: string,
+): { itemId: string; revision: number; decision: 'approve' | 'reject' } | null {
+  const parts = data.split(':');
+  if (parts.length !== 4) return null;
+  const [, verb, itemId, rawRevision] = parts;
+  if (verb !== 'a' && verb !== 'r') return null;
+  if (!itemId || !rawRevision) return null;
+  if (!/^\d+$/.test(rawRevision)) return null;
+  const revision = Number(rawRevision);
+  if (!Number.isSafeInteger(revision) || revision < 1) return null;
+  return { itemId, revision, decision: verb === 'a' ? 'approve' : 'reject' };
+}
+
+function outboxHeader(input: OutboxCardInput): string {
+  const { name, platform, chatId } = input.destination;
+  const dest = name ? `${name} (${platform}:${chatId})` : `${platform}:${chatId}`;
+  return `${input.personalityId} wants to post to ${dest} as ${input.sender} — revision ${input.revision}`;
+}
+
+function outboxCardText(input: OutboxCardInput): string {
+  const review = input.review
+    ? `\n\n${input.review.reviewer}: ${input.review.verdict}${
+        input.review.reasons ? ` — ${input.review.reasons}` : ''
+      }`
+    : '';
+  return `${outboxHeader(input)}\n\n${input.text}${review}`;
+}
+
+function outboxNoticeText(input: OutboxCardInput): string {
+  return `${outboxHeader(input)}\n\n${input.text.length} characters — too long to show in one Telegram message. Approve it in the web UI: Outbox → ${input.personalityId}. Ethos will not show you a partial draft to approve.`;
+}
+
+/** The wiring hands over `username ?? userId`. A username gets the `@` the
+ *  operator recognises; a bare numeric id is printed as-is. */
+function outboxHandle(by: string): string {
+  return /^\d+$/.test(by) ? by : `@${by.replace(/^@/, '')}`;
+}
+
+function outboxStatusText(status: OutboxCardStatus): string {
+  switch (status.kind) {
+    case 'approved':
+      return `Approved by ${outboxHandle(status.by)} — sending…`;
+    case 'sent':
+      return `Sent ${status.at}`;
+    case 'rejected':
+      return status.reason
+        ? `Rejected by ${outboxHandle(status.by)} — ${status.reason}`
+        : `Rejected by ${outboxHandle(status.by)}`;
+    case 'superseded':
+      return `Superseded by revision ${status.revision}`;
+    case 'expired':
+      return 'Expired';
+  }
+}
+
 // grammy's ReactionTypeEmoji.emoji is a strict union of specific emoji
 // literals. We define a type alias so config strings can be cast cleanly.
 type TelegramEmoji = '👀';
@@ -428,6 +566,8 @@ export class TelegramAdapter
   private callbackQueryHandler?: (event: CallbackQueryEvent) => void;
   /** Approval-card button-click handler, wired by the approval coordinator. */
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
+  /** Outbox-card button-click handler, wired by the outbox wiring. */
+  private outboxDecisionHandler?: (event: OutboxDecisionEvent) => void | Promise<void>;
   /** Chunk-id ledger so editMessage can re-flow multi-chunk responses. */
   private readonly chunkMap = new Map<string, string[]>();
   private readonly chunkMapMaxEntries = 1024;
@@ -818,6 +958,7 @@ export class TelegramAdapter
     //   clr:*         → clarify surface (via callbackQueryHandler)
     //   approve:*     → approval handler
     //   deny:*        → approval handler
+    //   obx:*         → outbox handler
     //   (other)       → clarify surface (backward compat)
     this.bot.on('callback_query:data', (ctx) => {
       const cq = ctx.callbackQuery;
@@ -862,6 +1003,45 @@ export class TelegramAdapter
         } else {
           void event.answer('No approval handler registered.');
         }
+        return;
+      }
+
+      // Route outbox-card taps to the outbox handler. Parsing is the whole of
+      // the adapter's job here: the owner check and the revision check live in
+      // the outbox wiring, which is the side that has the store.
+      if (data.startsWith('obx:')) {
+        const parsed = parseOutboxCallback(data);
+        if (!parsed) {
+          void event.answer('Unrecognised button.');
+          return;
+        }
+        const handler = this.outboxDecisionHandler;
+        if (!handler) {
+          void event.answer('No outbox handler registered.');
+          return;
+        }
+        let answered = false;
+        const decisionEvent: OutboxDecisionEvent = {
+          itemId: parsed.itemId,
+          revision: parsed.revision,
+          decision: parsed.decision,
+          userId: event.userId,
+          username: event.username,
+          chatId: event.chatId,
+          messageId: event.messageId,
+          answer: async (text) => {
+            answered = true;
+            await event.answer(text);
+          },
+        };
+        void (async () => {
+          try {
+            await handler(decisionEvent);
+          } catch {
+            // A failing handler must not leave the spinner turning.
+          }
+          if (!answered) await event.answer();
+        })();
         return;
       }
 
@@ -1387,6 +1567,78 @@ export class TelegramAdapter
    *  this to its approve() / deny() calls. */
   onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void {
     this.approvalDecisionHandler = handler;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Outbox approval cards (Part 2, O-T8)
+  //
+  // The sending bot DMs the operator the publication it wants to send. These
+  // three methods are the whole adapter surface: post, edit in place, and a
+  // handler slot the outbox wiring plugs into.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Post an outbox card to the operator's DM. Returns the message id so the
+   * wiring can store `chatId`/`messageId` on the item and edit the card later —
+   * including after a restart, since nothing about the card lives in memory.
+   *
+   * OVER-LENGTH IS A SAFETY RULE, NOT A NICETY. The card is posted only when
+   * the whole of it — header, publication text and reviewer verdict — fits in
+   * ONE message (`maxMessageLength`). The text is never truncated and never
+   * split across messages: nobody should approve text they cannot see, and
+   * splitting would put the buttons on a message that does not show what they
+   * approve. When it does not fit, the operator gets a notice pointing at the
+   * web UI, which can show the whole draft. `kind` says which was posted.
+   *
+   * Sent without `parse_mode`, so the publication renders byte-for-byte as the
+   * agent drafted it rather than as Telegram HTML.
+   */
+  async postOutboxCard(
+    input: OutboxCardInput,
+  ): Promise<{ messageId: string; kind: OutboxCardKind } | { error: string }> {
+    const body = outboxCardText(input);
+    const fits = body.length <= this.maxMessageLength;
+    const text = fits ? body : outboxNoticeText(input);
+    const rows: InlineButton[][] = fits
+      ? [
+          [
+            { label: '✅ Approve & send', data: `obx:a:${input.itemId}:${input.revision}` },
+            { label: '❌ Reject', data: `obx:r:${input.itemId}:${input.revision}` },
+          ],
+        ]
+      : [];
+    const threadOpt = input.threadId ? { message_thread_id: Number(input.threadId) } : {};
+
+    try {
+      const kb = new InlineKeyboard();
+      for (const btn of rows[0] ?? []) kb.text(btn.label, btn.data);
+      const sent = await this.bot.api.sendMessage(Number(input.chatId), text, {
+        ...(fits ? { reply_markup: kb } : {}),
+        ...threadOpt,
+      });
+      return { messageId: String(sent.message_id), kind: fits ? 'card' : 'notice' };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * Edit a posted outbox card to its settled state, dropping the buttons so it
+   * cannot be tapped twice. The wiring calls this on approve, send, reject,
+   * supersede (an edit made a new revision) and expiry.
+   */
+  async updateOutboxCard(input: {
+    chatId: string;
+    messageId: string;
+    status: OutboxCardStatus;
+  }): Promise<DeliveryResult> {
+    return this.editToPlainText(input.chatId, input.messageId, outboxStatusText(input.status));
+  }
+
+  /** Register the outbox-card button-click handler. The outbox wiring plugs in
+   *  here and owns the owner check, the revision check and the store writes. */
+  onOutboxDecision(handler: (event: OutboxDecisionEvent) => void | Promise<void>): void {
+    this.outboxDecisionHandler = handler;
   }
 
   async registerCommands(cmds: { name: string; description: string }[]): Promise<void> {

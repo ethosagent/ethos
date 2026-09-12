@@ -109,6 +109,7 @@
     "@ethosagent/nightly-loop": "workspace:*",
     "@ethosagent/notify-queue": "workspace:*",
     "@ethosagent/observability-sqlite": "workspace:*",
+    "@ethosagent/outbox": "workspace:*",
     "@ethosagent/pause-clock": "workspace:*",
     "@ethosagent/pause-http": "workspace:*",
     "@ethosagent/platform-callcapture": "workspace:*",

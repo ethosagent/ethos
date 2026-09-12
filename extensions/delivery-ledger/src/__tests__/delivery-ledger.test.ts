@@ -820,3 +820,51 @@ describe('SQLiteDeliveryLedger — durability posture', () => {
     store.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// findBySession (O-T5, plan/phases/trust-before-reach.md)
+//
+// The outbox dispatcher's restart question: an item left `sending` by a process
+// that is gone — did its send ever reach the platform? `sendTracked` writes the
+// row BEFORE `adapter.send`, so "no row" is proof nothing was sent and "a row"
+// means the ledger owns the retry from here.
+// ---------------------------------------------------------------------------
+
+describe('SQLiteDeliveryLedger — findBySession', () => {
+  let store: SQLiteDeliveryLedger;
+  beforeEach(() => {
+    store = ledger();
+  });
+  afterEach(() => {
+    store.close();
+  });
+
+  it('returns the row written under that session and nothing for an unknown one', async () => {
+    const id = await store.record(input({ sessionId: 'outbox:obx_1', content: 'the post' }));
+    await store.record(input({ sessionId: 'outbox:obx_2', content: 'another post' }));
+
+    const rows = await store.findBySession('outbox:obx_1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(id);
+    expect(rows[0]?.content).toBe('the post');
+
+    expect(await store.findBySession('outbox:never-existed')).toEqual([]);
+  });
+
+  it('does not filter by status — a delivered row is still evidence the call happened', async () => {
+    const id = await store.record(input({ sessionId: 'outbox:obx_3' }));
+    await store.markDelivered(id);
+    const rows = await store.findBySession('outbox:obx_3');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe('delivered');
+  });
+
+  it('returns every attempt under one session, newest first', async () => {
+    const first = await store.record(input({ sessionId: 'outbox:obx_4', content: 'attempt one' }));
+    const second = await store.record(input({ sessionId: 'outbox:obx_4', content: 'attempt two' }));
+    const rows = await store.findBySession('outbox:obx_4');
+    // Same millisecond is the common case here; the rowid tie-break is what
+    // makes "newest first" mean something.
+    expect(rows.map((r) => r.id)).toEqual([second, first]);
+  });
+});

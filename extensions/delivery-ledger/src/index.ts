@@ -146,6 +146,25 @@ export interface DeliveryLedger {
   release(id: string): Promise<void>;
   get(id: string): Promise<DeliveryObligation | null>;
   /**
+   * Every obligation ever written under `sessionId`, newest first.
+   *
+   * The question it answers is existential, not historical: "did a send under
+   * this session key ever reach the ledger?". A caller that owns a session key
+   * of its own — the outbox dispatcher's `outbox:<id>` — uses it to decide what
+   * an interrupted send actually did. `sendTracked` writes the `pending` row
+   * BEFORE `adapter.send`, so an empty result PROVES nothing was handed to the
+   * platform and the work can be retried by hand; a row means the platform may
+   * have seen it and the ledger owns the retry from then on.
+   *
+   * A list rather than a row because one session can legitimately own several:
+   * a lane key covers a whole conversation, and an outbox item retried after a
+   * failure writes a second obligation under the same key. Capped at
+   * {@link MAX_RECENT} for the same reason `listRecent` is — these rows hold
+   * full reply text. Status is NOT filtered: a `delivered` or `abandoned` row
+   * is as much evidence that the platform call happened as a `pending` one.
+   */
+  findBySession(sessionId: string): Promise<DeliveryObligation[]>;
+  /**
    * Give up on obligations older than `cutoffMs` that this process OWNS, and
    * return them so the caller can release whatever they hold (a voice
    * obligation's artifact).
@@ -216,6 +235,11 @@ const SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS delivery_status_bot ON delivery_obligations(status, bot_key);
   CREATE INDEX IF NOT EXISTS delivery_status_created ON delivery_obligations(status, created_at);
+  -- findBySession. Declared in the baseline rather than behind a migration
+  -- because migrate() execs the baseline on every open: an existing v3 file
+  -- picks the index up without a version bump, and the schema shape stays
+  -- readable in one place.
+  CREATE INDEX IF NOT EXISTS delivery_session ON delivery_obligations(session_id, created_at);
 `;
 
 /**
@@ -415,6 +439,21 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
       | ObligationRow
       | undefined;
     return row ? rowToObligation(row) : null;
+  }
+
+  async findBySession(sessionId: string): Promise<DeliveryObligation[]> {
+    // Same rowid tie-break as `listRecent`: rows written inside one
+    // millisecond otherwise come back in an arbitrary order, and "the most
+    // recent attempt under this session" would be a coin toss.
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM delivery_obligations
+         WHERE session_id = ?
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ?`,
+      )
+      .all(sessionId, MAX_RECENT) as ObligationRow[];
+    return rows.map(rowToObligation);
   }
 
   async abandonStale(botKeys: readonly string[], cutoffMs: number): Promise<DeliveryObligation[]> {

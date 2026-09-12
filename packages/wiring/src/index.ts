@@ -34,7 +34,7 @@ export type { WiringContext } from './types';
 import { buildAgentLoop } from './build-agent-loop';
 import { buildWiringContext } from './build-context';
 import { buildInfrastructure } from './build-infrastructure';
-import { composeAllTools } from './compose-tools';
+import { composeAllTools, type OutboxWiring } from './compose-tools';
 import { DisposerStack } from './disposer-stack';
 import { loadPlugins } from './load-plugins';
 import {
@@ -574,6 +574,24 @@ export interface CreateAgentLoopOptions {
    * unset and the tools are not registered.
    */
   watcherManager?: import('@ethosagent/watchers').WatcherManager;
+  /**
+   * The approval outbox — what makes `outbound_policy.approve_before_send`
+   * real for `send_message` and `watcher_create` (O-T3/O-T12,
+   * plan/phases/trust-before-reach.md).
+   *
+   * Two things wiring cannot answer for itself, both app-layer: the operator's
+   * own chat on a platform (`channel_filter.<platform>.ownerUserId`, an exempt
+   * destination), and queueing a publication — which resolves the sending bot
+   * from the config's bindings and writes the durable row. Build it with
+   * `createOutboxRuntime` (`apps/ethos/src/lib/outbox-wiring.ts`) and pass
+   * `runtime.wiring`.
+   *
+   * Absent → no gate is constructed at all and both tools behave exactly as
+   * they did before Part 2, which is the right answer for every surface with
+   * no adapters to publish through (CLI chat, one-shot runs, tests).
+   */
+  outbox?: OutboxWiring;
+
   /**
    * Shared call history for the outbound `call` tool. When provided, a call the
    * agent places opens a row the same way an inbound one does, so the
@@ -1402,6 +1420,12 @@ async function assembleAgentLoop(
     infra,
     profile,
     disposers,
+    // The approval outbox (O-T3/O-T4, plan/phases/trust-before-reach.md).
+    // Absent for every surface that wires none — CLI chat, one-shot runs, the
+    // desktop app, tests — and `send_message` behaves exactly as it did before
+    // Part 2. `ethos gateway` and `ethos boot` supply one, which is what makes
+    // `outbound_policy.approve_before_send` a gate rather than a doc comment.
+    ...(opts.outbox ? { outbox: opts.outbox } : {}),
   });
   const { skillPool, injectors, skillScanner } = toolsResult;
 
@@ -1710,4 +1734,9 @@ export * from './backup';
 // ---------------------------------------------------------------------------
 
 export * from './backup-schedule';
+// The approval outbox's app-layer seam. `apps/ethos` builds one of these and
+// passes it as `CreateAgentLoopOptions.outbox`; `createOutboxGate` combines it
+// with the personality's `outbound_policy` to produce the gate the two
+// publishing tools see.
+export { createOutboxGate, type OutboxWiring } from './compose-tools';
 export * from './system-jobs';

@@ -106,6 +106,17 @@ import {
 import { createHealthServer } from '../health-server';
 import { type CronDeliverJob, createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
+import {
+  createOutboxApprovalSurface,
+  createOutboxDispatcher,
+  createOutboxReviewer,
+  createOutboxRuntime,
+  isOutboxCardCapable,
+  loadOutboxCardRefs,
+  OUTBOX_CARDS_FILE,
+  type OutboxCardCapableAdapter,
+  wireOutboxCardAdapters,
+} from '../lib/outbox-wiring';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
@@ -130,6 +141,7 @@ import {
 import { runCronTurn } from './cron-turn';
 import {
   adapterRegistries,
+  buildBotSpeakers,
   buildChannelSpeakers,
   buildGateway,
   buildGatewayAdapters,
@@ -484,11 +496,66 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // between a per-bot executor and web-api's subscribers: a job claimed by a
   // bot's executor does not reach them. That is inherited verbatim from
   // `ethos gateway start` and is NOT closed by this profile.
+  // The approval outbox (Part 2, plan/phases/trust-before-reach.md). Opened
+  // AHEAD of every loop: each one's `send_message` gate is built from it, so a
+  // personality whose `outbound_policy.approve_before_send` is on queues its
+  // publications instead of sending them. ONE module, shared with
+  // `ethos gateway start` — see `../lib/outbox-wiring` and O-D8.
+  //
+  // `personalities` is the registry `personalityDirectory.refresh()` reloads,
+  // so an edited `approver_personality` applies on the next call rather than
+  // the next restart.
+  const botSpeakers = buildBotSpeakers(cfg);
+  // O-T7/O-T8. The approval surface's seams — the system loop the review turn
+  // runs on, the adapter that DMs the card — are built further down, so it is
+  // constructed right after the runtime (whose proposal hook needs it) and
+  // reads them late. ONE module with `ethos gateway start`, for O-D8's reason.
+  // O-T8 — the card adapter for each bot, filled by `registerBotLive` below so
+  // a bot added by a config reload gets its approval cards without a restart.
+  const outboxCardAdapters = new Map<string, OutboxCardCapableAdapter>();
+  const outbox = createOutboxRuntime({
+    speakers: botSpeakers,
+    ownerTarget: (platform) => cfg.channelFilter?.[platform]?.ownerUserId,
+    approverFor: (personalityId) =>
+      personalities.get(personalityId)?.outbound_policy?.approver_personality,
+    // Fire-and-forget: the item IS queued, so a review or a card that fails
+    // costs the operator a Telegram convenience, never the publication.
+    onProposed: (item, created) => outboxSurface.proposed(item, created),
+    logger,
+  });
+
+  // The durable card map (`~/.ethos/outbox-cards.json`). `OutboxItem` has no
+  // card columns, and without this a restart between a tap and a delivery
+  // leaves the operator's card reading "Approved — sending…" for good.
+  const outboxSurface = createOutboxApprovalSurface({
+    service: outbox.service,
+    reviewer: createOutboxReviewer({
+      service: outbox.service,
+      // The SAME loop cron fires on in this profile.
+      loop: () => sharedLoop,
+      hasPersonality: (id) => personalities.get(id) != null,
+      logger,
+    }),
+    adapterFor: (botKey, platform) => {
+      const adapter = outboxCardAdapters.get(botKey);
+      // Never a sibling bot on the same platform: the card is DM'd by the
+      // account whose name is on it (the F08 rule, on the approval side).
+      return adapter?.id.startsWith(`${platform}:`) ? adapter : undefined;
+    },
+    ownerTarget: (platform) => cfg.channelFilter?.[platform]?.ownerUserId,
+    cardRefs: await loadOutboxCardRefs(storage, join(dir, OUTBOX_CARDS_FILE), logger),
+    logger,
+  });
+
   const shared = await createAgentLoop(cfg, {
     profile: 'web',
     meshRegistryPath: meshRegistryPath(meshName),
     cronScheduler: scheduler,
     watcherManager,
+    // Cron, watcher wakes and every web/ACP turn run here, and a gated
+    // personality's `send_message` must queue from this loop exactly as it
+    // does from a bot's.
+    outbox: outbox.wiring,
   });
   sharedLoop = shared.loop;
   const systemLoop = shared.loop;
@@ -497,8 +564,13 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // same shape `ethos gateway start` builds today — this is NOT the
   // double-construction §3c warns about, which is about the two ROLES each
   // building a system loop.
-  const coldBuilt = await buildGatewayBots(cfg, scheduler, watcherManager, (sessionKey) =>
-    gatewayRef?.originThreadIdFor(sessionKey),
+  const coldBuilt = await buildGatewayBots(
+    cfg,
+    scheduler,
+    watcherManager,
+    (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
+    undefined,
+    outbox.wiring,
   );
   const bots = coldBuilt.bots;
 
@@ -831,6 +903,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     clarifyMessageCorrelator,
     personalityCardReader: telegramCardReader,
     greetingProvider: telegramGreetingProvider,
+    // O-T5's binding re-check, at bot granularity. The SAME roster the outbox's
+    // sender resolver picked from, so "which bot may publish for this
+    // personality" has one answer at propose time and at delivery time.
+    publicationSpeaksFor: botSpeakers.speaksFor,
   });
   gatewayRef = gateway;
 
@@ -973,6 +1049,11 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     for (const dispose of wiring.disposers) liveBotLoops.add(dispose);
     let correlator: ClarifyCorrelator | undefined;
     let flow: ReturnType<typeof wireApprovalFlow> | undefined;
+    // O-T8. A publication's approval card is DM'd by the bot that will publish
+    // it, so the map is keyed by botKey and never by platform. Registering the
+    // tap handler only fills a handler slot; the owner and revision checks
+    // behind it live in `../lib/outbox-wiring`.
+    const cardAdapter = adaptersSlice.find(isOutboxCardCapable);
     // Every undo is identity-based (splice THIS router, delete THIS
     // correlator), so it is safe to run against a half-finished registration
     // and safe to run after a replacement has registered under the same
@@ -987,6 +1068,11 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         if (i >= 0) personalityRefreshers.splice(i, 1);
       }
       if (correlator) clarifyCorrelators.delete(bot.botKey, correlator);
+      // Identity-based like every other undo here: a replacement registered
+      // under the same botKey keeps its own adapter.
+      if (cardAdapter && outboxCardAdapters.get(bot.botKey) === cardAdapter) {
+        outboxCardAdapters.delete(bot.botKey);
+      }
       if (flow) {
         if (approvalFlows.get(bot.botKey) === flow) approvalFlows.delete(bot.botKey);
         await flow.shutdown();
@@ -998,6 +1084,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       correlator = await registerClarifySurfacesFor([bot], adaptersSlice, bot.botKey);
       flow = wireApprovalFlow(gateway, [bot], adaptersSlice, approvalSeams);
       approvalFlows.set(bot.botKey, flow);
+      if (cardAdapter) {
+        outboxCardAdapters.set(bot.botKey, cardAdapter);
+        wireOutboxCardAdapters(outboxSurface, [cardAdapter]);
+      }
     } catch (err) {
       await undo();
       throw err;
@@ -1147,6 +1237,25 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   await Promise.all(adapters.map((a) => a.start()));
   heartbeatStartedAt = new Date().toISOString();
   await gateway.pluginsReady();
+
+  // The approval-outbox dispatcher (O-T6). AFTER `adapter.start()` above for
+  // exactly the reason step 9's sweeps are: a publication handed to a cold
+  // adapter is a human's approval burned on a send that reached nothing.
+  //
+  // This profile's gateway role is the one that holds adapters, so this is the
+  // one place a publication can actually leave — the serve role only writes
+  // decisions into the same `outbox.db`.
+  const outboxDispatcher = createOutboxDispatcher({
+    service: outbox.service,
+    gateway,
+    ledger: deliveryLedger,
+    // Read live: this profile adds and removes bots without a restart, and
+    // which rows it may claim changes with them.
+    botKeys: () => gateway.listBots().map((bot) => bot.botKey),
+    cards: outboxSurface.cards,
+    logger,
+  });
+  void outboxDispatcher.start();
 
   // -------------------------------------------------------------------------
   // §3b step 9 — THE reconciliation call. This is the step that closes §1's
@@ -1608,8 +1717,16 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         'The bot identity named by the diff is not in config.yaml — re-save the file.',
       );
     }
-    const built = await buildGatewayBots(slice, scheduler, watcherManager, (sessionKey) =>
-      gatewayRef?.originThreadIdFor(sessionKey),
+    const built = await buildGatewayBots(
+      slice,
+      scheduler,
+      watcherManager,
+      (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
+      undefined,
+      // A bot added without a restart is gated exactly like a cold-booted one.
+      // This is the drift O-D8 warns about, one call site down: miss it and a
+      // gated personality publishes unreviewed from whichever bot arrived last.
+      outbox.wiring,
     );
     try {
       const newAdapters = await buildGatewayAdapters(slice, attachmentCache);
@@ -1836,8 +1953,16 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         'The hookId named by the diff is not under `webhooks:` in config.yaml — re-save the file.',
       );
     }
-    const built = await buildGatewayBots(slice, scheduler, watcherManager, (sessionKey) =>
-      gatewayRef?.originThreadIdFor(sessionKey),
+    const built = await buildGatewayBots(
+      slice,
+      scheduler,
+      watcherManager,
+      (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
+      undefined,
+      // A bot added without a restart is gated exactly like a cold-booted one.
+      // This is the drift O-D8 warns about, one call site down: miss it and a
+      // gated personality publishes unreviewed from whichever bot arrived last.
+      outbox.wiring,
     );
     try {
       const bot = built.bots[0];
@@ -2216,6 +2341,17 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       await guard('watchdog', () => {
         if (stopWatchdog) stopWatchdog();
       });
+      // Stopped BEFORE the gateway drains: a tick that started now would claim
+      // a row this process is about to stop being able to deliver, and leave it
+      // `sending` for the ten minutes the stale reconciler waits.
+      await guard('outbox-dispatcher', async () => {
+        outboxDispatcher.stop();
+        // Reviews and card round trips start from a fire-and-forget hook, so
+        // they are drained BEFORE the adapters stop — otherwise the transport
+        // is torn out from under a card mid-update and an approved publication
+        // is left showing live buttons.
+        await outboxSurface.drain();
+      });
       // Deny + audit suspended approvals FIRST on both surfaces — their auto-deny
       // timers are unref'd and never fire on the way out, and a later await that
       // hangs must not cost the audit row or the card update. MUST stay above
@@ -2274,6 +2410,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       });
       await guard('inbound-dedup', () => {
         inboundDedup.close();
+      });
+      await guard('outbox', () => {
+        // After the loops are disposed: a turn still running could propose.
+        outbox.close();
       });
       await guard('channel-transcript', () => {
         // A no-op when observe mode never recorded anything.
@@ -2417,6 +2557,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
           callCaptureActive: callCaptureOwnershipManager
             ? () => callCaptureState.kind !== 'idle'
             : undefined,
+          outboxPending: outbox.pendingPublications,
         }),
         ...buildServeBusySources({
           chatService: created.chatService,

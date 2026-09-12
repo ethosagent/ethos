@@ -563,6 +563,18 @@ export async function createAgentLoop(
      * configured; every other caller omits it and gets today's behaviour.
      */
     livekit?: import('@ethosagent/wiring').LiveKitBindings;
+    /**
+     * The approval outbox — what makes `outbound_policy.approve_before_send`
+     * real for this loop's `send_message` and `watcher_create` (O-T3/O-T12,
+     * plan/phases/trust-before-reach.md). Build it with `createOutboxRuntime`
+     * (`./lib/outbox-wiring`) and pass `runtime.wiring`.
+     *
+     * Gateway roles only: queueing a publication is worth nothing on a surface
+     * with no adapter to publish it through later, and the dispatcher that
+     * delivers approved items runs in the gateway process. Omitted everywhere
+     * else, and both tools behave exactly as they did before Part 2.
+     */
+    outbox?: import('@ethosagent/wiring').OutboxWiring;
   } = {},
 ): Promise<CreateAgentLoopResult> {
   const rotated = await withRotation(config);
@@ -614,6 +626,7 @@ export async function createAgentLoop(
     ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
     ...(opts.probeWindowRefresh === true ? { probeWindowRefresh: true } : {}),
     ...(opts.livekit ? { livekit: opts.livekit } : {}),
+    ...(opts.outbox ? { outbox: opts.outbox } : {}),
   });
 
   return result;
@@ -693,6 +706,10 @@ export async function createTeamAgentLoop(
     profile?: WiringProfile;
     role?: 'coordinator' | 'member';
     slashRegistry?: import('@ethosagent/wiring').WiringSlashRegistry;
+    /** The approval outbox. A team-bound bot's coordinator publishes through
+     *  the same `send_message` a personality-bound one does, so it is gated by
+     *  the same `outbound_policy` — the coordinator personality's. */
+    outbox?: import('@ethosagent/wiring').OutboxWiring;
   } = {},
 ): Promise<TeamLoopInfo> {
   const manifest = loadTeamManifest(teamName);
@@ -736,6 +753,7 @@ export async function createTeamAgentLoop(
       profile: opts.profile ?? 'cli',
       meshRegistryPath: meshRegistryPath(meshName),
       ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
+      ...(opts.outbox ? { outbox: opts.outbox } : {}),
     },
   );
 

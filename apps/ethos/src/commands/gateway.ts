@@ -119,6 +119,7 @@ import {
   initPairingDb,
   type LiveKitBindings,
   type MessagingSendFn,
+  type OutboxWiring,
   resolveKanbanDbPath,
   sanitize,
   seedAllSystemJobs,
@@ -134,6 +135,18 @@ import { createHealthServer, type MetricsAuthCheck } from '../health-server';
 import { createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { openFileMemory } from '../lib/file-memory';
+import {
+  createOutboxApprovalSurface,
+  createOutboxDispatcher,
+  createOutboxReviewer,
+  createOutboxRuntime,
+  isOutboxCardCapable,
+  loadOutboxCardRefs,
+  OUTBOX_CARDS_FILE,
+  type OutboxApprovalSurface,
+  type OutboxCardCapableAdapter,
+  wireOutboxCardAdapters,
+} from '../lib/outbox-wiring';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { resolveLiveKitMedia } from '../livekit-media';
 import { emitReady } from '../logger';
@@ -469,11 +482,61 @@ export async function resolveTelephonyMedia(
 export function buildChannelSpeakers(
   config: EthosConfig,
 ): (platform: string, id: string) => boolean {
-  const bots: Array<{ platform: string; bind: BotBinding }> = [
-    ...(config.telegram?.bots ?? []).map((b) => ({ platform: 'telegram', bind: b.bind })),
-    ...(config.slack?.apps ?? []).map((a) => ({ platform: 'slack', bind: a.bind })),
+  const speakers = buildBotSpeakers(config);
+  return (platform, id) => speakers.candidates(platform, id).length > 0;
+}
+
+/**
+ * The same binding question, answered at BOT granularity (O-T4/O-T5,
+ * plan/phases/trust-before-reach.md).
+ *
+ * `buildChannelSpeakers` above asks "does ANY bot on this platform speak for
+ * this personality", which is the right question for a send addressed at a
+ * platform. Two sends are not addressed at a platform:
+ *
+ *  - a PUBLICATION names the exact bot that will speak, because a human
+ *    approved a card with that bot's name on it. `speaksFor` is what
+ *    `GatewayConfig.publicationSpeaksFor` is wired to, so a bot rebound since
+ *    the approval voids it instead of publishing in a voice nobody approved.
+ *  - a PROPOSAL has to pick that bot in the first place. `candidates` is the
+ *    input to `resolveSender` (`../lib/outbox-wiring`), which refuses rather
+ *    than guessing when there is more than one and the turn names none.
+ *
+ * ONE roster for both, and for `buildChannelSpeakers`, which is now a
+ * non-empty-candidates test over it: three derivations of "which bots are
+ * bound to whom" is three chances to disagree.
+ *
+ * The botKeys are derived exactly as the adapters' are — `deriveBotKey` for
+ * telegram/slack, `whatsAppBotKey` for WhatsApp — so a key here is a key the
+ * Gateway's routing table actually holds. Discord and Email are absent for the
+ * same reason they are absent from `buildChannelSpeakers`: neither carries a
+ * per-bot binding, so neither can answer the question.
+ */
+export interface BotSpeakers {
+  /** The botKeys on `platform` bound to `personalityId`, directly or through a
+   *  team manifest. Empty means no configured bot can speak for it. */
+  candidates(platform: string, personalityId: string): string[];
+  /** Does this exact bot still speak for `personalityId`? */
+  speaksFor(botKey: string, personalityId: string): boolean;
+}
+
+export function buildBotSpeakers(config: EthosConfig): BotSpeakers {
+  const bots: Array<{ botKey: string; platform: string; bind: BotBinding }> = [
+    ...(config.telegram?.bots ?? []).map((b) => ({
+      botKey: deriveBotKey(b),
+      platform: 'telegram',
+      bind: b.bind,
+    })),
+    ...(config.slack?.apps ?? []).map((a) => ({
+      botKey: deriveBotKey(a),
+      platform: 'slack',
+      bind: a.bind,
+    })),
+    // A bind-less WhatsApp entry is excluded, not defaulted: it answers as the
+    // default personality at runtime, but nothing in config says it speaks FOR
+    // that personality, and a publication is not a thing to infer.
     ...(config.whatsapp ?? []).flatMap((w) =>
-      w.bind ? [{ platform: 'whatsapp', bind: w.bind }] : [],
+      w.bind ? [{ botKey: whatsAppBotKey(w), platform: 'whatsapp', bind: w.bind }] : [],
     ),
   ];
   const memberCache = new Map<string, readonly string[]>();
@@ -490,8 +553,13 @@ export function buildChannelSpeakers(
     memberCache.set(team, loaded);
     return loaded;
   };
-  return (platform, id) =>
-    bots.some((b) => b.platform === platform && bindResolvesToPersonality(b.bind, id, members));
+  const bound = (bot: { bind: BotBinding }, id: string): boolean =>
+    bindResolvesToPersonality(bot.bind, id, members);
+  return {
+    candidates: (platform, id) =>
+      bots.filter((b) => b.platform === platform && bound(b, id)).map((b) => b.botKey),
+    speaksFor: (botKey, id) => bots.some((b) => b.botKey === botKey && bound(b, id)),
+  };
 }
 
 export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<void> {
@@ -734,6 +802,63 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     ? new SQLiteCallLog({ path: join(ethosDir(), 'calls.db') })
     : undefined;
 
+  // The approval outbox (Part 2, plan/phases/trust-before-reach.md). Opened
+  // AHEAD of every loop because each one's `send_message` gate is built from
+  // it: a personality whose `outbound_policy.approve_before_send` is on queues
+  // its publications here instead of sending them.
+  //
+  // `approverFor` is late-bound through `outboxApproverLookup` below. The
+  // registry that answers it (`seamPersonalities`) is constructed after the
+  // loops, and the lookup is only ever called from inside a tool call, which
+  // is long after that. Reading it live is what makes a policy edited on disk
+  // apply on the next call rather than the next restart.
+  let outboxApproverLookup: ((personalityId: string) => string | undefined) | undefined;
+  // O-T7/O-T8. Every seam the approval surface needs — the system loop the
+  // review turn runs on, the adapter that DMs the card, the registry that says
+  // whether the approver exists — is built further down, so the surface is
+  // constructed here (the proposal hook needs it) and reads them late.
+  let outboxSurface: OutboxApprovalSurface | undefined;
+  let outboxCardAdapters: Map<string, OutboxCardCapableAdapter> | undefined;
+  const botSpeakers = buildBotSpeakers(config);
+  const outbox = createOutboxRuntime({
+    speakers: botSpeakers,
+    ownerTarget: (platform) => config.channelFilter?.[platform]?.ownerUserId,
+    approverFor: (personalityId) => outboxApproverLookup?.(personalityId),
+    // Fire-and-forget: the item IS queued, so a review or a card that fails
+    // costs the operator a Telegram convenience, never the publication.
+    onProposed: (item, created) => outboxSurface?.proposed(item, created),
+    logger: new ConsoleLogger({}, logLevel),
+  });
+
+  // The durable card map (`~/.ethos/outbox-cards.json`). `OutboxItem` has no
+  // card columns, and without this a restart between a tap and a delivery
+  // leaves the operator's card reading "Approved — sending…" for good.
+  const outboxCardRefs = await loadOutboxCardRefs(
+    getStorage(),
+    join(ethosDir(), OUTBOX_CARDS_FILE),
+    new ConsoleLogger({}, logLevel),
+  );
+  outboxSurface = createOutboxApprovalSurface({
+    service: outbox.service,
+    reviewer: createOutboxReviewer({
+      service: outbox.service,
+      // The SAME loop cron's `runJob` fires on. Assigned below; a review only
+      // ever runs from inside a tool call, which is long after that.
+      loop: () => systemLoop,
+      hasPersonality: (id) => seamPersonalities.get(id) != null,
+      logger: new ConsoleLogger({}, logLevel),
+    }),
+    adapterFor: (botKey, platform) => {
+      const adapter = outboxCardAdapters?.get(botKey);
+      // Never a sibling bot on the same platform: the card is DM'd by the
+      // account whose name is on it (the F08 rule, on the approval side).
+      return adapter?.id.startsWith(`${platform}:`) ? adapter : undefined;
+    },
+    ownerTarget: (platform) => config.channelFilter?.[platform]?.ownerUserId,
+    cardRefs: outboxCardRefs,
+    logger: new ConsoleLogger({}, logLevel),
+  });
+
   // Build one AgentLoop per configured bot. Personality bots use
   // `createAgentLoop`; team bots use `createTeamAgentLoop`. Each loop
   // receives the shared `scheduler` so its `cron` tool lands in the
@@ -758,6 +883,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     watcherManager,
     (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
     callLog,
+    outbox.wiring,
   );
 
   // Phase 3: for each team-bound bot, ensure the supervisor is running.
@@ -823,6 +949,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     watcherManager,
     ...(callLog ? { callLog } : {}),
     ...(telephonyMedia.livekit ? { livekit: telephonyMedia.livekit } : {}),
+    // Cron, dreams and watcher wakes run here, and a gated personality's
+    // `send_message` must queue from this loop exactly as it does from a bot's.
+    outbox: outbox.wiring,
   });
   systemLoop = systemLoopReady;
 
@@ -840,6 +969,12 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   } catch {
     // Configured default not on disk — keep the registry's built-in default.
   }
+  // The outbox's advisory-reviewer lookup, bound now that a registry exists.
+  // `seamPersonalities` is the one `personalityDirectory.refresh()` reloads, so
+  // a changed `approver_personality` is picked up without a restart (O-D4).
+  outboxApproverLookup = (personalityId) =>
+    seamPersonalities.get(personalityId)?.outbound_policy?.approver_personality;
+
   const personalityRefreshers = [refreshSystemPersonalities, ...botPersonalityRefreshers];
   // Debounce window: at burst scale, re-scan disk at most once per interval. The
   // mtime-fingerprint cache already makes a no-change scan cheap (~stat per
@@ -957,6 +1092,18 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // right after Gateway construction — necessary because the surface and the
   // Gateway each need a reference to the other.
   const adapters = await buildGatewayAdapters(config, attachmentCache);
+
+  // O-T8 — outbox approval cards. Keyed by the botKey each adapter speaks as
+  // (the SAME derivation the Gateway's own routing table uses), because a
+  // publication's card is DM'd by the bot that will publish it. Registering the
+  // tap handler here rather than after `start()` only fills a handler slot; the
+  // owner and revision checks behind it live in `../lib/outbox-wiring`.
+  outboxCardAdapters = new Map(
+    [...adapterRegistries(adapters).botAdapters].flatMap(([botKey, adapter]) =>
+      isOutboxCardCapable(adapter) ? [[botKey, adapter] as const] : [],
+    ),
+  );
+  wireOutboxCardAdapters(outboxSurface, adapters);
 
   const { clarifyMessageCorrelator } = await registerGatewayClarifySurfaces({
     bots,
@@ -1116,6 +1263,10 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     clarifyMessageCorrelator,
     personalityCardReader: telegramCardReader,
     greetingProvider: telegramGreetingProvider,
+    // O-T5's binding re-check, at bot granularity. The SAME roster the outbox's
+    // sender resolver picked from, so "which bot may publish for this
+    // personality" has one answer at propose time and at delivery time.
+    publicationSpeaksFor: botSpeakers.speaksFor,
   });
   gatewayRef = gateway;
 
@@ -1335,6 +1486,26 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
         `background completion boot sweep failed: ${String(err)}`,
       );
     });
+
+  // The approval-outbox dispatcher (O-T6). AFTER `adapter.start()` for exactly
+  // the reason the two sweeps above are: a publication handed to a cold adapter
+  // is a human's approval burned on a send that reached nothing.
+  //
+  // Runs HERE, in the gateway process, because only this process holds
+  // adapters. web-api writes decisions into the same `outbox.db` and never
+  // touches an adapter, so `ethos boot` (one process) and `serve` + a separate
+  // `gateway` behave identically.
+  const outboxDispatcher = createOutboxDispatcher({
+    service: outbox.service,
+    gateway,
+    ledger: deliveryLedger,
+    // Read live: a bot can join or leave while this process runs, and which
+    // rows it may claim changes with it.
+    botKeys: () => gateway.listBots().map((bot) => bot.botKey),
+    cards: outboxSurface.cards,
+    logger: new ConsoleLogger({}, logLevel),
+  });
+  void outboxDispatcher.start();
 
   // Retention GC — delivered rows carry message bodies, so they are not kept
   // forever. Prune once at boot, then hourly. Pending rows are never pruned.
@@ -1874,6 +2045,15 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       cronTriggers.local?.stop();
       dreamExecutor.stop();
       langfusePoll?.stop();
+      // Stopped BEFORE the gateway drains: a tick that started now would claim
+      // a row this process is about to stop being able to deliver, and leave it
+      // `sending` for the ten minutes the stale reconciler waits.
+      outboxDispatcher.stop();
+      // Reviews and card round trips are started from a fire-and-forget hook,
+      // so they are drained explicitly BEFORE the adapters stop — otherwise the
+      // transport is torn out from under a card mid-update and an approved
+      // publication is left showing live buttons.
+      await outboxSurface.drain();
       await storage.remove(gatewayHealthPath()).catch(() => {});
       // Stops the daemon + heartbeat (if this process ever won the ownership
       // claim, including via a later retry tick — see
@@ -1903,6 +2083,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       );
       deliveryLedger.close();
       inboundDedup.close();
+      // After the loops are disposed: a turn still running could propose.
+      outbox.close();
       callLog?.close();
       // Observe mode's transcript handle — a no-op when nothing was recorded
       // (`openChannelTranscriptStore` closes only what it opened).
@@ -1944,6 +2126,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
         // resolves to `<teamsDir()>/<name>.pid`, so this is the dir the PID
         // files it writes actually land in.
         teamsPidDir: teamsDir(),
+        outboxPending: outbox.pendingPublications,
       }),
       // The one instance for this process. Its outbound half is still a no-op:
       // a real host adapter that signals a Firecracker-style control plane is a
@@ -2066,6 +2249,10 @@ export async function buildGatewayBots(
   watcherManager: WatcherManager,
   resolveOriginThreadId: (sessionKey: string) => string | undefined,
   callLog?: CallLog,
+  /** The approval outbox (`createOutboxRuntime(...).wiring`). Omitted and a
+   *  gated personality's `send_message` sends as it always did — which is why
+   *  every path that builds a bot has to pass it, hot-added bots included. */
+  outbox?: OutboxWiring,
 ): Promise<BuildGatewayBotsResult> {
   // F06 — a bot that fails to build must not strand the loops built before it
   // (each with a running background executor): release them, then rethrow.
@@ -2078,6 +2265,7 @@ export async function buildGatewayBots(
       resolveOriginThreadId,
       disposers,
       callLog,
+      outbox,
     );
   } catch (err) {
     await Promise.allSettled(disposers.map((dispose) => dispose()));
@@ -2092,6 +2280,7 @@ async function assembleGatewayBots(
   resolveOriginThreadId: (sessionKey: string) => string | undefined,
   disposers: Array<() => Promise<void>>,
   callLog?: CallLog,
+  outbox?: OutboxWiring,
 ): Promise<BuildGatewayBotsResult> {
   // Every personality loop gets the same scheduler + watcher manager so
   // agent-callable cron/watcher tools land in the shared stores. The thread
@@ -2103,6 +2292,9 @@ async function assembleGatewayBots(
     watcherManager,
     resolveOriginThreadId,
     ...(callLog ? { callLog } : {}),
+    // Every bot's loop gets the same outbox, so which bot a gated personality
+    // was speaking as makes no difference to whether its publication is queued.
+    ...(outbox ? { outbox } : {}),
   };
   const out: GatewayBotConfig[] = [];
   const setters: Array<(fn: MessagingSendFn) => void> = [];
@@ -2139,7 +2331,9 @@ async function assembleGatewayBots(
     let jobStore: GatewayBotConfig['jobStore'];
     let backgroundExecutor: GatewayBotConfig['backgroundExecutor'];
     if (bot.bind.type === 'team') {
-      const team = await createTeamAgentLoop(config, bot.bind.name);
+      const team = await createTeamAgentLoop(config, bot.bind.name, {
+        ...(outbox ? { outbox } : {}),
+      });
       loop = team.loop;
       routers.push(team.notificationRouter);
       registries.push(team.toolRegistry);
@@ -2194,7 +2388,9 @@ async function assembleGatewayBots(
     let jobStore: GatewayBotConfig['jobStore'];
     let backgroundExecutor: GatewayBotConfig['backgroundExecutor'];
     if (bind.type === 'team') {
-      const team = await createTeamAgentLoop(config, bind.name);
+      const team = await createTeamAgentLoop(config, bind.name, {
+        ...(outbox ? { outbox } : {}),
+      });
       loop = team.loop;
       routers.push(team.notificationRouter);
       registries.push(team.toolRegistry);
@@ -2722,6 +2918,11 @@ export function buildGatewayBusySources(deps: {
   callCaptureActive: (() => boolean) | undefined;
   /** Flat `~/.ethos/teams` — see `pidFilePath` in @ethosagent/team-supervisor. */
   teamsPidDir: string;
+  /**
+   * Approved-but-unsent publications (O-D9). `undefined` when this deployment
+   * wires no approval outbox — ABSENT, not zero, per the note above.
+   */
+  outboxPending?: () => number;
 }): BusySource[] {
   const sources: BusySource[] = [
     {
@@ -2819,6 +3020,26 @@ export function buildGatewayBusySources(deps: {
           busy: callCaptureActive(),
           reason: 'a call-capture session is active',
         }),
+    });
+  }
+
+  const outboxPending = deps.outboxPending;
+  if (outboxPending) {
+    sources.push({
+      // Durable, and owed to a person: a human approved this text and it has
+      // not gone out yet. Suspending here is how an approval for a
+      // time-sensitive post quietly reaches its 24h validity window unused.
+      // `awaiting_approval` items are deliberately NOT counted — a human may
+      // take days, and a machine that cannot suspend while someone thinks is a
+      // machine that never suspends.
+      name: 'outbox-publications',
+      checkBusy: () => {
+        const pending = outboxPending();
+        return Promise.resolve({
+          busy: pending > 0,
+          reason: `${pending} approved publication(s) not yet delivered`,
+        });
+      },
     });
   }
 
@@ -4132,6 +4353,16 @@ export interface BuildGatewayOptions {
   clarifyMessageCorrelator: GatewayConfig['clarifyMessageCorrelator'];
   personalityCardReader: GatewayConfig['personalityCardReader'];
   greetingProvider: GatewayConfig['greetingProvider'];
+  /**
+   * "Does bot `botKey` still speak for `personalityId`?" — the binding re-check
+   * `Gateway.deliverPublication` runs before it publishes an approved outbox
+   * item (O-T5). Build it with `buildBotSpeakers(config).speaksFor`.
+   *
+   * Required, not optional: `deliverPublication` refuses EVERY publication
+   * when it is absent, so leaving it unwired is a deployment that queues
+   * approvals nobody can deliver.
+   */
+  publicationSpeaksFor: NonNullable<GatewayConfig['publicationSpeaksFor']>;
 }
 
 /**
@@ -4258,6 +4489,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     clarifyMessageCorrelator,
     personalityCardReader: telegramCardReader,
     greetingProvider: telegramGreetingProvider,
+    publicationSpeaksFor,
   } = opts;
   // Observe mode records nothing without `channelTranscript`. Both branches
   // below wire one, so this stays silent here — it is the light for a
@@ -4316,6 +4548,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         channelTranscript,
         ...(channelDigestFeed ? { channelDigestFeed } : {}),
         observeModePlatforms: observedPlatforms,
+        publicationSpeaksFor,
       })
     : new Gateway({
         bots,
@@ -4377,5 +4610,6 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         channelTranscript,
         ...(channelDigestFeed ? { channelDigestFeed } : {}),
         observeModePlatforms: observedPlatforms,
+        publicationSpeaksFor,
       });
 }
