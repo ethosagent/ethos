@@ -4,7 +4,7 @@ description: "Every field in a personality's config.yaml and toolset.yaml — mo
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-09-08
+updated: 2026-09-12
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -138,12 +138,14 @@ capabilities: read, write, web
 
 ## streamingTimeoutMs {#streaming-timeout-ms}
 
-Type: integer (ms) · Default: AgentLoop default (`120000`)
+Type: integer (ms) · Default: `1200000` (20 minutes) — `DEFAULT_STREAMING_TIMEOUT_MS` in [packages/core/src/agent-loop/streaming-timeout.ts](../../../../packages/core/src/agent-loop/streaming-timeout.ts)
 
-Watchdog for the LLM stream. If no chunk arrives within this many milliseconds, the agent aborts the stream and emits an `error` event. Reset on every chunk — slow-but-progressing streams are unaffected. Thinking-mode personalities (Opus extended thinking) typically need longer; fast personalities (Haiku) can pick tighter.
+Watchdog for the LLM stream. If no chunk arrives within this many milliseconds, the agent aborts the stream and emits an `error` event with code `streaming_timeout`. Reset on every chunk — a slow-but-progressing stream of any total duration is unaffected, so this bounds silence, not length. Thinking-mode personalities (Opus extended thinking) inherit the 20-minute default; fast personalities (Haiku) can pick tighter to surface a wedged provider sooner.
+
+A deployment-wide override goes in `~/.ethos/config.yaml`; this key overrides both, per personality.
 
 ```yaml
-streamingTimeoutMs: 300000
+streamingTimeoutMs: 60000
 ```
 
 ## execution {#execution}

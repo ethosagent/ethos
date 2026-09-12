@@ -4,7 +4,7 @@ description: "AgentLoop takes every collaborator via AgentLoopConfig and never r
 kind: explanation
 audience: developer
 slug: injection-at-construction
-updated: 2026-05-12
+updated: 2026-09-12
 ---
 
 ## Context
@@ -38,7 +38,7 @@ constructor(config: AgentLoopConfig) {
   this.session = config.session ?? new InMemorySessionStore();
   this.hooks = config.hooks ?? new DefaultHookRegistry();
   this.resultBudgetChars = config.options?.resultBudgetChars ?? 80_000;
-  this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 120_000;
+  this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? DEFAULT_STREAMING_TIMEOUT_MS;
 }
 ```
 

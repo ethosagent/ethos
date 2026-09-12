@@ -1,6 +1,6 @@
 import type { AgentLoop } from '@ethosagent/core';
 import { describe, expect, it, vi } from 'vitest';
-import { AgentBridge } from '../agent-bridge';
+import { AgentBridge, DEFAULT_TURN_TIMEOUT_MS } from '../agent-bridge';
 
 async function* makeEventStream(
   events: { type: string; [k: string]: unknown }[],
@@ -303,5 +303,27 @@ describe('AgentBridge.whenIdle waits for an abandoned turn to settle (F06)', () 
     finish?.();
     await waiting;
     expect(settled).toBe(true);
+  });
+
+  it('default turn cap is DEFAULT_TURN_TIMEOUT_MS (20 minutes) when no override is passed', () => {
+    // Pins the resolved field rather than exercising the timer: this is a wall
+    // clock on the whole turn, so exercising the real default would mean a
+    // 20-minute test. Every production caller (apps/tui, web-api ChatService)
+    // constructs the bridge with no `turnTimeoutMs`, so this IS their cap.
+    expect(DEFAULT_TURN_TIMEOUT_MS).toBe(1_200_000);
+
+    const loop = {
+      async *run() {
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+      },
+    } as unknown as AgentLoop;
+
+    const defaulted = new AgentBridge(loop);
+    expect((defaulted as unknown as { turnTimeoutMs: number }).turnTimeoutMs).toBe(
+      DEFAULT_TURN_TIMEOUT_MS,
+    );
+
+    const overridden = new AgentBridge(loop, { turnTimeoutMs: 1_000 });
+    expect((overridden as unknown as { turnTimeoutMs: number }).turnTimeoutMs).toBe(1_000);
   });
 });

@@ -484,8 +484,45 @@ describe('AgentLoop', () => {
       expect(err?.error).toMatch(/stalled/);
     });
 
+    it('streaming watchdog default is DEFAULT_STREAMING_TIMEOUT_MS (20 minutes) when nothing overrides it', async () => {
+      // Pins the resolved value on the loop, not the constant alone: the
+      // watchdog is an IDLE timer, so exercising the real default would mean a
+      // 20-minute silent stream. `stream-step.ts` reads
+      // `ctx.personality.streamingTimeoutMs ?? deps.streamingTimeoutMs`, and
+      // this is the `deps` side of that.
+      const { DEFAULT_STREAMING_TIMEOUT_MS } = await import('../agent-loop/streaming-timeout');
+      expect(DEFAULT_STREAMING_TIMEOUT_MS).toBe(1_200_000);
+
+      const idleLlm: LLMProvider = {
+        name: 'mock',
+        model: 'mock-model',
+        maxContextTokens: 200_000,
+        supportsCaching: false,
+        supportsThinking: false,
+        async *complete(): AsyncIterable<CompletionChunk> {
+          yield { type: 'text_delta', text: 'done' };
+        },
+        async countTokens() {
+          return 1;
+        },
+      };
+
+      const loop = new AgentLoop({ llm: idleLlm, safety: createTestSafety() });
+      const resolved = (loop as unknown as { streamingTimeoutMs: number }).streamingTimeoutMs;
+      expect(resolved).toBe(DEFAULT_STREAMING_TIMEOUT_MS);
+
+      // An explicit option still wins.
+      const tight = new AgentLoop({
+        llm: idleLlm,
+        safety: createTestSafety(),
+        options: { streamingTimeoutMs: 50 },
+      });
+      expect((tight as unknown as { streamingTimeoutMs: number }).streamingTimeoutMs).toBe(50);
+    });
+
     it('streaming watchdog respects per-personality streamingTimeoutMs override', async () => {
-      // Personality says 30ms, AgentLoop default is 120000ms — personality wins.
+      // Personality says 30ms; the loop default is DEFAULT_STREAMING_TIMEOUT_MS
+      // (far longer) — personality wins.
       const hangingLlm: LLMProvider = {
         name: 'hanging',
         model: 'mock-model',

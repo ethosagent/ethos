@@ -221,13 +221,14 @@ export interface WiringConfig {
    */
   toolOrder?: 'insertion' | 'stable';
   /**
-   * Lane 4a(d) — per-request deadline (ms) for OpenAI-compat clients. Absent
-   * → the OpenAI SDK default (10 minutes) stays in force; the default is
-   * deliberately long because a cold local model load takes minutes.
+   * Lane 4a(d) — per-request deadline (ms) for OpenAI-compat AND Anthropic
+   * clients. Absent → `DEFAULT_LLM_REQUEST_TIMEOUT_MS` (20 minutes), which
+   * overrides both SDKs' own 10-minute defaults; the default is deliberately
+   * long because a cold local model load takes minutes.
    */
   requestTimeoutMs?: number;
   /** Lane 4a(d) — retry count for OpenAI-compat clients. Absent → the OpenAI
-   *  SDK default (2 retries). */
+   *  SDK default (2 retries). Anthropic has no such knob wired. */
   maxRetries?: number;
   /**
    * Lane 3(a) — total serialized tool-payload guard threshold, in chars.
@@ -1090,8 +1091,18 @@ async function createLLMFromRegistry(
           })),
         ],
         config.model,
-        // Lane 2a — the tool-ordering escape hatch applies to rotation pools too.
-        config.toolOrder !== undefined ? { toolOrder: config.toolOrder } : undefined,
+        // Lane 2a — the tool-ordering escape hatch applies to rotation pools
+        // too, and so does the per-request deadline: every pooled key builds
+        // its own client, so a deadline set only on the non-rotating path
+        // would silently not apply to a rotation deployment.
+        config.toolOrder !== undefined || config.requestTimeoutMs !== undefined
+          ? {
+              ...(config.toolOrder !== undefined ? { toolOrder: config.toolOrder } : {}),
+              ...(config.requestTimeoutMs !== undefined
+                ? { requestTimeoutMs: config.requestTimeoutMs }
+                : {}),
+            }
+          : undefined,
       );
     }
   }

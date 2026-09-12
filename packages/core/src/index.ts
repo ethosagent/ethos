@@ -45,6 +45,7 @@ export {
   ScriptToolBridge,
   type ScriptToolBridgeDeps,
 } from './agent-loop/stages/script-tool-bridge';
+export { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
 // Lane 5(i) — the tier resolution (with its provider-match guard), exported so
 // wiring's tier-mismatch startup diagnostic is tested against EXACTLY the
 // guard the loop runs, not a drifting re-statement of it.

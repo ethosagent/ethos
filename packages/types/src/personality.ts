@@ -345,7 +345,12 @@ export interface PersonalityConfig {
    * Per-personality streaming watchdog: if no chunk arrives from the LLM within
    * this many milliseconds, the agent aborts the stream and emits an error.
    * Reset on every chunk, so slow-but-progressing streams are unaffected.
-   * Defaults to AgentLoop's `streamingTimeoutMs` (120000ms / 2 minutes).
+   * Absent → the loop's `options.streamingTimeoutMs`, and absent there too →
+   * `DEFAULT_STREAMING_TIMEOUT_MS` in
+   * `@ethosagent/core`'s `agent-loop/streaming-timeout.ts`. The
+   * number is deliberately not restated here; it has been wrong in this comment
+   * before. The resolution order is read at
+   * `core/src/agent-loop/stages/stream-step.ts` (`watchdogMs`).
    * Thinking-mode personalities (e.g. Opus extended thinking) may need longer;
    * fast-turnaround personalities (Haiku) can pick something tighter.
    * See plan/IMPROVEMENT.md P1-2 / OpenClaw #68596.

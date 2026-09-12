@@ -11,7 +11,7 @@ import type {
   ToolDefinitionLite,
   ToolOrder,
 } from '@ethosagent/types';
-import { orderToolDefinitions } from '@ethosagent/types';
+import { DEFAULT_LLM_REQUEST_TIMEOUT_MS, orderToolDefinitions } from '@ethosagent/types';
 import { reduceToolSchemas } from './tool-schema';
 import { type AnthropicStreamParams, streamAnthropicMessages } from './transport';
 
@@ -35,6 +35,12 @@ export interface AnthropicProviderConfig {
    *  golden request-body harness to capture exact wire bytes. Absent → the
    *  SDK's default fetch. */
   fetchImpl?: typeof globalThis.fetch;
+  /** Per-request deadline in milliseconds, handed to the Anthropic SDK client.
+   *  The same operator key `requestTimeoutMs` that `OpenAICompatProvider`
+   *  honours. Absent → `DEFAULT_LLM_REQUEST_TIMEOUT_MS` (20 minutes),
+   *  overriding the SDK's own 10-minute default. `0` is honoured as "no
+   *  deadline". */
+  requestTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,8 +195,25 @@ export class AnthropicProvider implements LLMProvider {
 
   constructor(config: AnthropicProviderConfig) {
     this.model = config.model;
+    // An explicitly configured `requestTimeoutMs` always wins, including `0`
+    // (the SDK reads that as no deadline), which is why this is `??` and not a
+    // truthiness test. Absent → DEFAULT_LLM_REQUEST_TIMEOUT_MS (20 minutes),
+    // double `BaseAnthropic.DEFAULT_TIMEOUT`.
+    //
+    // Two things about what this bounds on THIS provider. First, `complete()`
+    // always streams (`streamAnthropicMessages` calls `client.messages.stream`),
+    // and for a streaming body the SDK arms its timer around `fetch` and clears
+    // it once the response headers arrive — so this is a time-to-headers
+    // deadline, not a stream-duration one. Second, setting it at all changes
+    // which SDK branch runs for a NON-streaming POST: `messages.create` only
+    // calls `calculateNonstreamingTimeout` when the client option is absent, so
+    // an explicit value also lifts that helper's "Streaming is required for
+    // operations that may take longer than 10 minutes" throw. The only
+    // non-streaming call here is `countTokens`, which returns in well under
+    // either bound. Asserted by client-timeout.test.ts.
     this.client = new Anthropic({
       apiKey: config.apiKey,
+      timeout: config.requestTimeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
       ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
       ...(config.fetchImpl ? { fetch: config.fetchImpl } : {}),
     });
@@ -297,7 +320,11 @@ export class AuthRotatingProvider implements LLMProvider {
   private readonly providers: AnthropicProvider[];
   private current = 0;
 
-  constructor(profiles: AuthProfile[], model: string, opts?: { toolOrder?: ToolOrder }) {
+  constructor(
+    profiles: AuthProfile[],
+    model: string,
+    opts?: { toolOrder?: ToolOrder; requestTimeoutMs?: number },
+  ) {
     const sorted = [...profiles].sort((a, b) => b.priority - a.priority);
     this.providers = sorted.map(
       (p) =>
@@ -306,6 +333,11 @@ export class AuthRotatingProvider implements LLMProvider {
           model,
           baseUrl: p.baseUrl,
           ...(opts?.toolOrder ? { toolOrder: opts.toolOrder } : {}),
+          // `!== undefined`, not truthiness — an explicit `0` must reach the
+          // pooled providers rather than falling back to the default.
+          ...(opts?.requestTimeoutMs !== undefined
+            ? { requestTimeoutMs: opts.requestTimeoutMs }
+            : {}),
         }),
     );
     if (this.providers.length === 0) throw new Error('AuthRotatingProvider: no profiles provided');
@@ -390,6 +422,10 @@ export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secret
   return new AnthropicProvider({
     apiKey,
     model: cfg.model as string,
+    // Per-request deadline threaded from config, the same key and the same
+    // shape `openaiCompatFactory` uses. Absent → the provider's 20-minute
+    // default.
+    ...(typeof cfg.requestTimeoutMs === 'number' ? { requestTimeoutMs: cfg.requestTimeoutMs } : {}),
     // Lane 2a — tool-ordering escape hatch threaded from config; invalid
     // values fall through to the 'stable' default.
     ...(cfg.toolOrder === 'insertion' || cfg.toolOrder === 'stable'

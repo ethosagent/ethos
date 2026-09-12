@@ -1834,13 +1834,23 @@ export interface EthosConfig {
    */
   toolOrder?: 'insertion' | 'stable';
   /**
-   * Lane 4a(d) — per-request deadline for the OpenAI-compat client, in
-   * milliseconds. Absent → the OpenAI SDK default (10 minutes) stays in
-   * force. The default is deliberately LONG: a cold local model load
-   * (Ollama paging weights into RAM/VRAM on the first turn) legitimately
-   * takes minutes, and a short default would break every fresh server
-   * start. Set this only when you know your serving latency. Flat-key shape:
+   * Lane 4a(d) — per-request deadline for the OpenAI-compat AND Anthropic
+   * clients, in milliseconds. Absent → `DEFAULT_LLM_REQUEST_TIMEOUT_MS` from
+   * `@ethosagent/types` (20 minutes), which both providers apply in place of
+   * their SDK's own 10-minute default. The default is deliberately LONG: a cold
+   * local model load (Ollama paging weights into RAM/VRAM on the first turn)
+   * legitimately takes minutes, and a short default would break every fresh
+   * server start. Set this only when you know your serving latency.
+   *
+   * Note what it bounds: both SDKs clear the timer once response HEADERS
+   * arrive, so on a streaming request this is a time-to-first-headers deadline.
+   * Stream duration is bounded by the loop's streaming watchdog
+   * (`DEFAULT_STREAMING_TIMEOUT_MS`) instead. Flat-key shape:
    *   requestTimeoutMs: 120000
+   *
+   * `0` is NOT accepted here — the parser below requires a positive integer, so
+   * `requestTimeoutMs: 0` is dropped as a typo and the default applies. The
+   * providers themselves would honour `0` as "no deadline" if it reached them.
    */
   requestTimeoutMs?: number;
   /**

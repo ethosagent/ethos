@@ -7,7 +7,7 @@ import type {
   ToolDefinitionLite,
   ToolOrder,
 } from '@ethosagent/types';
-import { orderToolDefinitions } from '@ethosagent/types';
+import { DEFAULT_LLM_REQUEST_TIMEOUT_MS, orderToolDefinitions } from '@ethosagent/types';
 import OpenAI from 'openai';
 import { parseThinkBlocks, withReasoningOnlyRetry } from './reasoning';
 import { classifyLocalRuntime, type LocalOpenAiRuntime } from './runtime-classify';
@@ -56,10 +56,11 @@ export interface OpenAICompatProviderConfig {
    *  SDK's default fetch. */
   fetchImpl?: typeof globalThis.fetch;
   /** Lane 4a(d) — per-request deadline in milliseconds, handed to the OpenAI
-   *  SDK client. Absent → the SDK's own default (10 minutes). The default
-   *  stays deliberately LONG: a cold local model load (Ollama pulling weights
-   *  into RAM/VRAM) legitimately takes minutes, and a short default would
-   *  break the first turn on every fresh server start. */
+   *  SDK client. Absent → `DEFAULT_LLM_REQUEST_TIMEOUT_MS` (20 minutes),
+   *  overriding the SDK's own 10-minute default. `0` is honoured as "no
+   *  deadline". The default stays deliberately LONG: a cold local model load
+   *  (Ollama pulling weights into RAM/VRAM) legitimately takes minutes, and a
+   *  short default would break the first turn on every fresh server start. */
   requestTimeoutMs?: number;
   /** Lane 4a(d) — retry count handed to the OpenAI SDK client. Absent → the
    *  SDK's own default (2 retries). */
@@ -384,14 +385,19 @@ export class OpenAICompatProvider implements LLMProvider {
       ? `${config.baseUrl.replace(/\/$/, '')}/openai/deployments/${config.model}`
       : config.baseUrl;
 
-    // Lane 4a(d) — timeout/retries are set ONLY when configured. With neither
-    // key present the constructed client inherits the SDK defaults unchanged
-    // (10-minute timeout, 2 retries) — asserted by client-timeout.test.ts —
-    // so an unconfigured hosted provider sees no latency or retry change.
+    // Lane 4a(d) — an explicitly configured `requestTimeoutMs` always wins,
+    // including `0` (the SDK reads that as no deadline), which is why this is
+    // `??` and not a truthiness test. Absent → DEFAULT_LLM_REQUEST_TIMEOUT_MS
+    // (20 minutes), double the SDK's own 10-minute default, so a slow
+    // reasoning turn or a cold local model load is not cut off mid-request.
+    // On a STREAMING request this bounds time-to-response-headers only — the
+    // SDK clears the timer once `fetch` resolves; see the constant's own doc
+    // for what actually bounds stream duration. `maxRetries` is untouched:
+    // absent → the SDK's 2. Both asserted by client-timeout.test.ts.
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL,
-      ...(config.requestTimeoutMs !== undefined ? { timeout: config.requestTimeoutMs } : {}),
+      timeout: config.requestTimeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
       ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
       ...(config.fetchImpl ? { fetch: config.fetchImpl } : {}),
       ...(this.azure
@@ -645,7 +651,8 @@ export const openaiCompatFactory: LLMProviderFactory = async ({
       ? { toolOrder: cfg.toolOrder }
       : {}),
     // Lane 4a(d) — request deadline + retry count threaded from config. Absent
-    // → the OpenAI SDK defaults (10-minute timeout, 2 retries) stay in force.
+    // → DEFAULT_LLM_REQUEST_TIMEOUT_MS (20 minutes) for the deadline, and the
+    // OpenAI SDK's own default of 2 retries.
     ...(typeof cfg.requestTimeoutMs === 'number' ? { requestTimeoutMs: cfg.requestTimeoutMs } : {}),
     ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
     // Lane 3(a) — llamacpp-class schema-sanitizer gate, set by wiring from

@@ -1,10 +1,11 @@
-// Lane 4a(d) — configurable timeout + retry, pinned to the SDK defaults.
+// Lane 4a(d) — configurable timeout + retry, pinned at the construction site.
 //
-// CRITICAL acceptance criterion (plan Lane 4): with NO keys configured, the
-// constructed client's effective timeout and retry count must be IDENTICAL to
-// the inherited OpenAI SDK defaults (10-minute timeout, 2 retries) — asserted
-// here at the construction site, against both the literal values and a bare
-// SDK client, so an unconfigured hosted provider sees zero behavior change.
+// With NO keys configured the client must carry DEFAULT_LLM_REQUEST_TIMEOUT_MS
+// (20 minutes) — Ethos's own deadline, deliberately DOUBLE the OpenAI SDK's
+// inherited 10-minute default, so a slow reasoning turn or a cold local model
+// load is not cut off mid-request. Retries are NOT overridden: the SDK's 2
+// still apply, which is asserted against a bare SDK client so drift in the
+// SDK's retry default is caught rather than pinned to a stale literal.
 //
 // The default stays LONG on purpose: a cold local model load (Ollama paging
 // weights into RAM/VRAM) legitimately takes minutes; a short default would
@@ -13,7 +14,11 @@
 // This file must NOT mock the `openai` module — the whole point is asserting
 // what the real SDK client got at construction.
 
-import type { Logger, SecretsResolver } from '@ethosagent/types';
+import {
+  DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+  type Logger,
+  type SecretsResolver,
+} from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { OpenAICompatProvider, openaiCompatFactory } from '../index';
 
@@ -40,11 +45,13 @@ function clientOf(provider: OpenAICompatProvider): ClientView['client'] {
   return (provider as unknown as ClientView).client;
 }
 
+// The SDK's own 10-minute default, which Ethos now REPLACES. Kept as a named
+// literal so the assertion below states plainly that the two differ.
 const SDK_DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
 const SDK_DEFAULT_MAX_RETRIES = 2;
 
 describe('OpenAICompatProvider — client timeout/retries (Lane 4a(d))', () => {
-  it('with NO keys set, the client inherits the SDK defaults exactly (10-minute timeout, 2 retries)', async () => {
+  it("with NO keys set, the client carries the 20-minute Ethos default and the SDK's 2 retries", async () => {
     const provider = new OpenAICompatProvider({
       name: 'openrouter',
       model: 'qwen/qwen3-8b',
@@ -52,16 +59,34 @@ describe('OpenAICompatProvider — client timeout/retries (Lane 4a(d))', () => {
       baseUrl: 'https://openrouter.ai/api/v1',
     });
     const client = clientOf(provider);
-    expect(client.timeout).toBe(SDK_DEFAULT_TIMEOUT_MS);
+    expect(client.timeout).toBe(DEFAULT_LLM_REQUEST_TIMEOUT_MS);
+    expect(client.timeout).toBe(1_200_000);
     expect(client.maxRetries).toBe(SDK_DEFAULT_MAX_RETRIES);
 
-    // Belt and braces: identical to a bare SDK client constructed with no
-    // timeout/retry options at all — if the SDK defaults ever move, this
-    // catches the drift without silently pinning stale literals.
+    // The point of the override, stated as an assertion: the deadline is no
+    // longer the SDK's, and it is exactly twice as long.
     const OpenAI = (await import('openai')).default;
     const bare = new OpenAI({ apiKey: 'k', baseURL: 'https://openrouter.ai/api/v1' });
-    expect(client.timeout).toBe(bare.timeout);
+    expect(bare.timeout).toBe(SDK_DEFAULT_TIMEOUT_MS);
+    expect(client.timeout).toBe(bare.timeout * 2);
+    // Retries ARE still the SDK's — nothing here touches them, so a move in
+    // the SDK's retry default is caught rather than pinned to a stale literal.
     expect(client.maxRetries).toBe(bare.maxRetries);
+  });
+
+  it('an explicit requestTimeoutMs of 0 is honoured as "no deadline", not replaced by the default', () => {
+    // `??`, not truthiness. The config parser in packages/config drops `0` as a
+    // typo before it gets here, but a programmatic caller can pass it and must
+    // not be silently given 20 minutes instead.
+    const provider = new OpenAICompatProvider({
+      name: 'ollama',
+      model: 'qwen3:8b',
+      apiKey: 'k',
+      baseUrl: 'http://localhost:11434/v1',
+      maxContextTokens: 32_000,
+      requestTimeoutMs: 0,
+    });
+    expect(clientOf(provider).timeout).toBe(0);
   });
 
   it('configured requestTimeoutMs and maxRetries reach the client', () => {
@@ -98,7 +123,7 @@ describe('OpenAICompatProvider — client timeout/retries (Lane 4a(d))', () => {
     expect(client.maxRetries).toBe(5);
   });
 
-  it('the factory leaves the SDK defaults in force when config carries no keys', async () => {
+  it('the factory applies the 20-minute default when config carries no keys', async () => {
     const provider = await openaiCompatFactory({
       config: {
         provider: 'openai-compat',
@@ -110,7 +135,7 @@ describe('OpenAICompatProvider — client timeout/retries (Lane 4a(d))', () => {
       logger: noopLogger,
     });
     const client = clientOf(provider as OpenAICompatProvider);
-    expect(client.timeout).toBe(SDK_DEFAULT_TIMEOUT_MS);
+    expect(client.timeout).toBe(DEFAULT_LLM_REQUEST_TIMEOUT_MS);
     expect(client.maxRetries).toBe(SDK_DEFAULT_MAX_RETRIES);
   });
 });

@@ -18,12 +18,41 @@ import { InMemorySteerSink } from './in-memory-steer-sink';
 
 export type BridgeOpts = Omit<RunOptions, 'abortSignal'>;
 
+/**
+ * Default whole-turn stall guard: 20 minutes.
+ *
+ * Unlike the loop's `DEFAULT_STREAMING_TIMEOUT_MS`, this is NOT an idle timer —
+ * it is a wall clock on the entire turn, armed once in `runTurnBody` and
+ * cleared only when the turn settles. A turn that is making steady progress is
+ * abandoned at this mark regardless.
+ *
+ * What the longer cap costs: a stuck turn holds its lane twice as long. The
+ * bridge serialises turns per session, so between the stall and the guard
+ * firing, every queued send for that session waits, `isRunning` stays true, and
+ * the UI shows a busy agent; at `queueCap` further sends are rejected with BUSY.
+ * The abandoned turn also keeps running on the loop after `idle` is emitted (see
+ * `turnsInFlight`), so its token spend is not bounded by this guard either.
+ * Raising it from 10 to 20 minutes doubles all of that. It buys back the
+ * opposite failure, which was the common one: a legitimately long turn — a
+ * reasoning model plus a slow tool chain — reported to the user as a timeout
+ * while it was still working.
+ *
+ * Nothing in the repo overrides it: `apps/tui/src/index.ts` and
+ * `apps/web-api/src/features/chat/service.ts` both construct `AgentBridge` with
+ * no `turnTimeoutMs`, and the only caller that passes one is
+ * `__tests__/agent-bridge.test.ts` (a 20ms value, to exercise the guard). The
+ * `/v1/chat/completions` route uses no bridge at all and so has no turn cap.
+ * Pinned by the 'default turn cap' case in `__tests__/agent-bridge.test.ts`.
+ */
+export const DEFAULT_TURN_TIMEOUT_MS = 1_200_000;
+
 export interface BridgeOptions {
   /** Max concurrent-send queue depth before new sends are rejected with BUSY. */
   queueCap?: number;
   /** Text buffer flush cadence in ms (default 16, ~60fps). */
   flushIntervalMs?: number;
-  /** Max ms to wait for a turn to complete before emitting TIMEOUT (default 5 min). */
+  /** Max ms to wait for a turn to complete before emitting TIMEOUT. Absent →
+   *  `DEFAULT_TURN_TIMEOUT_MS`. */
   turnTimeoutMs?: number;
 }
 
@@ -103,7 +132,7 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     this.loop = loop;
     this.queueCap = options.queueCap ?? 10;
     this.flushIntervalMs = options.flushIntervalMs ?? 16;
-    this.turnTimeoutMs = options.turnTimeoutMs ?? 10 * 60 * 1000;
+    this.turnTimeoutMs = options.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
   }
 
   get isRunning(): boolean {

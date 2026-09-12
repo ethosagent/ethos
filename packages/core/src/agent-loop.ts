@@ -36,6 +36,7 @@ import { processTools } from './agent-loop/stages/tool-processing';
 import { persistAbortedToolCalls } from './agent-loop/stages/tool-rejection';
 import { createTurnUsage, finalizeTurn, flushTurnUsage } from './agent-loop/stages/turn-finalizer';
 import { setupTurn } from './agent-loop/stages/turn-setup';
+import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
 import type { LoopDeps } from './agent-loop/turn-context';
 import { buildTurnEndCtx, maybeConsolidateAtTurnEnd } from './agent-loop/turn-end';
 import { createWatcherTap } from './agent-loop/watcher-tap';
@@ -231,12 +232,10 @@ export interface AgentLoopConfig {
      * because it only trips on the actual loop shape. Defaults to 5.
      */
     maxConsecutiveIdenticalCalls?: number;
-    /**
-     * Default streaming watchdog in milliseconds. If no chunk arrives from the
-     * LLM within this window, the agent aborts the stream and emits an error.
-     * Reset on every chunk. Personalities can override via
-     * `personality.streamingTimeoutMs`. Defaults to 600000 (10 minutes).
-     */
+    /** Streaming watchdog (ms). An IDLE timer — reset on every chunk at
+     *  `agent-loop/stages/stream-step.ts` (`watchdogMs`) — so it bounds silence,
+     *  not stream length. `personality.streamingTimeoutMs` overrides it; absent
+     *  → `DEFAULT_STREAMING_TIMEOUT_MS` (./agent-loop/streaming-timeout.ts). */
     streamingTimeoutMs?: number;
     /** Lane 3(b)/D20 — small-window mode (wiring-resolved); enables the turn personality's declared `small_window_toolset` narrowing. */
     smallWindow?: boolean;
@@ -430,7 +429,7 @@ export class AgentLoop {
     this.maxIdenticalToolCalls = config.options?.maxIdenticalToolCalls ?? 25;
     this.maxConsecutiveIdenticalCalls = config.options?.maxConsecutiveIdenticalCalls ?? 5;
     this.toolLoopWarn = config.options ?? {};
-    this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? 600_000;
+    this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? DEFAULT_STREAMING_TIMEOUT_MS;
     this.smallWindow = config.options?.smallWindow ?? false;
     this.modelRouting = config.modelRouting ?? {};
     this.modelSampling = config.modelSampling;
