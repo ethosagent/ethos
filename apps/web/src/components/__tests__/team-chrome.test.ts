@@ -229,6 +229,7 @@ describe('ScopeNav — team branch (§3)', () => {
       'Chat',
       'Overview',
       'Board',
+      'Outbox',
       'Structure',
       'Documents',
       'Memory',
@@ -305,7 +306,8 @@ describe('ScopeNav — a member workspace inside a team (D6)', () => {
     );
     expect(hrefs[0]).toBe('/t/marketing/p/cmo/chat');
     expect(hrefs.every((h) => h?.startsWith('/t/marketing/p/cmo/'))).toBe(true);
-    expect(hrefs).toHaveLength(12);
+    expect(hrefs).toContain('/t/marketing/p/cmo/outbox');
+    expect(hrefs).toHaveLength(13);
   });
 
   it('keeps the generic `+ New session` picker inside a member workspace', async () => {

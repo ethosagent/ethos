@@ -251,6 +251,7 @@ describe('TEAM_PANES', () => {
       'chat',
       'overview',
       'board',
+      'outbox',
       'structure',
       'documents',
       'memory',

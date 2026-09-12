@@ -403,6 +403,30 @@ Notes:
 - Call-look precedence, resolved in one function (`resolveCallTreatment` in `packages/types/src/personality.ts`) so every surface agrees: `voice.call_style` > a concrete `display.call_style` > derived from the personality id. `display.call_style: personality` is the default and is not a pin — it defers to the derivation.
 - Confirm what parsed with `ethos personality show <id>` — it emits a `## Voice` block, and omits the section entirely when the personality declares no `voice` block. Its `Call look` line names the derived treatment when the key is unset, because there is no blank state to report.
 
+## outbound_policy.\* {#outbound-policy}
+
+Type: dotted block · Default: unset (the agent's `send_message` publishes as soon as it calls it)
+
+Queue this personality's agent-initiated posts for human approval instead of sending them. Full semantics — the lifecycle, the content binding, the refusal codes and what the gate does not cover — are in the [`outbound_policy` reference](../../building/reference/outbound-policy.md).
+
+| Field | Type | Description |
+|---|---|---|
+| `outbound_policy.approve_before_send` | boolean | Only the literal `true` switches the gate on (`buildOutboundPolicy` compares `approve === 'true'`). When the key is absent the whole block is skipped and the other two are neither parsed nor validated. |
+| `outbound_policy.channels` | whitespace-separated names | Which platforms are gated: `slack`, `telegram`, `discord`, `whatsapp`, `email`. Absent — or an empty list — gates every platform. An unknown name fails the personality load with `Invalid outbound_policy.channels: "<name>"`, so a typo cannot silently leave a platform ungated. |
+| `outbound_policy.approver_personality` | personality id | An advisory reviewer that reads the draft and attaches a PASS/FAIL receipt before a human sees it. It can neither approve nor block. An id this machine does not have yields an `unavailable` receipt and the item still reaches the human. |
+
+```yaml
+outbound_policy.approve_before_send: true
+outbound_policy.channels: telegram slack
+outbound_policy.approver_personality: brand-editor
+```
+
+Notes:
+
+- The gate exists only where a surface wires the outbox: `ethos gateway start` and `ethos boot`. `ethos chat`, `ethos serve` and `ethos cron` wire none, and `send_message` sends there exactly as it did before the field existed.
+- Egress through MCP tools and `a2a_send` is not covered at all. `ethos personality show <id>` prints the posture and that exclusion on one `Publishing:` line.
+- Walkthrough: [Approve posts before they go out](../how-to/approve-posts-before-sending.md).
+
 ## toolset.yaml {#toolset-yaml}
 
 Flat YAML list of tool names. Each entry on its own line, prefixed with `- `. Tools missing from this list are filtered out before the LLM sees them.
@@ -440,3 +464,4 @@ Optional sibling directory at `~/.ethos/personalities/<id>/skills/`. Per-persona
 - [Run agent tools on a remote host](../how-to/run-tools-over-ssh.md) — the `execution: remote` requirement end to end, and what the remote host is exposed to.
 - [Retrieve files the agent wrote](../how-to/retrieve-agent-files.md) — `fs_reach.workdir` in practice, on a headless deployment.
 - [Local voice: Kokoro TTS + Whisper large v3 STT](../how-to/local-voice.md) — configure the providers this file's `voice.*` block picks between.
+- [`outbound_policy` reference](../../building/reference/outbound-policy.md) — the approval outbox this file's `outbound_policy` block switches on.

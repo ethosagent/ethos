@@ -9075,3 +9075,352 @@ a.stage-header-scope:hover {
     animation: none;
   }
 }
+
+/* ── Outbox — the personality approval queue (plan trust-before-reach.md
+   Part 2, O-T10) ──────────────────────────────────────────────────────
+
+   Containers here are raw primitives, never the `Card` primitive: DESIGN.md
+   reserves that for skill rows, cron rows and task tiles. There is no colored
+   left border (anti-slop table) — state is a pill with an icon AND a word, so
+   it survives both skins and colour-blindness. Every colour is a token. */
+
+.outbox-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.outbox-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 24px;
+  max-width: 880px;
+}
+
+.outbox-empty {
+  color: var(--ethos-text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.outbox-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.outbox-sec-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ethos-text-tertiary);
+}
+
+.outbox-sec-count {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--ethos-text-dim);
+}
+
+/* A bordered container assembled from primitives — the ClarifyCard pattern. */
+.outbox-item {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border);
+  border-radius: 8px;
+}
+
+/* The one waiting on a person reads a shade firmer. Border STRENGTH, not a
+   coloured edge, and not a second background. */
+.outbox-item-attn {
+  border-color: var(--ethos-border-strong);
+}
+
+.outbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.outbox-row-between {
+  justify-content: space-between;
+}
+
+.outbox-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  background: var(--ethos-bg-overlay);
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ethos-text-dim);
+  white-space: nowrap;
+}
+
+.outbox-chip-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 9999px;
+  background: var(--ethos-text-tertiary);
+}
+
+/* The sender is identity, so it carries the scope's accent — and only here
+   and on the primary action, per DESIGN.md's accent scoping. */
+.outbox-chip-sender .outbox-chip-dot {
+  background: var(--accent, var(--ethos-info));
+}
+
+.outbox-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid;
+  border-radius: 4px;
+  background: none;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.outbox-pill-ic {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+}
+
+.outbox-pill-wait {
+  color: var(--ethos-warning);
+  border-color: var(--ethos-warning);
+}
+
+.outbox-pill-ok {
+  color: var(--ethos-success);
+  border-color: var(--ethos-success);
+}
+
+.outbox-pill-bad {
+  color: var(--ethos-error);
+  border-color: var(--ethos-error);
+}
+
+.outbox-pill-muted {
+  color: var(--ethos-text-tertiary);
+  border-color: var(--ethos-border-strong);
+}
+
+.outbox-meta {
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+}
+
+.outbox-rev,
+.outbox-mono {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--ethos-text-dim);
+}
+
+/* The exact bytes that will be published. Mono says "data, not prose";
+   pre-wrap keeps the author's line breaks; nothing here truncates. */
+.outbox-preview {
+  margin: 0;
+  padding: 12px;
+  background: var(--ethos-bg);
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ethos-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.outbox-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px;
+  background: var(--ethos-bg);
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 4px;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ethos-text);
+  resize: vertical;
+}
+
+.outbox-textarea-reason {
+  min-height: 56px;
+}
+
+.outbox-textarea:focus-visible {
+  outline: 2px solid var(--accent, var(--ethos-info));
+  outline-offset: 1px;
+}
+
+.outbox-receipt {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ethos-border);
+  font-size: 13px;
+  color: var(--ethos-text-dim);
+}
+
+.outbox-receipt-ic {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  color: var(--ethos-text-tertiary);
+}
+
+.outbox-receipt-who {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  color: var(--ethos-text);
+}
+
+.outbox-verdict {
+  font-weight: 500;
+}
+
+.outbox-verdict-pass {
+  color: var(--ethos-success);
+}
+
+.outbox-verdict-fail {
+  color: var(--ethos-error);
+}
+
+.outbox-verdict-unclear,
+.outbox-verdict-unavailable {
+  color: var(--ethos-text-tertiary);
+}
+
+.outbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.outbox-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ethos-border);
+}
+
+.outbox-tl-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--ethos-text-dim);
+}
+
+.outbox-tl-ic {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+}
+
+.outbox-tl-t {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ethos-text-tertiary);
+}
+
+.outbox-tl-done .outbox-tl-ic {
+  color: var(--ethos-success);
+}
+
+.outbox-tl-pend .outbox-tl-ic {
+  color: var(--ethos-warning);
+}
+
+.outbox-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 4px;
+  background: var(--ethos-bg-overlay);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ethos-text-dim);
+}
+
+.outbox-notice-ic {
+  flex: none;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  color: var(--ethos-warning);
+}
+
+.outbox-notice-flat {
+  background: none;
+}
+
+.outbox-notice-flat .outbox-notice-ic {
+  color: var(--ethos-text-tertiary);
+}
+
+.outbox-notice-bad .outbox-notice-ic {
+  color: var(--ethos-error);
+}
+
+.outbox-conflict {
+  padding: 8px 12px;
+  border: 1px solid var(--ethos-warning);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ethos-text);
+}
+
+/* Terminal items are dense rows, not containers — the row is enough. */
+.outbox-dense {
+  display: flex;
+  flex-direction: column;
+}
+
+.outbox-drow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ethos-border);
+  font-size: 13px;
+  color: var(--ethos-text-dim);
+}
+
+.outbox-drow:last-child {
+  border-bottom: none;
+}
+
+.outbox-drow-txt {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ethos-text-tertiary);
+}

@@ -490,12 +490,10 @@ export function createOutboxReviewer(deps: OutboxReviewerDeps): OutboxReviewer {
 // each live card LIVES, so the dispatcher can still mark it "Sent" later.
 // ---------------------------------------------------------------------------
 
-/** The card contract, structurally. `TelegramAdapter` satisfies all three
- *  methods; the pin lives in `__tests__/outbox-wiring.test.ts`. */
-export interface OutboxCardPost {
-  chatId: string;
-  threadId?: string;
-  itemId: string;
+/** Everything a card SHOWS. Rendered above the buttons while the item waits,
+ *  and above the status line once it has settled — a decided card keeps the
+ *  draft, so the DM stays a record of WHAT was approved. */
+export interface OutboxCardBody {
   revision: number;
   personalityId: string;
   destination: { name?: string; platform: string; chatId: string };
@@ -504,12 +502,28 @@ export interface OutboxCardPost {
   review?: { reviewer: string; verdict: string; reasons?: string };
 }
 
+/** The card contract, structurally. `TelegramAdapter` satisfies all three
+ *  methods; the pin lives in `__tests__/outbox-wiring.test.ts`. */
+export interface OutboxCardPost extends OutboxCardBody {
+  chatId: string;
+  threadId?: string;
+  itemId: string;
+}
+
 export type OutboxCardState =
   | { kind: 'approved'; by: string }
   | { kind: 'sent'; at: string }
   | { kind: 'rejected'; by: string; reason?: string }
   | { kind: 'superseded'; revision: number }
-  | { kind: 'expired' };
+  | { kind: 'expired' }
+  /** The delivery did not happen. `reason` is the item's own `failureReason`. */
+  | { kind: 'failed'; reason?: string }
+  /** Handed to the delivery ledger with no confirmation back. */
+  | { kind: 'unconfirmed' };
+
+/** The terminal states the dispatcher drives a card into. `failed` reads its
+ *  reason off the item, so there is one wording, not two. */
+export type OutboxSettledStatus = 'sent' | 'expired' | 'failed' | 'unconfirmed';
 
 export interface OutboxCardTap {
   itemId: string;
@@ -530,8 +544,15 @@ export interface OutboxCardAdapter {
     chatId: string;
     messageId: string;
     status: OutboxCardState;
+    /** The body to re-render above the status line. The adapter stores nothing
+     *  about a card it posted, so the wiring hands it back from `cardRefs`. */
+    card?: OutboxCardBody;
   }): Promise<{ ok: boolean; error?: string }>;
   onOutboxDecision(handler: (event: OutboxCardTap) => void | Promise<void>): void;
+  /** The account this bot posts as, as the operator sees it — `@handle` on
+   *  Telegram, resolved by the adapter at start. Optional: an adapter that
+   *  cannot answer leaves the card naming the botKey. */
+  readonly senderHandle?: string | undefined;
 }
 
 /** Everything an adapter needs to say about itself for the glue to route a tap:
@@ -565,6 +586,14 @@ export interface OutboxCardRef {
   /** The sending bot whose adapter posted it, and its platform. */
   botKey: string;
   platform: string;
+  /**
+   * What the card shows, so a settled card can keep showing it.
+   *
+   * Absent on a `notice` (the draft never fit, so there is nothing to put
+   * back) and on a ref written by an older build. Absent is not an error: the
+   * card settles to its status line alone.
+   */
+  card?: OutboxCardBody;
 }
 
 /**
@@ -613,6 +642,56 @@ export interface OutboxCardRefStorage {
 export const OUTBOX_CARDS_FILE = 'outbox-cards.json';
 
 /**
+ * Read one persisted card body back.
+ *
+ * A body that does not round-trip is DROPPED and its ref kept: a settled card
+ * with no draft above the status line is terse, one rendered from a
+ * half-readable body is wrong, and losing the ref would strand the card at
+ * "Approved — sending…" forever.
+ */
+function parseCardBody(value: unknown): OutboxCardBody | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const body = value as Partial<OutboxCardBody>;
+  const dest = body.destination;
+  if (
+    typeof body.revision !== 'number' ||
+    typeof body.personalityId !== 'string' ||
+    typeof body.sender !== 'string' ||
+    typeof body.text !== 'string' ||
+    typeof dest !== 'object' ||
+    dest === null ||
+    typeof dest.platform !== 'string' ||
+    typeof dest.chatId !== 'string'
+  ) {
+    return undefined;
+  }
+  const review = body.review;
+  const parsedReview =
+    typeof review === 'object' &&
+    review !== null &&
+    typeof review.reviewer === 'string' &&
+    typeof review.verdict === 'string'
+      ? {
+          reviewer: review.reviewer,
+          verdict: review.verdict,
+          ...(typeof review.reasons === 'string' ? { reasons: review.reasons } : {}),
+        }
+      : undefined;
+  return {
+    revision: body.revision,
+    personalityId: body.personalityId,
+    destination: {
+      ...(typeof dest.name === 'string' ? { name: dest.name } : {}),
+      platform: dest.platform,
+      chatId: dest.chatId,
+    },
+    sender: body.sender,
+    text: body.text,
+    ...(parsedReview ? { review: parsedReview } : {}),
+  };
+}
+
+/**
  * Load the durable card map, and persist every change back to it.
  *
  * `writeAtomic`, because a torn map is a set of cards nothing can ever settle.
@@ -645,6 +724,7 @@ export async function loadOutboxCardRefs(
             typeof ref.botKey === 'string' &&
             typeof ref.platform === 'string'
           ) {
+            const card = parseCardBody(ref.card);
             refs.set(ref.itemId, {
               itemId: ref.itemId,
               chatId: ref.chatId,
@@ -653,6 +733,7 @@ export async function loadOutboxCardRefs(
               kind: ref.kind === 'notice' ? 'notice' : 'card',
               botKey: ref.botKey,
               platform: ref.platform,
+              ...(card ? { card } : {}),
             });
           }
         }
@@ -710,7 +791,12 @@ export interface OutboxApprovalSurfaceDeps {
   adapterFor: (botKey: string, platform: string) => OutboxCardAdapter | undefined;
   /** `channel_filter.<platform>.ownerUserId` (O-D5) — who the human is. */
   ownerTarget: (platform: string) => string | undefined;
-  /** How the sending bot is named on the card. Defaults to its botKey. */
+  /**
+   * How the sending bot is named on the card, when the host wants to override
+   * it. Unset — the normal case — the card asks the bot's OWN adapter
+   * (`senderHandle`, `@EthosMarketingBot` on Telegram) and falls back to the
+   * botKey when that has not resolved.
+   */
   senderLabel?: (botKey: string) => string;
   /** Defaults to an in-memory map; the commands pass the durable one. */
   cardRefs?: OutboxCardRefStore;
@@ -723,8 +809,8 @@ export interface OutboxApprovalSurfaceDeps {
  * a card that cannot be updated must never stop a publication.
  */
 export interface OutboxCardSync {
-  /** An item reached a state its card should show. */
-  settled(item: OutboxItem, status: 'sent' | 'expired'): void;
+  /** An item reached a terminal state its card should show. */
+  settled(item: OutboxItem, status: OutboxSettledStatus): void;
   /** Re-check every live card against the store: supersede any whose revision
    *  moved (an edit, possibly made by web-api in another process) and post the
    *  replacement. */
@@ -781,7 +867,7 @@ export function createOutboxApprovalSurface(
   const posting = new Set<string>();
 
   const update = async (
-    ref: Pick<OutboxCardRef, 'chatId' | 'messageId' | 'botKey' | 'platform'>,
+    ref: Pick<OutboxCardRef, 'chatId' | 'messageId' | 'botKey' | 'platform' | 'card'>,
     status: OutboxCardState,
   ): Promise<void> => {
     const adapter = deps.adapterFor(ref.botKey, ref.platform);
@@ -791,6 +877,9 @@ export function createOutboxApprovalSurface(
         chatId: ref.chatId,
         messageId: ref.messageId,
         status,
+        // The draft stays above the status line. Without it the chat records
+        // only that something was approved, never what.
+        ...(ref.card ? { card: ref.card } : {}),
       });
       if (!result.ok) warn(`[outbox] could not update an approval card: ${result.error ?? ''}`);
     } catch (err) {
@@ -823,23 +912,12 @@ export function createOutboxApprovalSurface(
     }
     const adapter = deps.adapterFor(item.botKey, item.platform);
     if (!adapter) return; // this process does not hold that bot — web UI only
-    const revision = service.getRevision(item.id, item.revision);
-    if (!revision) return;
+    const body = cardBody(item);
+    if (!body) return;
 
     posting.add(item.id);
     try {
-      const result = await adapter.postOutboxCard({
-        chatId: owner,
-        itemId: item.id,
-        revision: item.revision,
-        personalityId: item.personalityId,
-        destination: { platform: item.platform, chatId: item.chatId },
-        sender: deps.senderLabel?.(item.botKey) ?? item.botKey,
-        // Byte-exact, and never truncated by the adapter: an over-long draft
-        // gets the web-only notice instead of a partial one (O-T8).
-        text: revision.text,
-        ...(item.review ? { review: cardReview(item, item.review) } : {}),
-      });
+      const result = await adapter.postOutboxCard({ chatId: owner, itemId: item.id, ...body });
       if ('error' in result) {
         warn(`[outbox] could not post the approval card for ${item.id}: ${result.error}`);
         return;
@@ -852,6 +930,9 @@ export function createOutboxApprovalSurface(
         kind: result.kind,
         botKey: item.botKey,
         platform: item.platform,
+        // A notice never showed the draft — it did not fit — so there is
+        // nothing to put back above its status line.
+        ...(result.kind === 'card' ? { card: body } : {}),
       });
     } catch (err) {
       warn(
@@ -880,19 +961,67 @@ export function createOutboxApprovalSurface(
     };
   };
 
+  /**
+   * How the card names the account that will speak.
+   *
+   * The card's whole promise is "THIS bot posts this text", so a config key is
+   * a weaker claim than the handle the operator sees in their client. Order:
+   * the host's explicit override, then the bot's OWN adapter's handle, then
+   * the botKey. Never blocks — `senderHandle` is whatever the adapter has
+   * already resolved, and a card is not worth holding up on a network call.
+   */
+  const senderFor = (item: OutboxItem): string =>
+    deps.senderLabel?.(item.botKey) ??
+    deps.adapterFor(item.botKey, item.platform)?.senderHandle ??
+    item.botKey;
+
+  /** What the card shows for an item, built once and stored on its ref so the
+   *  settled card can re-render it. `undefined` when the revision has gone —
+   *  there is nothing to show, so nothing is posted. */
+  const cardBody = (item: OutboxItem): OutboxCardBody | undefined => {
+    const revision = service.getRevision(item.id, item.revision);
+    if (!revision) return undefined;
+    return {
+      revision: item.revision,
+      personalityId: item.personalityId,
+      destination: { platform: item.platform, chatId: item.chatId },
+      sender: senderFor(item),
+      // Byte-exact, and never truncated by the adapter: an over-long draft
+      // gets the web-only notice instead of a partial one (O-T8).
+      text: revision.text,
+      ...(item.review ? { review: cardReview(item, item.review) } : {}),
+    };
+  };
+
+  /** The body to keep above a settled card's status line: the one the card was
+   *  POSTED with when the side map still holds it — that is what the operator
+   *  actually read — and otherwise a fresh render of the same revision. */
+  const settledBody = (item: OutboxItem): OutboxCardBody | undefined => {
+    const ref = cardRefs.get(item.id);
+    return ref?.revision === item.revision && ref.card ? ref.card : cardBody(item);
+  };
+
+  /** The line a terminal item's card reads. `failed` quotes the item's own
+   *  `failureReason`, so the DM and the web pane cannot disagree about why. */
+  const settledState = (item: OutboxItem, status: OutboxSettledStatus): OutboxCardState => {
+    switch (status) {
+      case 'sent':
+        return { kind: 'sent', at: clockTime(item.sentAt ?? now()) };
+      case 'expired':
+        return { kind: 'expired' };
+      case 'unconfirmed':
+        return { kind: 'unconfirmed' };
+      case 'failed':
+        return { kind: 'failed', ...(item.failureReason ? { reason: item.failureReason } : {}) };
+    }
+  };
+
   const cards: OutboxCardSync = {
     settled: (item, status) => {
       const ref = cardRefs.get(item.id);
       if (!ref) return;
       cardRefs.delete(item.id);
-      track(
-        update(
-          ref,
-          status === 'sent'
-            ? { kind: 'sent', at: clockTime(item.sentAt ?? now()) }
-            : { kind: 'expired' },
-        ),
-      );
+      track(update(ref, settledState(item, status)));
     },
     reconcile: async () => {
       for (const ref of cardRefs.all()) {
@@ -906,6 +1035,8 @@ export function createOutboxApprovalSurface(
         // operator is looking at shows text that can no longer be sent, so it
         // loses its buttons and the new revision gets its own card.
         cardRefs.delete(ref.itemId);
+        // `ref`, not the item: the draft above "Superseded by revision n" must
+        // be the one this card was posted with, not the one that replaced it.
         await update(ref, { kind: 'superseded', revision: item.revision });
         await postCard(item);
       }
@@ -953,8 +1084,18 @@ export function createOutboxApprovalSurface(
       //    the tap is refused and the card is retired where it stands.
       if (item.revision !== tap.revision) {
         await tap.answer(`Superseded — revision ${item.revision} is the current draft.`);
+        // Only a body posted for the revision that was TAPPED. The current
+        // revision's text is not what this card showed, and putting it above
+        // "Superseded" would show the operator a draft they never saw.
+        const stale = cardRefs.get(tap.itemId);
         await update(
-          { chatId: tap.chatId, messageId: tap.messageId, botKey: item.botKey, platform },
+          {
+            chatId: tap.chatId,
+            messageId: tap.messageId,
+            botKey: item.botKey,
+            platform,
+            ...(stale?.revision === tap.revision && stale.card ? { card: stale.card } : {}),
+          },
           { kind: 'superseded', revision: item.revision },
         );
         return;
@@ -975,9 +1116,11 @@ export function createOutboxApprovalSurface(
           return;
         }
         await tap.answer('Approved — sending…');
+        const body = settledBody(item);
         // Recorded BEFORE the edit: this is what lets the dispatcher turn the
         // card into "Sent 14:02" later, including in a process that restarted
-        // between the tap and the delivery.
+        // between the tap and the delivery. The body rides along so that later
+        // edit can still put the approved draft above the status line.
         cardRefs.set({
           itemId: item.id,
           chatId: tap.chatId,
@@ -986,9 +1129,16 @@ export function createOutboxApprovalSurface(
           kind: 'card',
           botKey: item.botKey,
           platform,
+          ...(body ? { card: body } : {}),
         });
         await update(
-          { chatId: tap.chatId, messageId: tap.messageId, botKey: item.botKey, platform },
+          {
+            chatId: tap.chatId,
+            messageId: tap.messageId,
+            botKey: item.botKey,
+            platform,
+            ...(body ? { card: body } : {}),
+          },
           { kind: 'approved', by },
         );
         return;
@@ -1006,9 +1156,16 @@ export function createOutboxApprovalSurface(
         return;
       }
       await tap.answer('Rejected.');
+      const rejectedBody = settledBody(item);
       cardRefs.delete(item.id);
       await update(
-        { chatId: tap.chatId, messageId: tap.messageId, botKey: item.botKey, platform },
+        {
+          chatId: tap.chatId,
+          messageId: tap.messageId,
+          botKey: item.botKey,
+          platform,
+          ...(rejectedBody ? { card: rejectedBody } : {}),
+        },
         { kind: 'rejected', by },
       );
     },
@@ -1128,10 +1285,12 @@ export interface OutboxDispatcherDeps {
    */
   botKeys: () => readonly string[];
   /**
-   * The approval surface's card side (O-T8), when one is wired. Two jobs, both
-   * fail-open: turn a delivered card into "Sent 14:02", and notice a card whose
-   * item was edited — possibly by web-api in ANOTHER process — so the operator
-   * is never looking at live buttons over text that can no longer be sent.
+   * The approval surface's card side (O-T8), when one is wired. Three jobs,
+   * all fail-open: drive a card to its terminal line (sent, failed,
+   * unconfirmed, expired) without a human refreshing anything, and notice a
+   * card whose item was edited — possibly by web-api in ANOTHER process — so
+   * the operator is never looking at live buttons over text that can no longer
+   * be sent.
    */
   cards?: OutboxCardSync;
   intervalMs?: number;
@@ -1207,6 +1366,22 @@ export function createOutboxDispatcher(deps: OutboxDispatcherDeps): OutboxDispat
   };
 
   /**
+   * Drive the item's card to its terminal line.
+   *
+   * Fail-open, like every other card call: an item with no live card is a map
+   * miss, and the transition is recorded either way. This is what stops a card
+   * asserting "Approved — sending…" over a delivery that failed or that the
+   * platform never confirmed — the state moved on, so the card must too,
+   * without a human refreshing anything.
+   */
+  const settleCard = (
+    marked: { ok: true; value: OutboxItem } | { ok: false },
+    status: OutboxSettledStatus,
+  ): void => {
+    if (marked.ok) deps.cards?.settled(marked.value, status);
+  };
+
+  /**
    * Settle one `sending` row whose claiming process is gone.
    *
    * `Gateway.sendTracked` writes the `pending` obligation BEFORE `adapter.send`,
@@ -1247,10 +1422,13 @@ export function createOutboxDispatcher(deps: OutboxDispatcherDeps): OutboxDispat
     // Newest first, so the head is the attempt the dead process was making.
     const obligation = obligations[0];
     if (obligation) {
-      service.markUnconfirmed(item.id, obligation.id);
+      settleCard(service.markUnconfirmed(item.id, obligation.id), 'unconfirmed');
       return;
     }
-    service.markFailed(item.id, 'interrupted before the platform call; not sent — Retry');
+    settleCard(
+      service.markFailed(item.id, 'interrupted before the platform call; not sent — Retry'),
+      'failed',
+    );
   };
 
   const deliverOne = async (item: OutboxItem, report: OutboxTickReport): Promise<void> => {
@@ -1263,6 +1441,10 @@ export function createOutboxDispatcher(deps: OutboxDispatcherDeps): OutboxDispat
     if (!bound.ok) {
       report.failed++;
       warn(`[outbox] ${item.id} was not published: ${bound.error}`);
+      // `verifyBinding` fails the row itself, so the item is read back rather
+      // than marked again — the card quotes the reason the row now carries.
+      const failed = service.get(item.id);
+      if (failed) deps.cards?.settled(failed, 'failed');
       return;
     }
 
@@ -1298,7 +1480,7 @@ export function createOutboxDispatcher(deps: OutboxDispatcherDeps): OutboxDispat
       // it, so the item goes back to `approved` and a later tick — or the
       // process that owns the bot — delivers it.
       if (result.refusal.code === 'not_bound') {
-        service.markFailed(item.id, result.refusal.message);
+        settleCard(service.markFailed(item.id, result.refusal.message), 'failed');
         report.failed++;
       } else {
         service.releaseClaim(item.id);
@@ -1315,7 +1497,7 @@ export function createOutboxDispatcher(deps: OutboxDispatcherDeps): OutboxDispat
     }
 
     if (result.obligationId) {
-      service.markUnconfirmed(item.id, result.obligationId);
+      settleCard(service.markUnconfirmed(item.id, result.obligationId), 'unconfirmed');
       report.unconfirmed++;
       return;
     }
@@ -1323,10 +1505,13 @@ export function createOutboxDispatcher(deps: OutboxDispatcherDeps): OutboxDispat
     // Unconfirmed with no obligation: no ledger is wired, so nothing owns a
     // retry. Saying `unconfirmed` would promise a sweep that cannot happen, so
     // the honest state is `failed` with a human's Retry next to it.
-    service.markFailed(
-      item.id,
-      'the platform did not confirm and no delivery ledger recorded the attempt — ' +
-        'it may or may not have arrived. Check the channel before retrying.',
+    settleCard(
+      service.markFailed(
+        item.id,
+        'the platform did not confirm and no delivery ledger recorded the attempt — ' +
+          'it may or may not have arrived. Check the channel before retrying.',
+      ),
+      'failed',
     );
     report.failed++;
   };

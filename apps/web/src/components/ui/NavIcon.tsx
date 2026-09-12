@@ -8,6 +8,7 @@ export type NavIconKey =
   | 'chat'
   | 'overview'
   | 'board'
+  | 'outbox'
   | 'structure'
   | 'documents'
   | 'memory'
@@ -19,6 +20,8 @@ const PATHS: Record<NavIconKey, string> = {
   chat: 'M2 3h12v8H6l-3 3v-3H2z',
   overview: 'M2 8l6-5 6 5v6H2z',
   board: 'M2 2h3v12H2zM6.5 2h3v8h-3zM11 2h3v10h-3z',
+  // A tray with the draft still above it — nothing has gone out yet.
+  outbox: 'M2 9.5v4h12v-4M8 1.5v7M5 4.5L8 1.5l3 3',
   structure:
     'M10 3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM5 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM15 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM8 5v3M8 8l-4 2M8 8l4 2',
   documents: 'M4 1.5h5.5L13 5v9.5H4zM9.5 1.5V5H13M6.5 8.5h3M6.5 11h3',

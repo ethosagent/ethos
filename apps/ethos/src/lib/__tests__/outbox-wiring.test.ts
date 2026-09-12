@@ -19,6 +19,7 @@ import type {
 } from '@ethosagent/gateway';
 import {
   type OutboxItem,
+  type OutboxObservability,
   OutboxService,
   type OutboxState,
   SQLiteOutboxStore,
@@ -36,9 +37,9 @@ import {
   OUTBOX_REVIEW_SESSION_PREFIX,
   OUTBOX_REVIEW_TOOLS,
   type OutboxCardAdapter,
+  type OutboxCardBody,
   type OutboxCardPost,
   type OutboxCardRefStore,
-  type OutboxCardState,
   type OutboxCardTap,
   type OutboxPublicationRefusalCode,
   type OutboxPublicationRequest,
@@ -746,6 +747,8 @@ describe('parseOutboxReviewVerdict', () => {
 
 /** A card-capable adapter, recording every call. `post` decides what the post
  *  answers, which is how the over-length notice path is exercised. */
+type CardUpdate = Parameters<OutboxCardAdapter['updateOutboxCard']>[0];
+
 function cardAdapter(
   id = 'telegram:bot-a',
   post: (
@@ -754,21 +757,21 @@ function cardAdapter(
     messageId: 'm1',
     kind: 'card',
   }),
+  /** The `@handle` a real adapter resolves at start. Absent → the card falls
+   *  back to the botKey. */
+  senderHandle?: string,
 ) {
   const posts: OutboxCardPost[] = [];
-  const updates: Array<{ chatId: string; messageId: string; status: OutboxCardState }> = [];
+  const updates: CardUpdate[] = [];
   let tap: ((event: OutboxCardTap) => void | Promise<void>) | undefined;
   const adapter = {
     id,
+    ...(senderHandle ? { senderHandle } : {}),
     postOutboxCard: async (input: OutboxCardPost) => {
       posts.push(input);
       return post(input);
     },
-    updateOutboxCard: async (input: {
-      chatId: string;
-      messageId: string;
-      status: OutboxCardState;
-    }) => {
+    updateOutboxCard: async (input: CardUpdate) => {
       updates.push(input);
       return { ok: true };
     },
@@ -777,6 +780,20 @@ function cardAdapter(
     },
   };
   return { adapter, posts, updates, handler: () => tap };
+}
+
+/** A live card ref for an item whose card is already posted. */
+function liveCard(item: OutboxItem, card?: OutboxCardBody) {
+  return {
+    itemId: item.id,
+    chatId: '4242',
+    messageId: 'm1',
+    revision: item.revision,
+    kind: 'card' as const,
+    botKey: 'bot-a',
+    platform: 'telegram',
+    ...(card ? { card } : {}),
+  };
 }
 
 /** One tap, with the answer it got back. */
@@ -982,11 +999,20 @@ describe('createOutboxApprovalSurface — taps', () => {
     expect(answers[0]).toContain('Approved');
     expect(service.get(item.id)?.state).toBe('approved');
     expect(service.get(item.id)?.approvedBy).toBe('mitesh');
-    // The card the tap itself named is the one that gets edited.
+    // The card the tap itself named is the one that gets edited — and it keeps
+    // the draft, rebuilt from the store, even though this process has no
+    // memory of having posted it.
     expect(updates[0]).toEqual({
       chatId: '4242',
       messageId: 'm-old',
       status: { kind: 'approved', by: 'mitesh' },
+      card: {
+        revision: 1,
+        personalityId: 'cmo',
+        destination: { platform: 'telegram', chatId: '-100123' },
+        sender: 'bot-a',
+        text: TEXT,
+      },
     });
   });
 
@@ -1014,6 +1040,93 @@ describe('createOutboxApprovalSurface — taps', () => {
 
     expect(answers[0]).toContain('rejected');
     expect(service.get(item.id)?.state).toBe('rejected');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// X-D11 — a Telegram tap lands in `ethos audit decisions`
+//
+// The audit sink is OPTIONAL on `OutboxService`, and for the whole of wave 2
+// both gateway-side `createOutboxRuntime` calls passed none: a tap on the card
+// approved a publication and left no row anywhere. Telegram is the surface most
+// approvals will come from, so the web path being right was not the guarantee
+// X-D11 makes. `outbox-gate-live.test.ts` pins the two construction sites;
+// these two pin what a tap through a runtime built WITH a sink actually writes.
+// ---------------------------------------------------------------------------
+
+/** A runtime over the shared store with a recording audit sink, and a surface
+ *  driving THAT runtime's service — the assembly both roots build. */
+function auditedSurface(target: SQLiteOutboxStore, adapter: OutboxCardAdapter & { id: string }) {
+  const rows: Parameters<OutboxObservability['recordSafetyApproval']>[0][] = [];
+  const runtime = createOutboxRuntime({
+    speakers: roster({ telegram: ['bot-a'] }),
+    ownerTarget: () => '4242',
+    store: target,
+    observability: {
+      recordSafetyApproval: (opts) => {
+        rows.push(opts);
+      },
+    },
+  });
+  const surface = createOutboxApprovalSurface({
+    service: runtime.service,
+    adapterFor: (botKey, platform) =>
+      botKey === 'bot-a' && platform === 'telegram' ? adapter : undefined,
+    ownerTarget: (platform) => (platform === 'telegram' ? '4242' : undefined),
+    logger: { warn: () => {} },
+  });
+  return { rows, runtime, surface };
+}
+
+describe('createOutboxApprovalSurface — the audit trail (X-D11)', () => {
+  it('an approve tap writes exactly one outbox.approve row', async () => {
+    const item = awaitingItem(store);
+    const { adapter } = cardAdapter();
+    const { rows, surface, runtime } = auditedSurface(store, adapter);
+    const { tap } = tapOn(item);
+
+    await surface.decide('telegram', tap);
+
+    expect(runtime.service.get(item.id)?.state).toBe('approved');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.code).toBe('outbox.approve');
+    expect(rows[0]?.decision).toBe('approved');
+    // Who tapped, and WHICH bytes they approved. The hash, never the text.
+    expect(rows[0]?.details).toMatchObject({
+      itemId: item.id,
+      personalityId: 'cmo',
+      botKey: 'bot-a',
+      platform: 'telegram',
+      revision: 1,
+      contentHash: item.contentHash,
+      decidedBy: 'mitesh',
+    });
+    expect(JSON.stringify(rows[0])).not.toContain(TEXT);
+  });
+
+  it('a reject tap writes exactly one outbox.reject row', async () => {
+    const item = awaitingItem(store);
+    const { adapter } = cardAdapter();
+    const { rows, surface, runtime } = auditedSurface(store, adapter);
+    const { tap } = tapOn(item, { decision: 'reject' });
+
+    await surface.decide('telegram', tap);
+
+    expect(runtime.service.get(item.id)?.state).toBe('rejected');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.code).toBe('outbox.reject');
+    expect(rows[0]?.details).toMatchObject({ itemId: item.id, decidedBy: 'mitesh' });
+  });
+
+  it('a refused tap writes nothing — no decision was made', async () => {
+    const item = awaitingItem(store);
+    const { adapter } = cardAdapter();
+    const { rows, surface } = auditedSurface(store, adapter);
+    const { tap } = tapOn(item, { userId: '9999', username: 'bystander' });
+
+    await surface.decide('telegram', tap);
+
+    expect(rows).toHaveLength(0);
   });
 });
 
@@ -1054,15 +1167,7 @@ describe('createOutboxApprovalSurface — card lifecycle', () => {
   it('turns a delivered card into "Sent" from the dispatcher', async () => {
     const item = approvedItem(store);
     const refs = createMemoryCardRefStore();
-    refs.set({
-      itemId: item.id,
-      chatId: '4242',
-      messageId: 'm1',
-      revision: item.revision,
-      kind: 'card',
-      botKey: 'bot-a',
-      platform: 'telegram',
-    });
+    refs.set(liveCard(item));
     const { adapter, updates } = cardAdapter();
     const { surface } = surfaceOver(store, adapter, { cardRefs: refs });
     const { gateway } = publisher(() => ({ confirmed: true, obligationId: 'ob_1' }));
@@ -1073,6 +1178,222 @@ describe('createOutboxApprovalSurface — card lifecycle', () => {
 
     expect(updates[0]?.status.kind).toBe('sent');
     expect(refs.get(item.id)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A settled card is a record of WHAT was approved
+// ---------------------------------------------------------------------------
+
+describe('createOutboxApprovalSurface — a settled card keeps the draft', () => {
+  it('carries the posted body through the approve tap and on to "Sent"', async () => {
+    const item = awaitingItem(store);
+    const refs = createMemoryCardRefStore();
+    const { adapter, posts, updates } = cardAdapter();
+    const { surface } = surfaceOver(store, adapter, { cardRefs: refs });
+    surface.proposed(item, true);
+    await surface.drain();
+    const { tap } = tapOn(item);
+
+    await surface.decide('telegram', tap);
+
+    // The tap's own edit shows the draft the operator just approved…
+    expect(updates[0]?.status).toEqual({ kind: 'approved', by: 'mitesh' });
+    expect(updates[0]?.card?.text).toBe(TEXT);
+    expect(updates[0]?.card?.sender).toBe(posts[0]?.sender);
+    expect(updates[0]?.card?.revision).toBe(item.revision);
+    // …and the ref carries it forward, so a LATER process can still render it.
+    expect(refs.get(item.id)?.card?.text).toBe(TEXT);
+
+    const { gateway } = publisher(() => ({ confirmed: true, obligationId: 'ob_1' }));
+    const { dispatcher } = dispatcherOver(store, gateway, { cards: surface.cards });
+    await dispatcher.tick();
+    await surface.drain();
+
+    expect(updates[1]?.status.kind).toBe('sent');
+    expect(updates[1]?.card?.text).toBe(TEXT);
+  });
+
+  it('rebuilds the body from the store when the ref has none (an older ref)', async () => {
+    const item = approvedItem(store);
+    const refs = createMemoryCardRefStore();
+    refs.set(liveCard(item)); // written before bodies were stored
+    const { adapter, updates } = cardAdapter();
+    const { surface } = surfaceOver(store, adapter, { cardRefs: refs });
+    const { gateway } = publisher(() => ({ confirmed: true, obligationId: 'ob_1' }));
+    const { dispatcher } = dispatcherOver(store, gateway, { cards: surface.cards });
+
+    await dispatcher.tick();
+    await surface.drain();
+
+    // Nothing to re-render, so the card settles to its status line alone
+    // rather than to a guess.
+    expect(updates[0]?.card).toBeUndefined();
+  });
+
+  it('stores no body for an over-length notice — there was no draft on it', async () => {
+    const long = 'A'.repeat(5000);
+    const item = awaitingItem(store, long);
+    const refs = createMemoryCardRefStore();
+    const { adapter } = cardAdapter('telegram:bot-a', () => ({
+      messageId: 'm1',
+      kind: 'notice',
+    }));
+    const { surface } = surfaceOver(store, adapter, { cardRefs: refs });
+
+    surface.proposed(item, true);
+    await surface.drain();
+
+    expect(refs.get(item.id)?.kind).toBe('notice');
+    expect(refs.get(item.id)?.card).toBeUndefined();
+  });
+
+  it('supersedes with the draft the tapped card showed, never the new one', async () => {
+    const item = awaitingItem(store);
+    const refs = createMemoryCardRefStore();
+    const { adapter, updates } = cardAdapter();
+    const { surface } = surfaceOver(store, adapter, { cardRefs: refs });
+    surface.proposed(item, true);
+    await surface.drain();
+
+    store.edit(item.id, 1, 'Ethos 0.9 ships tomorrow.', 'mitesh');
+    const { tap } = tapOn(item, { revision: 1 });
+    await surface.decide('telegram', tap);
+
+    expect(updates[0]?.status).toEqual({ kind: 'superseded', revision: 2 });
+    expect(updates[0]?.card?.text).toBe(TEXT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two terminal states the dispatcher drives without a human
+// ---------------------------------------------------------------------------
+
+describe('createOutboxDispatcher — failed and unconfirmed reach the card', () => {
+  it('drives a card to "failed", carrying the row’s own reason', async () => {
+    const item = approvedItem(store);
+    const refs = createMemoryCardRefStore();
+    refs.set(
+      liveCard(item, {
+        revision: 1,
+        personalityId: 'cmo',
+        destination: { platform: 'telegram', chatId: '-100123' },
+        sender: '@EthosMarketingBot',
+        text: TEXT,
+      }),
+    );
+    const { adapter, updates } = cardAdapter();
+    const { surface } = surfaceOver(store, adapter, { cardRefs: refs });
+    const { gateway } = publisher(() => ({
+      confirmed: false,
+      obligationId: null,
+      refusal: { code: 'not_bound', message: 'bot-a no longer speaks for cmo' },
+    }));
+    const { dispatcher } = dispatcherOver(store, gateway, { cards: surface.cards });
+
+    const report = await dispatcher.tick();
+    await surface.drain();
+
+    expect(report.failed).toBe(1);
+    expect(stateOf(store, item.id)).toBe('failed');
+    expect(updates[0]?.status).toEqual({
+      kind: 'failed',
+      reason: 'bot-a no longer speaks for cmo',
+    });
+    // Still a record of what was approved.
+    expect(updates[0]?.card?.text).toBe(TEXT);
+    expect(refs.get(item.id)).toBeUndefined();
+  });
+
+  it('drives a card to "unconfirmed" when the platform did not confirm', async () => {
+    const item = approvedItem(store);
+    const refs = createMemoryCardRefStore();
+    refs.set(liveCard(item));
+    const { adapter, updates } = cardAdapter();
+    const { surface } = surfaceOver(store, adapter, { cardRefs: refs });
+    const { gateway } = publisher(() => ({ confirmed: false, obligationId: 'ob_9' }));
+    const { dispatcher } = dispatcherOver(store, gateway, { cards: surface.cards });
+
+    const report = await dispatcher.tick();
+    await surface.drain();
+
+    expect(report.unconfirmed).toBe(1);
+    expect(stateOf(store, item.id)).toBe('unconfirmed');
+    expect(updates[0]?.status).toEqual({ kind: 'unconfirmed' });
+    expect(refs.get(item.id)).toBeUndefined();
+  });
+
+  it('settles an interrupted send from the stale reconciler, both ways', async () => {
+    // No ledger row: nothing reached the platform, so the card says so.
+    const stale = Date.now() - 20 * 60_000;
+    const failed = approvedItem(store, {}, stale);
+    store.claim(failed.id, stale);
+    const refsA = createMemoryCardRefStore();
+    refsA.set(liveCard(failed));
+    const { adapter: adapterA, updates: updatesA } = cardAdapter();
+    const { surface: surfaceA } = surfaceOver(store, adapterA, { cardRefs: refsA });
+    const { gateway } = publisher(() => ({ confirmed: true, obligationId: 'ob_1' }));
+    const { dispatcher: dispatcherA } = dispatcherOver(store, gateway, {
+      cards: surfaceA.cards,
+      ledger: { findBySession: async () => [] },
+    });
+
+    await dispatcherA.tick();
+    await surfaceA.drain();
+
+    expect(stateOf(store, failed.id)).toBe('failed');
+    expect(updatesA[0]?.status).toEqual({
+      kind: 'failed',
+      reason: 'interrupted before the platform call; not sent — Retry',
+    });
+
+    // A ledger row: the ledger owns the retry, and the card claims neither.
+    // A different personality, so idempotent propose does not hand back the
+    // failed item above (same bound fields → same content hash).
+    const unconfirmed = approvedItem(store, { personalityId: 'cfo' }, stale);
+    store.claim(unconfirmed.id, stale);
+    const refsB = createMemoryCardRefStore();
+    refsB.set(liveCard(unconfirmed));
+    const { adapter: adapterB, updates: updatesB } = cardAdapter();
+    const { surface: surfaceB } = surfaceOver(store, adapterB, { cardRefs: refsB });
+    const { dispatcher: dispatcherB } = dispatcherOver(store, gateway, {
+      cards: surfaceB.cards,
+      ledger: { findBySession: async () => [{ id: 'ob_7' }] },
+    });
+
+    await dispatcherB.tick();
+    await surfaceB.drain();
+
+    expect(stateOf(store, unconfirmed.id)).toBe('unconfirmed');
+    expect(updatesB[0]?.status).toEqual({ kind: 'unconfirmed' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Who the card says is speaking
+// ---------------------------------------------------------------------------
+
+describe('createOutboxApprovalSurface — the sender name', () => {
+  it('names the bot by its adapter’s handle', async () => {
+    const item = awaitingItem(store);
+    const { adapter, posts } = cardAdapter('telegram:bot-a', undefined, '@EthosMarketingBot');
+    const { surface } = surfaceOver(store, adapter);
+
+    surface.proposed(item, true);
+    await surface.drain();
+
+    expect(posts[0]?.sender).toBe('@EthosMarketingBot');
+  });
+
+  it('falls back to the botKey when the adapter has not resolved one', async () => {
+    const item = awaitingItem(store);
+    const { adapter, posts } = cardAdapter();
+    const { surface } = surfaceOver(store, adapter);
+
+    surface.proposed(item, true);
+    await surface.drain();
+
+    expect(posts[0]?.sender).toBe('bot-a');
   });
 });
 
@@ -1105,6 +1426,49 @@ describe('loadOutboxCardRefs', () => {
     files.set('cards.json', 'not json');
     const third = await loadOutboxCardRefs(storage, 'cards.json', { warn: () => {} });
     expect(third.all()).toEqual([]);
+  });
+
+  it('round-trips the card body, and keeps the ref when the body is unreadable', async () => {
+    const files = new Map<string, string>();
+    const storage = {
+      read: async (path: string) => files.get(path) ?? null,
+      writeAtomic: async (path: string, content: string) => {
+        files.set(path, content);
+      },
+    };
+    const body: OutboxCardBody = {
+      revision: 2,
+      personalityId: 'cmo',
+      destination: { name: 'Ethos Announcements', platform: 'telegram', chatId: '-100123' },
+      sender: '@EthosMarketingBot',
+      text: TEXT,
+      review: { reviewer: 'brand-editor', verdict: 'PASS' },
+    };
+    const first = await loadOutboxCardRefs(storage, 'cards.json');
+    first.set({
+      itemId: 'obx_1',
+      chatId: '4242',
+      messageId: 'm1',
+      revision: 2,
+      kind: 'card',
+      botKey: 'bot-a',
+      platform: 'telegram',
+      card: body,
+    });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    const second = await loadOutboxCardRefs(storage, 'cards.json');
+    expect(second.get('obx_1')?.card).toEqual(body);
+
+    // A half-written body is dropped; the REF survives, because losing it
+    // would strand the card on "Approved — sending…" for good.
+    const rows = JSON.parse(files.get('cards.json') ?? '[]') as Record<string, unknown>[];
+    const row = rows[0];
+    if (row) row.card = { revision: 2, personalityId: 'cmo' };
+    files.set('cards.json', JSON.stringify(rows));
+    const third = await loadOutboxCardRefs(storage, 'cards.json');
+    expect(third.get('obx_1')?.messageId).toBe('m1');
+    expect(third.get('obx_1')?.card).toBeUndefined();
   });
 });
 

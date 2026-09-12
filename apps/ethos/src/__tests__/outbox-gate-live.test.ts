@@ -60,6 +60,17 @@ describe.each(ROOTS)('%s', (_label, source) => {
   it('counts approved-but-unsent publications as busy for the idle watcher', () => {
     expect(source).toContain('outboxPending: outbox.pendingPublications');
   });
+
+  it('gives the outbox the audit sink, so a Telegram tap lands in `ethos audit decisions`', () => {
+    // X-D11. `OutboxService`'s sink is optional, and absent it writes nothing
+    // and still decides: a tap on the card approves a publication and leaves no
+    // row. Silent in the same way the gate itself was — the web path has its
+    // own sink, so every audit test of the service still passes.
+    const call = source.slice(source.indexOf('createOutboxRuntime({'));
+    expect(call.slice(0, call.indexOf('\n  });'))).toContain(
+      'recordSafetyApproval: (opts) => getEthosObservability().recordSafetyApproval(opts)',
+    );
+  });
 });
 
 describe('ethos boot hot-added bots', () => {

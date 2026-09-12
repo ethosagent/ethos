@@ -176,6 +176,7 @@ describe('scopeEntries', () => {
     expect(panes.map((e) => e.label)).toEqual([
       'marketing › Overview',
       'marketing › Board',
+      'marketing › Outbox',
       'marketing › Structure',
       'marketing › Documents',
       'marketing › Memory',

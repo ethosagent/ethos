@@ -58,6 +58,7 @@ const WORKSPACE_PANE_LABELS: Record<string, string> = {
   memory: 'Memory',
   documents: 'Documents',
   schedule: 'Schedule',
+  outbox: 'Outbox',
   skills: 'Skills',
   mcp: 'MCP Servers',
   plugins: 'Plugins',
@@ -71,6 +72,7 @@ export type TeamPaneKey =
   | 'chat'
   | 'overview'
   | 'board'
+  | 'outbox'
   | 'structure'
   | 'documents'
   | 'memory'
@@ -87,6 +89,7 @@ export const TEAM_PANES: ReadonlyArray<{ key: TeamPaneKey; label: string }> = [
   { key: 'chat', label: 'Chat' },
   { key: 'overview', label: 'Overview' },
   { key: 'board', label: 'Board' },
+  { key: 'outbox', label: 'Outbox' },
   { key: 'structure', label: 'Structure' },
   { key: 'documents', label: 'Documents' },
   { key: 'memory', label: 'Memory' },

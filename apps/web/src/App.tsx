@@ -78,6 +78,7 @@ import { Memory } from './pages/Memory';
 import { Mesh } from './pages/Mesh';
 import { OAuthCallback } from './pages/OAuthCallback';
 import { Onboarding } from './pages/Onboarding';
+import { Outbox } from './pages/Outbox';
 import { Personalities } from './pages/Personalities';
 import { PersonalityCreate } from './pages/PersonalityCreate';
 import { PersonalityDetail } from './pages/PersonalityDetail';
@@ -120,6 +121,7 @@ const WORKSPACE_ROUTES: ReadonlyArray<{ path: string; element: ReactNode }> = [
   { path: 'memory', element: <Memory /> },
   { path: 'documents', element: <Documents /> },
   { path: 'schedule', element: <Cron /> },
+  { path: 'outbox', element: <Outbox /> },
   { path: 'goals', element: <Goals /> },
   { path: 'goals/:goalId', element: <GoalDetail /> },
   { path: 'tasks', element: <Tasks /> },
@@ -137,6 +139,7 @@ const TEAM_PANE_ELEMENTS: Record<TeamPaneKey, ReactNode> = {
   chat: <TeamChat />,
   overview: <TeamOverview />,
   board: <TeamBoard />,
+  outbox: <Outbox />,
   structure: <TeamStructure />,
   documents: <TeamDocuments />,
   memory: <TeamMemory />,

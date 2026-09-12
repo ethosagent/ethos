@@ -515,6 +515,14 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   const outboxCardAdapters = new Map<string, OutboxCardCapableAdapter>();
   const outbox = createOutboxRuntime({
     speakers: botSpeakers,
+    // X-D11 — every human outbox decision lands in `ethos audit decisions`,
+    // next to the tool approvals `wireApprovalFlow` records through this same
+    // sink. Resolved LAZILY, for that flow's reason: a boot that never settles
+    // an approval never opens the observability DB. `OutboxService.audit` is
+    // fail-open, so a broken sink costs an audit row, never a decision.
+    observability: {
+      recordSafetyApproval: (opts) => getEthosObservability().recordSafetyApproval(opts),
+    },
     ownerTarget: (platform) => cfg.channelFilter?.[platform]?.ownerUserId,
     approverFor: (personalityId) =>
       personalities.get(personalityId)?.outbound_policy?.approver_personality,

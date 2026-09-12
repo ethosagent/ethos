@@ -1023,10 +1023,13 @@ export async function createExecutionRouting(
  * publication and resolves its sending bot (O-T4), which needs the process's
  * adapters and bindings.
  *
- * Nothing supplies it yet: the gateway's outbox wiring is O-T4/O-T6, and it
- * arrives through `ComposeToolsDeps` (built at the `composeAllTools` call in
- * `packages/wiring/src/index.ts`). Until then every deployment leaves it
- * absent, no gate is built, and both tools behave as they always have.
+ * Two surfaces supply it: `ethos gateway start` and `ethos boot`, each from
+ * `createOutboxRuntime` (`apps/ethos/src/lib/outbox-wiring.ts`), arriving
+ * through `ComposeToolsDeps` (built at the `composeAllTools` call in
+ * `packages/wiring/src/index.ts`) — pinned by
+ * `apps/ethos/src/__tests__/outbox-gate-live.test.ts`. Every other surface
+ * leaves it absent, so no gate is built there and both tools behave as they
+ * always have.
  */
 export interface OutboxWiring {
   ownerTarget: OutboxGate['ownerTarget'];
@@ -1039,9 +1042,11 @@ export interface ComposeToolsDeps {
   /** Where each resource this stage opens registers its release (F06). */
   disposers: DisposerStack;
   /**
-   * Approval outbox. Absent — every surface that wires none — and both
-   * `send_message` and `watcher_create` behave exactly as they did before
-   * Part 2 (pinned by `src/__tests__/outbox-gate.test.ts`).
+   * Approval outbox. Supplied by `ethos gateway start` and `ethos boot`;
+   * absent on every other surface (`chat`, `serve`, `cron`, `mcp`, `batch`,
+   * `eval`, `acp`, `bench`), where both `send_message` and `watcher_create`
+   * behave exactly as they did before Part 2 — pinned by
+   * `src/__tests__/outbox-gate.test.ts`.
    */
   outbox?: OutboxWiring;
 }

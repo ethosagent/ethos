@@ -150,8 +150,10 @@ describe('observe-mode privacy warning', () => {
     const warnings = await start({ mode: 'mention_only', getMe: PRIVACY_ON });
     expect(warnings).toEqual([]);
     // The bot's own setting is nobody's problem until a chat is observed, so
-    // the check should not have spent an API call asking.
-    expect(mockApi.getMe).not.toHaveBeenCalled();
+    // this check spends NO API call of its own: `start()` resolves the bot's
+    // identity once — the outbox card needs the `@handle` too — and the check
+    // reads that. One call at start, never a second one per check.
+    expect(mockApi.getMe).toHaveBeenCalledTimes(1);
   });
 
   it('still warns when one chat is overridden away from an observe default', async () => {
@@ -176,9 +178,11 @@ describe('observe-mode privacy warning', () => {
     expect(mockApi.setMyCommands).toHaveBeenCalled();
   });
 
-  it('skips the getMe call entirely when no logger is installed', async () => {
+  it('makes no extra getMe call when no logger is installed', async () => {
     await start({ mode: 'observe', getMe: PRIVACY_ON, noLogger: true });
-    expect(mockApi.getMe).not.toHaveBeenCalled();
+    // Same story: the one call belongs to `start()`'s identity resolution, not
+    // to a check that has nowhere to report.
+    expect(mockApi.getMe).toHaveBeenCalledTimes(1);
   });
 });
 

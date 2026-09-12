@@ -108,10 +108,16 @@ export interface MessagingToolsOptions {
   send: MessagingSendFn;
   getAllowedTargets?: (personalityId?: string) => string[] | null;
   /**
-   * The approval outbox. Absent — every surface that wires none, which is all
-   * of them until the gateway does — and `send_message` behaves exactly as it
-   * did before O-T3 (pinned by "sends exactly as today when no outbox is
-   * wired" in `src/__tests__/outbox-gate.test.ts`).
+   * The approval outbox. Supplied by `ethos gateway start` and `ethos boot`,
+   * each from `createOutboxRuntime` (`apps/ethos/src/lib/outbox-wiring.ts`)
+   * and threaded down through `ComposeToolsDeps.outbox` — pinned by
+   * `apps/ethos/src/__tests__/outbox-gate-live.test.ts`.
+   *
+   * Absent on every other surface that can run a turn (`chat`, `serve`,
+   * `cron`, `mcp`, `batch`, `eval`, `acp`, `bench`), and there `send_message`
+   * behaves exactly as it did before O-T3 — a gated personality running under
+   * one of them sends ungated (pinned by "sends exactly as today when no
+   * outbox is wired" in `src/__tests__/outbox-gate.test.ts`).
    */
   outbox?: OutboxGate;
 }

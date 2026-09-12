@@ -822,6 +822,14 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const botSpeakers = buildBotSpeakers(config);
   const outbox = createOutboxRuntime({
     speakers: botSpeakers,
+    // X-D11 — every human outbox decision lands in `ethos audit decisions`,
+    // next to the tool approvals `wireApprovalFlow` records through this same
+    // sink. Resolved LAZILY, for that flow's reason: a boot that never settles
+    // an approval never opens the observability DB. `OutboxService.audit` is
+    // fail-open, so a broken sink costs an audit row, never a decision.
+    observability: {
+      recordSafetyApproval: (opts) => getEthosObservability().recordSafetyApproval(opts),
+    },
     ownerTarget: (platform) => config.channelFilter?.[platform]?.ownerUserId,
     approverFor: (personalityId) => outboxApproverLookup?.(personalityId),
     // Fire-and-forget: the item IS queued, so a review or a card that fails

@@ -511,13 +511,20 @@ export interface PersonalityConfig {
    * content binding a human approves live in `SQLiteOutboxStore` /
    * `OutboxService` (`@ethosagent/outbox`).
    *
-   * LIMITATION — the field is enforced in code and still inert in practice.
-   * The gate is built only when a surface supplies `ComposeToolsDeps.outbox`
-   * (packages/wiring/src/compose-tools.ts), and no surface supplies one yet:
-   * the gateway's outbox wiring is a later task. Until it lands, `gateSend`
-   * returns `undefined` for want of a seam and every deployment sends exactly
-   * as it did before — pinned by "sends exactly as today when no outbox is
-   * wired" in `extensions/tools-messaging/src/__tests__/outbox-gate.test.ts`.
+   * LIMITATION — the field is enforced on TWO surfaces, not everywhere. The
+   * gate is built only when a surface supplies `ComposeToolsDeps.outbox`
+   * (packages/wiring/src/compose-tools.ts), and only `ethos gateway start`
+   * and `ethos boot` do — both through `createOutboxRuntime`
+   * (apps/ethos/src/lib/outbox-wiring.ts), pinned by
+   * `apps/ethos/src/__tests__/outbox-gate-live.test.ts`. Every other surface
+   * that can run a turn — `chat`, `serve`, `cron`, `mcp`, `batch`, `eval`,
+   * `acp`, `bench` — wires none, so a gated personality running under one of
+   * them sends UNGATED: `gateSend` returns `undefined` for want of a seam and
+   * that deployment sends exactly as it did before (pinned by "sends exactly
+   * as today when no outbox is wired" in
+   * `extensions/tools-messaging/src/__tests__/outbox-gate.test.ts`). The
+   * policy is a property of the personality; whether it binds is a property of
+   * the process it runs in.
    *
    * `channels` names platforms (`slack`, `telegram`, `discord`, `whatsapp`,
    * `email`); absent means every platform. An unknown name FAILS the

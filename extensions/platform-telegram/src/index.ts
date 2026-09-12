@@ -79,11 +79,16 @@ export interface OutboxCardReview {
   reasons?: string;
 }
 
-export interface OutboxCardInput {
-  /** The operator's DM chat. */
-  chatId: string;
-  threadId?: string;
-  itemId: string;
+/**
+ * Everything a card SHOWS: who wants to publish what, where, as whom.
+ *
+ * Split out from {@link OutboxCardInput} because a settled card renders it
+ * too — a tap must not turn the DM into a bare "Approved", leaving no record
+ * of the text that went out. The adapter deliberately remembers nothing about
+ * a card it posted (the wiring owns that side map), so `updateOutboxCard` is
+ * handed the body back rather than looking it up.
+ */
+export interface OutboxCardBody {
   revision: number;
   /** The personality that wants to publish, e.g. `cmo`. */
   personalityId: string;
@@ -93,6 +98,13 @@ export interface OutboxCardInput {
   /** The publication, byte-exact. Never truncated — see `postOutboxCard`. */
   text: string;
   review?: OutboxCardReview;
+}
+
+export interface OutboxCardInput extends OutboxCardBody {
+  /** The operator's DM chat. */
+  chatId: string;
+  threadId?: string;
+  itemId: string;
 }
 
 /** What a posted card was: the full publication, or the notice that it was too
@@ -107,7 +119,13 @@ export type OutboxCardStatus =
   | { kind: 'sent'; at: string }
   | { kind: 'rejected'; by: string; reason?: string }
   | { kind: 'superseded'; revision: number }
-  | { kind: 'expired' };
+  | { kind: 'expired' }
+  /** The send did not happen. `reason` is the item's own failure reason,
+   *  rendered verbatim so the DM and the web pane cannot disagree about why. */
+  | { kind: 'failed'; reason?: string }
+  /** Handed to the delivery ledger, which got no confirmation back. Neither
+   *  "sent" nor "not sent" is true yet, and the card must claim neither. */
+  | { kind: 'unconfirmed' };
 
 /** An operator tap on an outbox card, surfaced to the outbox wiring. */
 export interface OutboxDecisionEvent {
@@ -146,13 +164,13 @@ function parseOutboxCallback(
   return { itemId, revision, decision: verb === 'a' ? 'approve' : 'reject' };
 }
 
-function outboxHeader(input: OutboxCardInput): string {
+function outboxHeader(input: OutboxCardBody): string {
   const { name, platform, chatId } = input.destination;
   const dest = name ? `${name} (${platform}:${chatId})` : `${platform}:${chatId}`;
   return `${input.personalityId} wants to post to ${dest} as ${input.sender} — revision ${input.revision}`;
 }
 
-function outboxCardText(input: OutboxCardInput): string {
+function outboxCardText(input: OutboxCardBody): string {
   const review = input.review
     ? `\n\n${input.review.reviewer}: ${input.review.verdict}${
         input.review.reasons ? ` — ${input.review.reasons}` : ''
@@ -161,7 +179,7 @@ function outboxCardText(input: OutboxCardInput): string {
   return `${outboxHeader(input)}\n\n${input.text}${review}`;
 }
 
-function outboxNoticeText(input: OutboxCardInput): string {
+function outboxNoticeText(input: OutboxCardBody): string {
   return `${outboxHeader(input)}\n\n${input.text.length} characters — too long to show in one Telegram message. Approve it in the web UI: Outbox → ${input.personalityId}. Ethos will not show you a partial draft to approve.`;
 }
 
@@ -185,7 +203,39 @@ function outboxStatusText(status: OutboxCardStatus): string {
       return `Superseded by revision ${status.revision}`;
     case 'expired':
       return 'Expired';
+    case 'failed':
+      return status.reason ? `Failed — ${status.reason}` : 'Failed — not sent.';
+    case 'unconfirmed':
+      return (
+        'Unconfirmed — the platform did not confirm this send. The delivery ledger owns the ' +
+        'retry from here; check the channel before sending it again.'
+      );
   }
+}
+
+/**
+ * What a SETTLED card reads: the header and the whole draft, with the status
+ * line under them. The chat stays a record of what was approved, not only that
+ * something was — the operator scrolling back a week later sees the text that
+ * went out next to who let it out.
+ *
+ * Falls back to the status line alone when the re-render would not fit in one
+ * Telegram message (4096 chars, `maxMessageLength`). The edit MUST land: a
+ * refused edit leaves the card on its previous text — "Approved — sending…"
+ * over a publication that has already gone out, or failed — and a card that
+ * asserts something untrue is worse than a terse one. The draft is never
+ * truncated to make room, for the same reason `postOutboxCard` posts a notice
+ * instead of a partial: a fragment of a publication is not the publication.
+ */
+function outboxSettledText(
+  status: OutboxCardStatus,
+  card: OutboxCardBody | undefined,
+  limit: number,
+): string {
+  const line = outboxStatusText(status);
+  if (!card) return line;
+  const full = `${outboxCardText(card)}\n\n${line}`;
+  return full.length <= limit ? full : line;
 }
 
 // grammy's ReactionTypeEmoji.emoji is a strict union of specific emoji
@@ -524,6 +574,15 @@ export class TelegramAdapter
   readonly maxMessageLength = 4096;
 
   /**
+   * What Telegram says this bot is, from ONE `getMe` at `start()`.
+   *
+   * `undefined` before start resolves it, and for the adapter's whole life if
+   * that call failed (bad token, network). Nothing waits on it: every reader
+   * has a fallback, because a bot that cannot name itself must still run.
+   */
+  private me: { username?: string; can_read_all_group_messages?: boolean } | undefined;
+
+  /**
    * Declared voice capabilities. `opus` leads the outbound list because
    * `sendVoice` with Ogg/Opus bytes is what makes Telegram render a playable
    * voice bubble; anything else degrades to `sendAudio` (still playable, but
@@ -714,10 +773,12 @@ export class TelegramAdapter
    * operators to scroll past it. For the same reason only an explicit `false`
    * warns: an absent field is not evidence of privacy mode.
    *
-   * Best-effort — a `getMe` that fails (bad token, network) is the polling
-   * loop's problem to report, not this check's.
+   * Reads {@link me}, which `start()` resolved — this check spends no API call
+   * of its own. Best-effort: a `getMe` that failed leaves `me` undefined and
+   * this check silent, and a bad token is the polling loop's problem to
+   * report, not this check's.
    */
-  private async warnIfPrivacyModeHidesObserved(): Promise<void> {
+  private warnIfPrivacyModeHidesObserved(): void {
     const logger = this.logger;
     if (!logger) return;
 
@@ -726,7 +787,7 @@ export class TelegramAdapter
       (this.channelOverrides?.entries().some(([, entry]) => entry.mode === 'observe') ?? false);
     if (!observed) return;
 
-    const me = await this.bot.api.getMe().catch(() => undefined);
+    const me = this.me;
     if (me?.can_read_all_group_messages !== false) return;
 
     logger.warn(
@@ -741,6 +802,14 @@ export class TelegramAdapter
   // ---------------------------------------------------------------------------
 
   async start(): Promise<void> {
+    // --- Bot identity from Telegram (best-effort, once per adapter) ---
+    // One `getMe` for the adapter's life, with two readers: the observe-mode
+    // privacy warning below, and `senderHandle`, which is how an outbox
+    // approval card names the account that will actually post. A failure here
+    // is never fatal — start continues, the card falls back to the botKey, and
+    // a bad token surfaces from the polling loop with a real error.
+    this.me = await this.bot.api.getMe().catch(() => undefined);
+
     // --- Bot identity from personality (best-effort) ---
     if (this.identity) {
       const id = this.identity;
@@ -771,8 +840,9 @@ export class TelegramAdapter
 
     // --- Observe-mode prerequisite (R11) --- after the override store loads,
     // because a per-chat `observe` override is one of the two things that make
-    // the check worth a `getMe` call.
-    await this.warnIfPrivacyModeHidesObserved();
+    // the warning apply. Reads the identity resolved at the top of `start()`;
+    // it makes no API call of its own.
+    this.warnIfPrivacyModeHidesObserved();
     this.warnIfOverridesUnreadable();
 
     this.bot.on('message', (ctx) => {
@@ -1572,10 +1642,24 @@ export class TelegramAdapter
   // ---------------------------------------------------------------------------
   // Outbox approval cards (Part 2, O-T8)
   //
-  // The sending bot DMs the operator the publication it wants to send. These
-  // three methods are the whole adapter surface: post, edit in place, and a
-  // handler slot the outbox wiring plugs into.
+  // The sending bot DMs the operator the publication it wants to send. Three
+  // methods and one accessor are the whole adapter surface: post, edit in
+  // place, a handler slot the outbox wiring plugs into, and the bot's own
+  // handle for the card to name it by.
   // ---------------------------------------------------------------------------
+
+  /**
+   * The bot's own `@username`, as the operator sees it in Telegram.
+   *
+   * The card's whole promise is "THIS account will speak", so naming it with a
+   * config key (`botKey`) undercuts the promise the card exists to make.
+   * Resolved once at `start()` and cached for the adapter's life — a card is
+   * never held up on a network call, and a `getMe` that failed leaves this
+   * `undefined` so callers fall back to the botKey.
+   */
+  get senderHandle(): string | undefined {
+    return this.me?.username ? `@${this.me.username}` : undefined;
+  }
 
   /**
    * Post an outbox card to the operator's DM. Returns the message id so the
@@ -1625,14 +1709,28 @@ export class TelegramAdapter
   /**
    * Edit a posted outbox card to its settled state, dropping the buttons so it
    * cannot be tapped twice. The wiring calls this on approve, send, reject,
-   * supersede (an edit made a new revision) and expiry.
+   * supersede (an edit made a new revision), expiry, a failed delivery and an
+   * unconfirmed one.
+   *
+   * Pass `card` to keep the header and the draft above the status line — see
+   * {@link outboxSettledText} for what happens when the two together no longer
+   * fit in one message.
    */
   async updateOutboxCard(input: {
     chatId: string;
     messageId: string;
     status: OutboxCardStatus;
+    /** What this card showed, to re-render above the status line. The adapter
+     *  stores nothing, so the wiring supplies it from the durable card map.
+     *  Omitted — an over-length notice, or a body the wiring no longer has —
+     *  leaves the status line alone. */
+    card?: OutboxCardBody;
   }): Promise<DeliveryResult> {
-    return this.editToPlainText(input.chatId, input.messageId, outboxStatusText(input.status));
+    return this.editToPlainText(
+      input.chatId,
+      input.messageId,
+      outboxSettledText(input.status, input.card, this.maxMessageLength),
+    );
   }
 
   /** Register the outbox-card button-click handler. The outbox wiring plugs in

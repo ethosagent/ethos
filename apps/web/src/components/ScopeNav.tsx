@@ -292,6 +292,7 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
           <NavRow path={`${wsPrefix}/memory`} icon="🧠" label="Memory" pathname={pathname} />
           <NavRow path={`${wsPrefix}/documents`} icon="📄" label="Documents" pathname={pathname} />
           <NavRow path={`${wsPrefix}/schedule`} icon="⏰" label="Schedule" pathname={pathname} />
+          <NavRow path={`${wsPrefix}/outbox`} icon="📤" label="Outbox" pathname={pathname} />
           <NavRow
             path={`${wsPrefix}/skills`}
             icon="⚡"
