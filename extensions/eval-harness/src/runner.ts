@@ -2,6 +2,7 @@ import type { AtroposRecord, AtroposUsage, BatchTask } from '@ethosagent/batch-r
 import { ATROPOS_SCHEMA_VERSION } from '@ethosagent/batch-runner';
 import type { AgentLoop } from '@ethosagent/core';
 import type { Storage } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 import {
   containsScorer,
   exactMatchScorer,
@@ -149,6 +150,11 @@ export class EvalRunner {
         switch (event.type) {
           case 'text_delta':
             text += event.text;
+            break;
+          case 'done':
+            // A `returnDirect` tool's answer arrives only as `done.text`, after
+            // any preamble that streamed: `answerSuffix` is what is still owed.
+            text += answerSuffix(text, event.text);
             break;
           case 'context_meta':
             if (Array.isArray(event.data.skillFilesUsed)) {

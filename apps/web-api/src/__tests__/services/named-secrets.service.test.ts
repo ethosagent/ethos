@@ -1,7 +1,56 @@
 import { InMemorySecretsResolver } from '@ethosagent/storage-fs';
-import { isEthosError } from '@ethosagent/types';
+import {
+  isEthosError,
+  type Tool,
+  type ToolSettingsField,
+  type ToolSettingsSecretBindingField,
+} from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NamedSecretsService, redactSecret } from '../../services/named-secrets.service';
+
+/** Minimal registry stub so create/list see the in-tree provider namespaces
+ *  (exa/tavily/brave/xai/openai/google). `x` still comes from the seed. */
+function stubTool(name: string, secrets: string[], fields: ToolSettingsField[] = []): Tool {
+  return {
+    name,
+    description: name,
+    schema: { type: 'object' },
+    capabilities: { secrets },
+    ...(fields.length > 0 ? { settingsSchema: { fields } } : {}),
+    execute: async () => ({ ok: true, value: '' }),
+  };
+}
+
+function binding(
+  secretKind: string,
+  extra: Omit<ToolSettingsSecretBindingField, 'kind' | 'key' | 'label' | 'secretKind'> = {},
+): ToolSettingsSecretBindingField {
+  return { kind: 'secret-binding', key: 'secret', label: 'Key', secretKind, ...extra };
+}
+
+function namedSecretToolRegistry() {
+  const webSearch = ['providers/exa/*', 'providers/tavily/*', 'providers/brave/*'];
+  return {
+    getAvailable: () => [
+      stubTool('web_search', webSearch, [
+        {
+          kind: 'enum',
+          key: 'provider',
+          label: 'Provider',
+          options: [
+            { value: 'exa', label: 'Exa' },
+            { value: 'tavily', label: 'Tavily' },
+            { value: 'brave', label: 'Brave' },
+          ],
+        },
+        binding('web-search'),
+      ]),
+      stubTool('engine_ask', ['providers/openai/*'], [binding('answer-engine')]),
+      stubTool('youtube_search', ['providers/google/*'], [binding('youtube-api-key')]),
+      stubTool('x_search', ['providers/xai/*'], [binding('x-search')]),
+    ],
+  };
+}
 
 describe('redactSecret', () => {
   it('masks the value and never returns it verbatim', () => {
@@ -21,7 +70,10 @@ describe('NamedSecretsService', () => {
 
   beforeEach(() => {
     secrets = new InMemorySecretsResolver();
-    service = new NamedSecretsService({ secrets });
+    service = new NamedSecretsService({
+      secrets,
+      toolRegistry: namedSecretToolRegistry(),
+    });
   });
 
   it('create writes to providers/<provider>/<name> in the vault', async () => {

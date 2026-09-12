@@ -9,13 +9,6 @@ import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { TrustPolicy } from '@ethosagent/kanban-store';
 import { AuthRotatingProvider } from '@ethosagent/llm-anthropic';
-import {
-  type PendingGateObservability,
-  PendingMemoryStore,
-  TombstoneStore,
-} from '@ethosagent/memory-approval';
-import { type HistorySource, HistoryStore, withHistory } from '@ethosagent/memory-history';
-import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { TeamRole } from '@ethosagent/tools-kanban';
@@ -25,11 +18,9 @@ import type {
   CliSubcommandContext,
   ExecutionBackendConfig,
   ExecutionBackendRegistry,
-  GlobalMemoryStore,
+  GoalStore,
   LLMProvider,
   Logger,
-  MemoryContext,
-  MemoryProvider,
   ModelProfile,
   RetentionConfig,
   SecretsResolver,
@@ -44,6 +35,7 @@ import { buildAgentLoop } from './build-agent-loop';
 import { buildWiringContext } from './build-context';
 import { buildInfrastructure } from './build-infrastructure';
 import { composeAllTools } from './compose-tools';
+import { DisposerStack } from './disposer-stack';
 import { loadPlugins } from './load-plugins';
 import {
   detectLocalRuntime,
@@ -52,7 +44,7 @@ import {
   type WindowProbeResult,
   windowProbeCachePath,
 } from './local-models';
-import { createUndecoratedBackend, type MemoryBackendSelection } from './memory-backend';
+import type { MemoryBundle } from './memory-backend';
 import {
   lookupContextWindow,
   lookupProfile,
@@ -66,6 +58,7 @@ import {
   capSummary,
   renderMiddleForSummary,
 } from './summarizer-prompt';
+import type { WiringContext } from './types';
 
 // ---------------------------------------------------------------------------
 // Messaging gateway — send function type re-exported for callers
@@ -660,6 +653,8 @@ export {
   buildA2aPeeringService,
   createA2aPeeringService,
 } from './a2a-peering-service';
+// F06 — the cleanup stack every composition root in this repo registers on.
+export { DISPOSE_STEP_TIMEOUT_MS, DisposerStack } from './disposer-stack';
 export { resolveKanbanDbPath } from './kanban-path';
 // Lane 6 (D5 + D19) — the arithmetic model-fit verdict: `computeModelFit` is
 // the pure division; `resolvePersonalityModelFit` is the one assembler both
@@ -1123,6 +1118,48 @@ export { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrou
 export interface CreateAgentLoopResult {
   loop: AgentLoop;
   toolRegistry: ToolRegistry;
+  /**
+   * F06 — release everything this call started or opened, in exactly this
+   * order (the reverse of construction, `DisposerStack`):
+   *   1. the voice stack's span flush timer;
+   *   2. the goal runner — refuses new starts, aborts and awaits in-flight
+   *      goal runs, which end `interrupted`;
+   *   3. the mesh proxy reconciler;
+   *   4. the background executor — stops claiming, hands its queued rows back
+   *      (`JobStore.releaseQueued`), aborts active runs and awaits their unwind;
+   *   5. jobs.db;
+   *   6. the per-personality memory backends the loop built, then the
+   *      request-dump store, then the primary memory backend (each closed
+   *      only when it holds a connection);
+   *   7. the plugins (`deactivate` + registrations);
+   *   8. the notify queue, the MCP clients, goals.db, the kanban store;
+   *   9. the docker execution sessions;
+   *  10. the three sessions.db connections (kv stores, context log, session
+   *      store), then the execution backends.
+   * Every step is attempted even when one throws; failures reject together as
+   * one `AggregateError`. Idempotent — a second call returns the first promise.
+   *
+   * The host stops feeding the loop first (close the HTTP server, stop the
+   * adapters, drain the gateway) and disposes any surface that borrowed from
+   * it (`CreateWebApiResult.dispose`) before calling this. Every handle on
+   * this result is dead afterwards.
+   *
+   * NOT covered: the process-global browser session sweeper
+   * (`@ethosagent/tools-browser/compose` — shared by every loop in the
+   * process, so no one loop may stop it). Pinned by
+   * packages/wiring/src/__tests__/runtime-dispose.test.ts.
+   */
+  dispose: () => Promise<void>;
+  /**
+   * F06 — for a loop that has been REPLACED while its process lives on (the
+   * chat `/model` switch): stop taking new background work (queued rows go to
+   * the successor, `BackgroundExecutor.drain`) and resolve once no background
+   * job and no goal run is still running on this loop (`GoalRunner.whenIdle`).
+   * Aborts nothing — call `dispose()` afterwards. A process stop skips this and
+   * disposes directly. Unbounded by design: work in flight finishes on the loop
+   * it started on. Pinned by packages/wiring/src/__tests__/runtime-dispose.test.ts.
+   */
+  drain: () => Promise<void>;
   /** Lane 3(b) — the served context window (tokens) of the primary provider.
    *  `ethos bench context` uses it as the schema-budget denominator so the
    *  bench table and the startup warning read the same numbers (D8). */
@@ -1202,22 +1239,30 @@ export interface CreateAgentLoopResult {
   notificationRouter: import('@ethosagent/types').NotificationRouter;
   /** v2.2 — Plugin loader instance for health checks and diagnostics. */
   pluginLoader: PluginLoader;
-  /** Loop-bearing goal runner — always present (backed by the shared goals.db).
-   *  Shared with the web-api GoalsService so web-created goals execute on the same runner+store. */
-  goalRunner: GoalRunner;
+  /** The goal backend, always present: the one goals.db store (compose-tools'
+   *  `goalStore`, the instance the goal_* tools write) and the loop-bearing
+   *  runner that executes goals from it, paired in buildAgentLoop. Hosts forward
+   *  the pair to web-api's GoalsService as is, so no surface opens a second
+   *  store or runs a loop-less runner. Borrowers do not dispose it. */
+  goals: { store: GoalStore; executor: GoalRunner };
+  /** The host-side memory surfaces (editor, Timeline, restore, approve queue)
+   *  for THIS loop's configured backend — built in buildAgentLoop from the same
+   *  `config` its memory registry resolves, so a web edit lands where the agent
+   *  reads (F04). Hosts forward it to `createWebApi` as is. */
+  memoryBundle: MemoryBundle;
   /** Durable background-job store — present only when the background subsystem is
    *  enabled for this loop. Shared with the gateway/Tasks surface. */
   jobStore?: import('@ethosagent/types').JobStore;
-  /** Detached background executor — present only when enabled. gateway.ts/chat.ts
-   *  register completion handlers and call shutdown() on it. */
+  /** Detached background executor — present only when enabled. Hosts register
+   *  completion handlers on it; `dispose()` shuts it down. */
   backgroundExecutor?: import('@ethosagent/job-runner').BackgroundExecutor;
   /** Resolved job runners — present only when the background subsystem is enabled.
    *  The web-api Tasks detail RPC asks the runner that executed a row for its own
    *  detail-grid rows (pi-delegation D18). */
   jobRunners?: import('@ethosagent/types').JobRunnerRegistry;
   /** Mesh proxy reconciler — present only when the background subsystem is enabled.
-   *  Polls mesh peers for jobs spawned via route_to_agent(background:true). Timers
-   *  are unref'd; expose stop() for shutdown symmetry. */
+   *  Polls mesh peers for jobs spawned via route_to_agent(background:true). Its
+   *  timer is unref'd; `dispose()` stops it. */
   meshProxyReconciler?: import('@ethosagent/tools-delegation').MeshProxyReconciler;
   /** The resolved active personality for this loop. Exposed so gateway.ts can
    *  read the plugins allowlist without duplicating the personality load. */
@@ -1296,20 +1341,52 @@ export async function createAgentLoop(
   opts: CreateAgentLoopOptions,
 ): Promise<CreateAgentLoopResult> {
   const { wiringCtx, profile, log } = buildWiringContext(config, opts);
+  // F06 — ONE stack for the whole assembly. Every stage pushes the release of
+  // each resource it opens right after opening it, so a stage that throws
+  // leaves the stack holding exactly what the earlier stages built — released
+  // here before the error propagates — and a finished boot hands the same
+  // stack back as `CreateAgentLoopResult.dispose`. Pinned by
+  // packages/wiring/src/__tests__/runtime-dispose.test.ts.
+  const disposers = new DisposerStack();
+  try {
+    return await assembleAgentLoop(wiringCtx, config, opts, profile, log, disposers);
+  } catch (err) {
+    await disposers.dispose().catch((rollbackErr: unknown) => {
+      log.warn(
+        `createAgentLoop: releasing a failed boot's resources also failed: ${
+          rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)
+        }`,
+      );
+    });
+    throw err;
+  }
+}
 
+async function assembleAgentLoop(
+  wiringCtx: WiringContext,
+  config: WiringConfig,
+  opts: CreateAgentLoopOptions,
+  profile: WiringProfile,
+  log: Logger,
+  disposers: DisposerStack,
+): Promise<CreateAgentLoopResult> {
   // -------------------------------------------------------------------------
   // Infrastructure: registries, personalities, sandbox, hooks, session,
   // capability backends, tool registry, clarify bridge
   // -------------------------------------------------------------------------
 
-  const infra = await buildInfrastructure(wiringCtx, config, opts);
+  const infra = await buildInfrastructure(wiringCtx, config, opts, disposers);
 
   // -------------------------------------------------------------------------
   // Tool composition: all tool groups, hooks, skills, MCP, design tools,
   // guard hooks, team memory.
   // -------------------------------------------------------------------------
 
-  const toolsResult = await composeAllTools(wiringCtx, config, opts, { infra, profile });
+  const toolsResult = await composeAllTools(wiringCtx, config, opts, {
+    infra,
+    profile,
+    disposers,
+  });
   const { skillPool, injectors, skillScanner } = toolsResult;
 
   // -------------------------------------------------------------------------
@@ -1341,6 +1418,7 @@ export async function createAgentLoop(
         : undefined,
     ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
     ...(opts.cliSubcommandRegistry ? { cliSubcommandRegistry: opts.cliSubcommandRegistry } : {}),
+    disposers,
   });
 
   // -------------------------------------------------------------------------
@@ -1372,6 +1450,7 @@ export async function createAgentLoop(
     pluginsResult,
     llm,
     profile,
+    disposers,
   });
 }
 
@@ -1381,7 +1460,9 @@ export async function createAgentLoop(
 // Apps that need a SessionStore or MemoryProvider before they build a full
 // AgentLoop (e.g. the TUI session picker) ask wiring for one. Wiring keeps
 // the choice of concrete backend; the app does not import session-sqlite or
-// memory-markdown directly.
+// a memory backend directly. Memory is always opened for the CONFIGURED
+// backend — `createMemoryProviderFromConfig` / `createMemoryBundle` below —
+// never an assumed markdown root (F04).
 
 export interface CreateSessionStoreOptions {
   /** Root data directory (typically `~/.ethos`). */
@@ -1394,7 +1475,11 @@ export interface CreateSessionStoreOptions {
   retention?: Pick<RetentionConfig, 'vacuumAfterPrune' | 'minVacuumIntervalDays'>;
 }
 
-export function createSessionStore(opts: CreateSessionStoreOptions): SessionStore {
+/** The caller opened it, so the caller closes it: `close()` releases the
+ *  sessions.db connection (F06 — a host that restarts in-process must). */
+export function createSessionStore(
+  opts: CreateSessionStoreOptions,
+): SessionStore & { close(): void } {
   return new SQLiteSessionStore(join(opts.dataDir, 'sessions.db'), {
     ...(opts.retention?.vacuumAfterPrune !== undefined
       ? { vacuumAfterPrune: opts.retention.vacuumAfterPrune }
@@ -1403,95 +1488,6 @@ export function createSessionStore(opts: CreateSessionStoreOptions): SessionStor
       ? { minVacuumIntervalDays: opts.retention.minVacuumIntervalDays }
       : {}),
   });
-}
-
-export interface CreateMemoryProviderOptions {
-  /** Root data directory (typically `~/.ethos`). */
-  dataDir: string;
-  /** Storage backend. Injected by the composition root; required. */
-  storage: Storage;
-  /**
-   * Provenance-history source label baked into this handle (§2.1). Every
-   * write through the returned provider is recorded under this source, except
-   * `writeGlobalEntry` (always `global-entry`) and dream turns (derived from
-   * the `dream:` sessionKey prefix). Defaults to `tool`.
-   */
-  source?: HistorySource;
-}
-
-// The markdown backend supports MEMORY.md / USER.md direct read/write
-// (GlobalMemoryStore) alongside the contract methods. The factory
-// advertises both via intersection so apps that need only one half
-// narrow at the use site. The result is wrapped in the history decorator so
-// every mutation is auditable (§2) — reads and tool-visible write behaviour
-// stay byte-identical.
-export function createMemoryProvider(
-  opts: CreateMemoryProviderOptions,
-): MemoryProvider & GlobalMemoryStore {
-  const base = new MarkdownFileMemoryProvider({ dir: opts.dataDir, storage: opts.storage });
-  const history = new HistoryStore({ dataDir: opts.dataDir, storage: opts.storage });
-  return withHistory(base, history, { source: opts.source ?? 'tool' });
-}
-
-export interface CreatePendingMemoryStoreOptions {
-  /** Root data directory (typically `~/.ethos`). */
-  dataDir: string;
-  storage: Storage;
-  /**
-   * Backend selection (`memory` / `memoryVault` slice of the app config).
-   * With `memory: 'vault'`, approve replays through the vault provider with
-   * provenance history under `<vaultRoot>/<agentDir>/.ethos-meta`. The pending
-   * queue + tombstones stay at `dataDir` regardless of backend. Omitted →
-   * markdown at `dataDir` (previous behavior).
-   */
-  config?: MemoryBackendSelection;
-  /** Per-scope queue hard cap. Default 200. */
-  cap?: number;
-  /** Pending candidate TTL in ms. Default 30 days. */
-  ttlMs?: number;
-  observability?: PendingGateObservability;
-  /** Test seam. */
-  now?: () => number;
-}
-
-/**
- * Assemble a `PendingMemoryStore` (memory-lifecycle L2) over the configured
- * backend, with the approve-replay `apply` wired to the provenance history so an
- * approved candidate records under its ORIGINAL source plus `approvedBy`. Used
- * by the CLI `ethos memory pending` command and (L3) the web RPC service — the
- * runtime write path composes the gate inline in `build-infrastructure`.
- */
-export function createPendingMemoryStore(opts: CreatePendingMemoryStoreOptions): {
-  store: PendingMemoryStore;
-  tombstones: TombstoneStore;
-} {
-  const { base, history } = createUndecoratedBackend({
-    selection: opts.config ?? {},
-    dataDir: opts.dataDir,
-    storage: opts.storage,
-  });
-  const tombstones = new TombstoneStore({ storage: opts.storage, dataDir: opts.dataDir });
-  const store = new PendingMemoryStore({
-    storage: opts.storage,
-    dataDir: opts.dataDir,
-    tombstones,
-    ...(opts.cap !== undefined ? { cap: opts.cap } : {}),
-    ...(opts.ttlMs !== undefined ? { ttlMs: opts.ttlMs } : {}),
-    ...(opts.observability ? { observability: opts.observability } : {}),
-    ...(opts.now ? { now: opts.now } : {}),
-    apply: async (entry, approvedBy) => {
-      const handle = withHistory(base, history, { source: entry.source, approvedBy });
-      const ctx: MemoryContext = {
-        scopeId: entry.scopeId,
-        sessionId: entry.sessionId ?? '',
-        sessionKey: entry.sessionKey ?? 'cli',
-        platform: 'cli',
-        workingDir: '',
-      };
-      await handle.sync([entry.update], ctx);
-    },
-  });
-  return { store, tombstones };
 }
 
 export {
@@ -1520,15 +1516,33 @@ export {
 // MemoryService can call the exact function the CLI `ethos memory restore`
 // uses, without depending on `apps/ethos`.
 export { type RestoreResult, restoreArchivedSlug } from '@ethosagent/nightly-loop';
-// Backend-aware sibling of createMemoryProvider (memory-lifecycle vault gaps):
-// returns a history-decorated handle for the CONFIGURED backend (`memory:
-// vault` → the vault; anything else → markdown at dataDir) plus the history
-// store and sidecar root/storage out-of-loop writers (nightly) need.
+// Backend-aware memory (memory-lifecycle vault gaps, F04). By convention, code
+// outside a loop opens memory through these, so it acts on the configured
+// backend. Nothing enforces that: `HistoryStore` / `TombstoneStore` stay
+// exported above, and `@ethosagent/memory-markdown` is still importable — F04
+// only removed wiring's own markdown-only factory (`createMemoryProvider`),
+// the one path every surface used to take. `createMemoryProviderFromConfig` returns a
+// history-decorated handle for the CONFIGURED backend (`memory: vault` → the
+// vault; anything else → markdown at dataDir) plus the history store and
+// sidecar root/storage out-of-loop writers (nightly) need;
+// `fileMemoryUnsupportedReason` says when a backend has no file surface to
+// edit (vector); `createPendingMemoryStore` assembles the approve queue (CLI
+// `ethos memory pending`); `createMemoryBundle` is the host-side editor/
+// Timeline/restore/approve set a loop hands its web API
+// (`CreateAgentLoopResult.memoryBundle`).
+// Option/branch types stay module-local until something outside wiring needs
+// them: `MemoryBundle` carries `editing` structurally, and every caller passes
+// its options inline.
 export {
   type ConfiguredMemoryBackend,
   type CreateMemoryProviderFromConfigOptions,
+  createMemoryBundle,
   createMemoryProviderFromConfig,
+  createPendingMemoryStore,
+  createTeamMemoryProvider,
+  fileMemoryUnsupportedReason,
   type MemoryBackendSelection,
+  type MemoryBundle,
 } from './memory-backend';
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import { createWebApi, WebTokenRepository } from '../../index';
 import { contentDisposition } from '../../routes/documents';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -44,7 +44,7 @@ describe('GET /documents/download', () => {
     app = createWebApi({
       dataDir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry([
         {

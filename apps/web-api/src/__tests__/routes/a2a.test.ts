@@ -13,7 +13,7 @@ import { a2aRouter } from '../../rpc/a2a';
 import type { RpcContext } from '../../rpc/context';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -346,7 +346,7 @@ describe('a2a RPC — auth enforced over HTTP', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

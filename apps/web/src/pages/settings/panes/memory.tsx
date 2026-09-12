@@ -22,7 +22,7 @@ export function MemoryPane() {
       <SettingRow
         label="Memory mode"
         formName="memory"
-        help="Markdown is human-editable in ~/.ethos/MEMORY.md. Vector uses local embeddings. Vault targets an external directory (memoryVault.path)."
+        help="Markdown is human-editable in ~/.ethos/MEMORY.md. Vector uses local embeddings. Vault targets an external directory (memoryVault.path). A change takes effect after restarting Ethos; the agent and the Memory page switch together then."
       >
         <Form.Item name="memory" style={{ marginBottom: 0 }}>
           <Radio.Group>

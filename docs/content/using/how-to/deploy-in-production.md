@@ -112,7 +112,7 @@ Test it:
 - Send a `@mention` in your Slack workspace → it replies.
 - Open `http://<box-hostname>:3000/` → the dashboard loads.
 
-Stop with **Ctrl-C**. Both children receive `SIGTERM` and exit cleanly within ~5 seconds.
+Stop with **Ctrl-C**. Both children receive `SIGTERM`, finish what is in flight, close their databases and exit — usually in well under a second on an idle box. A child that is mid-turn or draining a background job gets up to 30 seconds before the supervisor escalates to `SIGKILL` (`SHUTDOWN_GRACE_MS` in `apps/ethos/src/commands/run-all.ts`, pinned by `apps/ethos/src/commands/__tests__/run-all.test.ts`). Whatever supervises `ethos run-all` must allow at least that long — see the `kill_timeout` in the PM2 config below.
 
 ### 4. Hand it to PM2 for reboot survival
 
@@ -140,6 +140,9 @@ module.exports = {
       autorestart: true,
       max_restarts: 5,
       restart_delay: 2_000,
+      // PM2 SIGKILLs 1.6s after SIGTERM by default, which cuts the children's
+      // drain short. Must exceed run-all's 30s grace (SHUTDOWN_GRACE_MS).
+      kill_timeout: 35_000,
       out_file: '~/.pm2/logs/ethos-out.log',
       error_file: '~/.pm2/logs/ethos-err.log',
       time: true,

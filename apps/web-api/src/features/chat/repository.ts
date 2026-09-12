@@ -29,6 +29,11 @@ export class ChatRepository {
     });
   }
 
+  /** Remove a session this service created but never ran a turn on. */
+  async delete(id: string): Promise<void> {
+    await this.store.deleteSession(id);
+  }
+
   async get(id: string): Promise<Session | null> {
     return this.store.getSession(id);
   }

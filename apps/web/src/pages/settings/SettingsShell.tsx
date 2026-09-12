@@ -26,6 +26,7 @@ import { App as AntApp, Form, Spin, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { isDesktop } from '../../lib/desktop';
+import { errorCode } from '../../lib/recipes';
 import { rpc } from '../../rpc';
 import { CategoryRail } from './CategoryRail';
 import { buildConfigPatch, type SettingsRows } from './lib/build-config-patch';
@@ -37,12 +38,14 @@ import {
   type ChannelToolsetRow,
   channelToolsetRowsFromConfig,
   emptyRow,
+  type ProviderChainBase,
   type ProviderRow,
   type QuickCommandRow,
   quickCommandRowsFromConfig,
   type RetentionRow,
   retentionRowsFromConfig,
   rowsFromConfig,
+  shouldRebuildRows,
 } from './lib/rows';
 import { type SectionRoute, shouldScrollToSection } from './lib/section-scroll';
 import { computeDirty, type DirtySnapshot } from './lib/settings-dirty';
@@ -79,6 +82,8 @@ export function SettingsShell() {
   const [retentionRows, setRetentionRows] = useState<RetentionRow[]>([]);
   const [voiceBotRows, setVoiceBotRows] = useState<VoiceBotRow[]>([]);
   const hydratedRef = useRef(false);
+  // The chain version and primary row the provider rows were built from.
+  const rowsBaseRef = useRef<ProviderChainBase | undefined>(undefined);
   // What hydration last wrote — the left-hand side of the dirty diff (D9).
   const [saved, setSaved] = useState<DirtySnapshot | null>(null);
   // The form store mutates outside React, so nothing re-renders when a field
@@ -260,8 +265,16 @@ export function SettingsShell() {
         webBaseUrl: configQuery.data.webBaseUrl ?? '',
       };
       form.setFieldsValue(hydrated);
-      // Only hydrate provider rows on first load or when data changes identity
-      if (!hydratedRef.current) {
+      // Rows rebuild on first load, after a save or a refused save, and when
+      // the stored chain is no longer the one they were built from
+      // (`shouldRebuildRows` — keyed on `providersVersion`).
+      if (
+        shouldRebuildRows(
+          hydratedRef.current,
+          rowsBaseRef.current?.providersVersion,
+          configQuery.data.providersVersion,
+        )
+      ) {
         const hydratedRows: SettingsRows = {
           providerRows: rowsFromConfig(
             configQuery.data.providers,
@@ -292,6 +305,10 @@ export function SettingsShell() {
         setRetentionRows(hydratedRows.retentionRows);
         setVoiceBotRows(hydratedRows.voiceBotRows);
         hydratedRef.current = true;
+        rowsBaseRef.current = {
+          providersVersion: configQuery.data.providersVersion,
+          loadedPrimary: hydratedRows.providerRows[0],
+        };
         // The snapshot the dirty diff reads from. Set with the rows rather than
         // on every payload, so the two halves it compares always come from the
         // same `config.get` — a values-only refresh would make a row edit made
@@ -309,8 +326,23 @@ export function SettingsShell() {
       hydratedRef.current = false;
       notification.success({ message: 'Settings saved', placement: 'topRight' });
     },
-    onError: (err) =>
-      notification.error({ message: 'Save failed', description: (err as Error).message }),
+    onError: (err) => {
+      if (errorCode(err) === 'CONFIG_CONFLICT') {
+        // The provider chain changed in another tab or through the CLI. The
+        // save was refused and nothing was written; reload rather than
+        // overwrite what the other writer did.
+        hydratedRef.current = false;
+        qc.invalidateQueries({ queryKey: ['config'] });
+        notification.warning({
+          message: 'Settings changed elsewhere',
+          description:
+            'The provider chain was changed in another tab or by the CLI, so nothing was saved. Settings have been reloaded — check them and save again.',
+          placement: 'topRight',
+        });
+        return;
+      }
+      notification.error({ message: 'Save failed', description: (err as Error).message });
+    },
   });
 
   const updateProviderRow = useCallback((index: number, patch: Partial<ProviderRow>) => {
@@ -449,6 +481,7 @@ export function SettingsShell() {
         voiceBotRows,
       },
       configQuery.data,
+      rowsBaseRef.current,
     );
     if (!built.ok) {
       notification.error({ message: built.error });

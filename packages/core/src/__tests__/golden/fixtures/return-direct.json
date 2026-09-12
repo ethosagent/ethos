@@ -57,10 +57,17 @@
     {
       "sessionId": "normalized",
       "role": "tool_result",
-      "content": "direct-answer",
+      "content": "[output returned directly to the user — it is the assistant message that follows]",
       "toolCallId": "tc1",
       "toolName": "quick",
       "isError": false,
+      "id": "normalized",
+      "timestamp": "2000-01-01T00:00:00.000Z"
+    },
+    {
+      "sessionId": "normalized",
+      "role": "assistant",
+      "content": "direct-answer",
       "id": "normalized",
       "timestamp": "2000-01-01T00:00:00.000Z"
     }

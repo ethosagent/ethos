@@ -2,7 +2,7 @@
 
 import type { AgentEvent } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { A2aAsyncManager } from '../async';
+import { A2aAsyncManager, collectAgentRun } from '../async';
 import type { A2aTaskRunner } from '../rpc';
 import { InMemoryA2aTaskStore } from '../task-store';
 
@@ -106,5 +106,38 @@ describe('A2aAsyncManager — idempotency dedupe (no double run)', () => {
     await mgr.settled(b.id);
     expect(b.id).not.toBe(a.id);
     expect(counter.runs).toBe(2);
+  });
+});
+
+// A `returnDirect` tool's answer reaches the turn only as `done.text`, after any
+// preamble the model streamed: the peer gets the whole answer.
+describe('collectAgentRun — the whole answer', () => {
+  async function* events(list: AgentEvent[]): AsyncGenerator<AgentEvent> {
+    for (const e of list) yield e;
+  }
+
+  it('a returnDirect answer after a streamed preamble: both, in order', async () => {
+    expect(
+      await collectAgentRun(
+        events([
+          { type: 'text_delta', text: 'Let me look that up.' },
+          { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 },
+        ]),
+      ),
+    ).toEqual({ text: 'Let me look that up.\n\nDIRECT ANSWER' });
+  });
+
+  it('nothing streamed: done.text; a normal turn: unchanged', async () => {
+    expect(
+      await collectAgentRun(events([{ type: 'done', text: 'DIRECT ANSWER', turnCount: 1 }])),
+    ).toEqual({ text: 'DIRECT ANSWER' });
+    expect(
+      await collectAgentRun(
+        events([
+          { type: 'text_delta', text: 'same' },
+          { type: 'done', text: 'same', turnCount: 1 },
+        ]),
+      ),
+    ).toEqual({ text: 'same' });
   });
 });

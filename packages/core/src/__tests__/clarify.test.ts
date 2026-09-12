@@ -151,6 +151,71 @@ describe('ClarifyBridge', () => {
     await expect(bridge.request(baseInput)).rejects.toBeInstanceOf(ClarifyNoSurfaceError);
   });
 
+  // A surface that shuts down (web-api's `dispose`) has to be able to hand the
+  // slot back: a presenter left behind is a black hole — the bridge routes to
+  // it, believes the question was asked, and nobody ever sees it.
+  describe('registerPresenter returns a release', () => {
+    it('a released presenter stops receiving, and the bridge refuses as if none had registered', async () => {
+      const { bridge } = makeBridge();
+      const seen: string[] = [];
+      const release = bridge.registerPresenter('cli', (req) => {
+        seen.push(req.requestId);
+      });
+
+      release();
+
+      await expect(bridge.request(baseInput)).rejects.toBeInstanceOf(ClarifyNoSurfaceError);
+      expect(seen).toEqual([]);
+    });
+
+    it('start-stop-start: a second surface registering after the first was released presents', async () => {
+      const { bridge } = makeBridge();
+      bridge.registerPresenter('cli', () => {
+        throw new Error('the released presenter must never run');
+      })();
+
+      const queue = makePresentedQueue(bridge, 'cli');
+      const pending = bridge.request(baseInput);
+      const row = await queue.next();
+      await bridge.respond({ requestId: row.requestId, answer: 'second', source: 'user' });
+
+      expect((await pending).answer).toBe('second');
+    });
+
+    it('a late release never unregisters the presenter that replaced it', async () => {
+      const { bridge } = makeBridge();
+      const stale = bridge.registerPresenter('cli', () => {
+        throw new Error('the replaced presenter must never run');
+      });
+      const queue = makePresentedQueue(bridge, 'cli');
+
+      stale(); // the first surface tears down AFTER the second took the slot
+
+      const pending = bridge.request(baseInput);
+      const row = await queue.next();
+      await bridge.respond({ requestId: row.requestId, answer: 'live', source: 'user' });
+      expect((await pending).answer).toBe('live');
+    });
+
+    it('releasing one surface leaves another surface presenting', async () => {
+      const { bridge } = makeBridge();
+      const release = bridge.registerPresenter('web', () => {
+        throw new Error('the released web presenter must never run');
+      });
+      const queue = makePresentedQueue(bridge, 'cli');
+
+      release();
+
+      const pending = bridge.request(baseInput);
+      const row = await queue.next();
+      await bridge.respond({ requestId: row.requestId, answer: 'cli answered', source: 'user' });
+      expect((await pending).answer).toBe('cli answered');
+      await expect(bridge.request({ ...baseInput, surfaceType: 'web' })).rejects.toBeInstanceOf(
+        ClarifyNoSurfaceError,
+      );
+    });
+  });
+
   it('presents the request and resolves with the user answer', async () => {
     const { bridge, store } = makeBridge();
     const queue = makePresentedQueue(bridge, 'cli');

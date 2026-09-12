@@ -113,6 +113,60 @@ describe('parseConfigYaml — whatsapp.<n>.<field>', () => {
     expect(roundTripped?.toolSettings).toEqual(original.toolSettings);
   });
 
+  // Case 10 — open-key (search_console / dataforseo) round-trip + reserved-key refusal.
+  it('round-trips search_console and open keys through serialize/parse', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      apiKey: 'sk',
+      personality: 'researcher',
+      toolSettings: {
+        _default: {
+          search_console: { secret: 'gsc-default' },
+          dataforseo: { secret: 'seo-default' },
+        },
+        scout: {
+          search_console: { secret: 'gsc-scout' },
+          dataforseo: { secret: 'seo-scout' },
+        },
+      },
+    };
+    await writeConfig(storage, original, new InMemorySecretsResolver());
+
+    const raw = await storage.read(join(ethosDir(), 'config.yaml'));
+    expect(raw).toContain('toolSettings._default.search_console.secret: gsc-default');
+    expect(raw).toContain('toolSettings.scout.search_console.secret: gsc-scout');
+    expect(raw).toContain('toolSettings._default.dataforseo.secret: seo-default');
+    expect(raw).toContain('toolSettings.scout.dataforseo.secret: seo-scout');
+
+    const roundTripped = await readRawConfig(storage);
+    expect(roundTripped?.toolSettings).toEqual(original.toolSettings);
+  });
+
+  it('refuses __proto__ as a toolSettings binding key', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(
+      join(ethosDir(), 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'personality: researcher',
+        'toolSettings.scout.__proto__.secret: evil',
+        'toolSettings.scout.dataforseo.secret: seo-ok',
+        '',
+      ].join('\n'),
+    );
+
+    const parsed = await readRawConfig(storage);
+    expect(parsed?.toolSettings).toEqual({
+      scout: { dataforseo: { secret: 'seo-ok' } },
+    });
+    expect(Object.hasOwn(parsed?.toolSettings?.scout ?? {}, '__proto__')).toBe(false);
+  });
+
   it('drops an out-of-shape web_search recency, keeping the rest of the binding', async () => {
     const storage = new InMemoryStorage();
     await storage.mkdir(ethosDir());

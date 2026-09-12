@@ -75,7 +75,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   },
   {
     name: 'memory',
-    description: 'Show ~/.ethos/MEMORY.md and USER.md',
+    description: "Show this personality's memory (MEMORY.md, USER.md)",
     usage: '/memory',
     surfaces: ['cli'],
   },

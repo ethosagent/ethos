@@ -387,6 +387,102 @@ members:
     });
   });
 
+  describe('updateStatus ready respects prerequisites', () => {
+    function seedTeam(): KanbanStore {
+      writeManifest(
+        'analytics',
+        `
+name: analytics
+description: x
+domain_capabilities: [x]
+members:
+  - personality: engineer
+`,
+      );
+      return openBoard('analytics');
+    }
+
+    it('lands on todo when an assigned parent is unfinished', async () => {
+      const store = seedTeam();
+      const parent = store.createTask({ title: 'prereq', assignee: 'engineer' });
+      const child = store.createTask({
+        title: 'gtm',
+        assignee: 'engineer',
+        parents: [parent.id],
+      });
+      store.updateStatus(child.id, 'blocked');
+      store.close();
+
+      const { task } = await service.updateStatus({
+        team: 'analytics',
+        taskId: child.id,
+        status: 'ready',
+        reason: 'reassigned via UI',
+        actor: 'human:control-center',
+      });
+      expect(task.status).toBe('todo');
+
+      const reread = new KanbanStore(join(dir, 'analytics', 'board.db'));
+      const changes = reread.listEvents(child.id).filter((e) => e.kind === 'status_changed');
+      reread.close();
+      expect(changes.at(-1)?.data).toMatchObject({
+        from: 'blocked',
+        to: 'todo',
+        reason: 'reassigned via UI (waiting on prerequisites)',
+      });
+    });
+
+    it('lands on ready when the assigned parent is done', async () => {
+      const store = seedTeam();
+      const parent = store.createTask({ title: 'prereq', assignee: 'engineer' });
+      const child = store.createTask({ title: 'gtm', parents: [parent.id] });
+      store.updateStatus(parent.id, 'running');
+      store.completeRun(parent.id, 'finished');
+      store.updateStatus(child.id, 'blocked');
+      store.close();
+
+      const { task } = await service.updateStatus({
+        team: 'analytics',
+        taskId: child.id,
+        status: 'ready',
+        actor: 'human:control-center',
+      });
+      expect(task.status).toBe('ready');
+    });
+
+    it('lands on ready when the only parent is a goal (assignee null)', async () => {
+      const store = seedTeam();
+      const goal = store.createTask({ title: 'goal' });
+      const child = store.createTask({ title: 'gtm', parents: [goal.id] });
+      store.updateStatus(child.id, 'blocked');
+      store.close();
+
+      const { task } = await service.updateStatus({
+        team: 'analytics',
+        taskId: child.id,
+        status: 'ready',
+        actor: 'human:control-center',
+      });
+      expect(task.status).toBe('ready');
+    });
+
+    it('bulkUpdateStatus holds only the tasks with unfinished prerequisites', async () => {
+      const store = seedTeam();
+      const parent = store.createTask({ title: 'prereq', assignee: 'engineer' });
+      const held = store.createTask({ title: 'gtm', parents: [parent.id] });
+      const free = store.createTask({ title: 'free' });
+      store.close();
+
+      const { tasks } = await service.bulkUpdateStatus({
+        team: 'analytics',
+        taskIds: [held.id, free.id],
+        status: 'ready',
+        actor: 'human:control-center',
+      });
+      expect(tasks.map((t) => t.status)).toEqual(['todo', 'ready']);
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // bulkUpdateStatus / bulkAssign
   // ---------------------------------------------------------------------------

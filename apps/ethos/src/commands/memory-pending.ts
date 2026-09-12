@@ -18,8 +18,6 @@ const c = {
   yellow: '\x1b[33m',
 };
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 export async function runMemoryPending(args: string[]): Promise<void> {
   const flag = (name: string): string | undefined => {
     const i = args.indexOf(name);
@@ -35,12 +33,9 @@ export async function runMemoryPending(args: string[]): Promise<void> {
     dataDir: ethosDir(),
     storage: getStorage(),
     // Backend selection — approve replays into the configured backend (vault
-    // under memory: vault), not an assumed markdown root.
+    // under memory: vault; refused under vector), and cap + TTL come from
+    // `memoryApproval` the way the runtime gate reads them.
     ...(config ? { config } : {}),
-    ...(config?.memoryApproval?.cap !== undefined ? { cap: config.memoryApproval.cap } : {}),
-    ...(config?.memoryApproval?.ttlDays !== undefined
-      ? { ttlMs: config.memoryApproval.ttlDays * DAY_MS }
-      : {}),
   });
 
   const approveId = flag('--approve');

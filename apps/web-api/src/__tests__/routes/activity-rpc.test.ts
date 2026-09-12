@@ -9,7 +9,7 @@ import { createWebApi, WebTokenRepository } from '../../index';
 import type { ActivityHistoryFn } from '../../routes/index';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -42,7 +42,7 @@ describe('activity RPC', () => {
     const app = createWebApi({
       dataDir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

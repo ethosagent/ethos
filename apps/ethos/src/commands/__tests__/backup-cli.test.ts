@@ -205,6 +205,38 @@ describe('ethos backup — flags', () => {
     expect(errOut.join('\n')).toContain('--scope requires one of');
   });
 
+  // F04 follow-up: the scope table is dataDir-relative, so a `memory: vault`
+  // deployment's memory and its `.ethos-meta` provenance are in NO archive. The
+  // report must name the directory the operator has to back up themselves.
+  it('warns that vault memory is not in the archive, and names the path', async () => {
+    await seedDataDir(stateDir);
+    await writeFile(
+      join(stateDir, 'config.yaml'),
+      'provider: anthropic\nmodel: m\npersonality: demo\nmemory: vault\nmemoryVault.path: /Users/me/Vault\n',
+    );
+    await backupTo([]);
+    expect(joined()).toContain('/Users/me/Vault/Ethos');
+    expect(joined()).toContain('/Users/me/Vault/Ethos/.ethos-meta');
+    expect(joined()).toContain('NOT in this archive');
+  });
+
+  it('says nothing about an external vault under markdown memory', async () => {
+    await seedDataDir(stateDir);
+    await backupTo([]);
+    expect(joined()).not.toContain('NOT in this archive');
+  });
+
+  it('--json carries the vault exclusion too', async () => {
+    await seedDataDir(stateDir);
+    await writeFile(
+      join(stateDir, 'config.yaml'),
+      'provider: anthropic\nmodel: m\npersonality: demo\nmemory: vault\nmemoryVault.path: /Users/me/Vault\n',
+    );
+    await backupTo(['--json']);
+    const payload = lastJson() as { externalMemory?: { path: string; message: string } };
+    expect(payload.externalMemory?.path).toBe('/Users/me/Vault/Ethos');
+  });
+
   it('says a state archive holds conversation history', async () => {
     await seedDataDir(stateDir);
     await backupTo([]);

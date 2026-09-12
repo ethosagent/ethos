@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { ethosDir } from '@ethosagent/config';
 import { type LogRotationConfig, rotateIfNeeded } from '../error-log';
 import { createHealthServer } from '../health-server';
+import { DISPOSE_BEFORE_EXIT_GRACE_MS } from '../lib/dispose-before-exit';
 import { emitReady } from '../logger';
 import { notifyReady, startWatchdog } from '../sd-notify';
 
@@ -28,7 +29,21 @@ const MAX_BACKOFF_MS = 30_000;
 const STABLE_THRESHOLD_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 10;
 const RESTART_WINDOW_MS = 5 * 60_000;
-const SHUTDOWN_GRACE_MS = 5_000;
+/**
+ * The slowest child's own bounded SIGTERM path (F06). `ethos gateway` first
+ * drains its approval cards (`APPROVAL_SHUTDOWN_DRAIN_MS`, commands/gateway.ts)
+ * and its in-flight turns (`SHUTDOWN_DRAIN_TIMEOUT_MS`, extensions/gateway),
+ * then disposes its runtimes (`DISPOSE_BEFORE_EXIT_GRACE_MS`); `ethos serve`'s
+ * chat close + listener flush + disposal is shorter. The two drains are not
+ * importable here without loading the whole gateway into the supervisor, so
+ * they are restated — and pinned against their definitions by
+ * `__tests__/run-all.test.ts`, which fails if either grows past this.
+ */
+const CHILD_PRE_DISPOSE_DRAIN_MS = 5_000 + 10_000;
+const CHILD_SHUTDOWN_BUDGET_MS = CHILD_PRE_DISPOSE_DRAIN_MS + DISPOSE_BEFORE_EXIT_GRACE_MS;
+/** SIGKILL only once a child has overrun its own bounded shutdown, plus a
+ *  margin for the exit itself — earlier kills it mid-disposal. */
+const SHUTDOWN_GRACE_MS = CHILD_SHUTDOWN_BUDGET_MS + 5_000;
 const LOG_ROTATION_INTERVAL_MS = 60_000;
 
 // Default health-endpoint port. 3004, not 3003 — 3003 collided with the
@@ -460,6 +475,7 @@ export const __testing__ = {
   MAX_RESTARTS_IN_WINDOW,
   RESTART_WINDOW_MS,
   SHUTDOWN_GRACE_MS,
+  CHILD_SHUTDOWN_BUDGET_MS,
   LOG_ROTATION_INTERVAL_MS,
   DEFAULT_LOG_ROTATION,
   DEFAULT_HEALTH_PORT,

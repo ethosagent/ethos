@@ -6,6 +6,7 @@
 // `audience: 'internal'` events surface too. `debug` adds raw JSON.
 
 import type { AgentEvent } from '@ethosagent/core';
+import { answerSuffix } from '@ethosagent/types';
 
 export type Verbosity = 'quiet' | 'default' | 'verbose' | 'debug';
 
@@ -43,15 +44,41 @@ export interface RenderedLine {
 }
 
 /**
+ * What a `done` event still owes after the text that streamed this turn — the
+ * answer, after a blank line when a preamble streamed — or `undefined`.
+ *
+ * A `returnDirect` tool result reaches the turn only as `done.text`, possibly
+ * after a preamble the model streamed before the call; in every other turn
+ * `done.text` IS the streamed text and nothing is owed. The rule is
+ * `answerSuffix` in @ethosagent/types; this is the CLI's one entry to it, for
+ * both chat paths (the REPL's `projectEvent` and the single-query runner in
+ * commands/chat.ts). Pinned by `__tests__/verbosity-render.test.ts`.
+ */
+export function unstreamedDoneText(event: AgentEvent, streamedText: string): string | undefined {
+  if (event.type !== 'done') return undefined;
+  return answerSuffix(streamedText, event.text) || undefined;
+}
+
+/**
  * Pure event-to-line(s) projection. Used by tests; the live REPL renders with
  * ANSI directly but consults the same level/audience rules.
  *
+ * `turn.streamedText` — every `text_delta` this turn has streamed so far —
+ * lets a `done` surface the answer it alone carries (`unstreamedDoneText`).
+ * Absent → `done` surfaces nothing, as before.
+ *
  * Returns [] for events filtered out at the current level.
  */
-export function projectEvent(event: AgentEvent, verbosity: Verbosity): RenderedLine[] {
+export function projectEvent(
+  event: AgentEvent,
+  verbosity: Verbosity,
+  turn?: { streamedText: string },
+): RenderedLine[] {
+  const doneAnswer = turn ? unstreamedDoneText(event, turn.streamedText) : undefined;
   if (verbosity === 'quiet') {
     // Only final assistant text surfaces.
     if (event.type === 'text_delta') return [{ text: event.text, kind: 'text' }];
+    if (doneAnswer) return [{ text: doneAnswer, kind: 'text' }];
     return [];
   }
 
@@ -105,11 +132,15 @@ export function projectEvent(event: AgentEvent, verbosity: Verbosity): RenderedL
         });
       }
       break;
-    case 'thinking_delta':
     case 'done':
+      // Only the answer `done` alone carries (see `unstreamedDoneText`); the
+      // turn summary is rendered inline in the REPL.
+      if (doneAnswer) out.push({ text: doneAnswer, kind: 'text' });
+      break;
+    case 'thinking_delta':
     case 'context_meta':
-      // Not surfaced at any verbosity in the line projection. `done` triggers
-      // turn summary inline in the REPL; `context_meta` is internal.
+      // Not surfaced at any verbosity in the line projection; `context_meta` is
+      // internal.
       break;
   }
 

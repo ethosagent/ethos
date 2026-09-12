@@ -4,10 +4,10 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-06
+updated: 2026-09-12
 ---
 
-`~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. The parser ignores quotes around values.
+`~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
 
 ## Source {#source}
 
@@ -66,18 +66,70 @@ personality: engineer
 
 ## memory {#memory}
 
-Type: `markdown` | `vector` · Default: unset (treated as `markdown`)
+Type: `markdown` | `vector` | `vault` · Default: unset (treated as `markdown`)
 
-Memory backend. `markdown` reads and writes `~/.ethos/MEMORY.md` and `~/.ethos/USER.md`. `vector` enables the SQLite + embeddings store at `~/.ethos/memory.db`.
+Memory backend. One selection serves the agent, the web memory editor, the CLI memory verbs and the nightly pass:
+
+- `markdown` — per-personality files under `~/.ethos/personalities/<id>/` (`MEMORY.md`, `USER.md`) (default).
+- `vector` — SQLite + embeddings at `~/.ethos/memory.db`. No file editor: the web Memory page and `ethos memory restore|retract|supersede|history` refuse, because there are no files to edit.
+- `vault` — the same file layout inside a directory you own (an Obsidian vault), set by [`memoryVault.path`](#memory-vault).
 
 ```yaml
-memory: vector
+memory: vault
+memoryVault.path: /Users/you/Documents/Vault
 ```
 
 Notes:
 
 - Switching backends mid-stream does not migrate data — export from one, then import into the other.
+- A change takes effect on restart. A running `ethos serve` / `ethos gateway` logs `memory backend changed — restart required to apply` and keeps the backend it booted with.
 - Vector mode requires an embeddings-capable provider key.
+- `ethos backup` does not archive vault content — see [Back up and restore](../how-to/back-up-and-restore.md#vault-memory).
+
+## memoryVault.* {#memory-vault}
+
+Read only when `memory: vault`.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `memoryVault.path` | string | — | Absolute path to the vault root. Required under `memory: vault`; boot fails without it. |
+| `memoryVault.agentDir` | string | `Ethos` | Subtree of the vault the agent owns. Writes are confined to it; `search` may read the whole vault. |
+| `memoryVault.prefetch` | comma list | `MEMORY.md, USER.md` | Keys injected into the prompt tail for a personality scope. |
+| `memoryVault.exclude` | comma list | — | Names never read during `list()` / `search()`, on top of dot-directories and sync-conflict files. |
+
+```yaml
+memory: vault
+memoryVault.path: /Users/you/Documents/Vault
+memoryVault.agentDir: Ethos
+memoryVault.prefetch: MEMORY.md, USER.md
+memoryVault.exclude: Archive, Templates
+```
+
+Notes:
+
+- Content lands in `<path>/<agentDir>/personalities/<id>/`; provenance history and diff blobs in `<path>/<agentDir>/.ethos-meta/` (dot-prefixed so Obsidian ignores it).
+- The approval queue and its tombstones stay at `~/.ethos/` for every backend — they are gate state, not memory content.
+
+## memoryApproval.* {#memory-approval}
+
+Approve-before-store gate: a captured fact parks in a queue instead of being written, until someone approves it (`ethos memory pending`, or the web Memory page's Pending tab).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `memoryApproval.mode` | `off` \| `automated` \| `all` | `off` | `off` — writes go straight through; `automated` — gates writes the agent proposes on its own (capture, dream turns); `all` — gates every write, including explicit `memory_write` tool calls. |
+| `memoryApproval.cap` | number | `200` | Per-scope queue ceiling. At cap the oldest candidate is dropped, logged, and reported as an observability event. |
+| `memoryApproval.ttlDays` | number | `30` | Candidates older than this auto-REJECT (never auto-approve) and are tombstoned so capture does not re-propose them. |
+
+```yaml
+memoryApproval.mode: automated
+memoryApproval.cap: 200
+memoryApproval.ttlDays: 30
+```
+
+Notes:
+
+- Cap and TTL apply to every queue over one deployment — the runtime gate, `ethos memory pending`, and the web Pending tab.
+- A change takes effect on restart, like `memory` itself.
 
 ## baseUrl {#base-url}
 
@@ -102,7 +154,7 @@ modelRouting.engineer: moonshotai/kimi-k2.6
 
 ## providers.\<i\>.\* {#providers-chain}
 
-Provider fallback chain. When two or more entries are present, the runtime wraps them in a `ChainedProvider` with cooldown-based failover. Index `0` is primary; higher indices fall back in order. When only one entry is set, the top-level `provider` / `apiKey` / `model` fields are used.
+Provider fallback chain. When two or more entries are present, the runtime wraps them in a `ChainedProvider` with cooldown-based failover. Index `0` is primary; higher indices fall back in order. With fewer than two entries, the top-level `provider` / `apiKey` / `model` fields are used instead. When Settings or `ethos fallback add` grows a chain from the top-level fields, entry `0` becomes the top-level provider, with the same key reference.
 
 | Field | Type | Description |
 |---|---|---|
@@ -110,6 +162,11 @@ Provider fallback chain. When two or more entries are present, the runtime wraps
 | `providers.<i>.apiKey` | string | API key for entry `<i>`. |
 | `providers.<i>.model` | string | Optional model override for entry `<i>`. |
 | `providers.<i>.baseUrl` | string | Optional endpoint override for entry `<i>`. |
+| `providers.<i>.apiVersion` | string | Azure only: REST API version for entry `<i>`. |
+| `providers.<i>.region` | string | Bedrock only: AWS region for entry `<i>`. |
+| `providers.<i>.awsProfile` | string | Bedrock only: named AWS profile for entry `<i>`. |
+
+Any other `providers.<i>.<field>` line belongs to entry `<i>`: it moves with the entry when the chain is reordered and is removed with it. Its value is checked for plaintext credentials at boot like every other value. If one is found, Ethos refuses to start and names the line — run `ethos secrets set providers/<i>/<field> <value>`, then set the line to `providers.<i>.<field>: ${secrets:providers/<i>/<field>}`.
 
 ```yaml
 providers.0.provider: anthropic

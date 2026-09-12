@@ -285,7 +285,8 @@ describe('boot.ts wiring (source)', () => {
     // The rebind runs the SAME ladder cold boot did, reservations included.
     expect(src).toContain('const listenWeb = (bind: WebBindTarget) =>');
     expect(src).toContain('listen: listenWeb,');
-    // Shutdown closes whatever is CURRENTLY listening, not the first listener.
-    expect(src).toContain('webServer.close(() => resolve())');
+    // Shutdown closes whatever is CURRENTLY listening, not the first listener
+    // — through `closeListener`, which does not wait on open SSE streams (F06).
+    expect(src).toContain('() => closeListener(webServer),');
   });
 });

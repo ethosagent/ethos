@@ -85,6 +85,19 @@ export interface StoredMessage {
   isError?: boolean;
 }
 
+/**
+ * The persisted `content` of the tool_result row for the call whose value a
+ * `returnDirect` tool handed the user as the turn's answer. The value itself is
+ * stored ONCE, as the next assistant row (only the same batch's other
+ * tool_result rows can sit between them) — written by
+ * `persistReturnDirect` (packages/core/src/agent-loop/stages/return-direct.ts).
+ * A reader that wants the tool's output reads that row when it meets this
+ * marker, as `GoalsService.toolResult` (apps/web-api/src/services/goals.service.ts)
+ * does. Pinned by packages/core/src/__tests__/return-direct-history.test.ts.
+ */
+export const RETURNED_DIRECT_TOOL_RESULT =
+  '[output returned directly to the user — it is the assistant message that follows]';
+
 export interface SessionFilter {
   platform?: string;
   keyPrefix?: string;

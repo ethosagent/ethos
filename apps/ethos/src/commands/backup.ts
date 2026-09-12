@@ -151,6 +151,16 @@ export async function runBackup(argv: string[]): Promise<void> {
       scopes,
       snapshot: 'vacuum',
       secrets: await getSecretsResolver(),
+      // A `memory: vault` deployment's memory is outside dataDir, so no scope
+      // covers it — the result then carries a notice this report prints (F04).
+      ...(config
+        ? {
+            memory: {
+              ...(config.memory ? { memory: config.memory } : {}),
+              ...(config.memoryVault ? { memoryVault: config.memoryVault } : {}),
+            },
+          }
+        : {}),
     });
   } finally {
     // A failed backup must not leave the directory locked — the next run, and
@@ -171,6 +181,7 @@ export async function runBackup(argv: string[]): Promise<void> {
       createdAt: result.manifest.createdAt,
       unclassifiedDatabases: result.unclassifiedDatabases,
       skippedFiles: result.skippedFiles,
+      ...(result.externalMemory ? { externalMemory: result.externalMemory } : {}),
       sensitive: result.scopes.includes('state'),
       ...(configFallback ? { configFallback } : {}),
       // Both printed lines that embed the archive path, so a caller reading the
@@ -194,6 +205,9 @@ export async function runBackup(argv: string[]): Promise<void> {
   console.log('');
   console.log('  API keys and MCP tokens were NOT archived. The archive lists what is');
   console.log('  missing in secrets.manifest.yaml — refill with `ethos import --secrets prompt`.');
+  if (result.externalMemory) {
+    console.log(`  ⚠ ${result.externalMemory.message}`);
+  }
   for (const db of result.unclassifiedDatabases) {
     console.log(`  ⚠ ${db} is a database no scope owns — it was NOT archived.`);
   }

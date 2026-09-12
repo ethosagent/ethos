@@ -41,6 +41,7 @@ import { SQLiteDeliveryLedger } from '@ethosagent/delivery-ledger';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { LangfusePollLoop } from '@ethosagent/export-langfuse';
 import {
+  adapterRegistries,
   createCapturingAdapter,
   createFfmpegTranscoder,
   createVoiceArtifactStore,
@@ -87,6 +88,7 @@ import { createA2aTools } from '@ethosagent/tools-a2a';
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
 // them must not crash the CLI for users who don't run that platform.
 import {
+  answerSuffix,
   type ChannelTranscriptStore,
   type ClarifyResponse,
   EthosError,
@@ -111,8 +113,8 @@ import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   createApprovalDangerPredicate,
   createLazyProvider,
-  createMemoryProvider,
   createSessionStore,
+  fileMemoryUnsupportedReason,
   IdentityMap,
   initPairingDb,
   type LiveKitBindings,
@@ -129,6 +131,8 @@ import {
   createSlackApprovalHook,
 } from '../approval-coordinator';
 import { createHealthServer, type MetricsAuthCheck } from '../health-server';
+import { disposeBeforeExit } from '../lib/dispose-before-exit';
+import { openFileMemory } from '../lib/file-memory';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { resolveLiveKitMedia } from '../livekit-media';
 import { emitReady } from '../logger';
@@ -145,6 +149,7 @@ import { createSipWebhookServer } from '../sip-webhook-server';
 import { createWebhookServer, type DeliveryRelay, type PrefilterRunner } from '../webhook-server';
 import {
   buildSystemTaskHandlers,
+  closeObservabilityStore,
   createAgentLoop,
   createLLM,
   createTeamAgentLoop,
@@ -666,6 +671,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
         toolsetOverride,
       })) {
         if (event.type === 'text_delta') output += event.text;
+        // A `returnDirect` tool's answer arrives only as `done.text`, after
+        // any preamble that streamed — same rule as `runCronTurn`.
+        else if (event.type === 'done') output += answerSuffix(output, event.text);
         else progress.record(event);
       }
       return {
@@ -736,6 +744,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     notificationRouters: botNotificationRouters,
     toolRegistries: botToolRegistries,
     refreshers: botPersonalityRefreshers,
+    disposers: botLoopDisposers,
   } = await buildGatewayBots(
     config,
     scheduler,
@@ -801,6 +810,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // construction below), so any loop's `createAgentLoop()` call produces
     // an equivalent closure. Absent on every other deployment.
     runCallCapture: runCallCaptureFromLoop,
+    dispose: disposeSystemLoop,
   } = await createAgentLoop(config, {
     cronScheduler: scheduler,
     watcherManager,
@@ -1018,19 +1028,6 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // actually being watched. See `openChannelTranscriptStore`.
   const channelTranscript = openChannelTranscriptStore(join(ethosDir(), 'channel-transcript.db'));
 
-  // Build adapter registry for send_message cross-platform routing.
-  // Derive platform key from adapter.id prefix (e.g. 'telegram:bot-1' → 'telegram',
-  // 'email' → 'email'). This is a stable identifier, unlike displayName which is UI text.
-  const adapterMap = new Map<string, PlatformAdapter>();
-  for (const adapter of adapters) {
-    const colonIdx = adapter.id.indexOf(':');
-    const platformKey = colonIdx > 0 ? adapter.id.slice(0, colonIdx) : adapter.id;
-    // First adapter per platform wins (multi-bot: all share the same send path)
-    if (!adapterMap.has(platformKey)) {
-      adapterMap.set(platformKey, adapter);
-    }
-  }
-
   // W4.1 — funnel stamps at gateway turn completion. The tracker no-ops once
   // stamped, so this is one cheap callback per turn after the first.
   const onTurnComplete = ({ platform }: { platform: string }): void => {
@@ -1086,7 +1083,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     config,
     bots,
     systemLoop,
-    adapterMap,
+    adapters,
     deliveryLedger,
     inboundDedup,
     resolveUserId,
@@ -1122,11 +1119,17 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const sendGoalNote = async (platform: string, chatId: string, text: string): Promise<void> => {
     await gateway.sendTo(platform, chatId, text);
   };
+  /** The system loop's goal-note hooks, released on the way out with its runtime. */
+  const goalNoteCleanups: Array<() => void> = [];
+  // F06 — the hooks go on a BORROWED registry (the loop's), so each
+  // registration's cleanup is kept and run with that loop's own release.
   for (const bot of bots) {
-    registerGoalNotifications(bot.loop.hooks, sendGoalNote);
+    const off = registerGoalNotifications(bot.loop.hooks, sendGoalNote);
+    botLoopDisposers.unshift(async () => off());
   }
   if (systemLoop) {
-    registerGoalNotifications(systemLoop.hooks, sendGoalNote);
+    const offSystemGoalNotes = registerGoalNotifications(systemLoop.hooks, sendGoalNote);
+    goalNoteCleanups.push(offSystemGoalNotes);
   }
 
   // Wire send_message tool to the real Gateway send path.
@@ -1853,46 +1856,79 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // Graceful shutdown on SIGINT / SIGTERM. Tell every in-flight chat that the
   // gateway was interrupted so they don't sit waiting on a response that
   // never comes. See plan/IMPROVEMENT.md P1-1.
-  const shutdown = async () => {
-    console.log(`\n${c.dim}Shutting down...${c.reset}`);
-    if (stopWatchdog) stopWatchdog();
-    // Deny + audit any suspended approval FIRST — the coordinator's auto-deny
-    // timers are unref'd and never fire on the way out, and a later await
-    // that hangs must not cost the audit row or the card update.
-    //
-    // MUST stay above `adapters.map((a) => a.stop())`: the awaited handle
-    // drains the in-flight `updateApprovalCard` calls, and stopping the
-    // adapters first would tear out the transport those updates ride on,
-    // leaving a denied approval's card showing live Allow/Deny buttons.
-    await approvalFlow.shutdown();
-    healthServer.close();
-    webhookServer?.close();
-    sipWebhookServer?.close();
-    platformWebhookServer?.close();
-    clearInterval(pruneTimer);
-    clearInterval(heartbeatTimer);
-    clearInterval(retentionPruneTimer);
-    idleWatcher?.stop();
-    pauseLifecycle.stop?.();
-    cronTriggers.local?.stop();
-    dreamExecutor.stop();
-    langfusePoll?.stop();
-    await storage.remove(gatewayHealthPath()).catch(() => {});
-    // Stops the daemon + heartbeat (if this process ever won the ownership
-    // claim, including via a later retry tick — see
-    // `CallCaptureOwnershipManager`) and releases the lock so a restarted
-    // process, or the other host command, can take it.
-    await callCaptureOwnershipManager?.stop();
-    await gateway.shutdown({
-      notify:
-        '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
-    });
-    await Promise.allSettled(adapters.map((a) => a.stop()));
-    deliveryLedger.close();
-    inboundDedup.close();
-    callLog?.close();
-    stopTeamSupervisors(bots, config.teams ?? {}, supervisorDeps);
-    process.exit(0);
+  // Reentrancy: registered on BOTH SIGINT and SIGTERM, and a second signal
+  // during the drain would otherwise re-run the whole teardown. One promise,
+  // memoised; every caller awaits that same one (the shape `serve`/`boot` use).
+  let shuttingDown: Promise<void> | undefined;
+  const shutdown = async (): Promise<void> => {
+    shuttingDown ??= (async () => {
+      console.log(`\n${c.dim}Shutting down...${c.reset}`);
+      if (stopWatchdog) stopWatchdog();
+      // Deny + audit any suspended approval FIRST — the coordinator's auto-deny
+      // timers are unref'd and never fire on the way out, and a later await
+      // that hangs must not cost the audit row or the card update.
+      //
+      // MUST stay above `adapters.map((a) => a.stop())`: the awaited handle
+      // drains the in-flight `updateApprovalCard` calls, and stopping the
+      // adapters first would tear out the transport those updates ride on,
+      // leaving a denied approval's card showing live Allow/Deny buttons.
+      await approvalFlow.shutdown();
+      healthServer.close();
+      webhookServer?.close();
+      sipWebhookServer?.close();
+      platformWebhookServer?.close();
+      clearInterval(pruneTimer);
+      clearInterval(heartbeatTimer);
+      clearInterval(retentionPruneTimer);
+      idleWatcher?.stop();
+      pauseLifecycle.stop?.();
+      cronTriggers.local?.stop();
+      dreamExecutor.stop();
+      langfusePoll?.stop();
+      await storage.remove(gatewayHealthPath()).catch(() => {});
+      // Stops the daemon + heartbeat (if this process ever won the ownership
+      // claim, including via a later retry tick — see
+      // `CallCaptureOwnershipManager`) and releases the lock so a restarted
+      // process, or the other host command, can take it.
+      await callCaptureOwnershipManager?.stop();
+      await gateway.shutdown({
+        notify:
+          '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
+      });
+      await Promise.allSettled(adapters.map((a) => a.stop()));
+      // F06 — every loop's runtime (background executors, reconcilers, stores,
+      // MCP, plugins), once the gateway has drained and nothing routes to them.
+      // Before the call log closes: a loop's `call` tool writes through it.
+      await disposeBeforeExit(
+        [
+          ...botLoopDisposers.map((dispose) => ['bot loop', dispose] as const),
+          [
+            'system loop',
+            async () => {
+              for (const off of goalNoteCleanups.splice(0)) off();
+              await disposeSystemLoop();
+            },
+          ],
+        ],
+        (message) => console.warn(message),
+      );
+      deliveryLedger.close();
+      inboundDedup.close();
+      callLog?.close();
+      // Observe mode's transcript handle — a no-op when nothing was recorded
+      // (`openChannelTranscriptStore` closes only what it opened).
+      channelTranscript.close();
+      // This process's own `sessions.db` handles: the metrics api-key reader and
+      // whatever the Slack App Home readers opened (F06, as `serve`/`boot` do).
+      metricsApiKeys.close();
+      closeSlackSessionStores();
+      stopTeamSupervisors(bots, config.teams ?? {}, supervisorDeps);
+      // The process-wide observability store — last, after everything above,
+      // which records into it while it winds down.
+      closeObservabilityStore();
+      process.exit(0);
+    })();
+    await shuttingDown;
   };
 
   process.on('SIGINT', () => void shutdown());
@@ -1971,6 +2007,8 @@ export interface GatewayBotWiring {
   notificationRouters: NotificationRouter[];
   toolRegistries: ToolRegistry[];
   refreshers: Array<() => Promise<void>>;
+  /** The bot's loop runtime release (`CreateAgentLoopResult.dispose`, F06). */
+  disposers: Array<() => Promise<void>>;
 }
 
 export interface BuildGatewayBotsResult {
@@ -1989,7 +2027,11 @@ export interface BuildGatewayBotsResult {
    *  hot-dropped/edited personality reaches every loop's registry. Team loops
    *  have no personality registry and contribute none. */
   refreshers: Array<() => Promise<void>>;
-  /** The four lists above, attributed to the bot that produced each entry.
+  /** One runtime release per bot loop (`CreateAgentLoopResult.dispose`, F06) —
+   *  what a stopping gateway, or a bot retired live, calls once nothing routes
+   *  to the loop any more. */
+  disposers: Array<() => Promise<void>>;
+  /** The lists above, attributed to the bot that produced each entry.
    *  Aligned with `bots` — same order, same membership. */
   perBot: Map<string, GatewayBotWiring>;
 }
@@ -2036,6 +2078,32 @@ export async function buildGatewayBots(
   resolveOriginThreadId: (sessionKey: string) => string | undefined,
   callLog?: CallLog,
 ): Promise<BuildGatewayBotsResult> {
+  // F06 — a bot that fails to build must not strand the loops built before it
+  // (each with a running background executor): release them, then rethrow.
+  const disposers: Array<() => Promise<void>> = [];
+  try {
+    return await assembleGatewayBots(
+      config,
+      scheduler,
+      watcherManager,
+      resolveOriginThreadId,
+      disposers,
+      callLog,
+    );
+  } catch (err) {
+    await Promise.allSettled(disposers.map((dispose) => dispose()));
+    throw err;
+  }
+}
+
+async function assembleGatewayBots(
+  config: EthosConfig,
+  scheduler: CronScheduler,
+  watcherManager: WatcherManager,
+  resolveOriginThreadId: (sessionKey: string) => string | undefined,
+  disposers: Array<() => Promise<void>>,
+  callLog?: CallLog,
+): Promise<BuildGatewayBotsResult> {
   // Every personality loop gets the same scheduler + watcher manager so
   // agent-callable cron/watcher tools land in the shared stores. The thread
   // resolver rides along so background jobs record their full origin lane, and
@@ -2059,19 +2127,21 @@ export async function buildGatewayBots(
   // existing caller already receives — there is no second bookkeeping path to
   // drift from the first.
   const perBot = new Map<string, GatewayBotWiring>();
-  const mark = (): [number, number, number, number] => [
+  const mark = (): [number, number, number, number, number] => [
     setters.length,
     routers.length,
     registries.length,
     refreshers.length,
+    disposers.length,
   ];
-  const record = (bot: GatewayBotConfig, at: [number, number, number, number]): void => {
+  const record = (bot: GatewayBotConfig, at: [number, number, number, number, number]): void => {
     out.push(bot);
     perBot.set(bot.botKey, {
       messagingSetters: setters.slice(at[0]),
       notificationRouters: routers.slice(at[1]),
       toolRegistries: registries.slice(at[2]),
       refreshers: refreshers.slice(at[3]),
+      disposers: disposers.slice(at[4]),
     });
   };
   const buildOne = async (bot: TelegramBotConfig | SlackAppConfig): Promise<GatewayBotConfig> => {
@@ -2084,6 +2154,7 @@ export async function buildGatewayBots(
       loop = team.loop;
       routers.push(team.notificationRouter);
       registries.push(team.toolRegistry);
+      disposers.push(team.dispose);
     } else {
       // Per-bot personality loop. Threads the shared scheduler so
       // `create_cron_job` etc. lands in the same store as the
@@ -2099,6 +2170,7 @@ export async function buildGatewayBots(
       routers.push(result.notificationRouter);
       registries.push(result.toolRegistry);
       refreshers.push(result.refreshPersonalities);
+      disposers.push(result.dispose);
     }
     return {
       botKey,
@@ -2137,6 +2209,7 @@ export async function buildGatewayBots(
       loop = team.loop;
       routers.push(team.notificationRouter);
       registries.push(team.toolRegistry);
+      disposers.push(team.dispose);
     } else {
       const result = await createAgentLoop(
         { ...config, personality: bind.name },
@@ -2149,6 +2222,7 @@ export async function buildGatewayBots(
       routers.push(result.notificationRouter);
       registries.push(result.toolRegistry);
       refreshers.push(result.refreshPersonalities);
+      disposers.push(result.dispose);
     }
     record(
       {
@@ -2176,6 +2250,7 @@ export async function buildGatewayBots(
     routers.push(result.notificationRouter);
     registries.push(result.toolRegistry);
     refreshers.push(result.refreshPersonalities);
+    disposers.push(result.dispose);
     record(
       {
         botKey,
@@ -2199,6 +2274,7 @@ export async function buildGatewayBots(
     routers.push(result.notificationRouter);
     registries.push(result.toolRegistry);
     refreshers.push(result.refreshPersonalities);
+    disposers.push(result.dispose);
     record(
       {
         botKey,
@@ -2219,6 +2295,7 @@ export async function buildGatewayBots(
     routers.push(result.notificationRouter);
     registries.push(result.toolRegistry);
     refreshers.push(result.refreshPersonalities);
+    disposers.push(result.dispose);
     record(
       {
         botKey,
@@ -2236,6 +2313,7 @@ export async function buildGatewayBots(
     notificationRouters: routers,
     toolRegistries: registries,
     refreshers,
+    disposers,
     perBot,
   };
 }
@@ -2821,10 +2899,14 @@ export type AdapterModuleLoader = <T>(modulePath: string, label: string) => Prom
  * Adapt the personality-scoped MemoryProvider to the narrow
  * `{ read, append }` shape the Slack `/ethos memory` command consumes.
  * Scopes every read/write to `personality:<id>` so each Slack bot sees
- * the MEMORY.md of the personality it's bound to.
+ * the MEMORY.md of the personality it's bound to — on the configured backend
+ * (the vault under `memory: vault`), via `openFileMemory`. A backend with no
+ * file memory (vector) returns undefined, so the command answers "Memory is
+ * unavailable for this bot." rather than editing files the agent never reads.
  */
-function createSlackMemoryReader(personalityId: string) {
-  const provider = createMemoryProvider({ dataDir: ethosDir(), storage: getStorage() });
+export function createSlackMemoryReader(personalityId: string, config: EthosConfig) {
+  if (fileMemoryUnsupportedReason(config)) return undefined;
+  const provider = openFileMemory(config, 'tool').provider;
   const ctx: MemoryContext = {
     scopeId: `personality:${personalityId}`,
     sessionId: '',
@@ -2904,10 +2986,28 @@ const SLACK_RECENT_SESSION_LIMIT = 10;
  * `@ethosagent/gateway`), so one workspace's App Home never lists another
  * bot's conversations.
  */
+/**
+ * Every `sessions.db` handle `createSlackSessionReaders` opened — one per
+ * Slack bot, lazily, on the first App Home read. Closed together by the host's
+ * shutdown (F06); without that each one left a `-wal`/`-shm` pair behind.
+ */
+const slackSessionStores = new Set<{ close(): void }>();
+
+/** Close what `createSlackSessionReaders` opened. A no-op when no App Home
+ *  read ever happened. Called by `ethos gateway`'s and `ethos boot`'s shutdown. */
+export function closeSlackSessionStores(): void {
+  for (const store of slackSessionStores) store.close();
+  slackSessionStores.clear();
+}
+
 function createSlackSessionReaders(botKey: string) {
   let store: SessionStore | undefined;
   const sessions = (): SessionStore => {
-    store ??= createSessionStore({ dataDir: ethosDir() });
+    if (!store) {
+      const opened = createSessionStore({ dataDir: ethosDir() });
+      slackSessionStores.add(opened);
+      store = opened;
+    }
     return store;
   };
   const prefix = `slack:${encodeURIComponent(botKey)}:`;
@@ -3337,7 +3437,7 @@ export async function buildAdapters(
         // "Memory is unavailable for this bot."
         const memory =
           appCfg.bind.type === 'personality'
-            ? createSlackMemoryReader(appCfg.bind.name)
+            ? createSlackMemoryReader(appCfg.bind.name, config)
             : undefined;
         const botKey = deriveBotKey(appCfg);
         // Session rows are per-bot: the reader filters on this bot's lane-key
@@ -3831,12 +3931,15 @@ export function buildGatewayVoiceOutputs(
 }
 
 /**
- * Re-exported from `@ethosagent/gateway` so the merged `boot` profile can wire
- * the inbound-webhook server without importing the gateway package itself —
+ * Re-exported from `@ethosagent/gateway` so the merged `boot` profile can use
+ * them without importing the gateway package itself —
  * `apps/ethos/src/__tests__/daemon-free-smoke.test.ts` allows exactly one file
- * under `apps/ethos/src/` to do that, and this is it.
+ * under `apps/ethos/src/` to do that, and this is it. `createCapturingAdapter`
+ * wires the inbound-webhook server; `adapterRegistries` is the adapter
+ * derivation boot's per-bot lookup must share with the Gateway `buildGateway`
+ * builds.
  */
-export { createCapturingAdapter };
+export { adapterRegistries, createCapturingAdapter };
 
 export async function createGatewayAttachmentCache(
   storage: import('@ethosagent/types').Storage,
@@ -3995,12 +4098,16 @@ export interface BuildGatewayOptions {
   bots: GatewayBotConfig[];
   /** Used only on the no-bot idle path (`GatewayConfig.loop`). */
   systemLoop: AgentLoop;
-  /** Platform-keyed adapter registry for cross-platform `send_message`. */
-  adapterMap: Map<string, PlatformAdapter>;
-  /** botKey-keyed adapter registry — the FULL set, backing
-   *  `Gateway.listAdapters()`. Optional: absent → the gateway reports only
-   *  adapters added later via `addAdapter`. */
-  botAdapters?: ReadonlyMap<string, PlatformAdapter>;
+  /**
+   * EVERY adapter this process runs. Both registries the Gateway takes are
+   * derived from it by `adapterRegistries` (@ethosagent/gateway): the
+   * platform-keyed default for `send_message`, and the botKey-keyed full set
+   * that tracked sends resolve through. Taking the list rather than the two
+   * maps is deliberate — `ethos gateway start` once passed only the first map,
+   * and every later same-platform bot lost its tracked sends
+   * (`__tests__/gateway-bot-adapters.test.ts`).
+   */
+  adapters: readonly PlatformAdapter[];
   deliveryLedger: GatewayConfig['deliveryLedger'];
   inboundDedup: GatewayConfig['inboundDedup'];
   resolveUserId: GatewayConfig['resolveUserId'];
@@ -4135,8 +4242,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     config,
     bots,
     systemLoop,
-    adapterMap,
-    botAdapters,
+    adapters,
     deliveryLedger,
     inboundDedup,
     resolveUserId,
@@ -4169,6 +4275,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
   // deployment that assembles its own Gateway and forgets the sink. See
   // `GatewayConfig.observeModePlatforms`.
   const observedPlatforms = observeModePlatforms(config);
+  const { adapters: adapterMap, botAdapters } = adapterRegistries(adapters);
   return bots.length === 0
     ? // No platform configured — idle gateway. Every configured platform
       // (including Discord/Email) now registers a bot in `buildGatewayBots`,
@@ -4177,6 +4284,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         loop: systemLoop,
         defaultPersonality: config.personality,
         adapters: adapterMap,
+        botAdapters,
         deliveryLedger,
         inboundDedup,
         resolveUserId,
@@ -4223,7 +4331,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     : new Gateway({
         bots,
         attachmentCache,
-        ...(botAdapters ? { botAdapters } : {}),
+        botAdapters,
         // Reading cached attachment bytes: an inbound voice note is
         // transcribed from the audio itself, not from a path.
         storage,

@@ -1,6 +1,6 @@
 import type { AgentEvent } from '@ethosagent/core';
 import { describe, expect, it } from 'vitest';
-import { isVerbosity, nextVerbosity, projectEvent } from '../lib/verbosity';
+import { isVerbosity, nextVerbosity, projectEvent, unstreamedDoneText } from '../lib/verbosity';
 
 const ev = {
   text(text: string): AgentEvent {
@@ -99,6 +99,46 @@ describe('FW-10 verbosity projection', () => {
         type: 'text_delta',
         text: 'x',
       });
+    });
+  });
+
+  // A `returnDirect` tool result reaches the turn ONLY as `done.text`: core's
+  // processTools yields `done` with the tool's value and no text_delta. The
+  // REPL passes whether text streamed this turn, so the answer is shown once.
+  describe('an answer that arrives only as `done.text`', () => {
+    const done = (text: string): AgentEvent => ({ type: 'done', text, turnCount: 1 });
+
+    it('surfaces `done.text` as text when nothing streamed — at every level', () => {
+      for (const level of ['quiet', 'default', 'verbose'] as const) {
+        expect(projectEvent(done('DIRECT ANSWER'), level, { streamedText: '' })[0]).toEqual({
+          text: 'DIRECT ANSWER',
+          kind: 'text',
+        });
+      }
+    });
+
+    // The model streamed a preamble, then called a returnDirect tool: the
+    // answer never streamed, so it still surfaces — after a blank line.
+    it('surfaces the answer after a streamed preamble', () => {
+      expect(
+        projectEvent(done('DIRECT ANSWER'), 'default', { streamedText: 'Let me look that up.' }),
+      ).toEqual([{ text: '\n\nDIRECT ANSWER', kind: 'text' }]);
+    });
+
+    it('surfaces nothing when the answer already streamed, or when the caller tracks no turn', () => {
+      expect(projectEvent(done('the answer'), 'default', { streamedText: 'the answer' })).toEqual(
+        [],
+      );
+      expect(projectEvent(done('the answer'), 'quiet', { streamedText: 'the answer' })).toEqual([]);
+      expect(projectEvent(done('DIRECT ANSWER'), 'default')).toEqual([]);
+      expect(projectEvent(done(''), 'default', { streamedText: '' })).toEqual([]);
+    });
+
+    it('unstreamedDoneText is the single rule both chat paths use', () => {
+      expect(unstreamedDoneText(done('X'), '')).toBe('X');
+      expect(unstreamedDoneText(done('X'), 'X')).toBeUndefined();
+      expect(unstreamedDoneText(done('X'), 'preamble')).toBe('\n\nX');
+      expect(unstreamedDoneText(ev.text('X'), '')).toBeUndefined();
     });
   });
 

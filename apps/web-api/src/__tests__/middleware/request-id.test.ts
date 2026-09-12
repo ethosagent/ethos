@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -38,7 +38,7 @@ describe('x-request-id middleware (B1)', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop({
         events: [
           { type: 'run_start', provider: 'anthropic', model: 'm', source: 'global' },

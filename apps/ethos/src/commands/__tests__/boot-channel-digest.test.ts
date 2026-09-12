@@ -30,16 +30,16 @@ import { DefaultHookRegistry } from '@ethosagent/core';
 import { Gateway } from '@ethosagent/gateway';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { FsStorage } from '@ethosagent/storage-fs';
+import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
 import type {
   ChannelLaneSummary,
   ChannelTranscriptMessage,
   ChannelTranscriptPage,
   ChannelTranscriptStore,
-  MemoryProvider,
 } from '@ethosagent/types';
 import { createWebApi } from '@ethosagent/web-api';
 import type { SseEvent } from '@ethosagent/web-contracts';
+import { createMemoryBundle, type MemoryBundle } from '@ethosagent/wiring';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { channelDigestFeed } from '../boot';
 import { channelDigestSystemTask } from '../gateway';
@@ -105,22 +105,8 @@ function stubLoop(text = 'the crane slipped a day'): AgentLoop {
   } as unknown as AgentLoop;
 }
 
-function stubMemory(): MemoryProvider {
-  return {
-    async prefetch() {
-      return null;
-    },
-    async read() {
-      return null;
-    },
-    async search() {
-      return [];
-    },
-    async sync() {},
-    async list() {
-      return [];
-    },
-  };
+function stubMemory(): MemoryBundle {
+  return createMemoryBundle({ config: {}, dataDir: '/stub-ethos', storage: new InMemoryStorage() });
 }
 
 async function waitFor(predicate: () => boolean, label: string): Promise<void> {
@@ -144,7 +130,7 @@ describe('the channel digest reaches the web notifications feed under `boot`', (
     web = createWebApi({
       dataDir: dir,
       sessionStore: store,
-      memoryProvider: stubMemory(),
+      memoryBundle: stubMemory(),
       agentLoop: stubLoop('web turn'),
       personalities: new FilePersonalityRegistry(new FsStorage()),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },
@@ -270,7 +256,7 @@ describe('a digest broadcast to a feed nobody is listening to', () => {
     web = createWebApi({
       dataDir: dir,
       sessionStore: store,
-      memoryProvider: stubMemory(),
+      memoryBundle: stubMemory(),
       agentLoop: stubLoop('web turn'),
       personalities: new FilePersonalityRegistry(new FsStorage()),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

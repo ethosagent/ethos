@@ -56,6 +56,7 @@ import {
 } from '@ethosagent/worker-router';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
+import type { DisposerStack } from './disposer-stack';
 import type {
   CreateAgentLoopOptions,
   CreateAgentLoopResult,
@@ -64,7 +65,7 @@ import type {
 } from './index';
 import type { LoadPluginsResult } from './load-plugins';
 import { detectLocalRuntime } from './local-models';
-import { createUndecoratedBackend } from './memory-backend';
+import { approvalLimits, createMemoryBundle, createUndecoratedBackend } from './memory-backend';
 import {
   lookupProfile,
   mergeModelProfile,
@@ -92,6 +93,9 @@ export interface BuildAgentLoopDeps {
   pluginsResult: LoadPluginsResult;
   llm: LLMProvider;
   profile: WiringProfile;
+  /** The stack every earlier stage registered on; this stage adds its own
+   *  resources and hands `dispose` back on the result (F06). */
+  disposers: DisposerStack;
 }
 
 /**
@@ -184,6 +188,15 @@ export function resolveJobClarifyOrigin(
 }
 
 /**
+ * `MemoryProvider` (five methods, drift-gated) has no close; a backend that
+ * holds a connection of its own — memory-vector's memory.db — exposes one.
+ */
+async function closeMemoryProvider(provider: MemoryProvider): Promise<void> {
+  const close = (provider as Partial<{ close: () => unknown }>).close;
+  if (typeof close === 'function') await close.call(provider);
+}
+
+/**
  * Final assembly phase: resolve memory, wire vision tools, wire the improvement
  * fork and safety subsystems, construct AgentLoop, register delegation tools,
  * validate tool capabilities, and return the CreateAgentLoopResult.
@@ -195,7 +208,7 @@ export async function buildAgentLoop(
   deps: BuildAgentLoopDeps,
 ): Promise<CreateAgentLoopResult> {
   const { dataDir, log } = wiringCtx;
-  const { infra, toolsResult, pluginsResult, llm, profile } = deps;
+  const { infra, toolsResult, pluginsResult, llm, profile, disposers } = deps;
   const { memoryProviders, personalities, hooks, sessionCompose, tools } = infra;
   const { gatewaySendRef, goalStore, goalRunnerRef, injectors, mcpManager, skillsInjector } =
     toolsResult;
@@ -250,15 +263,25 @@ export async function buildAgentLoop(
         `Available: ${memoryProviders.list().join(', ')}`,
     );
   }
-  const memory = new EagerPrefetchPolicy(
-    await memoryFactory({
-      config: {},
-      dataDir,
-      secrets: config.secretsResolver ?? NOOP_SECRETS,
-      logger: log,
-    }),
-  );
+  const baseMemory = await memoryFactory({
+    config: {},
+    dataDir,
+    secrets: config.secretsResolver ?? NOOP_SECRETS,
+    logger: log,
+  });
+  disposers.push('memory provider', () => closeMemoryProvider(baseMemory));
+  const memory = new EagerPrefetchPolicy(baseMemory);
   for (const tool of createMemoryTools(memory, session)) tools.register(tool);
+  // F04 — the host-side memory surfaces (web/desktop editor, Timeline, restore,
+  // approve queue), selected from the SAME `config` + storage the registry
+  // factory above resolved, so an editor write lands in the backend the agent
+  // reads. Pinned by packages/wiring/src/__tests__/memory-bundle-loop.test.ts.
+  const memoryBundle = createMemoryBundle({
+    config,
+    dataDir,
+    storage: wiringCtx.storage,
+    logger: log,
+  });
 
   // -------------------------------------------------------------------------
   // Vision tools (registered here because they need `llm`)
@@ -624,10 +647,12 @@ export async function buildAgentLoop(
   if (config.observabilityRequestDump?.enabled) {
     const { JsonlRequestDumpStore } = await import('@ethosagent/request-dump');
     const dumpDir = config.observabilityRequestDump.dir ?? join(dataDir, 'request-dumps');
-    requestDumpStore = new JsonlRequestDumpStore({
+    const dumpStore = new JsonlRequestDumpStore({
       dir: dumpDir,
       maxBytes: config.observabilityRequestDump.rotation?.maxBytes,
     });
+    disposers.push('request dump store', () => dumpStore.close());
+    requestDumpStore = dumpStore;
   }
 
   // -------------------------------------------------------------------------
@@ -638,19 +663,49 @@ export async function buildAgentLoop(
     string,
     (options?: Record<string, unknown>) => MemoryProvider | Promise<MemoryProvider>
   >();
+  // Context assembly resolves `personality.memory.provider` through this map on
+  // EVERY turn. Each (provider, options) pair is built once and reused: a
+  // backend that holds a connection — memory-vector opens memory.db in its
+  // constructor — would otherwise open another per turn and close none. Every
+  // one built is released on dispose (F06). Pinned by
+  // packages/wiring/src/__tests__/runtime-dispose.test.ts.
+  const personalityMemory = new Map<string, Promise<MemoryProvider>>();
   for (const name of memoryProviders.list()) {
     const factory = memoryProviders.get(name);
     if (factory) {
-      memoryProviderMap.set(name, (options) =>
-        factory({
-          config: options ?? {},
-          dataDir,
-          secrets: config.secretsResolver ?? NOOP_SECRETS,
-          logger: log,
-        }),
-      );
+      memoryProviderMap.set(name, (options) => {
+        const key = `${name}\0${JSON.stringify(options ?? {})}`;
+        const cached = personalityMemory.get(key);
+        if (cached) return cached;
+        const built = Promise.resolve(
+          factory({
+            config: options ?? {},
+            dataDir,
+            secrets: config.secretsResolver ?? NOOP_SECRETS,
+            logger: log,
+          }),
+        );
+        // A build that fails is not cached — the next turn tries again.
+        built.catch(() => personalityMemory.delete(key));
+        personalityMemory.set(key, built);
+        return built;
+      });
     }
   }
+  disposers.push('per-personality memory providers', async () => {
+    const built = await Promise.allSettled(personalityMemory.values());
+    personalityMemory.clear();
+    const closes = await Promise.allSettled(
+      built.map((b) => (b.status === 'fulfilled' ? closeMemoryProvider(b.value) : undefined)),
+    );
+    const failed = closes.filter((c) => c.status === 'rejected');
+    if (failed.length > 0) {
+      throw new AggregateError(
+        failed.map((f) => f.reason),
+        `${failed.length} memory provider(s) failed to close`,
+      );
+    }
+  });
 
   registerBuiltinExtractors(documentExtractors);
 
@@ -953,6 +1008,11 @@ export async function buildAgentLoop(
   let meshProxyReconciler: MeshProxyReconciler | undefined;
   if (backgroundEnabled) {
     jobStore = new SQLiteJobStore(join(dataDir, 'jobs.db'));
+    // Lent to hosts as `CreateAgentLoopResult.jobStore` (gateway, Tasks tab);
+    // its lifetime is this loop's. Released after the executor and reconciler
+    // below (reverse order), so no worker writes to a closed handle.
+    const ownedJobStore = jobStore;
+    disposers.push('job store', () => ownedJobStore.close());
     // G2/G3/D7 — a background job's clarify routes to wherever a live human
     // is currently present (see `ClarifyBridge.resolveRouting`), falling back
     // to the job's own origin lane. That fallback needs to look the job up;
@@ -1105,6 +1165,13 @@ export async function buildAgentLoop(
       loop,
       runners: jobRunners,
       owner,
+      // F06 — who inherits this executor's queued rows when its loop is
+      // disposed. A bot's loop: any loop answering as the same bot — the
+      // replacement after a live bot edit, or the next boot's. A loop with no
+      // bot identity: only a successor in THIS process (desktop restart, a
+      // chat model switch) — `ethos chat`, `ethos serve` and `ethos gateway`'s
+      // system loop may share one jobs.db, and none may run another's jobs.
+      affinity: `${profile}:${opts.originBotKey ?? `pid-${process.pid}`}`,
       config: {
         maxConcurrentJobs: bg.maxConcurrentJobs,
         staleMs: bg.staleMs,
@@ -1124,6 +1191,12 @@ export async function buildAgentLoop(
       },
     });
     backgroundExecutor.start();
+    // Stops claiming, hands its queued rows on (`affinity` above), aborts every
+    // active run and awaits each one's unwind — a run finishes itself as
+    // `aborted` with `JOB_ABORTED_BY_SHUTDOWN` (`BackgroundExecutor.shutdown`,
+    // extensions/job-runner/src/index.ts).
+    const executor = backgroundExecutor;
+    disposers.push('background executor', () => executor.shutdown());
     if (interactionRouter) {
       // D17 — a run's remembered allowances die with the run. `onComplete`
       // fires on every terminal transition, which is exactly the boundary
@@ -1155,6 +1228,8 @@ export async function buildAgentLoop(
       log: (m) => log.info(`[mesh-reconciler] ${m}`),
     });
     meshProxyReconciler.start();
+    const reconciler = meshProxyReconciler;
+    disposers.push('mesh proxy reconciler', () => reconciler.stop());
   }
 
   // Delegation tools need the loop reference; register after loop creation.
@@ -1249,7 +1324,13 @@ export async function buildAgentLoop(
       });
     },
   });
+  // Lease-gated (GoalRunner.recoverOrphans → SQLiteGoalStore.interruptStale):
+  // interrupts only goals whose runner stopped heartbeating, so building this
+  // loop beside another live runner on the same goals.db leaves its goals alone.
   goalRunner.recoverOrphans();
+  // Registered after the goal store (compose-tools), so it runs BEFORE goals.db
+  // closes: in-flight goal runs are aborted and awaited, ending `interrupted`.
+  disposers.push('goal runner', () => goalRunner.shutdown());
   goalRunnerRef.runner = goalRunner;
 
   // Phase tool-cap P1 — fail-loud-at-boot validation.
@@ -1272,6 +1353,8 @@ export async function buildAgentLoop(
   let onMemoryCapturedFn:
     | ((cb: (n: { sessionId: string; scopeId: string; summary: string }) => void) => () => void)
     | undefined;
+  /** Present only when proactive capture is enabled — see `drain` below. */
+  let captureIdle: (() => Promise<void>) | undefined;
   if (config.memoryCapture?.enabled && (memoryName === 'markdown' || memoryName === 'vault')) {
     const captureConfig = config.memoryCapture;
     // Undecorated write provider + its own HistoryStore: the runner records
@@ -1344,15 +1427,13 @@ export async function buildAgentLoop(
     const captureTombstones = new TombstoneStore({ storage: wiringCtx.storage, dataDir });
     let capturePropose: ProposeFn | undefined;
     if (captureGated) {
-      const DAY_MS = 24 * 60 * 60 * 1000;
       const pending = new PendingMemoryStore({
         storage: wiringCtx.storage,
         dataDir,
         tombstones: captureTombstones,
-        ...(config.memoryApproval?.cap !== undefined ? { cap: config.memoryApproval.cap } : {}),
-        ...(config.memoryApproval?.ttlDays !== undefined
-          ? { ttlMs: config.memoryApproval.ttlDays * DAY_MS }
-          : {}),
+        // One derivation of cap + TTL, shared with the runtime gate and every
+        // out-of-loop queue (`approvalLimits`).
+        ...approvalLimits(config.memoryApproval),
         // Cap drops must be audible (Curator lesson, plan §3b) — same seam as
         // the build-infrastructure write path.
         observability: {
@@ -1406,6 +1487,11 @@ export async function buildAgentLoop(
     });
     captureRunner.registerHook(hooks);
     onMemoryCapturedFn = (cb) => captureRunner.onCaptured(cb);
+    // Capture runs AFTER the turn's stream closes: an LLM pass, then writes to
+    // memory / history / the pending queue. Both a stop and a `/model` switch
+    // wait for one already in flight rather than dropping it (F06).
+    captureIdle = () => captureRunner.whenIdle();
+    disposers.push('memory capture', () => captureRunner.whenIdle());
   }
 
   // Real-time voice stack. Null (a clean no-op) unless `config.voice.*` is
@@ -1424,9 +1510,19 @@ export async function buildAgentLoop(
     ...(opts.observability ? { observability: opts.observability } : {}),
     ...(opts.livekit ? { livekit: opts.livekit } : {}),
   });
+  if (voiceStack) disposers.push('voice stack', () => voiceStack.close());
 
   return {
     loop,
+    dispose: () => disposers.dispose(),
+    drain: async () => {
+      // Jobs first: a running job can start a goal run, never the reverse
+      // once the executor has stopped claiming.
+      await backgroundExecutor?.drain();
+      await goalRunner.whenIdle();
+      // Last: a capture queued by the turn that has just finished.
+      await captureIdle?.();
+    },
     toolRegistry: tools,
     // Lane 3(b) — the served window of the primary provider, exposed so
     // `ethos bench context` divides by the SAME denominator the schema-budget
@@ -1452,7 +1548,9 @@ export async function buildAgentLoop(
     ...(runCallCaptureFn ? { runCallCapture: runCallCaptureFn } : {}),
     notificationRouter,
     pluginLoader,
-    goalRunner,
+    // The runner above was built on THIS goalStore — the pair leaves together.
+    goals: { store: goalStore, executor: goalRunner },
+    memoryBundle,
     ...(jobStore ? { jobStore } : {}),
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
     ...(jobRunnerRegistry ? { jobRunners: jobRunnerRegistry } : {}),

@@ -76,6 +76,13 @@ const ETHOS_VERSION =
 const USAGE =
   'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | memory | acp | batch | bench | eval | evolve | learn | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
 
+// Declared here, not beside getBootCliRegistry() below, because dispatch runs at
+// module top level: the `default` branch calls getBootCliRegistry() while a `let`
+// further down the file is still in its temporal dead zone, so every unknown
+// command printed a ReferenceError instead of the usage text. Pinned by
+// apps/ethos/src/__tests__/unknown-command.test.ts.
+let _bootCliRegistry: CliSubcommandRegistry | null = null;
+
 const args = process.argv.slice(2);
 const command = args[0] ?? '';
 const inferredChatFromQueryFlag =
@@ -601,50 +608,10 @@ try {
         }
         mem.close();
       } else {
-        const { createMemoryProvider } = await import('@ethosagent/wiring');
-        const { ethosDir: getDir } = await import('@ethosagent/config');
-        const mem = createMemoryProvider({ dataDir: getDir(), storage: getStorage() });
-        const personalityId = config?.personality ?? 'default';
-        const cliCtx = {
-          scopeId: `personality:${personalityId}`,
-          sessionId: '',
-          sessionKey: 'cli',
-          platform: 'cli',
-          workingDir: process.cwd(),
-        };
-
-        if (sub === 'show' || sub === '') {
-          const result = await mem.prefetch(cliCtx);
-          if (jsonMode) {
-            writeJson({
-              entries: result
-                ? result.entries.map((e) => ({ key: e.key, content: e.content.trim() }))
-                : [],
-            });
-            break;
-          }
-          if (result && result.entries.length > 0) {
-            console.log(result.entries.map((e) => e.content.trim()).join('\n\n'));
-          } else {
-            console.log('No memory yet.');
-          }
-        } else if (sub === 'add') {
-          const text = args.slice(2).join(' ');
-          if (!text) {
-            console.error('Usage: ethos memory add "<text>"');
-            process.exit(1);
-          }
-          await mem.sync([{ action: 'add', key: 'MEMORY.md', content: text }], cliCtx);
-          console.log('Added to memory.');
-        } else if (sub === 'clear') {
-          await mem.sync([{ action: 'replace', key: 'MEMORY.md', content: '' }], cliCtx);
-          console.log('Memory cleared.');
-        } else {
-          console.log(
-            'Usage: ethos memory [show | add "<text>" | clear | history | restore <slug> | ' +
-              'supersede <slug> --by <slug> | retract <slug>]',
-          );
-        }
+        // Markdown at ~/.ethos, or the vault under `memory: vault` — the files
+        // the agent reads (commands/memory-file.ts).
+        const { runMemoryFileCommand } = await import('./commands/memory-file');
+        await runMemoryFileCommand(sub, args, config, jsonMode);
       }
       break;
     }
@@ -1317,11 +1284,15 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
   let boundary: import('@ethosagent/personalities').CharacterSheetBoundary | undefined;
   let renderers: string[] | undefined;
   let loopConstructed = false;
+  let releaseLoop: (() => Promise<void>) | undefined;
   try {
     if (cfg) {
       const { createAgentLoop } = await import('./wiring');
+      const { releaseCommandRuntime } = await import('./lib/release-command-runtime');
       const result = await createAgentLoop(cfg);
       loopConstructed = true;
+      releaseLoop = () =>
+        releaseCommandRuntime(result, { label: 'character sheet agent loop', drainMs: 0 });
       // Lane G (tools-as-code-api) — the script-callable surface, computed by
       // the SAME derivation the ScriptToolBridge enforces. Fail-soft with the
       // rest of this block: no loop → no line.
@@ -1372,9 +1343,12 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
     )}`,
   );
 
-  // Loop construction can leave live handles (MCP children, background
-  // executors); the sheet is printed and flushed, so exit explicitly (same
-  // posture as `ethos bench context`).
+  // Loop construction leaves live handles (MCP children, background executors,
+  // SQLite); release them (G4) and then still exit explicitly, because anything
+  // the bounded release left behind holds the process open (same posture as
+  // `ethos bench context`). Nothing was dispatched here, so there is nothing to
+  // drain — `drainMs: 0`.
+  await releaseLoop?.();
   if (loopConstructed) process.exit(process.exitCode ?? 0);
 }
 
@@ -1545,8 +1519,6 @@ function parseCliFlags(argv: string[]): Record<string, string> {
   }
   return out;
 }
-
-let _bootCliRegistry: CliSubcommandRegistry | null = null;
 
 async function getBootCliRegistry(): Promise<CliSubcommandRegistry> {
   if (_bootCliRegistry) return _bootCliRegistry;

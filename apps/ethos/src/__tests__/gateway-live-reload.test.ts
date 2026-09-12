@@ -270,6 +270,18 @@ describe('boot.ts reconciler wiring (source assertions)', () => {
     expect(src).not.toMatch(/plan\.removed, \.\.\.plan\.changed/);
   });
 
+  // F06 follow-up — a swap disposes the outgoing loop, and the jobs that
+  // disposal interrupts finish after the gateway stopped listening to that
+  // executor. Only the store sweep sees them, so a swap runs it.
+  it('runs the undelivered-jobs sweep after a bot swap', async () => {
+    const src = await read();
+    const swap = src.slice(src.indexOf('const changeBotLive = async'));
+    expect(swap.slice(0, swap.indexOf('\n  };\n'))).toMatch(
+      /afterSwap: \(\) => sweepInterruptedJobs\(id\)/,
+    );
+    expect(src).toMatch(/gateway\.sweepUndeliveredJobs\(\)/);
+  });
+
   it('marks a unit applied only after its own reconcile returned', async () => {
     const src = await read();
     // The old shape assigned one whole-config snapshot before applying
@@ -415,7 +427,12 @@ describe('boot.ts reconciler wiring (source assertions)', () => {
     expect(src).toMatch(/createReloadRunner\(reloadConfig,/);
     const at = src.indexOf("await guard('config-reload'");
     expect(at).toBeGreaterThan(0);
-    expect(src.slice(at, at + 200)).toContain('await configReloadRunner.stop()');
+    // Awaited — through `disposeBeforeExit`, which bounds it (F06): a reconcile
+    // retiring a bot disposes that bot's loop, and shutdown must not wait on
+    // it forever.
+    const step = src.slice(at, at + 600);
+    expect(step).toContain('await disposeBeforeExit(');
+    expect(step).toContain('() => configReloadRunner.stop()');
     // …and it runs BEFORE every step that tears down a reload-managed resource.
     expect(at).toBeLessThan(src.indexOf("'web-server',"));
     expect(at).toBeLessThan(src.indexOf("await guard('adapters'"));

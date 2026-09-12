@@ -302,6 +302,19 @@ export interface PersonalityToolsConfig {
    * namespace from `youtube` above, which is an API key, not an RSA identity.
    */
   search_console?: { secret?: string };
+  /**
+   * Any other binding key: a secret NAME and nothing else. `parseToolsYaml`
+   * PRESERVES a key none of the typed fields above claims rather than dropping
+   * it, so a `tools.yaml` written by a newer build — or by a plugin's tool —
+   * survives a read-modify-write by an older one.
+   *
+   * This package sits in the Extensions layer (ARCHITECTURE.md §II) and cannot
+   * see the tool registry, so it cannot tell an unclaimed key from one this
+   * build simply does not know about. The boundary that CAN is where the
+   * refusal lives: `ToolSettingsService.setDefault` / `setForPersonality`
+   * (apps/web-api) throws on a key no registered tool claims.
+   */
+  [key: string]: { provider?: string; secret?: string; recency?: string } | undefined;
 }
 
 const RECENCY_SHAPE = /^\d{1,4}[dwmy]$/;
@@ -324,14 +337,15 @@ function normalizeRecency(value: string): string | null {
 }
 
 /**
- * Every binding key `tools.yaml` (and the global `toolSettings` fallback slot)
- * can carry. This tuple is the SOLE gate on the read side — `isToolsYamlKey`
- * below is called from `parseToolsYaml`, so a key absent from it is silently
- * dropped on parse — which makes it the single source of truth for the write
- * side too. Exported so `apps/web-api`'s tool-settings service and config
- * repository derive their roster from it instead of hand-maintaining literals
- * that go stale the next time a tool is added (plan/phases/search-console.md
- * D23). Every key but `web_search` carries a secret NAME and nothing else.
+ * The binding keys with a NAMED field on `PersonalityToolsConfig` — the typed
+ * roster, not a gate. `parseToolsYaml` preserves a key outside it and
+ * `renderToolsYaml` re-emits it, because the real key space is whatever
+ * `settingsKey ?? name` the registered tools declare and this layer cannot see
+ * the registry (plan/phases/tool-credential-surface.md D6/D7). What the tuple
+ * still buys: `web_search`'s three-field shape stays distinct from a bare
+ * `{secret}`, and `renderToolsYaml` emits these first, in this order, so an
+ * existing file's byte layout does not shuffle when an unknown key joins it.
+ * Every key but `web_search` carries a secret NAME and nothing else.
  */
 export const TOOLS_YAML_KEYS = [
   'web_search',
@@ -342,9 +356,15 @@ export const TOOLS_YAML_KEYS = [
 ] as const;
 export type ToolsYamlKey = (typeof TOOLS_YAML_KEYS)[number];
 
-function isToolsYamlKey(k: string): k is ToolsYamlKey {
-  return (TOOLS_YAML_KEYS as readonly string[]).includes(k);
-}
+/** The typed roster minus `web_search` — the keys whose only field is a secret
+ *  NAME, in declaration order. Render emits these before preserved keys. */
+const SECRET_ONLY_YAML_KEYS: readonly string[] = TOOLS_YAML_KEYS.filter((k) => k !== 'web_search');
+
+/** Object keys reserved by the JS object model. A `tools.yaml` line naming one
+ *  would set the parsed object's PROTOTYPE rather than a binding, so it is
+ *  skipped on both sides. Twin of `RESERVED_KEYS` in web-api's tool-settings
+ *  service, which guards the same hazard on the slot id. */
+const RESERVED_YAML_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function parseInlineToolMap(s: string): Record<string, string> {
   const inner = s.replace(/^\{/, '').replace(/\}$/, '').trim();
@@ -375,15 +395,20 @@ function parseInlineToolMap(s: string): Record<string, string> {
  *   web_search:
  *     provider: exa
  *     secret: exa-main
+ *
+ * A key outside `TOOLS_YAML_KEYS` is PRESERVED as a `{secret}` binding, not
+ * dropped: this layer cannot see the tool registry, and a parser that discards
+ * what it cannot validate makes an older build delete a newer build's file
+ * (D7). The write boundary refuses an unclaimed key instead.
  */
 export function parseToolsYaml(src: string): PersonalityToolsConfig {
   const out: PersonalityToolsConfig = {};
   const lines = src.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
-    const m = line.match(/^(\w+):\s*(.*)$/);
+    const m = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
     const tool = m?.[1];
-    if (!m || !tool || !isToolsYamlKey(tool)) continue;
+    if (!m || !tool || RESERVED_YAML_KEYS.has(tool)) continue;
     const rest = (m[2] ?? '').trim();
     let entry: Record<string, string> = {};
     if (rest.startsWith('{')) {
@@ -412,20 +437,10 @@ export function parseToolsYaml(src: string): PersonalityToolsConfig {
     // provider without its intended key must not silently fall back to a
     // different (default) key.
     if (entry.secret && !isValidSecretName(entry.secret)) continue;
-    if (tool === 'x_search') {
-      if (entry.secret) out.x_search = { secret: entry.secret };
-      continue;
-    }
-    if (tool === 'engine_ask') {
-      if (entry.secret) out.engine_ask = { secret: entry.secret };
-      continue;
-    }
-    if (tool === 'youtube') {
-      if (entry.secret) out.youtube = { secret: entry.secret };
-      continue;
-    }
-    if (tool === 'search_console') {
-      if (entry.secret) out.search_console = { secret: entry.secret };
+    if (tool !== 'web_search') {
+      // Every other key — the four typed secret-only roster keys and any key
+      // this build does not know — carries a secret NAME and nothing else.
+      if (entry.secret) out[tool] = { secret: entry.secret };
       continue;
     }
     const ws: NonNullable<PersonalityToolsConfig['web_search']> = {};
@@ -461,6 +476,10 @@ export function parseToolsYaml(src: string): PersonalityToolsConfig {
  * Render a `PersonalityToolsConfig` back to the inline flow-map form
  * `parseToolsYaml` reads. Only fields that are set are emitted; a config with
  * no meaningful binding renders to `''` (caller removes the file).
+ *
+ * Order is stable: `web_search`, then the typed secret-only roster in
+ * `TOOLS_YAML_KEYS` order, then every preserved key sorted. So adding a key the
+ * typed roster does not claim appends a line rather than reshuffling the file.
  */
 export function renderToolsYaml(config: PersonalityToolsConfig): string {
   const lines: string[] = [];
@@ -472,11 +491,17 @@ export function renderToolsYaml(config: PersonalityToolsConfig): string {
     if (ws.recency) parts.push(`recency: ${ws.recency}`);
     if (parts.length > 0) lines.push(`web_search: { ${parts.join(', ')} }`);
   }
-  if (config.x_search?.secret) lines.push(`x_search: { secret: ${config.x_search.secret} }`);
-  if (config.engine_ask?.secret) lines.push(`engine_ask: { secret: ${config.engine_ask.secret} }`);
-  if (config.youtube?.secret) lines.push(`youtube: { secret: ${config.youtube.secret} }`);
-  if (config.search_console?.secret) {
-    lines.push(`search_console: { secret: ${config.search_console.secret} }`);
+  const preserved = Object.keys(config)
+    .filter((k) => k !== 'web_search' && !SECRET_ONLY_YAML_KEYS.includes(k))
+    .sort();
+  for (const key of [...SECRET_ONLY_YAML_KEYS, ...preserved]) {
+    const secret = config[key]?.secret;
+    // The key is emitted only when it matches the shared secret-name shape, so
+    // a key from a hand-edited file cannot inject anything into the rendered
+    // yaml. Every key `parseToolsYaml` stores already satisfies it.
+    if (secret && isValidSecretName(key) && !RESERVED_YAML_KEYS.has(key)) {
+      lines.push(`${key}: { secret: ${secret} }`);
+    }
   }
   return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
 }
@@ -1894,16 +1919,18 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     let toolsConfig: PersonalityToolsConfig | undefined;
     if (toolsSrc) {
       const parsed = parseToolsYaml(toolsSrc);
-      // Roster-driven, NOT a hardcoded list: this guard was once a hand-written
+      // Key-count, NOT a roster: this guard was once a hand-written
       // `parsed.web_search || parsed.x_search || ...` chain, and `search_console`
       // was added to `TOOLS_YAML_KEYS` (and to parse/render) without being added
       // here — so a tools.yaml carrying only that binding parsed correctly and
-      // was then silently discarded. `parseToolsYaml` only sets a key when it
-      // holds a real field, so "any roster key present" IS "any binding at all".
-      // An empty parse stays `undefined` rather than `{}`: `getToolsConfig`
-      // documents undefined as "no bindings", and it is what the unsafe-secret
-      // tests below assert.
-      if (TOOLS_YAML_KEYS.some((key) => parsed[key])) {
+      // was then silently discarded. It was then roster-driven, which had the
+      // same failure one layer out: a preserved key outside the typed roster is
+      // a real binding and would have been dropped here after parse kept it.
+      // `parseToolsYaml` only sets a key when it holds a real field, so "any key
+      // present" IS "any binding at all". An empty parse stays `undefined`
+      // rather than `{}`: `getToolsConfig` documents undefined as "no bindings",
+      // and it is what the unsafe-secret tests below assert.
+      if (Object.keys(parsed).length > 0) {
         toolsConfig = parsed;
       }
     }

@@ -1,4 +1,5 @@
 import type { KeyValueStore, ToolContext } from '@ethosagent/types';
+import { ContextStore } from '../context-store';
 
 export interface InMemoryToolContextOptions {
   sessionId?: string;
@@ -40,9 +41,15 @@ class InMemoryKeyValueStore implements KeyValueStore {
 }
 
 export function makeTestToolContext(opts?: InMemoryToolContextOptions): ToolContext {
+  const sessionKey = opts?.sessionKey ?? 'cli:test';
   const ctx: ToolContext = {
     sessionId: opts?.sessionId ?? 'test-session',
-    sessionKey: opts?.sessionKey ?? 'cli:test',
+    sessionKey,
+    // A tool under test sees the contract the batch path builds (one store per
+    // "run", which here is one context) — otherwise a tool that uses
+    // get/setContext passes its tests and loses the accessors in production.
+    rootSessionKey: sessionKey,
+    ...new ContextStore().asContextMethods(),
     platform: opts?.platform ?? 'cli',
     workingDir: opts?.workingDir ?? '/tmp',
     personalityId: opts?.personalityId,

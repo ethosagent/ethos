@@ -11,7 +11,7 @@ import { createWebApi, WebTokenRepository } from '../../index';
 import { DOCUMENTS_UPLOAD_MAX_BYTES } from '../../routes/documents';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -47,7 +47,7 @@ describe('POST /documents/upload', () => {
     app = createWebApi({
       dataDir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry([
         {

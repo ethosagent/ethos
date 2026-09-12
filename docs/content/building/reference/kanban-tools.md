@@ -94,7 +94,7 @@ All tools live in the `kanban` toolset and cap output at 20 000 chars.
 
 | Tool | Args | Returns |
 |---|---|---|
-| `kanban_create` | `title, body?, assignee?, priority?, parents?, workspace_mode?, scheduled_for?, idempotency_key?` | `{ task_id, status }` |
+| `kanban_create` | `title, body?, assignee?, priority?, parents?, workspace_mode?, idempotency_key?` | `{ task_id, status }` |
 | `kanban_create_goal` | `title, description?, priority?, idempotency_key?` | `{ task_id, status }` — creates a top-level GOAL (assignee=null). Sugar around `kanban_create`; child sub-tasks are created via `kanban_create` with `parents=[goal_id]`. |
 | `kanban_list` | `assignee?, status?, parent_id?, q?, limit?` | array of task summaries (default 100, max 1000). `q` is an FTS5 query over title + body + comments. |
 | `kanban_show` | `task_id` | task + comments + last 10 runs + last 20 events |
@@ -102,7 +102,7 @@ All tools live in the `kanban` toolset and cap output at 20 000 chars.
 | `kanban_comment` | `task_id, body` | `{ comment_id }` |
 | `kanban_complete` | `task_id, summary` | updated task — ends current run, status=done |
 | `kanban_block` | `task_id, reason` | updated task — ends current run, status=blocked, reason recorded atomically as both run summary and comment |
-| `kanban_unblock` | `task_id` | updated task — `ready` if all parents are `done`; `todo` otherwise. Refuses to run if the task is not currently `blocked`. |
+| `kanban_unblock` | `task_id` | updated task — `ready` if every assigned parent is `done`; `todo` otherwise. Goal parents (no assignee) never gate, the same rule the dispatcher's promotion uses. Refuses to run if the task is not currently `blocked`. |
 | `kanban_heartbeat` | `task_id, note?` | bumps `last_heartbeat_at` on the open run |
 | `kanban_link` | `parent_id, child_id` | rejects cycles; idempotent on re-link |
 | `kanban_assign` | `task_id, assignee` | updated task; pass `null` to unassign |

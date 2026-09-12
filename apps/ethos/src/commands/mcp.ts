@@ -37,6 +37,7 @@ import {
 } from '@ethosagent/tools-mcp';
 import type { SecretsResolver } from '@ethosagent/types';
 import { writeJson } from '../json-output';
+import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
 import { buildPresetArgs, collectArgFlags } from './mcp-preset-args';
 
@@ -136,14 +137,38 @@ async function runServe(argv: string[]): Promise<void> {
     );
     process.exit(1);
   }
-  const { loop } = await createAgentLoop(config);
+  const runtime = await createAgentLoop(config);
   const sessionStore = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
   const server = new EthosMcpServer({
-    loop,
+    loop: runtime.loop,
     dataDir: ethosDir(),
     logger: mcpLogger,
     sessionStore,
   });
+
+  // `ethos mcp serve` runs until its client goes away, so the only shutdown it
+  // has is the signal. Memoised: a second Ctrl-C must not start a second
+  // teardown. Stop serving first, then release the loop, then close the
+  // sessions.db handle THIS command opened (the loop closes its own).
+  let shuttingDown: Promise<void> | null = null;
+  const shutdown = (): Promise<void> => {
+    shuttingDown ??= (async () => {
+      // Stop accepting work before draining it.
+      await server.close().catch((err: unknown) => {
+        process.stderr.write(
+          `[shutdown] mcp server: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      });
+      await releaseCommandRuntime(runtime, {
+        label: 'mcp agent loop',
+        also: [['mcp sessions.db', async () => sessionStore.close()]],
+      });
+      process.exit(0);
+    })();
+    return shuttingDown;
+  };
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
 
   if (useHttp) {
     await server.serveHttp({ port });

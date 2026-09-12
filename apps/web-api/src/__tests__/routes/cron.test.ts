@@ -12,7 +12,7 @@ import { createWebApi } from '../../index';
 import type { CronFireTrigger } from '../../routes/cron';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -37,7 +37,7 @@ describe('createWebApi — POST /cron/fire', () => {
     return createWebApi({
       dataDir,
       sessionStore,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop({ events: [{ type: 'done', text: 'hi', turnCount: 1 }] }),
       personalities: makeStubPersonalityRegistry([
         { id: 'engineer', name: 'Engineer' } as PersonalityConfig,

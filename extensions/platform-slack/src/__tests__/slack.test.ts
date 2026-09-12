@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { chunkText, reflowChunks, SlackAdapter } from '../index';
+import { stubSlackWebApi } from './stub-slack-web-api';
+
+stubSlackWebApi();
 
 describe('Slack chunkText', () => {
   it('returns single chunk within limit', () => {

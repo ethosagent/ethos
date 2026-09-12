@@ -10,6 +10,7 @@ import type {
   RunUpdateDigest,
   SteerSink,
 } from '@ethosagent/types';
+import { answerSuffix, JOB_ABORTED_BY_SHUTDOWN } from '@ethosagent/types';
 import { EthosJobRunner } from './ethos-job-runner';
 import { BoundedLogBuffer } from './log-buffer';
 import { capText, extractSummarySection, SUMMARY_RESULT_CAP } from './summary';
@@ -73,6 +74,17 @@ export interface BackgroundExecutorDeps {
   runners?: JobRunnerRegistry;
   /** This process's identity, stamped on claims. */
   owner: string;
+  /**
+   * F06 — which queued work this executor may inherit. On `shutdown()` its
+   * not-yet-started rows are handed back under this label
+   * (`JobStore.releaseQueued`), and an executor built with the SAME affinity —
+   * the replacement loop after a live bot edit, or the next boot's — adopts
+   * them (`claimNextQueued`'s `adopt`). Wiring derives it from the loop's
+   * profile and bot identity (packages/wiring/src/build-agent-loop.ts), so one
+   * bot's queued jobs never move to another bot. Absent: queued rows stay bound
+   * to `owner`, as before.
+   */
+  affinity?: string;
   config: BackgroundExecutorConfig;
   /** Optional log sink. Library code never touches console.* — use this or nothing. */
   log?: (msg: string) => void;
@@ -188,6 +200,16 @@ function nowLine(toolName: string, args: unknown): string {
  * absence, and wiring one up later is a change at the executor, not at every
  * runner.
  */
+/**
+ * The `error` on a run `shutdown()` aborted — the owning loop was disposed (a
+ * process stop, or a live bot edit replacing its loop). Distinct from a user's
+ * `task_cancel` ('cancelled by task_cancel'), so a surface can tell the origin
+ * chat the job was interrupted rather than stay silent as it does on a cancel.
+ * Defined in @ethosagent/types, where the job store's `listUndelivered` and the
+ * gateway compare against it too; re-exported here for existing importers.
+ */
+export { JOB_ABORTED_BY_SHUTDOWN };
+
 const NOOP_STEER_SINK: SteerSink = {
   push: () => false,
   drain: () => [],
@@ -228,6 +250,8 @@ export class BackgroundExecutor {
    *  gateway creating `/background` jobs) can stamp the same owner this executor
    *  claims by. */
   readonly owner: string;
+  /** The label queued rows are handed back under, and adopted by (`affinity`). */
+  private readonly releasedAs: string | undefined;
   private readonly config: BackgroundExecutorConfig;
   private readonly pollMs: number;
   private readonly log: ((msg: string) => void) | undefined;
@@ -256,9 +280,14 @@ export class BackgroundExecutor {
 
   private started = false;
   private shuttingDown = false;
+  /** Set by `drain()`: claim nothing more, hand queued rows on instead. */
+  private draining = false;
   /** Re-entrancy guard so overlapping claim triggers coalesce into one loop. */
   private claiming = false;
   private claimAgain = false;
+  /** The claim pass in progress — `shutdown()` lets it finish before it
+   *  snapshots the active runs, so a row claimed mid-shutdown is not missed. */
+  private claimInFlight: Promise<void> | undefined;
   private nudgeScheduled = false;
 
   private staleTimer: ReturnType<typeof setInterval> | undefined;
@@ -271,6 +300,7 @@ export class BackgroundExecutor {
     this.defaultRunner = new EthosJobRunner(deps.loop);
     this.runners = deps.runners;
     this.owner = deps.owner;
+    this.releasedAs = deps.affinity !== undefined ? `released:${deps.affinity}` : undefined;
     this.config = deps.config;
     this.pollMs = deps.config.pollMs ?? DEFAULT_POLL_MS;
     this.log = deps.log;
@@ -372,6 +402,35 @@ export class BackgroundExecutor {
     }
   }
 
+  /**
+   * F06 — retire this executor WITHOUT aborting anything, for a loop that has
+   * been REPLACED while its process lives on (the chat `/model` switch): claim
+   * nothing more, hand queued rows on to the successor (`affinity`) — now and
+   * on every later poll, so a row a running job spawns is not stranded behind
+   * it — and resolve once every running job has finished on its own. The
+   * caller disposes the loop afterwards (`shutdown()` then finds nothing to
+   * abort). A process stop uses `shutdown()` directly and does not wait.
+   * Pinned by `__tests__/executor.test.ts`.
+   */
+  async drain(): Promise<void> {
+    this.draining = true;
+    await this.claimInFlight;
+    await this.releaseQueuedRows();
+    while (this.activeRuns.size > 0) {
+      await Promise.allSettled([...this.activeRuns.values()]);
+    }
+  }
+
+  private async releaseQueuedRows(): Promise<void> {
+    if (!this.releasedAs || !this.store.releaseQueued) return;
+    try {
+      const moved = await this.store.releaseQueued(this.owner, this.releasedAs);
+      if (moved > 0) this.log?.(`handed ${moved} queued job(s) back as ${this.releasedAs}`);
+    } catch (err) {
+      this.log?.(`releaseQueued failed: ${errMsg(err)}`);
+    }
+  }
+
   /** Delete terminal rows older than the retention window. Never crashes the executor. */
   private async pruneRetention(retentionMs: number): Promise<void> {
     try {
@@ -397,9 +456,10 @@ export class BackgroundExecutor {
   }
 
   /**
-   * Graceful drain: stop timers, abort every active job's controller, and wait
-   * for the in-flight runs to unwind. Each aborted run finishes itself as
-   * ('aborted', 'process shutdown') via the shutdown terminal branch in runOne —
+   * Graceful drain: stop timers, hand the queued rows on (`affinity`), abort
+   * every active job's controller, and wait for the in-flight runs to unwind.
+   * Each aborted run finishes itself as ('aborted', `JOB_ABORTED_BY_SHUTDOWN`)
+   * via the shutdown terminal branch in runOne —
    * so shutdown does NOT call store.finish itself (a second finish on an
    * already-terminal row throws; runOne stays the single finish owner per job).
    */
@@ -414,6 +474,13 @@ export class BackgroundExecutor {
     this.pollTimer = undefined;
     this.nudgeTimer = undefined;
     this.retentionTimer = undefined;
+
+    // No claim pass may still be starting a run once the snapshot below is taken.
+    await this.claimInFlight;
+
+    // F06 — the queued rows this executor will now never start go to its
+    // successor (same `affinity`) instead of waiting out `expireQueued`.
+    await this.releaseQueuedRows();
 
     const runs = [...this.activeRuns.values()];
     for (const controller of this.activeControllers.values()) controller.abort();
@@ -487,24 +554,43 @@ export class BackgroundExecutor {
       return;
     }
     this.claiming = true;
+    const pass = this.claimRows();
+    this.claimInFlight = pass;
     try {
-      do {
-        this.claimAgain = false;
-        while (!this.shuttingDown && this.activeControllers.size < this.config.maxConcurrentJobs) {
-          let job: BackgroundJob | null;
-          try {
-            job = await this.store.claimNextQueued(this.owner);
-          } catch (err) {
-            this.log?.(`claimNextQueued failed: ${errMsg(err)}`);
-            break;
-          }
-          if (!job) break;
-          this.startRun(job);
-        }
-      } while (this.claimAgain && !this.shuttingDown);
+      await pass;
     } finally {
       this.claiming = false;
+      this.claimInFlight = undefined;
     }
+  }
+
+  private async claimRows(): Promise<void> {
+    // Draining: this executor starts nothing more; whatever was queued since
+    // the last pass goes to its successor instead.
+    if (this.draining) {
+      await this.releaseQueuedRows();
+      return;
+    }
+    do {
+      this.claimAgain = false;
+      while (
+        !this.shuttingDown &&
+        !this.draining &&
+        this.activeControllers.size < this.config.maxConcurrentJobs
+      ) {
+        let job: BackgroundJob | null;
+        try {
+          job = this.releasedAs
+            ? await this.store.claimNextQueued(this.owner, { adopt: this.releasedAs })
+            : await this.store.claimNextQueued(this.owner);
+        } catch (err) {
+          this.log?.(`claimNextQueued failed: ${errMsg(err)}`);
+          break;
+        }
+        if (!job) break;
+        this.startRun(job);
+      }
+    } while (this.claimAgain && !this.shuttingDown);
   }
 
   /** Register the job's controller synchronously, then run it detached. */
@@ -613,6 +699,7 @@ export class BackgroundExecutor {
       let spend = 0;
       let errorText: string | undefined;
       let costBreached = false;
+      let turnDone = false;
 
       const text = this.createTextSink(job.id);
       const logSink = this.createLogSink(job.id);
@@ -645,6 +732,15 @@ export class BackgroundExecutor {
         // `runner_log` rows instead of one write per line.
         appendLog: (stream, line) => logSink.appendLog(stream, line),
       })) {
+        // Cancel, cost cap, shutdown: stop here rather than drain (contrast
+        // `done` below). Past an abort AgentLoop starts no new tool work —
+        // agent-loop.ts re-checks the signal after each streamed step,
+        // `processTools` (agent-loop/stages/tool-processing.ts) refuses each
+        // call before its `before_tool_call` hooks (`rejectAbortedCall`), and
+        // `executeParallel` refuses before each dispatch — but a hook already
+        // parked when the abort lands (an approval waiting on a human) runs to
+        // its end first, and draining would wait on it for a job that was just
+        // told to stop.
         if (controller.signal.aborted) break;
 
         if (ev.type === 'text_delta') {
@@ -695,7 +791,21 @@ export class BackgroundExecutor {
         } else if (ev.type === 'error') {
           errorText = ev.error;
         } else if (ev.type === 'done') {
-          break;
+          // NOT `break`: the default runner hands back `AgentLoop.run()`, which
+          // yields `done` BEFORE its turn-end work (`maybeConsolidateAtTurnEnd`
+          // — the context engine's `onTurnComplete`, the memory flush,
+          // auto-compaction), and closing the generator skips it (F07). The
+          // iterator is drained; the job holds its slot until it ends. Pinned by
+          // `__tests__/turn-tail.test.ts`.
+          turnDone = true;
+          // A `returnDirect` tool result arrives only as `done.text`, after any
+          // preamble that streamed: `answerSuffix` (@ethosagent/types) is what
+          // the stream still owes the job's output.
+          const owed = answerSuffix(output, ev.text);
+          if (owed) {
+            output += owed;
+            await text.push(owed);
+          }
         }
         // Forward-compat: any other event type is a no-op.
       }
@@ -714,15 +824,22 @@ export class BackgroundExecutor {
       // whatever hasn't flushed yet. No crash-durability is built for this.
       await logSink.flush();
 
+      // A turn that yielded `done` with no `error` before it has its answer.
+      // A cancel or shutdown that lands while its turn-end tail drains (above)
+      // does not un-finish it — the answer is already complete, and calling it
+      // aborted would throw it away. The shutdown case is pinned by
+      // `__tests__/turn-tail.test.ts`; a cancel takes the same branch.
+      const answered = turnDone && !errorText;
+
       // Terminal transition, in priority order.
       if (costBreached) {
         await this.finishAndNotify(job.id, 'failed', {
           error: `exceeded max_cost_usd $${job.maxCostUsd} (spent $${spend.toFixed(4)})`,
         });
-      } else if (cancelled) {
+      } else if (cancelled && !answered) {
         await this.finishAndNotify(job.id, 'aborted', { error: 'cancelled by task_cancel' });
-      } else if (this.shuttingDown) {
-        await this.finishAndNotify(job.id, 'aborted', { error: 'process shutdown' });
+      } else if (this.shuttingDown && !answered) {
+        await this.finishAndNotify(job.id, 'aborted', { error: JOB_ABORTED_BY_SHUTDOWN });
       } else if (errorText) {
         await this.finishAndNotify(job.id, 'failed', { error: errorText });
       } else {
@@ -737,7 +854,7 @@ export class BackgroundExecutor {
       // the honest terminal state.
       try {
         if (this.shuttingDown) {
-          await this.finishAndNotify(job.id, 'aborted', { error: 'process shutdown' });
+          await this.finishAndNotify(job.id, 'aborted', { error: JOB_ABORTED_BY_SHUTDOWN });
         } else {
           await this.finishAndNotify(job.id, 'failed', { error: errMsg(err) });
         }

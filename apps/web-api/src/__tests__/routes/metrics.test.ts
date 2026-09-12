@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWebApi } from '../../index';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -36,7 +36,7 @@ describe('createWebApi — GET /metrics', () => {
     return createWebApi({
       dataDir,
       sessionStore,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop({ events: [{ type: 'done', text: 'hi', turnCount: 1 }] }),
       personalities: makeStubPersonalityRegistry([
         { id: 'engineer', name: 'Engineer' } as PersonalityConfig,

@@ -91,6 +91,15 @@ function createGoalCreate(store: GoalStore, onCreated?: (goalId: string) => void
         return errorResult('deadline must be a string', 'input_invalid');
       }
       try {
+        // ALWAYS the fallback today: nothing in the framework writes `userId`
+        // into the run's ContextStore (see packages/core/src/context-store.ts —
+        // the only `setContext` calls in the repo are tests and plugin tools).
+        // Deliberately left as a read rather than deleted: it is the seam real
+        // user scoping would use, and it must stay in step with web-api, which
+        // creates and lists goals under a hardcoded 'default-user'
+        // (apps/web-api/src/services/goals.service.ts). Writing a real id on
+        // this side alone would key new goals to an owner those reads never ask
+        // for.
         const userId = ctx.getContext?.('userId') ?? 'default-user';
         const goal = store.create({
           userId: typeof userId === 'string' ? userId : 'default-user',

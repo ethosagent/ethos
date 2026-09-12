@@ -1,5 +1,7 @@
 import { readConfig } from '@ethosagent/config';
+import { answerSuffix } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from '../cli-overrides';
+import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { getSecretsResolver, getStorage, resolveActiveLoop } from '../wiring';
 
 /**
@@ -39,7 +41,8 @@ export async function runZero(argv: string[], prompt: string): Promise<void> {
   }
 
   const withOverrides = await applyCliOverrides(config, cliFlags, storage);
-  const { loop, personalityId } = await resolveActiveLoop(withOverrides);
+  const runtime = await resolveActiveLoop(withOverrides);
+  const { loop, personalityId } = runtime;
 
   const noStream = argv.includes('--no-stream');
   // Parse --session from argv
@@ -55,15 +58,22 @@ export async function runZero(argv: string[], prompt: string): Promise<void> {
   }
 
   try {
+    let streamed = '';
     for await (const event of loop.run(fullPrompt, {
       sessionKey,
       personalityId,
     })) {
-      if (event.type === 'text_delta' && !noStream) {
-        process.stdout.write(event.text);
+      if (event.type === 'text_delta') {
+        streamed += event.text;
+        if (!noStream) process.stdout.write(event.text);
       }
-      if (event.type === 'done' && noStream) {
-        process.stdout.write(event.text);
+      // A `returnDirect` tool's answer arrives only as `done.text`, after any
+      // preamble that streamed: `answerSuffix` is what the stream still owes.
+      // Streaming prints just that; `--no-stream` prints the whole reply.
+      if (event.type === 'done') {
+        const owed = answerSuffix(streamed, event.text);
+        const out = noStream ? streamed + owed : owed;
+        if (out) process.stdout.write(out);
       }
       if (event.type === 'error') {
         process.stderr.write(`[${event.code}] ${event.error}\n`);
@@ -73,6 +83,8 @@ export async function runZero(argv: string[], prompt: string): Promise<void> {
   } catch (err) {
     process.stderr.write(`ethos -z: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
+  } finally {
+    await releaseCommandRuntime(runtime);
   }
 
   // Trailing newline for shell consumers

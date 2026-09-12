@@ -1,6 +1,8 @@
-import type { AgentEvent } from '@ethosagent/types';
+import type { AgentEvent, SessionStore } from '@ethosagent/types';
+import { ABORTED_TOOL_RESULT } from '../../tool-registry';
 import { coerceArgsToSchema, describeRepairedArgsFailure } from '../schema-coerce';
 import type { WatcherTap } from '../turn-context';
+import type { CompletedToolCall } from './stream-step';
 
 // §4 (profile-gated remainder) — presence check for a REPAIRED tool call's
 // required fields. A repair signals the model emitted malformed output, so a
@@ -69,4 +71,44 @@ export function* emitToolRejection(
     result: reason,
     error: reason,
   };
+}
+
+// A /stop can land while an EARLIER call in the batch is parked in its
+// before_tool_call hook (an approval prompt). processTools then refuses every
+// remaining call before its hook fires — no approval prompt after /stop — and
+// refuses a call whose own hook resolved after the abort before its tool_start.
+// The returned entry is the Prepped `{ rejected }` shape, so the call still gets
+// its is_error tool_result. Pinned by __tests__/abort-before-tool-dispatch.test.ts.
+export function* rejectAbortedCall(
+  observe: WatcherTap['observe'],
+  tc: CompletedToolCall,
+): Generator<AgentEvent, { toolCallId: string; name: string; args: unknown; rejected: string }> {
+  yield* emitToolRejection(observe, tc.toolCallId, tc.toolName, ABORTED_TOOL_RESULT);
+  const args = tc.args ?? {};
+  return { toolCallId: tc.toolCallId, name: tc.toolName, args, rejected: ABORTED_TOOL_RESULT };
+}
+
+// The turn was aborted after the response's tool_use blocks streamed but before
+// any of them was processed. streamStep has already persisted those blocks, so
+// each gets an is_error tool_result — the same contract a rejected call keeps —
+// and nothing else happens: no before_tool_call, no tool_start, no dispatch.
+// Called from the post-streamStep abort exit in AgentLoop.run (agent-loop.ts);
+// pinned by __tests__/abort-before-tool-dispatch.test.ts.
+export async function persistAbortedToolCalls(
+  session: SessionStore,
+  sessionId: string,
+  traceId: string | undefined,
+  calls: CompletedToolCall[],
+): Promise<void> {
+  for (const tc of calls) {
+    await session.appendMessage({
+      sessionId,
+      role: 'tool_result',
+      content: ABORTED_TOOL_RESULT,
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+      traceId,
+      isError: true,
+    });
+  }
 }

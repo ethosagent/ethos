@@ -157,7 +157,9 @@ describe('Gateway.notifyTracked', () => {
 
   it('requires an explicit botKey in a multi-bot deployment', async () => {
     const ledger = new SQLiteDeliveryLedger(':memory:');
-    const adapter = stubAdapter();
+    // Bot B's own adapter: a tracked send leaves through the named bot's
+    // adapter, never the platform's default (F08).
+    const adapter = Object.assign(stubAdapter(), { id: 'telegram:bot-b' });
     const gw = gatewayWith({
       ledger,
       adapters: new Map([['telegram', adapter]]),

@@ -81,8 +81,7 @@ import {
   MeshRouteResultSchema,
   MissedRunPolicySchema,
   ModelTierConfigSchema,
-  NamedSecretKindSchema,
-  NamedSecretProviderSchema,
+  NamedSecretProviderNameSchema,
   OnboardingStepSchema,
   PendingMemorySchema,
   PendingSkillSchema,
@@ -1363,6 +1362,13 @@ const ConfigGetOutput = z.object({
   /** Currently selected skin (one of the BUILTIN_SKINS names). */
   skin: z.string(),
   providers: z.array(ProviderEntrySchema),
+  /** Opaque token for the stored chain `providers` came from. `config.update`
+   *  requires it back with a `providers` list and refuses a stale one with
+   *  `CONFIG_CONFLICT` (409). */
+  providersVersion: z.string(),
+  /** What the provider-chain codec dropped out of config.yaml and why (a
+   *  `providers.<n>` index with no `provider` line loses the whole entry). */
+  providersNotices: z.array(z.string()),
   approvalMode: z.enum(['manual', 'smart', 'off']),
   verbosity: z.enum(['concise', 'balanced', 'verbose']),
   debugMode: z.boolean(),
@@ -1876,9 +1882,18 @@ const ConfigUpdateInput = z.object({
         model: z.string().optional(),
         apiKey: z.string().optional(),
         baseUrl: z.string().optional(),
+        /** Index in `config.get`'s `providers` the row was loaded from; the
+         *  server keeps that entry's key and provider-specific fields
+         *  (`overlayProviderRow`, apps/web-api config.service.ts). Absent for
+         *  a row added in the editor. */
+        sourceIndex: z.number().int().nonnegative().optional(),
       }),
     )
     .optional(),
+  /** `config.get`'s `providersVersion` the `providers` list was built from.
+   *  Required whenever `providers` is sent — `assertProviderRows`
+   *  (apps/web-api config.service.ts) refuses a list without it. */
+  providersVersion: z.string().optional(),
   approvalMode: z.enum(['manual', 'smart', 'off']).optional(),
   verbosity: z.enum(['concise', 'balanced', 'verbose']).optional(),
   debugMode: z.boolean().optional(),
@@ -4357,6 +4372,11 @@ const a2a = {
 // A named secret lives at `providers/<provider>/<name>` in the vault. The raw
 // value is written here and NEVER round-tripped back — `list` returns masked
 // previews only. A personality stores just the secret NAME (a reference).
+//
+// WHICH providers exist is not stated here: it is derived from the
+// `providers/<segment>/*` prefixes registered tools declare, and served by the
+// `providers` procedure below. The wire only asserts the SHAPE of a provider id
+// (plan/phases/tool-credential-surface.md D1).
 // ---------------------------------------------------------------------------
 
 const NamedSecretNameSchema = z
@@ -4365,21 +4385,46 @@ const NamedSecretNameSchema = z
   .regex(/^[a-zA-Z0-9_-]+$/);
 
 const NamedSecretViewSchema = z.object({
-  provider: NamedSecretProviderSchema,
+  provider: NamedSecretProviderNameSchema,
   name: z.string(),
   /** Masked preview (e.g. `…abc1`, or `<set>` / `<unset>`) — never the raw
    *  value, and never both ends of one. See `redactSecretValue`. */
   preview: z.string(),
-  kind: NamedSecretKindSchema,
+  /** The provider's first declared `secretKind`. Tool-declared, so open. */
+  kind: z.string(),
+});
+
+/** One row of the derived provider roster — a namespace an operator may type a
+ *  credential into, with the presentation the declaring tool supplied. */
+const NamedSecretProviderViewSchema = z.object({
+  provider: NamedSecretProviderNameSchema,
+  /** Every `secretKind` a tool declaring this provider binds. */
+  kinds: z.array(z.string()),
+  label: z.string(),
+  getKeyUrl: z.string().optional(),
+});
+
+/** A declaration that grants nothing manageable. Reported, never thrown — a
+ *  malformed capability prefix must not take down composition (D2, §11). */
+const NamedSecretProviderDiagnosticSchema = z.object({
+  toolName: z.string(),
+  declared: z.string(),
+  reason: z.string(),
 });
 
 /** @experimental */
 const namedSecrets = {
   list: oc.output(z.object({ secrets: z.array(NamedSecretViewSchema) })),
+  providers: oc.output(
+    z.object({
+      providers: z.array(NamedSecretProviderViewSchema),
+      diagnostics: z.array(NamedSecretProviderDiagnosticSchema),
+    }),
+  ),
   create: oc
     .input(
       z.object({
-        provider: NamedSecretProviderSchema,
+        provider: NamedSecretProviderNameSchema,
         name: NamedSecretNameSchema,
         // 8 KiB cap — real API keys are well under 1 KiB; the bound stops a
         // client from filling the vault dir with a giant value.
@@ -4388,10 +4433,10 @@ const namedSecrets = {
     )
     .output(z.object({ ok: z.literal(true), preview: z.string() })),
   delete: oc
-    .input(z.object({ provider: NamedSecretProviderSchema, name: NamedSecretNameSchema }))
+    .input(z.object({ provider: NamedSecretProviderNameSchema, name: NamedSecretNameSchema }))
     .output(z.object({ ok: z.literal(true) })),
   testKey: oc
-    .input(z.object({ provider: NamedSecretProviderSchema, name: NamedSecretNameSchema }))
+    .input(z.object({ provider: NamedSecretProviderNameSchema, name: NamedSecretNameSchema }))
     .output(
       z.object({
         ok: z.boolean(),
@@ -4494,7 +4539,14 @@ const ToolSettingsEnumFieldSchema = z.object({
   kind: z.literal('enum'),
   key: z.string(),
   label: z.string(),
-  options: z.array(z.object({ value: z.string(), label: z.string().optional() })),
+  options: z.array(
+    z.object({
+      value: z.string(),
+      label: z.string().optional(),
+      /** Where the operator gets a key for this option's provider. */
+      getKeyUrl: z.string().optional(),
+    }),
+  ),
   default: z.string().optional(),
   required: z.boolean().optional(),
 });
@@ -4505,6 +4557,13 @@ const ToolSettingsSecretBindingFieldSchema = z.object({
   secretKind: z.string(),
   required: z.boolean().optional(),
   helpText: z.string().optional(),
+  /** Presentation for the provider namespace this credential lives in, and the
+   *  tool's own default secret name. Mirrors `ToolSettingsSecretBindingField`
+   *  in `@ethosagent/types` — the hand-maintained mirror the derived roster
+   *  reads its labels through, so the two must change together (D4). */
+  providerLabel: z.string().optional(),
+  getKeyUrl: z.string().optional(),
+  defaultSecretName: z.string().optional(),
 });
 /** A static disclosure row — no key, so nothing round-trips through it. Mirrors
  *  `ToolSettingsInfoField` in `@ethosagent/types`; a tool that needs a
@@ -4555,6 +4614,26 @@ const toolSettings = {
   setForPersonality: oc
     .input(z.object({ personalityId: z.string().min(1), values: ToolSettingsValuesSchema }))
     .output(z.object({ ok: z.literal(true), storage: ToolStorageSchema })),
+  /**
+   * Read-only resolution probe: for each secret-bearing tool group in the
+   * personality's toolset, report the ref the tool's ladder would resolve,
+   * which rung supplied it, and whether a non-empty value is present — never
+   * the value itself (plan/phases/tool-credential-surface.md D9 / PR3).
+   */
+  probeCredentials: oc.input(z.object({ personalityId: z.string().min(1) })).output(
+    z.object({
+      credentials: z.array(
+        z.object({
+          key: z.string(),
+          toolNames: z.array(z.string()),
+          ref: z.string(),
+          rung: z.enum(['personality', 'global-personality', 'global-default', 'tool-default']),
+          present: z.boolean(),
+          origin: z.enum(['set-here', 'inherited', 'unset']),
+        }),
+      ),
+    }),
+  ),
 };
 
 // ---------------------------------------------------------------------------

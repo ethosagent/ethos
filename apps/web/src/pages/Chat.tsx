@@ -59,7 +59,7 @@ import { clearLastSessionId, setLastSessionId } from '../lib/lastSession';
 import { buildNewSessionPath } from '../lib/newSessionPicker';
 import { accentVars, personalityTheme } from '../lib/theme';
 import { buildTeamPath } from '../lib/workspaceRoutes';
-import { mostRecentSessionIdForPersonality } from '../lib/workspaceScope';
+import { mostRecentSessionIdForPersonality, shouldRestoreLastSession } from '../lib/workspaceScope';
 import { rpc } from '../rpc';
 
 // The chat surface — daily-driver tab in v0. Composition:
@@ -177,9 +177,17 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   // param to consume here anymore). It means "start fresh, don't restore the
   // last session below" — read early so both effects that follow can see it.
   const newSessionParam = searchParams.get('new');
+  // Remembers a New Session request after the consumer below strips `?new=1`
+  // from the URL. Without it the stripped, bare URL reads as "resume", and the
+  // restore effect sent New Session straight back to the old session. Set at
+  // mount (a picker switch remounts Chat) and by the consumer (picking the
+  // same agent, or the team pane's New Session, does not); cleared once a
+  // `?session=` arrives, so a later bare visit in this mount restores again.
+  const freshRequested = useRef(newSessionParam !== null);
 
   // Restore this agent's own last session on mount when the URL has neither
-  // `?session=` nor `?new=1`. Sourced from `sessions.list` (the same RPC and
+  // `?session=` nor `?new=1`, and no New Session request was consumed
+  // (`shouldRestoreLastSession`). Sourced from `sessions.list` (the same RPC and
   // cache ScopeNav's session block already fills), not localStorage: Chat
   // fully remounts on a personality switch (`key={personalityId}` on its
   // route wrapper in App.tsx), so this is one fresh, agent-scoped lookup per
@@ -190,7 +198,16 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   // inside useChat) because it interacts with routing.
   const recentSessionsQuery = useRecentSessions(20);
   useEffect(() => {
-    if (sessionParam || currentSessionId || newSessionParam) return;
+    if (
+      !shouldRestoreLastSession({
+        sessionParam,
+        currentSessionId,
+        newSessionParam,
+        freshRequested: freshRequested.current,
+      })
+    ) {
+      return;
+    }
     if (!recentSessionsQuery.data) return;
     const restored = mostRecentSessionIdForPersonality(
       recentSessionsQuery.data.items,
@@ -208,9 +225,12 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
 
   // Mirror every URL session change into localStorage so cross-agent chrome
   // (CommandPalette, StatusBar, the right drawer's SSE toasts) that isn't
-  // itself personality-scoped still finds "the session I was just in".
+  // itself personality-scoped still finds "the session I was just in". A
+  // session in the URL also ends any New Session request (`freshRequested`).
   useEffect(() => {
-    if (sessionParam) setLastSessionId(sessionParam);
+    if (!sessionParam) return;
+    setLastSessionId(sessionParam);
+    freshRequested.current = false;
   }, [sessionParam]);
 
   const initialMount = useRef(true);
@@ -229,10 +249,12 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   }, [sessionParam]);
 
   // Consume `?new=1`: force a fresh session instead of the restore above.
-  // The param is stripped either way so Back doesn't re-trigger it.
+  // The param is stripped so Back doesn't re-trigger it; `freshRequested`
+  // keeps the restore from firing on the bare URL that leaves behind.
   // biome-ignore lint/correctness/useExhaustiveDependencies: resetSession/clearLastSessionId are stable; deps intentionally key on the param only
   useEffect(() => {
     if (!newSessionParam) return;
+    freshRequested.current = true;
     resetSession();
     clearLastSessionId();
     const next = new URLSearchParams(searchParams);

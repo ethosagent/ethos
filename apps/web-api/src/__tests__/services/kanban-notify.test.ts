@@ -78,10 +78,10 @@ describe('KanbanService — assign + /notify', () => {
 
     expect(updated.assignee).toBe('engineer');
 
-    // Give the fire-and-forget notifyAssignee a moment to settle (file I/O + fetch)
-    await new Promise((r) => setTimeout(r, 100));
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // `notifyAssignee` is fire-and-forget (file I/O, then fetch), so wait for the
+    // call rather than a fixed 100ms — a fixed sleep lost the race under a
+    // parallel run.
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1), { timeout: 10_000 });
     const [url, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:9999/notify');
     expect(opts.method).toBe('POST');
@@ -122,9 +122,7 @@ describe('KanbanService — assign + /notify', () => {
       actor: 'human:test',
     });
 
-    await new Promise((r) => setTimeout(r, 100));
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1), { timeout: 10_000 });
     const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(opts.body as string);
     expect(body).toEqual({ kind: 'kanban', ref: task.id, mode: 'notify' });
@@ -162,9 +160,7 @@ describe('KanbanService — assign + /notify', () => {
       actor: 'human:test',
     });
 
-    await new Promise((r) => setTimeout(r, 100));
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1), { timeout: 10_000 });
     const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(opts.body as string);
     expect(body).toEqual({ kind: 'kanban', ref: task.id, mode: 'notify+wake' });
@@ -314,5 +310,46 @@ describe('KanbanService — assign + /notify', () => {
       { taskId: a.id, changedFields: ['assignee'] },
       { taskId: b.id, changedFields: ['assignee'] },
     ]);
+  });
+});
+
+// Onboarding binds the main loop after the web API (and this service) exist,
+// so ticket hooks are attached to the loop's registry at that point rather
+// than at construction — and detached again by the web API's dispose.
+describe('KanbanService.useHooks', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'kanban-usehooks-'));
+    writeFileSync(
+      join(dir, 'team-a.yaml'),
+      'name: team-a\ndescription: test\ndomain_capabilities: [x]\nmembers:\n  - personality: engineer\n',
+    );
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('fires ticket_updated into hooks attached after construction, and stops once detached', async () => {
+    mkdirSync(join(dir, 'team-a'), { recursive: true });
+    const store = new KanbanStore(join(dir, 'team-a', 'board.db'));
+    const a = store.createTask({ title: 'a' });
+    const b = store.createTask({ title: 'b' });
+    store.close();
+
+    const service = new KanbanService({ teamsDir: dir });
+    const hooks = new DefaultHookRegistry();
+    const updated: string[] = [];
+    hooks.registerVoid('ticket_updated', async (payload) => {
+      updated.push(payload.taskId);
+    });
+
+    const detach = service.useHooks(hooks);
+    await service.assign({ team: 'team-a', taskId: a.id, assignee: 'engineer', actor: 'human:t' });
+    detach();
+    await service.assign({ team: 'team-a', taskId: b.id, assignee: 'engineer', actor: 'human:t' });
+
+    expect(updated).toEqual([a.id]);
   });
 });

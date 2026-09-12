@@ -170,9 +170,64 @@ describe('TeamLoopRegistry.disposeAll', () => {
     await registry.loopFor('research');
     await registry.disposeAll();
     expect(disposed.sort()).toEqual(['marketing', 'research']);
-    // Forgotten: the next request builds afresh.
     expect(builds).toBe(2);
-    await registry.loopFor('marketing');
-    expect(builds).toBe(3);
+    // Terminal (F06): disposeAll is the owning surface's shutdown, so a
+    // request that arrives afterwards builds nothing to leak.
+    await expect(registry.loopFor('marketing')).rejects.toThrow(/after dispose/);
+    expect(builds).toBe(2);
+  });
+});
+
+// F06 follow-up — a lazy team-loop build that races the web API's dispose.
+describe('TeamLoopRegistry lifetime (F06)', () => {
+  it('disposes a freshly built handle whose onCreate throws, instead of losing it', async () => {
+    let disposed = 0;
+    const registry = new TeamLoopRegistry({
+      factory: async (teamName) => ({
+        loop: fakeLoop(teamName),
+        dispose: async () => {
+          disposed++;
+        },
+      }),
+      listTeams: async () => TEAMS,
+      onCreate: () => {
+        throw new Error('cannot register cleanup: this runtime is already disposed');
+      },
+    });
+    await expect(registry.loopFor('marketing')).rejects.toThrow(/already disposed/);
+    expect(disposed).toBe(1);
+  });
+
+  it('builds nothing once disposed', async () => {
+    const { registry, builds } = makeRegistry();
+    await registry.disposeAll();
+    await expect(registry.loopFor('marketing')).rejects.toThrow(/after dispose/);
+    expect(builds()).toBe(0);
+  });
+
+  it('disposes a build that was still in flight when disposeAll ran', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let disposed = 0;
+    const registry = new TeamLoopRegistry({
+      factory: async (teamName) => {
+        await gate;
+        return {
+          loop: fakeLoop(teamName),
+          dispose: async () => {
+            disposed++;
+          },
+        };
+      },
+      listTeams: async () => TEAMS,
+    });
+    const building = registry.loopFor('marketing');
+    const disposing = registry.disposeAll();
+    release?.();
+    await disposing;
+    await building.catch(() => {});
+    expect(disposed).toBe(1);
   });
 });

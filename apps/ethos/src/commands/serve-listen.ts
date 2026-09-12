@@ -90,6 +90,36 @@ export async function listenWithFallback(
   });
 }
 
+/**
+ * Close a listener for SHUTDOWN: stop accepting, then drop every connection
+ * still open. `server.close()` alone waits for them, and every web UI tab
+ * holds `GET /sse/system` open indefinitely — so a SIGTERM with a tab open
+ * never got past the close, and the runtime disposal behind it never ran.
+ * Callers settle suspended approvals and call `closeChat()` first (so the
+ * "not sent" notice for dropped queued messages is already on its way), then
+ * close their WebSocket lanes; after a `flushMs` pause for those writes,
+ * whatever is still open is cut off, which is what a stop means. Pinned by
+ * apps/ethos/src/commands/__tests__/serve-close-listener.test.ts and
+ * serve-shutdown-notice.test.ts.
+ */
+export const LISTENER_FLUSH_MS = 100;
+
+export async function closeListener(
+  server: ListenResult['server'],
+  flushMs: number = LISTENER_FLUSH_MS,
+): Promise<void> {
+  const closed = new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  });
+  // A moment for writes already queued on open streams — the "not sent"
+  // notice `closeChat()` just emitted — to leave before their sockets drop.
+  await new Promise<void>((resolve) => setTimeout(resolve, flushMs));
+  // Present on `http.Server` (Node >= 18.2); absent on the http2 variants
+  // `@hono/node-server` can also return, which Ethos never binds.
+  (server as { closeAllConnections?: () => void }).closeAllConnections?.();
+  await closed;
+}
+
 const c = {
   reset: '\x1b[0m',
   bold: '\x1b[1m',

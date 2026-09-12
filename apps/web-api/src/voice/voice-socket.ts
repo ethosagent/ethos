@@ -46,7 +46,8 @@ export interface VoiceSocketOptions {
    * ignored, which is the honest behaviour for a deployment with no agent
    * wired: the pipeline tier still works and nothing pretends to consult.
    */
-  realtime?: (laneId: string) => RealtimeControlLaneDeps;
+  /** Null refuses the control channel for this lane — the audio lane still opens. */
+  realtime?: (laneId: string) => RealtimeControlLaneDeps | null;
   /** Credential check for the upgrade request. Rejected → 401, no socket. */
   authenticate(req: IncomingMessage): Promise<boolean>;
   /** Extra Origins allowed beyond loopback. Same rule as the HTTP surface. */

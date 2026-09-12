@@ -7,6 +7,9 @@
 import type { AttachmentCache, InboundMessage } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SlackAdapter } from '../adapter';
+import { stubSlackWebApi } from './stub-slack-web-api';
+
+stubSlackWebApi();
 
 const DOWNLOAD_URL = 'https://files.slack.com/files-pri/T1-F1/photo.png';
 

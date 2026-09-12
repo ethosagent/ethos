@@ -2,6 +2,21 @@ import { createHash } from 'node:crypto';
 import type { Message, MessageContent, StoredMessage } from '@ethosagent/types';
 import { ghostSkillMarker, skillCallsFromHistory } from './ghost-skills';
 
+/**
+ * What a blank assistant turn replays as. Anthropic rejects an assistant
+ * message with empty (or whitespace-only) text anywhere but the final position,
+ * and a replayed row is never final — the next user message follows it. Used by
+ * {@link toLLMMessages} for a stored empty model reply, and by
+ * `persistReturnDirect` (./stages/return-direct.ts) as the answer to an empty
+ * returnDirect value. Pinned by __tests__/return-direct-history.test.ts.
+ *
+ * The same API rejects a whitespace-only text BLOCK, so blank text beside a
+ * tool_use is dropped rather than sent — here and in `streamStep`'s in-turn
+ * message (./stages/stream-step.ts). Such a message still has its tool_use, so
+ * it never needs this placeholder. Pinned by __tests__/blank-assistant-text.test.ts.
+ */
+export const EMPTY_ASSISTANT_TEXT = '(no output)';
+
 /** Options for {@link dedupHistory}. */
 export interface DedupOpts {
   /**
@@ -134,13 +149,19 @@ export function toLLMMessages(stored: StoredMessage[]): Message[] {
     } else if (msg.role === 'assistant') {
       if (msg.toolCalls && msg.toolCalls.length > 0) {
         const content: MessageContent[] = [];
-        if (msg.content) content.push({ type: 'text', text: msg.content });
+        // Blank text is never a block (see EMPTY_ASSISTANT_TEXT); tool_use follows.
+        if (msg.content.trim()) content.push({ type: 'text', text: msg.content });
         for (const tc of msg.toolCalls) {
           content.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
         }
         messages.push({ role: 'assistant', content });
       } else {
-        messages.push({ role: 'assistant', content: msg.content });
+        // A stored empty model reply is kept (it carries the call's usage) but
+        // never replayed blank — see EMPTY_ASSISTANT_TEXT.
+        messages.push({
+          role: 'assistant',
+          content: msg.content.trim() ? msg.content : EMPTY_ASSISTANT_TEXT,
+        });
       }
     } else if (msg.role === 'tool_result') {
       // Skip orphans whose tool_use pair was truncated off the window.

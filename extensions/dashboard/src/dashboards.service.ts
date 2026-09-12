@@ -274,6 +274,12 @@ export class DashboardsService {
     return this.db;
   }
 
+  /** Close the connection — and with it every `DashboardStore` sharing it via
+   *  `getDb()`. Called by the composition root that constructed this (F06). */
+  close(): void {
+    this.db.close();
+  }
+
   private createTables(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS dashboards (

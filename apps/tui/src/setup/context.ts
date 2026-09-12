@@ -1,3 +1,4 @@
+import type { ProviderConfig } from '@ethosagent/config';
 import { createContext, type Dispatch, useContext } from 'react';
 
 export type WizardMode = 'quick' | 'full';
@@ -40,7 +41,12 @@ export interface WizardAnswers {
   emailSmtpHost?: string;
   emailSmtpPort?: number;
   rotationKeys?: Array<{ apiKey: string; priority: number }>;
-  providers?: Array<{ provider: string; apiKey: string; model?: string; baseUrl?: string }>;
+  /** The `providers:` chain, as `@ethosagent/config` models it — `region`,
+   *  `awsProfile`, `apiVersion` and the unmodelled `passthrough` included. The
+   *  wizard edits provider / key / model / baseUrl and carries the rest
+   *  through; a narrower type here would let a future `.map()` drop a field
+   *  the operator set with `ethos fallback add` or by hand. */
+  providers?: ProviderConfig[];
   /** W2.5 three-way close outcome, set by LaunchStep:
    *   'gateway' → start the channel gateway; 'chat' → open CLI chat;
    *   'done' → exit. `undefined` until the launch step confirms. */

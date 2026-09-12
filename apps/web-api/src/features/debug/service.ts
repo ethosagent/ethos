@@ -1,5 +1,5 @@
 import type { AgentLoop } from '@ethosagent/core';
-import type { SessionStore } from '@ethosagent/types';
+import { isEthosError, type SessionStore } from '@ethosagent/types';
 
 export interface DebugServiceOptions {
   sessionStore: SessionStore;
@@ -31,14 +31,15 @@ export class DebugService {
     const debugSessionKey = `${input.mainSessionId}:debug`;
     const turnId = `debug-${Date.now()}`;
 
-    // Guard: stub agentLoop used during onboarding has no completeDirect
-    if (typeof this.agentLoop.completeDirect !== 'function') {
-      return {
-        sessionId: debugSessionKey,
-        turnId,
-        response: 'Setup required — complete onboarding first.',
-      };
-    }
+    const setupRequired = {
+      sessionId: debugSessionKey,
+      turnId,
+      response: 'Setup required — complete onboarding first.',
+    };
+    // A loop with no `completeDirect` at all (test stubs) — and, in the catch
+    // below, onboarding's stand-in, which has the method but throws
+    // NOT_CONFIGURED until the real loop is bound (lib/pending-loop.ts).
+    if (typeof this.agentLoop.completeDirect !== 'function') return setupRequired;
 
     // Load recent messages from the main session for context
     const recentMessages = await this.sessionStore.getMessages(input.mainSessionId, { limit: 20 });
@@ -80,6 +81,7 @@ export class DebugService {
         }
       }
     } catch (err) {
+      if (isEthosError(err) && err.code === 'NOT_CONFIGURED') return setupRequired;
       const msg = err instanceof Error ? err.message : String(err);
       return { sessionId: debugSessionKey, turnId, response: `Error: ${msg}` };
     } finally {

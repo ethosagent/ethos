@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { CreateBackgroundJobInput } from '@ethosagent/types';
+import { type CreateBackgroundJobInput, JOB_ABORTED_BY_SHUTDOWN } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SQLiteJobStore } from '../index';
 
@@ -699,6 +699,28 @@ describe('SQLiteJobStore', () => {
     store.close();
   });
 
+  // F06 follow-up — a job its runtime's shutdown interrupted is announceable
+  // (the origin chat is told to ask again); a user's cancel is not.
+  it('listUndelivered includes aborted-by-shutdown rows, and only those aborted rows', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const abortAs = async (error: string): Promise<string> => {
+      const job = await store.create(baseInput());
+      await store.claimNextQueued('proc-A');
+      await store.finish(job.id, 'aborted', { error });
+      return job.id;
+    };
+
+    const interrupted = await abortAs(JOB_ABORTED_BY_SHUTDOWN);
+    await abortAs('cancelled by task_cancel');
+
+    const rows = await store.listUndelivered(['bot-1']);
+    expect(rows.map((r) => r.id)).toEqual([interrupted]);
+    // The same one-shot claim as a completion.
+    expect(await store.claimDelivery(interrupted)).toBe(true);
+    expect(await store.listUndelivered(['bot-1'])).toHaveLength(0);
+    store.close();
+  });
+
   it('claimDelivery is won exactly once, and a released claim is reclaimable', async () => {
     const store = new SQLiteJobStore(':memory:');
     const job = await store.create(baseInput());
@@ -986,5 +1008,41 @@ describe('SQLiteJobStore — durability posture', () => {
     // Asserted against the opened database, not the source text.
     expect(syncPragma(store)).toBe(2);
     store.close();
+  });
+});
+
+// F06 follow-up — an executor that shuts down (process exit, or a live bot
+// swap disposing the old loop) used to strand its QUEUED rows: claims match
+// `owner` exactly, the owner string is unique per executor instance, so no
+// other executor ever claimed them and they sat until `expireQueued`.
+describe('SQLiteJobStore — handing queued rows back (F06)', () => {
+  it('releaseQueued re-labels only the owner’s not-yet-started rows', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const running = await store.create(baseInput({ owner: 'exec-A' }));
+    await store.claimNextQueued('exec-A'); // the oldest row starts running
+    const queued = await store.create(baseInput({ owner: 'exec-A' }));
+    const other = await store.create(baseInput({ owner: 'exec-B' }));
+
+    const released = await store.releaseQueued('exec-A', 'released:cli:bot-1');
+
+    expect(released).toBe(1);
+    const rows = await Promise.all([queued, running, other].map((j) => store.get(j.id)));
+    const byStatus = rows.map((r) => `${r?.status}:${r?.owner}`).sort();
+    expect(byStatus).toEqual(['queued:exec-B', 'queued:released:cli:bot-1', 'running:exec-A']);
+  });
+
+  it('a successor adopts released rows, re-stamping them as its own', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const job = await store.create(baseInput({ owner: 'exec-A' }));
+    await store.releaseQueued('exec-A', 'released:cli:bot-1');
+
+    // Without the matching label it is not this executor's to take…
+    expect(await store.claimNextQueued('exec-B')).toBeNull();
+    expect(await store.claimNextQueued('exec-B', { adopt: 'released:cli:other' })).toBeNull();
+    // …with it, it is.
+    const claimed = await store.claimNextQueued('exec-B', { adopt: 'released:cli:bot-1' });
+    expect(claimed?.id).toBe(job.id);
+    expect(claimed?.status).toBe('running');
+    expect(claimed?.owner).toBe('exec-B');
   });
 });

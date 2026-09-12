@@ -126,11 +126,19 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
           key: 'provider',
           label: 'Provider',
           options: [
-            { value: 'exa', label: 'Exa' },
-            { value: 'tavily', label: 'Tavily' },
-            { value: 'brave', label: 'Brave' },
+            { value: 'exa', label: 'Exa', getKeyUrl: 'https://exa.ai/' },
+            { value: 'tavily', label: 'Tavily', getKeyUrl: 'https://tavily.com/' },
+            {
+              value: 'brave',
+              label: 'Brave Search',
+              getKeyUrl: 'https://brave.com/search/api/',
+            },
           ],
         },
+        // One binding covers three provider namespaces (exa / tavily / brave).
+        // Per-provider presentation (label, getKeyUrl) lives on the enum
+        // options above — a single `providerLabel` / `getKeyUrl` here could
+        // not name three places to get a key.
         {
           kind: 'secret-binding',
           key: 'secret',

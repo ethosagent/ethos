@@ -108,6 +108,7 @@ export function useToolSettingsSetDefault() {
       rpc.toolSettings.setDefault({ values }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: toolSettingsKeys.default() });
+      qc.invalidateQueries({ queryKey: toolSettingsKeys.all() });
       notification.success({ message: 'Defaults saved', placement: 'topRight' });
     },
     onError: (err) =>
@@ -124,6 +125,7 @@ export function useToolSettingsSetForPersonality(personalityId: string) {
       rpc.toolSettings.setForPersonality({ personalityId, values }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: toolSettingsKeys.forPersonality(personalityId) });
+      qc.invalidateQueries({ queryKey: toolSettingsKeys.probeCredentials(personalityId) });
       notification.success({ message: 'Tool settings saved', placement: 'topRight' });
     },
     onError: (err) =>

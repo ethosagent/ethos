@@ -68,13 +68,24 @@ export function restartBackend(port: number): void {
   }
 }
 
-export function stopBackend(): void {
+/**
+ * Stop the in-process server and wait for it.
+ *
+ * Awaitable on purpose, and the only stop the quit path has: the previous
+ * fire-and-forget `stopBackend()` returned immediately, so the process went away
+ * while the web api, the agent loop and their SQLite handles were still
+ * disposing — and because `stopServer` clears its runtime handle synchronously,
+ * a caller that fired it could not be waited on afterwards either. Never throws:
+ * a failed disposal must not keep the app alive. Pinned by
+ * __tests__/quit-shutdown.test.ts.
+ */
+export async function stopBackendAsync(): Promise<void> {
   serverRunning = false;
   if (restartTimer) {
     clearTimeout(restartTimer);
     restartTimer = null;
   }
-  stopServer().catch((err: unknown) => {
+  await stopServer().catch((err: unknown) => {
     logBackendError(
       `[ethos-backend] error stopping server: ${err instanceof Error ? err.message : String(err)}\n`,
     );
@@ -118,7 +129,15 @@ export async function restartBackendAsync(port: number): Promise<number> {
     restartTimer = null;
   }
   serverRunning = false;
-  await stopServer();
+  // `stopServer` rejects when a disposal step fails or runs past its bound
+  // (`shutdownDesktopRuntime`); the old runtime is already stopped as far as
+  // it can be, so report it and still start the new backend — the same thing
+  // `restartBackend` does. Pinned by __tests__/backend.test.ts.
+  await stopServer().catch((err: unknown) => {
+    logBackendError(
+      `[ethos-backend] error stopping server on restart: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+  });
   await new Promise((r) => setTimeout(r, 300));
   return startBackendAsync(port);
 }

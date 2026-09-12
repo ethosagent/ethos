@@ -18,6 +18,7 @@ import {
 } from '@ethosagent/personality-judge';
 import { draftExpressionUpdate } from '@ethosagent/skill-evolver';
 import { formatError, toEthosError } from '@ethosagent/types';
+import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createLLM, getStorage } from '../wiring';
 
 async function confirm(question: string): Promise<boolean> {
@@ -134,21 +135,31 @@ export async function buildEvidenceDigest(
 
 // Build an EvalRunner the Judge can drive: real AgentLoop, LLM judge scorer,
 // run history written under the personality's .judge-history/runs/.
-export async function buildJudgeRunner(config: EthosConfig, id: string): Promise<EvalRunner> {
+export async function buildJudgeRunner(
+  config: EthosConfig,
+  id: string,
+): Promise<{ runner: EvalRunner; release: () => Promise<void> }> {
   const { ethosDir } = await import('@ethosagent/config');
   const { join } = await import('node:path');
   const storage = getStorage();
   const runsDir = join(ethosDir(), 'personalities', id, '.judge-history', 'runs');
   await storage.mkdir(runsDir);
-  const { loop } = await createAgentLoop(config);
+  const runtime = await createAgentLoop(config);
   const llm = await createLLM(config);
-  return new EvalRunner(loop, {
+  const runner = new EvalRunner(runtime.loop, {
     concurrency: 4,
     outputPath: join(runsDir, `${Date.now()}.jsonl`),
     defaultScorer: 'llm',
     llmProvider: llm,
     storage,
   });
+  // The judge builds a whole agent loop to score with. `release` is the caller's
+  // obligation, not a nicety: without it every `ethos personality judge` and
+  // every nightly scoring pass exits on live SQLite handles (G4).
+  return {
+    runner,
+    release: () => releaseCommandRuntime(runtime, { label: 'judge agent loop' }),
+  };
 }
 
 function judgeStatePath(ethosDir: string, id: string, join: (...p: string[]) => string): string {
@@ -239,7 +250,7 @@ export async function runPersonalityJudge(argv: string[]): Promise<void> {
     }
 
     const priorLowStreak = await readJudgeStreak(id);
-    const runner = await buildJudgeRunner(config, id);
+    const { runner, release } = await buildJudgeRunner(config, id);
     const judge = described.config.nightly?.judge;
     const outcome = await scorePersonality({
       personalityId: id,
@@ -252,7 +263,7 @@ export async function runPersonalityJudge(argv: string[]): Promise<void> {
       priorLowStreak,
       runner,
       activation: { minInteractions: judge?.minInteractions ?? 20, minElapsedHours: 12 },
-    });
+    }).finally(release);
 
     if (recent.scopedNote) console.log(recent.scopedNote);
 
@@ -339,7 +350,7 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
       if (scopedNote) console.log(scopedNote);
 
       const priorLowStreak = await readJudgeStreak(id);
-      const runner = await buildJudgeRunner(config, id);
+      const { runner, release } = await buildJudgeRunner(config, id);
       const judge = described.config.nightly?.judge;
       const outcome = await scorePersonality({
         personalityId: id,
@@ -352,7 +363,7 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
         priorLowStreak,
         runner,
         activation: { minInteractions: judge?.minInteractions ?? 20, minElapsedHours: 12 },
-      });
+      }).finally(release);
 
       if (outcome.kind === 'insufficient_data') {
         console.log(`Not enough data to judge: ${outcome.reason}`);

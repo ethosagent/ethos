@@ -1,12 +1,13 @@
 import type { AgentLoop } from '@ethosagent/core';
 import { BackgroundExecutor } from '@ethosagent/job-runner';
-import type {
-  BackgroundJob,
-  BackgroundJobEventType,
-  CreateBackgroundJobInput,
-  InboundMessage,
-  JobStore,
-  PlatformAdapter,
+import {
+  type BackgroundJob,
+  type BackgroundJobEventType,
+  type CreateBackgroundJobInput,
+  type InboundMessage,
+  JOB_ABORTED_BY_SHUTDOWN,
+  type JobStore,
+  type PlatformAdapter,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import { Gateway } from '../index';
@@ -161,7 +162,9 @@ class FakeJobStore implements JobStore {
   async listUndelivered(originBotKeys: string[]): Promise<BackgroundJob[]> {
     return [...this.jobs.values()].filter(
       (j) =>
-        (j.status === 'done' || j.status === 'failed') &&
+        (j.status === 'done' ||
+          j.status === 'failed' ||
+          (j.status === 'aborted' && j.error === JOB_ABORTED_BY_SHUTDOWN)) &&
         j.deliveredAt === undefined &&
         j.originBotKey !== undefined &&
         originBotKeys.includes(j.originBotKey) &&
@@ -537,6 +540,7 @@ describe('Gateway — restart-durable background completions', () => {
   function bootGateway(
     bots: Array<{ botKey: string; store: FakeJobStore }>,
     adapter: PlatformAdapter,
+    botAdapters?: ReadonlyMap<string, PlatformAdapter>,
   ): Gateway {
     return new Gateway({
       bots: bots.map(({ botKey, store }) => ({
@@ -546,6 +550,7 @@ describe('Gateway — restart-durable background completions', () => {
         jobStore: store,
       })),
       adapters: new Map([['test', adapter]]),
+      ...(botAdapters ? { botAdapters } : {}),
       clarifySweepIntervalMs: 0,
     });
   }
@@ -621,18 +626,26 @@ describe('Gateway — restart-durable background completions', () => {
       });
     }
 
-    const adapter = stubAdapter();
+    // Each bot's own adapter, on one platform: a completion is announced by
+    // the bot it is filed under, never by the platform's default (F08).
+    const adapterA = stubAdapter({ id: 'test:botA' });
+    const adapterB = stubAdapter({ id: 'test:botB' });
     const gw = bootGateway(
       [
         { botKey: 'botA', store: storeA },
         { botKey: 'botB', store: storeB },
       ],
-      adapter,
+      adapterA,
+      new Map([
+        ['botA', adapterA],
+        ['botB', adapterB],
+      ]),
     );
 
     expect(await gw.sweepUndeliveredJobs()).toEqual({ delivered: 2, failed: 0 });
-    const bodies = noticeSends(adapter);
-    expect(bodies).toHaveLength(2);
+    expect(noticeSends(adapterA)).toHaveLength(1);
+    expect(noticeSends(adapterB)).toHaveLength(1);
+    const bodies = [...noticeSends(adapterA), ...noticeSends(adapterB)];
     expect(bodies.some((b) => b.includes('BOT-C-SECRET'))).toBe(false);
     // Bot C's rows are untouched — not delivered, and not burned either.
     expect(storeA.jobs.get('foreign-a')?.deliveredAt).toBeUndefined();
@@ -751,5 +764,132 @@ describe('Gateway — a child job’s progress never reaches a channel adapter',
     expect(store.appended.some((e) => e.type === 'text')).toBe(true);
 
     void gw;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F06 follow-up — a job its runtime's shutdown interrupted is announced
+// ---------------------------------------------------------------------------
+//
+// `BackgroundExecutor.shutdown` (a process stop, or a live bot edit replacing
+// the loop) finishes each running job as `aborted` with
+// `JOB_ABORTED_BY_SHUTDOWN` — distinct from a user's `task_cancel`, which stays
+// silent. The origin chat is told, once, through the bot that owns the job.
+
+describe('Gateway — a job interrupted by shutdown is announced; a cancel is not', () => {
+  const interrupted = (over: Partial<BackgroundJob> = {}) =>
+    makeJob({ status: 'aborted', error: JOB_ABORTED_BY_SHUTDOWN, summary: undefined, ...over });
+
+  /** Two bots on one platform, each with its own adapter — the notice must
+   *  leave through the job's own bot. */
+  function twoBotGateway() {
+    const a = fakeExecutor();
+    const b = fakeExecutor();
+    const storeA = new FakeJobStore();
+    const storeB = new FakeJobStore();
+    const adapterA = stubAdapter({ id: 'test:b1' });
+    const adapterB = stubAdapter({ id: 'test:b2' });
+    const gw = new Gateway({
+      bots: [
+        {
+          botKey: 'b1',
+          loop: gatedLoop().loop,
+          binding: { type: 'personality', name: 'default' },
+          backgroundExecutor: a.executor,
+          jobStore: storeA,
+        },
+        {
+          botKey: 'b2',
+          loop: gatedLoop().loop,
+          binding: { type: 'personality', name: 'default' },
+          backgroundExecutor: b.executor,
+          jobStore: storeB,
+        },
+      ],
+      adapters: new Map([['test', adapterA]]),
+      botAdapters: new Map([
+        ['b1', adapterA],
+        ['b2', adapterB],
+      ]),
+      clarifySweepIntervalMs: 0,
+    });
+    return { gw, a, b, storeA, storeB, adapterA, adapterB };
+  }
+
+  it('an interrupted job gets exactly one notice, through the bot that owns it', async () => {
+    const t = twoBotGateway();
+    const job = t.storeB.seed(interrupted({ id: 'feedface-2222', originBotKey: 'b2' }));
+    t.b.fire(job);
+    t.b.fire(job); // a duplicate onComplete must not open a second delivery
+    await waitUntil(() => noticeSends(t.adapterB).length === 1);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(noticeSends(t.adapterB)).toHaveLength(1);
+    expect(noticeSends(t.adapterA)).toHaveLength(0);
+    expect(noticeSends(t.adapterB)[0]).toContain(
+      'interrupted by a restart or config change — ask again to rerun',
+    );
+    expect(t.storeB.jobs.get(job.id)?.deliveredAt).toBeGreaterThan(0);
+    await t.gw.shutdown();
+  });
+
+  it('a user-cancelled job stays silent', async () => {
+    const t = twoBotGateway();
+    const job = t.storeB.seed(
+      makeJob({
+        id: 'cancel-1',
+        status: 'aborted',
+        error: 'cancelled by task_cancel',
+        originBotKey: 'b2',
+      }),
+    );
+    t.b.fire(job);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(noticeSends(t.adapterB)).toHaveLength(0);
+    expect(await t.gw.sweepUndeliveredJobs()).toEqual({ delivered: 0, failed: 0 });
+    expect(noticeSends(t.adapterB)).toHaveLength(0);
+    await t.gw.shutdown();
+  });
+
+  // A live bot edit unsubscribes the old executor (`removeAdapter`) BEFORE its
+  // loop is disposed, so the jobs that disposal interrupts reach no
+  // `onComplete` the gateway hears. The store sweep is the path that sees them.
+  it('after a live swap, the sweep announces the old loop’s interrupted jobs — once', async () => {
+    const store = new FakeJobStore();
+    const oldAdapter = stubAdapter({ id: 'test:b1' });
+    const gw = new Gateway({
+      bots: [
+        {
+          botKey: 'b1',
+          loop: gatedLoop().loop,
+          binding: { type: 'personality', name: 'default' },
+          jobStore: store,
+        },
+      ],
+      adapters: new Map([['test', oldAdapter]]),
+      clarifySweepIntervalMs: 0,
+    });
+
+    // The swap: the old bot out, its replacement (same botKey, same jobs.db) in.
+    await gw.removeAdapter('b1');
+    const newAdapter = stubAdapter({ id: 'test:b1' });
+    gw.addAdapter(newAdapter, {
+      botKey: 'b1',
+      loop: gatedLoop().loop,
+      binding: { type: 'personality', name: 'default' },
+      jobStore: store,
+    });
+    // The old loop's disposal interrupted a running job.
+    store.seed(interrupted({ id: 'abad1dea-3333' }));
+
+    expect(await gw.sweepUndeliveredJobs()).toEqual({ delivered: 1, failed: 0 });
+    await waitUntil(() => noticeSends(newAdapter).length === 1);
+    expect(noticeSends(newAdapter)[0]).toContain('interrupted by a restart or config change');
+    expect(noticeSends(oldAdapter)).toHaveLength(0);
+
+    // Exactly once: the durable claim is spent.
+    expect(await gw.sweepUndeliveredJobs()).toEqual({ delivered: 0, failed: 0 });
+    expect(noticeSends(newAdapter)).toHaveLength(1);
+    await gw.shutdown();
   });
 });

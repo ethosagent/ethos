@@ -251,6 +251,13 @@ export async function runToolTest(
   }
 
   const id = randomUUID();
+  // Deliberately ISOLATED, unlike every dispatch inside a turn
+  // (packages/core/src/agent-loop/stages/tool-processing.ts): no plugin context
+  // accessors and no `rootSessionKey`. A probe belongs to no run — its session
+  // key is synthetic and one-shot — so there is no run state for it to read, and
+  // letting it WRITE into a real run's store would let an operator's test button
+  // change what a live turn's tools see. A tool that needs either degrades here,
+  // which is the honest answer for a probe.
   const ctx: ToolContext = {
     sessionId: `tool-test:${id}`,
     sessionKey: `tool-test:${id}`,

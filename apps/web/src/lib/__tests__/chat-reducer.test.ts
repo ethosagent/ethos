@@ -1,3 +1,4 @@
+import { RETURNED_DIRECT_TOOL_RESULT } from '@ethosagent/types';
 import type { SseEvent, StoredMessage } from '@ethosagent/web-contracts';
 import { describe, expect, it } from 'vitest';
 import {
@@ -141,6 +142,230 @@ describe('applyEvent — text streaming', () => {
     s = applyEvent(s, { type: 'done', text: 'cached reply', turnCount: 1 }, NOW);
     expect(s.messages).toHaveLength(1);
     expect(s.currentTurn).toBeNull();
+  });
+});
+
+// A `returnDirect` tool result reaches the turn ONLY as `done.text`: core's
+// processTools (packages/core/src/agent-loop/stages/tool-processing.ts) yields
+// `done` with the tool's value and no `text_delta`. History carries it as an
+// assistant row after the tool_result (`persistReturnDirect`,
+// packages/core/src/agent-loop/stages/return-direct.ts); history written before
+// that row existed carries it only as the tool_result.
+describe('applyEvent — an answer that arrives only as `done.text`', () => {
+  const directTurn = (s: ChatState): ChatState => {
+    // Every live turn opens with `run_start` (packages/core turn-setup) — the
+    // anchor that says this stream saw the turn from its beginning.
+    let next = applyEvent(
+      s,
+      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'global' },
+      NOW,
+    );
+    next = applyEvent(
+      next,
+      { type: 'tool_start', toolCallId: 'tc1', toolName: 'lookup', args: {} },
+      NOW,
+    );
+    next = applyEvent(
+      next,
+      {
+        type: 'tool_end',
+        toolCallId: 'tc1',
+        toolName: 'lookup',
+        ok: true,
+        durationMs: 5,
+        result: 'DIRECT ANSWER',
+      },
+      NOW,
+    );
+    return applyEvent(next, { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 }, NOW);
+  };
+
+  it('renders `done.text` when no text streamed in the turn', () => {
+    const s = directTurn(initialChatState);
+    expect(s.messages).toHaveLength(1);
+    const turn = s.messages[0] as AssistantTurn;
+    expect(turn.blocks).toEqual([{ kind: 'text', content: 'DIRECT ANSWER' }]);
+    expect(actions(trailOf(s, turn.id)).map((a) => a.toolName)).toEqual(['lookup']);
+  });
+
+  // In a normal turn `done.text` IS the streamed text (`fullText` in
+  // packages/core/src/agent-loop.ts), so it is never shown twice.
+  it('adds nothing when the answer streamed — `done.text` is never a second copy', () => {
+    let s: ChatState = initialChatState;
+    s = applyEvent(s, { type: 'text_delta', text: 'stream' }, NOW);
+    s = applyEvent(s, { type: 'text_delta', text: 'ed' }, NOW);
+    s = applyEvent(s, { type: 'done', text: 'streamed', turnCount: 1 }, NOW);
+    expect((s.messages[0] as AssistantTurn).blocks).toEqual([
+      { kind: 'text', content: 'streamed' },
+    ]);
+  });
+
+  // The model streamed a preamble, THEN called the returnDirect tool: the
+  // answer never streamed, so it follows the preamble as its own block — the
+  // shape `parseHistory` gives the persisted turn.
+  it('after a streamed preamble (live, no reload): the preamble, then the answer', () => {
+    let s: ChatState = applyEvent(
+      initialChatState,
+      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'global' },
+      NOW,
+    );
+    s = applyEvent(s, { type: 'text_delta', text: 'Let me look that up.' }, NOW);
+    s = directTurn(s);
+    expect(s.messages).toHaveLength(1);
+    expect((s.messages[0] as AssistantTurn).blocks).toEqual([
+      { kind: 'text', content: 'Let me look that up.' },
+      { kind: 'text', content: 'DIRECT ANSWER' },
+    ]);
+  });
+
+  /** The answering call's persisted tool_result is a marker — the answer is
+   *  stored once, as the assistant row after it. */
+  const RETURNED_DIRECT_MARKER = RETURNED_DIRECT_TOOL_RESULT;
+
+  /** The rows core persists for a returnDirect turn, answer row included. */
+  const directHistory = (preamble: string): StoredMessage[] => [
+    storedMsg({
+      id: 'asst-old',
+      role: 'assistant',
+      content: preamble,
+      toolCalls: [{ id: 'tc1', name: 'lookup', input: {} }],
+      timestamp: new Date(100).toISOString(),
+    }),
+    storedMsg({
+      id: 'tr-old',
+      role: 'tool_result',
+      content: RETURNED_DIRECT_MARKER,
+      toolCallId: 'tc1',
+      toolName: 'lookup',
+      isError: false,
+      timestamp: new Date(101).toISOString(),
+    }),
+    storedMsg({
+      id: 'answer-old',
+      role: 'assistant',
+      content: 'DIRECT ANSWER',
+      timestamp: new Date(102).toISOString(),
+    }),
+  ];
+
+  it('reloaded from history: the persisted answer row is the turn’s answer', () => {
+    const s = applyAction(initialChatState, {
+      type: 'history-loaded',
+      messages: directHistory(''),
+    });
+    expect(s.messages).toHaveLength(1);
+    expect((s.messages[0] as AssistantTurn).blocks).toEqual([
+      { kind: 'text', content: 'DIRECT ANSWER' },
+    ]);
+    // The trail row's detail is what was persisted for the call: the marker.
+    expect(actions(trailOf(s, 'asst-old'))[0]?.result).toBe(RETURNED_DIRECT_MARKER);
+  });
+
+  it('replayed against its persisted twin (answer row): one turn, one answer, the live trail', () => {
+    let s: ChatState = applyAction(initialChatState, {
+      type: 'history-loaded',
+      messages: directHistory(''),
+    });
+    s = directTurn(s);
+
+    expect(s.messages).toHaveLength(1);
+    const turn = s.messages[0] as AssistantTurn;
+    expect(turn.id).toBe('asst-old');
+    expect(turn.blocks).toEqual([{ kind: 'text', content: 'DIRECT ANSWER' }]);
+    expect(actions(trailOf(s, 'asst-old'))[0]?.durationMs).toBe(5);
+    // The live trail wins the rekey, so the row shows the real value.
+    expect(actions(trailOf(s, 'asst-old'))[0]?.result).toBe('DIRECT ANSWER');
+  });
+
+  // Gap 5 — a client that joined a long turn mid-stream (a remount, or an SSE
+  // replay whose head the ring buffer evicted) holds only the TAIL of the
+  // streamed text, so the rule would re-append the whole answer. Without the
+  // `run_start` anchor — this stream never saw the turn start — it does not.
+  it('a turn joined mid-stream (no run_start): no append, no duplicated answer', () => {
+    let s: ChatState = applyEvent(
+      initialChatState,
+      { type: 'text_delta', text: 'tail of a long answer' },
+      NOW,
+    );
+    s = applyEvent(
+      s,
+      { type: 'done', text: 'head of it, and the tail of a long answer', turnCount: 1 },
+      NOW,
+    );
+    expect((s.messages[0] as AssistantTurn).blocks).toEqual([
+      { kind: 'text', content: 'tail of a long answer' },
+    ]);
+  });
+
+  // The client that SENT the message saw the turn from its start, whatever the
+  // stream did afterwards.
+  it('a turn the client submitted itself is anchored without a run_start', () => {
+    let s: ChatState = applyAction(initialChatState, {
+      type: 'submit-user-message',
+      id: 'u1',
+      text: 'look it up',
+      timestamp: NOW,
+    });
+    s = applyEvent(s, { type: 'text_delta', text: 'Let me look that up.' }, NOW);
+    s = applyEvent(s, { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 }, NOW);
+    const turn = s.messages.at(-1) as AssistantTurn;
+    expect(turn.blocks).toEqual([
+      { kind: 'text', content: 'Let me look that up.' },
+      { kind: 'text', content: 'DIRECT ANSWER' },
+    ]);
+  });
+
+  it('replayed against its twin when text streamed before the call: one turn, keeping the answer', () => {
+    let s: ChatState = applyAction(initialChatState, {
+      type: 'history-loaded',
+      messages: directHistory('Let me check.'),
+    });
+    s = applyEvent(
+      s,
+      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'global' },
+      NOW,
+    );
+    s = applyEvent(s, { type: 'text_delta', text: 'Let me check.' }, NOW);
+    s = directTurn(s);
+
+    expect(s.messages).toHaveLength(1);
+    const turn = s.messages[0] as AssistantTurn;
+    expect(turn.id).toBe('asst-old');
+    expect(turn.blocks).toEqual([
+      { kind: 'text', content: 'Let me check.' },
+      { kind: 'text', content: 'DIRECT ANSWER' },
+    ]);
+    expect(actions(trailOf(s, 'asst-old'))[0]?.durationMs).toBe(5);
+  });
+
+  it('replayed against a legacy twin (no answer row): one turn, showing the answer, with the live trail', () => {
+    let s: ChatState = applyAction(initialChatState, {
+      type: 'history-loaded',
+      messages: [
+        storedMsg({
+          id: 'asst-old',
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'tc1', name: 'lookup', input: {} }],
+          timestamp: new Date(100).toISOString(),
+        }),
+        storedMsg({
+          id: 'tr-old',
+          role: 'tool_result',
+          content: 'DIRECT ANSWER',
+          toolCallId: 'tc1',
+          toolName: 'lookup',
+          timestamp: new Date(101).toISOString(),
+        }),
+      ],
+    });
+    s = directTurn(s);
+
+    expect(s.messages).toHaveLength(1);
+    const turn = s.messages[0] as AssistantTurn;
+    expect(turn.id).toBe('asst-old');
+    expect(turn.blocks).toEqual([{ kind: 'text', content: 'DIRECT ANSWER' }]);
+    expect(actions(trailOf(s, 'asst-old'))[0]?.durationMs).toBe(5);
   });
 });
 

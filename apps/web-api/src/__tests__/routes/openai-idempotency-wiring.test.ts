@@ -8,7 +8,7 @@ import { createWebApi } from '../../index';
 import { IdempotencyStore } from '../../stores/idempotency-store';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -42,7 +42,7 @@ describe('createWebApi — /v1/chat/completions idempotency', () => {
     const app = createWebApi({
       dataDir,
       sessionStore,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop({
         events: [{ type: 'done', text: 'hello', turnCount: 1 }],
         onRun: () => {

@@ -2,19 +2,21 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
-import type { SecretsResolver } from '@ethosagent/types';
+import { FsStorage, InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
+import { isEthosError, type SecretsResolver } from '@ethosagent/types';
 import { call } from '@orpc/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
+import { statusFor } from '../../middleware/error-envelope';
 import { ConfigRepository } from '../../repositories/config.repository';
 import { adminRouter } from '../../rpc/admin';
 import type { RpcContext } from '../../rpc/context';
+import { gatherAdminStatus } from '../../services/admin.service';
 import { ConfigService } from '../../services/config.service';
 import type { ValidateProviderInput } from '../../services/onboarding.service';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -36,7 +38,7 @@ describe('admin RPCs — gated by admin.enabled', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },
@@ -170,6 +172,109 @@ describe('admin.checkProvider — resolved key reaches the validator', () => {
     const result = await call(adminRouter.checkProvider, { provider: 'openai' }, { context });
     expect(result.ok).toBe(false);
     expect(seen).toHaveLength(0);
+  });
+});
+
+// F01 follow-up: rotateKey used to REPLACE the whole chain with one entry. It
+// now goes through `ConfigService.rotateProviderKey`, which swaps the key on
+// every matching entry (and the top-level key) and keeps everything else.
+// Through `call` rather than HTTP: the refusal is an EthosError, which
+// routes/rpc.ts turns into `statusFor(code)` — pinned by the last assertion.
+describe('admin.rotateKey — one provider key, the rest of the chain untouched', () => {
+  const CHAIN = [
+    'providers.0.provider: anthropic',
+    'providers.1.provider: bedrock',
+    'providers.1.region: eu-west-1',
+    'providers.1.fooBar: keep-me',
+    'providers.2.provider: azure',
+    'providers.2.apiVersion: 2024-10-21',
+  ];
+
+  async function setup() {
+    const storage = new InMemoryStorage();
+    const secrets = new InMemorySecretsResolver();
+    const dataDir = '/data';
+    await storage.mkdir(dataDir);
+    await storage.write(
+      join(dataDir, 'config.yaml'),
+      `${[...BASE_CONFIG, ...CHAIN, 'admin.enabled: true'].join('\n')}\n`,
+    );
+    const config = new ConfigService({
+      config: new ConfigRepository({ dataDir, storage, secrets }),
+      secrets,
+    });
+    // Cast: the handler only touches `config`.
+    const context = { config } as unknown as RpcContext;
+    const read = async () => (await storage.read(join(dataDir, 'config.yaml'))) ?? '';
+    return { context, read, secrets };
+  }
+
+  it('keeps every other chain line and stores the key in the vault', async () => {
+    const { context, read } = await setup();
+    const result = await call(
+      adminRouter.rotateKey,
+      { provider: 'bedrock', key: 'bedrock-rotated-9876543210' },
+      { context },
+    );
+    expect(result.ok).toBe(true);
+
+    const yaml = await read();
+    for (const line of CHAIN) expect(yaml).toContain(line);
+    expect(yaml).toMatch(/^providers\.1\.apiKey: "\$\{secrets:[^}]+\}"$/m);
+    expect(yaml).not.toContain('bedrock-rotated-9876543210');
+  });
+
+  it('refuses a provider nothing is configured for with a 400, config untouched', async () => {
+    const { context, read } = await setup();
+    const before = await read();
+
+    const err = await call(
+      adminRouter.rotateKey,
+      { provider: 'mistral', key: 'sk-new' },
+      { context },
+    ).catch((e: unknown) => e);
+    expect(isEthosError(err) && err.code).toBe('INVALID_INPUT');
+    expect(statusFor('INVALID_INPUT')).toBe(400);
+    expect(await read()).toBe(before);
+  });
+});
+
+// `rotateProviderKey` accepts the top-level provider and its refusal points at
+// `admin.getStatus`, so the status has to list it: with fewer than two chain
+// entries the runtime runs on the top-level fields (`createLLM`).
+describe('admin.getStatus — the effective provider roster', () => {
+  function deps(config: unknown) {
+    // Cast: `gatherAdminStatus` guards every section it can; `execution` is the
+    // one it deliberately does not, so the stub answers that one.
+    return {
+      config,
+      execution: { backendHealth: async () => null },
+    } as unknown as Parameters<typeof gatherAdminStatus>[0];
+  }
+
+  it('reports the top-level provider when the chain has fewer than two entries', async () => {
+    const status = await gatherAdminStatus(
+      deps({
+        get: async () => ({ provider: 'anthropic', apiKeyPreview: 'sk-…abc1', providers: [] }),
+      }),
+    );
+    expect(status.providers).toEqual([{ id: 'anthropic', name: 'anthropic', hasKey: true }]);
+  });
+
+  it('reports the chain when it is what the runtime uses', async () => {
+    const status = await gatherAdminStatus(
+      deps({
+        get: async () => ({
+          provider: 'anthropic',
+          apiKeyPreview: 'sk-…abc1',
+          providers: [
+            { provider: 'openai', apiKeyPreview: 'sk-…1234' },
+            { provider: 'bedrock', apiKeyPreview: '<unset>' },
+          ],
+        }),
+      }),
+    );
+    expect(status.providers.map((p) => p.id)).toEqual(['openai', 'bedrock']);
   });
 });
 

@@ -22,4 +22,8 @@ export const toolSettingsRouter = {
   setForPersonality: os.toolSettings.setForPersonality.handler(({ input, context }) =>
     context.toolSettings.setForPersonality(input.personalityId, input.values),
   ),
+
+  probeCredentials: os.toolSettings.probeCredentials.handler(({ input, context }) =>
+    context.toolSettings.probeCredentials(input.personalityId),
+  ),
 };

@@ -56,6 +56,8 @@ export class DashboardRefreshScheduler {
   private readonly dashboardLastRun = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private sweeping = false;
+  /** The sweep in progress and its cancel handle — what `stop()` aborts and awaits. */
+  private inFlight: { done: Promise<void>; abort: AbortController } | null = null;
 
   constructor(config: DashboardRefreshSchedulerConfig) {
     this.config = config;
@@ -71,38 +73,57 @@ export class DashboardRefreshScheduler {
     this.timer.unref?.();
   }
 
-  stop(): void {
+  /**
+   * Stop ticking, then cancel the sweep in progress (its prompt refresh is
+   * aborted and writes nothing) and wait for it to unwind — so a caller that
+   * closes the dashboards DB or disposes the loop next does not pull either
+   * out from under a running refresh. Resolves immediately when idle.
+   * Pinned by extensions/dashboard/src/__tests__/refresh-scheduler.test.ts.
+   */
+  async stop(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
+    const current = this.inFlight;
+    if (!current) return;
+    current.abort.abort();
+    await current.done;
   }
 
   /** One sweep. Public for tests; the timer calls it on each tick. */
   async tick(): Promise<void> {
     if (this.sweeping) return; // re-entrancy guard — no overlapping double-fire
     this.sweeping = true;
-    try {
-      await this.sweep();
-    } catch (err) {
-      this.logger.warn?.('dashboard refresh sweep failed', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      this.sweeping = false;
-    }
+    const abort = new AbortController();
+    const done = (async () => {
+      try {
+        await this.sweep(abort.signal);
+      } catch (err) {
+        this.logger.warn?.('dashboard refresh sweep failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        this.sweeping = false;
+        this.inFlight = null;
+      }
+    })();
+    this.inFlight = { done, abort };
+    await done;
   }
 
-  private async sweep(): Promise<void> {
+  private async sweep(signal: AbortSignal): Promise<void> {
     const now = Date.now();
     const deps = {
       dashboards: this.config.dashboards,
       pluginLoader: this.config.pluginLoader,
       agentLoop: this.config.agentLoop,
       sessions: this.config.sessions,
+      abortSignal: signal,
     };
 
     for (const dash of this.config.dashboards.list(this.userId)) {
+      if (signal.aborted) return;
       const panels = this.config.dashboards.listLivePanels(dash.id);
 
       // Dashboard-level cron: refresh ALL live panels when due.
@@ -112,6 +133,7 @@ export class DashboardRefreshScheduler {
       ) {
         this.dashboardLastRun.set(dash.id, now);
         for (const panel of panels) {
+          if (signal.aborted) return;
           await refreshSinglePanel(panel, deps);
         }
         continue; // skip per-panel cron this tick
@@ -119,6 +141,7 @@ export class DashboardRefreshScheduler {
 
       // Per-panel cron.
       for (const panel of panels) {
+        if (signal.aborted) return;
         if (!panel.cronSchedule) continue;
         if (!isDue(panel.cronSchedule, panel.lastRunAt, now)) continue;
         await refreshSinglePanel(panel, deps);

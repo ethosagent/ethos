@@ -112,7 +112,9 @@ export interface RealtimeControlLaneDeps {
    * Absent → the lane falls back to its own accrued audio total, which is the
    * honest answer when nothing is tracking consults.
    */
-  sessionSpendUsd?(binding: RealtimeSessionBinding): number;
+  /** Undefined when the authority cannot answer (onboarding's stand-in loop
+   *  refuses until a loop is bound) — the lane then uses its own audio total. */
+  sessionSpendUsd?(binding: RealtimeSessionBinding): number | undefined;
   /**
    * Append one latency span for a completed realtime turn.
    *

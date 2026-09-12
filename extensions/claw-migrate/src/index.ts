@@ -84,6 +84,17 @@ export interface MigrateOptions {
   /** Storage backend for plan inspection + write ops. Injected by the
    *  composition root; required — never falls back to raw disk. */
   storage: Storage;
+  /**
+   * Where the imported `MEMORY.md` / `USER.md` land — the scope directory of the
+   * TARGET's configured memory backend, resolved by the caller
+   * (`createMemoryProviderFromConfig(...).memoryRoot` + `personalities/<id>`, see
+   * apps/ethos/src/commands/claw.ts). Without it they go to `<target>/` , the
+   * pre-scoping root that no agent reads: under `memory: vault` the memory lives
+   * in the operator's vault, and under markdown in the personality's own
+   * directory (F04 follow-up). Optional so a standalone caller keeps the old
+   * behaviour, and the CLI always passes it.
+   */
+  memoryDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +125,7 @@ export class ClawMigrator {
   readonly overwrite: boolean;
   readonly dryRun: boolean;
   private readonly storage: Storage;
+  private readonly memoryDir: string | undefined;
 
   constructor(opts: MigrateOptions) {
     this.source = opts.source ?? join(homedir(), '.openclaw');
@@ -123,6 +135,7 @@ export class ClawMigrator {
     this.overwrite = opts.overwrite ?? false;
     this.dryRun = opts.dryRun ?? false;
     this.storage = opts.storage;
+    this.memoryDir = opts.memoryDir;
   }
 
   /** True iff the OpenClaw source directory contains config.yaml. */
@@ -188,20 +201,24 @@ export class ClawMigrator {
         label: 'keys.json (rotation pool)',
       });
     }
+    // Memory lands in the target backend's scope directory when the caller
+    // resolved one (F04) — `<vaultRoot>/<agentDir>/personalities/<id>` under a
+    // vault, `<target>/personalities/<id>` under markdown.
+    const memoryRoot = this.memoryDir ?? this.target;
     if (detected.memory) {
       ops.push({
         kind: 'file',
         source: join(this.source, 'MEMORY.md'),
-        dest: join(this.target, 'MEMORY.md'),
-        label: 'MEMORY.md',
+        dest: join(memoryRoot, 'MEMORY.md'),
+        label: `MEMORY.md → ${join(memoryRoot, 'MEMORY.md')}`,
       });
     }
     if (detected.user) {
       ops.push({
         kind: 'file',
         source: join(this.source, 'USER.md'),
-        dest: join(this.target, 'USER.md'),
-        label: 'USER.md',
+        dest: join(memoryRoot, 'USER.md'),
+        label: `USER.md → ${join(memoryRoot, 'USER.md')}`,
       });
     }
     if (detected.skills) {

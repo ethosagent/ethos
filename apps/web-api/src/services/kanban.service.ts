@@ -62,12 +62,25 @@ export interface KanbanServiceOptions {
 export class KanbanService {
   private readonly rootDir: string;
   private readonly mesh: AgentMesh | undefined;
-  private readonly hooks: HookRegistry | undefined;
+  private hooks: HookRegistry | undefined;
 
   constructor(opts: KanbanServiceOptions = {}) {
     this.rootDir = opts.teamsDir ?? teamsDir();
     this.mesh = opts.mesh;
     this.hooks = opts.hooks;
+  }
+
+  /**
+   * Fire ticket hooks into `hooks` from now on. The web API attaches the main
+   * loop's registry when it wires that loop — at construction, or at
+   * `bindAgentLoop` once onboarding has booted it — and runs the returned
+   * detach on dispose. Pinned by __tests__/services/kanban-notify.test.ts.
+   */
+  useHooks(hooks: HookRegistry): () => void {
+    this.hooks = hooks;
+    return () => {
+      if (this.hooks === hooks) this.hooks = undefined;
+    };
   }
 
   /** Enumerate teams from the manifests on disk; merge in runtime status. */
@@ -375,7 +388,20 @@ export class KanbanService {
     // whether a human or an agent drove the transition.
     const store = new KanbanStore(boardPath, { teamId: opts.team });
     try {
-      const updated = store.updateStatus(opts.taskId, opts.status, opts.reason, opts.actor);
+      // The board's Unblock/Reassign actions ask for `ready`, and nothing that
+      // claims a `ready` task re-checks its parents — so a task still waiting on
+      // an unfinished prerequisite (`KanbanStore.hasOpenBlockingParents`, the
+      // rule `promoteReady` uses) lands on `todo`, and `promoteReady` lifts it
+      // once the prerequisites finish. The returned task shows the real status.
+      const held = opts.status === 'ready' && store.hasOpenBlockingParents(opts.taskId);
+      const updated = held
+        ? store.updateStatus(
+            opts.taskId,
+            'todo',
+            `${opts.reason ?? 'ready requested'} (waiting on prerequisites)`,
+            opts.actor,
+          )
+        : store.updateStatus(opts.taskId, opts.status, opts.reason, opts.actor);
       return { task: toWireTask(updated) };
     } finally {
       store.close();
@@ -384,7 +410,9 @@ export class KanbanService {
 
   /**
    * Batch status update — one KanbanStore transaction for the whole set of
-   * taskIds rather than looping the single-task RPC from the client.
+   * taskIds rather than looping the single-task RPC from the client. A `ready`
+   * request is held at `todo` for tasks with unfinished prerequisites, inside
+   * that transaction (`KanbanStore.bulkUpdateStatus`), same rule as `updateStatus`.
    */
   async bulkUpdateStatus(opts: {
     team: string;

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -64,7 +64,7 @@ describe('toolSettings.schemas RPC — the info field kind', () => {
     app = createWebApi({
       dataDir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry([], dataDir),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

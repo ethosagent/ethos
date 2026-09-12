@@ -88,6 +88,7 @@ describe('TUI /personality', () => {
         model: 'stub-model',
         initialPersonality: 'researcher',
         initialSessionKey,
+        readMemory: async () => null,
       }),
       {
         stdout: stdout as never,

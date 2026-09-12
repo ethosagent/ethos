@@ -128,6 +128,21 @@ const UNSUPPORTED_KEYS: ReadonlyArray<{
     read: (c) => c.memory,
     warning: 'memory backend changed — restart required to apply',
   },
+  // The backend alone is not the selection: `memoryVault.*` is where a vault
+  // deployment's content, provenance and web editor all root, and F04 made the
+  // web editor follow it too (`createMemoryBundle`).
+  {
+    key: 'memoryVault',
+    read: (c) => c.memoryVault,
+    warning: 'memoryVault config changed — restart required to apply',
+  },
+  // Read once when the gate and every pending queue are composed
+  // (`composeGatedMemory` / `createPendingMemoryStore`).
+  {
+    key: 'memoryApproval',
+    read: (c) => c.memoryApproval,
+    warning: 'memory approval gate changed — restart required to apply',
+  },
   {
     key: 'idleWatcher',
     read: (c) => c.idleWatcher,
@@ -630,6 +645,14 @@ export interface HotAddSteps {
   deregister(): Promise<void>;
   /** A rollback step that itself failed. Never swallowed silently. */
   onRollbackError(err: unknown): void;
+  /**
+   * F06 — release the prepared bot's runtime (its loop's `dispose`). Run once,
+   * LAST, whenever the commit throws — including when `register` itself throws
+   * (the duplicate-botKey guard), before `wire` ran and so before any wiring
+   * undo existed to release it. Idempotent callers only: a wiring undo may
+   * already have released the same runtime.
+   */
+  release?(): Promise<void>;
 }
 
 /**
@@ -656,7 +679,21 @@ export interface HotAddSteps {
  * current.
  */
 export async function commitHotAdd(steps: HotAddSteps): Promise<() => Promise<void>> {
-  steps.register();
+  const release = async (): Promise<void> => {
+    try {
+      await steps.release?.();
+    } catch (rollbackErr) {
+      steps.onRollbackError(rollbackErr);
+    }
+  };
+  try {
+    steps.register();
+  } catch (err) {
+    // Nothing was registered, so there is nothing to roll back — but the
+    // prepared runtime still exists, and nobody else will release it.
+    await release();
+    throw err;
+  }
   let undoWiring: (() => Promise<void>) | undefined;
   try {
     undoWiring = await steps.wire();
@@ -679,6 +716,7 @@ export async function commitHotAdd(steps: HotAddSteps): Promise<() => Promise<vo
     } catch (rollbackErr) {
       steps.onRollbackError(rollbackErr);
     }
+    await release();
     throw err;
   }
   return undoWiring;
@@ -736,9 +774,37 @@ export async function swapBotLive<TPrepared>(steps: {
    *  same `commit` as any other. */
   rebuildPrevious: () => Promise<TPrepared>;
   onRestoreFailed: (err: unknown) => void;
+  /**
+   * F06 — release a prepared replacement that will never be committed (its
+   * loop's `dispose`). Called when `retire` throws — `Gateway.removeAdapter`
+   * rejects while the old bot is quarantined — so the next reconcile retry
+   * does not build another replacement beside the stranded one. A commit that
+   * fails releases its own prepared runtime (`HotAddSteps.release`).
+   */
+  release?: (prepared: TPrepared) => Promise<void>;
+  /**
+   * F06 follow-up — runs once the old instance was retired and the swap has
+   * run to an end (the replacement committed, or the restore was attempted):
+   * either way the outgoing loop has been replaced, and its executor's
+   * shutdown finished its running jobs as interrupted AFTER the gateway
+   * stopped listening to it. `ethos boot` sweeps the store here so those
+   * jobs' origin chats are told (`Gateway.sweepUndeliveredJobs`). Not run when
+   * `retire` threw — nothing was replaced. A throw is swallowed: a sweep must
+   * not turn a committed swap into a failed one.
+   */
+  afterSwap?: () => Promise<void>;
 }): Promise<void> {
   const prepared = await steps.prepare();
-  await steps.retire();
+  try {
+    await steps.retire();
+  } catch (err) {
+    try {
+      await steps.release?.(prepared);
+    } catch (releaseErr) {
+      steps.onRestoreFailed(releaseErr);
+    }
+    throw err;
+  }
   try {
     await steps.commit(prepared);
   } catch (err) {
@@ -748,6 +814,8 @@ export async function swapBotLive<TPrepared>(steps: {
       steps.onRestoreFailed(restoreErr);
     }
     throw err;
+  } finally {
+    await steps.afterSwap?.().catch(() => {});
   }
 }
 

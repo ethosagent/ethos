@@ -303,6 +303,7 @@ The full list of registered codes. Every code shipped in `@ethosagent/types` `Et
 |---|---|---|
 | `CONFIG_MISSING` | `~/.ethos/config.yaml` is absent or unreadable. | Run `ethos setup`. |
 | `CONFIG_INVALID` | Config parsed but missing required fields. | Re-run `ethos setup`, or edit the file. |
+| `CONFIG_CONFLICT` | The provider chain changed (another tab, or `ethos fallback`) after the page you saved from loaded it. Nothing was written. | Reload Settings, check the chain, and save again. |
 | `PERSONALITY_NOT_FOUND` | Personality id does not exist. | `ethos personality list` and pick a valid id. |
 | `PROVIDER_AUTH_FAILED` | LLM provider rejected the key. | Re-export the API key or run `ethos setup keys`. |
 | `LLM_ERROR` | Provider returned a non-recoverable error mid-stream. | Re-run. If repeated, file a bug with the cause. |

@@ -183,7 +183,7 @@ function buildDeps(args: {
     },
 
     async scoreAlignment(scoreArgs): Promise<ScoreOutcome> {
-      const runner = await buildJudgeRunner(config, scoreArgs.personalityId);
+      const { runner, release } = await buildJudgeRunner(config, scoreArgs.personalityId);
       const judge = reg.get(scoreArgs.personalityId)?.nightly?.judge;
       const outcome = await scorePersonality({
         personalityId: scoreArgs.personalityId,
@@ -196,7 +196,7 @@ function buildDeps(args: {
         priorLowStreak: scoreArgs.priorLowStreak,
         runner,
         activation: { minInteractions: judge?.minInteractions ?? 20, minElapsedHours: 12 },
-      });
+      }).finally(release);
       if (outcome.kind === 'scored') lastJudgeResult = outcome.result;
       return outcome;
     },

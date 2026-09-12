@@ -29,6 +29,13 @@ class FakeEventSource {
 // @ethosagent/web-contracts is the simplest discriminated-union member).
 const sampleEvent = { type: 'notification' as const, message: 'hi' };
 
+// Transform the module's graph (the `@ethosagent/web-contracts` schemas behind
+// it) once, at collection, where no timeout applies. The per-test
+// `vi.resetModules()` + re-import below then re-evaluates already-transformed
+// modules; without this the FIRST `beforeEach` paid the cold transform against
+// the 10s hook budget, and timed out under a parallel run.
+await import('../sse');
+
 // The shared-connection registry is module-level state, so each test gets a
 // fresh copy of the module to stay isolated.
 let subscribeToSession: typeof SubscribeToSession;

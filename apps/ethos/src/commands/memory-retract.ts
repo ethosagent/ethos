@@ -7,8 +7,9 @@
 import { join } from 'node:path';
 import { ethosDir, readConfig } from '@ethosagent/config';
 import { type MemoryMeta, parseMemoryMeta, retractSlug } from '@ethosagent/nightly-loop';
-import type { MemoryContext } from '@ethosagent/types';
-import { createMemoryProvider, hashFact, TombstoneStore } from '@ethosagent/wiring';
+import type { MemoryContext, Storage } from '@ethosagent/types';
+import { hashFact, TombstoneStore } from '@ethosagent/wiring';
+import { openFileMemory } from '../lib/file-memory';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 export async function runMemoryRetract(args: string[]): Promise<void> {
@@ -29,7 +30,11 @@ export async function runMemoryRetract(args: string[]): Promise<void> {
   const scopeId = `personality:${personalityId}`;
   const dir = ethosDir();
 
-  const mem = createMemoryProvider({ dataDir: dir, storage: getStorage(), source: 'tool' });
+  // Content + sidecar follow the configured backend (the vault under `memory:
+  // vault`); the tombstones are gate state and stay at ~/.ethos for every
+  // backend, where capture's dedup reads them. Refused for vector.
+  const backend = openFileMemory(config, 'tool');
+  const mem = backend.provider;
   const tombstones = new TombstoneStore({ storage: getStorage(), dataDir: dir });
 
   const ctx: MemoryContext = {
@@ -50,8 +55,9 @@ export async function runMemoryRetract(args: string[]): Promise<void> {
       // Second sanctioned sidecar writer besides the nightly pass (§3c): read →
       // mutate only this slug → writeAtomic, so a concurrent nightly rebuild
       // (which carries lifecycle entries forward) is never clobbered.
-      readMeta: () => readMemoryMeta(dir, personalityId),
-      writeMeta: (meta) => writeMemoryMeta(dir, personalityId, meta),
+      readMeta: () => readMemoryMeta(backend.storage, backend.memoryRoot, personalityId),
+      writeMeta: (meta) =>
+        writeMemoryMeta(backend.storage, backend.memoryRoot, personalityId, meta),
     },
     reason,
   );
@@ -69,15 +75,19 @@ export async function runMemoryRetract(args: string[]): Promise<void> {
   );
 }
 
-// Read the importance/decay sidecar (M3). Tolerant: missing/corrupt → empty meta.
-async function readMemoryMeta(dir: string, id: string): Promise<MemoryMeta> {
-  return parseMemoryMeta(
-    await getStorage().read(join(dir, 'personalities', id, 'memory-meta.json')),
-  );
+// Read the importance/decay sidecar (M3) under the backend's memory root.
+// Tolerant: missing/corrupt → empty meta.
+async function readMemoryMeta(storage: Storage, root: string, id: string): Promise<MemoryMeta> {
+  return parseMemoryMeta(await storage.read(join(root, 'personalities', id, 'memory-meta.json')));
 }
 
-async function writeMemoryMeta(dir: string, id: string, meta: MemoryMeta): Promise<void> {
-  const scopeDir = join(dir, 'personalities', id);
-  await getStorage().mkdir(scopeDir);
-  await getStorage().writeAtomic(join(scopeDir, 'memory-meta.json'), JSON.stringify(meta, null, 2));
+async function writeMemoryMeta(
+  storage: Storage,
+  root: string,
+  id: string,
+  meta: MemoryMeta,
+): Promise<void> {
+  const scopeDir = join(root, 'personalities', id);
+  await storage.mkdir(scopeDir);
+  await storage.writeAtomic(join(scopeDir, 'memory-meta.json'), JSON.stringify(meta, null, 2));
 }

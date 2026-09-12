@@ -1,14 +1,11 @@
-import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import type { AgentBridge } from '@ethosagent/agent-bridge';
-import type { AgentLoop } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
-import { FsStorage } from '@ethosagent/storage-fs';
-import type { PendingClarify, Session } from '@ethosagent/types';
-import { createMemoryProvider } from '@ethosagent/wiring';
+import { answerSuffix, type PendingClarify, type Session } from '@ethosagent/types';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildHelpText, type ExternalSlashCommand } from '../help';
+import { type RebuiltLoop, switchLoop } from '../loop-switch';
 import {
   BUILTIN_SKIN_NAMES,
   BUILTIN_SKINS,
@@ -108,12 +105,19 @@ interface AppProps {
   initialSessionKey: string;
   initialVerbose?: boolean;
   /**
+   * `/memory` — the personality's file memory (MEMORY.md / USER.md) as the
+   * agent reads it, or null when empty. Injected by the host so it follows the
+   * configured backend (the vault under `memory: vault`); rejects with the
+   * backend's refusal when it has no file memory (vector).
+   */
+  readMemory: (scope: { personalityId: string; sessionKey: string }) => Promise<string | null>;
+  /**
    * Named skin pinned by the user (config.yaml `skin:` or `--skin` flag).
    * When set (and valid), it is the active skin; otherwise the engine
    * default ('default') applies. Personalities carry no skin of their own.
    */
   initialSkin?: string;
-  rebuildLoop?: (modelId: string) => Promise<AgentLoop>;
+  rebuildLoop?: (modelId: string) => Promise<RebuiltLoop>;
   inventory?: SplashInventory;
   version?: string;
   /** Transform user input before it is sent to the loop (e.g. @file/@url refs). */
@@ -182,6 +186,7 @@ export function App({
   slashCommands,
   onNotification,
   onSkillProposed,
+  readMemory,
 }: AppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -239,6 +244,14 @@ export function App({
   const [verboseDisplay, setVerboseDisplay] = useState(initialVerbose);
   const turnStartRef = useRef<number | null>(null);
   const firstTextDeltaAtRef = useRef<number | null>(null);
+  /**
+   * Every `text_delta` of the turn in flight. A ref, not the `streamingText`
+   * state: `onDone` is registered once and would close over a stale value.
+   * `answerSuffix` (@ethosagent/types) needs the whole streamed text to tell
+   * what `done.text` still owes — a `returnDirect` tool's answer, which
+   * arrives only there, after whatever preamble streamed before the call.
+   */
+  const streamedTextRef = useRef('');
   const turnToolDurationsRef = useRef<number[]>([]);
   const turnUsageRef = useRef<TurnTiming['turnUsage']>(null);
   const [turnElapsed, setTurnElapsed] = useState(0);
@@ -549,6 +562,7 @@ export function App({
   useEffect(() => {
     const onTextDelta = (text: string) => {
       if (firstTextDeltaAtRef.current === null) firstTextDeltaAtRef.current = Date.now();
+      streamedTextRef.current += text;
       setStreamingText((prev) => prev + text);
     };
 
@@ -556,7 +570,13 @@ export function App({
 
     const onDone = (text: string) => {
       const newMessages: ChatMessage[] = [];
-      if (text.trim()) newMessages.push({ id: nextId(), role: 'assistant', text });
+      // The whole reply: what streamed, plus whatever `done.text` still owes
+      // after it (see `streamedTextRef`). Equal to `done.text` on every turn
+      // whose answer streamed, which is every turn but a `returnDirect` one.
+      const streamed = streamedTextRef.current;
+      const full = streamed + answerSuffix(streamed, text);
+      const reply = full.trim() ? full : text;
+      if (reply.trim()) newMessages.push({ id: nextId(), role: 'assistant', text: reply });
       if (verboseRef.current && turnStartRef.current !== null) {
         const summary = formatVerboseSummary({
           turnStart: turnStartRef.current,
@@ -568,6 +588,7 @@ export function App({
         newMessages.push({ id: nextId(), role: 'assistant', text: summary });
       }
       if (newMessages.length > 0) setMessages((prev) => [...prev, ...newMessages]);
+      streamedTextRef.current = '';
       setStreamingText('');
       setThinkingText('');
       setRunning(false);
@@ -654,6 +675,7 @@ export function App({
         ...prev,
         { id: nextId(), role: 'assistant', text: `[${code}] ${error}` },
       ]);
+      streamedTextRef.current = '';
       setStreamingText('');
       setThinkingText('');
       setRunning(false);
@@ -747,6 +769,7 @@ export function App({
     setRunning(true);
     turnStartRef.current = Date.now();
     firstTextDeltaAtRef.current = null;
+    streamedTextRef.current = '';
     turnToolDurationsRef.current = [];
     turnUsageRef.current = null;
     // Resolve @file/@url refs (and any other host preprocessing) before the
@@ -863,26 +886,9 @@ export function App({
         break;
       case 'memory': {
         try {
-          const mem = createMemoryProvider({
-            dataDir: `${homedir()}/.ethos`,
-            storage: new FsStorage(),
-          });
-          const result = await mem.prefetch({
-            scopeId: `personality:${personality}`,
-            sessionId: '',
-            sessionKey,
-            platform: 'cli',
-            workingDir: process.cwd(),
-          });
-          if (result && result.entries.length > 0) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: nextId(),
-                role: 'assistant',
-                text: result.entries.map((e) => e.content.trim()).join('\n\n'),
-              },
-            ]);
+          const text = await readMemory({ personalityId: personality, sessionKey });
+          if (text) {
+            setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', text }]);
           } else {
             setStatusMsg('[no memory yet — chat to build it]');
           }
@@ -1028,6 +1034,7 @@ export function App({
         setRunning(true);
         turnStartRef.current = Date.now();
         firstTextDeltaAtRef.current = null;
+        streamedTextRef.current = '';
         turnToolDurationsRef.current = [];
         turnUsageRef.current = null;
         bridge.send(prompt, { sessionKey, personalityId: personality });
@@ -1156,8 +1163,14 @@ export function App({
             if (rebuildLoop) {
               setStatusMsg(`[switching model to ${entry.id}…]`);
               try {
-                const newLoop = await rebuildLoop(entry.id);
-                bridge.replaceLoop(newLoop);
+                const rebuilt = await rebuildLoop(entry.id);
+                // Swaps at once; the replaced runtime is released once the turn
+                // still running on it (if any) finishes (F06).
+                switchLoop(bridge, rebuilt).catch((err: unknown) => {
+                  setStatusMsg(
+                    `[previous model runtime did not shut down cleanly: ${err instanceof Error ? err.message : String(err)}]`,
+                  );
+                });
                 setCurrentModel(entry.id);
                 setStatusMsg(`[model: ${entry.id}]`);
               } catch (err) {

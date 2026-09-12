@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { ethosDir, readRawConfig, writeConfig } from '@ethosagent/config';
 import { deriveBotKey } from '@ethosagent/core';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -142,6 +143,27 @@ describe('ConfigRepository', () => {
     expect(yaml).not.toContain('openrouter');
   });
 
+  // The format is line-based: a control character cannot be written so that
+  // it reads back (and a newline would smuggle in a new key). Refused, naming
+  // the field, before the file is touched (`assertWritableConfigLines`).
+  it('refuses a value with a control character, naming the field', async () => {
+    await repo.update({ model: 'claude-opus-4-7' });
+    const before = await storage.read(join(DATA, 'config.yaml'));
+    const err = await repo
+      .update({ passthrough: { 'display.note': 'line\nfs_reach: /' } })
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(String((err as { cause?: string }).cause)).toContain("'display.note'");
+    expect(await storage.read(join(DATA, 'config.yaml'))).toBe(before);
+  });
+
+  it('writes `\\` and `"` so the reader gets them back, over repeated saves', async () => {
+    const value = ' C:\\srv\\\\share "x" #1: a ';
+    await repo.update({ baseUrl: value });
+    for (let i = 0; i < 3; i++) await repo.update({ verbosity: i % 2 ? 'concise' : 'verbose' });
+    expect((await repo.read())?.baseUrl).toBe(value);
+  });
+
   it('writes config.yaml with 0o600 so plaintext apiKeys are not world-readable', async () => {
     const path = join(DATA, 'config.yaml');
 
@@ -210,5 +232,158 @@ describe('ConfigRepository', () => {
     expect(config?.passthrough['telegram.bots.0.token']).toBeUndefined();
     expect(config?.passthrough.telegramToken).toBe(secretRef('telegram/token'));
     expect(await secrets.get('telegram/token')).toBe('old');
+  });
+
+  it('preserves open toolSettings keys (search_console) across read-modify-write', async () => {
+    await storage.mkdir(DATA);
+    await storage.write(
+      join(DATA, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: claude-opus-4-7',
+        'toolSettings._default.search_console.secret: gsc-default',
+        'toolSettings.scout.search_console.secret: gsc-scout',
+        'toolSettings.scout.dataforseo.secret: seo-scout',
+        '',
+      ].join('\n'),
+    );
+
+    const config = await repo.read();
+    expect(config?.toolSettings._default).toEqual({
+      search_console: { secret: 'gsc-default' },
+    });
+    expect(config?.toolSettings.scout).toEqual({
+      search_console: { secret: 'gsc-scout' },
+      dataforseo: { secret: 'seo-scout' },
+    });
+
+    await repo.update({ model: 'claude-sonnet-4-6' });
+    const yaml = await storage.read(join(DATA, 'config.yaml'));
+    expect(yaml).toContain('toolSettings._default.search_console.secret: gsc-default');
+    expect(yaml).toContain('toolSettings.scout.search_console.secret: gsc-scout');
+    expect(yaml).toContain('toolSettings.scout.dataforseo.secret: seo-scout');
+  });
+});
+
+// F01 (plan/phases/architecture-suggestions-2026-09-10.md): the CLI writer and
+// this repository share one `providers.<n>.*` codec (`parseProviderChain` /
+// `renderProviderChain` in @ethosagent/config), so a web save cannot drop a
+// field the CLI wrote, and the runtime reader (`readRawConfig`) sees it after.
+describe('ConfigRepository — provider chain written by the CLI', () => {
+  let storage: InMemoryStorage;
+  let secrets: InMemorySecretsResolver;
+  let repo: ConfigRepository;
+  const path = join(ethosDir(), 'config.yaml');
+
+  beforeEach(async () => {
+    storage = new InMemoryStorage();
+    secrets = new InMemorySecretsResolver();
+    repo = new ConfigRepository({ dataDir: ethosDir(), storage, secrets });
+    await writeConfig(
+      storage,
+      {
+        provider: 'anthropic',
+        model: 'claude-opus-4-7',
+        apiKey: '',
+        personality: 'researcher',
+        providers: [
+          { provider: 'anthropic', apiKey: 'sk-ant-chain-0123456789abcdef' },
+          { provider: 'bedrock', apiKey: '', region: 'eu-west-1', awsProfile: 'sso-prod' },
+          {
+            provider: 'azure',
+            apiKey: 'azure-key-0123456789abcdef',
+            baseUrl: 'https://example.openai.azure.com',
+            apiVersion: '2024-10-21',
+          },
+        ],
+      },
+      secrets,
+    );
+    // A field this release does not model — hand-added by the operator, or
+    // written by a newer ethos. It belongs to entry 1 (bedrock).
+    await storage.write(path, `${await storage.read(path)}providers.1.fooBar: keep-me\n`);
+  });
+
+  it('an unrelated web update keeps supported and unknown providers.N.* fields', async () => {
+    await repo.update({ verbosity: 'verbose' });
+
+    const yaml = await storage.read(path);
+    expect(yaml).toContain('verbosity: verbose');
+    expect(yaml).toContain('providers.1.fooBar: keep-me');
+
+    const cfg = await readRawConfig(storage);
+    expect(cfg?.providers).toHaveLength(3);
+    expect(cfg?.providers?.[1]).toMatchObject({
+      provider: 'bedrock',
+      region: 'eu-west-1',
+      awsProfile: 'sso-prod',
+      passthrough: { fooBar: 'keep-me' },
+    });
+    expect(cfg?.providers?.[2]).toMatchObject({
+      provider: 'azure',
+      baseUrl: 'https://example.openai.azure.com',
+      apiVersion: '2024-10-21',
+    });
+    // Secret values stay in the vault; the file holds references only.
+    expect(cfg?.providers?.[0]?.apiKey).toBe(secretRef('providers/0/anthropic/apiKey'));
+    expect(cfg?.providers?.[2]?.apiKey).toBe(secretRef('providers/2/azure/apiKey'));
+    expect(yaml).not.toContain('sk-ant-chain-0123456789abcdef');
+    expect(yaml).not.toContain('azure-key-0123456789abcdef');
+  });
+
+  it('a reorder moves unknown fields with their entry', async () => {
+    const [anthropic, bedrock, azure] = (await repo.read())?.providers ?? [];
+    if (!anthropic || !bedrock || !azure) throw new Error('fixture chain missing');
+    await repo.update({ providers: [bedrock, anthropic, azure] });
+
+    const cfg = await readRawConfig(storage);
+    expect(cfg?.providers?.map((p) => p.provider)).toEqual(['bedrock', 'anthropic', 'azure']);
+    expect(cfg?.providers?.[0]).toMatchObject({
+      provider: 'bedrock',
+      region: 'eu-west-1',
+      awsProfile: 'sso-prod',
+      passthrough: { fooBar: 'keep-me' },
+    });
+    expect(cfg?.providers?.[1]?.passthrough).toBeUndefined();
+    expect(cfg?.providers?.[2]?.passthrough).toBeUndefined();
+    // The key reference moves with its entry as well.
+    expect(cfg?.providers?.[1]?.apiKey).toBe(secretRef('providers/0/anthropic/apiKey'));
+    const yaml = await storage.read(path);
+    expect(yaml).toContain('providers.0.fooBar: keep-me');
+    expect(yaml).not.toContain('providers.1.fooBar');
+  });
+
+  it('deleting an entry drops its unknown fields with it', async () => {
+    const current = await repo.read();
+    await repo.update({
+      providers: (current?.providers ?? []).filter((p) => p.provider !== 'bedrock'),
+    });
+
+    const yaml = await storage.read(path);
+    expect(yaml).not.toContain('fooBar');
+    expect(yaml).not.toContain('eu-west-1');
+    const cfg = await readRawConfig(storage);
+    expect(cfg?.providers?.map((p) => p.provider)).toEqual(['anthropic', 'azure']);
+    expect(cfg?.providers?.[1]?.passthrough).toBeUndefined();
+    expect(cfg?.providers?.[1]?.apiVersion).toBe('2024-10-21');
+  });
+
+  it('externalizes a credential-named unknown field instead of persisting its value', async () => {
+    await storage.write(
+      path,
+      `${await storage.read(path)}providers.1.secretKey: aws-secret-0123456789abcdef\n`,
+    );
+
+    await repo.update({ verbosity: 'concise' });
+
+    const yaml = await storage.read(path);
+    expect(yaml).not.toContain('aws-secret-0123456789abcdef');
+    expect(yaml).toContain(`providers.1.secretKey: "${secretRef('providers/1/secretKey')}"`);
+    expect(await secrets.get('providers/1/secretKey')).toBe('aws-secret-0123456789abcdef');
+    const cfg = await readRawConfig(storage);
+    expect(cfg?.providers?.[1]?.passthrough).toEqual({
+      fooBar: 'keep-me',
+      secretKey: secretRef('providers/1/secretKey'),
+    });
   });
 });

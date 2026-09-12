@@ -504,7 +504,10 @@ describe('Gateway — ownership-checked redelivery', () => {
       content: 'someone else deployment',
     });
 
-    const adapter = stubAdapter();
+    // Bot A's own adapter. In a multi-bot deployment an obligation leaves only
+    // through the adapter of the bot it is filed under (F08) — an adapter
+    // belonging to no bot here would leave it pending.
+    const adapter = Object.assign(stubAdapter(), { id: 'telegram:bot-a' });
     const gw = gatewayWith(
       loopYielding(plainTurn),
       store,

@@ -15,6 +15,7 @@ import type {
 import {
   acquireBackupLock,
   createBackup,
+  type MemoryBackendSelection,
   type RestoreReport,
   resolveBackupSettings,
   restoreBackup,
@@ -171,6 +172,9 @@ export class BackupService {
         // MANDATORY (D2) — this is a serving process.
         snapshot: 'backup',
         secrets: this.opts.secrets,
+        // `memory: vault` keeps memory outside dataDir, which no scope covers
+        // (F04) — read from the same flat map every other setting here is.
+        memory: await this.memorySelection(),
       });
       this.lastFailure = null;
       const name = basename(result.path);
@@ -187,7 +191,14 @@ export class BackupService {
         scopes: result.scopes,
         fileCount: result.fileCount,
         uncompressedBytes: result.bytes,
-        skipped: result.skippedFiles.map((s) => ({ path: s.path, reason: s.reason })),
+        // The vault notice rides the `skipped` rows the pane already renders:
+        // it is the same question — what this archive does not hold.
+        skipped: [
+          ...result.skippedFiles.map((s) => ({ path: s.path, reason: s.reason })),
+          ...(result.externalMemory
+            ? [{ path: result.externalMemory.path, reason: result.externalMemory.message }]
+            : []),
+        ],
         unclassifiedDatabases: result.unclassifiedDatabases,
       };
     } catch (err) {
@@ -300,6 +311,23 @@ export class BackupService {
    * (a deployment that never ran setup) resolves to the same defaults the
    * scheduled job would use, which is what the pane should show.
    */
+  /**
+   * The `memory` / `memoryVault.*` slice, from the same flat passthrough map
+   * `settings()` reads `backup.*` from — the repository rooted at THIS
+   * service's dataDir, never the process-global config.
+   */
+  private async memorySelection(): Promise<MemoryBackendSelection> {
+    const passthrough = (await this.opts.config.read())?.passthrough ?? {};
+    const backend = passthrough.memory;
+    if (backend !== 'markdown' && backend !== 'vector' && backend !== 'vault') return {};
+    const path = passthrough['memoryVault.path'];
+    const agentDir = passthrough['memoryVault.agentDir'];
+    return {
+      memory: backend,
+      ...(path ? { memoryVault: { path, ...(agentDir ? { agentDir } : {}) } } : {}),
+    };
+  }
+
   private async settings(): Promise<{
     dir: string;
     enabled: boolean;

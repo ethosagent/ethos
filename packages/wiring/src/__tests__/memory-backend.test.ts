@@ -10,7 +10,12 @@ import { join } from 'node:path';
 import { DefaultHookRegistry } from '@ethosagent/core';
 import { MemoryCaptureRunner } from '@ethosagent/memory-capture';
 import { HistoryStore } from '@ethosagent/memory-history';
-import { emptyMeta, planConsolidation, resolveDecayParams } from '@ethosagent/nightly-loop';
+import {
+  emptyMeta,
+  planConsolidation,
+  resolveDecayParams,
+  restoreArchivedSlug,
+} from '@ethosagent/nightly-loop';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type {
   AgentDonePayload,
@@ -23,7 +28,9 @@ import type {
 import { describe, expect, it } from 'vitest';
 import { createPendingMemoryStore } from '../index';
 import {
+  buildVaultBackend,
   composeGatedMemory,
+  createMemoryBundle,
   createMemoryProviderFromConfig,
   createUndecoratedBackend,
 } from '../memory-backend';
@@ -241,6 +248,153 @@ describe('createPendingMemoryStore — CLI/web approve path is backend-aware', (
     expect(
       await storage.read(join(DATA, 'personalities', 'muse', 'memory-history.jsonl')),
     ).toBeNull();
+  });
+});
+
+describe('createMemoryBundle — host surfaces follow the loop backend (F04)', () => {
+  /** The runtime `vault` registry factory's stack (build-infrastructure). */
+  function runtimeVault(storage: InMemoryStorage) {
+    const { base, history } = buildVaultBackend({ vault: VAULT_CONFIG.memoryVault, storage });
+    return composeGatedMemory({ base, history, dataDir: DATA, storage }).provider;
+  }
+
+  it('under memory: vault, editor + restore write where the agent reads, labelled per surface', async () => {
+    const storage = new InMemoryStorage();
+    const bundle = createMemoryBundle({ config: VAULT_CONFIG, dataDir: DATA, storage });
+    expect(bundle.backend).toBe('vault');
+    if (!bundle.editing.supported) throw new Error('vault supports file editing');
+
+    await bundle.editing.editor.sync(
+      [{ action: 'replace', key: 'MEMORY.md', content: 'Use the staging account' }],
+      ctx({ sessionKey: '' }),
+    );
+    expect((await runtimeVault(storage).read('MEMORY.md', ctx()))?.content).toContain(
+      'Use the staging account',
+    );
+    expect(await storage.read(join(DATA, 'personalities', 'muse', 'MEMORY.md'))).toBeNull();
+
+    await storage.write(
+      join(SCOPE_DIR, 'memory-archive.md'),
+      `<!-- archived ${new Date().toISOString()} slug=old from=MEMORY.md -->\n### old\n\nkept`,
+    );
+    const restored = await restoreArchivedSlug(bundle.editing.restore, ctx(), 'old');
+    expect(restored.ok).toBe(true);
+    expect((await runtimeVault(storage).read('MEMORY.md', ctx()))?.content).toContain('### old');
+
+    const { entries } = await bundle.editing.history.read('personality:muse');
+    expect(new Set(entries.map((e) => e.source))).toEqual(new Set(['web-editor', 'restore']));
+    expect(await storage.exists(join(META_SCOPE_DIR, 'memory-history.jsonl'))).toBe(true);
+  });
+
+  it('keeps the approve queue at dataDir and replays into the vault', async () => {
+    const storage = new InMemoryStorage();
+    const bundle = createMemoryBundle({ config: VAULT_CONFIG, dataDir: DATA, storage });
+    const entry = await bundle.pending.propose({
+      scopeId: 'personality:muse',
+      source: 'capture',
+      factHash: 'h-bundle',
+      update: { action: 'add', key: 'MEMORY.md', content: 'approved via bundle' },
+    });
+    expect(
+      await storage.read(join(DATA, 'personalities', 'muse', 'memory-pending.jsonl')),
+    ).toContain('approved via bundle');
+    await bundle.pending.approve('personality:muse', entry.id, 'web');
+    expect((await runtimeVault(storage).read('MEMORY.md', ctx()))?.content).toContain(
+      'approved via bundle',
+    );
+  });
+
+  it('markdown (the default) keeps every surface at dataDir', async () => {
+    const storage = new InMemoryStorage();
+    const bundle = createMemoryBundle({ config: {}, dataDir: DATA, storage });
+    expect(bundle.backend).toBe('markdown');
+    if (!bundle.editing.supported) throw new Error('markdown supports file editing');
+    await bundle.editing.editor.sync(
+      [{ action: 'replace', key: 'MEMORY.md', content: 'markdown note' }],
+      ctx(),
+    );
+    expect(await storage.read(join(DATA, 'personalities', 'muse', 'MEMORY.md'))).toContain(
+      'markdown note',
+    );
+    expect(await storage.exists(join(DATA, 'personalities', 'muse', 'memory-history.jsonl'))).toBe(
+      true,
+    );
+  });
+
+  it('vector reports file editing as unsupported instead of editing dataDir markdown', () => {
+    const bundle = createMemoryBundle({
+      config: { memory: 'vector' },
+      dataDir: DATA,
+      storage: new InMemoryStorage(),
+    });
+    expect(bundle.backend).toBe('vector');
+    expect(bundle.editing.supported).toBe(false);
+    if (bundle.editing.supported) return;
+    expect(bundle.editing.reason).toContain('"vector" memory backend has no file editor');
+  });
+
+  it("the bundle's approve queue caps + expires by config.memoryApproval, as the runtime gate does", async () => {
+    const storage = new InMemoryStorage();
+    const approval = { mode: 'automated' as const, cap: 1, ttlDays: 1 };
+    const scope = 'personality:muse';
+    const update = { action: 'add' as const, key: 'MEMORY.md', content: 'x' };
+
+    // Cap: the second propose drops the first, exactly as the runtime queue would.
+    const capped = createMemoryBundle({
+      config: { ...VAULT_CONFIG, memoryApproval: approval },
+      dataDir: DATA,
+      storage,
+    });
+    await capped.pending.propose({ scopeId: scope, source: 'capture', update });
+    await capped.pending.propose({ scopeId: scope, source: 'capture', update });
+    expect(await capped.pending.list(scope)).toHaveLength(1);
+
+    // TTL: a candidate parked two days ago is expired under ttlDays: 1 but
+    // still live under the 30-day default.
+    const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
+    const ttlStorage = new InMemoryStorage();
+    const { store: parker } = createPendingMemoryStore({
+      dataDir: DATA,
+      storage: ttlStorage,
+      config: VAULT_CONFIG,
+      now: () => twoDaysAgo,
+    });
+    await parker.propose({ scopeId: scope, source: 'capture', update });
+    const defaults = createMemoryBundle({
+      config: VAULT_CONFIG,
+      dataDir: DATA,
+      storage: ttlStorage,
+    });
+    expect(await defaults.pending.list(scope)).toHaveLength(1);
+    const tuned = createMemoryBundle({
+      config: { ...VAULT_CONFIG, memoryApproval: approval },
+      dataDir: DATA,
+      storage: ttlStorage,
+    });
+    expect(await tuned.pending.list(scope)).toHaveLength(0);
+  });
+
+  it('under memory: vector, approve refuses (the runtime never gates vector) and the candidate stays', async () => {
+    const storage = new InMemoryStorage();
+    const bundle = createMemoryBundle({ config: { memory: 'vector' }, dataDir: DATA, storage });
+    const scope = 'personality:muse';
+    const entry = await bundle.pending.propose({
+      scopeId: scope,
+      source: 'capture',
+      factHash: 'h-leftover',
+      update: { action: 'add', key: 'MEMORY.md', content: 'parked under markdown' },
+    });
+
+    await expect(bundle.pending.approve(scope, entry.id, 'web')).rejects.toMatchObject({
+      code: 'NOT_CONFIGURED',
+      message: expect.stringContaining('Cannot approve into the "vector" memory backend'),
+    });
+    expect(await storage.read(join(DATA, 'personalities', 'muse', 'MEMORY.md'))).toBeNull();
+    expect(await bundle.pending.list(scope)).toHaveLength(1);
+
+    // Reject still clears it (and tombstones the fact).
+    expect((await bundle.pending.reject(scope, entry.id)).ok).toBe(true);
+    expect(await bundle.pending.list(scope)).toHaveLength(0);
   });
 });
 

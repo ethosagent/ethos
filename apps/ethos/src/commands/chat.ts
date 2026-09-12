@@ -31,9 +31,13 @@ import {
   refreshCommandIfStale,
   scanCommandsIntoRegistry,
 } from '../lib/command-loader';
+import { readFileMemorySnapshot } from '../lib/file-memory';
+import { type LoopGoals, runGoalSlash, runGoalsSlash } from '../lib/goal-slash';
+import { createLoopRebuilder } from '../lib/loop-rebuilder';
 import { grantQuickCommandConsent, hasQuickCommandConsent } from '../lib/onboarding';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
 import { formatRecap } from '../lib/recap';
+import { type ReleasableRuntime, releaseCommandRuntime } from '../lib/release-command-runtime';
 import { formatResumeHint } from '../lib/resume-hint';
 import { refreshSkillIfStale, type SkillMeta, scanSkillsIntoRegistry } from '../lib/skill-slash';
 import { buildBaseRegistry, type SlashCommandRegistry } from '../lib/slash-commands';
@@ -43,10 +47,17 @@ import { formatToolFeedLine } from '../lib/tool-feed';
 import {
   formatSkillProposedNotice,
   makeTuiNotificationSubscriber,
+  makeTuiSkillProposalSubscriber,
   makeTuiSlashCommands,
 } from '../lib/tui-capabilities';
-import { isVerbosity, nextVerbosity, projectEvent, type Verbosity } from '../lib/verbosity';
-import { getFunnelTracker, getStorage, resolveActiveLoop } from '../wiring';
+import {
+  isVerbosity,
+  nextVerbosity,
+  projectEvent,
+  unstreamedDoneText,
+  type Verbosity,
+} from '../lib/verbosity';
+import { getFunnelTracker, resolveActiveLoop } from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
@@ -225,6 +236,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // register plugin slash commands into it via registerSlashCommand.
   const registry = buildBaseRegistry();
 
+  const runtime = await resolveActiveLoop(config, { slashRegistry: registry });
   const {
     loop,
     personalityId,
@@ -235,7 +247,13 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     pluginLoader,
     jobStore,
     backgroundExecutor,
-  } = await resolveActiveLoop(config, { slashRegistry: registry });
+    goals,
+    drain,
+    dispose,
+  } = runtime;
+  // The runtime a `/model` switch makes current (TUI only); what this command
+  // releases on the way out. The one before it is retired by the switch itself.
+  let liveRuntime: ReleasableRuntime = runtime;
 
   // FW-15 — scan global and per-personality skill directories into the registry.
   const storage: Storage = new FsStorage();
@@ -273,43 +291,74 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   let quickConsentGiven = await hasQuickCommandConsent(ethosDir());
 
   if (opts.singleQuery) {
-    await runSingleQuery(loop, config, {
-      query: opts.singleQuery,
-      sessionKey: `cli:${basename(process.cwd())}`,
-      personalityId,
-    });
+    try {
+      await runSingleQuery(loop, config, {
+        query: opts.singleQuery,
+        sessionKey: `cli:${basename(process.cwd())}`,
+        personalityId,
+      });
+    } finally {
+      await releaseCommandRuntime(runtime, { label: 'chat agent loop' });
+    }
     return;
   }
 
   if (process.stdout.isTTY && process.stdin.isTTY) {
     const { runTUI } = await import('@ethosagent/tui');
     const inventory = await buildInventory(loop, config);
+    // Bound to the CURRENT runtime; a `/model` switch rebinds both below,
+    // since the replaced runtime's dispose unloads its plugins and drops its
+    // notification router (F06).
+    // `/goal` and `/goals` reach the TUI through this seam — the same handler
+    // the readline fallback uses (lib/goal-slash.ts).
+    const slashCommands = makeTuiSlashCommands(pluginLoader, goals);
+    const onNotification = makeTuiNotificationSubscriber(notificationRouter);
+    const onSkillProposed = setOnSkillProposed
+      ? makeTuiSkillProposalSubscriber(setOnSkillProposed)
+      : undefined;
+    const rebuild = createLoopRebuilder({ drain, dispose }, (modelId: string) =>
+      resolveActiveLoop({ ...config, model: modelId }),
+    );
     await runTUI(loop, {
       model: config.model,
       personality: displayName,
       verbose: config.verbose ?? false,
       skin: config.skin,
       inventory,
+      // F06 — each switch hands back the retirement of the runtime it
+      // replaced (drain its background jobs + goal runs, then dispose); the
+      // TUI runs it once no foreground turn is left on the old loop.
       rebuildLoop: async (modelId: string) => {
-        const { loop: newLoop } = await resolveActiveLoop({ ...config, model: modelId });
-        return newLoop;
+        const next = await rebuild(modelId);
+        liveRuntime = next.runtime;
+        slashCommands.rebind(next.runtime.pluginLoader);
+        onNotification.rebind(next.runtime.notificationRouter);
+        // The replaced loop may still propose while it drains; its slot lets
+        // go of the TUI's callback only once that runtime is retired.
+        const releaseSkillSlot = onSkillProposed?.rebind(
+          next.runtime.setOnSkillProposed ?? (() => {}),
+        );
+        return {
+          ...next,
+          retirePrevious: async () => {
+            try {
+              await next.retirePrevious();
+            } finally {
+              releaseSkillSlot?.();
+            }
+          },
+        };
       },
       preprocessInput: (text) => resolveAtRefs(text, process.cwd()),
-      slashCommands: makeTuiSlashCommands(pluginLoader),
-      onNotification: makeTuiNotificationSubscriber(notificationRouter),
-      ...(setOnSkillProposed
-        ? {
-            onSkillProposed: (cb: (text: string) => void) => {
-              setOnSkillProposed((skillId, _personalityId) => {
-                cb(formatSkillProposedNotice(skillId));
-              });
-              return () => {
-                setOnSkillProposed(() => {});
-              };
-            },
-          }
-        : {}),
+      slashCommands,
+      onNotification,
+      // `/memory` on the configured backend (the vault under `memory: vault`).
+      readMemory: (scope) => readFileMemorySnapshot(config, scope),
+      ...(onSkillProposed ? { onSkillProposed } : {}),
     });
+    // The TUI has exited: release whichever runtime is current (a `/model`
+    // switch retires the one it replaced, not this one).
+    await releaseCommandRuntime(liveRuntime, { label: 'chat agent loop' });
     return;
   }
 
@@ -474,15 +523,20 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         const active = await state.jobStore.countActiveByRoot(state.sessionKey);
         if (active > 0) {
           out(
-            `\n${c.yellow}[${active} background job${active === 1 ? '' : 's'} still running — ` +
-              `they will be orphaned on exit; ${active === 1 ? 'it' : 'they'} will show as ` +
-              `stale/expired on next boot]${c.reset}\n`,
+            `\n${c.dim}[waiting for ${active} background job${active === 1 ? '' : 's'} to ` +
+              `finish…]${c.reset}\n`,
           );
         }
       } catch {
         // best-effort — never block exit on a store read failure
       }
     }
+    // Phase B (T9) used to WARN here that background jobs would be orphaned on
+    // exit. The REPL now waits for them instead, bounded: `releaseCommandRuntime`
+    // drains the executor and the goal runner, then disposes the loop's own
+    // stores. Whatever is still running when the bound expires is released back
+    // to the queue for the next process to claim (job affinity), not abandoned.
+    await releaseCommandRuntime(runtime, { label: 'chat agent loop' });
     if (config.displayResumeHint !== false && !opts.noResumeHint) {
       try {
         const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
@@ -551,6 +605,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     notificationRouter,
     cliAdapter,
     pluginLoader,
+    goals,
   };
 
   // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
@@ -776,6 +831,8 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
   const toolArgs = new Map<string, unknown>();
   const toolNames = new Map<string, string>();
   let hasText = false;
+  // Every `text_delta` this turn — what a `returnDirect` answer is checked against.
+  let streamedText = '';
   // B3 — the turn's single identity, learned from the first event of the turn.
   // Used to stamp any error this turn writes to `errors.jsonl`, so the log line
   // and the trace in `observability.db` name the same turn.
@@ -823,7 +880,10 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
         toolArgs.set(event.toolCallId, event.args);
         toolNames.set(event.toolCallId, event.toolName);
       }
-      if (event.type === 'text_delta' && firstTextDeltaAt === null) {
+      // A `returnDirect` answer arrives only as `done.text`, possibly after a
+      // streamed preamble — rendered once, after it (`unstreamedDoneText`).
+      const doneAnswer = unstreamedDoneText(event, streamedText);
+      if ((event.type === 'text_delta' || doneAnswer) && firstTextDeltaAt === null) {
         firstTextDeltaAt = Date.now();
         clearSpinner();
         if (state.verbosity !== 'quiet') out(`${c.bold}ethos${c.reset} > `);
@@ -850,12 +910,14 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
 
       renderEventForVerbosity(event, state, {
         hasText,
+        streamedText,
         toolStartTimes,
         toolArgs,
         toolNames,
       });
 
-      if (event.type === 'text_delta') hasText = true;
+      if (event.type === 'text_delta') streamedText += event.text;
+      if (event.type === 'text_delta' || doneAnswer) hasText = true;
 
       if (event.type === 'done') {
         clearSpinner();
@@ -909,13 +971,15 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
 
 interface RenderContext {
   hasText: boolean;
+  /** Every `text_delta` this turn has streamed so far. */
+  streamedText: string;
   toolStartTimes: Map<string, number>;
   toolArgs: Map<string, unknown>;
   toolNames: Map<string, string>;
 }
 
 function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: RenderContext): void {
-  const lines = projectEvent(event, state.verbosity);
+  const lines = projectEvent(event, state.verbosity, { streamedText: ctx.streamedText });
   if (lines.length === 0) return;
 
   switch (event.type) {
@@ -984,8 +1048,16 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       break;
     }
 
+    case 'done': {
+      // Only what `done` alone carries — a `returnDirect` tool result, after
+      // any streamed preamble (`unstreamedDoneText`). Otherwise nothing: the
+      // streamed text already is the answer.
+      const answer = lines.find((line) => line.kind === 'text');
+      if (answer) out(stripAnsiEscapes(answer.text));
+      break;
+    }
+
     case 'thinking_delta':
-    case 'done':
     case 'context_meta':
       // Not surfaced in the rendered stream.
       break;
@@ -1020,6 +1092,7 @@ async function runSingleQuery(
   let firstTextDeltaAt: number | null = null;
   const toolDurations: number[] = [];
   let turnUsage: TurnTiming['turnUsage'] = null;
+  let streamedText = '';
 
   for await (const event of loop.run(input.query, {
     sessionKey: input.sessionKey,
@@ -1027,7 +1100,15 @@ async function runSingleQuery(
   })) {
     if (event.type === 'text_delta') {
       if (firstTextDeltaAt === null) firstTextDeltaAt = Date.now();
+      streamedText += event.text;
       out(event.text);
+    }
+    // A `returnDirect` answer arrives only as `done.text`, possibly after a
+    // streamed preamble: shown once, after it (`unstreamedDoneText`).
+    const doneAnswer = unstreamedDoneText(event, streamedText);
+    if (doneAnswer) {
+      if (firstTextDeltaAt === null) firstTextDeltaAt = Date.now();
+      out(doneAnswer);
     }
     if (event.type === 'tool_end') toolDurations.push(event.durationMs);
     if (event.type === 'usage') {
@@ -1066,6 +1147,8 @@ interface SlashHandlerContext {
   notificationRouter: import('@ethosagent/types').NotificationRouter;
   cliAdapter: NotificationAdapter;
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
+  /** The chat loop's goal store + executor pair (`ActiveLoop.goals`). */
+  goals: LoopGoals;
 }
 
 /**
@@ -1203,18 +1286,20 @@ async function handleSlashCommand(
     }
 
     case 'memory': {
-      const { createMemoryProvider } = await import('@ethosagent/wiring');
-      const { ethosDir } = await import('@ethosagent/config');
-      const mem = createMemoryProvider({ dataDir: ethosDir(), storage: getStorage() });
-      const result = await mem.prefetch({
-        scopeId: `personality:${state.personalityId}`,
-        sessionId: '',
+      // The configured backend's files (the vault under `memory: vault`) — what
+      // the agent reads. A backend with no file memory (vector) says so.
+      const { fileMemoryUnsupportedReason } = await import('@ethosagent/wiring');
+      const unsupported = fileMemoryUnsupportedReason(_config);
+      if (unsupported) {
+        out(`${c.dim}[${unsupported} Run \`ethos memory show\` to list it.]${c.reset}\n`);
+        break;
+      }
+      const text = await readFileMemorySnapshot(_config, {
+        personalityId: state.personalityId,
         sessionKey: state.sessionKey,
-        platform: 'cli',
-        workingDir: process.cwd(),
       });
-      if (result && result.entries.length > 0) {
-        out(`\n${result.entries.map((e) => e.content.trim()).join('\n\n')}\n\n`);
+      if (text) {
+        out(`\n${text}\n\n`);
       } else {
         out(`${c.dim}[no memory yet — chat to build it]${c.reset}\n`);
       }
@@ -1393,108 +1478,19 @@ async function handleSlashCommand(
       break;
     }
 
-    case 'goal': {
-      if (!arg) {
-        out(
-          `${c.dim}Usage: /goal <description> | /goal cancel|resume|steer <id> [message]${c.reset}\n`,
-        );
-        break;
-      }
-      const subParts = arg.split(/\s+/);
-      const sub = subParts[0]?.toLowerCase();
-
-      if (sub === 'cancel' || sub === 'resume' || sub === 'steer') {
-        const goalId = subParts[1];
-        if (!goalId) {
-          out(`${c.yellow}Usage: /goal ${sub} <goal-id>${c.reset}\n`);
-          break;
-        }
-        const { SQLiteGoalStore } = await import('@ethosagent/goal-store');
-        const { GoalRunner } = await import('@ethosagent/goal-runner');
-        const store = new SQLiteGoalStore(join(ethosDir(), 'goals.db'));
-        const runner = new GoalRunner({ store });
-        try {
-          if (sub === 'cancel') {
-            const ok = runner.cancel(goalId);
-            out(
-              ok
-                ? `${c.green}Goal cancelled.${c.reset}\n`
-                : `${c.yellow}Cannot cancel goal ${goalId}.${c.reset}\n`,
-            );
-          } else if (sub === 'resume') {
-            const ok = await runner.resume(goalId);
-            out(
-              ok
-                ? `${c.green}Goal resumed.${c.reset}\n`
-                : `${c.yellow}Cannot resume goal ${goalId}.${c.reset}\n`,
-            );
-          } else {
-            const msg = subParts.slice(2).join(' ');
-            if (!msg) {
-              out(`${c.yellow}Usage: /goal steer <id> <message>${c.reset}\n`);
-              break;
-            }
-            const ok = runner.steer(goalId, msg);
-            out(
-              ok
-                ? `${c.dim}Steer sent.${c.reset}\n`
-                : `${c.yellow}Cannot steer goal ${goalId}.${c.reset}\n`,
-            );
-          }
-        } finally {
-          store.close();
-        }
-        break;
-      }
-
-      // Default: create a new goal
-      const { SQLiteGoalStore } = await import('@ethosagent/goal-store');
-      const { GoalRunner } = await import('@ethosagent/goal-runner');
-      const store = new SQLiteGoalStore(join(ethosDir(), 'goals.db'));
-      const runner = new GoalRunner({ store });
-      try {
-        const goal = store.create({
-          userId: 'default-user',
-          personalityId: state.personalityId,
-          origin: 'cli',
-          title: arg.slice(0, 80),
-          goalText: arg,
-        });
-        out(`${c.green}Goal created: ${goal.id}${c.reset}\n`);
-        out(`${c.dim}  "${goal.goalText}"${c.reset}\n`);
-        out(`${c.dim}  Status: ${goal.status} · /goals to list${c.reset}\n`);
-        await runner.startGoal(goal.id);
-      } finally {
-        store.close();
-      }
+    case 'goal':
+      // F05 — the loop's own store + executor pair; refuses when nothing can run the goal.
+      await runGoalSlash(arg, {
+        goals: ctx.goals,
+        personalityId: state.personalityId,
+        out,
+        c,
+      });
       break;
-    }
 
-    case 'goals': {
-      const { SQLiteGoalStore } = await import('@ethosagent/goal-store');
-      const store = new SQLiteGoalStore(join(ethosDir(), 'goals.db'));
-      try {
-        const goals = store.list({ limit: 10 });
-        if (goals.length === 0) {
-          out(`${c.dim}No goals yet. Use /goal <text> to create one.${c.reset}\n`);
-        } else {
-          out(`${c.dim}Recent goals:${c.reset}\n`);
-          for (const g of goals) {
-            const status =
-              g.status === 'completed'
-                ? `${c.green}${g.status}${c.reset}`
-                : g.status === 'failed'
-                  ? `${c.red}${g.status}${c.reset}`
-                  : `${c.dim}${g.status}${c.reset}`;
-            const title = g.title.length > 50 ? `${g.title.slice(0, 50)}...` : g.title;
-            out(`  ${c.dim}${g.id.slice(0, 8)}${c.reset}  ${status}  ${title}\n`);
-          }
-        }
-      } finally {
-        store.close();
-      }
+    case 'goals':
+      runGoalsSlash({ goals: ctx.goals, out, c });
       break;
-    }
 
     case 'undo': {
       const count = Math.max(1, Number.parseInt(arg || '1', 10) || 1);

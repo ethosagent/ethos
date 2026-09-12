@@ -136,8 +136,37 @@ describe('run-all — pure helpers', () => {
       expect(__testing__.MAX_RESTARTS_IN_WINDOW).toBe(10);
     });
 
-    it('shutdown grace is 5 seconds — enough for child SIGTERM cleanup', () => {
-      expect(__testing__.SHUTDOWN_GRACE_MS).toBe(5_000);
+    // F06 follow-up — a child's own SIGTERM path is bounded, but by far more
+    // than 5 s: the gateway drains approval cards and in-flight turns before
+    // its runtime disposal, serve closes its chat turns before its own. A 5 s
+    // grace SIGKILLed children mid-disposal (half-closed stores, -wal left).
+    // The grace is derived from the children's budgets; this pins it against
+    // the constants where each budget is actually defined, so raising one
+    // without raising the grace fails here.
+    it('shutdown grace outlasts the slowest child’s own bounded shutdown', async () => {
+      const { readFile } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const root = join(import.meta.dirname, '..', '..', '..', '..', '..');
+      const constant = async (path: string, name: string): Promise<number> => {
+        const src = await readFile(join(root, path), 'utf8');
+        const m = src.match(new RegExp(`const ${name}(?::\\s*number)? = ([0-9_]+);`));
+        if (!m?.[1]) throw new Error(`${name} not found in ${path}`);
+        return Number(m[1].replace(/_/g, ''));
+      };
+      const dispose = await constant(
+        'apps/ethos/src/lib/dispose-before-exit.ts',
+        'DISPOSE_BEFORE_EXIT_GRACE_MS',
+      );
+      const gateway =
+        (await constant('apps/ethos/src/commands/gateway.ts', 'APPROVAL_SHUTDOWN_DRAIN_MS')) +
+        (await constant('extensions/gateway/src/index.ts', 'SHUTDOWN_DRAIN_TIMEOUT_MS')) +
+        dispose;
+      const serve =
+        (await constant('apps/web-api/src/features/chat/service.ts', 'CLOSE_GRACE_MS')) +
+        (await constant('apps/ethos/src/commands/serve-listen.ts', 'LISTENER_FLUSH_MS')) +
+        dispose;
+      expect(__testing__.CHILD_SHUTDOWN_BUDGET_MS).toBeGreaterThanOrEqual(Math.max(gateway, serve));
+      expect(__testing__.SHUTDOWN_GRACE_MS).toBeGreaterThan(__testing__.CHILD_SHUTDOWN_BUDGET_MS);
     });
 
     it('default health port is 3004 (moved off 3003 to avoid the gateway webhook collision)', () => {

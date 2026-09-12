@@ -143,11 +143,16 @@ const SESSION_SCHEMA = `
 
 export function createKvStoreFactory(
   dbPath: string,
-): (tool: string, scopeId: string) => KeyValueStore {
+): ((tool: string, scopeId: string) => KeyValueStore) & { close(): void } {
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   SqliteKeyValueStore.migrate(db);
-  return (tool, scopeId) => new SqliteKeyValueStore(db, tool, scopeId);
+  // `close` releases the one connection every store this factory hands out
+  // shares — the composition root that opened it calls it on dispose (F06).
+  return Object.assign(
+    (tool: string, scopeId: string) => new SqliteKeyValueStore(db, tool, scopeId),
+    { close: () => db.close() },
+  );
 }
 
 /**

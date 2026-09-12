@@ -38,22 +38,55 @@ export interface LocalToolTransportLiveCtx {
    * degrade when it is absent. That is intended, not a gap.
    */
   llm?: import('@ethosagent/types').SimpleCompletion;
+  /**
+   * The run's context store accessors (`ContextStore.asContextMethods`, wired in
+   * `agent-loop/stages/tool-processing.ts`). Closures over a live store, so they
+   * cannot ride the serializable `ToolExecuteRequest`.
+   */
+  getContext?: <T>(key: string) => T | undefined;
+  setContext?: <T>(key: string, value: T) => void;
 }
 
+/**
+ * Rebuilds a tool's `ToolContext` from the serializable request (wire), the live
+ * side-channel (callbacks and handles), and capability resolution (derived).
+ * Field-by-field parity with the caller's ctx is pinned by
+ * `packages/core/src/__tests__/tool-transport-hop.test.ts`, whose `PARTITION`
+ * must classify every `ToolContext` key.
+ */
 export class LocalToolTransport implements ToolTransport {
   constructor(
     private readonly lookup: (name: string) => Tool | undefined,
     private readonly backends?: CapabilityBackends,
-    private readonly getLiveCtx?: () => LocalToolTransportLiveCtx,
   ) {}
 
+  /**
+   * The `ToolTransport` contract's entry point: wire state only. Live state has
+   * no channel here, so a tool reached this way gets none — the local caller
+   * that HAS it (`DefaultToolRegistry.executeParallel`) calls
+   * {@link LocalToolTransport.executeWithLive} instead.
+   */
   async execute(request: ToolExecuteRequest, signal: AbortSignal): Promise<ToolResult> {
+    return this.executeWithLive(request, signal, undefined);
+  }
+
+  /**
+   * Execute with this batch's live state passed IN, so it is bound to this one
+   * invocation. `DefaultToolRegistry.executeParallel` uses it: a registry-level
+   * slot (or a getter over one) returns whichever batch wrote it last, and a
+   * batch that awaits — an async invocation filter — would resume with another
+   * batch's handles. Pinned by the "interleaved batches" tests in
+   * `__tests__/tool-transport-hop.test.ts`.
+   */
+  async executeWithLive(
+    request: ToolExecuteRequest,
+    signal: AbortSignal,
+    live: LocalToolTransportLiveCtx | undefined,
+  ): Promise<ToolResult> {
     const tool = this.lookup(request.name);
     if (!tool) {
       return { ok: false, error: `Tool '${request.name}' not found`, code: 'not_available' };
     }
-
-    const live = this.getLiveCtx?.();
 
     const ctx: ToolContext = {
       toolCallId: request.toolCallId,
@@ -64,6 +97,7 @@ export class LocalToolTransport implements ToolTransport {
       personalityId: request.personalityId,
       teamId: request.teamId,
       agentId: request.agentId,
+      rootSessionKey: request.rootSessionKey,
       jobId: request.jobId,
       origin: request.origin,
       memoryScopeId: request.memoryScopeId,
@@ -80,6 +114,8 @@ export class LocalToolTransport implements ToolTransport {
       a2aDelegation: live?.a2aDelegation,
       scriptTools: live?.scriptTools,
       llm: live?.llm,
+      getContext: live?.getContext,
+      setContext: live?.setContext,
     };
 
     if (tool.capabilities && this.backends) {

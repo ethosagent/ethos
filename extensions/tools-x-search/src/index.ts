@@ -208,6 +208,8 @@ export function createXSearchTool(opts: CreateXSearchToolOptions = {}): Tool {
           key: 'secret',
           label: 'xAI API key (X search)',
           secretKind: 'x-search',
+          providerLabel: 'xAI (Grok, X search)',
+          getKeyUrl: 'https://console.x.ai/',
         },
       ],
     },

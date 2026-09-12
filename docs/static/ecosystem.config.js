@@ -30,6 +30,10 @@ module.exports = {
       autorestart: true,
       max_restarts: 5,
       restart_delay: 2_000,
+      // `ethos run-all` forwards SIGTERM to its children and gives them up to
+      // 30s to drain (SHUTDOWN_GRACE_MS) before SIGKILL. PM2's own default is
+      // 1600ms, which would kill the supervisor mid-drain.
+      kill_timeout: 35_000,
       // Supervisor-level log; child logs are handled inside ~/.ethos/logs/.
       out_file: '~/.pm2/logs/ethos-out.log',
       error_file: '~/.pm2/logs/ethos-err.log',

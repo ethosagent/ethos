@@ -10,6 +10,8 @@ export const toolCatalogKeys = {
 // Phase 2 — global named secrets + per-personality tool settings.
 export const namedSecretKeys = {
   all: () => ['namedSecrets'] as const,
+  /** The derived provider roster — what the vault will accept a write under. */
+  providers: () => [...namedSecretKeys.all(), 'providers'] as const,
 };
 
 export const toolSettingsKeys = {
@@ -17,6 +19,7 @@ export const toolSettingsKeys = {
   schemas: () => [...toolSettingsKeys.all(), 'schemas'] as const,
   default: () => [...toolSettingsKeys.all(), 'default'] as const,
   forPersonality: (id: string) => [...toolSettingsKeys.all(), 'personality', id] as const,
+  probeCredentials: (id: string) => [...toolSettingsKeys.all(), 'probe', id] as const,
 };
 
 // The Keys pane — the whole secrets vault, by category (`rpc.keys.*`).

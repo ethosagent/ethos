@@ -53,6 +53,20 @@ export interface RealtimeBudgetAuthority {
   getPersonalityBudgetCap(personalityId?: string): number | undefined;
 }
 
+/**
+ * Read a value from the budget authority, or nothing when it refuses. The
+ * authority is the AgentLoop, and onboarding hands over a stand-in that throws
+ * NOT_CONFIGURED until the real loop is bound (lib/pending-loop.ts) — a lane
+ * must treat that as "no authority", not as a failed call.
+ */
+function ask<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
 export interface RealtimeControlDepsOptions {
   /** The registry the agent runs on — advertised == handled derives from it. */
   toolRegistry: ToolRegistry;
@@ -150,7 +164,7 @@ export function createRealtimeControlDeps(
       // the same threshold, but spoken instead of silent.
       const caps = [
         pricing.sessionBudgetUsd,
-        budget?.getPersonalityBudgetCap(info.personalityId),
+        ask(() => budget?.getPersonalityBudgetCap(info.personalityId)),
       ].filter((cap): cap is number => typeof cap === 'number' && cap > 0);
       return {
         laneKey,
@@ -185,7 +199,11 @@ export function createRealtimeControlDeps(
       // The two places token cost goes, so audio minutes land in both: the
       // loop's per-session spend (what `budgetCapUsd` and every budget halt
       // read) and the session row (what `/usage` and the Sessions tab read).
-      budget?.addSessionCost(binding.laneKey, usage.estimatedCostUsd);
+      // Nothing awaits this callback: a budget that refuses (onboarding's
+      // stand-in loop does, until a loop is bound) must not throw out of a live
+      // call. The session-row write below is unaffected — it does not go
+      // through the loop. Pinned by __tests__/realtime-control-deps.test.ts.
+      ask(() => budget?.addSessionCost(binding.laneKey, usage.estimatedCostUsd));
       void opts.sessions
         .updateUsage(binding.storeSessionId, { estimatedCostUsd: usage.estimatedCostUsd })
         .catch(() => {
@@ -197,7 +215,9 @@ export function createRealtimeControlDeps(
     // Only when there IS an authority holding the session's whole bill. Absent,
     // the lane falls back to its own audio total rather than being told the
     // session has spent nothing.
-    ...(budget ? { sessionSpendUsd: (binding) => budget.getSessionCost(binding.laneKey) } : {}),
+    ...(budget
+      ? { sessionSpendUsd: (binding) => ask(() => budget.getSessionCost(binding.laneKey)) }
+      : {}),
 
     // `record` only — see `RealtimeControlLaneDeps.recordSpan` for why the lane
     // is not handed the writer itself.

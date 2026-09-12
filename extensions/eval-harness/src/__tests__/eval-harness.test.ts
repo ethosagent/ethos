@@ -145,6 +145,29 @@ describe('parseExpectedJsonl', () => {
 // ---------------------------------------------------------------------------
 
 describe('EvalRunner', () => {
+  // A `returnDirect` tool's answer reaches the turn only as `done.text`, after
+  // any preamble the model streamed — it is what gets scored.
+  it('scores a returnDirect answer that only `done.text` carries', async () => {
+    const outputPath = join(testDir, 'out-rd.jsonl');
+    const loop = {
+      run: async function* () {
+        yield { type: 'text_delta', text: 'Let me check.' } as AgentEvent;
+        yield { type: 'done', text: 'The answer is 42', turnCount: 1 } as AgentEvent;
+      },
+    } as unknown as AgentLoop;
+    const runner = new EvalRunner(loop, {
+      concurrency: 1,
+      outputPath,
+      defaultScorer: 'contains',
+      storage: new FsStorage(),
+    });
+    const stats = await runner.run(
+      [{ id: 'rd', prompt: 'What is 6*7?' }],
+      parseExpectedJsonl('{"id":"rd","expected":"42"}'),
+    );
+    expect(stats.passed).toBe(1);
+  });
+
   it('scores a passing task as 1 and failing task as 0', async () => {
     const outputPath = join(testDir, 'out.jsonl');
     const loop = makeLoop({ task1: 'The answer is 42', task2: 'No answer here' });

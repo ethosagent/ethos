@@ -4,8 +4,11 @@
 // against its size guardrail, and `turn-end.ts` has single-digit headroom, so
 // the logic lives in this module and `maybeConsolidateAtTurnEnd` calls it in
 // one line. Why at turn end at all: it is the only stage that runs AFTER the
-// `done` event while the session lane is still held, so the engine sees a
-// finished turn and cannot race the next inbound message.
+// `done` event, so the engine sees a finished turn. It cannot race the next
+// inbound message only when the consumer drains the iterator while holding the
+// lane — the gateway does (`Gateway.runTurn`, pinned by
+// extensions/gateway/src/__tests__/turn-tail.test.ts); a consumer that breaks
+// on `done` skips this call entirely.
 //
 // The call fires BEFORE turn-end's auto-compaction and memory-flush gates on
 // purpose: `onTurnComplete` is a contract the engine holds with the framework,

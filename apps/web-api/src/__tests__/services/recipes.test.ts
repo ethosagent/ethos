@@ -93,6 +93,10 @@ const WEB_SEARCH_SETTINGS: Tool['settingsSchema'] = {
   ],
 };
 
+const WEB_SEARCH_CAPABILITIES: Tool['capabilities'] = {
+  secrets: ['providers/exa/*', 'providers/tavily/*', 'providers/brave/*'],
+};
+
 /** The slice of `keys.list()` the credential check reads: refs and `set`. */
 function keyStore(
   exaKey: string | null,
@@ -218,7 +222,9 @@ function makeWorld(o: WorldOptions = {}) {
         name,
         description: name,
         toolset: 'test',
-        ...(name === 'web_search' ? { settingsSchema: WEB_SEARCH_SETTINGS } : {}),
+        ...(name === 'web_search'
+          ? { settingsSchema: WEB_SEARCH_SETTINGS, capabilities: WEB_SEARCH_CAPABILITIES }
+          : {}),
       }) as Tool,
   );
 
@@ -248,6 +254,7 @@ function makeWorld(o: WorldOptions = {}) {
       secrets: new InMemorySecretsResolver(),
     }),
     personalities: personalitiesService,
+    secrets: new InMemorySecretsResolver(),
   });
 
   const recipes = new RecipesService({

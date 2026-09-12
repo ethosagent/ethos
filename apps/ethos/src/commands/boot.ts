@@ -104,6 +104,7 @@ import {
   type WebBindTarget,
 } from '../config-reload';
 import { createHealthServer } from '../health-server';
+import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
@@ -114,6 +115,7 @@ import { createWebhookServer, type PrefilterRunner } from '../webhook-server';
 import {
   buildServeBusySources,
   buildSystemTaskHandlers,
+  closeObservabilityStore,
   createAgentLoop,
   createLLM,
   dedupeBusySources,
@@ -126,6 +128,7 @@ import {
 } from '../wiring';
 import { runCronTurn } from './cron-turn';
 import {
+  adapterRegistries,
   buildGateway,
   buildGatewayAdapters,
   buildGatewayBots,
@@ -134,6 +137,7 @@ import {
   buildGatewayVoiceOutputs,
   buildPlatformWebhookMounts,
   channelDigestSystemTask,
+  closeSlackSessionStores,
   createCapturingAdapter,
   createGatewayAttachmentCache,
   createGatewayMetricsAuthCheck,
@@ -160,7 +164,12 @@ import {
   resolveWebHost,
   resolveWebPort,
 } from './serve-helpers';
-import { formatNonLoopbackWarning, isLoopbackHost, listenWithFallback } from './serve-listen';
+import {
+  closeListener,
+  formatNonLoopbackWarning,
+  isLoopbackHost,
+  listenWithFallback,
+} from './serve-listen';
 
 const ACP_PORT_DEFAULT = 3001;
 const WEB_PORT_FALLBACK_ATTEMPTS = 5;
@@ -543,7 +552,6 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // with no legacy to preserve, so it follows §3b step 10's CORRECTNESS
   // principle instead: nothing external reaches a half-reconciled process.
   const acpServer = buildServeAcpServer({
-    dir,
     loop: systemLoop,
     session,
     mesh,
@@ -636,7 +644,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     notificationRouter: shared.notificationRouter,
     cronScheduler: scheduler,
     cronTriggers,
-    goalRunner: shared.goalRunner,
+    goals: shared.goals,
+    memoryBundle: shared.memoryBundle,
     jobStore: shared.jobStore,
     jobRunners: shared.jobRunners,
     backgroundExecutor: shared.backgroundExecutor,
@@ -754,16 +763,11 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // actually being watched. See `openChannelTranscriptStore`.
   const channelTranscript = openChannelTranscriptStore(join(dir, 'channel-transcript.db'));
 
-  const adapterMap = new Map<string, PlatformAdapter>();
-  // The FULL set, keyed by botKey — `adapterMap` keeps only the first adapter
-  // per platform, so on its own it cannot answer `gateway.listAdapters()`.
-  const botAdapterMap = new Map<string, PlatformAdapter>();
-  for (const adapter of adapters) {
-    const colonIdx = adapter.id.indexOf(':');
-    const platformKey = colonIdx > 0 ? adapter.id.slice(0, colonIdx) : adapter.id;
-    if (!adapterMap.has(platformKey)) adapterMap.set(platformKey, adapter);
-    botAdapterMap.set(colonIdx > 0 ? adapter.id.slice(colonIdx + 1) : adapter.id, adapter);
-  }
+  // Every adapter, keyed by the botKey it speaks as — the SAME derivation
+  // `buildGateway` hands the Gateway (`adapterRegistries`), so the per-bot
+  // lookup below finds Email under its declared botKey rather than its bare
+  // `'email'` id.
+  const { botAdapters: botAdapterMap } = adapterRegistries(adapters);
 
   // Filled by the per-bot `registerBotLive` calls below (bots first, in
   // registration order), then closed with the shared loop's router — the same
@@ -792,8 +796,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     config: cfg,
     bots,
     systemLoop,
-    adapterMap,
-    botAdapters: botAdapterMap,
+    adapters,
     deliveryLedger,
     inboundDedup,
     resolveUserId,
@@ -916,6 +919,30 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   const botWiring = new Map<string, () => Promise<void>>();
 
   /**
+   * F06 — the loop runtimes of every bot currently wired, cold-booted and
+   * hot-added alike, keyed by identity (a swap briefly holds two loops for one
+   * botKey). A bot's loop is released by its own wiring teardown — the step
+   * that already runs exactly when nothing routes to it any more — and
+   * whatever is still here at shutdown is released there. Each release is
+   * `CreateAgentLoopResult.dispose`, which is idempotent, so a path that
+   * releases the same bot twice (a failed commit after its rollback) is safe.
+   */
+  const liveBotLoops = new Set<() => Promise<void>>();
+  const releaseBotLoops = async (wiring: GatewayBotWiring, id: string): Promise<void> => {
+    for (const dispose of wiring.disposers) liveBotLoops.delete(dispose);
+    const results = await Promise.allSettled(wiring.disposers.map((dispose) => dispose()));
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        logger.warn(`[config-reload] bot "${id}" loop dispose failed`, {
+          component: 'config-reload',
+          bot: id,
+          error: reason(r.reason),
+        });
+      }
+    }
+  };
+
+  /**
    * The app-level registrations EVERY bot makes, whatever its transport and
    * however it arrived — messaging send, notification routers, personality
    * refreshers, clarify surfaces, approval surface — plus the teardown that
@@ -936,6 +963,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     for (const setter of wiring.messagingSetters) setter(gatewayMessagingSend);
     allNotificationRouters.push(...wiring.notificationRouters);
     personalityRefreshers.push(...wiring.refreshers);
+    for (const dispose of wiring.disposers) liveBotLoops.add(dispose);
     let correlator: ClarifyCorrelator | undefined;
     let flow: ReturnType<typeof wireApprovalFlow> | undefined;
     // Every undo is identity-based (splice THIS router, delete THIS
@@ -952,9 +980,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         if (i >= 0) personalityRefreshers.splice(i, 1);
       }
       if (correlator) clarifyCorrelators.delete(bot.botKey, correlator);
-      if (!flow) return;
-      if (approvalFlows.get(bot.botKey) === flow) approvalFlows.delete(bot.botKey);
-      await flow.shutdown();
+      if (flow) {
+        if (approvalFlows.get(bot.botKey) === flow) approvalFlows.delete(bot.botKey);
+        await flow.shutdown();
+      }
+      // Last: the loop's runtime, once nothing above can route a turn to it.
+      await releaseBotLoops(wiring, bot.botKey);
     };
     try {
       correlator = await registerClarifySurfacesFor([bot], adaptersSlice, bot.botKey);
@@ -978,6 +1009,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       notificationRouters: [],
       toolRegistries: [],
       refreshers: [],
+      disposers: [],
     };
     const own = botAdapterMap.get(bot.botKey);
     botWiring.set(bot.botKey, await registerBotLive(bot, wiring, own ? [own] : []));
@@ -1572,23 +1604,29 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     const built = await buildGatewayBots(slice, scheduler, watcherManager, (sessionKey) =>
       gatewayRef?.originThreadIdFor(sessionKey),
     );
-    const newAdapters = await buildGatewayAdapters(slice, attachmentCache);
-    const bot = built.bots[0];
-    const adapter = newAdapters[0];
-    if (!bot || !adapter || built.bots.length !== 1 || newAdapters.length !== 1) {
-      throw refuse(
-        'the config slice did not build exactly one bot and one adapter',
-        'Check the entry in ~/.ethos/config.yaml — its credentials or personality binding are incomplete.',
-      );
+    try {
+      const newAdapters = await buildGatewayAdapters(slice, attachmentCache);
+      const bot = built.bots[0];
+      const adapter = newAdapters[0];
+      if (!bot || !adapter || built.bots.length !== 1 || newAdapters.length !== 1) {
+        throw refuse(
+          'the config slice did not build exactly one bot and one adapter',
+          'Check the entry in ~/.ethos/config.yaml — its credentials or personality binding are incomplete.',
+        );
+      }
+      const wiring = built.perBot.get(bot.botKey);
+      if (!wiring) {
+        throw refuse(
+          'the config slice built a bot the builder did not attribute',
+          'This is a wiring bug — file an issue.',
+        );
+      }
+      return { bot, adapter, wiring, slice };
+    } catch (err) {
+      // F06 — a refusal after the build must not strand the loop it built.
+      await Promise.allSettled(built.disposers.map((dispose) => dispose()));
+      throw err;
     }
-    const wiring = built.perBot.get(bot.botKey);
-    if (!wiring) {
-      throw refuse(
-        'the config slice built a bot the builder did not attribute',
-        'This is a wiring bug — file an issue.',
-      );
-    }
-    return { bot, adapter, wiring, slice };
   };
 
   /**
@@ -1635,6 +1673,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
           bot: id,
           error: reason(err),
         }),
+      // F06 — a commit that throws releases the prepared loop, even when
+      // `register` fails before `wire` ran. The wiring undo may already have;
+      // the loop's dispose is idempotent.
+      release: () => releaseBotLoops(wiring, id),
     });
     if (routes.length > 0) {
       logger.info(`[config-reload] bot "${id}" webhook route mounted`, {
@@ -1657,6 +1699,25 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
    * left alone — `removeBotLive` undoes it, and the swap path keeps it so a
    * restore has something to come back to.
    */
+  /**
+   * After a swap: announce the jobs the outgoing loop's executor interrupted.
+   * `removeAdapter` unsubscribed that executor before the swap disposed its
+   * loop, so its jobs finished as interrupted-by-shutdown with no gateway
+   * listening; only the store sweep sees them (`Gateway.sweepUndeliveredJobs`,
+   * the same durable claim the boot sweep takes). Never throws.
+   */
+  const sweepInterruptedJobs = async (id: string): Promise<void> => {
+    try {
+      await gateway.sweepUndeliveredJobs();
+    } catch (err) {
+      logger.warn(`[config-reload] bot "${id}" post-swap job sweep failed`, {
+        component: 'config-reload',
+        bot: id,
+        error: reason(err),
+      });
+    }
+  };
+
   const retireBotTransport = async (id: string): Promise<void> => {
     const botKey = id.slice(id.indexOf(':') + 1);
     // Unmount BEFORE the adapter is deregistered and stopped, so no delivery
@@ -1709,6 +1770,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     await swapBotLive({
       prepare: () => prepareBotLive(id, source),
       retire: () => retireBotTransport(id),
+      afterSwap: () => sweepInterruptedJobs(id),
+      // F06 — a quarantined old bot makes `retire` throw; the replacement's
+      // loop is released instead of stranded.
+      release: (prepared) => releaseBotLoops(prepared.wiring, id),
       commit: async (prepared) => {
         const undoWiring = await commitBotLive(id, prepared);
         // The replacement is live, so the outgoing registration can go. Its
@@ -1767,21 +1832,27 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     const built = await buildGatewayBots(slice, scheduler, watcherManager, (sessionKey) =>
       gatewayRef?.originThreadIdFor(sessionKey),
     );
-    const bot = built.bots[0];
-    if (!bot || built.bots.length !== 1) {
-      throw refuse(
-        `the config slice built ${built.bots.length} bots, not one`,
-        'Check the `webhooks:` entry in ~/.ethos/config.yaml — its personality binding is incomplete.',
-      );
+    try {
+      const bot = built.bots[0];
+      if (!bot || built.bots.length !== 1) {
+        throw refuse(
+          `the config slice built ${built.bots.length} bots, not one`,
+          'Check the `webhooks:` entry in ~/.ethos/config.yaml — its personality binding is incomplete.',
+        );
+      }
+      const wiring = built.perBot.get(bot.botKey);
+      if (!wiring) {
+        throw refuse(
+          'the config slice built a bot the builder did not attribute',
+          'This is a wiring bug — file an issue.',
+        );
+      }
+      return { bot, wiring, hook };
+    } catch (err) {
+      // F06 — a refusal after the build must not strand the loop it built.
+      await Promise.allSettled(built.disposers.map((dispose) => dispose()));
+      throw err;
     }
-    const wiring = built.perBot.get(bot.botKey);
-    if (!wiring) {
-      throw refuse(
-        'the config slice built a bot the builder did not attribute',
-        'This is a wiring bug — file an issue.',
-      );
-    }
-    return { bot, wiring, hook };
   };
 
   /**
@@ -1818,6 +1889,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
           hook: hookId,
           error: reason(err),
         }),
+      // F06 — same release-on-failure as `commitBotLive`.
+      release: () => releaseBotLoops(prepared.wiring, `webhook:${hookId}`),
     });
 
   const addWebhookRouteLive = async (hookId: string, source: EthosConfig): Promise<void> => {
@@ -1842,6 +1915,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     await swapBotLive({
       prepare: () => prepareWebhookLive(hookId, source),
       retire: () => retireWebhookTransport(hookId),
+      release: (prepared) => releaseBotLoops(prepared.wiring, `webhook:${hookId}`),
       commit: async (prepared) => {
         const undoWiring = await commitWebhookLive(hookId, prepared);
         await replaceBotWiring(botWiring, botKey, undoWiring);
@@ -2125,7 +2199,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       // active one to finish before anything is torn down.
       await guard('config-reload', async () => {
         clearInterval(configReloadTimer);
-        await configReloadRunner.stop();
+        // Bounded (F06): a reconcile retiring a bot disposes its loop, and a
+        // shutdown must not wait on that forever. The per-step bound inside
+        // the loop's dispose (`DISPOSE_STEP_TIMEOUT_MS`) normally ends it first.
+        await disposeBeforeExit([['config reload', () => configReloadRunner.stop()]], (message) =>
+          logger.warn(message, { component: 'boot' }),
+        );
       });
       await guard('watchdog', () => {
         if (stopWatchdog) stopWatchdog();
@@ -2140,6 +2219,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       await guard('force-settle-approvals', () => {
         created.forceSettleApprovals();
       });
+      // Chat before the web listener: `closeChat` aborts the web turns and
+      // writes the "not sent" notice to each tab's SSE stream, which the
+      // listener close below then drops (serve-shutdown-notice.test.ts).
+      await guard('close-chat', () => created.closeChat());
       await guard('mesh-heartbeat', () => {
         stopMeshHeartbeat();
       });
@@ -2185,6 +2268,14 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       await guard('inbound-dedup', () => {
         inboundDedup.close();
       });
+      await guard('channel-transcript', () => {
+        // A no-op when observe mode never recorded anything.
+        channelTranscript.close();
+      });
+      await guard('slack-session-readers', () => {
+        // The App Home / unfurl readers' lazily opened `sessions.db` handles.
+        closeSlackSessionStores();
+      });
       await guard('sockets', () =>
         Promise.allSettled([
           created.voiceSocket.close(),
@@ -2209,8 +2300,42 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         'web-server',
         // `webServer`, not a captured `server`: a Phase D rebind replaces the
         // listener, and closing the one this process started on would leave
-        // the current one up while the exit races it.
-        () => new Promise<void>((resolve) => webServer.close(() => resolve())),
+        // the current one up while the exit races it. `closeListener`, not a
+        // bare `close()`: an open web UI tab holds `/sse/system`, and a plain
+        // close waits on it forever (F06 live smoke).
+        () => closeListener(webServer),
+      );
+      // F06 — the runtimes, last, once every surface above has stopped
+      // feeding them: the web API (it borrowed the system loop), every bot
+      // loop still wired, then the system loop itself. A job the executors
+      // abort here is not delivered through the closed ledger: `gateway.shutdown`
+      // above already ran every bot's cleanup, unsubscribing the gateway's
+      // completion listener from each executor. Then this process's own
+      // sessions.db handles and the observability store — they run even when a
+      // dispose above timed out (`disposeBeforeExit` leaves a hung step behind).
+      await guard('runtime-dispose', () =>
+        disposeBeforeExit(
+          [
+            ['web api', () => created.dispose()],
+            ...[...liveBotLoops].map((dispose) => ['bot loop', dispose] as const),
+            ['system loop', shared.dispose],
+            [
+              'sessions.db',
+              async () => {
+                contextLog.close();
+                session.close();
+                apiKeys.close();
+                idempotencyStore.close();
+                metricsApiKeys.close();
+              },
+            ],
+            // `a2a/tasks.db` — its retention timer was cleared above; this is
+            // the handle itself, the last store this process owns.
+            ['a2a tasks.db', async () => a2a.taskStore.close()],
+            ['observability.db', async () => closeObservabilityStore()],
+          ],
+          (message) => logger.warn(message, { component: 'boot' }),
+        ),
       );
       process.exit(0);
     })();

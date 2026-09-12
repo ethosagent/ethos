@@ -4,7 +4,7 @@ description: "The Ethos CLI surface: ethos chat, slash commands, single-shot que
 kind: reference
 audience: shared
 slug: platform-cli
-updated: 2026-08-14
+updated: 2026-09-12
 ---
 
 The `ethos` binary is the default surface. It launches an interactive [agent](../getting-started/glossary.md#agent-loop) chat, streams [agent events](../getting-started/glossary.md#agent-event) to the terminal, persists conversation history in SQLite, and accepts slash commands for switching [personality](../getting-started/glossary.md#personality), inspecting [memory](../getting-started/glossary.md#memory-provider), and resetting state.
@@ -30,7 +30,7 @@ The CLI is also what you pipe into for scripted runs and what every other surfac
 | `ethos gateway start` | Run the channel [gateway](../getting-started/glossary.md#gateway) (Telegram, Discord, Slack, email). |
 | `ethos listen [doctor]` | Run a [wake satellite](../getting-started/glossary.md#wake-satellite) against `ethos serve`, or preflight one. Capture is raw PCM piped into stdin, the mic is open, and the server decides who was addressed from the transcript — see [Run a wake satellite](../using/how-to/run-a-wake-satellite.md). |
 | `ethos personality [list \| set <id> \| duplicate <src> <dst>]` | Inspect or change the default personality. |
-| `ethos memory [show \| add "<text>" \| clear]` | Read or edit `~/.ethos/MEMORY.md`. |
+| `ethos memory [show \| add "<text>" \| clear \| history \| pending \| restore \| supersede \| retract]` | Read, edit and audit the active personality's memory on the configured backend — see [ethos memory](../using/reference/cli.md#ethos-memory). |
 | `ethos skills` | List, install, and inspect skills. |
 | `ethos plugin` | Install or uninstall plugins. |
 | `ethos mcp` | Manage the MCP server bridge and per-personality MCP servers. |

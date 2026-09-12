@@ -27,7 +27,7 @@ import {
 import type { WatcherTap } from '../agent-loop/turn-context';
 import { makeTestToolContext } from '../defaults/in-memory-tool-context';
 import { DefaultHookRegistry } from '../hook-registry';
-import { DefaultToolRegistry } from '../tool-registry';
+import { ABORTED_TOOL_RESULT, DefaultToolRegistry } from '../tool-registry';
 import { createTestSafety } from './helpers/test-safety';
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,7 @@ function makeBridge(opts: {
   hooks?: DefaultHookRegistry;
   maxToolCallsPerTurn?: number;
   watcherTap?: WatcherTap;
+  abortSignal?: AbortSignal;
 }): BridgeSetup {
   const counters = createTurnBudgetCounters();
   const bridge = new ScriptToolBridge({
@@ -92,7 +93,10 @@ function makeBridge(opts: {
         1000,
       ),
   });
-  const ctx = makeTestToolContext();
+  const ctx: ToolContext = {
+    ...makeTestToolContext(),
+    ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+  };
   const api = bridge.bind(() => ctx);
   return { api, counters, ctx };
 }
@@ -247,6 +251,44 @@ describe('ScriptToolBridge — shared before_tool_call fire site', () => {
     );
     expect(end?.ok).toBe(false);
     expect(end?.error).toBe(BLOCK);
+  });
+});
+
+// Parity with processTools' per-call abort check: a /stop must stop the calls a
+// script is still making, and must not open an approval prompt for one of them.
+describe('ScriptToolBridge — the turn was aborted', () => {
+  it('refuses before the before_tool_call hook fires', async () => {
+    const controller = new AbortController();
+    const hooks = new DefaultHookRegistry();
+    let hookFired = 0;
+    hooks.registerModifying('before_tool_call', async () => {
+      hookFired++;
+      return null;
+    });
+    const tools = makeRegistry();
+    let ran = 0;
+    tools.register(
+      stubTool('counted', {
+        execute: async () => {
+          ran++;
+          return { ok: true, value: 'counted:ran' };
+        },
+      }),
+    );
+    const { api } = makeBridge({
+      tools,
+      hooks,
+      allowedTools: ['run_code', 'counted'],
+      abortSignal: controller.signal,
+    });
+
+    controller.abort();
+    const result = await api.startExecution().call('counted', {});
+
+    expect(hookFired).toBe(0);
+    expect(ran).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe(ABORTED_TOOL_RESULT);
   });
 });
 

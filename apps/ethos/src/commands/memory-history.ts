@@ -1,7 +1,12 @@
-import { ethosDir, readConfig } from '@ethosagent/config';
-import type { HistoryEntry, HistoryReadFilter, HistorySource } from '@ethosagent/wiring';
-import { HistoryStore } from '@ethosagent/wiring';
+import { readConfig } from '@ethosagent/config';
+import type {
+  HistoryEntry,
+  HistoryReadFilter,
+  HistorySource,
+  HistoryStore,
+} from '@ethosagent/wiring';
 import { writeJson } from '../json-output';
+import { openFileMemory } from '../lib/file-memory';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
@@ -41,7 +46,9 @@ export async function runMemoryHistory(args: string[]): Promise<void> {
   const personalityId = flag('--personality') ?? config?.personality ?? 'default';
   const scopeId = `personality:${personalityId}`;
 
-  const store = new HistoryStore({ dataDir: ethosDir(), storage: getStorage() });
+  // The configured backend's history (`<vault>/<agentDir>/.ethos-meta` under
+  // `memory: vault`); refused for vector, whose agent writes record none.
+  const store = openFileMemory(config, 'tool').history;
 
   const filter: HistoryReadFilter = {};
   const key = flag('--key');

@@ -1,4 +1,4 @@
-import type { SecretRef, SecretsResolver } from '@ethosagent/types';
+import type { SecretRef, SecretsResolver, Tool } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { type KeyCategoryView, type KeyEntryView, KeysService } from '../keys.service';
 import { expandEntry, KEY_CATALOG, parseCodexTokens, refsForEntry } from '../keys-catalog';
@@ -26,12 +26,45 @@ class FakeSecrets implements SecretsResolver {
   }
 }
 
+/** Registry stub so reflected NamedSecrets rows (exa etc.) appear in list(). */
+function namedSecretToolRegistry() {
+  const webSearch = ['providers/exa/*', 'providers/tavily/*', 'providers/brave/*'];
+  const tools: Tool[] = [
+    {
+      name: 'web_search',
+      description: 'web_search',
+      schema: { type: 'object' },
+      capabilities: { secrets: webSearch },
+      settingsSchema: {
+        fields: [
+          {
+            kind: 'enum',
+            key: 'provider',
+            label: 'Provider',
+            options: [
+              { value: 'exa', label: 'Exa' },
+              { value: 'tavily', label: 'Tavily' },
+              { value: 'brave', label: 'Brave' },
+            ],
+          },
+          { kind: 'secret-binding', key: 'secret', label: 'API key', secretKind: 'web-search' },
+        ],
+      },
+      execute: async () => ({ ok: true, value: '' }),
+    },
+  ];
+  return { getAvailable: () => tools };
+}
+
 function makeService(seed: Record<string, string> = {}): {
   service: KeysService;
   secrets: FakeSecrets;
 } {
   const secrets = new FakeSecrets(seed);
-  const namedSecrets = new NamedSecretsService({ secrets });
+  const namedSecrets = new NamedSecretsService({
+    secrets,
+    toolRegistry: namedSecretToolRegistry(),
+  });
   return { service: new KeysService({ secrets, namedSecrets }), secrets };
 }
 

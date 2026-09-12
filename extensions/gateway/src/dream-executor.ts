@@ -164,21 +164,26 @@ export class DreamExecutor {
     this.inFlight.set(personalityId, abort);
 
     let success = false;
+    let errored = false;
     try {
       // Dream turns run on the `dreaming` model tier — a personality that
       // declares `model.dreaming` gets its cheaper maintenance model here.
       // Falls back to `model.default` / the global model when it doesn't.
+      //
+      // Drained to the end, never `break`: AgentLoop yields `done` BEFORE its
+      // turn-end work (`maybeConsolidateAtTurnEnd` — the context engine's
+      // `onTurnComplete`, memory flush, auto-compaction), and closing the
+      // generator skips it (F07). A refused turn yields `error` then `done`,
+      // so success is a `done` with no `error` before it. Pinned by
+      // `__tests__/dream-executor.test.ts` ('turn tail').
       for await (const event of loop.run(prompt, {
         personalityId,
         sessionKey,
         abortSignal: abort.signal,
         tierOverride: 'dreaming',
       })) {
-        if (event.type === 'done') {
-          success = true;
-          break;
-        }
-        if (event.type === 'error') break;
+        if (event.type === 'error') errored = true;
+        else if (event.type === 'done' && !errored) success = true;
       }
     } finally {
       this.inFlight.delete(personalityId);

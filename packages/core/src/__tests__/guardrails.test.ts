@@ -115,7 +115,19 @@ describe('Orchestrator guardrails', () => {
     // them logic: the outcomes themselves are decided in
     // packages/core/src/clarify/clarify-bridge.ts and named in
     // packages/core/src/clarify/respond-outcome.ts.
-    expect(lineCount).toBeLessThanOrEqual(980);
+    // Bumped 980 -> 994 (abort before tool dispatch): a sixth early exit, after
+    // streamStep and before processTools, so an abort that lands once the
+    // response's tool_use blocks have streamed stops those tools instead of the
+    // iteration-top check seeing it only after they ran. The exit is the same
+    // flush / `aborted` error / endTrace sequence as the other five, plus one
+    // import and one call; persisting the is_error tool_results lives in
+    // agent-loop/stages/tool-rejection.ts (`persistAbortedToolCalls`).
+    // Bumped 994 -> 996 (ToolContext parity at turn end): the run's context
+    // store and the resolved `rootSessionKey` are handed to the turn-end stage,
+    // so a tool the memory flush dispatches gets the contract the batch path
+    // gives it. Two pass-through properties on the existing `turnEndExtras`
+    // object; the ToolContext they feed is built in agent-loop/turn-end.ts.
+    expect(lineCount).toBeLessThanOrEqual(996);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -233,7 +245,14 @@ describe('Orchestrator guardrails', () => {
       // Bumped 500 → 502: Lane 1(a) threads the max-single-tool-result gate
       // term through turn-end's evaluateGate deps (three lines; the arithmetic
       // itself lives in compaction.ts's shared evaluateGate).
-      if (lineCount > 502) {
+      // Bumped 502 -> 517 (ToolContext parity at turn end): turn-end.ts is the
+      // one helper that DISPATCHES tools, so the flush's ToolContext now carries
+      // `rootSessionKey` and the run's context accessors — two fields on
+      // TurnEndCtx/TurnEndExtras with their docs, two lines in buildTurnEndCtx,
+      // three in the ToolContext, one import. No logic: the store is created in
+      // agent-loop.ts and the parity is pinned by
+      // __tests__/tool-context-parity.test.ts.
+      if (lineCount > 517) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi } from '../../index';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -26,7 +26,7 @@ describe('GET /healthz', () => {
       // same path, and vitest runs the two files in parallel.
       storage: new InMemoryStorage(),
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

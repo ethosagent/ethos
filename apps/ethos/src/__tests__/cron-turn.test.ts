@@ -39,6 +39,33 @@ const okEvents = (): AgentEvent[] => [
   { type: 'done', text: 'output', turnCount: 1 },
 ];
 
+// A `returnDirect` tool's answer reaches the turn only as `done.text`, after
+// any preamble the model streamed: the job's output is the whole answer.
+describe('runCronTurn output', () => {
+  it('includes a returnDirect answer that only `done.text` carries', async () => {
+    const bare = await runCronTurn({
+      loop: makeLoop(() => [{ type: 'done', text: 'DIRECT ANSWER', turnCount: 1 }]),
+      sessions: makeSessions({}),
+      jobId: 'job-rd',
+      prompt: 'go',
+      personalityId: 'researcher',
+    });
+    expect(bare.output).toBe('DIRECT ANSWER');
+
+    const afterPreamble = await runCronTurn({
+      loop: makeLoop(() => [
+        { type: 'text_delta', text: 'Let me look that up.' },
+        { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 },
+      ]),
+      sessions: makeSessions({}),
+      jobId: 'job-rd2',
+      prompt: 'go',
+      personalityId: 'researcher',
+    });
+    expect(afterPreamble.output).toBe('Let me look that up.\n\nDIRECT ANSWER');
+  });
+});
+
 describe('runCronTurn session routing', () => {
   it('reuses the web-origin session when the personalities agree', async () => {
     const loop = makeLoop(okEvents);

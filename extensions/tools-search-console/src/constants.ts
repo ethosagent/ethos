@@ -96,6 +96,11 @@ export const GSC_SETTINGS_SCHEMA: ToolSettingsSchema = {
       key: 'secret',
       label: 'Google Search Console service account',
       secretKind: 'gsc-service-account',
+      providerLabel: 'Google Search Console (service account)',
+      getKeyUrl: 'https://console.cloud.google.com/iam-admin/serviceaccounts',
+      // `DEFAULT_SECRET_REF` above, minus the prefix. The only shipped tool
+      // whose default is not `apiKey`, and the reason the field exists (D4).
+      defaultSecretName: 'serviceAccount',
       helpText:
         "Paste the whole service-account JSON key. The account's client_email must be added as a user on the property by a verified owner (Search Console → Settings → Users and permissions).",
     },

@@ -101,6 +101,23 @@ export async function* parseThinkBlocks(
  * visible text and no tool calls, re-issue the request ONCE. Applies to every
  * provider name — never vendor-gated. The second attempt streams through
  * unconditionally, so at most one extra request is made per turn.
+ *
+ * LIMITATION — the first attempt's `thinking_delta` chunks have already been
+ * yielded when the retry is decided, and nothing retracts them. A surface that
+ * renders thinking live (`apps/ethos/src/commands/chat.ts`, and the web chat via
+ * the `thinking_delta` SSE event) therefore shows TWO reasoning passes for a
+ * retried turn, the second one's reasoning appended after the first's. Only the
+ * `done` of the first attempt is suppressed.
+ *
+ * Not gated on "nothing thought yet", which would be the obvious fix and would
+ * disable the feature outright: the retry condition IS thinking with no
+ * substance, so a guard on `!sawThinking` can never fire. Suppressing the first
+ * pass instead would mean buffering every thinking chunk until the turn's shape
+ * is known, which costs the live reasoning stream this tier exists to show.
+ * Nothing downstream is corrupted — thinking is never persisted (the assistant
+ * row stores text only; see `packages/core/src/agent-loop/stages/stream-step.ts`)
+ * — so the cost is a doubled reasoning block on screen, once per retried turn.
+ * Pinned by `__tests__/reasoning-passthrough.test.ts` ('retries at most once').
  */
 export async function* withReasoningOnlyRetry(
   makeAttempt: () => AsyncIterable<CompletionChunk>,

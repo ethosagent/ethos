@@ -6,6 +6,7 @@ import type {
   ToolContext,
   ToolFilterOpts,
 } from '@ethosagent/types';
+import type { ContextStore } from '../context-store';
 import { handleChunk } from './chunk-handler';
 import { effectiveGate, evaluateGate, gateThreshold } from './compaction';
 import { dedupHistory, toLLMMessages } from './history';
@@ -86,6 +87,12 @@ export interface TurnEndCtx {
   systemPrompt: string;
   /** Output reserve for the pressure gate (from RunOptions.maxCompletionTokens). */
   maxCompletionTokens?: number;
+  /** THIS run's plugin context store — the flush dispatches tools, and a tool
+   *  gets the same contract here as in a batch (`__tests__/tool-context-parity.test.ts`). */
+  contextStore: ContextStore;
+  /** The run's root session key (`RunOptions.rootSessionKey ?? sessionKey`), as
+   *  the batch path resolves it. See {@link TurnEndCtx.contextStore}. */
+  rootSessionKey: string;
 }
 
 /** Extra loop-local fields the turn-end stage needs beyond `TurnSetup`. */
@@ -95,6 +102,8 @@ export interface TurnEndExtras {
   abortSignal: AbortSignal;
   systemPrompt: string;
   maxCompletionTokens?: number;
+  contextStore: ContextStore;
+  rootSessionKey: string;
 }
 
 /** Build a {@link TurnEndCtx} from the shared `TurnSetup` plus loop-locals so
@@ -112,6 +121,8 @@ export function buildTurnEndCtx(setup: TurnSetup, extras: TurnEndExtras): TurnEn
     compactedThisTurn: extras.compactedThisTurn,
     abortSignal: extras.abortSignal,
     systemPrompt: extras.systemPrompt,
+    contextStore: extras.contextStore,
+    rootSessionKey: extras.rootSessionKey,
     ...(extras.maxCompletionTokens !== undefined
       ? { maxCompletionTokens: extras.maxCompletionTokens }
       : {}),
@@ -197,11 +208,11 @@ export async function* maybeConsolidateAtTurnEnd(
   // and the memory flush are both off. Logic lives in ./turn-complete.
   await runTurnComplete(deps, ctx);
 
-  // Context-economy Phase 2 — autoCompact is default ON (eval-gated flip);
-  // only an explicit `autoCompact: false` disables the turn-end trigger.
+  // autoCompact is default ON (only `autoCompact: false` disables it). Abort is re-checked:
+  // a /stop during the engine hook above starts no maintenance (turn-end-consolidation.test).
   const autoCompact = deps.compaction?.autoCompact !== false;
   const flushEnabled = deps.memoryConsolidation?.enabled === true;
-  if (!autoCompact && !flushEnabled) return;
+  if ((!autoCompact && !flushEnabled) || ctx.abortSignal.aborted) return;
 
   // Shared cooldown: skip if a compaction fired this turn or within the window.
   if (ctx.compactedThisTurn) return;
@@ -376,6 +387,7 @@ export async function runMemoryFlush(
   const toolCtx: ToolContext = {
     sessionId: ctx.sessionId,
     sessionKey: ctx.sessionKey,
+    rootSessionKey: ctx.rootSessionKey,
     platform: deps.platform,
     workingDir: deps.workingDir,
     personalityId: ctx.personality.id,
@@ -388,6 +400,9 @@ export async function runMemoryFlush(
     // Internal audience by construction — swallow every progress event.
     emit: () => {},
     resultBudgetChars: 20_000,
+    // The run's store, as the batch path spreads it: one contract wherever a
+    // tool runs (`__tests__/tool-context-parity.test.ts`).
+    ...ctx.contextStore.asContextMethods(),
   };
 
   const messages: Message[] = [...llmMessages, { role: 'user', content: FLUSH_INSTRUCTION }];

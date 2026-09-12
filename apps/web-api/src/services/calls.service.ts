@@ -155,6 +155,19 @@ export class CallsService {
    * the first time someone opened the Communications tab — a write performed by
    * a read, for no information.
    */
+  /**
+   * F06 — close the handle this service opened, if it opened one. Called by
+   * `CreateWebApiResult.dispose`: the connection is cached for the life of the
+   * process, so without this every run left a -wal/-shm pair behind. A no-op
+   * when nothing was opened, and idempotent. Pinned by
+   * apps/web-api/src/__tests__/services/read-side-close.test.ts.
+   */
+  close(): void {
+    const log = this.log as (CallLog & { close?: () => void }) | null;
+    this.log = null;
+    log?.close?.();
+  }
+
   private async open(): Promise<CallLog | null> {
     const existing = this.log;
     if (existing) return existing;

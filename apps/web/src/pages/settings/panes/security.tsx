@@ -30,6 +30,7 @@ import {
   App as AntApp,
   Button,
   Checkbox,
+  Collapse,
   Form,
   Input,
   InputNumber,
@@ -52,6 +53,7 @@ import {
   useToolSettingsSetDefault,
 } from '../../../features/settings/api/mutations';
 import {
+  useNamedSecretProviders,
   useNamedSecretsList,
   useToolSettingsDefault,
   useToolSettingsSchemas,
@@ -199,6 +201,7 @@ type NamedSecretRow = Awaited<ReturnType<typeof rpc.namedSecrets.list>>['secrets
 
 function NamedSecretsSection() {
   const listQuery = useNamedSecretsList();
+  const providersQuery = useNamedSecretProviders();
   const deleteMut = useNamedSecretDelete();
   const { modal } = AntApp.useApp();
   const [addOpen, setAddOpen] = useState(false);
@@ -275,6 +278,40 @@ function NamedSecretsSection() {
         pagination={false}
         locale={{ emptyText: 'No secrets yet. Add one to bind it from a personality.' }}
       />
+      {/* Declarations the provider roster ignored. Collapsed: a malformed
+          capability prefix is a tool-authoring bug, not an operator's problem,
+          and it must not be a throw during composition (D2, §11). */}
+      {(providersQuery.data?.diagnostics.length ?? 0) > 0 ? (
+        <Collapse
+          ghost
+          size="small"
+          style={{ marginTop: 8 }}
+          items={[
+            {
+              key: 'diagnostics',
+              label: (
+                <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                  {providersQuery.data?.diagnostics.length} tool declaration
+                  {providersQuery.data?.diagnostics.length === 1 ? '' : 's'} ignored
+                </Typography.Text>
+              ),
+              children: (
+                <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                  {providersQuery.data?.diagnostics.map((d) => (
+                    <Typography.Text
+                      key={`${d.toolName}/${d.declared}`}
+                      type="secondary"
+                      style={{ fontSize: 12 }}
+                    >
+                      {d.reason}
+                    </Typography.Text>
+                  ))}
+                </Space>
+              ),
+            },
+          ]}
+        />
+      ) : null}
       {addOpen ? (
         <AddSecretModal
           lockProvider={false}

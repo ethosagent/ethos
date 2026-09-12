@@ -11,13 +11,41 @@ import { ToolSettingsService, type ToolSettingsValues } from '../../services/too
 
 const DATA = '/data';
 
+function secretOnlyStub(
+  name: string,
+  opts: { settingsKey?: string; secrets?: string[]; secretKind: string },
+): Tool {
+  return {
+    name,
+    description: 'stub',
+    schema: {},
+    capabilities: { ...(opts.secrets ? { secrets: opts.secrets } : {}) },
+    ...(opts.settingsKey ? { settingsKey: opts.settingsKey } : {}),
+    settingsSchema: {
+      fields: [
+        {
+          kind: 'secret-binding',
+          key: 'secret',
+          label: 'Key',
+          secretKind: opts.secretKind,
+        },
+      ],
+    },
+    async execute() {
+      return { ok: true, value: '' };
+    },
+  };
+}
+
 // Minimal stand-in for the web_search tool (web-api does not depend on
 // @ethosagent/tools-web). It declares the same-shaped settingsSchema.
 const webSearchStub: Tool = {
   name: 'web_search',
   description: 'stub',
   schema: {},
-  capabilities: {},
+  capabilities: {
+    secrets: ['providers/exa/*', 'providers/tavily/*', 'providers/brave/*'],
+  },
   settingsSchema: {
     fields: [
       {
@@ -34,38 +62,32 @@ const webSearchStub: Tool = {
   },
 };
 
+const xSearchStub = secretOnlyStub('x_search', {
+  secrets: ['providers/xai/*'],
+  secretKind: 'xai-api-key',
+});
+const engineAskStub = secretOnlyStub('engine_ask', {
+  secrets: ['providers/openai/*'],
+  secretKind: 'openai-api-key',
+});
+
 // The two YouTube tools share ONE Google key, so both declare the same
 // `settingsKey` and the settings UI renders a single form. Stand-ins here for
 // the same reason as above; the real declarations are pinned in
 // packages/wiring/src/__tests__/social-search-tools.test.ts.
-const youtubeSecretSchema: Tool['settingsSchema'] = {
-  fields: [
-    {
-      kind: 'secret-binding',
-      key: 'secret',
-      label: 'Google API key (YouTube)',
-      secretKind: 'youtube-api-key',
-    },
-  ],
-};
-const youtubeSearchStub: Tool = {
-  name: 'youtube_search',
-  description: 'stub',
-  schema: {},
-  capabilities: {},
+const youtubeSearchStub = secretOnlyStub('youtube_search', {
   settingsKey: 'youtube',
-  settingsSchema: youtubeSecretSchema,
-  async execute() {
-    return { ok: true, value: '' };
-  },
-};
-const youtubeCommentsStub: Tool = { ...youtubeSearchStub, name: 'youtube_comments' };
+  secrets: ['providers/google/*'],
+  secretKind: 'youtube-api-key',
+});
+const youtubeCommentsStub = { ...youtubeSearchStub, name: 'youtube_comments' };
 
 describe('ToolSettingsService', () => {
   let storage: InMemoryStorage;
   let config: ConfigRepository;
   let personalities: PersonalitiesService;
   let service: ToolSettingsService;
+  let toolRegistry: DefaultToolRegistry;
 
   beforeEach(async () => {
     storage = new InMemoryStorage();
@@ -91,9 +113,18 @@ describe('ToolSettingsService', () => {
       secrets: new InMemorySecretsResolver(),
     });
 
-    const toolRegistry = new DefaultToolRegistry();
+    toolRegistry = new DefaultToolRegistry();
     toolRegistry.register(webSearchStub);
-    service = new ToolSettingsService({ config, personalities, toolRegistry });
+    toolRegistry.register(xSearchStub);
+    toolRegistry.register(engineAskStub);
+    toolRegistry.register(youtubeSearchStub);
+    toolRegistry.register(youtubeCommentsStub);
+    service = new ToolSettingsService({
+      config,
+      personalities,
+      secrets: new InMemorySecretsResolver(),
+      toolRegistry,
+    });
   });
 
   it('schemas() exposes web_search settingsSchema from the registry', () => {
@@ -156,7 +187,7 @@ describe('ToolSettingsService', () => {
     // absence from tools.yaml is a meaningful boundary check (not a no-op).
     const RAW_VALUE = 'sk-exa-RAW-SECRET-VALUE-4f2a9c';
     const secrets = new InMemorySecretsResolver();
-    const vault = new NamedSecretsService({ secrets });
+    const vault = new NamedSecretsService({ secrets, toolRegistry });
     await vault.create({ provider: 'exa', name: 'mine-key', value: RAW_VALUE });
     expect(await secrets.get('providers/exa/mine-key')).toBe(RAW_VALUE);
 
@@ -393,11 +424,12 @@ describe('ToolSettingsService', () => {
   });
 
   it('schemas() reports a tool settingsKey so the UI can group shared credentials', () => {
-    const registry = new DefaultToolRegistry();
-    registry.register(webSearchStub);
-    registry.register(youtubeSearchStub);
-    registry.register(youtubeCommentsStub);
-    const grouped = new ToolSettingsService({ config, personalities, toolRegistry: registry });
+    const grouped = new ToolSettingsService({
+      config,
+      personalities,
+      secrets: new InMemorySecretsResolver(),
+      toolRegistry,
+    });
 
     const { tools } = grouped.schemas();
     expect(tools.find((t) => t.name === 'youtube_search')?.settingsKey).toBe('youtube');
@@ -428,5 +460,126 @@ describe('ToolSettingsService', () => {
     // Nothing unsafe reached the written config.
     const raw = (await storage.read('/data/config.yaml')) ?? '';
     expect(raw).not.toContain('__proto__');
+  });
+
+  // -------------------------------------------------------------------------
+  // web_search field-level merge — Reset/Override must not wipe provider/recency.
+  // -------------------------------------------------------------------------
+
+  it('web_search secret-only patch preserves provider and recency', async () => {
+    const seeded: ToolSettingsValues = {
+      web_search: { provider: 'exa', secret: 'main', recency: '30d' },
+    };
+    await service.setForPersonality('mine', seeded);
+    await service.setForPersonality('scout', seeded);
+
+    // Reset shape: clear secret only.
+    await service.setForPersonality('mine', { web_search: { secret: '' } });
+    expect((await service.getForPersonality('mine')).values.web_search).toEqual({
+      provider: 'exa',
+      recency: '30d',
+    });
+
+    // Override shape: new secret (and optionally provider) keeps recency.
+    await service.setForPersonality('scout', { web_search: { secret: 'other' } });
+    expect((await service.getForPersonality('scout')).values.web_search).toEqual({
+      provider: 'exa',
+      secret: 'other',
+      recency: '30d',
+    });
+
+    await service.setForPersonality('scout', {
+      web_search: { provider: 'brave', secret: 'brave-key' },
+    });
+    expect((await service.getForPersonality('scout')).values.web_search).toEqual({
+      provider: 'brave',
+      secret: 'brave-key',
+      recency: '30d',
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Open-key / assertClaimedKeys regression (plan §13.2 cases 9, 12, 13).
+  // -------------------------------------------------------------------------
+
+  it('non-roster dataforseo binding round-trips in all three stores (case 9)', async () => {
+    const dataforseoStub = secretOnlyStub('dataforseo', {
+      secrets: ['providers/dataforseo/*'],
+      secretKind: 'serp-data',
+    });
+    toolRegistry.register(dataforseoStub);
+    const binding: ToolSettingsValues = { dataforseo: { secret: 'seoMain' } };
+
+    await service.setForPersonality('mine', binding);
+    expect((await service.getForPersonality('mine')).values).toEqual(binding);
+    expect(await storage.read('/data/personalities/mine/tools.yaml')).toContain(
+      'dataforseo: { secret: seoMain }',
+    );
+
+    await service.setForPersonality('scout', binding);
+    expect((await service.getForPersonality('scout')).values).toEqual(binding);
+    expect(await storage.read('/data/config.yaml')).toContain(
+      'toolSettings.scout.dataforseo.secret: seoMain',
+    );
+
+    await service.setDefault(binding);
+    expect((await service.getDefault()).values).toEqual(binding);
+    expect(await storage.read('/data/config.yaml')).toContain(
+      'toolSettings._default.dataforseo.secret: seoMain',
+    );
+  });
+
+  it('assertClaimedKeys refuses an unclaimed key when the registry is wired (case 12)', async () => {
+    let threw = false;
+    try {
+      await service.setDefault({ nonexistent_tool: { secret: 'x' } });
+    } catch (err) {
+      threw = true;
+      expect(isEthosError(err)).toBe(true);
+      if (isEthosError(err)) {
+        expect(err.code).toBe('INVALID_INPUT');
+        expect(err.cause).toContain('nonexistent_tool');
+      }
+    }
+    expect(threw).toBe(true);
+    expect((await service.getDefault()).values).toEqual({});
+
+    // No registry → refusal is off; the payload stores.
+    const open = new ToolSettingsService({
+      config,
+      personalities,
+      secrets: new InMemorySecretsResolver(),
+    });
+    await open.setDefault({ nonexistent_tool: { secret: 'x' } });
+    expect((await open.getDefault()).values).toEqual({ nonexistent_tool: { secret: 'x' } });
+  });
+
+  it('unregistered-tool binding survives RMW of a different key (case 13)', async () => {
+    // Seed dataforseo with no registry (write path stores any key).
+    const open = new ToolSettingsService({
+      config,
+      personalities,
+      secrets: new InMemorySecretsResolver(),
+    });
+    await open.setDefault({
+      dataforseo: { secret: 'seoMain' },
+      x_search: { secret: 'xai-old' },
+    });
+
+    // Registry that does NOT include dataforseo — patch only x_search.
+    const partial = new DefaultToolRegistry();
+    partial.register(xSearchStub);
+    const gated = new ToolSettingsService({
+      config,
+      personalities,
+      secrets: new InMemorySecretsResolver(),
+      toolRegistry: partial,
+    });
+    await gated.setDefault({ x_search: { secret: 'xai-new' } });
+
+    expect((await gated.getDefault()).values).toEqual({
+      dataforseo: { secret: 'seoMain' },
+      x_search: { secret: 'xai-new' },
+    });
   });
 });

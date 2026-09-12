@@ -16,6 +16,7 @@ import type {
   ToolContext,
   ToolResult,
 } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Depth tracking — stored in ToolContext.agentId as "depth:<n>"
@@ -124,18 +125,38 @@ async function runSubAgent(
   },
 ): Promise<string> {
   let output = '';
+  let terminal = false;
+  let failure: string | undefined;
 
+  // Drained to the end — never `break` on `done` or `throw` on `error` inside
+  // the loop. AgentLoop yields `done` BEFORE its turn-end work
+  // (`maybeConsolidateAtTurnEnd`: the context engine's `onTurnComplete`, the
+  // memory flush, auto-compaction) and `error` before its usage flush and trace
+  // close; closing the generator skips both (F07). The sub-turn's tail is part
+  // of the sub-turn, so the parent's tool call waits for it: returning early
+  // would leave that tail running with nothing holding it — outside the parent
+  // turn, and outside the lane the parent's surface holds for it. Pinned by
+  // `__tests__/turn-tail.test.ts`.
   for await (const event of loop.run(prompt, {
     sessionKey: opts.sessionKey,
     personalityId: opts.personalityId,
     abortSignal: opts.abortSignal,
     agentId: childAgentId(opts.depth),
   })) {
+    if (terminal) continue;
     if (event.type === 'text_delta') output += event.text;
-    if (event.type === 'error') throw new Error(event.error);
-    if (event.type === 'done') break;
+    else if (event.type === 'error') {
+      terminal = true;
+      failure = event.error;
+    } else if (event.type === 'done') {
+      terminal = true;
+      // A `returnDirect` tool result arrives only as `done.text`, after any
+      // preamble that streamed: `answerSuffix` is what the stream still owes.
+      output += answerSuffix(output, event.text);
+    }
   }
 
+  if (failure !== undefined) throw new Error(failure);
   return output.trim();
 }
 

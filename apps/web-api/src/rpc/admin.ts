@@ -13,9 +13,8 @@ export const adminRouter = {
 
   rotateKey: os.admin.rotateKey.handler(async ({ input, context }) => {
     await requireAdmin(context.config);
-    await context.config.update({
-      providers: [{ provider: input.provider, apiKey: input.key }],
-    });
+    // One provider's key; the rest of the chain is kept (F01 follow-up).
+    await context.config.rotateProviderKey(input.provider, input.key);
     return { ok: true as const };
   }),
 

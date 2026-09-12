@@ -482,12 +482,16 @@ describe('buildMemberLaunchArgs', () => {
     );
     expect(args).toContain('--model');
     expect(args).toContain('claude-haiku-4-5');
+    expect(args).toContain('--web-port');
+    expect(args[args.indexOf('--web-port') + 1]).toBe('13001');
   });
 
   it('omits --model when no override provided', async () => {
     const { buildMemberLaunchArgs } = await import('../supervisor');
     const args = buildMemberLaunchArgs('/usr/bin/ethos', 3001, 'engineer', 'alpha');
     expect(args).not.toContain('--model');
+    expect(args).toContain('--web-port');
+    expect(args[args.indexOf('--web-port') + 1]).toBe('13001');
   });
 
   it('passes --team and --role when both are provided (Plan B member spawn)', async () => {
@@ -505,6 +509,8 @@ describe('buildMemberLaunchArgs', () => {
     expect(args[args.indexOf('--team') + 1]).toBe('analytics');
     expect(args).toContain('--role');
     expect(args[args.indexOf('--role') + 1]).toBe('member');
+    expect(args).toContain('--web-port');
+    expect(args[args.indexOf('--web-port') + 1]).toBe('13001');
   });
 
   it('omits --team and --role when neither is provided (solo serve)', async () => {
@@ -512,6 +518,8 @@ describe('buildMemberLaunchArgs', () => {
     const args = buildMemberLaunchArgs('/usr/bin/ethos', 3001, 'engineer', 'alpha');
     expect(args).not.toContain('--team');
     expect(args).not.toContain('--role');
+    expect(args).toContain('--web-port');
+    expect(args[args.indexOf('--web-port') + 1]).toBe('13001');
   });
 });
 

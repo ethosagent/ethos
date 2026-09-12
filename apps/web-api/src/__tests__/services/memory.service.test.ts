@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
 import {
-  createMemoryProvider,
+  createMemoryBundle,
+  createMemoryProviderFromConfig,
   createPendingMemoryStore,
   HistoryStore,
   type PendingMemoryStore,
@@ -24,9 +25,8 @@ describe('MemoryService', () => {
     dir = await mkdtemp(join(tmpdir(), 'ethos-memory-'));
     personalityDir = join(dir, 'personalities', PERSONALITY_ID);
     await mkdir(personalityDir, { recursive: true });
-    service = new MemoryService({
-      memory: new MarkdownFileMemoryProvider({ dir, storage: new FsStorage() }),
-    });
+    const provider = new MarkdownFileMemoryProvider({ dir, storage: new FsStorage() });
+    service = new MemoryService({ memory: provider, restoreMemory: provider });
   });
 
   afterEach(async () => {
@@ -92,7 +92,12 @@ describe('MemoryService.history / restore (Timeline)', () => {
     service = new MemoryService({
       memory: new MarkdownFileMemoryProvider({ dir, storage }),
       history,
-      restoreMemory: createMemoryProvider({ dataDir: dir, storage, source: 'restore' }),
+      restoreMemory: createMemoryProviderFromConfig({
+        config: {},
+        dataDir: dir,
+        storage,
+        source: 'restore',
+      }).provider,
     });
   });
 
@@ -218,8 +223,10 @@ describe('MemoryService.pending (approve-before-store, L3)', () => {
     store = pending.store;
     tombstones = pending.tombstones;
     history = new HistoryStore({ dataDir, storage });
+    const provider = new MarkdownFileMemoryProvider({ dir: dataDir, storage });
     service = new MemoryService({
-      memory: new MarkdownFileMemoryProvider({ dir: dataDir, storage }),
+      memory: provider,
+      restoreMemory: provider,
       history,
       pending: store,
     });
@@ -292,16 +299,21 @@ describe('MemoryService.pending (approve-before-store, L3)', () => {
 
   it('under memory: vault, approve replays into the vault (history in .ethos-meta), not dataDir', async () => {
     const vaultStorage = new InMemoryStorage();
-    const vaultPending = createPendingMemoryStore({
+    // The bundle hosts hand createWebApi (F04): editor, Timeline and restore on
+    // the vault; the approve queue at dataDir.
+    const bundle = createMemoryBundle({
+      config: { memory: 'vault', memoryVault: { path: '/vault' } },
       dataDir,
       storage: vaultStorage,
-      config: { memory: 'vault', memoryVault: { path: '/vault' } },
     });
+    if (!bundle.editing.supported) throw new Error('vault supports file editing');
     const vaultService = new MemoryService({
-      memory: new MarkdownFileMemoryProvider({ dir: dataDir, storage: vaultStorage }),
-      pending: vaultPending.store,
+      memory: bundle.editing.editor,
+      restoreMemory: bundle.editing.restore,
+      history: bundle.editing.history,
+      pending: bundle.pending,
     });
-    const entry = await vaultPending.store.propose({
+    const entry = await bundle.pending.propose({
       scopeId,
       source: 'capture',
       factHash: 'h-vault',
@@ -318,8 +330,10 @@ describe('MemoryService.pending (approve-before-store, L3)', () => {
     expect(
       await vaultStorage.read(join(dataDir, 'personalities', PERSONALITY_ID, 'MEMORY.md')),
     ).toBeNull();
+    // The editor reads the vault, so the approved fact is what it shows.
     const { file } = await vaultService.get('memory', PERSONALITY_ID);
-    expect(file.content).toBe('');
+    expect(file.content).toContain('lives in Bengaluru');
+    expect((await vaultService.history(PERSONALITY_ID, {})).entries).toHaveLength(1);
 
     // Provenance history recorded under the vault's .ethos-meta, with the
     // ORIGINAL source plus approvedBy: 'web' — and none at dataDir.
@@ -343,10 +357,42 @@ describe('MemoryService.pending (approve-before-store, L3)', () => {
     await expect(service.pendingReject(PERSONALITY_ID, 'nope')).rejects.toThrow();
   });
 
-  it('degrades to empty / NOT_CONFIGURED when no queue is wired', async () => {
-    const bare = new MemoryService({
-      memory: new MarkdownFileMemoryProvider({ dir: dataDir, storage }),
+  it('refuses editor + restore with the bundle reason when the backend has no file editor', async () => {
+    const bundle = createMemoryBundle({ config: { memory: 'vector' }, dataDir, storage });
+    if (bundle.editing.supported) throw new Error('vector has no file editor');
+    const refusing = new MemoryService({
+      editingUnsupported: bundle.editing.reason,
+      pending: bundle.pending,
     });
+    for (const attempt of [
+      () => refusing.list(PERSONALITY_ID),
+      () => refusing.get('memory', PERSONALITY_ID),
+      () => refusing.write('memory', 'x', PERSONALITY_ID),
+      () => refusing.restore(PERSONALITY_ID, 'slug'),
+    ]) {
+      await expect(attempt()).rejects.toMatchObject({
+        code: 'NOT_CONFIGURED',
+        message: expect.stringContaining('"vector" memory backend has no file editor'),
+      });
+    }
+    expect(await storage.read(join(dataDir, 'personalities', PERSONALITY_ID, 'MEMORY.md'))).toBe(
+      null,
+    );
+    // The Timeline refuses too — an empty list would read as "nothing yet".
+    for (const attempt of [
+      () => refusing.history(PERSONALITY_ID, {}),
+      () => refusing.historyBlob(PERSONALITY_ID, 'deadbeef'),
+    ]) {
+      await expect(attempt()).rejects.toMatchObject({
+        code: 'NOT_CONFIGURED',
+        message: expect.stringContaining('"vector" memory backend has no file editor'),
+      });
+    }
+  });
+
+  it('degrades to empty / NOT_CONFIGURED when no queue is wired', async () => {
+    const provider = new MarkdownFileMemoryProvider({ dir: dataDir, storage });
+    const bare = new MemoryService({ memory: provider, restoreMemory: provider });
     expect(await bare.pendingList(PERSONALITY_ID)).toEqual({ pending: [] });
     await expect(bare.pendingApprove(PERSONALITY_ID, 'x')).rejects.toThrow();
     await expect(bare.pendingReject(PERSONALITY_ID, 'x')).rejects.toThrow();

@@ -1,6 +1,6 @@
-import { KanbanStore } from '@ethosagent/kanban-store';
+import { KanbanStore, renderOperatorContext, type Task } from '@ethosagent/kanban-store';
 import type { SessionLane } from '@ethosagent/session-lane';
-import type { AgentEvent } from '@ethosagent/types';
+import { type AgentEvent, answerSuffix } from '@ethosagent/types';
 
 const DEFAULT_INTERVAL_MS = 5_000;
 const DEFAULT_STALENESS_THRESHOLD_MS = 1_800_000;
@@ -33,8 +33,17 @@ export interface KanbanPollConfig {
   personalityId: string;
   /** SessionLane to enqueue stimuli through. */
   lane: SessionLane;
-  /** Runner to execute the stimulus prompt. */
-  runner: (prompt: string, sessionKey: string, taskId: string, taskTitle: string) => Promise<void>;
+  /**
+   * Runner to execute the stimulus prompt. `runId` is the run this loop's claim
+   * opened — pass it to `writeRunActivityComments` so it heartbeats only that run.
+   */
+  runner: (
+    prompt: string,
+    sessionKey: string,
+    taskId: string,
+    taskTitle: string,
+    runId: string,
+  ) => Promise<void>;
   /** Poll interval. Default 5000ms. */
   intervalMs?: number;
   /** Optional error callback. */
@@ -108,8 +117,9 @@ export class KanbanPollLoop {
         // task into progress and prevents the next tick from re-notifying it
         // (the status filter is 'ready'). If another writer already claimed it,
         // skip gracefully.
+        let claimed: Task;
         try {
-          store.updateStatus(
+          claimed = store.updateStatus(
             task.id,
             'running',
             'claimed via poll dispatch',
@@ -119,16 +129,28 @@ export class KanbanPollLoop {
           this.cfg.onError?.(err instanceof Error ? err : new Error(String(err)));
           continue;
         }
+        // A re-claim past the retry budget lands `failed` with no run
+        // (`updateStatus`'s budgetExhausted branch) — nothing to run.
+        const runId = claimed.status === 'running' ? claimed.currentRunId : null;
+        if (runId === null) continue;
 
+        // Each claim runs in a fresh session, so what the operator has said on
+        // the ticket since (answers to a kanban_block question) rides in the
+        // prompt — see renderOperatorContext.
+        const operatorContext = renderOperatorContext(
+          store.listComments(task.id),
+          store.listRuns(task.id),
+        );
         const prompt =
           `You have been assigned kanban task ${task.id}: "${task.title}". ${task.body}\n` +
           'The task is now in progress (running). Use your tools to complete the work. ' +
           'When finished, call kanban_complete with a short summary. ' +
           'If you are blocked, call kanban_block with the reason. ' +
-          'For long-running work, call kanban_heartbeat periodically.';
+          'For long-running work, call kanban_heartbeat periodically.' +
+          (operatorContext ? `\n\n${operatorContext}` : '');
         const sessionKey = `poll:kanban:${task.id}:${Date.now()}`;
         void this.cfg.lane.enqueue(async () => {
-          await this.cfg.runner(prompt, sessionKey, task.id, task.title).catch((err) => {
+          await this.cfg.runner(prompt, sessionKey, task.id, task.title, runId).catch((err) => {
             this.cfg.onError?.(err instanceof Error ? err : new Error(String(err)));
           });
         });
@@ -141,6 +163,16 @@ export class KanbanPollLoop {
 
 const ARG_PREVIEW_CAP = 500;
 const ERROR_CAP = 500;
+/**
+ * Period of the automatic heartbeat `writeRunActivityComments` writes while it
+ * consumes a run's event stream. Agents rarely call `kanban_heartbeat`
+ * themselves, and the supervisor `Dispatcher` reclaims a `running` task whose
+ * `updated_at` is older than `stalenessThresholdMs` (5 min default,
+ * `findStaleRunningTasks`) and blocks a run whose `last_heartbeat_at` is older
+ * than `staleMs` (90 s default, `findStalledRuns`) — `heartbeatRun` bumps both
+ * columns. Must stay below the smaller of the two.
+ */
+export const AUTO_HEARTBEAT_INTERVAL_MS = 60_000;
 
 function truncate(s: string, cap: number): string {
   return s.length > cap ? `${s.slice(0, cap)}…` : s;
@@ -153,10 +185,26 @@ function truncate(s: string, cap: number): string {
  * own store is already closed by the time the runner executes, so the runner
  * MUST open its own handle keyed by boardPath. WAL allows concurrent writers.
  * Each comment write is wrapped so a write failure never aborts the run.
+ *
+ * While the stream is being consumed, the task's run is heartbeated once
+ * immediately and then every `AUTO_HEARTBEAT_INTERVAL_MS` on a timer — not per
+ * event, because one tool call can run silent for many minutes (GEO's `geo_run`
+ * makes many paid engine calls inside a single call) and must not be reclaimed
+ * mid-call. Only while the task's current run is still `runId`, the run this
+ * runner's claim opened: once the agent ends it (`kanban_complete` /
+ * `kanban_block`) or it is reclaimed and re-claimed, heartbeating would keep
+ * somebody else's run alive, so the timer stops for good. The timer is
+ * `unref()`d and cleared in the `finally`.
+ *
+ * Limitation: this heartbeat proves the process is alive and still inside this
+ * run, not that the turn is progressing. A turn that hangs forever inside the
+ * stream is heartbeated for as long as it hangs; the board's staleness gates
+ * catch a dead process, not a stuck one.
  */
 export async function writeRunActivityComments(
   boardPath: string,
   taskId: string,
+  runId: string,
   author: string,
   events: AsyncIterable<AgentEvent>,
   onError?: (err: Error) => void,
@@ -169,7 +217,34 @@ export async function writeRunActivityComments(
       onError?.(err instanceof Error ? err : new Error(String(err)));
     }
   };
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  const stopHeartbeat = (): void => {
+    if (heartbeatTimer !== null) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+  const heartbeat = (): void => {
+    try {
+      if (store.getTask(taskId)?.currentRunId !== runId) {
+        stopHeartbeat();
+        return;
+      }
+      store.heartbeatRun(taskId, 'auto: agent active', author);
+    } catch (err) {
+      // The run ended between the check and the write (the agent closed it
+      // mid-stream) — `heartbeatRun` throws "no open run" for exactly that.
+      if (err instanceof Error && err.message.startsWith('no open run')) {
+        stopHeartbeat();
+        return;
+      }
+      onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+  };
   try {
+    heartbeatTimer = setInterval(heartbeat, AUTO_HEARTBEAT_INTERVAL_MS);
+    heartbeatTimer.unref();
+    heartbeat();
     let finalText = '';
     for await (const event of events) {
       if (event.type === 'text_delta') {
@@ -186,7 +261,10 @@ export async function writeRunActivityComments(
       } else if (event.type === 'error') {
         addComment(`⚠️ error: ${truncate(event.error, ERROR_CAP)}`);
       } else if (event.type === 'done') {
-        if (event.text && event.text.length > 0) finalText = event.text;
+        // A `returnDirect` tool's answer arrives only as `done.text`, after any
+        // preamble that streamed: the comment carries the whole reply
+        // (`answerSuffix`, @ethosagent/types).
+        finalText += answerSuffix(finalText, event.text);
       }
     }
     const trimmed = finalText.trim();
@@ -194,6 +272,7 @@ export async function writeRunActivityComments(
       addComment(trimmed);
     }
   } finally {
+    stopHeartbeat();
     store.close();
   }
 }

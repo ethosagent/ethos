@@ -1,5 +1,6 @@
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { SQLiteGoalStore } from '@ethosagent/goal-store';
+import type { GoalStore } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import type { ComposeToolsResult } from '../compose-tools';
 import type { CreateAgentLoopResult } from '../index';
@@ -26,8 +27,14 @@ describe('goal store is always wired (toolset-independent)', () => {
     expect(goalStoreIsRequired).toBe(true);
   });
 
-  it('CreateAgentLoopResult.goalRunner is required (loop-bearing runner always built)', () => {
-    const goalRunnerIsRequired: Exact<CreateAgentLoopResult['goalRunner'], GoalRunner> = true;
-    expect(goalRunnerIsRequired).toBe(true);
+  // F05 — the store and the loop-bearing runner leave wiring as ONE pair, so a
+  // host forwards both or neither; web-api's GoalsService no longer builds its
+  // own store or a loop-less runner to fill a gap.
+  it('CreateAgentLoopResult.goals is a required store + executor pair', () => {
+    const goalsIsRequired: Exact<
+      CreateAgentLoopResult['goals'],
+      { store: GoalStore; executor: GoalRunner }
+    > = true;
+    expect(goalsIsRequired).toBe(true);
   });
 });

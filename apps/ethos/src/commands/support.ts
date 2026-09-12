@@ -14,6 +14,8 @@ import { stripAnsiEscapes } from '@ethosagent/core';
 import { createTarGz, readTarGz, SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import type { ObsEvent, Span, Trace } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
+import { fileMemoryUnsupportedReason } from '@ethosagent/wiring';
+import { openFileMemory } from '../lib/file-memory';
 import { getStorage } from '../wiring';
 
 // ---------------------------------------------------------------------------
@@ -187,15 +189,33 @@ export async function runBundle(argv: string[]): Promise<void> {
     const config = await readRawConfig(storage);
     const safeConfig = config ? stripSecrets({ ...config }) : null;
 
-    // Memory files (opt-in only)
+    // Memory files (opt-in only). Read through the CONFIGURED backend and the
+    // ACTIVE personality's scope (F04) — `<dataDir>/MEMORY.md` is neither: it is
+    // the pre-scoping root, which under `memory: vault` holds nothing and under
+    // markdown holds a stale file no agent reads. A backend with no file memory
+    // (vector) says so instead of shipping an empty section.
     let memoryContent: string | null = null;
     if (flags.includeMemory) {
-      const parts: string[] = [];
-      const memContent = await storage.read(join(ethosDir(), 'MEMORY.md'));
-      if (memContent !== null) parts.push(`# MEMORY.md\n${memContent}`);
-      const userContent = await storage.read(join(ethosDir(), 'USER.md'));
-      if (userContent !== null) parts.push(`# USER.md\n${userContent}`);
-      if (parts.length > 0) memoryContent = parts.join('\n\n');
+      const unsupported = fileMemoryUnsupportedReason(config ?? {});
+      if (unsupported) {
+        memoryContent = `# memory not captured\n${unsupported}`;
+      } else {
+        const personalityId = config?.personality ?? 'default';
+        const mem = openFileMemory(config, 'tool').provider;
+        const memCtx = {
+          scopeId: `personality:${personalityId}`,
+          sessionId: '',
+          sessionKey: 'cli',
+          platform: 'cli',
+          workingDir: process.cwd(),
+        };
+        const parts: string[] = [];
+        for (const key of ['MEMORY.md', 'USER.md'] as const) {
+          const entry = await mem.read(key, memCtx);
+          if (entry !== null) parts.push(`# ${key} (${personalityId})\n${entry.content}`);
+        }
+        if (parts.length > 0) memoryContent = parts.join('\n\n');
+      }
     }
 
     // Count span kinds

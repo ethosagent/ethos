@@ -12,6 +12,7 @@ import {
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import { loadEvolveConfig, SkillEvolver } from '@ethosagent/skill-evolver';
 import { EthosError } from '@ethosagent/types';
+import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createLLM, getStorage } from '../wiring';
 
 const c = {
@@ -184,8 +185,8 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   console.log(`${c.dim}  expected   → ${expectedPath}${c.reset}`);
   console.log(`${c.dim}  output     → ${outputPath}${c.reset}\n`);
 
-  const { loop } = await createAgentLoop(config);
-  const runner = new EvalRunner(loop, {
+  const runtime = await createAgentLoop(config);
+  const runner = new EvalRunner(runtime.loop, {
     concurrency,
     outputPath,
     defaultScorer: scorer,
@@ -195,12 +196,14 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   const start = Date.now();
   let lastLine = '';
 
-  const stats = await runner.run(tasks, expectedMap, (done, total) => {
-    const pct = Math.round((done / total) * 100);
-    const line = `  ${done}/${total} (${pct}%)`;
-    process.stdout.write(`\r${line.padEnd(lastLine.length + 2)}`);
-    lastLine = line;
-  });
+  const stats = await runner
+    .run(tasks, expectedMap, (done, total) => {
+      const pct = Math.round((done / total) * 100);
+      const line = `  ${done}/${total} (${pct}%)`;
+      process.stdout.write(`\r${line.padEnd(lastLine.length + 2)}`);
+      lastLine = line;
+    })
+    .finally(() => releaseCommandRuntime(runtime, { label: 'eval agent loop' }));
 
   if (lastLine) process.stdout.write('\n');
 
@@ -346,8 +349,8 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   );
   console.log(`${c.dim}  dataset → ${opts.dataset}${c.reset}\n`);
 
-  const { loop } = await createAgentLoop(effectiveConfig);
-  const runner = new EvalRunner(loop, {
+  const localRuntime = await createAgentLoop(effectiveConfig);
+  const runner = new EvalRunner(localRuntime.loop, {
     concurrency: opts.concurrency,
     outputPath,
     defaultScorer: 'contains',
@@ -356,11 +359,13 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
 
   const runStart = Date.now();
   let lastLine = '';
-  const stats = await runner.run(tasks, expectedMap, (done, total) => {
-    const line = `  ${done}/${total} (${Math.round((done / total) * 100)}%)`;
-    process.stdout.write(`\r${line.padEnd(lastLine.length + 2)}`);
-    lastLine = line;
-  });
+  const stats = await runner
+    .run(tasks, expectedMap, (done, total) => {
+      const line = `  ${done}/${total} (${Math.round((done / total) * 100)}%)`;
+      process.stdout.write(`\r${line.padEnd(lastLine.length + 2)}`);
+      lastLine = line;
+    })
+    .finally(() => releaseCommandRuntime(localRuntime, { label: 'eval agent loop' }));
   if (lastLine) process.stdout.write('\n');
 
   // Per-task scores come from the assistant records the runner wrote.

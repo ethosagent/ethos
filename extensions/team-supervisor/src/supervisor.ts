@@ -82,6 +82,13 @@ export function evaluateRestartGuard(
   return { allowed: failures.length <= limits.maxRestarts, failures };
 }
 
+/** Web bind for a supervised member. `ethos serve` defaults to 3000 and walks +4; members must not sit there. */
+export function memberWebPort(acpPort: number): number {
+  const offset = 10_000;
+  const shifted = acpPort + offset;
+  return shifted <= 65535 ? shifted : acpPort - offset;
+}
+
 export function buildMemberLaunchArgs(
   entryPoint: string,
   port: number,
@@ -91,7 +98,17 @@ export function buildMemberLaunchArgs(
   teamName?: string,
   role?: 'coordinator' | 'member',
 ): string[] {
-  const base = ['serve', '--port', String(port), '--personality', personality, '--mesh', meshName];
+  const base = [
+    'serve',
+    '--port',
+    String(port),
+    '--web-port',
+    String(memberWebPort(port)),
+    '--personality',
+    personality,
+    '--mesh',
+    meshName,
+  ];
   if (modelOverride) base.push('--model', modelOverride);
   // Plan B: --team and --role thread the team-context plumbing through serve →
   // wiring → kanban store + role-gate hook. Both are optional; solo serve calls

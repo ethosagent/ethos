@@ -97,10 +97,13 @@ const WAV_CAPS: AdapterVoiceCaps = {
 /**
  * An adapter with DECLARED voice caps. `voiceCaps: null` builds one WITHOUT
  * them — the case the caps gate must refuse rather than duck-type its way into.
+ * `id` defaults to `<platform>:test`; pass `<platform>:<botKey>` to name the bot
+ * the adapter speaks as, the way every first-party adapter does.
  */
 export function fakeAdapter(
   opts: {
     platform?: string;
+    id?: string;
     voiceCaps?: AdapterVoiceCaps | null;
     voiceOk?: boolean;
     sendOk?: boolean;
@@ -112,7 +115,7 @@ export function fakeAdapter(
   let voiceOk = opts.voiceOk ?? true;
 
   const base = {
-    id: `${platform}:test`,
+    id: opts.id ?? `${platform}:test`,
     displayName: platform,
     capabilities: { platform },
     canSendTyping: false,

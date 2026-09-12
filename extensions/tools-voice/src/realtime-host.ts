@@ -18,6 +18,7 @@
 // on a tool the realtime model called directly rather than through
 // `agent_consult`.
 
+import { ContextStore } from '@ethosagent/core';
 import type {
   HookRegistry,
   RealtimeToolDefinition,
@@ -92,6 +93,14 @@ export const REALTIME_UNKNOWN_TOOL = 'unknown_tool';
 const DEFAULT_RESULT_BUDGET_CHARS = 4_000;
 
 export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeToolHost {
+  // A realtime call runs tools outside any `AgentLoop.run()`, so nothing else
+  // can hand them the per-run plugin context store the batch path gives
+  // (`asContextMethods`, packages/core/src/agent-loop/stages/tool-processing.ts).
+  // The host IS the scope: one is created per realtime session
+  // (`apps/web-api/src/voice/realtime-control-deps.ts`), which makes the store's
+  // lifetime the spoken call — the closest thing here to "one turn", and never
+  // shared with another call. Pinned by `__tests__/realtime-host.test.ts`.
+  const contextStore = new ContextStore();
   const definitions = deriveRealtimeToolset({
     registry: opts.registry,
     ...(opts.personalityToolset ? { personalityToolset: opts.personalityToolset } : {}),
@@ -134,6 +143,9 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
       const toolCtx: ToolContext = {
         sessionId: ctx.sessionId,
         sessionKey: ctx.sessionKey,
+        // No parent run to inherit from — the call's own lane is its root, the
+        // same fallback the batch path applies.
+        rootSessionKey: ctx.sessionKey,
         platform: ctx.platform,
         workingDir: ctx.workingDir,
         ...(ctx.personalityId ? { personalityId: ctx.personalityId } : {}),
@@ -145,6 +157,7 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
         // stream of it would talk over the first.
         emit: (_event: ToolProgressEvent) => {},
         resultBudgetChars: budget,
+        ...contextStore.asContextMethods(),
       };
 
       const [outcome] = await opts.registry.executeParallel(

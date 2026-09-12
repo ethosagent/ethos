@@ -193,6 +193,20 @@ export function Onboarding({ startAtStep }: { startAtStep?: WizardStepId }) {
       // Restart desktop backend so it picks up the new API key.
       if (isDesktop && bridge) {
         bridge.backend.restart().catch(() => {});
+      } else {
+        // The server boots the agent in this same process, so chat, goals, MCP,
+        // Settings › Execution and renderers work immediately — but what starts
+        // AROUND the loop at boot does not (see `adoptBootedLoop` in
+        // apps/ethos/src/lib/onboarding-boot.ts, which lists them and why). Say
+        // so rather than leaving those tabs quietly empty. `duration: 0` keeps
+        // it up until dismissed; the server logs the same line.
+        notification.info({
+          message: 'Setup complete — chat is ready',
+          description:
+            'Cron schedules, background tasks, voice and plugin-backed dashboards start when you restart `ethos serve`.',
+          placement: 'topRight',
+          duration: 0,
+        });
       }
       clearDraft();
       void queryClient.invalidateQueries({ queryKey: ['config'] });

@@ -68,6 +68,13 @@ function toolSpan(over: Record<string, unknown> = {}) {
   };
 }
 
+// Transform the page's module graph once, at collection, where no timeout
+// applies. Each case still re-imports it after `vi.resetModules()` (the resume
+// cursor is module state), but that re-evaluates already-transformed modules.
+// Without this the FIRST `beforeEach` paid the cold transform against the 10s
+// hook budget, and timed out under a parallel run.
+await import('../Activity');
+
 let container: HTMLDivElement;
 let root: Root;
 let Activity: React.ComponentType;

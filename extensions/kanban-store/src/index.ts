@@ -9,6 +9,7 @@ export {
   type TrustPolicy,
   tierMaxRetries,
 } from './autonomy-tier';
+export { renderOperatorContext } from './prompt-thread';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -350,6 +351,16 @@ const SCHEMA = `
     PRIMARY KEY (team_id, member_id)
   ) STRICT;
 `;
+
+// The dependency rule, correlated on an outer `tasks t`: a parent of `t` that is
+// assigned and not `done`. Goal parents (assignee NULL) never match — they are
+// transparent containers (see `promoteReady`'s doc comment). One fragment so
+// `promoteReady` and `hasOpenBlockingParents` cannot drift apart.
+const OPEN_BLOCKING_PARENT_SQL = `SELECT 1 FROM task_links l
+  JOIN tasks p ON p.id = l.parent_id
+  WHERE l.child_id = t.id
+    AND p.assignee IS NOT NULL
+    AND p.status != 'done'`;
 
 // ---------------------------------------------------------------------------
 // KanbanStore
@@ -916,6 +927,18 @@ export class KanbanStore {
       let runStarted = false;
       let runCancelled = false;
 
+      // Claim exclusivity: an open run means the task is already owned. This
+      // used to fall through to the plain UPDATE below as a silent no-op that
+      // still returned status 'running', so two racing claimers
+      // (`KanbanPollLoop.tick` in apps/ethos/src/lib/kanban-poll.ts and
+      // `Dispatcher.tick` in extensions/team-supervisor/src/dispatcher.ts) could
+      // both believe they won and run the ticket twice. Both catch this and skip.
+      if (status === 'running' && oldRunId !== null) {
+        throw new Error(
+          `already claimed: task ${taskId} is ${oldStatus} with open run ${oldRunId}`,
+        );
+      }
+
       if (status === 'running' && oldRunId === null) {
         // WIP caps first: a claim that would push the board (or the assignee)
         // past its limit is refused before anything is written. Inside the same
@@ -1236,9 +1259,21 @@ export class KanbanStore {
   // One outer transaction wrapping N per-task updateStatus calls: any invalid
   // id anywhere in taskIds throws and rolls back the whole batch, not just
   // the tasks up to that point (same nested-transaction idiom as archive()).
+  //
+  // A `ready` request is held at `todo` for any task with an open blocking
+  // parent (`hasOpenBlockingParents`), decided inside the same transaction as
+  // the write; `promoteReady` lifts it once its prerequisites finish. Single-task
+  // `updateStatus` writes `ready` unconditionally and leaves the gate to its
+  // callers; this batch has one caller, web-api's
+  // `KanbanService.bulkUpdateStatus` (an operator action with no gate of its
+  // own), so the gate lives here where it can share the transaction.
   bulkUpdateStatus(taskIds: string[], status: TaskStatus, actor = 'system'): Task[] {
     const tx = this.db.transaction((): Task[] => {
-      return taskIds.map((id) => this.updateStatus(id, status, undefined, actor));
+      return taskIds.map((id) =>
+        status === 'ready' && this.hasOpenBlockingParents(id)
+          ? this.updateStatus(id, 'todo', 'waiting on prerequisites', actor)
+          : this.updateStatus(id, status, undefined, actor),
+      );
     });
     return tx();
   }
@@ -1410,20 +1445,29 @@ export class KanbanStore {
     const candidates = this.db
       .prepare(
         `SELECT t.id FROM tasks t
-         WHERE t.status = 'todo'
-           AND NOT EXISTS (
-             SELECT 1 FROM task_links l
-             JOIN tasks p ON p.id = l.parent_id
-             WHERE l.child_id = t.id
-               AND p.assignee IS NOT NULL
-               AND p.status != 'done'
-           )`,
+         WHERE t.status = 'todo' AND NOT EXISTS (${OPEN_BLOCKING_PARENT_SQL})`,
       )
       .all() as Array<{ id: string }>;
     for (const c of candidates) {
       this.updateStatus(c.id, 'ready', 'parents done', actor);
     }
     return candidates.map((c) => c.id);
+  }
+
+  /**
+   * True when `taskId` has at least one blocking parent that is not `done` —
+   * exactly the rule `promoteReady` gates on (both read `OPEN_BLOCKING_PARENT_SQL`).
+   * Callers that want to write `ready` directly use this to land on `todo`
+   * instead, since nothing downstream of `ready` re-checks parents. False for a
+   * task with no parents, only goal parents, or an unknown id.
+   */
+  hasOpenBlockingParents(taskId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS hit FROM tasks t WHERE t.id = ? AND EXISTS (${OPEN_BLOCKING_PARENT_SQL})`,
+      )
+      .get(taskId) as { hit: number } | undefined;
+    return row !== undefined;
   }
 
   /**

@@ -1,4 +1,5 @@
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
+import { answerSuffix } from '@ethosagent/types';
 
 export interface AskPersonalityArgs {
   personality_id: string;
@@ -38,7 +39,10 @@ export async function askPersonality(
       inputTokens += ev.inputTokens;
       outputTokens += ev.outputTokens;
     } else if (ev.type === 'done') {
-      text = ev.text || text;
+      // A `returnDirect` tool's answer arrives only as `done.text`, after any
+      // preamble that streamed: `answerSuffix` (@ethosagent/types) is what the
+      // stream still owes — the caller gets the whole reply, not one half.
+      text += answerSuffix(text, ev.text);
       turnCount = ev.turnCount;
     }
   }

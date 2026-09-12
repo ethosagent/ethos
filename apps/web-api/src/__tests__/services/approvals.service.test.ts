@@ -16,7 +16,7 @@ import {
 } from '../../services/approvals.service';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -642,7 +642,7 @@ describe('createWebApi — approvalTimeoutMs threading', () => {
       createWebApi({
         dataDir: dir,
         sessionStore: store,
-        memoryProvider: makeStubMemoryProvider(),
+        memoryBundle: makeStubMemoryBundle(),
         agentLoop: loop,
         personalities: makeStubPersonalityRegistry(),
         chatDefaults: { model: 'claude-test', provider: 'anthropic' },

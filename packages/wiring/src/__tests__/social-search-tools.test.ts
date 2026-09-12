@@ -70,12 +70,14 @@ describe('youtube_search / youtube_comments — shape', () => {
       expect(tool.capabilities.network?.allowedHosts).toEqual(['www.googleapis.com']);
       expect(tool.capabilities.secrets).toEqual(['providers/google/*']);
       expect(tool.settingsSchema?.fields).toEqual([
-        {
+        expect.objectContaining({
           kind: 'secret-binding',
           key: 'secret',
           label: 'Google API key (YouTube)',
           secretKind: 'youtube-api-key',
-        },
+          providerLabel: 'Google (YouTube Data API)',
+          getKeyUrl: 'https://console.cloud.google.com/apis/credentials',
+        }),
       ]);
       expect(tool.isAvailable?.()).toBe(true);
     }

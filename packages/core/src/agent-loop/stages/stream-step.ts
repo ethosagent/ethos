@@ -529,7 +529,8 @@ export async function* streamStep(
   // Push assistant message with proper content blocks for next iteration
   if (completedToolCalls.length > 0) {
     const assistantContent: MessageContent[] = [];
-    if (chunkText) assistantContent.push({ type: 'text', text: chunkText });
+    // Blank text is not a block a provider accepts (see EMPTY_ASSISTANT_TEXT).
+    if (chunkText.trim()) assistantContent.push({ type: 'text', text: chunkText });
     for (const tc of completedToolCalls) {
       assistantContent.push({
         type: 'tool_use',

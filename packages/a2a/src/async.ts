@@ -22,6 +22,7 @@
 // spec GetTask).
 
 import type { AgentEvent } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 import { type A2aAuditSink, safeAudit } from './audit';
 import type { A2aTaskRunner } from './rpc';
 import { type A2aTask, type A2aTaskStore, isTerminalStatus, newTaskId } from './task-store';
@@ -31,8 +32,10 @@ import { type A2aTask, type A2aTaskStore, isTerminalStatus, newTaskId } from './
 // ---------------------------------------------------------------------------
 
 /**
- * Consume an AgentEvent stream: accumulate `text_delta` as the final text
- * (falling back to `done.text`); `error` → a failure reason. `thinking_delta`
+ * Consume an AgentEvent stream: accumulate `text_delta` as the final text,
+ * plus whatever `done.text` still owes after it (`answerSuffix` — a
+ * `returnDirect` tool's answer, which arrives only there, possibly after a
+ * streamed preamble); `error` → a failure reason. `thinking_delta`
  * and tool events are working updates and are NOT surfaced to the peer —
  * internal reasoning must not cross the trust boundary.
  */
@@ -57,7 +60,7 @@ export async function collectAgentRun(
         break;
     }
   }
-  const text = out.length > 0 ? out : (doneText ?? '');
+  const text = out + answerSuffix(out, doneText ?? undefined);
   return failure !== undefined ? { text, error: failure } : { text };
 }
 

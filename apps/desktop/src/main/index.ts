@@ -6,7 +6,7 @@ import { WebTokenRepository } from '@ethosagent/web-api';
 import { app, BrowserWindow, nativeTheme, session, type Tray } from 'electron';
 import type { SatelliteStatus } from '../shared/ipc-contract';
 import { initAutoUpdater } from './auto-update';
-import { restartBackendAsync, startBackend, startBackendAsync, stopBackend } from './backend';
+import { restartBackendAsync, startBackend, startBackendAsync, stopBackendAsync } from './backend';
 import {
   applyRemoteAuthCookie,
   getConnectionMode,
@@ -24,6 +24,7 @@ import { setKeychainValue } from './keychain';
 import { showMinimizeNotification } from './notifications';
 import { registerProtocolHandler } from './protocol-handler';
 import { registerQuickChatIpc, showQuickChat } from './quick-chat-window';
+import { DESKTOP_SHUTDOWN_GRACE_MS } from './runtime-shutdown';
 import { onSatelliteStatus, setWakeEnabled, startSatellite, stopSatellite } from './satellite';
 import { isBackgroundMode, logBackgroundStartup } from './startup-mode';
 import { store } from './store';
@@ -498,16 +499,50 @@ app
 
 app.on('window-all-closed', () => {
   if (!desktopActivated) {
-    stopBackend();
+    // No sync `stopBackend()` here: it would claim the runtime and dispose it
+    // un-awaited, leaving the `before-quit` shutdown below nothing to wait for
+    // (`stopServer` clears its runtime handle synchronously).
     app.quit();
   }
   // After activation, tray keeps app alive
 });
 
-app.on('before-quit', () => {
+// Quitting has to WAIT for the runtime, so `before-quit` cancels the quit,
+// runs the shutdown, and quits again once it has settled. `shutdownDesktopRuntime`
+// (via stopBackendAsync) is already bounded by DESKTOP_SHUTDOWN_GRACE_MS; the
+// outer bound here covers the satellite, which has no budget of its own, so a
+// wedged step can delay the quit but never cancel it.
+const QUIT_SHUTDOWN_BUDGET_MS = DESKTOP_SHUTDOWN_GRACE_MS + 5_000;
+let quitShutdown: Promise<void> | null = null;
+let quitShutdownSettled = false;
+
+app.on('before-quit', (event: { preventDefault: () => void }) => {
   isQuitting = true;
-  void stopSatellite();
-  stopBackend();
+  // The re-quit this handler makes below must go through, not start over.
+  if (quitShutdownSettled) return;
+  event.preventDefault();
+  if (quitShutdown) return;
+
   unregisterGlobalShortcuts();
   destroyTray();
+  quitShutdown = (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.allSettled([stopSatellite(), stopBackendAsync()]),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            console.error('[ethos] shutdown exceeded its budget; quitting anyway');
+            resolve();
+          }, QUIT_SHUTDOWN_BUDGET_MS);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      quitShutdownSettled = true;
+    }
+  })();
+  void quitShutdown.then(() => {
+    app.quit();
+  });
 });

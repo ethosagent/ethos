@@ -88,6 +88,14 @@ function safeReduce(r: ToolResultReducer, result: ToolResult, ctx: ToolReducerCo
   }
 }
 
+/**
+ * The one wording for a tool call refused because its turn was aborted before
+ * it ran. Written by `executeParallel`'s pre-dispatch refusal below, by
+ * `processTools`'s per-call abort check, and by `persistAbortedToolCalls`
+ * (agent-loop/stages/tool-processing.ts, agent-loop/stages/tool-rejection.ts).
+ */
+export const ABORTED_TOOL_RESULT = 'Aborted — the turn was cancelled before this tool ran.';
+
 const DEFAULT_CACHE_TTL_MS = 300_000;
 const MAX_CACHE_ENTRIES = 1000;
 
@@ -102,9 +110,15 @@ export class DefaultToolRegistry implements ToolRegistry {
   private readonly backends?: CapabilityBackends;
   private readonly reducers?: ToolResultReducerRegistry;
   private readonly transport: ToolTransport;
-
-  // Per-turn live context — updated by executeParallel before dispatching.
-  private turnLiveCtx: LocalToolTransportLiveCtx = { emit: () => {} };
+  /**
+   * The transport this registry built for itself when none was injected. Kept
+   * typed so `executeParallel` can hand it each batch's live state as an
+   * argument (`executeWithLive`) — there is no registry-level live slot for a
+   * concurrent batch to overwrite. An injected transport gets the serializable
+   * request only; live state does not cross a transport the registry did not
+   * build.
+   */
+  private readonly localTransport?: LocalToolTransport;
 
   constructor(
     backends?: CapabilityBackends,
@@ -113,13 +127,12 @@ export class DefaultToolRegistry implements ToolRegistry {
   ) {
     this.backends = backends;
     this.reducers = reducers;
-    this.transport =
-      transport ??
-      new LocalToolTransport(
-        (name) => this.tools.get(name)?.tool,
-        backends,
-        () => this.turnLiveCtx,
-      );
+    if (transport) {
+      this.transport = transport;
+    } else {
+      this.localTransport = new LocalToolTransport((name) => this.tools.get(name)?.tool, backends);
+      this.transport = this.localTransport;
+    }
   }
 
   private cacheGet(tool: Tool, args: unknown, ctx: ToolContext): ToolResult | null {
@@ -319,8 +332,11 @@ export class DefaultToolRegistry implements ToolRegistry {
   ): Promise<Array<{ toolCallId: string; name: string; result: ToolResult; durationMs?: number }>> {
     const perCallBudget = Math.floor(ctx.resultBudgetChars / Math.max(calls.length, 1));
 
-    // Update live turn context for the default LocalToolTransport
-    this.turnLiveCtx = {
+    // This batch's live state (callbacks and handles that cannot ride the
+    // serializable request). A local, not a field: every call below closes over
+    // THIS batch's value, so an interleaved batch cannot swap it out — pinned by
+    // the "interleaved batches" tests in __tests__/tool-transport-hop.test.ts.
+    const live: LocalToolTransportLiveCtx = {
       emit: ctx.emit,
       readMtimes: ctx.readMtimes,
       storage: ctx.storage,
@@ -328,7 +344,13 @@ export class DefaultToolRegistry implements ToolRegistry {
       a2aDelegation: ctx.a2aDelegation,
       scriptTools: ctx.scriptTools,
       llm: ctx.llm,
+      getContext: ctx.getContext,
+      setContext: ctx.setContext,
     };
+    const dispatch = (request: ToolExecuteRequest): Promise<ToolResult> =>
+      this.localTransport
+        ? this.localTransport.executeWithLive(request, ctx.abortSignal, live)
+        : this.transport.execute(request, ctx.abortSignal);
 
     // A4 — one clock per call. The batch used to be timed by a single timer in
     // the agent loop, so every tool in a parallel batch reported the batch wall
@@ -438,6 +460,18 @@ export class DefaultToolRegistry implements ToolRegistry {
         };
       }
 
+      // The turn was cancelled while this call waited to dispatch — the backstop
+      // behind processTools' own per-call check (`rejectAbortedCall`). Returned
+      // here, not through the try below, so the refusal never reaches cacheSet.
+      // Pinned by __tests__/abort-before-tool-dispatch.test.ts.
+      if (ctx.abortSignal.aborted) {
+        return {
+          toolCallId: call.toolCallId,
+          name: call.name,
+          result: { ok: false, error: ABORTED_TOOL_RESULT, code: 'execution_failed' } as ToolResult,
+        };
+      }
+
       const cappedBudget = Math.min(perCallBudget, entry.tool.maxResultChars ?? perCallBudget);
 
       try {
@@ -452,6 +486,7 @@ export class DefaultToolRegistry implements ToolRegistry {
           personalityId: ctx.personalityId,
           teamId: ctx.teamId,
           agentId: ctx.agentId,
+          rootSessionKey: ctx.rootSessionKey,
           jobId: ctx.jobId,
           origin: ctx.origin,
           memoryScopeId: ctx.memoryScopeId,
@@ -471,9 +506,9 @@ export class DefaultToolRegistry implements ToolRegistry {
                 call.args,
                 ctx,
                 { toolName: call.name, toolCallId: call.toolCallId },
-                () => this.transport.execute(request, ctx.abortSignal),
+                () => dispatch(request),
               )
-            : await this.transport.execute(request, ctx.abortSignal);
+            : await dispatch(request);
         // Apply reducer before budget trim so budget sees post-reduced text
         const reducer = this.reducers?.get(call.name);
         const result = reducer

@@ -33,7 +33,7 @@ import type { AgentSafety, CompletionChunk, LLMProvider } from '@ethosagent/type
 import { EthosObservability } from '@ethosagent/wiring';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
-import { makeStubMemoryProvider, makeStubPersonalityRegistry } from '../test-helpers';
+import { makeStubMemoryBundle, makeStubPersonalityRegistry } from '../test-helpers';
 
 const PROVIDER_REQUEST_ID = 'req_011CQoD21correlation';
 
@@ -113,7 +113,7 @@ describe('D21 — x-request-id -> traceId -> observability.db -> providerRequest
     const created = createWebApi({
       dataDir: dir,
       sessionStore,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: loop,
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

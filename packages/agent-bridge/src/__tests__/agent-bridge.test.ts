@@ -232,3 +232,76 @@ describe('AgentBridge', () => {
     expect(calls).toEqual(['first']);
   });
 });
+
+// F06 follow-up — a host that replaces the bridge's loop (the TUI `/model`
+// switch) must know when the replaced loop has no turn left on it.
+describe('AgentBridge.whenIdle (F06)', () => {
+  it('resolves at once when idle, and after the running turn ends otherwise', async () => {
+    let finish: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      finish = r;
+    });
+    const loop = {
+      async *run() {
+        await gate;
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+      },
+    } as unknown as AgentLoop;
+    const bridge = new AgentBridge(loop);
+    await bridge.whenIdle();
+
+    const turn = bridge.send('x', { sessionKey: 's' });
+    let idle = false;
+    const waiting = bridge.whenIdle().then(() => {
+      idle = true;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(idle).toBe(false);
+    finish?.();
+    await turn;
+    await waiting;
+    expect(idle).toBe(true);
+  });
+});
+
+// F06 follow-up — the stall guard gives up on a turn that stops producing
+// events: it emits `idle` so the UI unblocks, but the abandoned turn is still
+// running on the loop. `whenIdle()` (what a host waits on before disposing the
+// loop) must mean every turn actually SETTLED, not that the UI moved on.
+describe('AgentBridge.whenIdle waits for an abandoned turn to settle (F06)', () => {
+  it('does not resolve on the stall guard’s idle while the turn still runs', async () => {
+    let finish: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      finish = r;
+    });
+    const loop = {
+      async *run() {
+        // Ignores its abort — a tool call that never checks the signal.
+        await gate;
+        yield { type: 'done', text: 'late', turnCount: 1 };
+      },
+    } as unknown as AgentLoop;
+    const bridge = new AgentBridge(loop, { turnTimeoutMs: 20 });
+    const idleEvents: number[] = [];
+    bridge.on('idle', () => idleEvents.push(Date.now()));
+    bridge.on('error', () => {});
+
+    void bridge.send('x', { sessionKey: 's' });
+    await new Promise((r) => setTimeout(r, 60));
+    // The stall guard fired: the UI sees idle, isRunning is false…
+    expect(idleEvents.length).toBe(1);
+    expect(bridge.isRunning).toBe(false);
+
+    // …but the turn has not settled, so neither has whenIdle.
+    let settled = false;
+    const waiting = bridge.whenIdle().then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(settled).toBe(false);
+
+    finish?.();
+    await waiting;
+    expect(settled).toBe(true);
+  });
+});

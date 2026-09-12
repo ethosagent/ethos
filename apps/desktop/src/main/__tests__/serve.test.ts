@@ -147,6 +147,24 @@ describe('the desktop backend threads the loop execution-backend registry', () =
   });
 });
 
+// Goals (plan architecture-suggestions-2026-09-10 F05). The desktop never
+// forwarded the loop-bearing goal runner, so GoalsService fell back to a
+// runner with no `runAttempt`: a desktop-created goal was stored `running` and
+// nothing ever executed it. The property is again INSTANCE IDENTITY — the
+// store + executor pair `createAgentLoop` built (one goals.db handle, the
+// runner bound to the loop) is the pair the web API drives; nothing here
+// builds a second one. Asserted against source for the same reason as the
+// blocks above: `startServer` needs a live Electron main process.
+describe('the desktop backend forwards the loop goal backend', () => {
+  it('takes `goals` off the createAgentLoop result and hands it to createWebApi', async () => {
+    const src = await readFile(join(import.meta.dirname, '..', 'serve.ts'), 'utf8');
+    // One binding, used twice: destructured out of `createAgentLoop`, then
+    // passed into `createWebApi`.
+    expect(src.match(/^\s*goals,$/gm)).toHaveLength(2);
+    expect(src).not.toMatch(/new (GoalRunner|SQLiteGoalStore)\b/);
+  });
+});
+
 // The browser-takeover screencast lane (plan B3, T8). The desktop is the third
 // in-process web-API host: `createAgentLoop` builds the browser tools HERE, so
 // the session `browser_request_takeover` locked is one this process can reach —
@@ -162,7 +180,26 @@ describe('the desktop backend wires the browser-takeover lane', () => {
     expect(src).toContain('takeoverSocket.attach(s);');
     // Taken off the `createWebApi` result, like the other two lanes.
     expect(src).toMatch(/^\s*takeoverSocket,$/m);
-    // Closed before `server.close()`, which waits on the open lane otherwise.
-    expect(src).toContain('if (takeover) await takeover.close();');
+    // Handed to the runtime's socket list, which `shutdownDesktopRuntime`
+    // closes before `server.close()` (that waits on the open lane otherwise) —
+    // the order is pinned in runtime-shutdown.test.ts.
+    expect(src).toContain('rt.sockets = [voiceSocket, satelliteSocket, takeoverSocket];');
+  });
+});
+
+// Memory (plan architecture-suggestions-2026-09-10 F04). The desktop handed the
+// web API a markdown-only `createMemoryProvider` at dataDir, so under
+// `memory: vault` the desktop memory editor, Timeline and restore worked on
+// files the agent never reads. The bundle `createAgentLoop` built from this
+// same config is the one the web API drives; nothing here builds another.
+// Asserted against source for the same reason as the blocks above.
+describe('the desktop backend forwards the loop memory bundle', () => {
+  it('takes `memoryBundle` off the createAgentLoop result and hands it to createWebApi', async () => {
+    const src = await readFile(join(import.meta.dirname, '..', 'serve.ts'), 'utf8');
+    // One binding, used twice: destructured out of `createAgentLoop`, then
+    // passed into `createWebApi`.
+    expect(src.match(/^\s*memoryBundle,$/gm)).toHaveLength(2);
+    expect(src).not.toContain('createMemoryProvider(');
+    expect(src).not.toContain('memoryBackend:');
   });
 });

@@ -82,9 +82,14 @@ function team(over: Partial<TeamDetail> = {}): TeamDetail {
   } as TeamDetail;
 }
 
+// Imported once, at collection, where no timeout applies. It used to be
+// imported inside `beforeEach`, so the first case paid the cold transform of the
+// page's whole module graph against the 10s hook budget — and timed out under a
+// parallel run. Nothing here needs a fresh module per case.
+const { TeamChat } = await import('../team/TeamChat');
+
 let container: HTMLDivElement;
 let root: Root;
-let TeamChat: React.ComponentType;
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 3; i++) {
@@ -104,7 +109,7 @@ async function mount(): Promise<void> {
   await flush();
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   routeParams = { teamId: 'marketing' };
   teamsGet.mockReset();
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -118,7 +123,6 @@ beforeEach(async () => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  ({ TeamChat } = await import('../team/TeamChat'));
 });
 
 afterEach(async () => {

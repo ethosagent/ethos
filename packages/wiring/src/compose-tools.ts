@@ -2,15 +2,12 @@ import { dirname, join } from 'node:path';
 import {
   createSpokenStyleInjector,
   type DefaultToolRegistry,
-  LastWriteWinsPolicy,
-  LazyOnDemandPolicy,
   personalityAssetDir,
   SessionManager,
 } from '@ethosagent/core';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import { SQLiteGoalStore } from '@ethosagent/goal-store';
 import { autonomyTier, KanbanStore } from '@ethosagent/kanban-store';
-import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import type { PendingNotify, PendingNotifyQueue } from '@ethosagent/notify-queue';
 import { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
 import {
@@ -106,6 +103,7 @@ import type {
   TurnAuditor,
 } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
+import type { DisposerStack } from './disposer-stack';
 import { ensureFsReachDirs } from './fs-reach-dirs';
 import {
   composeGrounding,
@@ -115,6 +113,7 @@ import {
 } from './grounding';
 import type { CreateAgentLoopOptions, WiringConfig, WiringProfile } from './index';
 import { resolveKanbanDbPath } from './kanban-path';
+import { createTeamMemoryProvider } from './memory-backend';
 import { MODEL_CATALOG } from './model-catalog';
 import { fetchManifest, loadModelCatalog, manifestToEntries } from './model-catalog-loader';
 import {
@@ -754,6 +753,16 @@ export interface ExecutionRouting {
   process: ExecutionRouter;
   /** The full resolution, for the injector that tells the model where its shell is. */
   resolveTurn(personalityId: string | undefined): Promise<TurnExecution | undefined>;
+  /**
+   * Release every execution backend instance — the ONE owner of them (F06 /
+   * G6). That is the wrappers this routing built (a docker `SessionManager`,
+   * whose per-session containers only it tracks) AND whatever else the
+   * registry holds, including an instance the Settings probe resolved later.
+   * Each instance is disposed exactly once, and a second call disposes
+   * nothing: `buildInfrastructure` deliberately does not walk the registry.
+   * Pinned by packages/wiring/src/__tests__/execution-dispose-ownership.test.ts.
+   */
+  dispose(): Promise<void>;
 }
 
 const UNKNOWN_PERSONALITY_REFUSAL =
@@ -804,6 +813,8 @@ export async function createExecutionRouting(
   // a second personality at the docker posture joins the existing session
   // bookkeeping instead of starting a parallel set of lanes.
   const backendCache = new Map<string, ExecutionBackend>();
+  /** Set by the first `dispose()` — see the `ExecutionRouting.dispose` doc. */
+  let disposal: Promise<void> | undefined;
 
   async function buildBackendFor(p: ExecutionPosture): Promise<ExecutionBackend | undefined> {
     if (p.backend === 'docker') {
@@ -940,12 +951,39 @@ export async function createExecutionRouting(
     exec: routerFor('exec'),
     process: routerFor('process'),
     resolveTurn,
+    dispose: () => {
+      // Memoised: a host that calls it twice disposes nothing twice.
+      disposal ??= (async () => {
+        const disposed = new Set<ExecutionBackend>();
+        const disposeOnce = async (backend: ExecutionBackend): Promise<void> => {
+          if (disposed.has(backend)) return;
+          disposed.add(backend);
+          await backend.dispose();
+        };
+        for (const [name, wrapped] of backendCache) {
+          // A `SessionManager` disposes the registry instance it wraps
+          // (`packages/core/src/execution/session-manager.ts`), so that instance
+          // must not be disposed again by the registry pass below.
+          const inner = input.registry.get(name);
+          if (inner) disposed.add(inner);
+          await disposeOnce(wrapped);
+        }
+        backendCache.clear();
+        for (const name of input.registry.list()) {
+          const backend = input.registry.get(name);
+          if (backend) await disposeOnce(backend);
+        }
+      })();
+      return disposal;
+    },
   };
 }
 
 export interface ComposeToolsDeps {
   infra: InfrastructureResult;
   profile: WiringProfile;
+  /** Where each resource this stage opens registers its release (F06). */
+  disposers: DisposerStack;
 }
 
 // ---------------------------------------------------------------------------
@@ -1054,7 +1092,7 @@ export async function composeAllTools(
   deps: ComposeToolsDeps,
 ): Promise<ComposeToolsResult> {
   const { dataDir, log } = wiringCtx;
-  const { infra, profile } = deps;
+  const { infra, profile, disposers } = deps;
   const { personalities, activePerson, hooks, capabilityBackends, tools, clarifyBridge } = infra;
 
   // Materialize the personality's derived write directories BEFORE the posture
@@ -1091,6 +1129,7 @@ export async function composeAllTools(
     ...(config.execution?.docker ? { docker: config.execution.docker } : {}),
     ...(config.execution?.ssh ? { ssh: config.execution.ssh } : {}),
   });
+  disposers.push('execution routing', () => routing.dispose());
   const posture = routing.posture;
   const executionBackend = routing.backend;
   const execRoute = routing.exec;
@@ -1240,6 +1279,7 @@ export async function composeAllTools(
         : {}),
     });
     const store = kanbanStore;
+    disposers.push('kanban store', () => store.close());
     const kanbanOpts: {
       store: KanbanStore;
       hooks?: typeof hooks;
@@ -1335,6 +1375,9 @@ export async function composeAllTools(
   // independent of whether the personality exposes goal_* tools. Only the
   // agent-facing goal_* TOOLS stay gated by the personality's toolset.
   const goalStore = new SQLiteGoalStore(join(dataDir, 'goals.db'));
+  // Lent to hosts as `CreateAgentLoopResult.goals`; its lifetime is this
+  // loop's, so it is closed here, by the loop's dispose, and nowhere else.
+  disposers.push('goal store', () => goalStore.close());
   const goalRunnerRef: GoalRunnerRef = {};
   if ((activePerson.toolset ?? []).some((name: string) => name.startsWith('goal_'))) {
     for (const tool of createGoalTools(goalStore, (id) => goalRunnerRef.runner?.startGoal(id)))
@@ -1522,6 +1565,9 @@ export async function composeAllTools(
       for (const name of removedNames) tools.unregister(name);
     },
   });
+  // Pushed BEFORE the connects below, so a boot that fails mid-connect still
+  // disconnects the stdio children it already spawned.
+  disposers.push('mcp clients', () => mcpManager.shutdown());
   const mcpTools = await mcpManager.getToolsForPersonality(
     activePerson.id,
     activePerson.mcp_servers,
@@ -1659,12 +1705,13 @@ export async function composeAllTools(
         `Invalid teamName "${config.teamName}": must match [a-zA-Z0-9_-]+ (no path separators or traversal)`,
       );
     }
-    const teamMemoryDir = join(dataDir, 'teams', config.teamName, 'memory');
-    const teamMemory = new LazyOnDemandPolicy(
-      new LastWriteWinsPolicy(
-        new MarkdownFileMemoryProvider({ dir: teamMemoryDir, storage: wiringCtx.storage }),
-      ),
-    );
+    // The same composition web-api's TeamsService borrows via
+    // `MemoryBundle.teamMemory` — one owner for team memory (F04 follow-up).
+    const teamMemory = createTeamMemoryProvider({
+      teamsDir: join(dataDir, 'teams'),
+      teamName: config.teamName,
+      storage: wiringCtx.storage,
+    });
 
     await seedTeamMemory(teamMemory, config.teamName);
 
@@ -1682,6 +1729,7 @@ export async function composeAllTools(
     // pattern delivery-ledger.db already uses across the gateway and
     // web-api processes.
     const notifyQueue = new SQLiteNotifyQueue(join(dataDir, 'notify-queue.db'));
+    disposers.push('notify queue', () => notifyQueue.close());
     injectors.push(createPendingNotifyInjector(notifyQueue, config.teamName));
   }
 

@@ -1,57 +1,123 @@
-import { join } from 'node:path';
-import { GoalRunner } from '@ethosagent/goal-runner';
-import { SQLiteGoalStore } from '@ethosagent/goal-store';
-import type { AcceptanceSpec, Goal, GoalAttempt, GoalEvent, SessionStore } from '@ethosagent/types';
+import {
+  type AcceptanceSpec,
+  EthosError,
+  type Goal,
+  type GoalAttempt,
+  type GoalEvent,
+  type GoalStore,
+  RETURNED_DIRECT_TOOL_RESULT,
+  type SessionStore,
+} from '@ethosagent/types';
+
+/**
+ * The run-control half of the goal backend — exactly what GoalsService calls.
+ * Structural, so web-api never names the concrete runner (ARCHITECTURE.md
+ * Law 5): `GoalRunner` from `@ethosagent/goal-runner` satisfies it, and wiring
+ * hands one over as `CreateAgentLoopResult.goals.executor`.
+ */
+export interface GoalExecutor {
+  /** True only when `startGoal`/`resume` will actually execute attempts
+   *  (`GoalRunner.canExecute`: a loop-bearing `runAttempt` is wired). */
+  canExecute(): boolean;
+  startGoal(goalId: string): Promise<void>;
+  steer(goalId: string, message: string): boolean;
+  cancel(goalId: string): boolean;
+  resume(goalId: string): Promise<boolean>;
+}
+
+/**
+ * A goal store and the executor that runs goals FROM that store, built
+ * together by wiring (`buildAgentLoop` → `CreateAgentLoopResult.goals`). Pinned
+ * by `accepts wiring's CreateAgentLoopResult.goals` in
+ * `__tests__/goals-backend.test.ts`.
+ */
+export interface GoalsBackend {
+  store: GoalStore;
+  executor: GoalExecutor;
+}
 
 export interface GoalsServiceOptions {
-  dataDir: string;
-  /** Shared loop-bearing runner from wiring's CreateAgentLoopResult. When provided,
-   *  web-created goals execute on the same runner+store as the CLI/gateway path. */
-  runner?: GoalRunner;
-  /** Shared goal store — pass alongside `runner` so reads hit the same db handle. */
-  store?: SQLiteGoalStore;
+  /** Borrowed from the composition root — GoalsService never constructs a
+   *  store or runner of its own, and never disposes this pair. Absent
+   *  (onboarding, hosts without a loop) → reads are empty and create/resume
+   *  are refused with `NOT_CONFIGURED`. */
+  goals?: GoalsBackend;
+  /**
+   * The pair a goal for this personality runs on, when it is not the main one:
+   * a team personality's goal belongs on its TEAM's loop (`ctx.teamId`, the
+   * team board, team memory) — the same resolution a chat turn makes through
+   * `loopForPersonality`. Returning undefined means "the main pair".
+   */
+  goalsFor?: (personalityId: string) => Promise<GoalsBackend | undefined>;
   /** Session store for reading tool-call results out of a goal's attempt
    *  sessions. When absent, `toolResult` returns `{ found: false }`. */
   sessionStore?: SessionStore;
 }
 
 export class GoalsService {
-  private store: SQLiteGoalStore;
-  private runner: GoalRunner;
+  private goals: GoalsBackend | undefined;
+  private readonly goalsFor: GoalsServiceOptions['goalsFor'];
   private sessionStore?: SessionStore;
 
   constructor(opts: GoalsServiceOptions) {
-    this.store = opts.store ?? new SQLiteGoalStore(join(opts.dataDir, 'goals.db'));
-    this.runner = opts.runner ?? new GoalRunner({ store: this.store });
+    this.goals = opts.goals;
+    this.goalsFor = opts.goalsFor;
     this.sessionStore = opts.sessionStore;
-    // The injected runner already recovered orphans in build-agent-loop; only a
-    // self-constructed (loop-less) runner needs to recover here.
-    if (!opts.runner) this.runner.recoverOrphans();
+  }
+
+  /** The pair a goal for `personalityId` belongs to: its team's, else the main one. */
+  private async backendFor(personalityId: string | undefined): Promise<GoalsBackend | undefined> {
+    if (personalityId === undefined) return this.goals;
+    return (await this.goalsFor?.(personalityId)) ?? this.goals;
+  }
+
+  /** The pair that owns an EXISTING goal — resolved from the personality it was created for. */
+  private async backendOf(goalId: string): Promise<GoalsBackend | undefined> {
+    return this.backendFor(this.goals?.store.get(goalId)?.personalityId);
+  }
+
+  /**
+   * The backend, but only if it will actually run a goal. Checked before any
+   * row is written, so an unavailable executor can never leave a `running`
+   * goal that nothing executes (pinned in `__tests__/goals-backend.test.ts`).
+   */
+  private requireExecution(goals: GoalsBackend | undefined): GoalsBackend {
+    if (!goals?.executor.canExecute()) {
+      throw new EthosError({
+        code: 'NOT_CONFIGURED',
+        cause: 'Goal execution is not available on this server.',
+        action: 'Finish setup so the server runs an agent loop, then start the goal again.',
+      });
+    }
+    return goals;
   }
 
   async get(id: string): Promise<{ goal: Goal; events: GoalEvent[]; attempts: GoalAttempt[] }> {
-    const goal = this.store.get(id);
-    if (!goal) throw new Error(`Goal not found: ${id}`);
-    const events = this.store.getEvents(id);
-    const attempts = this.store.getAttempts(id);
+    const store = this.goals?.store;
+    const goal = store?.get(id);
+    if (!store || !goal) throw new Error(`Goal not found: ${id}`);
+    const events = store.getEvents(id);
+    const attempts = store.getAttempts(id);
     return { goal, events, attempts };
   }
 
   async list(opts?: { status?: string; limit?: number }): Promise<{ goals: Goal[] }> {
-    const goals = this.store.list(opts as Parameters<SQLiteGoalStore['list']>[0]);
+    const goals = this.goals?.store.list(opts as Parameters<GoalStore['list']>[0]) ?? [];
     return { goals };
   }
 
   async steer(id: string, message: string): Promise<{ ok: boolean }> {
-    return { ok: this.runner.steer(id, message) };
+    const goals = await this.backendOf(id);
+    return { ok: goals?.executor.steer(id, message) ?? false };
   }
 
   async cancel(id: string): Promise<{ ok: boolean }> {
-    return { ok: this.runner.cancel(id) };
+    const goals = await this.backendOf(id);
+    return { ok: goals?.executor.cancel(id) ?? false };
   }
 
   async resume(id: string): Promise<{ ok: boolean }> {
-    return { ok: await this.runner.resume(id) };
+    return { ok: await this.requireExecution(await this.backendOf(id)).executor.resume(id) };
   }
 
   async create(input: {
@@ -71,6 +137,7 @@ export class GoalsService {
     allowDangerousToolCalls?: boolean;
     maxRecoveryAttempts?: number;
   }): Promise<{ goal: Goal }> {
+    const { store, executor } = this.requireExecution(await this.backendFor(input.personalityId));
     const acceptanceCriteria: AcceptanceSpec | undefined = input.acceptanceCriteria
       ? {
           checks: (input.acceptanceCriteria.checks ?? []).map((c, i) => ({
@@ -86,7 +153,7 @@ export class GoalsService {
         }
       : undefined;
 
-    const goal = this.store.create({
+    const goal = store.create({
       userId: 'default-user',
       personalityId: input.personalityId,
       origin: 'web',
@@ -109,20 +176,20 @@ export class GoalsService {
         ? { maxRecoveryAttempts: input.maxRecoveryAttempts }
         : {}),
     });
-    await this.runner.startGoal(goal.id);
+    await executor.startGoal(goal.id);
     return { goal };
   }
 
   async getGoal(id: string): Promise<Goal | null> {
-    return this.store.get(id);
+    return this.goals?.store.get(id) ?? null;
   }
 
   async getEvents(goalId: string): Promise<GoalEvent[]> {
-    return this.store.getEvents(goalId);
+    return this.goals?.store.getEvents(goalId) ?? [];
   }
 
   async getEventsSince(goalId: string, afterSeq: number): Promise<GoalEvent[]> {
-    const events = this.store.getEvents(goalId);
+    const events = this.goals?.store.getEvents(goalId) ?? [];
     return events.filter((e) => e.seq > afterSeq);
   }
 
@@ -142,16 +209,24 @@ export class GoalsService {
     const store = this.sessionStore;
     if (!store) return { found: false };
 
-    const attempts = this.store.getAttempts(goalId);
+    const attempts = this.goals?.store.getAttempts(goalId) ?? [];
     for (const attempt of attempts) {
       const session = await store.getSessionByKey(attempt.sessionKey);
       if (!session) continue;
       const messages = await store.getMessages(session.id);
 
-      const resultMsg = messages.find(
+      const resultIdx = messages.findIndex(
         (m) => m.role === 'tool_result' && m.toolCallId === toolCallId,
       );
+      const resultMsg = messages[resultIdx];
       if (!resultMsg) continue;
+      // A returnDirect call's value is stored once, as the next assistant row;
+      // its own row holds only the marker (RETURNED_DIRECT_TOOL_RESULT).
+      const output =
+        resultMsg.content === RETURNED_DIRECT_TOOL_RESULT
+          ? (messages.slice(resultIdx + 1).find((m) => m.role === 'assistant')?.content ??
+            resultMsg.content)
+          : resultMsg.content;
 
       // Best-effort: pull args + name from the assistant message that issued
       // the call. The result row also carries toolName as a fallback.
@@ -170,7 +245,7 @@ export class GoalsService {
         found: true,
         ...(toolName !== undefined ? { toolName } : {}),
         ...(input !== undefined ? { input } : {}),
-        output: resultMsg.content,
+        output,
       };
     }
 

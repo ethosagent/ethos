@@ -55,6 +55,48 @@ export function isKnownAgentEvent(event: { type: string }): event is AgentEvent 
   return (KNOWN_AGENT_EVENT_TYPES as readonly string[]).includes(event.type);
 }
 
+/**
+ * The part of a turn's answer that reached the consumer ONLY in `done.text`,
+ * or `''`.
+ *
+ * In a normal turn `done.text` is the concatenation of every `text_delta` the
+ * turn streamed (`fullText` in packages/core/src/agent-loop.ts), so nothing is
+ * owed. On the `returnDirect` path it is the tool's answer, which never
+ * streamed — possibly after a preamble the model did stream before calling
+ * the tool (packages/core/src/agent-loop/stages/return-direct.ts). So the
+ * answer is owed whenever `done.text` is non-empty and the streamed text does
+ * not already end with it. One rule for every surface; pinned by
+ * `__tests__/unstreamed-answer.test.ts`.
+ *
+ * NOT guaranteed — two known limits of deciding from text alone (no event says
+ * "this turn was returnDirect"):
+ *  - A preamble that happens to END WITH the tool's answer text (streamed
+ *    `'…Done.'`, answer `'Done.'`) reads as a normal turn, so the answer is
+ *    not appended. The user saw the same characters, but not as the answer.
+ *  - The rule needs the WHOLE streamed text, and cannot tell that it was given
+ *    less. A consumer that saw only the tail of a long turn (the web
+ *    `SessionStreamBuffer` evicting its head, a client that joined late) holds
+ *    a text that does not end with `done.text`, so it re-appends the full
+ *    answer — a duplicate. Pass everything the turn streamed, or gate the call
+ *    on having seen the turn start: the web reducer does, with `streamAnchored`
+ *    (apps/web/src/lib/chat-reducer.ts).
+ */
+export function unstreamedAnswer(streamedText: string, doneText: string | undefined): string {
+  if (!doneText || streamedText.endsWith(doneText)) return '';
+  return doneText;
+}
+
+/**
+ * What to append after the streamed text so the reply is complete: the
+ * {@link unstreamedAnswer}, after a blank line when anything visible streamed
+ * before it, or `''`. `streamedText + answerSuffix(...)` is the whole reply.
+ */
+export function answerSuffix(streamedText: string, doneText: string | undefined): string {
+  const answer = unstreamedAnswer(streamedText, doneText);
+  if (!answer) return '';
+  return streamedText.trim() ? `\n\n${answer}` : answer;
+}
+
 export interface DryRunToolPlan {
   toolCallId: string;
   toolName: string;

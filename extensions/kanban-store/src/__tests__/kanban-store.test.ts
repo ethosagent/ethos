@@ -151,8 +151,16 @@ describe('KanbanStore', () => {
 
   it('updateStatus does not open a second run if one is already open', () => {
     const task = store.createTask({ title: 'work' });
-    store.updateStatus(task.id, 'running');
-    store.updateStatus(task.id, 'running'); // no-op for run creation
+    const first = store.updateStatus(task.id, 'running', 'claimed', 'poller');
+    // A second claim is refused, not a silent success — otherwise two racing
+    // claimers (poll loop + dispatcher) would both believe they own the task.
+    expect(() => store.updateStatus(task.id, 'running', 'dispatched', 'dispatcher')).toThrow(
+      /already claimed/,
+    );
+    const after = store.getTask(task.id);
+    expect(after?.status).toBe('running');
+    expect(after?.currentRunId).toBe(first.currentRunId);
+    expect(after?.retryCount).toBe(0);
     expect(store.listRuns(task.id)).toHaveLength(1);
   });
 
@@ -430,6 +438,23 @@ describe('KanbanStore', () => {
     expect(store.getTask(c.id)?.status).toBe('todo');
   });
 
+  it('bulkUpdateStatus holds a ready request at todo for tasks with an unfinished assigned parent', () => {
+    const parent = store.createTask({ title: 'prereq', assignee: 'engineer' });
+    const blocked = store.createTask({ title: 'blocked', parents: [parent.id] });
+    const free = store.createTask({ title: 'free' });
+    store.updateStatus(blocked.id, 'blocked');
+
+    const out = store.bulkUpdateStatus([blocked.id, free.id], 'ready', 'human:ui');
+
+    expect(out.map((t) => t.status)).toEqual(['todo', 'ready']);
+    const changes = store.listEvents(blocked.id).filter((e) => e.kind === 'status_changed');
+    expect(changes.at(-1)?.data).toMatchObject({
+      from: 'blocked',
+      to: 'todo',
+      reason: 'waiting on prerequisites',
+    });
+  });
+
   it('bulkAssign sets the assignee on every task in the batch', () => {
     const a = store.createTask({ title: 'a' });
     const b = store.createTask({ title: 'b' });
@@ -609,6 +634,34 @@ describe('KanbanStore', () => {
     store.completeRun(realParent.id, 'real parent done');
     promoted = store.promoteReady();
     expect(promoted).toContain(childOfReal.id);
+  });
+
+  describe('hasOpenBlockingParents', () => {
+    it('is false for a task with no parents', () => {
+      const t = store.createTask({ title: 'standalone' });
+      expect(store.hasOpenBlockingParents(t.id)).toBe(false);
+    });
+
+    it('is false when the only parent is an unfinished goal (assignee null)', () => {
+      const goal = store.createTask({ title: 'goal' });
+      const child = store.createTask({ title: 'child', parents: [goal.id] });
+      expect(store.getTask(goal.id)?.status).toBe('todo');
+      expect(store.hasOpenBlockingParents(child.id)).toBe(false);
+    });
+
+    it('is true when an assigned parent is not done', () => {
+      const parent = store.createTask({ title: 'prereq', assignee: 'engineer' });
+      const child = store.createTask({ title: 'child', parents: [parent.id] });
+      expect(store.hasOpenBlockingParents(child.id)).toBe(true);
+    });
+
+    it('is false once the assigned parent is done', () => {
+      const parent = store.createTask({ title: 'prereq', assignee: 'engineer' });
+      const child = store.createTask({ title: 'child', parents: [parent.id] });
+      store.updateStatus(parent.id, 'running');
+      store.completeRun(parent.id, 'finished');
+      expect(store.hasOpenBlockingParents(child.id)).toBe(false);
+    });
   });
 
   it('promoteScheduled promotes scheduled tasks whose time has passed', () => {

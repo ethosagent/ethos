@@ -11,8 +11,9 @@ import {
 } from '@ethosagent/cron';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
-import { EthosError } from '@ethosagent/types';
+import { answerSuffix, EthosError } from '@ethosagent/types';
 import { writeJson } from '../json-output';
+import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getEthosObservability, getStorage } from '../wiring';
 
 const c = {
@@ -31,8 +32,12 @@ function toScriptRef(file?: string, timeout?: string): ScriptRef | undefined {
   return { file, ...(timeout !== undefined ? { timeoutSeconds: Number(timeout) } : {}) };
 }
 
-function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup: () => void } {
+function makeScheduler(config: EthosConfig): {
+  scheduler: CronScheduler;
+  cleanup: () => Promise<void>;
+} {
   let loop: AgentLoop | null = null;
+  let runtime: Awaited<ReturnType<typeof createAgentLoop>> | null = null;
   let personalities: Awaited<ReturnType<typeof createPersonalityRegistry>> | null = null;
 
   const scheduler = new CronScheduler({
@@ -65,7 +70,10 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
           action: `Run 'ethos cron list' to find affected jobs, then update or delete them`,
         });
       }
-      if (!loop) loop = (await createAgentLoop(config)).loop;
+      if (!loop) {
+        runtime = await createAgentLoop(config);
+        loop = runtime.loop;
+      }
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;
       let output = '';
 
@@ -90,6 +98,9 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
         toolsetOverride,
       })) {
         if (event.type === 'text_delta') output += event.text;
+        // A `returnDirect` tool's answer arrives only as `done.text`, after
+        // any preamble that streamed — same rule as `runCronTurn`.
+        else if (event.type === 'done') output += answerSuffix(output, event.text);
         else progress.record(event);
       }
 
@@ -104,11 +115,21 @@ function makeScheduler(config: EthosConfig): { scheduler: CronScheduler; cleanup
   });
 
   // The CLI never starts a trigger loop (each subcommand is a one-shot CRUD
-  // or `runJobNow` call, not a long-running daemon) — `cleanup` is a no-op
-  // now that `start()`/`stop()` have moved off `CronScheduler` onto
-  // `LocalIntervalTrigger` (plan/completed/cron-scheduler-seam.md). Kept as a
-  // shape so every call site's `finally { cleanup() }` needs no change.
-  return { scheduler, cleanup: () => {} };
+  // or `runJobNow` call, not a long-running daemon), so there is no trigger to
+  // stop — `start()`/`stop()` moved off `CronScheduler` onto
+  // `LocalIntervalTrigger` (plan/completed/cron-scheduler-seam.md). What
+  // `cleanup` DOES own is the agent loop `runJob` builds lazily: `ethos cron
+  // run` is the one subcommand that constructs one, and it used to exit on top
+  // of it (G4).
+  return {
+    scheduler,
+    cleanup: async () => {
+      const built = runtime;
+      runtime = null;
+      loop = null;
+      if (built) await releaseCommandRuntime(built, { label: 'cron agent loop' });
+    },
+  };
 }
 
 export async function runCronCommand(
@@ -169,7 +190,7 @@ export async function runCronCommand(
           console.log();
         }
       } finally {
-        cleanup();
+        await cleanup();
       }
       break;
     }
@@ -226,7 +247,7 @@ export async function runCronCommand(
         }
         console.log();
       } finally {
-        cleanup();
+        await cleanup();
       }
       break;
     }
@@ -298,7 +319,7 @@ export async function runCronCommand(
         console.log(`${c.green}✓ Created "${job.name}" (${job.id})${c.reset}`);
         if (next) console.log(`${c.dim}Next run: ${next.toLocaleString()}${c.reset}`);
       } finally {
-        cleanup();
+        await cleanup();
       }
       break;
     }
@@ -340,7 +361,7 @@ export async function runCronCommand(
       } catch (err) {
         console.log(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`);
       } finally {
-        cleanup();
+        await cleanup();
       }
       break;
     }
@@ -365,7 +386,7 @@ export async function runCronCommand(
       } catch (err) {
         console.log(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`);
       } finally {
-        cleanup();
+        await cleanup();
       }
       break;
     }
@@ -383,7 +404,7 @@ export async function runCronCommand(
       } catch (err) {
         console.log(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`);
       } finally {
-        cleanup();
+        await cleanup();
       }
       break;
     }
@@ -408,7 +429,7 @@ export async function runCronCommand(
       } catch (err) {
         console.log(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`);
       } finally {
-        cleanup();
+        await cleanup();
       }
       break;
     }
@@ -427,7 +448,7 @@ export async function runCronCommand(
       } catch (err) {
         console.log(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`);
       } finally {
-        cleanup();
+        await cleanup();
       }
       break;
     }

@@ -1,11 +1,15 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { KanbanStore } from '@ethosagent/kanban-store';
+import { KanbanStore, type TaskEvent } from '@ethosagent/kanban-store';
 import { SessionLane } from '@ethosagent/session-lane';
 import type { AgentEvent } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { KanbanPollLoop, writeRunActivityComments } from '../kanban-poll';
+import {
+  AUTO_HEARTBEAT_INTERVAL_MS,
+  KanbanPollLoop,
+  writeRunActivityComments,
+} from '../kanban-poll';
 
 describe('KanbanPollLoop', () => {
   let tempDir: string;
@@ -179,6 +183,58 @@ describe('KanbanPollLoop', () => {
     expect(runner.mock.calls[0][0]).toContain('kanban_complete');
   });
 
+  it('tick() carries operator comments and the last block reason into the claimed prompt', async () => {
+    let taskId = '';
+    seedStore((store) => {
+      const task = store.createTask({
+        title: 'brand guide',
+        body: 'build it',
+        assignee: 'agent-a',
+        actor: 'test',
+      });
+      taskId = task.id;
+      store.updateStatus(task.id, 'ready', undefined, 'test');
+      store.updateStatus(task.id, 'running', 'claimed via poll dispatch', 'agent-a');
+      store.addComment(task.id, 'agent-a', '🔧 web_fetch({"url":"https://example.com"})');
+      store.blockRun(task.id, 'Which X handle should I read?', 'agent-a', 'needs_input');
+      store.addComment(task.id, 'human:control-center', 'Use @rudderstack on X.');
+      store.updateStatus(task.id, 'ready', 'unblocked by operator', 'human:control-center');
+    });
+
+    const lane = new SessionLane();
+    const runner =
+      vi.fn<
+        (
+          prompt: string,
+          sessionKey: string,
+          taskId: string,
+          taskTitle: string,
+          runId: string,
+        ) => Promise<void>
+      >();
+    runner.mockResolvedValue(undefined);
+    const pollLoop = new KanbanPollLoop({
+      boardPath: dbPath,
+      personalityId: 'agent-a',
+      lane,
+      runner,
+    });
+
+    await pollLoop.tick();
+    await vi.waitFor(() => {
+      expect(runner).toHaveBeenCalledTimes(1);
+    });
+
+    const [prompt, , , , runId] = runner.mock.calls[0] ?? [];
+    expect(prompt).toContain('Use @rudderstack on X.');
+    expect(prompt).toContain('Your previous attempt stopped with: Which X handle should I read?');
+    expect(prompt).not.toContain('web_fetch');
+    // The runner is handed the run this claim opened.
+    const store = new KanbanStore(dbPath);
+    expect(runId).toBe(store.getTask(taskId)?.currentRunId);
+    store.close();
+  });
+
   it('tick() reclaims stale running tasks', async () => {
     seedStore((store) => {
       const task = store.createTask({ title: 'stale-task', assignee: 'agent-a', actor: 'test' });
@@ -309,12 +365,29 @@ describe('writeRunActivityComments', () => {
       yield { type: 'text_delta', text: 'done' };
       yield { type: 'done', text: 'all done', turnCount: 1 };
     }
-    await writeRunActivityComments(dbPath, task.id, 'agent-a', fakeEvents());
+    await writeRunActivityComments(dbPath, task.id, 'r_none', 'agent-a', fakeEvents());
     const verify = new KanbanStore(dbPath);
     const comments = verify.listComments(task.id);
     expect(comments.every((c) => c.author === 'agent-a')).toBe(true);
     expect(comments.some((c) => c.body.includes('🔧 read_file'))).toBe(true);
     expect(comments.some((c) => c.body.includes('all done'))).toBe(true);
+    verify.close();
+  });
+
+  // A `returnDirect` tool's answer reaches a turn only as `done.text`, after any
+  // preamble the model streamed: the posted comment carries both.
+  it('posts the preamble AND a returnDirect answer that only `done.text` carries', async () => {
+    const store = new KanbanStore(dbPath);
+    const task = store.createTask({ title: 'direct-task', assignee: 'agent-a', actor: 'test' });
+    store.close();
+    async function* directEvents(): AsyncIterable<AgentEvent> {
+      yield { type: 'text_delta', text: 'Let me look that up.' };
+      yield { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 };
+    }
+    await writeRunActivityComments(dbPath, task.id, 'r_none', 'agent-a', directEvents());
+    const verify = new KanbanStore(dbPath);
+    const bodies = verify.listComments(task.id).map((c) => c.body);
+    expect(bodies).toContain('Let me look that up.\n\nDIRECT ANSWER');
     verify.close();
   });
 
@@ -325,9 +398,135 @@ describe('writeRunActivityComments', () => {
     async function* errEvents(): AsyncIterable<AgentEvent> {
       yield { type: 'error', error: 'boom', code: 'oops' };
     }
-    await writeRunActivityComments(dbPath, task.id, 'agent-a', errEvents());
+    await writeRunActivityComments(dbPath, task.id, 'r_none', 'agent-a', errEvents());
     const verify = new KanbanStore(dbPath);
     expect(verify.listComments(task.id).some((c) => c.body.includes('⚠️ error: boom'))).toBe(true);
     verify.close();
+  });
+
+  describe('auto-heartbeat', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function claimTask(): { taskId: string; runId: string } {
+      const store = new KanbanStore(dbPath);
+      const task = store.createTask({ title: 'long-task', assignee: 'agent-a', actor: 'test' });
+      store.updateStatus(task.id, 'ready', undefined, 'test');
+      const claimed = store.updateStatus(task.id, 'running', undefined, 'test');
+      store.close();
+      return { taskId: task.id, runId: claimed.currentRunId ?? '' };
+    }
+
+    function heartbeats(taskId: string): TaskEvent[] {
+      const store = new KanbanStore(dbPath);
+      try {
+        return store.listEvents(taskId).filter((e) => e.kind === 'heartbeat');
+      } finally {
+        store.close();
+      }
+    }
+
+    /** One tool_start, then a silent tool call that lasts until `finish()`, then done. */
+    function silentToolCall(onSilence?: () => void): {
+      events: AsyncIterable<AgentEvent>;
+      finish: () => void;
+    } {
+      let finish: () => void = () => {};
+      const toolCallDone = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      async function* events(): AsyncIterable<AgentEvent> {
+        yield { type: 'tool_start', toolCallId: 'c1', toolName: 'geo_run', args: {} };
+        onSilence?.();
+        await toolCallDone;
+        yield { type: 'done', text: 'finished', turnCount: 1 };
+      }
+      return { events: events(), finish: () => finish() };
+    }
+
+    it('heartbeats on a timer through a long tool call that emits no events', async () => {
+      const { taskId, runId } = claimTask();
+      vi.useFakeTimers();
+      const t0 = Date.now();
+      const { events, finish } = silentToolCall();
+      const onError = vi.fn();
+      const run = writeRunActivityComments(dbPath, taskId, runId, 'agent-a', events, onError);
+
+      await vi.advanceTimersByTimeAsync(AUTO_HEARTBEAT_INTERVAL_MS * 3);
+
+      // One immediately, then one per interval — with no event in between.
+      const beats = heartbeats(taskId);
+      expect(beats).toHaveLength(4);
+      expect(beats.every((e) => e.actor === 'agent-a')).toBe(true);
+      expect(beats[0]?.data.note).toBe('auto: agent active');
+      {
+        const store = new KanbanStore(dbPath);
+        const claimedRun = store.listRuns(taskId).find((r) => r.id === runId);
+        expect(claimedRun?.lastHeartbeatAt).toBe(t0 + AUTO_HEARTBEAT_INTERVAL_MS * 3);
+        store.close();
+      }
+
+      finish();
+      await run;
+      // Cleared in the finally: no timer left, no heartbeat after the stream ends.
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(AUTO_HEARTBEAT_INTERVAL_MS * 2);
+      expect(heartbeats(taskId)).toHaveLength(4);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it('stops the timer once the agent ends its own run mid-stream', async () => {
+      const { taskId, runId } = claimTask();
+      vi.useFakeTimers();
+      const { events, finish } = silentToolCall();
+      const onError = vi.fn();
+      const run = writeRunActivityComments(dbPath, taskId, runId, 'agent-a', events, onError);
+
+      await vi.advanceTimersByTimeAsync(AUTO_HEARTBEAT_INTERVAL_MS);
+      expect(heartbeats(taskId)).toHaveLength(2);
+
+      // The agent calls kanban_complete while the stream is still open.
+      {
+        const store = new KanbanStore(dbPath);
+        store.completeRun(taskId, 'done', 'agent-a');
+        store.close();
+      }
+      await vi.advanceTimersByTimeAsync(AUTO_HEARTBEAT_INTERVAL_MS * 3);
+      expect(heartbeats(taskId)).toHaveLength(2);
+      // The stream is still being consumed, yet the timer is gone.
+      expect(vi.getTimerCount()).toBe(0);
+
+      finish();
+      await run;
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it("never heartbeats when the task's current run is a different run", async () => {
+      const { taskId, runId } = claimTask();
+      // The task was reclaimed and re-claimed by someone else: a new run is open.
+      {
+        const store = new KanbanStore(dbPath);
+        store.reclaimTask(taskId, 'orphan_stale', 'dispatcher');
+        const reclaimed = store.updateStatus(taskId, 'running', 'dispatched', 'dispatcher');
+        store.close();
+        expect(reclaimed.currentRunId).not.toBe(runId);
+      }
+      vi.useFakeTimers();
+      let timersDuringCall = -1;
+      const { events, finish } = silentToolCall(() => {
+        timersDuringCall = vi.getTimerCount();
+      });
+      const onError = vi.fn();
+      const run = writeRunActivityComments(dbPath, taskId, runId, 'agent-a', events, onError);
+
+      await vi.advanceTimersByTimeAsync(AUTO_HEARTBEAT_INTERVAL_MS * 2);
+      expect(timersDuringCall).toBe(0);
+      expect(heartbeats(taskId)).toHaveLength(0);
+
+      finish();
+      await run;
+      expect(onError).not.toHaveBeenCalled();
+    });
   });
 });

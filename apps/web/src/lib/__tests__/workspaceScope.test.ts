@@ -7,6 +7,7 @@ import {
   filterTasksForLibrary,
   filterTasksForWorkspace,
   mostRecentSessionIdForPersonality,
+  shouldRestoreLastSession,
 } from '../workspaceScope';
 
 // P2 — plan/phases/personality-first-ui.md, "scope the existing pages". Proves
@@ -135,5 +136,35 @@ describe('mostRecentSessionIdForPersonality', () => {
 
   it('returns null when the personality has no sessions', () => {
     expect(mostRecentSessionIdForPersonality(sessions, 'writer')).toBeNull();
+  });
+});
+
+describe('shouldRestoreLastSession', () => {
+  const nothing = {
+    sessionParam: undefined,
+    currentSessionId: null,
+    newSessionParam: null,
+    freshRequested: false,
+  };
+
+  it('restores when nothing has claimed the chat', () => {
+    expect(shouldRestoreLastSession(nothing)).toBe(true);
+  });
+
+  it('does not restore after a consumed New Session request, even with no URL flag left', () => {
+    // The bug: Chat strips `?new=1` once consumed, leaving a bare URL.
+    expect(shouldRestoreLastSession({ ...nothing, freshRequested: true })).toBe(false);
+  });
+
+  it('does not restore while `?new=1` is still in the URL', () => {
+    expect(shouldRestoreLastSession({ ...nothing, newSessionParam: '1' })).toBe(false);
+  });
+
+  it('does not restore when the URL already names a session', () => {
+    expect(shouldRestoreLastSession({ ...nothing, sessionParam: 's1' })).toBe(false);
+  });
+
+  it('does not restore over a live session', () => {
+    expect(shouldRestoreLastSession({ ...nothing, currentSessionId: 's1' })).toBe(false);
   });
 });

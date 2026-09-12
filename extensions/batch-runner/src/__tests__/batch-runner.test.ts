@@ -105,6 +105,23 @@ describe('parseTasksJsonl', () => {
 // ---------------------------------------------------------------------------
 
 describe('BatchRunner.run', () => {
+  // A `returnDirect` tool's answer reaches the turn only as `done.text`, after
+  // any preamble the model streamed: the assistant record carries both.
+  it('records a returnDirect answer that only `done.text` carries', async () => {
+    const loop = makeLoop([
+      [
+        { type: 'text_delta', text: 'Let me look that up.' },
+        { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 },
+      ],
+    ]);
+    const runner = makeRunner(loop);
+    const task = tasks[0];
+    if (!task) throw new Error('fixture missing');
+    await runner.run([task]);
+    const assistant = (await readOutput(testDir)).find((r) => r.role === 'assistant');
+    expect(assistant?.content).toBe('Let me look that up.\n\nDIRECT ANSWER');
+  });
+
   it('runs tasks and produces Atropos JSONL', async () => {
     const loop = makeLoop([textEvents, textEvents]);
     const runner = makeRunner(loop);

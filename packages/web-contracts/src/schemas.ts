@@ -1,3 +1,4 @@
+import { SECRET_NAME_RE } from '@ethosagent/types';
 import { z } from 'zod';
 
 // Wire-format schemas. These mirror the in-memory shapes from
@@ -1762,60 +1763,22 @@ const RecipeFsReachSchema = z.object({
 });
 
 /**
- * The providers a named secret may be written under. Defined here rather than
- * in `router.ts` because two namespaces need it: `namedSecrets`, which owns the
- * write, and `recipes.preflight`, whose credential rows name the provider that
- * write would target.
+ * The SHAPE of a provider namespace a named secret may be written under —
+ * never the roster itself. Which providers exist is DERIVED from the
+ * `providers/<segment>/*` prefixes registered tools declare in
+ * `capabilities.secrets` (`deriveProviderRoster`,
+ * `apps/web-api/src/services/derive-provider-roster.ts`), so a tool — including
+ * a plugin's — brings its own credential surface with it and this package holds
+ * no list to go stale (plan/phases/tool-credential-surface.md D1).
  *
- * `exa` / `tavily` / `brave` are `web_search` keys; `xai` is the xAI key
- * `x_search` binds; `x` is an X API bearer token for the native X search
- * backend (planned); `openai` is the OpenAI key `engine_ask` binds — it shares
- * the `providers/openai/*` namespace with the OpenAI LLM provider and
- * `image_generate`; `google` is a YouTube Data API key `youtube_search` and
- * `youtube_comments` bind — a separate namespace from `providers/gemini/*`
- * (the LLM provider key), since a YouTube-scoped Cloud key and a Gemini key
- * are different credentials with different quotas and failure modes;
- * `google-search-console` is a whole service-account JSON key `gsc_sites` and
- * `gsc_queries` bind — a separate namespace from `providers/google/*` for the
- * same reason `google` is separate from `gemini`, and more so: it is an RSA
- * identity granted per property by a verified owner inside Search Console, not
- * an API key metered by a Cloud quota, so the two share no quota, no failure
- * modes and no rotation story.
+ * The wire therefore asserts only that the value is a single safe path segment,
+ * matching `SECRET_NAME_RE`. `NamedSecretsService.assertProvider` is what
+ * refuses an unknown one, with the derived roster in the message. Defined here
+ * rather than in `router.ts` because two namespaces need it: `namedSecrets`,
+ * which owns the write, and `recipes.preflight`, whose credential rows name the
+ * provider that write would target.
  */
-export const NamedSecretProviderSchema = z.enum([
-  'exa',
-  'tavily',
-  'brave',
-  'xai',
-  'x',
-  'openai',
-  'google',
-  'google-search-console',
-]);
-export type NamedSecretProvider = z.infer<typeof NamedSecretProviderSchema>;
-
-/** The category a `secret-binding` field's `secretKind` selects on. */
-export const NamedSecretKindSchema = z.enum([
-  'web-search',
-  'x-search',
-  'x-api',
-  'answer-engine',
-  'youtube-api-key',
-  'gsc-service-account',
-]);
-export type NamedSecretKind = z.infer<typeof NamedSecretKindSchema>;
-
-/** provider → kind. The one mapping the vault service and the SecretPicker share. */
-export const NAMED_SECRET_PROVIDER_KINDS: Record<NamedSecretProvider, NamedSecretKind> = {
-  exa: 'web-search',
-  tavily: 'web-search',
-  brave: 'web-search',
-  xai: 'x-search',
-  x: 'x-api',
-  openai: 'answer-engine',
-  google: 'youtube-api-key',
-  'google-search-console': 'gsc-service-account',
-};
+export const NamedSecretProviderNameSchema = z.string().regex(SECRET_NAME_RE);
 
 /** Mirrors the bundle's `safety.network` — declared reach, not a new capability. */
 const RecipeNetworkPolicySchema = z.object({
@@ -2006,10 +1969,10 @@ export const RecipePreflightSchema = z.object({
           z.object({
             /**
              * What a binding names: the provider — narrowed by the caller
-             * against `NamedSecretProviderSchema`. Left as a string here so a
-             * tool whose provider roster grows past the web-search enum still
-             * produces a VALID response (the server simply offers no option for
-             * it) rather than one this contract rejects.
+             * against the derived provider roster. Left as a plain string here
+             * so a tool whose provider roster grows still produces a VALID
+             * response (the server simply offers no option for it) rather than
+             * one this contract rejects.
              */
             provider: z.string(),
             label: z.string(),

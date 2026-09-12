@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   formatSkillProposedNotice,
   makeTuiNotificationSubscriber,
+  makeTuiSkillProposalSubscriber,
   makeTuiSlashCommands,
   type PluginSlashSource,
 } from '../lib/tui-capabilities';
@@ -120,6 +121,107 @@ describe('makeTuiNotificationSubscriber', () => {
     await router.route('plugin-x', { sessionKey: 'cli:proj', message: 'late' });
     expect(received).toEqual([]);
     expect(router.deregister).toHaveBeenCalledWith('cli:proj');
+  });
+});
+
+// F06 follow-up — the TUI `/model` switch replaces the loop; the replaced
+// loop's dispose unloads ITS plugin loader and drops ITS notification router.
+// Adapters bound to the first loop's then served nothing: plugin slash commands
+// vanished after `/model`, and plugin notifications stopped arriving.
+describe('TUI capability adapters follow a /model switch (F06)', () => {
+  it('slash commands rebind to the new runtime’s plugin loader', async () => {
+    const first = {
+      getAllSlashCommands: () => [{ name: 'hello', description: 'd', usage: '/hello' }],
+      getSlashHandler: () => async () => 'from first',
+    };
+    const second = {
+      getAllSlashCommands: () => [{ name: 'hello', description: 'd', usage: '/hello' }],
+      getSlashHandler: () => async () => 'from second',
+    };
+    const cmds = makeTuiSlashCommands(first);
+    cmds.rebind(second);
+    expect(cmds.list().map((c) => c.name)).toEqual(['hello']);
+    expect(await cmds.dispatch('hello', '', { sessionKey: 's', personalityId: 'p' })).toBe(
+      'from second',
+    );
+  });
+
+  it('live notification subscriptions move to the new runtime’s router', async () => {
+    const make = () => {
+      const adapters = new Map<string, { send: (m: string) => Promise<void> }>();
+      const router: NotificationRouter = {
+        async route(_p: string, opts: NotifyOptions) {
+          await adapters.get(opts.sessionKey)?.send(opts.message);
+        },
+        register: vi.fn((key, adapter) => {
+          adapters.set(key, adapter);
+        }),
+        deregister: vi.fn((key) => {
+          adapters.delete(key);
+        }),
+      };
+      return router;
+    };
+    const oldRouter = make();
+    const newRouter = make();
+    const received: string[] = [];
+    const subscribe = makeTuiNotificationSubscriber(oldRouter);
+    const unsubscribe = subscribe('cli:proj', (t) => received.push(t));
+
+    subscribe.rebind(newRouter);
+    await newRouter.route('plugin-x', { sessionKey: 'cli:proj', message: 'from the new loop' });
+    expect(received).toEqual(['from the new loop']);
+    expect(oldRouter.deregister).toHaveBeenCalledWith('cli:proj');
+
+    unsubscribe();
+    expect(newRouter.deregister).toHaveBeenCalledWith('cli:proj');
+  });
+});
+
+// F06 follow-up — skill-proposal notices, like slash commands and
+// notifications, were bound to the FIRST loop's improvement fork: after
+// `/model` the new loop's proposals never reached the TUI.
+describe('skill-proposal notices follow a /model switch (F06)', () => {
+  /** A loop's single-slot `setOnSkillProposed` and a way to fire it. */
+  function makeSlot() {
+    let fn: ((skillId: string, personalityId: string) => void) | undefined;
+    return {
+      set: (next: (skillId: string, personalityId: string) => void) => {
+        fn = next;
+      },
+      propose: (skillId: string) => fn?.(skillId, 'p'),
+    };
+  }
+
+  it('rebinds to the new runtime, and releases the old slot when it is retired', () => {
+    const oldLoop = makeSlot();
+    const newLoop = makeSlot();
+    const received: string[] = [];
+    const subscribe = makeTuiSkillProposalSubscriber(oldLoop.set);
+    subscribe((text) => received.push(text));
+
+    const releaseOld = subscribe.rebind(newLoop.set);
+    newLoop.propose('from-new');
+    expect(received).toHaveLength(1);
+    expect(received[0]).toContain('from-new');
+
+    // Until the old runtime is retired it may still propose (it drains first).
+    oldLoop.propose('from-old-while-draining');
+    expect(received).toHaveLength(2);
+
+    releaseOld();
+    oldLoop.propose('after-retire');
+    expect(received).toHaveLength(2);
+  });
+
+  it('unsubscribe releases the current slot', () => {
+    const slot = makeSlot();
+    const received: string[] = [];
+    const subscribe = makeTuiSkillProposalSubscriber(slot.set);
+    const unsubscribe = subscribe((text) => received.push(text));
+    unsubscribe();
+    slot.propose('late');
+    expect(received).toEqual([]);
   });
 });
 

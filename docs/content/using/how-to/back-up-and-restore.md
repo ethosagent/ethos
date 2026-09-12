@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: back-up-and-restore
 time: "10 min"
-updated: 2026-09-05
+updated: 2026-09-12
 ---
 
 ## Task
@@ -45,6 +45,8 @@ ethos backup
 With no path, the archive lands in `~/.ethos/backups/`. Pass a path (or `--out`) to write it somewhere else.
 
 Two things are deliberately not in it. Secrets — `secrets/`, `keys.json`, `web-token`, MCP OAuth tokens — are excluded, and the archive carries a `secrets.manifest.yaml` naming what a restore has to refill. Machine-local queues — the delivery ledger, the inbound-dedup window, the notify queue — are excluded because replaying them on a second machine would resend real messages to real people.
+
+A third thing is not in it under one setting: see [Vault memory is not archived](#vault-memory).
 
 ### 2. Pick the scopes you want
 
@@ -179,6 +181,20 @@ Store integrity
 
 Then start the agent and ask it something only the old machine would know.
 
+## Vault memory is not archived {#vault-memory}
+
+Under [`memory: vault`](../reference/config-yaml.md#memory) the memory lives in your own directory, outside `~/.ethos` — and every scope in the table above is relative to `~/.ethos`. So no archive holds it, and each backup says so and names the two paths:
+
+```
+  ⚠ memory: vault — /Users/you/Documents/Vault/Ethos (memory content) and
+    /Users/you/Documents/Vault/Ethos/.ethos-meta (provenance history) are outside
+    the data directory and are NOT in this archive. Back that directory up yourself.
+```
+
+Back that directory up the way you back up the rest of that vault — Time Machine, `restic`, the sync client that already holds it. The same line appears in the scheduled run's output file (`~/.ethos/cron/output/backup/<ts>.md`) and as a skipped row in Settings › Backup.
+
+What a restore still carries under `memory: vault`: `config.yaml` (so the restored machine points at the same vault path), the approval queue and its tombstones, and every database in the `state` scope. Point the restored deployment at a vault directory you have restored separately, then start it.
+
 ## Troubleshoot {#troubleshoot}
 
 **`sessions.db is in use by another process`** — a `state` restore takes an exclusive lock on every database it is about to replace, and something is holding one. Stop `ethos chat`, `serve`, `gateway` and the desktop app, then retry. `--force` skips the check, and skipping it means nothing verified that another process was not mid-write.
@@ -197,4 +213,5 @@ Then start the agent and ask it something only the old machine would know.
 - [`backup.*` config reference](../reference/config-yaml.md#backup) — the five schedule keys and their defaults.
 - [Secrets resolver reference](../reference/secrets-resolver.md) — where the credentials a restore prompts for are stored.
 - [Sessions and history](../explanation/sessions-and-history.md) — what is inside the `state` scope, and why it is sensitive.
+- [How does memory work?](../explanation/memory-model.md) — where each backend keeps its files, and which of them a backup reaches.
 - [Decommission an Ethos deployment](decommission-ethos-deployment.md) — the teardown side, when the answer is to delete rather than move.

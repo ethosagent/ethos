@@ -1,9 +1,4 @@
 import {
-  NAMED_SECRET_PROVIDER_KINDS,
-  type NamedSecretProvider,
-  NamedSecretProviderSchema,
-} from '@ethosagent/web-contracts';
-import {
   App as AntApp,
   Button,
   Divider,
@@ -16,7 +11,8 @@ import {
 } from 'antd';
 import { useState } from 'react';
 import { useNamedSecretCreate } from '../../features/settings/api/mutations';
-import { useNamedSecretsList } from '../../features/settings/api/queries';
+import { useNamedSecretProviders, useNamedSecretsList } from '../../features/settings/api/queries';
+import type { rpc } from '../../rpc';
 
 // SecretPicker — a dropdown over global NAMED secrets, filtered by kind (and,
 // when the consuming tool has a sibling provider, by that provider). Values
@@ -28,48 +24,19 @@ import { useNamedSecretsList } from '../../features/settings/api/queries';
 // `providerFilter` names one of them the form locks to it; otherwise, when the
 // picker's `secretKind` maps to exactly one provider (x_search → xai), it locks
 // to that one, so the created secret always lands where the tool will look.
+//
+// That roster is SERVER-derived (`namedSecrets.providers`) from the registered
+// tools' `providers/<segment>/*` capability grants. Nothing here restates it:
+// a tool — including a plugin's — brings its own provider with it, and this
+// file needs no edit for it (plan/phases/tool-credential-surface.md D1).
 
-/** Display labels, grouped the way the add form's Select shows them. */
-const PROVIDER_GROUPS: Array<{ label: string; providers: Array<[NamedSecretProvider, string]> }> = [
-  {
-    label: 'Web search',
-    providers: [
-      ['exa', 'Exa'],
-      ['tavily', 'Tavily'],
-      ['brave', 'Brave Search'],
-    ],
-  },
-  {
-    label: 'X',
-    providers: [
-      ['xai', 'xAI (Grok, X search)'],
-      ['x', 'X API (bearer token)'],
-    ],
-  },
-  {
-    label: 'Answer engines',
-    providers: [['openai', 'OpenAI (ChatGPT answer engine)']],
-  },
-  {
-    label: 'YouTube',
-    providers: [['google', 'Google (YouTube Data API)']],
-  },
-  {
-    label: 'Search Console',
-    providers: [['google-search-console', 'Google Search Console (service account)']],
-  },
-];
+type ProviderRow = Awaited<ReturnType<typeof rpc.namedSecrets.providers>>['providers'][number];
 
-function asNamedSecretProvider(v: string | undefined): NamedSecretProvider | undefined {
-  const parsed = NamedSecretProviderSchema.safeParse(v);
-  return parsed.success ? parsed.data : undefined;
-}
-
-/** The providers whose secrets a picker of `secretKind` offers. */
-function providersOfKind(secretKind: string): NamedSecretProvider[] {
-  return NamedSecretProviderSchema.options.filter(
-    (p) => NAMED_SECRET_PROVIDER_KINDS[p] === secretKind,
-  );
+/** The providers whose secrets a picker of `secretKind` offers. A provider can
+ *  declare several kinds (two tools, one namespace), so this is a membership
+ *  test over `kinds`, not an equality test on one. */
+export function providersOfKind(roster: ProviderRow[], secretKind: string): string[] {
+  return roster.filter((p) => p.kinds.includes(secretKind)).map((p) => p.provider);
 }
 
 export interface SecretPickerProps {
@@ -91,13 +58,24 @@ export function SecretPicker({
   disabled,
 }: SecretPickerProps) {
   const secretsQuery = useNamedSecretsList();
+  const providersQuery = useNamedSecretProviders();
   const [addOpen, setAddOpen] = useState(false);
-  const filterProvider = asNamedSecretProvider(providerFilter);
-  const kindProviders = providersOfKind(secretKind);
+  const roster = providersQuery.data?.providers ?? [];
+  const rosterLoading = providersQuery.isLoading || providersQuery.isPending;
+  const filterProvider = roster.some((p) => p.provider === providerFilter)
+    ? providerFilter
+    : undefined;
+  const kindProviders = providersOfKind(roster, secretKind);
 
-  const secrets = (secretsQuery.data?.secrets ?? []).filter(
-    (s) => s.kind === secretKind && (!providerFilter || s.provider === providerFilter),
-  );
+  // While the roster loads, `kindProviders` is empty and would wipe the Select
+  // options (and hide a currently-bound value). Defer the kind filter until
+  // the roster arrives; still honour an explicit providerFilter, and keep the
+  // bound value visible as a fallback option.
+  const secrets = (secretsQuery.data?.secrets ?? []).filter((s) => {
+    if (providerFilter && s.provider !== providerFilter) return false;
+    if (rosterLoading) return true;
+    return kindProviders.includes(s.provider);
+  });
 
   const options = secrets.map((s) => ({
     value: s.name,
@@ -113,6 +91,15 @@ export function SecretPicker({
       </Space>
     ),
   }));
+  // Bound value may not be in the filtered list yet (roster still loading, or
+  // kind mismatch until providers arrive) — keep it selectable so the control
+  // does not flash empty.
+  if (value && !options.some((o) => o.value === value)) {
+    options.unshift({
+      value,
+      label: <span>{value}</span>,
+    });
+  }
 
   return (
     <>
@@ -122,7 +109,7 @@ export function SecretPicker({
         onChange={(v) => onChange(v || undefined)}
         options={options}
         placeholder={providerFilter ? `Select a ${providerFilter} key` : 'Select a secret'}
-        loading={secretsQuery.isLoading}
+        loading={secretsQuery.isLoading || rosterLoading}
         disabled={disabled}
         allowClear
         notFoundContent={
@@ -165,7 +152,7 @@ export function SecretPicker({
 }
 
 interface AddSecretForm {
-  provider: NamedSecretProvider;
+  provider: string;
   name: string;
   value: string;
 }
@@ -175,60 +162,98 @@ export function AddSecretModal({
   lockProvider,
   onClose,
   onCreated,
+  onSubmit,
+  title = 'Add secret',
+  okText = 'Save secret',
 }: {
-  initialProvider?: NamedSecretProvider;
+  initialProvider?: string;
   lockProvider: boolean;
   onClose: () => void;
   onCreated: (name: string) => void;
+  /**
+   * When set, replaces the default create-only path. Caller owns the write
+   * (e.g. create-and-bind on the personality page). Must resolve on success.
+   */
+  onSubmit?: (values: { provider: string; name: string; value: string }) => Promise<void>;
+  title?: string;
+  okText?: string;
 }) {
   const { notification } = AntApp.useApp();
   const [form] = Form.useForm<AddSecretForm>();
   const createMut = useNamedSecretCreate();
+  const [submitting, setSubmitting] = useState(false);
+  const providersQuery = useNamedSecretProviders();
+  const roster = providersQuery.data?.providers ?? [];
+  const selectedProvider = Form.useWatch('provider', form) ?? initialProvider;
+  const getKeyUrl = roster.find((p) => p.provider === selectedProvider)?.getKeyUrl;
 
   const handleSubmit = (values: AddSecretForm) => {
-    createMut.mutate(
-      { provider: values.provider, name: values.name.trim(), value: values.value },
-      {
-        onSuccess: () => {
+    const payload = {
+      provider: values.provider,
+      name: values.name.trim(),
+      value: values.value,
+    };
+    if (onSubmit) {
+      setSubmitting(true);
+      void onSubmit(payload)
+        .then(() => {
           form.resetFields();
-          onCreated(values.name.trim());
-        },
-        onError: (err) =>
+          onCreated(payload.name);
+        })
+        .catch((err: unknown) =>
           notification.error({
             message: 'Failed to add secret',
             description: (err as Error).message,
           }),
+        )
+        .finally(() => setSubmitting(false));
+      return;
+    }
+    createMut.mutate(payload, {
+      onSuccess: () => {
+        form.resetFields();
+        onCreated(payload.name);
       },
-    );
+      onError: (err) =>
+        notification.error({
+          message: 'Failed to add secret',
+          description: (err as Error).message,
+        }),
+    });
   };
 
   return (
     <Modal
-      title="Add secret"
+      title={title}
       open
       onCancel={onClose}
-      okText="Save secret"
-      confirmLoading={createMut.isPending}
+      okText={okText}
+      confirmLoading={onSubmit ? submitting : createMut.isPending}
       onOk={() => form.submit()}
     >
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         The value is stored in the local vault and never shown again — a personality references it
         by name only.
       </Typography.Paragraph>
+      {!providersQuery.isLoading && roster.length === 0 ? (
+        <Typography.Paragraph type="secondary">
+          No tool declaring a credential namespace is registered yet, so there is nothing to add a
+          key for. Start a chat so the tool registry boots, then reopen this — or set the key
+          directly with <Typography.Text code>ethos secrets set</Typography.Text>.
+        </Typography.Paragraph>
+      ) : null}
       <Form
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
-        initialValues={{ provider: initialProvider ?? 'exa' }}
+        initialValues={{ provider: initialProvider }}
       >
         <Form.Item name="provider" label="Provider" rules={[{ required: true }]}>
           <Select
             disabled={lockProvider}
-            options={PROVIDER_GROUPS.map((g) => ({
-              label: g.label,
-              title: g.label,
-              options: g.providers.map(([value, label]) => ({ value, label })),
-            }))}
+            loading={providersQuery.isLoading}
+            placeholder="Select a provider"
+            options={roster.map((p) => ({ value: p.provider, label: p.label }))}
           />
         </Form.Item>
         <Form.Item
@@ -248,6 +273,15 @@ export function AddSecretModal({
           name="value"
           label="API key"
           rules={[{ required: true, message: 'Enter the key' }]}
+          {...(getKeyUrl
+            ? {
+                extra: (
+                  <Typography.Link href={getKeyUrl} target="_blank" rel="noreferrer">
+                    Where to get this key
+                  </Typography.Link>
+                ),
+              }
+            : {})}
         >
           <Input.Password placeholder="Paste the provider API key" autoComplete="off" />
         </Form.Item>

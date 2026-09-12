@@ -1,10 +1,15 @@
 import { probeServiceAccountKey } from '@ethosagent/tools-search-console';
-import { EthosError, isValidSecretName, type SecretsResolver } from '@ethosagent/types';
 import {
-  NAMED_SECRET_PROVIDER_KINDS,
-  type NamedSecretKind,
-  type NamedSecretProvider,
-} from '@ethosagent/web-contracts';
+  EthosError,
+  isValidSecretName,
+  type SecretsResolver,
+  type ToolRegistry,
+} from '@ethosagent/types';
+import {
+  type DerivedProviderRoster,
+  deriveProviderRoster,
+  NAMED_SECRET_SEED_PROVIDERS,
+} from './derive-provider-roster';
 
 // Global named-secrets vault manager (Phase 2, web-search-provider-selection).
 //
@@ -15,76 +20,48 @@ import {
 // reference); the VALUE lives here and NEVER round-trips back to the client —
 // reads are masked previews only.
 //
-// Everything is provider-scoped: a provider maps to exactly one `kind`, which
-// is what a tool's `secret-binding` field filters the picker by.
-
-export type { NamedSecretProvider } from '@ethosagent/web-contracts';
-
-export interface NamedSecretProviderEntry {
-  provider: NamedSecretProvider;
-  kind: NamedSecretKind;
-  label: string;
-  /** Where the operator goes to obtain this credential. */
-  getKeyUrl: string;
-}
-
-/** Every provider namespace a named secret may live under. `kind` comes from
- *  the contract's `NAMED_SECRET_PROVIDER_KINDS` so the picker and the vault
- *  can never disagree about which kind a provider is. */
-export const NAMED_SECRET_PROVIDERS: readonly NamedSecretProviderEntry[] = (
-  [
-    { provider: 'exa', label: 'Exa', getKeyUrl: 'https://exa.ai/' },
-    { provider: 'tavily', label: 'Tavily', getKeyUrl: 'https://tavily.com/' },
-    { provider: 'brave', label: 'Brave Search', getKeyUrl: 'https://brave.com/search/api/' },
-    { provider: 'xai', label: 'xAI (Grok, X search)', getKeyUrl: 'https://console.x.ai/' },
-    {
-      provider: 'x',
-      label: 'X API (bearer token)',
-      getKeyUrl: 'https://developer.x.com/en/portal/dashboard',
-    },
-    {
-      provider: 'openai',
-      label: 'OpenAI (ChatGPT answer engine)',
-      getKeyUrl: 'https://platform.openai.com/api-keys',
-    },
-    {
-      provider: 'google',
-      label: 'Google (YouTube Data API)',
-      getKeyUrl: 'https://console.cloud.google.com/apis/credentials',
-    },
-    {
-      provider: 'google-search-console',
-      label: 'Google Search Console (service account)',
-      getKeyUrl: 'https://console.cloud.google.com/iam-admin/serviceaccounts',
-    },
-  ] satisfies Omit<NamedSecretProviderEntry, 'kind'>[]
-).map((e) => ({ ...e, kind: NAMED_SECRET_PROVIDER_KINDS[e.provider] }));
+// WHICH provider namespaces exist is not stated here: it is derived from those
+// same capability grants by `deriveProviderRoster`, so registering a tool
+// registers its credential surface (plan/phases/tool-credential-surface.md D1).
+// With no registry wired the roster is `NAMED_SECRET_SEED_PROVIDERS` alone —
+// a degraded path, recorded in that plan's §15.
 
 /** Upper bound on a stored secret value. Real provider API keys are well under
  *  1 KiB; the cap is a DoS guard so a client cannot fill the vault dir. */
 const MAX_VALUE_BYTES = 8 * 1024;
 
 export interface NamedSecretView {
-  provider: NamedSecretProvider;
+  provider: string;
   name: string;
   /** Masked preview — e.g. `sk-…abc1`. Never the raw value. */
   preview: string;
-  /** Category the SecretPicker filters by — see `NAMED_SECRET_PROVIDER_KINDS`. */
-  kind: NamedSecretKind;
+  /** Category the SecretPicker filters by — the provider's alphabetically-first
+   *  `secretKind` (`kinds` is sorted in `deriveProviderRoster`). A provider with
+   *  several is resolved through the roster's `kinds`, not through this field. */
+  kind: string;
 }
 
 export interface NamedSecretsServiceOptions {
   secrets: SecretsResolver;
+  /** Source of the provider roster. Absent → the seed only. */
+  toolRegistry?: Pick<ToolRegistry, 'getAvailable'>;
 }
 
 export class NamedSecretsService {
   constructor(private readonly opts: NamedSecretsServiceOptions) {}
 
+  /** The provider namespaces an operator may write a credential into, plus the
+   *  declarations that were ignored getting there. Recomputed per call: the
+   *  registry is live and a plugin can register a tool after boot. */
+  providers(): DerivedProviderRoster {
+    return deriveProviderRoster(this.opts.toolRegistry, NAMED_SECRET_SEED_PROVIDERS);
+  }
+
   /** List every named secret across all provider namespaces, with MASKED
    *  previews only. The raw value never crosses this boundary. */
   async list(): Promise<{ secrets: NamedSecretView[] }> {
     const out: NamedSecretView[] = [];
-    for (const { provider, kind } of NAMED_SECRET_PROVIDERS) {
+    for (const { provider, kinds } of this.providers().providers) {
       const prefix = `providers/${provider}/`;
       const refs = await this.opts.secrets.list(prefix);
       for (const ref of refs) {
@@ -92,7 +69,7 @@ export class NamedSecretsService {
         // Only flat `<name>` entries — no nested paths under a provider.
         if (!name || name.includes('/')) continue;
         const value = await this.opts.secrets.get(ref);
-        out.push({ provider, name, preview: redactSecret(value), kind });
+        out.push({ provider, name, preview: redactSecret(value), kind: kinds[0] ?? '' });
       }
     }
     out.sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
@@ -129,8 +106,9 @@ export class NamedSecretsService {
   /** Optional probe — resolves the stored value and makes one lightweight
    *  authenticated request to the provider so the user can confirm the key
    *  works. The raw key travels provider-ward only, never back to the client.
-   *  A provider with no free probe (`x` — every search call is billable) is
-   *  reported as `tested: false`: the secret exists, its validity is unknown. */
+   *  A provider with no probe branch (`x` — every search call is billable, and
+   *  any derived provider nothing here knows about) is reported as
+   *  `tested: false`: the secret exists, its validity is unknown. */
   async testKey(input: {
     provider: string;
     name: string;
@@ -139,7 +117,6 @@ export class NamedSecretsService {
     const name = this.assertName(input.name);
     const value = await this.opts.secrets.get(`providers/${provider}/${name}`);
     if (!value) return { ok: false, error: 'Secret not found.' };
-    if (provider === 'x') return { ok: true, tested: false };
     try {
       return await probeProvider(provider, value);
     } catch (err) {
@@ -154,12 +131,14 @@ export class NamedSecretsService {
     }
   }
 
-  private assertProvider(provider: string): NamedSecretProvider {
-    const entry = NAMED_SECRET_PROVIDERS.find((p) => p.provider === provider);
-    if (entry) return entry.provider;
+  private assertProvider(provider: string): string {
+    const roster = this.providers().providers;
+    if (roster.some((p) => p.provider === provider)) return provider;
     throw invalid(
       `Unknown provider "${provider}".`,
-      `Use one of: ${NAMED_SECRET_PROVIDERS.map((p) => p.provider).join(', ')}.`,
+      roster.length === 0
+        ? 'No tool declaring a credential namespace is registered yet — start a chat so the tool registry boots, or set the key with `ethos secrets set`.'
+        : `Use one of: ${roster.map((p) => p.provider).join(', ')}.`,
     );
   }
 
@@ -199,10 +178,33 @@ export function redactSecret(value: string | null | undefined): string {
  */
 const GOOGLE_PROBE_VIDEO_ID = 'dQw4w9WgXcQ';
 
+/**
+ * The providers `probeProvider` has a live branch for. Exported so a test can
+ * assert every derived in-tree provider is here or on `PROBE_EXEMPT_PROVIDERS`
+ * — the replacement for the `never` exhaustiveness guard the derived roster
+ * removed, since a `string` provider has nothing to narrow (§7.3). It catches
+ * the in-tree case, which is the one that regresses; a plugin's tool could
+ * never have had a compile-forced branch anyway.
+ */
+export const PROBED_PROVIDERS: readonly string[] = [
+  'brave',
+  'exa',
+  'google',
+  'google-search-console',
+  'openai',
+  'tavily',
+  'xai',
+];
+
+/** Derived providers deliberately left without a probe. `x` short-circuited at
+ *  the same `{ ok: true, tested: false }` before the roster was derived: every
+ *  X search call is billable, so there is no free request to make. */
+export const PROBE_EXEMPT_PROVIDERS: readonly string[] = ['x'];
+
 async function probeProvider(
-  provider: Exclude<NamedSecretProvider, 'x'>,
+  provider: string,
   key: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; tested?: boolean }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
@@ -285,11 +287,12 @@ async function probeProvider(
       );
       return interpret(res.status);
     } else {
-      // Exhaustiveness guard: a provider added to NamedSecretProviderSchema
-      // without a branch above fails to typecheck here instead of silently
-      // falling through to Brave's endpoint (the failure this replaces).
-      const exhaustiveCheck: never = provider;
-      throw new Error(`No key probe implemented for provider "${exhaustiveCheck}"`);
+      // No branch for this provider — the honest answer, and the same one `x`
+      // has always given: the secret exists, its validity is unknown. The
+      // roster is derived, so `provider` is a `string` and there is nothing a
+      // `never` could narrow; `PROBED_PROVIDERS` plus a test replaces the
+      // compile-forced branch for in-tree tools (§7.3).
+      return { ok: true, tested: false };
     }
   } finally {
     clearTimeout(timeout);

@@ -155,6 +155,47 @@ describe('commitHotAdd — a failed hot-add leaves nothing behind', () => {
     expect(second.state.wired).toBe(false);
   });
 
+  // F06 — a hot-add's prepared bot owns a whole loop runtime (background
+  // executor, stores, MCP, plugins). A commit that throws must release it
+  // whichever step failed — including `register`, which fails BEFORE `wire`
+  // ran, so no wiring undo exists to do it.
+  it('releases the prepared runtime when register throws before wiring registers', async () => {
+    const table = fakeRoutingTable();
+    table.add('b1'); // a live bot already holds the key — the duplicate guard fires
+    const { steps, state } = hotAddSteps(table, 'b1');
+    const release = vi.fn(async () => {});
+
+    await expect(commitHotAdd({ ...steps, release })).rejects.toThrow(/already registered/);
+
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(state.wired).toBe(false);
+    // The bot that already held the key is untouched.
+    expect([...table.bots]).toEqual(['b1']);
+  });
+
+  it('releases the prepared runtime after rolling back a failed start', async () => {
+    const table = fakeRoutingTable();
+    const { steps, state } = hotAddSteps(table, 'b1', { start: true });
+    const order: string[] = [];
+    const release = vi.fn(async () => {
+      order.push(`release (wired=${state.wired})`);
+    });
+
+    await expect(commitHotAdd({ ...steps, release })).rejects.toThrow('adapter refused to start');
+
+    // Last: after the wiring undo, so nothing routes to the loop it releases.
+    expect(order).toEqual(['release (wired=false)']);
+    expect([...table.bots]).toEqual([]);
+  });
+
+  it('does not release a runtime whose commit succeeded', async () => {
+    const table = fakeRoutingTable();
+    const { steps } = hotAddSteps(table, 'b1');
+    const release = vi.fn(async () => {});
+    await commitHotAdd({ ...steps, release });
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it('reports a rollback step that itself fails, and still throws the original', async () => {
     const table = fakeRoutingTable();
     const { steps, state } = hotAddSteps(table, 'b1', { start: true });
@@ -316,6 +357,36 @@ describe('swapBotLive — a rejected edit is not an outage', () => {
     expect(reported).toEqual(['and the previous config would not build either']);
   });
 
+  // F06 follow-up — `Gateway.removeAdapter` REJECTS when the old bot is still
+  // busy after the abort grace (quarantine). The replacement was already built
+  // by then — a whole loop runtime — and was neither committed nor released,
+  // so every reconcile retry built another one.
+  it('releases the prepared replacement when retiring the old bot throws', async () => {
+    const h = botLifecycle();
+    h.start(h.build('cold'));
+    const released: string[] = [];
+
+    await expect(
+      swapBotLive<string>({
+        prepare: async () => h.build('replacement'),
+        retire: async () => {
+          throw new Error('bot "tg:b1" still busy — quarantined');
+        },
+        commit: async (id) => h.start(id),
+        rebuildPrevious: async () => h.build('previous'),
+        onRestoreFailed: () => {},
+        release: async (id) => {
+          released.push(id);
+        },
+      }),
+    ).rejects.toThrow('quarantined');
+
+    expect(released).toEqual(['replacement#2']);
+    // The old bot is still the live one, and nothing was rebuilt.
+    expect(h.liveAdapter()).toBe('cold#1');
+    expect(h.builtIds()).toEqual(['cold#1', 'replacement#2']);
+  });
+
   it('swaps cleanly when the replacement commits, and never rebuilds', async () => {
     const h = botLifecycle();
     h.start(h.build('cold'));
@@ -335,6 +406,89 @@ describe('swapBotLive — a rejected edit is not an outage', () => {
     expect(h.liveAdapter()).toBe('replacement#2');
     expect(rebuilt).toBe(0);
     expect(h.builtIds()).toEqual(['cold#1', 'replacement#2']);
+  });
+
+  // F06 follow-up — the swap disposes the outgoing loop, whose executor
+  // finishes its running jobs as interrupted-by-shutdown AFTER the gateway
+  // stopped listening to it. `afterSwap` is where the store sweep runs, so
+  // those jobs' origin chats hear about it.
+  it('runs afterSwap once the replacement is committed', async () => {
+    const h = botLifecycle();
+    h.start(h.build('cold'));
+
+    await swapBotLive<string>({
+      prepare: async () => h.build('replacement'),
+      retire: async () => h.stop(),
+      commit: async (id) => h.start(id),
+      rebuildPrevious: async () => h.build('previous'),
+      onRestoreFailed: () => {},
+      afterSwap: async () => {
+        h.log.push('afterSwap');
+      },
+    });
+
+    expect(h.log.at(-1)).toBe('afterSwap');
+    expect(h.log.filter((l) => l === 'afterSwap')).toHaveLength(1);
+  });
+
+  it('runs afterSwap after a restore too — the outgoing loop was replaced either way', async () => {
+    const h = botLifecycle();
+    h.start(h.build('cold'));
+    const ran: string[] = [];
+
+    await expect(
+      swapBotLive<string>({
+        prepare: async () => h.build('replacement'),
+        retire: async () => h.stop(),
+        commit: async (id) => {
+          if (id.startsWith('replacement')) throw new Error('adapter refused to start');
+          h.start(id);
+        },
+        rebuildPrevious: async () => h.build('previous'),
+        onRestoreFailed: () => {},
+        afterSwap: async () => {
+          ran.push(h.liveAdapter() ?? 'none');
+        },
+      }),
+    ).rejects.toThrow('adapter refused to start');
+
+    expect(ran).toEqual(['previous#3']);
+  });
+
+  it('does not run afterSwap when nothing was retired, and a failing afterSwap never fails a swap', async () => {
+    const h = botLifecycle();
+    h.start(h.build('cold'));
+    let ran = 0;
+
+    await expect(
+      swapBotLive<string>({
+        prepare: async () => h.build('replacement'),
+        retire: async () => {
+          throw new Error('quarantined');
+        },
+        commit: async (id) => h.start(id),
+        rebuildPrevious: async () => h.build('previous'),
+        onRestoreFailed: () => {},
+        afterSwap: async () => {
+          ran++;
+        },
+      }),
+    ).rejects.toThrow('quarantined');
+    expect(ran).toBe(0);
+
+    await expect(
+      swapBotLive<string>({
+        prepare: async () => h.build('second'),
+        retire: async () => h.stop(),
+        commit: async (id) => h.start(id),
+        rebuildPrevious: async () => h.build('previous'),
+        onRestoreFailed: () => {},
+        afterSwap: async () => {
+          throw new Error('sweep failed');
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(h.liveAdapter()).toBe('second#3');
   });
 });
 

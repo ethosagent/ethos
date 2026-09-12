@@ -63,11 +63,13 @@ export function useGoalResume(id: string) {
 
 export function useGoalSteer(id: string) {
   const queryClient = useQueryClient();
+  const { notification } = AntApp.useApp();
   return useMutation({
     mutationFn: (message: string) => rpc.goals.steer({ id, message }),
     onSuccess: () =>
       void queryClient.invalidateQueries({
         queryKey: goalsKeys.detail(id),
       }),
+    onError: (err) => surfaceError(notification, 'Steer failed', err),
   });
 }

@@ -97,8 +97,12 @@ export interface ChainedProviderOptions {
  * the failing provider is put on cooldown and the next provider is tried.
  * Non-retriable errors (auth, content_filter, context_overflow) propagate immediately.
  *
- * Once streaming starts (first CompletionChunk received), the stream is committed —
- * no mid-stream retries. Failover only happens on errors thrown before the first chunk.
+ * The first emitted CompletionChunk (any variant) commits the attempt: a later error,
+ * retryable or not, propagates and no other provider is started. Failover only happens
+ * on errors thrown before the first chunk, and never once `options.abortSignal` has
+ * fired. Enforced by the `yieldedAny` / `abortSignal.aborted` guard in `complete`;
+ * pinned by the "ChainedProvider stream commit (F03)" tests in
+ * `packages/core/src/__tests__/chained-provider.test.ts`.
  *
  * Error codes:
  *   ALL_PROVIDERS_FAILED         — every provider failed with a failover-eligible error
@@ -155,13 +159,21 @@ export class ChainedProvider implements LLMProvider {
     const reasons: FailoverReason[] = [];
 
     for (const entry of available) {
+      let yieldedAny = false;
       try {
         const stream = entry.provider.complete(messages, tools, options);
         for await (const chunk of stream) {
+          yieldedAny = true;
           yield chunk;
         }
         return;
       } catch (err) {
+        // The consumer folds every chunk into one assistant turn, so a second
+        // attempt after any chunk would splice two answers together. And an
+        // abort is the caller stopping the turn, not a provider fault — no
+        // next attempt, no cooldown.
+        if (yieldedAny || options.abortSignal?.aborted) throw err;
+
         const reason = classifyProviderError(err);
         reasons.push(reason);
 

@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { BatchRunner, parseTasksJsonl } from '@ethosagent/batch-runner';
 import type { EthosConfig } from '@ethosagent/config';
 import { EthosError } from '@ethosagent/types';
+import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getStorage } from '../wiring';
 
 const c = {
@@ -99,10 +100,10 @@ export async function runBatch(args: string[], config: EthosConfig): Promise<voi
   console.log(`${c.dim}  output     → ${outputPath}${c.reset}`);
   console.log(`${c.dim}  checkpoint → ${checkpointPath}${c.reset}\n`);
 
-  const { loop } = await createAgentLoop(config);
+  const runtime = await createAgentLoop(config);
 
   const runner = new BatchRunner(
-    loop,
+    runtime.loop,
     {
       concurrency,
       outputPath,
@@ -115,13 +116,15 @@ export async function runBatch(args: string[], config: EthosConfig): Promise<voi
   const start = Date.now();
   let lastLine = '';
 
-  const stats = await runner.run(tasks, (done, total) => {
-    // Overwrite progress line in terminal
-    const pct = Math.round((done / total) * 100);
-    const line = `  ${done}/${total} (${pct}%)`;
-    process.stdout.write(`\r${line.padEnd(lastLine.length + 2)}`);
-    lastLine = line;
-  });
+  const stats = await runner
+    .run(tasks, (done, total) => {
+      // Overwrite progress line in terminal
+      const pct = Math.round((done / total) * 100);
+      const line = `  ${done}/${total} (${pct}%)`;
+      process.stdout.write(`\r${line.padEnd(lastLine.length + 2)}`);
+      lastLine = line;
+    })
+    .finally(() => releaseCommandRuntime(runtime, { label: 'batch agent loop' }));
 
   if (lastLine) process.stdout.write('\n');
 

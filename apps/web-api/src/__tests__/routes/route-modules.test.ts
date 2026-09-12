@@ -9,7 +9,7 @@ import { createWebApi, WebTokenRepository } from '../../index';
 import type { RouteModule } from '../../routes/route-module';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -59,7 +59,7 @@ describe('createWebApi — route-module seam', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },
@@ -148,7 +148,7 @@ describe('createWebApi — route-module live enabledCheck gate', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry(),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

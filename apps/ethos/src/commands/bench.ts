@@ -1,5 +1,6 @@
 import type { PersonalityConfig, ToolRegistry } from '@ethosagent/types';
 import { evaluateToolSchemaBudget, measureStaticFloor } from '@ethosagent/wiring';
+import { releaseCommandRuntime } from '../lib/release-command-runtime';
 
 // `ethos bench context` — context-economy Phase 0 (plan/phases/gap-context-economy.md §4).
 // Quantifies the per-turn context tax: a static per-personality table (SOUL.md
@@ -271,6 +272,7 @@ export async function runBench(args: string[]): Promise<void> {
   let loop: import('@ethosagent/core').AgentLoop | undefined;
   let activePersonalityId = '';
   let contextWindow: number | undefined;
+  let releaseLoop: (() => Promise<void>) | undefined;
   if (config) {
     const { createAgentLoop } = await import('../wiring');
     // Lane 0 (D16) — bench context probes the served window LIVE and rewrites
@@ -280,6 +282,7 @@ export async function runBench(args: string[]): Promise<void> {
     loop = result.loop;
     activePersonalityId = result.activePersonality.id;
     contextWindow = result.contextWindow;
+    releaseLoop = () => releaseCommandRuntime(result, { label: 'bench agent loop' });
   } else {
     console.log(
       `${c.yellow}No ~/.ethos/config.yaml — measuring built-in personalities without a wired ` +
@@ -372,7 +375,9 @@ export async function runBench(args: string[]): Promise<void> {
   }
 
   console.log();
-  // Loop construction can leave live handles (MCP children, cron timers);
-  // measurements are complete and flushed, so exit explicitly.
+  // Loop construction leaves live handles (MCP children, cron timers, SQLite);
+  // release them rather than exiting on top of them, then exit explicitly
+  // because anything the bounded release left behind still holds the loop open.
+  await releaseLoop?.();
   process.exit(process.exitCode ?? 0);
 }

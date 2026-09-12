@@ -82,6 +82,34 @@ describe('GoalRunner planning phase', () => {
     expect(attemptFirstMessage).toContain('STEP 1: investigate. STEP 2: act.');
   });
 
+  // A `returnDirect` tool's answer reaches a turn only as `done.text`, after any
+  // preamble the model streamed: the plan and the attempt output are the whole
+  // reply (`answerSuffix`, @ethosagent/types).
+  it('(a2) a returnDirect plan and output keep the streamed preamble', async () => {
+    const goal = makeGoal(store);
+    let attemptFirstMessage: string | undefined;
+    const runner = new GoalRunner({
+      store,
+      runPlan: fakeGen([
+        { type: 'text_delta', text: 'Let me think.' },
+        { type: 'done', text: 'STEP 1: act.', turnCount: 1 },
+      ]),
+      runAttempt: async function* (_sk: string, firstMessage: string): AsyncGenerator<AgentEvent> {
+        attemptFirstMessage = firstMessage;
+        yield { type: 'text_delta', text: 'Let me look that up.' };
+        yield { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 };
+      },
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'completed');
+
+    const final = store.get(goal.id);
+    expect(final?.planMd).toBe('Let me think.\n\nSTEP 1: act.');
+    expect(attemptFirstMessage).toContain('STEP 1: act.');
+    expect(final?.outputMd).toBe('Let me look that up.\n\nDIRECT ANSWER');
+  });
+
   it('(b) planning error → goal failed, attempt NEVER runs', async () => {
     const goal = makeGoal(store);
     let attemptCalled = false;

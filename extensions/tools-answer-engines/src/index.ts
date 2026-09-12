@@ -116,6 +116,8 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
           key: 'secret',
           label: 'OpenAI API key (answer engine)',
           secretKind: 'answer-engine',
+          providerLabel: 'OpenAI (ChatGPT answer engine)',
+          getKeyUrl: 'https://platform.openai.com/api-keys',
         },
       ],
     },

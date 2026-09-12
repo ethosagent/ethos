@@ -77,10 +77,14 @@ describe('GoalRunner phase a — single-attempt execution', () => {
     const goal = makeGoal(store);
     const runner = new GoalRunner({
       store,
+      // `done.text` is the turn's streamed text (`fullText` in
+      // packages/core/src/agent-loop.ts) — a turn whose `done` carried
+      // something the stream never sent is the `returnDirect` case, covered in
+      // planning.test.ts.
       runAttempt: fakeRunAttempt([
         { type: 'text_delta', text: 'hello ' },
         { type: 'text_delta', text: 'world' },
-        { type: 'done', text: 'final output', turnCount: 2 },
+        { type: 'done', text: 'hello world', turnCount: 2 },
       ]),
     });
 
@@ -89,7 +93,7 @@ describe('GoalRunner phase a — single-attempt execution', () => {
 
     const final = store.get(goal.id);
     expect(final?.status).toBe('completed');
-    expect(final?.outputMd).toBe('final output');
+    expect(final?.outputMd).toBe('hello world');
     expect(final?.turnCount).toBe(2);
 
     const events = store.getEvents(goal.id);
@@ -773,5 +777,22 @@ describe('GoalRunner phase e — ceilings, failure, completion gate', () => {
 
     await new Promise((r) => setTimeout(r, 10));
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ summary: 'THE SUMMARY' }));
+  });
+});
+
+// F05 — hosts that create goals on a user's behalf (apps/web-api GoalsService)
+// ask `canExecute()` before writing a row, so a store-only runner — whose
+// `startGoal` records `run_start` and returns — can never leave a `running`
+// goal that nothing executes.
+describe('GoalRunner.canExecute', () => {
+  it('is false for store-only construction and true once runAttempt is wired', () => {
+    const store = new SQLiteGoalStore(':memory:');
+    expect(new GoalRunner({ store }).canExecute()).toBe(false);
+    expect(
+      new GoalRunner({
+        store,
+        runAttempt: fakeRunAttempt([{ type: 'done', text: 'x', turnCount: 1 }]),
+      }).canExecute(),
+    ).toBe(true);
   });
 });

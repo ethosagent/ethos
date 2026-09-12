@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   AgentEvent,
   Goal,
@@ -5,11 +6,13 @@ import type {
   GoalExhaustedPayload,
   GoalFailedPayload,
   GoalOrigin,
+  GoalStatus,
   GoalStore,
   HookRegistry,
   SteerSink,
   Verdict,
 } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 import { isConverged, judge } from './judge';
 import { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
@@ -42,6 +45,14 @@ const TRANSIENT_ERROR_RE =
 
 /** Backoff schedule for transient-error retries — max 3 retries per attempt. */
 const TRANSIENT_RETRY_DELAYS_MS = [2_000, 8_000, 20_000];
+
+/** Resolves once `signal` aborts (at once if it already has). */
+function abortedPromise(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+}
 
 function isTransientError(error: string, code: string): boolean {
   // Aborts are deliberate; watcher terminations are safety decisions. Never retry.
@@ -85,8 +96,50 @@ class ArraySteerSink implements SteerSink {
   }
 }
 
+/** Lease cadence, mirroring job-runner's defaults: a live runner beats every
+ *  30s, and recovery waits three missed beats before calling a goal orphaned. */
+const DEFAULT_HEARTBEAT_MS = 30_000;
+const DEFAULT_STALE_MS = 90_000;
+
+/**
+ * The store a runner executes against: the `GoalStore` contract plus the
+ * ownership lease `recoverOrphans` depends on. `SQLiteGoalStore`
+ * (extensions/goal-store) implements it; declared here, by its one consumer,
+ * rather than widening the shared contract.
+ */
+export interface LeasedGoalStore extends GoalStore {
+  // `owner` below is ONE RUN's lease (`<runnerId>:<runSeq>`, see `RunController`),
+  // not the runner's: a run superseded by a resume on the same runner must fail
+  // these checks exactly like one superseded by another process.
+  /** Record `owner` as the run executing the goal, with a fresh heartbeat. */
+  claimGoal(goalId: string, owner: string): void;
+  /** Atomically resume a `failed` / `cancelled` / `interrupted` goal for the run
+   *  `owner`: status `running`, resume count +1, lease taken. False when the goal
+   *  was not resumable — e.g. another process resumed it first. */
+  resumeGoal(goalId: string, owner: string): boolean;
+  /** Refresh `owner`'s heartbeat. False — and nothing written — when the goal was
+   *  cancelled (by anyone) or another run holds its lease: the run must stop. */
+  heartbeatGoal(goalId: string, owner: string): boolean;
+  /** Status write for the run `owner` is executing; refused (false) once the goal
+   *  is cancelled or held by another run, so a stopped run never overwrites it. */
+  updateRunStatus(
+    goalId: string,
+    owner: string,
+    status: GoalStatus,
+    extra?: Parameters<GoalStore['updateStatus']>[2],
+  ): boolean;
+  /** Interrupt every active goal whose lease is older than `staleMs`; returns their ids. */
+  interruptStale(staleMs: number): string[];
+}
+
 export interface GoalRunnerConfig {
-  store: GoalStore;
+  store: LeasedGoalStore;
+  /** This runner's id — the prefix of every run lease it takes. Defaults to a random UUID. */
+  ownerId?: string;
+  /** How often a live run's lease is refreshed. Default 30s. */
+  heartbeatMs?: number;
+  /** How old a lease must be before `recoverOrphans` treats its goal as orphaned. Default 90s. */
+  staleMs?: number;
   maxTurnsSafetyValve?: number;
   hooks?: HookRegistry;
   /** Loop-bearing attempt runner. When absent the runner records the run_start
@@ -126,12 +179,41 @@ export interface GoalRunnerConfig {
   sleepFn?: (ms: number) => Promise<void>;
 }
 
+/**
+ * One run's AbortController, carrying the lease that run holds in the store.
+ * A lease is per RUN (`<runnerId>:<seq>`), so after cancel → resume on the same
+ * runner the cancelled run, still unwinding, fails every lease check the
+ * resumed run passes. Pinned by __tests__/cancel-lease.test.ts.
+ */
+class RunController extends AbortController {
+  constructor(readonly lease: string) {
+    super();
+  }
+}
+
 export class GoalRunner {
-  private store: GoalStore;
+  private store: LeasedGoalStore;
+  private runSeq = 0;
+  private readonly ownerId: string;
+  private readonly heartbeatMs: number;
+  private readonly staleMs: number;
+  /** Refreshes the lease of every goal in `activeRuns`. Started by the first
+   *  claim, unref'd, cleared when nothing is active and by `shutdown()`. */
+  private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private maxTurnsSafetyValve: number;
-  private activeRuns = new Map<string, AbortController>();
+  /** goalId → the goal's CURRENT run on this runner. */
+  private activeRuns = new Map<string, RunController>();
   private activeRunState = new Map<string, { getPartial: () => string; queuedSteers: string[] }>();
   private activeSteerSinks = new Map<string, SteerSink>();
+  /** Every fire-and-forget run (plan-then-run, resume) still unwinding — what
+   *  `shutdown()` awaits. Each entry removes itself once it settles. */
+  private readonly runs = new Set<Promise<void>>();
+  /** The controller of every run in `runs` — including a superseded run no
+   *  longer in `activeRuns` — so `shutdown()` can abort all it awaits. */
+  private readonly liveRuns = new Set<RunController>();
+  /** Set by `shutdown()`: no new start or resume, and an aborted run ends
+   *  `interrupted` instead of being judged or failed. */
+  private shuttingDown = false;
   private hooks: HookRegistry | undefined;
   private runAttempt: GoalRunnerConfig['runAttempt'];
   private runPlan: GoalRunnerConfig['runPlan'];
@@ -139,11 +221,112 @@ export class GoalRunner {
 
   constructor(config: GoalRunnerConfig) {
     this.store = config.store;
+    this.ownerId = config.ownerId ?? randomUUID();
+    this.heartbeatMs = config.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+    this.staleMs = config.staleMs ?? DEFAULT_STALE_MS;
     this.maxTurnsSafetyValve = config.maxTurnsSafetyValve ?? 100;
     this.hooks = config.hooks;
     this.runAttempt = config.runAttempt;
     this.runPlan = config.runPlan;
     this.sleep = config.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  /**
+   * Whether `startGoal`/`resume` will actually execute attempts. False for
+   * store-only construction (no `runAttempt`), where `startGoal` records
+   * `run_start` and returns. A host that creates goals on a user's behalf
+   * checks this BEFORE writing the row — apps/web-api `GoalsService.create`
+   * refuses otherwise — so it never leaves a `running` goal nothing runs.
+   * False again once `shutdown()` has been called: a stopping runner starts
+   * nothing (pinned in __tests__/lease.test.ts).
+   */
+  canExecute(): boolean {
+    return this.runAttempt !== undefined && !this.shuttingDown;
+  }
+
+  private newRun(): RunController {
+    this.runSeq += 1;
+    return new RunController(`${this.ownerId}:${this.runSeq}`);
+  }
+
+  /** Take the goal's lease for `run` and make sure the heartbeat is running. */
+  private claim(goalId: string, run: RunController): void {
+    this.store.claimGoal(goalId, run.lease);
+    this.ensureHeartbeat();
+  }
+
+  private ensureHeartbeat(): void {
+    if (this.heartbeatTimer || this.shuttingDown) return;
+    this.heartbeatTimer = setInterval(() => this.beat(), this.heartbeatMs);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private beat(): void {
+    if (this.activeRuns.size === 0) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+      return;
+    }
+    for (const [goalId, controller] of [...this.activeRuns]) {
+      try {
+        // Cancelled by anyone, or resumed by another run: stop spending on it.
+        // The run then unwinds through `endIfStopped` without a write.
+        if (!this.store.heartbeatGoal(goalId, controller.lease)) controller.abort();
+      } catch {
+        // A missed beat only ages the lease; if beats keep failing, a peer's
+        // recovery interrupts the goal after staleMs — the documented outcome
+        // for a runner that cannot write. Throwing here would crash the process.
+      }
+    }
+  }
+
+  /** Status write for `run` (`LeasedGoalStore.updateRunStatus`): refused once
+   *  the goal is cancelled or held by another run. Returns whether it applied;
+   *  completion/failure hooks fire only when it did. Without a run (a direct
+   *  `judgeAttempt` call) it writes as the goal's current run on this runner. */
+  private setStatus(
+    run: RunController | undefined,
+    goalId: string,
+    status: GoalStatus,
+    extra?: Parameters<GoalStore['updateStatus']>[2],
+  ): boolean {
+    const lease = run?.lease ?? this.activeRuns.get(goalId)?.lease ?? this.ownerId;
+    return this.store.updateRunStatus(goalId, lease, status, extra);
+  }
+
+  /** Forget `run`'s bookkeeping — only while it is still the goal's current
+   *  run: a resume on this runner may already have registered a newer one. */
+  private release(goalId: string, run: RunController): void {
+    if (this.activeRuns.get(goalId) !== run) return;
+    this.activeRuns.delete(goalId);
+    this.activeRunState.delete(goalId);
+  }
+
+  /**
+   * Phase/attempt boundary check — the same observation a heartbeat makes. When
+   * the goal was cancelled (here or in another process) or another run took
+   * its lease — including a resume on this same runner — abort the run and end
+   * it quietly: no status write, no hooks, and the newer run's bookkeeping
+   * left alone. Pinned by __tests__/cancel-lease.test.ts.
+   */
+  private endIfStopped(goalId: string, controller: RunController): boolean {
+    let live: boolean;
+    try {
+      live = this.store.heartbeatGoal(goalId, controller.lease);
+    } catch {
+      // A beat the store refused (a peer's write lock) is not a stop signal:
+      // ending the run here would kill a paid, uncancelled run silently, with
+      // the goal left `running` and nothing to unwind it. Keep going — like
+      // `beat()`, a missed beat only ages the lease, and if the store stays
+      // unwritable the stale sweep interrupts the goal after `staleMs`. Pinned
+      // by __tests__/lease.test.ts ("a heartbeat the store refuses").
+      return false;
+    }
+    if (live) return false;
+    controller.abort();
+    if (this.activeRuns.get(goalId) === controller) this.activeSteerSinks.delete(goalId);
+    this.release(goalId, controller);
+    return true;
   }
 
   /**
@@ -153,6 +336,9 @@ export class GoalRunner {
    * returns), which keeps store-only construction type-checking.
    */
   async startGoal(goalId: string): Promise<void> {
+    // A runner that is shutting down starts nothing; a row left `running` here
+    // is marked `interrupted` by the next boot's `recoverOrphans`.
+    if (this.shuttingDown) return;
     const goal = this.store.get(goalId);
     if (!goal) throw new Error(`Goal not found: ${goalId}`);
     if (goal.status !== 'running') return;
@@ -160,7 +346,7 @@ export class GoalRunner {
     // loop would clobber the registered AbortController and race the first.
     if (this.activeRuns.has(goalId)) return;
 
-    const controller = new AbortController();
+    const controller = this.newRun();
     this.activeRuns.set(goalId, controller);
 
     // run_start is emitted ONCE here, at the top of the run (before any planning
@@ -174,14 +360,96 @@ export class GoalRunner {
     });
 
     if (!this.runAttempt) {
-      // Store-only construction: run_start recorded above, nothing to run.
+      // Store-only construction: run_start recorded above, nothing to run —
+      // and no lease, so recovery treats the row as unowned.
       return;
     }
+    this.claim(goalId, controller);
 
     // Fire-and-forget: plan (when a planning callback is wired), then launch the
     // convergence/retry loop. Kept off startGoal's awaited path so goal creation
     // returns fast — planning runs in the background.
-    void this.planThenRun(goal, controller).catch(() => {});
+    this.track(this.planThenRun(goal, controller), controller);
+  }
+
+  /**
+   * Stop this runner for good (F06 — the owning loop's `dispose()` calls it
+   * BEFORE goals.db closes): refuse every further start and resume, abort
+   * each in-flight run through its AbortController, and wait for every run to
+   * unwind. An aborted run ends `interrupted` — the status `recoverOrphans`
+   * gives a run the process lost, and one `resume` accepts — so the next boot
+   * sees it the same way whether the stop was graceful or not. A goal that was
+   * cancelled first keeps `cancelled`. Nothing writes to the store after this
+   * resolves. Pinned by `__tests__/shutdown.test.ts`.
+   */
+  async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    // No beats after this: the runs below end `interrupted` themselves.
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = undefined;
+    // Every run it is about to await — a superseded one no longer in
+    // `activeRuns` too, or the await below would never resolve.
+    for (const controller of this.liveRuns) controller.abort();
+    await Promise.all([...this.runs]);
+  }
+
+  /**
+   * F06 — resolves once no goal run of this runner is still in flight (at once
+   * when none is). Unlike `shutdown()` it aborts nothing: a host retiring a
+   * loop it has REPLACED (the chat `/model` switch) waits on this so a goal
+   * running there finishes on the loop it started on, then disposes the loop.
+   * Pinned by `__tests__/when-idle.test.ts`.
+   */
+  async whenIdle(): Promise<void> {
+    while (this.runs.size > 0) {
+      await Promise.all([...this.runs]);
+    }
+  }
+
+  /**
+   * Follow a fire-and-forget run: `shutdown()` awaits it, and its rejection is
+   * swallowed here because nobody is listening. A store write that throws from
+   * inside a run therefore ends it quietly — the goal keeps whatever status it
+   * had, its lease stops being beaten, and the stale sweep (`recoverOrphans`)
+   * is the backstop that marks it `interrupted`. The boundary check does NOT
+   * take that path: see `endIfStopped`.
+   */
+  private track(run: Promise<void>, controller: RunController): void {
+    this.liveRuns.add(controller);
+    const settled: Promise<void> = run
+      .catch(() => {})
+      .finally(() => {
+        this.runs.delete(settled);
+        this.liveRuns.delete(controller);
+      });
+    this.runs.add(settled);
+  }
+
+  /** True when `controller`'s run was aborted by `shutdown()`. */
+  private stoppedByShutdown(controller: RunController): boolean {
+    return this.shuttingDown && controller.signal.aborted;
+  }
+
+  /** End a run `shutdown()` aborted as `interrupted` — unless it already left
+   *  the active states (a `cancel()` that raced the shutdown keeps its status). */
+  private interruptForShutdown(
+    goalId: string,
+    controller: RunController,
+    outputPartial: string,
+  ): void {
+    const status = this.store.get(goalId)?.status;
+    if (
+      status === 'planning' ||
+      status === 'running' ||
+      status === 'judging' ||
+      status === 'retrying'
+    ) {
+      this.setStatus(controller, goalId, 'interrupted', {
+        errorText: 'Interrupted: the runtime shut down',
+        ...(outputPartial ? { outputPartial } : {}),
+      });
+    }
+    this.release(goalId, controller);
   }
 
   /**
@@ -191,7 +459,7 @@ export class GoalRunner {
    * unchanged. When planning fails, runPlanningPhase has already finalized the
    * goal (failed/interrupted) and returns false, so no attempt runs.
    */
-  private async planThenRun(goal: Goal, controller: AbortController): Promise<void> {
+  private async planThenRun(goal: Goal, controller: RunController): Promise<void> {
     if (this.runPlan) {
       const planned = await this.runPlanningPhase(goal, controller);
       if (!planned) return;
@@ -212,12 +480,12 @@ export class GoalRunner {
    * "no plan, no execution". Returns true immediately when no planning callback
    * is wired (planning skipped).
    */
-  private async runPlanningPhase(goal: Goal, controller: AbortController): Promise<boolean> {
+  private async runPlanningPhase(goal: Goal, controller: RunController): Promise<boolean> {
     const runPlan = this.runPlan;
     if (!runPlan) return true;
 
     const sessionKey = `goal:${goal.id}:plan`;
-    this.store.updateStatus(goal.id, 'planning');
+    this.setStatus(controller, goal.id, 'planning');
     this.store.appendEvent(goal.id, 'plan_start', { sessionKey });
 
     // Inject the planning directive + goal spec into the plan session's system
@@ -233,24 +501,31 @@ export class GoalRunner {
     }
 
     const finalizeFailed = (errorText: string): false => {
-      this.store.updateStatus(goal.id, 'failed', { errorText });
-      this.fireGoalFailed(goal, errorText, '');
+      if (this.setStatus(controller, goal.id, 'failed', { errorText })) {
+        this.fireGoalFailed(goal, errorText, '');
+      }
       cleanupInjector?.();
-      this.activeRuns.delete(goal.id);
-      this.activeRunState.delete(goal.id);
+      this.release(goal.id, controller);
       return false;
     };
 
     let planText = '';
     let accumulated = '';
     let costUsd = 0;
+    let planError: string | undefined;
 
     try {
+      // Drained to the end, never `return` on `error` inside the loop: AgentLoop
+      // yields `error` before its usage flush and trace close (and `done` before
+      // its turn-end work), and closing the generator skips them (F07). The goal
+      // is finalized below, once the iterator is exhausted. Pinned by
+      // `__tests__/turn-tail.test.ts`.
       for await (const event of runPlan(sessionKey, this.renderPlanPrompt(goal), {
         abortSignal: controller.signal,
         ...(goal.personalityId ? { personalityId: goal.personalityId } : {}),
         ...(goal.userId ? { userId: goal.userId } : {}),
       })) {
+        if (planError !== undefined) continue;
         switch (event.type) {
           case 'text_delta':
             accumulated += event.text;
@@ -268,15 +543,20 @@ export class GoalRunner {
             break;
           case 'error':
             this.store.appendEvent(goal.id, 'error', { error: event.error, code: event.code });
-            return finalizeFailed(`Planning failed: ${event.error}`);
+            planError = event.error;
+            break;
           case 'done':
-            planText = event.text;
+            // A `returnDirect` tool's answer arrives only as `done.text`, after
+            // any preamble that streamed: the plan is the whole reply
+            // (`answerSuffix`, @ethosagent/types).
+            planText = accumulated + answerSuffix(accumulated, event.text);
             break;
           default:
             break;
         }
       }
     } catch (err) {
+      if (this.endIfStopped(goal.id, controller)) return false;
       const msg = err instanceof Error ? err.message : String(err);
       this.store.appendEvent(goal.id, 'error', { error: msg, code: 'planning_failed' });
       return finalizeFailed(`Planning failed: ${msg}`);
@@ -284,14 +564,23 @@ export class GoalRunner {
       cleanupInjector?.();
     }
 
+    // A shutdown abort surfaces as an `aborted` error event; it is an
+    // interruption, not a planning failure.
+    if (this.stoppedByShutdown(controller)) {
+      this.interruptForShutdown(goal.id, controller, '');
+      return false;
+    }
+    // Cancelled mid-plan (the abort also surfaces as an `aborted` error event).
+    if (this.endIfStopped(goal.id, controller)) return false;
+    if (planError !== undefined) return finalizeFailed(`Planning failed: ${planError}`);
+
     // Aborted mid-plan: cancel() already set 'cancelled'; a budget abort leaves
     // status at 'planning' — mark it interrupted. Either way, no attempt runs.
     if (controller.signal.aborted) {
       if (this.store.get(goal.id)?.status === 'planning') {
-        this.store.updateStatus(goal.id, 'interrupted', { errorText: 'Planning interrupted' });
+        this.setStatus(controller, goal.id, 'interrupted', { errorText: 'Planning interrupted' });
       }
-      this.activeRuns.delete(goal.id);
-      this.activeRunState.delete(goal.id);
+      this.release(goal.id, controller);
       return false;
     }
 
@@ -301,7 +590,7 @@ export class GoalRunner {
     }
 
     // Persist the plan and return to 'running'; the attempt loop takes over.
-    this.store.updateStatus(goal.id, 'running', { planMd: plan });
+    this.setStatus(controller, goal.id, 'running', { planMd: plan });
     this.store.appendEvent(goal.id, 'plan_ready', { summary: plan.slice(0, 200) });
     return true;
   }
@@ -360,13 +649,20 @@ export class GoalRunner {
    */
   private async runAttemptLoop(
     goal: Goal,
-    controller: AbortController,
+    controller: RunController,
     n: number,
     firstMessage: string,
     strategy?: RetryStrategy,
   ): Promise<void> {
     const runAttempt = this.runAttempt;
     if (!runAttempt) return;
+    // A retry reached after `shutdown()` aborted the run opens no new attempt.
+    if (this.stoppedByShutdown(controller)) {
+      this.interruptForShutdown(goal.id, controller, '');
+      return;
+    }
+    // Boundary: a goal cancelled (or taken over) since the last phase opens no attempt.
+    if (this.endIfStopped(goal.id, controller)) return;
 
     const sessionKey = `goal:${goal.id}:attempt-${n}`;
 
@@ -457,6 +753,19 @@ export class GoalRunner {
 
     try {
       while (true) {
+        // A non-transient `error` from this run. Like a transient one, it ends
+        // the run but NOT the iterator: AgentLoop yields `error` before its
+        // usage flush and trace close (and `done` before its turn-end work), and
+        // leaving the `for await` early closes the generator and skips them
+        // (F07). Everything after the error is drained, not read; the goal is
+        // failed — or the attempt retried — once the iterator is exhausted,
+        // which also keeps a retry on the SAME session key from starting while
+        // the failed run is still finishing. Pinned by `__tests__/turn-tail.test.ts`.
+        let fatalError: string | undefined;
+        // What THIS attempt streamed. `accumulated` spans the whole run (it is
+        // the run's partial across retries), and the answer rule compares
+        // against one turn's own stream.
+        let attemptStreamed = '';
         for await (const event of runAttempt(sessionKey, currentMessage, {
           abortSignal: controller.signal,
           steerSink,
@@ -470,6 +779,7 @@ export class GoalRunner {
             : {}),
           ...(goal.allowDangerousToolCalls ? { allowDangerousToolCalls: true } : {}),
         })) {
+          if (transientRetryError || fatalError !== undefined) continue;
           // Coalesce text deltas into turn-grained checkpoints — never per-delta.
           if (event.type !== 'text_delta') flushText();
 
@@ -477,6 +787,7 @@ export class GoalRunner {
             case 'text_delta':
               pendingText += event.text;
               accumulated += event.text;
+              attemptStreamed += event.text;
               break;
             case 'thinking_delta':
               break;
@@ -559,27 +870,43 @@ export class GoalRunner {
                 transientRetryError = event.error;
                 break;
               }
-              this.store.updateStatus(goal.id, 'failed', {
-                errorText: event.error,
-                outputPartial: accumulated || output,
-              });
-              this.fireGoalFailed(goal, event.error, accumulated || output);
-              cleanupInjector?.();
-              this.activeRuns.delete(goal.id);
-              this.activeRunState.delete(goal.id);
-              return;
+              fatalError = event.error;
+              break;
             case 'done':
-              output = event.text;
+              // The whole reply — a `returnDirect` answer arrives only as
+              // `done.text`, after any preamble THIS attempt streamed;
+              // `answerSuffix` is what is still owed.
+              output = attemptStreamed + answerSuffix(attemptStreamed, event.text);
               turns = event.turnCount;
               break;
             default:
               // Forward-compat: ignore unknown event types.
               break;
           }
+        }
 
-          // A transient error ends this run — stop consuming and re-enter the
-          // while-loop with a continuation message after the backoff.
-          if (transientRetryError) break;
+        // Before the fatal-error branch: a shutdown abort surfaces as an
+        // `aborted` error event, and it is an interruption, not a failure.
+        if (this.stoppedByShutdown(controller)) {
+          flushText();
+          this.interruptForShutdown(goal.id, controller, accumulated || output);
+          return;
+        }
+        // Likewise a cancel (here or in another process): its abort is not a failure.
+        if (this.endIfStopped(goal.id, controller)) {
+          flushText();
+          return;
+        }
+
+        if (fatalError !== undefined) {
+          const written = this.setStatus(controller, goal.id, 'failed', {
+            errorText: fatalError,
+            outputPartial: accumulated || output,
+          });
+          if (written) this.fireGoalFailed(goal, fatalError, accumulated || output);
+          cleanupInjector?.();
+          this.release(goal.id, controller);
+          return;
         }
 
         // After each run finishes: flush trailing text from this continuation.
@@ -603,7 +930,9 @@ export class GoalRunner {
             `The previous request failed transiently (${transientRetryError}). ` +
             `Continue the goal from where you left off.`;
           transientRetryError = null;
-          await this.sleep(delayMs);
+          // Cut short by an abort, so a shutdown does not wait out the backoff;
+          // the re-run then sees the aborted signal and ends at once.
+          await Promise.race([this.sleep(delayMs), abortedPromise(controller.signal)]);
           continue; // re-run the SAME session with the continuation message
         }
 
@@ -654,11 +983,13 @@ export class GoalRunner {
               ? `Stuck: couldn't recover after ${recoveryCount} recovery attempts — kept hitting tool-call budgets (${reason})`
               : `Stuck: couldn't recover after ${recoveryCount} recovery attempts — ${tool} kept failing`;
           const partial = accumulated || output;
-          this.store.updateStatus(goal.id, 'failed', { errorText, outputPartial: partial });
-          this.fireGoalFailed(goal, errorText, partial);
+          if (
+            this.setStatus(controller, goal.id, 'failed', { errorText, outputPartial: partial })
+          ) {
+            this.fireGoalFailed(goal, errorText, partial);
+          }
           cleanupInjector?.();
-          this.activeRuns.delete(goal.id);
-          this.activeRunState.delete(goal.id);
+          this.release(goal.id, controller);
           return;
         }
 
@@ -672,44 +1003,43 @@ export class GoalRunner {
           error: 'Budget ceiling exceeded',
           code: 'budget_exceeded',
         });
-        this.store.updateStatus(goal.id, 'interrupted', {
+        this.setStatus(controller, goal.id, 'interrupted', {
           outputPartial: accumulated || output,
           errorText: `Budget limit reached ($${goal.maxCostUsd?.toFixed?.(2) ?? goal.maxCostUsd})`,
         });
         cleanupInjector?.();
-        this.activeRuns.delete(goal.id);
-        this.activeRunState.delete(goal.id);
+        this.release(goal.id, controller);
         return;
       }
     } catch (err) {
       // Generator threw (not an error event) — treat as failure (terminal).
       const msg = err instanceof Error ? err.message : String(err);
       flushText();
+      if (this.endIfStopped(goal.id, controller)) return;
       this.store.appendEvent(goal.id, 'error', { error: msg, code: 'execution_failed' });
-      this.store.updateStatus(goal.id, 'failed', {
+      const written = this.setStatus(controller, goal.id, 'failed', {
         errorText: msg,
         outputPartial: accumulated || output,
       });
-      this.fireGoalFailed(goal, msg, accumulated || output);
+      if (written) this.fireGoalFailed(goal, msg, accumulated || output);
       cleanupInjector?.();
-      this.activeRuns.delete(goal.id);
-      this.activeRunState.delete(goal.id);
+      this.release(goal.id, controller);
       return;
     } finally {
       cleanupInjector?.();
       // The steer sink lives only for this attempt; run-state (queuedSteers)
       // survives across retries and is cleared at terminal points below.
-      this.activeSteerSinks.delete(goal.id);
+      // Only this attempt's sink: a superseded run must not drop the newer run's.
+      if (this.activeSteerSinks.get(goal.id) === steerSink) this.activeSteerSinks.delete(goal.id);
     }
 
     if (turns >= this.maxTurnsSafetyValve) {
       controller.abort();
-      this.store.updateStatus(goal.id, 'interrupted', {
+      this.setStatus(controller, goal.id, 'interrupted', {
         outputPartial: output || accumulated,
         errorText: `Turn limit reached (${this.maxTurnsSafetyValve} turns)`,
       });
-      this.activeRuns.delete(goal.id);
-      this.activeRunState.delete(goal.id);
+      this.release(goal.id, controller);
       return;
     }
 
@@ -722,7 +1052,7 @@ export class GoalRunner {
 
     // Persist run-level metrics onto the goal. judgeAttempt sets 'judging' again
     // (or completed/exhausted/retrying after); writing 'judging' here is consistent.
-    this.store.updateStatus(goal.id, 'judging', {
+    this.setStatus(controller, goal.id, 'judging', {
       turnCount: turns,
       toolCount: tools,
       tokenCount: inputTokens + outputTokens,
@@ -735,17 +1065,16 @@ export class GoalRunner {
         const reason = gate.reason ?? 'completion rejected';
         this.store.appendEvent(goal.id, 'complete_rejected', { reason });
         if (n >= goal.maxAttempts) {
-          this.store.updateStatus(goal.id, 'exhausted', { outputPartial: output });
-          this.fireGoalExhausted(goal, output, null);
-          this.activeRuns.delete(goal.id);
-          this.activeRunState.delete(goal.id);
+          if (this.setStatus(controller, goal.id, 'exhausted', { outputPartial: output })) {
+            this.fireGoalExhausted(goal, output, null);
+          }
+          this.release(goal.id, controller);
           return;
         }
-        this.store.updateStatus(goal.id, 'retrying');
+        this.setStatus(controller, goal.id, 'retrying');
         const updatedAfterReject = this.store.get(goal.id);
         if (!updatedAfterReject) {
-          this.activeRuns.delete(goal.id);
-          this.activeRunState.delete(goal.id);
+          this.release(goal.id, controller);
           return;
         }
         const retryCtx = this.getRetryContext(goal.id) ?? this.renderGoalPrompt(updatedAfterReject);
@@ -754,17 +1083,15 @@ export class GoalRunner {
       }
     }
 
-    const converged = await this.judgeAttempt(goal.id, n, output, completionSummary);
+    const converged = await this.judgeAttempt(goal.id, n, output, completionSummary, controller);
     if (converged) {
-      this.activeRuns.delete(goal.id);
-      this.activeRunState.delete(goal.id);
+      this.release(goal.id, controller);
       return;
     }
 
     const updated = this.store.get(goal.id);
     if (!updated) {
-      this.activeRuns.delete(goal.id);
-      this.activeRunState.delete(goal.id);
+      this.release(goal.id, controller);
       return;
     }
 
@@ -773,20 +1100,20 @@ export class GoalRunner {
       const lastVerdict = attempts[attempts.length - 1]?.verdict ?? null;
       const nextStrategy = lastVerdict ? classifyFailure(attempts, lastVerdict) : undefined;
       if (nextStrategy === 'clarify') {
-        this.store.updateStatus(goal.id, 'needs_clarification');
+        const parked = this.setStatus(controller, goal.id, 'needs_clarification');
         const gaps = lastVerdict?.perCriterion
           .filter((c) => c.gap)
           .map((c) => c.gap)
           .join('; ');
-        this.fireGoalNeedsClarification(goal.id, gaps?.length ? gaps : 'clarification needed');
-        this.activeRuns.delete(goal.id);
-        this.activeRunState.delete(goal.id);
+        if (parked) {
+          this.fireGoalNeedsClarification(goal.id, gaps?.length ? gaps : 'clarification needed');
+        }
+        this.release(goal.id, controller);
         return;
       }
       const ctx = this.getRetryContext(goal.id);
       if (!ctx) {
-        this.activeRuns.delete(goal.id);
-        this.activeRunState.delete(goal.id);
+        this.release(goal.id, controller);
         return;
       }
       await this.runAttemptLoop(updated, controller, n + 1, ctx, nextStrategy);
@@ -794,8 +1121,7 @@ export class GoalRunner {
     }
 
     // exhausted / needs_clarification / any other terminal status.
-    this.activeRuns.delete(goal.id);
-    this.activeRunState.delete(goal.id);
+    this.release(goal.id, controller);
   }
 
   /**
@@ -826,7 +1152,12 @@ export class GoalRunner {
   }
 
   /**
-   * Cancel a running goal.
+   * Cancel a goal that is planning, running, judging or retrying — whichever
+   * runner executes it, so it returns true for a goal live on another runner
+   * too. The `cancelled` row is the signal: this runner aborts its own run at
+   * once; the owner of a run elsewhere aborts on its next heartbeat or phase
+   * boundary (`endIfStopped`), and `updateRunStatus` keeps it from writing over
+   * the cancel. Pinned by __tests__/cancel-lease.test.ts.
    */
   cancel(goalId: string): boolean {
     const goal = this.store.get(goalId);
@@ -850,22 +1181,25 @@ export class GoalRunner {
     this.activeSteerSinks.delete(goalId);
 
     // Only persist a non-empty partial so cancelling early doesn't overwrite with ''.
+    // Unconditional on purpose: anyone may cancel, whoever holds the lease.
     this.store.updateStatus(goalId, 'cancelled', outputPartial ? { outputPartial } : undefined);
     return true;
   }
 
   /**
-   * Resume a failed/cancelled/interrupted goal.
+   * Resume a failed/cancelled/interrupted goal. The claim is one conditional
+   * UPDATE (`LeasedGoalStore.resumeGoal`): resumable status → `running`, resume
+   * count +1 and a NEW run lease, atomically — so of two processes resuming the
+   * same goal exactly one wins, and a run still unwinding from before (even on
+   * this runner) holds a superseded lease and stands down. Pinned by
+   * __tests__/lease.test.ts and __tests__/cancel-lease.test.ts.
    */
   async resume(goalId: string): Promise<boolean> {
-    const goal = this.store.get(goalId);
-    if (!goal) return false;
-    if (goal.status !== 'failed' && goal.status !== 'cancelled' && goal.status !== 'interrupted') {
-      return false;
-    }
-
-    this.store.incrementResumeCount(goalId);
-    this.store.updateStatus(goalId, 'running');
+    if (this.shuttingDown) return false;
+    // Read only for the resume note below; the decision is the atomic claim.
+    const before = this.store.get(goalId);
+    const controller = this.newRun();
+    if (!this.store.resumeGoal(goalId, controller.lease)) return false;
 
     const refreshed = this.store.get(goalId);
     if (!refreshed) return false;
@@ -889,10 +1223,10 @@ export class GoalRunner {
     const latest = attempts[attempts.length - 1];
     if (!latest) return false;
     const n = latest.n;
-    const controller = new AbortController();
     this.activeRuns.set(goalId, controller);
-    const resumeNote = `The goal run was interrupted: ${refreshed.errorText ?? goal.status}. Review prior progress and continue.`;
-    void this.runAttemptLoop(refreshed, controller, n, resumeNote).catch(() => {});
+    this.ensureHeartbeat();
+    const resumeNote = `The goal run was interrupted: ${refreshed.errorText ?? before?.status ?? 'interrupted'}. Review prior progress and continue.`;
+    this.track(this.runAttemptLoop(refreshed, controller, n, resumeNote), controller);
     return true;
   }
 
@@ -905,22 +1239,21 @@ export class GoalRunner {
     attemptN: number,
     output: string,
     summary?: string,
+    run?: RunController,
   ): Promise<boolean> {
     const goal = this.store.get(goalId);
     if (!goal) return false;
 
     const spec = goal.acceptanceCriteria;
     if (!spec) {
-      this.store.updateStatus(goalId, 'completed', {
-        outputMd: output,
-        completedAt: Date.now(),
-      });
-      this.store.appendEvent(goalId, 'done', { attemptN });
-      this.fireGoalCompleted(goal, output, summary);
+      if (this.setStatus(run, goalId, 'completed', { outputMd: output, completedAt: Date.now() })) {
+        this.store.appendEvent(goalId, 'done', { attemptN });
+        this.fireGoalCompleted(goal, output, summary);
+      }
       return true;
     }
 
-    this.store.updateStatus(goalId, 'judging');
+    this.setStatus(run, goalId, 'judging');
     const verdict = await judge({ output, spec });
 
     this.store.updateAttempt(goalId, attemptN, {
@@ -932,33 +1265,29 @@ export class GoalRunner {
     const attempts = this.store.getAttempts(goalId);
 
     if (isConverged(verdict, spec.threshold)) {
-      this.store.updateStatus(goalId, 'completed', {
-        outputMd: output,
-        completedAt: Date.now(),
-      });
-      this.store.appendEvent(goalId, 'done', {
-        score: verdict.score,
-        attemptN,
-      });
-      this.fireGoalCompleted(goal, output, summary);
+      if (this.setStatus(run, goalId, 'completed', { outputMd: output, completedAt: Date.now() })) {
+        this.store.appendEvent(goalId, 'done', {
+          score: verdict.score,
+          attemptN,
+        });
+        this.fireGoalCompleted(goal, output, summary);
+      }
       return true;
     }
 
     if (attemptN >= goal.maxAttempts) {
-      this.store.updateStatus(goalId, 'exhausted', {
-        outputPartial: output,
-      });
-      this.fireGoalExhausted(goal, output, verdict);
+      if (this.setStatus(run, goalId, 'exhausted', { outputPartial: output })) {
+        this.fireGoalExhausted(goal, output, verdict);
+      }
       return false;
     }
 
     if (attempts.length >= 2) {
       const prevScores = attempts.slice(-2).map((a) => a.verdict?.score ?? 0);
       if (prevScores.every((s) => s >= verdict.score)) {
-        this.store.updateStatus(goalId, 'exhausted', {
-          outputPartial: output,
-        });
-        this.fireGoalExhausted(goal, output, verdict);
+        if (this.setStatus(run, goalId, 'exhausted', { outputPartial: output })) {
+          this.fireGoalExhausted(goal, output, verdict);
+        }
         return false;
       }
     }
@@ -967,24 +1296,19 @@ export class GoalRunner {
       score: verdict.score,
       gaps: verdict.perCriterion.filter((c) => c.gap).map((c) => c.gap),
     });
-    this.store.updateStatus(goalId, 'retrying');
+    this.setStatus(run, goalId, 'retrying');
 
     return false;
   }
 
   /**
-   * Recover orphaned goals on boot.
+   * Recover orphaned goals on boot: mark `interrupted` every active goal whose
+   * lease went quiet for `staleMs` (`LeasedGoalStore.interruptStale`). Goals a
+   * live runner — this one or another process's — is heartbeating are left
+   * alone. Pinned by __tests__/lease.test.ts.
    */
   recoverOrphans(): void {
-    const runningGoals = this.store.list({ status: 'running' });
-    const judgingGoals = this.store.list({ status: 'judging' });
-    const retryingGoals = this.store.list({ status: 'retrying' });
-
-    for (const goal of [...runningGoals, ...judgingGoals, ...retryingGoals]) {
-      if (!this.activeRuns.has(goal.id)) {
-        this.store.updateStatus(goal.id, 'interrupted');
-      }
-    }
+    this.store.interruptStale(this.staleMs);
   }
 
   /**

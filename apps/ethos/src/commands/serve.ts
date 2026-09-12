@@ -75,7 +75,7 @@ import {
   createApprovalDangerPredicate,
   createBrowserTakeoverRegistry,
   createLazyProvider,
-  createMemoryProvider,
+  createMemoryBundle,
   createSessionStore,
   IdentityMap,
   resolvePersonalityModelFit,
@@ -87,7 +87,10 @@ import {
 import { appendErrorLog } from '../error-log';
 import { createAcpMcpWiring } from '../lib/acp-mcp-wiring';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
+import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { bumpKanbanHeartbeats, KanbanPollLoop, writeRunActivityComments } from '../lib/kanban-poll';
+import { createLateBoundGoals } from '../lib/late-goals';
+import { adoptBootedLoop } from '../lib/onboarding-boot';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
@@ -96,6 +99,7 @@ import { notifyReady, startWatchdog } from '../sd-notify';
 import {
   buildServeBusySources,
   buildSystemTaskHandlers,
+  closeObservabilityStore,
   createAgentLoop,
   createLLM,
   createTeamAgentLoop,
@@ -117,7 +121,12 @@ import {
   resolveWebHost,
   resolveWebPort,
 } from './serve-helpers';
-import { formatNonLoopbackWarning, isLoopbackHost, listenWithFallback } from './serve-listen';
+import {
+  closeListener,
+  formatNonLoopbackWarning,
+  isLoopbackHost,
+  listenWithFallback,
+} from './serve-listen';
 
 // `ethos serve` boots:
 //   • ACP server on `--port` (default 3001) + mesh registration
@@ -175,7 +184,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // Hoisted above the onboarding-mode check so both branches can use it.
   const skillsCatalogDir = resolveSkillsCatalogDir(import.meta.dirname);
 
-  // Onboarding mode: no config yet — start the web server with a stub loop
+  // Onboarding mode: no config yet — start the web server on the web API's own
+  // stand-in loop (apps/web-api/src/lib/pending-loop.ts)
   // so the UI can run the onboarding wizard.
   if (config === null) {
     const session = createSessionStore({ dataDir: dir });
@@ -193,9 +203,16 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     // boots the real agent loop — eagerly when the wizard completes (via
     // `onSetupComplete` below), or on the first chat request — and caches it.
     let realLoop: AgentLoop | null = null;
+    // Its runtime release (F06), run by `cleanup`. At most one loop is ever
+    // built: a successful boot is cached in `realLoop`, and a boot that throws
+    // has already released what it opened (`createAgentLoop` rolls back).
+    let disposeRealLoop: (() => Promise<void>) | undefined;
     // Buffers createWebApi's tool registrations (dashboard tools) until
     // onboarding boots the real loop, then flushes them into its registry.
     const lazyToolRegistry = new DeferredToolRegistry();
+    // Same late binding for goals: refused until the real loop boots, then
+    // created and executed on that loop's own store + runner — no restart.
+    const lateGoals = createLateBoundGoals();
     // Single-flight boot: concurrent callers await the same in-flight
     // attempt. Returns null while config is still missing; if the boot
     // itself throws, logs and resets so a later call can retry.
@@ -208,9 +225,54 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
             const secrets = await getSecretsResolver();
             const loaded = await readConfig(getStorage(), secrets);
             if (!loaded) return null;
-            const agentResult = await createAgentLoop(loaded);
+            // The web API's memory surfaces were built at startup for the
+            // default backend (markdown: no config existed, and the onboarding
+            // wizard never writes `memory:`). Boot the agent on that same
+            // backend so a web edit lands where it reads; a `memory:` chosen
+            // since startup applies after a restart, as a backend change does
+            // in every serve mode. Pinned by serve-memory-wiring.test.ts.
+            const agentConfig =
+              (loaded.memory ?? 'markdown') === 'markdown'
+                ? loaded
+                : { ...loaded, memory: 'markdown' as const };
+            if (agentConfig !== loaded) {
+              console.warn(
+                `[serve] memory: ${loaded.memory} takes effect after restarting ethos serve; ` +
+                  'until then the agent and the web memory editor both use markdown.',
+              );
+            }
+            // The same loop options the normal branch builds with (web
+            // profile: the web approval hook, not the terminal guard, gates
+            // dangerous calls) — `serveLoopOptions` is the one source.
+            const agentResult = await createAgentLoop(
+              agentConfig,
+              serveLoopOptions({ meshName: parseFlagValue(args, ['--mesh']) ?? 'default' }),
+            );
+            // Hand the loop to the goal pair, the web API (its stand-in starts
+            // delegating here, and its main-loop registrations — approval hook
+            // with the danger check the normal branch builds, session tracking,
+            // clarify presenter, notification adapter, kanban ticket hooks — go
+            // on it) and the deferred tool registry. All or nothing: a failed
+            // step undoes the others and disposes the loop, so the next boot
+            // retries cleanly. Before `realLoop` is set, so the first turn
+            // already has them. `created` exists by now: a boot only starts
+            // after the server is up.
+            await adoptBootedLoop(agentResult, {
+              goals: lateGoals,
+              web: created,
+              tools: lazyToolRegistry,
+              dangerPredicate: (loop) =>
+                buildServeDangerPredicate(loop, personalities, agentConfig),
+            });
+            disposeRealLoop = agentResult.dispose;
             realLoop = agentResult.loop;
-            if (agentResult.toolRegistry) lazyToolRegistry.setInner(agentResult.toolRegistry);
+            // What the bind could not carry over (see `adoptBootedLoop`): these
+            // are started around the loop at boot, so they stay off until the
+            // operator restarts. The web onboarding screen says the same.
+            console.warn(
+              '[serve] agent is live in this process. Cron schedules, background tasks, ' +
+                'voice lanes and dashboards-through-plugins start when you restart `ethos serve`.',
+            );
             return agentResult.loop;
           } catch (err) {
             console.error(
@@ -226,21 +288,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       }
       return bootInFlight;
     };
-    const stubLoop = {
-      run: async function* (text: string, opts: Record<string, unknown> = {}) {
-        const loop = await bootRealLoop();
-        if (loop) {
-          yield* loop.run(text, opts as never);
-        } else {
-          yield {
-            type: 'error' as const,
-            error: 'Setup required — complete onboarding first.',
-            code: 'SETUP_REQUIRED',
-          };
-        }
-      },
-    } as unknown as AgentLoop;
-
     const webDist = locateWebDist(parseFlagValue(args, ['--web-dist']));
     const attachmentCache = new FsAttachmentCache(
       new FsStorage(),
@@ -253,13 +300,23 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       attachmentCache,
       sessionStore: session,
       contextLog,
-      memoryProvider: createMemoryProvider({
-        dataDir: dir,
-        storage: getStorage(),
-        source: 'web-editor',
-      }),
+      // No config yet, so no loop to take a bundle from: build one for the
+      // default backend (markdown) — what the loop picks with no `memory:` key.
+      // Limitation: its approve-before-store queue also takes the default cap
+      // and TTL (`memoryApproval` is read from config, which does not exist
+      // yet); a configured cap/TTL applies to the web queue after a restart.
+      memoryBundle: createMemoryBundle({ config: {}, dataDir: dir, storage: getStorage() }),
       identityMap,
-      agentLoop: stubLoop,
+      // No `agentLoop`: the web API runs on its stand-in until the boot above
+      // binds the real loop. A turn before then asks for that boot.
+      bootAgentLoop: async () => {
+        await bootRealLoop();
+      },
+      // Config-independent, so available before boot — same trail as normal mode.
+      approvalObservability: {
+        recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+      },
+      goals: lateGoals.goals,
       personalities,
       chatDefaults: { model: 'setup-required', provider: 'setup-required' },
       toolRegistry: lazyToolRegistry,
@@ -305,17 +362,50 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     notifyReady();
     const stopWatchdog = startWatchdog();
 
-    const webShutdown = () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      });
-    const cleanup = async () => {
-      if (stopWatchdog) stopWatchdog();
-      // Deny + audit any suspended approval BEFORE the awaits below — the
-      // auto-deny timers are unref'd and never fire on the way out.
-      created.forceSettleApprovals();
-      await webShutdown();
-      process.exit(0);
+    // `closeListener`, not `server.close()`: an open web UI tab holds
+    // `/sse/system`, and a plain close waits on it forever (F06 live smoke).
+    const webShutdown = () => closeListener(server);
+    // Memoised for the same reason the main branch's is: a second signal must
+    // not re-run a shutdown that is already under way.
+    let shuttingDown: Promise<void> | undefined;
+    const cleanup = async (): Promise<void> => {
+      shuttingDown ??= (async () => {
+        if (stopWatchdog) stopWatchdog();
+        // Deny + audit any suspended approval BEFORE the awaits below — the
+        // auto-deny timers are unref'd and never fire on the way out.
+        created.forceSettleApprovals();
+        // Chat before the listener: `closeChat` writes the "not sent" notice to
+        // each tab's SSE stream, which the listener close then drops.
+        await created.closeChat();
+        await webShutdown();
+        // F06 — the web API first (its stand-in forwards to the real one), then
+        // the real loop if onboarding booted it. A boot still in flight is
+        // awaited first, so its loop cannot come up behind the exit undisposed.
+        await disposeBeforeExit(
+          [
+            ['web api', () => created.dispose()],
+            [
+              'agent loop',
+              async () => {
+                await bootInFlight;
+                await disposeRealLoop?.();
+              },
+            ],
+            // This process's own sessions.db handles, lent to the web API only.
+            [
+              'sessions.db',
+              async () => {
+                contextLog.close();
+                session.close();
+              },
+            ],
+            ['observability.db', async () => closeObservabilityStore()],
+          ],
+          (message) => console.warn(message),
+        );
+        process.exit(0);
+      })();
+      await shuttingDown;
     };
     process.on('SIGTERM', () => void cleanup());
     process.on('SIGINT', () => void cleanup());
@@ -353,7 +443,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     | undefined;
   const meshName = parseFlagValue(args, ['--mesh']) ?? 'default';
 
-  const loopProfile = 'web';
+  const loopProfile = SERVE_LOOP_PROFILE;
 
   let loop: AgentLoop;
   let toolRegistry: ToolRegistry | undefined;
@@ -371,7 +461,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   let runCallCaptureFromLoop:
     | import('@ethosagent/wiring').CreateAgentLoopResult['runCallCapture']
     | undefined;
-  let goalRunner: import('@ethosagent/goal-runner').GoalRunner | undefined;
+  let goals: import('@ethosagent/wiring').CreateAgentLoopResult['goals'] | undefined;
+  // No `| undefined`: definite assignment makes a branch that forgets it a compile error.
+  let memoryBundle: import('@ethosagent/wiring').MemoryBundle;
   let jobStore: import('@ethosagent/types').JobStore | undefined;
   let backgroundExecutor:
     | import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor']
@@ -390,6 +482,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // probe. Undefined on the team-coordinator path, where the probe degrades to
   // `backend_unresolved` rather than testing a registry this process invented.
   let executionBackends: import('@ethosagent/types').ExecutionBackendRegistry | undefined;
+  // Releases the main loop's runtime (F06) — `cleanup` calls it last, after the
+  // web API that borrowed the loop has been disposed.
+  let disposeLoop: (() => Promise<void>) | undefined;
   let voiceConfig: ServeVoiceConfig | undefined;
   // The voice stack, held only for its span writer: the browser realtime tier
   // records per-turn latency into the SAME writer the pipeline tier uses, so a
@@ -408,8 +503,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // Phase E of plan/phases/model-visible-logged.md — fork copies context events
   // onto the child (D9). Same `sessions.db` file `session` uses, separate
   // handle — the same "same file, separate type" pattern SQLiteContextLog's own
-  // file-header comment documents (WAL mode makes concurrent handles safe). Not
-  // closed on SIGINT/SIGTERM below, matching `session` itself, which also isn't.
+  // file-header comment documents (WAL mode makes concurrent handles safe).
+  // Closed by `cleanup`, with `session`, after the loop's dispose.
   const contextLog = new SQLiteContextLog(join(dir, 'sessions.db'));
 
   // Cron scheduler — hoisted ABOVE the agent-loop construction so the
@@ -574,12 +669,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     activePersonality = personalityOverride;
     const result = await createAgentLoop(
       { ...config, teamName: teamFlag, ...(roleFlag ? { role: roleFlag } : {}) },
-      {
-        profile: loopProfile,
-        meshRegistryPath: meshRegistryPath(activeMeshName),
-        ...(cronScheduler ? { cronScheduler } : {}),
-        watcherManager,
-      },
+      serveLoopOptions({ meshName: activeMeshName, cronScheduler, watcherManager }),
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
@@ -589,7 +679,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     setOnSkillProposed = result.setOnSkillProposed;
     onMemoryCaptured = result.onMemoryCaptured;
     runCallCaptureFromLoop = result.runCallCapture;
-    goalRunner = result.goalRunner;
+    goals = result.goals;
+    memoryBundle = result.memoryBundle;
     jobStore = result.jobStore;
     backgroundExecutor = result.backgroundExecutor;
     jobRunners = result.jobRunners;
@@ -601,6 +692,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     refreshLoopPersonalities = result.refreshPersonalities;
     skillsInjector = result.skillsInjector;
     executionBackends = result.executionBackends;
+    disposeLoop = result.dispose;
   } else if (teamFlag) {
     // Chat UX: `ethos serve --team <name>` → run as the team's coordinator.
     const {
@@ -612,6 +704,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       pluginLoader: teamPluginLoader,
       notificationRouter: teamNotificationRouter,
       runCallCapture: teamRunCallCapture,
+      goals: teamGoals,
+      memoryBundle: teamMemoryBundle,
+      dispose: teamDispose,
     } = await createTeamAgentLoop(config, teamFlag, {
       profile: loopProfile,
       ...(roleFlag ? { role: roleFlag } : {}),
@@ -629,15 +724,18 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     // even when callCapture.personalityId was configured. Threaded through
     // createTeamAgentLoop now (see apps/ethos/src/wiring.ts).
     runCallCaptureFromLoop = teamRunCallCapture;
+    // Same gap for goals: this branch never forwarded a goal backend, so a web
+    // goal in coordinator mode was stored `running` and never executed.
+    goals = teamGoals;
+    memoryBundle = teamMemoryBundle;
+    disposeLoop = teamDispose;
   } else {
     activeMeshName = meshName;
     activePersonality = config.personality;
-    const result = await createAgentLoop(config, {
-      profile: loopProfile,
-      meshRegistryPath: meshRegistryPath(activeMeshName),
-      ...(cronScheduler ? { cronScheduler } : {}),
-      watcherManager,
-    });
+    const result = await createAgentLoop(
+      config,
+      serveLoopOptions({ meshName: activeMeshName, cronScheduler, watcherManager }),
+    );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
     mcpManager = result.mcpManager;
@@ -646,7 +744,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     setOnSkillProposed = result.setOnSkillProposed;
     onMemoryCaptured = result.onMemoryCaptured;
     runCallCaptureFromLoop = result.runCallCapture;
-    goalRunner = result.goalRunner;
+    goals = result.goals;
+    memoryBundle = result.memoryBundle;
     jobStore = result.jobStore;
     backgroundExecutor = result.backgroundExecutor;
     jobRunners = result.jobRunners;
@@ -658,6 +757,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     refreshLoopPersonalities = result.refreshPersonalities;
     skillsInjector = result.skillsInjector;
     executionBackends = result.executionBackends;
+    disposeLoop = result.dispose;
   }
   let titleFn: ((systemPrompt: string, userMessage: string) => Promise<string>) | undefined;
   try {
@@ -710,18 +810,23 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // ACP server (existing behavior — kept first so any breakage is obvious).
   // The MCP session-grant wiring is omitted on the team-coordinator path,
   // which has no McpManager — `session/registerMcpServers` then fails closed.
+  // Team boards only: the ACP server's passive `notify` delivery queue. Opened
+  // here rather than inside the builder so this process closes it on the way
+  // out, like its other SQLite handles (F06).
+  const notifyQueue = teamFlag ? new SQLiteNotifyQueue(join(dir, 'notify-queue.db')) : undefined;
   const acpServer = buildServeAcpServer({
-    dir,
     loop,
     session,
     mesh,
     personalities,
     activePersonality,
     teamFlag,
+    ...(notifyQueue ? { notifyQueue } : {}),
     mcpManager,
     jobStore,
     backgroundExecutor,
     teamAuthToken,
+    logger: new ConsoleLogger({}, logLevel),
   });
   acpServer.startHttp(acpPort);
 
@@ -771,10 +876,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         boardPath,
         personalityId: activePersonality,
         lane,
-        runner: async (prompt, sessionKey, taskId, taskTitle) => {
+        runner: async (prompt, sessionKey, taskId, taskTitle, runId) => {
           await writeRunActivityComments(
             boardPath,
             taskId,
+            runId,
             activePersonality,
             loop.run(prompt, { sessionKey, personalityId: activePersonality }),
             (err) => console.warn(`[kanban-poll] comment write failed: ${err.message}`),
@@ -826,6 +932,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
 
   // Web API — always mounts alongside the ACP server.
   let webShutdown: (() => Promise<void>) | null = null;
+  let webDispose: (() => Promise<void>) | undefined;
   const webDist = locateWebDist(parseFlagValue(args, ['--web-dist']));
 
   // Start the cron scheduler now — `loop` is assigned, and we'll bind
@@ -1063,6 +1170,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       loop: team.loop,
       refreshPersonalities: team.refreshPersonalities,
       notificationRouter: team.notificationRouter,
+      // A goal for one of this team's personalities runs on THIS pair, the same
+      // way its chat turns run on this loop (web-api `goalsForPersonality`).
+      goals: team.goals,
+      // `TeamLoopRegistry.disposeAll` (via the web API's `dispose`) calls it.
+      dispose: team.dispose,
     };
   };
 
@@ -1087,7 +1199,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     notificationRouter,
     cronScheduler,
     cronTriggers,
-    goalRunner,
+    goals,
+    memoryBundle,
     jobStore,
     jobRunners,
     backgroundExecutor,
@@ -1160,13 +1273,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       created.voiceSocket.close(),
       created.satelliteSocket.close(),
       created.takeoverSocket.close(),
-      created.disposeTeamLoops(),
-    ]).then(
-      () =>
-        new Promise<void>((resolve) => {
-          server.close(() => resolve());
-        }),
-    );
+    ]).then(() => closeListener(server));
+  // F06 — run by `cleanup` once the listener is down. It also takes down the
+  // team loops the web API built.
+  webDispose = () => created.dispose();
 
   emitReady('serve');
   notifyReady();
@@ -1210,26 +1320,67 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     );
   });
 
-  const cleanup = async () => {
-    if (stopWatchdog) stopWatchdog();
-    // Deny + audit any suspended approval FIRST, before the awaits below —
-    // the auto-deny timers are unref'd and never fire on the way out, and a
-    // later await that hangs must not cost the audit row.
-    created.forceSettleApprovals();
-    stopHeartbeat();
-    stopPollLoop?.();
-    stopLangfusePoll?.();
-    // Stops the daemon + heartbeat (if this process ever won the ownership
-    // claim, including via a later retry tick — see
-    // `CallCaptureOwnershipManager`) and releases the lock so a restarted
-    // process, or the other host command, can take it.
-    await callCaptureOwnershipManager?.stop();
-    await mesh.unregister(agentId);
-    idleWatcher?.stop();
-    pauseLifecycle.stop?.();
-    cronTriggers.local?.stop();
-    if (webShutdown) await webShutdown();
-    process.exit(0);
+  // Reentrancy: registered on BOTH SIGINT and SIGTERM, and a second signal
+  // during the drain would otherwise re-run the whole shutdown — settling
+  // approvals again, writing a second "not sent" notice, closing the listener
+  // twice and starting a fresh disposal budget. One promise, memoised; every
+  // caller awaits that same one (the shape `boot.ts` already uses).
+  let shuttingDown: Promise<void> | undefined;
+  const cleanup = async (): Promise<void> => {
+    shuttingDown ??= (async () => {
+      if (stopWatchdog) stopWatchdog();
+      // Deny + audit any suspended approval FIRST, before the awaits below —
+      // the auto-deny timers are unref'd and never fire on the way out, and a
+      // later await that hangs must not cost the audit row.
+      created.forceSettleApprovals();
+      stopHeartbeat();
+      stopPollLoop?.();
+      stopLangfusePoll?.();
+      // Stops the daemon + heartbeat (if this process ever won the ownership
+      // claim, including via a later retry tick — see
+      // `CallCaptureOwnershipManager`) and releases the lock so a restarted
+      // process, or the other host command, can take it.
+      await callCaptureOwnershipManager?.stop();
+      await mesh.unregister(agentId);
+      idleWatcher?.stop();
+      pauseLifecycle.stop?.();
+      cronTriggers.local?.stop();
+      clearInterval(a2a.retentionTimer);
+      // Chat before the listener: `closeChat` aborts the web turns and writes the
+      // "not sent" notice to each tab's SSE stream, which the listener close
+      // then drops (serve-shutdown-notice.test.ts).
+      await created.closeChat();
+      if (webShutdown) await webShutdown();
+      // F06 — the web API first (it borrowed the loop), then the loop's own
+      // runtime: background executor, reconciler, stores, MCP, plugins.
+      await disposeBeforeExit(
+        [
+          ['web api', webDispose],
+          ['agent loop', disposeLoop],
+          // This process's own sessions.db handles — last, once nothing that
+          // borrowed them (the web API, the ACP server's loop) runs any more.
+          [
+            'sessions.db',
+            async () => {
+              contextLog.close();
+              session.close();
+              apiKeys.close();
+              idempotencyStore.close();
+            },
+          ],
+          // `a2a/tasks.db` and, on a team board, `notify-queue.db` — this
+          // process's own handles, like the ones above.
+          ['a2a tasks.db', async () => a2a.taskStore.close()],
+          ['notify-queue.db', async () => notifyQueue?.close()],
+          // The process-wide observability store — after everything above, which
+          // records into it while it winds down.
+          ['observability.db', async () => closeObservabilityStore()],
+        ],
+        (message) => console.warn(message),
+      );
+      process.exit(0);
+    })();
+    await shuttingDown;
   };
   process.on('SIGTERM', () => void cleanup());
   process.on('SIGINT', () => void cleanup());
@@ -1391,11 +1542,57 @@ function listRegisteredTeams(dataDir: string): string[] {
 // gate.
 
 type ServePersonalityRegistry = Awaited<ReturnType<typeof createPersonalityRegistry>>;
+
+type ServeLoopOptions = NonNullable<Parameters<typeof createAgentLoop>[1]>;
+
+/** Every `ethos serve` loop runs the web profile: no terminal guard — the web
+ *  approval hook is the gate for dangerous calls. */
+const SERVE_LOOP_PROFILE = 'web' as const;
+
+/**
+ * The `createAgentLoop` options of an `ethos serve` loop, shared by the normal
+ * branch and the loop onboarding boots in-process so the two cannot drift.
+ * Cron and watchers exist only when serve starts with a config, so onboarding
+ * passes neither. Pinned by commands/__tests__/serve-onboarding-bind.test.ts.
+ */
+export function serveLoopOptions(opts: {
+  meshName: string;
+  cronScheduler?: ServeLoopOptions['cronScheduler'] | null;
+  watcherManager?: ServeLoopOptions['watcherManager'];
+}): ServeLoopOptions {
+  return {
+    profile: SERVE_LOOP_PROFILE,
+    meshRegistryPath: meshRegistryPath(opts.meshName),
+    ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
+    ...(opts.watcherManager ? { watcherManager: opts.watcherManager } : {}),
+  };
+}
+
+/**
+ * The danger check behind the web approval modal, shared by the normal web API
+ * and the loop onboarding binds after boot. Same `checkCommand` rules the CLI
+ * guard uses, surfaced through the modal instead of a hard block; threaded
+ * with the turn's personality (learned from the loop's `session_start`) so
+ * `denyRules` and `approvalMode` are enforced, plus a lazy provider handle for
+ * `approvalMode: 'smart'` — nothing is constructed unless a flagged call
+ * actually reaches the reviewer.
+ */
+export function buildServeDangerPredicate(
+  loop: AgentLoop,
+  personalities: ServePersonalityRegistry,
+  config: EthosConfig,
+): ReturnType<typeof createApprovalDangerPredicate> {
+  return createApprovalDangerPredicate({
+    hooks: [loop.hooks],
+    personalities,
+    getProvider: createLazyProvider(() => createLLM(config)),
+    model: config.model,
+    alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+  });
+}
 type AcpServerOptions = ConstructorParameters<typeof AcpServer>[0];
 
 export interface BuildServeAcpServerOptions {
-  /** `~/.ethos` (or the `--data-dir` override) — the notify-queue db's parent. */
-  dir: string;
   loop: AcpServerOptions['runner'];
   session: AcpServerOptions['session'];
   mesh: AcpServerOptions['mesh'];
@@ -1403,10 +1600,15 @@ export interface BuildServeAcpServerOptions {
   activePersonality: string;
   /** `--team <name>`; absent on a solo serve. */
   teamFlag: string | undefined;
+  /** Team boards only — the passive `notify`-mode delivery queue. Opened by
+   *  the CALLER so it also closes it (F06); absent on a solo serve. */
+  notifyQueue?: SQLiteNotifyQueue;
   mcpManager: McpManager | undefined;
   jobStore: AcpServerOptions['jobStore'];
   backgroundExecutor: AcpServerOptions['backgroundExecutor'];
   teamAuthToken: string | undefined;
+  /** Where the ACP server reports failures with no response left to carry them. */
+  logger?: AcpServerOptions['logger'];
 }
 
 /**
@@ -1420,7 +1622,6 @@ export interface BuildServeAcpServerOptions {
  */
 export function buildServeAcpServer(opts: BuildServeAcpServerOptions): AcpServer {
   const {
-    dir,
     loop,
     session,
     mesh,
@@ -1431,6 +1632,7 @@ export function buildServeAcpServer(opts: BuildServeAcpServerOptions): AcpServer
     jobStore,
     backgroundExecutor,
     teamAuthToken,
+    logger,
   } = opts;
   // The MCP session-grant wiring is omitted on the team-coordinator path,
   // which has no McpManager — `session/registerMcpServers` then fails closed.
@@ -1442,15 +1644,14 @@ export function buildServeAcpServer(opts: BuildServeAcpServerOptions): AcpServer
     // Lane C (kanban-hooks-notify-parity, Phase 2) — passive `notify`-mode
     // delivery needs somewhere to land, which only exists for a team board.
     // A solo (non-team) `ethos serve` just no-ops that path.
-    ...(teamFlag
-      ? { teamId: teamFlag, notifyQueue: new SQLiteNotifyQueue(join(dir, 'notify-queue.db')) }
-      : {}),
+    ...(teamFlag && opts.notifyQueue ? { teamId: teamFlag, notifyQueue: opts.notifyQueue } : {}),
     ...(mcpManager
       ? createAcpMcpWiring({ mcpManager, personalities, defaultPersonalityId: activePersonality })
       : {}),
     ...(jobStore ? { jobStore } : {}),
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
     ...(teamAuthToken ? { authToken: teamAuthToken } : {}),
+    ...(logger ? { logger } : {}),
   });
 }
 
@@ -1816,7 +2017,11 @@ export interface BuildServeWebApiOptions {
   notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
   cronScheduler: CronScheduler | null;
   cronTriggers: CronTriggers;
-  goalRunner: import('@ethosagent/goal-runner').GoalRunner | undefined;
+  /** The loop's goal store + executor pair. Undefined → web goal create/resume is refused. */
+  goals: import('@ethosagent/wiring').CreateAgentLoopResult['goals'] | undefined;
+  /** The loop's memory surfaces (`CreateAgentLoopResult.memoryBundle`) — the
+   *  web editor, Timeline, restore and approve queue on its configured backend. */
+  memoryBundle: import('@ethosagent/wiring').MemoryBundle;
   jobStore: import('@ethosagent/types').JobStore | undefined;
   jobRunners: import('@ethosagent/types').JobRunnerRegistry | undefined;
   backgroundExecutor:
@@ -1894,7 +2099,8 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     notificationRouter,
     cronScheduler,
     cronTriggers,
-    goalRunner,
+    goals,
+    memoryBundle,
     jobStore,
     jobRunners,
     backgroundExecutor,
@@ -1934,14 +2140,9 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     // team's loop, built on demand through this factory.
     ...(createTeamLoop ? { createTeamLoop } : {}),
     ...(mainLoopTeam ? { mainLoopTeam } : {}),
-    memoryProvider: createMemoryProvider({
-      dataDir: dir,
-      storage: getStorage(),
-      source: 'web-editor',
-    }),
-    // Backend selection for the approve-before-store queue — a web approve
-    // replays into the configured backend (vault under memory: vault).
-    memoryBackend: config,
+    // The loop's memory surfaces (F04): editor, Timeline, restore and approve
+    // all on the backend the agent reads — the vault under `memory: vault`.
+    memoryBundle,
     identityMap,
     agentLoop: loop,
     // The same registry the agent loop loaded above is reused so mtime
@@ -2013,19 +2214,9 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
       model: config.model,
       provider: config.provider,
     },
-    // Same `checkCommand` rules the CLI guard uses; surfacing them via
-    // the approval modal instead of a hard block. Threaded with the turn's
-    // personality (learned from the loop's `session_start`) so `denyRules`
-    // and `approvalMode` are enforced, plus a lazy provider handle for
-    // `approvalMode: 'smart'` — nothing is constructed unless a flagged call
-    // actually reaches the reviewer.
-    dangerPredicate: createApprovalDangerPredicate({
-      hooks: [loop.hooks],
-      personalities,
-      getProvider: createLazyProvider(() => createLLM(config)),
-      model: config.model,
-      alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
-    }),
+    // The approval modal's danger check — built by the same function the
+    // onboarding boot uses (`buildServeDangerPredicate`).
+    dangerPredicate: buildServeDangerPredicate(loop, personalities, config),
     // Every modal decision (and every allowlist auto-allow) lands in the
     // safety audit trail behind `ethos audit decisions`.
     approvalObservability: {
@@ -2075,7 +2266,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     ...(setOnSkillProposed ? { setOnSkillProposed } : {}),
     ...(onMemoryCaptured ? { onMemoryCaptured } : {}),
     memoryNoticesEnabled: config.displayMemoryNotices !== false,
-    ...(goalRunner ? { goalRunner } : {}),
+    ...(goals ? { goals } : {}),
     ...(jobStore ? { jobStore } : {}),
     ...(jobRunners ? { jobRunners } : {}),
     // I15/I18 — the run card's liveness feed and the completion hand-back.
@@ -2083,12 +2274,10 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     // `onComplete`); neither is a new notification bus (G9/D11/D20, D27).
     ...(backgroundExecutor
       ? {
-          subscribeRunUpdates: (handler: (update: RunUpdateDigest) => void) => {
-            backgroundExecutor?.onRunUpdate(handler);
-          },
-          subscribeJobComplete: (handler: (job: BackgroundJob) => void) => {
-            backgroundExecutor?.onComplete(handler);
-          },
+          subscribeRunUpdates: (handler: (update: RunUpdateDigest) => void) =>
+            backgroundExecutor.onRunUpdate(handler),
+          subscribeJobComplete: (handler: (job: BackgroundJob) => void) =>
+            backgroundExecutor.onComplete(handler),
         }
       : {}),
     ...(sttProviders ? { sttProviderRegistry: sttProviders } : {}),

@@ -224,3 +224,49 @@ describe('approval surface', () => {
     expect(result.output).toContain('confirm it verbally');
   });
 });
+
+// A realtime call runs tools outside any AgentLoop run, so the host is the only
+// thing that can carry the per-run plugin context store — and it is created per
+// session (`apps/web-api/src/voice/realtime-control-deps.ts`), which makes the
+// call itself the scope.
+describe('ToolContext parity — the realtime host', () => {
+  function recorder(seen: Array<Parameters<Tool['execute']>[1]>): Tool {
+    return {
+      ...echoTool('read_file', 'file contents', 'file'),
+      async execute(_args, ctx) {
+        seen.push(ctx);
+        return { ok: true, value: 'file contents' };
+      },
+    };
+  }
+
+  function hostWith(seen: Array<Parameters<Tool['execute']>[1]>) {
+    return createRealtimeToolHost({
+      registry: registryWith(echoTool(AGENT_CONSULT_TOOL, 'x'), recorder(seen)),
+      personalityToolset: ['read_file'],
+      safeTools: new Set(['read_file']),
+    });
+  }
+
+  it('hands the tool the context accessors and rootSessionKey', async () => {
+    const seen: Array<Parameters<Tool['execute']>[1]> = [];
+    await hostWith(seen).dispatch({ callId: 'c1', name: 'read_file', args: {} }, dispatchCtx);
+
+    expect(typeof seen[0]?.getContext).toBe('function');
+    expect(typeof seen[0]?.setContext).toBe('function');
+    expect(seen[0]?.rootSessionKey).toBe(dispatchCtx.sessionKey);
+  });
+
+  it('one store per call: shared across its dispatches, never across two calls', async () => {
+    const seen: Array<Parameters<Tool['execute']>[1]> = [];
+    const host = hostWith(seen);
+    await host.dispatch({ callId: 'c1', name: 'read_file', args: {} }, dispatchCtx);
+    seen[0]?.setContext?.('who', 'first call');
+    await host.dispatch({ callId: 'c2', name: 'read_file', args: {} }, dispatchCtx);
+    expect(seen[1]?.getContext?.('who')).toBe('first call');
+
+    const other: Array<Parameters<Tool['execute']>[1]> = [];
+    await hostWith(other).dispatch({ callId: 'c3', name: 'read_file', args: {} }, dispatchCtx);
+    expect(other[0]?.getContext?.('who')).toBeUndefined();
+  });
+});

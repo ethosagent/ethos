@@ -1,6 +1,11 @@
 import type { AgentMesh, NotifyMode } from '@ethosagent/agent-mesh';
 import type { KanbanStore, Task } from '@ethosagent/kanban-store';
-import { autonomyTier, type TrustPolicy, tierMaxRetries } from '@ethosagent/kanban-store';
+import {
+  autonomyTier,
+  renderOperatorContext,
+  type TrustPolicy,
+  tierMaxRetries,
+} from '@ethosagent/kanban-store';
 import type { HookRegistry, SecretsResolver } from '@ethosagent/types';
 import type { MemberRuntime } from './runtime';
 
@@ -263,6 +268,13 @@ export class Dispatcher {
     // 2a. Reclaim stuck `running` tasks — a second eligibility path on top of
     //     step 2's heartbeat-block. A task is stuck if its owner is gone
     //     (`orphan_no_owner`) or it stopped making progress (`orphan_stale`).
+    //     `degraded` is NOT gone: it means a health probe missed
+    //     (`startHealthProbeLoop` in health.ts, below `maxConsecutiveFails`)
+    //     while the process may still be mid-turn on this very task. A member
+    //     that is really gone has left `degraded`: supervisor.ts's `onHung`
+    //     SIGKILLs it (exit → `restarting`) or marks it `failed` without
+    //     auto_restart, and `starting` is a fresh process holding none of the
+    //     old run's state.
     //     Unlike step 2, this re-queues the task (`ready`) rather than blocking
     //     it: the same tick's dispatch loop re-claims it, which routes through
     //     `updateStatus('running')` and so spends the retry budget. We skip
@@ -273,7 +285,8 @@ export class Dispatcher {
     for (const task of this.board.listTasks({ status: 'running' })) {
       if (this.inflight.has(task.id)) continue;
       const assignee = task.assignee;
-      const ownerGone = assignee === null || this.supervisor.statusOf(assignee) !== 'running';
+      const ownerStatus = assignee === null ? null : this.supervisor.statusOf(assignee);
+      const ownerGone = ownerStatus !== 'running' && ownerStatus !== 'degraded';
       const reason: 'orphan_no_owner' | 'orphan_stale' | null = ownerGone
         ? 'orphan_no_owner'
         : staleIds.has(task.id)
@@ -519,6 +532,11 @@ export class Dispatcher {
     return (await this.secrets.get(ref)) ?? undefined;
   }
 
+  /** What the operator has said on the task since it was created — see `renderOperatorContext`. */
+  private operatorContext(taskId: string): string {
+    return renderOperatorContext(this.board.listComments(taskId), this.board.listRuns(taskId));
+  }
+
   private async fireDispatch(
     task: Task,
     assignee: string,
@@ -528,7 +546,7 @@ export class Dispatcher {
     controller: AbortController,
     mode?: NotifyMode,
   ): Promise<void> {
-    const prompt = renderTaskPrompt(task);
+    const prompt = renderTaskPrompt(task, this.operatorContext(task.id));
     const authToken = await this.resolveAuthToken(authTokenRef);
 
     // Per-dispatch timeout so a hung transport doesn't outlive its task. Without
@@ -593,7 +611,7 @@ export class Dispatcher {
     authTokenRef: string | undefined,
     controller: AbortController,
   ): Promise<void> {
-    const prompt = renderTaskPrompt(task);
+    const prompt = renderTaskPrompt(task, this.operatorContext(task.id));
     const authToken = await this.resolveAuthToken(authTokenRef);
 
     const timer = setTimeout(() => {
@@ -646,7 +664,12 @@ export class Dispatcher {
 // closer-tools to every member personality that can be assigned work. A future
 // pass should validate this at `ethos team start` time, loading each member's
 // toolset and refusing to boot when a closer-tool is missing.
-function renderTaskPrompt(task: Task): string {
+//
+// `operatorContext` is `renderOperatorContext`'s output: the peer runs every
+// `/notify` in a fresh `notify:<kind>:<timestamp>` session (the `/notify` route
+// in apps/acp-server/src/index.ts), so an operator's answer to a
+// `kanban_block` question reaches the agent only through this prompt.
+function renderTaskPrompt(task: Task, operatorContext: string): string {
   const lines = [
     `## Task ${task.id}: ${task.title}`,
     '',
@@ -657,6 +680,7 @@ function renderTaskPrompt(task: Task): string {
     `Heartbeat with \`kanban_heartbeat\` if the work takes longer than a minute.`,
     `Task id: \`${task.id}\` — pass this exact id to the kanban tools.`,
   ];
+  if (operatorContext) lines.push('', operatorContext);
   return lines.join('\n');
 }
 

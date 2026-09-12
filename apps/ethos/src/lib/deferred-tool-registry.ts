@@ -26,12 +26,17 @@ export class DeferredToolRegistry implements ToolRegistry {
   private inner: ToolRegistry | null = null;
   private pending: PendingRegistration[] = [];
 
-  /** Set the real registry and flush buffered registrations into it, in order. */
+  /**
+   * Flush buffered registrations into the real registry, in order, then use it.
+   * A flush that throws leaves this registry deferred with its buffer intact,
+   * so onboarding's next boot can hand over a fresh registry
+   * (lib/onboarding-boot.ts).
+   */
   setInner(real: ToolRegistry): void {
-    this.inner = real;
     for (const { tool, opts } of this.pending) {
       real.register(tool, opts);
     }
+    this.inner = real;
     this.pending = [];
   }
 

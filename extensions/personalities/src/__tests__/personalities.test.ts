@@ -442,20 +442,89 @@ describe('FilePersonalityRegistry', () => {
       }
     });
 
-    it('getToolsConfig is undefined for a tools.yaml with no recognised binding', async () => {
+    it('getToolsConfig is undefined for a tools.yaml with no binding at all', async () => {
       // An empty parse result stays undefined rather than becoming `{}` —
       // undefined is what "this personality has no bindings" means to every
       // caller (compose-tools' resolvePersonalitySetting, web-api's
-      // tool-settings service).
+      // tool-settings service). A key with no `secret` is not a binding.
       const dir = join(testDir, 'nokeys');
       await mkdir(dir);
       await writeFile(join(dir, 'config.yaml'), 'name: NoKeys\n');
       await writeFile(join(dir, 'SOUL.md'), '# NoKeys');
-      await writeFile(join(dir, 'tools.yaml'), '# no bindings yet\nbogus_tool: { secret: main }\n');
+      await writeFile(join(dir, 'tools.yaml'), '# no bindings yet\nbogus_tool: { }\n');
 
       const registry = new FilePersonalityRegistry(new FsStorage());
       await registry.loadFromDirectory(testDir);
       expect(registry.getToolsConfig('nokeys')).toBeUndefined();
+    });
+
+    it('preserves a binding key outside the typed roster', () => {
+      // The key space is whatever the registered tools declare, and this layer
+      // cannot see the registry. Dropping a key it cannot vouch for means an
+      // older build DELETES a newer build's binding on the next write, so parse
+      // keeps it and the write boundary in web-api refuses an unclaimed one.
+      expect(parseToolsYaml('dataforseo: { secret: seoMain }\n')).toEqual({
+        dataforseo: { secret: 'seoMain' },
+      });
+      // Block form takes the same path.
+      expect(parseToolsYaml('dataforseo:\n  secret: seoBlock\n')).toEqual({
+        dataforseo: { secret: 'seoBlock' },
+      });
+      // A preserved key carries a secret NAME and nothing else — a stray field
+      // beside it is not part of the shape and does not survive.
+      expect(parseToolsYaml('dataforseo: { secret: seoMain, provider: nope }\n')).toEqual({
+        dataforseo: { secret: 'seoMain' },
+      });
+    });
+
+    it('re-emits preserved keys in stable order after the typed roster', () => {
+      const config = {
+        web_search: { provider: 'exa' as const, secret: 'exa-main' },
+        youtube: { secret: 'yt-main' },
+        zeta_tool: { secret: 'zeta' },
+        dataforseo: { secret: 'seoMain' },
+      };
+      const rendered = renderToolsYaml(config);
+      // Typed roster first in TOOLS_YAML_KEYS order, then unknowns sorted — so
+      // a new key appends a line instead of reshuffling the file.
+      expect(rendered).toBe(
+        [
+          'web_search: { provider: exa, secret: exa-main }',
+          'youtube: { secret: yt-main }',
+          'dataforseo: { secret: seoMain }',
+          'zeta_tool: { secret: zeta }',
+          '',
+        ].join('\n'),
+      );
+      expect(parseToolsYaml(rendered)).toEqual(config);
+    });
+
+    it('drops a preserved binding whose secret name is unsafe', () => {
+      // The `isValidSecretName` guard applies to a key outside the roster
+      // identically: a provider without its intended key must not silently fall
+      // back to a different one.
+      expect(parseToolsYaml('dataforseo: { secret: ../exa/apiKey }\n')).toEqual({});
+      // …and a reserved object-model key never becomes a computed own-key.
+      for (const bad of ['__proto__', 'constructor', 'prototype']) {
+        const parsed = parseToolsYaml(`${bad}: { secret: pwned }\n`);
+        expect(Object.keys(parsed)).toEqual([]);
+        expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+      }
+    });
+
+    it('keeps a tools.yaml whose only binding is outside the typed roster', async () => {
+      // The loadOne guard was roster-driven, so a file parse preserved would
+      // still have been discarded one layer out — the same failure mode that
+      // lost `search_console` before it.
+      const dir = join(testDir, 'serp-alone');
+      await mkdir(dir);
+      await writeFile(join(dir, 'config.yaml'), 'name: SerpAlone\n');
+      await writeFile(join(dir, 'SOUL.md'), '# SerpAlone');
+      await writeFile(join(dir, 'tools.yaml'), 'dataforseo: { secret: seoMain }\n');
+
+      const registry = new FilePersonalityRegistry(new FsStorage());
+      await registry.loadFromDirectory(testDir);
+      expect(registry.getToolsConfig('serp-alone')).toEqual({ dataforseo: { secret: 'seoMain' } });
     });
 
     it('drops a youtube binding whose secret name is unsafe', async () => {

@@ -1,4 +1,4 @@
-import { VOICE_ORIGIN_TAG } from '@ethosagent/types';
+import { unstreamedAnswer, VOICE_ORIGIN_TAG } from '@ethosagent/types';
 import {
   type ApprovalRequest,
   type BackgroundJobStatusWire,
@@ -198,6 +198,18 @@ export interface ChatState {
    * when a new generation starts — a submission, a history load, a reset.
    */
   abortedTurn: boolean;
+  /**
+   * Whether this stream saw the in-flight turn FROM ITS START — the client
+   * submitted it, or `run_start` arrived (packages/core's turn-setup yields it
+   * before any text).
+   *
+   * It gates `withUnstreamedAnswer`, which needs the whole streamed text to
+   * tell what `done.text` still owes. A client that joined a long turn
+   * mid-stream — a remount, or an SSE replay whose head the ring buffer evicted
+   * (`SessionStreamBuffer`, capacity 1000) — holds only the tail, and applying
+   * the rule there re-appends the whole answer as a visible duplicate.
+   */
+  streamAnchored: boolean;
 }
 
 /**
@@ -223,6 +235,7 @@ export const initialChatState: ChatState = {
   phase: null,
   stoppedTurnIds: [],
   abortedTurn: false,
+  streamAnchored: false,
 };
 
 /**
@@ -470,7 +483,10 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       // its ✓ while any of them is, so a `tool_end` that never arrives reads
       // `N actions`, never `✓ N actions`. Both reducers carry this note; changing
       // one without the other re-creates the divergence contract §4 forbids.
-      return finaliseTurn(state);
+      //
+      // `event.text` is handed on for the one answer that arrives ONLY there —
+      // see `withUnstreamedAnswer`.
+      return finaliseTurn(state, event.text);
 
     case 'error': {
       // A stream that errored is a turn that ENDED, so it takes the same
@@ -567,6 +583,9 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
         turnStartedAt: state.turnStartedAt ?? now,
         currentOp: null,
         phase: 'thinking',
+        // This stream is watching the turn from its beginning — see
+        // `streamAnchored`.
+        streamAnchored: true,
       };
 
     case 'usage':
@@ -629,6 +648,8 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
         turnStartedAt: action.timestamp,
         // A new generation re-arms the stream the abort silenced.
         abortedTurn: false,
+        // We are the client that asked for this turn, so we see all of it.
+        streamAnchored: true,
       };
     }
 
@@ -804,8 +825,12 @@ function ensureTurn(turn: AssistantTurn | null, now: number): AssistantTurn {
  * case; a row still running there stays running, and the footer withholds its
  * ✓ rather than the reducer inventing an outcome.
  */
-function finaliseTurn(state: ChatState): ChatState {
-  const turn = state.currentTurn;
+function finaliseTurn(state: ChatState, doneText?: string): ChatState {
+  const streamed = state.currentTurn;
+  // The answer rule needs the WHOLE streamed text; `streamAnchored` is whether
+  // this stream has it.
+  const turn =
+    streamed && (state.streamAnchored ? withUnstreamedAnswer(streamed, doneText) : streamed);
   const cleared = {
     currentTurn: null,
     isStreaming: false,
@@ -813,6 +838,7 @@ function finaliseTurn(state: ChatState): ChatState {
     currentOp: null,
     phase: null,
     turnStartedAt: null,
+    streamAnchored: false,
   } as const;
   if (!turn || (turn.blocks.length === 0 && (state.trail[turn.id]?.length ?? 0) === 0)) {
     return { ...state, ...cleared };
@@ -822,12 +848,45 @@ function finaliseTurn(state: ChatState): ChatState {
   // content, drop the live copy — but move its trail onto the history turn's id
   // first. The live copy is the one with real durations; the persisted rows
   // have none.
+  // A returnDirect answer is persisted as its own assistant row after the
+  // tool_result (`persistReturnDirect`, packages/core/src/agent-loop/stages/
+  // return-direct.ts), so `parseHistory` gives its twin any streamed preamble
+  // PLUS the answer as a separate block — the shape `withUnstreamedAnswer`
+  // gives the live turn — and this one comparison covers it.
   const last = state.messages[state.messages.length - 1];
   if (last?.role === 'assistant' && turnsMatch(last, turn)) {
     return { ...state, ...rekeyTrail(state, turn.id, last.id), ...cleared };
   }
+  // History written before core persisted that row: the twin cannot carry the
+  // answer (it exists only as a tool_result row, which `parseHistory` files in
+  // the trail), so it matches the turn as it STREAMED. Keep the twin's id, give
+  // it the answer — one turn, and it shows what the user was told.
+  if (last?.role === 'assistant' && streamed && turn !== streamed && turnsMatch(last, streamed)) {
+    const messages = [...state.messages.slice(0, -1), { ...last, blocks: turn.blocks }];
+    return { ...state, messages, ...rekeyTrail(state, turn.id, last.id), ...cleared };
+  }
 
   return { ...state, messages: [...state.messages, turn], ...cleared };
+}
+
+/**
+ * The turn with the answer its `done` alone carries appended as its own text
+ * block — or unchanged when nothing is owed.
+ *
+ * A `returnDirect` tool result reaches the turn only as `done.text`, possibly
+ * after a preamble the model streamed before the call; in every other turn
+ * `done.text` IS the streamed text. `unstreamedAnswer` (@ethosagent/types) is
+ * the one rule, applied to the text this turn streamed. A separate block, not
+ * an extension of the preamble, because that is how `parseHistory` rebuilds the
+ * persisted turn — so the replay defense's `turnsMatch` sees the same shape.
+ * Applied only on a stream anchored to the turn's start (`streamAnchored`).
+ * Pinned by `__tests__/chat-reducer.test.ts` ('arrives only as `done.text`').
+ */
+function withUnstreamedAnswer(turn: AssistantTurn, doneText: string | undefined): AssistantTurn {
+  const streamed = turn.blocks.map((b) => (b.kind === 'text' ? b.content : '')).join('');
+  const answer = unstreamedAnswer(streamed, doneText);
+  if (!answer) return turn;
+  return { ...turn, blocks: [...turn.blocks, { kind: 'text', content: answer }] };
 }
 
 /**

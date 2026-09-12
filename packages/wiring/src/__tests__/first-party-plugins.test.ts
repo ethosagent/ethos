@@ -1,4 +1,35 @@
+import { DefaultLLMProviderRegistry } from '@ethosagent/core';
+import {
+  PROVIDER_CONTRACT_MAJOR as ac,
+  activate as activateAnthropic,
+} from '@ethosagent/llm-anthropic';
+import { activate as activateAzure, PROVIDER_CONTRACT_MAJOR as azc } from '@ethosagent/llm-azure';
+import {
+  activate as activateBedrock,
+  PROVIDER_CONTRACT_MAJOR as bc,
+} from '@ethosagent/llm-bedrock';
+import { activate as activateCodex, PROVIDER_CONTRACT_MAJOR as cc } from '@ethosagent/llm-codex';
+import {
+  activate as activateGeminiNative,
+  PROVIDER_CONTRACT_MAJOR as gc,
+} from '@ethosagent/llm-gemini-native';
+import {
+  activate as activateOpenaiCompat,
+  PROVIDER_CONTRACT_MAJOR as oc,
+} from '@ethosagent/llm-openai-compat';
+import { activate as activateXai, PROVIDER_CONTRACT_MAJOR as xc } from '@ethosagent/llm-xai';
 import { describe, expect, it } from 'vitest';
+import { activateFirstPartyPlugins } from '../activate-first-party';
+import {
+  registerBuiltinProviders,
+  registerRemainingBuiltinProviders,
+} from '../register-builtin-providers';
+
+// Static imports, not per-test `await import(...)`: the provider packages
+// (the AWS SDK behind bedrock among them) are a heavy cold graph, and imported
+// inside a case their transform counted against that case's 15s budget, which a
+// parallel run can exhaust. Imported here it happens at collection, where no
+// timeout applies. Nothing in this file needs a fresh module per case.
 
 const noopLog = {
   info: () => {},
@@ -11,33 +42,6 @@ const noopLog = {
 
 describe('first-party plugin activation', () => {
   it('registers the same provider names as registerBuiltinProviders', async () => {
-    const { DefaultLLMProviderRegistry } = await import('@ethosagent/core');
-    const { registerBuiltinProviders, registerRemainingBuiltinProviders } = await import(
-      '../register-builtin-providers'
-    );
-    const { activateFirstPartyPlugins } = await import('../activate-first-party');
-    const { activate: activateAnthropic, PROVIDER_CONTRACT_MAJOR: ac } = await import(
-      '@ethosagent/llm-anthropic'
-    );
-    const { activate: activateOpenaiCompat, PROVIDER_CONTRACT_MAJOR: oc } = await import(
-      '@ethosagent/llm-openai-compat'
-    );
-    const { activate: activateAzure, PROVIDER_CONTRACT_MAJOR: azc } = await import(
-      '@ethosagent/llm-azure'
-    );
-    const { activate: activateCodex, PROVIDER_CONTRACT_MAJOR: cc } = await import(
-      '@ethosagent/llm-codex'
-    );
-    const { activate: activateBedrock, PROVIDER_CONTRACT_MAJOR: bc } = await import(
-      '@ethosagent/llm-bedrock'
-    );
-    const { activate: activateGeminiNative, PROVIDER_CONTRACT_MAJOR: gc } = await import(
-      '@ethosagent/llm-gemini-native'
-    );
-    const { activate: activateXai, PROVIDER_CONTRACT_MAJOR: xc } = await import(
-      '@ethosagent/llm-xai'
-    );
-
     // Path A: direct registration (standalone createLLM)
     const directRegistry = new DefaultLLMProviderRegistry();
     registerBuiltinProviders(directRegistry);
@@ -100,9 +104,6 @@ describe('first-party plugin activation', () => {
   });
 
   it('rejects mismatched pluginContractMajor', async () => {
-    const { DefaultLLMProviderRegistry } = await import('@ethosagent/core');
-    const { activateFirstPartyPlugins } = await import('../activate-first-party');
-
     const registry = new DefaultLLMProviderRegistry();
 
     await expect(
@@ -115,12 +116,6 @@ describe('first-party plugin activation', () => {
   });
 
   it('built-in providers register via activate() under bare names', async () => {
-    const { DefaultLLMProviderRegistry } = await import('@ethosagent/core');
-    const { activateFirstPartyPlugins } = await import('../activate-first-party');
-    const { activate: activateAnthropic, PROVIDER_CONTRACT_MAJOR: ac } = await import(
-      '@ethosagent/llm-anthropic'
-    );
-
     const registry = new DefaultLLMProviderRegistry();
     await activateFirstPartyPlugins(
       [
@@ -138,12 +133,6 @@ describe('first-party plugin activation', () => {
   });
 
   it('built-in and community providers coexist in the same registry', async () => {
-    const { DefaultLLMProviderRegistry } = await import('@ethosagent/core');
-    const { activateFirstPartyPlugins } = await import('../activate-first-party');
-    const { activate: activateAnthropic, PROVIDER_CONTRACT_MAJOR: ac } = await import(
-      '@ethosagent/llm-anthropic'
-    );
-
     const registry = new DefaultLLMProviderRegistry();
 
     // Built-in via first-party activation

@@ -79,10 +79,21 @@ export async function gatherAdminStatus(deps: {
   let providers: AdminStatus['providers'] = [];
   try {
     const cfg = await deps.config.get();
-    providers = cfg.providers.map((p) => ({
+    // The EFFECTIVE roster: the runtime runs on the chain from two entries on
+    // and on the top-level fields below that (`createLLM`, packages/wiring).
+    // Reporting the chain alone said "no providers" for a top-level-only
+    // config, while `ConfigService.rotateProviderKey` accepts that provider and
+    // points its refusal here.
+    const effective =
+      cfg.providers.length >= 2
+        ? cfg.providers
+        : cfg.provider
+          ? [{ provider: cfg.provider, apiKeyPreview: cfg.apiKeyPreview }]
+          : [];
+    providers = effective.map((p) => ({
       id: p.provider,
       name: p.provider,
-      hasKey: Boolean(p.apiKeyPreview),
+      hasKey: Boolean(p.apiKeyPreview) && p.apiKeyPreview !== '<unset>',
     }));
   } catch {
     // config service may not be available

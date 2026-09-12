@@ -1,7 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import {
+  fillFromTopLevel,
+  isProviderChainSecretRef,
   isVoiceChannelPlatform,
   normalizeAuxTimeoutSeconds,
+  providerChainVersion,
   secretRefFromValue,
   VOICE_CHANNEL_PLATFORMS,
   type VoiceBargeInTuning,
@@ -16,6 +19,7 @@ import {
   parseRealtimeRoster,
   parseSttRoster,
   parseTtsRoster,
+  type RawConfig,
   type RawProviderEntry,
 } from '../repositories/config.repository';
 
@@ -1359,6 +1363,13 @@ export interface ConfigGetResult {
     apiKeyPreview: string;
     baseUrl: string | null;
   }>;
+  /** `providerChainVersion` of the stored chain these `providers` came from.
+   *  `update` requires it back with any `providers` list. */
+  providersVersion: string;
+  /** What the provider-chain codec dropped out of config.yaml and why — a
+   *  `providers.<n>` index with no `provider` line loses the whole entry. The
+   *  CLI surfaces the same notices at boot and in `ethos doctor`. */
+  providersNotices: string[];
   approvalMode: 'manual' | 'smart' | 'off';
   verbosity: 'concise' | 'balanced' | 'verbose';
   debugMode: boolean;
@@ -1603,6 +1614,111 @@ export interface ConfigGetResult {
   };
 }
 
+/** One provider-chain row as the Settings page sends it. */
+export interface ProviderRowInput {
+  provider: string;
+  model?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  /** Position in `get().providers` (= the repository's chain) the row was
+   *  loaded from. Absent for a row added in the editor. */
+  sourceIndex?: number;
+}
+
+/**
+ * The repository entry for one incoming row. The page owns `model` and
+ * `baseUrl` — it always sends its full visible state, so an absent one was
+ * cleared — and `apiKey` only when retyped. Everything else belongs to the
+ * stored entry the row came from and is kept: the key reference, `apiVersion`,
+ * `region`, `awsProfile` and `passthrough`.
+ *
+ * A row keeps nothing when it has no `sourceIndex`, when that index is past the
+ * stored chain, or when its provider differs from the stored entry's — a key
+ * or a region never crosses to a different provider. Stored entries no row
+ * points at are dropped, because the caller's list IS the new chain.
+ */
+function overlayProviderRow(
+  row: ProviderRowInput,
+  stored: readonly RawProviderEntry[],
+): RawProviderEntry {
+  const source = row.sourceIndex !== undefined ? stored[row.sourceIndex] : undefined;
+  const entry: RawProviderEntry =
+    source && source.provider === row.provider ? { ...source } : { provider: row.provider };
+  if (row.model) entry.model = row.model;
+  else delete entry.model;
+  if (row.baseUrl) entry.baseUrl = row.baseUrl;
+  else delete entry.baseUrl;
+  if (row.apiKey) entry.apiKey = row.apiKey;
+  return entry;
+}
+
+/**
+ * Refuse a `providers` list the overlay cannot apply unambiguously: no
+ * `providersVersion` (nothing to check staleness against), or two rows naming
+ * the same stored entry (both would inherit one key reference, and deleting
+ * either later would delete the other's secret).
+ */
+function assertProviderRows(rows: readonly ProviderRowInput[], version: string | undefined): void {
+  if (!version) {
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: '`providers` was sent without the `providersVersion` it was built from.',
+      action: 'Send `providersVersion` from the `config.get` the rows were loaded from.',
+    });
+  }
+  const seen = new Set<number>();
+  for (const row of rows) {
+    if (row.sourceIndex === undefined) continue;
+    if (seen.has(row.sourceIndex)) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `Two provider rows claim stored entry ${row.sourceIndex}.`,
+        action: 'Send each loaded row once; a new row carries no `sourceIndex`.',
+      });
+    }
+    seen.add(row.sourceIndex);
+  }
+}
+
+/** Provider-specific top-level lines this repository keeps in `passthrough`. */
+const TOP_LEVEL_PROVIDER_FIELDS = ['apiVersion', 'region', 'awsProfile'] as const;
+
+/**
+ * What a patch that MOVES the top-level `provider` must do to the rest of the
+ * top level. The runtime reads the top-level fields whenever the chain has
+ * fewer than two entries (`createLLM`, packages/wiring), so they are one
+ * entry and move together: when the new chain row 0 is the new provider, the
+ * top level takes that entry's key reference, model, base URL and
+ * `apiVersion` / `region` / `awsProfile`; otherwise it takes none of them, and
+ * the old provider's are cleared either way — the model included, since a model
+ * id belongs to the provider it was chosen for. A value the patch sets itself
+ * (a typed key, the page's model and base URL) wins. `{}` / nothing when the
+ * patch leaves `provider` where it was. The entry's unmodelled `passthrough`
+ * has no top-level home and is not mirrored.
+ */
+function mirrorTopLevel(
+  patch: ConfigUpdateInput,
+  before: RawConfig | null,
+  chain: readonly RawProviderEntry[] | undefined,
+): { fields: Partial<RawConfig>; set: Record<string, string>; clear: string[] } {
+  const none = { fields: {}, set: {}, clear: [] };
+  if (patch.provider === undefined || patch.provider === before?.provider) return none;
+  const head = (chain ?? before?.providers ?? [])[0];
+  const entry = head?.provider === patch.provider ? head : undefined;
+  const fields: Partial<RawConfig> = {};
+  if (!patch.apiKey) fields.apiKey = entry?.apiKey;
+  if (!patch.model) fields.model = entry?.model;
+  if (!patch.baseUrl) fields.baseUrl = entry?.baseUrl;
+  const set: Record<string, string> = {};
+  const clear: string[] = [];
+  for (const field of TOP_LEVEL_PROVIDER_FIELDS) {
+    const value = entry?.[field];
+    if (value) set[field] = value;
+    else clear.push(field);
+  }
+  return { fields, set, clear };
+}
+
 export interface ConfigUpdateInput {
   provider?: string;
   model?: string;
@@ -1612,12 +1728,12 @@ export interface ConfigUpdateInput {
   memory?: 'markdown' | 'vector' | 'vault';
   modelRouting?: Record<string, string>;
   skin?: string;
-  providers?: Array<{
-    provider: string;
-    model?: string;
-    apiKey?: string;
-    baseUrl?: string;
-  }>;
+  /** The whole chain, in order. A row loaded from `get().providers` carries its
+   *  position there as `sourceIndex`; see `overlayProviderRow`. */
+  providers?: ProviderRowInput[];
+  /** `get().providersVersion` the `providers` list was built from. Required
+   *  with `providers`; a stale one is refused with `CONFIG_CONFLICT`. */
+  providersVersion?: string;
   approvalMode?: 'manual' | 'smart' | 'off';
   verbosity?: 'concise' | 'balanced' | 'verbose';
   debugMode?: boolean;
@@ -1928,6 +2044,8 @@ export class ConfigService {
           baseUrl: p.baseUrl ?? null,
         })),
       ),
+      providersVersion: providerChainVersion(raw.providers),
+      providersNotices: raw.providerNotices,
       approvalMode: raw.approvalMode ?? 'manual',
       verbosity: raw.verbosity ?? 'balanced',
       debugMode: raw.debugMode ?? false,
@@ -2297,6 +2415,25 @@ export class ConfigService {
     // Empty-string apiKey would erase the existing key. Treat as no-op.
     const cleaned: typeof patch = { ...patch };
     if (cleaned.apiKey !== undefined && cleaned.apiKey === '') delete cleaned.apiKey;
+    delete cleaned.providersVersion;
+
+    // A `providers` list is checked FIRST, before any write below — a stale or
+    // malformed one must leave the file and the vault exactly as they were.
+    // The same version is re-checked inside the repository's write lock
+    // (`ConfigRepository.update`), which closes the window between this read
+    // and that write.
+    const before = await this.opts.config.read();
+    if (patch.providers !== undefined) {
+      assertProviderRows(patch.providers, patch.providersVersion);
+      if (providerChainVersion(before?.providers ?? []) !== patch.providersVersion) {
+        throw new EthosError({
+          code: 'CONFIG_CONFLICT',
+          cause:
+            'The provider chain changed after this page loaded it (another tab, or `ethos fallback`). Nothing was saved.',
+          action: 'Reload Settings, check the provider chain, and save again.',
+        });
+      }
+    }
 
     // These behavior flags are flat config keys (`admin.enabled`,
     // `display.streaming_edits`, `compaction.autoCompact`, …), not typed fields
@@ -2909,6 +3046,55 @@ export class ConfigService {
 
     for (const key of SETTINGS_PATCH_KEYS) delete cleaned[key];
 
+    // Convert providers to repository format when present. The incoming list
+    // is the WHOLE chain in its new order (the Settings page sends it on every
+    // save), but a row carries only what the page shows. A row that names the
+    // stored entry it was loaded from (`sourceIndex`) is overlaid onto that
+    // entry, so the key reference, `apiVersion` / `region` / `awsProfile` and
+    // any unmodelled `passthrough` survive; see `overlayProviderRow`. Pinned by
+    // `__tests__/services/config-provider-chain.test.ts`.
+    // Every vault secret the stored chain points at is a deletion candidate;
+    // `deleteOrphanedSecrets` keeps the ones the written config still names.
+    let repoProviders: RawProviderEntry[] | undefined;
+    let chainSecretRefs: string[] = [];
+    if (cleaned.providers) {
+      const stored = before?.providers ?? [];
+      repoProviders = cleaned.providers.map((p) => overlayProviderRow(p, stored));
+      chainSecretRefs = providerChainSecretRefs(stored);
+      // Below two entries the runtime runs on the top-level fields, from two
+      // on on the chain alone (`createLLM`, packages/wiring). A config with no
+      // chain shows ONE row, built from the top-level fields: saving it back
+      // must not write a one-entry chain (the runtime ignores it, and it went
+      // keyless into entry 0 the moment a second row was added). And when this
+      // save grows a chain of fewer than two entries past one, entry 0 takes
+      // the primary's place, so it takes the top-level key reference, base
+      // URL, model and provider-specific fields too (`fillFromTopLevel`).
+      const legacySingleRow =
+        stored.length === 0 &&
+        cleaned.providers.length === 1 &&
+        cleaned.providers[0]?.sourceIndex === undefined;
+      const head = repoProviders[0];
+      if (legacySingleRow) {
+        repoProviders = undefined;
+      } else if (stored.length < 2 && repoProviders.length >= 2 && head && before?.provider) {
+        repoProviders[0] = fillFromTopLevel(head, topLevelChainEntry(before));
+      }
+      // The rows are not repository entries; only `repoProviders` is written.
+      delete cleaned.providers;
+    }
+
+    // A patch that moves the top-level `provider` moves the whole top-level
+    // entry with it — key, model, base URL and the provider-specific lines —
+    // and never leaves the old provider's behind (`mirrorTopLevel`). Applied
+    // here, before the passthrough deletes below, because two of those lines
+    // live in passthrough.
+    const mirror = mirrorTopLevel(cleaned, before, repoProviders);
+    for (const [key, value] of Object.entries(mirror.set)) passthroughPatch[key] = value;
+    for (const key of mirror.clear) {
+      delete passthroughPatch[key];
+      if (before?.passthrough[key] !== undefined) deleteKeys.push(key);
+    }
+
     // A key both deleted (prefix replacement) and re-set in the same patch
     // must survive — the delete pass runs first, so drop it from the list.
     const finalDeletes = [...new Set(deleteKeys)].filter((k) => !(k in passthroughPatch));
@@ -2977,48 +3163,110 @@ export class ConfigService {
     delete cleaned.voiceRealtimeDefault;
     delete cleaned.voiceRealtimeSessionBudgetUsd;
 
-    // Convert providers to repository format when present.
-    let repoProviders: RawProviderEntry[] | undefined;
-    if (cleaned.providers) {
-      repoProviders = cleaned.providers.map((p) => {
-        const entry: RawProviderEntry = { provider: p.provider };
-        if (p.model) entry.model = p.model;
-        if (p.apiKey) entry.apiKey = p.apiKey;
-        if (p.baseUrl) entry.baseUrl = p.baseUrl;
-        return entry;
+    await this.opts.config.update(
+      {
+        ...cleaned,
+        ...mirror.fields,
+        ...(repoProviders !== undefined ? { providers: repoProviders } : {}),
+        ...(passthrough !== undefined ? { passthrough } : {}),
+        ...(patch.voiceProvider !== undefined
+          ? { voiceProvider: patch.voiceProvider || undefined }
+          : {}),
+        ...(patch.voiceApiKey !== undefined ? { voiceApiKey: patch.voiceApiKey || undefined } : {}),
+        ...(patch.voiceBaseUrl !== undefined
+          ? { voiceBaseUrl: patch.voiceBaseUrl || undefined }
+          : {}),
+        ...(patch.voiceModel !== undefined ? { voiceModel: patch.voiceModel || undefined } : {}),
+        ...(patch.voiceTtsProvider !== undefined
+          ? { voiceTtsProvider: patch.voiceTtsProvider || undefined }
+          : {}),
+        ...(patch.voiceTtsApiKey !== undefined
+          ? { voiceTtsApiKey: patch.voiceTtsApiKey || undefined }
+          : {}),
+        ...(patch.voiceTtsVoice !== undefined
+          ? { voiceTtsVoice: patch.voiceTtsVoice || undefined }
+          : {}),
+        ...(patch.voiceTtsBaseUrl !== undefined
+          ? { voiceTtsBaseUrl: patch.voiceTtsBaseUrl || undefined }
+          : {}),
+        ...(patch.voiceTtsModel !== undefined
+          ? { voiceTtsModel: patch.voiceTtsModel || undefined }
+          : {}),
+      },
+      patch.providers !== undefined ? { providersVersion: patch.providersVersion } : {},
+    );
+
+    await this.deleteOrphanedSecrets([
+      ...droppedSecretRefs,
+      ...chainSecretRefs,
+      ...topLevelChainSecretRefs(before),
+    ]);
+    try {
+      await this.opts.onUpdated?.();
+    } catch {
+      // The write landed; a broken listener is not the caller's problem.
+    }
+  }
+
+  /**
+   * Replace the API key of one provider (`admin.rotateKey`): the top-level
+   * `apiKey` when the top-level `provider` matches, and the `apiKey` of EVERY
+   * chain entry whose `provider` matches. Every other field of every entry —
+   * order, `region`, `apiVersion`, `passthrough`, the other entries' keys — is
+   * the stored entry as the codec read it. The key reaches the file only as a
+   * vault reference (`ConfigRepository.externalizeSecrets`). Pinned by
+   * `__tests__/services/config-provider-chain.test.ts`.
+   *
+   * Refuses with `INVALID_INPUT` (HTTP 400) when nothing is configured for
+   * `provider`, or when `key` is empty — an empty key would ERASE the stored
+   * one — and with `CONFIG_CONFLICT` (409) when the chain changed between the
+   * read and the write. Writes nothing in any of those cases.
+   */
+  async rotateProviderKey(provider: string, key: string): Promise<void> {
+    const raw = await this.opts.config.read();
+    if (!raw) {
+      throw new EthosError({
+        code: 'CONFIG_MISSING',
+        cause: 'Config not found at ~/.ethos/config.yaml',
+        action: 'Run onboarding from the web UI or `ethos setup` from the CLI.',
       });
     }
-
-    await this.opts.config.update({
-      ...cleaned,
-      ...(repoProviders !== undefined ? { providers: repoProviders } : {}),
-      ...(passthrough !== undefined ? { passthrough } : {}),
-      ...(patch.voiceProvider !== undefined
-        ? { voiceProvider: patch.voiceProvider || undefined }
-        : {}),
-      ...(patch.voiceApiKey !== undefined ? { voiceApiKey: patch.voiceApiKey || undefined } : {}),
-      ...(patch.voiceBaseUrl !== undefined
-        ? { voiceBaseUrl: patch.voiceBaseUrl || undefined }
-        : {}),
-      ...(patch.voiceModel !== undefined ? { voiceModel: patch.voiceModel || undefined } : {}),
-      ...(patch.voiceTtsProvider !== undefined
-        ? { voiceTtsProvider: patch.voiceTtsProvider || undefined }
-        : {}),
-      ...(patch.voiceTtsApiKey !== undefined
-        ? { voiceTtsApiKey: patch.voiceTtsApiKey || undefined }
-        : {}),
-      ...(patch.voiceTtsVoice !== undefined
-        ? { voiceTtsVoice: patch.voiceTtsVoice || undefined }
-        : {}),
-      ...(patch.voiceTtsBaseUrl !== undefined
-        ? { voiceTtsBaseUrl: patch.voiceTtsBaseUrl || undefined }
-        : {}),
-      ...(patch.voiceTtsModel !== undefined
-        ? { voiceTtsModel: patch.voiceTtsModel || undefined }
-        : {}),
-    });
-
-    await this.deleteOrphanedSecrets(droppedSecretRefs);
+    if (!key) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: 'The new key is empty.',
+        action: 'Pass the new API key; nothing was changed.',
+      });
+    }
+    const top = raw.provider === provider;
+    const inChain = raw.providers.some((p) => p.provider === provider);
+    if (!top && !inChain) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `No provider "${provider}" is configured, so there is no key to rotate.`,
+        action: 'Name a provider from admin.getStatus, or add it in Settings first.',
+      });
+    }
+    // Conditional on the chain this was built from, re-checked inside the
+    // repository's write lock: a concurrent change refuses with
+    // CONFIG_CONFLICT rather than overwriting it with this stale copy.
+    await this.opts.config.update(
+      {
+        ...(top ? { apiKey: key } : {}),
+        ...(inChain
+          ? {
+              providers: raw.providers.map((p) =>
+                p.provider === provider ? { ...p, apiKey: key } : p,
+              ),
+            }
+          : {}),
+      },
+      { providersVersion: providerChainVersion(raw.providers) },
+    );
+    await this.deleteOrphanedSecrets([
+      ...(inChain ? providerChainSecretRefs(raw.providers) : []),
+      ...(top ? topLevelChainSecretRefs(raw) : []),
+    ]);
     try {
       await this.opts.onUpdated?.();
     } catch {
@@ -3036,10 +3284,13 @@ export class ConfigService {
    * so the deletion belongs here, alongside the caller that knows the key
    * carried a credential (same shape as PlatformsRepository's removals).
    *
-   * Refs still named by a surviving passthrough entry are kept: deleting one
-   * would break that entry. Webhook refs embed the webhook id so a collision
-   * needs a hand-edited config.yaml, but the check costs one read and the
-   * failure mode it guards is a live credential deleted out from under a hook.
+   * Refs still named ANYWHERE in config.yaml or another operator-authored
+   * file that can hold one (`ConfigRepository.secretRefsInUse`: mcp.json,
+   * keys.json, `personalities/<id>/*.yaml`, …), even inside a longer value, are
+   * kept: deleting one would break whatever names it. Webhook refs embed the webhook
+   * id and chain refs an index, so a collision needs a hand-edited config.yaml
+   * or two chain entries sharing a ref, but the check costs one read and the
+   * failure mode it guards is a live credential deleted out from under its user.
    *
    * A failing delete propagates (ARCHITECTURE.md §V S7 — no silent failure).
    * The config change already landed; the error is how the operator learns
@@ -3048,12 +3299,7 @@ export class ConfigService {
   private async deleteOrphanedSecrets(refs: string[]): Promise<void> {
     const secrets = this.opts.secrets;
     if (!secrets || refs.length === 0) return;
-    const surviving = new Set<string>();
-    const after = await this.opts.config.read();
-    for (const value of Object.values(after?.passthrough ?? {})) {
-      const ref = secretRefFromValue(value);
-      if (ref) surviving.add(ref);
-    }
+    const surviving = await this.opts.config.secretRefsInUse();
     for (const ref of new Set(refs)) {
       if (surviving.has(ref)) continue;
       await secrets.delete(ref);
@@ -3064,6 +3310,52 @@ export class ConfigService {
 // `${secrets:ref}` — same indirection syntax the CLI's config loader
 // resolves (apps/ethos/src/config.ts).
 const SECRETS_REF_RE = /\$\{secrets:([^}]+)\}/g;
+
+/** The top-level provider fields as a chain entry, for `fillFromTopLevel`.
+ *  `apiVersion` / `region` / `awsProfile` are top-level lines this repository
+ *  does not model, so they sit in `passthrough`. */
+function topLevelChainEntry(raw: RawConfig): RawProviderEntry {
+  const p = raw.passthrough;
+  return {
+    provider: raw.provider ?? '',
+    ...(raw.apiKey ? { apiKey: raw.apiKey } : {}),
+    ...(raw.model ? { model: raw.model } : {}),
+    ...(raw.baseUrl ? { baseUrl: raw.baseUrl } : {}),
+    ...(p.apiVersion ? { apiVersion: p.apiVersion } : {}),
+    ...(p.region ? { region: p.region } : {}),
+    ...(p.awsProfile ? { awsProfile: p.awsProfile } : {}),
+  };
+}
+
+/**
+ * The deletion candidate among the top-level key fields: the `apiKey` the
+ * config held BEFORE the save, and only when it is an index-named chain secret
+ * (`isProviderChainSecretRef`) — which it is after a provider move mirrored
+ * chain row 0's reference up (`mirrorTopLevel`). The canonical names the
+ * writers mint for top-level fields (`providers/<provider>/apiKey`,
+ * `auxiliary/*`) are read by name by provider factories and tools and are
+ * never candidates. `deleteOrphanedSecrets` keeps any still referenced.
+ */
+function topLevelChainSecretRefs(before: RawConfig | null): string[] {
+  const ref = before?.apiKey ? secretRefFromValue(before.apiKey) : null;
+  return ref && isProviderChainSecretRef(ref) ? [ref] : [];
+}
+
+/** The vault refs a chain's entries point at that the chain itself minted
+ *  (`providers/<index>/…`, see `externalizeProviderChain` in
+ *  @ethosagent/config). Read strictly (`secretRefFromValue`) and limited to
+ *  that namespace because these are DELETION candidates: a hand-written ref to
+ *  some other secret is not the chain's to remove. */
+function providerChainSecretRefs(chain: readonly RawProviderEntry[]): string[] {
+  const refs: string[] = [];
+  for (const entry of chain) {
+    for (const value of [entry.apiKey ?? '', ...Object.values(entry.passthrough ?? {})]) {
+      const ref = secretRefFromValue(value);
+      if (ref && isProviderChainSecretRef(ref)) refs.push(ref);
+    }
+  }
+  return refs;
+}
 
 /** Coerce the stored `display.streaming_edits` value to the enum. Unset or
  *  unrecognized falls back to the effective default, `'dms'`. */

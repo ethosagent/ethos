@@ -53,7 +53,6 @@ vi.mock('../backend', () => ({
   restartBackendAsync: async () => 3001,
   startBackend: () => {},
   startBackendAsync: async () => 3001,
-  stopBackend: () => {},
 }));
 vi.mock('../connection-window', () => ({ showConnectionWindow: async () => null }));
 vi.mock('../error-window', () => ({ showErrorWindow: async () => 'quit' }));

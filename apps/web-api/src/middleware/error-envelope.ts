@@ -31,6 +31,8 @@ const STATUS_BY_CODE: Partial<Record<EthosErrorCode, number>> = {
   SESSION_NOT_FOUND: 404,
   CONFIG_MISSING: 400,
   CONFIG_INVALID: 400,
+  // A write built against a provider chain that has since changed (ConfigService.update).
+  CONFIG_CONFLICT: 409,
   INVALID_INPUT: 400,
   PERSONALITY_NOT_FOUND: 404,
   FILE_NOT_FOUND: 404,
@@ -56,6 +58,14 @@ const STATUS_BY_CODE: Partial<Record<EthosErrorCode, number>> = {
   // The caller supplied a credential or a chat the platform did not accept.
   RECIPE_CHANNEL_SETUP_FAILED: 400,
   NETWORK_ERROR: 502,
+  // This server is not set up to do that (no LLM, no goal executor, no
+  // approval queue, no attachment cache, …): a precondition of the deployment,
+  // not a crash and not the caller's fault. 503 matches /healthz's degraded
+  // answer. Limitation: `requireStorage` (repositories/require-storage.ts)
+  // throws this code for a wiring bug. Today its only callers are constructors,
+  // so it fails `createWebApi` rather than a request, but nothing enforces
+  // that — a request-time caller would surface a wiring bug as 503.
+  NOT_CONFIGURED: 503,
 };
 
 export function toEnvelope(err: EthosError): ErrorEnvelope {
@@ -83,7 +93,7 @@ export function errorHandler(err: Error, c: Context): Response {
   if (isEthosError(err)) {
     return c.json(
       { ...toEnvelope(err), ...(requestId ? { requestId } : {}) },
-      statusFor(err.code) as 400 | 401 | 403 | 404 | 409 | 413 | 500 | 502 | 504,
+      statusFor(err.code) as 400 | 401 | 403 | 404 | 409 | 413 | 500 | 502 | 503 | 504,
     );
   }
   // Anything else is a bug (uncaught raw Error). Log the full error server-side

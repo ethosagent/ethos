@@ -91,6 +91,12 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     | undefined;
   private readonly clarifyResolvedListeners = new Set<ClarifyResolvedListener>();
   private activeSink: InMemorySteerSink | null = null;
+  /**
+   * One entry per `runTurn` that has not SETTLED — including a turn the stall
+   * guard abandoned, which keeps running on the loop after `idle` was emitted.
+   * What `whenIdle()` waits on; `isRunning` (the UI's view) does not.
+   */
+  private readonly turnsInFlight = new Set<Promise<void>>();
 
   constructor(loop: AgentLoop, options: BridgeOptions = {}) {
     super();
@@ -168,6 +174,23 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
     this.controller?.abort();
   }
 
+  /**
+   * Resolves once no turn is running — at once when idle. After `replaceLoop`
+   * the only turn that can still be running is the replaced loop's, so this is
+   * when a host may release that loop's runtime (F06; the TUI's `/model`
+   * switch, apps/tui/src/loop-switch.ts).
+   */
+  async whenIdle(): Promise<void> {
+    // Not the `idle` event: the stall guard emits it for a turn it abandons
+    // while that turn is still running, and a host that disposes the loop at
+    // that point pulls its stores out from under it. A queued turn starts
+    // before the one ahead of it leaves the set, so the loop only ends once
+    // nothing is left to run. Pinned by __tests__/agent-bridge.test.ts.
+    while (this.turnsInFlight.size > 0) {
+      await Promise.all([...this.turnsInFlight]);
+    }
+  }
+
   /** Drop any pending queued sends. Does not affect the in-flight turn. */
   clearQueue(): number {
     const dropped = this.queue.length;
@@ -227,6 +250,20 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
   // -------------------------------------------------------------------------
 
   private async runTurn(input: string, opts: BridgeOpts): Promise<void> {
+    let settle: (() => void) | undefined;
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    this.turnsInFlight.add(settled);
+    try {
+      await this.runTurnBody(input, opts);
+    } finally {
+      this.turnsInFlight.delete(settled);
+      settle?.();
+    }
+  }
+
+  private async runTurnBody(input: string, opts: BridgeOpts): Promise<void> {
     this.controller = new AbortController();
     let timedOut = false;
 

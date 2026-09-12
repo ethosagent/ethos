@@ -1,4 +1,5 @@
 import type { AgentEvent, PcmChunk, VoiceMode } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 import { encodeWav } from '@ethosagent/voice-session';
 import {
   matchWakePhrase,
@@ -234,6 +235,12 @@ export class SatelliteLane {
   private closed = false;
   /** Serializes frame dispatch — see {@link handle}. */
   private chain: Promise<void> = Promise.resolve();
+  /**
+   * Per session key: the last agent run on it, drained to its end — which is
+   * later than its reply (see `runTurn`). The next run on that key starts only
+   * once this settles. Entries never reject and remove themselves when done.
+   */
+  private readonly turnDrains = new Map<string, Promise<void>>();
 
   constructor(opts: SatelliteLaneOptions) {
     this.opts = opts;
@@ -811,38 +818,131 @@ export class SatelliteLane {
       spoken.push(sentence);
       this.queueSpeech(state, sentence, speakAudio);
     };
-    try {
-      for await (const event of this.opts.deps.runTurn({
-        text,
-        sessionKey,
-        personalityId,
-        signal: state.controller.signal,
-      })) {
-        if (this.isStale(state)) return;
-        if (event.type === 'text_delta') {
-          reply += event.text;
-          const clean = sanitizeForSpeech(reply);
-          // `>` and not `!==`: an opening fence makes the sanitized text
-          // SHRINK, and there is nothing to do about that — what has been
-          // spoken cannot be unspoken. Feeding resumes when the fence closes
-          // and the text grows past the mark again.
-          if (clean.length > fed) {
-            const grown = clean.slice(fed);
-            fed = clean.length;
-            for (const sentence of chunker.push(grown)) say(sentence);
-          }
-          continue;
-        }
-        if (event.type === 'error') {
-          this.fail('turn_failed', event.error, { utteranceId: state.id });
-        }
+
+    // F07 — the REPLY and the TURN end at different moments. AgentLoop yields
+    // `done` BEFORE its turn-end work (`maybeConsolidateAtTurnEnd` in
+    // packages/core/src/agent-loop/turn-end.ts: the context engine's
+    // `onTurnComplete`, the memory flush, auto-compaction) and `error` before
+    // its usage flush and trace close. So the final fragment is spoken at the
+    // terminal event (`settle`), `reply_text` and — via `withTurnEnd` —
+    // `turn_end` follow as soon as the reply's audio is on the wire, and the
+    // iterator keeps being drained behind them (`drain`). A microphone kept deaf
+    // through a compaction would be the room paying for maintenance. The next
+    // turn's agent run on this session key waits for the drain
+    // (`this.turnDrains`), so no turn reads history a turn-end compaction is
+    // still rewriting. Pinned by `__tests__/satellite-lane-tail.test.ts`.
+    const prior = this.turnDrains.get(sessionKey);
+    let answered = false;
+    // The turn went stale before it answered: nothing more goes to the node.
+    let staleExit = false;
+    let markAnswered: () => void = () => {};
+    const answer = new Promise<void>((resolve) => {
+      markAnswered = resolve;
+    });
+    const settle = (speakRemainder: boolean): void => {
+      if (answered) return;
+      answered = true;
+      if (speakRemainder) {
+        const remainder = chunker.flush();
+        if (remainder) say(remainder);
       }
-      const remainder = chunker.flush();
-      if (remainder) say(remainder);
-    } catch (err) {
-      if (this.isStale(state)) return;
-      this.fail('turn_failed', errorMessage(err, 'The turn failed'), { utteranceId: state.id });
-    }
+      markAnswered();
+    };
+    const feed = (delta: string): void => {
+      reply += delta;
+      const clean = sanitizeForSpeech(reply);
+      // `>` and not `!==`: an opening fence makes the sanitized text SHRINK,
+      // and there is nothing to do about that — what has been spoken cannot be
+      // unspoken. Feeding resumes when the fence closes and the text grows past
+      // the mark again.
+      if (clean.length > fed) {
+        const grown = clean.slice(fed);
+        fed = clean.length;
+        for (const sentence of chunker.push(grown)) say(sentence);
+      }
+    };
+    const drain = (async () => {
+      try {
+        await prior;
+        if (this.isStale(state)) {
+          staleExit = true;
+          return;
+        }
+        for await (const event of this.opts.deps.runTurn({
+          text,
+          sessionKey,
+          personalityId,
+          signal: state.controller.signal,
+        })) {
+          // Past the terminal event only the turn-end tail is left, so it is
+          // drained even when a newer utterance has superseded this one.
+          if (answered) continue;
+          // Stale (superseded, or the socket closed — both abort the turn)
+          // BEFORE the answer: deliberately not drained. Past an abort
+          // AgentLoop starts no new tool work (it re-checks the signal after
+          // each streamed step, `processTools` refuses each call before its
+          // hooks via `rejectAbortedCall`, and `executeParallel` refuses before
+          // dispatch — packages/core), but a `before_tool_call` hook already
+          // parked (an approval) runs to its end first — waiting for a turn
+          // nobody is listening to.
+          if (this.isStale(state)) {
+            staleExit = true;
+            return;
+          }
+          if (event.type === 'text_delta') {
+            feed(event.text);
+            continue;
+          }
+          if (event.type === 'error') {
+            this.fail('turn_failed', event.error, { utteranceId: state.id });
+            settle(true);
+          } else if (event.type === 'done') {
+            // A `returnDirect` tool result arrives only as `done.text`, after
+            // any preamble that streamed: `answerSuffix` (@ethosagent/types) is
+            // what is still owed, spoken after the preamble.
+            const owed = answerSuffix(reply, event.text);
+            if (owed) feed(owed);
+            settle(true);
+          }
+        }
+        // An iterator that ends without `done` or `error` (AgentLoop always
+        // yields one; a runner need not): settle with what there is.
+        settle(true);
+      } catch (err) {
+        if (answered) {
+          // The reply already went out; a failure in the turn's tail is not a
+          // failed reply, so it goes to the audit trail rather than the node.
+          this.opts.deps.observe?.('satellite.turn_tail_failed', {
+            nodeId,
+            personalityId,
+            utteranceId: state.id,
+            error: errorMessage(err, 'The turn tail failed'),
+          });
+        } else if (this.isStale(state)) {
+          staleExit = true;
+        } else {
+          this.fail('turn_failed', errorMessage(err, 'The turn failed'), {
+            utteranceId: state.id,
+          });
+        }
+      } finally {
+        // A stale exit or a throw: the unfinished fragment stays unspoken, as
+        // it always has.
+        settle(false);
+      }
+    })();
+    // `drain` cannot reject (every path is caught above); the second handler
+    // only keeps the entry's own contract honest.
+    const drained = drain.then(
+      () => {},
+      () => {},
+    );
+    this.turnDrains.set(sessionKey, drained);
+    void drained.then(() => {
+      if (this.turnDrains.get(sessionKey) === drained) this.turnDrains.delete(sessionKey);
+    });
+    await answer;
+    if (staleExit) return;
     // The answer in TEXT, once per turn, and BEFORE the synthesis tail is
     // awaited: the words are known now, and a node with a screen should not
     // wait on TTS for audio it may not even be receiving. Sent whatever

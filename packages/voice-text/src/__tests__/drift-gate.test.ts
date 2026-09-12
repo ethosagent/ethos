@@ -101,10 +101,18 @@ describe('voice-text drift gate', () => {
       for (const file of walkSources(join(ROOT, scanDir))) {
         const rel = relative(ROOT, file).replace(/\\/g, '/');
         if (rel.startsWith(OWNER)) continue;
-        const lines = readFileSync(file, 'utf-8').split('\n');
+        const text = readFileSync(file, 'utf-8');
+        // A line that declares `name` contains `name`, so a file that mentions
+        // none of the names cannot hold an offender, and skipping it gives the
+        // same result. It matters for time: the per-line regex pass over every
+        // file in the repo (~26 MB) was ~1s alone and this case ran 9.4s of its
+        // 15s budget under a parallel run; the prefilter cuts that pass ~8x.
+        const present = patterns.filter(([name]) => text.includes(name));
+        if (present.length === 0) continue;
+        const lines = text.split('\n');
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i] ?? '';
-          for (const [name, pattern] of patterns) {
+          for (const [name, pattern] of present) {
             if (pattern.test(line)) offenders.push(`${rel}:${i + 1}  [${name}]  ${line.trim()}`);
           }
         }

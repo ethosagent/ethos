@@ -164,6 +164,45 @@ describe('kanban tools', () => {
     if (!result.ok) expect(result.code).toBe('input_invalid');
   });
 
+  const SCHEDULED_FOR_REFUSED =
+    "This status doesn't exist. Set status among the given list: todo, ready, running, blocked, needs_revision, failed, done.";
+
+  it('kanban_create refuses scheduled_for: 0 with input_invalid', async () => {
+    const result = await (tools.kanban_create as Tool).execute(
+      { title: 'later', scheduled_for: 0 },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('input_invalid');
+      expect(result.error).toBe(SCHEDULED_FOR_REFUSED);
+    }
+    expect(store.listTasks()).toHaveLength(0);
+  });
+
+  it('kanban_create refuses a future scheduled_for with input_invalid', async () => {
+    const result = await (tools.kanban_create as Tool).execute(
+      { title: 'later', scheduled_for: Date.now() + 60_000 },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('input_invalid');
+      expect(result.error).toBe(SCHEDULED_FOR_REFUSED);
+    }
+    expect(store.listTasks()).toHaveLength(0);
+  });
+
+  it('kanban_create with scheduled_for: null creates as todo', async () => {
+    const out = await call<{ task_id: string; status: string }>(
+      tools.kanban_create as Tool,
+      { title: 'now', scheduled_for: null },
+      makeCtx(),
+    );
+    expect(out.status).toBe('todo');
+    expect(store.getTask(out.task_id)?.status).toBe('todo');
+  });
+
   // ---------------------------------------------------------------------------
   // kanban_create_goal
   // ---------------------------------------------------------------------------
@@ -807,7 +846,7 @@ describe('kanban tools', () => {
   });
 
   it('kanban_unblock returns todo when at least one parent is still pending', async () => {
-    const p = store.createTask({ title: 'parent' });
+    const p = store.createTask({ title: 'parent', assignee: 'engineer' });
     const c = store.createTask({ title: 'child', parents: [p.id] });
     store.updateStatus(c.id, 'blocked');
 
@@ -817,6 +856,19 @@ describe('kanban tools', () => {
       makeCtx(),
     );
     expect(out.status).toBe('todo');
+  });
+
+  it('kanban_unblock treats an unfinished goal parent (no assignee) as transparent', async () => {
+    const goal = store.createTask({ title: 'goal' }); // assignee null = goal, never done
+    const c = store.createTask({ title: 'child', parents: [goal.id] });
+    store.updateStatus(c.id, 'blocked');
+
+    const out = await call<{ status: string }>(
+      tools.kanban_unblock as Tool,
+      { task_id: c.id },
+      makeCtx(),
+    );
+    expect(out.status).toBe('ready');
   });
 
   // ---------------------------------------------------------------------------

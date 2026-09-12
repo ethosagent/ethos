@@ -209,6 +209,8 @@ function baseVoiceConfig(): ConfigGetData {
     modelRouting: {},
     skin: 'default',
     providers: [],
+    providersVersion: 'v0',
+    providersNotices: [],
     approvalMode: 'manual',
     verbosity: 'balanced',
     debugMode: false,

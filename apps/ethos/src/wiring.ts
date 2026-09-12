@@ -138,6 +138,20 @@ export function getObservabilityStore(): SQLiteObservabilityStore {
   return obsStoreSingleton;
 }
 
+/**
+ * Close the process-wide observability store — the LAST step of a stopping
+ * process (`ethos serve`'s shutdown), after every component that records into
+ * it has wound down. The singletons are dropped, so a straggler that records
+ * afterwards reopens a fresh handle rather than writing to a closed one.
+ */
+export function closeObservabilityStore(): void {
+  const store = obsStoreSingleton;
+  obsStoreSingleton = undefined;
+  obsSingleton = undefined;
+  ethosObsSingleton = undefined;
+  store?.close();
+}
+
 export function getEthosObservability(): EthosObservability {
   // Constructed alongside the singleton — getObservabilityService initialises both.
   if (!ethosObsSingleton) {
@@ -228,6 +242,12 @@ export function buildSystemTaskHandlers(
         settings,
         storage: getStorage(),
         secrets: await getSecretsResolver(),
+        // Under `memory: vault` the memory is outside dataDir and in no
+        // archive; the run output has to say so (F04).
+        memory: {
+          ...(config.memory ? { memory: config.memory } : {}),
+          ...(config.memoryVault ? { memoryVault: config.memoryVault } : {}),
+        },
       });
       // The wording lives next to the result shape it describes, because this
       // string is the whole of what a scheduled run reports: it is persisted to
@@ -630,6 +650,16 @@ export interface TeamLoopInfo {
   runCallCapture?: import('@ethosagent/wiring').CreateAgentLoopResult['runCallCapture'];
   /** Re-load this loop's personality registry — same seam `createAgentLoop` returns. */
   refreshPersonalities: import('@ethosagent/wiring').CreateAgentLoopResult['refreshPersonalities'];
+  /** The coordinator loop's goal store + executor pair, forwarded so `ethos serve --team`
+   *  web goals run on it instead of being refused. */
+  goals: import('@ethosagent/wiring').CreateAgentLoopResult['goals'];
+  /** The coordinator loop's memory surfaces, forwarded so `ethos serve --team`'s
+   *  web memory editor targets the backend that loop reads (F04). */
+  memoryBundle: import('@ethosagent/wiring').CreateAgentLoopResult['memoryBundle'];
+  /** Release the coordinator loop's runtime — `CreateAgentLoopResult.dispose` (F06). */
+  dispose: import('@ethosagent/wiring').CreateAgentLoopResult['dispose'];
+  /** `CreateAgentLoopResult.drain` of the coordinator loop (F06). */
+  drain: import('@ethosagent/wiring').CreateAgentLoopResult['drain'];
 }
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
@@ -688,6 +718,10 @@ export async function createTeamAgentLoop(
     backgroundExecutor,
     runCallCapture,
     refreshPersonalities,
+    goals,
+    memoryBundle,
+    dispose,
+    drain,
   } = await createAgentLoop(
     {
       ...coordinatorConfig,
@@ -723,6 +757,10 @@ export async function createTeamAgentLoop(
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
     ...(runCallCapture ? { runCallCapture } : {}),
     refreshPersonalities,
+    goals,
+    memoryBundle,
+    dispose,
+    drain,
   };
 }
 
@@ -762,6 +800,14 @@ export interface ActiveLoop {
   /** Phase B — durable background engine handles (undefined when background is disabled). */
   jobStore?: import('@ethosagent/wiring').CreateAgentLoopResult['jobStore'];
   backgroundExecutor?: import('@ethosagent/wiring').CreateAgentLoopResult['backgroundExecutor'];
+  /** The loop's goal store + executor pair — what chat's `/goal` drives (lib/goal-slash.ts). */
+  goals: import('@ethosagent/wiring').CreateAgentLoopResult['goals'];
+  /** Release this loop's runtime — `CreateAgentLoopResult.dispose` (F06). The
+   *  chat `/model` switch retires the replaced one with it. */
+  dispose: import('@ethosagent/wiring').CreateAgentLoopResult['dispose'];
+  /** Wait out its background jobs and goal runs — `CreateAgentLoopResult.drain`;
+   *  the `/model` switch drains the replaced runtime before disposing it. */
+  drain: import('@ethosagent/wiring').CreateAgentLoopResult['drain'];
 }
 
 export async function resolveActiveLoop(
@@ -787,6 +833,9 @@ export async function resolveActiveLoop(
       ...(teamResult.backgroundExecutor
         ? { backgroundExecutor: teamResult.backgroundExecutor }
         : {}),
+      goals: teamResult.goals,
+      dispose: teamResult.dispose,
+      drain: teamResult.drain,
     };
   }
   const personalityId = config.activeContext?.name ?? config.personality;
@@ -802,6 +851,9 @@ export async function resolveActiveLoop(
     pluginLoader: result.pluginLoader,
     ...(result.jobStore ? { jobStore: result.jobStore } : {}),
     ...(result.backgroundExecutor ? { backgroundExecutor: result.backgroundExecutor } : {}),
+    goals: result.goals,
+    dispose: result.dispose,
+    drain: result.drain,
   };
 }
 

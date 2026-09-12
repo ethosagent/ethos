@@ -27,7 +27,13 @@ import {
   type VoiceTtsProviderPatch,
 } from './config-types';
 import { auxPatchFromForm, type FormShape } from './form-shape';
-import type { ChannelToolsetRow, ProviderRow, QuickCommandRow, RetentionRow } from './rows';
+import type {
+  ChannelToolsetRow,
+  ProviderChainBase,
+  ProviderRow,
+  QuickCommandRow,
+  RetentionRow,
+} from './rows';
 import { type VoiceBotRow, voiceBotsPatchFromRows } from './voice-bots';
 import {
   audioFormatOrNull,
@@ -77,6 +83,7 @@ const DERIVED_PATCH_KEYS = new Set<string>([
   'apiKey',
   'baseUrl',
   'providers',
+  'providersVersion',
   'modelRouting',
   'retention',
   'personalityRetention',
@@ -92,6 +99,7 @@ export function buildConfigPatch(
   values: FormShape,
   rows: SettingsRows,
   saved: ConfigGetData | undefined,
+  chainBase?: ProviderChainBase,
 ): BuildConfigPatchResult {
   const {
     providerRows,
@@ -270,21 +278,22 @@ export function buildConfigPatch(
     }
   }
 
-  // Build the providers array for the update
+  // Build the providers array for the update. `sourceIndex` names the stored
+  // entry a row was loaded from, so the server keeps what this editor does not
+  // show — the key reference, `region`, `apiVersion`, … (`overlayProviderRow`
+  // in apps/web-api's config.service.ts).
   const providers = providerRows.map((row) => {
-    const entry: { provider: string; model?: string; apiKey?: string; baseUrl?: string } = {
+    const entry: NonNullable<ConfigUpdatePatch['providers']>[number] = {
       provider: row.provider,
     };
     if (row.model) entry.model = row.model;
     if (row.apiKey) entry.apiKey = row.apiKey;
     if (row.baseUrl) entry.baseUrl = row.baseUrl;
+    if (row.sourceIndex !== undefined) entry.sourceIndex = row.sourceIndex;
     return entry;
   });
 
   const patch: ConfigUpdatePatch = {
-    // Backward compat: also write the legacy single-provider fields from primary
-    provider: primary.provider,
-    model: primary.model,
     personality: values.personality,
     memory: values.memory,
     skin: values.skin,
@@ -528,8 +537,22 @@ export function buildConfigPatch(
     voiceSttProviders,
     voiceRealtimeProviders,
   };
-  if (primary.apiKey) patch.apiKey = primary.apiKey;
-  if (primary.baseUrl !== undefined) patch.baseUrl = primary.baseUrl;
+  // The top-level `provider` / `model` / `baseUrl` / `apiKey` are written from
+  // the primary row only when the operator EDITED that row — changed its
+  // provider, model, key or base URL, or moved another entry to the top. The
+  // top-level fields are a pair with the top-level key, and on a config whose
+  // top-level provider differs from chain row 0 an unrelated save used to
+  // rewrite `provider` to row 0's while the key stayed the old provider's.
+  // Without a `chainBase` (no loaded snapshot) the primary is always written.
+  if (!chainBase?.loadedPrimary || primaryRowEdited(primary, chainBase.loadedPrimary)) {
+    patch.provider = primary.provider;
+    patch.model = primary.model;
+    if (primary.apiKey) patch.apiKey = primary.apiKey;
+    if (primary.baseUrl !== undefined) patch.baseUrl = primary.baseUrl;
+  }
+  // The chain version the rows were loaded from; a stale one is refused
+  // (`CONFIG_CONFLICT`) instead of overlaid onto entries that moved.
+  if (chainBase) patch.providersVersion = chainBase.providersVersion;
 
   // The absent-field guard — the behavioural half of the invariant in §5.1.
   //
@@ -549,4 +572,15 @@ export function buildConfigPatch(
   }
 
   return { ok: true, patch };
+}
+
+/** Whether the operator changed the primary row since it was loaded. */
+function primaryRowEdited(primary: ProviderRow, loaded: ProviderRow): boolean {
+  return (
+    primary.sourceIndex !== loaded.sourceIndex ||
+    primary.provider !== loaded.provider ||
+    primary.model !== loaded.model ||
+    primary.baseUrl !== loaded.baseUrl ||
+    primary.apiKey !== ''
+  );
 }

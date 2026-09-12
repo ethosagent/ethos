@@ -181,6 +181,29 @@ describe('ClawMigrator.execute', () => {
     expect(cfg).toContain('telegramToken: tg-token');
   });
 
+  // F04 follow-up — the CLI resolves the TARGET backend's scope directory and
+  // passes it as `memoryDir`, so an import under `memory: vault` lands in the
+  // vault the agent reads instead of `<target>/MEMORY.md`, which nothing reads.
+  it('imports memory into the configured backend scope when one is given', async () => {
+    const { source, target } = await makeSandbox();
+    await seedMinimalOpenclaw(source);
+    const memoryDir = join(target, '..', 'vault', 'Ethos', 'personalities', 'engineer');
+
+    const m = new ClawMigrator({ source, target, memoryDir, storage: new FsStorage() });
+    const plan = await m.plan();
+    expect(plan.ops.map((o) => o.label)).toContain(`MEMORY.md → ${join(memoryDir, 'MEMORY.md')}`);
+    const result = await m.execute(plan);
+
+    expect(result.failed).toBe(0);
+    expect(await readFile(join(memoryDir, 'MEMORY.md'), 'utf-8')).toBe(
+      '- prefers TypeScript\n- uses pnpm\n',
+    );
+    expect(await readFile(join(memoryDir, 'USER.md'), 'utf-8')).toContain('Mitesh');
+    // Nothing at the pre-scoping root.
+    expect(await exists(join(target, 'MEMORY.md'))).toBe(false);
+    expect(await exists(join(target, 'USER.md'))).toBe(false);
+  });
+
   it('dry run does not write any files', async () => {
     const { source, target } = await makeSandbox();
     await seedMinimalOpenclaw(source);

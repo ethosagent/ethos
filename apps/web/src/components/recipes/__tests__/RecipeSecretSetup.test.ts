@@ -41,6 +41,14 @@ vi.mock('../../../rpc', () => ({
   rpc: {
     namedSecrets: {
       list: () => Promise.resolve({ secrets: [] }),
+      providers: () =>
+        Promise.resolve({
+          providers: [
+            { provider: 'exa', kinds: ['web-search'], label: 'Exa' },
+            { provider: 'tavily', kinds: ['web-search'], label: 'Tavily' },
+          ],
+          diagnostics: [],
+        }),
       create: (...args: unknown[]) => namedSecretsCreateFn(...args),
     },
   },
@@ -78,11 +86,20 @@ let container: HTMLDivElement;
 let root: Root;
 const onChange = vi.fn();
 
+const PROVIDER_ROSTER = {
+  providers: [
+    { provider: 'exa', kinds: ['web-search'], label: 'Exa' },
+    { provider: 'tavily', kinds: ['web-search'], label: 'Tavily' },
+  ],
+  diagnostics: [] as [],
+};
+
 function mount(secrets: typeof VAULT): void {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   queryClient.setQueryData(namedSecretKeys.all(), { secrets });
+  queryClient.setQueryData(namedSecretKeys.providers(), PROVIDER_ROSTER);
   act(() => {
     root.render(
       createElement(

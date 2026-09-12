@@ -1,6 +1,7 @@
 import type { AgentLoop } from '@ethosagent/core';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import type { SessionStore } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 import type { DashboardPanel } from './dashboards.service';
 import { extractParamRefs, interpolateParams } from './interpolate-params';
 
@@ -43,6 +44,12 @@ interface RefreshDeps {
    * unchanged (the manual/RPC path keeps its session).
    */
   sessions?: SessionStore;
+  /**
+   * Cancels a prompt refresh mid-turn. An aborted refresh writes nothing to the
+   * panel — a partial answer is not a refresh. The scheduler passes its own so
+   * `DashboardRefreshScheduler.stop()` can cancel and await a sweep.
+   */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -171,14 +178,29 @@ export async function refreshSinglePanel(
       // Run through AgentLoop
       let output = '';
       let structured: unknown = null;
+      let turnError: string | undefined;
       for await (const event of loop.run(fullPrompt, {
         sessionKey,
         ...(personalityId ? { personalityId } : {}),
+        ...(deps.abortSignal ? { abortSignal: deps.abortSignal } : {}),
       })) {
         if (event.type === 'text_delta') output += event.text;
+        // A `returnDirect` tool's answer arrives only as `done.text`, after any
+        // preamble that streamed: `answerSuffix` is what the stream still owes.
+        if (event.type === 'done') output += answerSuffix(output, event.text);
         if (event.type === 'tool_end' && 'structured' in event) {
           structured = (event as { structured?: unknown }).structured;
         }
+        if (event.type === 'error') turnError ??= event.error;
+      }
+      if (deps.abortSignal?.aborted) return;
+      // An errored turn (a provider failure, SETUP_REQUIRED before onboarding
+      // has a loop) is not an answer: keep the panel's last content and record
+      // the error rather than writing whatever text it streamed — often ''.
+      // Pinned by __tests__/dashboard-refresh-error.test.ts.
+      if (turnError !== undefined) {
+        deps.dashboards.setPanelError(panel.id, turnError);
+        return;
       }
 
       // Check for structured output (render_html returns _uiType: 'html')
@@ -191,7 +213,10 @@ export async function refreshSinglePanel(
       deps.dashboards.clearPanelError(panel.id);
       writeBackParams(panel, ephemeral, persistent, panelDefaults, deps);
     } catch (err) {
-      deps.dashboards.setPanelError(panel.id, err instanceof Error ? err.message : String(err));
+      // A cancelled refresh is not a failed one — leave the panel as it was.
+      if (!deps.abortSignal?.aborted) {
+        deps.dashboards.setPanelError(panel.id, err instanceof Error ? err.message : String(err));
+      }
     } finally {
       // Ephemeral session GC — best-effort, never fails a refresh.
       if (deps.sessions) {

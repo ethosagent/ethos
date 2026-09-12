@@ -5,12 +5,14 @@ import { render } from 'ink';
 import { createElement } from 'react';
 import { App, type ExternalSlashCommands } from './components/App';
 import type { SplashInventory } from './components/Splash';
+import type { RebuiltLoop } from './loop-switch';
 
 export type { BridgeOpts } from '@ethosagent/agent-bridge';
 export { AgentBridge } from '@ethosagent/agent-bridge';
 export type { ExternalSlashCommands } from './components/App';
 export type { SplashInventory } from './components/Splash';
 export type { ExternalSlashCommand } from './help';
+export type { RebuiltLoop } from './loop-switch';
 
 export interface TUIOptions {
   model: string;
@@ -18,8 +20,9 @@ export interface TUIOptions {
   verbose?: boolean;
   /** Named skin to apply at boot (one of the built-in skin names). */
   skin?: string;
-  /** Called when the user switches model via /model picker. Returns a new AgentLoop. */
-  rebuildLoop?: (modelId: string) => Promise<AgentLoop>;
+  /** Called when the user switches model via /model picker. Returns the new
+   *  loop and the release of the runtime it replaces (`RebuiltLoop`). */
+  rebuildLoop?: (modelId: string) => Promise<RebuiltLoop>;
   /** Capability inventory shown on the splash screen before first message. */
   inventory?: SplashInventory;
   /** Current package version — used for update notifier. */
@@ -36,6 +39,8 @@ export interface TUIOptions {
   onNotification?: (sessionKey: string, cb: (text: string) => void) => () => void;
   /** Subscribe to skill-evolver proposal notices. Returns an unsubscribe. */
   onSkillProposed?: (cb: (text: string) => void) => () => void;
+  /** `/memory` reader over the configured backend's file memory (see `AppProps.readMemory`). */
+  readMemory: (scope: { personalityId: string; sessionKey: string }) => Promise<string | null>;
 }
 
 export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
@@ -57,6 +62,7 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       slashCommands: opts.slashCommands,
       onNotification: opts.onNotification,
       onSkillProposed: opts.onSkillProposed,
+      readMemory: opts.readMemory,
     }),
   );
 

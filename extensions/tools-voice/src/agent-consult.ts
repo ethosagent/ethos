@@ -28,6 +28,7 @@ import type {
   ToolResult,
   VoiceTurnOrigin,
 } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 
 /** Tool name. Exported so the realtime seam never spells it by hand. */
 export const AGENT_CONSULT_TOOL = 'agent_consult';
@@ -196,12 +197,14 @@ export interface AgentConsultOptions {
 }
 
 /**
- * `agent_consult(prompt) -> text`. One agent turn, its text back.
- *
- * Modelled on `runSubAgent` in `@ethosagent/tools-delegation`: drive
- * `loop.run`, accumulate `text_delta`, throw on `error`, stop at `done`.
+ * `agent_consult(prompt) -> text`. One agent turn, its text back — returned at
+ * the turn's terminal event, with the rest of the turn drained after it (see
+ * {@link runConsult}).
  */
 export function createAgentConsultTool(loop: AgentLoop, opts: AgentConsultOptions): Tool {
+  // Per session key: the still-draining remainder of the last consulted turn.
+  // See `runConsult` for why this, and not the caller's lane, orders them.
+  const tails = new Map<string, Promise<void>>();
   return {
     name: AGENT_CONSULT_TOOL,
     description:
@@ -248,7 +251,7 @@ export function createAgentConsultTool(loop: AgentLoop, opts: AgentConsultOption
         };
       }
       try {
-        return { ok: true, value: await runConsult(loop, prompt, ctx, opts) };
+        return { ok: true, value: await runConsult(loop, prompt, ctx, opts, tails) };
       } catch (err) {
         return {
           ok: false,
@@ -264,30 +267,91 @@ export function createAgentConsultTool(loop: AgentLoop, opts: AgentConsultOption
 /** `ToolContext.agentId` of the consulted turn. See the re-entrancy guard. */
 const CONSULT_AGENT_ID = 'voice-consult';
 
-async function runConsult(
+/**
+ * Drive one consulted turn. Resolves with its text AT THE TERMINAL EVENT, and
+ * keeps pulling the iterator after that.
+ *
+ * F07 (plan/phases/architecture-suggestions-2026-09-10.md). `AgentLoop.run()`
+ * yields `done` BEFORE its turn-end work — `maybeConsolidateAtTurnEnd` in
+ * packages/core/src/agent-loop/turn-end.ts: the context engine's
+ * `onTurnComplete`, the memory flush, auto-compaction — and yields `error`
+ * before its usage flush and trace close. Breaking out on either calls the
+ * generator's `return()` and skips all of it. Waiting for it before answering
+ * would put compaction between a spoken question and its answer. So the answer
+ * settles at the terminal event and the remainder is drained behind it.
+ *
+ * The drain is not fire-and-forget. The caller — the realtime control lane's
+ * `SessionLane` (apps/web-api/src/voice/realtime-control-lane.ts,
+ * `enqueueToolCall`) — releases its task when this returns, which is before the
+ * tail is done, so that lane no longer keeps the next consult off this turn's
+ * tail. `tails` does: the next consult on the same session key awaits it before
+ * its turn starts, so no turn reads history a turn-end compaction is still
+ * rewriting. A tail that throws is swallowed there — the answer it followed has
+ * already been spoken, and it must not fail the next question. Pinned by
+ * `__tests__/agent-consult.test.ts` ('the turn-end tail (F07)').
+ */
+function runConsult(
   loop: AgentLoop,
   prompt: string,
   ctx: ToolContext,
   opts: AgentConsultOptions,
+  tails: Map<string, Promise<void>>,
 ): Promise<string> {
   // The pin wins over the context. A receptionist consult that fell back to the
   // caller's context personality on a missing id would be the owner's scope,
   // which is the one outcome this must never produce.
   const personalityId = opts.personalityId ?? ctx.personalityId;
-  let output = '';
-  for await (const event of loop.run(prompt, {
-    // The consult runs on the CALLER's session key — the talk-session lane. A
-    // fresh key per consult would give the agent amnesia between one spoken
-    // question and the next, which is the opposite of what a conversation is.
-    sessionKey: ctx.sessionKey,
-    ...(personalityId ? { personalityId } : {}),
-    abortSignal: ctx.abortSignal,
-    agentId: CONSULT_AGENT_ID,
-    voiceOrigin: opts.voiceOrigin,
-  })) {
-    if (event.type === 'text_delta') output += event.text;
-    if (event.type === 'error') throw new Error(event.error);
-    if (event.type === 'done') break;
-  }
-  return output.trim();
+  // The consult runs on the CALLER's session key — the talk-session lane. A
+  // fresh key per consult would give the agent amnesia between one spoken
+  // question and the next, which is the opposite of what a conversation is.
+  const sessionKey = ctx.sessionKey;
+  const prior = tails.get(sessionKey);
+  return new Promise<string>((resolve, reject) => {
+    let answered = false;
+    const turn = (async () => {
+      if (prior) await prior;
+      let output = '';
+      for await (const event of loop.run(prompt, {
+        sessionKey,
+        ...(personalityId ? { personalityId } : {}),
+        abortSignal: ctx.abortSignal,
+        agentId: CONSULT_AGENT_ID,
+        voiceOrigin: opts.voiceOrigin,
+      })) {
+        // Past the terminal event: drained, not read.
+        if (answered) continue;
+        if (event.type === 'text_delta') output += event.text;
+        else if (event.type === 'error') {
+          answered = true;
+          reject(new Error(event.error));
+        } else if (event.type === 'done') {
+          answered = true;
+          // A `returnDirect` tool result arrives only as `done.text`, after any
+          // preamble that streamed: `answerSuffix` (@ethosagent/types) is what
+          // the streamed text still owes.
+          resolve((output + answerSuffix(output, event.text)).trim());
+        }
+      }
+      // An iterator that ends without `done` or `error` — AgentLoop always
+      // yields one, a test fake need not: answer with what accumulated.
+      if (!answered) {
+        answered = true;
+        resolve(output.trim());
+      }
+    })();
+    const tail = turn.then(
+      () => {},
+      (err: unknown) => {
+        if (answered) return;
+        answered = true;
+        reject(err);
+      },
+    );
+    // Registered synchronously, before any await, so a consult that arrives
+    // while this one is still waiting on `prior` queues behind this one.
+    tails.set(sessionKey, tail);
+    void tail.then(() => {
+      if (tails.get(sessionKey) === tail) tails.delete(sessionKey);
+    });
+  });
 }

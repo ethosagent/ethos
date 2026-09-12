@@ -83,6 +83,29 @@ describe('runZero exit-code propagation (G5)', () => {
     expect(process.exitCode).toBe(1);
   });
 
+  // A `returnDirect` tool's answer reaches the turn only as `done.text`, after
+  // any preamble the model streamed: streaming output still prints it, once.
+  it('streams a returnDirect answer that only `done.text` carries', async () => {
+    vi.mocked(readConfig).mockResolvedValue(FAKE_CONFIG as never);
+    vi.mocked(resolveActiveLoop).mockResolvedValue({
+      loop: {
+        run: async function* () {
+          yield { type: 'text_delta', text: 'Let me look that up.' };
+          yield { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 };
+        },
+      },
+      personalityId: 'default',
+    } as never);
+
+    await runZero(['-z', 'hello'], 'hello');
+    const written = vi
+      .mocked(process.stdout.write)
+      .mock.calls.map((c) => String(c[0]))
+      .join('');
+    expect(written).toContain('Let me look that up.\n\nDIRECT ANSWER');
+    expect(written.split('DIRECT ANSWER')).toHaveLength(2);
+  });
+
   it('leaves exitCode unset on a successful turn', async () => {
     vi.mocked(readConfig).mockResolvedValue(FAKE_CONFIG as never);
     vi.mocked(resolveActiveLoop).mockResolvedValue({

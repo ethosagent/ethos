@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -28,7 +28,7 @@ describe('SSE — chat.send → /sse/sessions/:id', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       // Slow-ish stub so the SSE consumer reliably catches events live AND
       // exercises the replay path on reconnect.
       agentLoop: makeStubAgentLoop({
@@ -210,7 +210,7 @@ describe('SSE — /sse/activity', () => {
     app = createWebApi({
       dataDir: dir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       // A `text_delta` plus two discrete actions: the deltas prove the
       // activity feed drops streaming tokens, the tool pair gives each turn
       // more than one activity frame so the resume cases have a gap to skip.

@@ -1,15 +1,14 @@
+import type { ProviderConfig } from '@ethosagent/config';
 import { PROVIDER_CATALOG } from '@ethosagent/wiring/provider-catalog';
 import { Box, Text, useInput } from 'ink';
 import { useState } from 'react';
 import { DESIGN, GLYPHS } from '../../skin';
 import { useWizardContext } from '../context';
 
-interface ProviderEntry {
-  provider: string;
-  apiKey: string;
-  model?: string;
-  baseUrl?: string;
-}
+/** The chain entry as `@ethosagent/config` models it — this step edits the
+ *  provider and its key and carries every other field (`region`, `awsProfile`,
+ *  `apiVersion`, unmodelled `passthrough`) through untouched. */
+type ProviderEntry = ProviderConfig;
 
 type Phase = 'list' | 'add-provider' | 'add-key';
 

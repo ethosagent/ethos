@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { buildMemberLaunchArgs } from '../supervisor';
+import { buildMemberLaunchArgs, memberWebPort } from '../supervisor';
+
+describe('memberWebPort', () => {
+  it('shifts the ACP port by 10000', () => {
+    expect(memberWebPort(3000)).toBe(13000);
+  });
+
+  it('subtracts the offset when the shift would overflow', () => {
+    expect(memberWebPort(61328)).toBe(51328);
+    expect(memberWebPort(60000)).toBe(50000);
+  });
+});
 
 describe('supervisor worker launch args', () => {
   it('uses tsx loader for TypeScript entrypoint', () => {
@@ -11,6 +22,8 @@ describe('supervisor worker launch args', () => {
       'serve',
       '--port',
       '3010',
+      '--web-port',
+      '13010',
       '--personality',
       'researcher',
       '--mesh',
@@ -30,6 +43,8 @@ describe('supervisor worker launch args', () => {
       'serve',
       '--port',
       '3011',
+      '--web-port',
+      '13011',
       '--personality',
       'engineer',
       '--mesh',

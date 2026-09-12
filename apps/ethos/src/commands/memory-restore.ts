@@ -2,9 +2,10 @@
 // memory file (memory-experience pillar C, §4.2). Decay is reversible: a
 // section demoted to `memory-archive.md` returns to MEMORY.md/USER.md by slug,
 // and the move is recorded in the provenance history under `source: 'restore'`.
-import { ethosDir, readConfig } from '@ethosagent/config';
+import { readConfig } from '@ethosagent/config';
 import { restoreArchivedSlug } from '@ethosagent/nightly-loop';
 import type { MemoryContext } from '@ethosagent/types';
+import { openFileMemory } from '../lib/file-memory';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 /**
@@ -29,12 +30,8 @@ export async function runMemoryRestore(args: string[]): Promise<void> {
   const config = await readConfig(getStorage(), await getSecretsResolver());
   const personalityId = flag('--personality') ?? config?.personality ?? 'default';
 
-  const { createMemoryProvider } = await import('@ethosagent/wiring');
-  const mem = createMemoryProvider({
-    dataDir: ethosDir(),
-    storage: getStorage(),
-    source: 'restore',
-  });
+  // The configured backend (the vault under `memory: vault`); refused for vector.
+  const mem = openFileMemory(config, 'restore').provider;
 
   const ctx: MemoryContext = {
     scopeId: `personality:${personalityId}`,

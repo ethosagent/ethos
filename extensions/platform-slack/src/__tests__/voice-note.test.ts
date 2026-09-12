@@ -4,9 +4,12 @@ import { isVoiceOutboundAdapter, voiceAudioMimeType } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SlackAdapter } from '../adapter';
 import type { RawSlackFile } from '../routing/triage';
+import { stubSlackWebApi } from './stub-slack-web-api';
 
 // The real Bolt App is constructed but never started (no socket opens), and the
 // client is swapped for a spy — mirrors the outbound-media test harness.
+stubSlackWebApi();
+
 function makeAdapter(cache?: InMemoryAttachmentCache) {
   const adapter = new SlackAdapter({
     botToken: 'xoxb-fake',

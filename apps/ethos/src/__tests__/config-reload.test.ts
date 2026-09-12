@@ -238,6 +238,25 @@ describe('loadAndDiffConfig — unsupported keys', () => {
     expect(diff.web).toBeNull();
   });
 
+  // F04 follow-up: the memory BACKEND was listed but not what points it at a
+  // store. `memoryVault.path` is the web editor's root as well as the agent's,
+  // and `memoryApproval` is read when the gate is composed — editing either
+  // under a running serve/boot was a silent no-op.
+  it('flags memoryVault and memoryApproval changes', async () => {
+    const { diff } = await diffOf(BASE, [
+      ...BASE,
+      'memory: vault',
+      'memoryVault.path: /tmp/vault-b',
+      'memoryApproval.mode: automated',
+    ]);
+    expect(diff.unsupported.sort()).toEqual(['memory', 'memoryApproval', 'memoryVault']);
+    expect(logger.warnings.sort()).toEqual([
+      '[config-reload] memory approval gate changed — restart required to apply',
+      '[config-reload] memory backend changed — restart required to apply',
+      '[config-reload] memoryVault config changed — restart required to apply',
+    ]);
+  });
+
   it('flags idleWatcher and cron schedule changes (§0 row 10, unassigned)', async () => {
     const { diff } = await diffOf(BASE, [
       ...BASE,

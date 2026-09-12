@@ -2,7 +2,11 @@ import type { AgentLoop } from '@ethosagent/core';
 import { SQLiteJobStore } from '@ethosagent/job-store';
 import type { BackgroundJob, CreateBackgroundJobInput, HookRegistry } from '@ethosagent/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundExecutor, type BackgroundExecutorConfig } from '../index';
+import {
+  BackgroundExecutor,
+  type BackgroundExecutorConfig,
+  JOB_ABORTED_BY_SHUTDOWN,
+} from '../index';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -383,7 +387,7 @@ describe('BackgroundExecutor', () => {
     expect(exec.activeCount()).toBe(0);
     const j = await store.get(job.id);
     expect(j?.status).toBe('aborted');
-    expect(j?.error).toBe('process shutdown');
+    expect(j?.error).toBe(JOB_ABORTED_BY_SHUTDOWN);
     expect(signals[0]?.aborted).toBe(true);
   });
 
@@ -648,6 +652,132 @@ describe('BackgroundExecutor', () => {
       error: 'boom',
     });
 
+    await exec.shutdown();
+  });
+});
+
+// F06 follow-up — disposing a loop shuts its executor down. Its QUEUED rows are
+// stamped with this executor's unique owner, so before this nothing else ever
+// claimed them: a live bot edit (or a restart) stranded them until
+// `expireQueued`. Shutdown now hands them back, and an executor with the same
+// affinity (the replacement bot's loop, the next boot's) adopts them.
+describe('BackgroundExecutor shutdown hands queued work on (F06)', () => {
+  it('releases its queued rows, and a successor with the same affinity runs them', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const { loop: oldLoop } = makeNeverEndingLoop();
+    // A saturated pool: nothing is claimed, the row stays queued under A.
+    const a = new BackgroundExecutor({
+      store,
+      loop: oldLoop,
+      owner: 'exec-A',
+      affinity: 'cli:bot-1',
+      config: cfg({ maxConcurrentJobs: 0 }),
+    });
+    a.start();
+    const job = await store.create(createInput({ owner: 'exec-A' }));
+
+    await a.shutdown();
+    expect((await store.get(job.id))?.status).toBe('queued');
+
+    const { loop: newLoop, run } = makeStaticLoop([{ type: 'done', text: 'ok', turnCount: 1 }]);
+    const stranger = new BackgroundExecutor({
+      store,
+      loop: newLoop,
+      owner: 'exec-C',
+      affinity: 'cli:bot-2',
+      config: cfg(),
+    });
+    stranger.start();
+    await new Promise((r) => setTimeout(r, 60));
+    // A different bot's executor never takes it…
+    expect((await store.get(job.id))?.status).toBe('queued');
+    await stranger.shutdown();
+
+    const b = new BackgroundExecutor({
+      store,
+      loop: newLoop,
+      owner: 'exec-B',
+      affinity: 'cli:bot-1',
+      config: cfg(),
+    });
+    b.start();
+    // …the successor does.
+    await vi.waitFor(async () => expect((await store.get(job.id))?.status).toBe('done'), {
+      timeout: 2000,
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+    await b.shutdown();
+  });
+
+  it('marks a run it aborted with the exported shutdown reason, distinct from a cancel', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const { loop } = makeNeverEndingLoop();
+    const exec = new BackgroundExecutor({ store, loop, owner: OWNER, config: cfg() });
+    const job = await store.create(createInput());
+    exec.start();
+    exec.nudge();
+    await vi.waitFor(() => expect(exec.activeCount()).toBe(1), { timeout: 2000 });
+    await exec.shutdown();
+    expect((await store.get(job.id))?.error).toBe(JOB_ABORTED_BY_SHUTDOWN);
+    expect(JOB_ABORTED_BY_SHUTDOWN).not.toBe('cancelled by task_cancel');
+  });
+});
+
+// F06 follow-up — the chat `/model` switch retires the replaced loop. Disposing
+// it aborted its running background jobs with the shutdown reason, and a
+// CLI-origin job is never announced, so the work vanished (before F06 it
+// finished on the leaked runtime). `drain()` retires an executor without
+// aborting anything: no new claims, queued rows handed on, and it resolves
+// once the running jobs finished on their own.
+describe('BackgroundExecutor.drain (F06)', () => {
+  it('lets the running job finish, claims nothing new, and hands queued rows on', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    let finish: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      finish = r;
+    });
+    const run = vi.fn(() =>
+      (async function* () {
+        await gate;
+        yield { type: 'done', text: 'finished', turnCount: 1 };
+      })(),
+    );
+    const exec = new BackgroundExecutor({
+      store,
+      loop: { run } as unknown as AgentLoop,
+      owner: 'exec-A',
+      affinity: 'cli:pid-1',
+      config: cfg({ maxConcurrentJobs: 1 }),
+    });
+    const running = await store.create(createInput({ owner: 'exec-A' }));
+    exec.start();
+    await vi.waitFor(() => expect(exec.activeCount()).toBe(1), { timeout: 2000 });
+    const queued = await store.create(createInput({ owner: 'exec-A' }));
+
+    let drained = false;
+    const draining = exec.drain().then(() => {
+      drained = true;
+    });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(drained).toBe(false);
+    // Handed on, not claimed by the draining executor.
+    expect((await store.get(queued.id))?.owner).toBe('released:cli:pid-1');
+
+    finish?.();
+    await draining;
+    const done = await store.get(running.id);
+    expect(done?.status).toBe('done');
+    expect(done?.error ?? null).toBeNull();
+    expect(run).toHaveBeenCalledTimes(1);
+    await exec.shutdown();
+  });
+
+  it('resolves at once when nothing is running', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const { loop } = makeStaticLoop([]);
+    const exec = new BackgroundExecutor({ store, loop, owner: OWNER, config: cfg() });
+    exec.start();
+    await expect(exec.drain()).resolves.toBeUndefined();
     await exec.shutdown();
   });
 });

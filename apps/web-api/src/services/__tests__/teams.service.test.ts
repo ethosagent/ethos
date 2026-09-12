@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { FsStorage } from '@ethosagent/storage-fs';
+import { createTeamMemoryProvider } from '@ethosagent/wiring';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { KanbanService } from '../kanban.service';
 import { TeamsService } from '../teams.service';
@@ -129,10 +130,13 @@ describe('TeamsService', () => {
     mkdirSync(join(dir, 'research'), { recursive: true });
     new KanbanStore(join(dir, 'research', 'board.db'), { teamId: 'research' }).close();
 
+    const storage = new FsStorage();
     service = new TeamsService({
       kanban: new KanbanService({ teamsDir: dir }),
-      storage: new FsStorage(),
+      storage,
       teamsDir: dir,
+      // The provider wiring hands the service in production (F04).
+      teamMemory: (teamName) => createTeamMemoryProvider({ teamsDir: dir, teamName, storage }),
     });
   });
 

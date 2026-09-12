@@ -581,6 +581,26 @@ describe('runScheduledBackup', () => {
     );
   });
 
+  // F04 follow-up — the cron output file is the ONLY place a scheduled run is
+  // reported, so a vault deployment must learn from it that its memory is not
+  // in the archive.
+  it('names vault memory as absent from the archive under memory: vault', async () => {
+    writeFileSync(join(dataDir, 'config.yaml'), 'provider: anthropic\n');
+    const settings = resolveBackupSettings(makeConfig({ backup: { dir } }));
+    const result = await runScheduledBackup({
+      dataDir,
+      settings,
+      storage,
+      memory: { memory: 'vault', memoryVault: { path: '/Users/me/Vault' } },
+    });
+    expect(result.externalMemory?.path).toBe('/Users/me/Vault/Ethos');
+    const summary = summarizeScheduledBackup(result);
+    expect(summary).toContain(`Backup written to ${result.path}`);
+    expect(summary).toContain('/Users/me/Vault/Ethos/.ethos-meta');
+    expect(summary).toContain('NOT in this archive');
+    expect(summary).not.toContain('INCOMPLETE');
+  });
+
   it('says nothing about skips when there were none', async () => {
     writeFileSync(join(dataDir, 'config.yaml'), 'provider: anthropic\n');
     const settings = resolveBackupSettings(makeConfig({ backup: { dir } }));

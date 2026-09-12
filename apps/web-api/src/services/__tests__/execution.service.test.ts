@@ -9,6 +9,15 @@ import { describe, expect, it } from 'vitest';
 import type { ConfigRepository } from '../../repositories/config.repository';
 import { ExecutionService } from '../execution.service';
 
+// `probeTarget` reaches `formatSshTarget` through a lazy
+// `await import('@ethosagent/wiring')` — the whole wiring barrel, every
+// extension behind it. In a running web-api that barrel is already loaded by
+// other services' static imports, so the lazy import resolves at once; here it
+// is cold, and the first configured probe paid for it inside a test's 15s
+// budget (three probes timed out under a parallel run). Pay it at collection,
+// where no timeout applies, so the probes time only what they test.
+await import('@ethosagent/wiring');
+
 // `execution.probeSsh` (plan/phases/remote-execution-routing.md §6, T7).
 //
 // The load-bearing assertions are:
@@ -30,7 +39,13 @@ import { ExecutionService } from '../execution.service';
 
 function config(passthrough: Record<string, string>): Pick<ConfigRepository, 'read'> {
   return {
-    read: async () => ({ passthrough, modelRouting: {}, toolSettings: {}, providers: [] }),
+    read: async () => ({
+      passthrough,
+      modelRouting: {},
+      toolSettings: {},
+      providers: [],
+      providerNotices: [],
+    }),
   };
 }
 

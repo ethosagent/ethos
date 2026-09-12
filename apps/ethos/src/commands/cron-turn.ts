@@ -3,7 +3,7 @@
 // the routing rule and the failure path are unit-testable.
 
 import { CronProgressRecorder, type CronRunProgress } from '@ethosagent/cron';
-import { type AgentEvent, EthosError } from '@ethosagent/types';
+import { type AgentEvent, answerSuffix, EthosError } from '@ethosagent/types';
 
 /** The slice of `AgentLoop` a cron firing needs. */
 interface CronTurnLoop {
@@ -77,6 +77,9 @@ export async function runCronTurn(input: CronTurnInput): Promise<CronTurnResult>
     ...(toolsetOverride ? { toolsetOverride } : {}),
   })) {
     if (event.type === 'text_delta') output += event.text;
+    // A `returnDirect` tool's answer arrives only as `done.text`, after any
+    // preamble that streamed: `answerSuffix` is what the stream still owes.
+    else if (event.type === 'done') output += answerSuffix(output, event.text);
     else if (event.type === 'error') failure = `[${event.code}] ${event.error}`;
     // Records only `audience: 'user'` events; the recorder is the gate.
     else progress.record(event);

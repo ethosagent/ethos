@@ -41,8 +41,8 @@ import type {
   RecipeListItem,
   RecipePreflight,
 } from '@ethosagent/web-contracts';
-import { NamedSecretProviderSchema } from '@ethosagent/web-contracts';
 import type { CronService } from './cron.service';
+import { deriveProviderRoster, NAMED_SECRET_SEED_PROVIDERS } from './derive-provider-roster';
 import type { KeysService } from './keys.service';
 import type { McpService } from './mcp.service';
 import type { PersonalitiesService } from './personalities.service';
@@ -1014,13 +1014,19 @@ export class RecipesService {
     // `ToolSettingsField | undefined`, not the arm the predicate matched.
     if (enumField?.kind !== 'enum') return undefined;
     if (bindingField?.kind !== 'secret-binding') return undefined;
+    // Only providers the named-secrets vault can store a key for: a provider
+    // the page cannot write is not one it can offer. That set is the DERIVED
+    // roster — the same one `NamedSecretsService.create` accepts — so a tool
+    // whose provider list grows needs no edit here (D1).
+    const writable = new Set(
+      deriveProviderRoster(this.opts.toolRegistry, NAMED_SECRET_SEED_PROVIDERS).providers.map(
+        (p) => p.provider,
+      ),
+    );
     const providers: Array<{ id: string; label: string }> = [];
     for (const option of enumField.options) {
-      // Only providers the named-secrets vault can store a key for: a provider
-      // the page cannot write is not one it can offer.
-      const writable = NamedSecretProviderSchema.safeParse(option.value);
-      if (writable.success)
-        providers.push({ id: writable.data, label: option.label ?? option.value });
+      if (writable.has(option.value))
+        providers.push({ id: option.value, label: option.label ?? option.value });
     }
     if (providers.length === 0) return undefined;
     return {

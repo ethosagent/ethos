@@ -5,6 +5,8 @@
 // call.
 
 export { type BackupResult, type CreateBackupOptions, createBackup } from './create';
+// What an archive cannot carry: vault memory lives outside dataDir (F04).
+export { type ExternalMemoryNotice, externalMemoryNotice } from './external-memory';
 export {
   type BackupManifest,
   MANIFEST_PATH,

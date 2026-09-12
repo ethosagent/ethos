@@ -11,7 +11,8 @@ import type { AgentMesh, MeshEntry } from '@ethosagent/agent-mesh';
 import type { PendingNotifyQueue } from '@ethosagent/notify-queue';
 import { SessionLane } from '@ethosagent/session-lane';
 import type { McpServerConfig, McpSessionView } from '@ethosagent/tools-mcp';
-import type { JobStore, SessionStore } from '@ethosagent/types';
+import type { JobStore, Logger, SessionStore } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 import { type WebSocket, WebSocketServer } from 'ws';
 
 /** Maximum number of concurrent MCP session views. */
@@ -20,6 +21,16 @@ const MAX_ACP_SESSIONS = 100;
 // ---------------------------------------------------------------------------
 // Local types — avoids depending on @ethosagent/core
 // ---------------------------------------------------------------------------
+
+const noopLogger: Logger = {
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+  child() {
+    return noopLogger;
+  },
+};
 
 type AgentEvent = { type: string } & Record<string, unknown>;
 
@@ -84,6 +95,14 @@ export class AcpServer {
   private readonly abortControllers = new Map<Id, AbortController>();
   // tracks which sessionKeys have an active prompt
   private readonly busySessions = new Set<string>();
+  /**
+   * Sessions whose streamed prompt has sent its result but is still draining
+   * AgentLoop's turn-end tail (F07, the streaming `prompt` in `dispatch`). The
+   * session stays in `busySessions` meanwhile; a next prompt on it awaits this
+   * instead of being refused, since a client that sends it after the result
+   * did nothing wrong. Resolves when the drain ends; never rejects.
+   */
+  private readonly sessionTails = new Map<string, Promise<void>>();
   private readonly startedAt = Date.now();
   private lastTurnAt: number | null = null;
 
@@ -104,6 +123,7 @@ export class AcpServer {
   private readonly personalityId: string | undefined;
   private readonly teamId: string | undefined;
   private readonly notifyQueue: PendingNotifyQueue | undefined;
+  private readonly logger: Logger;
 
   constructor(config: {
     runner: AgentRunner;
@@ -136,6 +156,12 @@ export class AcpServer {
     teamId?: string;
     /** Pending-notify queue writer for the passive `notify` mode (Phase 2). */
     notifyQueue?: PendingNotifyQueue;
+    /**
+     * Where failures with no JSON-RPC response left to carry them are reported
+     * — today a turn-end tail that throws after its result was sent. Absent →
+     * a no-op logger. Never stdout: in stdio mode stdout IS the protocol.
+     */
+    logger?: Logger;
   }) {
     this.runner = config.runner;
     this.session = config.session;
@@ -150,6 +176,7 @@ export class AcpServer {
     this.personalityId = config.personalityId;
     this.teamId = config.teamId;
     this.notifyQueue = config.notifyQueue;
+    this.logger = config.logger ?? noopLogger;
   }
 
   /**
@@ -413,6 +440,10 @@ export class AcpServer {
 
         case 'prompt': {
           const p = req.params as { sessionKey: string; text: string; personalityId?: string };
+          // A streamed prompt that already answered may still be draining its
+          // turn — wait for it rather than refuse (see `sessionTails`).
+          const tail = this.sessionTails.get(p.sessionKey);
+          if (tail) await tail;
           if (this.busySessions.has(p.sessionKey)) {
             return {
               jsonrpc: '2.0',
@@ -626,6 +657,10 @@ export class AcpServer {
 
         case 'prompt': {
           const p = req.params as { sessionKey: string; text: string; personalityId?: string };
+          // A prompt that already answered may still be draining its turn —
+          // wait for it rather than refuse (see `sessionTails`).
+          const tail = this.sessionTails.get(p.sessionKey);
+          if (tail) await tail;
           if (this.busySessions.has(p.sessionKey)) {
             sendError(-32000, `Session ${p.sessionKey} has a prompt in progress`);
             return;
@@ -633,6 +668,17 @@ export class AcpServer {
           const ac = new AbortController();
           controllers.set(id, ac);
           this.busySessions.add(p.sessionKey);
+          // F07 — the RESULT and the TURN end at different moments. AgentLoop
+          // yields `done` BEFORE its turn-end work (`maybeConsolidateAtTurnEnd`
+          // in packages/core/src/agent-loop/turn-end.ts: the context engine's
+          // `onTurnComplete`, the memory flush, auto-compaction) and `error`
+          // before its usage flush and trace close. So the result goes out at
+          // the terminal event, the iterator is drained behind it — its events
+          // drained, not streamed, since the request is already answered — and
+          // the session stays busy (and cancellable) until the drain ends.
+          // Pinned by `__tests__/turn-tail.test.ts`.
+          let answered = false;
+          let releaseTail: () => void = () => {};
           try {
             let fullText = '';
             let turnCount = 0;
@@ -641,18 +687,50 @@ export class AcpServer {
               personalityId: p.personalityId,
               abortSignal: ac.signal,
             })) {
+              if (answered) continue;
               if (event.type === 'done') {
                 turnCount = event.turnCount as number;
+                // A `returnDirect` tool result arrives only as `done.text`,
+                // after any preamble that streamed: the result is the WHOLE
+                // reply — streamed text plus `answerSuffix` (@ethosagent/types).
+                fullText += answerSuffix(fullText, event.text as string | undefined);
               } else {
                 if (event.type === 'text_delta') fullText += event.text as string;
                 sendStream(event);
               }
+              if (event.type === 'done' || event.type === 'error') {
+                answered = true;
+                this.lastTurnAt = Date.now();
+                sendResult({ text: fullText, turnCount });
+                this.sessionTails.set(
+                  p.sessionKey,
+                  new Promise<void>((resolve) => {
+                    releaseTail = resolve;
+                  }),
+                );
+              }
             }
-            this.lastTurnAt = Date.now();
-            sendResult({ text: fullText, turnCount });
+            // An iterator that ends without `done` or `error` (AgentLoop
+            // always yields one; a runner need not): answer with what
+            // accumulated.
+            if (!answered) {
+              answered = true;
+              this.lastTurnAt = Date.now();
+              sendResult({ text: fullText, turnCount });
+            }
+          } catch (err) {
+            // A failure in the tail of an answered turn must not send a second
+            // response for the same request id — but it is not silent either.
+            if (!answered) throw err;
+            this.logger.warn('acp: turn tail failed after the result was sent', {
+              sessionKey: p.sessionKey,
+              error: err instanceof Error ? err.message : String(err),
+            });
           } finally {
             controllers.delete(id);
             this.busySessions.delete(p.sessionKey);
+            this.sessionTails.delete(p.sessionKey);
+            releaseTail();
           }
           break;
         }
@@ -938,11 +1016,22 @@ export class AcpServer {
   ): Promise<{ text: string; turnCount: number }> {
     let fullText = '';
     let turnCount = 0;
+    let failure: string | undefined;
     for await (const event of this.runner.run(text, { sessionKey, personalityId })) {
       if (event.type === 'text_delta') fullText += event.text as string;
-      if (event.type === 'done') turnCount = event.turnCount as number;
-      if (event.type === 'error') throw new Error(event.error as string);
+      if (event.type === 'done') {
+        turnCount = event.turnCount as number;
+        // A `returnDirect` tool result arrives only as `done.text`, after any
+        // preamble that streamed: the result is the whole reply.
+        fullText += answerSuffix(fullText, event.text as string | undefined);
+      }
+      if (event.type === 'error' && failure === undefined) failure = event.error as string;
     }
+    // Thrown only once the iterator is exhausted: AgentLoop yields `error`
+    // before its usage flush and trace close, and throwing inside the loop
+    // closes the generator and skips them (F07). Pinned by
+    // `__tests__/turn-tail.test.ts`.
+    if (failure !== undefined) throw new Error(failure);
     return { text: fullText.trim(), turnCount };
   }
 

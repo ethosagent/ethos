@@ -4,7 +4,7 @@ description: "Memory is two plain-markdown files — MEMORY.md per-personality, 
 kind: explanation
 audience: user
 slug: memory-model
-updated: 2026-06-09
+updated: 2026-09-12
 ---
 
 ## Context
@@ -129,6 +129,14 @@ This means concurrent agents writing to the same `MEMORY.md` is a real concern i
 
 The escape hatch, again, is the `MemoryProvider` interface. A backend that supports atomic compare-and-swap (a database, Redis) handles concurrent writers cleanly. The markdown default trades concurrency for legibility — the workloads that need both have a path.
 
+### The same files, in a directory you own
+
+`memory: vault` changes where those files live, not what they are. Point [`memoryVault.path`](../reference/config-yaml.md#memory-vault) at a directory you already keep — an Obsidian vault, a synced notes folder — and the agent writes `<path>/Ethos/personalities/<id>/MEMORY.md` instead of `~/.ethos/personalities/<id>/MEMORY.md`. Writes are confined to that `Ethos` subtree; search may read the whole vault, so your own notes are readable without being writable. Provenance history and diff blobs go to `<path>/Ethos/.ethos-meta/`, dot-prefixed so your notes app ignores them.
+
+One selection covers every reader and writer: the agent's tools, the web Memory page, `ethos memory`, the nightly consolidation pass. The exception is the approve-before-store queue, which stays in `~/.ethos/` whatever the backend — a parked candidate is gate state, not memory content, and it must survive a backend switch.
+
+Vector mode is the one backend with no files at all. Its entries live in `memory.db`, so the file surfaces — the web editor, the Timeline, `ethos memory restore` — refuse rather than edit bytes no agent reads.
+
 ### Memory is not session history
 
 This is a common confusion worth ending on. A [session](../../getting-started/glossary.md#session) is the literal sequence of messages in the current thread — stored in SQLite, scoped per working directory, read into the prompt as the last N messages. Memory is the distilled context the agent decides to keep across sessions.
@@ -142,6 +150,8 @@ The two stores have different shapes, different lifecycles, and different conten
 **You commit to manageable file sizes.** A `MEMORY.md` that grows unbounded is a `MEMORY.md` that gets truncated. The prefetch cap is 20 000 characters; the model is instructed to keep the file under that. If the agent writes too much, you can read it and trim it yourself — but the easy path is right-sized writes, not aggressive retrieval.
 
 **Per-personality memory is automatic, not configurable.** Every personality gets its own `MEMORY.md`. There is no option for shared memory across personalities. If you need one personality to access another's context, the honest workaround is to read the other personality's `MEMORY.md` file directly (it is just a file on disk) or use a shared backend via the `MemoryProvider` interface.
+
+**A vault is outside the backup.** `ethos backup` archives `~/.ethos`, so under `memory: vault` the memory and its history are not in any Ethos archive. Each backup says so and names the directory; backing it up is yours to arrange, the same way the rest of that vault is. See [Back up and restore](../how-to/back-up-and-restore.md#vault-memory).
 
 **Plain text is greppable, which is the point.** A `MEMORY.md` containing a password is searchable from any shell on the machine. Treat these files like any other dotfile: do not paste secrets the agent does not need to know. The threat model is the same as your `.bashrc`.
 
@@ -158,3 +168,4 @@ Alternatives considered:
 - [Why are sessions scoped per working directory?](sessions-and-history.md) — session history vs memory, two different stores
 - [Personality config reference](../reference/personality-yaml.md) — the fields in `config.yaml`
 - [Add a memory provider](../../building/how-to/add-a-memory-provider.md) — implement a non-markdown backend
+- [Back up and restore](../how-to/back-up-and-restore.md) — what an archive carries, and what a vault leaves to you

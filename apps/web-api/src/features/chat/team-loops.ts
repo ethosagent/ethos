@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import type { NotificationRouter } from '@ethosagent/types';
+import type { GoalsBackend } from '../../services/goals.service';
 
 // Team-scoped loops for the web chat surface (plan/phases/teams-as-a-scope.md
 // D4, §9). A personality that belongs to a team runs on that team's loop —
@@ -15,6 +16,13 @@ import type { NotificationRouter } from '@ethosagent/types';
 
 export interface TeamLoopHandle {
   loop: AgentLoop;
+  /**
+   * The team loop's goal store + executor. A goal for a team personality
+   * belongs on the team's runner for the same reason its chat turn does — the
+   * team board, `team_memory_*`, the role gate and `ctx.teamId` all come from
+   * that loop. Absent → goals for its members stay on the main pair.
+   */
+  goals?: GoalsBackend;
   /** Reload the loop's personality registry before a turn, as the main loop does. */
   refreshPersonalities?: () => Promise<void>;
   /** The loop's own notification router, so plugin monitors reach the web session. */
@@ -52,6 +60,8 @@ export class TeamLoopRegistry {
   private membership: TeamMembership[] | null = null;
   private membershipFetchedAt = 0;
   private membershipInFlight: Promise<TeamMembership[]> | null = null;
+  /** Set by `disposeAll`: the owning surface is gone, so nothing is built again. */
+  private disposed = false;
 
   constructor(private readonly opts: TeamLoopRegistryOptions) {}
 
@@ -79,12 +89,24 @@ export class TeamLoopRegistry {
 
   /** Lazily build (once) and return the team's loop. Concurrent callers share one build. */
   loopFor(teamName: string): Promise<TeamLoopHandle> {
+    if (this.disposed) {
+      return Promise.reject(new Error(`team loop "${teamName}" requested after dispose`));
+    }
     const existing = this.loops.get(teamName);
     if (existing) return existing;
     const building = this.opts
       .factory(teamName)
-      .then((handle) => {
-        this.opts.onCreate?.(teamName, handle);
+      .then(async (handle) => {
+        try {
+          this.opts.onCreate?.(teamName, handle);
+        } catch (err) {
+          // F06 — `onCreate` throws when the surface was disposed while this
+          // build was in flight. The handle would be lost (the slot is dropped
+          // below, and `disposeAll` only disposes handles that resolved), so
+          // release its runtime here.
+          await handle.dispose?.();
+          throw err;
+        }
         return handle;
       })
       .catch((err) => {
@@ -102,7 +124,11 @@ export class TeamLoopRegistry {
     this.membershipFetchedAt = 0;
   }
 
+  /** Dispose every built (and in-flight) team loop. Terminal: the owning
+   *  surface's shutdown, so `loopFor` refuses afterwards. Pinned by
+   *  `__tests__/team-loops.test.ts`. */
   async disposeAll(): Promise<void> {
+    this.disposed = true;
     const pending = [...this.loops.values()];
     this.loops.clear();
     await Promise.allSettled(

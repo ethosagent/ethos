@@ -7,6 +7,8 @@
 
 import type {
   CompletionChunk,
+  ContextEngine,
+  ContextEngineRegistry,
   LLMProvider,
   Message,
   Tool,
@@ -17,6 +19,7 @@ import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import { isContextOverflowError } from '../agent-loop/overflow';
 import { runMemoryFlush } from '../agent-loop/turn-end';
+import { ContextStore } from '../context-store';
 import { InMemorySessionStore } from '../defaults/in-memory-session';
 import { DefaultToolRegistry } from '../tool-registry';
 import { createTestSafety } from './helpers/test-safety';
@@ -185,6 +188,56 @@ describe('Phase 3 — auto-compaction fires at turn end, never mid-task', () => 
 
     const wm = await session.listCompressions(s.id);
     expect(wm.at(-1)?.keptFromMessageId).toBeTruthy();
+  });
+
+  // F07 follow-up — a /stop that lands while the turn is in its tail (here,
+  // during the context engine's turn-complete hook) must not go on to start a
+  // compaction: on a gateway the lane is still held, so the stop would wait on
+  // a summarizer call. Maintenance re-checks the turn's abort signal after the
+  // hook (`maybeConsolidateAtTurnEnd`).
+  it('a /stop during the turn-complete hook skips turn-end compaction', async () => {
+    const session = new InMemorySessionStore();
+    const s = await seedShortSession(session, 'cli:stop-tail', 8);
+    const controller = new AbortController();
+    const engine: ContextEngine = {
+      name: 'drop_oldest',
+      async compact(opts) {
+        return { messages: opts.messages, notes: '' };
+      },
+      async onTurnComplete() {
+        controller.abort();
+        return null;
+      },
+    };
+    const contextEngines: ContextEngineRegistry = {
+      register() {},
+      get: () => engine,
+      names: () => ['drop_oldest'],
+    };
+    const llm = makeLLM(() => ({
+      chunks: [
+        { type: 'text_delta', text: 'ok' },
+        usageChunk(170_000),
+        { type: 'done', finishReason: 'end_turn' },
+      ],
+    }));
+    const loop = new AgentLoop({
+      llm,
+      session,
+      contextEngines,
+      safety: createTestSafety(),
+      compaction: { autoCompact: true },
+    });
+
+    const events = await collect(
+      loop.run('next', { sessionKey: 'cli:stop-tail', abortSignal: controller.signal }),
+    );
+
+    expect(events.some((e) => e.type === 'done')).toBe(true);
+    expect(events.some((e) => e.type === 'tool_progress' && e.toolName === '_compaction')).toBe(
+      false,
+    );
+    expect(await session.listCompressions(s.id)).toHaveLength(0);
   });
 
   it('fires by default — autoCompact undefined means ON (context-economy Phase 2 flip)', async () => {
@@ -421,6 +474,11 @@ describe('Phase 3 — runMemoryFlush hard constraints', () => {
     filterOpts: {},
     compactedThisTurn: false,
     abortSignal: new AbortController().signal,
+    // The run's own fields, as `buildTurnEndCtx` supplies them: a flush
+    // dispatches tools, and they get the batch path's contract
+    // (`__tests__/tool-context-parity.test.ts`).
+    rootSessionKey: 'cli:s1',
+    contextStore: new ContextStore(),
   } as unknown as Parameters<typeof runMemoryFlush>[1];
 
   it('an already-aborted signal aborts the flush before any write', async () => {

@@ -11,6 +11,7 @@ import type {
   GetJobEventsOptions,
   JobStore,
 } from '@ethosagent/types';
+import { JOB_ABORTED_BY_SHUTDOWN } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -316,25 +317,29 @@ export class SQLiteJobStore implements JobStore {
     return row ? rowToJob(row) : null;
   }
 
-  async claimNextQueued(owner: string): Promise<BackgroundJob | null> {
+  async claimNextQueued(owner: string, opts?: { adopt?: string }): Promise<BackgroundJob | null> {
     const now = Date.now();
+    // A row handed back by `releaseQueued` carries its release label as owner;
+    // `adopt` names the one label this claimant may take. Without it the claim
+    // is exactly the owner-only claim it always was.
+    const adopt = opts?.adopt ?? owner;
     const claim = this.db.transaction((): string | null => {
       const candidate = this.db
         .prepare(
           `SELECT id FROM jobs
-           WHERE status = 'queued' AND owner = ?
+           WHERE status = 'queued' AND owner IN (?, ?)
            ORDER BY created_at ASC, rowid ASC
            LIMIT 1`,
         )
-        .get(owner) as { id: string } | undefined;
+        .get(owner, adopt) as { id: string } | undefined;
       if (!candidate) return null;
 
       const result = this.db
         .prepare(
-          `UPDATE jobs SET status = 'running', started_at = ?, heartbeat_at = ?
+          `UPDATE jobs SET status = 'running', owner = ?, started_at = ?, heartbeat_at = ?
            WHERE id = ? AND status = 'queued'`,
         )
-        .run(now, now, candidate.id);
+        .run(owner, now, now, candidate.id);
       if (result.changes !== 1) return null;
 
       this.appendEventSync(candidate.id, 'claimed', {});
@@ -344,6 +349,29 @@ export class SQLiteJobStore implements JobStore {
 
     const claimedId = claim();
     return claimedId ? this.getSync(claimedId) : null;
+  }
+
+  async releaseQueued(owner: string, releasedAs: string): Promise<number> {
+    // One transaction: a claim by `owner` cannot interleave with the move, so a
+    // row is either still `owner`'s or already under the release label.
+    return this.db.transaction((): number => {
+      const rows = this.db
+        .prepare(`SELECT id FROM jobs WHERE status = 'queued' AND owner = ?`)
+        .all(owner) as Array<{ id: string }>;
+      const move = this.db.prepare(
+        `UPDATE jobs SET owner = ? WHERE id = ? AND status = 'queued' AND owner = ?`,
+      );
+      let moved = 0;
+      for (const { id } of rows) {
+        if (move.run(releasedAs, id, owner).changes === 1) {
+          // Still `queued` — the release is a re-label, recorded on the row's
+          // own timeline rather than as a new status.
+          this.appendEventSync(id, 'queued', { releasedBy: owner, releasedAs });
+          moved++;
+        }
+      }
+      return moved;
+    })();
   }
 
   async heartbeat(id: string): Promise<void> {
@@ -577,22 +605,24 @@ export class SQLiteJobStore implements JobStore {
 
   async listUndelivered(originBotKeys: string[]): Promise<BackgroundJob[]> {
     if (originBotKeys.length === 0) return [];
-    // Only `done`/`failed` are announceable — `aborted` is user-requested and
-    // stays silent, and `stale`/`expired` have no result worth waking anyone
-    // for. Narrowing here (rather than at the caller) is also what keeps this
-    // query's result set bounded: an un-announceable row is never scanned again.
+    // Announceable: `done`/`failed`, and an `aborted` row ONLY when its
+    // runtime's shutdown interrupted it (`JOB_ABORTED_BY_SHUTDOWN`) — the
+    // origin chat is told to ask again. A user's cancel stays silent, and
+    // `stale`/`expired` have no result worth waking anyone for. Narrowing here
+    // (rather than at the caller) is also what keeps this query's result set
+    // bounded: an un-announceable row is never scanned again.
     const placeholders = originBotKeys.map(() => '?').join(',');
     const rows = this.db
       .prepare(
         `SELECT * FROM jobs
-         WHERE status IN ('done','failed')
+         WHERE (status IN ('done','failed') OR (status = 'aborted' AND error = ?))
            AND delivered_at IS NULL
            AND origin_bot_key IN (${placeholders})
            AND origin_platform IS NOT NULL
            AND origin_chat_id IS NOT NULL
          ORDER BY COALESCE(finished_at, created_at) ASC, rowid ASC`,
       )
-      .all(...originBotKeys) as JobRow[];
+      .all(JOB_ABORTED_BY_SHUTDOWN, ...originBotKeys) as JobRow[];
     return rows.map(rowToJob);
   }
 

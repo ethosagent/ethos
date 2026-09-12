@@ -1,13 +1,8 @@
 import { type AgentEvent, type AgentLoop, DefaultHookRegistry } from '@ethosagent/core';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
-import { FsStorage } from '@ethosagent/storage-fs';
-import type {
-  MemoryEntry,
-  MemoryEntryRef,
-  MemoryProvider,
-  MemorySnapshot,
-  PersonalityConfig,
-} from '@ethosagent/types';
+import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
+import type { PersonalityConfig } from '@ethosagent/types';
+import { createMemoryBundle, type MemoryBundle } from '@ethosagent/wiring';
 import type { ConfigGetResult, ConfigService } from '../services/config.service';
 
 // Test helpers shared by route + service tests. Building a real `AgentLoop`
@@ -73,29 +68,15 @@ export function makeStubPersonalityRegistry(
 }
 
 // ---------------------------------------------------------------------------
-// MemoryProvider stub
+// Memory bundle stub
 //
 // HTTP/route tests don't exercise the memory tab, but `createWebApi`
-// requires the provider via options. Returns null/empty to exercise
-// the backend-neutral path of the contract.
+// requires the bundle via options. A real markdown bundle over an empty
+// in-memory store: reads come back empty, writes touch no disk.
 // ---------------------------------------------------------------------------
 
-export function makeStubMemoryProvider(): MemoryProvider {
-  return {
-    async prefetch(): Promise<MemorySnapshot | null> {
-      return null;
-    },
-    async read(): Promise<MemoryEntry | null> {
-      return null;
-    },
-    async search(): Promise<MemoryEntry[]> {
-      return [];
-    },
-    async sync(): Promise<void> {},
-    async list(): Promise<MemoryEntryRef[]> {
-      return [];
-    },
-  };
+export function makeStubMemoryBundle(): MemoryBundle {
+  return createMemoryBundle({ config: {}, dataDir: '/stub-ethos', storage: new InMemoryStorage() });
 }
 
 // ---------------------------------------------------------------------------

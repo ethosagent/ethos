@@ -3,7 +3,11 @@ import { createInterface } from 'node:readline';
 import {
   type EthosConfig,
   ethosDir,
+  externalizeProviderChain,
+  externalizeSecret,
+  isProviderChainSecretRef,
   readRawConfig,
+  secretRefFromValue,
   writeConfig,
   writeKeys,
 } from '@ethosagent/config';
@@ -109,12 +113,9 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
     const secrets = await getSecretsResolver();
     const provider = answers.provider ?? 'anthropic';
 
-    let apiKeyRef = '';
-    if (answers.apiKey) {
-      const ref = `providers/${provider}/apiKey`;
-      await secrets.set(ref, answers.apiKey);
-      apiKeyRef = `\${secrets:${ref}}`;
-    }
+    const apiKeyRef = answers.apiKey
+      ? await storeSecret(secrets, `providers/${provider}/apiKey`, answers.apiKey)
+      : '';
 
     const config: EthosConfig = {
       provider,
@@ -124,8 +125,9 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
       memory: answers.memory,
       baseUrl: answers.baseUrl,
       apiVersion: answers.apiVersion,
+      // Collision-free vault names, and a stored reference passes through.
       providers: answers.providers
-        ? await storeProviderSecrets(answers.providers, secrets)
+        ? await externalizeProviderChain(answers.providers, secrets)
         : undefined,
       telegramToken: answers.telegramToken
         ? await storeSecret(secrets, 'telegram/token', answers.telegramToken)
@@ -153,6 +155,7 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
     };
 
     await writeConfig(storage, config, secrets);
+    await sweepReplacedChainSecrets(existingConfig, config, secrets);
     await scaffoldEthosDir(storage);
 
     if (answers.rotationKeys && answers.rotationKeys.length > 0) {
@@ -366,14 +369,17 @@ async function runReadlineFallback({
   rl.close();
 
   const secrets = await getSecretsResolver();
-  let apiKeyRef = '';
-  if (apiKey) {
-    const ref = `providers/${provider}/apiKey`;
-    await secrets.set(ref, apiKey);
-    apiKeyRef = `\${secrets:${ref}}`;
-  }
+  const apiKeyRef = apiKey
+    ? await storeSecret(secrets, `providers/${provider}/apiKey`, apiKey)
+    : '';
 
+  // Everything this prompt sequence did NOT ask about is carried over: the
+  // `providers:` chain above all, which `writeConfig` deliberately does not
+  // preserve as unexpressible lines (`parseProviderChain` owns that namespace),
+  // so building a fresh object here deleted the whole chain and orphaned its
+  // vault secrets. The TUI path has always round-tripped; these two agree now.
   const config: EthosConfig = {
+    ...(existing ?? {}),
     provider,
     model,
     apiKey: apiKeyRef,
@@ -393,25 +399,52 @@ async function runReadlineFallback({
   return config;
 }
 
+/**
+ * Store `value` under `ref` and return the reference for config.yaml — or
+ * return `value` untouched when it already IS a reference. The wizard is seeded
+ * with the config on disk, whose credentials are references, so a re-run that
+ * leaves a field alone hands one straight back; storing it would replace the
+ * real key with its own reference string. `externalizeSecret` is that
+ * idempotent store. Pinned by `__tests__/setup-rerun-secrets.test.ts`.
+ */
+/**
+ * Vault entries the chain the wizard just replaced was the only holder of.
+ * Index-named (`isProviderChainSecretRef`) only — a canonical
+ * `providers/<provider>/apiKey` is read by name by the provider factories and
+ * tools, so config.yaml not naming it says nothing. Runs AFTER the write, so a
+ * failed write leaves the vault intact; a failed delete is reported, never
+ * fatal (the config change already landed).
+ */
+async function sweepReplacedChainSecrets(
+  before: EthosConfig | null,
+  after: EthosConfig,
+  secrets: import('@ethosagent/types').SecretsResolver,
+): Promise<void> {
+  if (!before?.providers?.length) return;
+  const kept = new Set<string>();
+  for (const value of [after.apiKey, ...(after.providers ?? []).map((p) => p.apiKey)]) {
+    const ref = value ? secretRefFromValue(value) : null;
+    if (ref) kept.add(ref);
+  }
+  for (const entry of before.providers) {
+    const ref = secretRefFromValue(entry.apiKey);
+    if (!ref || kept.has(ref) || !isProviderChainSecretRef(ref)) continue;
+    try {
+      await secrets.delete(ref);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(
+        `${c.yellow}⚠ Stored key material for the replaced fallback chain was not deleted:${c.reset} ${msg}\n` +
+          `${c.dim}  Remove it with: ethos secrets remove ${ref}${c.reset}`,
+      );
+    }
+  }
+}
+
 async function storeSecret(
   secrets: import('@ethosagent/types').SecretsResolver,
   ref: string,
   value: string,
 ): Promise<string> {
-  await secrets.set(ref, value);
-  return `\${secrets:${ref}}`;
-}
-
-async function storeProviderSecrets(
-  providers: Array<{ provider: string; apiKey: string; model?: string; baseUrl?: string }>,
-  secrets: import('@ethosagent/types').SecretsResolver,
-): Promise<Array<{ provider: string; apiKey: string; model?: string; baseUrl?: string }>> {
-  return Promise.all(
-    providers.map(async (p, i) => ({
-      ...p,
-      apiKey: p.apiKey
-        ? await storeSecret(secrets, `providers/${i}/${p.provider}/apiKey`, p.apiKey)
-        : '',
-    })),
-  );
+  return externalizeSecret(value, ref, secrets);
 }

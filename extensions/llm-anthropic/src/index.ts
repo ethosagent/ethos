@@ -344,7 +344,15 @@ export class AuthRotatingProvider implements LLMProvider {
         // Once the consumer has seen any chunk, failing over to a different
         // provider would emit a fresh stream from the start and corrupt the
         // assistant turn. Propagate the error instead.
-        if (yieldedAny) throw err;
+        //
+        // An aborted turn is the same refusal for a different reason: the caller
+        // stopped, so there is no failure to route around and nothing waiting for
+        // a second stream. Stated explicitly rather than left to `classifyError`
+        // returning 'unknown' for `APIUserAbortError` — a fallthrough is not a
+        // decision, and an abort that races the platform's own 429 would rotate.
+        // Same guard as `ChainedProvider` (packages/core/src/providers/chained-provider.ts);
+        // pinned by `__tests__/auth-rotation-abort.test.ts`.
+        if (yieldedAny || options.abortSignal?.aborted) throw err;
 
         const reason = classifyError(err);
         if (reason === 'auth' || reason === 'rate_limit' || reason === 'overloaded') {

@@ -24,6 +24,8 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { SecretsResolver } from '@ethosagent/types';
+import type { MemoryBackendSelection } from '../memory-backend';
+import { type ExternalMemoryNotice, externalMemoryNotice } from './external-memory';
 import { type BackupManifest, writeManifest } from './manifest';
 import { type BackupEntry, DEFAULT_SCOPES, enumerateBackupEntries, type ScopeName } from './scopes';
 import { buildSecretsManifest, SECRETS_MANIFEST_PATH } from './secrets-manifest';
@@ -49,6 +51,13 @@ export interface CreateBackupOptions {
   secrets?: SecretsResolver;
   /** Staging root for database snapshots. Defaults to a fresh temp dir. */
   stagingDir?: string;
+  /**
+   * The deployment's memory selection (`memory` / `memoryVault` from config).
+   * Read for one purpose: a `memory: vault` deployment keeps its memory outside
+   * `dataDir`, which no scope covers, so the result carries a notice naming what
+   * this archive does NOT hold (`externalMemory`). Omitted → no notice.
+   */
+  memory?: MemoryBackendSelection;
 }
 
 export interface BackupResult {
@@ -68,6 +77,13 @@ export interface BackupResult {
    * as bad, so a caller MUST surface these.
    */
   skippedFiles: TarSkip[];
+  /**
+   * Memory that lives outside `dataDir` and is therefore NOT in this archive —
+   * present only under `memory: vault`. Every surface that reports a backup
+   * MUST print it: it is the difference between "backed up" and "backed up
+   * except the memory". See `backup/external-memory.ts`.
+   */
+  externalMemory?: ExternalMemoryNotice;
 }
 
 /** Where a database's snapshot lands under the staging root. */
@@ -137,6 +153,7 @@ export async function createBackup(opts: CreateBackupOptions): Promise<BackupRes
     await writer.finish();
     // Complete, closed, and only now the archive at `outPath`.
     renameSync(tempPath, opts.outPath);
+    const externalMemory = opts.memory ? externalMemoryNotice(opts.memory) : null;
     return {
       path: opts.outPath,
       scopes,
@@ -145,6 +162,7 @@ export async function createBackup(opts: CreateBackupOptions): Promise<BackupRes
       bytes,
       unclassifiedDatabases,
       skippedFiles: [...writer.skipped],
+      ...(externalMemory ? { externalMemory } : {}),
     };
   } catch (err) {
     // Close the pipeline before the temp directory goes, so the descriptors

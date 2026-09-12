@@ -349,6 +349,54 @@ describe('DreamExecutor', () => {
   // hasActiveDreams — the idle-watcher's busy predicate
   // -----------------------------------------------------------------------
 
+  // F07 — AgentLoop yields `done` BEFORE its turn-end work (the context
+  // engine's `onTurnComplete`, the memory flush, auto-compaction). Breaking on
+  // `done` closes the generator and skips it; the dream must drain the turn.
+  describe('turn tail', () => {
+    it('drains the loop past `done`, so turn-end work runs, and still records the dream', async () => {
+      let tailRan = false;
+      const tailLoop = {
+        run: async function* () {
+          yield { type: 'done' as const, text: '', turnCount: 1 };
+          await Promise.resolve();
+          tailRan = true;
+        },
+      } as unknown as AgentLoop;
+      executor = new DreamExecutor(
+        storage,
+        () => tailLoop,
+        () => makeConfig(),
+      );
+
+      executor.recordUserTurn(personalityId);
+      vi.setSystemTime(Date.now() + 61 * 60_000);
+      await internals(executor).tick();
+
+      expect(tailRan).toBe(true);
+      expect(await storage.read(statePath)).not.toBeNull();
+    });
+
+    it('a refused turn (error, then done) is not recorded as a dream', async () => {
+      const refusedLoop = {
+        run: async function* () {
+          yield { type: 'error' as const, error: 'budget', code: 'BUDGET_EXCEEDED' };
+          yield { type: 'done' as const, text: '', turnCount: 0 };
+        },
+      } as unknown as AgentLoop;
+      executor = new DreamExecutor(
+        storage,
+        () => refusedLoop,
+        () => makeConfig(),
+      );
+
+      executor.recordUserTurn(personalityId);
+      vi.setSystemTime(Date.now() + 61 * 60_000);
+      await internals(executor).tick();
+
+      expect(await storage.read(statePath)).toBeNull();
+    });
+  });
+
   describe('hasActiveDreams', () => {
     it('is false when idle, true mid-dream, and false again once the dream ends', async () => {
       // A loop whose run() parks until the test releases it, so the dream is

@@ -1,9 +1,12 @@
 import type { Attachment } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import { SlackAdapter } from '../adapter';
+import { stubSlackWebApi } from './stub-slack-web-api';
 
 // The real Bolt App is constructed but never started (no socket opens), and the
 // client is swapped for a spy — mirrors the receipt-reactions test harness.
+// Construction alone still fires `auth.test`; the stub keeps it off slack.com.
+stubSlackWebApi();
 function makeAdapter() {
   const adapter = new SlackAdapter({
     botToken: 'xoxb-fake',

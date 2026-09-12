@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
 import type * as vscode from 'vscode';
+import { decideFinalize } from './finalize';
 
 export function getWebviewContent(_webview: vscode.Webview, _extensionUri: vscode.Uri): string {
   const nonce = crypto.randomBytes(16).toString('hex');
@@ -299,10 +300,14 @@ export function getWebviewContent(_webview: vscode.Webview, _extensionUri: vscod
     if (el) { el.textContent = streamText; scrollBottom(); }
   }
 
+  // Interpolated from ./finalize.ts — see decideFinalize there.
+  const decideFinalize = ${decideFinalize.toString()};
+
   function finalizeStream(text) {
-    const full = text || streamText;
-    const el = document.getElementById('_streaming');
-    if (el) { el.removeAttribute('id'); renderResponseText(el, full); }
+    let el = document.getElementById('_streaming');
+    const d = decideFinalize(!!el, streamText, text);
+    if (d.kind === 'add-message') { startStream(); el = document.getElementById('_streaming'); }
+    if (d.kind !== 'none' && el) { el.removeAttribute('id'); renderResponseText(el, d.text); }
     streamDiv = null;
     streamText = '';
   }

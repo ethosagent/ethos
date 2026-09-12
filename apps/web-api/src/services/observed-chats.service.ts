@@ -109,6 +109,19 @@ export class ObservedChatsService {
    * for nothing. Once opened it is never re-probed — a file cannot un-exist
    * under a live handle, and the probe is only there to avoid creating one.
    */
+  /**
+   * F06 — close the handle this service opened, if it opened one. Called by
+   * `CreateWebApiResult.dispose`: the connection is cached for the life of the
+   * process, so without this every run left a -wal/-shm pair behind. A no-op
+   * when nothing was opened, and idempotent. Pinned by
+   * apps/web-api/src/__tests__/services/read-side-close.test.ts.
+   */
+  close(): void {
+    const store = this.store;
+    this.store = null;
+    store?.close();
+  }
+
   private async open(): Promise<ChannelTranscriptStore | null> {
     const existing = this.store;
     if (existing) return existing;

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { deriveBotKey as deriveBotKeyFromSeed } from '@ethosagent/core';
@@ -15,7 +16,97 @@ import type {
   SttProviderEntry,
   TtsProviderEntry,
 } from '@ethosagent/types';
-import { isRetentionDuration } from '@ethosagent/types';
+import { EthosError, isRetentionDuration, SECRET_NAME_RE } from '@ethosagent/types';
+
+// ---------------------------------------------------------------------------
+// Value scalars — the one reader of a `key: <value>`, and the CLI's writer
+// ---------------------------------------------------------------------------
+
+/**
+ * The value of a `key: <value>` line, as whichever writer meant it.
+ *
+ * - `"…"`: the text between the quotes, with exactly two escapes decoded —
+ *   `\\` is `\` and `\"` is `"`. Every other backslash is literal, so a
+ *   hand-written `"C:\tmp"`, `"C:\Users\me"` or `"C:\ffmpeg\bin"` reads
+ *   exactly as it did before quoting was made reversible; no escape can
+ *   silently become a tab, form feed or backspace. `quoteConfigScalar` writes
+ *   the same two escapes, so both writers' values read back as written — the
+ *   old reader stripped the quotes and decoded nothing, so each web save of
+ *   `C:\tmp "x"` added a layer of `\`. Values the previous web writer produced
+ *   with `JSON.stringify` still decode: without control characters (which no
+ *   writer accepts, `assertWritableConfigLines`) JSON uses only these escapes.
+ * - Anything else — `'…'` included — is trimmed, and one quote is stripped from
+ *   each end: the legacy rule, unchanged for hand-written files.
+ *
+ * Pinned by `__tests__/config-scalar-roundtrip.test.ts`.
+ */
+export function parseConfigScalar(raw: string): string {
+  const s = raw.trim();
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+    return s.slice(1, -1).replace(/\\(["\\])/g, '$1');
+  }
+  return s.replace(/^["']|["']$/g, '');
+}
+
+/** `value` double-quoted with `\` and `"` escaped — the inverse of
+ *  `parseConfigScalar` for a quoted value. Both config writers quote with it
+ *  (`renderConfigScalar` here, `yamlScalar` in apps/web-api). */
+export function quoteConfigScalar(value: string): string {
+  return `"${value.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+}
+
+/**
+ * The CLI writer's spelling of a value: raw when `parseConfigScalar` reads the
+ * raw text back unchanged, quoted (`quoteConfigScalar`) otherwise — surrounding
+ * whitespace or a quote at either end. Ordinary values — URLs, cron
+ * expressions, model ids, Windows paths — keep the unquoted shape existing
+ * files have; a raw backslash is literal.
+ *
+ * Exported for `__tests__/config-scalar-roundtrip.test.ts`, which pins it as
+ * `parseConfigScalar`'s inverse value by value; nothing outside this module
+ * calls it (`serializeConfigLines` does, through `renderConfigLine`).
+ */
+export function renderConfigScalar(value: string): string {
+  if (value === '') return value;
+  const plain = value === value.trim() && !/^["']/.test(value) && !/["']$/.test(value);
+  return plain ? value : quoteConfigScalar(value);
+}
+
+/** One serialized `key: value` line with its value run through
+ *  `renderConfigScalar`. Keys never contain `': '`, so the first one splits. */
+function renderConfigLine(line: string): string {
+  const i = line.indexOf(': ');
+  if (i <= 0) return line;
+  const value = line.slice(i + 2);
+  // `""` is the serializer's explicit empty (`security.trusted_github_orgs`),
+  // already in the spelling `parseConfigScalar` reads as ''.
+  if (value === '""') return line;
+  return `${line.slice(0, i)}: ${renderConfigScalar(value)}`;
+}
+
+/**
+ * Refuse serialized config lines that carry a control character (newline, CR,
+ * tab, …). The format is line-based: such a value cannot be written so it
+ * reads back, so the writer refuses it with `INVALID_INPUT` naming the key
+ * instead of writing a file that means something else. Credentials are exempt
+ * by construction — only their `${secrets:…}` reference reaches a line. Both
+ * writers call it on exactly what they are about to write: `writeConfig` here
+ * and `ConfigRepository.write` in apps/web-api (setup goes through
+ * `writeConfig`). Pinned by `__tests__/config-scalar-roundtrip.test.ts`.
+ */
+export function assertWritableConfigLines(lines: readonly string[]): void {
+  for (const line of lines) {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are the subject.
+    if (!/[\u0000-\u001f\u007f]/.test(line)) continue;
+    const i = line.indexOf(':');
+    const key = i > 0 ? line.slice(0, i) : line.slice(0, 40);
+    throw new EthosError({
+      code: 'INVALID_INPUT',
+      cause: `config.yaml cannot store a newline, tab or other control character; '${key}' has one.`,
+      action: `Remove the control character from '${key}' and save again.`,
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // ${secrets:ref} substitution
@@ -227,6 +318,83 @@ export function secretRefForConfigKey(key: string, ctx: SecretRefContext = {}): 
   return null;
 }
 
+/**
+ * Write-path externalization for the whole provider chain: every entry's
+ * `apiKey`, and every `passthrough` field whose name `secretRefForConfigKey`
+ * maps to a ref, goes to the vault. Both config writers call it
+ * (`externalizeConfigSecrets` here, `ConfigRepository` in apps/web-api), so no
+ * chain credential reaches disk as a value.
+ *
+ * Vault names embed an index (`providers/1/bedrock/apiKey`), and a stored
+ * value is already a reference, which passes through untouched — so an entry
+ * keeps the name it was FIRST stored under when it moves. A newly typed value
+ * is therefore stored under a name no value in the resulting chain references:
+ * the derived name, or its first free `-2`, `-3`, … suffix. Without that, a key
+ * typed for the entry that takes a vacated index overwrote the secret of the
+ * entry that moved away from it. Pinned by
+ * `__tests__/config-provider-chain.test.ts` ("vacated index").
+ *
+ * `reserved` holds the values of the config's OTHER credential lines — each
+ * writer passes its top-level `apiKey` (and, in apps/web-api, the voice keys
+ * and passthrough), because a provider move writes chain entry 0's
+ * index-named reference into the top-level `apiKey` line (`ConfigService`),
+ * and a name counted as free there would be minted again over that key.
+ * Pinned by `__tests__/config-provider-chain.test.ts` ("counts the top-level
+ * key as taken") and apps/ethos's `fallback-secrets.test.ts`.
+ */
+export async function externalizeProviderChain<E extends ProviderChainEntry>(
+  entries: readonly E[],
+  secrets: SecretsResolver,
+  reserved: Iterable<string | undefined> = [],
+): Promise<E[]> {
+  const ctx: SecretRefContext = { providerChain: entries.map((p) => p.provider) };
+  const taken = new Set<string>();
+  const values: Array<string | undefined> = [...reserved];
+  for (const entry of entries) values.push(entry.apiKey, ...Object.values(entry.passthrough ?? {}));
+  for (const value of values) {
+    for (const m of (value ?? '').matchAll(SECRETS_REF_RE)) if (m[1]) taken.add(m[1]);
+  }
+  const store = async (value: string, key: string): Promise<string> => {
+    const base = secretRefForConfigKey(key, ctx);
+    if (!value || isSecretRef(value) || base === null) return value;
+    let ref = base;
+    for (let n = 2; taken.has(ref); n++) ref = `${base}-${n}`;
+    taken.add(ref);
+    return externalizeSecret(value, ref, secrets);
+  };
+  const out: E[] = [];
+  for (const [i, entry] of entries.entries()) {
+    const next: E = { ...entry };
+    if (entry.apiKey) next.apiKey = await store(entry.apiKey, `providers.${i}.apiKey`);
+    if (entry.passthrough) {
+      const passthrough: Record<string, string> = {};
+      for (const [field, value] of Object.entries(entry.passthrough)) {
+        passthrough[field] = await store(value, `providers.${i}.${field}`);
+      }
+      next.passthrough = passthrough;
+    }
+    out.push(next);
+  }
+  return out;
+}
+
+/**
+ * Whether `ref` is a vault name the provider-chain writers mint:
+ * `providers/<index>/…` (`secretRefForConfigKey` on a `providers.<n>.*` key,
+ * plus `externalizeProviderChain`'s `-2`, `-3`, … suffixes). These are the ONLY
+ * secrets a config write may delete as orphans. Every other name is read by
+ * name, with no `${secrets:…}` line anywhere: the canonical
+ * `providers/<provider>/<field>` names (`secrets.get` in llm-anthropic,
+ * llm-openai-compat, llm-azure, llm-bedrock, llm-gemini and apps/web-api's
+ * named-secrets service; the declared secret of tools-image and the default
+ * ref of tools-answer-engines' ChatGPT engine) and the `auxiliary/*` ones — so
+ * config.yaml not naming one says nothing about whether it is in use. No
+ * by-name reader uses a numeric second segment.
+ */
+export function isProviderChainSecretRef(ref: string): boolean {
+  return /^providers\/\d+\//.test(ref);
+}
+
 // ---------------------------------------------------------------------------
 // Key rotation pool
 // ---------------------------------------------------------------------------
@@ -419,14 +587,31 @@ export interface SearchConsoleToolSetting {
   secret?: string;
 }
 
-/** Per-personality tool config. */
+/**
+ * Per-personality tool config. The named fields are the TYPED roster; the index
+ * signature is the real key space, which is whatever `settingsKey ?? name` the
+ * registered tools declare. This package sits below the tool registry in the
+ * layer model (ARCHITECTURE.md §II) and cannot see it, so it parses and renders
+ * `toolSettings.<id>.<key>.secret` for any shape-safe `<key>` and leaves the
+ * refusal to the write boundary that does have the registry
+ * (`ToolSettingsService`, apps/web-api). See D8: the hand-listed render block
+ * this replaced omitted `search_console`, so a global Search Console binding
+ * was written into this object, dropped by the renderer, and gone on the next
+ * read — rungs 2 and 3 of the four-rung ladder dead while rung 1 worked.
+ */
 export interface PersonalityToolSettings {
   web_search?: WebSearchToolSetting;
   x_search?: XSearchToolSetting;
   engine_ask?: EngineAskToolSetting;
   youtube?: YouTubeToolSetting;
   search_console?: SearchConsoleToolSetting;
+  [key: string]: WebSearchToolSetting | { secret?: string } | undefined;
 }
+
+/** Object keys reserved by the JS object model — never let one become a
+ *  computed own-key on a parsed slot, or a hand-edited config.yaml seeds a
+ *  prototype-pollution reservoir. */
+const RESERVED_TOOL_SETTINGS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /** Global FALLBACK map: personality ID (or `_default`) → per-tool config. */
 export type ToolSettingsMap = Record<string, PersonalityToolSettings>;
@@ -810,9 +995,24 @@ export interface WakeRouteConfig {
   enabled?: boolean;
 }
 
-export interface ProviderConfig {
-  provider: string;
+/** A provider-chain entry as `parseConfigYaml` returns it. `apiKey` is `''`
+ *  when the file carries none (Bedrock on an AWS profile, a local server). */
+export interface ProviderConfig extends ProviderChainEntry {
   apiKey: string;
+}
+
+// ---------------------------------------------------------------------------
+// Provider chain codec — `providers.<n>.<field>: <value>`
+// ---------------------------------------------------------------------------
+
+/**
+ * One `providers.<n>` entry exactly as config.yaml holds it: values verbatim,
+ * so an `apiKey` is normally a `${secrets:…}` reference and nothing here
+ * resolves it.
+ */
+export interface ProviderChainEntry {
+  provider: string;
+  apiKey?: string;
   model?: string;
   baseUrl?: string;
   /** Azure-only: REST API version (e.g. `2024-10-21`). Required when
@@ -826,6 +1026,200 @@ export interface ProviderConfig {
    *  otherwise. Named `awsProfile`, not `profile`, because `profile` already
    *  means a per-model `ModelProfile` (`models.*`) in this config. */
   awsProfile?: string;
+  /**
+   * Every other `providers.<n>.<field>` line, keyed by `<field>`. It belongs to
+   * THIS entry: `renderProviderChain` re-emits it under whatever index the
+   * entry has at write time, so it moves with the entry on reorder and is gone
+   * with it on delete (pinned by `__tests__/config-provider-chain.test.ts` and
+   * apps/web-api's `config.repository.test.ts`). Nothing at runtime reads it;
+   * it exists so a writer that does not model a field cannot delete it.
+   */
+  passthrough?: Record<string, string>;
+}
+
+/**
+ * The modelled fields, in render order. These are exactly the fields
+ * `createLLM` (packages/wiring/src/index.ts) forwards to a chain entry's
+ * provider factory; any other field lands in `passthrough`.
+ */
+const PROVIDER_CHAIN_FIELDS = [
+  'provider',
+  'apiKey',
+  'model',
+  'baseUrl',
+  'apiVersion',
+  'region',
+  'awsProfile',
+] as const;
+type ProviderChainField = (typeof PROVIDER_CHAIN_FIELDS)[number];
+
+function isProviderChainField(field: string): field is ProviderChainField {
+  return (PROVIDER_CHAIN_FIELDS as readonly string[]).includes(field);
+}
+
+/** A `<field>` both writers can interpolate into a key unquoted: no space, no
+ *  colon, nothing a line parser could split on. */
+const PROVIDER_CHAIN_FIELD = /^[A-Za-z0-9_.-]+$/;
+
+/** `providers.<n>.<field>: <value>`, `<field>` in the `PROVIDER_CHAIN_FIELD`
+ *  charset. Space before the colon is tolerated (hand edits). */
+const PROVIDER_CHAIN_LINE = /^providers\.(\d+)\.([A-Za-z0-9_.-]+)\s*:\s*(.*)$/;
+
+/** Never a computed own-key on a parsed slot — see RESERVED_TOOL_SETTINGS_KEYS. */
+const RESERVED_PROVIDER_FIELDS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isRenderableField(field: string): boolean {
+  return PROVIDER_CHAIN_FIELD.test(field) && !RESERVED_PROVIDER_FIELDS.has(field);
+}
+
+/**
+ * True for a line `parseProviderChain` reads — the `providers.<n>.<field>`
+ * grammar. Line parsers skip these and hand the whole file to
+ * `parseProviderChain`, so the namespace has one reader; `unexpressibleLines`
+ * skips them so a stale line can never re-attach to whichever entry later
+ * takes its index. A `providers.<n>.` line outside the grammar (a space inside
+ * the field name) is NOT claimed and is handled like any other malformed line.
+ */
+export function isProviderChainLine(line: string): boolean {
+  return PROVIDER_CHAIN_LINE.test(line);
+}
+
+/**
+ * Parse every `providers.<n>.*` line into chain entries, ordered by index.
+ *
+ * Pure: no I/O, no secret resolution. Values go through `parseConfigScalar`,
+ * so the CLI writer's spelling (`renderConfigScalar`) and apps/web-api's
+ * ConfigRepository's (`quoteConfigScalar` on more values) read back the same
+ * value. An index without a
+ * `provider` names nothing the runtime can resolve and is dropped along with
+ * its other fields, the same rule `buildVoiceProviderEntry` applies to the
+ * voice rosters. Reserved object keys (`__proto__`, …) and empty values are
+ * dropped.
+ *
+ * `notices` is the optional sink for what was dropped and why — a reserved
+ * field name, and an index with no `provider` line, which loses the whole
+ * entry. The codec is pure, so it cannot reach the config notice tables
+ * itself: `parseConfigYaml` passes one and files them under
+ * `parseWarningsByConfig` (boot deprecations, `configParseNotices`,
+ * `ethos doctor`), and apps/web-api's `ConfigRepository.read` returns them on
+ * `RawConfig.providerNotices`.
+ */
+export function parseProviderChain(
+  lines: Iterable<string>,
+  notices?: string[],
+): ProviderChainEntry[] {
+  const byIndex = new Map<number, Map<string, string>>();
+  for (const line of lines) {
+    const m = line.match(PROVIDER_CHAIN_LINE);
+    const field = m?.[2];
+    if (!m || !field) continue;
+    if (!isRenderableField(field)) {
+      notices?.push(
+        `config.yaml: 'providers.${m[1]}.${field}' uses a reserved name and was ignored.`,
+      );
+      continue;
+    }
+    const value = parseConfigScalar(m[3] ?? '');
+    if (!value) continue;
+    const idx = Number(m[1]);
+    const slot = byIndex.get(idx) ?? new Map<string, string>();
+    byIndex.set(idx, slot);
+    slot.set(field, value);
+  }
+  const entries: ProviderChainEntry[] = [];
+  for (const idx of [...byIndex.keys()].sort((a, b) => a - b)) {
+    const slot = byIndex.get(idx);
+    const provider = slot?.get('provider');
+    if (!slot || !provider) {
+      // A typo'd `providers.1.provder:` loses the WHOLE entry, on every
+      // surface, and this codec is the only reader — so it says which lines.
+      notices?.push(
+        `config.yaml: no 'providers.${idx}.provider' line, so entry ${idx} is ignored — ` +
+          `${[...(slot?.keys() ?? [])].map((f) => `'providers.${idx}.${f}'`).join(', ')} ` +
+          'had no effect.',
+      );
+      continue;
+    }
+    const entry: ProviderChainEntry = { provider };
+    const passthrough: Record<string, string> = {};
+    for (const [field, value] of slot) {
+      if (field === 'provider') continue;
+      if (isProviderChainField(field)) entry[field] = value;
+      else passthrough[field] = value;
+    }
+    if (Object.keys(passthrough).length > 0) entry.passthrough = passthrough;
+    entries.push(entry);
+  }
+  return entries;
+}
+
+/**
+ * Render chain entries as `[key, value]` pairs, index = array position:
+ * modelled fields in `PROVIDER_CHAIN_FIELDS` order, then `passthrough` sorted
+ * so the file is byte-stable. Empty values are omitted. Value encoding is the
+ * caller's — each config writer applies its own scalar rule to the whole file.
+ * A passthrough field that fails the line grammar, is reserved, or shadows a
+ * modelled field is not rendered.
+ */
+export function renderProviderChain(
+  entries: readonly ProviderChainEntry[],
+): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const [i, entry] of entries.entries()) {
+    for (const field of PROVIDER_CHAIN_FIELDS) {
+      const value = entry[field];
+      if (field === 'provider' || value) out.push([`providers.${i}.${field}`, value ?? '']);
+    }
+    const passthrough = entry.passthrough ?? {};
+    for (const field of Object.keys(passthrough).sort()) {
+      const value = passthrough[field];
+      if (!value || isProviderChainField(field) || !isRenderableField(field)) continue;
+      out.push([`providers.${i}.${field}`, value]);
+    }
+  }
+  return out;
+}
+
+/**
+ * `entry` with every modelled field it lacks taken from `top` — the top-level
+ * `provider` / `apiKey` / `model` / … as a chain entry — when both name the
+ * same provider; `entry` unchanged otherwise.
+ *
+ * The runtime reads the top-level fields while the chain has fewer than two
+ * entries and the chain from two on (`createLLM`, packages/wiring). A chain
+ * growing past one entry therefore takes the primary's place, and its entry 0
+ * must carry the top-level key reference (the same vault entry, not a copy),
+ * base URL, model and provider-specific fields — or the primary loses its key
+ * the moment a fallback is added. Used by apps/web-api's `ConfigService.update`
+ * and `ethos fallback add`.
+ */
+export function fillFromTopLevel<E extends ProviderChainEntry>(
+  entry: E,
+  top: ProviderChainEntry,
+): E {
+  if (entry.provider !== top.provider) return entry;
+  const next: E = { ...entry };
+  for (const field of PROVIDER_CHAIN_FIELDS) {
+    const value = top[field];
+    if (field !== 'provider' && !next[field] && value) (next as ProviderChainEntry)[field] = value;
+  }
+  return next;
+}
+
+/**
+ * An opaque token for a chain's exact content — order, every modelled field,
+ * key REFERENCES (not values) and `passthrough` — hashed over
+ * `renderProviderChain`'s canonical pairs, so object key order does not move
+ * it. apps/web-api's `config.get` returns it and `config.update` must send it
+ * back with a `providers` list: a list built against a chain that has since
+ * changed (another tab, `ethos fallback`) is refused instead of overlaid onto
+ * the wrong entries (`ConfigService.update`, apps/web-api).
+ */
+export function providerChainVersion(entries: readonly ProviderChainEntry[]): string {
+  return createHash('sha256')
+    .update(JSON.stringify(renderProviderChain(entries)))
+    .digest('hex')
+    .slice(0, 16);
 }
 
 /**
@@ -2586,7 +2980,6 @@ async function externalizeConfigSecrets(
 ): Promise<EthosConfig> {
   const ctx: SecretRefContext = {
     provider: config.provider,
-    providerChain: config.providers?.map((p) => p.provider),
     telegramBotKeys: config.telegram?.bots.map((b) => deriveBotKey(b)),
     slackAppKeys: config.slack?.apps.map((a) => deriveBotKey(a)),
   };
@@ -2609,16 +3002,9 @@ async function externalizeConfigSecrets(
   );
   r.emailPassword = await externalizeSecret(r.emailPassword, ref('emailPassword'), secrets);
 
-  if (r.providers) {
-    const out: ProviderConfig[] = [];
-    for (const [i, p] of r.providers.entries()) {
-      out.push({
-        ...p,
-        apiKey: await externalizeSecret(p.apiKey, ref(`providers.${i}.apiKey`), secrets),
-      });
-    }
-    r.providers = out;
-  }
+  // The top-level key can name an index-named chain secret (a provider move);
+  // count it as taken so no new chain key is minted over it.
+  if (r.providers) r.providers = await externalizeProviderChain(r.providers, secrets, [r.apiKey]);
   if (r.telegram?.bots) {
     const bots: TelegramBotConfig[] = [];
     for (const [i, bot] of r.telegram.bots.entries()) {
@@ -2874,9 +3260,10 @@ export async function writeConfig(
   // boot, applied to exactly what is about to be serialized. Reused rather
   // than re-implemented so the write and boot checks can never disagree.
   validateNoPlaintextSecrets(config);
+  const lines = serializeConfigLines(config);
+  assertWritableConfigLines(lines);
   await storage.mkdir(ethosDir());
   const path = join(ethosDir(), 'config.yaml');
-  const lines = serializeConfigLines(config);
   const existing = await storage.read(path);
   if (existing !== null) lines.push(...unexpressibleLines(existing, lines));
   await storage.write(path, `${lines.join('\n')}\n`, { mode: 0o600 });
@@ -2909,6 +3296,12 @@ function configLineKey(line: string): string | null {
  * `writeConfig(storage, { ...cfg, retention: undefined })` still deletes it.
  * Pinned by `packages/config/src/__tests__/config-write-preserves-keys.test.ts`.
  *
+ * `providers.<n>.*` lines are never kept here: `parseProviderChain` carries an
+ * unmodelled field on its entry's `passthrough`, so the field is re-emitted at
+ * the entry's CURRENT index — a verbatim copy would stay at the old index and
+ * attach to whichever entry moved into it. Pinned by
+ * `packages/config/src/__tests__/config-provider-chain.test.ts`.
+ *
  * Limits, both pre-existing: comments and blank lines are still dropped, and a
  * preserved credential is not externalized into the vault (nothing parses the
  * key, so `externalizeConfigSecrets` never sees it) — it stays exactly as the
@@ -2939,7 +3332,7 @@ function unexpressibleLines(existing: string, emitted: readonly string[]): strin
   const kept: string[] = [];
   for (const line of existing.split('\n')) {
     const key = configLineKey(line);
-    if (key === null || covered.has(key)) continue;
+    if (key === null || covered.has(key) || isProviderChainLine(line)) continue;
     kept.push(line);
   }
   return kept;
@@ -3007,12 +3400,18 @@ function serializeConfigLines(config: EthosConfig): string[] {
       if (ws?.provider) lines.push(`toolSettings.${id}.web_search.provider: ${ws.provider}`);
       if (ws?.secret) lines.push(`toolSettings.${id}.web_search.secret: ${ws.secret}`);
       if (ws?.recency) lines.push(`toolSettings.${id}.web_search.recency: ${ws.recency}`);
-      const xs = settings.x_search;
-      if (xs?.secret) lines.push(`toolSettings.${id}.x_search.secret: ${xs.secret}`);
-      const ea = settings.engine_ask;
-      if (ea?.secret) lines.push(`toolSettings.${id}.engine_ask.secret: ${ea.secret}`);
-      const yt = settings.youtube;
-      if (yt?.secret) lines.push(`toolSettings.${id}.youtube.secret: ${yt.secret}`);
+      // Every other binding key carries a secret NAME and nothing else, so one
+      // loop over the open key space replaces one hand-written line per key.
+      // Sorted, so the file is byte-stable across writes. The key itself is
+      // shape-tested before it reaches a line: `<key>` comes from a parsed
+      // config or a caller's object, and neither is trusted to be yaml-safe.
+      for (const key of Object.keys(settings).sort()) {
+        if (key === 'web_search' || RESERVED_TOOL_SETTINGS_KEYS.has(key)) continue;
+        const secret = settings[key]?.secret;
+        if (secret && SECRET_NAME_RE.test(key)) {
+          lines.push(`toolSettings.${id}.${key}.secret: ${secret}`);
+        }
+      }
     }
   }
   if (config.models) {
@@ -3406,16 +3805,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
         lines.push(`channel_filter.${platform}.contextVisibility: ${cfg.contextVisibility}`);
     }
   }
-  if (config.providers && config.providers.length > 0) {
-    for (const [i, p] of config.providers.entries()) {
-      lines.push(`providers.${i}.provider: ${p.provider}`);
-      if (p.apiKey) lines.push(`providers.${i}.apiKey: ${p.apiKey}`);
-      if (p.model) lines.push(`providers.${i}.model: ${p.model}`);
-      if (p.baseUrl) lines.push(`providers.${i}.baseUrl: ${p.baseUrl}`);
-      if (p.apiVersion) lines.push(`providers.${i}.apiVersion: ${p.apiVersion}`);
-      if (p.region) lines.push(`providers.${i}.region: ${p.region}`);
-      if (p.awsProfile) lines.push(`providers.${i}.awsProfile: ${p.awsProfile}`);
-    }
+  for (const [key, value] of renderProviderChain(config.providers ?? [])) {
+    lines.push(`${key}: ${value}`);
   }
   if (config.auxiliary?.compression) {
     const c = config.auxiliary.compression;
@@ -3735,7 +4126,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (lf.publicKey) lines.push(`telemetry.export.langfuse.publicKey: ${lf.publicKey}`);
     if (lf.secretKey) lines.push(`telemetry.export.langfuse.secretKey: ${lf.secretKey}`);
   }
-  return lines;
+  // Every value in the one spelling `parseConfigScalar` reads back unchanged.
+  return lines.map(renderConfigLine);
 }
 
 export async function resolveConfigSecrets(
@@ -3950,7 +4342,6 @@ function parseConfigYaml(src: string): EthosConfig {
   const modelRouting: Record<string, string> = {};
   const toolSettings: ToolSettingsMap = {};
   const activeContextKv: Record<string, string> = {};
-  const providersKv: Record<number, Record<string, string>> = {};
   const retentionKv: Record<string, string> = {};
   const personalitiesRetKv: Record<string, Record<string, string>> = {};
   const displayKv: Record<string, string> = {};
@@ -4089,7 +4480,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (tbind) {
       const idx = Number(tbind[1]);
       telegramBotsKv[idx] ??= {};
-      telegramBotsKv[idx][`bind.${tbind[2]}`] = tbind[3].trim().replace(/^["']|["']$/g, '');
+      telegramBotsKv[idx][`bind.${tbind[2]}`] = parseConfigScalar(tbind[3]);
       continue;
     }
     // telegram.bots.<index>.<field>: <value>
@@ -4097,7 +4488,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (tbot) {
       const idx = Number(tbot[1]);
       telegramBotsKv[idx] ??= {};
-      telegramBotsKv[idx][tbot[2]] = tbot[3].trim().replace(/^["']|["']$/g, '');
+      telegramBotsKv[idx][tbot[2]] = parseConfigScalar(tbot[3]);
       continue;
     }
     // slack.apps.<index>.bind.<field>: <value>
@@ -4105,7 +4496,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (sbind) {
       const idx = Number(sbind[1]);
       slackAppsKv[idx] ??= {};
-      slackAppsKv[idx][`bind.${sbind[2]}`] = sbind[3].trim().replace(/^["']|["']$/g, '');
+      slackAppsKv[idx][`bind.${sbind[2]}`] = parseConfigScalar(sbind[3]);
       continue;
     }
     // slack.apps.<index>.<field>: <value>
@@ -4113,7 +4504,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (sapp) {
       const idx = Number(sapp[1]);
       slackAppsKv[idx] ??= {};
-      slackAppsKv[idx][sapp[2]] = sapp[3].trim().replace(/^["']|["']$/g, '');
+      slackAppsKv[idx][sapp[2]] = parseConfigScalar(sapp[3]);
       continue;
     }
     // whatsapp.<index>.bind.<field>: <value>
@@ -4121,7 +4512,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (wabind) {
       const idx = Number(wabind[1]);
       whatsappKv[idx] ??= {};
-      whatsappKv[idx][`bind.${wabind[2]}`] = wabind[3].trim().replace(/^["']|["']$/g, '');
+      whatsappKv[idx][`bind.${wabind[2]}`] = parseConfigScalar(wabind[3]);
       continue;
     }
     // whatsapp.<index>.<field>: <value>
@@ -4129,7 +4520,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (wa) {
       const idx = Number(wa[1]);
       whatsappKv[idx] ??= {};
-      whatsappKv[idx][wa[2]] = wa[3].trim().replace(/^["']|["']$/g, '');
+      whatsappKv[idx][wa[2]] = parseConfigScalar(wa[3]);
       continue;
     }
     // voice.bots.<index>.bind.<field>: <value>
@@ -4137,7 +4528,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (vbind) {
       const idx = Number(vbind[1]);
       voiceBotsKv[idx] ??= {};
-      voiceBotsKv[idx][`bind.${vbind[2]}`] = vbind[3].trim().replace(/^["']|["']$/g, '');
+      voiceBotsKv[idx][`bind.${vbind[2]}`] = parseConfigScalar(vbind[3]);
       continue;
     }
     // voice.bots.<index>.<field>: <value>
@@ -4145,7 +4536,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (vbot) {
       const idx = Number(vbot[1]);
       voiceBotsKv[idx] ??= {};
-      voiceBotsKv[idx][vbot[2]] = vbot[3].trim().replace(/^["']|["']$/g, '');
+      voiceBotsKv[idx][vbot[2]] = parseConfigScalar(vbot[3]);
       continue;
     }
     // voice.<tts|stt|realtime>.providers.<name>.<field>: <value> — the named
@@ -4165,7 +4556,7 @@ function parseConfigYaml(src: string): EthosConfig {
             : voiceTtsProvidersKv;
       const name = vprov[2];
       bag[name] ??= {};
-      bag[name][vprov[3]] = vprov[4].trim().replace(/^["']|["']$/g, '');
+      bag[name][vprov[3]] = parseConfigScalar(vprov[4]);
       continue;
     }
     // voice.realtime.default / voice.realtime.sessionBudgetUsd. Matched AFTER
@@ -4173,7 +4564,7 @@ function parseConfigYaml(src: string): EthosConfig {
     // carries dots — so this `(\w+)` can never swallow a roster key.
     const vrt = line.match(/^voice\.realtime\.(\w+):\s*(.+)$/);
     if (vrt) {
-      const value = vrt[2].trim().replace(/^["']|["']$/g, '');
+      const value = parseConfigScalar(vrt[2]);
       if (vrt[1] === 'default') {
         voiceRealtimeDefault = value;
       } else if (vrt[1] === 'sessionBudgetUsd') {
@@ -4190,21 +4581,19 @@ function parseConfigYaml(src: string): EthosConfig {
     if (vprovLegacy) {
       const name = vprovLegacy[1];
       voiceTtsProvidersLegacyKv[name] ??= {};
-      voiceTtsProvidersLegacyKv[name][vprovLegacy[2]] = vprovLegacy[3]
-        .trim()
-        .replace(/^["']|["']$/g, '');
+      voiceTtsProvidersLegacyKv[name][vprovLegacy[2]] = parseConfigScalar(vprovLegacy[3]);
       continue;
     }
     // voice.livekit.<field>: <value>
     const vlk = line.match(/^voice\.livekit\.(\w+):\s*(.+)$/);
     if (vlk) {
-      voiceLiveKitKv[vlk[1]] = vlk[2].trim().replace(/^["']|["']$/g, '');
+      voiceLiveKitKv[vlk[1]] = parseConfigScalar(vlk[2]);
       continue;
     }
     // voice.trunk.<field>: <value>
     const vtr = line.match(/^voice\.trunk\.(\w+):\s*(.+)$/);
     if (vtr) {
-      voiceTrunkKv[vtr[1]] = vtr[2].trim().replace(/^["']|["']$/g, '');
+      voiceTrunkKv[vtr[1]] = parseConfigScalar(vtr[2]);
       continue;
     }
     // voice.inbound.owner.<field>: <value> — matched BEFORE the scalar line
@@ -4212,13 +4601,13 @@ function parseConfigYaml(src: string): EthosConfig {
     // anyway; the order is what makes that safe to read rather than to prove.
     const vino = line.match(/^voice\.inbound\.owner\.(\w+):\s*(.+)$/);
     if (vino) {
-      voiceInboundOwnerKv[vino[1]] = vino[2].trim().replace(/^["']|["']$/g, '');
+      voiceInboundOwnerKv[vino[1]] = parseConfigScalar(vino[2]);
       continue;
     }
     // voice.inbound.<field>: <value>
     const vin = line.match(/^voice\.inbound\.(\w+):\s*(.+)$/);
     if (vin) {
-      voiceInboundKv[vin[1]] = vin[2].trim().replace(/^["']|["']$/g, '');
+      voiceInboundKv[vin[1]] = parseConfigScalar(vin[2]);
       continue;
     }
     // voice.bargeIn.<surface>.<field>: <value>. The surface is anchored to the
@@ -4229,7 +4618,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (vbi) {
       const surface = vbi[1];
       voiceBargeInKv[surface] ??= {};
-      voiceBargeInKv[surface][vbi[2]] = vbi[3].trim().replace(/^["']|["']$/g, '');
+      voiceBargeInKv[surface][vbi[2]] = parseConfigScalar(vbi[3]);
       continue;
     }
     // voice.filler.<field> — the tool-call keep-alive knobs. An unknown value
@@ -4237,7 +4626,7 @@ function parseConfigYaml(src: string): EthosConfig {
     const vfl = line.match(/^voice\.filler\.(\w+):\s*(.+)$/);
     if (vfl) {
       const field = vfl[1];
-      const value = vfl[2].trim().replace(/^["']|["']$/g, '');
+      const value = parseConfigScalar(vfl[2]);
       if (field === 'enabled') {
         if (value === 'true' || value === 'false') voiceFillerKv.enabled = value === 'true';
       } else if (field === 'afterMs') {
@@ -4256,13 +4645,13 @@ function parseConfigYaml(src: string): EthosConfig {
     // meaningful (= trust nothing non-local) and must not collapse to absent.
     const vtp = line.match(/^voice\.trustedPlugins:\s*(.*)$/);
     if (vtp) {
-      voiceTrustedPluginsRaw = vtp[1].trim().replace(/^["']|["']$/g, '');
+      voiceTrustedPluginsRaw = parseConfigScalar(vtp[1]);
       continue;
     }
     // voice.defaultMode: off | mirror_inbound | all — where a new lane starts.
     const vdm = line.match(/^voice\.defaultMode:\s*(.+)$/);
     if (vdm) {
-      const mode = vdm[1].trim().replace(/^["']|["']$/g, '');
+      const mode = parseConfigScalar(vdm[1]);
       if (mode === 'off' || mode === 'mirror_inbound' || mode === 'all') {
         voiceDefaultMode = mode;
       }
@@ -4273,7 +4662,7 @@ function parseConfigYaml(src: string): EthosConfig {
     // above: a typo here must not make the whole config unloadable.
     const vtier = line.match(/^voice\.tier:\s*(.+)$/);
     if (vtier) {
-      const tier = vtier[1].trim().replace(/^["']|["']$/g, '');
+      const tier = parseConfigScalar(vtier[1]);
       if (tier === 'pipeline' || tier === 'realtime') voiceTier = tier;
       continue;
     }
@@ -4284,7 +4673,7 @@ function parseConfigYaml(src: string): EthosConfig {
     const vch = line.match(/^voice\.channels\.([A-Za-z0-9_-]+)\.ttsOut:\s*(.+)$/);
     if (vch) {
       const platform = vch[1];
-      const value = vch[2].trim().replace(/^["']|["']$/g, '');
+      const value = parseConfigScalar(vch[2]);
       if (isVoiceChannelPlatform(platform) && (value === 'true' || value === 'false')) {
         voiceChannelsKv[platform] = { ttsOut: value === 'true' };
       }
@@ -4294,7 +4683,7 @@ function parseConfigYaml(src: string): EthosConfig {
     // values are ignored, same rule as the mode and tier above.
     const vtc = line.match(/^voice\.transcode\.(\w+):\s*(.+)$/);
     if (vtc) {
-      const value = vtc[2].trim().replace(/^["']|["']$/g, '');
+      const value = parseConfigScalar(vtc[2]);
       if (vtc[1] === 'ffmpegPath') {
         if (value) voiceTranscodeKv.ffmpegPath = value;
       } else if (vtc[1] === 'bitrateKbps') {
@@ -4309,7 +4698,7 @@ function parseConfigYaml(src: string): EthosConfig {
     // voice.artifacts.<field> — retention for synthesized voice artifacts.
     const vart = line.match(/^voice\.artifacts\.(\w+):\s*(.+)$/);
     if (vart) {
-      const value = vart[2].trim().replace(/^["']|["']$/g, '');
+      const value = parseConfigScalar(vart[2]);
       if (vart[1] === 'abandonAfterDays') {
         const n = parseBoundedInt(value, 1, 365);
         if (n !== undefined) voiceArtifactsKv.abandonAfterDays = n;
@@ -4330,7 +4719,7 @@ function parseConfigYaml(src: string): EthosConfig {
       const bag = vwrec[1] === 'routes' ? voiceWakeRoutesKv : voiceWakeNodesKv;
       const id = vwrec[2];
       bag[id] ??= {};
-      bag[id][vwrec[3]] = vwrec[4].trim().replace(/^["']|["']$/g, '');
+      bag[id][vwrec[3]] = parseConfigScalar(vwrec[4]);
       continue;
     }
     // voice.wake.<field> — the scalar satellite knobs. An unknown engine and an
@@ -4339,7 +4728,7 @@ function parseConfigYaml(src: string): EthosConfig {
     const vwk = line.match(/^voice\.wake\.(\w+):\s*(.+)$/);
     if (vwk) {
       const field = vwk[1];
-      const value = vwk[2].trim().replace(/^["']|["']$/g, '');
+      const value = parseConfigScalar(vwk[2]);
       if (field === 'enabled') {
         if (value === 'true' || value === 'false') voiceWakeKv.enabled = value === 'true';
       } else if (field === 'edgeStt') {
@@ -4365,7 +4754,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (tcfg) {
       const name = tcfg[1];
       teamsKv[name] ??= {};
-      teamsKv[name][tcfg[2]] = tcfg[3].trim().replace(/^["']|["']$/g, '');
+      teamsKv[name][tcfg[2]] = parseConfigScalar(tcfg[3]);
       continue;
     }
     // webhooks.<hookId>.<field>: <value>
@@ -4373,43 +4762,37 @@ function parseConfigYaml(src: string): EthosConfig {
     if (whook) {
       const hookId = whook[1];
       webhooksKv[hookId] ??= {};
-      webhooksKv[hookId][whook[2]] = whook[3].trim().replace(/^["']|["']$/g, '');
+      webhooksKv[hookId][whook[2]] = parseConfigScalar(whook[3]);
       continue;
     }
-    // providers.<index>.<field>: <value>
-    const prov = line.match(/^providers\.(\d+)\.(\S+):\s*(.+)$/);
-    if (prov) {
-      const idx = Number(prov[1]);
-      providersKv[idx] ??= {};
-      const field = prov[2]?.trim() ?? '';
-      if (field) providersKv[idx][field] = prov[3].trim().replace(/^["']|["']$/g, '');
-      continue;
-    }
+    // providers.<index>.<field>: <value> — parsed after the loop, whole-file,
+    // by `parseProviderChain`, the one reader of this namespace.
+    if (isProviderChainLine(line)) continue;
     // personalities.<id>.retention.<field>: <value>  (must come before modelRouting)
     const perp = line.match(/^personalities\.([^.]+)\.retention\.(events\.)?(\w+):\s*(.+)$/);
     if (perp) {
       const pid = perp[1];
       const key = `${perp[2] ?? ''}${perp[3]}`;
       personalitiesRetKv[pid] ??= {};
-      personalitiesRetKv[pid][key] = perp[4].trim().replace(/^["']|["']$/g, '');
+      personalitiesRetKv[pid][key] = parseConfigScalar(perp[4]);
       continue;
     }
     // retention.<field>: <value>  or  retention.events.<subfield>: <value>
     const ret = line.match(/^retention\.(events\.)?(\w+):\s*(.+)$/);
     if (ret) {
-      retentionKv[`${ret[1] ?? ''}${ret[2]}`] = ret[3].trim().replace(/^["']|["']$/g, '');
+      retentionKv[`${ret[1] ?? ''}${ret[2]}`] = parseConfigScalar(ret[3]);
       continue;
     }
     // display.<field>: <value>
     const disp = line.match(/^display\.([a-z_]+):\s*(.+)$/);
     if (disp) {
-      displayKv[disp[1]] = disp[2].trim().replace(/^["']|["']$/g, '');
+      displayKv[disp[1]] = parseConfigScalar(disp[2]);
       continue;
     }
     // evolver.<field>: <value>
     const evlv = line.match(/^evolver\.([a-z_]+):\s*(.+)$/);
     if (evlv) {
-      evolverKv[evlv[1]] = evlv[2].trim().replace(/^["']|["']$/g, '');
+      evolverKv[evlv[1]] = parseConfigScalar(evlv[2]);
       continue;
     }
     // background.acp.agents.<name>.<field>: <value> — the named ACP-agent
@@ -4420,13 +4803,13 @@ function parseConfigYaml(src: string): EthosConfig {
     if (bacp) {
       const name = bacp[1];
       backgroundAcpAgentsKv[name] ??= {};
-      backgroundAcpAgentsKv[name][bacp[2]] = bacp[3].trim().replace(/^["']|["']$/g, '');
+      backgroundAcpAgentsKv[name][bacp[2]] = parseConfigScalar(bacp[3]);
       continue;
     }
     // background.<field>: <value>
     const bg = line.match(/^background\.([a-z_]+):\s*(.+)$/);
     if (bg) {
-      backgroundKv[bg[1]] = bg[2].trim().replace(/^["']|["']$/g, '');
+      backgroundKv[bg[1]] = parseConfigScalar(bg[2]);
       continue;
     }
     // cron.trigger.<field>: <value>  or  cron.arming.<field>: <value>
@@ -4435,86 +4818,86 @@ function parseConfigYaml(src: string): EthosConfig {
     // this branch would silently drop them instead of warning.
     const cron = line.match(/^cron\.(trigger|arming)\.([a-zA-Z]+):\s*(.+)$/);
     if (cron) {
-      cronKv[`${cron[1]}.${cron[2]}`] = cron[3].trim().replace(/^["']|["']$/g, '');
+      cronKv[`${cron[1]}.${cron[2]}`] = parseConfigScalar(cron[3]);
       continue;
     }
     // cron.fireUrl: <url>  — presence is the local/external mode switch.
     const cronFire = line.match(/^cron\.fireUrl:\s*(.+)$/);
     if (cronFire) {
-      cronKv.fireUrl = cronFire[1].trim().replace(/^["']|["']$/g, '');
+      cronKv.fireUrl = parseConfigScalar(cronFire[1]);
       continue;
     }
     // cron.maxParallelJobs: <n>  (scalar sibling of cron.fireUrl)
     const cronMax = line.match(/^cron\.maxParallelJobs:\s*(.+)$/);
     if (cronMax) {
-      cronKv.maxParallelJobs = cronMax[1].trim().replace(/^["']|["']$/g, '');
+      cronKv.maxParallelJobs = parseConfigScalar(cronMax[1]);
       continue;
     }
     // auxiliary.compression.<field>: <value>
     const auxc = line.match(/^auxiliary\.compression\.(\w+):\s*(.+)$/);
     if (auxc) {
-      auxiliaryCompressionKv[auxc[1]] = auxc[2].trim().replace(/^["']|["']$/g, '');
+      auxiliaryCompressionKv[auxc[1]] = parseConfigScalar(auxc[2]);
       continue;
     }
     // auxiliary.vision.<field>: <value>
     const auxv = line.match(/^auxiliary\.vision\.(\w+):\s*(.+)$/);
     if (auxv) {
-      auxiliaryVisionKv[auxv[1]] = auxv[2].trim().replace(/^["']|["']$/g, '');
+      auxiliaryVisionKv[auxv[1]] = parseConfigScalar(auxv[2]);
       continue;
     }
     // auxiliary.web.<field>: <value>
     const auxw = line.match(/^auxiliary\.web\.(\w+):\s*(.+)$/);
     if (auxw) {
-      auxiliaryWebKv[auxw[1]] = auxw[2].trim().replace(/^["']|["']$/g, '');
+      auxiliaryWebKv[auxw[1]] = parseConfigScalar(auxw[2]);
       continue;
     }
     // auxiliary.asr.<field>: <value>
     const auxAsr = line.match(/^auxiliary\.asr\.(\w+):\s*(.+)$/);
     if (auxAsr) {
-      auxiliaryAsrKv[auxAsr[1]] = auxAsr[2].trim().replace(/^["']|["']$/g, '');
+      auxiliaryAsrKv[auxAsr[1]] = parseConfigScalar(auxAsr[2]);
       continue;
     }
     // auxiliary.tts.<field>: <value>
     const auxTts = line.match(/^auxiliary\.tts\.(\w+):\s*(.+)$/);
     if (auxTts) {
-      auxiliaryTtsKv[auxTts[1]] = auxTts[2].trim().replace(/^["']|["']$/g, '');
+      auxiliaryTtsKv[auxTts[1]] = parseConfigScalar(auxTts[2]);
       continue;
     }
     // web.searxng.url: <url>  — two levels deep, so the `web.<\w+>` branch
     // below cannot see it. Stored under its dotted sub-path in the same map.
     const searx = line.match(/^web\.searxng\.url:\s*(.+)$/);
     if (searx) {
-      webKv['searxng.url'] = searx[1].trim().replace(/^["']|["']$/g, '');
+      webKv['searxng.url'] = parseConfigScalar(searx[1]);
       continue;
     }
     // web.<field>: <value>
     const web = line.match(/^web\.(\w+):\s*(.+)$/);
     if (web) {
-      webKv[web[1]] = web[2].trim().replace(/^["']|["']$/g, '');
+      webKv[web[1]] = parseConfigScalar(web[2]);
       continue;
     }
     // logs.rotation.<field>: <value>
     const lr = line.match(/^logs\.rotation\.(\w+):\s*(.+)$/);
     if (lr) {
-      logsRotationKv[lr[1]] = lr[2].trim().replace(/^["']|["']$/g, '');
+      logsRotationKv[lr[1]] = parseConfigScalar(lr[2]);
       continue;
     }
     // logs.level: <debug|info|warn|error>
     const ll = line.match(/^logs\.level:\s*(.+)$/);
     if (ll) {
-      kv['logs.level'] = ll[1].trim().replace(/^["']|["']$/g, '');
+      kv['logs.level'] = parseConfigScalar(ll[1]);
       continue;
     }
     // aws.secrets.<field>: <value>
     const awss = line.match(/^aws\.secrets\.(\w+):\s*(.+)$/);
     if (awss) {
-      awsSecretsKv[awss[1]] = awss[2].trim().replace(/^["']|["']$/g, '');
+      awsSecretsKv[awss[1]] = parseConfigScalar(awss[2]);
       continue;
     }
     // telemetry.export.langfuse.<field>: <value>
     const tel = line.match(/^telemetry\.export\.langfuse\.(\w+):\s*(.+)$/);
     if (tel) {
-      telemetryLangfuseKv[tel[1]] = tel[2].trim().replace(/^["']|["']$/g, '');
+      telemetryLangfuseKv[tel[1]] = parseConfigScalar(tel[2]);
       continue;
     }
     // modelCatalog.providers.<id>.url: <value>
@@ -4522,13 +4905,13 @@ function parseConfigYaml(src: string): EthosConfig {
     if (mcp) {
       const providerId = mcp[1];
       modelCatalogProvidersKv[providerId] ??= {};
-      modelCatalogProvidersKv[providerId][mcp[2]] = mcp[3].trim().replace(/^["']|["']$/g, '');
+      modelCatalogProvidersKv[providerId][mcp[2]] = parseConfigScalar(mcp[3]);
       continue;
     }
     // modelCatalog.<field>: <value>
     const mc = line.match(/^modelCatalog\.(\w+):\s*(.+)$/);
     if (mc) {
-      modelCatalogKv[mc[1]] = mc[2].trim().replace(/^["']|["']$/g, '');
+      modelCatalogKv[mc[1]] = parseConfigScalar(mc[2]);
       continue;
     }
     // models.<providerId>/<modelId>.<field>: <value>  (§7 per-model profile).
@@ -4541,7 +4924,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (mdl) {
       const modelKey = mdl[1];
       modelsKv[modelKey] ??= {};
-      modelsKv[modelKey][mdl[2]] = mdl[3].trim().replace(/^["']|["']$/g, '');
+      modelsKv[modelKey][mdl[2]] = parseConfigScalar(mdl[3]);
       continue;
     }
     // §5 / Phase 3 — compaction.<field>: <value>  (global gate + turn-end flags).
@@ -4549,13 +4932,13 @@ function parseConfigYaml(src: string): EthosConfig {
       /^compaction\.(pressure|target|gateDelta|autoCompact|retryOnOverflow|abortOnSummaryFailure|smallWindow|maxContextTokens|minTailUserMessages):\s*(.+)$/,
     );
     if (cmp) {
-      compactionKv[cmp[1]] = cmp[2].trim().replace(/^["']|["']$/g, '');
+      compactionKv[cmp[1]] = parseConfigScalar(cmp[2]);
       continue;
     }
     // Call-capture personality binding (decision 3) — callCapture.personalityId: <id>
     const ccap = line.match(/^callCapture\.personalityId:\s*(.+)$/);
     if (ccap) {
-      callCaptureKv.personalityId = ccap[1].trim().replace(/^["']|["']$/g, '');
+      callCaptureKv.personalityId = parseConfigScalar(ccap[1]);
       continue;
     }
     // Phase 3 — memoryConsolidation.<field>: <value>  (silent flush config).
@@ -4563,13 +4946,13 @@ function parseConfigYaml(src: string): EthosConfig {
       /^memoryConsolidation\.(enabled|flushThreshold|timeboxMs|maxTokens|maxDeltaChars|minMessagesSinceFlush):\s*(.+)$/,
     );
     if (mcz) {
-      memoryConsolidationKv[mcz[1]] = mcz[2].trim().replace(/^["']|["']$/g, '');
+      memoryConsolidationKv[mcz[1]] = parseConfigScalar(mcz[2]);
       continue;
     }
     // modelRouting.<personality>: <model>
     const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
     if (mr) {
-      modelRouting[mr[1].trim()] = mr[2].trim().replace(/^["']|["']$/g, '');
+      modelRouting[mr[1].trim()] = parseConfigScalar(mr[2]);
       continue;
     }
     // toolSettings.<personality|_default>.web_search.<provider|secret|recency>: <value>
@@ -4579,7 +4962,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (tsMatch) {
       const id = tsMatch[1].trim();
       const field = tsMatch[2];
-      const val = tsMatch[3].trim().replace(/^["']|["']$/g, '');
+      const val = parseConfigScalar(tsMatch[3]);
       const slot = toolSettings[id] ?? {};
       toolSettings[id] = slot;
       const ws = slot.web_search ?? {};
@@ -4599,37 +4982,29 @@ function parseConfigYaml(src: string): EthosConfig {
       }
       continue;
     }
-    // toolSettings.<personality|_default>.x_search.secret: <name>
-    const xsMatch = line.match(/^toolSettings\.([^.]+)\.x_search\.secret:\s*(.+)$/);
-    if (xsMatch) {
-      const id = xsMatch[1].trim();
+    // toolSettings.<personality|_default>.<key>.secret: <name> — every binding
+    // key but `web_search`, which the branch above handles and must therefore
+    // stay ahead of this one. `web_search` keeps its own branch rather than
+    // merging into this one: it has three fields, a provider enum and a recency
+    // normalizer, and averaging the two would lose all three.
+    //
+    // One generic branch over the OPEN key space (D8). The three near-identical
+    // regexes this replaced were a hand list, and `search_console` was added to
+    // the type without being added to them — so it round-tripped through a
+    // personality's tools.yaml and died at both config.yaml rungs.
+    const tsSecret = line.match(/^toolSettings\.([^.]+)\.([A-Za-z0-9_-]+)\.secret:\s*(.+)$/);
+    const tsKey = tsSecret?.[2];
+    if (tsSecret && tsKey && !RESERVED_TOOL_SETTINGS_KEYS.has(tsKey)) {
+      const id = tsSecret[1].trim();
       const slot = toolSettings[id] ?? {};
       toolSettings[id] = slot;
-      slot.x_search = { secret: xsMatch[2].trim().replace(/^["']|["']$/g, '') };
-      continue;
-    }
-    // toolSettings.<personality|_default>.engine_ask.secret: <name>
-    const eaMatch = line.match(/^toolSettings\.([^.]+)\.engine_ask\.secret:\s*(.+)$/);
-    if (eaMatch) {
-      const id = eaMatch[1].trim();
-      const slot = toolSettings[id] ?? {};
-      toolSettings[id] = slot;
-      slot.engine_ask = { secret: eaMatch[2].trim().replace(/^["']|["']$/g, '') };
-      continue;
-    }
-    // toolSettings.<personality|_default>.youtube.secret: <name>
-    const ytMatch = line.match(/^toolSettings\.([^.]+)\.youtube\.secret:\s*(.+)$/);
-    if (ytMatch) {
-      const id = ytMatch[1].trim();
-      const slot = toolSettings[id] ?? {};
-      toolSettings[id] = slot;
-      slot.youtube = { secret: ytMatch[2].trim().replace(/^["']|["']$/g, '') };
+      slot[tsKey] = { secret: parseConfigScalar(tsSecret[3]) };
       continue;
     }
     // activeContext.type / activeContext.name
     const ac = line.match(/^activeContext\.(\S+):\s*(.+)$/);
     if (ac) {
-      activeContextKv[ac[1].trim()] = ac[2].trim().replace(/^["']|["']$/g, '');
+      activeContextKv[ac[1].trim()] = parseConfigScalar(ac[2]);
       continue;
     }
     // channel_filter.<platform>.<field>: <value>
@@ -4637,9 +5012,7 @@ function parseConfigYaml(src: string): EthosConfig {
     if (cf) {
       const platform = cf[1];
       channelFilterKv[platform] ??= {};
-      (channelFilterKv[platform] as Record<string, string>)[cf[2]] = cf[3]
-        .trim()
-        .replace(/^["']|["']$/g, '');
+      (channelFilterKv[platform] as Record<string, string>)[cf[2]] = parseConfigScalar(cf[3]);
       continue;
     }
     // quick_commands.<name>.<field>: <value>
@@ -4647,37 +5020,37 @@ function parseConfigYaml(src: string): EthosConfig {
     if (qc) {
       const qname = qc[1];
       qcKv[qname] ??= {};
-      (qcKv[qname] as Record<string, string>)[qc[2]] = qc[3].trim().replace(/^["']|["']$/g, '');
+      (qcKv[qname] as Record<string, string>)[qc[2]] = parseConfigScalar(qc[3]);
       continue;
     }
     // channel_toolsets.<platform>: <comma-separated tool names>
     const ct = line.match(/^channel_toolsets\.([^.:\s]+):\s*(.+)$/);
     if (ct) {
-      channelToolsetsKv[ct[1]] = ct[2].trim().replace(/^["']|["']$/g, '');
+      channelToolsetsKv[ct[1]] = parseConfigScalar(ct[2]);
       continue;
     }
     // storage.<field>: <value>
     const stg = line.match(/^storage\.([\w.]+):\s*(.+)$/);
     if (stg) {
-      kv[`storage.${stg[1]}`] = stg[2].trim().replace(/^["']|["']$/g, '');
+      kv[`storage.${stg[1]}`] = parseConfigScalar(stg[2]);
       continue;
     }
     // plugins.auto_install: <value>
     const pai = line.match(/^plugins\.auto_install:\s*(.+)$/);
     if (pai) {
-      kv['plugins.auto_install'] = pai[1].trim().replace(/^["']|["']$/g, '');
+      kv['plugins.auto_install'] = parseConfigScalar(pai[1]);
       continue;
     }
     // admin.enabled: <value>
     const adm = line.match(/^admin\.enabled:\s*(.+)$/);
     if (adm) {
-      kv['admin.enabled'] = adm[1].trim().replace(/^["']|["']$/g, '');
+      kv['admin.enabled'] = parseConfigScalar(adm[1]);
       continue;
     }
     // a2a.enabled: <value>
     const a2a = line.match(/^a2a\.enabled:\s*(.+)$/);
     if (a2a) {
-      kv['a2a.enabled'] = a2a[1].trim().replace(/^["']|["']$/g, '');
+      kv['a2a.enabled'] = parseConfigScalar(a2a[1]);
       continue;
     }
     // security.trusted_github_orgs: <org,list>
@@ -4685,31 +5058,31 @@ function parseConfigYaml(src: string): EthosConfig {
     // configuration ("trust no org"), distinct from the key being absent.
     const sec = line.match(/^security\.trusted_github_orgs:\s*(.*)$/);
     if (sec) {
-      kv['security.trusted_github_orgs'] = sec[1].trim().replace(/^["']|["']$/g, '');
+      kv['security.trusted_github_orgs'] = parseConfigScalar(sec[1]);
       continue;
     }
     // nightlyPass.<field>: <value>
     const np = line.match(/^nightlyPass\.(\w+):\s*(.+)$/);
     if (np) {
-      kv[`nightlyPass.${np[1]}`] = np[2].trim().replace(/^["']|["']$/g, '');
+      kv[`nightlyPass.${np[1]}`] = parseConfigScalar(np[2]);
       continue;
     }
     // backup.<field>: <value>
     const bk = line.match(/^backup\.(\w+):\s*(.+)$/);
     if (bk) {
-      kv[`backup.${bk[1]}`] = bk[2].trim().replace(/^["']|["']$/g, '');
+      kv[`backup.${bk[1]}`] = parseConfigScalar(bk[2]);
       continue;
     }
     // weeklyDigest.<field>: <value>
     const wd = line.match(/^weeklyDigest\.(\w+):\s*(.+)$/);
     if (wd) {
-      kv[`weeklyDigest.${wd[1]}`] = wd[2].trim().replace(/^["']|["']$/g, '');
+      kv[`weeklyDigest.${wd[1]}`] = parseConfigScalar(wd[2]);
       continue;
     }
     // channelDigest.<field>: <value>
     const cd = line.match(/^channelDigest\.(\w+):\s*(.+)$/);
     if (cd) {
-      kv[`channelDigest.${cd[1]}`] = cd[2].trim().replace(/^["']|["']$/g, '');
+      kv[`channelDigest.${cd[1]}`] = parseConfigScalar(cd[2]);
       continue;
     }
     // toolLoop.<field>: <value>  (hard caps and their soft-warn tiers)
@@ -4717,32 +5090,32 @@ function parseConfigYaml(src: string): EthosConfig {
       /^toolLoop\.(maxToolCallsWarnAt|maxIdenticalToolCallsWarnAt|maxToolCallsPerTurn|maxIdenticalToolCalls):\s*(.+)$/,
     );
     if (tl) {
-      toolLoopKv[tl[1]] = tl[2].trim().replace(/^["']|["']$/g, '');
+      toolLoopKv[tl[1]] = parseConfigScalar(tl[2]);
       continue;
     }
     // kanban.<field>: <value>  (board WIP caps; distinct from kanbanPoll)
     const kb = line.match(/^kanban\.(maxInProgress|maxInProgressPerProfile):\s*(.+)$/);
     if (kb) {
-      kanbanKv[kb[1]] = kb[2].trim().replace(/^["']|["']$/g, '');
+      kanbanKv[kb[1]] = parseConfigScalar(kb[2]);
       continue;
     }
     // grounding.kanban.<field>: <value>  — matched BEFORE the flat grounding
     // keys below so the deeper key never falls through to the shallower branch.
     const grk = line.match(/^grounding\.kanban\.(checks|allowedCheckCommands):\s*(.+)$/);
     if (grk) {
-      groundingKanbanKv[grk[1]] = grk[2].trim().replace(/^["']|["']$/g, '');
+      groundingKanbanKv[grk[1]] = parseConfigScalar(grk[2]);
       continue;
     }
     // grounding.<field>: <value>  (ground-truth verification policy)
     const gr = line.match(/^grounding\.(enabled|onFinding|showUnsupported|memoryTag):\s*(.+)$/);
     if (gr) {
-      groundingKv[gr[1]] = gr[2].trim().replace(/^["']|["']$/g, '');
+      groundingKv[gr[1]] = parseConfigScalar(gr[2]);
       continue;
     }
     // kanbanPoll.<field>: <value>
     const kp = line.match(/^kanbanPoll\.(\w+):\s*(.+)$/);
     if (kp) {
-      kv[`kanbanPoll.${kp[1]}`] = kp[2].trim().replace(/^["']|["']$/g, '');
+      kv[`kanbanPoll.${kp[1]}`] = parseConfigScalar(kp[2]);
       continue;
     }
     // idleWatcher.<field>: <value>  (scale-to-zero watcher; default OFF).
@@ -4750,31 +5123,31 @@ function parseConfigYaml(src: string): EthosConfig {
       /^idleWatcher\.(enabled|idleThresholdMs|startupCooldownMs|checkIntervalMs|wakePathConfirmed):\s*(.+)$/,
     );
     if (iw) {
-      idleWatcherKv[iw[1]] = iw[2].trim().replace(/^["']|["']$/g, '');
+      idleWatcherKv[iw[1]] = parseConfigScalar(iw[2]);
       continue;
     }
     // pauseClockCorrection.<field>: <value>  (resume clock correction; default OFF).
     const pcc = line.match(/^pauseClockCorrection\.(enabled|thresholdMs):\s*(.+)$/);
     if (pcc) {
-      pauseClockCorrectionKv[pcc[1]] = pcc[2].trim().replace(/^["']|["']$/g, '');
+      pauseClockCorrectionKv[pcc[1]] = parseConfigScalar(pcc[2]);
       continue;
     }
     // pauseLifecycle.http.<field>: <value>  (orchestrator idle notification; default OFF).
     const plh = line.match(/^pauseLifecycle\.http\.(url|token|timeoutMs):\s*(.+)$/);
     if (plh) {
-      pauseLifecycleHttpKv[plh[1]] = plh[2].trim().replace(/^["']|["']$/g, '');
+      pauseLifecycleHttpKv[plh[1]] = parseConfigScalar(plh[2]);
       continue;
     }
     // memory.charLimits.<memory|user>: <chars>  (markdown per-key ceilings).
     const mcl = line.match(/^memory\.charLimits\.(memory|user):\s*(.+)$/);
     if (mcl) {
-      memoryCharLimitsKv[mcl[1]] = mcl[2].trim().replace(/^["']|["']$/g, '');
+      memoryCharLimitsKv[mcl[1]] = parseConfigScalar(mcl[2]);
       continue;
     }
     // execution.docker.<cpu|diskMb>: <value>  (container resource caps).
     const exd = line.match(/^execution\.docker\.(cpu|diskMb):\s*(.+)$/);
     if (exd) {
-      executionDockerKv[exd[1]] = exd[2].trim().replace(/^["']|["']$/g, '');
+      executionDockerKv[exd[1]] = parseConfigScalar(exd[2]);
       continue;
     }
     // execution.ssh.<field>: <value>  (the single remote execution target).
@@ -4785,7 +5158,7 @@ function parseConfigYaml(src: string): EthosConfig {
       /^execution\.ssh\.(host|user|port|identityFile|knownHostsFile|strictHostKeys|remoteWorkdir):\s*(.+)$/,
     );
     if (exs) {
-      executionSshKv[exs[1]] = exs[2].trim().replace(/^["']|["']$/g, '');
+      executionSshKv[exs[1]] = parseConfigScalar(exs[2]);
       continue;
     }
     // browser.<field>: <value>  (Playwright budgets + launch posture). The
@@ -4796,13 +5169,13 @@ function parseConfigYaml(src: string): EthosConfig {
       /^browser\.(navigationTimeoutMs|commandTimeoutMs|headed|idleTimeoutMs|stealth\.enabled|profiles\.enabled|proxy\.(?:server|username|password)):\s*(.+)$/,
     );
     if (brw) {
-      browserKv[brw[1]] = brw[2].trim().replace(/^["']|["']$/g, '');
+      browserKv[brw[1]] = parseConfigScalar(brw[2]);
       continue;
     }
     // gateway.<field>: <value>  (gateway-wide, non-credential knobs).
     const gwy = line.match(/^gateway\.(maxInboundMediaBytes):\s*(.+)$/);
     if (gwy) {
-      gatewayKv[gwy[1]] = gwy[2].trim().replace(/^["']|["']$/g, '');
+      gatewayKv[gwy[1]] = parseConfigScalar(gwy[2]);
       continue;
     }
     // teamSupervisor.restartLoopGuard.<field>: <n>  (member auto-restart brake).
@@ -4810,7 +5183,7 @@ function parseConfigYaml(src: string): EthosConfig {
       /^teamSupervisor\.restartLoopGuard\.(maxRestarts|windowSeconds):\s*(.+)$/,
     );
     if (trg) {
-      restartLoopGuardKv[trg[1]] = trg[2].trim().replace(/^["']|["']$/g, '');
+      restartLoopGuardKv[trg[1]] = parseConfigScalar(trg[2]);
       continue;
     }
     // discord.missedMessageBackfill.<field>: <value>  (channel-history backfill).
@@ -4818,42 +5191,42 @@ function parseConfigYaml(src: string): EthosConfig {
       /^discord\.missedMessageBackfill\.(enabled|windowSeconds|limit):\s*(.+)$/,
     );
     if (dbf) {
-      discordBackfillKv[dbf[1]] = dbf[2].trim().replace(/^["']|["']$/g, '');
+      discordBackfillKv[dbf[1]] = parseConfigScalar(dbf[2]);
       continue;
     }
     // discord.<field>: <value>  (single segment — the backfill keys above are
     // dotted and have already been taken, and `\w` does not match a dot).
     const dsc = line.match(/^discord\.(\w+):\s*(.+)$/);
     if (dsc) {
-      discordKv[dsc[1]] = dsc[2].trim().replace(/^["']|["']$/g, '');
+      discordKv[dsc[1]] = parseConfigScalar(dsc[2]);
       continue;
     }
     // memoryCapture.<field>: <value>
     const mcap = line.match(/^memoryCapture\.(\w+):\s*(.+)$/);
     if (mcap) {
-      kv[`memoryCapture.${mcap[1]}`] = mcap[2].trim().replace(/^["']|["']$/g, '');
+      kv[`memoryCapture.${mcap[1]}`] = parseConfigScalar(mcap[2]);
       continue;
     }
     // memoryVault.<field>: <value>
     const mvault = line.match(/^memoryVault\.(\w+):\s*(.+)$/);
     if (mvault) {
-      kv[`memoryVault.${mvault[1]}`] = mvault[2].trim().replace(/^["']|["']$/g, '');
+      kv[`memoryVault.${mvault[1]}`] = parseConfigScalar(mvault[2]);
       continue;
     }
     // memoryApproval.<field>: <value>
     const mappr = line.match(/^memoryApproval\.(\w+):\s*(.+)$/);
     if (mappr) {
-      kv[`memoryApproval.${mappr[1]}`] = mappr[2].trim().replace(/^["']|["']$/g, '');
+      kv[`memoryApproval.${mappr[1]}`] = parseConfigScalar(mappr[2]);
       continue;
     }
     // memoryConsolidation.<field>: <value>
     const mcon = line.match(/^memoryConsolidation\.(\w+):\s*(.+)$/);
     if (mcon) {
-      kv[`memoryConsolidation.${mcon[1]}`] = mcon[2].trim().replace(/^["']|["']$/g, '');
+      kv[`memoryConsolidation.${mcon[1]}`] = parseConfigScalar(mcon[2]);
       continue;
     }
     const m = line.match(/^(\w+):\s*(.+)$/);
-    if (m) kv[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
+    if (m) kv[m[1].trim()] = parseConfigScalar(m[2]);
   }
 
   const activeContextType = activeContextKv.type;
@@ -4863,24 +5236,13 @@ function parseConfigYaml(src: string): EthosConfig {
       ? { type: activeContextType, name: activeContextName }
       : undefined;
 
-  const sortedProviderIdxs = Object.keys(providersKv)
-    .map(Number)
-    .sort((a, b) => a - b);
-  const providers: ProviderConfig[] = sortedProviderIdxs
-    .map((i): ProviderConfig | null => {
-      const p = providersKv[i];
-      if (!p?.provider) return null;
-      return {
-        provider: p.provider,
-        apiKey: p.apiKey ?? '',
-        model: p.model,
-        baseUrl: p.baseUrl,
-        apiVersion: p.apiVersion,
-        region: p.region,
-        awsProfile: p.awsProfile,
-      };
-    })
-    .filter((p): p is ProviderConfig => p !== null);
+  const providerNotices: string[] = [];
+  const providers: ProviderConfig[] = parseProviderChain(src.split('\n'), providerNotices).map(
+    (p) => ({
+      ...p,
+      apiKey: p.apiKey ?? '',
+    }),
+  );
 
   // Malformed retention durations are dropped with a warning rather than
   // carried through raw — see `retentionDuration`.
@@ -5448,6 +5810,7 @@ function parseConfigYaml(src: string): EthosConfig {
     ...cronDeprecations,
     ...auxTimeoutWarnings,
     ...retentionWarnings,
+    ...providerNotices,
   ]);
   return config;
 }
@@ -5613,11 +5976,32 @@ export function validateNoPlaintextSecrets(config: object): void {
       .map(
         (v) =>
           `  - field '${v.field}' appears to contain a plaintext ${v.label}. ` +
-          `Use \${secrets:<ref>} substitution instead.`,
+          `Use \${secrets:<ref>} substitution instead.${providerLineFix(v.field)}`,
       )
       .join('\n');
     throw new Error(`Config validation failed: plaintext secret(s) detected.\n${details}`);
   }
+}
+
+/**
+ * The concrete fix for a violation inside the provider chain, whose object
+ * path (`providers[1].passthrough.awsAccessKeyId`) is not the config.yaml line
+ * an operator has to edit (`providers.1.awsAccessKeyId`). An unmodelled chain
+ * field used to be dropped on read, so a config carrying a key in one booted
+ * before and is refused now; this names the line and the command. Empty for
+ * any other path, whose object path and config key need no translation or
+ * are not config.yaml at all (`writeKeys`'s `[0].apiKey`). Pinned by
+ * `__tests__/config-provider-chain.test.ts` ("plaintext secret").
+ */
+function providerLineFix(field: string): string {
+  const m = field.match(/^providers\[(\d+)\]\.(?:passthrough\.)?(.+)$/);
+  if (!m) return '';
+  const key = `providers.${m[1]}.${m[2]}`;
+  const ref = secretRefForConfigKey(key) ?? key.replace(/\./g, '/');
+  return (
+    ` It is config.yaml line \`${key}\`: run \`ethos secrets set ${ref} <value>\`, ` +
+    `then change the line to \`${key}: \${secrets:${ref}}\`.`
+  );
 }
 
 function walkStringValues(

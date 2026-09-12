@@ -428,3 +428,21 @@ describe('runBrowserVoiceTurn', () => {
     expect(reply).toBe('Clear skies. Twelve degrees.');
   });
 });
+
+// A `returnDirect` tool's answer reaches the turn only as `done.text`, after any
+// preamble the model streamed: the spoken reply carries both.
+describe('runBrowserVoiceTurn — the whole answer', () => {
+  it('includes a returnDirect answer that only `done.text` carries', async () => {
+    const loop = {
+      run: async function* (): AsyncGenerator<AgentEvent> {
+        yield { type: 'text_delta', text: 'Let me look that up.' };
+        yield { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 };
+      },
+    } as unknown as AgentLoop;
+    const reply = await runBrowserVoiceTurn(
+      { agentLoop: loop, botKey: 'ethos' },
+      { text: 'look it up', sessionId: 'chat-9', fallbackClientId: 'batch-1' },
+    );
+    expect(reply).toBe('Let me look that up.\n\nDIRECT ANSWER');
+  });
+});

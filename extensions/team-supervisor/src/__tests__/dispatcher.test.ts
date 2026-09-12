@@ -16,7 +16,10 @@ import {
 // In-memory supervisor stand-in. Production uses the real `Map<personality, MemberState>`
 // from `runSupervisor`; tests build this directly.
 function makeSupervisor(
-  members: Record<string, { port: number; status: 'running' | 'starting' | 'failed' }>,
+  members: Record<
+    string,
+    { port: number; status: 'running' | 'starting' | 'degraded' | 'restarting' | 'failed' }
+  >,
 ): SupervisorState {
   return {
     portOf: (p) => members[p]?.port ?? null,
@@ -361,6 +364,80 @@ describe('Dispatcher.tick()', () => {
     expect(board.getTask(t.id)?.status).toBe('ready');
     await new Promise((r) => setImmediate(r));
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reclaim a running task whose assignee is degraded — one missed probe is not gone', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'degraded' } });
+    const t = board.createTask({ title: 'mid-turn', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'claimed via poll dispatch', 'engineer');
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({
+      board,
+      supervisor: sup,
+      dispatch,
+      stalenessThresholdMs: 60_000,
+    });
+
+    await dispatcher.tick();
+
+    const reclaim = board
+      .listEvents(t.id)
+      .find((e) => e.kind === 'status_changed' && e.data.reason === 'orphan_no_owner');
+    expect(reclaim).toBeUndefined();
+    expect(board.getTask(t.id)?.status).toBe('running');
+    await new Promise((r) => setImmediate(r));
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it.each(['restarting', 'failed'] as const)(
+    'reclaims a running task whose assignee is %s with reason orphan_no_owner',
+    async (status) => {
+      const sup = makeSupervisor({ engineer: { port: 3001, status } });
+      const t = board.createTask({ title: 'owner gone', assignee: 'engineer' });
+      board.updateStatus(t.id, 'ready');
+      board.updateStatus(t.id, 'running', 'claimed via poll dispatch', 'engineer');
+
+      const dispatcher = new Dispatcher({
+        board,
+        supervisor: sup,
+        dispatch: vi.fn<DispatchCall>(async () => 'ok'),
+        stalenessThresholdMs: 60_000,
+      });
+
+      await dispatcher.tick();
+
+      const reclaim = board
+        .listEvents(t.id)
+        .find((e) => e.kind === 'status_changed' && e.data.reason === 'orphan_no_owner');
+      expect(reclaim).toBeDefined();
+      expect(board.getTask(t.id)?.status).toBe('ready');
+    },
+  );
+
+  it('carries operator comments and the last block reason into the dispatch prompt', async () => {
+    const sup = makeSupervisor({ engineer: { port: 3001, status: 'running' } });
+    const t = board.createTask({ title: 'brand guide', body: 'build it', assignee: 'engineer' });
+    board.updateStatus(t.id, 'ready');
+    board.updateStatus(t.id, 'running', 'dispatched', 'dispatcher');
+    board.addComment(t.id, 'engineer', '🔧 web_fetch({"url":"https://example.com"})');
+    board.blockRun(t.id, 'Which X handle should I read?', 'engineer', 'needs_input');
+    board.addComment(t.id, 'human:control-center', 'Use @rudderstack on X.');
+    board.updateStatus(t.id, 'ready', 'unblocked by operator', 'human:control-center');
+
+    const dispatch = vi.fn<DispatchCall>(async () => 'ok');
+    const dispatcher = new Dispatcher({ board, supervisor: sup, dispatch });
+
+    await dispatcher.tick();
+    await new Promise((r) => setImmediate(r));
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const prompt = dispatch.mock.calls[0]?.[0].prompt ?? '';
+    expect(prompt).toContain(`## Task ${t.id}: brand guide`);
+    expect(prompt).toContain('Use @rudderstack on X.');
+    expect(prompt).toContain('Your previous attempt stopped with: Which X handle should I read?');
+    expect(prompt).not.toContain('web_fetch');
   });
 
   it('does not reclaim a running task that is still in-flight from a prior tick', async () => {

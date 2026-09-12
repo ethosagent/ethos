@@ -33,9 +33,10 @@ import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
 import type { WatcherTap } from '../turn-context';
 import { consultWatcherHalt, enforceBeforeToolCall } from './per-call-enforcement';
+import { persistReturnDirect } from './return-direct';
 import type { ScriptToolBridge } from './script-tool-bridge';
 import type { CompletedToolCall, UsageSink } from './stream-step';
-import { emitToolRejection, validateRepairedArgs } from './tool-rejection';
+import { emitToolRejection, rejectAbortedCall, validateRepairedArgs } from './tool-rejection';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,7 +67,6 @@ export interface ToolProcessingDeps {
   platform: string;
   resultBudgetChars: number;
   teamId?: string;
-  contextStore: ContextStore;
   sessionReadMtimes: Map<string, Map<string, { mtimeMs: number; readAtTurn: number }>>;
   llm: LLMProvider;
 }
@@ -98,6 +98,8 @@ export interface ToolProcessingContext {
   usageSink: UsageSink;
   /** tools-as-code-api Lane B — per-turn bridge for in-script tool calls. */
   scriptToolBridge?: ScriptToolBridge;
+  /** This run's get/setContext store — one per `AgentLoop.run()` (agent-loop.ts). */
+  contextStore: ContextStore;
 
   // Downgrade state — mutable refs
   dgEnabled: boolean;
@@ -166,9 +168,6 @@ export async function* processTools(
     deps.sessionReadMtimes.set(ctx.sessionKey, sessionMtimes);
   }
 
-  // v2: clear per-run context store so plugins start fresh each run
-  deps.contextStore.clear();
-
   const toolCtxBase = {
     sessionId: ctx.sessionId,
     sessionKey: ctx.sessionKey,
@@ -208,7 +207,7 @@ export async function* processTools(
     readMtimes: sessionMtimes,
     ...(scopedStorage ? { storage: scopedStorage } : {}),
     ...(ctx.personality.safety?.network ? { networkPolicy: ctx.personality.safety.network } : {}),
-    ...deps.contextStore.asContextMethods(),
+    ...ctx.contextStore.asContextMethods(),
     llm: new SimpleCompletionImpl(deps.llm, ctx.effectiveModel, ({ input, output }) => {
       ctx.usageSink.llmInputTokens += input;
       ctx.usageSink.llmOutputTokens += output;
@@ -237,6 +236,12 @@ export async function* processTools(
   const getHalt = ctx.watcherTap.getHalt;
 
   for (const tc of ctx.completedToolCalls) {
+    // /stop landed while an earlier call's hook was parked — see rejectAbortedCall.
+    if (ctx.abortSignal.aborted) {
+      prepped.push(yield* rejectAbortedCall(observe, tc));
+      continue;
+    }
+
     // §4 — the streamed arguments were unparseable and unrepairable. Never run
     // the tool with empty args; reject via the same Prepped.rejected path used
     // by hook/watcher rejections so the model gets a visible is_error result.
@@ -309,6 +314,11 @@ export async function* processTools(
         personalityId: ctx.personality.id,
       },
     );
+    // ...or while THIS call's hook was parked: no tool_start for a call that cannot run.
+    if (ctx.abortSignal.aborted) {
+      prepped.push(yield* rejectAbortedCall(observe, tc));
+      continue;
+    }
 
     if (!beforeDecision.allowed) {
       hookDenials++;
@@ -472,27 +482,14 @@ export async function* processTools(
     return r.result.ok && t?.returnDirect;
   });
   if (directResult?.result.ok) {
-    // Persist tool results for history fidelity
-    for (const p of prepped) {
-      const execResult = execResultMap.get(p.toolCallId);
-      const result: ToolResult = p.rejected
-        ? { ok: false as const, error: p.rejected, code: 'execution_failed' as const }
-        : (execResult?.result ?? {
-            ok: false as const,
-            error: 'Tool result missing',
-            code: 'execution_failed' as const,
-          });
-      await deps.session.appendMessage({
-        sessionId: ctx.sessionId,
-        role: 'tool_result',
-        // Lane 1(c) — same ingestion cap as the main persist path below.
-        content: capIngestedResult(result.ok ? result.value : result.error, deps.resultBudgetChars),
-        toolCallId: p.toolCallId,
-        toolName: p.name,
-        traceId: ctx.traceId,
-        isError: !result.ok,
-      });
-    }
+    // `answer` is the persisted answer row's exact text — `done.text` must be it.
+    const turn = {
+      sessionId: ctx.sessionId,
+      traceId: ctx.traceId,
+      resultBudgetChars: deps.resultBudgetChars,
+    };
+    const direct = { toolCallId: directResult.toolCallId, value: directResult.result.value };
+    const answer = await persistReturnDirect(deps.session, turn, prepped, execResultMap, direct);
     // Emit tool_end for all completed tools
     for (const r of execResults) {
       yield {
@@ -512,11 +509,11 @@ export async function* processTools(
     deps.observability?.flush();
     yield {
       type: 'done',
-      text: directResult.result.value,
+      text: answer,
       turnCount: ctx.turnCount,
       ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
     };
-    return { kind: 'return-direct', text: directResult.result.value, turnCount: ctx.turnCount };
+    return { kind: 'return-direct', text: answer, turnCount: ctx.turnCount };
   }
 
   // Dry-run plan collection — record every executed tool call and track the cap.

@@ -1,3 +1,4 @@
+import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { EthosError } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -367,5 +368,178 @@ describe('CompletionsService — session personality binding', () => {
     const sessions = await ctx.store.listSessions();
     const created = sessions.find((s) => s.key.startsWith('openai:ephem:'));
     expect(created?.personalityId).toBe('engineer');
+  });
+});
+
+// F07 (plan/phases/architecture-suggestions-2026-09-10.md). AgentLoop yields
+// `error` BEFORE its usage flush and trace close (and `done` before its
+// turn-end work). Throwing inside the `for await` closes the generator and
+// skips that. The error must still become the response — after the drain.
+describe('CompletionsService — drains the loop past its terminal event (F07)', () => {
+  let store: SQLiteSessionStore;
+  afterEach(() => store.close());
+
+  /** A loop that yields `events`, then runs a tail only a draining consumer reaches. */
+  function tailedService(events: AgentEvent[]) {
+    const state = { tailRan: false };
+    store = new SQLiteSessionStore(':memory:');
+    const loop = {
+      async *run(): AsyncGenerator<AgentEvent> {
+        for (const event of events) yield event;
+        await new Promise((r) => setTimeout(r, 5));
+        state.tailRan = true;
+      },
+    } as unknown as AgentLoop;
+    const service = new CompletionsService({
+      loop,
+      sessions: new CompletionsRepository(store),
+      defaults,
+      now: fixedNow,
+      newId: seqIds(),
+    });
+    return { service, state };
+  }
+
+  const failing: AgentEvent[] = [
+    { type: 'text_delta', text: 'partial' },
+    { type: 'error', error: 'upstream went down', code: 'LLM_ERROR' },
+  ];
+
+  it('complete(): rejects with the loop error only after the loop has drained', async () => {
+    const t = tailedService(failing);
+    await expect(
+      t.service.complete({ req: userOnly('hi'), personalityId: 'engineer' }),
+    ).rejects.toThrow(/upstream went down/);
+    expect(t.state.tailRan).toBe(true);
+  });
+
+  it('complete(): drains past `done` before answering', async () => {
+    const t = tailedService([
+      { type: 'text_delta', text: 'ok' },
+      { type: 'done', text: 'ok', turnCount: 1 },
+    ]);
+    const out = await t.service.complete({ req: userOnly('hi'), personalityId: 'engineer' });
+    expect(out.choices[0]?.message.content).toBe('ok');
+    expect(t.state.tailRan).toBe(true);
+  });
+
+  // A returnDirect tool result reaches the turn only as `done.text`: processTools
+  // yields `done` with the tool's value and no text_delta.
+  const direct: AgentEvent[] = [{ type: 'done', text: 'DIRECT ANSWER', turnCount: 1 }];
+
+  it('complete(): answers with `done.text` when no text streamed — returnDirect', async () => {
+    const t = tailedService(direct);
+    const out = await t.service.complete({ req: userOnly('hi'), personalityId: 'engineer' });
+    expect(out.choices[0]?.message.content).toBe('DIRECT ANSWER');
+  });
+
+  it('stream(): streams `done.text` when no text streamed — returnDirect', async () => {
+    const t = tailedService(direct);
+    const seen: ChatCompletionChunk[] = [];
+    for await (const chunk of t.service.stream({
+      req: userOnly('hi'),
+      personalityId: 'engineer',
+    })) {
+      seen.push(chunk);
+    }
+    expect(seen.map((c) => c.choices[0]?.delta)).toEqual([
+      { role: 'assistant', content: 'DIRECT ANSWER' },
+      {},
+    ]);
+    expect(seen.at(-1)?.choices[0]?.finish_reason).toBe('stop');
+  });
+
+  // A streamed preamble, then a returnDirect tool: the answer is only in `done.text`.
+  const preamble: AgentEvent[] = [
+    { type: 'text_delta', text: 'Let me look that up.' },
+    { type: 'done', text: 'DIRECT ANSWER', turnCount: 1 },
+  ];
+
+  it('complete(): a returnDirect answer after a streamed preamble — both, in order', async () => {
+    const t = tailedService(preamble);
+    const out = await t.service.complete({ req: userOnly('hi'), personalityId: 'engineer' });
+    expect(out.choices[0]?.message.content).toBe('Let me look that up.\n\nDIRECT ANSWER');
+  });
+
+  it('stream(): the answer streams after the preamble, before the finish chunk', async () => {
+    const t = tailedService(preamble);
+    const seen: ChatCompletionChunk[] = [];
+    for await (const chunk of t.service.stream({
+      req: userOnly('hi'),
+      personalityId: 'engineer',
+    })) {
+      seen.push(chunk);
+    }
+    expect(seen.map((c) => c.choices[0]?.delta)).toEqual([
+      { role: 'assistant', content: 'Let me look that up.' },
+      { content: '\n\nDIRECT ANSWER' },
+      {},
+    ]);
+  });
+
+  it('stream(): throws the loop error only after the loop has drained', async () => {
+    const t = tailedService(failing);
+    const seen: ChatCompletionChunk[] = [];
+    await expect(
+      (async () => {
+        for await (const chunk of t.service.stream({
+          req: userOnly('hi'),
+          personalityId: 'engineer',
+        })) {
+          seen.push(chunk);
+        }
+      })(),
+    ).rejects.toThrow(/upstream went down/);
+    expect(t.state.tailRan).toBe(true);
+    // Text before the error still streamed; nothing after it did.
+    expect(seen.map((c) => c.choices[0]?.delta.content)).toEqual(['partial']);
+  });
+});
+
+// F07 — the streamed answer is complete at `done`; the rest of the turn is
+// turn-end maintenance. The closing chunks go out at the terminal event, and
+// the generator keeps draining the loop (yielding nothing more) until it ends.
+describe('CompletionsService.stream — closing chunks at the terminal event (F07)', () => {
+  let store: SQLiteSessionStore;
+  afterEach(() => store.close());
+
+  it('yields the finish_reason (and usage) chunk before the tail runs, then drains it', async () => {
+    const state = { tailRan: false };
+    store = new SQLiteSessionStore(':memory:');
+    const loop = {
+      async *run(): AsyncGenerator<AgentEvent> {
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'usage', inputTokens: 4, outputTokens: 1, estimatedCostUsd: 0 };
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+        await new Promise((r) => setTimeout(r, 5));
+        state.tailRan = true;
+      },
+    } as unknown as AgentLoop;
+    const service = new CompletionsService({
+      loop,
+      sessions: new CompletionsRepository(store),
+      defaults,
+      now: fixedNow,
+      newId: seqIds(),
+    });
+    const req: ChatCompletionRequest = {
+      model: 'engineer',
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true,
+      stream_options: { include_usage: true },
+    };
+
+    const seen: Array<{ chunk: ChatCompletionChunk; tailRan: boolean }> = [];
+    for await (const chunk of service.stream({ req, personalityId: 'engineer' })) {
+      seen.push({ chunk, tailRan: state.tailRan });
+    }
+
+    expect(
+      seen.map((s) => (s.chunk.choices.length === 0 ? 'usage' : s.chunk.choices[0]?.finish_reason)),
+    ).toEqual([null, 'stop', 'usage']);
+    // Both closing chunks were produced while the tail had not run…
+    expect(seen.every((s) => !s.tailRan)).toBe(true);
+    // …and the generator did not end until it had.
+    expect(state.tailRan).toBe(true);
   });
 });

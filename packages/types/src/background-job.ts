@@ -55,6 +55,19 @@ export type BackgroundJobStatus =
   | 'stale'
   | 'expired';
 
+/**
+ * The `error` on a job its runtime's shutdown aborted — the owning loop was
+ * disposed (a process stop, or a live bot edit replacing its loop). Written by
+ * `BackgroundExecutor.shutdown` (extensions/job-runner). Distinct from a
+ * user's `task_cancel` ('cancelled by task_cancel'): an interrupted job is
+ * announced to its origin chat (`JobStore.listUndelivered` offers it,
+ * `Gateway.onBackgroundJobComplete` / `sweepUndeliveredJobs` deliver it), a
+ * cancelled one stays silent. One definition here so the store, the executor
+ * and the gateway compare against the same string.
+ */
+export const JOB_ABORTED_BY_SHUTDOWN =
+  'interrupted: its runtime shut down (a restart or a configuration change)';
+
 // ---------------------------------------------------------------------------
 // Background job — one durable row per detached child turn
 // ---------------------------------------------------------------------------
@@ -207,8 +220,21 @@ export interface JobStore {
   /** Insert a new queued job. Returns the created row. */
   create(input: CreateBackgroundJobInput): Promise<BackgroundJob>;
   get(id: string): Promise<BackgroundJob | null>;
-  /** Atomically transition the oldest queued row owned by `owner` to running; returns it, or null if none. */
-  claimNextQueued(owner: string): Promise<BackgroundJob | null>;
+  /**
+   * Atomically transition the oldest queued row owned by `owner` to running;
+   * returns it, or null if none. With `opts.adopt`, rows handed back under
+   * that label (`releaseQueued`) are claimable too, and are re-stamped as
+   * `owner`'s on claim.
+   */
+  claimNextQueued(owner: string, opts?: { adopt?: string }): Promise<BackgroundJob | null>;
+  /**
+   * F06 — hand every not-yet-started (`queued`) row `owner` holds back under
+   * the label `releasedAs`, so an executor that adopts that label (see
+   * `claimNextQueued`) can run them — the shutting-down executor's successor.
+   * Returns how many rows moved. Optional: a store without it keeps queued
+   * rows bound to their owner, and they wait for `expireQueued`.
+   */
+  releaseQueued?(owner: string, releasedAs: string): Promise<number>;
   /** Bump heartbeatAt to now. No-op if the row is not running. */
   heartbeat(id: string): Promise<void>;
   /** Set accumulated spend for a job (absolute value). */
@@ -264,7 +290,9 @@ export interface JobStore {
   /** Running rows that track a remote job (remoteJobId set) — for the mesh proxy reconciler. */
   listRunningRemote(): Promise<BackgroundJob[]>;
   /**
-   * Announceable jobs (`done`/`failed`) that carry a full origin lane, are owned
+   * Announceable jobs (`done`/`failed`, plus `aborted` with
+   * {@link JOB_ABORTED_BY_SHUTDOWN} — an interruption the origin chat is told
+   * about; a user's cancel is not) that carry a full origin lane, are owned
    * by one of `originBotKeys`, and have never been claimed for delivery. Oldest
    * first — the restart sweep replays completions in the order they finished.
    *

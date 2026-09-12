@@ -78,6 +78,7 @@ import type {
 } from '@ethosagent/types';
 import { activateFirstPartyPlugins } from './activate-first-party';
 import { validateCallCaptureBinding } from './call-capture-binding';
+import type { DisposerStack } from './disposer-stack';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
 import { buildVaultBackend, composeGatedMemory } from './memory-backend';
 import { registerRemainingBuiltinProviders } from './register-builtin-providers';
@@ -223,11 +224,16 @@ export function createPersonalityNetworkPolicyResolver(
  *  - CapabilityBackends constructed
  *  - ToolRegistry (DefaultToolRegistry) with reducers registered
  *  - ClarifyBridge
+ *
+ * Every resource it opens registers its release on `disposers` right after
+ * construction (F06), so `createAgentLoop` can roll a failed boot back and
+ * `CreateAgentLoopResult.dispose` can take a finished one down.
  */
 export async function buildInfrastructure(
   wiringCtx: WiringContext,
   config: WiringConfig,
   opts: CreateAgentLoopOptions,
+  disposers: DisposerStack,
 ): Promise<InfrastructureResult> {
   const { dataDir, log } = wiringCtx;
 
@@ -293,6 +299,10 @@ export async function buildInfrastructure(
   executionBackends.register('local', (ctx) => new LocalExecutionBackend(ctx));
   executionBackends.register('docker', (ctx) => new DockerExecutionBackend(ctx));
   executionBackends.register('ssh', (ctx) => new SshExecutionBackend(ctx));
+  // Instances are NOT released here (F06 / G6): the execution routing
+  // (`createExecutionRouting`, compose-tools.ts) is their single owner, because
+  // a docker `SessionManager` wrapper disposes the registry instance it wraps
+  // and a second pass over the registry would dispose that instance twice.
 
   // Memory provider registry — built-ins registered here; plugins add more via
   // registerMemoryProvider.
@@ -440,6 +450,11 @@ export async function buildInfrastructure(
   // -------------------------------------------------------------------------
 
   const sessionCompose = composeSession(wiringCtx);
+  // Three connections on sessions.db, all opened here and handed only to this
+  // loop's own components — none is lent to a host beyond the loop's life.
+  disposers.push('sessions.db (session store)', () => sessionCompose.sessionStore.close());
+  disposers.push('sessions.db (context log)', () => sessionCompose.contextLog.close());
+  disposers.push('sessions.db (kv stores)', () => sessionCompose.kvStoreFactory.close());
 
   // -------------------------------------------------------------------------
   // Capability backends

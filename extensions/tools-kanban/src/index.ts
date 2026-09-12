@@ -211,7 +211,6 @@ function createKanbanCreate(store: KanbanStore): Tool {
         priority: { type: 'integer', description: 'Higher = more urgent (default 0)' },
         parents: { type: 'array', items: { type: 'string' } },
         workspace_mode: { type: 'string', enum: WORKSPACE_MODES },
-        scheduled_for: { type: 'integer', description: 'Epoch ms; sets status=scheduled' },
         idempotency_key: { type: 'string' },
         max_retries: {
           type: ['integer', 'null'],
@@ -265,12 +264,11 @@ function createKanbanCreate(store: KanbanStore): Tool {
       ) {
         return errorResult('parents must be an array of task id strings', 'input_invalid');
       }
-      if (
-        args.scheduled_for !== undefined &&
-        args.scheduled_for !== null &&
-        (typeof args.scheduled_for !== 'number' || !Number.isFinite(args.scheduled_for))
-      ) {
-        return errorResult('scheduled_for must be a finite number or null', 'input_invalid');
+      if (args.scheduled_for !== undefined && args.scheduled_for !== null) {
+        return errorResult(
+          "This status doesn't exist. Set status among the given list: todo, ready, running, blocked, needs_revision, failed, done.",
+          'input_invalid',
+        );
       }
       if (args.idempotency_key !== undefined) {
         if (typeof args.idempotency_key !== 'string') {
@@ -314,7 +312,6 @@ function createKanbanCreate(store: KanbanStore): Tool {
           ...(args.priority !== undefined ? { priority: args.priority } : {}),
           ...(args.parents !== undefined ? { parents: args.parents } : {}),
           ...(args.workspace_mode !== undefined ? { workspaceMode: args.workspace_mode } : {}),
-          ...(args.scheduled_for !== undefined ? { scheduledFor: args.scheduled_for } : {}),
           ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
           ...(args.max_retries !== undefined ? { maxRetries: args.max_retries } : {}),
           ...(args.acceptance_criteria !== undefined
@@ -1177,7 +1174,7 @@ function createKanbanUnblock(store: KanbanStore): Tool {
   return {
     name: 'kanban_unblock',
     description:
-      'Flip a blocked task to ready (if all parents are done/archived) or todo (if any parent is still pending).\n' +
+      'Flip a blocked task to ready (if all prerequisite tasks are done) or todo (if any prerequisite is still pending).\n' +
       RULES,
     toolset: 'kanban',
     maxResultChars: MAX_RESULT_CHARS,
@@ -1200,11 +1197,10 @@ function createKanbanUnblock(store: KanbanStore): Tool {
           'execution_failed',
         );
       }
-      // Only `done` parents satisfy a dependency. Archived means the parent was
-      // soft-deleted/abandoned, not completed, so its child stays waiting.
-      const parents = store.getParents(args.task_id);
-      const allParentsDone = parents.every((p) => p.status === 'done');
-      const next: TaskStatus = allParentsDone ? 'ready' : 'todo';
+      // Same rule as `promoteReady` (`KanbanStore.hasOpenBlockingParents`): only
+      // `done` satisfies an assigned parent — archived means abandoned, not
+      // completed — and goal parents (assignee null) never gate.
+      const next: TaskStatus = store.hasOpenBlockingParents(args.task_id) ? 'todo' : 'ready';
       try {
         const t = store.updateStatus(args.task_id, next, undefined, actorOf(ctx));
         return jsonResult(fullTask(t));

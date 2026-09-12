@@ -201,6 +201,10 @@ describe('reasoning passthrough (Lane 4b(b))', () => {
     expect(streams.createCalls).toBe(2);
     expect(chunks.filter((c) => c.type === 'done')).toHaveLength(1);
     expect(textOf(chunks)).toBe('');
+    // The documented limitation, pinned: the first attempt's thinking was
+    // already yielded when the retry was decided, so a surface that renders
+    // thinking shows BOTH passes. See `withReasoningOnlyRetry`'s doc comment.
+    expect(thinkingOf(chunks)).toBe('still thinkingstill thinking');
   });
 
   it('does not retry when the turn has real text alongside thinking', async () => {

@@ -249,8 +249,8 @@ export interface ToolSettingsEnumField {
   key: string;
   /** Human-readable label for the form control. */
   label: string;
-  /** Allowed values, each with an optional display label. */
-  options: Array<{ value: string; label?: string }>;
+  /** Allowed values, each with an optional display label and key URL. */
+  options: Array<{ value: string; label?: string; getKeyUrl?: string }>;
   /** Selection applied when the personality hasn't chosen one. */
   default?: string;
   required?: boolean;
@@ -269,6 +269,30 @@ export interface ToolSettingsSecretBindingField {
   required?: boolean;
   /** When present, rendered as a help popover next to the field's label. */
   helpText?: string;
+  /**
+   * Human name for the provider namespace this credential lives in — what the
+   * add-secret form offers instead of the raw `providers/<segment>/*` id. The
+   * provider roster is DERIVED from `capabilities.secrets`
+   * (`deriveProviderRoster`, `apps/web-api/src/services/derive-provider-roster.ts`),
+   * so once the hand-maintained enum is gone these strings have nowhere else to
+   * come from. Absent → the provider segment itself.
+   *
+   * A tool declaring several provider prefixes labels them through its
+   * `enum` field's option labels instead, which are per-provider; this one
+   * applies to every provider the tool declares and so suits a single-provider
+   * tool (plan/phases/tool-credential-surface.md D4).
+   */
+  providerLabel?: string;
+  /** Where the operator goes to obtain this credential. */
+  getKeyUrl?: string;
+  /**
+   * The name this tool resolves under its provider when nothing binds one —
+   * the last segment of its `defaultRef`. Absent → `apiKey`, which is right
+   * for most tools and wrong for `gsc_sites` / `gsc_queries`
+   * (`serviceAccount`). Read by the resolution probe so it can reproduce the
+   * tool's own default without guessing.
+   */
+  defaultSecretName?: string;
 }
 
 /**

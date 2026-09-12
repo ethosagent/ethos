@@ -44,7 +44,9 @@ const SCHEMA = `
     allow_dangerous_tool_calls INTEGER,
     max_recovery_attempts INTEGER,
     max_identical_tool_calls INTEGER,
-    plan_md             TEXT
+    plan_md             TEXT,
+    lease_owner         TEXT,
+    heartbeat_at        INTEGER
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS goal_attempts (
@@ -216,6 +218,40 @@ function newAttemptId(): string {
 }
 
 // ---------------------------------------------------------------------------
+// Status writes
+// ---------------------------------------------------------------------------
+
+type StatusExtra = Parameters<GoalStore['updateStatus']>[2];
+
+/** The SET list (and its values, in order) for a status write plus `extra`. */
+function statusAssignments(
+  status: GoalStatus,
+  extra: StatusExtra,
+): { sets: string[]; values: unknown[] } {
+  const sets: string[] = ['status = ?'];
+  const values: unknown[] = [status];
+  const columns = [
+    ['outputMd', 'output_md'],
+    ['outputPartial', 'output_partial'],
+    ['errorText', 'error_text'],
+    ['completedAt', 'completed_at'],
+    ['turnCount', 'turn_count'],
+    ['toolCount', 'tool_count'],
+    ['tokenCount', 'token_count'],
+    ['costUsd', 'cost_usd'],
+    ['planMd', 'plan_md'],
+  ] as const;
+  for (const [key, column] of columns) {
+    const value = extra?.[key];
+    if (value !== undefined) {
+      sets.push(`${column} = ?`);
+      values.push(value);
+    }
+  }
+  return { sets, values };
+}
+
+// ---------------------------------------------------------------------------
 // SQLiteGoalStore
 // ---------------------------------------------------------------------------
 
@@ -229,11 +265,19 @@ export class SQLiteGoalStore implements GoalStore {
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    // One goals.db is shared cross-process (every loop builds a runner against
+    // it — see the lease below). An explicit busy timeout makes concurrent
+    // writes wait instead of throwing SQLITE_BUSY: a losing `resumeGoal` must
+    // report `false`, not a thrown "database is locked". Pinned by
+    // __tests__/lease.test.ts ("a peer process holding the write lock").
+    this.db.pragma('busy_timeout = 5000');
 
     // Version check — refuse to open a DB whose schema is newer than this code.
     const versionRows = this.db.pragma('user_version') as Array<{ user_version: number }>;
     const currentVersion = versionRows[0]?.user_version ?? 0;
-    if (currentVersion > 6) {
+    // 7 is accepted: unshipped interim builds stamped it for "6 + the lease
+    // columns" (see below), and it is re-stamped to 6.
+    if (currentVersion > 7) {
       throw new Error(
         `goal-store: database user_version=${currentVersion} is newer than code (6); refusing to open to avoid downgrade`,
       );
@@ -284,7 +328,28 @@ export class SQLiteGoalStore implements GoalStore {
       }
     }
 
-    if (currentVersion < 6) {
+    // Rule: an ADDITIVE NULLABLE column does not bump user_version. Every
+    // older build refuses a database stamped newer than itself, and all of
+    // them tolerate an extra nullable column (INSERTs name their columns;
+    // reads map `SELECT *` field by field), so a bump would only lock older
+    // CLIs/desktops sharing ~/.ethos out of goals.db. Such columns are added
+    // on every open, idempotently, whatever the stamp says. Pinned by
+    // __tests__/lease.test.ts ("lease columns are additive").
+    //
+    // The ownership lease (`lease_owner`, `heartbeat_at`) that
+    // `interruptStale` / `resumeGoal` read. Rows written by older code keep
+    // both NULL and are handled by the unleased rule in `interruptStale`.
+    const cols = this.db.pragma('table_info(goals)') as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'lease_owner')) {
+      this.db.exec('ALTER TABLE goals ADD COLUMN lease_owner TEXT');
+    }
+    if (!cols.some((c) => c.name === 'heartbeat_at')) {
+      this.db.exec('ALTER TABLE goals ADD COLUMN heartbeat_at INTEGER');
+    }
+
+    // 6 is the schema version. Re-stamping an interim 7 makes the file
+    // openable by the shipped builds again; the columns stay (harmless to them).
+    if (currentVersion !== 6) {
       this.db.pragma('user_version = 6');
     }
   }
@@ -358,71 +423,35 @@ export class SQLiteGoalStore implements GoalStore {
     return rows.map(rowToGoal);
   }
 
-  updateStatus(
-    id: string,
-    status: GoalStatus,
-    extra?: Partial<
-      Pick<
-        Goal,
-        | 'outputMd'
-        | 'outputPartial'
-        | 'errorText'
-        | 'completedAt'
-        | 'turnCount'
-        | 'toolCount'
-        | 'tokenCount'
-        | 'costUsd'
-        | 'planMd'
-      >
-    >,
-  ): void {
-    const sets: string[] = ['status = ?'];
-    const values: unknown[] = [status];
-
-    if (extra?.outputMd !== undefined) {
-      sets.push('output_md = ?');
-      values.push(extra.outputMd);
-    }
-    if (extra?.outputPartial !== undefined) {
-      sets.push('output_partial = ?');
-      values.push(extra.outputPartial);
-    }
-    if (extra?.errorText !== undefined) {
-      sets.push('error_text = ?');
-      values.push(extra.errorText);
-    }
-    if (extra?.completedAt !== undefined) {
-      sets.push('completed_at = ?');
-      values.push(extra.completedAt);
-    }
-    if (extra?.turnCount !== undefined) {
-      sets.push('turn_count = ?');
-      values.push(extra.turnCount);
-    }
-    if (extra?.toolCount !== undefined) {
-      sets.push('tool_count = ?');
-      values.push(extra.toolCount);
-    }
-    if (extra?.tokenCount !== undefined) {
-      sets.push('token_count = ?');
-      values.push(extra.tokenCount);
-    }
-    if (extra?.costUsd !== undefined) {
-      sets.push('cost_usd = ?');
-      values.push(extra.costUsd);
-    }
-    if (extra?.planMd !== undefined) {
-      sets.push('plan_md = ?');
-      values.push(extra.planMd);
-    }
-
-    values.push(id);
+  updateStatus(id: string, status: GoalStatus, extra?: StatusExtra): void {
+    const { sets, values } = statusAssignments(status, extra);
     const result = this.db
       .prepare(`UPDATE goals SET ${sets.join(', ')} WHERE id = ?`)
-      .run(...values);
+      .run(...values, id);
     if (result.changes === 0) {
       throw new Error(`updateStatus: goal ${id} not found`);
     }
+  }
+
+  /**
+   * The executing run's status write: applied only while `owner` (that run's
+   * lease) still holds the goal — or nobody does — and the goal is not
+   * `cancelled`. A cancel, from this process or another, is therefore never
+   * overwritten by the run it stopped; and a run superseded by a resume, on
+   * this runner or another, cannot write over the run that replaced it. One
+   * conditional UPDATE, so a cancel cannot land between a check and the write.
+   * Returns whether the write applied. Pinned by __tests__/lease.test.ts and
+   * goal-runner's __tests__/cancel-lease.test.ts.
+   */
+  updateRunStatus(id: string, owner: string, status: GoalStatus, extra?: StatusExtra): boolean {
+    const { sets, values } = statusAssignments(status, extra);
+    const result = this.db
+      .prepare(
+        `UPDATE goals SET ${sets.join(', ')}
+         WHERE id = ? AND status != 'cancelled' AND (lease_owner IS NULL OR lease_owner = ?)`,
+      )
+      .run(...values, id, owner);
+    return result.changes === 1;
   }
 
   appendEvent(goalId: string, eventType: GoalEventType, payload: Record<string, unknown>): void {
@@ -533,6 +562,107 @@ export class SQLiteGoalStore implements GoalStore {
     if (result.changes === 0) {
       throw new Error(`incrementResumeCount: goal ${id} not found`);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Ownership lease — the job-store heartbeat + reclaimStale model, for goals.
+  // The executing RUN claims a goal and refreshes `heartbeat_at` while it is
+  // live; `interruptStale` takes only goals whose lease went quiet, so a runner
+  // booting beside another live runner leaves that runner's goals alone. The
+  // owner string identifies one run, not one runner (goal-runner leases as
+  // `<runnerId>:<runSeq>`), so a run superseded by a resume — even on the same
+  // runner — fails every check below once the new run has claimed the goal.
+  // Pinned by __tests__/lease.test.ts.
+  // -------------------------------------------------------------------------
+
+  /** Take (or retake) the lease on a goal: `owner` is now the run executing it. */
+  claimGoal(goalId: string, owner: string): void {
+    this.db
+      .prepare('UPDATE goals SET lease_owner = ?, heartbeat_at = ? WHERE id = ?')
+      .run(owner, Date.now(), goalId);
+  }
+
+  /**
+   * Resume a goal for the run `owner`, atomically: from `failed`, `cancelled`
+   * or `interrupted` only, it becomes `running`, its resume count goes up and
+   * `owner` takes the lease — all in one conditional UPDATE, so of two
+   * processes resuming the same goal exactly one wins and the other gets
+   * false. A run that was still unwinding from the previous attempt holds a
+   * superseded lease and stands down at its next check. Pinned by
+   * __tests__/lease.test.ts ("resumeGoal").
+   */
+  resumeGoal(goalId: string, owner: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE goals
+         SET status = 'running', resume_count = resume_count + 1,
+             lease_owner = ?, heartbeat_at = ?
+         WHERE id = ? AND status IN ('failed', 'cancelled', 'interrupted')`,
+      )
+      .run(owner, Date.now(), goalId);
+    return result.changes === 1;
+  }
+
+  /**
+   * Refresh `owner`'s lease, and report whether the run should go on: false when
+   * the goal was `cancelled` (by anyone) or another run holds the lease now.
+   * A beat from a run that does not hold the lease changes nothing — it
+   * neither revives nor takes over someone else's.
+   */
+  heartbeatGoal(goalId: string, owner: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE goals SET heartbeat_at = ?
+         WHERE id = ? AND lease_owner = ? AND status != 'cancelled'`,
+      )
+      .run(Date.now(), goalId, owner);
+    return result.changes === 1;
+  }
+
+  /**
+   * Mark `interrupted` every active goal (planning / running / judging /
+   * retrying) whose lease is older than `staleMs`, and return their ids.
+   * `needs_clarification` is parked on a person, not executing, and is never
+   * taken — the same reason job-store's sweep skips `blocked`.
+   *
+   * A goal with NO lease (a row written before the lease columns existed, or
+   * one created but not yet started) counts as orphaned only once its last
+   * sign of life — the newer of `started_at` and its latest event — is older
+   * than `staleMs`: a pre-lease runner still driving it writes events, and a
+   * just-created row has not reached `startGoal` yet. One UPDATE, so a beat
+   * cannot land between the check and the write.
+   *
+   * Limitation: a heartbeat is wall-clock, so a live runner whose host slept
+   * longer than `staleMs` looks dead to a peer that sweeps before its next
+   * beat, and the goal is marked `interrupted`. The lease is not taken over:
+   * that run's next beat still succeeds and its next status write
+   * (`updateRunStatus`, owner unchanged) puts the goal back — unless someone
+   * resumes the `interrupted` goal first, in which case the resumed run's new
+   * lease wins and the sleeper stands down at its next check.
+   */
+  interruptStale(staleMs: number, now: number = Date.now()): string[] {
+    const threshold = now - staleMs;
+    const rows = this.db
+      .prepare(
+        `UPDATE goals SET status = 'interrupted'
+         WHERE status IN ('planning', 'running', 'judging', 'retrying')
+           AND (
+             (heartbeat_at IS NOT NULL AND heartbeat_at <= ?)
+             OR (
+               heartbeat_at IS NULL
+               AND MAX(
+                 started_at,
+                 COALESCE(
+                   (SELECT MAX(e.created_at) FROM goal_events e WHERE e.goal_id = goals.id),
+                   0
+                 )
+               ) <= ?
+             )
+           )
+         RETURNING id`,
+      )
+      .all(threshold, threshold) as Array<{ id: string }>;
+    return rows.map((r) => r.id);
   }
 
   close(): void {

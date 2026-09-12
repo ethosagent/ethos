@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -64,7 +64,10 @@ function runAsRemoteLoginShell(
 
 const dirs: string[] = [];
 function scratchDir(name: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `ethos-ssh-${name}-`));
+  // Canonicalized: macOS's tmpdir() is `/var/...`, a symlink to `/private/var/...`,
+  // and node's `process.cwd()` reports the resolved path while `sh`'s `$PWD` keeps
+  // the logical one. Resolving here makes both spellings agree.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), `ethos-ssh-${name}-`)));
   dirs.push(dir);
   return dir;
 }

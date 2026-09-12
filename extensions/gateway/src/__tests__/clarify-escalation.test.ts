@@ -173,6 +173,37 @@ describe('Gateway.sweepClarifyEscalations (§4.6 rung 3)', () => {
     await gw.shutdown();
   });
 
+  // F08 — the notice is filed under the run's bot, so it leaves through that
+  // bot's adapter even when a sibling bot owns the platform's default adapter.
+  it('pushes through the origin bot’s own adapter, never the platform default', async () => {
+    const adapterB1 = Object.assign(stubAdapter(), { id: 'test:b1' });
+    const adapterB2 = Object.assign(stubAdapter(), { id: 'test:b2' });
+    const bot = (botKey: string, rows: PendingClarify[], jobs: BackgroundJob[]) => ({
+      botKey,
+      loop: {
+        clarifyBridge: new ClarifyBridge(memoryClarifyStore(rows)),
+        hooks: { registerVoid: vi.fn(() => () => {}) },
+      } as unknown as AgentLoop,
+      binding: { type: 'personality' as const, name: 'default' },
+      jobStore: fakeJobStore(jobs).store,
+    });
+    const gw = new Gateway({
+      bots: [bot('b1', [], []), bot('b2', [pendingRow()], [blockedJob({ originBotKey: 'b2' })])],
+      adapters: new Map([['test', adapterB1]]),
+      botAdapters: new Map([
+        ['b1', adapterB1],
+        ['b2', adapterB2],
+      ]),
+      clarifySweepIntervalMs: 0,
+    });
+
+    expect(await gw.sweepClarifyEscalations(T0 + 60_000)).toEqual({ pushed: 1, failed: 0 });
+    expect(sentTexts(adapterB1)).toHaveLength(0);
+    expect(sentTexts(adapterB2)).toHaveLength(1);
+
+    await gw.shutdown();
+  });
+
   it('hands the claim back when the platform does not confirm and no ledger is wired', async () => {
     const adapter = stubAdapter();
     (adapter.send as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, error: 'down' });

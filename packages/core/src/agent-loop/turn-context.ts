@@ -22,7 +22,6 @@ import type {
   WatcherEvent,
 } from '@ethosagent/types';
 import type { ClarifyBridge } from '../clarify/clarify-bridge';
-import type { ContextStore } from '../context-store';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
 
 // ---------------------------------------------------------------------------
@@ -140,7 +139,6 @@ export interface LoopDeps {
   } | null>;
   sessionCosts: Map<string, number>;
   sessionReadMtimes: Map<string, Map<string, { mtimeMs: number; readAtTurn: number }>>;
-  contextStore: ContextStore;
   documentExtractors?: import('@ethosagent/types').DocumentExtractorRegistry;
   /** Model-visible ⟺ logged (plan/phases/model-visible-logged.md, Phase B).
    *  Both optional and always used together — absent either one, the

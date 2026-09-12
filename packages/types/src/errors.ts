@@ -22,6 +22,7 @@ export type EthosErrorCode =
   // Configuration / setup
   | 'CONFIG_MISSING'
   | 'CONFIG_INVALID'
+  | 'CONFIG_CONFLICT'
   | 'PERSONALITY_NOT_FOUND'
   // Provider / LLM
   | 'PROVIDER_AUTH_FAILED'

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWebApi, WebTokenRepository } from '../../index';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -35,7 +35,7 @@ describe('backup RPC', () => {
     app = createWebApi({
       dataDir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: makeStubPersonalityRegistry([{ id: 'writer', name: 'Writer' }]),
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },
@@ -162,7 +162,7 @@ describe('backup RPC', () => {
       const bearerApp = createWebApi({
         dataDir,
         sessionStore: store,
-        memoryProvider: makeStubMemoryProvider(),
+        memoryBundle: makeStubMemoryBundle(),
         agentLoop: makeStubAgentLoop(),
         personalities: makeStubPersonalityRegistry([{ id: 'writer', name: 'Writer' }]),
         chatDefaults: { model: 'claude-test', provider: 'anthropic' },

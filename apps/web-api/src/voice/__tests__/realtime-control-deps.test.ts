@@ -231,3 +231,45 @@ describe('talk-session binding', () => {
     expect(binding.host.definitions.map((d) => d.name)).toEqual(binding.host.handled);
   });
 });
+
+// Onboarding's stand-in loop answers every AgentLoop method with a thrown
+// NOT_CONFIGURED until a real loop is bound, and it was handed to the realtime
+// lane as its budget authority: the cap read failed the lane open, and the
+// usage callback — which nothing awaits — threw from a live call. A budget that
+// refuses is treated as "no budget authority", the same as none at all.
+describe('createRealtimeControlDeps — a budget authority that throws', () => {
+  function refusingBudget(): RealtimeBudgetAuthority {
+    const refuse = () => {
+      throw new Error('The agent is not running yet.');
+    };
+    return {
+      getPersonalityBudgetCap: refuse as never,
+      getSessionCost: refuse as never,
+      addSessionCost: refuse as never,
+    };
+  }
+
+  it('opens the lane and survives a usage frame', async () => {
+    const sessions = new InMemorySessionStore();
+    const deps = build(sessions, 'lane-1', {
+      pricing: async () => ({ costPerMinuteUsd: 0.06 }),
+      budget: refusingBudget(),
+    });
+
+    const binding = await deps.open({ sessionId: 'chat-9' });
+    expect(binding.sessionBudgetUsd).toBeUndefined();
+    expect(() =>
+      deps.onUsage?.(binding, {
+        type: 'usage',
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostUsd: 0.03,
+      }),
+    ).not.toThrow();
+    expect(deps.sessionSpendUsd?.(binding)).toBeUndefined();
+    // The session row still gets the cost — that write does not go through the loop.
+    await Promise.resolve();
+    const row = await sessions.getSession(binding.storeSessionId);
+    expect(row?.usage.estimatedCostUsd).toBeCloseTo(0.03, 10);
+  });
+});

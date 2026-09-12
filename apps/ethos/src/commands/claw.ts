@@ -1,6 +1,9 @@
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ClawMigrator, type MigrateOptions, type MigrationPlan } from '@ethosagent/claw-migrate';
-import { getStorage } from '../wiring';
+import { readConfig } from '@ethosagent/config';
+import { openFileMemory } from '../lib/file-memory';
+import { getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -27,11 +30,25 @@ export async function runClaw(args: string[]): Promise<void> {
   }
 
   const flags = parseFlags(args.slice(1));
+  // The imported MEMORY.md / USER.md go to the scope of the TARGET's configured
+  // memory backend (F04): the vault under `memory: vault`, the personality's own
+  // directory under markdown. `openFileMemory` refuses a backend with no file
+  // memory (vector) rather than importing into files no agent reads — the CLI's
+  // top-level handler renders that as NOT_CONFIGURED with the next step.
+  const config = await readConfig(getStorage(), await getSecretsResolver());
+  const memoryDir = config
+    ? join(
+        openFileMemory(config, 'tool').memoryRoot,
+        'personalities',
+        config.personality ?? 'default',
+      )
+    : undefined;
   const opts: MigrateOptions = {
     storage: getStorage(),
     dryRun: flags.dryRun,
     preset: flags.preset,
     overwrite: flags.overwrite,
+    ...(memoryDir ? { memoryDir } : {}),
   };
 
   const migrator = new ClawMigrator(opts);

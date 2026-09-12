@@ -4,10 +4,10 @@
 // `> Superseded by [[#<new-slug>]]` note and its sidecar entry records
 // `supersededBy`. Existing verbs only, history-recorded (source `tool`).
 import { join } from 'node:path';
-import { ethosDir, readConfig } from '@ethosagent/config';
+import { readConfig } from '@ethosagent/config';
 import { type MemoryMeta, parseMemoryMeta, supersedeSlug } from '@ethosagent/nightly-loop';
-import type { MemoryContext } from '@ethosagent/types';
-import { createMemoryProvider } from '@ethosagent/wiring';
+import type { MemoryContext, Storage } from '@ethosagent/types';
+import { openFileMemory } from '../lib/file-memory';
 import { getSecretsResolver, getStorage } from '../wiring';
 
 export async function runMemorySupersede(args: string[]): Promise<void> {
@@ -25,9 +25,11 @@ export async function runMemorySupersede(args: string[]): Promise<void> {
 
   const config = await readConfig(getStorage(), await getSecretsResolver());
   const personalityId = flag('--personality') ?? config?.personality ?? 'default';
-  const dir = ethosDir();
 
-  const mem = createMemoryProvider({ dataDir: dir, storage: getStorage(), source: 'tool' });
+  // Content + sidecar follow the configured backend (the vault under `memory:
+  // vault`). Refused for vector.
+  const backend = openFileMemory(config, 'tool');
+  const mem = backend.provider;
 
   const ctx: MemoryContext = {
     scopeId: `personality:${personalityId}`,
@@ -40,8 +42,8 @@ export async function runMemorySupersede(args: string[]): Promise<void> {
   const result = await supersedeSlug(mem, ctx, slug, bySlug, {
     // Second sanctioned sidecar writer besides the nightly pass (§3c): read →
     // mutate only this slug → writeAtomic, never clobbering decay bookkeeping.
-    readMeta: () => readMemoryMeta(dir, personalityId),
-    writeMeta: (meta) => writeMemoryMeta(dir, personalityId, meta),
+    readMeta: () => readMemoryMeta(backend.storage, backend.memoryRoot, personalityId),
+    writeMeta: (meta) => writeMemoryMeta(backend.storage, backend.memoryRoot, personalityId, meta),
   });
 
   if (!result.ok) {
@@ -55,15 +57,19 @@ export async function runMemorySupersede(args: string[]): Promise<void> {
   console.log(`Superseded "${slug}" (from ${result.fromKey}) by "${bySlug}" → archived.`);
 }
 
-// Read the importance/decay sidecar (M3). Tolerant: missing/corrupt → empty meta.
-async function readMemoryMeta(dir: string, id: string): Promise<MemoryMeta> {
-  return parseMemoryMeta(
-    await getStorage().read(join(dir, 'personalities', id, 'memory-meta.json')),
-  );
+// Read the importance/decay sidecar (M3) under the backend's memory root.
+// Tolerant: missing/corrupt → empty meta.
+async function readMemoryMeta(storage: Storage, root: string, id: string): Promise<MemoryMeta> {
+  return parseMemoryMeta(await storage.read(join(root, 'personalities', id, 'memory-meta.json')));
 }
 
-async function writeMemoryMeta(dir: string, id: string, meta: MemoryMeta): Promise<void> {
-  const scopeDir = join(dir, 'personalities', id);
-  await getStorage().mkdir(scopeDir);
-  await getStorage().writeAtomic(join(scopeDir, 'memory-meta.json'), JSON.stringify(meta, null, 2));
+async function writeMemoryMeta(
+  storage: Storage,
+  root: string,
+  id: string,
+  meta: MemoryMeta,
+): Promise<void> {
+  const scopeDir = join(root, 'personalities', id);
+  await storage.mkdir(scopeDir);
+  await storage.writeAtomic(join(scopeDir, 'memory-meta.json'), JSON.stringify(meta, null, 2));
 }

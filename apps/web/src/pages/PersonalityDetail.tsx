@@ -19,15 +19,21 @@ import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
 import { A2aPeersSection } from '../components/personality/A2aPeersSection';
 import { CharacterSheetView } from '../components/personality/CharacterSheetView';
 import { TriggersSection } from '../components/personality/TriggersSection';
+import { AddSecretModal, providersOfKind } from '../components/tool-settings/SecretPicker';
 import { ToolSettingsForm } from '../components/tool-settings/ToolSettingsForm';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
+import { namedSecretKeys, toolSettingsKeys } from '../features/settings/api/keys';
 import { useToolSettingsSetForPersonality } from '../features/settings/api/mutations';
 import {
+  useNamedSecretProviders,
   useToolSettingsForPersonality,
+  useToolSettingsProbeCredentials,
   useToolSettingsSchemas,
 } from '../features/settings/api/queries';
+import { createAndBindCredential } from '../lib/create-and-bind-credential';
+import { describeCredentialState } from '../lib/credential-state';
 import { canRetirePersonality, retireConfirmCopy } from '../lib/personalityIdentityActions';
-import { groupToolSettings } from '../lib/tool-settings-form';
+import { groupToolSettings, type ToolSettingsGroup } from '../lib/tool-settings-form';
 import { buildIdentityRedirectPath } from '../lib/workspaceRoutes';
 import { rpc } from '../rpc';
 import {
@@ -713,6 +719,11 @@ function McpSection({
 // tools.yaml, built-in → global toolSettings slot) and is surfaced in the note.
 // ---------------------------------------------------------------------------
 
+/** Secret-binding field on a group's schema, when the group is credential-bearing. */
+function secretBindingField(group: ToolSettingsGroup) {
+  return group.schema.fields.find((f) => f.kind === 'secret-binding');
+}
+
 function ToolSettingsSection({
   personalityId,
   toolset,
@@ -720,11 +731,21 @@ function ToolSettingsSection({
   personalityId: string;
   toolset: string[];
 }) {
+  const { notification } = AntApp.useApp();
+  const qc = useQueryClient();
   const schemasQuery = useToolSettingsSchemas();
   const settingQuery = useToolSettingsForPersonality(personalityId);
+  const probeQuery = useToolSettingsProbeCredentials(personalityId);
+  const providersQuery = useNamedSecretProviders();
   const saveMut = useToolSettingsSetForPersonality(personalityId);
   const [values, setValues] = useState<Record<string, Record<string, string>>>({});
   const [dirty, setDirty] = useState(false);
+  // Unset-state create-and-bind: which group + whether the binding lands here
+  // or on `_default`.
+  const [addBind, setAddBind] = useState<{
+    group: ToolSettingsGroup;
+    scope: 'personality' | 'global';
+  } | null>(null);
 
   // One form per settings SLOT, not per tool: tools that share a credential
   // (youtube_search / youtube_comments) declare the same `settingsKey` and get
@@ -745,6 +766,67 @@ function ToolSettingsSection({
   // setting: there is nothing to write, so neither the save button nor the note
   // about where writes land belongs on a section made only of those.
   const anyWritable = groups.some((g) => g.schema.fields.some((f) => f.kind !== 'info'));
+  const probeByKey = new Map(
+    (probeQuery.data?.credentials ?? []).map((row) => [row.key, row] as const),
+  );
+  const roster = providersQuery.data?.providers ?? [];
+
+  const handleOverride = (group: ToolSettingsGroup, secretName: string) => {
+    // Merge against current form values so non-secret fields (provider,
+    // recency, …) survive a secret-only Override. The service also field-merges
+    // web_search; this keeps the client optimistic state honest too.
+    const payload = { ...(values[group.key] ?? {}), secret: secretName };
+    saveMut.mutate(
+      { [group.key]: payload },
+      {
+        onSuccess: () => {
+          setValues((prev) => ({
+            ...prev,
+            [group.key]: { ...(prev[group.key] ?? {}), ...payload },
+          }));
+        },
+      },
+    );
+  };
+
+  const handleReset = (group: ToolSettingsGroup) => {
+    // Clear secret only — keep provider/recency (and any other non-secret
+    // fields) from the current form values.
+    const payload = { ...(values[group.key] ?? {}), secret: '' };
+    saveMut.mutate(
+      { [group.key]: payload },
+      {
+        onSuccess: () => {
+          setValues((prev) => {
+            const next = { ...prev };
+            const { secret: _cleared, ...row } = {
+              ...(next[group.key] ?? {}),
+              ...payload,
+            };
+            if (Object.keys(row).length === 0) delete next[group.key];
+            else next[group.key] = row;
+            return next;
+          });
+          setDirty(false);
+        },
+      },
+    );
+  };
+
+  const addBindField = addBind ? secretBindingField(addBind.group) : undefined;
+  const addBindKindProviders =
+    addBindField && addBindField.kind === 'secret-binding'
+      ? providersOfKind(roster, addBindField.secretKind)
+      : [];
+  const addBindFormProvider = addBind ? values[addBind.group.key]?.provider : undefined;
+  const addBindInitialProvider =
+    addBindFormProvider && addBindKindProviders.includes(addBindFormProvider)
+      ? addBindFormProvider
+      : addBindKindProviders.length === 1
+        ? addBindKindProviders[0]
+        : undefined;
+  const addBindLockProvider =
+    addBindFormProvider !== undefined || addBindKindProviders.length === 1;
 
   return (
     <div style={{ marginBottom: 32 }}>
@@ -758,31 +840,73 @@ function ToolSettingsSection({
             : 'Built-in personality — saved to your local config (its files are read-only).'}
         </Typography.Paragraph>
       ) : null}
-      {groups.map((group) => (
-        <div key={group.key} style={{ marginBottom: 20 }}>
-          {/* Every tool the one form covers, so an operator setting the shared
-              Google key can see it reaches both YouTube tools. */}
-          <Typography.Text
-            strong
-            style={{
-              fontFamily: 'Geist Mono, monospace',
-              fontSize: 13,
-              display: 'block',
-              marginBottom: 8,
-            }}
-          >
-            {group.toolNames.join(', ')}
-          </Typography.Text>
-          <ToolSettingsForm
-            schema={group.schema}
-            value={values[group.key] ?? {}}
-            onChange={(next) => {
-              setValues((prev) => ({ ...prev, [group.key]: next }));
-              setDirty(true);
-            }}
-          />
-        </div>
-      ))}
+      {groups.map((group) => {
+        const probe = probeByKey.get(group.key);
+        const described = probe ? describeCredentialState(probe) : null;
+        return (
+          <div key={group.key} style={{ marginBottom: 20 }}>
+            {/* Every tool the one form covers, so an operator setting the shared
+                Google key can see it reaches both YouTube tools. */}
+            <Typography.Text
+              strong
+              style={{
+                fontFamily: 'Geist Mono, monospace',
+                fontSize: 13,
+                display: 'block',
+                marginBottom: 8,
+              }}
+            >
+              {group.toolNames.join(', ')}
+            </Typography.Text>
+            {described ? (
+              <div style={{ marginBottom: 12 }}>
+                <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                  {described.message}
+                </Typography.Paragraph>
+                {described.state === 'unset' ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    <Button
+                      size="small"
+                      onClick={() => setAddBind({ group, scope: 'personality' })}
+                    >
+                      Add a key (bind here)
+                    </Button>
+                    <Button size="small" onClick={() => setAddBind({ group, scope: 'global' })}>
+                      Add a key (save globally)
+                    </Button>
+                  </div>
+                ) : null}
+                {described.state === 'inherited' && described.secretName ? (
+                  <Button
+                    size="small"
+                    loading={saveMut.isPending}
+                    onClick={() => handleOverride(group, described.secretName ?? '')}
+                  >
+                    Override for this personality
+                  </Button>
+                ) : null}
+                {described.state === 'overridden' ? (
+                  <Button
+                    size="small"
+                    loading={saveMut.isPending}
+                    onClick={() => handleReset(group)}
+                  >
+                    Reset to global
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            <ToolSettingsForm
+              schema={group.schema}
+              value={values[group.key] ?? {}}
+              onChange={(next) => {
+                setValues((prev) => ({ ...prev, [group.key]: next }));
+                setDirty(true);
+              }}
+            />
+          </div>
+        );
+      })}
       {anyWritable ? (
         <Button
           type="primary"
@@ -791,6 +915,63 @@ function ToolSettingsSection({
         >
           Save tool settings
         </Button>
+      ) : null}
+      {addBind && addBindField && addBindField.kind === 'secret-binding' ? (
+        <AddSecretModal
+          title={addBind.scope === 'global' ? 'Add a key (save globally)' : 'Add a key (bind here)'}
+          okText={addBind.scope === 'global' ? 'Save globally' : 'Create and bind'}
+          initialProvider={addBindInitialProvider}
+          lockProvider={addBindLockProvider}
+          onClose={() => setAddBind(null)}
+          onCreated={() => setAddBind(null)}
+          onSubmit={async ({ provider, name, value }) => {
+            const scope = addBind.scope;
+            const key = addBind.group.key;
+            // Prefer the form's provider enum (web_search); else the modal's
+            // provider. Only attach when the binding schema uses it.
+            const formProvider = values[key]?.provider;
+            const extra =
+              formProvider !== undefined
+                ? { provider: formProvider }
+                : key === 'web_search'
+                  ? { provider }
+                  : undefined;
+            await createAndBindCredential({
+              create: (input) => rpc.namedSecrets.create(input),
+              bind: (binding) =>
+                scope === 'global'
+                  ? rpc.toolSettings.setDefault({ values: binding })
+                  : rpc.toolSettings.setForPersonality({
+                      personalityId,
+                      values: binding,
+                    }),
+              provider,
+              name,
+              value,
+              key,
+              scope,
+              ...(extra ? { bindingExtra: extra } : {}),
+            });
+            await Promise.all([
+              qc.invalidateQueries({ queryKey: namedSecretKeys.all() }),
+              qc.invalidateQueries({ queryKey: toolSettingsKeys.all() }),
+            ]);
+            if (scope === 'personality') {
+              setValues((prev) => ({
+                ...prev,
+                [key]: { ...(prev[key] ?? {}), ...(extra ?? {}), secret: name },
+              }));
+              setDirty(false);
+            }
+            notification.success({
+              message:
+                scope === 'global'
+                  ? 'Key saved as a global default'
+                  : 'Key created and bound to this personality',
+              placement: 'topRight',
+            });
+          }}
+        />
       ) : null}
     </div>
   );

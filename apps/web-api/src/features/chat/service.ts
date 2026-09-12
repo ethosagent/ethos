@@ -150,6 +150,17 @@ interface ActivityEventMap {
  */
 const ACTIVITY_KEY = '__activity__';
 
+/** How long `close()` waits for aborted turns to unwind before giving up. */
+const CLOSE_GRACE_MS = 5_000;
+
+function shuttingDownError(): EthosError {
+  return new EthosError({
+    code: 'INTERNAL',
+    cause: 'The chat service is shutting down',
+    action: 'Retry once the server has restarted.',
+  });
+}
+
 export class ChatService {
   private readonly bridges = new Map<string, AgentBridge>();
   /** sessionId -> the loop its bridge was built on, so a re-route rebuilds it. */
@@ -170,6 +181,8 @@ export class ChatService {
   private readonly sessionPersonalityIds = new Map<string, string | null>();
   /** sessionId -> hand-back texts held until the in-flight turn's `done`. */
   private readonly pendingHandBacks = new Map<string, string[]>();
+  /** Set by `close()`: no new turn starts on this service again. */
+  private closed = false;
 
   constructor(private readonly opts: ChatServiceOptions) {
     // Allow many SSE connections per session (multi-tab) without warnings.
@@ -182,6 +195,7 @@ export class ChatService {
   // ---------------------------------------------------------------------------
 
   async send(input: ChatSendInput): Promise<ChatSendOutput> {
+    if (this.closed) throw shuttingDownError();
     const session = input.sessionId
       ? await this.requireSession(input.sessionId)
       : await this.opts.sessions.create({
@@ -273,6 +287,18 @@ export class ChatService {
       );
     }
 
+    // Checked again: `close()` may have run during any await above (session
+    // creation, attachment writes, the personality refresh), and a turn must
+    // not start on a loop that is about to be disposed. A session this call
+    // created for itself is removed again rather than left empty and turnless.
+    if (this.closed) {
+      if (!input.sessionId) {
+        this.forget(session.id);
+        await this.opts.sessions.delete(session.id);
+      }
+      throw shuttingDownError();
+    }
+
     // Fire and forget — the bridge streams events through our subscription
     // and persists messages via the agent loop. `chat.send` returns as soon
     // as the turn is queued so the client can connect SSE.
@@ -306,6 +332,46 @@ export class ChatService {
     const bridge = this.bridges.get(sessionId);
     if (!bridge) return; // No bridge → nothing to abort. Idempotent.
     bridge.abortTurn();
+  }
+
+  /**
+   * F06 — end this service's turns for good, before the loop they run on is
+   * disposed: refuse every further `send`, drop each session's queued inputs,
+   * abort each in-flight turn and wait for its bridge to go idle. The wait is
+   * bounded by `graceMs` — a turn that ignores its abort must not hold a
+   * shutdown or restart open. Pinned by
+   * apps/web-api/src/__tests__/services/chat-close.test.ts.
+   */
+  async close(graceMs: number = CLOSE_GRACE_MS): Promise<void> {
+    this.closed = true;
+    const unwinding: Promise<void>[] = [];
+    for (const [sessionId, bridge] of this.bridges) {
+      // Queue first: an aborted turn's `finally` starts the next queued one.
+      // The tab is told what was dropped — the same `error` event a full queue
+      // produces — rather than the input silently vanishing.
+      const dropped = bridge.clearQueue();
+      if (dropped > 0) {
+        this.append(sessionId, {
+          type: 'error',
+          error: `${dropped} queued message${dropped === 1 ? ' was' : 's were'} not sent — the server is shutting down.`,
+          code: 'BUSY',
+        });
+      }
+      // `whenIdle`, not the `idle` event: a turn the stall guard abandoned is
+      // still running on the loop after `idle`, and settled is what matters
+      // to a host about to dispose that loop.
+      unwinding.push(bridge.whenIdle());
+      bridge.abortTurn();
+    }
+    if (unwinding.length === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.all(unwinding),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, graceMs);
+      }),
+    ]);
+    clearTimeout(timer);
   }
 
   steer(sessionId: string, text: string): boolean {

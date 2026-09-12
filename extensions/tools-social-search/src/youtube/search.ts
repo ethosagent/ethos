@@ -131,6 +131,8 @@ export function createYouTubeSearchTool(opts: CreateYouTubeToolOptions = {}): To
           key: 'secret',
           label: 'Google API key (YouTube)',
           secretKind: 'youtube-api-key',
+          providerLabel: 'Google (YouTube Data API)',
+          getKeyUrl: 'https://console.cloud.google.com/apis/credentials',
         },
       ],
     },

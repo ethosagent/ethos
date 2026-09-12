@@ -6,6 +6,9 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { SlackAdapter, type SlackAdapterConfig } from '../adapter';
+import { stubSlackWebApi } from './stub-slack-web-api';
+
+stubSlackWebApi();
 
 /** Real Bolt App constructed but never started; the client is a spy. Same
  *  harness shape as `outbound-media.test.ts`. */

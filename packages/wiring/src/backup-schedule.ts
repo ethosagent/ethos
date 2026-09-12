@@ -25,9 +25,11 @@ import { isAbsolute, join } from 'node:path';
 import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import type { SecretsResolver, Storage } from '@ethosagent/types';
 import { createBackup } from './backup/create';
+import type { ExternalMemoryNotice } from './backup/external-memory';
 import { classifyHolder, currentBootId } from './backup/holder-identity';
 import { DEFAULT_SCOPES, parseScopes, type ScopeName } from './backup/scopes';
 import type { TarSkip } from './backup/tar';
+import type { MemoryBackendSelection } from './memory-backend';
 
 /** Fired at 04:00 local by default — after the nightly pass (03:00), not with it. */
 export const DEFAULT_BACKUP_CRON = '0 4 * * *';
@@ -387,6 +389,12 @@ export interface RunScheduledBackupOptions {
   now?: Date;
   /** How long to wait for the `.lock`. Defaults to 5s. */
   lockTimeoutMs?: number;
+  /**
+   * The deployment's memory selection. Under `memory: vault` the memory is
+   * outside `dataDir` and in no archive, and the run output must say so (F04)
+   * — this is the only place a scheduled run is reported.
+   */
+  memory?: MemoryBackendSelection;
 }
 
 export interface ScheduledBackupResult {
@@ -403,6 +411,8 @@ export interface ScheduledBackupResult {
    * what was asked for and `summarizeScheduledBackup` must say so.
    */
   skippedFiles: TarSkip[];
+  /** Memory outside `dataDir`, absent from this archive (`memory: vault`). */
+  externalMemory?: ExternalMemoryNotice;
 }
 
 /**
@@ -431,6 +441,7 @@ export async function runScheduledBackup(
       // MANDATORY here (D2): this runs in a serving process.
       snapshot: 'backup',
       ...(opts.secrets ? { secrets: opts.secrets } : {}),
+      ...(opts.memory ? { memory: opts.memory } : {}),
     });
     const rotated = await rotateBackups(opts.storage, dir, keep);
     return {
@@ -440,6 +451,7 @@ export async function runScheduledBackup(
       bytes: result.bytes,
       rotated,
       skippedFiles: result.skippedFiles,
+      ...(result.externalMemory ? { externalMemory: result.externalMemory } : {}),
     };
   } finally {
     release();
@@ -469,10 +481,16 @@ export function summarizeScheduledBackup(result: ScheduledBackupResult): string 
   const rotated =
     result.rotated.length > 0 ? `, rotated ${result.rotated.length} older archive(s)` : '';
   const written = `Backup written to ${result.path} (${result.fileCount} files, ${result.bytes} bytes, scopes: ${result.scopes.join('+')})${rotated}`;
-  if (result.skippedFiles.length === 0) return written;
+  // Vault memory is not a skip — nothing tried to archive it — but it is the
+  // same question an operator reads this file to answer: what is not in there.
+  const external = result.externalMemory ? [`  ⚠ ${result.externalMemory.message}`] : [];
+  if (result.skippedFiles.length === 0) {
+    return external.length > 0 ? [written, ...external].join('\n') : written;
+  }
   return [
     `Backup INCOMPLETE — ${result.skippedFiles.length} file(s) could not be archived and are NOT in it.`,
     written,
     ...result.skippedFiles.map((skip) => `  ⚠ ${skip.path} — ${skip.reason}`),
+    ...external,
   ].join('\n');
 }

@@ -8,7 +8,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentMesh } from '@ethosagent/agent-mesh';
-import type { AgentLoop } from '@ethosagent/core';
+import { type AgentLoop, DefaultToolRegistry } from '@ethosagent/core';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type {
   BackgroundJob,
@@ -474,6 +474,72 @@ describe('delegate_task background path', () => {
     const omitRes = await tool.execute({ prompt: 'p', background: true }, makeCtx());
     if (!omitRes.ok) throw new Error('expected ok');
     expect(store.jobs.get(JSON.parse(omitRes.value).jobId)?.maxCostUsd).toBe(1.5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Nested delegation through the real registry → local transport hop (F02)
+//
+// A background child turn runs as `sessionKey = <child key>` with
+// `rootSessionKey = <the root it descends from>`. The tools read the root, so
+// the ctx must survive DefaultToolRegistry → LocalToolTransport intact — both
+// projections once dropped it, and the child counted against itself.
+// ---------------------------------------------------------------------------
+
+describe('nested delegation keeps its root across the transport hop', () => {
+  const childCtx = () =>
+    makeCtx({ sessionKey: 'background:child', rootSessionKey: 'cli:root', jobId: 'job-child' });
+
+  it('counts active jobs against the root, not the child session', async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store, { maxJobsPerRoot: 2 });
+    store.seed({ id: 'a', rootSessionKey: 'cli:root', status: 'running' });
+    store.seed({ id: 'b', rootSessionKey: 'cli:root', status: 'queued' });
+    const reg = new DefaultToolRegistry({});
+    reg.register(createDelegateTaskTool(loop, deps));
+
+    const [res] = await reg.executeParallel(
+      [{ toolCallId: 'c1', name: 'delegate_task', args: { prompt: 'p', background: true } }],
+      childCtx(),
+    );
+
+    expect(res?.result.ok).toBe(false);
+    if (res && !res.result.ok) {
+      expect(res.result.error).toMatch(/too many active background jobs for this session/);
+    }
+    expect(store.jobs.size).toBe(2);
+  });
+
+  it('stamps the root on a job spawned from a nested turn', async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store);
+    const reg = new DefaultToolRegistry({});
+    reg.register(createDelegateTaskTool(loop, deps));
+
+    const [res] = await reg.executeParallel(
+      [{ toolCallId: 'c1', name: 'delegate_task', args: { prompt: 'p', background: true } }],
+      childCtx(),
+    );
+
+    if (!res?.result.ok) throw new Error('expected ok');
+    const job = store.jobs.get(JSON.parse(res.result.value).jobId);
+    expect(job?.rootSessionKey).toBe('cli:root');
+    expect(job?.parentSessionKey).toBe('background:child');
+  });
+
+  it("lets a nested turn see its root's jobs via task_status", async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store);
+    store.seed({ id: 'sibling', rootSessionKey: 'cli:root', status: 'running' });
+    const reg = new DefaultToolRegistry();
+    reg.register(createTaskStatusTool(deps));
+
+    const [res] = await reg.executeParallel(
+      [{ toolCallId: 'c1', name: 'task_status', args: { id: 'sibling' } }],
+      childCtx(),
+    );
+
+    expect(res?.result.ok).toBe(true);
   });
 });
 

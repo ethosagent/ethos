@@ -14,18 +14,36 @@ import {
   restoreArchivedSlug,
 } from '@ethosagent/wiring';
 
-export interface MemoryServiceOptions {
-  memory: MemoryProvider;
-  identityMap?: IdentityMap;
-  /** Provenance-history reader (M1). Absent in tests / ACP-only deployments —
-   *  the Timeline procedures then return empty results. */
+/** File editing over the configured backend — `MemoryBundle.editing` when supported. */
+interface MemoryEditingOptions {
+  /** Editor handle over the configured backend. */
+  memory: Pick<MemoryProvider, 'read' | 'sync'>;
+  /** A `restore`-labelled handle on the same backend. */
+  restoreMemory: Pick<MemoryProvider, 'read' | 'sync'>;
+  /**
+   * Provenance-history reader (M1). Absent only in tests (and ACP-only
+   * deployments) that wire an editor but no history — the Timeline procedures
+   * then return empty results. A backend with NO file memory takes the
+   * `MemoryEditingRefusal` branch instead, so the Timeline refuses rather than
+   * reading as "nothing yet" (F04 follow-up).
+   */
   history?: HistoryStore;
-  /** A `restore`-labelled memory handle. Absent → restore is unavailable. */
-  restoreMemory?: Pick<MemoryProvider, 'read' | 'sync'>;
+}
+
+/** The configured backend has no file editor (F04 — `MemoryBundle.editing.reason`,
+ *  e.g. `memory: vector`): the editor and restore refuse with this reason. */
+interface MemoryEditingRefusal {
+  editingUnsupported: string;
+}
+
+/** Exactly one of an editor or a refusal — there is no "nothing wired" state,
+ *  because `createWebApi` always derives one from the bundle it requires. */
+export type MemoryServiceOptions = (MemoryEditingOptions | MemoryEditingRefusal) & {
+  identityMap?: IdentityMap;
   /** Approve-before-store queue (L3). Absent → the Pending procedures return
    *  empty / NOT_CONFIGURED. */
   pending?: PendingMemoryStore;
-}
+};
 
 interface HistoryQuery {
   key?: string;
@@ -65,10 +83,11 @@ export class MemoryService {
     writeOpts?: { userId?: string },
   ): Promise<{ file: MemoryFile }> {
     const key = store === 'memory' ? 'MEMORY.md' : 'USER.md';
+    const memory = this.requireMemory();
     const ctx = this.buildCtx(this.scopeIdFor(store, personalityId, writeOpts?.userId));
-    await this.opts.memory.sync([{ action: 'replace', key, content }], ctx);
+    await memory.sync([{ action: 'replace', key, content }], ctx);
     // Re-read to return the persisted state.
-    const entry = await this.opts.memory.read(key, ctx);
+    const entry = await memory.read(key, ctx);
     const modifiedAt = entry?.metadata?.lastUpdatedAt
       ? new Date(entry.metadata.lastUpdatedAt).toISOString()
       : null;
@@ -105,7 +124,8 @@ export class MemoryService {
    * Timeline read (§5). Returns the personality scope's history newest-first,
    * paginated by an opaque offset cursor. Filtering (key / source / date range)
    * runs server-side before pagination so `nextCursor` stays accurate. Returns
-   * empty when no history reader is wired.
+   * empty when no history reader is wired, and refuses when the configured
+   * backend has no file memory (`requireEditing`).
    */
   async history(
     personalityId: string,
@@ -115,7 +135,7 @@ export class MemoryService {
     nextCursor: string | null;
     corruptLines: number;
   }> {
-    const history = this.opts.history;
+    const history = this.requireEditing().history;
     if (!history) return { entries: [], nextCursor: null, corruptLines: 0 };
 
     const scopeId = `personality:${personalityId}`;
@@ -145,7 +165,7 @@ export class MemoryService {
 
   /** Fetch one entry's full before-state blob (§2.1) for the diff expander. */
   async historyBlob(personalityId: string, blob: string): Promise<{ content: string | null }> {
-    const history = this.opts.history;
+    const history = this.requireEditing().history;
     if (!history) return { content: null };
     return { content: await history.readBlob(`personality:${personalityId}`, blob) };
   }
@@ -156,14 +176,7 @@ export class MemoryService {
    * `restore`-labelled handle so the move records itself in the history.
    */
   async restore(personalityId: string, slug: string): Promise<{ ok: true; restoredTo: string }> {
-    const mem = this.opts.restoreMemory;
-    if (!mem) {
-      throw new EthosError({
-        code: 'NOT_CONFIGURED',
-        cause: 'No restore-capable memory handle is wired.',
-        action: 'Restore is available when the server runs with a data directory.',
-      });
-    }
+    const mem = this.requireEditing().restoreMemory;
     const ctx = this.buildCtx(`personality:${personalityId}`);
     const result = await restoreArchivedSlug(mem, ctx, slug);
     if (!result.ok) {
@@ -224,6 +237,21 @@ export class MemoryService {
     return { ok: true };
   }
 
+  /** The editor handles, or the backend's refusal (NOT_CONFIGURED + reason). */
+  private requireEditing(): MemoryEditingOptions {
+    const opts = this.opts;
+    if ('memory' in opts) return opts;
+    throw new EthosError({
+      code: 'NOT_CONFIGURED',
+      cause: opts.editingUnsupported,
+      action: 'Switch `memory:` to markdown or vault in Settings to edit memory here.',
+    });
+  }
+
+  private requireMemory(): Pick<MemoryProvider, 'read' | 'sync'> {
+    return this.requireEditing().memory;
+  }
+
   private requirePending(): PendingMemoryStore {
     const store = this.opts.pending;
     if (!store) {
@@ -241,9 +269,10 @@ export class MemoryService {
     personalityId: string,
     readOpts?: { userId?: string },
   ): Promise<MemoryFile> {
+    const memory = this.requireMemory();
     const key = store === 'memory' ? 'MEMORY.md' : 'USER.md';
     const ctx = this.buildCtx(this.scopeIdFor(store, personalityId, readOpts?.userId));
-    const entry = await this.opts.memory.read(key, ctx);
+    const entry = await memory.read(key, ctx);
     const modifiedAt = entry?.metadata?.lastUpdatedAt
       ? new Date(entry.metadata.lastUpdatedAt).toISOString()
       : null;

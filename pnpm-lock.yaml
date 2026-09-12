@@ -622,12 +622,6 @@ importers:
       '@ethosagent/eval-harness':
         specifier: workspace:*
         version: link:../../extensions/eval-harness
-      '@ethosagent/goal-runner':
-        specifier: workspace:*
-        version: link:../../extensions/goal-runner
-      '@ethosagent/goal-store':
-        specifier: workspace:*
-        version: link:../../extensions/goal-store
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store

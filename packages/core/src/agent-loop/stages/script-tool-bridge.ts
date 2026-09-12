@@ -11,6 +11,7 @@ import type {
 } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { scriptCallableFor, scriptExclusionError, scriptExclusionFor } from '../../script-safe';
+import { ABORTED_TOOL_RESULT } from '../../tool-registry';
 import type { checkTurnBudgets } from '../budgets';
 import type { WatcherTap } from '../turn-context';
 import {
@@ -210,6 +211,15 @@ export class ScriptToolBridge {
         ...(rejection.ok ? {} : { error: rejection.error }),
       });
       return toCallResult(rejection);
+    }
+
+    // The turn was cancelled while the script was running: refuse BEFORE the
+    // hook fires, so a /stop cannot be followed by an approval prompt for a
+    // call that will never run. Parity with the per-call check in
+    // `processTools` (./tool-processing.ts); the registry's own pre-dispatch
+    // refusal is the backstop behind both.
+    if (getCtx().abortSignal.aborted) {
+      return { ok: false, error: ABORTED_TOOL_RESULT, code: 'execution_aborted' };
     }
 
     // Step 2 — the single production `before_tool_call` fire site. A rejection

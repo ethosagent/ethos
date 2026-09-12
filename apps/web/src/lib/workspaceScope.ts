@@ -120,3 +120,32 @@ export function mostRecentSessionIdForPersonality<T extends RecentSessionLike>(
   );
   return sorted[0]?.id ?? null;
 }
+
+/** Inputs to Chat's "restore the last session?" guard. */
+export interface RestoreGuardInput {
+  /** `?session=` — the URL already names a session. */
+  sessionParam: string | null | undefined;
+  /** The session the chat hook currently holds. */
+  currentSessionId: string | null;
+  /** `?new=` — a New Session request not yet consumed. */
+  newSessionParam: string | null;
+  /** A New Session request this mount already consumed (Chat strips `?new=1`
+   *  from the URL so Back doesn't replay it; this is what remembers it). */
+  freshRequested: boolean;
+}
+
+/**
+ * Whether Chat should restore this agent's most recent session. Only when
+ * nothing else has claimed the chat: no `?session=`, no live session, and no
+ * New Session request — pending in the URL or already consumed. Without the
+ * consumed case, stripping `?new=1` left a bare URL that looked exactly like
+ * "just switched here, resume", and New Session landed on the old session.
+ */
+export function shouldRestoreLastSession({
+  sessionParam,
+  currentSessionId,
+  newSessionParam,
+  freshRequested,
+}: RestoreGuardInput): boolean {
+  return !sessionParam && !currentSessionId && !newSessionParam && !freshRequested;
+}

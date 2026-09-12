@@ -2,6 +2,7 @@ import type { VoiceBargeInTuning } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import { voiceLaneKey } from '@ethosagent/core';
 import type { PersonalityConfig } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 import type { AgentTurnRunner, VoiceSession } from '@ethosagent/voice-session';
 import type { VoiceStack } from '@ethosagent/wiring';
 import { runOnLoop } from '../features/chat/team-loops';
@@ -178,6 +179,9 @@ export async function runBrowserVoiceTurn(
     voiceOrigin: { transport: 'browser-talk-mode', speaker: 'owner' },
   })) {
     if (event.type === 'text_delta') reply += event.text;
+    // A `returnDirect` tool's answer arrives only as `done.text`, after any
+    // preamble that streamed: `answerSuffix` is what the stream still owes.
+    else if (event.type === 'done') reply += answerSuffix(reply, event.text);
   }
   return reply;
 }

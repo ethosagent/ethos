@@ -1,18 +1,28 @@
 import { dirname, join } from 'node:path';
 import {
+  assertWritableConfigLines,
+  externalizeProviderChain,
   externalizeSecret,
+  isProviderChainLine,
   normalizeWebSearchRecency,
+  type ProviderChainEntry,
+  parseConfigScalar,
+  parseProviderChain,
+  providerChainVersion,
+  quoteConfigScalar,
+  renderProviderChain,
   type SecretRefContext,
   secretRefForConfigKey,
 } from '@ethosagent/config';
 import { deriveBotKey } from '@ethosagent/core';
-import { TOOLS_YAML_KEYS, type ToolsYamlKey } from '@ethosagent/personalities';
-import type {
-  RealtimeProviderEntry,
-  SecretsResolver,
-  Storage,
-  SttProviderEntry,
-  TtsProviderEntry,
+import {
+  EthosError,
+  isValidSecretName,
+  type RealtimeProviderEntry,
+  type SecretsResolver,
+  type Storage,
+  type SttProviderEntry,
+  type TtsProviderEntry,
 } from '@ethosagent/types';
 import { requireStorage } from './require-storage';
 
@@ -40,37 +50,51 @@ export interface ConfigRepositoryOptions {
   secrets: SecretsResolver;
 }
 
+/** Object keys reserved by the JS object model — never let one become a
+ *  computed own-key on a parsed slot, or a hand-edited config.yaml seeds a
+ *  prototype-pollution reservoir. Twin of `RESERVED_KEYS` in the tool-settings
+ *  service, which guards the same hazard on the slot id. */
+const RESERVED_TOOL_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** `${secrets:<ref>}` anywhere in a string. */
+const SECRET_REF_ANYWHERE = /\$\{secrets:([^}]+)\}/g;
+
+/** The refusal `update` throws when `opts.providersVersion` is stale. */
+function providerChainConflict(): EthosError {
+  return new EthosError({
+    code: 'CONFIG_CONFLICT',
+    cause:
+      'The provider chain changed after this page loaded it (another tab, or `ethos fallback`). Nothing was saved.',
+    action: 'Reload Settings, check the provider chain, and save again.',
+  });
+}
+
 /**
- * The keys in a `toolSettings` slot that carry a secret NAME and nothing else —
- * everything on the roster except `web_search`, which also carries a provider
- * and a default recency. Derived from `TOOLS_YAML_KEYS` rather than restated,
- * so a tool added there parses and renders here with no second edit
- * (plan/phases/search-console.md D23).
+ * One personality's (or `_default`'s) tool bindings, as they sit in
+ * config.yaml. Only secret NAMES live here — never values (§V S9).
+ *
+ * The key space is OPEN: it is whatever `settingsKey ?? name` the registered
+ * tools declare, which this repository cannot see. Parse keeps every shape-safe
+ * key it finds and render re-emits it, so a binding whose tool is not loaded in
+ * this process survives a read-modify-write; `ToolSettingsService` refuses an
+ * unclaimed key at the write boundary instead
+ * (plan/phases/tool-credential-surface.md D6/D7).
  */
-export const SECRET_ONLY_TOOL_KEYS = TOOLS_YAML_KEYS.filter(
-  (k): k is Exclude<ToolsYamlKey, 'web_search'> => k !== 'web_search',
-);
-
-function isSecretOnlyToolKey(k: string): k is Exclude<ToolsYamlKey, 'web_search'> {
-  return (SECRET_ONLY_TOOL_KEYS as readonly string[]).includes(k);
-}
-
-/** One personality's (or `_default`'s) tool bindings, as they sit in
- *  config.yaml. Only secret NAMES live here — never values (§V S9). */
-export type ToolSettingsSlot = {
+export interface ToolSettingsSlot {
   web_search?: { provider?: string; secret?: string; recency?: string };
-} & Partial<Record<Exclude<ToolsYamlKey, 'web_search'>, { secret?: string }>>;
-
-/** A single entry in the provider chain (providers.N.* lines in config.yaml). */
-export interface RawProviderEntry {
-  provider: string;
-  apiKey?: string;
-  model?: string;
-  baseUrl?: string;
+  [key: string]: { provider?: string; secret?: string; recency?: string } | undefined;
 }
 
-/** Parsed shape — only the fields the web surface reads. Unknown keys are
- *  retained internally on the `_raw` map so writes preserve them. */
+/** A single entry in the provider chain (providers.N.* lines in config.yaml).
+ *  The shape, the reader and the renderer are `@ethosagent/config`'s — the CLI
+ *  writer uses the same three — so neither writer drops a field the other
+ *  wrote (pinned by `__tests__/repositories/config.repository.test.ts`,
+ *  "provider chain written by the CLI"). Fields outside the modelled set ride
+ *  on `passthrough`. */
+export type RawProviderEntry = ProviderChainEntry;
+
+/** Parsed shape — only the fields the web surface reads. Every other key is
+ *  retained on `passthrough` so a write preserves it. */
 export interface RawConfig {
   provider?: string;
   model?: string;
@@ -109,6 +133,11 @@ export interface RawConfig {
   /** Every other top-level key the file contained (telegramToken etc.).
    *  Round-tripped through writes verbatim. */
   passthrough: Record<string, string>;
+  /** What the provider-chain codec dropped and why (a `providers.<n>` index
+   *  with no `provider` line, a reserved field name) — `parseProviderChain`'s
+   *  notices. Never written; `ConfigService.get` reports them as
+   *  `providersNotices`. */
+  providerNotices: string[];
 }
 
 export class ConfigRepository {
@@ -158,51 +187,28 @@ export class ConfigRepository {
       'auxiliary.tts.baseUrl',
       'auxiliary.tts.model',
     ]);
+    const lines = src.split('\n');
+    const providerNotices: string[] = [];
     const config: RawConfig = {
       modelRouting: {},
       toolSettings: {},
-      providers: [],
+      // Every `providers.<n>.*` line, unmodelled fields included, through the
+      // codec the CLI writer shares (F01).
+      providers: parseProviderChain(lines, providerNotices),
       passthrough: {},
+      providerNotices,
     };
-    const providerMap = new Map<number, RawProviderEntry>();
 
-    for (const line of src.split('\n')) {
-      // `providers.<n>.<field>: <value>` — provider chain entries
-      const pm = line.match(/^providers\.(\d+)\.(\S+):\s*(.+)$/);
-      if (pm) {
-        const idx = Number(pm[1]);
-        const field = pm[2]?.trim();
-        const value = pm[3] !== undefined ? stripQuotes(pm[3].trim()) : '';
-        if (field && !Number.isNaN(idx)) {
-          let entry = providerMap.get(idx);
-          if (!entry) {
-            entry = { provider: '' };
-            providerMap.set(idx, entry);
-          }
-          switch (field) {
-            case 'provider':
-              entry.provider = value;
-              break;
-            case 'apiKey':
-              entry.apiKey = value;
-              break;
-            case 'model':
-              entry.model = value;
-              break;
-            case 'baseUrl':
-              entry.baseUrl = value;
-              break;
-          }
-        }
-        continue;
-      }
+    for (const line of lines) {
+      // `providers.<n>.<field>: <value>` — parsed above; never passthrough.
+      if (isProviderChainLine(line)) continue;
 
       // `modelRouting.<id>: <model>` — per-personality overrides
       const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
       if (mr) {
         const id = mr[1]?.trim();
         const value = mr[2]?.trim();
-        if (id && value) config.modelRouting[id] = stripQuotes(value);
+        if (id && value) config.modelRouting[id] = parseConfigScalar(value);
         continue;
       }
 
@@ -215,7 +221,7 @@ export class ConfigRepository {
       if (ts) {
         const pid = ts[1]?.trim();
         const field = ts[2];
-        const value = ts[3] !== undefined ? stripQuotes(ts[3].trim()) : '';
+        const value = ts[3] !== undefined ? parseConfigScalar(ts[3]) : '';
         if (pid && value) {
           const slot = config.toolSettings[pid] ?? {};
           config.toolSettings[pid] = slot;
@@ -242,17 +248,19 @@ export class ConfigRepository {
         }
         continue;
       }
-      // `toolSettings.<personality|_default>.<tool>.secret: <name>` — every
-      // roster key but `web_search`, which the branch above handles. One
-      // roster-driven branch rather than one hand-written branch per tool: the
-      // literals this replaced omitted `youtube`, so a YouTube binding written
-      // to a built-in's slot fell through to `passthrough` and never reached
-      // the settings surface that wrote it.
-      const other = line.match(/^toolSettings\.([^.]+)\.([A-Za-z0-9_]+)\.secret:\s*(.+)$/);
+      // `toolSettings.<personality|_default>.<key>.secret: <name>` — every
+      // binding key but `web_search`, which the branch above handles. One
+      // generic branch rather than one per tool: the literals this replaced
+      // omitted `youtube`, so a YouTube binding written to a built-in's slot
+      // fell through to `passthrough` and never reached the settings surface
+      // that wrote it. The roster that replaced them had the same failure one
+      // layer out — a key no in-tree tool declares was dropped on read, so a
+      // read-modify-write deleted it from the file.
+      const other = line.match(/^toolSettings\.([^.]+)\.([A-Za-z0-9_-]+)\.secret:\s*(.+)$/);
       const otherTool = other?.[2];
-      if (other && otherTool && isSecretOnlyToolKey(otherTool)) {
+      if (other && otherTool && !RESERVED_TOOL_KEYS.has(otherTool)) {
         const pid = other[1]?.trim();
-        const value = other[3] !== undefined ? stripQuotes(other[3].trim()) : '';
+        const value = other[3] !== undefined ? parseConfigScalar(other[3]) : '';
         if (pid && value) {
           const slot = config.toolSettings[pid] ?? {};
           config.toolSettings[pid] = slot;
@@ -263,7 +271,7 @@ export class ConfigRepository {
       const kv = line.match(/^([\w.-]+):\s*(.+)$/);
       if (!kv) continue;
       const key = kv[1]?.trim();
-      const value = kv[2] !== undefined ? stripQuotes(kv[2].trim()) : '';
+      const value = kv[2] !== undefined ? parseConfigScalar(kv[2]) : '';
       if (!key) continue;
 
       if (known.has(key)) {
@@ -344,13 +352,6 @@ export class ConfigRepository {
       }
     }
 
-    // Assemble providers array from indexed map, sorted by index
-    const sortedIndices = [...providerMap.keys()].sort((a, b) => a - b);
-    for (const idx of sortedIndices) {
-      const entry = providerMap.get(idx);
-      if (entry) config.providers.push(entry);
-    }
-
     return config;
   }
 
@@ -363,8 +364,16 @@ export class ConfigRepository {
    * NOTE: `passthrough` merges on top of current — this method can only
    * ADD or OVERWRITE keys, never delete. Use `deletePassthroughKeys` for
    * deletion (e.g. clearing a platform's tokens).
+   *
+   * `opts.providersVersion` makes the write conditional: it is checked against
+   * the chain read INSIDE the write lock, and a mismatch throws
+   * `CONFIG_CONFLICT` before anything — file or vault — is written. The
+   * caller built `patch.providers` from that version of the chain.
    */
-  async update(patch: Partial<RawConfig>): Promise<RawConfig> {
+  async update(
+    patch: Partial<RawConfig>,
+    opts: { providersVersion?: string } = {},
+  ): Promise<RawConfig> {
     let next!: RawConfig;
     const op = this.writeChain
       .catch(() => {})
@@ -374,7 +383,14 @@ export class ConfigRepository {
           toolSettings: {},
           providers: [],
           passthrough: {},
+          providerNotices: [],
         };
+        if (
+          opts.providersVersion !== undefined &&
+          providerChainVersion(current.providers) !== opts.providersVersion
+        ) {
+          throw providerChainConflict();
+        }
         next = {
           ...current,
           ...patch,
@@ -410,6 +426,7 @@ export class ConfigRepository {
           toolSettings: {},
           providers: [],
           passthrough: {},
+          providerNotices: [],
         };
         for (const key of keys) delete current.passthrough[key];
         await this.write(current);
@@ -417,6 +434,34 @@ export class ConfigRepository {
     this.writeChain = op.catch(() => {});
     await op;
     return current;
+  }
+
+  /**
+   * Every `${secrets:…}` ref an operator-authored file under `dataDir` names:
+   * config.yaml, the other top-level `*.yaml` / `*.yml` / `*.json` files
+   * (`mcp.json`, `keys.json`, …) and every file of those kinds in a
+   * `personalities/<id>/` directory (`config.yaml`, `toolset.yaml`, `mcp.yaml`,
+   * `tools.yaml`). Read through the injected Storage. The "still in use" side
+   * of deleting a vault secret (`ConfigService.deleteOrphanedSecrets`), so it
+   * matches anywhere in a file, loosely, on purpose: a false "in use" leaves
+   * vault litter, a false "unused" deletes a live credential.
+   */
+  async secretRefsInUse(): Promise<Set<string>> {
+    const refs = new Set<string>();
+    const scan = async (dir: string): Promise<void> => {
+      for (const entry of await this.storage.listEntries(dir)) {
+        if (entry.isDir || !/\.(ya?ml|json)$/.test(entry.name)) continue;
+        const text = await this.storage.read(join(dir, entry.name));
+        for (const m of (text ?? '').matchAll(SECRET_REF_ANYWHERE)) if (m[1]) refs.add(m[1]);
+      }
+    };
+    const dataDir = dirname(this.path);
+    await scan(dataDir);
+    const personalities = join(dataDir, 'personalities');
+    for (const entry of await this.storage.listEntries(personalities)) {
+      if (entry.isDir) await scan(join(personalities, entry.name));
+    }
+    return refs;
   }
 
   /**
@@ -433,7 +478,6 @@ export class ConfigRepository {
   private async externalizeSecrets(config: RawConfig): Promise<RawConfig> {
     const ctx: SecretRefContext = {
       ...(config.provider ? { provider: config.provider } : {}),
-      providerChain: config.providers.map((p) => p.provider),
       telegramBotKeys: botKeys(config.passthrough, 'telegram.bots', 'token'),
       slackAppKeys: botKeys(config.passthrough, 'slack.apps', 'botToken'),
     };
@@ -454,14 +498,14 @@ export class ConfigRepository {
       ref('auxiliary.tts.apiKey'),
       this.secrets,
     );
-    const providers: RawProviderEntry[] = [];
-    for (const [i, p] of config.providers.entries()) {
-      providers.push({
-        ...p,
-        apiKey: await externalizeSecret(p.apiKey, ref(`providers.${i}.apiKey`), this.secrets),
-      });
-    }
-    next.providers = providers;
+    // Shared with the CLI writer; also picks a vault name no other chain entry
+    // holds, so a newly typed key cannot overwrite a moved entry's secret.
+    next.providers = await externalizeProviderChain(config.providers, this.secrets, [
+      next.apiKey,
+      next.voiceApiKey,
+      next.voiceTtsApiKey,
+      ...Object.values(config.passthrough),
+    ]);
     const passthrough: Record<string, string> = {};
     for (const [key, value] of Object.entries(config.passthrough)) {
       const keyRef = secretRefForConfigKey(key, ctx);
@@ -491,7 +535,8 @@ export class ConfigRepository {
       lines.push(`contextLayering: ${config.contextLayering}`);
     if (config.debugPanelEnabled !== undefined)
       lines.push(`display.debug_panel: ${config.debugPanelEnabled}`);
-    if (config.debugPanelModel) lines.push(`display.debug_panel_model: ${config.debugPanelModel}`);
+    if (config.debugPanelModel)
+      lines.push(`display.debug_panel_model: ${yamlScalar(config.debugPanelModel)}`);
     if (config.voiceProvider)
       lines.push(`auxiliary.asr.provider: ${yamlScalar(config.voiceProvider)}`);
     if (config.voiceApiKey) lines.push(`auxiliary.asr.apiKey: ${yamlScalar(config.voiceApiKey)}`);
@@ -524,20 +569,20 @@ export class ConfigRepository {
       if (ws?.recency) {
         lines.push(`toolSettings.${yamlScalar(pid)}.web_search.recency: ${yamlScalar(ws.recency)}`);
       }
-      for (const tool of SECRET_ONLY_TOOL_KEYS) {
+      // Every other key the slot carries, sorted so the file is byte-stable
+      // across writes. Shape-tested before it reaches a line: unlike the value,
+      // which `yamlScalar` quotes, the key is interpolated raw.
+      for (const tool of Object.keys(settings).sort()) {
+        if (tool === 'web_search' || RESERVED_TOOL_KEYS.has(tool)) continue;
         const secret = settings[tool]?.secret;
-        if (secret) {
+        if (secret && isValidSecretName(tool)) {
           lines.push(`toolSettings.${yamlScalar(pid)}.${tool}.secret: ${yamlScalar(secret)}`);
         }
       }
     }
-    for (let i = 0; i < config.providers.length; i++) {
-      const p = config.providers[i];
-      if (!p) continue;
-      lines.push(`providers.${i}.provider: ${yamlScalar(p.provider)}`);
-      if (p.apiKey) lines.push(`providers.${i}.apiKey: ${yamlScalar(p.apiKey)}`);
-      if (p.model) lines.push(`providers.${i}.model: ${yamlScalar(p.model)}`);
-      if (p.baseUrl) lines.push(`providers.${i}.baseUrl: ${yamlScalar(p.baseUrl)}`);
+    // Keys come from the codec, shape-checked there; values are quoted here.
+    for (const [key, value] of renderProviderChain(config.providers)) {
+      lines.push(`${key}: ${yamlScalar(value)}`);
     }
     // Stable-order passthrough — keep keys the CLI cares about across
     // round-trips even if it adds new ones in the future.
@@ -547,12 +592,11 @@ export class ConfigRepository {
     // Credential values live in the vault, not here — but write 0o600 anyway
     // so a web-driven update never regresses the file to a world-readable
     // mode (matches apps/ethos/src/config.ts and web-token.repository.ts).
+    // The same refusal `writeConfig` applies: a control character cannot be
+    // written into a line-based file so that it reads back.
+    assertWritableConfigLines(lines);
     await this.storage.writeAtomic(this.path, `${lines.join('\n')}\n`, { mode: 0o600 });
   }
-}
-
-function stripQuotes(s: string): string {
-  return s.replace(/^["']|["']$/g, '');
 }
 
 /**
@@ -851,14 +895,15 @@ function botKeys(
   return keys;
 }
 
-/** Escape a value for safe YAML scalar emission. If the value contains
- *  characters that could alter YAML structure (colons, newlines, special
- *  chars, leading/trailing whitespace), wrap it in JSON-style double
- *  quotes. This prevents newline injection that could create new
- *  top-level keys (e.g. injecting `fs_reach` for privilege escalation). */
+/** Quote a value that contains characters that could alter YAML structure
+ *  (colons, special chars, leading/trailing whitespace) with
+ *  `quoteConfigScalar` — `\` and `"` escaped, which `parseConfigScalar`
+ *  decodes. Newline injection (a smuggled `fs_reach:` line) is stopped by
+ *  refusal, not quoting: `assertWritableConfigLines` in `write` rejects any
+ *  line carrying a control character. */
 function yamlScalar(value: string): string {
   if (/[:\n\r#[\]{}&*!|>'"%@`]/.test(value) || value.trim() !== value) {
-    return JSON.stringify(value);
+    return quoteConfigScalar(value);
   }
   return value;
 }

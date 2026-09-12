@@ -8,7 +8,7 @@ import { createWebApi, WebTokenRepository } from '../../index';
 import { AVATAR_MAX_BYTES } from '../../routes/personality-avatar';
 import {
   makeStubAgentLoop,
-  makeStubMemoryProvider,
+  makeStubMemoryBundle,
   makeStubPersonalityRegistry,
 } from '../test-helpers';
 
@@ -34,7 +34,7 @@ describe('POST|GET|DELETE /api/personalities/:id/avatar', () => {
     app = createWebApi({
       dataDir,
       sessionStore: store,
-      memoryProvider: makeStubMemoryProvider(),
+      memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop(),
       personalities: registry,
       chatDefaults: { model: 'claude-test', provider: 'anthropic' },

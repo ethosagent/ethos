@@ -9,7 +9,6 @@ import {
   DashboardStore,
   DashboardsService,
 } from '@ethosagent/dashboard';
-import type { GoalRunner } from '@ethosagent/goal-runner';
 import { ConsoleLogger } from '@ethosagent/logger';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { SQLiteCardStore } from '@ethosagent/session-cards';
@@ -21,20 +20,13 @@ import type {
   BackgroundJob,
   JobRunnerRegistry,
   JobStore,
-  MemoryProvider,
   RunUpdateDigest,
   SecretsResolver,
   SessionStore,
   Storage,
 } from '@ethosagent/types';
 import type { ActivityEvent, SseEvent } from '@ethosagent/web-contracts';
-import {
-  createMemoryProvider,
-  createPendingMemoryStore,
-  HistoryStore,
-  type IdentityMap,
-  type MemoryBackendSelection,
-} from '@ethosagent/wiring';
+import { DisposerStack, type IdentityMap, type MemoryBundle } from '@ethosagent/wiring';
 import type { Hono } from 'hono';
 import {
   createTakeoverSocket,
@@ -51,6 +43,8 @@ import { CompletionsService } from './features/completions/service';
 import { DebugService } from './features/debug/service';
 import { SessionsRepository } from './features/sessions/repository';
 import { SessionsService } from './features/sessions/service';
+import { lateDelegate, lateFn } from './lib/late-slot';
+import { createPendingLoop } from './lib/pending-loop';
 import { AUTH_COOKIE } from './middleware/auth';
 import type { ApiKeyAdminStore } from './middleware/bearer-auth';
 import { AllowlistRepository } from './repositories/allowlist.repository';
@@ -83,7 +77,7 @@ import { createDiscoveredChatStore } from './services/discovered-chats';
 import { DocumentsService } from './services/documents.service';
 import { EvolverService } from './services/evolver.service';
 import { ExecutionService } from './services/execution.service';
-import { GoalsService } from './services/goals.service';
+import { type GoalsBackend, GoalsService } from './services/goals.service';
 import { KanbanService } from './services/kanban.service';
 import { KeysService } from './services/keys.service';
 import { LabService } from './services/lab.service';
@@ -138,24 +132,32 @@ export interface CreateWebApiOptions {
    *  evolution, Soul split). Omitted in onboarding mode — those RPCs then
    *  return NOT_CONFIGURED. */
   personalitiesLlm?: () => Promise<import('@ethosagent/types').LLMProvider>;
-  /** Memory provider for scoped read/write. Construct via
-   *  `createMemoryProvider` from `@ethosagent/wiring`. */
-  memoryProvider: MemoryProvider;
+  /**
+   * The memory surfaces for the CONFIGURED backend (F04): the editor handle,
+   * Timeline history, restore handle, and approve queue. Hosts forward
+   * `CreateAgentLoopResult.memoryBundle` (or `createMemoryBundle` when no loop
+   * exists yet), so an editor write lands where the agent reads — `memory:
+   * vault` edits the vault, and a backend with no file editor (`vector`) is
+   * refused by MemoryService rather than edited at `dataDir`.
+   */
+  memoryBundle: MemoryBundle;
   /** Identity map for resolving platform users to opaque userIds.
    *  Optional — when omitted, `memory.listUsers` returns empty. */
   identityMap?: IdentityMap;
-  /**
-   * Memory backend selection (the `memory` / `memoryVault` slice of the app
-   * config). Threaded into the approve-before-store queue so a web approve
-   * replays into the configured backend (`memory: vault` → the vault, history
-   * under `.ethos-meta`) instead of assuming markdown at `dataDir`. Omitted →
-   * markdown (previous behavior).
-   */
-  memoryBackend?: MemoryBackendSelection;
   /** Agent loop the chat surface drives. Must already be wired with tools,
    *  hooks, providers etc. (typically via `@ethosagent/wiring`). When omitted
-   *  (onboarding mode), a stub loop that yields a SETUP_REQUIRED error is used. */
+   *  (onboarding: `ethos serve` with no config.yaml), every service runs on a
+   *  stand-in (`createPendingLoop`, lib/pending-loop.ts) that delegates to the
+   *  loop the host later hands `bindAgentLoop`, and nothing is registered on
+   *  any loop until then. Pinned by __tests__/onboarding-bind-loop.test.ts. */
   agentLoop?: AgentLoop;
+  /**
+   * Onboarding only (no `agentLoop`): called when a turn arrives and no loop is
+   * bound yet. The host boots the real loop and binds it with `bindAgentLoop`
+   * before resolving; resolving without binding (setup still missing) gives the
+   * turn a SETUP_REQUIRED error.
+   */
+  bootAgentLoop?: () => Promise<unknown>;
   /**
    * Team-scoped loop factory (plan/phases/teams-as-a-scope.md D4, §9). The
    * composition root builds one loop per team on demand — `ethos serve` hands
@@ -167,9 +169,11 @@ export interface CreateWebApiOptions {
   /** The team `agentLoop` already runs as (`ethos serve --team <name>`); its
    *  members stay on `agentLoop` rather than getting a second loop. */
   mainLoopTeam?: string;
-  /** Loop-bearing goal runner from `createAgentLoop`. When provided, web-created
-   *  goals execute on the same runner+store as the CLI/gateway path. */
-  goalRunner?: GoalRunner;
+  /** Goal store + executor pair from `createAgentLoop` (`CreateAgentLoopResult.goals`),
+   *  so web-created goals execute on the same runner and store as the CLI/gateway
+   *  path. Borrowed, never disposed here. Absent → goal reads are empty and
+   *  create/resume are refused (`GoalsService.requireExecution`). */
+  goals?: GoalsBackend;
   /** Durable background-job store from wiring's CreateAgentLoopResult. Backs the
    *  Tasks surface (list/get/cancel). Absent when background delegation is
    *  disabled — the tasks RPC degrades to empty reads. */
@@ -187,15 +191,17 @@ export interface CreateWebApiOptions {
    * routed to its PARENT session's SSE stream as a `run.update` push event —
    * without it a run card renders once and freezes, because the run's own events
    * fire on `childSessionKey`, which nobody watching the parent chat subscribes
-   * to. Absent → no digest, and the card is fed by polling nothing.
+   * to. Absent → no digest, and the card is fed by polling nothing. Returns the
+   * unsubscribe, which `dispose()` runs — the executor outlives this surface.
    */
-  subscribeRunUpdates?: (handler: (update: RunUpdateDigest) => void) => void;
+  subscribeRunUpdates?: (handler: (update: RunUpdateDigest) => void) => () => void;
   /**
    * Subscribe to terminal job transitions (`BackgroundExecutor.onComplete`) so
    * the run's result lands as a message in the parent conversation, from Ethos
    * (§4.9/D27). Deliberately the EXISTING complete path — not a new bus.
+   * Returns the unsubscribe, which `dispose()` runs.
    */
-  subscribeJobComplete?: (handler: (job: BackgroundJob) => void) => void;
+  subscribeJobComplete?: (handler: (job: BackgroundJob) => void) => () => void;
   /** Personality registry — shared with the loop so hot-reloads (mtime cache)
    *  reach both surfaces. Must be a `FilePersonalityRegistry` so the web-api's
    *  Personalities tab can drive its CRUD methods (create / update / delete /
@@ -614,14 +620,79 @@ export interface CreateWebApiResult {
    */
   forceSettleApprovals: () => void;
   /**
+   * F06 — end this surface's chat turns: new sends refused, queued inputs
+   * dropped with an `error` notice on each tab's SSE stream, in-flight turns
+   * aborted and awaited (bounded; `ChatService.close`). Hosts call it right
+   * after `forceSettleApprovals` and BEFORE closing the listener, or the
+   * notice is written to streams that no longer exist. `dispose()` also runs
+   * it; a second call finds nothing left to close.
+   */
+  closeChat: () => Promise<void>;
+  /**
    * How many tool approvals are still awaiting a human decision. Read by the
    * idle watcher's `web-approvals` busy source: a suspended approval is
    * in-flight work, and suspending the VM on one loses it silently
    * (plan/phases/idle-watcher.md §1 check #12).
    */
   pendingApprovalCount: () => number;
-  /** Dispose every lazily built team loop (D4). No-op without `createTeamLoop`. */
-  disposeTeamLoops: () => Promise<void>;
+  /**
+   * F06 — release what THIS call started or opened, newest first: any
+   * still-suspended approval (denied and audited), the chat turns it started
+   * (new sends refused, queued ones dropped, in-flight ones aborted and awaited
+   * within a grace period), the dashboard refresh scheduler (its sweep in
+   * progress is cancelled and awaited), every hook / listener / subscription
+   * it registered on a borrowed loop, clarify bridge, router, executor or
+   * capture feed, the dashboard tools it put on the borrowed tool registry, the
+   * SSE buffers' reap timers, the dashboards.db and cards.db connections and
+   * the team loops it built. Every step is attempted; failures reject together
+   * as one `AggregateError`. Idempotent.
+   *
+   * ONE exception, and it is not a registration: the `setOnSkill*` callback
+   * SLOTS this call fills (`opts.setOnSkillProposed` and friends) have no
+   * deregister — they are single-slot setters owned by the caller, overwritten
+   * by the next surface. A disposed surface's copy is inert instead (`live`),
+   * pinned by `web-api-dispose.test.ts` ('start-stop-start').
+   *
+   * It NEVER disposes what it was handed — the agent loop, session store,
+   * context log, goal pair, memory bundle, job store, MCP manager, plugin
+   * loader, idempotency store: their owner outlives this surface and closes
+   * them itself, after this resolves. Hosts close the HTTP server and sockets
+   * first. Pinned by apps/web-api/src/__tests__/web-api-dispose.test.ts.
+   */
+  dispose: () => Promise<void>;
+  /**
+   * Hand a surface built with no `agentLoop` the real loop once the host has
+   * booted it. The stand-in every service holds starts delegating to it, and
+   * the main-loop registrations construction makes for a ready loop
+   * (`wireMainLoop`: per-loop hooks, clarify presenter, notification adapter,
+   * kanban ticket hooks) are made on it, with their releases on `dispose` —
+   * which still never disposes the loop. `dangerPredicate` is for a danger
+   * check that can only be built from the booted loop; it replaces the
+   * construction-time one. The dashboard refresh scheduler starts here too:
+   * unbound, it has no loop to refresh on.
+   *
+   * All or nothing: a bind whose wiring throws releases what it registered and
+   * leaves the surface bindable. Returns the unbind — for a host whose own
+   * adoption of the loop failed afterwards — which releases the bind and makes
+   * the surface pending again. Throws when a loop is already wired; a no-op
+   * (returning a no-op unbind) once this surface is disposed. All pinned by
+   * __tests__/onboarding-bind-loop.test.ts.
+   */
+  bindAgentLoop: (
+    loop: AgentLoop,
+    extras?: {
+      notificationRouter?: import('@ethosagent/types').NotificationRouter;
+      dangerPredicate?: DangerPredicate;
+      /** The loop's MCP manager — replaces the passive stand-in. */
+      mcpManager?: import('@ethosagent/tools-mcp').McpManager;
+      /** The loop's execution-backend registry — what Settings › Execution probes. */
+      executionBackends?: import('@ethosagent/types').ExecutionBackendRegistry;
+      /** The loop's skills injector — backs `personalities.renderers`. */
+      skillsInjector?: SkillsInjector;
+      /** The loop's personality-registry reload, run before each turn. */
+      refreshPersonalities?: () => Promise<void>;
+    },
+  ) => () => Promise<void>;
   /**
    * Post one channel digest into the web notifications feed
    * (plan/phases/ambient-group-monitoring.md R12, "the digest also lands in
@@ -666,17 +737,55 @@ export interface CreateWebApiResult {
 }
 
 export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
+  // F06 — each thing this surface starts or opens, and each listener it puts
+  // on a service it BORROWED, registers its release here right after it is
+  // made. `CreateWebApiResult.dispose` runs them newest first; nothing handed
+  // in through `opts` is ever closed by it. A construction that throws partway
+  // releases whatever it had registered before rethrowing — construction is
+  // synchronous, so the release runs in the background rather than being
+  // awaited. Pinned by apps/web-api/src/__tests__/web-api-dispose.test.ts.
+  const disposers = new DisposerStack();
+  try {
+    return assembleWebApi(opts, disposers);
+  } catch (err) {
+    void disposers.dispose().catch((releaseErr: unknown) => {
+      console.warn(
+        `[web-api] releasing a failed construction also failed: ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
+      );
+    });
+    throw err;
+  }
+}
+
+function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): CreateWebApiResult {
+  // Onboarding (no `agentLoop`): the real loop arrives through `bindAgentLoop`
+  // (bottom); until then every service holds a stand-in that delegates to it.
+  const loopPending = opts.agentLoop === undefined;
+  let boundLoop: AgentLoop | undefined;
+  /**
+   * The rest of what a loop brings, installed by `bindAgentLoop` once
+   * onboarding has booted one. Every slot below resolves through this holder:
+   * a delegating stand-in (`lateDelegate`), a forwarding callback (`lateFn`),
+   * or a getter on the consumer's options literal when that consumer re-reads
+   * it per call. What canNOT be installed this way is listed on
+   * `bindAgentLoop` — those need a restart, and the onboarding UI says so.
+   */
+  const bound: {
+    mcpManager?: import('@ethosagent/tools-mcp').McpManager;
+    executionBackends?: import('@ethosagent/types').ExecutionBackendRegistry;
+    skillsInjector?: SkillsInjector;
+    refreshPersonalities?: () => Promise<void>;
+  } = {};
+  /** The loop's personality-registry refresh: the bound one, else the host's. */
+  const refreshLoopPersonalities = lateFn(
+    () => bound.refreshPersonalities ?? opts.refreshPersonalities,
+  );
   const agentLoop: AgentLoop =
     opts.agentLoop ??
-    ({
-      run: async function* () {
-        yield {
-          type: 'error' as const,
-          error: 'Setup required — complete onboarding first.',
-          code: 'SETUP_REQUIRED',
-        };
-      },
-    } as unknown as AgentLoop);
+    createPendingLoop({
+      bound: () => boundLoop,
+      ...(opts.bootAgentLoop ? { boot: opts.bootAgentLoop } : {}),
+    });
 
   // The composition root owns Storage construction; every repository/service
   // below receives this single instance (never a silent FsStorage fallback).
@@ -684,6 +793,13 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
 
   const secrets: SecretsResolver =
     opts.secrets ?? new FileSecretsResolver({ dir: join(opts.dataDir, 'secrets'), storage });
+
+  // Single-slot callbacks this surface sets on a BORROWED service — the clarify
+  // bridge's `web` presenter, the loop's skill-evolution setters — have no
+  // unregister: the next surface's registration overwrites them. Until it
+  // does (or forever, when the loop outlives this surface), they must not
+  // reach a disposed surface, so each checks `live`, cleared first on dispose.
+  let live = true;
 
   // --- Repositories (data access only) ---
   const tokens = new WebTokenRepository({ dataDir: opts.dataDir, storage });
@@ -708,7 +824,6 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // The mesh registry lives at ~/.ethos/meshes/default/registry.json —
   // the same path `ethos serve` writes to via meshRegistryPath('default').
   const mesh = new AgentMesh(defaultRegistryPath(), { storage });
-  const memoryProvider = opts.memoryProvider;
   const platformsRepo = new PlatformsRepository({
     config: configRepo,
     secrets,
@@ -729,6 +844,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const cardStore = new SQLiteCardStore(join(opts.dataDir, 'cards.db'), {
     logger: new ConsoleLogger({ component: 'cards' }),
   });
+  disposers.push('cards.db', () => cardStore.close());
   const sessionsService = new SessionsService({
     sessions: sessionsRepo,
     cards: cardStore,
@@ -751,8 +867,12 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     // personality dropped/edited on disk (by another process, or the loop's
     // create path) is visible in the Personalities tab without a restart.
     refresh: () => opts.personalities.loadFromDirectory(join(opts.dataDir, 'personalities')),
-    ...(opts.skillsInjector ? { skillsInjector: opts.skillsInjector } : {}),
-    ...(opts.refreshPersonalities ? { refreshLoopPersonalities: opts.refreshPersonalities } : {}),
+    // Read per call by `PersonalitiesService`, so a getter is all the binding
+    // this slot needs (the injector arrives with `bindAgentLoop`).
+    get skillsInjector() {
+      return bound.skillsInjector ?? opts.skillsInjector;
+    },
+    refreshLoopPersonalities,
     ...(opts.dockerBuildable === false ? { dockerBuildable: false } : {}),
     ...(opts.modelFit ? { modelFit: opts.modelFit } : {}),
     ...(opts.scriptSurface ? { scriptSurface: opts.scriptSurface } : {}),
@@ -819,34 +939,43 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const skillsService = new SkillsService({ library: skillsLibrary });
   const evolverService = new EvolverService({ evolver: evolverRepo, library: skillsLibrary });
   const goalsService = new GoalsService({
-    dataDir: opts.dataDir,
     sessionStore: opts.sessionStore,
-    ...(opts.goalRunner ? { runner: opts.goalRunner } : {}),
+    ...(opts.goals ? { goals: opts.goals } : {}),
+    // A team personality's goal runs on its team's pair — the same resolution
+    // `loopForPersonality` makes for that personality's chat turns. Declared
+    // here, resolved through `teamLoops` (built below) at call time.
+    goalsFor: async (personalityId) => (await teamLoops?.handleFor(personalityId))?.goals,
   });
   const meshService = new MeshService({ mesh });
+  // Every memory surface comes from the one bundle built for the configured
+  // backend (F04): the editor (`web-editor`-labelled), the Timeline history and
+  // the `restore`-labelled handle all sit on that backend; the approve queue
+  // stays at dataDir and replays into it. A backend with no file editor gets
+  // no editor handle, and `MemoryService.requireMemory` refuses with the
+  // bundle's reason.
+  const memoryEditing = opts.memoryBundle.editing;
   const memoryService = new MemoryService({
-    memory: memoryProvider,
+    ...(memoryEditing.supported
+      ? {
+          memory: memoryEditing.editor,
+          history: memoryEditing.history,
+          restoreMemory: memoryEditing.restore,
+        }
+      : { editingUnsupported: memoryEditing.reason }),
     identityMap: opts.identityMap,
-    // Timeline reads the same JSONL history the CLI does; restore writes through
-    // a `restore`-labelled handle so the move records itself (§5).
-    history: new HistoryStore({ dataDir: opts.dataDir, storage }),
-    restoreMemory: createMemoryProvider({
-      dataDir: opts.dataDir,
-      storage,
-      source: 'restore',
-    }),
-    // Approve-before-store queue (L3). Reads the same `memory-pending.jsonl`
-    // the runtime gate writes and the CLI `ethos memory pending` drives; approve
-    // replays through the provenance history under the original source, into
-    // the configured backend when a selection is threaded through.
-    pending: createPendingMemoryStore({
-      dataDir: opts.dataDir,
-      storage,
-      ...(opts.memoryBackend ? { config: opts.memoryBackend } : {}),
-    }).store,
+    pending: opts.memoryBundle.pending,
   });
-  const kanbanService = new KanbanService({ mesh, hooks: agentLoop.hooks });
-  const teamsService = new TeamsService({ kanban: kanbanService, storage });
+  // Ticket hooks attach to the main loop's registry when that loop is wired
+  // (`wireMainLoop`) — during onboarding it does not exist yet.
+  const kanbanService = new KanbanService({ mesh });
+  // Team memory comes from the bundle too (F04): the same policy stack the
+  // `team_memory_*` tools write through, so a web edit cannot silently
+  // overwrite an agent's (`createTeamMemoryProvider`).
+  const teamsService = new TeamsService({
+    kanban: kanbanService,
+    storage,
+    teamMemory: opts.memoryBundle.teamMemory,
+  });
   // Per-team loop map (D4). Membership comes from the same read model
   // `teams.list` serves, so the two never disagree about who is on a team.
   // `wireTurnLoop` (below) gives each built loop the same web hooks the main
@@ -864,6 +993,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
         onCreate: (_teamName, handle) => wireTurnLoop(handle.loop, handle.notificationRouter),
       })
     : undefined;
+  if (teamLoops) disposers.push('team loops', () => teamLoops.disposeAll());
   /** The loop a turn for `personalityId` runs on — its team's, else the main one. */
   const loopForPersonality = async (personalityId: string | undefined): Promise<AgentLoop> => {
     if (!teamLoops || !personalityId) return agentLoop;
@@ -873,7 +1003,12 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const tasksService = new TasksService(opts.jobStore ? { store: opts.jobStore } : {});
   const apiKeysService = new ApiKeysService(opts.apiKeys ?? null);
   // Phase 2 — global named-secrets vault + generic per-tool settings surface.
-  const namedSecretsService = new NamedSecretsService({ secrets });
+  // The registry is what makes the provider roster derived rather than
+  // hand-listed — without it only the compatibility seed is offered.
+  const namedSecretsService = new NamedSecretsService({
+    secrets,
+    ...(opts.toolRegistry ? { toolRegistry: opts.toolRegistry } : {}),
+  });
   // Keys pane — the whole vault, masked, partitioned by the static catalog.
   const keysService = new KeysService({ secrets, namedSecrets: namedSecretsService });
   // Settings › Backup. Reads `backup.*` from config.yaml and the `backup`
@@ -896,11 +1031,15 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const executionService = new ExecutionService({
     config: configRepo,
     personalities: opts.personalities,
-    ...(opts.executionBackends ? { executionBackends: opts.executionBackends } : {}),
+    // Read per call by `ExecutionService`, so the getter IS the binding.
+    get executionBackends() {
+      return bound.executionBackends ?? opts.executionBackends;
+    },
   });
   const toolSettingsService = new ToolSettingsService({
     config: configRepo,
     personalities: personalitiesService,
+    secrets,
     ...(opts.toolRegistry ? { toolRegistry: opts.toolRegistry } : {}),
   });
   const digestService = new DigestService({
@@ -927,14 +1066,17 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // Read-only ledger view. Opens nothing until first asked, and nothing at all
   // when the gateway has never run here.
   const deliveriesService = new DeliveriesService({ dataDir: opts.dataDir, storage });
+  disposers.push('delivery-ledger.db (read side)', () => deliveriesService.close());
   // Read-only telephony call history, `<dataDir>/calls.db` — the same file the
   // gateway writes. Same lazy-open rule as the ledger above: a deployment with
   // no telephony never grows the database by opening a Settings page.
   const callsService = new CallsService({ dataDir: opts.dataDir, storage });
+  disposers.push('calls.db (read side)', () => callsService.close());
   // Read-only observe-mode lane summaries, `<dataDir>/channel-transcript.db` —
   // the same file the gateway writes. Same lazy-open rule again: a deployment
   // where no chat is observed never grows the database by rendering a page.
   const observedChatsService = new ObservedChatsService({ dataDir: opts.dataDir, storage });
+  disposers.push('channel-transcript.db (read side)', () => observedChatsService.close());
   const voiceService = new VoiceService({
     sttRegistry: opts.sttProviderRegistry,
     providerName: opts.sttProviderName,
@@ -1019,7 +1161,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       storage,
       ...(opts.toolRegistry ? { toolRegistry: opts.toolRegistry } : {}),
       personalities: opts.personalities,
-      ...(opts.refreshPersonalities ? { refresh: opts.refreshPersonalities } : {}),
+      refresh: refreshLoopPersonalities,
     }),
   });
   // `display.voice_*` compatibility read-through for the browser lane's
@@ -1063,11 +1205,18 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     // cannot reach.
     ...(realtimeControlRegistry
       ? {
-          realtime: (laneId: string) =>
-            createRealtimeControlDeps(
+          realtime: (laneId: string) => {
+            // No gate, no realtime lane. `before_tool_call` is what stands
+            // between a spoken request and a tool call, and onboarding's
+            // stand-in has no hooks until a loop is bound — a control channel
+            // opened then would run tools unchecked. Refuse it; the audio lane
+            // is unaffected. Pinned by __tests__/onboarding-bind-loop.test.ts.
+            const hooks = agentLoop.hooks;
+            if (!hooks) return null;
+            return createRealtimeControlDeps(
               {
                 toolRegistry: realtimeControlRegistry,
-                hooks: agentLoop.hooks,
+                hooks,
                 sessions: opts.sessionStore,
                 personalities: opts.personalities,
                 defaults: opts.chatDefaults,
@@ -1086,7 +1235,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
                 ...(opts.voiceSpans ? { spans: opts.voiceSpans } : {}),
               },
               laneId,
-            ),
+            );
+          },
         }
       : {}),
     authenticate: async (req) => {
@@ -1119,7 +1269,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
         // the turn) and this process's (which the sheet/editor reads). A route
         // naming a personality deleted since the last push must be refused
         // against what is on disk now, not against a boot snapshot.
-        await opts.refreshPersonalities?.();
+        await refreshLoopPersonalities();
         await opts.personalities.loadFromDirectory(join(opts.dataDir, 'personalities'));
         const config = opts.personalities.get(id);
         // Unknown resolves privileged as well as absent — nothing downstream
@@ -1172,7 +1322,9 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // and delegates personality attachment back through PersonalitiesService.
   // When mcpManager is omitted, a passive stub rejects mutations cleanly.
   const mcpService = new McpService({
-    mcpManager: opts.mcpManager ?? createPassiveMcpManager(),
+    // The bound manager once onboarding boots one; until then the passive
+    // stand-in, whose whole contract is "reads work, mutations refuse".
+    mcpManager: lateDelegate(() => bound.mcpManager ?? opts.mcpManager, createPassiveMcpManager()),
     personalityUpdater: {
       get: (id) => {
         const d = opts.personalities.describe(id);
@@ -1221,7 +1373,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     loop: agentLoop,
     sessions: completionsRepo,
     defaults: opts.chatDefaults,
-    ...(opts.refreshPersonalities ? { refreshPersonalities: opts.refreshPersonalities } : {}),
+    refreshPersonalities: refreshLoopPersonalities,
   });
 
   const dashboardsService = new DashboardsService({
@@ -1232,13 +1384,21 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // Share the DashboardsService's DB handle with DashboardStore so
   // agent-driven dashboard_create / dashboard_add_panel tools operate on
   // the same connection — no duplicate WAL handle.
+  disposers.push('dashboards.db', () => dashboardsService.close());
   const dashboardStore = new DashboardStore(dashboardsService.getDb());
 
   // Register agent-driven dashboard tools when a tool registry is available.
-  if (opts.toolRegistry) {
-    for (const tool of buildDashboardTools(dashboardStore)) {
-      opts.toolRegistry.register(tool);
+  // The registry is borrowed (the loop's), so the tools come back off it on
+  // dispose — they write through the dashboards.db handle closed above.
+  const borrowedToolRegistry = opts.toolRegistry;
+  if (borrowedToolRegistry) {
+    const dashboardTools = buildDashboardTools(dashboardStore);
+    for (const tool of dashboardTools) {
+      borrowedToolRegistry.register(tool);
     }
+    disposers.push('dashboard tools', () => {
+      for (const tool of dashboardTools) borrowedToolRegistry.unregister(tool.name);
+    });
   }
 
   // One buffer per process — keyed internally by sessionId. Bridges are
@@ -1252,6 +1412,12 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // `ChatService.subscribeActivity`'s filter, NOT by the buffer. Larger
   // capacity than the per-session buffer because it aggregates every session.
   const activityBuffer = new SessionStreamBuffer<ActivityEvent>({ capacity: 5000 });
+  // `destroy` cancels pending reaps without firing `onReap` — nobody is left
+  // for a late reap to tell.
+  disposers.push('sse buffers', () => {
+    buffer.destroy();
+    activityBuffer.destroy();
+  });
   const chatService = new ChatService({
     loop: agentLoop,
     sessions: chatRepo,
@@ -1264,12 +1430,18 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     ...(opts.onTurnDone ? { onTurnDone: opts.onTurnDone } : {}),
     systemBus,
     ...(opts.attachmentCache ? { attachmentCache: opts.attachmentCache } : {}),
-    ...(opts.refreshPersonalities ? { refreshPersonalities: opts.refreshPersonalities } : {}),
+    refreshPersonalities: refreshLoopPersonalities,
     ...(teamLoops ? { teamLoops } : {}),
   });
   buffer.onReap = (sessionId) => {
     chatService.forget(sessionId);
   };
+
+  // Where the per-loop registrations below put their releases: this surface's
+  // own stack, except while `bindAgentLoop` is wiring a late loop — then a
+  // stack of that bind's own, so a failed or undone bind releases exactly what
+  // it registered and nothing else.
+  let loopReleases: DisposerStack = disposers;
 
   // Register web notification adapter — delivers process/plugin notifications
   // (router keyed by sessionKey) to the session's SSE stream as a
@@ -1282,7 +1454,13 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     router: import('@ethosagent/types').NotificationRouter,
   ): void => {
     const sessionKeysById = new Map<string, string>();
-    loop.hooks.registerVoid('session_start', async (payload) => {
+    // The router is the loop's (borrowed): every adapter this surface put on
+    // it comes back off on dispose, not only the ones a reap happened to clear.
+    loopReleases.push('notification adapters', () => {
+      for (const sessionKey of sessionKeysById.values()) router.deregister(sessionKey);
+      sessionKeysById.clear();
+    });
+    const offSessionStart = loop.hooks.registerVoid('session_start', async (payload) => {
       sessionKeysById.set(payload.sessionId, payload.sessionKey);
       router.register(payload.sessionKey, {
         send: async (message: string) => {
@@ -1295,6 +1473,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
         },
       });
     });
+    loopReleases.push('notification session_start hook', offSessionStart);
     const originalOnReap = buffer.onReap;
     buffer.onReap = (sessionId: string) => {
       const sessionKey = sessionKeysById.get(sessionId);
@@ -1305,10 +1484,6 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       originalOnReap?.(sessionId);
     };
   };
-  if (opts.notificationRouter && opts.agentLoop) {
-    wireNotificationRouter(agentLoop, opts.notificationRouter);
-  }
-
   // Bridge approvals → SSE. The hook fires when the agent reaches a
   // dangerous tool call; the resolved event lets every tab on the same
   // session auto-dismiss the modal once any one of them decides.
@@ -1335,12 +1510,12 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   const sessionIdsByKey = new Map<string, string>();
   const sessionKeysById = new Map<string, string>();
   const trackSessionKeys = (loop: AgentLoop): void => {
-    loop.hooks.registerVoid('session_start', async (payload) => {
+    const off = loop.hooks.registerVoid('session_start', async (payload) => {
       sessionIdsByKey.set(payload.sessionKey, payload.sessionId);
       sessionKeysById.set(payload.sessionId, payload.sessionKey);
     });
+    loopReleases.push('session-key session_start hook', off);
   };
-  trackSessionKeys(agentLoop);
   const previousOnReapForSessionKeys = buffer.onReap;
   buffer.onReap = (sessionId: string) => {
     const key = sessionKeysById.get(sessionId);
@@ -1364,7 +1539,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // that case, resolve the job's `parentSessionKey` and translate it through
   // the map above instead.
   const presentClarify = (clarifyBridge: NonNullable<AgentLoop['clarifyBridge']>): void => {
-    clarifyBridge.registerPresenter('web', async (req) => {
+    const offPresenter = clarifyBridge.registerPresenter('web', async (req) => {
+      if (!live) return;
       // ClarifyBridge.presentNow() awaits this presenter inside a bare
       // `.catch(() => {})` (see clarify-bridge.ts) — a throw here is
       // otherwise invisible anywhere in the process. Log before rethrowing
@@ -1401,7 +1577,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
         throw err;
       }
     });
-    clarifyBridge.onResolved((row, response) => {
+    const offResolved = clarifyBridge.onResolved((row, response) => {
       void (async () => {
         const sessionId =
           row.jobId !== undefined
@@ -1419,14 +1595,47 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
         );
       });
     });
+    loopReleases.push('clarify web presenter', offPresenter);
+    loopReleases.push('clarify resolved listener', offResolved);
     // Fix 4 (pi-delegation.md §1b) — rebuild lane bookkeeping for rows that
     // survived a restart (must run AFTER the presenter above is
     // registered — hydrate() only adopts rows this bridge can present).
     void clarifyBridge.hydrate();
     void clarifyBridge.sweep();
   };
-  const clarifyBridge = agentLoop.clarifyBridge;
-  if (clarifyBridge) presentClarify(clarifyBridge);
+
+  // Register the web `before_tool_call` hook on the loop. CLI/TUI/ACP
+  // profiles get the synchronous terminal guard from `@ethosagent/wiring`;
+  // the web profile skips that registration so this hook is the sole
+  // gatekeeper for dangerous calls. Without a predicate (e.g. tests) every
+  // tool call passes through unattended.
+  // Onboarding's danger check can only be built from the booted loop, so
+  // `bindAgentLoop` may replace this before the main loop is wired.
+  let dangerPredicate = opts.dangerPredicate;
+  const registerApprovalHook = (loop: AgentLoop): void => {
+    if (!dangerPredicate) return;
+    const off = loop.hooks.registerModifying(
+      'before_tool_call',
+      createWebApprovalHook({
+        approvals: approvalsService,
+        isDangerous: dangerPredicate,
+      }),
+    );
+    loopReleases.push('web approval hook', off);
+  };
+
+  // The main loop gets what every loop gets (`wireTurnLoop`, below) plus what
+  // only the main loop gets: the kanban service's ticket hooks. Made here while
+  // construction is still opening things, so a later throw releases them; a
+  // pending (onboarding) loop is wired by `bindAgentLoop` instead.
+  const wireMainLoop = (
+    loop: AgentLoop,
+    router: import('@ethosagent/types').NotificationRouter | undefined,
+  ): void => {
+    wireTurnLoop(loop, router);
+    loopReleases.push('kanban ticket hooks', kanbanService.useHooks(loop.hooks));
+  };
+  if (!loopPending) wireMainLoop(agentLoop, opts.notificationRouter);
 
   // The screencast takeover lane (B3). Same cookie, same Origin policy and the
   // same upgrade router as the voice lane. Mounted unconditionally: a lane the
@@ -1454,6 +1663,8 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     // when it throws that answer away. `resolved` now comes from the branch
     // that made the decision.
     handback: async (requestId: string) => {
+      // Read per call: during onboarding the bridge arrives with `bindAgentLoop`.
+      const clarifyBridge = agentLoop.clarifyBridge;
       if (!clarifyBridge) {
         return {
           resolved: false as const,
@@ -1489,7 +1700,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // requires a turn to have run in its session — which is exactly how the run
   // got delegated.
   if (opts.subscribeRunUpdates || opts.subscribeJobComplete) {
-    opts.subscribeRunUpdates?.((update) => {
+    const offRunUpdates = opts.subscribeRunUpdates?.((update) => {
       const sessionId = sessionIdsByKey.get(update.parentSessionKey);
       // No open session for this key — a CLI- or gateway-spawned run. Its card
       // does not live here, so there is nothing to keep alive.
@@ -1505,8 +1716,9 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
         toolCount: update.toolCount,
       });
     });
+    if (offRunUpdates) disposers.push('run-update subscription', offRunUpdates);
 
-    opts.subscribeJobComplete?.((job) => {
+    const offJobComplete = opts.subscribeJobComplete?.((job) => {
       const sessionId = sessionIdsByKey.get(job.parentSessionKey);
       if (!sessionId) return;
       const text = formatRunHandBack({
@@ -1528,6 +1740,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
         );
       });
     });
+    if (offJobComplete) disposers.push('job-complete subscription', offJobComplete);
   }
 
   // E3 — improvement fork SSE. When the wiring layer's setOnSkillProposed
@@ -1535,6 +1748,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // `evolve.skill_pending` push event to every connected session. The web
   // UI picks this up to surface the review-queue badge.
   opts.setOnSkillProposed?.((skillId, personalityId) => {
+    if (!live) return;
     chatService.broadcastAll({
       type: 'evolve.skill_pending',
       skillId,
@@ -1544,6 +1758,7 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   });
 
   opts.setOnSkillApplied?.((skillId, personalityId) => {
+    if (!live) return;
     chatService.broadcastAll({
       type: 'evolve.skill_applied',
       skillId,
@@ -1557,33 +1772,18 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // SSE as an AgentEvent — broadcast it as its own push event, scoped to the
   // capturing session. Gated by `display.memory_notices` (default on).
   if (opts.onMemoryCaptured && opts.memoryNoticesEnabled !== false) {
-    opts.onMemoryCaptured((n) => {
+    const offCaptured = opts.onMemoryCaptured((n) => {
       chatService.broadcast(n.sessionId, { type: 'memory.captured', summary: n.summary });
     });
+    disposers.push('memory-captured listener', offCaptured);
   }
 
-  // Register the web `before_tool_call` hook on the loop. CLI/TUI/ACP
-  // profiles get the synchronous terminal guard from `@ethosagent/wiring`;
-  // the web profile skips that registration so this hook is the sole
-  // gatekeeper for dangerous calls. Without a predicate (e.g. tests) every
-  // tool call passes through unattended.
-  const registerApprovalHook = (loop: AgentLoop): void => {
-    if (!opts.dangerPredicate) return;
-    loop.hooks.registerModifying(
-      'before_tool_call',
-      createWebApprovalHook({
-        approvals: approvalsService,
-        isDangerous: opts.dangerPredicate,
-      }),
-    );
-  };
-  registerApprovalHook(agentLoop);
-
-  // A team loop built by `teamLoops` (D4) gets the same per-loop web hooks the
-  // main loop got above: its notification router, session key ↔ id tracking
+  // Every loop turns run on — the main one, a team loop (D4), or the loop
+  // onboarding boots later (`bindAgentLoop`) — gets the same per-loop web hooks
+  // through this ONE function: its notification router, session key ↔ id tracking
   // (clarify + run hand-back need it), its clarify presenter, and the web
-  // approval hook. Hoisted declaration on purpose — it is only ever invoked
-  // after boot, from the registry's `onCreate`.
+  // approval hook. Called above for a ready main loop (a hoisted declaration),
+  // from the team registry's `onCreate`, and from `bindAgentLoop`.
   //
   // Not re-wired for team loops: `opts.dangerPredicate` learns each session's
   // personality from `session_start` on the registries it was BUILT with (the
@@ -1612,7 +1812,11 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
       config: configService,
       onboarding: onboardingService,
       approvals: approvalsService,
-      ...(clarifyBridge ? { clarifyBridge } : {}),
+      // A getter, read per request (routes/rpc.ts copies the container with
+      // Object.assign): during onboarding the bridge arrives with `bindAgentLoop`.
+      get clarifyBridge() {
+        return agentLoop.clarifyBridge;
+      },
       cron: cronService,
       skills: skillsService,
       evolver: evolverService,
@@ -1708,14 +1912,40 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
   // via the extension-owned scheduler (replaces the old hand-rolled `isCronDue`
   // + `setInterval` poller). Each prompt refresh runs as an ephemeral session
   // (the throwaway chat session is GC'd via the shared session store).
-  if (opts.agentLoop) {
-    new DashboardRefreshScheduler({
+  //
+  // Registered LAST, so it is released FIRST: its sweep writes to dashboards.db
+  // and runs turns on the loop, and both must still be there while `stop()`
+  // cancels and awaits it.
+  const startRefreshScheduler = (): void => {
+    const scheduler = new DashboardRefreshScheduler({
       dashboards: dashboardsService,
-      agentLoop: opts.agentLoop,
+      agentLoop,
       pluginLoader: opts.pluginLoader,
       sessions: opts.sessionStore,
-    }).start();
-  }
+    });
+    scheduler.start();
+    loopReleases.push('dashboard refresh scheduler', () => scheduler.stop());
+  };
+  // Onboarding starts it in `bindAgentLoop` instead: with no loop bound, a due
+  // prompt panel would ask the host to boot on every tick and get an error back.
+  if (!loopPending) startRefreshScheduler();
+  // Onboarding: what `bindAgentLoop` registers is released from this slot —
+  // where a ready loop's scheduler sits, so after the chat turns are closed and
+  // approvals settled below, as for a ready loop.
+  let bindReleases: DisposerStack | undefined;
+  if (loopPending) disposers.push('bound agent loop', () => bindReleases?.dispose());
+
+  // Stop accepting work — registered LAST, so these run FIRST on dispose.
+  // The chat turns this surface started are aborted and awaited (bounded) so
+  // the loop they run on can be disposed right after; before that, every
+  // still-suspended approval is denied + audited, because a turn parked on an
+  // approval would otherwise not unwind. Hosts already call
+  // `forceSettleApprovals` first; a second settle finds nothing pending.
+  disposers.push('chat turns', () => chatService.close());
+  disposers.push('approvals', () => approvalsService.forceSettleAll());
+  disposers.push('single-slot callbacks', () => {
+    live = false;
+  });
 
   return {
     app,
@@ -1725,8 +1955,53 @@ export function createWebApi(opts: CreateWebApiOptions): CreateWebApiResult {
     satelliteSocket,
     takeoverSocket,
     forceSettleApprovals: () => approvalsService.forceSettleAll(),
+    closeChat: () => chatService.close(),
     pendingApprovalCount: () => approvalsService.pendingCount(),
-    disposeTeamLoops: () => teamLoops?.disposeAll() ?? Promise.resolve(),
+    dispose: () => disposers.dispose(),
+    bindAgentLoop: (loop, extras = {}) => {
+      // A boot that finishes after this surface was released has nothing to
+      // wire into: its registrations would outlive the dispose that owns them.
+      if (!live) return async () => {};
+      if (!loopPending || boundLoop) {
+        throw new Error('createWebApi: an agent loop is already wired to this surface');
+      }
+      const releases = new DisposerStack();
+      const constructionPredicate = dangerPredicate;
+      loopReleases = releases;
+      try {
+        boundLoop = loop;
+        if (extras.dangerPredicate) dangerPredicate = extras.dangerPredicate;
+        if (extras.mcpManager) bound.mcpManager = extras.mcpManager;
+        if (extras.executionBackends) bound.executionBackends = extras.executionBackends;
+        if (extras.skillsInjector) bound.skillsInjector = extras.skillsInjector;
+        if (extras.refreshPersonalities) bound.refreshPersonalities = extras.refreshPersonalities;
+        releases.push('bound loop surfaces', () => {
+          bound.mcpManager = undefined;
+          bound.executionBackends = undefined;
+          bound.skillsInjector = undefined;
+          bound.refreshPersonalities = undefined;
+        });
+        wireMainLoop(loop, extras.notificationRouter);
+        startRefreshScheduler();
+      } catch (err) {
+        // All or nothing: undo what this bind registered and leave the surface
+        // bindable, so the host's next boot does not hit "already wired".
+        boundLoop = undefined;
+        dangerPredicate = constructionPredicate;
+        void releases.dispose().catch(() => {});
+        throw err;
+      } finally {
+        loopReleases = disposers;
+      }
+      bindReleases = releases;
+      return async () => {
+        if (bindReleases !== releases) return;
+        bindReleases = undefined;
+        boundLoop = undefined;
+        dangerPredicate = constructionPredicate;
+        await releases.dispose();
+      };
+    },
     notifyChannelDigest: (digest) => {
       const truncation =
         digest.omittedCount && digest.omittedCount > 0 && digest.usedCount !== undefined

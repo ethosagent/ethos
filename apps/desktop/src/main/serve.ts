@@ -15,30 +15,23 @@ import {
   createBrowserTakeoverRegistry,
   createLazyProvider,
   createLLM,
-  createMemoryProvider,
   createSessionStore,
   IdentityMap,
 } from '@ethosagent/wiring';
 import { serve as honoServe } from '@hono/node-server';
-import {
-  type CallCaptureDesktopHandle,
-  resolveCallCaptureNativeDir,
-  startCallCaptureDesktop,
-} from './call-capture';
+import { resolveCallCaptureNativeDir, startCallCaptureDesktop } from './call-capture';
 import { getKeychainValue } from './keychain';
+import { type DesktopRuntime, shutdownDesktopRuntime } from './runtime-shutdown';
 import { store } from './store';
 
-type ServerHandle = ReturnType<typeof honoServe>;
-
-let serverHandle: ServerHandle | null = null;
 let boundPort: number | null = null;
-/** Kept so `stopServer` can drop live WS lanes before the port closes. */
-let voiceSocketHandle: { close(): Promise<void> } | null = null;
-let satelliteSocketHandle: { close(): Promise<void> } | null = null;
-let takeoverSocketHandle: { close(): Promise<void> } | null = null;
-/** Kept so `stopServer` can deny + audit any suspended approval on the way out. */
-let forceSettleApprovalsHandle: (() => void) | null = null;
-let callCaptureHandle: CallCaptureDesktopHandle | null = null;
+/**
+ * Everything the running backend holds — HTTP server, WS lanes, call capture,
+ * the web API, the loop's runtime, the sessions.db handle — released as ONE by
+ * `stopServer` (F06). A restart is `stopServer` then `startServer` in this same
+ * process, so what is not released here would run beside the next backend.
+ */
+let runtime: DesktopRuntime | null = null;
 
 export function getDataDir(): string {
   return store.get('dataDir') ?? join(homedir(), '.ethos');
@@ -104,8 +97,27 @@ export async function readSharedVoiceAndCallCaptureConfig(
 }
 
 export async function startServer(port: number): Promise<number> {
-  if (serverHandle) return boundPort ?? port;
+  if (runtime) return boundPort ?? port;
+  // Filled in as each resource is created, so a start that fails half way
+  // releases exactly what it built (F06) instead of stranding a loop whose
+  // background executor keeps ticking with no server in front of it.
+  const rt: DesktopRuntime = {};
+  try {
+    const actual = await bootRuntime(port, rt);
+    runtime = rt;
+    return actual;
+  } catch (err) {
+    boundPort = null;
+    await shutdownDesktopRuntime(rt).catch((releaseErr: unknown) => {
+      console.warn(
+        `[ethos-backend] releasing a failed start also failed: ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
+      );
+    });
+    throw err;
+  }
+}
 
+async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   const dataDir = getDataDir();
 
   const provider = (store.get('provider') as string) ?? 'anthropic';
@@ -209,6 +221,9 @@ export async function startServer(port: number): Promise<number> {
     executionBackends,
     onMemoryCaptured,
     runCallCapture,
+    goals,
+    memoryBundle,
+    dispose: disposeLoop,
   } = await createAgentLoop(wiringConfig, {
     dataDir,
     profile: 'web',
@@ -216,8 +231,10 @@ export async function startServer(port: number): Promise<number> {
     ...(builtinPersonalitiesDir ? { builtinPersonalitiesDir } : {}),
     ...(callCaptureNativeDir ? { callCaptureNativeDir } : {}),
   });
+  rt.loop = { dispose: disposeLoop };
 
   const session = createSessionStore({ dataDir });
+  rt.sessionStore = session;
 
   const personalities = await createPersonalityRegistry({
     storage: new FsStorage(),
@@ -265,19 +282,20 @@ export async function startServer(port: number): Promise<number> {
     satelliteSocket,
     takeoverSocket,
     forceSettleApprovals,
+    closeChat,
+    dispose: disposeWebApi,
   } = createWebApi({
     dataDir,
     sessionStore: session,
-    memoryProvider: createMemoryProvider({
-      dataDir,
-      storage: new FsStorage(),
-      source: 'web-editor',
-    }),
-    // Backend selection for the approve-before-store queue — a web approve
-    // replays into the configured backend (vault under memory: vault).
-    memoryBackend: wiringConfig,
+    // The memory surfaces `createAgentLoop` built from this same config (F04):
+    // editor, Timeline, restore and approve on the backend the agent reads —
+    // the vault under `memory: vault`, a refusal for `vector`.
+    memoryBundle,
     identityMap,
     agentLoop: loop,
+    // The goal store + loop-bearing executor `createAgentLoop` built together.
+    // Without it a desktop goal was stored `running` and never executed.
+    goals,
     // The screencast takeover lane's session registry (B3). The desktop is the
     // third in-process web-API host: `createAgentLoop` above built the browser
     // tools HERE, so the session `browser_request_takeover` locked is the one
@@ -340,20 +358,21 @@ export async function startServer(port: number): Promise<number> {
     ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
     ...(webDistDir ? { webDist: webDistDir } : {}),
   });
-  forceSettleApprovalsHandle = forceSettleApprovals;
+  rt.webApi = { dispose: disposeWebApi };
+  rt.settleApprovals = forceSettleApprovals;
+  rt.closeChat = closeChat;
 
   function bind(p: number): Promise<number> {
     return new Promise<number>((resolve, reject) => {
       const s = honoServe(
         { fetch: webApp.fetch, port: p, hostname: '127.0.0.1' },
         (info: AddressInfo) => {
-          serverHandle = s;
+          rt.server = s;
           // Talk-mode's streaming binary lane (`GET /voice/ws`). Unattached, the
           // route answers and never upgrades, so browser talk-mode silently
           // falls back to the batch RPC path — which is what the desktop has
           // been doing since the lane shipped.
           voiceSocket.attach(s);
-          voiceSocketHandle = voiceSocket;
           // The wake-satellite lane (`GET /satellite/ws`). Without this the
           // desktop would serve a satellite endpoint that never upgrades: the
           // route answers, the socket never opens, and the in-process host
@@ -363,12 +382,14 @@ export async function startServer(port: number): Promise<number> {
           // other's upgrade. Same calls `ethos serve` makes; see
           // apps/ethos/src/commands/serve.ts.
           satelliteSocket.attach(s);
-          satelliteSocketHandle = satelliteSocket;
           // The browser-takeover screencast lane (`GET /browser/takeover/ws`),
           // on the same shared upgrade router. Unattached the route never
           // upgrades, so the takeover panel has nothing to connect to.
           takeoverSocket.attach(s);
-          takeoverSocketHandle = takeoverSocket;
+          // Closed before the server: `server.close()` waits on open
+          // connections, and a talk-mode tab or a satellite holds its lane
+          // open indefinitely by design.
+          rt.sockets = [voiceSocket, satelliteSocket, takeoverSocket];
           resolve(info.port);
         },
       );
@@ -389,41 +410,25 @@ export async function startServer(port: number): Promise<number> {
 
   boundPort = actual;
   console.log(`[ethos-backend] in-process server listening on http://127.0.0.1:${actual}`);
-  callCaptureHandle = startCallCaptureDesktop({
+  const callCapture = startCallCaptureDesktop({
     wiringConfig,
     runCallCapture,
     dataDir,
     ...(callCaptureNativeDir ? { callCaptureNativeDir } : {}),
   });
+  if (callCapture) rt.callCapture = callCapture;
   return actual;
 }
 
 export async function stopServer(): Promise<void> {
-  if (!serverHandle) return;
-  const s = serverHandle;
-  const voice = voiceSocketHandle;
-  const satellites = satelliteSocketHandle;
-  const takeover = takeoverSocketHandle;
-  const callCapture = callCaptureHandle;
-  const settleApprovals = forceSettleApprovalsHandle;
-  serverHandle = null;
-  voiceSocketHandle = null;
-  satelliteSocketHandle = null;
-  takeoverSocketHandle = null;
-  forceSettleApprovalsHandle = null;
-  callCaptureHandle = null;
+  const current = runtime;
+  if (!current) return;
+  runtime = null;
   boundPort = null;
-  // Deny + audit any suspended approval FIRST, before the awaits below — the
-  // auto-deny timers are unref'd and never fire on the way out, and a later
-  // await that hangs must not cost the audit row.
-  settleApprovals?.();
-  if (callCapture) await callCapture.stop();
-  // Sockets first: `server.close()` waits on open connections, and both a
-  // talk-mode tab and a satellite hold their lane open indefinitely by design.
-  if (voice) await voice.close();
-  if (satellites) await satellites.close();
-  if (takeover) await takeover.close();
-  await new Promise<void>((resolve) => s.close(() => resolve()));
+  // Settle approvals first, then call capture, sockets and HTTP, then the web
+  // API, the loop's runtime and the session store — `shutdownDesktopRuntime`
+  // owns the order and attempts every step.
+  await shutdownDesktopRuntime(current);
 }
 
 export function getPort(): number | null {

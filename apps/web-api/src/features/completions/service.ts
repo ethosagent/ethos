@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent, AgentLoop } from '@ethosagent/core';
 import { createEventTranslator, type EventTranslator } from '@ethosagent/surface-kit';
-import { type Attachment, EthosError } from '@ethosagent/types';
+import { type Attachment, answerSuffix, EthosError } from '@ethosagent/types';
 import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
@@ -76,8 +76,12 @@ export class CompletionsService {
       ...(attachments?.length ? { attachments } : {}),
     })) {
       translator.push(event);
-      if (translator.error) throw loopFailure(translator.error);
     }
+    // Thrown only once the iterator is exhausted: AgentLoop yields `error`
+    // before its usage flush and trace close (and `done` before its turn-end
+    // work), and throwing inside the `for await` closes the generator and skips
+    // them (F07). Pinned by `completions.service.test.ts` ('drains the loop').
+    if (translator.error) throw loopFailure(translator.error);
 
     return {
       id: `chatcmpl-${this.id()}`,
@@ -87,7 +91,13 @@ export class CompletionsService {
       choices: [
         {
           index: 0,
-          message: { role: 'assistant', content: translator.text },
+          // A `returnDirect` tool result arrives only as `done.text`, after any
+          // preamble that streamed: `answerSuffix` (@ethosagent/types) is what
+          // the streamed text still owes.
+          message: {
+            role: 'assistant',
+            content: translator.text + answerSuffix(translator.text, translator.done?.text),
+          },
           finish_reason: finishReason(translator),
         },
       ],
@@ -106,8 +116,48 @@ export class CompletionsService {
     const model = input.req.model;
 
     let yieldedRole = false;
+    let closed = false;
     const translator = createEventTranslator();
 
+    // The closing chunks. Final chunk — empty delta + finish_reason
+    // terminator; OpenAI clients gate on this. Same derivation as the
+    // non-streaming path. Then the optional usage chunk — only when the client
+    // opted in; OpenAI's docs show it as the absolute last data frame, with
+    // `choices: []`. `isLastStreamChunk` recognises whichever comes last.
+    const closingChunks = (): ChatCompletionChunk[] => [
+      {
+        id,
+        object: 'chat.completion.chunk',
+        created,
+        model,
+        choices: [{ index: 0, delta: {}, finish_reason: finishReason(translator) }],
+      },
+      ...(input.req.stream_options?.include_usage
+        ? [
+            {
+              id,
+              object: 'chat.completion.chunk' as const,
+              created,
+              model,
+              choices: [],
+              usage: {
+                prompt_tokens: translator.usage.inputTokens,
+                completion_tokens: translator.usage.outputTokens,
+                total_tokens: translator.usage.inputTokens + translator.usage.outputTokens,
+              },
+            },
+          ]
+        : []),
+    ];
+
+    // F07 — the closing chunks go out AT `done`, not when the iterator ends:
+    // AgentLoop yields `done` BEFORE its turn-end work (`maybeConsolidateAtTurnEnd`
+    // in packages/core/src/agent-loop/turn-end.ts — the context engine's
+    // `onTurnComplete`, the memory flush, auto-compaction), and the answer must
+    // not wait for maintenance. The loop is then drained to its end without
+    // yielding anything more, so a consumer that keeps pulling (the SSE route
+    // does) holds the turn open until it is really over. Pinned by
+    // `completions.service.test.ts` ('closing chunks at the terminal event').
     for await (const event of this.driveLoop({
       sessionKey,
       lastUserText,
@@ -120,49 +170,50 @@ export class CompletionsService {
       ...(attachments?.length ? { attachments } : {}),
     })) {
       translator.push(event);
-      if (event.type === 'text_delta') {
-        const delta: ChatCompletionChunk['choices'][0]['delta'] = yieldedRole
-          ? { content: event.text }
-          : { role: 'assistant', content: event.text };
-        yieldedRole = true;
-        yield {
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [{ index: 0, delta, finish_reason: null }],
-        };
-      } else if (translator.error) {
-        throw loopFailure(translator.error);
+      // Past an `error` (the turn failed) or past `done` (the stream is
+      // closed): the rest is drained, not streamed.
+      if (translator.error || closed) continue;
+      if (event.type === 'done') {
+        closed = true;
+        // A `returnDirect` tool result arrives only as `done.text`, after any
+        // preamble that streamed: what the stream still owes (`answerSuffix`,
+        // @ethosagent/types) goes out as one more content chunk before closing.
+        // `translator.text` is what streamed — `push` folds `done` in without
+        // adding its text.
+        const owed = answerSuffix(translator.text, event.text);
+        if (owed) {
+          const delta: ChatCompletionChunk['choices'][0]['delta'] = yieldedRole
+            ? { content: owed }
+            : { role: 'assistant', content: owed };
+          yieldedRole = true;
+          yield {
+            id,
+            object: 'chat.completion.chunk',
+            created,
+            model,
+            choices: [{ index: 0, delta, finish_reason: null }],
+          };
+        }
+        yield* closingChunks();
+        continue;
       }
-    }
-
-    // Final chunk — empty delta + finish_reason terminator. OpenAI clients
-    // gate on this. Same derivation as the non-streaming path.
-    yield {
-      id,
-      object: 'chat.completion.chunk',
-      created,
-      model,
-      choices: [{ index: 0, delta: {}, finish_reason: finishReason(translator) }],
-    };
-
-    // Optional usage chunk — only when the client opted in. OpenAI's docs
-    // show it as the absolute last data frame, with `choices: []`.
-    if (input.req.stream_options?.include_usage) {
+      if (event.type !== 'text_delta') continue;
+      const delta: ChatCompletionChunk['choices'][0]['delta'] = yieldedRole
+        ? { content: event.text }
+        : { role: 'assistant', content: event.text };
+      yieldedRole = true;
       yield {
         id,
         object: 'chat.completion.chunk',
         created,
         model,
-        choices: [],
-        usage: {
-          prompt_tokens: translator.usage.inputTokens,
-          completion_tokens: translator.usage.outputTokens,
-          total_tokens: translator.usage.inputTokens + translator.usage.outputTokens,
-        },
+        choices: [{ index: 0, delta, finish_reason: null }],
       };
     }
+    // Same drain-then-throw as `complete` (F07).
+    if (translator.error) throw loopFailure(translator.error);
+    // No `done` — AgentLoop always yields one, a test fake need not: close now.
+    if (!closed) yield* closingChunks();
   }
 
   /**
@@ -347,6 +398,19 @@ function loopFailure(err: { error: string; code: string }): EthosError {
     cause: err.error,
     action: 'Retry the request. If the error repeats, file an issue.',
   });
+}
+
+/**
+ * Whether `chunk` is the last client-visible frame `CompletionsService.stream`
+ * yields for `req`: the usage chunk when the client asked for one, otherwise
+ * the `finish_reason` terminator. `stream` yields both at the loop's `done` and
+ * then keeps draining the loop without yielding (F07), so the SSE route ends
+ * the response at this chunk rather than when the generator ends.
+ */
+export function isLastStreamChunk(chunk: ChatCompletionChunk, req: ChatCompletionRequest): boolean {
+  return req.stream_options?.include_usage
+    ? chunk.choices.length === 0
+    : (chunk.choices[0]?.finish_reason ?? null) !== null;
 }
 
 /**

@@ -23,6 +23,7 @@ import type {
   ToolRegistry,
 } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
+import type { DisposerStack } from './disposer-stack';
 import type { CreateAgentLoopOptions, WiringConfig, WiringSlashRegistry } from './index';
 import type { WiringContext } from './types';
 
@@ -60,6 +61,8 @@ export interface LoadPluginsDeps {
   buildCompressionSummarizer: () => import('@ethosagent/core').SummarizerFn | undefined;
   slashRegistry?: WiringSlashRegistry;
   cliSubcommandRegistry?: import('@ethosagent/plugin-sdk').PluginRegistries['cliSubcommandRegistry'];
+  /** Where the plugin loader registers its release (F06). */
+  disposers: DisposerStack;
 }
 
 /**
@@ -152,6 +155,9 @@ export async function loadPlugins(
     // through it too.
     secrets: config.secretsResolver,
   });
+  // Pushed BEFORE `loadAll`, so plugins activated by a boot that then fails
+  // are deactivated again rather than left running with their monitors.
+  deps.disposers.push('plugins', () => pluginLoader.unloadAll());
   await pluginLoader.loadAll();
 
   if (activePerson.plugins?.length) {

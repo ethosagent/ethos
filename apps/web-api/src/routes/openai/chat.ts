@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { EthosError } from '@ethosagent/types';
 import { type Context, Hono } from 'hono';
+// Side-effect import: types `c.get('requestId')` (the `x-request-id`
+// middleware is mounted in routes/index.ts), as in middleware/error-envelope.ts.
+import 'hono/request-id';
 import { streamSSE } from 'hono/streaming';
-import type { CompletionsService } from '../../features/completions/service';
+import { type CompletionsService, isLastStreamChunk } from '../../features/completions/service';
 import { openAiErrorBody } from '../../middleware/bearer-auth';
 import type { PersonalitiesService } from '../../services/personalities.service';
 import { type ChatCompletionRequest, ChatCompletionRequestSchema } from './schemas';
@@ -129,14 +132,37 @@ function streamCompletion(
 ): Response {
   return streamSSE(c, async (stream) => {
     const controller = new AbortController();
+    // A genuine client disconnect BEFORE the answer aborts the turn. Hono only
+    // reports an abort for a response it has not closed itself
+    // (`StreamingApi`'s `cancel` checks `closed`), so ending the response at
+    // the last chunk below does not abort the drain behind it.
     stream.onAbort(() => controller.abort());
     try {
       for await (const chunk of service.stream({ ...input, abortSignal: controller.signal })) {
+        // F07 — past the last chunk the client has its whole answer and the
+        // response is closed; `stream` is still draining AgentLoop's turn-end
+        // work (see `CompletionsService.stream`), and this handler pulls it to
+        // the end so that work runs inside the request's lifetime.
+        if (stream.closed) continue;
         await stream.writeSSE({ data: JSON.stringify(chunk) });
         if (controller.signal.aborted) return;
+        if (isLastStreamChunk(chunk, input.req)) {
+          await stream.writeSSE({ data: '[DONE]' });
+          await stream.close();
+        }
       }
-      await stream.writeSSE({ data: '[DONE]' });
+      // No closing chunk was recognised (defensive — `stream` always yields one).
+      if (!stream.closed) await stream.writeSSE({ data: '[DONE]' });
     } catch (err) {
+      if (stream.closed) {
+        // The answer and `[DONE]` are already out; a failure in the turn's
+        // tail has no client to report to. The request's `x-request-id` ties
+        // this line to the request the client made. Widened to `| undefined`:
+        // the middleware is absent on sub-apps mounted alone (tests).
+        const requestId: string | undefined = c.get('requestId');
+        console.error('[stream_tail_failed]', requestId, err);
+        return;
+      }
       // Emit OpenAI-shaped error then close. SDK clients surface this as a
       // stream error rather than a malformed JSON parse. Never reflect raw
       // error.message — it may contain internal paths or stack traces.

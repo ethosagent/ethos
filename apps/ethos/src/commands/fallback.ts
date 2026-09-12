@@ -1,6 +1,8 @@
 import { createInterface, type Interface } from 'node:readline';
 import {
   type EthosConfig,
+  fillFromTopLevel,
+  isProviderChainSecretRef,
   type ProviderConfig,
   readRawConfig,
   secretRefFromValue,
@@ -20,10 +22,13 @@ import { getSecretsResolver, getStorage } from '../wiring';
 //   ethos fallback remove <index>   — remove the entry at <index> (1-based)
 //   ethos fallback clear            — wipe the entire chain
 //
-// The primary `provider:` / `apiKey:` / `model:` at top level are the
-// first attempt; `providers:` are tried in array order when the primary
-// errors. Apikeys are stored as `${secrets:providers/<idx>/<provider>/apiKey}`
-// refs through the SecretsResolver — never plaintext in config.yaml.
+// With fewer than two `providers:` entries the runtime uses the top-level
+// `provider:` / `apiKey:` / `model:`; from two on it uses the chain alone, in
+// array order (`createLLM`, packages/wiring). `add` therefore keeps the
+// top-level provider at the head of the chain it grows. Apikeys are stored as
+// `${secrets:providers/<idx>/<provider>/apiKey}` refs (a `-2`, `-3`, … suffix
+// when another entry holds that name) through the SecretsResolver — never
+// plaintext in config.yaml.
 
 const c = {
   reset: '\x1b[0m',
@@ -78,7 +83,44 @@ export async function runFallback(args: string[]): Promise<void> {
   }
 }
 
+/**
+ * What the runtime runs, not how the file is laid out: with two or more chain
+ * entries `createLLM` (packages/wiring) uses the chain alone, entry 1 first, and
+ * ignores the top-level fields; with fewer it uses the top-level fields. One
+ * "Primary" line, then the fallbacks. Chain entries keep their 1-based chain
+ * number, which is what `remove <index>` takes.
+ */
 function printList(config: EthosConfig): void {
+  const chain = config.providers ?? [];
+  // Every modelled field the entry carries, plus the NAMES of the unmodelled
+  // ones (`passthrough`) — their values can be anything, including something an
+  // operator would not want echoed.
+  const entryLine = (i: number, p: ProviderConfig, tag: string): string => {
+    const extra = Object.keys(p.passthrough ?? {}).sort();
+    return (
+      `  ${tag}${i + 1}.${c.reset} ${c.cyan}${p.provider}${c.reset}` +
+      ` · ${p.model ?? '(inherits primary model)'}` +
+      ` · ${maskRef(p.apiKey)}` +
+      (p.baseUrl ? ` · ${c.dim}${p.baseUrl}${c.reset}` : '') +
+      (p.apiVersion ? ` · ${c.dim}apiVersion ${p.apiVersion}${c.reset}` : '') +
+      (p.region ? ` · ${c.dim}region ${p.region}${c.reset}` : '') +
+      (p.awsProfile ? ` · ${c.dim}profile ${p.awsProfile}${c.reset}` : '') +
+      (extra.length > 0 ? ` · ${c.dim}also: ${extra.join(', ')}${c.reset}` : '')
+    );
+  };
+
+  const [head, ...rest] = chain;
+  if (head && rest.length > 0) {
+    console.log(`${c.bold}Primary${c.reset} ${c.dim}(chain entry 1)${c.reset}`);
+    console.log(entryLine(0, head, c.green));
+    console.log('');
+    console.log(
+      `${c.bold}Fallbacks${c.reset} ${c.dim}(tried in order when the primary errors)${c.reset}`,
+    );
+    for (const [i, p] of rest.entries()) console.log(entryLine(i + 1, p, c.dim));
+    return;
+  }
+
   console.log(
     `${c.bold}Primary${c.reset} ${c.dim}(from top-level provider/apiKey/model)${c.reset}`,
   );
@@ -86,26 +128,13 @@ function printList(config: EthosConfig): void {
     `  ${c.cyan}${config.provider}${c.reset} · ${config.model} · ${maskRef(config.apiKey)}`,
   );
   console.log('');
-
-  const chain = config.providers ?? [];
-  if (chain.length === 0) {
-    console.log(`${c.dim}No fallback providers configured.${c.reset}`);
-    console.log(`${c.dim}Add one with:${c.reset} ${c.bold}ethos fallback add${c.reset}`);
-    return;
-  }
-
-  console.log(
-    `${c.bold}Fallback chain${c.reset} ${c.dim}(tried in order on primary error)${c.reset}`,
-  );
-  for (const [i, p] of chain.entries()) {
-    const tag = i === 0 ? c.green : c.dim;
+  if (head) {
     console.log(
-      `  ${tag}${i + 1}.${c.reset} ${c.cyan}${p.provider}${c.reset}` +
-        ` · ${p.model ?? '(inherits primary model)'}` +
-        ` · ${maskRef(p.apiKey)}` +
-        (p.baseUrl ? ` · ${c.dim}${p.baseUrl}${c.reset}` : ''),
+      `${c.dim}Not in use — a chain takes effect at two entries:${c.reset}\n${entryLine(0, head, c.dim)}`,
     );
   }
+  console.log(`${c.dim}No fallback providers configured.${c.reset}`);
+  console.log(`${c.dim}Add one with:${c.reset} ${c.bold}ethos fallback add${c.reset}`);
 }
 
 async function addEntry(config: EthosConfig): Promise<void> {
@@ -127,25 +156,55 @@ async function addEntry(config: EthosConfig): Promise<void> {
 
     const model = (await ask(rl, 'Model (blank to inherit primary): ')).trim();
     const baseUrl = (await ask(rl, 'Base URL (blank for provider default): ')).trim();
+    // Only what this provider uses, same shape as the azure line: a prompt an
+    // operator cannot answer is worse than no prompt. Nothing else could author
+    // `providers.<i>.region` / `.awsProfile`, so a Bedrock fallback silently ran
+    // in us-east-1 (`createLLM`, packages/wiring, defaults the region).
     const apiVersion =
       provider === 'azure'
         ? (await ask(rl, 'Azure API version (e.g. 2024-12-01-preview): ')).trim()
         : '';
+    const region = provider === 'bedrock' ? (await ask(rl, 'AWS region (us-east-1): ')).trim() : '';
+    const awsProfile =
+      provider === 'bedrock'
+        ? (await ask(rl, 'AWS profile (blank for static keys / env): ')).trim()
+        : '';
 
     const chain = [...(config.providers ?? [])];
+    // Below two entries the runtime runs on the top-level fields; from two on
+    // it runs the chain alone (`createLLM`, packages/wiring). So the add that
+    // grows the chain past one entry must put the top-level provider at its
+    // head — key reference, base URL, model and all — or the primary is gone.
+    if (chain.length < 2 && config.provider) {
+      const top: ProviderConfig = {
+        provider: config.provider,
+        apiKey: config.apiKey,
+        model: config.model,
+        ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+        ...(config.apiVersion ? { apiVersion: config.apiVersion } : {}),
+        ...(config.region ? { region: config.region } : {}),
+        ...(config.awsProfile ? { awsProfile: config.awsProfile } : {}),
+      };
+      const head = chain[0];
+      if (head && head.provider === top.provider) chain[0] = fillFromTopLevel(head, top);
+      else chain.unshift(top);
+    }
     const idx = chain.length;
 
-    // Store the API key through the resolver; config gets the ref.
+    // The plaintext key goes to `writeConfig`, which stores it in the vault
+    // under a name no other chain entry holds (`externalizeProviderChain` in
+    // @ethosagent/config) and writes only the ref. Minting
+    // `providers/<idx>/<provider>/apiKey` here instead overwrote the key of any
+    // survivor of an earlier `remove` that still pointed at that name.
     const secrets = await getSecretsResolver();
-    const ref = `providers/${idx}/${provider}/apiKey`;
-    await secrets.set(ref, apiKey);
-
     const entry: ProviderConfig = {
       provider,
-      apiKey: `\${secrets:${ref}}`,
+      apiKey,
       ...(model ? { model } : {}),
       ...(baseUrl ? { baseUrl } : {}),
       ...(apiVersion ? { apiVersion } : {}),
+      ...(region ? { region } : {}),
+      ...(awsProfile ? { awsProfile } : {}),
     };
     chain.push(entry);
 
@@ -187,11 +246,16 @@ async function removeEntry(config: EthosConfig, idx: number): Promise<void> {
 
   // Cleanup of the underlying secret. The ref index doesn't shift even though
   // the array did — we intentionally don't renumber: the original ref strings
-  // in the surviving entries would mis-resolve otherwise. That also means a
-  // later `add` can mint the ref a survivor already holds, so drop it only
-  // when no survivor still points at it.
+  // in the surviving entries would mis-resolve otherwise. Two entries can still
+  // share one ref (an `add` from before `externalizeProviderChain` minted a
+  // held name), so drop it only when no survivor still points at it.
+  // Only a name the chain minted (`providers/<n>/…`) is ours to delete: a
+  // canonical `providers/<provider>/apiKey` is read by name by the provider
+  // factories and tools (`isProviderChainSecretRef`). And the top-level key
+  // counts as a reference: `add` on a top-level-only config puts the top-level
+  // entry at the head of the chain naming the SAME vault entry.
   const ref = secretRefFromValue(removed.apiKey);
-  if (ref && !chain.some((e) => secretRefFromValue(e.apiKey) === ref)) {
+  if (ref && isProviderChainSecretRef(ref) && !stillReferenced(ref, chain, config)) {
     await deleteSecretMaterial(secrets, ref);
   }
 }
@@ -217,11 +281,21 @@ async function clearChain(config: EthosConfig): Promise<void> {
   const refs = new Set<string>();
   for (const entry of chain) {
     const ref = secretRefFromValue(entry.apiKey);
-    if (ref) refs.add(ref);
+    if (ref && isProviderChainSecretRef(ref) && !stillReferenced(ref, [], config)) refs.add(ref);
   }
   for (const ref of refs) {
     await deleteSecretMaterial(secrets, ref);
   }
+}
+
+/** Whether a surviving chain entry or the top-level `apiKey` still names `ref`. */
+function stillReferenced(
+  ref: string,
+  chain: readonly ProviderConfig[],
+  config: EthosConfig,
+): boolean {
+  if (secretRefFromValue(config.apiKey) === ref) return true;
+  return chain.some((e) => secretRefFromValue(e.apiKey) === ref);
 }
 
 /**

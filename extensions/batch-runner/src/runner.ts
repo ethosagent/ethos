@@ -1,5 +1,6 @@
 import type { AgentLoop } from '@ethosagent/core';
 import type { Storage } from '@ethosagent/types';
+import { answerSuffix } from '@ethosagent/types';
 import { AtroposWriter } from './atropos-writer';
 import { readCheckpoint, writeCheckpoint } from './checkpoint';
 import { Semaphore } from './semaphore';
@@ -109,6 +110,11 @@ export class BatchRunner {
         switch (event.type) {
           case 'text_delta':
             text += event.text;
+            break;
+          case 'done':
+            // A `returnDirect` tool's answer arrives only as `done.text`, after
+            // any preamble that streamed: `answerSuffix` is what is still owed.
+            text += answerSuffix(text, event.text);
             break;
           case 'tool_start':
             toolCalls.push({ name: event.toolName, args: event.args });

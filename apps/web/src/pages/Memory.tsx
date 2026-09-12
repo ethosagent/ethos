@@ -22,6 +22,7 @@ import type { Dayjs } from 'dayjs';
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { PersonalitySelect } from '../components/personality/PersonalitySelect';
+import { memoryFailure, retryMemoryQuery } from '../features/memory/refusal';
 import { useFavouritePersonality } from '../hooks/useFavouritePersonality';
 import { resolvePersonalityId } from '../lib/favouritePersonality';
 import { rpc } from '../rpc';
@@ -72,11 +73,7 @@ export function Memory() {
         ...(activeStore === 'user' && userId ? { userId } : {}),
       }),
     enabled: !!effectivePersonalityId,
-  });
-
-  const configQuery = useQuery({
-    queryKey: ['config'],
-    queryFn: () => rpc.config.get(),
+    retry: retryMemoryQuery,
   });
 
   if (personalitiesQuery.isLoading || (personalitiesQuery.isSuccess && listQuery.isLoading)) {
@@ -86,17 +83,11 @@ export function Memory() {
       </div>
     );
   }
-  if (listQuery.error) {
-    return (
-      <Typography.Text type="danger">
-        Failed to load memory: {(listQuery.error as Error).message}
-      </Typography.Text>
-    );
-  }
-
   const files = listQuery.data?.items ?? [];
   const fileByStore = new Map(files.map((f) => [f.store, f] as const));
-  const memoryMode = configQuery.data?.memory ?? 'markdown';
+  // Keyed on the error the RUNNING server returned, not on config.yaml's
+  // `memory:` (which can name another backend while a restart is pending).
+  const listFailure = listQuery.error ? memoryFailure(listQuery.error) : null;
 
   const users = usersQuery.data?.users ?? [];
 
@@ -137,13 +128,6 @@ export function Memory() {
         ) : null}
       </div>
 
-      {memoryMode === 'vector' ? (
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-          Vector mode is active — the agent uses semantic chunks, not these files. Switch to{' '}
-          <code>markdown</code> mode in Settings if you want edits here to flow back to the agent.
-        </Typography.Paragraph>
-      ) : null}
-
       <Tabs
         activeKey={view}
         onChange={(k) => setView(k as MemoryView)}
@@ -151,7 +135,21 @@ export function Memory() {
           {
             key: 'files',
             label: 'Files',
-            children: (
+            // The server refuses file editing for a backend that has none
+            // (MemoryService.requireMemory, NOT_CONFIGURED); show that refusal
+            // here and keep Timeline/Pending reachable rather than failing the page.
+            children: listFailure ? (
+              listFailure.kind === 'unsupported' ? (
+                <Typography.Paragraph type="secondary">
+                  {listFailure.message}
+                  {listFailure.action ? ` ${listFailure.action}` : null}
+                </Typography.Paragraph>
+              ) : (
+                <Typography.Text type="danger">
+                  Failed to load memory: {listFailure.message}
+                </Typography.Text>
+              )
+            ) : (
               <Tabs
                 activeKey={activeStore}
                 onChange={(k) => setActiveStore(k as MemoryStoreId)}
@@ -389,6 +387,7 @@ function MemoryTimeline({ personalityId }: { personalityId: string }) {
         ...(pageParam ? { cursor: pageParam } : {}),
       }),
     initialPageParam: null as string | null,
+    retry: retryMemoryQuery,
     getNextPageParam: (last) => last.nextCursor,
     enabled: !!personalityId,
   });
@@ -410,6 +409,7 @@ function MemoryTimeline({ personalityId }: { personalityId: string }) {
   const pages = historyQuery.data?.pages ?? [];
   const entries = pages.flatMap((p) => p.entries);
   const corruptLines = pages[0]?.corruptLines ?? 0;
+  const historyFailure = historyQuery.error ? memoryFailure(historyQuery.error) : null;
 
   return (
     <div className="memory-timeline">
@@ -458,10 +458,19 @@ function MemoryTimeline({ personalityId }: { personalityId: string }) {
         <div style={{ display: 'grid', placeItems: 'center', height: 160 }}>
           <Spin />
         </div>
-      ) : historyQuery.error ? (
-        <Typography.Text type="danger">
-          Failed to load history: {(historyQuery.error as Error).message}
-        </Typography.Text>
+      ) : historyFailure ? (
+        // The same refusal the Files tab shows: a backend with no file memory
+        // has no provenance history either, which is not "nothing yet".
+        historyFailure.kind === 'unsupported' ? (
+          <Typography.Paragraph type="secondary">
+            {historyFailure.message}
+            {historyFailure.action ? ` ${historyFailure.action}` : null}
+          </Typography.Paragraph>
+        ) : (
+          <Typography.Text type="danger">
+            Failed to load history: {historyFailure.message}
+          </Typography.Text>
+        )
       ) : entries.length === 0 ? (
         <Typography.Text type="secondary">
           No memory history yet. Edits, captures, and consolidation runs appear here.

@@ -718,6 +718,40 @@ export interface DoctorOptions {
   };
 }
 
+/**
+ * The provider-chain lines of `ethos doctor`'s Config section — empty when
+ * there is no `providers:` chain. The chain decides which provider every turn
+ * runs on, and this command is the one whose job is "what is wrong with my
+ * config"; it said nothing about it. Mirrors `ethos fallback list`: the runtime
+ * runs the chain from two entries on and the top-level fields below that
+ * (`createLLM`, packages/wiring), and unmodelled fields are listed by NAME
+ * only. Exported for `__tests__/doctor-provider-chain.test.ts`.
+ */
+export function providerChainLines(config: EthosConfig): string[] {
+  const chain = config.providers ?? [];
+  if (chain.length === 0) return [];
+  const lines: string[] = [];
+  lines.push(
+    chain.length >= 2
+      ? `     chain:       ${chain.length} entries — entry 1 is primary, the top-level provider/apiKey/model are not in use`
+      : `     chain:       1 entry — not in use, a chain takes effect at two entries; the top-level provider/apiKey/model run`,
+  );
+  for (const [i, p] of chain.entries()) {
+    const extra = Object.keys(p.passthrough ?? {}).sort();
+    lines.push(
+      `       ${i + 1}. ${c.cyan}${p.provider}${c.reset}` +
+        ` · ${p.model ?? '(inherits primary model)'}` +
+        ` · ${p.apiKey ? 'key set' : `${c.yellow}no key${c.reset}`}` +
+        (p.baseUrl ? ` · ${p.baseUrl}` : '') +
+        (p.apiVersion ? ` · apiVersion ${p.apiVersion}` : '') +
+        (p.region ? ` · region ${p.region}` : '') +
+        (p.awsProfile ? ` · profile ${p.awsProfile}` : '') +
+        (extra.length > 0 ? ` · ${c.dim}also: ${extra.join(', ')}${c.reset}` : ''),
+    );
+  }
+  return lines;
+}
+
 export async function runDoctor(args: string[] = [], options?: DoctorOptions): Promise<void> {
   if (args.includes('--recent-errors')) {
     runRecentErrorsReport();
@@ -897,6 +931,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     // `ethos gateway` and `ethos listen` surface these at boot; an operator
     // running `ethos serve` and driving the web UI would otherwise never see
     // them, and this is the command whose job is "what is wrong with my config".
+    for (const line of providerChainLines(config)) console.log(line);
     const notices = configParseNotices(config);
     for (const err of notices.errors) console.log(`  ${c.red}✗${c.reset}  ${err}`);
     for (const warn of notices.warnings) console.log(`  ${c.yellow}⚠${c.reset}  ${warn}`);

@@ -27,6 +27,8 @@ export function buildHelpText(
     '/skin [list|<name>]           switch UI theme',
     '/tools                        list all available tools',
     '/skills                       list available skills',
+    '/goal <text>                  start an autonomous goal run',
+    '/goals                        recent goals',
     '/exit                         quit',
   ];
   for (const cmd of external) {

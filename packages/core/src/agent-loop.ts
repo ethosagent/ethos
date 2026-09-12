@@ -33,6 +33,7 @@ import { ScriptToolBridge } from './agent-loop/stages/script-tool-bridge';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
 import { streamStep } from './agent-loop/stages/stream-step';
 import { processTools } from './agent-loop/stages/tool-processing';
+import { persistAbortedToolCalls } from './agent-loop/stages/tool-rejection';
 import { createTurnUsage, finalizeTurn, flushTurnUsage } from './agent-loop/stages/turn-finalizer';
 import { setupTurn } from './agent-loop/stages/turn-setup';
 import type { LoopDeps } from './agent-loop/turn-context';
@@ -410,8 +411,6 @@ export class AgentLoop {
     string,
     Map<string, { mtimeMs: number; readAtTurn: number }>
   >();
-  /** v2: per-run key/value store threaded into ToolContext for plugin communication. */
-  private readonly contextStore = new ContextStore();
 
   constructor(config: AgentLoopConfig) {
     this.llm = config.llm;
@@ -576,7 +575,6 @@ export class AgentLoop {
       credentialCheck: this.credentialCheck,
       sessionCosts: this.sessionCosts,
       sessionReadMtimes: this.sessionReadMtimes,
-      contextStore: this.contextStore,
       documentExtractors: this.documentExtractors,
       contentStore: this.contentStore,
       contextLog: this.contextLog,
@@ -708,6 +706,9 @@ export class AgentLoop {
       turnAttachments: opts.attachments,
       ...(this.onToolMetric ? { onToolMetric: this.onToolMetric } : {}),
     });
+
+    // get/setContext: one store per run(), seen by its batches only (context-store-per-run.test.ts)
+    const contextStore = new ContextStore();
 
     // A1 — this turn's token/cost rollup: filled as each assistant message is
     // persisted, flushed by the finalizer (and by the early exits that skip it).
@@ -844,6 +845,19 @@ export class AgentLoop {
       const { completedToolCalls } = stepResult;
       const usageSink = stepResult.usageSink;
 
+      // Aborted after the tool_use blocks streamed: the iteration-top check would
+      // only see it after processTools ran them (see persistAbortedToolCalls).
+      if (abortSignal.aborted) {
+        await persistAbortedToolCalls(this.session, sessionId, traceId, completedToolCalls);
+        await flushTurnUsage(this.session, sessionId, turnUsage, this.observability);
+        yield { type: 'error', error: 'Aborted', code: 'aborted' };
+        if (traceId) {
+          this.observability?.endTrace(traceId, 'aborted');
+          this.observability?.flush();
+        }
+        return;
+      }
+
       // G4 — the first tool dispatch is where the posture has to hold: every
       // surface's hooks are registered by now and nothing has executed yet.
       this.checkApprovalPosture();
@@ -864,7 +878,6 @@ export class AgentLoop {
           platform: this.platform,
           resultBudgetChars: this.resultBudgetChars,
           teamId: this.teamId,
-          contextStore: this.contextStore,
           sessionReadMtimes: this.sessionReadMtimes,
           llm: this.llm,
         },
@@ -890,6 +903,7 @@ export class AgentLoop {
           watcherTap,
           usageSink,
           scriptToolBridge,
+          contextStore,
           dgEnabled,
           dgRemaining: dgRemainingRef,
           dgTools,
@@ -942,14 +956,16 @@ export class AgentLoop {
       ...(this.turnAuditors ? { turnAuditors: this.turnAuditors } : {}),
     });
 
-    // Phase 3 — turn-end context maintenance (silent memory flush at 70%,
-    // auto-compaction at 80%). Runs AFTER `done`, lane still held, so it cannot
-    // race the next inbound turn. Auto-compaction is default on (set
-    // compaction.autoCompact: false to disable); the memory flush is opt-in.
+    // Phase 3 — turn-end maintenance (opt-in memory flush at 70%, auto-compaction at 80%,
+    // default on). Runs AFTER `done`, so only a consumer that drains the iterator gets it,
+    // and it races no inbound turn only while that consumer holds the lane — the gateway
+    // does (`Gateway.runTurn`; extensions/gateway/src/__tests__/turn-tail.test.ts).
     const turnEndExtras = {
       userScopeId,
       compactedThisTurn,
       abortSignal,
+      contextStore,
+      rootSessionKey: opts.rootSessionKey ?? sessionKey,
       systemPrompt: systemPrompt ?? '',
       ...(opts.maxCompletionTokens !== undefined
         ? { maxCompletionTokens: opts.maxCompletionTokens }

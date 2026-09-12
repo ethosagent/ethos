@@ -46,11 +46,15 @@ vi.mock('../sessions', async (importOriginal) => ({
 }));
 
 // A fake Chromium, so the CREATION path (deadlock tests) runs without a
-// browser. Its pages are complete enough for a whole browse_url call.
+// browser. Its pages are complete enough for a whole browse_url call, and for
+// a takeover on the session it creates. `bringToFront` is load-bearing on
+// macOS/Windows: `hasDisplay()` is true there, so a created session is
+// `headed` and the takeover raises its window before the handover.
 const pw = vi.hoisted(() => {
   function makePage() {
     return {
       on: () => {},
+      bringToFront: async () => {},
       goto: async () => null,
       isClosed: () => false,
       title: async () => 'Created',

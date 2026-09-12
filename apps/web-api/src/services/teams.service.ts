@@ -2,9 +2,8 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { autonomyTier } from '@ethosagent/kanban-store';
-import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { parseTeamManifest, readRuntimeFrom, teamsDir } from '@ethosagent/team-supervisor';
-import type { MemoryContext, Storage, TeamManifest } from '@ethosagent/types';
+import type { MemoryContext, MemoryProvider, Storage, TeamManifest } from '@ethosagent/types';
 import type {
   KanbanEvent,
   KanbanMemberStats,
@@ -21,8 +20,10 @@ import { assertSafeTeamName, type KanbanService } from './kanban.service';
 // §9). Composes over `KanbanService` for discovery, the board snapshot and the
 // path-containment guard; adds what the manifest and runtime file say about
 // members, and the supervisor ledger derived from `task_events` (§7). Team
-// memory goes through the same markdown provider wiring mounts for the team
-// loop (`<teamsDir>/<name>/memory`, `scopeId = team:<name>`), via Storage.
+// memory is BORROWED, never built here: the injected `teamMemory` factory is
+// wiring's `createTeamMemoryProvider` (F04 follow-up), so a web edit carries the
+// same mtime precondition the `team_memory_*` tools do and cannot silently
+// overwrite an agent's write (`<teamsDir>/<name>/memory`, `scopeId = team:<name>`).
 
 const GLOBAL_BOARD_NAME = 'global';
 
@@ -41,17 +42,28 @@ export interface TeamsServiceOptions {
   storage: Storage;
   /** Override the teams directory (testing). Defaults to `~/.ethos/teams`. */
   teamsDir?: string;
+  /**
+   * Team-topic memory for one team, composed by wiring
+   * (`MemoryBundle.teamMemory` → `createTeamMemoryProvider`). Called once per
+   * team and kept: the write precondition lives on the returned instance, so a
+   * fresh provider per request would drop it.
+   */
+  teamMemory: (teamName: string) => MemoryProvider;
 }
 
 export class TeamsService {
   private readonly kanban: KanbanService;
   private readonly storage: Storage;
   private readonly rootDir: string;
+  private readonly openTeamMemory: (teamName: string) => MemoryProvider;
+  /** One provider per team, for the life of this service — see `teamMemory`. */
+  private readonly teamMemory = new Map<string, TeamMemory>();
 
   constructor(opts: TeamsServiceOptions) {
     this.kanban = opts.kanban;
     this.storage = opts.storage;
     this.rootDir = opts.teamsDir ?? teamsDir();
+    this.openTeamMemory = opts.teamMemory;
   }
 
   /** Every team with a parseable manifest. The global board is not a team. */
@@ -230,20 +242,24 @@ export class TeamsService {
   }
 
   private memoryFor(team: string): TeamMemory {
-    return new TeamMemory(
-      new MarkdownFileMemoryProvider({
-        dir: join(this.rootDir, team, 'memory'),
-        storage: this.storage,
-      }),
-      { scopeId: `team:${team}`, sessionId: '', sessionKey: '', platform: 'web', workingDir: '' },
-    );
+    const cached = this.teamMemory.get(team);
+    if (cached) return cached;
+    const view = new TeamMemory(this.openTeamMemory(team), {
+      scopeId: `team:${team}`,
+      sessionId: '',
+      sessionKey: '',
+      platform: 'web',
+      workingDir: '',
+    });
+    this.teamMemory.set(team, view);
+    return view;
   }
 }
 
 /** Topic-keyed view over the team-scoped provider: `<key>` ⇄ `<key>.md`. */
 class TeamMemory {
   constructor(
-    private readonly provider: MarkdownFileMemoryProvider,
+    private readonly provider: MemoryProvider,
     private readonly ctx: MemoryContext,
   ) {}
 

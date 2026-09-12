@@ -236,9 +236,25 @@ export class ClarifyBridge {
    * type. `request()` resolves which surface a row routes to (see
    * `resolveRouting`) and looks the presenter up here — at most one presenter
    * is ever invoked per row.
+   *
+   * Returns a release, like every other `register*`/`on*` in this repo. A
+   * surface that outlives one process but not the whole run — web-api, torn
+   * down by `CreateWebApiResult.dispose` — MUST call it: a presenter left
+   * behind is a black hole, because the routing that found it believes the
+   * question was asked. Released, the slot is empty again: a row routed to that
+   * surface refuses with {@link ClarifyNoSurfaceError}, `hydrate()` stops
+   * adopting its persisted rows, and another surface's presenter is unaffected.
+   *
+   * The release is identity-checked, so a late teardown cannot unregister the
+   * presenter that replaced it (start-stop-start). Pinned by
+   * `packages/core/src/__tests__/clarify.test.ts`
+   * ('registerPresenter returns a release').
    */
-  registerPresenter(surfaceType: ClarifySurfaceType, presenter: ClarifyPresenter): void {
+  registerPresenter(surfaceType: ClarifySurfaceType, presenter: ClarifyPresenter): () => void {
     this.presenters.set(surfaceType, presenter);
+    return () => {
+      if (this.presenters.get(surfaceType) === presenter) this.presenters.delete(surfaceType);
+    };
   }
 
   /**

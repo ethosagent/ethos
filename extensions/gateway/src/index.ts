@@ -56,7 +56,13 @@ import type {
   VoiceAudioFormat,
   VoiceTurnOrigin,
 } from '@ethosagent/types';
-import { isVoiceOutboundAdapter, voiceAudioExtension, voiceAudioMimeType } from '@ethosagent/types';
+import {
+  answerSuffix,
+  isVoiceOutboundAdapter,
+  JOB_ABORTED_BY_SHUTDOWN,
+  voiceAudioExtension,
+  voiceAudioMimeType,
+} from '@ethosagent/types';
 import {
   DEFAULT_VOICE_MODE,
   detectLanguage,
@@ -268,6 +274,17 @@ const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
  */
 const ABORT_GRACE_MS = 2_000;
 
+/**
+ * How long `shutdown()` waits for the turns it aborted to unwind — drained
+ * turn-end tails included — before returning anyway. The same budget as
+ * `DISPOSE_BEFORE_EXIT_GRACE_MS` (apps/ethos/src/lib/dispose-before-exit.ts),
+ * which is what the callers spend next disposing each bot's loop: a turn still
+ * running when its loop is disposed is working against a torn-down runtime.
+ * `AgentLoop` promises no deadline for observing an abort, so the wait is
+ * bounded rather than exact. Overridable per call (`shutdown({ drainTimeoutMs })`).
+ */
+const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
+
 /** `telegram:<botKey>` → `telegram`. An id with no colon IS the platform. */
 function platformOfAdapterId(id: string): string {
   const colon = id.indexOf(':');
@@ -279,6 +296,47 @@ function platformOfAdapterId(id: string): string {
 function botKeyOfAdapterId(id: string): string {
   const colon = id.indexOf(':');
   return colon > 0 ? id.slice(colon + 1) : id;
+}
+
+/**
+ * The botKey an adapter speaks as: the `botKey` it declares when it has one,
+ * else `filedUnder` (the key a caller's map used, or the id-derived one).
+ *
+ * The one legacy alias for adapter identity, normalized here and nowhere else.
+ * First-party adapters declare `botKey` — it is what they stamp on
+ * `InboundMessage.botKey` — and all but one also embed it in `id`
+ * (`telegram:<botKey>`). Email's id is the bare platform `'email'`, so an
+ * id-derived key files it under `'email'` while the bot it serves, and every
+ * obligation it owes, is `emailBotKey(user, host)`. Pinned by
+ * `__tests__/bot-addressed-delivery.test.ts`.
+ */
+function servedBotKey(adapter: PlatformAdapter, filedUnder: string): string {
+  const declared = (adapter as { botKey?: unknown }).botKey;
+  return typeof declared === 'string' && declared.length > 0 ? declared : filedUnder;
+}
+
+/**
+ * Both adapter registries a Gateway takes, derived from ONE list of every
+ * adapter the process runs: `adapters` (first adapter per platform — the
+ * platform's default, for `sendTo`) and `botAdapters` (every adapter, keyed by
+ * the botKey it speaks as — what tracked sends resolve through, see
+ * `Gateway.adapterForBot`). A caller that builds only the first map leaves
+ * every later same-platform bot without an adapter for its tracked sends;
+ * deriving both here is what makes that omission impossible. Used by
+ * `buildGateway` and `ethos boot` (apps/ethos/src/commands/gateway.ts, boot.ts).
+ */
+export function adapterRegistries(adapters: Iterable<PlatformAdapter>): {
+  adapters: Map<string, PlatformAdapter>;
+  botAdapters: Map<string, PlatformAdapter>;
+} {
+  const byPlatform = new Map<string, PlatformAdapter>();
+  const byBot = new Map<string, PlatformAdapter>();
+  for (const adapter of adapters) {
+    const platform = platformOfAdapterId(adapter.id);
+    if (!byPlatform.has(platform)) byPlatform.set(platform, adapter);
+    byBot.set(servedBotKey(adapter, botKeyOfAdapterId(adapter.id)), adapter);
+  }
+  return { adapters: byPlatform, botAdapters: byBot };
 }
 
 /**
@@ -890,6 +948,16 @@ export class Gateway {
    * while everything already queued keeps resolving normally.
    */
   private readonly retiringBots = new Set<string>();
+  /**
+   * Set at the very start of `shutdown()` and never cleared: from then on
+   * `handleMessage` starts no turn and pushes into no steer sink (see
+   * `refuseWhileClosing`). Adapters keep delivering until the callers stop
+   * them, AFTER `shutdown()` returns, so without this an inbound during the
+   * drain started a turn on a loop about to be disposed, or was "↩ noted" into
+   * an aborted turn nobody reads. `notify` is shutdown's own resend text.
+   * Distinct from `retiringBots`, which gates one bot during `removeAdapter`.
+   */
+  private closing: { notify?: string } | null = null;
   private readonly lanes = new Map<string, SessionLane>();
   /** Effective session key per lane (allows /new to fork a fresh session). */
   private readonly sessionKeys = new Map<string, string>();
@@ -920,8 +988,14 @@ export class Gateway {
   /** Chats (`${platform}:${chatId}`) where streaming was disabled after
    *  repeated flood-waits — future turns there fall back to non-streaming. */
   private readonly streamingDisabledChats = new Set<string>();
-  /** Active turns by laneKey — used by graceful shutdown to notify users. */
-  private readonly activeTurns = new Map<string, { adapter: PlatformAdapter; chatId: string }>();
+  /** Active turns by laneKey — used by graceful shutdown to notify users.
+   *  `answered` flips once the turn's TEXT final (or the error note standing
+   *  in for it) is confirmed delivered — before any voice note (`markAnswered`
+   *  in `runTurn`); shutdown's resend notice skips those. */
+  private readonly activeTurns = new Map<
+    string,
+    { adapter: PlatformAdapter; chatId: string; answered?: boolean }
+  >();
   /** Active steer sinks by laneKey — inbound messages during a turn push here. */
   private readonly activeSinks = new Map<string, SteerSink>();
   /** Buffered notifications for sessions whose turn has ended. */
@@ -1076,6 +1150,8 @@ export class Gateway {
    * needless delay or a race depending on which side of it the turn lands.
    */
   private readonly drainWaiters = new Set<() => void>();
+  /** Every `runTurn` in flight — what `shutdown()` waits on after aborting. */
+  private readonly inflightTurns = new Set<Promise<void>>();
   private readonly resolveUserIdFn:
     | ((platform: string, platformUserId: string, displayLabel?: string) => Promise<string>)
     | undefined;
@@ -1217,9 +1293,14 @@ export class Gateway {
     // `config.adapters` names its own bot in `adapter.id`, so a caller that
     // passed only the platform-keyed map still gets an honest
     // `listAdapters()` rather than an empty one.
-    this.botAdapters = new Map(config.botAdapters ?? []);
+    // Keyed by the botKey each adapter DECLARES where it declares one — see
+    // `servedBotKey` — because tracked sends resolve through this map by bot.
+    this.botAdapters = new Map();
+    for (const [key, adapter] of config.botAdapters ?? []) {
+      this.botAdapters.set(servedBotKey(adapter, key), adapter);
+    }
     for (const adapter of this.adapterRegistry.values()) {
-      const botKey = botKeyOfAdapterId(adapter.id);
+      const botKey = servedBotKey(adapter, botKeyOfAdapterId(adapter.id));
       if (!this.botAdapters.has(botKey)) this.botAdapters.set(botKey, adapter);
     }
     this.resolveUserIdFn = config.resolveUserId;
@@ -1256,7 +1337,19 @@ export class Gateway {
           adapter.onMessage((msg: InboundMessage) => {
             // Pin unconditionally — see the startWithContext path above.
             const stamped = { ...msg, botKey: adapterBotKey };
-            void this.handleMessage(stamped, adapter);
+            // Nobody awaits this call, so a failed turn would otherwise be an
+            // unhandled rejection. Same record as `addAdapter`'s inbound path.
+            void this.handleMessage(stamped, adapter).catch((err: unknown) => {
+              this.observability?.recordSafetyBlock({
+                code: 'gateway.inbound_error',
+                cause: 'inbound message handling threw',
+                details: {
+                  platform: msg.platform,
+                  botKey: adapterBotKey,
+                  error: err instanceof Error ? err.message : String(err),
+                },
+              });
+            });
           });
           adapter.start().catch(() => {});
         }
@@ -1456,7 +1549,10 @@ export class Gateway {
   addAdapter(adapter: PlatformAdapter, bot: GatewayBotConfig): void {
     const platform = platformOfAdapterId(adapter.id);
     this.addBot(bot);
-    this.botAdapters.set(bot.botKey, adapter);
+    // ONE derivation with the constructor's seeding: the botKey the adapter
+    // DECLARES wins (it is what it stamps on every inbound), falling back to
+    // the bot it is being registered for. See `servedBotKey`.
+    this.botAdapters.set(servedBotKey(adapter, bot.botKey), adapter);
     // First-adapter-per-platform, matching how the wiring builds
     // `GatewayConfig.adapters`. A hot-added second Telegram bot must not
     // repoint every agent-initiated `send_message` at itself.
@@ -1833,6 +1929,13 @@ export class Gateway {
   // ---------------------------------------------------------------------------
 
   async handleMessage(message: InboundMessage, adapter: PlatformAdapter): Promise<void> {
+    // Shutting down: nothing new starts. Checked BEFORE dedup on purpose — a
+    // refused message is never recorded as seen, so a platform that redelivers
+    // it to the next process gets it processed rather than dropped as a dupe.
+    if (this.closing) {
+      await this.refuseWhileClosing(message, adapter, this.closing);
+      return;
+    }
     // Drop duplicates BEFORE any work — billing-relevant. See OpenClaw #71761
     // (channel messages injected twice → 2× cost). Use the resolved botKey
     // (message.botKey or the synthesized default) so multi-bot routing
@@ -2038,9 +2141,9 @@ export class Gateway {
     // multi-bot deployments (see constructor), so a multi-bot message with
     // an unknown botKey is dropped at `no_bot_available` rather than routed
     // to another bot's loop — cross-bot isolation is preserved.
-    let botKey = message.botKey ?? this.defaultBotKey ?? '';
-    let bot = botKey ? this.bots.get(botKey) : undefined;
-    if (!bot && this.defaultBotKey) {
+    const claimedBotKey = message.botKey ?? this.defaultBotKey ?? '';
+    const botKey = this.routedBotKey(message);
+    if (botKey !== claimedBotKey) {
       // Graceful fallback (single-bot only — `defaultBotKey` is null in
       // multi-bot): an unknown botKey degrades to the sole bot rather than
       // silently dropping. The observability event lets operators spot a
@@ -2054,9 +2157,8 @@ export class Gateway {
           fallback: this.defaultBotKey,
         },
       });
-      botKey = this.defaultBotKey;
-      bot = this.bots.get(botKey);
     }
+    const bot = botKey ? this.bots.get(botKey) : undefined;
     if (!bot) {
       this.observability?.recordSafetyBlock({
         code: 'gateway.no_bot_available',
@@ -2798,9 +2900,12 @@ export class Gateway {
     return lane.enqueue(async (signal) => {
       const slotHeld = await this.concurrency.acquire(signal);
       if (!slotHeld) return;
+      const turn = this.runTurn(laneKey, lane, bot, message, adapter, text, threadId, signal);
+      this.inflightTurns.add(turn);
       try {
-        await this.runTurn(laneKey, lane, bot, message, adapter, text, threadId, signal);
+        await turn;
       } finally {
+        this.inflightTurns.delete(turn);
         this.concurrency.release();
       }
     });
@@ -2892,9 +2997,6 @@ export class Gateway {
     }, 4_000);
 
     try {
-      let responseText = '';
-      let errored: { error: string; code: string } | null = null;
-
       // --- Voice pipeline: auto-transcribe audio attachments ---
       const attachmentCache = this.attachmentCache;
       const storage = this.storage;
@@ -3014,138 +3116,225 @@ export class Gateway {
       const toolsetNarrow = this.channelToolsets?.[message.platform];
 
       const translator = createEventTranslator();
-      for await (const event of bot.loop.run(loopText, {
-        sessionKey,
-        personalityId,
-        abortSignal: signal,
-        attachments: message.attachments,
-        userId,
-        steerSink,
-        origin: `${message.platform}:${message.chatId}`,
-        ...(voiceOrigin ? { voiceOrigin } : {}),
-        ...(toolsetNarrow ? { toolsetNarrow } : {}),
-        // Unconditional, not config-driven: UI-card tools have no rendering on
-        // any channel adapter, so they never reach a channel turn's tool list.
-        toolsetExclude: [...CHANNEL_EXCLUDED_TOOLS],
-      })) {
-        translator.push(event);
-        // Feed the live draft. Progress folds in only for `audience:'user'`
-        // (W3.3) — the framework never opts a tool in. Fire-and-forget: the
-        // streamer serializes internally and finalize() awaits it.
-        if (streamer && !signal.aborted) {
-          if (event.type === 'text_delta') {
-            void streamer.pushText(translator.text);
-          } else if (event.type === 'tool_progress' && shouldSurfaceProgress(event)) {
-            void streamer.pushProgress(event.message);
+
+      // The chat has its answer: the TEXT final (or the error note standing in
+      // for it) landed. Read by `shutdown()` — the one decision it informs is
+      // whether this chat still needs an "interrupted, please resend" notice —
+      // so it is set before the voice pipeline, which can take seconds, not
+      // after it. Pinned by `__tests__/turn-tail.test.ts` ('answered means').
+      const markAnswered = (): void => {
+        const active = this.activeTurns.get(laneKey);
+        if (active) active.answered = true;
+      };
+
+      // Deliver the reply exactly once. Called at the turn's terminal event,
+      // or after the loop when the iterator ends without one.
+      const deliverAnswer = async (): Promise<void> => {
+        // A `returnDirect` tool result reaches the turn only as `done.text`,
+        // after whatever preamble the model streamed before the call. The
+        // whole reply is the streamed text plus `answerSuffix` (the one rule,
+        // in @ethosagent/types) — delivered as ONE final: the streamed draft is
+        // finalized in place with it, or it is the one send. Pinned by
+        // `__tests__/turn-tail.test.ts` ('returnDirect').
+        const responseText = translator.text + answerSuffix(translator.text, translator.done?.text);
+        const errored = translator.error;
+
+        // Did the live streamer already deliver (at least a first chunk)? If so,
+        // the final content lands as a draft edit (registered in dedup via
+        // record()) instead of a fresh send — no duplicate message.
+        const streamed = streamer?.hasDelivered ?? false;
+
+        if (signal.aborted) {
+          // /stop or shutdown — caller already notified the user. Any partial
+          // draft is left as-is.
+        } else if (errored) {
+          const note =
+            responseText.trim().length > 0
+              ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
+              : `⚠ Error: ${errored.error}`;
+          const sanitizedNote = stripAnsiEscapes(note);
+          if (streamer && streamed) {
+            // Fold the interruption into the existing draft rather than sending
+            // a second message that duplicates the streamed text.
+            await streamer.finalize(sanitizedNote);
+            markAnswered();
+          } else if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
+            const noted = await this.sendTracked(
+              {
+                adapter,
+                botKey: bot.botKey,
+                platform: message.platform,
+                chatId: message.chatId,
+                sessionKey,
+              },
+              { text: sanitizedNote, threadId },
+            );
+            if (noted) markAnswered();
+          } else {
+            // Suppressed by the dedup cache: this exact note already reached
+            // the lane inside the TTL. See the same branch on the answer path.
+            markAnswered();
           }
-        }
-        if (event.type === 'usage') {
-          const u = this.usageStore.get(laneKey) ?? {
-            inputTokens: 0,
-            outputTokens: 0,
-            costUsd: 0,
-          };
-          u.inputTokens += event.inputTokens;
-          u.outputTokens += event.outputTokens;
-          u.costUsd += event.estimatedCostUsd;
-          this.usageStore.set(laneKey, u);
-        }
-        if (translator.error) {
-          errored = translator.error;
-          break;
-        }
-        if (translator.done) break;
-      }
-      responseText = translator.text;
+        } else if (responseText) {
+          const sanitized = stripAnsiEscapes(responseText);
+          // Streaming path lands the final via editMessage; non-streaming path
+          // gates a fresh send on dedup. `delivered` decides whether the voice
+          // pipeline runs (it runs on either delivery route).
+          let delivered = false;
+          if (streamer && streamed) {
+            await streamer.finalize(sanitized);
+            delivered = true;
+          } else if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
+            // `delivered` is now the adapter's own verdict, not "we called
+            // send()". An unconfirmed reply leaves a pending obligation AND
+            // skips the voice pipeline — synthesising audio for a message the
+            // user never received is pure waste.
+            delivered = await this.sendTracked(
+              {
+                adapter,
+                botKey: bot.botKey,
+                platform: message.platform,
+                chatId: message.chatId,
+                sessionKey,
+              },
+              { text: sanitized, parseMode: 'markdown', threadId },
+            );
+          } else {
+            // Suppressed by the dedup cache: this exact text already reached
+            // the lane inside the TTL, so the chat HAS the answer and needs no
+            // "please resend" notice. NOT `delivered`: this turn sent nothing,
+            // so it records no obligation and synthesizes no voice note.
+            markAnswered();
+          }
 
-      // Did the live streamer already deliver (at least a first chunk)? If so,
-      // the final content lands as a draft edit (registered in dedup via
-      // record()) instead of a fresh send — no duplicate message.
-      const streamed = streamer?.hasDelivered ?? false;
-
-      if (signal.aborted) {
-        // /stop or shutdown — caller already notified the user. Any partial
-        // draft is left as-is.
-      } else if (errored) {
-        const note =
-          responseText.trim().length > 0
-            ? `${responseText}\n\n⚠ Response interrupted: ${errored.error}`
-            : `⚠ Error: ${errored.error}`;
-        const sanitizedNote = stripAnsiEscapes(note);
-        if (streamer && streamed) {
-          // Fold the interruption into the existing draft rather than sending
-          // a second message that duplicates the streamed text.
-          await streamer.finalize(sanitizedNote);
-        } else if (this.outboundDedup.shouldSend(sessionKey, sanitizedNote)) {
-          await this.sendTracked(
-            {
-              adapter,
-              botKey: bot.botKey,
-              platform: message.platform,
-              chatId: message.chatId,
-              sessionKey,
-            },
-            { text: sanitizedNote, threadId },
-          );
-        }
-      } else if (responseText) {
-        const sanitized = stripAnsiEscapes(responseText);
-        // Streaming path lands the final via editMessage; non-streaming path
-        // gates a fresh send on dedup. `delivered` decides whether the voice
-        // pipeline runs (it runs on either delivery route).
-        let delivered = false;
-        if (streamer && streamed) {
-          await streamer.finalize(sanitized);
-          delivered = true;
-        } else if (this.outboundDedup.shouldSend(sessionKey, sanitized)) {
-          // `delivered` is now the adapter's own verdict, not "we called
-          // send()". An unconfirmed reply leaves a pending obligation AND
-          // skips the voice pipeline — synthesising audio for a message the
-          // user never received is pure waste.
-          delivered = await this.sendTracked(
-            {
-              adapter,
-              botKey: bot.botKey,
-              platform: message.platform,
-              chatId: message.chatId,
-              sessionKey,
-            },
-            { text: sanitized, parseMode: 'markdown', threadId },
-          );
-        }
-
-        if (delivered) {
-          // --- Voice pipeline: post-turn TTS synthesis ---
-          // `shouldReplyWithVoice` is the ONE decision function (voice V1a
-          // eng-review D3, drift-gated). Everything downstream of it is
-          // delivery mechanics, which is why they live in their own method.
-          const shouldSynth = shouldReplyWithVoice({
-            mode: await this.voiceModeStore.get(laneKey),
-            inboundHadAudio: this.lastInboundHadAudio.get(laneKey) ?? false,
-          });
-          if (shouldSynth) {
-            await this.deliverVoiceReply({
-              adapter,
-              botKey: bot.botKey,
-              platform: message.platform,
-              chatId: message.chatId,
-              threadId,
-              sessionKey,
-              text: sanitized,
-              personalityId,
-              language: voiceLanguage,
+          if (delivered) {
+            markAnswered();
+            // --- Voice pipeline: post-turn TTS synthesis ---
+            // `shouldReplyWithVoice` is the ONE decision function (voice V1a
+            // eng-review D3, drift-gated). Everything downstream of it is
+            // delivery mechanics, which is why they live in their own method.
+            const shouldSynth = shouldReplyWithVoice({
+              mode: await this.voiceModeStore.get(laneKey),
+              inboundHadAudio: this.lastInboundHadAudio.get(laneKey) ?? false,
             });
+            if (shouldSynth) {
+              await this.deliverVoiceReply({
+                adapter,
+                botKey: bot.botKey,
+                platform: message.platform,
+                chatId: message.chatId,
+                threadId,
+                sessionKey,
+                text: sanitized,
+                personalityId,
+                language: voiceLanguage,
+              });
+            }
           }
         }
-      }
 
-      if (!signal.aborted && !errored && responseText) {
-        try {
-          this.onTurnComplete?.({ platform: message.platform });
-        } catch {
-          // App-layer callback errors must never break the turn.
+        if (!signal.aborted && !errored && responseText) {
+          try {
+            this.onTurnComplete?.({ platform: message.platform });
+          } catch {
+            // App-layer callback errors must never break the turn.
+          }
         }
+      };
+
+      // F07 — the ANSWER and the TURN end at different moments. The answer is
+      // final at the terminal event (`done`, or an `error`), so delivery starts
+      // there and does not wait for anything else. The turn is not over:
+      // AgentLoop still has work after that yield — `maybeConsolidateAtTurnEnd`
+      // (the context engine's `onTurnComplete`, the memory flush,
+      // auto-compaction) after `done`, usage flush and trace close after an
+      // `error`. A `break` here would call the generator's `return()` and skip
+      // all of it, so the iterator is pulled until it is exhausted. `runTurn`
+      // returns — which is what releases the lane — only once BOTH the delivery
+      // has settled AND the iterator is done: the join after the loop below.
+      // Pinned by `__tests__/turn-tail.test.ts`.
+      let answer: Promise<void> | undefined;
+      try {
+        for await (const event of bot.loop.run(loopText, {
+          sessionKey,
+          personalityId,
+          abortSignal: signal,
+          attachments: message.attachments,
+          userId,
+          steerSink,
+          origin: `${message.platform}:${message.chatId}`,
+          ...(voiceOrigin ? { voiceOrigin } : {}),
+          ...(toolsetNarrow ? { toolsetNarrow } : {}),
+          // Unconditional, not config-driven: UI-card tools have no rendering on
+          // any channel adapter, so they never reach a channel turn's tool list.
+          toolsetExclude: [...CHANNEL_EXCLUDED_TOOLS],
+        })) {
+          if (event.type === 'usage') {
+            const u = this.usageStore.get(laneKey) ?? {
+              inputTokens: 0,
+              outputTokens: 0,
+              costUsd: 0,
+            };
+            u.inputTokens += event.inputTokens;
+            u.outputTokens += event.outputTokens;
+            u.costUsd += event.estimatedCostUsd;
+            this.usageStore.set(laneKey, u);
+          }
+          // Past the terminal event: the tail is drained, not rendered. The
+          // answer is already on its way, and anything the tail yields (a
+          // turn-end compaction notice) would land after the final.
+          if (answer) continue;
+          translator.push(event);
+          // Feed the live draft. Progress folds in only for `audience:'user'`
+          // (W3.3) — the framework never opts a tool in. Fire-and-forget: the
+          // streamer serializes internally and finalize() awaits it.
+          if (streamer && !signal.aborted) {
+            if (event.type === 'text_delta') {
+              void streamer.pushText(translator.text);
+            } else if (event.type === 'tool_progress' && shouldSurfaceProgress(event)) {
+              void streamer.pushProgress(event.message);
+            }
+          }
+          if (translator.error || translator.done) {
+            // The answer is going out; the tail is maintenance, not the agent
+            // composing a reply, so it gets no typing indicator.
+            clearInterval(typingTimer);
+            // The loop reads its steer sink only between LLM iterations and
+            // has none left, so a message pushed now would be acknowledged
+            // ("↩ noted") and then read by nobody. Unhooked, the next message
+            // queues on the lane instead — which the tail still holds.
+            this.activeSinks.delete(laneKey);
+            answer = deliverAnswer();
+            // Observed by the join below; this only stops a rejection that
+            // settles while the tail is still draining from being reported
+            // as unhandled.
+            answer.catch(() => {});
+          }
+        }
+      } catch (err) {
+        // Before the answer, a loop failure is the turn failing: it propagates
+        // exactly as it always did. After it, the user already has the answer,
+        // so a failure in the turn-end tail is recorded, not thrown back at the
+        // adapter that delivered it.
+        if (!answer) throw err;
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.turn_tail_failed',
+          cause: 'AgentLoop threw in its turn-end tail after the reply was delivered',
+          details: {
+            platform: message.platform,
+            botKey: bot.botKey,
+            chatId: message.chatId,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
       }
+      // The join: the lane is released only once delivery has settled too. A
+      // tail failure is already recorded above, so a delivery failure thrown
+      // here hides nothing.
+      if (answer) await answer;
+      // An iterator that ends without `done` or `error` — AgentLoop always
+      // yields one, test fakes need not: deliver what accumulated.
+      else await deliverAnswer();
     } finally {
       clearInterval(typingTimer);
       this.activeTurns.delete(laneKey);
@@ -3388,13 +3577,15 @@ export class Gateway {
    * A durable background job finished. Queue a completion notice for its
    * originating lane and try to flush it. Deferred (not sent) while a turn is
    * in flight on that lane so the notice never interleaves with a streaming
-   * response. Only `done` / `failed` wake — `aborted` is user-requested and
-   * stays silent; `stale` / `expired` never reach `onComplete` (they come from
-   * sweeps, whose cross-process delivery is a later phase). Never throws — a
-   * completion callback that throws would crash the executor.
+   * response. `done` / `failed` wake, and so does an `aborted` job its
+   * runtime's shutdown interrupted (`JOB_ABORTED_BY_SHUTDOWN` — the origin
+   * chat is told to ask again); a user's cancel stays silent. `stale` /
+   * `expired` never reach `onComplete` (they come from sweeps, whose
+   * cross-process delivery is a later phase). Never throws — a completion
+   * callback that throws would crash the executor.
    */
   private onBackgroundJobComplete(bot: GatewayBotConfig, job: BackgroundJob): void {
-    if (job.status !== 'done' && job.status !== 'failed') return;
+    if (!isAnnounceableJob(job)) return;
     if (this.deliveredWakes.has(job.id)) return;
     const platform = job.originPlatform;
     const chatId = job.originChatId;
@@ -3418,7 +3609,10 @@ export class Gateway {
    * drops the item with an observability record rather than throwing.
    */
   private async flushWakes(laneKey: string): Promise<void> {
-    if (this.activeSinks.has(laneKey)) return; // a turn is running — defer
+    // A turn is running — defer. `activeTurns` as well as `activeSinks`: the
+    // sink is unhooked at the turn's terminal event, but the turn holds the
+    // lane (and may still be sending its voice note) until `runTurn` returns.
+    if (this.activeTurns.has(laneKey) || this.activeSinks.has(laneKey)) return;
     const list = this.pendingWakes.get(laneKey);
     if (!list || list.length === 0) {
       this.pendingWakes.delete(laneKey);
@@ -3434,9 +3628,13 @@ export class Gateway {
       const platform = job.originPlatform;
       const chatId = job.originChatId;
       if (!platform || !chatId) continue;
-      const adapter = this.adapterRegistry.get(platform);
+      // The notice is filed under `bot.botKey`, so it leaves through that
+      // bot's adapter — never a sibling's (F08, see `adapterForBot`).
+      const adapter = this.adapterForBot(bot.botKey, platform);
       if (!adapter) {
-        // No adapter for this platform in this process — drop, don't retry.
+        // No adapter for this bot on this platform in this process — drop from
+        // memory, don't retry here. The durable claim (`jobs.delivered_at`) is
+        // untouched, so `sweepUndeliveredJobs` still owes it on the next boot.
         this.markWakeDelivered(job.id);
         this.observability?.recordSafetyBlock({
           code: 'background.wake_undeliverable',
@@ -3531,6 +3729,11 @@ export class Gateway {
   private buildWakeNotice(job: BackgroundJob): string {
     const shortId = job.id.slice(0, 8);
     const labelPart = job.label ? `"${job.label}" ` : '';
+    // Interrupted by its runtime's shutdown: no result to relay, and the error
+    // is our own constant — a trusted one-liner, nothing to wrap.
+    if (job.status === 'aborted') {
+      return `[background job ${shortId} ${labelPart}interrupted by a restart or config change — ask again to rerun]`;
+    }
     const envelope = `[background job ${shortId} ${labelPart}finished — status: ${job.status}]`;
     const body =
       job.status === 'done' ? (job.summary ?? '(no summary)') : (job.error ?? 'unknown error');
@@ -3571,11 +3774,13 @@ export class Gateway {
    * or stop the VM.
    *
    * Both maps are read from one accessor because they are two halves of the
-   * same fact: `activeTurns` and `activeSinks` are set together at turn start
-   * and deleted together in `runTurn`'s `finally`, so they are normally empty
-   * or non-empty as a pair. The `||` is the conservative half — if a sink ever
-   * outlived its turn it would still be work in flight, and answering "idle"
-   * there would stop the process out from under a live steer.
+   * same fact: `activeTurns` and `activeSinks` are set together at turn start.
+   * The sink is unhooked at the turn's terminal event and the turn entry only
+   * in `runTurn`'s `finally`, so `activeTurns` is the half that covers the
+   * turn-end tail (F07) — which still writes the session store. The `||` is the
+   * conservative half — if a sink ever outlived its turn it would still be work
+   * in flight, and answering "idle" there would stop the process out from
+   * under a live steer.
    */
   hasActiveTurns(): boolean {
     return this.activeTurns.size > 0 || this.activeSinks.size > 0;
@@ -3586,11 +3791,31 @@ export class Gateway {
    * text to every chat with an in-flight turn before aborting — so users
    * never see silent failure on shutdown / upgrade. See IMPROVEMENT.md P1-1
    * and OpenClaw #71178 (mid-turn update drops every Telegram message).
+   *
+   * A turn whose reply already landed and is only draining AgentLoop's
+   * turn-end tail (F07, see `runTurn`) gets NO notice: the user has the
+   * answer, and "please resend" would buy a duplicate turn. Its lane is
+   * aborted like every other; nothing it still does can send a second reply.
+   * Pinned by `__tests__/turn-tail.test.ts`.
+   *
+   * RETURNS ONLY ONCE THE ABORTED TURNS HAVE UNWOUND — each `runTurn`,
+   * including the turn-end tail it drains — or `drainTimeoutMs` (default
+   * {@link SHUTDOWN_DRAIN_TIMEOUT_MS}) has passed, whichever is first. Callers
+   * dispose each bot's loop right after this returns; returning with turns
+   * still live handed them a runtime being torn down. A turn that outlives the
+   * bound is recorded (`gateway.shutdown_drain_timeout`), not waited on for
+   * ever. Pinned by `__tests__/turn-tail.test.ts` ('shutdown waits').
    */
-  async shutdown(opts: { notify?: string } = {}): Promise<void> {
+  async shutdown(opts: { notify?: string; drainTimeoutMs?: number } = {}): Promise<void> {
+    // First, before any await: inbound from here on is refused, not started.
+    this.closing = opts.notify ? { notify: opts.notify } : {};
     if (opts.notify) {
       const sends: Promise<unknown>[] = [];
-      for (const ctx of this.activeTurns.values()) {
+      for (const [laneKey, ctx] of this.activeTurns) {
+        if (ctx.answered) continue;
+        // Recorded so a message this chat sends during the drain is not told
+        // the same thing twice (`refuseWhileClosing` dedups on the lane key).
+        this.outboundDedup.record(laneKey, opts.notify);
         sends.push(ctx.adapter.send(ctx.chatId, { text: opts.notify }).catch(() => {}));
       }
       await Promise.allSettled(sends);
@@ -3613,6 +3838,7 @@ export class Gateway {
     for (const lane of this.lanes.values()) {
       lane.abort();
     }
+    await this.awaitInflightTurns(opts.drainTimeoutMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS);
     this.lanes.clear();
     this.sessionKeys.clear();
     this.activeTurns.clear();
@@ -3620,6 +3846,72 @@ export class Gateway {
     this.sessionRouting.clear();
     this.approvalRoutes.clear();
     this.sessionIdByKey.clear();
+  }
+
+  /**
+   * An inbound that arrived after `shutdown()` began. It starts no turn and is
+   * steered into none. With a `notify` text it gets that text — the same
+   * "please resend" an interrupted turn gets, and just as true, since this
+   * message will not be answered either — through the ordinary outbound dedup,
+   * keyed on its lane, so a chat hears it once however many messages it sends
+   * (and not again if its in-flight turn was already told). Without one it is
+   * dropped silently, which is what `shutdown()` without `notify` does to
+   * in-flight turns. Either way the drop is recorded.
+   */
+  private async refuseWhileClosing(
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+    closing: { notify?: string },
+  ): Promise<void> {
+    const botKey = this.routedBotKey(message);
+    this.observability?.recordSafetyBlock({
+      code: 'gateway.shutting_down',
+      cause: 'inbound message arrived while the gateway was shutting down',
+      details: { platform: message.platform, chatId: message.chatId, botKey },
+    });
+    const notify = closing.notify;
+    if (!notify) return;
+    const threadId = message.threadId ? message.threadId : undefined;
+    const laneKey = threadId
+      ? buildLaneKey(message.platform, botKey, message.chatId, threadId)
+      : buildLaneKey(message.platform, botKey, message.chatId);
+    if (!this.outboundDedup.shouldSend(laneKey, notify)) return;
+    await adapter.send(message.chatId, { text: notify, threadId }).catch(() => {});
+  }
+
+  /**
+   * The botKey a message ROUTES to: its own, or the sole bot when its own
+   * names no bot this process serves (`handleMessage`'s single-bot degrade —
+   * `gateway.unknown_botKey`; `defaultBotKey` is null in multi-bot, so nothing
+   * degrades there). ONE derivation, because the lane key is built from it in
+   * two places: the turn's, and `refuseWhileClosing`'s. A second derivation
+   * that disagreed keyed the same chat two ways and told it to resend twice.
+   */
+  private routedBotKey(message: InboundMessage): string {
+    const claimed = message.botKey ?? this.defaultBotKey ?? '';
+    return this.bots.has(claimed) ? claimed : (this.defaultBotKey ?? claimed);
+  }
+
+  /** Wait for every in-flight `runTurn` to settle, or `timeoutMs` — see `shutdown`. */
+  private async awaitInflightTurns(timeoutMs: number): Promise<void> {
+    const turns = [...this.inflightTurns];
+    if (turns.length === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = await Promise.race([
+      Promise.allSettled(turns).then(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+    clearTimeout(timer);
+    if (timedOut) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.shutdown_drain_timeout',
+        cause: 'aborted turns were still running when the shutdown drain bound expired',
+        details: { stillRunning: this.inflightTurns.size, timeoutMs },
+      });
+    }
   }
 
   /** Call after all plugins are loaded to register plugin slash commands with platform adapters. */
@@ -3637,6 +3929,34 @@ export class Gateway {
   // ---------------------------------------------------------------------------
   // Durable delivery obligations (item 9)
   // ---------------------------------------------------------------------------
+
+  /**
+   * The adapter that speaks AS `botKey` on `platform` — the only adapter a
+   * tracked send filed under `botKey` may leave through (F08).
+   *
+   * `adapterRegistry` is one-per-platform: the platform's DEFAULT adapter, for
+   * sends that are intentionally platform-addressed (`sendTo`, the
+   * `send_message` tool). Resolving a tracked send there let SalesBot's adapter
+   * deliver SupportBot's obligation, and SalesBot's `ok: true` then marked
+   * SupportBot's row delivered. This resolves through `botAdapters` instead and
+   * requires the adapter's platform to agree with the send's. No match →
+   * `undefined`, and every caller leaves the work pending (or refuses) rather
+   * than borrowing a sibling bot's adapter.
+   *
+   * ONE alias, conditional and applied only here: in a SINGLE-bot deployment
+   * (`defaultBotKey` set) the sole bot is served by every adapter in the
+   * process — `handleMessage` routes any inbound whose botKey it does not know
+   * to that bot (`gateway.unknown_botKey`) — so its replies may have left
+   * through an adapter filed under another key, and the platform's adapter IS
+   * its adapter. In a multi-bot deployment `defaultBotKey` is null and nothing
+   * is borrowed. Both halves pinned by `__tests__/bot-addressed-delivery.test.ts`.
+   */
+  private adapterForBot(botKey: string, platform: string): PlatformAdapter | undefined {
+    const own = this.botAdapters.get(botKey);
+    if (own && platformOfAdapterId(own.id) === platform) return own;
+    if (botKey === this.defaultBotKey) return this.adapterRegistry.get(platform);
+    return undefined;
+  }
 
   /** The ledger binding for one bot, or `undefined` when no ledger is wired. */
   private deliveryBinding(botKey: string, platform: string): DeliveryBinding | undefined {
@@ -3732,11 +4052,12 @@ export class Gateway {
    * {@link sweepPendingDeliveries}.
    *
    * Refuses (returning false, and recording the same unconfirmed event) when
-   * the platform has no registered adapter, or when the bot cannot be named: an
-   * obligation filed under a botKey this process does not own is one the sweep
-   * will never pick up, which is a lost message wearing a durable row. In
-   * multi-bot deployments `botKey` is therefore required — `voice.inbound.owner`
-   * carries one for exactly this reason.
+   * the bot cannot be named, or when that bot has no adapter on the platform
+   * here: an obligation filed under a botKey this process does not own is one
+   * the sweep will never pick up, which is a lost message wearing a durable
+   * row, and one sent through a SIBLING bot's adapter would be confirmed by the
+   * wrong bot (F08). In multi-bot deployments `botKey` is therefore required —
+   * `voice.inbound.owner` carries one for exactly this reason.
    */
   async notifyTracked(
     target: {
@@ -3763,12 +4084,15 @@ export class Gateway {
       return false;
     };
 
-    const adapter = this.adapterRegistry.get(target.platform);
-    if (!adapter) return refuse(`no adapter registered for platform "${target.platform}"`);
-
     const botKey = target.botKey ?? this.defaultBotKey;
     if (!botKey) return refuse('no botKey given and this deployment has no single default bot');
     if (!this.bots.has(botKey)) return refuse(`botKey "${botKey}" is not served by this process`);
+
+    // The bot's own adapter, never the platform's default — see `adapterForBot`.
+    const adapter = this.adapterForBot(botKey, target.platform);
+    if (!adapter) {
+      return refuse(`no adapter registered for bot "${botKey}" on platform "${target.platform}"`);
+    }
 
     return this.sendTracked(
       {
@@ -3818,18 +4142,20 @@ export class Gateway {
     let redelivered = 0;
     let failed = 0;
     for (const row of pending) {
+      // The row's OWN bot's adapter, never the platform's default: a sibling
+      // bot's `ok: true` would mark this bot's obligation delivered (F08).
+      // Resolved BEFORE the claim, so a row this process cannot deliver is left
+      // exactly as it was — still `pending`, never burned, never held in
+      // `redelivering` where a peer that does own the adapter would skip it.
+      const adapter = this.adapterForBot(row.botKey, row.platform);
+      if (!adapter) {
+        failed++;
+        continue;
+      }
       let claimed = false;
       try {
         claimed = await ledger.claim(row.id);
         if (!claimed) continue; // a peer process won the claim
-        const adapter = this.adapterRegistry.get(row.platform);
-        if (!adapter) {
-          // This process owns the bot but not an adapter for its platform.
-          // Hand the row back rather than burning it.
-          await ledger.release(row.id);
-          failed++;
-          continue;
-        }
         if (row.kind === 'voice') {
           // A voice obligation owes BYTES, not a string, so it takes its own
           // path — one that re-sends the stored artifact and never
@@ -4096,10 +4422,12 @@ export class Gateway {
         const platform = job.originPlatform;
         const chatId = job.originChatId;
         if (!platform || !chatId) continue;
-        const adapter = this.adapterRegistry.get(platform);
+        // This bot's own adapter — never a sibling's (F08, `adapterForBot`).
+        const adapter = this.adapterForBot(bot.botKey, platform);
         if (!adapter) {
-          // This process owns the bot but not an adapter for its platform. Hand
-          // the row back untouched rather than burning its one claim.
+          // This process owns the bot but not an adapter for it on this
+          // platform. Hand the row back untouched rather than burning its one
+          // claim.
           failed++;
           continue;
         }
@@ -4192,7 +4520,8 @@ export class Gateway {
    * The lane a parked run's notice is pushed to, or `null` to skip it: a job
    * with no recorded origin (CLI-owned), a job whose origin belongs to a
    * DIFFERENT bot in a shared store (an obligation filed under someone else's
-   * botKey is a lost message), or a platform this process has no adapter for.
+   * botKey is a lost message), or a bot with no adapter here on that platform
+   * (`adapterForBot` — a sibling bot's adapter is never borrowed, F08).
    * Skipping returns the row untouched — its claim is never spent.
    */
   private clarifyNoticeTarget(
@@ -4203,7 +4532,7 @@ export class Gateway {
     const chatId = job.originChatId;
     if (!platform || !chatId) return null;
     if (job.originBotKey && job.originBotKey !== bot.botKey) return null;
-    if (!this.adapterRegistry.get(platform)) return null;
+    if (!this.adapterForBot(bot.botKey, platform)) return null;
     return {
       platform,
       botKey: bot.botKey,
@@ -4222,7 +4551,7 @@ export class Gateway {
     target: ClarifyNoticeTarget,
     text: string,
   ): Promise<boolean> {
-    const adapter = this.adapterRegistry.get(target.platform);
+    const adapter = this.adapterForBot(bot.botKey, target.platform);
     if (!adapter) return false;
     const laneKey = target.threadId
       ? buildLaneKey(target.platform, bot.botKey, target.chatId, target.threadId)
@@ -4480,6 +4809,16 @@ export class Gateway {
       this.lastInboundHadAudio.delete(evictedKey);
     }
   }
+}
+
+/**
+ * Whether a finished job's origin chat is told: `done` / `failed`, and an
+ * `aborted` job only when its runtime's shutdown interrupted it. The same rule
+ * `JobStore.listUndelivered` applies to the restart sweep's input.
+ */
+function isAnnounceableJob(job: BackgroundJob): boolean {
+  if (job.status === 'done' || job.status === 'failed') return true;
+  return job.status === 'aborted' && job.error === JOB_ABORTED_BY_SHUTDOWN;
 }
 
 function createSteerSink(cap = 32): SteerSink {

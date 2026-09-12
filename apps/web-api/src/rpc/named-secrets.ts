@@ -6,6 +6,10 @@ import { os } from './context';
 export const namedSecretsRouter = {
   list: os.namedSecrets.list.handler(({ context }) => context.namedSecrets.list()),
 
+  // The derived provider roster — the browser cannot compute it, the
+  // derivation needs the live tool registry.
+  providers: os.namedSecrets.providers.handler(({ context }) => context.namedSecrets.providers()),
+
   create: os.namedSecrets.create.handler(({ input, context }) =>
     context.namedSecrets.create(input),
   ),

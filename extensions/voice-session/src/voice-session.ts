@@ -13,7 +13,7 @@ import type {
   SttProvider,
   TtsProvider,
 } from '@ethosagent/types';
-import { isStreamingSttProvider, isStreamingTtsProvider } from '@ethosagent/types';
+import { answerSuffix, isStreamingSttProvider, isStreamingTtsProvider } from '@ethosagent/types';
 import { isHallucination, SentenceChunker } from '@ethosagent/voice-text';
 import { createBufferedSttAdapter } from './buffered-stt';
 import { EndpointDetector } from './endpoint-detector';
@@ -79,6 +79,11 @@ export class VoiceSession {
   private utteranceChunks: PcmChunk[] = [];
   private turnController: AbortController | null = null;
   private currentTurn: Promise<void> | null = null;
+  /**
+   * The last agent run, drained to its end — which is later than its reply
+   * (see `runTurn`). The next run starts only once this settles. Never rejects.
+   */
+  private turnDrain: Promise<void> = Promise.resolve();
   private lastReplyTextValue = '';
   private utteranceSeq = 0;
   private currentTurnId = '';
@@ -202,10 +207,14 @@ export class VoiceSession {
     }
   }
 
-  /** Resolves when the in-flight turn (if any) and its playout have finished. */
+  /**
+   * Resolves when the in-flight turn (if any), its playout, and the drain of
+   * its agent run past the reply (see `runTurn`) have all finished.
+   */
   async idle(): Promise<void> {
     if (this.currentTurn) await this.currentTurn;
     await this.playout.idle();
+    await this.turnDrain;
   }
 
   /**
@@ -278,44 +287,115 @@ export class VoiceSession {
     this.fillerSpokenThisTurn = false;
     let firstSentenceSpanned = false;
 
-    try {
-      for await (const event of this.runner.run(text, { abortSignal: controller.signal })) {
-        if (controller.signal.aborted) break;
-        if (event.type === 'text_delta') {
-          if (this.state === 'thinking') this.setState('speaking');
-          this.hasSpokenTextThisTurn = true;
-          // Text resumed — cancel a pending filler and stop ticking.
-          this.stopToolFillerAndTick();
-          for (const sentence of chunker.push(event.text)) {
-            if (!firstSentenceSpanned) {
-              firstSentenceSpanned = true;
-              this.span('llm_first_sentence', turnStart, 'ok');
-            }
-            this.speakSentence(sentence);
-          }
-          continue;
-        }
-        if (event.type === 'tool_start') {
-          this.onToolStart();
-          continue;
-        }
-        if (event.type === 'tool_end') {
-          this.onToolEnd();
-        }
-        // thinking_delta and other events are never spoken.
-      }
-      if (!controller.signal.aborted) {
+    // F07 — the REPLY and the TURN end at different moments. AgentLoop yields
+    // `done` BEFORE its turn-end work (`maybeConsolidateAtTurnEnd` in
+    // packages/core/src/agent-loop/turn-end.ts: the context engine's
+    // `onTurnComplete`, the memory flush, auto-compaction) and `error` before
+    // its usage flush and trace close. So the reply's final fragment is spoken
+    // at the terminal event (`settle`), the reply completes once its audio has
+    // played, and the iterator keeps being drained behind it (`drain`). The
+    // next turn's agent run waits for that drain (`this.turnDrain`, awaited
+    // below), so no turn reads history a turn-end compaction is still
+    // rewriting. Pinned by `__tests__/turn-tail.test.ts`.
+    const prior = this.turnDrain;
+    let answered = false;
+    let markAnswered: () => void = () => {};
+    const answer = new Promise<void>((resolve) => {
+      markAnswered = resolve;
+    });
+    const settle = (speakRemainder: boolean): void => {
+      if (answered) return;
+      answered = true;
+      this.stopToolFillerAndTick();
+      if (speakRemainder && !controller.signal.aborted) {
         const remainder = chunker.flush();
         if (remainder) this.speakSentence(remainder);
       }
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        this.emit({ type: 'error', error: errorMessage(err), code: 'runner' });
-      }
-    } finally {
-      this.stopToolFillerAndTick();
-    }
+      markAnswered();
+    };
 
+    // Every text_delta of this turn, for `answerSuffix` at `done`.
+    let streamed = '';
+    const speakText = (delta: string): void => {
+      if (this.state === 'thinking') this.setState('speaking');
+      this.hasSpokenTextThisTurn = true;
+      // Text resumed — cancel a pending filler and stop ticking.
+      this.stopToolFillerAndTick();
+      for (const sentence of chunker.push(delta)) {
+        if (!firstSentenceSpanned) {
+          firstSentenceSpanned = true;
+          this.span('llm_first_sentence', turnStart, 'ok');
+        }
+        this.speakSentence(sentence);
+      }
+    };
+
+    const drain = (async () => {
+      let threw = false;
+      try {
+        await prior;
+        // Barged over while waiting for the previous turn: never start.
+        if (controller.signal.aborted) return;
+        for await (const event of this.runner.run(text, { abortSignal: controller.signal })) {
+          // Past the terminal event only the turn-end tail is left: drained,
+          // not spoken — even if the session was stopped meanwhile.
+          if (answered) continue;
+          // Aborted BEFORE the answer (barge-in, `stop()`): deliberately NOT
+          // drained. Past an abort AgentLoop starts no new tool work (it
+          // re-checks the signal after each streamed step, `processTools`
+          // refuses each call before its hooks via `rejectAbortedCall`, and
+          // `executeParallel` refuses before dispatch — packages/core), but a
+          // `before_tool_call` hook already parked (an approval) runs to its
+          // end first — waiting for a turn the user has talked over.
+          if (controller.signal.aborted) break;
+          if (event.type === 'done' || event.type === 'error') {
+            // A `returnDirect` tool result arrives only as `done.text`, after
+            // any preamble that streamed: `answerSuffix` (@ethosagent/types) is
+            // what is still owed, spoken after the preamble.
+            if (event.type === 'done') {
+              const owed = answerSuffix(streamed, event.text);
+              if (owed) speakText(owed);
+            }
+            settle(true);
+            continue;
+          }
+          if (event.type === 'text_delta') {
+            streamed += event.text;
+            speakText(event.text);
+            continue;
+          }
+          if (event.type === 'tool_start') {
+            this.onToolStart();
+            continue;
+          }
+          if (event.type === 'tool_end') {
+            this.onToolEnd();
+          }
+          // thinking_delta and other events are never spoken.
+        }
+      } catch (err) {
+        threw = true;
+        if (answered) {
+          // The reply already went out; a failure in the turn's tail is not a
+          // failed reply, and telling the listener otherwise would be wrong.
+          this.logger?.warn('voice-session: turn tail failed', { err });
+        } else if (!controller.signal.aborted) {
+          this.emit({ type: 'error', error: errorMessage(err), code: 'runner' });
+        }
+      } finally {
+        // An iterator that ends without `done` or `error` (AgentLoop always
+        // yields one; a runner need not), an abort, or a throw: settle with
+        // what there is. A throw leaves the unfinished fragment unspoken, as it
+        // always has.
+        settle(!threw);
+      }
+    })();
+    this.turnDrain = drain.then(
+      () => {},
+      (err: unknown) => this.logger?.warn('voice-session: turn drain failed', { err }),
+    );
+
+    await answer;
     await this.playout.idle();
 
     if (controller.signal.aborted) {

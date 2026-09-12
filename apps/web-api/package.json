@@ -27,8 +27,6 @@
     "@ethosagent/dashboard": "workspace:*",
     "@ethosagent/delivery-ledger": "workspace:*",
     "@ethosagent/eval-harness": "workspace:*",
-    "@ethosagent/goal-runner": "workspace:*",
-    "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",
     "@ethosagent/logger": "workspace:*",
