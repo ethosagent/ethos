@@ -709,6 +709,42 @@ function guaranteeRows(
 }
 
 /**
+ * The egress paths the outbound-approval gate does NOT cover (O-D10). Printed
+ * on every gated sheet rather than left implied: covering MCP tools and
+ * `a2a_send` would mean classifying arbitrary third-party tools, and a sheet
+ * that said nothing would read as blanket coverage.
+ */
+const PUBLISHING_NOT_COVERED = 'not covered: MCP tools, a2a_send';
+
+/**
+ * The `Publishing:` line — what `outbound_policy` does for THIS personality,
+ * and what it does not.
+ *
+ * This function only RENDERS. The gate it describes is in `executeSendMessage`
+ * (extensions/tools-messaging/src/index.ts); the queue, the immutable
+ * revisions and the content binding are `SQLiteOutboxStore` / `OutboxService`
+ * in `@ethosagent/outbox`; the `channels` list it reads was validated at load
+ * by `parseOutboundChannels` (./index.ts).
+ *
+ * Deliberately one self-contained function returning one line, so P-T3 can
+ * lift it into the shared `permissionSurface` module unchanged.
+ */
+export function publishingLine(config: PersonalityConfig): string {
+  const policy = config.outbound_policy;
+  if (!policy?.approve_before_send) {
+    return 'Publishing: not gated — send_message goes out as soon as the agent calls it';
+  }
+  const where =
+    policy.channels && policy.channels.length > 0
+      ? `on ${policy.channels.join(', ')}`
+      : 'on every platform';
+  const reviewer = policy.approver_personality
+    ? `reviewer: ${policy.approver_personality}`
+    : 'reviewer: none — a human approves directly';
+  return `Publishing: approval required ${where} · ${reviewer} · ${PUBLISHING_NOT_COVERED}`;
+}
+
+/**
  * Render the `## Boundary` block — which published guarantees are enforced,
  * narrowed, relaxed, or inapplicable for THIS personality.
  *
@@ -926,6 +962,14 @@ export function renderCharacterSheet(
   if (workdirs.length > 0) {
     lines.push(`- Workdir${workdirs.length === 1 ? '' : 's'}: ${workdirs.join(', ')}`);
   }
+
+  // O-D10 — the outbound-approval posture, directly under the filesystem reach
+  // because publishing is channel reach the way `fs_reach` is disk reach, and
+  // the operator's question about both is the same one. Unconditional: "not
+  // gated" is the answer an ungated personality's reader most needs, so this
+  // line does not earn its existence by being interesting.
+  lines.push('');
+  lines.push(publishingLine(config));
 
   // §4.7 — the register's per-personality state, directly under the reach it
   // summarises and BEFORE the conditional sections, so adding a posture or a

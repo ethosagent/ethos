@@ -644,6 +644,9 @@ importers:
       '@ethosagent/observability-sqlite':
         specifier: workspace:*
         version: link:../../extensions/observability-sqlite
+      '@ethosagent/outbox':
+        specifier: workspace:*
+        version: link:../../extensions/outbox
       '@ethosagent/personalities':
         specifier: workspace:*
         version: link:../../extensions/personalities

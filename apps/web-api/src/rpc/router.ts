@@ -41,6 +41,7 @@ import { modelRegistryRouter } from './model-registry';
 import { modelsRouter } from './models';
 import { namedSecretsRouter } from './named-secrets';
 import { onboardingRouter } from './onboarding';
+import { outboxRouter } from './outbox';
 import { personalitiesRouter } from './personalities';
 import { platformsRouter } from './platforms';
 import { pluginsRouter } from './plugins';
@@ -111,6 +112,7 @@ export const apiRouter = {
   digest: digestRouter,
   voice: voiceRouter,
   deliveries: deliveriesRouter,
+  outbox: outboxRouter,
   channels: channelsRouter,
   a2a: a2aRouter,
   namedSecrets: namedSecretsRouter,

@@ -48,6 +48,7 @@ describe('dualAuth scope enforcement (WEB-001)', () => {
     app.post('/rpc/chat/steer', (c) => c.json({ ok: true }));
     app.post('/rpc/personalities/create', (c) => c.json({ ok: true }));
     app.get('/sse/sessions/abc123', (c) => c.json({ ok: true }));
+    app.post('/rpc/outbox/approve', (c) => c.json({ ok: true }));
   });
 
   afterEach(() => {
@@ -75,6 +76,19 @@ describe('dualAuth scope enforcement (WEB-001)', () => {
   it('chat.steer works with chat:send (newly mapped)', async () => {
     expect((await call('/rpc/chat/steer', await key(['chat:send']))).status).toBe(200);
     expect((await call('/rpc/chat/steer', await key(['sessions:read']))).status).toBe(403);
+  });
+
+  // O-T9. The outbox namespace is deliberately UNMAPPED in SCOPE_MAP, like
+  // `deliveries`: approving a publication is a human decision on the web UI, and
+  // `ApiKeyScope` has no vocabulary for it. An API key must not be able to put
+  // agent-drafted text in front of real people, so the fail-closed path is the
+  // intended gate here, not an oversight. Cookie sessions (O-D5) are unaffected.
+  it('outbox.approve is not reachable with any bearer key', async () => {
+    const res = await call('/rpc/outbox/approve', await key(['sessions:read', 'tools:approve']));
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe('FORBIDDEN');
+    expect(body.error).toMatch(/experimental/);
   });
 
   it('personalities.create is cookie-only — rejected for any bearer key', async () => {

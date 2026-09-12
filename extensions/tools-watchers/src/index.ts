@@ -7,7 +7,7 @@
 // the watcher record's explicit targets — nothing is added to
 // PersonalityConfig (plan gap-event-triggers §3e).
 
-import type { Tool, ToolResult } from '@ethosagent/types';
+import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
 import {
   MIN_INTERVAL_SECONDS,
   type WatcherKind,
@@ -44,7 +44,80 @@ interface WakeArg {
   prompt_prefix?: string;
 }
 
-export function createWatcherTools(manager: WatcherManager): Tool[] {
+// ---------------------------------------------------------------------------
+// The approval outbox seam (O-T12, plan/phases/trust-before-reach.md)
+//
+// A watcher's `deliver` sends the change summary VERBATIM to whatever channel
+// the agent names, with no LLM turn and nobody reading it first. For a
+// personality whose `outbound_policy.approve_before_send` is on, that is the
+// exact publication the policy exists to hold back — so the watcher is refused
+// at creation and pointed at `wake`, where the woken agent's `send_message`
+// meets the gate in `@ethosagent/tools-messaging`.
+//
+// Declared structurally, for the same reason that gate is: extensions do not
+// import each other (ARCHITECTURE.md §II). This is the half of
+// `OutboxGate` a watcher needs — the questions, not the queue; a watcher never
+// proposes anything. `createOutboxGate` in
+// `packages/wiring/src/compose-tools.ts` satisfies both.
+//
+// The limitation: only CREATION is gated. A watcher stored before the policy
+// was switched on keeps delivering — `WatcherManager` (`@ethosagent/watchers`)
+// runs its `onChange.deliver` off the cron tick and reads no personality
+// policy, and nothing re-validates stored records. An operator turning approval
+// on for a personality that already owns delivering watchers has to delete
+// them.
+// ---------------------------------------------------------------------------
+
+export interface WatcherOutboxGate {
+  /** Does `outbound_policy` gate agent-initiated sends by this personality to
+   *  this platform? */
+  gates(personalityId: string, platform: string): boolean;
+  /** The operator's own chat on `platform`, or `undefined` when none is
+   *  configured. Delivering to the person who approves is not publishing. */
+  ownerTarget(platform: string): string | undefined;
+}
+
+export interface WatcherToolsOptions {
+  /**
+   * Approval outbox. Absent — every surface that wires none — and
+   * `watcher_create` behaves exactly as it did before O-T12 (pinned by "an
+   * ungated personality creates a delivering watcher unchanged" in
+   * `src/__tests__/outbox-deliver-refusal.test.ts`).
+   */
+  outbox?: WatcherOutboxGate;
+}
+
+/**
+ * Refuse a `deliver` target that would publish to a third party, for a gated
+ * personality. `undefined` means the watcher may be created.
+ *
+ * The two exempt destinations are the ones the `send_message` gate exempts, for
+ * the same reasons: the turn's own chat (`ctx.origin`) is the conversation, and
+ * the operator's own chat is the person who would be approving.
+ */
+function refuseForeignDeliver(
+  gate: WatcherOutboxGate | undefined,
+  ctx: ToolContext,
+  platform: string,
+  chatId: string,
+): ToolResult | undefined {
+  const personalityId = ctx.personalityId;
+  if (!gate || !personalityId || !gate.gates(personalityId, platform)) return undefined;
+  if (ctx.origin !== undefined && `${platform}:${chatId}` === ctx.origin) return undefined;
+  if (chatId === gate.ownerTarget(platform)) return undefined;
+  return fail(
+    'This personality publishes only through the approval outbox ' +
+      `(outbound_policy.approve_before_send), and a watcher's deliver would send every change ` +
+      `to ${platform}:${chatId} verbatim with nobody reviewing it. Use wake instead: wake a ` +
+      `personality with the change, and the send_message it chooses to make is queued for ` +
+      `approval like any other publication.`,
+  );
+}
+
+export function createWatcherTools(
+  manager: WatcherManager,
+  opts: WatcherToolsOptions = {},
+): Tool[] {
   const idSchema = {
     type: 'string',
     description: 'Watcher id (lowercase letters, digits, hyphens).',
@@ -97,7 +170,7 @@ export function createWatcherTools(manager: WatcherManager): Tool[] {
       },
       required: ['id', 'kind', 'target', 'interval_seconds'],
     },
-    async execute(args): Promise<ToolResult> {
+    async execute(args, ctx): Promise<ToolResult> {
       const { id, kind, target, interval_seconds, deliver, wake } = args as {
         id?: string;
         kind?: WatcherKind;
@@ -119,6 +192,8 @@ export function createWatcherTools(manager: WatcherManager): Tool[] {
         if (!deliver.platform || !deliver.chat_id) {
           return fail('deliver requires explicit platform and chat_id');
         }
+        const refusal = refuseForeignDeliver(opts.outbox, ctx, deliver.platform, deliver.chat_id);
+        if (refusal) return refusal;
         onChange.deliver = { platform: deliver.platform, chatId: deliver.chat_id };
       }
       if (wake) {

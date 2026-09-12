@@ -1122,3 +1122,86 @@ describe('renderCharacterSheet — ## Routing effective model', () => {
     expect(providerLine(sheet)).toBe('- Provider: anthropic');
   });
 });
+
+// O-D10 — the `Publishing:` line. It discloses what the outbound-approval gate
+// covers AND what it does not: MCP tools and `a2a_send` stay outside it, so the
+// sheet says so instead of letting `outbound_policy` read as blanket coverage.
+describe('renderCharacterSheet — Publishing line (O-D10)', () => {
+  function sheetFor(policy: PersonalityConfig['outbound_policy']): string {
+    return renderCharacterSheet({ ...fullConfig, outbound_policy: policy }, soulMd);
+  }
+
+  function publishing(sheet: string): string {
+    const line = sheet.split('\n').find((l) => l.startsWith('Publishing:'));
+    if (!line) throw new Error('no Publishing line in the sheet');
+    return line;
+  }
+
+  it('says a personality with no policy is not gated', () => {
+    expect(publishing(sheetFor(undefined))).toBe(
+      'Publishing: not gated — send_message goes out as soon as the agent calls it',
+    );
+  });
+
+  it('says the same for an explicit approve_before_send: false', () => {
+    expect(publishing(sheetFor({ approve_before_send: false, channels: ['telegram'] }))).toBe(
+      'Publishing: not gated — send_message goes out as soon as the agent calls it',
+    );
+  });
+
+  it('renders the spec line for a gated platform subset with a reviewer', () => {
+    expect(
+      publishing(
+        sheetFor({
+          approve_before_send: true,
+          channels: ['telegram'],
+          approver_personality: 'brand-editor',
+        }),
+      ),
+    ).toBe(
+      'Publishing: approval required on telegram · reviewer: brand-editor · not covered: MCP tools, a2a_send',
+    );
+  });
+
+  it('lists every named platform when the subset has more than one', () => {
+    expect(
+      publishing(
+        sheetFor({
+          approve_before_send: true,
+          channels: ['telegram', 'slack'],
+          approver_personality: 'brand-editor',
+        }),
+      ),
+    ).toBe(
+      'Publishing: approval required on telegram, slack · reviewer: brand-editor · not covered: MCP tools, a2a_send',
+    );
+  });
+
+  // Absent `channels` means every platform, not none — the reader should never
+  // have to guess which way a missing list falls.
+  it('says "every platform" when channels is absent', () => {
+    expect(
+      publishing(sheetFor({ approve_before_send: true, approver_personality: 'brand-editor' })),
+    ).toBe(
+      'Publishing: approval required on every platform · reviewer: brand-editor · not covered: MCP tools, a2a_send',
+    );
+  });
+
+  it('says "every platform" when channels is declared empty', () => {
+    expect(publishing(sheetFor({ approve_before_send: true, channels: [] }))).toBe(
+      'Publishing: approval required on every platform · reviewer: none — a human approves directly · not covered: MCP tools, a2a_send',
+    );
+  });
+
+  it('names the absent reviewer rather than dropping the clause', () => {
+    expect(publishing(sheetFor({ approve_before_send: true, channels: ['telegram'] }))).toBe(
+      'Publishing: approval required on telegram · reviewer: none — a human approves directly · not covered: MCP tools, a2a_send',
+    );
+  });
+
+  it('sits between the filesystem reach block and the Boundary section', () => {
+    const sheet = sheetFor({ approve_before_send: true, channels: ['telegram'] });
+    expect(sheet.indexOf('## Filesystem reach')).toBeLessThan(sheet.indexOf('Publishing:'));
+    expect(sheet.indexOf('Publishing:')).toBeLessThan(sheet.indexOf('## Boundary'));
+  });
+});

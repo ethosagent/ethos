@@ -2293,6 +2293,50 @@ function parseExecutionPosture(raw: string | undefined): PersonalityConfig['exec
   );
 }
 
+/**
+ * The platforms `outbound_policy.channels` may name.
+ *
+ * A deliberate COPY of `SEND_MESSAGE_PLATFORMS` in
+ * `extensions/tools-messaging/src/index.ts` — the roster the gated tool
+ * actually addresses. It is not shared code because both are extensions and
+ * `@ethosagent/personalities` must not import a sibling extension (O-D2; the
+ * same layer reason the gate seam in tools-messaging is declared
+ * structurally rather than imported). The two are pinned equal by
+ * `packages/wiring/src/__tests__/outbound-policy-platforms.test.ts`, which
+ * imports BOTH and fails if either list moves alone — `packages/wiring` is
+ * the lowest layer that can see both. **They must change together:** a
+ * platform added to `send_message` and not to this list would be refused at
+ * load for anyone trying to gate it; one removed here and not there would go
+ * back to sending ungated.
+ */
+export const OUTBOUND_POLICY_PLATFORMS = [
+  'slack',
+  'telegram',
+  'discord',
+  'whatsapp',
+  'email',
+] as const;
+
+/**
+ * Outbound approval policy — the block `executeSendMessage`
+ * (extensions/tools-messaging/src/index.ts) reads to decide whether a
+ * `send_message` publishes or is queued for a human.
+ *
+ * `channels` is VALIDATED rather than passed through, for the same reason
+ * `parseExecutionPosture` validates its requirement: a typo here is silent
+ * and its failure mode is the dangerous direction. `channels: telgram` would
+ * match no platform, so the gate would never fire and the personality this
+ * key exists to hold back would publish freely — with a config that reads as
+ * if it were gated. Validation runs whatever `approve_before_send` says,
+ * because a `false` today is a `true` after one edit.
+ *
+ * One case it does NOT catch, because the whole block is gone by then: a
+ * config.yaml declaring `outbound_policy.channels` with no
+ * `outbound_policy.approve_before_send` returns `undefined` on the first line
+ * below, so nothing is parsed and nothing is validated. That config also gates
+ * nothing, which is the honest reading of a policy whose only required field is
+ * missing — but the unknown name in it goes unreported.
+ */
 function buildOutboundPolicy(
   cfg: Record<string, string>,
 ): import('@ethosagent/types').OutboundPolicyConfig | undefined {
@@ -2302,10 +2346,23 @@ function buildOutboundPolicy(
     approve_before_send: approve === 'true',
   };
   const channels = cfg['outbound_policy.channels'];
-  if (channels) out.channels = channels.split(/\s+/).filter(Boolean);
+  if (channels) out.channels = parseOutboundChannels(channels);
   const approver = cfg['outbound_policy.approver_personality'];
   if (approver) out.approver_personality = approver;
   return out;
+}
+
+function parseOutboundChannels(raw: string): string[] {
+  const names = raw.split(/\s+/).filter(Boolean);
+  const known: readonly string[] = OUTBOUND_POLICY_PLATFORMS;
+  for (const name of names) {
+    if (known.includes(name)) continue;
+    throw new Error(
+      `Invalid outbound_policy.channels: "${name}". ` +
+        `Expected one of: ${OUTBOUND_POLICY_PLATFORMS.join(', ')}.`,
+    );
+  }
+  return names;
 }
 
 function buildMcpExportConfig(

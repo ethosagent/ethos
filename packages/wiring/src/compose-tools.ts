@@ -55,7 +55,7 @@ import { compose as composeKanban } from '@ethosagent/tools-kanban/compose';
 import { loadMcpConfig, McpManager } from '@ethosagent/tools-mcp';
 import { createMeetingTools } from '@ethosagent/tools-meeting';
 import { createTeamMemoryTools, isSafeTopicKey } from '@ethosagent/tools-memory';
-import type { MessagingSendFn } from '@ethosagent/tools-messaging';
+import type { MessagingSendFn, OutboxGate } from '@ethosagent/tools-messaging';
 import { compose as composeMessaging } from '@ethosagent/tools-messaging/compose';
 import { createTeamDesignTools } from '@ethosagent/tools-personality-design';
 import { compose as composePersonalityDesign } from '@ethosagent/tools-personality-design/compose';
@@ -498,6 +498,41 @@ export function createRemoteExecutionInjector(opts: {
         ].join('\n'),
       };
     },
+  };
+}
+
+/**
+ * The one implementation of the approval-outbox gate (O-T3/O-T12,
+ * plan/phases/trust-before-reach.md).
+ *
+ * Two halves meet here. The POLICY half is wiring's: `outbound_policy` lives on
+ * the personality, and this looks it up through `lookupPersonality` on every
+ * call rather than reading it once — a personality edited on disk is re-read by
+ * the registry's mtime cache, so turning approval on applies to the next tool
+ * call instead of the next restart (O-D8). The DELIVERY half belongs to the app
+ * layer: which bot sends (O-T4) and where the queue lives are things only a
+ * surface holding adapters knows, so they arrive as `outbox`.
+ *
+ * The returned object satisfies both `OutboxGate` (`@ethosagent/tools-messaging`)
+ * and `WatcherOutboxGate` (`@ethosagent/tools-watchers`) structurally — neither
+ * extension imports the other, or this.
+ */
+export function createOutboxGate(deps: {
+  lookupPersonality: (id: string) => PersonalityConfig | undefined;
+  outbox: OutboxWiring;
+}): OutboxGate {
+  return {
+    gates(personalityId, platform) {
+      const policy = deps.lookupPersonality(personalityId)?.outbound_policy;
+      if (!policy?.approve_before_send) return false;
+      // `channels` absent means every platform. An EMPTY list is read the same
+      // way: a policy that switched approval on has asked for approval, and the
+      // reading that gates more is the one a mis-parsed list can survive.
+      const channels = policy.channels;
+      return channels === undefined || channels.length === 0 || channels.includes(platform);
+    },
+    ownerTarget: (platform) => deps.outbox.ownerTarget(platform),
+    propose: (proposal) => deps.outbox.propose(proposal),
   };
 }
 
@@ -979,11 +1014,36 @@ export async function createExecutionRouting(
   };
 }
 
+/**
+ * The app layer's half of the approval outbox — the two things wiring cannot
+ * answer for itself.
+ *
+ * `ownerTarget` is `channel_filter.<platform>.ownerUserId`, which lives on the
+ * surface's channel config and not on `WiringConfig`. `propose` queues the
+ * publication and resolves its sending bot (O-T4), which needs the process's
+ * adapters and bindings.
+ *
+ * Nothing supplies it yet: the gateway's outbox wiring is O-T4/O-T6, and it
+ * arrives through `ComposeToolsDeps` (built at the `composeAllTools` call in
+ * `packages/wiring/src/index.ts`). Until then every deployment leaves it
+ * absent, no gate is built, and both tools behave as they always have.
+ */
+export interface OutboxWiring {
+  ownerTarget: OutboxGate['ownerTarget'];
+  propose: OutboxGate['propose'];
+}
+
 export interface ComposeToolsDeps {
   infra: InfrastructureResult;
   profile: WiringProfile;
   /** Where each resource this stage opens registers its release (F06). */
   disposers: DisposerStack;
+  /**
+   * Approval outbox. Absent — every surface that wires none — and both
+   * `send_message` and `watcher_create` behave exactly as they did before
+   * Part 2 (pinned by `src/__tests__/outbox-gate.test.ts`).
+   */
+  outbox?: OutboxWiring;
 }
 
 // ---------------------------------------------------------------------------
@@ -1449,6 +1509,15 @@ export async function composeAllTools(
 
   const messagingAllowlist = await loadMessagingAllowlist(dataDir);
 
+  // One gate object for both tools that can publish agent-drafted text to a
+  // third party: `send_message` queues, `watcher_create` refuses.
+  const outboxGate = deps.outbox
+    ? createOutboxGate({
+        lookupPersonality: (id) => personalities.get(id),
+        outbox: deps.outbox,
+      })
+    : undefined;
+
   for (const tool of composeMessaging(wiringCtx, {
     send: async (platform, target, body, botKey) =>
       gatewaySendRef.fn(platform, target, body, botKey),
@@ -1456,6 +1525,7 @@ export async function composeAllTools(
       if (!personalityId) return [];
       return messagingAllowlist.get(personalityId) ?? [];
     },
+    outbox: outboxGate,
   }).tools)
     tools.register(tool);
 
@@ -1467,7 +1537,10 @@ export async function composeAllTools(
 
   // Watcher tools — registered only when a WatcherManager was threaded through.
   if (opts.watcherManager) {
-    for (const tool of composeWatchers(wiringCtx, { manager: opts.watcherManager }).tools)
+    for (const tool of composeWatchers(wiringCtx, {
+      manager: opts.watcherManager,
+      outbox: outboxGate,
+    }).tools)
       tools.register(tool);
   }
 

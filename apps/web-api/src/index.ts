@@ -88,6 +88,7 @@ import { ModelRegistryService } from './services/model-registry.service';
 import { NamedSecretsService } from './services/named-secrets.service';
 import { ObservedChatsService } from './services/observed-chats.service';
 import { OnboardingService } from './services/onboarding.service';
+import { OutboxService } from './services/outbox.service';
 import { PersonalitiesService } from './services/personalities.service';
 import { PlatformsService } from './services/platforms.service';
 import { PluginsService } from './services/plugins.service';
@@ -1078,6 +1079,32 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   // when the gateway has never run here.
   const deliveriesService = new DeliveriesService({ dataDir: opts.dataDir, storage });
   disposers.push('delivery-ledger.db (read side)', () => deliveriesService.close());
+  // The personality approval queue, `<dataDir>/outbox.db` — the same file the
+  // gateway's dispatcher polls. Same lazy-open rule as the ledger above, and the
+  // same borrowed-store posture: web-api records the human's DECISIONS, and the
+  // gateway (the only process with adapters) does the publishing.
+  //
+  // The audit sink is the one `ApprovalsService` already takes: an outbox
+  // decision lands in `ethos audit decisions` next to a tool approval because
+  // "what did a human let this agent do" is one question, not two. `OutboxService`
+  // writes those rows itself — nothing here writes a second copy.
+  const outboxService = new OutboxService({
+    dataDir: opts.dataDir,
+    storage,
+    ...(opts.approvalObservability ? { observability: opts.approvalObservability } : {}),
+    // Team membership has one owner (the manifest, via TeamsService). The outbox
+    // pane borrows it rather than re-deriving a roster the Teams tab could
+    // disagree with. An unreadable or unknown team lists nothing.
+    teamMembers: async (teamId) => {
+      try {
+        const detail = await teamsService.get(teamId);
+        return detail.members.map((m) => m.personalityId);
+      } catch {
+        return [];
+      }
+    },
+  });
+  disposers.push('outbox.db (decisions)', () => outboxService.close());
   // Read-only telephony call history, `<dataDir>/calls.db` — the same file the
   // gateway writes. Same lazy-open rule as the ledger above: a deployment with
   // no telephony never grows the database by opening a Settings page.
@@ -1857,6 +1884,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       satellites: satelliteRegistry,
       wakeRoutes: wakeRoutesService,
       deliveries: deliveriesService,
+      outbox: outboxService,
       calls: callsService,
       observedChats: observedChatsService,
       toolRegistry: opts.toolRegistry,

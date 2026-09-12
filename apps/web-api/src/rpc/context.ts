@@ -28,6 +28,7 @@ import type { ModelRegistryService } from '../services/model-registry.service';
 import type { NamedSecretsService } from '../services/named-secrets.service';
 import type { ObservedChatsService } from '../services/observed-chats.service';
 import type { OnboardingService } from '../services/onboarding.service';
+import type { OutboxService } from '../services/outbox.service';
 import type { PersonalitiesService } from '../services/personalities.service';
 import type { PlatformsService } from '../services/platforms.service';
 import type { PluginLoader, PluginsService } from '../services/plugins.service';
@@ -104,6 +105,11 @@ export interface RpcContext {
   /** Read-only delivery-obligation ledger view. Not optional: it degrades to
    *  zeros when the gateway has never run. */
   deliveries: DeliveriesService;
+  /** The personality approval queue — read, and the human's decisions. Not
+   *  optional: it reports an empty queue (opening nothing) where no gated
+   *  personality has ever proposed a publication. Decisions only; the gateway
+   *  process does the publishing. */
+  outbox: OutboxService;
   /** Connected wake satellites + the pushed routing table. Absent in
    *  deployments with no satellite lane — the RPCs then report an empty house
    *  rather than throwing at a Settings page. */

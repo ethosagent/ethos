@@ -83,6 +83,9 @@ import {
   ModelTierConfigSchema,
   NamedSecretProviderNameSchema,
   OnboardingStepSchema,
+  OutboxItemViewSchema,
+  OutboxRevisionViewSchema,
+  OutboxStateSchema,
   PendingMemorySchema,
   PendingSkillSchema,
   PersonalitySchema,
@@ -4306,6 +4309,108 @@ const deliveries = {
 };
 
 // ---------------------------------------------------------------------------
+// Outbox — the personality approval queue (plan `trust-before-reach.md` Part 2)
+//
+// A personality with `outbound_policy.approve_before_send` does not publish: its
+// `send_message` queues an item here and returns "NOT sent". This namespace is
+// the WEB approval surface for that queue (O-D5: any authenticated `/rpc`
+// session counts as the operator, the same rule `deliveries` rides on).
+//
+// It writes DECISIONS ONLY. There is no procedure that sends, claims, retries a
+// delivery or touches an adapter — web-api holds no adapters at all. The
+// gateway dispatcher polls the same SQLite file, claims `approved` rows for its
+// own bots and calls `sendTracked`. `outbox.retry` is named for the human
+// action it is (re-approve a failed item at the same revision), not for a
+// network retry.
+//
+// The binding is what makes an approval mean something: `approve` carries back
+// the `revision` and `contentHash` the human READ, and the store's conditional
+// UPDATE refuses it if either has moved. That surfaces as `CONFLICT` —
+// "changed since you viewed it" — and the UI re-reads rather than publishing
+// text nobody approved.
+// ---------------------------------------------------------------------------
+
+/**
+ * Filters for one pane. Absent `personalityId` AND `teamId` means every item in
+ * the deployment — the count behind a global "needs you" badge.
+ *
+ * `teamId` expands to that team's member personalities (the manifest's roster),
+ * which is what the team pane shows. Given both, the intersection applies: a
+ * personality that is not a member of the team matches nothing.
+ */
+const OutboxListInput = z.object({
+  personalityId: z.string().min(1).optional(),
+  teamId: z.string().min(1).optional(),
+  /** Restrict to these states — the four UI sections. Absent means all. */
+  states: z.array(OutboxStateSchema).min(1).optional(),
+  /** Items to return, newest first. */
+  limit: z.number().int().min(1).max(200).optional(),
+});
+const OutboxListOutput = z.object({ items: z.array(OutboxItemViewSchema) });
+
+const OutboxGetInput = z.object({ itemId: z.string().min(1) });
+/** The item plus its full revision history, oldest first — the card's
+ *  "revision 2 · edited by you" line and the timeline are rendered from it. */
+const OutboxGetOutput = z.object({
+  item: OutboxItemViewSchema,
+  revisions: z.array(OutboxRevisionViewSchema),
+});
+
+/** Every decision answers with the item as it now stands, so a client never
+ *  has to guess the resulting state or issue a second read. */
+const OutboxItemOutput = z.object({ item: OutboxItemViewSchema });
+
+/**
+ * A BOUND approval. `revision` and `contentHash` are the ones the human read
+ * off the card; if the item has been edited, revoked, rejected or expired since
+ * it was rendered, nothing is approved and the call fails `CONFLICT`.
+ */
+const OutboxApproveInput = z.object({
+  itemId: z.string().min(1),
+  revision: z.number().int().positive(),
+  contentHash: z.string().min(1),
+  /** Tab identity, recorded as `decidedBy` on the `outbox.approve` audit row.
+   *  A LABEL for the trail, never the gate: authentication is the gate. */
+  clientId: z.string().min(1),
+});
+
+const OutboxRejectInput = z.object({
+  itemId: z.string().min(1),
+  /** Shown to the agent and kept in the audit trail. */
+  reason: z.string().min(1),
+  clientId: z.string().min(1),
+});
+
+/** Replace the text with revision n+1. `revision` is the one the editor started
+ *  from; any approval on it is void. Destination and sender are NOT editable —
+ *  to publish somewhere else, reject and let the agent propose again. */
+const OutboxEditInput = z.object({
+  itemId: z.string().min(1),
+  revision: z.number().int().positive(),
+  text: z.string().min(1),
+  clientId: z.string().min(1),
+});
+
+/** `revoke` (withdraw an approval before the dispatcher claims it) and `retry`
+ *  (re-approve a failed item at the same revision) need no binding: neither
+ *  puts new text in front of anyone. */
+const OutboxDecisionInput = z.object({
+  itemId: z.string().min(1),
+  clientId: z.string().min(1),
+});
+
+/** @experimental */
+const outbox = {
+  list: oc.input(OutboxListInput).output(OutboxListOutput),
+  get: oc.input(OutboxGetInput).output(OutboxGetOutput),
+  approve: oc.input(OutboxApproveInput).output(OutboxItemOutput),
+  reject: oc.input(OutboxRejectInput).output(OutboxItemOutput),
+  edit: oc.input(OutboxEditInput).output(OutboxItemOutput),
+  revoke: oc.input(OutboxDecisionInput).output(OutboxItemOutput),
+  retry: oc.input(OutboxDecisionInput).output(OutboxItemOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Observed chats — the rooms a bot WATCHES and never answers
 // (plan/phases/ambient-group-monitoring.md R12).
 //
@@ -5239,6 +5344,7 @@ export const contract = {
   digest,
   voice,
   deliveries,
+  outbox,
   channels,
   a2a,
   namedSecrets,

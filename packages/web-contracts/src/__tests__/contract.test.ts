@@ -307,6 +307,7 @@ describe('contract router', () => {
       'models',
       'namedSecrets',
       'onboarding',
+      'outbox',
       'personalities',
       'platforms',
       'plugins',

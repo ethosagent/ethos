@@ -501,11 +501,43 @@ export interface PersonalityConfig {
    */
   mcp_export?: PersonalityMcpExportConfig;
   /**
-   * Per-personality outbound approval policy. Declared but NOT yet enforced:
-   * the block is parsed, persisted and round-tripped, and has no runtime
-   * effect. Setting `approve_before_send: true` does NOT gate channel egress
-   * today — no pending queue exists and outbound messages send as usual.
-   * Treat it as inert until a release wires it into the gateway.
+   * Per-personality outbound approval policy.
+   *
+   * `approve_before_send: true` turns an agent-initiated `send_message` into a
+   * PROPOSAL rather than a send. The gate is in `executeSendMessage`
+   * (extensions/tools-messaging/src/index.ts), which runs it AFTER the
+   * operator allowlist check, so an approval can never widen the destinations
+   * the operator allowed. The queued item, its immutable revisions and the
+   * content binding a human approves live in `SQLiteOutboxStore` /
+   * `OutboxService` (`@ethosagent/outbox`).
+   *
+   * LIMITATION — the field is enforced in code and still inert in practice.
+   * The gate is built only when a surface supplies `ComposeToolsDeps.outbox`
+   * (packages/wiring/src/compose-tools.ts), and no surface supplies one yet:
+   * the gateway's outbox wiring is a later task. Until it lands, `gateSend`
+   * returns `undefined` for want of a seam and every deployment sends exactly
+   * as it did before — pinned by "sends exactly as today when no outbox is
+   * wired" in `extensions/tools-messaging/src/__tests__/outbox-gate.test.ts`.
+   *
+   * `channels` names platforms (`slack`, `telegram`, `discord`, `whatsapp`,
+   * `email`); absent means every platform. An unknown name FAILS the
+   * personality load — `buildOutboundPolicy`
+   * (extensions/personalities/src/index.ts) — so a typo cannot silently leave
+   * a platform ungated. `approve_before_send: false` ignores `channels` at
+   * runtime, but a bad name in it is still refused at load.
+   *
+   * `approver_personality` is an ADVISORY reviewer, never an approver: it
+   * attaches a PASS/FAIL receipt and a human still decides.
+   *
+   * What it does NOT cover, stated because the name would otherwise imply it:
+   * the turn's own chat and the operator's own chat are exempt destinations;
+   * cron delivery, goal notes, owner notices and team/mesh dispatch are not
+   * gated; and egress through MCP tools or `a2a_send` is not covered at all —
+   * that would mean classifying arbitrary third-party tools. `publishingLine`
+   * (extensions/personalities/src/character-sheet.ts) prints the exclusion on
+   * every character sheet rather than letting this field read as blanket
+   * coverage.
+   *
    * Counts as ONE field for the schema-freeze gate.
    */
   outbound_policy?: OutboundPolicyConfig;
