@@ -122,8 +122,16 @@ describe('startHealthProbeLoop', () => {
       },
     });
 
-    // Wait for 3 ticks (60ms with 20ms interval)
-    await new Promise<void>((resolve) => setTimeout(resolve, 80));
+    // Three ticks is ~60ms of wall clock at a 20ms interval, but `setInterval`
+    // only guarantees a MINIMUM delay: a loaded machine slips the firings, and
+    // the fixed 80ms window this used to wait was observed catching two ticks
+    // instead of three. Wait for the loop to REACH the third consecutive
+    // failure rather than assuming a fixed window contains it. The assertions
+    // below are unchanged — `tickCount >= 3` still pins "three fails, then hung".
+    await vi.waitFor(() => expect(onHung).toHaveBeenCalledWith('worker'), {
+      timeout: 5_000,
+      interval: 5,
+    });
     stop();
 
     expect(tickCount).toBeGreaterThanOrEqual(3);
@@ -148,7 +156,13 @@ describe('startHealthProbeLoop', () => {
       probe: async () => (failNext ? null : okResponse),
     });
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 80));
+    // Same slipped-interval hazard as the `onHung` test above: this needs two
+    // ticks (fail, then succeed), which a fixed 80ms window does not guarantee
+    // on a loaded machine. Wait for the outcome instead.
+    await vi.waitFor(() => expect(onRecovered).toHaveBeenCalledWith('worker'), {
+      timeout: 5_000,
+      interval: 5,
+    });
     stop();
 
     expect(onRecovered).toHaveBeenCalledWith('worker');

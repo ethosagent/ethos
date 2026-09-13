@@ -14,8 +14,21 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
-const TSX = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
 const SERVICE = join(REPO_ROOT, 'apps', 'web-api', 'src', 'services', 'approvals.service');
+
+/**
+ * `node --import tsx`, deliberately NOT the `tsx` bin.
+ *
+ * The bin is a WRAPPER that spawns the real process and relays signals to it
+ * (`relaySignals` in `tsx/dist/cli.mjs`). The relay gives the child 30ms to
+ * acknowledge the signal over IPC, twice; miss both and the wrapper `SIGKILL`s
+ * it and exits `128 + SIGTERM` = 143. That budget is a scheduling deadline, not
+ * a property of the code under test — on a loaded machine the child simply does
+ * not get scheduled in time, and `expect(code).toBe(0)` below fails having
+ * measured tsx rather than `forceSettleAll`. Verified: starving the child past
+ * the window yields 143 through the bin and 0 through `--import`.
+ */
+const NODE_ARGS = ['--import', 'tsx'] as const;
 
 /**
  * The child. Imports the real `ApprovalsService` by absolute path (its own
@@ -74,7 +87,10 @@ describe('serve shutdown ordering — forceSettleAll before process.exit', () =>
     const scriptPath = join(dir, 'shutdown-child.ts');
     await writeFile(scriptPath, childScript(markerPath), 'utf8');
 
-    const child = spawn(TSX, [scriptPath], { cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [...NODE_ARGS, scriptPath], {
+      cwd: REPO_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     let stderr = '';
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk);
