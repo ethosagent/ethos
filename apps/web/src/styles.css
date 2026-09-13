@@ -2080,6 +2080,51 @@ body,
   padding: 24px 0;
 }
 
+/* Paged history (useChat `loadOlder`): the reserved slot at the top of the list.
+   It holds the top sentinel and, while a page loads or after one failed, ONE
+   feedback row — the same `.activity-row` the trail uses (DESIGN.md "Feedback &
+   activity" §6), never a toast. The slot keeps its height as the row comes and
+   goes, so starting a load moves nothing on screen. */
+.message-list-older {
+  position: relative;
+  max-width: var(--layout-chat-max-width);
+  width: 100%;
+  min-height: 28px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.message-list-older-sentinel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 1px;
+}
+
+.message-list-older-retry {
+  margin-left: auto;
+  flex-shrink: 0;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color var(--motion-fast, 80ms) cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.message-list-older-retry:hover {
+  background: var(--ethos-hover);
+}
+
+.message-list-older-retry:focus-visible {
+  outline: 2px solid var(--accent, var(--ethos-info));
+  outline-offset: 1px;
+}
+
 .message-list-empty {
   display: flex;
   flex-direction: column;

@@ -150,12 +150,42 @@ const SessionListOutput = z.object({
   nextCursor: z.string().nullable(),
 });
 
-const SessionGetInput = z.object({ id: z.string() });
+const SessionGetInput = z.object({
+  id: z.string(),
+  /**
+   * Default `true`: `messages` and `cards` carry the WHOLE session. `false`
+   * skips reading them, and both arrays are then `[]` meaning "not requested",
+   * not "none" — page the history with `sessions.messages` instead.
+   */
+  withMessages: z.boolean().default(true),
+});
 const SessionGetOutput = z.object({
   session: SessionSchema,
+  /** Every message, oldest first. `[]` when `withMessages: false` (not requested). */
   messages: z.array(StoredMessageSchema),
-  /** Card envelopes emitted during this session, for replay. Empty when none. */
+  /** Card envelopes emitted during this session, for replay. Empty when none, or when not requested. */
   cards: z.array(SessionCardSchema),
+});
+
+// Turn-based, cursor-paged history, newest page first. A turn starts at a
+// `user` message (`user_steer` does not start one) and is never split across
+// pages; rows before the first user message ride with the page that reaches the
+// start. A page also stops adding older turns at ~500 KB of message content,
+// but always carries at least one whole turn.
+const SessionMessagesInput = z.object({
+  id: z.string(),
+  /** Opaque cursor from a previous response's `nextCursor`. Absent = the newest turns. */
+  before: z.string().optional(),
+  /** Whole turns per page. */
+  turns: z.number().int().min(1).max(100).default(20),
+});
+const SessionMessagesOutput = z.object({
+  /** The page's messages, oldest first. */
+  messages: z.array(StoredMessageSchema),
+  /** Only the cards whose tool call belongs to a message in this page. */
+  cards: z.array(SessionCardSchema),
+  /** Pass as `before` for the next-older page. `null` once the page reaches the start of the session. */
+  nextCursor: z.string().nullable(),
 });
 
 const SessionForkInput = z.object({
@@ -215,6 +245,7 @@ export type ContextAnatomyWire = z.infer<typeof ContextAnatomySchema>;
 const sessions = {
   list: oc.input(SessionListInput).output(SessionListOutput),
   get: oc.input(SessionGetInput).output(SessionGetOutput),
+  messages: oc.input(SessionMessagesInput).output(SessionMessagesOutput),
   fork: oc.input(SessionForkInput).output(SessionForkOutput),
   delete: oc.input(SessionDeleteInput).output(SessionDeleteOutput),
   update: oc.input(SessionUpdateInput).output(SessionUpdateOutput),

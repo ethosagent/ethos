@@ -43,6 +43,7 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
   sessions: {
     list: 'sessions:read',
     get: 'sessions:read',
+    messages: 'sessions:read',
     fork: 'sessions:write',
     delete: 'sessions:write',
     update: 'sessions:write',

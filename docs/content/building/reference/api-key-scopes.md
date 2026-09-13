@@ -4,7 +4,7 @@ description: "All API key scopes and what each one gates."
 kind: reference
 audience: developer
 slug: api-key-scopes
-updated: 2026-08-19
+updated: 2026-09-13
 ---
 
 A scope is one permission on one API key. Each key carries a set of them, and the set decides which surfaces the bearer reaches: the contract namespaces on `/rpc/*`, the SSE endpoint, and the OpenAI-compatible `/v1/*` endpoints. Two mint paths issue keys from this same vocabulary — the `apiKeys.create` RPC (cookie-auth only, used by the web Settings tab) and `ethos api-key create` on the CLI.
@@ -17,7 +17,7 @@ A scope is one permission on one API key. Each key carries a set of them, and th
 
 | Scope | Gates |
 |---|---|
-| `sessions:read` | Read access to `sessions.list` and `sessions.get`. |
+| `sessions:read` | Read access to `sessions.list`, `sessions.get`, and `sessions.messages`. |
 | `sessions:write` | Write access to `sessions.fork`, `sessions.delete`, and `sessions.update`. |
 | `chat` | The whole OpenAI-compatible surface: `/v1/*` (currently `/v1/models`, `/v1/chat/completions`, `/v1/capabilities`, and `/v1/audio/transcriptions`). Asserted once at the `/v1` mount, so it covers every route under it. |
 | `chat:send` | Access to `chat.send` and `chat.abort` on `/rpc/*`. |

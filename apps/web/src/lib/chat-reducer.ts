@@ -254,6 +254,22 @@ export type ChatAction =
     }
   | { type: 'steer-user-message'; id: string; text: string; timestamp: number }
   | { type: 'history-loaded'; messages: StoredMessage[]; cards?: SessionCard[] }
+  /**
+   * One next-older page of paged history (`sessions.messages` with a cursor),
+   * prepended ahead of what is already loaded. Unlike `history-loaded` it
+   * REPLACES nothing: the turn in flight, streaming, runs and clarify state are
+   * left exactly as they are.
+   */
+  | { type: 'history-older-loaded'; messages: StoredMessage[]; cards?: SessionCard[] }
+  /**
+   * The newest page of history, fetched again because the session grew outside
+   * this tab's stream (a `cron.fired` turn). MERGED: when the page starts inside
+   * what is loaded, everything from that row to the end is replaced by the page
+   * and every older loaded page is kept; otherwise the page replaces the whole
+   * history. The turn in flight, streaming, phase, runs and clarify state are
+   * left exactly as they are.
+   */
+  | { type: 'history-newest-merged'; messages: StoredMessage[]; cards?: SessionCard[] }
   | { type: 'send-failed'; userMessageId: string; error: string }
   | { type: 'clear-error' }
   /**
@@ -676,6 +692,48 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
         messages: parsed.messages,
         trail: parsed.trail,
         abortedTurn: false,
+      };
+    }
+
+    case 'history-older-loaded': {
+      // A page is whole turns starting at a user row (web-contracts
+      // `sessions.messages`), and `parseHistory` flushes at every user and steer
+      // row — so the page parses on its own, cards included, with no state from
+      // the page after it.
+      const parsed = parseHistory(action.messages, action.cards ?? []);
+      const known = new Set(state.messages.map((m) => m.id));
+      const older = parsed.messages.filter((m) => !known.has(m.id));
+      if (older.length === 0) return state;
+      return {
+        ...state,
+        messages: [...older, ...state.messages],
+        // Existing keys win: a trail the live surface has amended since (a
+        // `tool_end` after reload) is newer than the page's reading of it.
+        trail: { ...parsed.trail, ...state.trail },
+      };
+    }
+
+    case 'history-newest-merged': {
+      const parsed = parseHistory(action.messages, action.cards ?? []);
+      const first = parsed.messages[0];
+      if (!first) return state;
+      // Contiguous: rows older than the page's first stay as loaded, earlier
+      // pages included; from that row on, the page is the newer account — and it
+      // carries under persisted ids any row this tab only knew by a local one.
+      // Not contiguous: more than a page arrived, so the page is all there is.
+      const at = state.messages.findIndex((m) => m.id === first.id);
+      const kept = at >= 0 ? state.messages.slice(0, at) : [];
+      // Trails follow their turns, plus the in-flight turn's own.
+      const keep = new Set(kept.map((m) => m.id));
+      if (state.currentTurn) keep.add(state.currentTurn.id);
+      const trail: TrailState = {};
+      for (const [turnId, entries] of Object.entries(state.trail)) {
+        if (keep.has(turnId)) trail[turnId] = entries;
+      }
+      return {
+        ...state,
+        messages: [...kept, ...parsed.messages],
+        trail: { ...parsed.trail, ...trail },
       };
     }
 
@@ -1262,6 +1320,21 @@ function parseHistory(
   flush();
   insertReplayedCards(ui, cards, anchors);
   return { messages: ui, trail };
+}
+
+/**
+ * Whether the newest page of history starts inside `messages` — the same check
+ * `history-newest-merged` makes, so the hook can tell whether its paging cursor
+ * survives the merge (it does only when older loaded pages are kept). `null`
+ * for a page with nothing to show.
+ */
+export function newestPageIsContiguous(
+  messages: ChatMessage[],
+  stored: StoredMessage[],
+): boolean | null {
+  const first = parseHistory(stored).messages[0];
+  if (!first) return null;
+  return messages.some((m) => m.id === first.id);
 }
 
 /** Where a replayed card goes, and which turn it goes into. */

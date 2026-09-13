@@ -4,7 +4,7 @@ description: "Constructor options, RPC namespaces, and authentication modes for 
 kind: reference
 audience: developer
 slug: sdk-client
-updated: 2026-05-13
+updated: 2026-09-13
 ---
 
 `EthosClient` is the typed RPC client for the Ethos control-plane API. It wraps an [oRPC](https://orpc.unnoq.com/) link so every call is validated against the shared contract at compile time and at runtime.
@@ -57,10 +57,24 @@ These namespaces are committed to semver stability. Breaking changes require a m
 | Method | Input | Output | Description |
 |---|---|---|---|
 | `list` | `{ q?, limit?, cursor?, personalityId? }` | `{ sessions, nextCursor }` | Paginated session list with optional FTS5 search. |
-| `get` | `{ id }` | `{ session, messages }` | Single session with full message history. |
+| `get` | `{ id, withMessages? }` | `{ session, messages, cards }` | Single session with full message history. `withMessages: false` skips the history: `messages` and `cards` are then `[]`, meaning "not requested". |
+| `messages` | `{ id, before?, turns? }` | `{ messages, cards, nextCursor }` | One page of history, newest turns first. See [Paged history](#paged-history). |
 | `fork` | `{ id, personalityId? }` | `{ session }` | Fork an existing session into a new one. |
 | `delete` | `{ id }` | `{ ok: true }` | Delete a session. |
 | `update` | `{ id, title }` | `{ session }` | Rename a session. Pass `null` to clear. |
+
+### Paged history {#paged-history}
+
+`sessions.messages` returns up to `turns` (1–100, default 20) whole turns. A turn starts at a `user` message and is never split across pages; rows before the first user message come with the page that reaches the start of the session. A page also stops adding older turns at about 500 KB of message content, but always carries at least one turn. `cards` holds only the cards whose tool call is in the page.
+
+Pass `nextCursor` back as `before` to get the next-older page. It is `null` once the page reaches the start. The cursor is opaque and stays valid while new messages arrive. A cursor that does not decode, or that belongs to another session, fails with `INVALID_INPUT`; an unknown session fails with `SESSION_NOT_FOUND`.
+
+```ts
+let page = await client.rpc.sessions.messages({ id: sessionId, turns: 20 });
+while (page.nextCursor) {
+  page = await client.rpc.sessions.messages({ id: sessionId, before: page.nextCursor });
+}
+```
 
 ### chat {#chat}
 

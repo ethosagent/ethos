@@ -9,6 +9,7 @@ import { sessionsExport } from '../features/sessions/rpc/export';
 import { sessionsFork } from '../features/sessions/rpc/fork';
 import { sessionsGet } from '../features/sessions/rpc/get';
 import { sessionsList } from '../features/sessions/rpc/list';
+import { sessionsMessages } from '../features/sessions/rpc/messages';
 import { sessionsPin } from '../features/sessions/rpc/pin';
 import { sessionsUnpin } from '../features/sessions/rpc/unpin';
 import { sessionsUpdate } from '../features/sessions/rpc/update';
@@ -65,6 +66,7 @@ export const apiRouter = {
   sessions: {
     list: sessionsList,
     get: sessionsGet,
+    messages: sessionsMessages,
     fork: sessionsFork,
     delete: sessionsDelete,
     update: sessionsUpdate,

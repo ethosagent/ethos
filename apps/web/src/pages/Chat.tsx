@@ -146,6 +146,9 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     resetSession,
     compact,
     noteClarifyAnswer,
+    loadOlder,
+    hasOlder,
+    olderStatus,
   } = useChat({
     ...(sessionParam ? { initialSessionId: sessionParam } : {}),
     personalityId,
@@ -1001,6 +1004,9 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         model={model}
         sessionId={currentSessionId ?? undefined}
         onSuggestPrompt={handleSuggestPrompt}
+        hasOlder={hasOlder}
+        olderStatus={olderStatus}
+        onLoadOlder={loadOlder}
         {...(canTalk && !inCall ? { onTryVoice: handleTalkToggle } : {})}
         {...(teamContext
           ? {

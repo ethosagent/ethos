@@ -19,10 +19,13 @@ export function useSessionList(debouncedSearch: string, personalityId?: string) 
   });
 }
 
+// The session row only. Every consumer reads `session.*` (title, key,
+// personalityId); history is paged by `useChat` through `sessions.messages`, so
+// `messages` and `cards` come back as `[]` here — "not requested", not "none".
 export function useSessionGet(sessionId: string | undefined | null) {
   return useQuery({
     queryKey: sessionKeys.detail(sessionId ?? ''),
-    queryFn: () => rpc.sessions.get({ id: sessionId ?? '' }),
+    queryFn: () => rpc.sessions.get({ id: sessionId ?? '', withMessages: false }),
     enabled: !!sessionId,
     staleTime: 30_000,
   });

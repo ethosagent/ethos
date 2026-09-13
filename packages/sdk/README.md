@@ -70,6 +70,14 @@ All contract namespaces are accessible via `client.rpc`:
 const { sessions, nextCursor } = await client.rpc.sessions.list({ limit: 20 });
 const { session, messages } = await client.rpc.sessions.get({ id: 'ses_abc' });
 
+// Paged history: newest turns first, then walk back with the cursor.
+// Skip the full transcript on `get` when you page instead.
+const { session: meta } = await client.rpc.sessions.get({ id: 'ses_abc', withMessages: false });
+let page = await client.rpc.sessions.messages({ id: meta.id, turns: 20 });
+while (page.nextCursor) {
+  page = await client.rpc.sessions.messages({ id: meta.id, before: page.nextCursor });
+}
+
 // Chat
 const { sessionId } = await client.rpc.chat.send({
   clientId: 'tab-1',
@@ -91,7 +99,7 @@ await client.rpc.memory.write({ store: 'memory', content: '# Updated context' })
 
 These follow semver. Breaking changes require a major version bump.
 
-- **sessions** -- `list`, `get`, `fork`, `delete`, `update`
+- **sessions** -- `list`, `get`, `messages`, `fork`, `delete`, `update`
 - **chat** -- `send`, `abort`
 - **personalities** -- `list`, `get`, `characterSheet`, `create`, `update`, `delete`, `duplicate`, plus per-personality skill CRUD
 - **memory** -- `list`, `get`, `write`

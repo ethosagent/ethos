@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import {
   ApprovalRequestSchema,
   contract,
@@ -324,6 +325,10 @@ describe('contract router', () => {
     ]);
   });
 
+  it('sessions exposes paged history next to get', () => {
+    expect(Object.keys(contract.sessions)).toEqual(expect.arrayContaining(['get', 'messages']));
+  });
+
   it('every leaf is an object (oRPC procedure)', () => {
     for (const [ns, procedures] of Object.entries(contract)) {
       for (const [name, procedure] of Object.entries(procedures)) {
@@ -374,5 +379,49 @@ describe('KEY_CATEGORY_IDS', () => {
     expect(new Set(KEY_CATEGORY_IDS).size).toBe(KEY_CATEGORY_IDS.length);
     expect(KeyCategorySchema.options).toEqual([...KEY_CATEGORY_IDS]);
     expect(KeyCategorySchema.safeParse('not-a-category').success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sessions — paged history input bounds and defaults
+// ---------------------------------------------------------------------------
+
+// Schemas are module-private, so reach them through the contract the way the
+// server does; the `instanceof` guard fails loudly if oRPC's internals move.
+function sessionsSchemaOf(procedure: unknown, field: 'inputSchema' | 'outputSchema'): z.ZodType {
+  const def = (procedure as { '~orpc'?: Record<string, unknown> })['~orpc'];
+  const schema = def?.[field];
+  if (!(schema instanceof z.ZodType)) throw new Error(`contract has no ${field}`);
+  return schema;
+}
+
+describe('sessions.messages / sessions.get inputs', () => {
+  it('sessions.messages defaults turns to 20 and bounds it to 1..100', () => {
+    const schema = sessionsSchemaOf(contract.sessions.messages, 'inputSchema');
+    expect(schema.parse({ id: 's' })).toEqual({ id: 's', turns: 20 });
+    expect(schema.parse({ id: 's', turns: 1, before: 'c' })).toEqual({
+      id: 's',
+      turns: 1,
+      before: 'c',
+    });
+    expect(schema.safeParse({ id: 's', turns: 100 }).success).toBe(true);
+    for (const turns of [0, 101, 1.5]) {
+      expect(schema.safeParse({ id: 's', turns }).success, `turns=${turns}`).toBe(false);
+    }
+  });
+
+  it('sessions.messages output requires a nullable nextCursor', () => {
+    const output = sessionsSchemaOf(contract.sessions.messages, 'outputSchema');
+    expect(output.safeParse({ messages: [], cards: [], nextCursor: null }).success).toBe(true);
+    expect(output.safeParse({ messages: [], cards: [] }).success).toBe(false);
+  });
+
+  it('sessions.get defaults withMessages to true', () => {
+    const schema = sessionsSchemaOf(contract.sessions.get, 'inputSchema');
+    expect(schema.parse({ id: 's' })).toEqual({ id: 's', withMessages: true });
+    expect(schema.parse({ id: 's', withMessages: false })).toEqual({
+      id: 's',
+      withMessages: false,
+    });
   });
 });

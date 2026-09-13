@@ -33,7 +33,7 @@ A dashboard designed as a "profile editor" reads USER.md, presents it in a texta
 
 Each session has a sequence of messages stored in the `SessionStore` (the default implementation is `SQLiteSessionStore` using WAL mode with FTS5 for full-text search). Messages are the turn-by-turn conversation: user inputs, assistant responses, tool calls, tool results.
 
-The SDK exposes session messages read-only through `sessions.get({ id })`, which returns the `Session` metadata plus an array of `StoredMessage` objects. A dashboard renders these as the chat transcript.
+The SDK exposes session messages read-only through `sessions.get({ id })`, which returns the `Session` metadata plus an array of `StoredMessage` objects. A dashboard renders these as the chat transcript. For a long session, `sessions.messages({ id, before?, turns? })` returns the history one page of whole turns at a time, newest first, with a `nextCursor` for the next-older page.
 
 A dashboard does not write messages directly. Messages are created by the agent loop during a turn: the user sends text via `chat.send`, the loop processes it, and messages are persisted as side effects. Injecting messages outside the loop would corrupt the conversation history — the LLM expects a strict alternation of user/assistant/tool_result blocks, and violations cause API errors.
 
@@ -51,7 +51,7 @@ This is intentional. The store's internal schema (rowid ordering, FTS triggers, 
 |---|---|---|---|
 | MEMORY.md | `memory.get({ store: 'memory', personalityId })` | Yes | Returns current Markdown content |
 | USER.md | `memory.get({ store: 'user', personalityId, userId? })` | Yes | The personality's copy, or the person's when `userId` is passed |
-| Session messages | `sessions.get({ id })` | Yes | Returns conversation transcript |
+| Session messages | `sessions.get({ id })`, `sessions.messages({ id, before? })` | Yes | Whole transcript, or one page of turns at a time |
 | Session list | `sessions.list({ q?, limit?, cursor? })` | Yes | Paginated, supports FTS5 search |
 
 ## What is safe to write

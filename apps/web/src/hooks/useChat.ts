@@ -7,6 +7,7 @@ import {
   type ChatAction,
   type ChatState,
   initialChatState,
+  newestPageIsContiguous,
   type RestoredRun,
 } from '../lib/chat-reducer';
 import { getClientId } from '../lib/clientId';
@@ -19,8 +20,9 @@ import { subscribeToSession } from '../sse';
 //   1. The chat reducer (lib/chat-reducer.ts) — pure state machine.
 //   2. The SSE subscription (lib/sse.ts) — drives reducer with live events.
 //   3. The oRPC mutations (chat.send) — kicks off new turns.
-//   4. The history fetch (sessions.get) — populates state on mount when an
-//      existing session is opened.
+//   4. The history fetch (sessions.messages) — the newest page of whole turns
+//      on mount when an existing session is opened; `loadOlder` walks back
+//      one page at a time from there.
 //
 // `sessionId` is both an input AND output: callers can pass `undefined`
 // to start a fresh session, and the hook surfaces the server-assigned id
@@ -46,11 +48,14 @@ export interface UseChatOptions {
   onSessionNotFound?: (sessionId: string) => void;
   /**
    * The current session's string key. When a `cron.fired` SSE event arrives
-   * with a matching sessionKey, history is reloaded so the cron turn appears
-   * in chat.
+   * with a matching sessionKey, the newest page of history is fetched again and
+   * merged, so the cron turn appears in chat.
    */
   sessionKey?: string;
 }
+
+/** Where the next-older history page stands. `error` keeps the cursor. */
+export type OlderHistoryStatus = 'idle' | 'loading' | 'error';
 
 export interface UseChatResult {
   state: ChatState;
@@ -101,6 +106,16 @@ export interface UseChatResult {
    * only a source, never the answer.
    */
   noteClarifyAnswer: (requestId: string, answer: string) => void;
+  /**
+   * Fetch the next-older page of history and prepend it. A no-op while a page
+   * is in flight or when nothing is older; a page that lands after the session
+   * was switched, reset or reloaded is dropped. After a failure, calling it
+   * again retries the same page.
+   */
+  loadOlder: () => Promise<void>;
+  /** The session has history older than what is loaded. */
+  hasOlder: boolean;
+  olderStatus: OlderHistoryStatus;
 }
 
 type Reducer = (state: ChatState, op: ReducerOp) => ChatState;
@@ -176,11 +191,41 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     opts.initialSessionId ?? null,
   );
 
+  // Callback props are read through a ref, updated every render, so a caller
+  // passing an inline function (Chat.tsx does) never restarts the history
+  // load — that effect re-runs only when the session changes.
+  const onSessionNotFoundRef = useRef(opts.onSessionNotFound);
+  onSessionNotFoundRef.current = opts.onSessionNotFound;
+  // The latest reducer state, for the cron merge's contiguity check.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   // Track whether we've fetched history for this session so we don't
   // refetch on every render. A `useQuery` would also work but the data
   // is single-shot per session and feeds the reducer, which already owns
   // the canonical message list — useState is the right tool here.
   const historyLoadedFor = useRef<string | null>(null);
+
+  // Paged history. The cursor lives in a ref, beside the session it belongs
+  // to, so `loadOlder` stays referentially stable and a second call sees the
+  // first in flight before React re-renders; `hasOlder`/`olderStatus` mirror
+  // it for rendering. The pages themselves go straight into the reducer, which
+  // stays the one owner of the message list. `pageGeneration` bumps whenever
+  // the loaded history is replaced or wiped, so a page asked for before that
+  // is recognised as stale and dropped.
+  const olderCursor = useRef<{ sessionId: string; cursor: string } | null>(null);
+  const olderInFlight = useRef(false);
+  const pageGeneration = useRef(0);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [olderStatus, setOlderStatus] = useState<OlderHistoryStatus>('idle');
+
+  const resetPaging = useCallback((sessionId: string | null, cursor: string | null) => {
+    pageGeneration.current += 1;
+    olderInFlight.current = false;
+    olderCursor.current = sessionId !== null && cursor !== null ? { sessionId, cursor } : null;
+    setHasOlder(olderCursor.current !== null);
+    setOlderStatus('idle');
+  }, []);
 
   // 0b. Rediscover runs that were already going when this page connected, and
   //     the questions any of them are parked on.
@@ -214,31 +259,44 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     if (!currentSessionId) return;
     if (historyLoadedFor.current === currentSessionId) return;
 
+    const sessionId = currentSessionId;
     let cancelled = false;
+    // The run restore needs the session's key, read from the session row alone
+    // (`withMessages: false`) and started beside the page so it adds no wait.
+    // Not from the React Query cache: `useChat` also runs where no
+    // `useSessionGet` for this id sits beside it (QuickChat, the architect
+    // flows), and the hook needs no QueryClient. Its failure only costs the
+    // best-effort restore, so it is handled here and never surfaces.
+    const sessionRow = rpc.sessions.get({ id: sessionId, withMessages: false });
+    sessionRow.catch(() => undefined);
     rpc.sessions
-      .get({ id: currentSessionId })
-      .then((res) => {
+      .messages({ id: sessionId })
+      .then((page) => {
         if (cancelled) return;
         // Mark as loaded only after success so a Strict Mode
         // cancel+remount cycle retries rather than skipping.
-        historyLoadedFor.current = currentSessionId;
+        historyLoadedFor.current = sessionId;
+        resetPaging(sessionId, page.nextCursor);
         dispatch({
           kind: 'action',
-          action: { type: 'history-loaded', messages: res.messages, cards: res.cards },
+          action: { type: 'history-loaded', messages: page.messages, cards: page.cards },
         });
         // Chained off the history load rather than run as its own effect for
         // one reason: `history-loaded` REPLACES `state.messages`, so a restore
-        // that landed first would have its anchors thrown away. It also needs
-        // the session's key, which this response already carries.
-        void restoreRunState(res.session.key, () => cancelled);
+        // that landed first would have its anchors thrown away.
+        void sessionRow.then(
+          (res) => restoreRunState(res.session.key, () => cancelled),
+          () => undefined,
+        );
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
         if (message.toLowerCase().includes('not found')) {
           // Stale session ID — reset silently so the user gets a fresh chat
-          opts.onSessionNotFound?.(currentSessionId ?? '');
+          onSessionNotFoundRef.current?.(sessionId);
           historyLoadedFor.current = null;
+          resetPaging(null, null);
           dispatch({ kind: 'action', action: { type: 'reset' } });
           setCurrentSessionId(null);
           return;
@@ -252,7 +310,65 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     return () => {
       cancelled = true;
     };
-  }, [currentSessionId, opts.onSessionNotFound, restoreRunState]);
+  }, [currentSessionId, restoreRunState, resetPaging]);
+
+  // 1b. The next-older page, on demand (the list's top sentinel, or Retry).
+  const loadOlder = useCallback(async (): Promise<void> => {
+    const from = olderCursor.current;
+    if (!from || olderInFlight.current) return;
+    olderInFlight.current = true;
+    const generation = pageGeneration.current;
+    setOlderStatus('loading');
+    try {
+      const page = await rpc.sessions.messages({ id: from.sessionId, before: from.cursor });
+      if (generation !== pageGeneration.current) return;
+      olderCursor.current =
+        page.nextCursor !== null ? { sessionId: from.sessionId, cursor: page.nextCursor } : null;
+      dispatch({
+        kind: 'action',
+        action: { type: 'history-older-loaded', messages: page.messages, cards: page.cards },
+      });
+      setHasOlder(page.nextCursor !== null);
+      setOlderStatus('idle');
+    } catch {
+      if (generation !== pageGeneration.current) return;
+      // The cursor stays where it was, so the next call asks for this page again.
+      setOlderStatus('error');
+    } finally {
+      if (generation === pageGeneration.current) olderInFlight.current = false;
+    }
+  }, []);
+
+  // 1c. The newest page again, merged (`history-newest-merged`) — for a turn
+  //     that reached this session outside this tab's stream: a `cron.fired`
+  //     job. Best-effort: a failed read leaves the transcript as it was, and
+  //     the next firing or reload catches up.
+  const mergeNewest = useCallback(
+    async (sessionId: string): Promise<void> => {
+      // Before the first page lands, that load is already fetching the newest turns.
+      if (historyLoadedFor.current !== sessionId) return;
+      const generation = pageGeneration.current;
+      try {
+        const page = await rpc.sessions.messages({ id: sessionId });
+        if (generation !== pageGeneration.current || historyLoadedFor.current !== sessionId) {
+          return;
+        }
+        const contiguous = newestPageIsContiguous(stateRef.current.messages, page.messages);
+        if (contiguous === null) return;
+        // More than a page arrived: the merge replaces the whole history, so the
+        // cursor restarts from this page and an older page in flight is dropped.
+        // Contiguous, the older loaded pages stay and so does the cursor.
+        if (!contiguous) resetPaging(sessionId, page.nextCursor);
+        dispatch({
+          kind: 'action',
+          action: { type: 'history-newest-merged', messages: page.messages, cards: page.cards },
+        });
+      } catch {
+        // best-effort
+      }
+    },
+    [resetPaging],
+  );
 
   // 2. Subscribe to SSE for the current session. The wrapper handles
   //    reconnect via Last-Event-ID; we just dispatch every event into
@@ -262,14 +378,14 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     const sub = subscribeToSession(currentSessionId, {
       onEvent: (event) => {
         dispatch({ kind: 'event', event });
-        // When a cron job that ran in this session fires, reload history so
-        // the cron turn appears inline in the chat.
+        // When a cron job that ran in this session fires, merge the newest
+        // page so the cron turn appears inline in the chat.
         if (
           event.type === 'cron.fired' &&
-          (event as { sessionKey?: string }).sessionKey &&
-          (event as { sessionKey?: string }).sessionKey === opts.sessionKey
+          event.sessionKey &&
+          event.sessionKey === opts.sessionKey
         ) {
-          historyLoadedFor.current = null;
+          void mergeNewest(currentSessionId);
         }
       },
       onError: () => {
@@ -281,7 +397,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
       },
     });
     return () => sub.close();
-  }, [currentSessionId, opts.sessionKey]);
+  }, [currentSessionId, opts.sessionKey, mergeNewest]);
 
   // 3. Send a user message. Optimistically appends the user bubble,
   //    fires chat.send, and lets SSE drive the assistant response.
@@ -413,16 +529,21 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     }
   }, [currentSessionId]);
 
-  const switchSession = useCallback((sessionId: string) => {
-    dispatch({ kind: 'action', action: { type: 'reset' } });
-    setCurrentSessionId(sessionId);
-  }, []);
+  const switchSession = useCallback(
+    (sessionId: string) => {
+      resetPaging(null, null);
+      dispatch({ kind: 'action', action: { type: 'reset' } });
+      setCurrentSessionId(sessionId);
+    },
+    [resetPaging],
+  );
 
   const resetSession = useCallback(() => {
+    resetPaging(null, null);
     dispatch({ kind: 'action', action: { type: 'reset' } });
     setCurrentSessionId(null);
     historyLoadedFor.current = null;
-  }, []);
+  }, [resetPaging]);
 
   const undoTurns = useCallback(
     async (n = 1): Promise<number> => {
@@ -487,5 +608,8 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     undoTurns,
     compact,
     noteClarifyAnswer,
+    loadOlder,
+    hasOlder,
+    olderStatus,
   };
 }

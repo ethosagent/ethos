@@ -24,6 +24,7 @@ import { questionForRun, resolvedForRun } from '../../lib/clarify-queue';
 // received no SSE event whatsoever.
 
 const sessionsGet = vi.fn();
+const sessionsMessages = vi.fn();
 const tasksList = vi.fn();
 const clarifyListPending = vi.fn();
 /** Push an event to whatever `useChat` subscribed with. */
@@ -31,7 +32,10 @@ let emit: ((event: SseEvent) => void) | null = null;
 
 vi.mock('../../rpc', () => ({
   rpc: {
-    sessions: { get: (...args: unknown[]) => sessionsGet(...args) },
+    sessions: {
+      get: (...args: unknown[]) => sessionsGet(...args),
+      messages: (...args: unknown[]) => sessionsMessages(...args),
+    },
     tasks: { list: (...args: unknown[]) => tasksList(...args) },
     clarify: { listPending: (...args: unknown[]) => clarifyListPending(...args) },
   },
@@ -50,8 +54,14 @@ const SESSION_ID = 'sess-1';
 const SESSION_KEY = 'web:sess-1';
 const DEADLINE = '2026-08-20T12:00:00.000Z';
 
-function sessionResponse(messages: unknown[]) {
-  return { session: { id: SESSION_ID, key: SESSION_KEY }, messages, cards: [] };
+/** The session row, read without its history (`withMessages: false`). */
+function sessionRow() {
+  return { session: { id: SESSION_ID, key: SESSION_KEY }, messages: [], cards: [] };
+}
+
+/** The newest (and only) page of history. */
+function historyPage(messages: unknown[]) {
+  return { messages, cards: [], nextCursor: null };
 }
 
 /** One `tasks.list` row. Only the fields the restore path reads are real. */
@@ -112,10 +122,12 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   emit = null;
   sessionsGet.mockReset();
+  sessionsMessages.mockReset();
   tasksList.mockReset();
   clarifyListPending.mockReset();
-  sessionsGet.mockResolvedValue(
-    sessionResponse([{ id: 'm1', role: 'assistant', content: 'on it', timestamp: 2 }]),
+  sessionsGet.mockResolvedValue(sessionRow());
+  sessionsMessages.mockResolvedValue(
+    historyPage([{ id: 'm1', role: 'assistant', content: 'on it', timestamp: 2 }]),
   );
   tasksList.mockResolvedValue([jobRow()]);
   clarifyListPending.mockResolvedValue([clarifyRow()]);

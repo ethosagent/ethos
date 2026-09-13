@@ -19,6 +19,7 @@ import type { UseChatResult } from '../useChat';
 // swallowing the rejection.
 
 const sessionsGet = vi.fn();
+const sessionsMessages = vi.fn();
 const tasksList = vi.fn();
 const clarifyListPending = vi.fn();
 const chatAbort = vi.fn();
@@ -28,7 +29,10 @@ let emit: ((event: SseEvent) => void) | null = null;
 
 vi.mock('../../rpc', () => ({
   rpc: {
-    sessions: { get: (...args: unknown[]) => sessionsGet(...args) },
+    sessions: {
+      get: (...args: unknown[]) => sessionsGet(...args),
+      messages: (...args: unknown[]) => sessionsMessages(...args),
+    },
     tasks: { list: (...args: unknown[]) => tasksList(...args) },
     clarify: { listPending: (...args: unknown[]) => clarifyListPending(...args) },
     chat: {
@@ -76,6 +80,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   emit = null;
   sessionsGet.mockReset();
+  sessionsMessages.mockReset();
   tasksList.mockReset();
   clarifyListPending.mockReset();
   chatAbort.mockReset();
@@ -86,6 +91,7 @@ beforeEach(() => {
     messages: [],
     cards: [],
   });
+  sessionsMessages.mockResolvedValue({ messages: [], cards: [], nextCursor: null });
   tasksList.mockResolvedValue([]);
   clarifyListPending.mockResolvedValue([]);
   container = document.createElement('div');

@@ -45,6 +45,7 @@ describe('dualAuth scope enforcement (WEB-001)', () => {
     // Stub handlers — reachable only if middleware passes.
     app.post('/rpc/sessions/export', (c) => c.json({ ok: true }));
     app.post('/rpc/sessions/pin', (c) => c.json({ ok: true }));
+    app.post('/rpc/sessions/messages', (c) => c.json({ ok: true }));
     app.post('/rpc/chat/steer', (c) => c.json({ ok: true }));
     app.post('/rpc/personalities/create', (c) => c.json({ ok: true }));
     app.get('/sse/sessions/abc123', (c) => c.json({ ok: true }));
@@ -66,6 +67,12 @@ describe('dualAuth scope enforcement (WEB-001)', () => {
     const body = (await res.json()) as { code: string; error: string };
     expect(body.code).toBe('FORBIDDEN');
     expect(body.error).toMatch(/scope "sessions:read"/);
+  });
+
+  it('sessions.messages requires sessions:read, the same scope as sessions.get', async () => {
+    expect((await call('/rpc/sessions/messages', await key(['sessions:read']))).status).toBe(200);
+    expect((await call('/rpc/sessions/messages', await key(['chat:send']))).status).toBe(403);
+    expect(resolveScope('sessions.messages')).toBe(resolveScope('sessions.get'));
   });
 
   it('sessions.pin requires sessions:write', async () => {

@@ -155,6 +155,42 @@ export interface CompressionEvent {
   durationMs: number;
 }
 
+/**
+ * Options for {@link SessionStore.getMessagePage} — a turn-based, keyset-paged
+ * read of a session's history, newest page first.
+ *
+ * A TURN starts at a `role: 'user'` row and holds every later row up to the
+ * next `user` row. `user_steer` rows never start a turn: they belong to the
+ * turn in progress, as do `assistant` and `tool_result` rows. Rows older than
+ * the session's first `user` row belong to no turn and ride along with the
+ * page that reaches the start of the session.
+ */
+export interface MessagePageOptions {
+  /** Whole turns to return; an integer >= 1. A turn is never split. */
+  turns: number;
+  /**
+   * Id of the oldest row of the previous page (`MessagePage.messages[0].id`).
+   * The page holds only rows strictly older than that row's
+   * `(timestamp, insertion order)` position. The row may since have been
+   * soft-deleted; its position still anchors the page. Absent = newest turns.
+   */
+  beforeMessageId?: string;
+  /**
+   * Soft cap on the UTF-8 bytes of `content` plus the JSON of `toolCalls`
+   * across the page. Older turns stop being added once the next one would
+   * exceed it, but at least one turn is always returned even if it alone does.
+   * Absent = no cap.
+   */
+  maxBytes?: number;
+}
+
+export interface MessagePage {
+  /** Rows in chronological order (timestamp, then insertion order), soft-deleted rows excluded. */
+  messages: StoredMessage[];
+  /** False when `messages` reaches the start of the session (or there was nothing older). */
+  hasMore: boolean;
+}
+
 export interface SessionStore {
   createSession(session: Omit<Session, 'id' | 'createdAt' | 'updatedAt'>): Promise<Session>;
   getSession(id: string): Promise<Session | null>;
@@ -167,6 +203,14 @@ export interface SessionStore {
     sessionId: string,
     options?: { limit?: number; offset?: number },
   ): Promise<StoredMessage[]>;
+  /**
+   * Turn-based page of a session's history — see {@link MessagePageOptions}
+   * for the page semantics. Returns `null` when `beforeMessageId` does not name
+   * a row of this session. Optional: a store that omits it offers only
+   * `getMessages`. Pinned for both shipped stores by
+   * extensions/session-sqlite/src/__tests__/message-page.test.ts.
+   */
+  getMessagePage?(sessionId: string, options: MessagePageOptions): Promise<MessagePage | null>;
   updateUsage(sessionId: string, delta: Partial<SessionUsage>): Promise<void>;
   /**
    * Search for messages by query text. Bounds are inclusive on `StoredMessage.timestamp`.

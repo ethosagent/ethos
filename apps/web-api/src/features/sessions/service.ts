@@ -25,6 +25,9 @@ export interface SessionsServiceOptions {
   cards?: CardStore;
 }
 
+/** Byte cap (message `content` + `toolCalls` JSON) on one `sessions.messages` page. */
+export const MESSAGE_PAGE_MAX_BYTES = 500_000;
+
 export interface ListInput {
   q?: string;
   limit?: number;
@@ -51,11 +54,19 @@ export class SessionsService {
     };
   }
 
+  /**
+   * `withMessages: false` skips reading messages and cards; both come back as
+   * `[]` meaning "not requested". Absent means `true`, the original contract.
+   */
   async get(
     id: string,
+    options: { withMessages?: boolean } = {},
   ): Promise<{ session: WireSession; messages: WireStoredMessage[]; cards: SessionCard[] }> {
     const session = await this.opts.sessions.get(id);
     if (!session) throw notFound(id);
+    if (options.withMessages === false) {
+      return { session: toWireSession(session), messages: [], cards: [] };
+    }
     const messages = await this.opts.sessions.messages(id);
     return {
       session: toWireSession(session),
@@ -63,6 +74,33 @@ export class SessionsService {
       // The contract always carries the array so the client never branches on
       // undefined; a session with no store wired simply replays none.
       cards: this.opts.cards?.list(id) ?? [],
+    };
+  }
+
+  /** One turn-based page of history, newest first — see `sessions.messages` in web-contracts. */
+  async messages(input: {
+    id: string;
+    turns: number;
+    before?: string;
+  }): Promise<{ messages: WireStoredMessage[]; cards: SessionCard[]; nextCursor: string | null }> {
+    const session = await this.opts.sessions.get(input.id);
+    if (!session) throw notFound(input.id);
+    const page = await this.opts.sessions.messagePage(input.id, {
+      turns: input.turns,
+      maxBytes: MESSAGE_PAGE_MAX_BYTES,
+      ...(input.before !== undefined ? { before: input.before } : {}),
+    });
+    if (!page) {
+      throw new EthosError({
+        code: 'INVALID_INPUT',
+        cause: `Cursor is not valid for session ${input.id}`,
+        action: 'Pass a nextCursor returned by sessions.messages for this session, or omit before.',
+      });
+    }
+    return {
+      messages: page.messages.map(toWireMessage),
+      cards: this.opts.cards?.listForToolCalls(input.id, toolCallIdsOf(page.messages)) ?? [],
+      nextCursor: page.nextCursor,
     };
   }
 
@@ -152,6 +190,16 @@ function notFound(id: string): EthosError {
     cause: `Session ${id} not found`,
     action: 'Verify the ID. Open the Sessions tab to see the current list.',
   });
+}
+
+/** Tool-call ids a page's rows reference: assistant `toolCalls` and `tool_result` rows. */
+function toolCallIdsOf(messages: import('@ethosagent/types').StoredMessage[]): string[] {
+  const ids = new Set<string>();
+  for (const m of messages) {
+    if (m.toolCallId) ids.add(m.toolCallId);
+    for (const call of m.toolCalls ?? []) ids.add(call.id);
+  }
+  return [...ids];
 }
 
 function toWireSession(s: import('@ethosagent/types').Session): WireSession {

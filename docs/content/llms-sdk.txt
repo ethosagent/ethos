@@ -47,7 +47,8 @@ Access RPC methods via `client.rpc.<namespace>.<method>(input)`.
 
 ### sessions
 - list({ q?, limit?, cursor?, personalityId? }) → { sessions, nextCursor }
-- get({ id }) → { session, messages }
+- get({ id, withMessages? }) → { session, messages, cards }   (withMessages: false → messages and cards are [] = not requested)
+- messages({ id, before?, turns? }) → { messages, cards, nextCursor }   (newest turns first; turns 1-100, default 20; pass nextCursor as before; null at the start)
 - fork({ id, personalityId? }) → { session }
 - delete({ id }) → { ok }
 - update({ id, title }) → { session }

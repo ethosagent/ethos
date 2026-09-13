@@ -7,6 +7,7 @@ import type {
   SessionStore,
   StoredMessage,
 } from '@ethosagent/types';
+import { EthosError } from '@ethosagent/types';
 
 // Thin wrapper over the `SessionStore` contract for the sessions feature.
 // Hides the store's exact method names and Date/string conversions from
@@ -41,6 +42,12 @@ export interface ListOptions {
   personalityId?: string;
   /** Exact origin platform (`mcp`, `web`, …). */
   platform?: string;
+}
+
+/** One page of `messagePage`: rows oldest first, and the cursor for the next-older page. */
+export interface MessagePageResult {
+  messages: StoredMessage[];
+  nextCursor: string | null;
 }
 
 export class SessionsRepository {
@@ -138,6 +145,41 @@ export class SessionsRepository {
   async messages(sessionId: string, limit?: number): Promise<StoredMessage[]> {
     const opts = limit !== undefined ? { limit } : undefined;
     return this.store.getMessages(sessionId, opts);
+  }
+
+  /**
+   * Turn-based page of a session's history (`SessionStore.getMessagePage`).
+   * `before` is the opaque cursor from a previous page. Returns `null` when the
+   * cursor does not decode or does not name a row of this session.
+   */
+  async messagePage(
+    sessionId: string,
+    opts: { turns: number; before?: string; maxBytes: number },
+  ): Promise<MessagePageResult | null> {
+    if (!this.store.getMessagePage) {
+      throw new EthosError({
+        code: 'NOT_CONFIGURED',
+        cause: 'The configured session store does not support paged history.',
+        action: 'Use sessions.get to read the whole session.',
+      });
+    }
+    let beforeMessageId: string | undefined;
+    if (opts.before !== undefined) {
+      const decoded = decodeMessageCursor(opts.before);
+      if (decoded === null) return null;
+      beforeMessageId = decoded;
+    }
+    const page = await this.store.getMessagePage(sessionId, {
+      turns: opts.turns,
+      maxBytes: opts.maxBytes,
+      ...(beforeMessageId !== undefined ? { beforeMessageId } : {}),
+    });
+    if (!page) return null;
+    const oldest = page.messages[0];
+    return {
+      messages: page.messages,
+      nextCursor: page.hasMore && oldest ? encodeMessageCursor(oldest.id) : null,
+    };
   }
 
   async delete(id: string): Promise<void> {
@@ -270,6 +312,25 @@ function zeroUsage() {
 
 function encodeCursor(offset: number): string {
   return Buffer.from(String(offset), 'utf-8').toString('base64url');
+}
+
+// History cursor: base64url JSON `{"v":1,"m":"<id of the oldest row returned>"}`.
+// A keyset position, not an offset — the store resolves the id to
+// `(timestamp, rowid)`, so appends never shift it. `v` lets the shape change
+// without misreading an old cursor.
+function encodeMessageCursor(messageId: string): string {
+  return Buffer.from(JSON.stringify({ v: 1, m: messageId }), 'utf-8').toString('base64url');
+}
+
+function decodeMessageCursor(cursor: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf-8'));
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const { v, m } = parsed as { v?: unknown; m?: unknown };
+    return v === 1 && typeof m === 'string' && m.length > 0 ? m : null;
+  } catch {
+    return null;
+  }
 }
 
 function decodeCursor(cursor: string | null | undefined): number {

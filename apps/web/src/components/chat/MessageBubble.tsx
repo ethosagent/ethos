@@ -1,5 +1,6 @@
 import { ContentRenderer, type FenceRendererResolver } from '@ethosagent/ui-components';
 import { useQuery } from '@tanstack/react-query';
+import { memo } from 'react';
 import { CardView } from '../../features/cards/CardView';
 import { formatBytes, type MessageAttachment } from '../../lib/attachments';
 import type { AssistantBlock, AssistantTurn, UserMessage } from '../../lib/chat-reducer';
@@ -22,7 +23,10 @@ import { Trail } from './Trail';
 // tool chip, badge or status. What the agent DID goes under the bubble, in the
 // collapsed `Trail` footer.
 
-export function UserBubble({ message }: { message: UserMessage }) {
+// Both bubbles are memoized: with a long history loaded, a streamed token must
+// re-render only the live bubble. That holds only while the props they are
+// given stay referentially stable — see MessageList's `AssistantHistoryRow`.
+export const UserBubble = memo(function UserBubble({ message }: { message: UserMessage }) {
   const attachments = message.attachments ?? [];
   return (
     <div className="message-row message-row-user">
@@ -46,7 +50,7 @@ export function UserBubble({ message }: { message: UserMessage }) {
       ) : null}
     </div>
   );
-}
+});
 
 function AttachmentChip({ attachment }: { attachment: MessageAttachment }) {
   const { state, type, name, sizeBytes, previewUrl } = attachment;
@@ -72,7 +76,7 @@ function AttachmentChip({ attachment }: { attachment: MessageAttachment }) {
   );
 }
 
-export function AssistantBubble({
+export const AssistantBubble = memo(function AssistantBubble({
   turn,
   streaming,
   fenceRenderers,
@@ -128,7 +132,7 @@ export function AssistantBubble({
       <Trail entries={trail ?? []} turnId={turn.id} {...(stopped ? { stopped } : {})} />
     </div>
   );
-}
+});
 
 function BlockRenderer({
   block,

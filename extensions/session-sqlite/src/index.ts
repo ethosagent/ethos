@@ -4,6 +4,8 @@ import Database, { migrate } from '@ethosagent/sqlite';
 import type {
   CompressionEvent,
   KeyValueStore,
+  MessagePage,
+  MessagePageOptions,
   SearchResult,
   Session,
   SessionFilter,
@@ -12,6 +14,7 @@ import type {
   StoredMessage,
 } from '@ethosagent/types';
 import { SqliteKeyValueStore } from './kv-store';
+import { readMessagePage } from './message-page';
 
 export {
   AmbiguousPrefixError,
@@ -483,6 +486,13 @@ export class SQLiteSessionStore implements SessionStore {
             .all(sessionId, offset);
 
     return (rows as MessageRow[]).map(rowToMessage);
+  }
+
+  async getMessagePage(
+    sessionId: string,
+    options: MessagePageOptions,
+  ): Promise<MessagePage | null> {
+    return readMessagePage<MessageRow>(this.db, sessionId, options, rowToMessage);
   }
 
   async updateUsage(sessionId: string, delta: Partial<SessionUsage>): Promise<void> {

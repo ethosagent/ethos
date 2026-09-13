@@ -153,6 +153,33 @@ function syncPragma(store: unknown): number {
   return (rows as Array<{ synchronous: number }>)[0]?.synchronous ?? -1;
 }
 
+describe('SQLiteCardStore.listForToolCalls', () => {
+  let store: SQLiteCardStore | undefined;
+
+  afterEach(() => {
+    store?.close();
+    store = undefined;
+  });
+
+  it('returns only the named tool calls of that session, in seq order', () => {
+    store = new SQLiteCardStore(':memory:');
+    store.append('sess-a', 'call-1', textCard('one'));
+    store.append('sess-a', 'call-2', textCard('two'));
+    store.append('sess-a', 'call-3', textCard('three'));
+    store.append('sess-b', 'call-2', textCard('other session'));
+
+    const cards = store.listForToolCalls('sess-a', ['call-3', 'call-1', 'not-a-card']);
+    expect(cards.map((c) => c.toolCallId)).toEqual(['call-1', 'call-3']);
+    expect(cards.map((c) => c.seq)).toEqual([0, 2]);
+  });
+
+  it('returns nothing for an empty id list', () => {
+    store = new SQLiteCardStore(':memory:');
+    store.append('sess-a', 'call-1', textCard('one'));
+    expect(store.listForToolCalls('sess-a', [])).toEqual([]);
+  });
+});
+
 describe('SQLiteCardStore — durability posture', () => {
   let dir: string | undefined;
   let fileStore: SQLiteCardStore | undefined;

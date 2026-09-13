@@ -21,6 +21,7 @@ import type { AssistantTurn, ChatState } from '../../lib/chat-reducer';
 // is a HOOK test, not the component-test suite D9 declined.
 
 const sessionsGet = vi.fn();
+const sessionsMessages = vi.fn();
 const tasksList = vi.fn();
 const clarifyListPending = vi.fn();
 /** Push an event to whatever `useChat` subscribed with. */
@@ -28,7 +29,10 @@ let emit: ((event: SseEvent) => void) | null = null;
 
 vi.mock('../../rpc', () => ({
   rpc: {
-    sessions: { get: (...args: unknown[]) => sessionsGet(...args) },
+    sessions: {
+      get: (...args: unknown[]) => sessionsGet(...args),
+      messages: (...args: unknown[]) => sessionsMessages(...args),
+    },
     tasks: { list: (...args: unknown[]) => tasksList(...args) },
     // Chained behind the run restore. Its own guard is
     // `useChat-clarify-restore.test.ts`; here it just has to exist so these
@@ -49,12 +53,14 @@ const { useChat } = await import('../useChat');
 const SESSION_ID = 'sess-1';
 const SESSION_KEY = 'web:sess-1';
 
-function sessionResponse(messages: unknown[]) {
-  return {
-    session: { id: SESSION_ID, key: SESSION_KEY },
-    messages,
-    cards: [],
-  };
+/** The session row, read without its history (`withMessages: false`). */
+function sessionRow() {
+  return { session: { id: SESSION_ID, key: SESSION_KEY }, messages: [], cards: [] };
+}
+
+/** The newest (and only) page of history. */
+function historyPage(messages: unknown[]) {
+  return { messages, cards: [], nextCursor: null };
 }
 
 /** One `tasks.list` row. Only the fields the restore path reads are real. */
@@ -109,6 +115,8 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   emit = null;
   sessionsGet.mockReset();
+  sessionsGet.mockResolvedValue(sessionRow());
+  sessionsMessages.mockReset();
   tasksList.mockReset();
   clarifyListPending.mockReset();
   clarifyListPending.mockResolvedValue([]);
@@ -126,8 +134,8 @@ afterEach(async () => {
 
 describe('useChat — rediscovering a run the page was not connected for', () => {
   it('anchors an already-running delegated job on mount, with no run.update at all', async () => {
-    sessionsGet.mockResolvedValue(
-      sessionResponse([
+    sessionsMessages.mockResolvedValue(
+      historyPage([
         { id: 'm1', role: 'user', content: 'delegate this', timestamp: 1 },
         { id: 'm2', role: 'assistant', content: 'on it', timestamp: 2 },
       ]),
@@ -150,7 +158,7 @@ describe('useChat — rediscovering a run the page was not connected for', () =>
   });
 
   it('does not anchor a run that already finished — its hand-back is in history', async () => {
-    sessionsGet.mockResolvedValue(sessionResponse([]));
+    sessionsMessages.mockResolvedValue(historyPage([]));
     tasksList.mockResolvedValue([jobRow({ status: 'done', finishedAt: 9_000 })]);
 
     await mount();
@@ -162,8 +170,8 @@ describe('useChat — rediscovering a run the page was not connected for', () =>
   });
 
   it('a later live digest updates the restored run instead of anchoring it twice', async () => {
-    sessionsGet.mockResolvedValue(
-      sessionResponse([{ id: 'm1', role: 'assistant', content: 'on it', timestamp: 2 }]),
+    sessionsMessages.mockResolvedValue(
+      historyPage([{ id: 'm1', role: 'assistant', content: 'on it', timestamp: 2 }]),
     );
     tasksList.mockResolvedValue([jobRow({})]);
 
@@ -191,7 +199,7 @@ describe('useChat — rediscovering a run the page was not connected for', () =>
   });
 
   it('still anchors a run whose first digest arrives live, with nothing to restore', async () => {
-    sessionsGet.mockResolvedValue(sessionResponse([]));
+    sessionsMessages.mockResolvedValue(historyPage([]));
     tasksList.mockResolvedValue([]);
 
     await mount();
@@ -215,8 +223,8 @@ describe('useChat — rediscovering a run the page was not connected for', () =>
   });
 
   it('leaves the transcript alone when the catch-up read fails', async () => {
-    sessionsGet.mockResolvedValue(
-      sessionResponse([{ id: 'm1', role: 'assistant', content: 'on it', timestamp: 2 }]),
+    sessionsMessages.mockResolvedValue(
+      historyPage([{ id: 'm1', role: 'assistant', content: 'on it', timestamp: 2 }]),
     );
     tasksList.mockRejectedValue(new Error('offline'));
 

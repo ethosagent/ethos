@@ -1,5 +1,7 @@
 import type {
   CompressionEvent,
+  MessagePage,
+  MessagePageOptions,
   SearchResult,
   Session,
   SessionFilter,
@@ -100,6 +102,68 @@ export class InMemorySessionStore implements SessionStore {
     const end = all.length - offset;
     const start = options?.limit ? Math.max(0, end - options.limit) : 0;
     return all.slice(start, end);
+  }
+
+  // The twin of extensions/session-sqlite/src/message-page.ts: the same page
+  // semantics (documented on `MessagePageOptions`), pinned for both stores by
+  // extensions/session-sqlite/src/__tests__/message-page.test.ts. Array order
+  // is insertion order, which is the order `getMessages` above returns.
+  async getMessagePage(
+    sessionId: string,
+    options: MessagePageOptions,
+  ): Promise<MessagePage | null> {
+    const { turns, beforeMessageId, maxBytes } = options;
+    if (!Number.isInteger(turns) || turns < 1) {
+      throw new RangeError(`turns must be an integer >= 1, got ${turns}`);
+    }
+    const all = this.messages.get(sessionId) ?? [];
+    let end = all.length;
+    if (beforeMessageId !== undefined) {
+      end = all.findIndex((m) => m.id === beforeMessageId);
+      if (end < 0) return null;
+    }
+
+    const accepted: StoredMessage[][] = [];
+    let turn: StoredMessage[] = [];
+    let turnBytes = 0;
+    let total = 0;
+    let hasMore = false;
+    for (let i = end - 1; i >= 0; i--) {
+      const m = all[i];
+      if (!m) continue;
+      turn.push(m);
+      turnBytes +=
+        Buffer.byteLength(m.content) +
+        (m.toolCalls ? Buffer.byteLength(JSON.stringify(m.toolCalls)) : 0);
+      if (m.role !== 'user') continue;
+      if (
+        accepted.length === turns ||
+        (accepted.length > 0 && maxBytes !== undefined && total + turnBytes > maxBytes)
+      ) {
+        hasMore = true;
+        turn = [];
+        break;
+      }
+      accepted.push(turn);
+      total += turnBytes;
+      turn = [];
+      turnBytes = 0;
+    }
+
+    // Leftover rows precede every user row: they count toward the oldest turn.
+    if (turn.length > 0) {
+      const oldest = accepted.at(-1);
+      if (!oldest) {
+        accepted.push(turn);
+      } else if (accepted.length === 1 || maxBytes === undefined || total + turnBytes <= maxBytes) {
+        oldest.push(...turn);
+      } else {
+        accepted.pop();
+        hasMore = true;
+      }
+    }
+
+    return { messages: accepted.flat().reverse(), hasMore };
   }
 
   async updateUsage(sessionId: string, delta: Partial<SessionUsage>): Promise<void> {

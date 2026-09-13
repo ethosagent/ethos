@@ -45,6 +45,12 @@ export interface CardStore {
   append(sessionId: string, toolCallId: string, envelope: CardEnvelope): number;
   /** Every still-valid card for a session, in emission order. */
   list(sessionId: string): SessionCard[];
+  /**
+   * The still-valid cards of a session whose `toolCallId` is one of
+   * `toolCallIds`, in emission order. Filtered in SQL on the primary key, so a
+   * page of history never loads the whole session's cards.
+   */
+  listForToolCalls(sessionId: string, toolCallIds: readonly string[]): SessionCard[];
   /** Copy a session's cards onto another session, appended in source order. */
   copySession(fromSessionId: string, toSessionId: string): void;
   /** Drop every card for a session. */
@@ -138,7 +144,24 @@ export class SQLiteCardStore implements CardStore {
         'SELECT tool_call_id, seq, envelope FROM session_cards WHERE session_id = ? ORDER BY seq ASC',
       )
       .all(sessionId) as CardRow[];
+    return this.toCards(sessionId, rows);
+  }
 
+  listForToolCalls(sessionId: string, toolCallIds: readonly string[]): SessionCard[] {
+    if (toolCallIds.length === 0) return [];
+    // One bound JSON array rather than N placeholders: one prepared statement,
+    // and no SQLITE_MAX_VARIABLE_NUMBER ceiling on a large page.
+    const rows = this.db
+      .prepare(
+        `SELECT tool_call_id, seq, envelope FROM session_cards
+         WHERE session_id = ? AND tool_call_id IN (SELECT value FROM json_each(?))
+         ORDER BY seq ASC`,
+      )
+      .all(sessionId, JSON.stringify(toolCallIds)) as CardRow[];
+    return this.toCards(sessionId, rows);
+  }
+
+  private toCards(sessionId: string, rows: CardRow[]): SessionCard[] {
     const cards: SessionCard[] = [];
     for (const row of rows) {
       const envelope = this.parseEnvelope(row.envelope);
