@@ -1,16 +1,17 @@
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+// Relative on purpose: the learning inbox is injected into this package through
+// `LearningSubmitPort`, but the test submits through the REAL store.
+import { listCandidates, readCandidate, submitCandidate } from '../../../learning-inbox/src/store';
+import type { LearningSubmitPort } from '../learning-port';
 import { proposeSkillFromEvidence } from '../nightly-propose';
 
 const WINDOW = '2026-06-17T00:00:00.000Z';
 const DATA_DIR = '/data';
 const PID = 'sage';
-
 const CANDIDATE = 'nightly-20260617T0000000.md';
-const pendingPath = join(DATA_DIR, 'skills', '.pending', PID, CANDIDATE);
-const livePath = join(DATA_DIR, 'skills', CANDIDATE);
 
 function makeLLM(response: string): { llm: LLMProvider; calls: () => number } {
   let calls = 0;
@@ -37,278 +38,82 @@ function makeLLM(response: string): { llm: LLMProvider; calls: () => number } {
 const GOOD_DRAFT =
   '<filename>research-pattern.md</filename>\n<skill>When asked to X, do Y.</skill>';
 
-describe('proposeSkillFromEvidence', () => {
-  it('manual mode (unset): drafts and queues to pending, never promotes', async () => {
-    const storage = new InMemoryStorage();
+let storage: InMemoryStorage;
+let learning: LearningSubmitPort;
+
+beforeEach(() => {
+  storage = new InMemoryStorage();
+  learning = {
+    submit: (input) => submitCandidate(storage, DATA_DIR, input),
+    has: async (id) => (await readCandidate(storage, DATA_DIR, id)) !== null,
+  };
+});
+
+function input(
+  llm: LLMProvider,
+  extra: Partial<Parameters<typeof proposeSkillFromEvidence>[0]> = {},
+) {
+  return {
+    personalityId: PID,
+    evidenceDigest: 'user: hi\nassistant: hello',
+    windowEnd: WINDOW,
+    dataDir: DATA_DIR,
+    llm,
+    learning,
+    ...extra,
+  };
+}
+
+describe('proposeSkillFromEvidence (L-T6, path 2: nightly)', () => {
+  it('submits a nightly-origin candidate and writes no pending or live file', async () => {
     const { llm } = makeLLM(GOOD_DRAFT);
+    const result = await proposeSkillFromEvidence(
+      input(llm, { evidenceSessionIds: ['s-1'], targetCaseIds: ['case-1'] }),
+    );
 
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: undefined,
-      evidenceDigest: 'user: how do I research?\nassistant: step 1...',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-    });
-
-    expect(result.decision).toBe('queued');
+    expect(result.decision).toBe('submitted');
     expect(result.fileName).toBe(CANDIDATE);
-    expect(await storage.read(pendingPath)).toContain('When asked to X, do Y.');
-    expect(await storage.read(livePath)).toBeNull();
-  });
-
-  it('manual mode (user): queues to pending, never promotes', async () => {
-    const storage = new InMemoryStorage();
-    const { llm } = makeLLM(GOOD_DRAFT);
-
-    const result = await proposeSkillFromEvidence({
+    const candidates = await listCandidates(storage, DATA_DIR);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      id: result.candidateId,
+      kind: 'skill',
+      op: 'create',
+      origin: 'nightly',
       personalityId: PID,
-      approvalMode: 'user',
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
+      status: 'pending_replay',
+      destination: join(DATA_DIR, 'skills', CANDIDATE),
+      content: 'When asked to X, do Y.\n',
+      targetCaseIds: ['case-1'],
+      evidence: { sessionIds: ['s-1'], ref: `nightly:${WINDOW}` },
     });
-
-    expect(result.decision).toBe('queued');
-    expect(await storage.read(pendingPath)).not.toBeNull();
-    expect(await storage.read(livePath)).toBeNull();
+    expect(await storage.exists(join(DATA_DIR, 'skills', '.pending'))).toBe(false);
+    expect(await storage.exists(join(DATA_DIR, 'skills', CANDIDATE))).toBe(false);
   });
 
-  it('auto mode + validate PASS: promotes to live skills dir', async () => {
-    const storage = new InMemoryStorage();
+  it("scope='personality' resolves the destination under personalities/<id>/skills/", async () => {
     const { llm } = makeLLM(GOOD_DRAFT);
-
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: 'auto',
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-      validate: async () => true,
-    });
-
-    expect(result.decision).toBe('promoted');
-    expect(await storage.read(livePath)).toContain('When asked to X, do Y.');
-    expect(await storage.read(pendingPath)).toBeNull();
+    await proposeSkillFromEvidence(input(llm, { scope: 'personality' }));
+    const [candidate] = await listCandidates(storage, DATA_DIR);
+    expect(candidate?.destination).toBe(join(DATA_DIR, 'personalities', PID, 'skills', CANDIDATE));
   });
 
-  it('auto mode + validate FAIL: stays in pending', async () => {
-    const storage = new InMemoryStorage();
-    const { llm } = makeLLM(GOOD_DRAFT);
-
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: 'auto',
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-      validate: async () => false,
-    });
-
-    expect(result.decision).toBe('rejected');
-    expect(await storage.read(pendingPath)).toContain('When asked to X, do Y.');
-    expect(await storage.read(livePath)).toBeNull();
-  });
-
-  it('LLM declines (NO_PATTERN): no candidate written', async () => {
-    const storage = new InMemoryStorage();
+  it('LLM declines (NO_PATTERN): nothing submitted', async () => {
     const { llm } = makeLLM('NO_PATTERN');
-
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: 'user',
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-    });
-
+    const result = await proposeSkillFromEvidence(input(llm));
     expect(result.decision).toBe('none');
-    expect(result.fileName).toBeNull();
-    expect(await storage.read(pendingPath)).toBeNull();
+    expect(result.candidateId).toBeNull();
+    expect(await listCandidates(storage, DATA_DIR)).toEqual([]);
   });
 
-  it('idempotency: a second manual run for the same window does not re-draft', async () => {
-    const storage = new InMemoryStorage();
+  it('idempotency: a second run for the same window drafts nothing and submits nothing new', async () => {
     const { llm, calls } = makeLLM(GOOD_DRAFT);
+    const first = await proposeSkillFromEvidence(input(llm));
+    const second = await proposeSkillFromEvidence(input(llm));
 
-    const input = {
-      personalityId: PID,
-      approvalMode: 'user' as const,
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-    };
-
-    await proposeSkillFromEvidence(input);
+    expect(second.decision).toBe('exists');
+    expect(second.candidateId).toBe(first.candidateId);
     expect(calls()).toBe(1);
-
-    const second = await proposeSkillFromEvidence(input);
-    expect(second.decision).toBe('queued');
-    expect(second.reason).toContain('already queued');
-    // No second LLM draft call.
-    expect(calls()).toBe(1);
-  });
-
-  it('promotion unset falls back to approvalMode=user (queues)', async () => {
-    const storage = new InMemoryStorage();
-    const { llm } = makeLLM(GOOD_DRAFT);
-
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: 'user',
-      promotion: undefined,
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-      validate: async () => true,
-    });
-
-    expect(result.decision).toBe('queued');
-    expect(await storage.read(pendingPath)).not.toBeNull();
-    expect(await storage.read(livePath)).toBeNull();
-  });
-
-  it('promotion unset falls back to approvalMode=auto (promotes)', async () => {
-    const storage = new InMemoryStorage();
-    const { llm } = makeLLM(GOOD_DRAFT);
-
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: 'auto',
-      promotion: undefined,
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-      validate: async () => true,
-    });
-
-    expect(result.decision).toBe('promoted');
-    expect(await storage.read(livePath)).not.toBeNull();
-  });
-
-  it("promotion='auto' promotes even when approvalMode is user", async () => {
-    const storage = new InMemoryStorage();
-    const { llm } = makeLLM(GOOD_DRAFT);
-
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: 'user',
-      promotion: 'auto',
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-      validate: async () => true,
-    });
-
-    expect(result.decision).toBe('promoted');
-    expect(await storage.read(livePath)).not.toBeNull();
-  });
-
-  it("promotion='review' queues even when approvalMode is auto", async () => {
-    const storage = new InMemoryStorage();
-    const { llm } = makeLLM(GOOD_DRAFT);
-
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: 'auto',
-      promotion: 'review',
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-      validate: async () => true,
-    });
-
-    expect(result.decision).toBe('queued');
-    expect(await storage.read(pendingPath)).not.toBeNull();
-    expect(await storage.read(livePath)).toBeNull();
-  });
-
-  it("scope='personality' promotes under personalities/<id>/skills/", async () => {
-    const storage = new InMemoryStorage();
-    const { llm } = makeLLM(GOOD_DRAFT);
-
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: 'auto',
-      scope: 'personality',
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-      validate: async () => true,
-    });
-
-    expect(result.decision).toBe('promoted');
-    const scopedPath = join(DATA_DIR, 'personalities', PID, 'skills', CANDIDATE);
-    expect(await storage.read(scopedPath)).toContain('When asked to X, do Y.');
-    // Not written to the shared dir.
-    expect(await storage.read(livePath)).toBeNull();
-  });
-
-  it("scope unset / 'shared' promotes under the shared skills dir", async () => {
-    const storage = new InMemoryStorage();
-    const { llm } = makeLLM(GOOD_DRAFT);
-
-    const result = await proposeSkillFromEvidence({
-      personalityId: PID,
-      approvalMode: 'auto',
-      scope: 'shared',
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-      validate: async () => true,
-    });
-
-    expect(result.decision).toBe('promoted');
-    expect(await storage.read(livePath)).toContain('When asked to X, do Y.');
-    const scopedPath = join(DATA_DIR, 'personalities', PID, 'skills', CANDIDATE);
-    expect(await storage.read(scopedPath)).toBeNull();
-  });
-
-  it('idempotency: a re-run after promotion does not re-promote or re-draft', async () => {
-    const storage = new InMemoryStorage();
-    const { llm, calls } = makeLLM(GOOD_DRAFT);
-
-    const input = {
-      personalityId: PID,
-      approvalMode: 'auto' as const,
-      evidenceDigest: 'digest',
-      windowEnd: WINDOW,
-      dataDir: DATA_DIR,
-      storage,
-      llm,
-      validate: async () => true,
-    };
-
-    const first = await proposeSkillFromEvidence(input);
-    expect(first.decision).toBe('promoted');
-    expect(calls()).toBe(1);
-
-    const second = await proposeSkillFromEvidence(input);
-    expect(second.decision).toBe('promoted');
-    expect(second.reason).toContain('already promoted');
-    expect(calls()).toBe(1);
+    expect(await listCandidates(storage, DATA_DIR)).toHaveLength(1);
   });
 });

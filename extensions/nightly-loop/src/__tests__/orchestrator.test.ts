@@ -5,6 +5,7 @@ import type { ConsolidationResult } from '../memory-consolidation';
 import { emptyMeta, type MemoryMeta } from '../memory-decay';
 import {
   type NightlyEvidence,
+  type NightlyLearningDeps,
   type NightlyPassDeps,
   type NightlyState,
   runNightlyPass,
@@ -39,8 +40,7 @@ function scoredOutcome(alignmentScore: number, signal: JudgeResult['signal'] = n
 function makeDeps(overrides: Partial<NightlyPassDeps> = {}): {
   deps: NightlyPassDeps;
   spies: {
-    applyExpression: ReturnType<typeof vi.fn>;
-    queueExpression: ReturnType<typeof vi.fn>;
+    submitExpression: ReturnType<typeof vi.fn>;
     applyMemoryUpdates: ReturnType<typeof vi.fn>;
     draftExpression: ReturnType<typeof vi.fn>;
     scoreAlignment: ReturnType<typeof vi.fn>;
@@ -49,8 +49,7 @@ function makeDeps(overrides: Partial<NightlyPassDeps> = {}): {
 } {
   let state: NightlyState | null = null;
 
-  const applyExpression = vi.fn(async () => ({ revisionId: 'rev-1' }));
-  const queueExpression = vi.fn(async () => {});
+  const submitExpression = vi.fn(async () => ({ candidateId: 'c-expr-1' }));
   const applyMemoryUpdates = vi.fn(async () => {});
   const draftExpression = vi.fn(async () => ({
     newExpression: 'new expression',
@@ -65,12 +64,7 @@ function makeDeps(overrides: Partial<NightlyPassDeps> = {}): {
     readJudgeStreak: async () => 0,
     writeJudgeStreak: async () => {},
     draftExpression,
-    applyExpression,
-    // `auto` by default so the pre-B-T1 tests below keep exercising the APPLY
-    // path they were written for. The gate's own behaviour — absent and `user`
-    // queue instead — is covered by the `evolution_approval_mode` block.
-    expressionApprovalMode: () => 'auto',
-    queueExpression,
+    submitExpression,
     readMemory: async () => ({ memory: 'old memory', user: 'old user' }),
     consolidate: async () => ({ memory: 'new memory', user: 'new user' }),
     applyMemoryUpdates,
@@ -84,8 +78,7 @@ function makeDeps(overrides: Partial<NightlyPassDeps> = {}): {
   return {
     deps: base,
     spies: {
-      applyExpression,
-      queueExpression,
+      submitExpression,
       applyMemoryUpdates,
       draftExpression,
       scoreAlignment,
@@ -99,24 +92,26 @@ function stepStatus(steps: { step: string; status: string }[], name: string): st
 }
 
 describe('runNightlyPass', () => {
-  it('happy path: below GOOD threshold applies Expression and consolidates memory', async () => {
+  it('happy path: below GOOD threshold submits an Expression candidate and consolidates memory', async () => {
     const { deps, spies, getState } = makeDeps();
     const res = await runNightlyPass('sage', deps);
 
     expect(stepStatus(res.steps, 'judge')).toBe('ran');
     expect(stepStatus(res.steps, 'expression')).toBe('ran');
+    expect(res.steps.find((s) => s.step === 'expression')?.detail).toContain('c-expr-1');
     expect(stepStatus(res.steps, 'memory')).toBe('ran');
-    expect(spies.applyExpression).toHaveBeenCalledTimes(1);
-    expect(spies.applyExpression).toHaveBeenCalledWith('sage', 'new expression', {
-      summary: 'because evidence shows X',
-      evidenceRef: `nightly:0.60@${EVIDENCE.windowEnd}`,
-    });
+    expect(spies.submitExpression).toHaveBeenCalledTimes(1);
+    expect(spies.submitExpression).toHaveBeenCalledWith(
+      'sage',
+      { newExpression: 'new expression', rationale: 'because evidence shows X' },
+      { evidenceRef: `nightly:0.60@${EVIDENCE.windowEnd}` },
+    );
     expect(spies.applyMemoryUpdates).toHaveBeenCalledTimes(1);
 
     const state = getState();
     expect(state?.windowEnd).toBe(EVIDENCE.windowEnd);
     expect(state?.completed).toEqual(
-      expect.arrayContaining(['judge', 'expression', 'skills', 'memory']),
+      expect.arrayContaining(['judge', 'expression', 'skills', 'replay', 'memory']),
     );
   });
 
@@ -131,7 +126,7 @@ describe('runNightlyPass', () => {
     expect(res.steps.find((s) => s.step === 'judge')?.detail).toBe('too few');
     expect(stepStatus(res.steps, 'expression')).toBe('skipped');
     expect(stepStatus(res.steps, 'memory')).toBe('ran');
-    expect(spies.applyExpression).not.toHaveBeenCalled();
+    expect(spies.submitExpression).not.toHaveBeenCalled();
     expect(spies.applyMemoryUpdates).toHaveBeenCalledTimes(1);
   });
 
@@ -143,7 +138,7 @@ describe('runNightlyPass', () => {
     const expr = res.steps.find((s) => s.step === 'expression');
     expect(expr?.status).toBe('skipped');
     expect(expr?.detail).toContain('well-aligned');
-    expect(spies.applyExpression).not.toHaveBeenCalled();
+    expect(spies.submitExpression).not.toHaveBeenCalled();
     expect(spies.draftExpression).not.toHaveBeenCalled();
   });
 
@@ -165,15 +160,15 @@ describe('runNightlyPass', () => {
   it('idempotency: all steps completed for the same window are skipped without effects', async () => {
     const completedState: NightlyState = {
       windowEnd: EVIDENCE.windowEnd,
-      completed: ['judge', 'expression', 'skills', 'memory'],
+      completed: ['judge', 'expression', 'skills', 'replay', 'memory'],
     };
     const { deps, spies } = makeDeps({ readState: async () => completedState });
     const res = await runNightlyPass('sage', deps);
 
-    for (const name of ['judge', 'expression', 'skills', 'memory']) {
+    for (const name of ['judge', 'expression', 'skills', 'replay', 'memory']) {
       expect(stepStatus(res.steps, name)).toBe('skipped');
     }
-    expect(spies.applyExpression).not.toHaveBeenCalled();
+    expect(spies.submitExpression).not.toHaveBeenCalled();
     expect(spies.applyMemoryUpdates).not.toHaveBeenCalled();
     expect(spies.scoreAlignment).not.toHaveBeenCalled();
   });
@@ -188,19 +183,19 @@ describe('runNightlyPass', () => {
 
     expect(stepStatus(res.steps, 'judge')).toBe('ran');
     expect(spies.scoreAlignment).toHaveBeenCalledTimes(1);
-    expect(spies.applyExpression).toHaveBeenCalledTimes(1);
+    expect(spies.submitExpression).toHaveBeenCalledTimes(1);
   });
 
   it('failing expression step is recorded failed, memory still runs, step not completed', async () => {
-    const applyExpression = vi.fn(async (): Promise<{ revisionId: string }> => {
-      throw new Error('apply boom');
+    const submitExpression = vi.fn(async (): Promise<{ candidateId: string }> => {
+      throw new Error('submit boom');
     });
-    const { deps, spies, getState } = makeDeps({ applyExpression });
+    const { deps, spies, getState } = makeDeps({ submitExpression });
     const res = await runNightlyPass('sage', deps);
 
     const expr = res.steps.find((s) => s.step === 'expression');
     expect(expr?.status).toBe('failed');
-    expect(expr?.detail).toContain('apply boom');
+    expect(expr?.detail).toContain('submit boom');
     expect(stepStatus(res.steps, 'memory')).toBe('ran');
     expect(spies.applyMemoryUpdates).toHaveBeenCalledTimes(1);
 
@@ -233,7 +228,7 @@ describe('runNightlyPass', () => {
       expect(stepStatus(res.steps, 'judge')).toBe('ran');
       expect(stepStatus(res.steps, 'expression')).toBe('ran');
       expect(spies.scoreAlignment).toHaveBeenCalledTimes(1);
-      expect(spies.applyExpression).toHaveBeenCalledTimes(1);
+      expect(spies.submitExpression).toHaveBeenCalledTimes(1);
     });
 
     it('gates undefined fields: judge + expression run (default true)', async () => {
@@ -241,7 +236,7 @@ describe('runNightlyPass', () => {
       const res = await runNightlyPass('sage', deps, {});
       expect(stepStatus(res.steps, 'judge')).toBe('ran');
       expect(stepStatus(res.steps, 'expression')).toBe('ran');
-      expect(spies.applyExpression).toHaveBeenCalledTimes(1);
+      expect(spies.submitExpression).toHaveBeenCalledTimes(1);
     });
 
     it('gates.judge false: judge skipped, expression short-circuits, memory still runs', async () => {
@@ -252,7 +247,7 @@ describe('runNightlyPass', () => {
       expect(judge?.detail).toBe('judge disabled');
       expect(stepStatus(res.steps, 'expression')).toBe('skipped');
       expect(spies.scoreAlignment).not.toHaveBeenCalled();
-      expect(spies.applyExpression).not.toHaveBeenCalled();
+      expect(spies.submitExpression).not.toHaveBeenCalled();
       expect(stepStatus(res.steps, 'memory')).toBe('ran');
       expect(spies.applyMemoryUpdates).toHaveBeenCalledTimes(1);
     });
@@ -266,80 +261,178 @@ describe('runNightlyPass', () => {
       expect(expr?.status).toBe('skipped');
       expect(expr?.detail).toBe('expression disabled');
       expect(spies.draftExpression).not.toHaveBeenCalled();
-      expect(spies.applyExpression).not.toHaveBeenCalled();
+      expect(spies.submitExpression).not.toHaveBeenCalled();
     });
   });
 
-  // B-T1. `evolution_approval_mode` promises that `user` — the default when the
-  // field is absent — applies an Expression change only on explicit user
-  // approval. Before this, there was no mode check anywhere on the nightly
-  // path, so every personality not set to `auto` got unapproved SOUL.md
-  // rewrites on every run. These tests ARE the gate.
-  describe('evolution_approval_mode gate (B-T1)', () => {
-    it('mode absent: queues the draft and never applies it', async () => {
-      const { deps, spies } = makeDeps({ expressionApprovalMode: () => undefined });
+  // B-T1 made `user` mode queue instead of apply; L-D2 goes further. The pass has
+  // no apply dependency at all: a draft is a learning candidate in EVERY mode,
+  // and only `replayAndResolve` may promote one without a human
+  // (`extensions/learning-inbox/src/__tests__/auto-promotion.test.ts` pins the
+  // mode side). The deps below carry a pre-L-T6 host's `applyExpression` and
+  // mode reader anyway, to prove nothing on this path can reach them.
+  describe('evolution_approval_mode (B-T1, L-D2)', () => {
+    function withLegacyApply(mode: 'auto' | 'user' | undefined) {
+      const applyExpression = vi.fn(async () => ({ revisionId: 'rev-1' }));
+      const made = makeDeps({
+        applyExpression,
+        expressionApprovalMode: () => mode,
+      } as Partial<NightlyPassDeps>);
+      return { ...made, applyExpression };
+    }
+
+    it('a user-mode personality never reaches applyExpression', async () => {
+      const { deps, spies, applyExpression } = withLegacyApply('user');
       const res = await runNightlyPass('sage', deps);
 
-      const expr = res.steps.find((s) => s.step === 'expression');
-      expect(expr?.status).toBe('ran');
-      expect(expr?.detail).toContain('queued for approval');
-      expect(spies.applyExpression).not.toHaveBeenCalled();
-      expect(spies.queueExpression).toHaveBeenCalledTimes(1);
-      expect(spies.queueExpression).toHaveBeenCalledWith(
-        'sage',
-        { newExpression: 'new expression', rationale: 'because evidence shows X' },
-        {
-          evidenceRef: `nightly:0.60@${EVIDENCE.windowEnd}`,
-          baseExpression: 'expression text',
-        },
-      );
+      expect(res.steps.find((s) => s.step === 'expression')?.status).toBe('ran');
+      expect(applyExpression).not.toHaveBeenCalled();
+      expect(spies.submitExpression).toHaveBeenCalledTimes(1);
     });
 
-    it("mode 'user': queues the draft and never applies it", async () => {
-      const { deps, spies } = makeDeps({ expressionApprovalMode: () => 'user' });
+    it('mode absent (the `user` default) never reaches applyExpression', async () => {
+      const { deps, spies, applyExpression } = withLegacyApply(undefined);
+      await runNightlyPass('sage', deps);
+
+      expect(applyExpression).not.toHaveBeenCalled();
+      expect(spies.submitExpression).toHaveBeenCalledTimes(1);
+    });
+
+    it("mode 'auto' no longer applies an unevaluated draft: it is submitted too", async () => {
+      const { deps, spies, applyExpression } = withLegacyApply('auto');
       const res = await runNightlyPass('sage', deps);
 
-      expect(res.steps.find((s) => s.step === 'expression')?.detail).toContain(
-        'queued for approval',
-      );
-      expect(spies.applyExpression).not.toHaveBeenCalled();
-      expect(spies.queueExpression).toHaveBeenCalledTimes(1);
+      expect(res.steps.find((s) => s.step === 'expression')?.detail).toContain('submitted');
+      expect(applyExpression).not.toHaveBeenCalled();
+      expect(spies.submitExpression).toHaveBeenCalledTimes(1);
     });
 
-    it("mode 'auto': applies as today, nothing queued", async () => {
-      const { deps, spies } = makeDeps({ expressionApprovalMode: () => 'auto' });
-      const res = await runNightlyPass('sage', deps);
-
-      expect(res.steps.find((s) => s.step === 'expression')?.detail).toContain('applied');
-      expect(spies.applyExpression).toHaveBeenCalledTimes(1);
-      expect(spies.queueExpression).not.toHaveBeenCalled();
-    });
-
-    it('a queued draft completes the step, so the same window does not re-queue', async () => {
-      const { deps, spies, getState } = makeDeps({ expressionApprovalMode: () => 'user' });
+    it('a submitted draft completes the step, so the same window does not re-submit', async () => {
+      const { deps, spies, getState } = makeDeps();
       await runNightlyPass('sage', deps);
       expect(getState()?.completed).toContain('expression');
 
       await runNightlyPass('sage', deps);
-      expect(spies.queueExpression).toHaveBeenCalledTimes(1);
+      expect(spies.submitExpression).toHaveBeenCalledTimes(1);
     });
+  });
 
-    it('a failing queue write is recorded failed and does not complete the step', async () => {
-      const queueExpression = vi.fn(async () => {
-        throw new Error('disk full');
+  describe('replay step (L-D9)', () => {
+    function budget(n: number): NightlyLearningDeps['budget'] {
+      let left = n;
+      return {
+        take: () => {
+          if (left <= 0) return false;
+          left -= 1;
+          return true;
+        },
+      };
+    }
+
+    function learning(overrides: Partial<NightlyLearningDeps> = {}) {
+      const freezeCases = vi.fn(async () => 2);
+      const pendingReplay = vi.fn(async () => ['c-1', 'c-2', 'c-3', 'c-4', 'c-5']);
+      const replay = vi.fn(async () => ({ verdict: 'pass', promoted: false }));
+      const deps: NightlyLearningDeps = {
+        enabled: true,
+        budget: budget(5),
+        freezeCases,
+        pendingReplay,
+        replay,
+        ...overrides,
+      };
+      return { deps, freezeCases, pendingReplay, replay };
+    }
+
+    it('runs after skills and before memory, freezing cases first', async () => {
+      const order: string[] = [];
+      const l = learning({
+        freezeCases: async () => {
+          order.push('freeze');
+          return 1;
+        },
+        pendingReplay: async () => {
+          order.push('pending');
+          return ['c-1'];
+        },
+        replay: async () => {
+          order.push('replay');
+          return { verdict: 'pass', promoted: true };
+        },
       });
-      const { deps, spies, getState } = makeDeps({
-        expressionApprovalMode: () => 'user',
-        queueExpression,
+      const { deps } = makeDeps({
+        createSkills: async () => {
+          order.push('skills');
+          return 1;
+        },
+        readMemory: async () => {
+          order.push('memory');
+          return { memory: 'm', user: 'u' };
+        },
+        learning: l.deps,
       });
+
       const res = await runNightlyPass('sage', deps);
 
-      const expr = res.steps.find((s) => s.step === 'expression');
-      expect(expr?.status).toBe('failed');
-      expect(expr?.detail).toBe('disk full');
-      expect(getState()?.completed).not.toContain('expression');
-      expect(spies.applyExpression).not.toHaveBeenCalled();
+      expect(order).toEqual(['skills', 'freeze', 'pending', 'replay', 'memory']);
+      expect(res.steps.map((s) => s.step)).toEqual([
+        'judge',
+        'expression',
+        'skills',
+        'replay',
+        'memory',
+      ]);
+      expect(res.steps.find((s) => s.step === 'replay')?.detail).toContain('1 promoted');
+    });
+
+    it('never runs replay (or freezes cases) when learningReplay.enabled is false', async () => {
+      const l = learning({ enabled: false });
+      const { deps, getState } = makeDeps({ learning: l.deps });
+
+      const res = await runNightlyPass('sage', deps);
+
+      expect(stepStatus(res.steps, 'replay')).toBe('skipped');
+      expect(l.freezeCases).not.toHaveBeenCalled();
+      expect(l.pendingReplay).not.toHaveBeenCalled();
+      expect(l.replay).not.toHaveBeenCalled();
+      expect(getState()?.completed).not.toContain('replay');
+    });
+
+    it('never exceeds maxCandidatesPerRun, and the budget is shared across personalities', async () => {
+      const shared = budget(2);
+      const first = learning({ budget: shared });
+      const second = learning({ budget: shared });
+
+      const a = await runNightlyPass('sage', makeDeps({ learning: first.deps }).deps);
+      const b = await runNightlyPass('scout', makeDeps({ learning: second.deps }).deps);
+
+      expect(first.replay).toHaveBeenCalledTimes(2);
+      expect(second.replay).not.toHaveBeenCalled();
+      expect(a.steps.find((s) => s.step === 'replay')?.detail).toContain('3 deferred');
+      expect(b.steps.find((s) => s.step === 'replay')?.detail).toContain('5 deferred');
+    });
+
+    it('one failing candidate does not stop the others, and the step is not completed', async () => {
+      const replay = vi.fn(async (_id: string, candidateId: string) => {
+        if (candidateId === 'c-2') throw new Error('arm crashed');
+        return { verdict: 'regress', promoted: false };
+      });
+      const { deps, getState } = makeDeps({ learning: learning({ replay }).deps });
+
+      const res = await runNightlyPass('sage', deps);
+
+      expect(replay).toHaveBeenCalledTimes(5);
+      const step = res.steps.find((s) => s.step === 'replay');
+      expect(step?.status).toBe('failed');
+      expect(step?.detail).toContain('c-2: arm crashed');
+      expect(getState()?.completed).not.toContain('replay');
       expect(stepStatus(res.steps, 'memory')).toBe('ran');
+    });
+
+    it('no learning dep: the step is a noop', async () => {
+      const { deps } = makeDeps();
+      const res = await runNightlyPass('sage', deps);
+      expect(stepStatus(res.steps, 'replay')).toBe('noop');
     });
   });
 

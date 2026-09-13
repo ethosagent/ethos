@@ -1,221 +1,216 @@
 ---
 title: "Manage skill evolution"
-description: "Review, approve, prune, and archive auto-proposed skills that Ethos generates from your usage patterns."
+description: "Review, replay, approve, reject and roll back the skills Ethos drafts from its own work, using the learning inbox and the ethos learning CLI."
 kind: how-to
 audience: user
 slug: manage-skill-evolution
 time: "10 min"
-updated: 2026-06-09
+updated: 2026-09-13
 ---
 
 ## Task
 
-Review, approve, prune, and archive [skill](../../getting-started/glossary.md#skill) proposals that Ethos generates from your usage patterns.
+Decide which drafted [skills](../../getting-started/glossary.md#skill) (markdown instruction files the agent loads when relevant) go live, and undo the ones you regret.
 
 ## Result
 
-Your `~/.ethos/skills/` directory contains only the evolved skills you explicitly approved. Stale proposals are pruned. Retired skills are archived and recoverable.
+A drafted skill goes live only after it passes a replay against real past tasks, or after you approve it and give a reason that is recorded in the audit log. Drafts you do not want stay on record as `rejected`. A promotion you regret is rolled back to the file that was there before.
 
 ## Prereqs
 
 - `ethos` installed and a provider configured ([Configure an LLM provider](configure-providers.md)).
-- At least one [personality](../../getting-started/glossary.md#personality) with `skill_evolution.enabled: true` in its `config.yaml`.
-- Several completed [sessions](../../getting-started/glossary.md#session) with enough [tool](../../getting-started/glossary.md#tool) calls to trigger the evolver (default threshold: 5 tool calls per session).
+- At least one drafted skill. Drafts come from four places:
 
-## How skill evolution works
+| Source | Drafts when |
+|---|---|
+| Post-turn fork | A turn by a [personality](../../getting-started/glossary.md#personality) (the directory of files that decides the agent's role, tools and voice) with `skill_evolution.enabled: true` made at least `skill_evolution.min_tool_calls` successful tool calls, outside the cooldown |
+| Chat | The agent calls `skill_propose` |
+| Eval | `ethos evolve run`, or `ethos eval run … --evolve` |
+| Nightly pass | `ethos nightly run`, or the schedule when `nightlyPass.enabled: true` |
 
-After each conversation with enough tool calls, the skill evolver analyzes your usage patterns and proposes new skills. Proposals land in `~/.ethos/skills/pending/` as markdown files with YAML frontmatter. They stay there until you approve, reject, or prune them.
+Every draft lands in one place, the learning inbox, as a *candidate*. For why a replay gates it and what a replay can and cannot measure, read [Why does a learned change need a replay before it goes live?](../explanation/learning-inbox.md).
 
-```mermaid
-graph LR
-    A[Conversation] --> B[Skill Evolver]
-    B --> C[Proposal]
-    C --> D{Review}
-    D -->|Approve| E[Active Skill]
-    D -->|Reject| F[Archive]
-    E -->|Archive| F
-```
+The per-personality keys, in `~/.ethos/personalities/<id>/config.yaml`:
 
-Enable skill evolution per-personality in `~/.ethos/personalities/<id>/config.yaml`:
-
-```yaml
-skill_evolution.enabled: true
-skill_evolution.min_tool_calls: 5
-skill_evolution.cooldown_minutes: 60
-```
-
-| Config key | Type | Default | Effect |
-|---|---|---|---|
-| `skill_evolution.enabled` | `boolean` | `false` | Enables the evolver for this personality |
-| `skill_evolution.min_tool_calls` | `integer` | `5` | Minimum tool calls in a session before the evolver runs |
-| `skill_evolution.cooldown_minutes` | `integer` | `60` | Minimum minutes between evolver runs for the same personality |
+| Key | Default | Effect |
+|---|---|---|
+| `skill_evolution.enabled` | `false` | Turns on the post-turn fork for this personality |
+| `skill_evolution.min_tool_calls` | `5` | Successful tool calls a turn needs before the fork runs |
+| `skill_evolution.cooldown_minutes` | `60` | Minimum minutes between fork runs for this personality, per process |
+| `skill_evolution.promotion` | unset | `auto` lets a `pass` promote without you; `review` always waits for you. Unset falls back to `evolution_approval_mode`, then `autoApprove` |
+| `skill_evolution.scope` | `shared` | `personality` writes to `~/.ethos/personalities/<id>/skills/`. Only a personality-scoped skill can promote itself; a shared one always needs you |
 
 ## Steps
 
-### 1. View pending proposals
+### 1. List waiting candidates
 
 ```bash
-ethos evolve status
+ethos learning list
 ```
-
-Output lists each proposal with its name, source personality, creation date, and a summary of the detected pattern:
 
 ```text
-Pending proposals (3):
-  summarize-pr    from engineer   2026-06-07  "Summarizes GitHub PR diffs with key changes"
-  lint-fix-loop   from engineer   2026-06-08  "Runs lint, applies fixes, re-checks in a loop"
-  draft-reply     from writer     2026-06-09  "Drafts email replies matching prior tone"
+ID                KIND       PERSONALITY  ORIGIN  STATUS          VERDICT  SUBMITTED
+c-mf3k2x-a1b2c3   New skill  engineer     fork    pending_replay  not run  2026-09-12T21:04:11.000Z
+c-mf3m9q-d4e5f6   New skill  engineer     eval    pending_review  regress  2026-09-12T22:40:03.000Z
 ```
 
-### 2. Inspect a proposal
+Add `--personality <id>` to filter. Add `--all` to include promoted, rejected, `stale` and `invalid` candidates.
 
-Open the proposal file to review the generated skill definition before approving:
+### 2. Inspect one
 
 ```bash
-cat ~/.ethos/skills/pending/summarize-pr.md
+ethos learning show c-mf3k2x-a1b2c3
 ```
 
-The file contains a standard skill markdown with YAML frontmatter (`name`, `description`) and the skill body. Verify the instructions match the pattern you want to codify.
+```text
+Learning candidate c-mf3k2x-a1b2c3
+  kind:         New skill (skill/create)
+  personality:  engineer
+  origin:       fork
+  status:       pending_replay
+  verdict:      not run
+  destination:  /Users/you/.ethos/skills/summarize-pr.md
+…
+Replay scorecard  not run — ethos learning replay c-mf3k2x-a1b2c3
+```
 
-### 3. Approve a proposal
+The output also shows the evidence the draft came from, the full proposed file, and a timeline of every status change.
+
+### 3. Replay it
+
+Replay runs real models and costs money, capped per candidate by [`learningReplay.maxCostUsd`](../reference/config-yaml.md#learning-replay).
 
 ```bash
-ethos evolve apply summarize-pr.md
+ethos learning replay c-mf3k2x-a1b2c3
 ```
 
-The CLI moves the file from `~/.ethos/skills/pending/summarize-pr.md` to `~/.ethos/skills/summarize-pr/SKILL.md` and registers it. The skill is available on the next chat turn.
+```text
+Replaying c-mf3k2x-a1b2c3 — baseline and candidate dry runs on every selected case…
+Pass · target +0.42 · regressions 0/5 · $0.31 of $0.50 · dry-run: tools stubbed · tested on engineer
+waiting for review — …
+```
 
-To approve all pending proposals at once:
+**Replay measures approach, not answers.** Tools are stubbed, so a `pass` says the skill did not make the agent choose worse tools or take a worse approach on familiar tasks. It cannot say whether an answer that depends on real tool output got better.
+
+If the candidate passed, is personality-scoped, and auto-promotion is on, the last line reads `promoted automatically` instead, and you are done.
+
+### 4. Approve it
+
+If the verdict is `pass`, approve it directly:
 
 ```bash
-ethos evolve apply --all
+ethos learning approve c-mf3k2x-a1b2c3
 ```
 
-### 4. Reject a proposal
+```text
+approved c-mf3k2x-a1b2c3 → /Users/you/.ethos/skills/summarize-pr.md
+```
 
-Delete the proposal file directly:
+If the verdict is anything else (`regress`, `incomplete`, or `not run`), a plain approve is refused:
+
+```text
+not approved c-mf3m9q-d4e5f6 — Verdict is regress; approving a candidate that has not passed a replay needs an override reason
+Approve anyway with: ethos learning approve c-mf3m9q-d4e5f6 --override "<reason>"
+```
+
+Give the reason:
 
 ```bash
-rm ~/.ethos/skills/pending/draft-reply.md
+ethos learning approve c-mf3m9q-d4e5f6 --override "regression is a tone case I accept"
 ```
 
-Or use the prune command with a filter (see step 5).
+```text
+approved c-mf3m9q-d4e5f6 → /Users/you/.ethos/skills/lint-fix-loop.md
+override recorded: regression is a tone case I accept
+```
 
-### 5. Prune old proposals
+`ethos evolve apply <candidate-id | filename>` also approves, but only a `pass`.
 
-Remove proposals older than a threshold:
+### 5. Reject what you do not want
 
 ```bash
-ethos evolve prune --older-than 7
+ethos learning reject c-mf3m9q-d4e5f6 --reason "duplicates an existing skill"
 ```
 
-This deletes all pending proposals created more than 7 days ago. Add `--yes` to skip the confirmation prompt:
+```text
+rejected c-mf3m9q-d4e5f6
+```
+
+To reject every skill candidate waiting longer than 7 days, run `ethos evolve prune --older-than 7`. It lists them and asks before rejecting. Nothing is deleted either way.
+
+### 6. Roll back a promotion
 
 ```bash
-ethos evolve prune --older-than 7 --yes
+ethos learning rollback c-mf3k2x-a1b2c3 --reason "made reviews too terse"
 ```
 
-Without `--older-than`, prune removes all pending proposals:
-
-```bash
-ethos evolve prune --yes
+```text
+rolled back c-mf3k2x-a1b2c3
 ```
 
-### 6. Archive active skills
+A rewrite gets its previous file back. A new skill's file is removed.
 
-Move active skills that have not been invoked recently to `~/.ethos/skills/archived/`:
+### 7. Decide on the web instead
+
+Start the dashboard with `ethos serve`. Open the **Skills** page. Its approval queue lists waiting skill candidates with **Approve** and **Reject**. If a candidate has not passed a replay, **Approve** prompts for a required reason before it approves.
+
+The web dashboard has no page yet that shows every candidate, runs a replay, or rolls back. Use `ethos learning` for those.
+
+### 8. Archive skills you no longer use
 
 ```bash
 ethos evolve archive --older-than 30
 ```
 
-This archives evolved skills with no invocations in the last 30 days. Archived skills are not loaded at boot but remain on disk for recovery.
-
-To restore an archived skill:
-
-```bash
-mv ~/.ethos/skills/archived/summarize-pr ~/.ethos/skills/summarize-pr
+```text
+archived 2 skills to .archive/2026-09-13/
 ```
 
-### 7. Manage proposals in the web UI
-
-Start the web dashboard:
-
-```bash
-ethos serve --web
-```
-
-The status bar shows a badge with the count of pending proposals. Click it to open the approve/reject panel.
-
-Each proposal row displays:
-
-- Skill name and description
-- Source personality
-- Creation date
-- **Approve** and **Reject** buttons
-
-Click **Approve** to move the proposal to active skills. Click **Reject** to delete it. Both actions take effect immediately.
-
-### 8. Configure via the personality wizard
-
-Run the setup wizard:
-
-```bash
-ethos personality create <id>
-```
-
-The wizard includes a **Skill Learning** step with:
-
-- A toggle to enable or disable skill evolution for this personality.
-- A threshold field for `min_tool_calls` (how many tool calls trigger the evolver).
-- A cooldown field for `cooldown_minutes` (minimum interval between evolver runs).
-
-For existing personalities, re-run the wizard:
-
-```bash
-ethos personality edit <id>
-```
-
-The **Skill Learning** step appears with the current values pre-filled.
+This moves `~/.ethos/skills/*.md` files last modified more than 30 days ago into `~/.ethos/skills/.archive/<date>/`, with a `manifest.json`. It goes by file modification time, not by use. Skill discovery skips dot-directories, so archived files stop loading. To restore one, move it back to `~/.ethos/skills/`.
 
 ## Verify
 
-Confirm that approved skills appear in the active skill list:
+Confirm the candidate is live:
+
+```bash
+ethos learning list --all --personality engineer
+```
+
+```text
+ID                KIND       PERSONALITY  ORIGIN  STATUS    VERDICT  SUBMITTED
+c-mf3k2x-a1b2c3   New skill  engineer     fork    promoted  pass     2026-09-12T21:04:11.000Z
+```
+
+For a shared-scope skill, confirm it loads:
 
 ```bash
 ethos skills list
 ```
 
-The approved skill shows under the `ethos` source label. Start a chat session and invoke it:
+The skill appears under the `ethos` source.
+
+Confirm your decision was recorded:
 
 ```bash
-ethos chat
+ethos audit decisions --since 1d
 ```
 
-```text
-/summarize-pr
-```
-
-The agent responds using the evolved skill's instructions.
-
-Confirm archived skills no longer load:
-
-```bash
-ethos skills list | grep summarize-pr
-```
-
-No output means the skill is archived and not active.
+Each human decision prints one `audit.approval` line with code `learning.approve`, `learning.override`, `learning.reject` or `learning.rollback`. A candidate that promoted itself writes no line here. Its timeline in `ethos learning show <id>` records it instead.
 
 ## Troubleshoot
 
-**No proposals appear after many sessions.** -- Verify the personality has `skill_evolution.enabled: true` in its `config.yaml`. Check that sessions exceed the `min_tool_calls` threshold. Check that the cooldown period has elapsed since the last evolver run.
+**No candidates appear.** Check that the personality sets `skill_evolution.enabled: true` and that turns reach `skill_evolution.min_tool_calls`. The cooldown lives in the running process, so a restart resets it.
 
-**`ethos evolve apply` fails with "file not found".** -- Pass the filename with the `.md` extension: `ethos evolve apply summarize-pr.md`, not `ethos evolve apply summarize-pr`.
+**Files are still in `~/.ethos/skills/pending/` or `skills/.pending/`.** Those folders are retired. On first use the inbox imports their files (and `learning/pending-expression/`) as candidates with origin `legacy`, removes them, and writes `~/.ethos/learning/legacy-import.json`. Run `ethos learning list` to see them.
 
-**Approved skill does not appear in chat.** -- The active personality's `toolset.yaml` may filter it out. Run `/skills` inside chat to see which skills the personality loads. Add the skill's `required_tools` to the personality's toolset if needed.
+**The verdict is `incomplete` with too few cases.** The replay needs at least 3 cases, including one past task that is not a target. A personality whose case pool is still empty cannot reach that. Turn on [`nightlyPass.enabled`](../reference/config-yaml.md#nightly-pass) so cases are frozen nightly, or approve with `--override`.
 
-**Evolver proposes duplicate skills.** -- The evolver dedupes by skill name. If a skill with the same name already exists in `~/.ethos/skills/`, the proposal is skipped. If you see near-duplicates with different names, reject the redundant one and keep the more general version.
+**`replay_unavailable`.** `learningReplay.enabled` is `false` in `~/.ethos/config.yaml`.
 
-**Archive restored skill not loading.** -- Move the directory back to `~/.ethos/skills/`, not `~/.ethos/skills/pending/`. The scanner expects `~/.ethos/skills/<name>/SKILL.md`, not a flat markdown file.
+**Approve refuses with `stale`.** The live file changed after the draft was made, so the draft no longer applies to it. Reject the candidate.
 
-**Web UI badge count stuck.** -- Refresh the browser. The badge polls `~/.ethos/skills/pending/` on a 30-second interval. If the count persists after refresh, check that the pending directory exists and is readable.
+**Rollback refuses with `live_edited`.** Someone edited the skill after it was promoted. Rollback never overwrites a hand edit. Edit the file yourself.
+
+**The agent says it cannot approve a skill.** That is intended. `skills_pending_approve` refuses in chat, because approval is a human decision. Run `ethos learning approve <id>`.
+
+**An approved skill does not load in chat.** The personality's `toolset.yaml` may not include the skill's `required_tools`. Run `/skills` in chat to see what the personality loads.

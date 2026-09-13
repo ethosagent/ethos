@@ -103,6 +103,7 @@ const sidebars: SidebarsConfig = {
             'using/explanation/what-is-a-personality',
             'using/explanation/built-in-personalities',
             'using/explanation/what-is-a-skill',
+            'using/explanation/learning-inbox',
             'using/explanation/memory-model',
             'using/explanation/user-profiles',
             'using/explanation/dreaming',

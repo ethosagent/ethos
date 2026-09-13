@@ -394,9 +394,11 @@ export const SkillSchema = z.object({
 export type Skill = z.infer<typeof SkillSchema>;
 
 /**
- * A pending skill is a candidate that the SkillEvolver wrote to
- * `~/.ethos/skills/.pending/`. Approving moves it into the live skills
- * directory; rejecting deletes it.
+ * A skill candidate waiting in the learning inbox, in the shape the Evolver
+ * tab's approval queue has always rendered. `id` is the learning candidate id.
+ * Approving goes through `LearningInbox.approve` and is refused unless the
+ * candidate's replay passed (plan `trust-before-reach.md` Part 4, L-T8);
+ * rejecting marks the candidate `rejected`.
  */
 export const PendingSkillSchema = z.object({
   id: z.string(),
@@ -2249,3 +2251,147 @@ export const OutboxItemViewSchema = z.object({
   originSessionKey: z.string().nullable(),
 });
 export type OutboxItemView = z.infer<typeof OutboxItemViewSchema>;
+
+// ---------------------------------------------------------------------------
+// Learning inbox — replay-gated learning (plan `trust-before-reach.md` Part 4)
+//
+// WIRE shapes, named `…View`, for the one review inbox every learned change
+// waits in. The authoritative types live in `@ethosagent/learning-inbox`
+// (`LearningCandidate`, `ReplayReport`, `LearningAuditEntry`). The enums below
+// are pinned to that package by the COMPILER at
+// `apps/web-api/src/services/learning.service.ts`: `ALL_STATUSES` feeds
+// `options` into the inbox's status filter (a value here the store does not
+// know fails to typecheck), and `toCandidateView` assigns the store's fields
+// into these enums (a value the store gained and this did not fails too).
+//
+// Timestamps are ISO 8601 strings — the store writes them that way, and they
+// are rendered as ages, not compared against ledger windows.
+// ---------------------------------------------------------------------------
+
+export const LearningCandidateKindSchema = z.enum(['skill', 'expression']);
+export const LearningCandidateOpSchema = z.enum(['create', 'rewrite', 'update']);
+export const LearningCandidateOriginSchema = z.enum([
+  'fork',
+  'nightly',
+  'chat',
+  'eval',
+  'web',
+  'cli',
+  'legacy',
+]);
+export const LearningCandidateStatusSchema = z.enum([
+  'pending_replay',
+  'pending_review',
+  'promoted',
+  'rejected',
+  'rolled_back',
+  'invalid',
+  'stale',
+]);
+/** `incomplete` means the replay could not be scored, not that it failed. */
+export const LearningVerdictSchema = z.enum(['pass', 'regress', 'incomplete']);
+
+export const LearningCandidateViewSchema = z.object({
+  id: z.string(),
+  kind: LearningCandidateKindSchema,
+  op: LearningCandidateOpSchema,
+  personalityId: z.string(),
+  origin: LearningCandidateOriginSchema,
+  /** The live path the content lands on when promoted. */
+  destination: z.string(),
+  /** The proposed bytes: a whole skill file, or the new Expression region. */
+  content: z.string(),
+  /** sha256 of the live bytes when submitted; null for a create. */
+  baseHash: z.string().nullable(),
+  evidence: z.object({
+    sessionIds: z.array(z.string()),
+    taskIds: z.array(z.string()),
+    digest: z.string().nullable(),
+    ref: z.string().nullable(),
+  }),
+  targetCaseIds: z.array(z.string()),
+  status: LearningCandidateStatusSchema,
+  /** Null until a replay has run — "Not run" in the list. */
+  verdict: LearningVerdictSchema.nullable(),
+  submittedAt: z.string(),
+  updatedAt: z.string(),
+});
+export type LearningCandidateView = z.infer<typeof LearningCandidateViewSchema>;
+
+export const LearningAssertionResultViewSchema = z.object({
+  kind: z.enum([
+    'criteria',
+    'contains',
+    'regex',
+    'exact',
+    'tool_called',
+    'tool_not_called',
+    'completed',
+  ]),
+  value: z.string(),
+  passed: z.boolean(),
+});
+
+export const LearningReplayArmViewSchema = z.object({
+  arm: z.enum(['baseline', 'candidate']),
+  text: z.string(),
+  /** The dry-run tool plan: what the arm WOULD have called. Tools were stubbed. */
+  plan: z.array(z.object({ toolCallId: z.string(), toolName: z.string(), args: z.unknown() })),
+  errors: z.array(z.object({ error: z.string(), code: z.string() })),
+  halts: z.array(
+    z.object({ kind: z.enum(['budget', 'watcher']), rule: z.string(), message: z.string() }),
+  ),
+  costUsd: z.number(),
+  completed: z.boolean(),
+  assertions: z.array(LearningAssertionResultViewSchema),
+  /** Assertions passed ÷ total, in [0, 1]. */
+  score: z.number(),
+});
+
+export const LearningReplayCaseViewSchema = z.object({
+  caseId: z.string(),
+  role: z.enum(['target', 'regression']),
+  source: z.enum(['kanban', 'eval', 'session']),
+  sourceRef: z.string(),
+  prompt: z.string(),
+  baseline: LearningReplayArmViewSchema.nullable(),
+  candidate: LearningReplayArmViewSchema.nullable(),
+  /** candidate.score − baseline.score, when both arms ran. */
+  delta: z.number().nullable(),
+});
+
+/** The scorecard. `limitations` carries the dry-run caveat (L-D4) — render it on every card. */
+export const LearningReplayReportViewSchema = z.object({
+  runId: z.string(),
+  candidateId: z.string(),
+  /** L-D11: the only personality this replay measured. */
+  testedOn: z.string(),
+  startedAt: z.string(),
+  finishedAt: z.string(),
+  verdict: LearningVerdictSchema,
+  rules: z.object({ a: z.boolean(), b: z.boolean(), c: z.boolean(), d: z.boolean() }),
+  targetMeanDelta: z.number().nullable(),
+  regressionMeanDelta: z.number().nullable(),
+  regressionsWorse: z.number(),
+  regressionCount: z.number(),
+  costUsd: z.number(),
+  maxCostUsd: z.number(),
+  stopReason: z.enum(['budget', 'error', 'insufficient_cases']).nullable(),
+  error: z.string().nullable(),
+  cases: z.array(LearningReplayCaseViewSchema),
+  skipped: z.array(z.object({ caseId: z.string(), reason: z.string() })),
+  limitations: z.array(z.string()),
+});
+export type LearningReplayReportView = z.infer<typeof LearningReplayReportViewSchema>;
+
+/** One line of the candidate's `audit.jsonl` — the Timeline section. */
+export const LearningTimelineEntryViewSchema = z.object({
+  at: z.string(),
+  action: z.string(),
+  from: LearningCandidateStatusSchema.nullable(),
+  to: LearningCandidateStatusSchema.nullable(),
+  verdict: LearningVerdictSchema.nullable(),
+  actor: z.string().nullable(),
+  reason: z.string().nullable(),
+});
+export type LearningTimelineEntryView = z.infer<typeof LearningTimelineEntryViewSchema>;

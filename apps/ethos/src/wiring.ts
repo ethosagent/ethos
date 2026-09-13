@@ -25,7 +25,10 @@ import {
   type CreateAgentLoopResult,
   EthosObservability,
   FunnelTracker,
+  type LearningInbox,
   createAgentLoop as packageCreateAgentLoop,
+  createLearningInbox as packageCreateLearningInbox,
+  createLearningReplayer as packageCreateLearningReplayer,
   createLLM as packageCreateLLM,
   type WiringConfig,
   type WiringProfile,
@@ -498,6 +501,119 @@ export async function createLLM(
   });
 }
 
+/**
+ * The `WiringConfig` a CLI loop is built from. Shared by `createAgentLoop` and
+ * `createLearningReplayer`: a replay arm must be assembled from exactly the
+ * config a production loop is, or the baseline arm measures a different agent
+ * from the one the candidate would change.
+ */
+async function wiringConfigFor(
+  config: EthosConfig &
+    Pick<WiringConfig, 'teamName' | 'role' | 'coordinatorId' | 'postmortems' | 'trustPolicy'>,
+): Promise<WiringConfig> {
+  const rotated = await withRotation(config);
+  const wiringConfig: WiringConfig = {
+    ...rotated,
+    ...(config.teamName !== undefined ? { teamName: config.teamName } : {}),
+    ...(config.role !== undefined ? { role: config.role } : {}),
+    ...(config.coordinatorId !== undefined ? { coordinatorId: config.coordinatorId } : {}),
+    ...(config.auxiliary?.compression
+      ? { auxiliaryCompression: config.auxiliary.compression }
+      : {}),
+    ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
+    ...(config.auxiliary?.web ? { auxiliaryWeb: config.auxiliary.web } : {}),
+    ...(config.auxiliary?.asr ? { auxiliaryAsr: config.auxiliary.asr } : {}),
+    ...(config.auxiliary?.tts ? { auxiliaryTts: config.auxiliary.tts } : {}),
+    ...(config.voice ? { voice: config.voice } : {}),
+    ...(config.memoryCapture ? { memoryCapture: config.memoryCapture } : {}),
+    ...(config.memoryVault ? { memoryVault: config.memoryVault } : {}),
+    ...(config.memoryApproval ? { memoryApproval: config.memoryApproval } : {}),
+    ...(config.nightlyPass ? { nightlyPass: config.nightlyPass } : {}),
+    ...(config.displayMemoryNotices !== undefined
+      ? { displayMemoryNotices: config.displayMemoryNotices }
+      : {}),
+    ...(config.web?.search_backend ? { webSearchBackend: config.web.search_backend } : {}),
+    ...(config.web?.searxng?.url ? { searxngUrl: config.web.searxng.url } : {}),
+    ...(config.browser ? { browser: config.browser } : {}),
+    ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
+    ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
+    ...(config.background ? { background: config.background } : {}),
+    ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),
+    ...(config.storage ? { storage: config.storage } : {}),
+    ...(config.pluginsAutoInstall !== undefined
+      ? { pluginsAutoInstall: config.pluginsAutoInstall }
+      : {}),
+    secretsResolver: await getSecretsResolver(),
+  };
+  return wiringConfig;
+}
+
+/**
+ * Replay a learning candidate and let `replayAndResolve` decide whether it
+ * promotes (plan `trust-before-reach.md` Part 4, L-D9). Called by the nightly
+ * `replay` step and by `--auto-approve` on `ethos eval|evolve`; never on
+ * `agent_done`. The two arms are real, isolated dry-run loops
+ * (`createReplayLoop`); the grader is this config's default LLM.
+ */
+export async function createLearningReplayer(
+  config: EthosConfig,
+  opts: {
+    personalities: import('@ethosagent/personalities').FilePersonalityRegistry;
+    actor: string;
+    /** `--auto-approve`: stands in for the global `autoApprove` knob for this command. */
+    autoApproveOverride?: boolean;
+  },
+): Promise<ReturnType<typeof packageCreateLearningReplayer>> {
+  const { resolveLearningReplay } = await import('@ethosagent/config');
+  return packageCreateLearningReplayer(await wiringConfigFor(config), {
+    storage: getStorage(),
+    dataDir: ethosDir(),
+    workingDir: process.cwd(),
+    personalities: opts.personalities,
+    expressions: opts.personalities,
+    grader: await createLLM(config),
+    settings: resolveLearningReplay(config),
+    actor: opts.actor,
+    ...(opts.autoApproveOverride !== undefined
+      ? { autoApproveOverride: opts.autoApproveOverride }
+      : {}),
+  });
+}
+
+/**
+ * The learning review inbox for a CLI command — `ethos learning` and the legacy
+ * `ethos evolve --approve|--reject|--list-pending|apply` verbs (L-T8). Every
+ * decision writes its `learning.*` row to the observability store `ethos audit
+ * decisions` reads. Replay is wired only when `learningReplay.enabled` is true;
+ * otherwise `replay` refuses `replay_unavailable`. The replayer is built per
+ * replay: it constructs an LLM provider, and a replay costs minutes anyway.
+ */
+export async function createCliLearningInbox(config: EthosConfig): Promise<LearningInbox> {
+  const { resolveLearningReplay } = await import('@ethosagent/config');
+  const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+  const personalities = await createPersonalityRegistry({
+    storage: getStorage(),
+    userPersonalitiesDir: ethosDir(),
+  });
+  await personalities.loadFromDirectory(join(ethosDir(), 'personalities'));
+  return packageCreateLearningInbox({
+    storage: getStorage(),
+    dataDir: ethosDir(),
+    personalities,
+    expressions: personalities,
+    defaultPersonalityId: config.personality,
+    observability: {
+      recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+    },
+    ...(resolveLearningReplay(config).enabled
+      ? {
+          replay: async (candidateId: string) =>
+            (await createLearningReplayer(config, { personalities, actor: 'cli' }))(candidateId),
+        }
+      : {}),
+  });
+}
+
 export async function createAgentLoop(
   config: EthosConfig &
     Pick<WiringConfig, 'teamName' | 'role' | 'coordinatorId' | 'postmortems' | 'trustPolicy'>,
@@ -591,40 +707,7 @@ export async function createAgentLoop(
     disablePostTurnLearning?: boolean;
   } = {},
 ): Promise<CreateAgentLoopResult> {
-  const rotated = await withRotation(config);
-  const wiringConfig: WiringConfig = {
-    ...rotated,
-    ...(config.teamName !== undefined ? { teamName: config.teamName } : {}),
-    ...(config.role !== undefined ? { role: config.role } : {}),
-    ...(config.coordinatorId !== undefined ? { coordinatorId: config.coordinatorId } : {}),
-    ...(config.auxiliary?.compression
-      ? { auxiliaryCompression: config.auxiliary.compression }
-      : {}),
-    ...(config.auxiliary?.vision ? { auxiliaryVision: config.auxiliary.vision } : {}),
-    ...(config.auxiliary?.web ? { auxiliaryWeb: config.auxiliary.web } : {}),
-    ...(config.auxiliary?.asr ? { auxiliaryAsr: config.auxiliary.asr } : {}),
-    ...(config.auxiliary?.tts ? { auxiliaryTts: config.auxiliary.tts } : {}),
-    ...(config.voice ? { voice: config.voice } : {}),
-    ...(config.memoryCapture ? { memoryCapture: config.memoryCapture } : {}),
-    ...(config.memoryVault ? { memoryVault: config.memoryVault } : {}),
-    ...(config.memoryApproval ? { memoryApproval: config.memoryApproval } : {}),
-    ...(config.nightlyPass ? { nightlyPass: config.nightlyPass } : {}),
-    ...(config.displayMemoryNotices !== undefined
-      ? { displayMemoryNotices: config.displayMemoryNotices }
-      : {}),
-    ...(config.web?.search_backend ? { webSearchBackend: config.web.search_backend } : {}),
-    ...(config.web?.searxng?.url ? { searxngUrl: config.web.searxng.url } : {}),
-    ...(config.browser ? { browser: config.browser } : {}),
-    ...(config.postmortems !== undefined ? { postmortems: config.postmortems } : {}),
-    ...(config.trustPolicy !== undefined ? { trustPolicy: config.trustPolicy } : {}),
-    ...(config.background ? { background: config.background } : {}),
-    ...(config.modelCatalog ? { modelCatalogConfig: config.modelCatalog } : {}),
-    ...(config.storage ? { storage: config.storage } : {}),
-    ...(config.pluginsAutoInstall !== undefined
-      ? { pluginsAutoInstall: config.pluginsAutoInstall }
-      : {}),
-    secretsResolver: await getSecretsResolver(),
-  };
+  const wiringConfig = await wiringConfigFor(config);
   const result = await packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),
     workingDir: opts.workingDir ?? process.cwd(),

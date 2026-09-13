@@ -17,6 +17,7 @@ export const personalitiesLearningRouter = {
       input.newExpression,
       input.summary,
       input.evidenceRef,
+      input.overrideReason,
     ),
   ),
   revertExpression: os.personalities.revertExpression.handler(({ input, context }) =>

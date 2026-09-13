@@ -33,6 +33,7 @@ import { executionRouter } from './execution';
 import { goalsRouter } from './goals';
 import { kanbanRouter } from './kanban';
 import { keysRouter } from './keys';
+import { learningRouter } from './learning';
 import { mcpRouter } from './mcp';
 import { memoryRouter } from './memory';
 import { meshRouter } from './mesh';
@@ -113,6 +114,7 @@ export const apiRouter = {
   voice: voiceRouter,
   deliveries: deliveriesRouter,
   outbox: outboxRouter,
+  learning: learningRouter,
   channels: channelsRouter,
   a2a: a2aRouter,
   namedSecrets: namedSecretsRouter,

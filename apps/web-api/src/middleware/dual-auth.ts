@@ -34,6 +34,11 @@ const TOUCH_THROTTLE_MS = 60_000;
 // every bearer key that resolves to this sentinel.
 export const COOKIE_ONLY = 'cookie-only';
 
+// Deliberately UNMAPPED namespaces fail closed for bearer keys (the
+// "experimental" branch in `dualAuth`). `outbox` (Part 2) and `learning`
+// (Part 4, L-T8) are left out on purpose: approving a publication, or a
+// learned change that rewrites a skill or an Expression, is a human decision
+// made in the web UI, never something an API key can do.
 export const SCOPE_MAP: Record<string, Record<string, string>> = {
   sessions: {
     list: 'sessions:read',

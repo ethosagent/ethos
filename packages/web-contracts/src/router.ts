@@ -42,6 +42,11 @@ import {
   KanbanTaskStatusSchema,
   KanbanTeamSummarySchema,
   KeyCategorySchema,
+  LearningCandidateKindSchema,
+  LearningCandidateStatusSchema,
+  LearningCandidateViewSchema,
+  LearningReplayReportViewSchema,
+  LearningTimelineEntryViewSchema,
   LedgerEventSchema,
   McpAddServerInputSchema,
   McpAddServerOutputSchema,
@@ -650,10 +655,11 @@ const PersonalitySkillsImportInput = z.object({
 });
 const PersonalitySkillsImportOutput = z.object({ imported: z.array(PersonalitySkillSchema) });
 
-// Pending skill-candidate review queue. The nightly skill-evolver (manual
-// mode) drafts candidates into `<dataDir>/skills/.pending/<personalityId>/`;
-// these procedures let a human list / approve (promote to the live skills
-// dir) / reject (delete) them.
+// Pending skill-candidate review queue — a legacy adapter over the learning
+// inbox (L-T8). Lists this personality's waiting skill candidates by the file
+// each lands as; approve promotes one only when its replay passed (otherwise
+// `INVALID_INPUT`, naming `ethos learning approve <id> --override`); reject marks
+// it rejected.
 const PersonalitySkillCandidateFileName = z
   .string()
   .min(1)
@@ -732,6 +738,13 @@ const PersonalityApplyExpressionInput = z.object({
   newExpression: z.string(),
   summary: z.string(),
   evidenceRef: z.string(),
+  /**
+   * Apply is an approval of a learning candidate that has not been replayed,
+   * so it needs a human reason (plan `trust-before-reach.md` Design §6). Absent
+   * → `INVALID_INPUT` naming the override. `summary` is the drafter's text and
+   * does not count.
+   */
+  overrideReason: z.string().trim().min(1).optional(),
 });
 const PersonalityApplyExpressionOutput = z.object({ revisionId: z.string() });
 
@@ -4411,6 +4424,98 @@ const outbox = {
 };
 
 // ---------------------------------------------------------------------------
+// Learning — the review inbox for replay-gated learning
+// (plan `trust-before-reach.md` Part 4, L-T8)
+//
+// Every learned change (a new skill, a skill rewrite, an Expression) waits here
+// with its evidence, its replay scorecard and its timeline. This namespace is
+// the web half of `LearningInbox` (`extensions/learning-inbox/src/inbox.ts`),
+// which owns the two rules a client has to know:
+//
+//   - `approve` on a verdict other than `pass` — a candidate that was NEVER
+//     replayed included — needs `override.reason`, and fails
+//     `OVERRIDE_REQUIRED` without one. The reason lands on the timeline.
+//   - every decision that lands writes exactly one `learning.approve |
+//     override | reject | rollback` row to `ethos audit decisions`.
+//
+// Auth: cookie only. `learning` is deliberately absent from `SCOPE_MAP`
+// (`apps/web-api/src/middleware/dual-auth.ts`), so a bearer API key fails
+// closed on every procedure — approving a learned change is at least as
+// sensitive as approving a publication, and `outbox` set that precedent.
+// ---------------------------------------------------------------------------
+
+const LearningListInput = z.object({
+  personalityId: z.string().min(1).optional(),
+  kind: LearningCandidateKindSchema.optional(),
+  /** Restrict to these statuses — the inbox's list groups. Absent means all. */
+  statuses: z.array(LearningCandidateStatusSchema).min(1).optional(),
+  /** Candidates to return, newest first. */
+  limit: z.number().int().min(1).max(500).optional(),
+});
+const LearningListOutput = z.object({ candidates: z.array(LearningCandidateViewSchema) });
+
+const LearningCandidateIdInput = z.object({ candidateId: z.string().min(1) });
+
+const LearningGetOutput = z.object({
+  candidate: LearningCandidateViewSchema,
+  /** What is live now — the left side of the diff. `core` is set for an Expression only. */
+  current: z.object({ content: z.string().nullable(), core: z.string().nullable() }),
+  /** The newest scorecard; null when the candidate was never replayed ("Not run"). */
+  replay: LearningReplayReportViewSchema.nullable(),
+  /** Every replay run, oldest first. */
+  replayRunIds: z.array(z.string()),
+  timeline: z.array(LearningTimelineEntryViewSchema),
+  /**
+   * Whether Rollback would proceed now. When not, `code` (`not_promoted`,
+   * `live_edited`, `not_latest`, `no_record`) and `reason` explain the disabled
+   * button — `live_edited` is "the live file has been edited since".
+   */
+  rollback: z.object({
+    allowed: z.boolean(),
+    code: z.string().nullable(),
+    reason: z.string().nullable(),
+  }),
+});
+
+/** Run once, synchronously; a replay costs minutes and real money (L-D6, L-D7). */
+const LearningReplayOutput = z.object({
+  candidate: LearningCandidateViewSchema,
+  replay: LearningReplayReportViewSchema,
+  /** True when L-D3's auto resolver promoted it on a `pass`. */
+  promoted: z.boolean(),
+  /** Why it did not promote, when it did not. */
+  decisionReason: z.string().nullable(),
+});
+
+const LearningApproveInput = z.object({
+  candidateId: z.string().min(1),
+  /** Tab identity, recorded as `decidedBy` on the audit row. A label, never the gate. */
+  clientId: z.string().min(1),
+  /** Required unless the verdict is `pass` ("Approve anyway…"). */
+  override: z.object({ reason: z.string().trim().min(1) }).optional(),
+});
+
+const LearningDecisionInput = z.object({
+  candidateId: z.string().min(1),
+  clientId: z.string().min(1),
+  /** Optional free text for the timeline. */
+  reason: z.string().trim().min(1).optional(),
+});
+
+/** Every decision answers with the candidate as it now stands. */
+const LearningCandidateOutput = z.object({ candidate: LearningCandidateViewSchema });
+
+/** @experimental */
+const learning = {
+  list: oc.input(LearningListInput).output(LearningListOutput),
+  get: oc.input(LearningCandidateIdInput).output(LearningGetOutput),
+  replay: oc.input(LearningCandidateIdInput).output(LearningReplayOutput),
+  approve: oc.input(LearningApproveInput).output(LearningCandidateOutput),
+  reject: oc.input(LearningDecisionInput).output(LearningCandidateOutput),
+  rollback: oc.input(LearningDecisionInput).output(LearningCandidateOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Observed chats — the rooms a bot WATCHES and never answers
 // (plan/phases/ambient-group-monitoring.md R12).
 //
@@ -5345,6 +5450,7 @@ export const contract = {
   voice,
   deliveries,
   outbox,
+  learning,
   channels,
   a2a,
   namedSecrets,

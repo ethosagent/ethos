@@ -1,7 +1,8 @@
 import { ContentRenderer } from '@ethosagent/ui-components';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Button, Modal, Spin, Typography } from 'antd';
+import { App as AntApp, Button, Input, Modal, Spin, Typography } from 'antd';
 import { useState } from 'react';
+import { learningRefusal } from '../lib/learning-refusal';
 import { rpc } from '../rpc';
 
 // ---------------------------------------------------------------------------
@@ -319,6 +320,15 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
   const qc = useQueryClient();
   const { notification, modal } = AntApp.useApp();
   const [proposal, setProposal] = useState<Proposal | null>(null);
+  // Applying a draft is a human approval of a change no replay has measured, so
+  // the server requires a reason (`LearningInbox.approve`). The human types it;
+  // nothing here ever fills one in.
+  const [overrideReason, setOverrideReason] = useState('');
+
+  const closeProposal = () => {
+    setProposal(null);
+    setOverrideReason('');
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['personalities', 'livingSoul', personalityId],
@@ -345,25 +355,27 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
   });
 
   const applyMut = useMutation({
-    mutationFn: (p: Proposal) =>
+    mutationFn: (input: { proposal: Proposal; overrideReason: string }) =>
       rpc.personalities.applyExpression({
         id: personalityId,
-        newExpression: p.newExpression,
-        summary: p.rationale.slice(0, 120) || 'expression update',
+        newExpression: input.proposal.newExpression,
+        summary: input.proposal.rationale.slice(0, 120) || 'expression update',
         evidenceRef: `web:${new Date().toISOString()}`,
+        overrideReason: input.overrideReason,
       }),
     onSuccess: () => {
-      setProposal(null);
+      closeProposal();
       qc.invalidateQueries({ queryKey: ['personalities', 'livingSoul', personalityId] });
       qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', personalityId] });
       notification.success({ message: 'Voice updated', placement: 'topRight' });
     },
-    onError: (err) =>
-      notification.error({
-        message: 'Apply failed',
-        description: err instanceof Error ? err.message : String(err),
-      }),
+    onError: (err) => {
+      const refusal = learningRefusal(err, 'Apply failed');
+      notification.error({ message: refusal.title, description: refusal.detail });
+    },
   });
+
+  const trimmedReason = overrideReason.trim();
 
   const revertMut = useMutation({
     mutationFn: () => rpc.personalities.revertExpression({ id: personalityId }),
@@ -513,16 +525,22 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
         open={proposal !== null}
         title="Review voice update"
         width={720}
-        onCancel={() => setProposal(null)}
+        onCancel={closeProposal}
         footer={[
-          <Button key="cancel" type="text" onClick={() => setProposal(null)}>
+          <Button key="cancel" type="text" onClick={closeProposal}>
             Cancel
           </Button>,
           <Button
             key="apply"
             type="primary"
             loading={applyMut.isPending}
-            onClick={() => proposal && applyMut.mutate(proposal)}
+            disabled={trimmedReason === ''}
+            data-testid="living-soul-apply"
+            onClick={() =>
+              proposal &&
+              trimmedReason !== '' &&
+              applyMut.mutate({ proposal, overrideReason: trimmedReason })
+            }
           >
             Apply update
           </Button>,
@@ -590,6 +608,23 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
             <div style={{ display: 'flex', gap: 16 }}>
               <ExpressionPanel label="Before" text={proposal.currentExpression} />
               <ExpressionPanel label="After" text={proposal.newExpression} />
+            </div>
+
+            <div>
+              <Typography.Text type="secondary" style={LABEL_STYLE}>
+                Reason to apply
+              </Typography.Text>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
+                This draft has not passed a replay, so applying it overrides that check. Say why —
+                it is recorded in the audit trail. Required.
+              </Typography.Paragraph>
+              <Input.TextArea
+                aria-label="Reason to apply"
+                data-testid="living-soul-override-reason"
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+                autoSize={{ minRows: 2, maxRows: 6 }}
+              />
             </div>
           </div>
         ) : null}

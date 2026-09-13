@@ -721,6 +721,23 @@ export interface CreateAgentLoopOptions {
 // LLM provider construction
 // ---------------------------------------------------------------------------
 
+// L-T8 — the inbox's own types, re-exported so a surface (web-api) reaches the
+// review inbox through the composition root rather than a second package link.
+export {
+  AWAITING_DECISION,
+  type CandidateStatus,
+  type CurrentContent,
+  LEARNING_AUDIT_CODES,
+  type LearningCandidate,
+  type LearningCandidateDetail,
+  type LearningInbox,
+  type LearningInboxRefusal,
+  type LearningInboxResult,
+  type LearningObservability,
+  REPLAY_LIMITATIONS,
+  type ReplayAndResolveResult,
+  type ReplayReport,
+} from '@ethosagent/learning-inbox';
 export {
   type A2aIdentityView,
   A2aPeeringError,
@@ -736,6 +753,31 @@ export {
 // F06 — the cleanup stack every composition root in this repo registers on.
 export { DISPOSE_STEP_TIMEOUT_MS, DisposerStack } from './disposer-stack';
 export { resolveKanbanDbPath } from './kanban-path';
+// L-T6 — the learning inbox's composition root: every submit, replay, legacy
+// import and promotion binds the inbox to real packages through these.
+export {
+  type CaseSessionSource,
+  createLearningInbox,
+  createLearningReplayer,
+  freezeLatestUserTurnCase,
+  freezeNightlyCases,
+  freezeRecentSessionCases,
+  importLegacyLearningQueues,
+  type LearningContext,
+  type LearningInboxOptions,
+  type LearningReplayerOptions,
+  learningPendingSkillsPort,
+  learningPolicyFor,
+  learningPromoteDeps,
+  learningSubmitPort,
+  listPendingExpressionCandidates,
+  pendingReplayCandidateIds,
+  personalityCore,
+  promoteLearningCandidate,
+  rejectLearningCandidate,
+  submitExpressionCandidate,
+  toPendingSkillSummary,
+} from './learning-pipeline';
 // Lane 6 (D5 + D19) — the arithmetic model-fit verdict: `computeModelFit` is
 // the pure division; `resolvePersonalityModelFit` is the one assembler both
 // the CLI (`ethos personality show`) and the `personalities.characterSheet`
@@ -1308,11 +1350,10 @@ export interface CreateAgentLoopResult {
    *  instance — multiple loops in the same process are independent. */
   setMessagingSend: (fn: MessagingSendFn) => void;
   /** Set by the web-api chat service to receive SSE notifications when the
-   *  improvement fork proposes a new skill candidate. */
+   *  improvement fork submits a skill candidate to the learning inbox. The id
+   *  passed is the inbox candidate id. There is no "applied" counterpart: the
+   *  fork never promotes (L-T6); promotion happens after a replay or a human. */
   setOnSkillProposed?: (fn: (skillId: string, personalityId: string) => void) => void;
-  /** Set by the web-api chat service to receive SSE notifications when the
-   *  improvement fork auto-promotes a skill to the live library. */
-  setOnSkillApplied?: (fn: (skillId: string, personalityId: string) => void) => void;
   /**
    * Subscribe to proactive-capture notices (memory-experience §3.3). Present
    * only when `memoryCapture.enabled`. CLI chat subscribes to print one dim

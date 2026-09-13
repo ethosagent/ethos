@@ -8,7 +8,11 @@
 // writes it to `~/.ethos/digests/<ISO-year>-W<ISO-week>.md`, and optionally
 // emails it when an email platform + recipients are configured.
 import { join } from 'node:path';
-import { buildWeeklyDigest, isoWeekLabel } from '@ethosagent/digest';
+import {
+  buildWeeklyDigest,
+  isoWeekLabel,
+  waitingSkillNamesByPersonality,
+} from '@ethosagent/digest';
 import { formatError, toEthosError } from '@ethosagent/types';
 
 function surface(err: unknown): never {
@@ -30,7 +34,8 @@ export async function runDigestOnce(
   opts?: { email?: boolean },
 ): Promise<void> {
   const { ethosDir } = await import('@ethosagent/config');
-  const { getStorage } = await import('../wiring');
+  const { createCliLearningInbox, getStorage } = await import('../wiring');
+  const { AWAITING_DECISION } = await import('@ethosagent/learning-inbox');
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
 
   const storage = getStorage();
@@ -61,6 +66,12 @@ export async function runDigestOnce(
     }
   }
 
+  // The candidate count is the learning inbox's, not a retired pending dir.
+  const waiting = await (await createCliLearningInbox(config)).list({
+    kind: 'skill',
+    status: AWAITING_DECISION,
+  });
+
   const now = new Date();
   const markdown = await buildWeeklyDigest({
     personalities: targets,
@@ -68,6 +79,7 @@ export async function runDigestOnce(
     dataDir: dir,
     now,
     learningLogByPersonality,
+    pendingSkillCandidatesByPersonality: waitingSkillNamesByPersonality(waiting),
   });
 
   const label = isoWeekLabel(now);

@@ -559,11 +559,20 @@ export interface PersonalityConfig {
    */
   context_engine_options?: Record<string, unknown>;
   /**
-   * E3 — Auto-triggered skill evolution. When `enabled: true`, the
-   * skill-evolver auto-trigger queues an analysis after every turn that
-   * crosses the `min_tool_calls` threshold and is outside the cooldown
-   * window. Default: disabled (opt-in per personality). Counts as ONE
-   * field for the schema-freeze gate (the nested shape is a leaf type).
+   * Skill evolution for this personality. Every drafted skill is submitted to
+   * the learning inbox as a candidate (plan `trust-before-reach.md` Part 4);
+   * nothing configured here writes a live skill directly.
+   *
+   *   `enabled` — gates the nightly pass's skill-drafting step
+   *     (`apps/ethos/src/commands/nightly.ts`). Default: off.
+   *   `promotion`, `scope`, `evolve_existing` — documented on each key below.
+   *   `min_tool_calls`, `cooldown_minutes`, `model` — parsed and written back
+   *     by `extensions/personalities/src/index.ts`, but READ BY NOTHING: their
+   *     one reader, the per-turn skill-evolver auto-trigger, was deleted
+   *     (L-T6). Limitation: setting them has no effect.
+   *
+   * Counts as ONE field for the schema-freeze gate (the nested shape is a
+   * leaf type).
    */
   skill_evolution?: {
     enabled?: boolean;
@@ -571,20 +580,31 @@ export interface PersonalityConfig {
     cooldown_minutes?: number;
     model?: string;
     /**
-     * Improve existing skills during eval-driven evolution (the rewrite
-     * branch). Distinct from `enabled`, which gates new-skill creation.
-     * Unset = follows `enabled`. Inert on the nightly create-only path.
+     * Intended to gate the rewrite branch of eval-driven evolution —
+     * `SkillEvolver`'s `evolveExisting` option
+     * (`extensions/skill-evolver/src/evolver.ts`, default `true`).
+     * Limitation: no caller maps this key onto that option (`ethos evolve`,
+     * `ethos eval --evolve`), so only the web Personalities form reads it and
+     * rewrites are always considered.
      */
     evolve_existing?: boolean;
     /**
-     * Promotion gate for a drafted skill. `'review'` queues it for human
-     * approval; `'auto'` promotes it automatically after validation. Unset =
-     * fall back to the `evolution_approval_mode`-based gate.
+     * Who may promote this personality's skill candidates — the first of the
+     * three auto knobs (`promotion` > `evolution_approval_mode` >
+     * `evolve-config.json` `autoApprove`; `resolveAutoPromotion`,
+     * `extensions/learning-inbox/src/auto-promotion.ts`). `'review'`: only a
+     * human. `'auto'`: additionally, a replay promotes a candidate whose
+     * verdict is `pass` — and only when `scope` is `'personality'`; a shared
+     * skill always needs a human (`autoPromotionDecision`, same file). Unset =
+     * the next knob decides.
      */
     promotion?: 'review' | 'auto';
     /**
-     * Where a promoted skill is written. `'shared'` (default) = the global
-     * skills dir; `'personality'` = the per-personality skills dir.
+     * Where a promoted skill is written (`liveSkillDir`,
+     * `extensions/skill-evolver/src/skill-dir.ts`). `'shared'` (default) =
+     * `<dataDir>/skills`, visible to every capability-matched personality;
+     * `'personality'` = `<dataDir>/personalities/<id>/skills`. Also decides
+     * whether auto-promotion is possible at all (see `promotion`).
      */
     scope?: 'personality' | 'shared';
   };
@@ -698,23 +718,21 @@ export interface PersonalityConfig {
    * Phase 3a — Governance dial for Expression self-evolution, distinct from
    * `safety.approvalMode` (which gates tool calls, not evolution). Do NOT
    * overload safety.approvalMode.
-   *   `user` (default when absent): every Expression change is drafted and
-   *     applied only on explicit user approval. Two drafters honour this.
-   *     `runPersonalityEvolve` (apps/ethos/src/commands/personality-evolve.ts)
-   *     shows the rationale and diff and applies on `y`. The nightly pass does
-   *     NOT apply: `runNightlyPass` step 3
-   *     (extensions/nightly-loop/src/orchestrator.ts) routes the draft to its
-   *     `queueExpression` dep, which parks it at
-   *     `~/.ethos/learning/pending-expression/<id>.json`
-   *     (`queuePendingExpression`, apps/ethos/src/commands/pending-expression.ts),
-   *     and the next `ethos personality evolve <id>` offers it.
-   *   `auto`: the Personality Judge is the approver instead of the user. An
-   *     Expression scoring below `GOOD_ALIGNMENT_THRESHOLD` is applied with no
-   *     prompt, by both drafters above.
-   * No longer inert — it was, before phase 3b wired the Judge. What the two
-   * readers do with each value is pinned by
-   * extensions/nightly-loop/src/__tests__/orchestrator.test.ts and
-   * apps/ethos/src/commands/__tests__/pending-expression.test.ts.
+   * Every drafter — the nightly pass, `ethos personality evolve`, the web
+   * Living Soul editor — submits its draft to the learning inbox as a
+   * candidate; none applies it (plan `trust-before-reach.md` Part 4, L-D2).
+   * What this field decides is who may promote that candidate:
+   *   `user` (default when absent): only a human — `y` at
+   *     `ethos personality evolve <id>`, Apply on the web, or the inbox. The
+   *     auto resolver answers `review` (`resolveAutoPromotion`,
+   *     extensions/learning-inbox/src/auto-promotion.ts).
+   *   `auto`: additionally, `replayAndResolve` promotes a candidate whose
+   *     replay verdict is `pass`. The Personality Judge decides only whether to
+   *     draft; an unevaluated draft is never applied.
+   * For skills it is the middle of the three auto knobs
+   * (`skill_evolution.promotion` > this > `evolve-config.json` `autoApprove`).
+   * Pinned by extensions/learning-inbox/src/__tests__/auto-promotion.test.ts
+   * and extensions/nightly-loop/src/__tests__/orchestrator.test.ts.
    * Counts as ONE field for the schema-freeze gate.
    */
   evolution_approval_mode?: 'auto' | 'user';

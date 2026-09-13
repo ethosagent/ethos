@@ -45,7 +45,6 @@ export {
   type SkillsInjectorOptions,
 } from './skills-injector';
 export {
-  type PendingSkillRecord,
   type PersonalitySkillRecord,
   type SkillRecord,
   SkillsLibrary,

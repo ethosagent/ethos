@@ -4,13 +4,10 @@ export {
   loadEvolveConfig,
   parseEvalJsonl,
 } from './analyze';
-export {
-  registerSkillEvolutionAutoTrigger,
-  resetSkillEvolutionCooldowns,
-  type SkillEvolutionAutoTriggerOptions,
-} from './auto-trigger';
 export { registerEvolverCron } from './cron';
 export {
+  type EvolveApplyCandidate,
+  type EvolveApplyInbox,
   runEvolveApply,
   runEvolveArchive,
   runEvolvePrune,
@@ -30,9 +27,14 @@ export {
   type ImprovementRuntime,
   resetImprovementForkCooldowns,
 } from './improvement-fork';
+export type {
+  LearningSubmitPort,
+  SkillCandidateOrigin,
+  SkillCandidateSubmission,
+} from './learning-port';
 export {
-  type ApprovalMode,
   type NightlySkillProposalResult,
+  nightlySkillCandidateId,
   type ProposalDecision,
   type ProposeSkillInput,
   proposeSkillFromEvidence,
@@ -46,6 +48,7 @@ export {
 export { liveSkillDir } from './skill-dir';
 export { draftSoulSplit, type SoulSplitProposal } from './soul-split';
 export { createSkillProposeTool, createSkillReadTool } from './tools';
+export type { SkillProposeTarget, SkillProposeToolOptions } from './tools/skill-propose';
 export type {
   EvalRecord,
   EvolutionPlan,

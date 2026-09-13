@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { assertSafeId, EthosError, type Storage } from '@ethosagent/types';
 import { parseEthosRequires } from './dialects/ethos-namespace';
-import { checkRequirements, checkSkillFrontmatter, parseSkillFrontmatter } from './skill-compat';
+import { checkRequirements, parseSkillFrontmatter } from './skill-compat';
 
 // CRUD over the markdown-skill files under ~/.ethos/skills/ (global) and
 // ~/.ethos/personalities/<id>/skills/ (per-personality). Sits alongside
@@ -36,14 +36,6 @@ export interface PersonalitySkillRecord {
   modifiedAt: string;
 }
 
-export interface PendingSkillRecord {
-  id: string;
-  name: string;
-  description: string | null;
-  body: string;
-  proposedAt: string;
-}
-
 export interface SkillsLibraryOptions {
   /** Root data dir — `~/.ethos/`. */
   dataDir: string;
@@ -65,7 +57,6 @@ export interface SkillsLibraryOptions {
 export class SkillsLibrary {
   private readonly storage: Storage;
   private readonly skillsDir: string;
-  private readonly pendingDir: string;
   private readonly personalitiesDir: string;
   private readonly catalogDir: string | null;
   private readonly availableTools: (() => Set<string>) | null;
@@ -74,7 +65,6 @@ export class SkillsLibrary {
   constructor(opts: SkillsLibraryOptions) {
     this.storage = opts.storage;
     this.skillsDir = join(opts.dataDir, 'skills');
-    this.pendingDir = join(this.skillsDir, '.pending');
     this.personalitiesDir = join(opts.dataDir, 'personalities');
     this.catalogDir = opts.catalogDir ?? null;
     this.availableTools = opts.availableTools ?? null;
@@ -83,11 +73,6 @@ export class SkillsLibrary {
   /** Absolute path to the directory holding live (global) skills. */
   getSkillsDir(): string {
     return this.skillsDir;
-  }
-
-  /** Absolute path to the pending-candidates directory. */
-  getPendingDir(): string {
-    return this.pendingDir;
   }
 
   // ---------------------------------------------------------------------------
@@ -153,65 +138,12 @@ export class SkillsLibrary {
     await this.storage.remove(path);
   }
 
-  // ---------------------------------------------------------------------------
-  // Pending queue (evolver outputs)
-  // ---------------------------------------------------------------------------
-
-  async listPending(): Promise<PendingSkillRecord[]> {
-    const names = await this.storage.list(this.pendingDir);
-    const out: PendingSkillRecord[] = [];
-    for (const name of names) {
-      if (!name.endsWith('.md')) continue;
-      const path = join(this.pendingDir, name);
-      const raw = await this.storage.read(path);
-      const mtimeMs = await this.storage.mtime(path);
-      if (raw === null || mtimeMs === null) continue;
-      const id = name.replace(/\.md$/, '');
-      const parsed = parseSkillFrontmatter(raw);
-      const body = parsed?.body ?? raw;
-      const fm = parsed?.raw ?? {};
-      out.push({
-        id,
-        name: typeof fm.name === 'string' ? fm.name : id,
-        description: typeof fm.description === 'string' ? fm.description : null,
-        body,
-        proposedAt: new Date(mtimeMs).toISOString(),
-      });
-    }
-    out.sort((a, b) => (a.proposedAt < b.proposedAt ? 1 : -1));
-    return out;
-  }
-
-  async pendingExists(id: string): Promise<boolean> {
-    assertSafeId(id, 'skillId');
-    return this.storage.exists(join(this.pendingDir, `${id}.md`));
-  }
-
-  /**
-   * Move `<id>.md` from pending → live, replacing any existing live skill.
-   *
-   * Refuses to promote a file whose frontmatter does not parse: the live dir
-   * is loaded at startup, so an unparseable file there is a boot failure. The
-   * pending file is left in place so it can be inspected or edited.
-   */
-  async approvePending(id: string): Promise<void> {
-    assertSafeId(id, 'skillId');
-    const src = join(this.pendingDir, `${id}.md`);
-    const body = await this.storage.read(src);
-    if (body === null) throw notFoundGlobal(id);
-    const check = checkSkillFrontmatter(body);
-    if (!check.ok) throw invalidFrontmatter(`${id}.md`, check.error);
-    await this.storage.mkdir(this.skillsDir);
-    await this.storage.write(join(this.skillsDir, `${id}.md`), body);
-    await this.storage.remove(src);
-  }
-
-  async rejectPending(id: string): Promise<void> {
-    assertSafeId(id, 'skillId');
-    const path = join(this.pendingDir, `${id}.md`);
-    if (!(await this.storage.exists(path))) throw notFoundGlobal(id);
-    await this.storage.remove(path);
-  }
+  // The pending queue that used to live here (`listPending` / `approvePending` /
+  // `rejectPending` over `skills/.pending/`) is gone (plan
+  // `trust-before-reach.md` Part 4, L-T8). `approvePending` was a promote path
+  // that bypassed the learning inbox's override rule, audit rows and rollback
+  // record; every proposal is now a learning candidate, reviewed through
+  // `LearningInbox` (`extensions/learning-inbox/src/inbox.ts`).
 
   // ---------------------------------------------------------------------------
   // Per-personality skills
@@ -480,18 +412,6 @@ function notFoundGlobal(id: string): EthosError {
     code: 'SKILL_NOT_FOUND',
     cause: `Skill "${id}" not found.`,
     action: 'Use listSkills() to see what is currently installed.',
-  });
-}
-
-function invalidFrontmatter(fileName: string, error: string): EthosError {
-  return new EthosError({
-    // Reuses the existing skill-install code — EthosErrorCode is a closed
-    // union with a docs round-trip gate; a new code is not worth a schema
-    // change for this case.
-    code: 'SKILL_INSTALL_FAILED',
-    cause: `Skill "${fileName}" has unparseable YAML frontmatter: ${error}`,
-    action:
-      'Fix the frontmatter (values containing ": " must be quoted) and approve it again, or reject it.',
   });
 }
 

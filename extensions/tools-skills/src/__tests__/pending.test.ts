@@ -4,6 +4,7 @@ import {
   createSkillsTools,
   type PendingSkillSummary,
   type PendingSkillsPort,
+  SKILL_APPROVAL_IS_HUMAN_ONLY,
   type SkillsToolsOptions,
 } from '../index';
 
@@ -11,6 +12,7 @@ import {
 // with so the tools can be checked for pass-through, and throws the same shape
 // of error the real library throws for an unknown id.
 class FakePendingLibrary implements PendingSkillsPort {
+  /** Recorded if anything ever reaches a promotion method. Nothing may (L-D13). */
   approved: string[] = [];
   rejected: string[] = [];
 
@@ -18,12 +20,6 @@ class FakePendingLibrary implements PendingSkillsPort {
 
   async listPending(): Promise<PendingSkillSummary[]> {
     return this.items;
-  }
-
-  async approvePending(id: string): Promise<void> {
-    if (!this.items.some((p) => p.id === id)) throw new Error(`Skill "${id}" not found.`);
-    this.approved.push(id);
-    this.items = this.items.filter((p) => p.id !== id);
   }
 
   async rejectPending(id: string): Promise<void> {
@@ -105,29 +101,32 @@ describe('skills_pending_view', () => {
   });
 });
 
-describe('skills_pending_approve', () => {
-  it('calls the library with the id it was given', async () => {
+describe('skills_pending_approve (L-D13 — approval is human-only)', () => {
+  it('refuses and names both human paths that exist: `ethos learning approve <id>` and the web Skills approval queue', async () => {
     const result = await tool('skills_pending_approve').execute({ id: 'new-1754-abc123' }, ctx);
-    expect(result.ok).toBe(true);
-    expect(library.approved).toEqual(['new-1754-abc123']);
-    expect(library.rejected).toEqual([]);
-  });
-
-  it('returns a typed error rather than throwing for an unknown id', async () => {
-    const result = await tool('skills_pending_approve').execute({ id: 'gone' }, ctx);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe('not_available');
-    expect(library.approved).toEqual([]);
+    expect(result.error).toBe(SKILL_APPROVAL_IS_HUMAN_ONLY);
+    expect(result.error).toContain('ethos learning approve <id>');
+    expect(result.error).toContain('--override "<reason>"');
+    expect(result.error).toContain('Skills page approval queue');
+    // `apps/web/src/pages/Learning.tsx` is not built (L-T9); the model must not
+    // send a user to it.
+    expect(result.error).not.toContain('Learning page');
   });
 
-  it('returns a typed error for an already-approved id', async () => {
-    await tool('skills_pending_approve').execute({ id: 'new-1754-abc123' }, ctx);
-    const second = await tool('skills_pending_approve').execute({ id: 'new-1754-abc123' }, ctx);
-    expect(second.ok).toBe(false);
-    if (second.ok) return;
-    expect(second.code).toBe('not_available');
-    expect(library.approved).toEqual(['new-1754-abc123']);
+  it('promotes nothing, for a queued id, an unknown id, or an unsafe id', async () => {
+    for (const id of ['new-1754-abc123', 'gone', '../../etc/passwd']) {
+      const result = await tool('skills_pending_approve').execute({ id }, ctx);
+      expect(result.ok).toBe(false);
+    }
+    expect(library.approved).toEqual([]);
+    expect(library.rejected).toEqual([]);
+    expect(
+      (await tool('skills_pending_list').execute({}, ctx)).ok &&
+        (await library.listPending()).length,
+    ).toBe(2);
   });
 });
 
@@ -144,7 +143,7 @@ describe('id validation', () => {
   // Same charset guard SkillsLibrary applies before joining an id into a path.
   const unsafe = ['../../etc/passwd', 'Foo', 'a b', '', '.pending'];
 
-  for (const name of ['skills_pending_view', 'skills_pending_approve', 'skills_pending_reject']) {
+  for (const name of ['skills_pending_view', 'skills_pending_reject']) {
     it(`${name} refuses an id that fails validation`, async () => {
       for (const id of unsafe) {
         const result = await tool(name).execute({ id }, ctx);

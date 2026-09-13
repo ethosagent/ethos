@@ -4,7 +4,7 @@ description: "Ethos is a TypeScript agent framework where personality is archite
 kind: explanation
 audience: shared
 slug: /
-updated: 2026-06-09
+updated: 2026-09-13
 ---
 
 **[Personalities](getting-started/glossary.md#personality) aren't hats you swap in the prompt. They're enforced boundaries.** A personality in Ethos is a directory of files — `SOUL.md`, `config.yaml`, `toolset.yaml` — that the runtime treats as a structural component. Switching it changes prompt, tools, memory, and model atomically. The boundary is enforced at the [tool registry](getting-started/glossary.md#tool), not requested in the prompt.
@@ -16,7 +16,7 @@ That single decision pays off six ways:
 - **Safe plugins.** Every [tool](getting-started/glossary.md#tool) declares what it reads, what it writes, and what network it touches. The runtime enforces those declarations per call. Granting an unfamiliar [plugin](getting-started/glossary.md#plugin) to a personality is bounded by what its toolset already allows.
 - **Teams, not just agents.** A coordinator personality decomposes one request into specialist tasks; the [team](getting-started/glossary.md#team) executes them against a durable kanban board with a full audit trail. Same primitives — personality, toolset, session — composed.
 - **A web dashboard and desktop app.** `ethos serve --web` launches a React SPA. Chat, sessions, personalities, skills, MCP servers, plugins, memory, teams, cron jobs, activity feed, batch/eval — managed from one place. The Electron desktop app adds a system tray, quick-chat overlay, and global shortcuts.
-- **Skills that evolve.** The skill-evolver analyzes eval output, proposes rewrites for underperforming [skills](getting-started/glossary.md#skill), and drafts new skills for recurring patterns. You approve or reject from the web dashboard or desktop app.
+- **Skills that evolve.** The skill-evolver analyzes eval output, proposes rewrites for underperforming [skills](getting-started/glossary.md#skill), and drafts new skills for recurring patterns. Nothing goes live without a passing replay against past tasks or your approval, from `ethos learning` or the web dashboard's Skills page.
 
 Three personalities ship by default for everyday use. Two system personalities — personality-architect and team-architect — are available for building and managing agents. Plugins register slash commands (e.g. `/market brief`) that work across CLI, Telegram, Discord, Slack, and the web UI. Your existing Claude Code, OpenClaw, OpenCode, and Hermes skill libraries run as-is, filtered to the right specialist per personality. Zero mode (`ethos -z`) runs one-shot prompts with no readline — pipe it into scripts, CI, or cron. Inline `@ref` context (`@file`, `@url`) pulls external sources into the conversation without copy-paste.
 
@@ -43,7 +43,7 @@ The runtime streams end-to-end: every turn emits an `AsyncGenerator<AgentEvent>`
 
 <a className="docsCard" href="/docs/using/how-to/manage-skill-evolution">
   <h3>Let the agent learn from usage</h3>
-  <p>The skill-evolver watches eval results, proposes rewrites for weak skills, drafts new ones for recurring patterns. You approve from the dashboard.</p>
+  <p>The skill-evolver watches eval results, proposes rewrites for weak skills, drafts new ones for recurring patterns. Each goes live only after a passing replay or your approval.</p>
 </a>
 
 <a className="docsCard" href="/docs/using/how-to/use-web-dashboard">

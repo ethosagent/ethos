@@ -12,8 +12,10 @@ import {
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import { loadEvolveConfig, SkillEvolver } from '@ethosagent/skill-evolver';
 import { EthosError } from '@ethosagent/types';
+import { learningSubmitPort } from '@ethosagent/wiring';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createLLM, getStorage } from '../wiring';
+import { replayEvolvedCandidates } from './evolve';
 
 const c = {
   reset: '\x1b[0m',
@@ -215,49 +217,81 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   console.log(`\n${c.bold}${passMark}${failMark}${avgMark}  ${c.dim}${elapsed}s${c.reset}`);
   console.log(`${c.dim}output → ${outputPath}${c.reset}`);
 
-  if (evolve) await runEvolveAfter(config, outputPath, autoApprove);
+  if (evolve) await runEvolveAfter(config, outputPath, autoApprove, tasks, expectedMap);
 
   if (stats.failed > 0) process.exit(1);
 }
 
+/**
+ * `ethos eval --evolve` — path 7 (plan `trust-before-reach.md` Part 4). Drafts
+ * are submitted to the learning inbox. This is the one evolve entry point with
+ * AUTHORED expected values, so each draft's target cases are frozen from the
+ * eval tasks it was drawn from (`caseFromEvalTask`, keeping their `match` kind).
+ * `--auto-approve` replays synchronously (L-D9); it no longer renames files live.
+ */
 async function runEvolveAfter(
   config: EthosConfig,
   evalOutputPath: string,
   autoApprove: boolean,
+  tasks: ReturnType<typeof parseTasksJsonl>,
+  expectedMap: ReturnType<typeof parseExpectedJsonl>,
 ): Promise<void> {
   const dir = ethosDir();
   const skillsDir = join(dir, 'skills');
-  const pendingDir = join(skillsDir, 'pending');
-  const evolveConfig = await loadEvolveConfig(join(dir, 'evolve-config.json'), getStorage());
+  const storage = getStorage();
+  const evolveConfig = await loadEvolveConfig(join(dir, 'evolve-config.json'), storage);
   const llm = await createLLM(config);
+  const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+  const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: dir });
+  await reg.loadFromDirectory(join(dir, 'personalities'));
+  const personalityId = config.personality;
+  const prompts = new Map(tasks.map((t) => [t.id, t.prompt]));
 
   console.log(`\n${c.bold}evolving skills${c.reset}  ${c.dim}model: ${llm.model}${c.reset}`);
 
+  const { caseFromEvalTask, freezeCase } = await import('@ethosagent/learning-inbox');
   const evolver = new SkillEvolver({
     evalOutputPath,
     skillsDir,
-    pendingDir,
     config: evolveConfig,
     llm,
-    storage: getStorage(),
+    storage,
+    learning: learningSubmitPort({ storage, dataDir: dir }),
+    dataDir: dir,
+    personalityId,
+    scope: reg.get(personalityId)?.skill_evolution?.scope,
+    targetCaseIds: async (summaries) => {
+      const ids: string[] = [];
+      for (const summary of summaries.slice(0, 3)) {
+        const expected = expectedMap.get(summary.taskId);
+        const prompt = prompts.get(summary.taskId);
+        if (!expected || prompt === undefined) continue;
+        const learningCase = caseFromEvalTask(
+          personalityId,
+          { id: summary.taskId, prompt, expected: expected.expected, match: expected.match },
+          new Date().toISOString(),
+        );
+        if (!learningCase) continue;
+        await freezeCase(storage, dir, learningCase);
+        ids.push(learningCase.id);
+      }
+      return ids;
+    },
   });
   const result = await evolver.evolve();
 
   console.log(
-    `  rewrites: ${result.rewritesWritten.length}  new: ${result.newSkillsWritten.length}  skipped: ${result.skipped.length}`,
+    `  rewrites: ${result.rewritesSubmitted.length}  new: ${result.newSkillsSubmitted.length}  skipped: ${result.skipped.length}`,
   );
-  for (const f of result.rewritesWritten) console.log(`  ${c.green}rewrite${c.reset} ${f}`);
-  for (const f of result.newSkillsWritten) console.log(`  ${c.green}new${c.reset}     ${f}`);
+  for (const f of result.rewritesSubmitted) console.log(`  ${c.green}rewrite${c.reset} ${f}`);
+  for (const f of result.newSkillsSubmitted) console.log(`  ${c.green}new${c.reset}     ${f}`);
   for (const s of result.skipped)
     console.log(`  ${c.yellow}skip${c.reset}    ${s.kind} ${s.target} — ${s.reason}`);
 
-  if (autoApprove) {
-    const { rename } = await import('node:fs/promises');
-    const all = [...result.rewritesWritten, ...result.newSkillsWritten];
-    for (const f of all) await rename(join(pendingDir, f), join(skillsDir, f));
-    if (all.length > 0) console.log(`  ${c.green}auto-approved${c.reset} ${all.length} file(s)`);
-  } else if (result.rewritesWritten.length + result.newSkillsWritten.length > 0) {
-    console.log(`  ${c.dim}review with: ethos evolve --list-pending${c.reset}`);
+  if (autoApprove && result.candidateIds.length > 0) {
+    await replayEvolvedCandidates(config, reg, result.candidateIds);
+  } else if (result.candidateIds.length > 0) {
+    console.log(`  ${c.dim}review with: ethos learning list${c.reset}`);
   }
 }
 

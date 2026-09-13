@@ -38,6 +38,7 @@ import { runFallback } from './commands/fallback';
 import { runGatewayStart } from './commands/gateway';
 import { runKeys } from './commands/keys';
 import { runLearn } from './commands/learn';
+import { runLearning } from './commands/learning';
 import { runLogs } from './commands/logs';
 import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
@@ -75,7 +76,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | memory | acp | batch | bench | eval | evolve | learn | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | memory | acp | batch | bench | eval | evolve | learn | learning | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 // Declared here, not beside getBootCliRegistry() below, because dispatch runs at
 // module top level: the `default` branch calls getBootCliRegistry() while a `let`
@@ -724,6 +725,12 @@ try {
 
     case 'learn': {
       await runLearn(args.slice(1));
+      break;
+    }
+
+    case 'learning': {
+      const config = await loadRequiredConfig();
+      await runLearning(args.slice(1), config);
       break;
     }
 

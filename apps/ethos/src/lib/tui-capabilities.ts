@@ -155,8 +155,8 @@ function shellQuote(arg: string): string {
  * `$(…)` in it would produce a line that runs something else entirely. The
  * `.md` suffix goes inside the quotes — the whole argument is one word.
  */
-export function formatSkillProposedNotice(skillId: string): string {
-  return `[skill-evolver] Proposed skill: ${skillId} — run \`ethos evolve apply ${shellQuote(`${skillId}.md`)}\` to activate`;
+export function formatSkillProposedNotice(candidateId: string): string {
+  return `[skill-evolver] Proposed skill: learning candidate ${candidateId} — it goes live after a passing replay, or run \`ethos learning approve ${shellQuote(candidateId)}\``;
 }
 
 /** A loop's single-slot skill-proposal setter (`CreateAgentLoopResult.setOnSkillProposed`). */

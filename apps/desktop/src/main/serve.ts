@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readConfig } from '@ethosagent/config';
+import { readConfig, resolveLearningReplay } from '@ethosagent/config';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import type { SecretsResolver, Storage } from '@ethosagent/types';
@@ -14,6 +14,7 @@ import {
   createApprovalDangerPredicate,
   createBrowserTakeoverRegistry,
   createLazyProvider,
+  createLearningReplayer,
   createLLM,
   createSessionStore,
   IdentityMap,
@@ -96,6 +97,40 @@ export async function readSharedVoiceAndCallCaptureConfig(
   };
 }
 
+/**
+ * The `learningReplay` option `createWebApi` takes — the on-demand replay
+ * behind the `learning.replay` RPC (plan `trust-before-reach.md` L-D9). The same settings `ethos serve`
+ * passes (`apps/ethos/src/commands/serve.ts`): two real dry-run loops built from
+ * this backend's `wiringConfig`, graded by its default LLM, bounded by the
+ * shared `~/.ethos/config.yaml`'s `learningReplay.*`. Built per replay, like
+ * serve: it constructs an LLM provider, and a replay costs minutes anyway.
+ *
+ * `settings` null (the shared config could not be read) or `enabled: false` →
+ * no option, and the inbox refuses `replay_unavailable`. An unreadable config
+ * fails closed rather than spending money under settings nobody could check.
+ */
+export function desktopLearningReplay(opts: {
+  settings: ReturnType<typeof resolveLearningReplay> | null;
+  wiringConfig: WiringConfig;
+  dataDir: string;
+  personalities: Awaited<ReturnType<typeof createPersonalityRegistry>>;
+}): Pick<Parameters<typeof createWebApi>[0], 'learningReplay'> {
+  const { settings } = opts;
+  if (!settings?.enabled) return {};
+  return {
+    learningReplay: async (candidateId: string) =>
+      createLearningReplayer(opts.wiringConfig, {
+        storage: new FsStorage(),
+        dataDir: opts.dataDir,
+        personalities: opts.personalities,
+        expressions: opts.personalities,
+        grader: await createLLM(opts.wiringConfig),
+        settings,
+        actor: 'web',
+      })(candidateId),
+  };
+}
+
 export async function startServer(port: number): Promise<number> {
   if (runtime) return boundPort ?? port;
   // Filled in as each resource is created, so a start that fails half way
@@ -163,6 +198,20 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
   // `callCapture.personalityId` (see `readSharedVoiceAndCallCaptureConfig`
   // above) so a fresh desktop install doesn't crash on startup when a
   // personality unconditionally ships the `call_capture` toolset capability.
+  // `learningReplay.*` from the same shared file, so `learning.replay` runs
+  // under the settings `ethos serve` reads (see `desktopLearningReplay`).
+  let learningReplaySettings: ReturnType<typeof resolveLearningReplay> | null = null;
+  try {
+    learningReplaySettings = resolveLearningReplay(
+      (await readConfig(new FsStorage(), secretsResolver)) ?? {},
+    );
+  } catch (err) {
+    console.warn(
+      '[ethos-backend] failed to read learningReplay from ~/.ethos/config.yaml — ' +
+        `learning replay will report itself unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   const { callCapture: sharedCallCapture, ...sharedVoiceConfig } = sharedVoiceAndCallCaptureConfig;
   const callCapturePersonalityId = store.get('callCapturePersonalityId') as string | undefined;
 
@@ -324,6 +373,14 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
       alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     }),
     ...(onMemoryCaptured ? { onMemoryCaptured } : {}),
+    // `learning.replay` — absent, the desktop refused `REPLAY_UNAVAILABLE`
+    // while `ethos serve` ran the replay.
+    ...desktopLearningReplay({
+      settings: learningReplaySettings,
+      wiringConfig,
+      dataDir,
+      personalities,
+    }),
     toolRegistry,
     // F1 — the desktop runs the in-process backend with Docker disabled, so the
     // character sheet must render the honest local (un-sandboxed) posture rather

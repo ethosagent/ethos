@@ -21,6 +21,7 @@ import type { GoalsService } from '../services/goals.service';
 import type { KanbanService } from '../services/kanban.service';
 import type { KeysService } from '../services/keys.service';
 import type { LabService } from '../services/lab.service';
+import type { LearningService } from '../services/learning.service';
 import type { McpService } from '../services/mcp.service';
 import type { MemoryService } from '../services/memory.service';
 import type { MeshService } from '../services/mesh.service';
@@ -110,6 +111,10 @@ export interface RpcContext {
    *  personality has ever proposed a publication. Decisions only; the gateway
    *  process does the publishing. */
   outbox: OutboxService;
+  /** The learning review inbox — list, scorecards, and the human's decisions
+   *  (plan `trust-before-reach.md` Part 4, L-T8). Not optional: it answers an
+   *  empty inbox where nothing was ever proposed. */
+  learning: LearningService;
   /** Connected wake satellites + the pushed routing table. Absent in
    *  deployments with no satellite lane — the RPCs then report an empty house
    *  rather than throwing at a Settings page. */

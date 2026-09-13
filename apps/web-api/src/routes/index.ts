@@ -136,6 +136,8 @@ export interface ServiceContainer {
   /** The personality approval queue — reads, and the human's decisions.
    *  Decisions only: the gateway process publishes. */
   outbox: import('../services/outbox.service').OutboxService;
+  /** The learning review inbox — reads, scorecards, and the human's decisions. */
+  learning: import('../services/learning.service').LearningService;
   /** Connected wake satellites + the pushed routing table. Absent when this
    *  deployment mounts no satellite lane. */
   satellites?: import('../voice/satellite-registry').SatelliteRegistry;

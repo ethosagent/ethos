@@ -8,6 +8,11 @@ import type { Skill } from '@ethosagent/web-contracts';
 
 export interface SkillsServiceOptions {
   library: SkillsLibrary;
+  /**
+   * Skill candidates waiting in the learning inbox — the "Approval queue"
+   * badge. Borrowed from `LearningService` at wiring time (L-T8); absent → 0.
+   */
+  pendingCount?: () => Promise<number>;
 }
 
 export class SkillsService {
@@ -16,11 +21,11 @@ export class SkillsService {
   async list(opts?: {
     includeUnavailable?: boolean;
   }): Promise<{ skills: Skill[]; pendingCount: number }> {
-    const [skills, pending] = await Promise.all([
+    const [skills, pendingCount] = await Promise.all([
       this.opts.library.listSkills({ includeUnavailable: opts?.includeUnavailable }),
-      this.opts.library.listPending(),
+      this.opts.pendingCount ? this.opts.pendingCount() : Promise.resolve(0),
     ]);
-    return { skills: skills.map(toWire), pendingCount: pending.length };
+    return { skills: skills.map(toWire), pendingCount };
   }
 
   async get(id: string): Promise<{ skill: Skill }> {

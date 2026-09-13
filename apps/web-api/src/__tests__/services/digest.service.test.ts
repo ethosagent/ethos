@@ -85,6 +85,26 @@ describe('DigestService.generate', () => {
     expect(written).toBe(result.markdown);
   });
 
+  // L-T8 — the digest's candidate count is the learning inbox's waiting skills.
+  it('generate() counts the learning inbox candidates it is given', async () => {
+    const storage = new InMemoryStorage();
+    const registry = makeStubPersonalityRegistry([userPersonality('coder')], DATA);
+    const service = new DigestService({
+      storage,
+      dataDir: DATA,
+      personalities: registry,
+      learning: {
+        pendingSkills: async () => [
+          { personalityId: 'coder', destination: join(DATA, 'skills', 'use-rg.md') },
+        ],
+      },
+    });
+
+    const result = await service.generate();
+    expect(result?.markdown).toContain('New skill candidates (1)');
+    expect(result?.markdown).toContain('- use-rg.md');
+  });
+
   it('latest() then returns what generate() wrote', async () => {
     const storage = new InMemoryStorage();
     const registry = makeStubPersonalityRegistry([userPersonality('coder')], DATA);

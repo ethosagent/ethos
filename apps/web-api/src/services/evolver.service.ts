@@ -1,20 +1,32 @@
 import type { EvolveConfig } from '@ethosagent/skill-evolver';
-import type { PendingSkillRecord, SkillsLibrary } from '@ethosagent/skills';
 import type { EvolverRun, PendingSkill } from '@ethosagent/web-contracts';
+import { toPendingSkillSummary } from '@ethosagent/wiring';
 import type { EvolverRepository } from '../repositories/evolver.repository';
+import { type LearningService, learningRefusalError } from './learning.service';
 
 // Evolver-tab service. Composes:
 //
 //   • EvolverRepository (web-only) — EvolveConfig file + run-history log
-//   • SkillsLibrary    — the .pending directory (the approval queue)
+//   • LearningService — the approval queue, which is now the learning inbox
 //
 // The actual SkillEvolver.evolve() is invoked by the CLI today
 // (`ethos skills evolve`); this service only owns the data the web tab
 // needs to surface.
+//
+// `pendingList / pendingApprove / pendingReject` are legacy adapters (plan
+// `trust-before-reach.md` Part 4, L-T8). They used to drive
+// `SkillsLibrary.approvePending` over `skills/.pending/`, a queue nothing
+// writes any more. They now list WAITING SKILL CANDIDATES (ids are candidate
+// ids) and decide through `LearningService`, so they are subject to the same
+// override rule as `learning.approve`: `pendingApprove` has no field for a
+// reason, so a candidate whose replay did not pass is refused with
+// `INVALID_INPUT` naming the paths that can carry one — `ethos learning approve
+// <id> --override`, and the Skills page, which approves through
+// `learning.approve` and prompts for the reason.
 
 export interface EvolverServiceOptions {
   evolver: EvolverRepository;
-  library: SkillsLibrary;
+  learning: LearningService;
 }
 
 export class EvolverService {
@@ -29,29 +41,28 @@ export class EvolverService {
   }
 
   async listPending(): Promise<{ pending: PendingSkill[] }> {
-    const pending = await this.opts.library.listPending();
-    return { pending: pending.map(toWirePending) };
+    const pending = await this.opts.learning.pendingSkills();
+    return { pending: pending.map(toPendingSkillSummary) };
   }
 
   async approvePending(id: string): Promise<void> {
-    await this.opts.library.approvePending(id);
+    const result = await this.opts.learning.approve({ candidateId: id, decidedBy: 'web:evolver' });
+    if (!result.ok) {
+      throw learningRefusalError(
+        result,
+        result.code === 'override_required'
+          ? 'Approve it with a reason from the Skills page approval queue, or run `ethos learning approve <id> --override "<reason>"`.'
+          : 'Reload the approval queue; `ethos learning show <id>` prints this candidate’s timeline.',
+      );
+    }
   }
 
   async rejectPending(id: string): Promise<void> {
-    await this.opts.library.rejectPending(id);
+    const result = await this.opts.learning.reject({ candidateId: id, decidedBy: 'web:evolver' });
+    if (!result.ok) throw learningRefusalError(result, 'Reload the approval queue.');
   }
 
   async listHistory(limit: number = 20): Promise<{ runs: EvolverRun[] }> {
     return { runs: await this.opts.evolver.listHistory(limit) };
   }
-}
-
-function toWirePending(record: PendingSkillRecord): PendingSkill {
-  return {
-    id: record.id,
-    name: record.name,
-    description: record.description,
-    body: record.body,
-    proposedAt: record.proposedAt,
-  };
 }

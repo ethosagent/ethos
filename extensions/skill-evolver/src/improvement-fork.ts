@@ -8,8 +8,14 @@
 //
 // The fork uses a fresh InMemorySessionStore so it never pollutes the
 // parent's session. It does NOT call close() on shared providers.
+//
+// A proposed skill is SUBMITTED to the learning inbox and never written live
+// here (plan `trust-before-reach.md` Part 4, L-D9). The global `autoApprove`
+// used to copy it straight into the live dir with no check; it now waits for
+// the next replay, and `replayAndResolve`
+// (`extensions/learning-inbox/src/auto-promotion.ts`) is what may promote it.
+// Replay costs minutes and money, and `agent_done` is the wrong place for both.
 
-import { join } from 'node:path';
 import {
   AgentLoop,
   DefaultHookRegistry,
@@ -28,6 +34,7 @@ import type {
   Tool,
 } from '@ethosagent/types';
 import { buildForkContext } from './fork-context';
+import type { LearningSubmitPort } from './learning-port';
 import { createSkillProposeTool, createSkillReadTool } from './tools';
 
 export interface ImprovementRuntime {
@@ -45,10 +52,17 @@ export interface ImprovementForkOptions {
   personalities: PersonalityRegistry;
   dataDir: string;
   storage: Storage;
+  /** The learning inbox a proposal is submitted to. */
+  learning: LearningSubmitPort;
+  /**
+   * Freeze the triggering turn (`payload.sessionId` / `initialPrompt`) as the
+   * candidate's target case and return its id. Injected: building a case needs
+   * the personality's Core, which this package does not read.
+   */
+  targetCaseIds?: (payload: AgentDonePayload, personalityId: string) => Promise<string[]>;
   now?: () => number;
-  onSkillProposed?: (skillId: string, personalityId: string) => void;
-  autoApprove?: () => boolean;
-  onSkillApplied?: (skillId: string, personalityId: string) => void;
+  /** Fired with the inbox candidate id once a proposal is submitted. */
+  onSkillProposed?: (candidateId: string, personalityId: string) => void;
 }
 
 // Rubric system prompt for the fork personality.
@@ -126,9 +140,8 @@ export class ImprovementFork {
     const userPrompt = `${RUBRIC_SYSTEM}\n\n${context}${activeSkillHint}`;
 
     // 3. Build the restricted fork tool registry.
-    const pendingDir = join(this.opts.dataDir, 'skills', '.pending', personality.id);
     const skillsDirs = personality.skillsDirs ?? [];
-    let proposedSkillId: string | null = null;
+    let proposedCandidateId: string | null = null;
 
     const forkTools = new DefaultToolRegistry();
 
@@ -136,11 +149,19 @@ export class ImprovementFork {
     forkTools.register(createSkillReadTool({ storage: this.opts.storage, skillsDirs }) as Tool);
     forkTools.register(
       createSkillProposeTool({
-        storage: this.opts.storage,
-        pendingDir,
+        learning: this.opts.learning,
+        dataDir: this.opts.dataDir,
+        origin: 'fork',
+        target: () => ({
+          personalityId: personality.id,
+          scope: personality.skill_evolution?.scope,
+        }),
+        targetCaseIds: async () => (await this.opts.targetCaseIds?.(payload, personality.id)) ?? [],
+        // The fork's own session is in-memory; the evidence is the parent turn.
+        evidenceSessionIds: () => [payload.sessionId],
         now: this.opts.now,
-        onProposed: (skillId: string) => {
-          proposedSkillId = skillId;
+        onProposed: (candidateId: string) => {
+          proposedCandidateId = candidateId;
         },
       }) as Tool,
     );
@@ -183,26 +204,9 @@ export class ImprovementFork {
       // Fork failures are non-fatal.
     }
 
-    // 6. If a skill was proposed, either auto-promote or notify.
-    if (proposedSkillId) {
-      if (this.opts.autoApprove?.()) {
-        const filename = `${proposedSkillId}.md`;
-        const pendingPath = join(pendingDir, filename);
-        const liveDir =
-          personality.skill_evolution?.scope === 'personality'
-            ? join(this.opts.dataDir, 'personalities', personality.id, 'skills')
-            : join(this.opts.dataDir, 'skills');
-        const livePath = join(liveDir, filename);
-        const content = await this.opts.storage.read(pendingPath);
-        if (content) {
-          await this.opts.storage.mkdir(liveDir);
-          await this.opts.storage.write(livePath, content);
-          await this.opts.storage.remove(pendingPath);
-          this.opts.onSkillApplied?.(proposedSkillId, personality.id);
-        }
-      } else {
-        this.opts.onSkillProposed?.(proposedSkillId, personality.id);
-      }
+    // 6. A proposal is in the inbox now; say so. Nothing is written live.
+    if (proposedCandidateId) {
+      this.opts.onSkillProposed?.(proposedCandidateId, personality.id);
     }
   }
 }

@@ -4,21 +4,44 @@ import { join } from 'node:path';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+// Relative on purpose: the learning inbox is injected into this package through
+// `LearningSubmitPort`, but the tests submit through the REAL store.
+import {
+  type LearningCandidate,
+  listCandidates,
+  readCandidate,
+  submitCandidate,
+} from '../../../learning-inbox/src/store';
 import { DEFAULT_EVOLVE_CONFIG } from '../analyze';
-import { SkillEvolver } from '../evolver';
+import { type EvolveOptions, SkillEvolver } from '../evolver';
 
 let testDir: string;
 let skillsDir: string;
-let pendingDir: string;
 let evalPath: string;
 
 beforeEach(async () => {
   testDir = join(tmpdir(), `evolver-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   skillsDir = join(testDir, 'skills');
-  pendingDir = join(skillsDir, 'pending');
   evalPath = join(testDir, 'eval.jsonl');
   await mkdir(skillsDir, { recursive: true });
 });
+
+/** The options every test shares: a real inbox under the tmp dir, personality `researcher`. */
+function base(): Pick<EvolveOptions, 'learning' | 'dataDir' | 'personalityId'> {
+  const storage = new FsStorage();
+  return {
+    dataDir: testDir,
+    personalityId: 'researcher',
+    learning: {
+      submit: (input) => submitCandidate(storage, testDir, input),
+      has: async (id) => (await readCandidate(storage, testDir, id)) !== null,
+    },
+  };
+}
+
+async function candidates(): Promise<LearningCandidate[]> {
+  return listCandidates(new FsStorage(), testDir);
+}
 
 afterEach(async () => {
   await rm(testDir, { recursive: true, force: true });
@@ -50,7 +73,7 @@ function jsonl(...lines: object[]): string {
 }
 
 describe('SkillEvolver', () => {
-  it('writes a rewritten skill to pending/', async () => {
+  it('submits a rewritten skill to the learning inbox as a rewrite of that file (path 7: eval)', async () => {
     await writeFile(join(skillsDir, 'json.md'), 'old content', 'utf-8');
 
     const lines: object[] = [];
@@ -81,20 +104,34 @@ describe('SkillEvolver', () => {
     const evolver = new SkillEvolver({
       evalOutputPath: evalPath,
       skillsDir,
-      pendingDir,
+      ...base(),
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
       storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
-    expect(result.rewritesWritten).toEqual(['json.md']);
+    expect(result.rewritesSubmitted).toEqual(['json.md']);
 
-    const written = await readFile(join(pendingDir, 'json.md'), 'utf-8');
-    expect(written).toContain('rewritten body');
+    const [candidate] = await candidates();
+    expect(candidate).toMatchObject({
+      id: result.candidateIds[0],
+      kind: 'skill',
+      op: 'rewrite',
+      origin: 'eval',
+      personalityId: 'researcher',
+      status: 'pending_replay',
+      destination: join(skillsDir, 'json.md'),
+    });
+    expect(candidate?.content).toContain('rewritten body');
+    expect(candidate?.content).toContain('target_file: json.md');
+    expect(candidate?.baseHash).not.toBeNull();
+    // Nothing live changed and no pending queue exists.
+    expect(await readFile(join(skillsDir, 'json.md'), 'utf-8')).toBe('old content');
+    expect(await readdir(join(skillsDir, 'pending')).catch(() => [])).toEqual([]);
   });
 
-  it('writes a new skill from a high-score zero-skill bundle', async () => {
+  it('submits a new skill from a high-score zero-skill bundle', async () => {
     const lines: object[] = [];
     for (let i = 0; i < 4; i++) {
       lines.push(
@@ -125,16 +162,20 @@ describe('SkillEvolver', () => {
     const evolver = new SkillEvolver({
       evalOutputPath: evalPath,
       skillsDir,
-      pendingDir,
+      ...base(),
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
       storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
-    expect(result.newSkillsWritten).toEqual(['map-over-loops.md']);
-    const written = await readFile(join(pendingDir, 'map-over-loops.md'), 'utf-8');
-    expect(written).toContain('Prefer map().');
+    expect(result.newSkillsSubmitted).toEqual(['map-over-loops.md']);
+    const [candidate] = await candidates();
+    expect(candidate).toMatchObject({
+      op: 'create',
+      destination: join(skillsDir, 'map-over-loops.md'),
+    });
+    expect(candidate?.content).toContain('Prefer map().');
   });
 
   it('records skip reason when LLM responds NO_REWRITE', async () => {
@@ -158,18 +199,17 @@ describe('SkillEvolver', () => {
     const evolver = new SkillEvolver({
       evalOutputPath: evalPath,
       skillsDir,
-      pendingDir,
+      ...base(),
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
       storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
-    expect(result.rewritesWritten).toEqual([]);
+    expect(result.rewritesSubmitted).toEqual([]);
     expect(result.skipped).toEqual([{ kind: 'rewrite', target: 'a.md', reason: 'NO_REWRITE' }]);
 
-    const dirEntries = await readdir(pendingDir).catch(() => [] as string[]);
-    expect(dirEntries).toEqual([]);
+    expect(await candidates()).toEqual([]);
   });
 
   it('evolveExisting:false skips the rewrite branch while still creating new skills', async () => {
@@ -210,7 +250,7 @@ describe('SkillEvolver', () => {
     const evolver = new SkillEvolver({
       evalOutputPath: evalPath,
       skillsDir,
-      pendingDir,
+      ...base(),
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
       evolveExisting: false,
@@ -218,8 +258,8 @@ describe('SkillEvolver', () => {
     });
 
     const result = await evolver.evolve();
-    expect(result.rewritesWritten).toEqual([]);
-    expect(result.newSkillsWritten).toEqual(['map-over-loops.md']);
+    expect(result.rewritesSubmitted).toEqual([]);
+    expect(result.newSkillsSubmitted).toEqual(['map-over-loops.md']);
     // The rewrite candidate was identified by analysis but never written.
     expect(result.plan.rewriteCandidates.length).toBeGreaterThan(0);
   });
@@ -245,20 +285,20 @@ describe('SkillEvolver', () => {
     const evolver = new SkillEvolver({
       evalOutputPath: evalPath,
       skillsDir,
-      pendingDir,
+      ...base(),
       config: DEFAULT_EVOLVE_CONFIG,
       llm,
       storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
-    expect(result.newSkillsWritten).toEqual(['shared-2.md']);
+    expect(result.newSkillsSubmitted).toEqual(['shared-2.md']);
     const original = await readFile(join(skillsDir, 'shared.md'), 'utf-8');
     expect(original).toBe('preexisting');
   });
 
   // An LLM-authored skill whose frontmatter does not parse is a boot failure
-  // waiting to be approved — it must never reach pending/ in the first place.
+  // waiting to be approved — it must never reach the inbox in the first place.
   const BROKEN_FRONTMATTER = [
     '---',
     'name: stock-add',
@@ -288,20 +328,19 @@ describe('SkillEvolver', () => {
     const evolver = new SkillEvolver({
       evalOutputPath: evalPath,
       skillsDir,
-      pendingDir,
+      ...base(),
       config: DEFAULT_EVOLVE_CONFIG,
       llm: makeLLM([`<skill>\n${BROKEN_FRONTMATTER}\n</skill>`]),
       storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
-    expect(result.rewritesWritten).toEqual([]);
+    expect(result.rewritesSubmitted).toEqual([]);
     expect(result.skipped).toHaveLength(1);
     expect(result.skipped[0]).toMatchObject({ kind: 'rewrite', target: 'json.md' });
     expect(result.skipped[0]?.reason).toContain('invalid-frontmatter');
 
-    const dirEntries = await readdir(pendingDir).catch(() => [] as string[]);
-    expect(dirEntries).toEqual([]);
+    expect(await candidates()).toEqual([]);
   });
 
   it('does not write a new skill whose generated frontmatter is unparseable', async () => {
@@ -331,20 +370,19 @@ describe('SkillEvolver', () => {
     const evolver = new SkillEvolver({
       evalOutputPath: evalPath,
       skillsDir,
-      pendingDir,
+      ...base(),
       config: DEFAULT_EVOLVE_CONFIG,
       llm: makeLLM([`<filename>stock-add.md</filename>\n<skill>\n${BROKEN_FRONTMATTER}\n</skill>`]),
       storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
-    expect(result.newSkillsWritten).toEqual([]);
+    expect(result.newSkillsSubmitted).toEqual([]);
     expect(result.skipped).toHaveLength(1);
     expect(result.skipped[0]).toMatchObject({ kind: 'new', target: 'stock-add.md' });
     expect(result.skipped[0]?.reason).toContain('invalid-frontmatter');
 
-    const dirEntries = await readdir(pendingDir).catch(() => [] as string[]);
-    expect(dirEntries).toEqual([]);
+    expect(await candidates()).toEqual([]);
   });
 
   it('still writes a candidate whose frontmatter quotes the colon', async () => {
@@ -375,14 +413,14 @@ describe('SkillEvolver', () => {
     const evolver = new SkillEvolver({
       evalOutputPath: evalPath,
       skillsDir,
-      pendingDir,
+      ...base(),
       config: DEFAULT_EVOLVE_CONFIG,
       llm: makeLLM([`<filename>stock-add.md</filename>\n<skill>\n${good}\n</skill>`]),
       storage: new FsStorage(),
     });
 
     const result = await evolver.evolve();
-    expect(result.newSkillsWritten).toEqual(['stock-add.md']);
+    expect(result.newSkillsSubmitted).toEqual(['stock-add.md']);
     expect(result.skipped).toEqual([]);
   });
 });

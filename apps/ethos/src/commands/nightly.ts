@@ -7,8 +7,14 @@
 // is wrapped so one failure prints and the run continues to the next. The
 // pass itself is on-demand only — this command adds no cron scheduling and no
 // gateway/serve triggers.
+//
+// Nothing this pass drafts goes live from here (plan `trust-before-reach.md`
+// Part 4). The Expression and skill drafts are learning candidates; the
+// `replay` step measures pending candidates and `replayAndResolve` is the one
+// thing that may promote one without a human.
 import { join } from 'node:path';
-import type { EthosConfig } from '@ethosagent/config';
+import { type EthosConfig, resolveLearningReplay } from '@ethosagent/config';
+import type { SessionCaseTurn } from '@ethosagent/learning-inbox';
 import {
   type ConsolidationInput,
   consolidateMemory,
@@ -32,12 +38,23 @@ import {
   type Storage,
   toEthosError,
 } from '@ethosagent/types';
-import { createLLM, getStorage } from '../wiring';
-import { expressionHash, queuePendingExpression } from './pending-expression';
+import {
+  type CaseSessionSource,
+  freezeNightlyCases,
+  importLegacyLearningQueues,
+  learningSubmitPort,
+  pendingReplayCandidateIds,
+  resolveKanbanDbPath,
+  submitExpressionCandidate,
+} from '@ethosagent/wiring';
+import { createLearningReplayer, createLLM, getStorage } from '../wiring';
 import {
   buildEvidenceDigest,
   buildJudgeRunner,
+  type EvidenceDigest,
+  freezeTargetTurnCases,
   gatherRecentUserPrompts,
+  judgeZeroScoredTurns,
   readJudgeStreak,
   signalNotice,
   writeJudgeStreak,
@@ -48,28 +65,33 @@ function surface(err: unknown): never {
   process.exit(1);
 }
 
-// Auto-mode proposal test for a drafted skill candidate. Asks the LLM whether
-// the candidate is a genuine, reusable skill (PASS) or noise (FAIL). Any error
-// or ambiguous reply is treated as FAIL — auto-promotion is fail-closed.
-async function judgeSkillCandidate(content: string, llm: LLMProvider): Promise<boolean> {
-  const prompt = [
-    'You are reviewing a proposed agent skill before it is added to the active skill set.',
-    'A good skill is a generalizable, reusable approach — not a one-off fact or a restated task.',
-    '',
-    '## Candidate skill',
-    content.trim(),
-    '',
-    'Reply with exactly PASS if this is a genuine, reusable skill worth keeping, or FAIL otherwise.',
-  ].join('\n');
-
-  let text = '';
-  for await (const chunk of llm.complete([{ role: 'user', content: prompt }], [], {
-    maxTokens: 16,
-    temperature: 0,
-  })) {
-    if (chunk.type === 'text_delta') text += chunk.text;
+// Open `sessions.db` for one read and close it again, as `gatherEvidence` does.
+async function withSessionStore<T>(
+  ethosDir: string,
+  fn: (store: CaseSessionSource) => Promise<T>,
+): Promise<T> {
+  const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+  const store = new SQLiteSessionStore(join(ethosDir, 'sessions.db'));
+  try {
+    return await fn(store);
+  } finally {
+    store.close();
   }
-  return text.trim().toUpperCase().startsWith('PASS');
+}
+
+/**
+ * `learningReplay.maxCandidatesPerRun` as one budget for the whole run: every
+ * personality's `replay` step draws from the same count (L-D9).
+ */
+function runBudget(max: number): { take(): boolean } {
+  let left = max;
+  return {
+    take() {
+      if (left <= 0) return false;
+      left -= 1;
+      return true;
+    },
+  };
 }
 
 // Read the nightly checkpoint sidecar. Tolerant: a missing or malformed file
@@ -143,13 +165,27 @@ function buildDeps(args: {
   memoryStorage: Storage;
   /** Backend history store — records the §5 sidecar reconciliation. */
   history: import('@ethosagent/wiring').HistoryStore;
+  /** The run's shared `maxCandidatesPerRun` budget. */
+  replayBudget: { take(): boolean };
 }): NightlyPassDeps {
   const { config, ethosDir, reg, llm, memory, memoryRoot, memoryStorage, history } = args;
+  const learningCtx = { storage: getStorage(), dataDir: ethosDir, personalities: reg };
+  const replaySettings = resolveLearningReplay(config);
+  // Built on first use: a night with nothing pending never assembles a loop.
+  let replayer: Promise<Awaited<ReturnType<typeof createLearningReplayer>>> | undefined;
 
   // The Judge's writeJudgeStreak needs the JudgeResult, but the orchestrator's
   // dep signature only carries (id, lowStreak). Capture the last scored result
   // in scoreAlignment so writeJudgeStreak can persist it.
   let lastJudgeResult: JudgeResult | null = null;
+
+  // A draft's target cases come from its own evidence (plan
+  // `trust-before-reach.md` Part 4, Design §2), recorded per personality as the
+  // run produces it: the turns the Judge was shown and the run file it scored
+  // them into (Expression), and the messages the digest quoted (skills).
+  const judgedTurns = new Map<string, SessionCaseTurn[]>();
+  const judgeRunFiles = new Map<string, string>();
+  const digests = new Map<string, EvidenceDigest>();
 
   const memoryCtx = (id: string): import('@ethosagent/types').MemoryContext => ({
     scopeId: `personality:${id}`,
@@ -171,6 +207,9 @@ function buildDeps(args: {
       try {
         const recent = await gatherRecentUserPrompts(store, id);
         const built = await buildEvidenceDigest(store, id);
+        judgedTurns.set(id, recent.turns);
+        digests.set(id, built);
+        judgeRunFiles.delete(id);
         return {
           recentPrompts: recent.prompts,
           evidenceDigest: built.digest,
@@ -184,7 +223,10 @@ function buildDeps(args: {
     },
 
     async scoreAlignment(scoreArgs): Promise<ScoreOutcome> {
-      const { runner, release } = await buildJudgeRunner(config, scoreArgs.personalityId);
+      const { runner, release, outputPath } = await buildJudgeRunner(
+        config,
+        scoreArgs.personalityId,
+      );
       const judge = reg.get(scoreArgs.personalityId)?.nightly?.judge;
       const outcome = await scorePersonality({
         personalityId: scoreArgs.personalityId,
@@ -198,7 +240,10 @@ function buildDeps(args: {
         runner,
         activation: { minInteractions: judge?.minInteractions ?? 20, minElapsedHours: 12 },
       }).finally(release);
-      if (outcome.kind === 'scored') lastJudgeResult = outcome.result;
+      if (outcome.kind === 'scored') {
+        lastJudgeResult = outcome.result;
+        judgeRunFiles.set(scoreArgs.personalityId, outputPath);
+      }
       return outcome;
     },
 
@@ -215,56 +260,83 @@ function buildDeps(args: {
       return draftExpressionUpdate({ core, currentExpression, evidence }, llm);
     },
 
-    async applyExpression(id, newExpression, opts) {
-      const { entry } = await reg.evolveExpression(id, newExpression, opts);
-      return { revisionId: entry.revisionId };
-    },
-
-    // The approval gate the orchestrator consults before step 3 writes
-    // anything. Absent === `user` === queue, per the `evolution_approval_mode`
-    // contract in packages/types/src/personality.ts.
-    expressionApprovalMode(id) {
-      return reg.get(id)?.evolution_approval_mode;
-    },
-
-    async queueExpression(id, draft, meta) {
-      await queuePendingExpression(getStorage(), ethosDir, {
+    // L-D2: a draft is a candidate in every approval mode. Its target cases are
+    // the prompts the Judge scored 0 in the run that triggered it — and none
+    // when it scored none: a candidate without a target replays `incomplete`
+    // and waits for a human, rather than being measured on unrelated turns.
+    async submitExpression(id, draft, meta) {
+      const runFile = judgeRunFiles.get(id);
+      const targetCaseIds = await freezeTargetTurnCases(
+        learningCtx,
+        id,
+        judgeZeroScoredTurns(
+          runFile ? await getStorage().read(runFile) : null,
+          judgedTurns.get(id) ?? [],
+        ),
+      );
+      const candidate = await submitExpressionCandidate(learningCtx, {
         personalityId: id,
+        origin: 'nightly',
         newExpression: draft.newExpression,
         rationale: draft.rationale,
         evidenceRef: meta.evidenceRef,
-        baseHash: expressionHash(meta.baseExpression),
-        at: new Date().toISOString(),
+        targetCaseIds,
       });
-      console.log(
-        `  queued Expression draft for ${id} — approve with \`ethos personality evolve ${id}\``,
-      );
+      console.log(`  submitted Expression candidate ${candidate.id} for ${id} — waits for replay`);
+      return { candidateId: candidate.id };
     },
 
     async createSkills(id, evidence): Promise<number> {
       const cfg = reg.get(id);
       if (!cfg?.skill_evolution?.enabled) return 0;
 
+      // Target cases are the user turns the evidence digest quoted — the same
+      // digest `evidence.evidenceDigest` carries to the drafter.
+      const digest = digests.get(id);
+      const targetCaseIds = await freezeTargetTurnCases(learningCtx, id, digest?.userTurns ?? []);
       const result = await proposeSkillFromEvidence({
         personalityId: id,
-        approvalMode: cfg.evolution_approval_mode,
-        promotion: cfg.skill_evolution?.promotion,
         scope: cfg.skill_evolution?.scope,
         evidenceDigest: evidence.evidenceDigest,
         windowEnd: evidence.windowEnd,
         dataDir: ethosDir,
-        storage: getStorage(),
         llm,
-        // Auto-mode proposal test: a candidate is promoted only if this LLM
-        // review judges it a genuine, reusable skill. This is the nightly-pass
-        // stand-in for the live ImprovementFork's classification step — same
-        // intent (is this worth keeping?), no AgentLoop spawn at nightly time.
-        validate: (candidate) => judgeSkillCandidate(candidate.content, llm),
+        learning: learningSubmitPort(learningCtx),
+        evidenceSessionIds: digest?.sessionIds ?? [],
+        targetCaseIds,
       });
       console.log(
-        `  skill candidate ${result.fileName ?? '(none)'}: ${result.decision} — ${result.reason}`,
+        `  skill candidate ${result.candidateId ?? '(none)'}: ${result.decision} — ${result.reason}`,
       );
-      return result.decision === 'promoted' ? 1 : 0;
+      return result.decision === 'submitted' ? 1 : 0;
+    },
+
+    learning: {
+      enabled: replaySettings.enabled,
+      budget: args.replayBudget,
+      async freezeCases(id) {
+        const result = await withSessionStore(ethosDir, (store) =>
+          freezeNightlyCases(learningCtx, {
+            personalityId: id,
+            sessions: store,
+            kanbanDbPath: resolveKanbanDbPath({}, ethosDir),
+          }),
+        );
+        return result.frozen.length;
+      },
+      pendingReplay(id) {
+        return pendingReplayCandidateIds(learningCtx, id);
+      },
+      async replay(_id, candidateId) {
+        replayer ??= createLearningReplayer(config, { personalities: reg, actor: 'nightly' });
+        const result = await (await replayer)(candidateId);
+        console.log(
+          `  replayed ${candidateId}: ${result.report.verdict}${
+            result.promotion?.ok ? ' — promoted' : ` — ${result.decision.reason ?? 'not promoted'}`
+          }`,
+        );
+        return { verdict: result.report.verdict, promoted: result.promotion?.ok === true };
+      },
     },
 
     async readMemory(id) {
@@ -343,6 +415,14 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: dir });
   await reg.loadFromDirectory(join(dir, 'personalities'));
 
+  // The four pre-inbox queues drain into the learning inbox once; a no-op after.
+  await importLegacyLearningQueues({
+    storage,
+    dataDir: dir,
+    personalities: reg,
+    defaultPersonalityId: config.personality,
+  });
+
   // Resolve targets: the given id, or all user (mutable, non-builtin) ones.
   let targets: string[];
   if (id) {
@@ -386,6 +466,7 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
     memoryRoot: backend.memoryRoot,
     memoryStorage: backend.storage,
     history: backend.history,
+    replayBudget: runBudget(resolveLearningReplay(config).maxCandidatesPerRun),
   });
 
   for (const target of targets) {

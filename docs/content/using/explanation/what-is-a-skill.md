@@ -4,7 +4,7 @@ description: "A skill is a reusable instruction packet discovered across ecosyst
 kind: explanation
 audience: user
 slug: what-is-a-skill
-updated: 2026-08-12
+updated: 2026-09-13
 ---
 
 ## Context
@@ -136,17 +136,18 @@ The scanner's job is to refuse the catastrophic combination — a community-sour
 
 ### Skills can evolve from usage
 
-Ethos can propose new skills automatically by analyzing session history. The skill evolver reads past conversations, identifies repeated tool-call patterns, and generates candidate `SKILL.md` files. Three workflows feed it:
+Ethos can draft new skills, and rewrites of existing ones, from its own work. Four sources draft them:
 
-**From an eval run.** `ethos eval run <tasks.jsonl> --expected <expected.jsonl> --evolve` chains into evolution after scoring. The evolver examines where the agent underperformed and proposes skills to close the gap. Proposed skills land in `~/.ethos/skills/pending/`.
+| Source | When it drafts |
+|---|---|
+| Post-turn fork | After a turn, when the [personality's](what-is-a-personality.md) `config.yaml` sets `skill_evolution.enabled: true`, the turn exceeded `skill_evolution.min_tool_calls`, and `skill_evolution.cooldown_minutes` has passed |
+| Chat | When the agent calls `skill_propose` during a conversation |
+| Nightly pass | When `ethos nightly` runs, or the scheduled nightly pass if `nightlyPass.enabled: true` |
+| Eval | `ethos eval run <tasks.jsonl> --expected <expected.jsonl> --evolve`, or `ethos evolve run` over the last 7 days of sessions |
 
-**From session history.** `ethos evolve run` exports recent sessions (last 7 days by default) and runs the evolver against them. Same output path.
+Every draft becomes a candidate in the [learning inbox](learning-inbox.md), never a live file. A candidate goes live in one of two ways. A replay against this personality's past tasks can pass and promote it automatically, but only for a skill with `skill_evolution.scope: personality`. Or a human approves it, with `ethos learning approve <id>` or from the approval queue on the web dashboard's Skills page. Approving a candidate whose replay did not pass, or never ran, needs a written reason (`LearningInbox.approve`, `extensions/learning-inbox/src/inbox.ts`). The agent cannot approve its own proposal: `skills_pending_approve` refuses and names those two human paths.
 
-**Auto-triggered per personality.** When `skill_evolution.enabled: true` is set in a [personality's](what-is-a-personality.md) `config.yaml`, evolution runs automatically after qualifying turns — those exceeding `skill_evolution.min_tool_calls` and outside `skill_evolution.cooldown_minutes`. Proposed skills land in `~/.ethos/skills/.pending/<personalityId>/` (note the dot-prefix, separate from the eval path).
-
-Review pending proposals with `ethos evolve --list-pending`. Approve with `ethos evolve --approve <filename>` or `--approve-all`. Reject with `--reject <filename>`. Newer subcommand-style alternatives also work: `ethos evolve status` (show run history and pending queue) and `ethos evolve apply <filename> | --all`.
-
-The evolver does not modify existing skills in place. It proposes new files; you review and approve. The approval step is the gate — no skill enters the active pool without explicit user action.
+A rewrite replaces the skill it names in `target_file`; it is not added as a second file beside the original. Promotion snapshots the replaced file first, so `ethos learning rollback <id>` can restore it unless someone has edited the file since (`promote.ts`). The older verbs still work as adapters onto the same inbox: `ethos evolve apply <candidate-id | filename>` and `--approve` approve only a candidate whose replay passed, and `--reject` rejects.
 
 ### Environment gating
 
@@ -174,9 +175,9 @@ metadata:
 
 The check runs at discovery time, before safety scanning and before the per-personality capability filter. A skill that requires `SLACK_BOT_TOKEN` on a machine where that variable is unset disappears from the pool entirely — no personality ever sees it.
 
-### The web dashboard's evolver panel
+### Reviewing proposals in the web dashboard
 
-The web dashboard (launched via `ethos serve`) includes a Skills tab with two panels: the skill library and the evolver. The evolver panel shows pending proposals, run history, and lets you approve or reject skills from the browser. This is the visual equivalent of `ethos evolve --list-pending` and `--approve` — same data, graphical interface.
+The web dashboard (launched via `ethos serve`) has no page that lists every candidate yet. The Skills page's **Evolver** tab carries configuration, run history and an **Approval queue** of waiting skill candidates. **Approve** there decides through the same learning inbox, so the same override rule applies: a candidate that has not passed a replay prompts for a reason. Expression candidates are applied from a personality's Living Soul section. To see every candidate together, with its evidence, content, replay scorecard and timeline, run `ethos learning list` and `ethos learning show <id>`.
 
 ### Per-personality skills directories
 

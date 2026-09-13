@@ -4,7 +4,7 @@ description: "Ethos is a TypeScript agent framework where personality is archite
 kind: explanation
 audience: shared
 slug: what-is-ethos
-updated: 2026-06-09
+updated: 2026-09-13
 ---
 
 **Ethos is a TypeScript framework where [personality](glossary.md#personality) is the unit of architecture.** Not a system prompt string. A directory of files that, when switched, atomically changes the agent's prompt, tool access, memory scope, and model.
@@ -51,7 +51,7 @@ Beyond personalities, the framework ships:
 - **Nine surfaces** — CLI, web dashboard, desktop app, VS Code extension, and five channel adapters (Telegram, Discord, Slack, WhatsApp, Email). Same agent, same memory, same sessions across all of them.
 - **Plugin ecosystem** — plugins register tools, hooks, providers, [slash commands](../using/explanation/plugin-commands.md), and data sources. Plugins declare widget templates in `widgets.yaml`. Default-deny allowlists per personality. See [Plugin SDK reference](../building/reference/plugin-sdk.md).
 - **Custom dashboards** — draggable panel grid powered by plugin data sources, SQL queries, cron auto-refresh, and inter-panel communication. See [Build a custom dashboard](../building/tutorials/build-custom-dashboard.md).
-- **Skill evolution** — `@ethosagent/skill-evolver` analyzes eval output, proposes skill rewrites and new skills, with a human approval queue in web and desktop. See [Manage skill evolution](../using/how-to/manage-skill-evolution.md).
+- **Skill evolution** — `@ethosagent/skill-evolver` analyzes eval output, proposes skill rewrites and new skills as candidates that go live only after a passing replay against past tasks or a human approval (`ethos learning`, or the web dashboard's Skills page). See [Manage skill evolution](../using/how-to/manage-skill-evolution.md).
 - **Persistent sessions** in SQLite, scoped per working directory.
 - **Plain-text memory** files (`MEMORY.md`, `USER.md`) you can read, grep, edit, and commit.
 - **Skill discovery** that picks up your existing libraries from Claude Code, OpenClaw, OpenCode, and Hermes — no porting.

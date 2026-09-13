@@ -92,6 +92,9 @@ describe('learning evidence excludes machine-driven sessions', () => {
     expect(await buildEvidenceDigest(store, 'nobody-has-run-me')).toEqual({
       digest: '',
       hasSessions: false,
+      messageIds: [],
+      sessionIds: [],
+      userTurns: [],
     });
   });
 

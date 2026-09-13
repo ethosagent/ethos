@@ -14,8 +14,16 @@ import type {
   PersonalityConfig,
   Tool,
 } from '@ethosagent/types';
-import { resolveMcpExportScope } from '@ethosagent/wiring';
+import { createLearningInbox, resolveMcpExportScope } from '@ethosagent/wiring';
 import { describe, expect, it } from 'vitest';
+// Relative on purpose: web-api reaches the inbox through `@ethosagent/wiring`
+// and has no workspace link to the package; the test reads the real store.
+import {
+  listCandidates,
+  submitCandidate,
+  updateCandidate,
+} from '../../../../../extensions/learning-inbox/src/store';
+import { LearningService } from '../../services/learning.service';
 import { PersonalitiesService } from '../../services/personalities.service';
 import { makeStubPersonalityRegistry } from '../test-helpers';
 
@@ -355,6 +363,17 @@ describe('PersonalitiesService', () => {
       const service = new PersonalitiesService({
         personalities: registry,
         library,
+        storage,
+        dataDir: DATA,
+        learning: new LearningService({
+          inbox: createLearningInbox({
+            storage,
+            dataDir: DATA,
+            personalities: registry,
+            expressions: registry,
+            defaultPersonalityId: 'agent',
+          }),
+        }),
         ...(opts.llm ? { llm: async () => opts.llm as LLMProvider } : {}),
       });
       return { service, storage };
@@ -385,6 +404,42 @@ describe('PersonalitiesService', () => {
       });
     });
 
+    it('proposeExpression submits a web-origin learning candidate and applies nothing (L-T6, path 5: web)', async () => {
+      const llm = stubLLM('I speak even more plainly.\nRATIONALE: tighter');
+      const { service, storage } = await makeSoulService({ llm });
+      const draft = await service.proposeExpression('agent');
+
+      const candidates = await listCandidates(storage, DATA);
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]).toMatchObject({
+        kind: 'expression',
+        op: 'update',
+        origin: 'web',
+        personalityId: 'agent',
+        status: 'pending_replay',
+        destination: join(DATA, 'personalities', 'agent', 'SOUL.md'),
+        content: draft.newExpression,
+      });
+      expect((await service.livingSoul('agent')).learningLog).toHaveLength(0);
+    });
+
+    it('applyExpression promotes the candidate proposeExpression submitted, not a second one', async () => {
+      const llm = stubLLM('I speak even more plainly.\nRATIONALE: tighter');
+      const { service, storage } = await makeSoulService({ llm });
+      const draft = await service.proposeExpression('agent');
+      await service.applyExpression(
+        'agent',
+        draft.newExpression,
+        'tighter',
+        'web:test',
+        'reviewed the draft',
+      );
+
+      const candidates = await listCandidates(storage, DATA);
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]?.status).toBe('promoted');
+    });
+
     it('applyExpression writes a revision and returns its id', async () => {
       const { service } = await makeSoulService({});
       const { revisionId } = await service.applyExpression(
@@ -392,11 +447,28 @@ describe('PersonalitiesService', () => {
         'I speak even more plainly.\n',
         'tighten voice',
         'sessions:test',
+        'reviewed by hand',
       );
       expect(revisionId).toBe('expr-rev-1');
       const soul = await service.livingSoul('agent');
       expect(soul.expression).toContain('I speak even more plainly.');
       expect(soul.learningLog).toHaveLength(1);
+    });
+
+    // L-T8 — Apply approves a candidate that was never replayed, so like every
+    // other non-pass approval it needs a human reason (enforced once, in
+    // `LearningInbox.approve`). The drafter's `summary` does not count.
+    it('applyExpression without an override reason is refused and changes nothing', async () => {
+      const { service, storage } = await makeSoulService({});
+      await expect(
+        service.applyExpression('agent', 'I speak even more plainly.\n', 'tighten voice', 'x'),
+      ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+      const soul = await service.livingSoul('agent');
+      expect(soul.expression).toContain('I speak plainly.');
+      expect(soul.learningLog).toHaveLength(0);
+      const [candidate] = await listCandidates(storage, DATA);
+      expect(candidate?.status).toBe('pending_replay');
     });
 
     it('revertExpression on an empty learning log throws INVALID_INPUT', async () => {
@@ -408,7 +480,13 @@ describe('PersonalitiesService', () => {
 
     it('revertExpression restores the prior snapshot after an apply', async () => {
       const { service } = await makeSoulService({});
-      await service.applyExpression('agent', 'changed voice.\n', 'summary', 'sessions:test');
+      await service.applyExpression(
+        'agent',
+        'changed voice.\n',
+        'summary',
+        'sessions:test',
+        'reviewed by hand',
+      );
       const result = await service.revertExpression('agent');
       expect(result.ok).toBe(true);
       const soul = await service.livingSoul('agent');
@@ -678,9 +756,9 @@ describe('PersonalitiesService', () => {
   // Pending skill-candidate review queue — list / approve (promote) / reject.
   // Pending dir mirrors the nightly skill-evolver: <DATA>/skills/.pending/<id>.
   // -------------------------------------------------------------------------
-  describe('skill-candidate review queue', () => {
-    const PENDING = join(DATA, 'skills', '.pending', 'agent');
+  describe('skill-candidate review queue (L-T8: an adapter over the learning inbox)', () => {
     const LIVE = join(DATA, 'skills');
+    const SKILL = '---\nname: nightly-a\ndescription: "body a"\n---\n\nbody a\n';
 
     async function makeCandidateService(configExtra = ''): Promise<{
       service: PersonalitiesService;
@@ -694,77 +772,107 @@ describe('PersonalitiesService', () => {
       const registry = new FilePersonalityRegistry(storage, DATA);
       await registry.loadFromDirectory(join(DATA, 'personalities'));
       const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const learning = new LearningService({
+        inbox: createLearningInbox({
+          storage,
+          dataDir: DATA,
+          personalities: registry,
+          expressions: registry,
+          defaultPersonalityId: 'agent',
+        }),
+      });
       const service = new PersonalitiesService({
         personalities: registry,
         library,
         storage,
         dataDir: DATA,
+        learning,
       });
       return { service, storage };
     }
 
-    it('lists pending .md candidates', async () => {
+    async function nightly(
+      storage: InMemoryStorage,
+      fileName: string,
+      opts: { dir?: string; verdict?: 'pass' } = {},
+    ) {
+      const candidate = await submitCandidate(storage, DATA, {
+        kind: 'skill',
+        op: 'create',
+        personalityId: 'agent',
+        origin: 'nightly',
+        destination: join(opts.dir ?? LIVE, fileName),
+        content: SKILL,
+      });
+      if (opts.verdict) {
+        await updateCandidate(storage, DATA, candidate.id, {
+          status: 'pending_review',
+          verdict: opts.verdict,
+        });
+      }
+      return candidate;
+    }
+
+    it('lists waiting skill candidates by the file they land as', async () => {
       const { service, storage } = await makeCandidateService();
-      await storage.mkdir(PENDING);
-      await storage.write(join(PENDING, 'nightly-a.md'), '# A\nbody a\n');
-      await storage.write(join(PENDING, 'nightly-b.md'), '# B\nbody b\n');
-      await storage.write(join(PENDING, 'notes.txt'), 'ignored');
+      await nightly(storage, 'nightly-a.md');
+      await nightly(storage, 'nightly-b.md');
 
       const { candidates } = await service.skillCandidatesList('agent');
-      const byName = Object.fromEntries(candidates.map((c) => [c.fileName, c.content]));
-      expect(Object.keys(byName).sort()).toEqual(['nightly-a.md', 'nightly-b.md']);
-      expect(byName['nightly-a.md']).toContain('body a');
+      expect(candidates.map((c) => c.fileName).sort()).toEqual(['nightly-a.md', 'nightly-b.md']);
+      expect(candidates[0]?.content).toContain('body a');
     });
 
-    it('returns [] when no pending dir exists', async () => {
+    it('drains a legacy skills/.pending/<id>/ file into the list on first use', async () => {
+      const { service, storage } = await makeCandidateService();
+      const legacy = join(DATA, 'skills', '.pending', 'agent');
+      await storage.mkdir(legacy);
+      await storage.write(join(legacy, 'nightly-old.md'), SKILL);
+
+      const { candidates } = await service.skillCandidatesList('agent');
+      expect(candidates.map((c) => c.fileName)).toEqual(['nightly-old.md']);
+      expect(await storage.exists(join(legacy, 'nightly-old.md'))).toBe(false);
+    });
+
+    it('returns [] when nothing is waiting', async () => {
       const { service } = await makeCandidateService();
       const { candidates } = await service.skillCandidatesList('agent');
       expect(candidates).toEqual([]);
     });
 
-    it('approve writes the live file and removes the pending one', async () => {
+    it('approve promotes a passing candidate and returns where it landed', async () => {
       const { service, storage } = await makeCandidateService();
-      await storage.mkdir(PENDING);
-      await storage.write(join(PENDING, 'nightly-a.md'), '# A\nbody a\n');
+      await nightly(storage, 'nightly-a.md', { verdict: 'pass' });
 
       const result = await service.skillCandidateApprove('agent', 'nightly-a.md');
       expect(result).toEqual({ ok: true, promotedTo: join(LIVE, 'nightly-a.md') });
       expect(await storage.read(join(LIVE, 'nightly-a.md'))).toContain('body a');
-      expect(await storage.exists(join(PENDING, 'nightly-a.md'))).toBe(false);
+      expect((await service.skillCandidatesList('agent')).candidates).toEqual([]);
     });
 
     // B-T7 — `skill_evolution.scope: personality` means the per-personality
-    // skills dir. Promoting into the shared dir would widen a personality-only
-    // skill to every personality. Enforced by `liveSkillDir`
-    // (@ethosagent/skill-evolver), the same helper the nightly promoter uses.
+    // skills dir; `promote()` re-resolves it with `liveSkillDir`.
     it("approve honours skill_evolution.scope='personality'", async () => {
       const { service, storage } = await makeCandidateService(
         'skill_evolution.scope: personality\n',
       );
-      await storage.mkdir(PENDING);
-      await storage.write(join(PENDING, 'nightly-a.md'), '# A\nbody a\n');
-
       const scopedDir = join(DATA, 'personalities', 'agent', 'skills');
+      await nightly(storage, 'nightly-a.md', { dir: scopedDir, verdict: 'pass' });
+
       const result = await service.skillCandidateApprove('agent', 'nightly-a.md');
 
       expect(result).toEqual({ ok: true, promotedTo: join(scopedDir, 'nightly-a.md') });
-      expect(await storage.read(join(scopedDir, 'nightly-a.md'))).toContain('body a');
       expect(await storage.exists(join(LIVE, 'nightly-a.md'))).toBe(false);
-      expect(await storage.exists(join(PENDING, 'nightly-a.md'))).toBe(false);
     });
 
-    it("approve with skill_evolution.scope='shared' writes the shared dir", async () => {
-      const { service, storage } = await makeCandidateService('skill_evolution.scope: shared\n');
-      await storage.mkdir(PENDING);
-      await storage.write(join(PENDING, 'nightly-a.md'), '# A\nbody a\n');
+    it('approve refuses a never-replayed candidate — it needs an override reason this procedure cannot carry', async () => {
+      const { service, storage } = await makeCandidateService();
+      await nightly(storage, 'nightly-a.md');
 
-      const result = await service.skillCandidateApprove('agent', 'nightly-a.md');
-
-      expect(result).toEqual({ ok: true, promotedTo: join(LIVE, 'nightly-a.md') });
-      expect(await storage.read(join(LIVE, 'nightly-a.md'))).toContain('body a');
-      expect(
-        await storage.exists(join(DATA, 'personalities', 'agent', 'skills', 'nightly-a.md')),
-      ).toBe(false);
+      await expect(service.skillCandidateApprove('agent', 'nightly-a.md')).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+      });
+      expect(await storage.exists(join(LIVE, 'nightly-a.md'))).toBe(false);
     });
 
     it('approve on a missing candidate throws SKILL_NOT_FOUND', async () => {
@@ -774,26 +882,14 @@ describe('PersonalitiesService', () => {
       });
     });
 
-    it('approve drains the pending file even if the live skill already exists', async () => {
+    it('reject rejects the waiting candidate', async () => {
       const { service, storage } = await makeCandidateService();
-      await storage.mkdir(LIVE);
-      await storage.write(join(LIVE, 'nightly-a.md'), 'EXISTING live body\n');
-      await storage.mkdir(PENDING);
-      await storage.write(join(PENDING, 'nightly-a.md'), 'NEW candidate body\n');
-
-      await service.skillCandidateApprove('agent', 'nightly-a.md');
-      // Live file is left untouched; pending is cleared.
-      expect(await storage.read(join(LIVE, 'nightly-a.md'))).toContain('EXISTING live body');
-      expect(await storage.exists(join(PENDING, 'nightly-a.md'))).toBe(false);
-    });
-
-    it('reject removes the pending file', async () => {
-      const { service, storage } = await makeCandidateService();
-      await storage.mkdir(PENDING);
-      await storage.write(join(PENDING, 'nightly-a.md'), '# A\n');
+      const candidate = await nightly(storage, 'nightly-a.md');
 
       await service.skillCandidateReject('agent', 'nightly-a.md');
-      expect(await storage.exists(join(PENDING, 'nightly-a.md'))).toBe(false);
+
+      const [stored] = await listCandidates(storage, DATA);
+      expect(stored).toMatchObject({ id: candidate.id, status: 'rejected' });
     });
 
     it('reject on a missing candidate succeeds idempotently', async () => {
@@ -813,9 +909,6 @@ describe('PersonalitiesService', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Per-personality safety + memory overrides — approvalMode + memory.provider
-  // round-trip through update → config.yaml → toWire.
   // -------------------------------------------------------------------------
   describe('safety + memory overrides round-trip', () => {
     async function makeRealService() {

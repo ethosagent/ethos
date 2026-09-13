@@ -9,8 +9,25 @@ import type {
 } from '@ethosagent/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createTestSafety } from '../../../../packages/core/src/__tests__/helpers/test-safety';
+// Relative on purpose: the learning inbox is injected into this package through
+// `LearningSubmitPort`, but the tests submit through the REAL store.
+import { listCandidates, readCandidate, submitCandidate } from '../../../learning-inbox/src/store';
 import { buildForkContext } from '../fork-context';
-import { ImprovementFork, resetImprovementForkCooldowns } from '../improvement-fork';
+import {
+  ImprovementFork,
+  type ImprovementForkOptions,
+  resetImprovementForkCooldowns,
+} from '../improvement-fork';
+import type { LearningSubmitPort } from '../learning-port';
+
+const DATA_DIR = '/tmp/test-evolver';
+
+function learningPort(storage: InMemoryStorage): LearningSubmitPort {
+  return {
+    submit: (input) => submitCandidate(storage, DATA_DIR, input),
+    has: async (id) => (await readCandidate(storage, DATA_DIR, id)) !== null,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -207,8 +224,9 @@ describe('ImprovementFork', () => {
         safety: createTestSafety(),
       },
       personalities: opts.personalities ?? makeRegistry(),
-      dataDir: '/tmp/test-evolver',
+      dataDir: DATA_DIR,
       storage,
+      learning: learningPort(storage),
       now: opts.now,
       onSkillProposed: opts.onSkillProposed,
     });
@@ -286,8 +304,9 @@ describe('ImprovementFork', () => {
         safety: createTestSafety(),
       },
       personalities: makeRegistry(),
-      dataDir: '/tmp/test-evolver',
+      dataDir: DATA_DIR,
       storage,
+      learning: learningPort(storage),
       now: () => now,
     });
     fork.register();
@@ -327,8 +346,9 @@ describe('ImprovementFork', () => {
         safety: createTestSafety(),
       },
       personalities: makeRegistry(),
-      dataDir: '/tmp/test-evolver',
+      dataDir: DATA_DIR,
       storage,
+      learning: learningPort(storage),
       now: () => now,
     });
     fork.register();
@@ -343,13 +363,21 @@ describe('ImprovementFork', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('auto-promotes when autoApprove returns true', async () => {
-    const applied: Array<{ skillId: string; personalityId: string }> = [];
-    const proposed: Array<{ skillId: string; personalityId: string }> = [];
-
-    // Mock LLM that triggers skill_propose tool call, then ends.
+  /** An LLM whose first turn calls `skill_propose`, then ends. */
+  function skillProposeLLM(): LLMProvider {
     let callCount = 0;
-    const skillProposeLLM: LLMProvider = {
+    const usage = {
+      type: 'usage' as const,
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCostUsd: 0,
+      },
+    };
+    const args = JSON.stringify({ content: '# Auto skill\nDo the thing.', reason: 'Works well' });
+    return {
       name: 'test-provider',
       model: 'test-model',
       supportsCaching: false,
@@ -358,48 +386,14 @@ describe('ImprovementFork', () => {
       async *complete() {
         callCount++;
         if (callCount === 1) {
-          // First call: produce a tool_use for skill_propose
           yield { type: 'tool_use_start' as const, toolCallId: 'tc1', toolName: 'skill_propose' };
-          yield {
-            type: 'tool_use_delta' as const,
-            toolCallId: 'tc1',
-            partialJson: JSON.stringify({
-              content: '# Auto skill\nDo the thing.',
-              reason: 'Works well',
-            }),
-          };
-          yield {
-            type: 'tool_use_end' as const,
-            toolCallId: 'tc1',
-            inputJson: JSON.stringify({
-              content: '# Auto skill\nDo the thing.',
-              reason: 'Works well',
-            }),
-          };
-          yield {
-            type: 'usage' as const,
-            usage: {
-              inputTokens: 10,
-              outputTokens: 5,
-              cacheReadTokens: 0,
-              cacheCreationTokens: 0,
-              estimatedCostUsd: 0,
-            },
-          };
+          yield { type: 'tool_use_delta' as const, toolCallId: 'tc1', partialJson: args };
+          yield { type: 'tool_use_end' as const, toolCallId: 'tc1', inputJson: args };
+          yield usage;
           yield { type: 'done' as const, finishReason: 'tool_use' as const };
         } else {
-          // Second call (after tool result): just end the turn
           yield { type: 'text_delta' as const, text: 'Done.' };
-          yield {
-            type: 'usage' as const,
-            usage: {
-              inputTokens: 10,
-              outputTokens: 5,
-              cacheReadTokens: 0,
-              cacheCreationTokens: 0,
-              estimatedCostUsd: 0,
-            },
-          };
+          yield usage;
           yield { type: 'done' as const, finishReason: 'end_turn' as const };
         }
       },
@@ -407,12 +401,14 @@ describe('ImprovementFork', () => {
         return 100;
       },
     };
+  }
 
+  function proposingFork(extra: Partial<ImprovementForkOptions> = {}) {
     const hooks = new DefaultHookRegistry();
     const fork = new ImprovementFork({
       hooks,
       runtime: {
-        llm: skillProposeLLM,
+        llm: skillProposeLLM(),
         model: 'test-model',
         memoryProvider: createMockMemoryProvider(),
         sessionStore: createMockSessionStore([
@@ -422,131 +418,64 @@ describe('ImprovementFork', () => {
         safety: createTestSafety(),
       },
       personalities: makeRegistry(),
-      dataDir: '/tmp/test-evolver',
+      dataDir: DATA_DIR,
       storage,
-      autoApprove: () => true,
-      onSkillApplied: (skillId, personalityId) => {
-        applied.push({ skillId, personalityId });
-      },
-      onSkillProposed: (skillId, personalityId) => {
-        proposed.push({ skillId, personalityId });
-      },
+      learning: learningPort(storage),
+      ...extra,
     });
     fork.register();
+    return { hooks, fork };
+  }
+
+  it('submits a fork-origin candidate for the triggering turn (L-T6, path 1: fork)', async () => {
+    const proposed: Array<{ candidateId: string; personalityId: string }> = [];
+    const targetCalls: Array<{ sessionId: string; personalityId: string }> = [];
+    const { hooks } = proposingFork({
+      targetCaseIds: async (payload, personalityId) => {
+        targetCalls.push({ sessionId: payload.sessionId, personalityId });
+        return ['case-turn'];
+      },
+      onSkillProposed: (candidateId, personalityId) => {
+        proposed.push({ candidateId, personalityId });
+      },
+    });
 
     await hooks.fireVoid('agent_done', basePayload);
 
-    // The skill should have been auto-promoted to the live dir
-    expect(applied).toHaveLength(1);
-    expect(proposed).toHaveLength(0);
-
-    // Verify the file is in the live skills dir
-    const liveFiles = await storage.list('/tmp/test-evolver/skills');
-    const liveSkillFiles = liveFiles.filter((f) => f.endsWith('.md') && !f.startsWith('.'));
-    expect(liveSkillFiles.length).toBeGreaterThan(0);
-
-    // Verify no file remains in pending
-    const pendingFiles = await storage.list('/tmp/test-evolver/skills/.pending/engineer');
-    expect(pendingFiles).toHaveLength(0);
+    const candidates = await listCandidates(storage, DATA_DIR);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      kind: 'skill',
+      op: 'create',
+      origin: 'fork',
+      personalityId: 'engineer',
+      status: 'pending_replay',
+      targetCaseIds: ['case-turn'],
+      evidence: { sessionIds: ['sess1'] },
+    });
+    expect(candidates[0]?.destination).toMatch(/^\/tmp\/test-evolver\/skills\/new-.*\.md$/);
+    expect(targetCalls).toEqual([{ sessionId: 'sess1', personalityId: 'engineer' }]);
+    expect(proposed).toEqual([{ candidateId: candidates[0]?.id, personalityId: 'engineer' }]);
   });
 
-  it('does not auto-promote when autoApprove returns false', async () => {
-    const applied: Array<{ skillId: string; personalityId: string }> = [];
-    const proposed: Array<{ skillId: string; personalityId: string }> = [];
-
-    let callCount = 0;
-    const skillProposeLLM: LLMProvider = {
-      name: 'test-provider',
-      model: 'test-model',
-      supportsCaching: false,
-      supportsThinking: false,
-      maxContextTokens: 100000,
-      async *complete() {
-        callCount++;
-        if (callCount === 1) {
-          yield { type: 'tool_use_start' as const, toolCallId: 'tc1', toolName: 'skill_propose' };
-          yield {
-            type: 'tool_use_delta' as const,
-            toolCallId: 'tc1',
-            partialJson: JSON.stringify({
-              content: '# Auto skill\nDo the thing.',
-              reason: 'Works well',
-            }),
-          };
-          yield {
-            type: 'tool_use_end' as const,
-            toolCallId: 'tc1',
-            inputJson: JSON.stringify({
-              content: '# Auto skill\nDo the thing.',
-              reason: 'Works well',
-            }),
-          };
-          yield {
-            type: 'usage' as const,
-            usage: {
-              inputTokens: 10,
-              outputTokens: 5,
-              cacheReadTokens: 0,
-              cacheCreationTokens: 0,
-              estimatedCostUsd: 0,
-            },
-          };
-          yield { type: 'done' as const, finishReason: 'tool_use' as const };
-        } else {
-          yield { type: 'text_delta' as const, text: 'Done.' };
-          yield {
-            type: 'usage' as const,
-            usage: {
-              inputTokens: 10,
-              outputTokens: 5,
-              cacheReadTokens: 0,
-              cacheCreationTokens: 0,
-              estimatedCostUsd: 0,
-            },
-          };
-          yield { type: 'done' as const, finishReason: 'end_turn' as const };
-        }
-      },
-      async countTokens() {
-        return 100;
-      },
-    };
-
-    const hooks = new DefaultHookRegistry();
-    const fork = new ImprovementFork({
-      hooks,
-      runtime: {
-        llm: skillProposeLLM,
-        model: 'test-model',
-        memoryProvider: createMockMemoryProvider(),
-        sessionStore: createMockSessionStore([
-          { role: 'user', content: 'Hello' },
-          { role: 'assistant', content: 'World' },
-        ]),
-        safety: createTestSafety(),
-      },
-      personalities: makeRegistry(),
-      dataDir: '/tmp/test-evolver',
-      storage,
-      autoApprove: () => false,
-      onSkillApplied: (skillId, personalityId) => {
-        applied.push({ skillId, personalityId });
-      },
-      onSkillProposed: (skillId, personalityId) => {
-        proposed.push({ skillId, personalityId });
-      },
-    });
-    fork.register();
+  it('autoApprove no longer writes live: the proposal is submitted as a candidate instead', async () => {
+    // `autoApprove` and `onSkillApplied` are gone from the options. Passed
+    // anyway, the way a pre-L-T6 composition root would, they must change nothing.
+    const applied: string[] = [];
+    const { hooks } = proposingFork({
+      autoApprove: () => true,
+      onSkillApplied: (id: string) => applied.push(id),
+    } as Partial<ImprovementForkOptions>);
 
     await hooks.fireVoid('agent_done', basePayload);
 
-    // The skill should remain in pending — onSkillProposed fired, not onSkillApplied
-    expect(applied).toHaveLength(0);
-    expect(proposed).toHaveLength(1);
-
-    // Verify the file is still in the pending dir
-    const pendingFiles = await storage.list('/tmp/test-evolver/skills/.pending/engineer');
-    expect(pendingFiles.length).toBeGreaterThan(0);
+    expect(applied).toEqual([]);
+    const liveFiles = (await storage.list(`${DATA_DIR}/skills`)).filter((f) => f.endsWith('.md'));
+    expect(liveFiles).toEqual([]);
+    expect(await storage.list(`${DATA_DIR}/skills/.pending/engineer`)).toEqual([]);
+    const candidates = await listCandidates(storage, DATA_DIR);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.status).toBe('pending_replay');
   });
 
   it('resetImprovementForkCooldowns clears cooldown state', async () => {
@@ -573,8 +502,9 @@ describe('ImprovementFork', () => {
         safety: createTestSafety(),
       },
       personalities: makeRegistry(),
-      dataDir: '/tmp/test-evolver',
+      dataDir: DATA_DIR,
       storage,
+      learning: learningPort(storage),
       now: () => now,
     });
     fork.register();

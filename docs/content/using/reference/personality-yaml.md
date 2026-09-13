@@ -4,7 +4,7 @@ description: "Every field in a personality's config.yaml and toolset.yaml — mo
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -306,25 +306,45 @@ context_layering.cap_total_chars: 12000
 
 ## skill_evolution.* {#skill-evolution}
 
-Auto-triggered skill evolution. When `enabled: true`, the skill-evolver auto-trigger queues an analysis after every turn that crosses the `min_tool_calls` threshold and is outside the cooldown window. The built-in `engineer` personality ships with it enabled (`min_tool_calls: 5`, `cooldown_minutes: 60`).
+Per-personality skill learning: whether this personality drafts skill candidates, and where and how a drafted skill may go live. Every draft becomes a candidate in the [learning inbox](../explanation/learning-inbox.md); no key here writes a live skill file. The built-in `engineer` personality sets `enabled: true`, `min_tool_calls: 5` and `cooldown_minutes: 60`.
+
+Source: `skill_evolution` on `PersonalityConfig` in [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts), parsed by `buildSkillEvolution` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `skill_evolution.enabled` | boolean | `false` | Master switch. Off by default — opt-in per personality. |
-| `skill_evolution.min_tool_calls` | integer | runtime default | Minimum tool calls in a turn before evolution runs. |
-| `skill_evolution.cooldown_minutes` | integer | runtime default | Cooldown between evolution runs. |
-| `skill_evolution.model` | string | top-level `model` | Override which LLM the evolver uses for analysis. Falls back to the personality's model when unset. |
+| `skill_evolution.enabled` | boolean | `false` | Turns on the two drafters that read it: the post-turn improvement fork (`ImprovementFork.shouldFork`, `extensions/skill-evolver/src/improvement-fork.ts`) and the nightly pass's skill drafter (`createSkills`, `apps/ethos/src/commands/nightly.ts`). |
+| `skill_evolution.min_tool_calls` | integer | `5` | Successful tool calls a turn needs before the fork runs. |
+| `skill_evolution.cooldown_minutes` | integer | `60` | Minimum minutes between fork runs for this personality. Held in memory per process, so a restart clears it. |
+| `skill_evolution.model` | string | unset | Loaded and saved, but nothing reads it at run time. Setting it does not change which model drafts skills. |
+| `skill_evolution.evolve_existing` | boolean | unset | Intended to let eval-driven evolution skip rewrites of existing skills (`false`) while still drafting new ones. Loaded and saved, but no command passes it to `SkillEvolver`, so `ethos evolve` and `ethos eval --evolve` always consider rewrites (`evolveExisting` defaults to `true` in `extensions/skill-evolver/src/evolver.ts`). |
+| `skill_evolution.promotion` | `review` \| `auto` | unset | Whether this personality's skill candidates may promote without a human. Values below. |
+| `skill_evolution.scope` | `shared` \| `personality` | `shared` | Where a promoted skill is written (`liveSkillDir`, `extensions/skill-evolver/src/skill-dir.ts`). Values below. |
+
+`skill_evolution.promotion` values, resolved by `resolveAutoPromotion` in `extensions/learning-inbox/src/auto-promotion.ts`:
+
+- `auto` — a candidate whose replay verdict is `pass` promotes without a human, provided `scope` is `personality`.
+- `review` — every candidate waits for a human, whatever `evolution_approval_mode` or `autoApprove` say.
+- unset (default) — falls back to `evolution_approval_mode` (`auto` → auto, `user` → review), then to `autoApprove` in `~/.ethos/evolve-config.json`, then review.
+
+`skill_evolution.scope` values:
+
+- `shared` (default) — `~/.ethos/skills/`, loaded by every personality whose toolset covers the skill's required tools. A shared skill always needs a human to promote, even after a `pass` (`autoPromotionDecision`).
+- `personality` — `~/.ethos/personalities/<id>/skills/`, loaded by this personality only. The only skill destination auto-promotion writes to.
 
 ```yaml
 skill_evolution.enabled: true
 skill_evolution.min_tool_calls: 5
 skill_evolution.cooldown_minutes: 60
-skill_evolution.model: claude-sonnet-4-6
+skill_evolution.promotion: auto
+skill_evolution.scope: personality
 ```
 
 Notes:
 
-- The global cron schedule for running the evolver lives in [`config.yaml`](./config-yaml.md#evolver-cron-enabled) (`evolver.cron_enabled`, `evolver.schedule`), not here. These personality-level keys control whether a personality participates and the per-turn trigger thresholds.
+- Nothing here skips replay. A skill candidate goes live only on a `pass` replay that the rules above allow, or on a human approval; approving anything that is not a `pass` needs a reason, recorded in the audit log. Replay measures approach, not answers that depend on real tool output. See [Why does a learned change need a replay before it goes live?](../explanation/learning-inbox.md).
+- `promotion` and `scope` are read when a candidate is replayed or promoted, not when it is drafted (`learningPolicyFor`, `packages/wiring/src/learning-pipeline.ts`; `promote`, `extensions/learning-inbox/src/promote.ts`). A candidate drafted against the other scope becomes `stale` instead of promoting.
+- An unrecognised `promotion` or `scope` value, or a non-integer `min_tool_calls` or `cooldown_minutes`, is ignored as if unset.
+- The global evolver schedule lives in [`config.yaml`](./config-yaml.md#evolver-cron-enabled) (`evolver.cron_enabled`, `evolver.schedule`), not here.
 
 ## safety {#safety}
 

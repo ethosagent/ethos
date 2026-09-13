@@ -31,7 +31,7 @@ import {
   platformPrompt as whatsappPrompt,
 } from '@ethosagent/platform-whatsapp/format';
 import { createSkillProposeTool } from '@ethosagent/skill-evolver';
-import { type SkillsInjector, SkillsLibrary, type UniversalScanner } from '@ethosagent/skills';
+import type { SkillsInjector, UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
 import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsStorage } from '@ethosagent/storage-fs';
@@ -113,6 +113,11 @@ import {
 } from './grounding';
 import type { CreateAgentLoopOptions, WiringConfig, WiringProfile } from './index';
 import { resolveKanbanDbPath } from './kanban-path';
+import {
+  freezeLatestUserTurnCase,
+  learningPendingSkillsPort,
+  learningSubmitPort,
+} from './learning-pipeline';
 import { createTeamMemoryProvider } from './memory-backend';
 import { MODEL_CATALOG } from './model-catalog';
 import { fetchManifest, loadModelCatalog, manifestToEntries } from './model-catalog-loader';
@@ -1598,13 +1603,18 @@ export async function composeAllTools(
   const skillPassthrough = deriveSkillPassthrough(skillPool, activePerson, bootToolNames);
 
   // Skill introspection tools — skills_list + skill_view, plus the pending-queue
-  // review tools. The library handle is the same class the web Skills/Evolver
-  // tab drives, so chat-side approve/reject is one path, not a second one.
+  // review tools. The queue is the learning inbox (L-T8): the same
+  // `LearningInbox` the `learning.*` RPCs and `ethos learning` decide through,
+  // so a chat-side reject writes the same `learning.reject` audit row. There is
+  // no chat-side approve (L-D13).
   for (const tool of composeSkillsTools(wiringCtx, {
     skillPool,
-    pendingSkills: new SkillsLibrary({
-      dataDir: wiringCtx.dataDir,
+    pendingSkills: learningPendingSkillsPort({
       storage: wiringCtx.storage,
+      dataDir: wiringCtx.dataDir,
+      personalities,
+      defaultPersonalityId: activePerson.id,
+      ...(opts.observability ? { observability: opts.observability } : {}),
     }),
   }).tools) {
     tools.register(tool);
@@ -1612,10 +1622,30 @@ export async function composeAllTools(
 
   // skill_propose — lets the agent propose new skills from chat when asked,
   // gated by the 'skills' toolset so personalities opt in via toolset.yaml.
+  // Path 6 (plan `trust-before-reach.md` Part 4, L-T6): the proposal is a
+  // learning candidate for the calling turn's personality, with the current
+  // user turn frozen as its target case. It used to land in a flat
+  // `skills/.pending/` that carried no personality at all.
+  const learningCtx = { storage: wiringCtx.storage, dataDir: wiringCtx.dataDir, personalities };
   tools.register(
     createSkillProposeTool({
-      storage: wiringCtx.storage,
-      pendingDir: join(wiringCtx.dataDir, 'skills', '.pending'),
+      learning: learningSubmitPort(learningCtx),
+      dataDir: wiringCtx.dataDir,
+      origin: 'chat',
+      target: (ctx) => {
+        const personality = personalities.get(ctx.personalityId ?? activePerson.id);
+        return personality
+          ? { personalityId: personality.id, scope: personality.skill_evolution?.scope }
+          : null;
+      },
+      targetCaseIds: async (ctx, personalityId) => {
+        const id = await freezeLatestUserTurnCase(learningCtx, infra.sessionCompose.sessionStore, {
+          sessionId: ctx.sessionId,
+          sessionKey: ctx.sessionKey,
+          personalityId,
+        });
+        return id ? [id] : [];
+      },
       toolset: 'skills',
     }) as Tool,
   );

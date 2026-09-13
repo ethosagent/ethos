@@ -7,7 +7,7 @@
 // CLI orchestration (registry loading, file write, email, process.exit) lives
 // in `apps/ethos/src/commands/digest.ts`; the web-api `DigestService.generate`
 // drives the same generator. Both import from here.
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { LearningLogEntry, PersonalityConfig, Storage } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -105,14 +105,23 @@ async function readNightlyState(
   }
 }
 
-// Count the 3d skill candidates currently parked in skills/.pending/<id>/.
-async function readPendingSkillCandidates(
-  storage: Storage,
-  dataDir: string,
-  id: string,
-): Promise<string[]> {
-  const entries = await storage.list(join(dataDir, 'skills', '.pending', id));
-  return entries.filter((name) => name.endsWith('.md'));
+/**
+ * Group waiting skill candidates by personality, as the filenames the digest
+ * lists. The candidates come from the learning inbox (`LearningInbox.list`,
+ * kind `skill`, status awaiting a decision) — the callers read it; this package
+ * stays pure. It used to list `skills/.pending/<id>/`, a queue the legacy import
+ * drains, so the count read 0 while the inbox held candidates (L-T8).
+ */
+export function waitingSkillNamesByPersonality(
+  candidates: ReadonlyArray<{ personalityId: string; destination: string }>,
+): Record<string, string[]> {
+  const byPersonality: Record<string, string[]> = {};
+  for (const c of candidates) {
+    const names = byPersonality[c.personalityId] ?? [];
+    names.push(basename(c.destination));
+    byPersonality[c.personalityId] = names;
+  }
+  return byPersonality;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +138,9 @@ export interface WeeklyDigestInput {
   // `reg.readLivingSoul(id)`; tests supply fixtures directly. Optional —
   // an absent id is treated as having no entries.
   learningLogByPersonality?: Record<string, LearningLogEntry[]>;
+  // Waiting skill candidates keyed by personality id, from the learning inbox
+  // (`waitingSkillNamesByPersonality`). Optional — an absent id has none.
+  pendingSkillCandidatesByPersonality?: Record<string, string[]>;
 }
 
 export async function buildWeeklyDigest(input: WeeklyDigestInput): Promise<string> {
@@ -136,6 +148,7 @@ export async function buildWeeklyDigest(input: WeeklyDigestInput): Promise<strin
   const windowDays = input.windowDays ?? 7;
   const windowStart = new Date(now.getTime() - windowDays * 86_400_000);
   const logByPersonality = input.learningLogByPersonality ?? {};
+  const candidatesByPersonality = input.pendingSkillCandidatesByPersonality ?? {};
 
   const inWindow = (iso: string): boolean => {
     const t = Date.parse(iso);
@@ -156,7 +169,7 @@ export async function buildWeeklyDigest(input: WeeklyDigestInput): Promise<strin
     const evolutions = (logByPersonality[id] ?? []).filter((e) => inWindow(e.at));
     const judge = await readJudgeState(storage, dataDir, id);
     const nightly = await readNightlyState(storage, dataDir, id);
-    const candidates = await readPendingSkillCandidates(storage, dataDir, id);
+    const candidates = candidatesByPersonality[id] ?? [];
 
     totalEvolutions += evolutions.length;
     totalCandidates += candidates.length;

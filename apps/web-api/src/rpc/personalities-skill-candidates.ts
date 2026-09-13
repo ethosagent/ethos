@@ -1,8 +1,9 @@
 import { os } from './context';
 
-// Pending skill-candidate review queue. The nightly skill-evolver (manual
-// mode) drafts candidates into `<dataDir>/skills/.pending/<id>/`; these
-// procedures list / approve (promote) / reject (delete) them. Split out of
+// Pending skill-candidate review queue — a legacy adapter over the learning
+// inbox (L-T8). These procedures list this personality's waiting skill
+// candidates and approve / reject them through `LearningService`; see
+// `PersonalitiesService.skillCandidatesList` for what changed. Split out of
 // `personalities.ts` to keep each handler file thin. Spread into
 // `personalitiesRouter`.
 

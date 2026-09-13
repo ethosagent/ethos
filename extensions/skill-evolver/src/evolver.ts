@@ -1,19 +1,31 @@
+// The eval-driven skill evolver (path 7 in plan `trust-before-reach.md`
+// Part 4): `ethos evolve run`, `ethos evolve --eval-output`, `ethos eval
+// --evolve`, and the `skill-evolver` system job.
+//
+// It drafts rewrites of low-scoring skills and new skills from high-scoring
+// skill-less bundles, and SUBMITS each draft to the learning inbox. It used to
+// write `skills/pending/`, which `--auto-approve` then renamed straight into the
+// live dir. Nothing here promotes now; `--auto-approve` replays the candidates
+// and lets `replayAndResolve` decide (L-D9).
+
 import { join } from 'node:path';
 import { checkSkillFrontmatter } from '@ethosagent/skills';
 import type { LLMProvider, Message, Storage } from '@ethosagent/types';
 import { analyzeEvalOutput, parseEvalJsonl } from './analyze';
+import type { LearningSubmitPort } from './learning-port';
 import {
   parseNewSkillResponse,
   parseRewriteResponse,
   renderNewSkillPrompt,
   renderRewritePrompt,
 } from './prompts';
-import type { EvolutionPlan, EvolveConfig } from './types';
+import { liveSkillDir } from './skill-dir';
+import type { EvolutionPlan, EvolveConfig, TaskSummary } from './types';
 
 export interface EvolveOptions {
   evalOutputPath: string;
+  /** The skills the evaluated run used — analysed for rewrite candidates. */
   skillsDir: string;
-  pendingDir: string;
   config: EvolveConfig;
   llm: LLMProvider;
   /** Storage backend. Injected by the composition root; required — never
@@ -26,12 +38,31 @@ export interface EvolveOptions {
    * personality config source.
    */
   evolveExisting?: boolean;
+  /** The learning inbox every draft is submitted to. */
+  learning: LearningSubmitPort;
+  /** `~/.ethos` — the root `liveSkillDir` resolves destinations under. */
+  dataDir: string;
+  /** The personality the evaluated run belonged to. */
+  personalityId: string;
+  /** That personality's `skill_evolution.scope`. */
+  scope?: 'personality' | 'shared';
+  /**
+   * Freeze target cases from the tasks a draft was made from and return their
+   * ids. `ethos eval --evolve` has the authored expected values for this; a
+   * caller without them omits it, and the candidate replays `incomplete` and
+   * waits for a human.
+   */
+  targetCaseIds?: (tasks: TaskSummary[]) => Promise<string[]>;
 }
 
 export interface EvolveResult {
   plan: EvolutionPlan;
-  rewritesWritten: string[];
-  newSkillsWritten: string[];
+  /** Filenames of the rewrites submitted to the inbox. */
+  rewritesSubmitted: string[];
+  /** Filenames of the new skills submitted to the inbox. */
+  newSkillsSubmitted: string[];
+  /** Inbox candidate ids, in submission order. */
+  candidateIds: string[];
   skipped: Array<{ kind: 'rewrite' | 'new'; target: string; reason: string }>;
 }
 
@@ -39,20 +70,48 @@ export class SkillEvolver {
   constructor(private readonly options: EvolveOptions) {}
 
   async evolve(): Promise<EvolveResult> {
-    const { evalOutputPath, skillsDir, pendingDir, config, llm } = this.options;
+    const { evalOutputPath, skillsDir, config, llm, learning, personalityId } = this.options;
     const storage = this.options.storage;
     const evolveExisting = this.options.evolveExisting ?? true;
+    const liveDir = liveSkillDir(this.options.dataDir, personalityId, this.options.scope);
 
     const src = await storage.read(evalOutputPath);
     if (!src) throw new Error(`eval output not found: ${evalOutputPath}`);
     const records = parseEvalJsonl(src);
     const plan = await analyzeEvalOutput(records, skillsDir, config, storage);
 
-    await storage.mkdir(pendingDir);
-
-    const rewritesWritten: string[] = [];
-    const newSkillsWritten: string[] = [];
+    const rewritesSubmitted: string[] = [];
+    const newSkillsSubmitted: string[] = [];
+    const candidateIds: string[] = [];
     const skipped: EvolveResult['skipped'] = [];
+
+    const submit = async (
+      op: 'create' | 'rewrite',
+      fileName: string,
+      content: string,
+      tasks: TaskSummary[],
+    ): Promise<void> => {
+      let targetCaseIds: string[] = [];
+      try {
+        targetCaseIds = (await this.options.targetCaseIds?.(tasks)) ?? [];
+      } catch {
+        targetCaseIds = [];
+      }
+      const candidate = await learning.submit({
+        kind: 'skill',
+        op,
+        personalityId,
+        origin: 'eval',
+        destination: join(liveDir, fileName),
+        content,
+        evidence: {
+          taskIds: tasks.map((t) => t.taskId),
+          ref: `eval:${evalOutputPath}`,
+        },
+        targetCaseIds,
+      });
+      candidateIds.push(candidate.id);
+    };
 
     const rewriteCandidates = evolveExisting ? plan.rewriteCandidates : [];
     for (const candidate of rewriteCandidates) {
@@ -73,8 +132,13 @@ export class SkillEvolver {
         });
         continue;
       }
-      await storage.write(join(pendingDir, outName), `${parsed.content}\n`);
-      rewritesWritten.push(outName);
+      await submit(
+        'rewrite',
+        outName,
+        `${withTargetFile(parsed.content, outName)}\n`,
+        candidate.lowScoringTasks,
+      );
+      rewritesSubmitted.push(outName);
     }
 
     for (const candidate of plan.newSkillCandidates) {
@@ -94,13 +158,26 @@ export class SkillEvolver {
         });
         continue;
       }
-      const safeName = await pickAvailableName(parsed.fileName, pendingDir, skillsDir, storage);
-      await storage.write(join(pendingDir, safeName), `${parsed.content}\n`);
-      newSkillsWritten.push(safeName);
+      const safeName = await pickAvailableName(parsed.fileName, [skillsDir, liveDir], storage);
+      await submit('create', safeName, `${parsed.content}\n`, candidate.tasks);
+      newSkillsSubmitted.push(safeName);
     }
 
-    return { plan, rewritesWritten, newSkillsWritten, skipped };
+    return { plan, rewritesSubmitted, newSkillsSubmitted, candidateIds, skipped };
   }
+}
+
+/**
+ * A rewrite is applied to the file it rewrites: `promote()` reads the
+ * content's `target_file` to find it (`skillFilename` in
+ * `extensions/learning-inbox/src/promote.ts`). The rewrite prompt returns a
+ * bare skill, so the key is stamped here — into the existing frontmatter when
+ * there is one, otherwise as a frontmatter block of its own.
+ */
+function withTargetFile(content: string, fileName: string): string {
+  const line = `target_file: ${fileName}`;
+  if (/^---\r?\n/.test(content)) return content.replace(/^---\r?\n/, `---\n${line}\n`);
+  return `---\n${line}\n---\n\n${content}`;
 }
 
 async function callLLM(llm: LLMProvider, prompt: string): Promise<string> {
@@ -112,16 +189,15 @@ async function callLLM(llm: LLMProvider, prompt: string): Promise<string> {
   return text;
 }
 
-// If the LLM picks a filename already used by an existing skill (or already
-// queued in pending/), suffix it with -2, -3, ... so we don't silently clobber.
+// If the LLM picks a filename already used by an existing skill, suffix it with
+// -2, -3, ... so a promotion never silently replaces a skill it did not draft.
 async function pickAvailableName(
   proposed: string,
-  pendingDir: string,
-  skillsDir: string,
+  dirs: readonly string[],
   storage: Storage,
 ): Promise<string> {
   const taken = new Set<string>();
-  for (const dir of [pendingDir, skillsDir]) {
+  for (const dir of dirs) {
     for (const entry of await storage.list(dir)) {
       if (entry.endsWith('.md')) taken.add(entry);
     }

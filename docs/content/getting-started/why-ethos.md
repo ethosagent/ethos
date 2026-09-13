@@ -4,7 +4,7 @@ description: "Comparison of Ethos to LangChain, CrewAI, AutoGen, OpenClaw, and H
 kind: explanation
 audience: shared
 slug: why-ethos
-updated: 2026-06-09
+updated: 2026-09-13
 ---
 
 Ethos makes different trade-offs than other agent frameworks. This page is the honest comparison.
@@ -104,9 +104,9 @@ Ethos has a skill evolution loop. The `skill-evolver` watches eval output, ident
 - **Rewrites** for skills that score below a configurable threshold — the evolver reads the skill source and failing transcripts, then generates a rewritten version.
 - **New skills** for recurring unassisted patterns — when the agent repeatedly handles a task type without a matching skill, the evolver proposes one.
 
-Proposals land in a pending directory for human review. The web dashboard and desktop app surface these as an approval queue — accept, reject, or edit before the skill goes live. `autoApprove: true` in config removes the gate for CI-driven evolution.
+Proposals land in the learning inbox as candidates, not live files. A candidate goes live only after a replay against the personality's own past tasks scores `pass` and the auto-promotion rules allow it, or when a human approves it with `ethos learning approve <id>` or from the web dashboard's Skills page. Approving anything that did not pass needs a written reason, recorded in the audit log. `autoApprove: true` does not remove the gate: it lets a candidate promote itself only after a `pass`, and only when the skill is visible to that one personality. A replay measures approach, not answers that depend on real tool output. See [Why does a learned change need a replay before it goes live?](../using/explanation/learning-inbox.md).
 
-No other framework in this comparison does this. Hermes has skill self-creation, but it is immediate and ungated — the agent writes and activates skills in the same turn. Ethos separates observation (eval runs) from proposal (evolver) from activation (human approval), which means the feedback loop is auditable.
+No other framework in this comparison does this. Hermes has skill self-creation, but it is immediate and ungated — the agent writes and activates skills in the same turn. Ethos separates observation (eval runs) from proposal (evolver) from activation (a measured replay or a human approval), which means the feedback loop is auditable.
 
 ## When Ethos isn't the right choice
 

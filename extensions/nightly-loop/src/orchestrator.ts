@@ -1,13 +1,21 @@
 // Nightly-pass orchestrator (Phase 3c, component E) — the pure, dependency-
 // injected core of the nightly governed-learning pass.
 //
-// runNightlyPass() runs five ordered, individually-checkpointed steps for one
-// personality: gather evidence → judge alignment → (maybe) evolve Expression →
-// (maybe) create skills → consolidate memory. Step 3 writes SOUL.md only under
-// `evolution_approval_mode: auto`; every other mode queues the draft through
-// `queueExpression` for explicit approval (plan `trust-before-reach.md` B-T1). Every external effect is an
-// injected plain function (NightlyPassDeps), so the pass is unit-testable with
-// stubs — no AgentLoop, no real LLM, no Storage.
+// runNightlyPass() runs six ordered, individually-checkpointed steps for one
+// personality: gather evidence → judge alignment → (maybe) draft an Expression →
+// (maybe) create skills → replay learning candidates → consolidate memory.
+//
+// Nothing in this pass writes SOUL.md or a live skill directly (plan
+// `trust-before-reach.md` Part 4, L-D2). Step 3 submits its Expression draft as
+// a learning candidate (`submitExpression`); the Judge decides only WHETHER to
+// draft. The `replay` step measures pending candidates, and the one path that
+// may then promote without a human is `replayAndResolve`
+// (`extensions/learning-inbox/src/auto-promotion.ts`), reached through
+// `NightlyLearningDeps.replay`. This module therefore has no apply dependency to
+// call — an approval mode cannot route around a gate that is not here.
+//
+// Every external effect is an injected plain function (NightlyPassDeps), so the
+// pass is unit-testable with stubs — no AgentLoop, no real LLM, no Storage.
 //
 // Idempotency: each step name is recorded in NightlyState.completed once it
 // succeeds, scoped to the evidence window (windowEnd). A re-run with the same
@@ -70,36 +78,22 @@ export interface NightlyPassDeps {
     currentExpression: string;
     evidence: string;
   }): Promise<{ newExpression: string; rationale: string }>;
-  applyExpression(
-    id: string,
-    newExpression: string,
-    opts: { summary: string; evidenceRef: string },
-  ): Promise<{ revisionId: string }>;
   /**
-   * Governance gate for step 3 (plan `trust-before-reach.md` B-T1). Reads
-   * `PersonalityConfig.evolution_approval_mode`, whose contract says `user` —
-   * the default when the field is absent — applies an Expression change "only
-   * on explicit user approval". Anything other than `'auto'` therefore routes
-   * the draft to `queueExpression` and NEVER to `applyExpression`.
-   *
-   * Required, not optional: an omittable gate is not a gate, and a host that
-   * forgot to wire it would resume applying unapproved changes silently, which
-   * is the exact bug this dep exists to close.
+   * Submit a drafted Expression to the learning inbox (L-D2). It is never
+   * applied here, in any approval mode: an `auto` personality's draft goes live
+   * only after a `pass` replay (`replayAndResolve`), a `user` one only when a
+   * human approves it. The candidate fingerprints the live SOUL.md itself
+   * (`baseHash`), so no base Expression is passed. In the CLI this is
+   * `submitExpressionCandidate` (`packages/wiring/src/learning-pipeline.ts`).
    */
-  expressionApprovalMode(id: string): 'auto' | 'user' | undefined;
-  /**
-   * Park a drafted Expression for explicit approval instead of applying it.
-   * `meta.baseExpression` is the Expression the draft was written against, so
-   * the approval surface can refuse a draft the Expression has moved out from
-   * under. In the CLI this is `queuePendingExpression`
-   * (apps/ethos/src/commands/pending-expression.ts).
-   */
-  queueExpression(
+  submitExpression(
     id: string,
     draft: { newExpression: string; rationale: string },
-    meta: { evidenceRef: string; baseExpression: string },
-  ): Promise<void>;
+    meta: { evidenceRef: string },
+  ): Promise<{ candidateId: string }>;
   createSkills?(id: string, evidence: NightlyEvidence): Promise<number>; // 3d hook; OPTIONAL — absent = step noop
+  /** The `replay` step (L-D9). OPTIONAL — absent = step noop. */
+  learning?: NightlyLearningDeps;
   readMemory(id: string): Promise<{ memory: string; user: string }>;
   consolidate(input: {
     memory: string;
@@ -129,6 +123,27 @@ export interface NightlyPassDeps {
   writeState(id: string, state: NightlyState): Promise<void>;
   onSignal?(id: string, signal: 'drift' | 'underspecified_soul'): void; // surface the actionable signal
   log?(msg: string): void;
+}
+
+/**
+ * The nightly `replay` step (plan `trust-before-reach.md` Part 4, L-D9). The one
+ * scheduled place replay runs — never on `agent_done`.
+ */
+export interface NightlyLearningDeps {
+  /** `learningReplay.enabled` (`resolveLearningReplay`). False skips the whole step. */
+  enabled: boolean;
+  /**
+   * The run's `learningReplay.maxCandidatesPerRun`. `take()` consumes one slot
+   * and returns false once none are left. One budget object is shared by every
+   * personality in a run, so the cap is per RUN, not per personality.
+   */
+  budget: { take(): boolean };
+  /** Freeze new cases for this personality (at most 10, pool capped at 40). Returns the count frozen. */
+  freezeCases(id: string): Promise<number>;
+  /** This personality's `pending_replay` candidate ids, oldest first. */
+  pendingReplay(id: string): Promise<string[]>;
+  /** Replay one candidate and let `replayAndResolve` decide whether it promotes. */
+  replay(id: string, candidateId: string): Promise<{ verdict: string; promoted: boolean }>;
 }
 
 function errMessage(err: unknown): string {
@@ -248,30 +263,14 @@ export async function runNightlyPass(
           evidence: evidence.evidenceDigest,
         });
         const evidenceRef = `nightly:${result.alignmentScore.toFixed(2)}@${evidence.windowEnd}`;
-        // The approval gate. Only `auto` writes SOUL.md here; `user` (and the
-        // absent default, which IS `user`) queues the draft and waits for
-        // `ethos personality evolve <id>` to offer it.
-        if (deps.expressionApprovalMode(personalityId) === 'auto') {
-          const applied = await deps.applyExpression(personalityId, draft.newExpression, {
-            summary: draft.rationale.slice(0, 120) || 'nightly expression update',
-            evidenceRef,
-          });
-          steps.push({
-            step: 'expression',
-            status: 'ran',
-            detail: `applied (alignment ${pct}%, revision ${applied.revisionId})`,
-          });
-        } else {
-          await deps.queueExpression(personalityId, draft, {
-            evidenceRef,
-            baseExpression: soul.expression,
-          });
-          steps.push({
-            step: 'expression',
-            status: 'ran',
-            detail: `queued for approval (alignment ${pct}%)`,
-          });
-        }
+        // L-D2: the Judge decided to draft; it does not decide to apply. The
+        // draft is a candidate in every approval mode.
+        const submitted = await deps.submitExpression(personalityId, draft, { evidenceRef });
+        steps.push({
+          step: 'expression',
+          status: 'ran',
+          detail: `submitted candidate ${submitted.candidateId} (alignment ${pct}%)`,
+        });
         await markDone('expression');
       } catch (err) {
         steps.push({ step: 'expression', status: 'failed', detail: errMessage(err) });
@@ -286,7 +285,11 @@ export async function runNightlyPass(
   } else if (deps.createSkills) {
     try {
       const count = await deps.createSkills(personalityId, evidence);
-      steps.push({ step: 'skills', status: 'ran', detail: `${count} skill(s) created` });
+      steps.push({
+        step: 'skills',
+        status: 'ran',
+        detail: `${count} skill candidate(s) submitted`,
+      });
       await markDone('skills');
     } catch (err) {
       steps.push({ step: 'skills', status: 'failed', detail: errMessage(err) });
@@ -296,7 +299,58 @@ export async function runNightlyPass(
     await markDone('skills');
   }
 
-  // Step 5: memory consolidation. Independent of the judge/expression outcome —
+  // Step 5: replay (L-D9). After `skills`, so tonight's candidates are measured
+  // tonight. Budget-capped across the run; skipped entirely when
+  // `learningReplay.enabled` is false. A failing candidate does not stop the
+  // others; a step with any failure is not marked done, and a retry only sees
+  // what is still `pending_replay`.
+  const learning = deps.learning;
+  if (done('replay')) {
+    steps.push({ step: 'replay', status: 'skipped', detail: 'already completed for this window' });
+  } else if (!learning) {
+    steps.push({ step: 'replay', status: 'noop', detail: 'learning inbox not wired' });
+    await markDone('replay');
+  } else if (!learning.enabled) {
+    steps.push({ step: 'replay', status: 'skipped', detail: 'learningReplay.enabled is false' });
+  } else {
+    try {
+      const frozen = await learning.freezeCases(personalityId);
+      const failures: string[] = [];
+      let replayed = 0;
+      let promoted = 0;
+      let deferred = 0;
+      for (const candidateId of await learning.pendingReplay(personalityId)) {
+        if (!learning.budget.take()) {
+          deferred += 1;
+          continue;
+        }
+        try {
+          const outcome = await learning.replay(personalityId, candidateId);
+          replayed += 1;
+          if (outcome.promoted) promoted += 1;
+        } catch (err) {
+          failures.push(`${candidateId}: ${errMessage(err)}`);
+        }
+      }
+      const detail = `${frozen} case(s) frozen, ${replayed} replayed, ${promoted} promoted${
+        deferred ? `, ${deferred} deferred (maxCandidatesPerRun)` : ''
+      }`;
+      if (failures.length > 0) {
+        steps.push({
+          step: 'replay',
+          status: 'failed',
+          detail: `${detail}; ${failures.join('; ')}`,
+        });
+      } else {
+        steps.push({ step: 'replay', status: 'ran', detail });
+        await markDone('replay');
+      }
+    } catch (err) {
+      steps.push({ step: 'replay', status: 'failed', detail: errMessage(err) });
+    }
+  }
+
+  // Step 6: memory consolidation. Independent of the judge/expression outcome —
   // runs even if those failed.
   if (done('memory')) {
     steps.push({ step: 'memory', status: 'skipped', detail: 'already completed for this window' });

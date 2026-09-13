@@ -299,6 +299,7 @@ describe('contract router', () => {
       'goals',
       'kanban',
       'keys',
+      'learning',
       'mcp',
       'memory',
       'mesh',

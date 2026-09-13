@@ -32,6 +32,8 @@ import {
   splitByAttachment,
   usedByPersonalityIds,
 } from '../lib/attachmentLists';
+import { getClientId } from '../lib/clientId';
+import { learningRefusal } from '../lib/learning-refusal';
 import { rpc } from '../rpc';
 
 type SkillOrigin = 'built-in' | 'user' | 'evolver' | 'personality';
@@ -782,7 +784,7 @@ function EvolverConfigForm() {
         label="Auto-approve evolved skills"
         name="autoApprove"
         valuePropName="checked"
-        extra="When enabled, proposed skills are promoted directly to the live library without manual review."
+        extra="When enabled, a proposed skill goes live without manual review only after it passes a replay, and only when it is scoped to a single personality — a skill shared across personalities always needs a human. A personality's own skill_evolution.promotion or evolution_approval_mode takes precedence."
       >
         <Switch />
       </Form.Item>
@@ -795,9 +797,23 @@ function EvolverConfigForm() {
   );
 }
 
-function PendingQueue() {
+// Pending ids are learning candidate ids (`EvolverService.listPending`), so
+// Approve decides through `learning.approve`, which returns the inbox's refusal
+// codes. A candidate that has not passed a replay is refused `OVERRIDE_REQUIRED`
+// (`LearningInbox.approve`); that opens a prompt for the human's reason instead
+// of an error. The reason is never supplied for them.
+export function PendingQueue() {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
+  const [overrideFor, setOverrideFor] = useState<{ skill: PendingSkill; refusal: string } | null>(
+    null,
+  );
+  const [overrideReason, setOverrideReason] = useState('');
+
+  const closeOverride = () => {
+    setOverrideFor(null);
+    setOverrideReason('');
+  };
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['evolver', 'pending'],
@@ -805,15 +821,29 @@ function PendingQueue() {
   });
 
   const approveMut = useMutation({
-    mutationFn: (id: string) => rpc.evolver.pendingApprove({ id }),
+    mutationFn: (input: { skill: PendingSkill; overrideReason?: string }) =>
+      rpc.learning.approve({
+        candidateId: input.skill.id,
+        clientId: getClientId(),
+        ...(input.overrideReason ? { override: { reason: input.overrideReason } } : {}),
+      }),
     onSuccess: () => {
+      closeOverride();
       qc.invalidateQueries({ queryKey: ['evolver', 'pending'] });
       qc.invalidateQueries({ queryKey: ['skills', 'list'] });
       notification.success({ message: 'Approved — skill is now live.', placement: 'topRight' });
     },
-    onError: (err) =>
-      notification.error({ message: 'Approve failed', description: (err as Error).message }),
+    onError: (err, input) => {
+      const refusal = learningRefusal(err, 'Approve failed');
+      if (refusal.code === 'OVERRIDE_REQUIRED' && !input.overrideReason) {
+        setOverrideFor({ skill: input.skill, refusal: refusal.detail });
+        return;
+      }
+      notification.error({ message: refusal.title, description: refusal.detail });
+    },
   });
+
+  const trimmedReason = overrideReason.trim();
 
   const rejectMut = useMutation({
     mutationFn: (id: string) => rpc.evolver.pendingReject({ id }),
@@ -853,70 +883,105 @@ function PendingQueue() {
   }
 
   return (
-    <Table<PendingSkill>
-      rowKey="id"
-      dataSource={pending}
-      pagination={false}
-      size="small"
-      expandable={{
-        expandedRowRender: (row) => <PendingPreview skill={row} />,
-      }}
-      columns={[
-        {
-          title: 'Name',
-          dataIndex: 'name',
-          key: 'name',
-          render: (name: string, row) => (
-            <div>
-              <div style={{ fontWeight: 500 }}>{name}</div>
-              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{row.id}.md</div>
-            </div>
-          ),
-        },
-        {
-          title: 'Description',
-          dataIndex: 'description',
-          key: 'description',
-          render: (d: string | null) =>
-            d ? d : <Typography.Text type="secondary">—</Typography.Text>,
-        },
-        {
-          title: 'Proposed',
-          dataIndex: 'proposedAt',
-          key: 'proposedAt',
-          width: 140,
-          render: (iso: string) => formatRelative(iso),
-        },
-        {
-          title: '',
-          key: 'actions',
-          width: 200,
-          render: (_, row) => (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Button
-                size="small"
-                type="primary"
-                onClick={() => approveMut.mutate(row.id)}
-                loading={approveMut.isPending && approveMut.variables === row.id}
-              >
-                Approve
-              </Button>
-              <Popconfirm
-                title="Reject this candidate?"
-                description="The pending file is deleted."
-                onConfirm={() => rejectMut.mutate(row.id)}
-                okText="Reject"
-                okButtonProps={{ danger: true }}
-              >
-                <Button size="small" danger>
-                  Reject
+    <>
+      <Modal
+        open={overrideFor !== null}
+        title="Approve without a passing replay?"
+        okText="Approve anyway"
+        okButtonProps={{ disabled: trimmedReason === '', loading: approveMut.isPending }}
+        onOk={() =>
+          overrideFor &&
+          trimmedReason !== '' &&
+          approveMut.mutate({ skill: overrideFor.skill, overrideReason: trimmedReason })
+        }
+        onCancel={closeOverride}
+        destroyOnClose
+      >
+        {overrideFor ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Typography.Text>
+              <Typography.Text strong>{overrideFor.skill.name}</Typography.Text> has not passed a
+              replay. {overrideFor.refusal}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Say why you are approving it anyway — the reason is recorded in the audit trail.
+              Required.
+            </Typography.Text>
+            <Input.TextArea
+              aria-label="Reason to approve anyway"
+              data-testid="skills-override-reason"
+              value={overrideReason}
+              onChange={(e) => setOverrideReason(e.target.value)}
+              autoSize={{ minRows: 2, maxRows: 6 }}
+            />
+          </div>
+        ) : null}
+      </Modal>
+      <Table<PendingSkill>
+        rowKey="id"
+        dataSource={pending}
+        pagination={false}
+        size="small"
+        expandable={{
+          expandedRowRender: (row) => <PendingPreview skill={row} />,
+        }}
+        columns={[
+          {
+            title: 'Name',
+            dataIndex: 'name',
+            key: 'name',
+            render: (name: string, row) => (
+              <div>
+                <div style={{ fontWeight: 500 }}>{name}</div>
+                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{row.id}.md</div>
+              </div>
+            ),
+          },
+          {
+            title: 'Description',
+            dataIndex: 'description',
+            key: 'description',
+            render: (d: string | null) =>
+              d ? d : <Typography.Text type="secondary">—</Typography.Text>,
+          },
+          {
+            title: 'Proposed',
+            dataIndex: 'proposedAt',
+            key: 'proposedAt',
+            width: 140,
+            render: (iso: string) => formatRelative(iso),
+          },
+          {
+            title: '',
+            key: 'actions',
+            width: 200,
+            render: (_, row) => (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => approveMut.mutate({ skill: row })}
+                  loading={approveMut.isPending && approveMut.variables?.skill.id === row.id}
+                >
+                  Approve
                 </Button>
-              </Popconfirm>
-            </div>
-          ),
-        },
-      ]}
-    />
+                <Popconfirm
+                  title="Reject this candidate?"
+                  description="The candidate is marked rejected and stays on the record; it will not go live."
+                  onConfirm={() => rejectMut.mutate(row.id)}
+                  okText="Reject"
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button size="small" danger>
+                    Reject
+                  </Button>
+                </Popconfirm>
+              </div>
+            ),
+          },
+        ]}
+      />
+    </>
   );
 }
 

@@ -26,7 +26,13 @@ import type {
   Storage,
 } from '@ethosagent/types';
 import type { ActivityEvent, SseEvent } from '@ethosagent/web-contracts';
-import { DisposerStack, type IdentityMap, type MemoryBundle } from '@ethosagent/wiring';
+import {
+  createLearningInbox,
+  DisposerStack,
+  type IdentityMap,
+  type MemoryBundle,
+  type ReplayAndResolveResult,
+} from '@ethosagent/wiring';
 import type { Hono } from 'hono';
 import {
   createTakeoverSocket,
@@ -81,6 +87,7 @@ import { type GoalsBackend, GoalsService } from './services/goals.service';
 import { KanbanService } from './services/kanban.service';
 import { KeysService } from './services/keys.service';
 import { LabService } from './services/lab.service';
+import { LearningService } from './services/learning.service';
 import { McpService } from './services/mcp.service';
 import { MemoryService } from './services/memory.service';
 import { MeshService } from './services/mesh.service';
@@ -259,6 +266,15 @@ export interface CreateWebApiOptions {
    * code passes wiring's `EthosObservability`. Omitted (tests) → no rows.
    */
   approvalObservability?: ApprovalObservability;
+  /**
+   * On-demand replay for the `learning.replay` RPC (plan
+   * `trust-before-reach.md` Part 4, L-D9). Boot code passes a replayer built
+   * from the same config the production loop is (`createLearningReplayer`),
+   * and passes nothing when `learningReplay.enabled` is false. Absent →
+   * `learning.replay` fails `REPLAY_UNAVAILABLE`; every other learning
+   * procedure still works.
+   */
+  learningReplay?: (candidateId: string) => Promise<ReplayAndResolveResult>;
   /**
    * Auto-deny window for a pending approval, in ms. Omitted → the
    * `ApprovalsService` default (10 minutes); `0` disables the timeout so a
@@ -864,7 +880,27 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     ...(opts.contextAnatomyFn ? { contextAnatomy: opts.contextAnatomyFn } : {}),
   });
   const sharedMcpJsonStore = new McpJsonStore(storage);
+  // The learning review inbox (plan `trust-before-reach.md` Part 4, L-T8). One
+  // service for every human decision about a learned change: the `learning.*`
+  // RPCs AND the legacy procedures (`personalities.skillCandidate*`,
+  // `personalities.applyExpression`, `evolver.pending*`) decide through it, so
+  // the override rule and the `learning.*` audit rows have one owner
+  // (`LearningInbox`). The audit sink is the one outbox and tool approvals use:
+  // "what did a human let this agent do" is one question. The legacy queues are
+  // drained on first use, so a web-only deployment's inbox is not empty.
+  const learningService = new LearningService({
+    inbox: createLearningInbox({
+      storage,
+      dataDir: opts.dataDir,
+      personalities: opts.personalities,
+      expressions: opts.personalities,
+      defaultPersonalityId: async () => (await configRepo.read())?.personality ?? 'researcher',
+      ...(opts.approvalObservability ? { observability: opts.approvalObservability } : {}),
+      ...(opts.learningReplay ? { replay: opts.learningReplay } : {}),
+    }),
+  });
   const personalitiesService = new PersonalitiesService({
+    learning: learningService,
     personalities: opts.personalities,
     library: skillsLibrary,
     secrets,
@@ -950,8 +986,11 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       discovered: discoveredChats,
     }),
   });
-  const skillsService = new SkillsService({ library: skillsLibrary });
-  const evolverService = new EvolverService({ evolver: evolverRepo, library: skillsLibrary });
+  const skillsService = new SkillsService({
+    library: skillsLibrary,
+    pendingCount: async () => (await learningService.pendingSkills()).length,
+  });
+  const evolverService = new EvolverService({ evolver: evolverRepo, learning: learningService });
   const goalsService = new GoalsService({
     sessionStore: opts.sessionStore,
     ...(opts.goals ? { goals: opts.goals } : {}),
@@ -1070,6 +1109,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     storage,
     dataDir: opts.dataDir,
     personalities: opts.personalities,
+    learning: learningService,
   });
   const documentsService = new DocumentsService({
     personalities: opts.personalities,
@@ -1897,6 +1937,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       wakeRoutes: wakeRoutesService,
       deliveries: deliveriesService,
       outbox: outboxService,
+      learning: learningService,
       calls: callsService,
       observedChats: observedChatsService,
       toolRegistry: opts.toolRegistry,

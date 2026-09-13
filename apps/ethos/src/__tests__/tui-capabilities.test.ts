@@ -247,44 +247,38 @@ describe('formatSkillProposedNotice', () => {
     return text;
   };
 
-  /** The single argument between `ethos evolve apply ` and the closing backtick. */
-  const applyArg = (notice: string): string => {
-    const start = notice.indexOf('`ethos evolve apply ');
+  /** The single argument between `ethos learning approve ` and the closing backtick. */
+  const approveArg = (notice: string): string => {
+    const start = notice.indexOf('`ethos learning approve ');
     expect(start).toBeGreaterThanOrEqual(0);
-    const rest = notice.slice(start + '`ethos evolve apply '.length);
+    const rest = notice.slice(start + '`ethos learning approve '.length);
     const end = rest.indexOf('`');
     expect(end).toBeGreaterThanOrEqual(0);
     return rest.slice(0, end);
   };
 
-  it('names the skill and the apply command', () => {
-    expect(formatSkillProposedNotice('summarize-prs')).toBe(
-      "[skill-evolver] Proposed skill: summarize-prs — run `ethos evolve apply 'summarize-prs.md'` to activate",
+  it('names the learning candidate and the human approve command (L-T6)', () => {
+    expect(formatSkillProposedNotice('c-abc-123')).toBe(
+      "[skill-evolver] Proposed skill: learning candidate c-abc-123 — it goes live after a passing replay, or run `ethos learning approve 'c-abc-123'`",
     );
-    expect(decodeSingleQuoted(applyArg(formatSkillProposedNotice('summarize-prs')))).toBe(
-      'summarize-prs.md',
+    expect(decodeSingleQuoted(approveArg(formatSkillProposedNotice('c-abc-123')))).toBe(
+      'c-abc-123',
     );
   });
 
-  it('quotes a skill id containing a space', () => {
+  it('quotes an id containing a space', () => {
     const notice = formatSkillProposedNotice('rewrite-a b-1');
-    expect(notice).toContain("`ethos evolve apply 'rewrite-a b-1.md'`");
-    expect(decodeSingleQuoted(applyArg(notice))).toBe('rewrite-a b-1.md');
+    expect(notice).toContain("`ethos learning approve 'rewrite-a b-1'`");
+    expect(decodeSingleQuoted(approveArg(notice))).toBe('rewrite-a b-1');
   });
 
-  it('quotes a skill id containing `;` and `$(…)`', () => {
+  it('quotes an id containing `;` and `$(…)`', () => {
     const notice = formatSkillProposedNotice('rewrite-a;rm -rf ~ $(id)-1');
-    expect(decodeSingleQuoted(applyArg(notice))).toBe('rewrite-a;rm -rf ~ $(id)-1.md');
+    expect(decodeSingleQuoted(approveArg(notice))).toBe('rewrite-a;rm -rf ~ $(id)-1');
   });
 
-  it('quotes a skill id containing an embedded single quote', () => {
+  it('quotes an id containing an embedded single quote', () => {
     const notice = formatSkillProposedNotice("rewrite-a'; id #-1");
-    expect(decodeSingleQuoted(applyArg(notice))).toBe("rewrite-a'; id #-1.md");
-  });
-
-  it('keeps the `.md` suffix inside the quotes', () => {
-    // The suffix must be part of the same shell word, not a bare `.md` that a
-    // closing quote would strand outside it.
-    expect(formatSkillProposedNotice('x')).toContain("apply 'x.md'`");
+    expect(decodeSingleQuoted(approveArg(notice))).toBe("rewrite-a'; id #-1");
   });
 });

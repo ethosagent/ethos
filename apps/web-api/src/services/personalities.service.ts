@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { declaredWorkdirs } from '@ethosagent/core';
 import {
   type CharacterSheetBoundary,
@@ -14,7 +14,7 @@ import {
   SYSTEM_PERSONALITY_IDS,
   type UpdatePersonalityPatch,
 } from '@ethosagent/personalities';
-import { draftExpressionUpdate, draftSoulSplit, liveSkillDir } from '@ethosagent/skill-evolver';
+import { draftExpressionUpdate, draftSoulSplit } from '@ethosagent/skill-evolver';
 import type { PersonalitySkillRecord, SkillsInjector, SkillsLibrary } from '@ethosagent/skills';
 import { type McpJsonStore, mcpTokenSecretRef } from '@ethosagent/tools-mcp';
 import {
@@ -25,7 +25,9 @@ import {
   type Storage,
 } from '@ethosagent/types';
 import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
+import { listPendingExpressionCandidates, submitExpressionCandidate } from '@ethosagent/wiring';
 import type { ConfigRepository } from '../repositories/config.repository';
+import { type LearningService, learningRefusalError } from './learning.service';
 
 /** Latest Personality-Judge alignment, mapped from `.judge-history/state.json`. */
 interface JudgeWire {
@@ -50,6 +52,13 @@ interface NightlyWire {
 export interface PersonalitiesServiceOptions {
   personalities: FilePersonalityRegistry;
   library: SkillsLibrary;
+  /**
+   * The learning review inbox (L-T8). Every approval this service performs —
+   * `skillCandidateApprove`, `applyExpression` — goes through it, so the
+   * override rule and the audit rows have one owner. Absent → the skill
+   * candidate queue lists empty and every decision fails `NOT_CONFIGURED`.
+   */
+  learning?: LearningService;
   secrets?: import('@ethosagent/types').SecretsResolver;
   mcpJsonStore?: McpJsonStore;
   /** Lazy LLM factory — drafts Expression updates and Soul splits (Phase 3a). */
@@ -513,27 +522,34 @@ export class PersonalitiesService {
   }
 
   // ---------------------------------------------------------------------------
-  // Pending skill-candidate review queue. The nightly skill-evolver (manual
-  // mode) drafts candidates into `<dataDir>/skills/.pending/<id>/<file>.md`
-  // and leaves them for a human. Approving promotes the file into the live
-  // skills dir (`<dataDir>/skills/<file>.md`); rejecting deletes it. Paths
-  // mirror `proposeSkillFromEvidence` in @ethosagent/skill-evolver exactly.
+  // Pending skill-candidate review queue — a legacy adapter over the learning
+  // inbox (plan `trust-before-reach.md` Part 4, L-T8).
+  //
+  // These three procedures used to read and promote files under
+  // `<dataDir>/skills/.pending/<id>/` directly. Every proposal is now a learning
+  // candidate, so they list this personality's WAITING SKILL CANDIDATES and
+  // decide through `LearningService`. `fileName` is still the file the skill
+  // lands as (the destination's basename); a name that matches two waiting
+  // candidates is refused rather than guessed.
+  //
+  // What changed for a caller: `skillCandidateApprove` carries no reason, so it
+  // approves only a candidate whose replay passed; any other is refused with
+  // `INVALID_INPUT` naming the paths that can carry a reason: `ethos learning
+  // approve <id> --override`, and the web Skills approval queue.
+  // Approving no longer "treats an existing live file as already promoted" —
+  // `promote()` refuses a stale candidate instead of silently dropping it.
   // ---------------------------------------------------------------------------
 
   async skillCandidatesList(
     personalityId: string,
   ): Promise<{ candidates: Array<{ fileName: string; content: string }> }> {
     this.requirePersonality(personalityId);
-    const { storage, dataDir } = this.opts;
-    if (!storage || !dataDir) return { candidates: [] };
-    const pendingDir = join(dataDir, 'skills', '.pending', personalityId);
-    const names = (await storage.list(pendingDir)).filter((n) => n.endsWith('.md'));
-    const candidates: Array<{ fileName: string; content: string }> = [];
-    for (const fileName of names) {
-      const content = await storage.read(join(pendingDir, fileName));
-      if (content !== null) candidates.push({ fileName, content });
-    }
-    return { candidates };
+    const learning = this.opts.learning;
+    if (!learning) return { candidates: [] };
+    const waiting = await learning.pendingSkills(personalityId);
+    return {
+      candidates: waiting.map((c) => ({ fileName: basename(c.destination), content: c.content })),
+    };
   }
 
   async skillCandidateApprove(
@@ -541,41 +557,37 @@ export class PersonalitiesService {
     fileName: string,
   ): Promise<{ ok: true; promotedTo: string }> {
     this.requirePersonality(personalityId);
-    const { storage, dataDir } = this.opts;
-    if (!storage || !dataDir) throw storageNotConfigured();
+    const learning = this.requireLearning();
     this.assertCandidateFileName(fileName);
-    const pendingPath = join(dataDir, 'skills', '.pending', personalityId, fileName);
-    // Honour `skill_evolution.scope`: a personality-scoped skill must land in
-    // that personality's own skills dir, not the shared one. Same helper the
-    // nightly promoter uses (`liveSkillDir` in @ethosagent/skill-evolver), so
-    // the two paths cannot drift apart again.
-    const scope = this.opts.personalities.describe(personalityId)?.config.skill_evolution?.scope;
-    const liveDir = liveSkillDir(dataDir, personalityId, scope);
-    const livePath = join(liveDir, fileName);
-    const body = await storage.read(pendingPath);
-    if (body === null) throw candidateNotFound(personalityId, fileName);
-    // If the live file already exists, treat the candidate as already promoted:
-    // skip the (re)write but still clear the pending file so the queue drains.
-    if (!(await storage.exists(livePath))) {
-      await storage.mkdir(liveDir);
-      await storage.writeAtomic(livePath, body);
+    const found = await learning.resolveSkill(fileName, personalityId);
+    if (!found.ok) throw learningRefusalError(found, 'Use personalities.skillCandidatesList.');
+    const result = await learning.approve({ candidateId: found.value.id, decidedBy: 'web' });
+    if (!result.ok) {
+      throw learningRefusalError(
+        result,
+        result.code === 'override_required'
+          ? `Approve ${found.value.id} with a reason from the Skills page approval queue, or run \`ethos learning approve ${found.value.id} --override "<reason>"\`.`
+          : `Run \`ethos learning show ${found.value.id}\` for its timeline.`,
+      );
     }
-    await storage.remove(pendingPath);
-    return { ok: true, promotedTo: livePath };
+    return { ok: true, promotedTo: result.value.promotion.destination };
   }
 
   async skillCandidateReject(personalityId: string, fileName: string): Promise<void> {
     this.requirePersonality(personalityId);
-    const { storage, dataDir } = this.opts;
-    if (!storage || !dataDir) throw storageNotConfigured();
+    const learning = this.requireLearning();
     this.assertCandidateFileName(fileName);
-    const pendingPath = join(dataDir, 'skills', '.pending', personalityId, fileName);
-    // Idempotent: a missing file is already in the desired state.
-    if (await storage.exists(pendingPath)) await storage.remove(pendingPath);
+    const found = await learning.resolveSkill(fileName, personalityId);
+    // Idempotent, as before: nothing waiting under that name is already the desired state.
+    if (!found.ok && found.code === 'not_found') return;
+    if (!found.ok)
+      throw learningRefusalError(found, 'Reject it by id: `ethos learning reject <id>`.');
+    const result = await learning.reject({ candidateId: found.value.id, decidedBy: 'web' });
+    if (!result.ok) throw learningRefusalError(result, 'Reload the candidate list.');
   }
 
   /** Reject anything that is not a bare `<name>.md` (no path separators, no
-   *  `..`) so a candidate name can never escape the pending dir. */
+   *  `..`) — the wire contract's shape, checked again at the service. */
   private assertCandidateFileName(fileName: string): void {
     if (!/^[a-zA-Z0-9_-]+\.md$/.test(fileName)) {
       throw new EthosError({
@@ -584,6 +596,18 @@ export class PersonalitiesService {
         action: 'Pass a bare "<name>.md" file name with no path separators.',
       });
     }
+  }
+
+  private requireLearning(): LearningService {
+    const learning = this.opts.learning;
+    if (!learning) {
+      throw new EthosError({
+        code: 'NOT_CONFIGURED',
+        cause: 'The learning inbox is not wired into this server',
+        action: 'Start the server with `ethos serve`, which wires the learning inbox.',
+      });
+    }
+    return learning;
   }
 
   async mcpSetToken(personalityId: string, server: string, token: string): Promise<void> {
@@ -740,6 +764,11 @@ export class PersonalitiesService {
     }
   }
 
+  // Path 5 (plan `trust-before-reach.md` Part 4, L-T6). A web draft used to live
+  // only in the client, and Apply wrote SOUL.md directly. Now the draft is a
+  // learning candidate the moment it is made, and Apply is a human approval of
+  // that candidate through `promote()` — so a web change has the same stale
+  // check, Learning Log revision and rollback record as every other path.
   async proposeExpression(id: string): Promise<{
     currentExpression: string;
     newExpression: string;
@@ -754,6 +783,19 @@ export class PersonalitiesService {
       { core: soul.core, currentExpression: soul.expression, evidence },
       llm,
     );
+    const { storage, dataDir } = this.opts;
+    if (storage && dataDir) {
+      await submitExpressionCandidate(
+        { storage, dataDir, personalities: this.opts.personalities },
+        {
+          personalityId: id,
+          origin: 'web',
+          newExpression: draft.newExpression,
+          rationale: draft.rationale,
+          evidenceRef: `web:${new Date().toISOString()}`,
+        },
+      );
+    }
     return {
       currentExpression: soul.expression,
       newExpression: draft.newExpression,
@@ -762,17 +804,53 @@ export class PersonalitiesService {
     };
   }
 
+  // Apply is a HUMAN APPROVAL of a candidate that has not been replayed, so it
+  // goes through `LearningService.approve` like every other approval (L-T8)
+  // and needs `overrideReason` — the inbox refuses a non-`pass` approval
+  // without one. `summary` is the drafter's rationale and is not a reason.
   async applyExpression(
     id: string,
     newExpression: string,
     summary: string,
     evidenceRef: string,
+    overrideReason?: string,
   ): Promise<{ revisionId: string }> {
-    const { entry } = await this.opts.personalities.evolveExpression(id, newExpression, {
-      summary,
-      evidenceRef,
+    const { storage, dataDir } = this.opts;
+    if (!storage || !dataDir) throw storageNotConfigured();
+    const learning = this.requireLearning();
+    const ctx = { storage, dataDir, personalities: this.opts.personalities };
+    // The candidate `proposeExpression` submitted for exactly these bytes; an
+    // edited draft is a different change, so it becomes its own candidate.
+    const waiting = (await listPendingExpressionCandidates(ctx, id)).find(
+      (c) => c.origin === 'web' && c.content === newExpression,
+    );
+    const candidate =
+      waiting ??
+      (await submitExpressionCandidate(ctx, {
+        personalityId: id,
+        origin: 'web',
+        newExpression,
+        rationale: summary,
+        evidenceRef,
+      }));
+    const result = await learning.approve({
+      candidateId: candidate.id,
+      decidedBy: 'web',
+      override: overrideReason ? { reason: overrideReason } : undefined,
     });
-    return { revisionId: entry.revisionId };
+    if (!result.ok) {
+      throw learningRefusalError(
+        { code: result.code, reason: `Expression not applied: ${result.reason}` },
+        result.code === 'override_required'
+          ? `Give a reason (overrideReason) to apply ${candidate.id} anyway, or run \`ethos learning replay ${candidate.id}\` first.`
+          : 'Reload the Living Soul and draft the change again.',
+        'INVALID_INPUT',
+      );
+    }
+    if (result.value.promotion.kind !== 'expression') {
+      throw new Error(`applyExpression: candidate ${candidate.id} is not an Expression`);
+    }
+    return { revisionId: result.value.promotion.revisionId };
   }
 
   async revertExpression(id: string): Promise<{ ok: true; revertedTo: string }> {
@@ -965,14 +1043,6 @@ function storageNotConfigured(): EthosError {
     code: 'NOT_CONFIGURED',
     cause: 'Storage not configured for this server',
     action: 'Start the server with a data dir + storage wired in.',
-  });
-}
-
-function candidateNotFound(personalityId: string, fileName: string): EthosError {
-  return new EthosError({
-    code: 'SKILL_NOT_FOUND',
-    cause: `Skill candidate "${fileName}" not found for personality "${personalityId}".`,
-    action: 'Use personalities.skillCandidatesList to see pending candidates.',
   });
 }
 

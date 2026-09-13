@@ -23,6 +23,7 @@ import {
   ethosDir,
   readConfig,
   readRawConfig,
+  resolveLearningReplay,
   writeConfig,
 } from '@ethosagent/config';
 import {
@@ -107,6 +108,7 @@ import {
   buildSystemTaskHandlers,
   closeObservabilityStore,
   createAgentLoop,
+  createLearningReplayer,
   createLLM,
   createTeamAgentLoop,
   deriveIdleWatcherCapabilities,
@@ -2246,6 +2248,17 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     approvalObservability: {
       recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
     },
+    // On-demand replay for the `learning.replay` RPC (L-D9): two real dry-run
+    // loops built from this config, so the baseline arm measures the agent this
+    // server runs. Absent when `learningReplay.enabled` is false — the RPC then
+    // refuses `REPLAY_UNAVAILABLE` rather than running one. Built per replay; see
+    // `createCliLearningInbox` for why.
+    ...(resolveLearningReplay(config).enabled
+      ? {
+          learningReplay: async (candidateId: string) =>
+            (await createLearningReplayer(config, { personalities, actor: 'web' }))(candidateId),
+        }
+      : {}),
     // Operator-tunable approval SLA. `!== undefined`, not truthiness — `0`
     // ("wait forever") is a meaningful value the operator may have set.
     ...(config.approvalTimeoutMs !== undefined

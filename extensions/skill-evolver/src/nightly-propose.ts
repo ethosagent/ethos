@@ -1,71 +1,62 @@
-// Phase 3d — nightly skill proposal. The governed nightly pass calls
-// proposeSkillFromEvidence() to DRAFT one skill candidate from the night's
-// evidence digest, then gate it on the personality's approval mode:
+// Phase 3d — nightly skill proposal (path 2 in plan `trust-before-reach.md`
+// Part 4). The governed nightly pass calls proposeSkillFromEvidence() to DRAFT
+// one skill candidate from the night's evidence digest and submit it to the
+// learning inbox.
 //
-//   manual (evolution_approval_mode unset or 'user'): write the candidate to
-//     the per-personality pending queue (<dataDir>/skills/.pending/<id>/) only.
-//     A human promotes it later via `ethos evolve apply`.
-//   auto (evolution_approval_mode === 'auto'): validate the candidate through
-//     the injected `validate` seam (the ImprovementFork proposal test harness in
-//     production; a stub in tests). On PASS, promote it to <dataDir>/skills/;
-//     on FAIL, leave it in pending.
+// Nothing here promotes. It used to: an `auto` personality's draft went live on
+// one LLM PASS/FAIL reply, and an omitted validator defaulted to PASS. Whether a
+// candidate goes live is now decided after a replay by `replayAndResolve`
+// (`extensions/learning-inbox/src/auto-promotion.ts`), which reads the auto
+// knobs once (L-D3) and never takes an LLM opinion as the verdict (L-D1).
 //
 // Drafting reuses the existing renderNewSkillPrompt / parseNewSkillResponse
 // machinery — the same "synthesize a new skill from work" path the eval-driven
 // evolver uses — fed a single synthetic task built from the evidence digest.
 //
-// Idempotency is the orchestrator's job (it records the `skills` step in the
-// nightly checkpoint and skips it on re-run for the same window). This function
-// additionally refuses to draft a second candidate for a window that already
-// has one queued, so a forced re-run never double-writes.
+// Idempotency: the orchestrator checkpoints the `skills` step per window, and
+// the candidate id is derived from the personality and the window
+// (`nightlySkillCandidateId`), so a forced re-run finds the candidate already
+// submitted and drafts nothing — no second LLM call.
 
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import type { LLMProvider, Message, Storage } from '@ethosagent/types';
+import type { LLMProvider, Message } from '@ethosagent/types';
+import type { LearningSubmitPort } from './learning-port';
 import { parseNewSkillResponse, renderNewSkillPrompt } from './prompts';
 import { liveSkillDir } from './skill-dir';
 import type { TaskSummary } from './types';
 
-export type ApprovalMode = 'auto' | 'user';
-
-export type ProposalDecision = 'queued' | 'promoted' | 'rejected' | 'none';
+export type ProposalDecision = 'submitted' | 'exists' | 'none';
 
 export interface NightlySkillProposalResult {
   decision: ProposalDecision;
-  /** Candidate filename (without the pending/live directory). Null when none was drafted. */
+  /** The inbox candidate id. Null when nothing was drafted. */
+  candidateId: string | null;
+  /** Candidate filename at its destination. Null when nothing was drafted. */
   fileName: string | null;
   /** Short human-readable reason for the decision. */
   reason: string;
 }
 
 export interface ProposeSkillInput {
-  /** Personality id — scopes the per-personality pending directory. */
   personalityId: string;
-  /** Approval gate. Absent/'user' = manual (queue only); 'auto' = validate + maybe promote. */
-  approvalMode: ApprovalMode | undefined;
   /**
-   * Promotion gate override. `'auto'` promotes after validation; `'review'`
-   * queues for human approval. When unset, falls back to `approvalMode`.
-   */
-  promotion?: 'review' | 'auto';
-  /**
-   * Where a promoted skill is written. `'shared'` (default) = <dataDir>/skills/;
-   * `'personality'` = <dataDir>/personalities/<id>/skills/.
+   * `skill_evolution.scope`. Decides the destination: `'personality'` =
+   * `<dataDir>/personalities/<id>/skills/`, otherwise `<dataDir>/skills/`.
    */
   scope?: 'personality' | 'shared';
   /** Compact prose digest of the night's interactions (NightlyEvidence.evidenceDigest). */
   evidenceDigest: string;
-  /** Stable window marker — used to namespace the candidate so re-runs are idempotent. */
+  /** Stable window marker — namespaces the candidate so re-runs are idempotent. */
   windowEnd: string;
-  /** ~/.ethos root; pending = <dataDir>/skills/.pending/<id>/, live = <dataDir>/skills/. */
+  /** ~/.ethos root. */
   dataDir: string;
-  storage: Storage;
   llm: LLMProvider;
-  /**
-   * Auto-mode validation seam. Receives the drafted candidate markdown and
-   * returns whether it passes. In production this runs the ImprovementFork
-   * proposal test harness; tests inject a stub. Only called in 'auto' mode.
-   */
-  validate?: (candidate: { fileName: string; content: string }) => Promise<boolean>;
+  learning: LearningSubmitPort;
+  /** The evidence sessions the digest was built from. */
+  evidenceSessionIds?: string[];
+  /** Frozen cases from the evidence sessions, for the replay to improve on. */
+  targetCaseIds?: readonly string[];
 }
 
 async function callLLM(llm: LLMProvider, prompt: string): Promise<string> {
@@ -77,41 +68,39 @@ async function callLLM(llm: LLMProvider, prompt: string): Promise<string> {
   return text;
 }
 
-// A window-stable filename so a forced re-run of the same nightly window can
-// detect (and skip) an already-queued candidate. The window end is sanitised
-// into a filename-safe token.
+// A window-stable filename so a forced re-run of the same nightly window lands
+// on the same destination. The window end is sanitised into a filename token.
 function candidateFileName(windowEnd: string): string {
   const token = windowEnd.replace(/[^0-9a-zA-Z]/g, '').slice(0, 16) || 'window';
   return `nightly-${token}.md`;
 }
 
+/** One candidate per personality per window. */
+export function nightlySkillCandidateId(personalityId: string, windowEnd: string): string {
+  const digest = createHash('sha256').update(`${personalityId}@${windowEnd}`, 'utf8').digest('hex');
+  return `n-${digest.slice(0, 16)}`;
+}
+
 /**
- * Draft and gate ONE skill candidate from nightly evidence. Returns the
- * decision and the candidate filename (null if nothing was drafted).
- *
- * Errors are NOT swallowed here — the caller (the nightly `createSkills` dep)
- * surfaces them as a failed step, mirroring the judge/expression steps.
+ * Draft ONE skill candidate from nightly evidence and submit it. Errors are NOT
+ * swallowed here — the caller (the nightly `createSkills` dep) surfaces them as
+ * a failed step, mirroring the judge/expression steps.
  */
 export async function proposeSkillFromEvidence(
   input: ProposeSkillInput,
 ): Promise<NightlySkillProposalResult> {
   const fileName = candidateFileName(input.windowEnd);
-  const pendingDir = join(input.dataDir, 'skills', '.pending', input.personalityId);
-  const liveDir = liveSkillDir(input.dataDir, input.personalityId, input.scope);
-  const pendingPath = join(pendingDir, fileName);
-  const livePath = join(liveDir, fileName);
+  const id = nightlySkillCandidateId(input.personalityId, input.windowEnd);
 
-  // Idempotency guard: a candidate for this window already exists (pending or
-  // promoted). Do not draft or promote again.
-  if ((await input.storage.read(pendingPath)) !== null) {
-    return { decision: 'queued', fileName, reason: 'candidate already queued for this window' };
-  }
-  if ((await input.storage.read(livePath)) !== null) {
-    return { decision: 'promoted', fileName, reason: 'candidate already promoted for this window' };
+  if (await input.learning.has(id)) {
+    return {
+      decision: 'exists',
+      candidateId: id,
+      fileName,
+      reason: 'candidate already submitted for this window',
+    };
   }
 
-  // Draft via the existing new-skill synthesis prompt, feeding the evidence
-  // digest as a single synthetic high-scoring task.
   const task: TaskSummary = {
     taskId: `nightly:${input.windowEnd}`,
     prompt: 'Recent interactions for this personality',
@@ -122,31 +111,34 @@ export async function proposeSkillFromEvidence(
   const raw = await callLLM(input.llm, renderNewSkillPrompt({ tasks: [task] }));
   const parsed = parseNewSkillResponse(raw);
   if (parsed.kind === 'skip') {
-    return { decision: 'none', fileName: null, reason: `no candidate (${parsed.reason})` };
+    return {
+      decision: 'none',
+      candidateId: null,
+      fileName: null,
+      reason: `no candidate (${parsed.reason})`,
+    };
   }
 
-  const body = `${parsed.content}\n`;
-
-  // Promotion gate. The explicit `promotion` knob wins when set; otherwise
-  // fall back to the legacy `approvalMode`-based gate. 'review' === manual.
-  const auto = input.promotion ? input.promotion === 'auto' : input.approvalMode === 'auto';
-
-  // Manual gate (review / unset 'user'): queue only, never promote.
-  if (!auto) {
-    await input.storage.mkdir(pendingDir);
-    await input.storage.write(pendingPath, body);
-    return { decision: 'queued', fileName, reason: 'manual approval — queued for review' };
-  }
-
-  // Auto gate: validate, then promote on PASS / queue on FAIL.
-  const passed = input.validate ? await input.validate({ fileName, content: body }) : true;
-  if (!passed) {
-    await input.storage.mkdir(pendingDir);
-    await input.storage.write(pendingPath, body);
-    return { decision: 'rejected', fileName, reason: 'auto validation failed — left in pending' };
-  }
-
-  await input.storage.mkdir(liveDir);
-  await input.storage.write(livePath, body);
-  return { decision: 'promoted', fileName, reason: 'auto validation passed — promoted' };
+  const destination = join(liveSkillDir(input.dataDir, input.personalityId, input.scope), fileName);
+  const candidate = await input.learning.submit({
+    id,
+    kind: 'skill',
+    op: 'create',
+    personalityId: input.personalityId,
+    origin: 'nightly',
+    destination,
+    content: `${parsed.content}\n`,
+    evidence: {
+      sessionIds: input.evidenceSessionIds ?? [],
+      digest: input.evidenceDigest,
+      ref: `nightly:${input.windowEnd}`,
+    },
+    targetCaseIds: input.targetCaseIds ?? [],
+  });
+  return {
+    decision: 'submitted',
+    candidateId: candidate.id,
+    fileName,
+    reason: 'submitted to the learning inbox; waits for replay',
+  };
 }

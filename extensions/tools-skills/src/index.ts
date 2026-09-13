@@ -6,7 +6,7 @@ export interface SkillEntry {
   kind?: string;
 }
 
-/** One entry of the `.pending` review queue. Mirrors `PendingSkillRecord`. */
+/** One skill candidate waiting in the learning inbox. `id` is the candidate id. */
 export interface PendingSkillSummary {
   id: string;
   name: string;
@@ -16,16 +16,30 @@ export interface PendingSkillSummary {
 }
 
 /**
- * The pending-queue slice of `SkillsLibrary` (`@ethosagent/skills`), declared
- * structurally so this package keeps its single `@ethosagent/types` dependency.
- * The composition root passes the real library in — these tools and the web
- * Skills/Evolver tab therefore drive the exact same methods, not a second path.
+ * The waiting-skill slice of the learning inbox, declared structurally so this
+ * package keeps its single `@ethosagent/types` dependency. The composition root
+ * passes `learningPendingSkillsPort` (`packages/wiring/src/learning-pipeline.ts`),
+ * which lists and rejects through `LearningInbox` — the same object the
+ * `learning.*` RPCs and `ethos learning` decide through, not a second path.
+ *
+ * There is no `approvePending` here on purpose: approval is human-only (L-D13,
+ * see `skills_pending_approve` below), so no tool in this package can promote.
  */
 export interface PendingSkillsPort {
   listPending(): Promise<PendingSkillSummary[]>;
-  approvePending(id: string): Promise<void>;
   rejectPending(id: string): Promise<void>;
 }
+
+/**
+ * What `skills_pending_approve` answers, every time. Names both human paths.
+ * `ethos learning approve` is `apps/ethos/src/commands/learning.ts` (L-T8).
+ */
+export const SKILL_APPROVAL_IS_HUMAN_ONLY =
+  'Approving a proposed skill is a human decision and cannot be made from chat. ' +
+  'Ask the user to run `ethos learning approve <id>` in a terminal (adding ' +
+  '`--override "<reason>"` when it has not passed a replay), or to approve it ' +
+  'from the Skills page approval queue in the web UI, which asks for a reason when one is needed. ' +
+  'Rejecting still works here, with skills_pending_reject.';
 
 export interface SkillsToolsOptions {
   listSkills: (personalityId?: string) => SkillEntry[];
@@ -113,9 +127,8 @@ export function createSkillsTools(opts: SkillsToolsOptions): Tool[] {
   };
 
   // ---------------------------------------------------------------------------
-  // Pending-queue review, from chat — the same approve/reject the web Skills
-  // tab drives, so the user never has to leave the conversation to triage what
-  // the agent proposed.
+  // Pending-queue review, from chat. Listing, viewing and rejecting work here;
+  // approving does not (L-D13).
   // ---------------------------------------------------------------------------
 
   const pendingListTool: Tool = {
@@ -139,7 +152,7 @@ export function createSkillsTools(opts: SkillsToolsOptions): Tool[] {
         .join('\n');
       return {
         ok: true,
-        value: `${items.length} proposed skill(s) awaiting review:\n\n${formatted}\n\nUse skills_pending_view to read one in full, then skills_pending_approve or skills_pending_reject with its id.`,
+        value: `${items.length} proposed skill(s) awaiting review:\n\n${formatted}\n\nUse skills_pending_view to read one in full. The user approves with \`ethos learning approve <id>\` or from the Skills page approval queue in the web UI; skills_pending_reject discards one.`,
       };
     },
   };
@@ -184,10 +197,17 @@ export function createSkillsTools(opts: SkillsToolsOptions): Tool[] {
     },
   };
 
+  // L-D13 (plan `trust-before-reach.md` Part 4) — approval is human-only, so
+  // this tool never promotes. The auto resolver (`replayAndResolve` in
+  // `extensions/learning-inbox/src/auto-promotion.ts`) is the ONE non-human
+  // promotion path, and it promotes only on a measured `pass`. A model
+  // approving its own proposal in chat would be a second one — and on CLI/TUI,
+  // where no approval prompt appears, it would promote with no human at all.
+  // Rejecting stays, because rejection only narrows what the agent can do.
   const pendingApproveTool: Tool = {
     name: 'skills_pending_approve',
     description:
-      'Approve one proposed skill by id, moving it out of the review queue and into the live skill library. Call this only when the user has explicitly asked for that specific skill to be approved — never on your own initiative, since you are also what proposes skills. The id is shown to the user in the confirmation prompt on surfaces that have one (web, desktop, Slack); in the CLI and TUI there is no approval prompt and this runs immediately.',
+      'Does not approve. Approving a proposed skill is a human decision made outside chat — with `ethos learning approve <id>` in a terminal, or from the Skills page approval queue in the web UI. Call this only to tell the user how to approve a skill they asked about.',
     toolset: 'skills',
     maxResultChars: 2_000,
     requiresApproval: true,
@@ -203,17 +223,8 @@ export function createSkillsTools(opts: SkillsToolsOptions): Tool[] {
       },
       required: ['id'],
     },
-    async execute(args): Promise<ToolResult> {
-      const { id } = args as { id: string };
-      if (!id) return { ok: false, error: 'id is required', code: 'input_invalid', field: 'id' };
-      if (!isSafeSkillId(id)) return invalidId(id);
-
-      try {
-        await opts.pending.approvePending(id);
-      } catch (err) {
-        return { ok: false, error: messageOf(err), code: 'not_available' };
-      }
-      return { ok: true, value: `Approved proposed skill "${id}". It is now a live skill.` };
+    async execute(): Promise<ToolResult> {
+      return { ok: false, code: 'not_available', error: SKILL_APPROVAL_IS_HUMAN_ONLY };
     },
   };
 

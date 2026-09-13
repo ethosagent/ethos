@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: use-web-dashboard
 time: "10 min"
-updated: 2026-09-02
+updated: 2026-09-13
 ---
 
 ## Task
@@ -189,9 +189,13 @@ For the full walkthrough, see [Use the admin panel](use-admin-panel.md).
 
 ### 12. Review skill proposals
 
-When the skill evolver proposes a new skill, a badge appears in the status bar.
+Open the **Skills** page, then the **Evolver** tab. Its count badge shows how many skill candidates wait in the learning inbox. Open the **Approval queue** sub-tab to see them.
 
-Click the badge to open the proposals panel. Each proposal shows the skill name, when it was proposed, and a preview of the content. Approve to activate the skill; reject to delete it.
+Click **Approve** to promote a candidate to a live skill. If the candidate has not passed a replay, a prompt asks for a reason first; the reason is recorded in the audit log.
+
+Click **Reject** to mark a candidate rejected. No live skill file changes, and the candidate stays visible with `ethos learning list --all`.
+
+Expression candidates are applied from a personality's **Living Soul** section. No dashboard page lists every candidate together yet; run `ethos learning list` for that.
 
 For the full workflow, see [Manage skill evolution](manage-skill-evolution.md).
 

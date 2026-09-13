@@ -22,16 +22,27 @@
  *   6. Promotion and rollback (`promote.ts`, L-T5) — the one path that changes a
  *      live skill file or an Expression, with its snapshot and refusals.
  *
- * Nothing submits candidates or runs replay on a schedule yet; rerouting the
- * seven learning paths through this package is L-T6.
+ *   7. The one auto resolver and the one non-human promotion path
+ *      (`auto-promotion.ts`, L-T6): `resolveAutoPromotion` reads the three
+ *      auto knobs in one order (L-D3), and `replayAndResolve` promotes only on
+ *      a `pass` verdict, an `auto` answer, and a destination visible to the
+ *      replayed personality alone (L-D11).
+ *   8. The review inbox (`inbox.ts`, L-T8): `LearningInbox` — list, get,
+ *      replay, approve, reject, rollback — the one service every human surface
+ *      decides through. It owns the override rule (a non-`pass` approval needs
+ *      a reason) and the `learning.*` `recordSafetyApproval` rows (X-D11).
+ *
+ * The seven learning paths submit here (L-T6); the composition that binds this
+ * package to a real loop, registry and config is
+ * `packages/wiring/src/learning-pipeline.ts`.
  *
  * Dependencies are `@ethosagent/types`, `@ethosagent/eval-harness` (the scorers
  * and `collectDryRunPlan`, used directly by `replay.ts`), and one predicate from
  * `@ethosagent/safety-groundtruth` (`isCheckLine`). Still injected rather than
  * imported: `liveSkillDir` (`@ethosagent/skill-evolver`),
  * `checkSkillFrontmatter` (`@ethosagent/skills`) and the Expression registry
- * (`@ethosagent/personalities`), all through `PromoteDeps`. Once L-T6 lands those
- * packages call into this one, so importing them here would be a dependency
+ * (`@ethosagent/personalities`), all through `PromoteDeps`. Wiring composes
+ * those packages with this one, so importing them here would be a dependency
  * cycle.
  */
 
@@ -41,6 +52,16 @@ export {
   type LearningAuditEntry,
   readAudit,
 } from './audit';
+export {
+  type AutoPromotionDecision,
+  type AutoPromotionKnobs,
+  type AutoPromotionMode,
+  autoPromotionDecision,
+  type ReplayAndResolveDeps,
+  type ReplayAndResolveResult,
+  replayAndResolve,
+  resolveAutoPromotion,
+} from './auto-promotion';
 export {
   type AssertionKind,
   CASE_CONTEXT_MESSAGES,
@@ -73,6 +94,19 @@ export {
   type LegacyImportResult,
   readTargetFile,
 } from './import-legacy';
+export {
+  AWAITING_DECISION,
+  type CurrentContent,
+  type DecisionActor,
+  LEARNING_AUDIT_CODES,
+  type LearningCandidateDetail,
+  type LearningDecision,
+  LearningInbox,
+  type LearningInboxDeps,
+  type LearningInboxRefusal,
+  type LearningInboxResult,
+  type LearningObservability,
+} from './inbox';
 export { type OverlayShadow, OverlayStorage } from './overlay-storage';
 export {
   auditPath,

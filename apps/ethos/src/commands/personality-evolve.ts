@@ -2,16 +2,33 @@
 // `ethos personality judge <id>` (Phases 3a/3b).
 //
 // Governed learning for a personality's Living Soul Expression. `evolve` gathers
-// recent session evidence, drafts an Expression update via the LLM, shows the
-// diff + rationale, and applies it only after explicit user approval (user mode)
-// or auto-applies it behind a Personality-Judge alignment gate (auto mode).
+// recent session evidence, drafts an Expression update via the LLM, and submits
+// it to the learning inbox (path 4, plan `trust-before-reach.md` Part 4).
+//   user mode: shows the diff + rationale; `y` is a human approval and promotes
+//     the candidate through `LearningInbox.approve`, `N` rejects it through
+//     `LearningInbox.reject`. A candidate that has not passed a replay needs an
+//     override reason (the inbox's rule), so `y` asks for one; an empty reason
+//     cancels the approval and the candidate stays waiting.
+//   auto mode: the Judge decides only WHETHER to draft (L-D2). The draft waits
+//     in the inbox and goes live only on a `pass` replay (`replayAndResolve`).
+// Both modes first offer any Expression candidate already waiting for this
+// personality — what the nightly pass drafted — in user mode.
 // `revert` undoes the most recent Expression update. `judge` runs the
 // Personality-Judge on-demand and reports an alignment score and any signal.
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import type { EthosConfig } from '@ethosagent/config';
 import { EvalRunner } from '@ethosagent/eval-harness';
-import { LEARNING_EXCLUDED_KEY_PREFIXES } from '@ethosagent/learning-inbox';
+import {
+  CASE_CONTEXT_MESSAGES,
+  caseFromSessionTurn,
+  freezeCase,
+  LEARNING_EXCLUDED_KEY_PREFIXES,
+  type LearningCandidate,
+  type LearningInbox,
+  MAX_TARGET_CASES,
+  type SessionCaseTurn,
+} from '@ethosagent/learning-inbox';
 import {
   GOOD_ALIGNMENT_THRESHOLD,
   type JudgeResult,
@@ -19,19 +36,31 @@ import {
 } from '@ethosagent/personality-judge';
 import { draftExpressionUpdate } from '@ethosagent/skill-evolver';
 import { formatError, toEthosError } from '@ethosagent/types';
+import {
+  importLegacyLearningQueues,
+  listPendingExpressionCandidates,
+  personalityCore,
+  submitExpressionCandidate,
+} from '@ethosagent/wiring';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
-import { createAgentLoop, createLLM, getStorage } from '../wiring';
-import { offerPendingExpression } from './pending-expression';
+import { createAgentLoop, createCliLearningInbox, createLLM, getStorage } from '../wiring';
 
-async function confirm(question: string): Promise<boolean> {
+async function ask(question: string): Promise<string> {
   const rl = createInterface({ input: stdin, output: stdout });
   try {
-    const answer = await rl.question(question);
-    return answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes';
+    return (await rl.question(question)).trim();
   } finally {
     rl.close();
   }
 }
+
+async function confirm(question: string): Promise<boolean> {
+  const answer = (await ask(question)).toLowerCase();
+  return answer === 'y' || answer === 'yes';
+}
+
+const OVERRIDE_REASON_PROMPT =
+  'This change has not passed a replay. Why approve it anyway? (empty cancels) ';
 
 function oneLine(content: string): string {
   const collapsed = content.replace(/\s+/g, ' ').trim();
@@ -67,8 +96,76 @@ async function printExpressionProposal(
   );
 }
 
+const DECIDED_BY = 'ethos personality evolve';
+
+/**
+ * Put a CLI human's answer on an Expression candidate, through the learning
+ * inbox — the one owner of the override rule and of the `learning.*` audit row
+ * each decision writes (`LearningInbox`, `extensions/learning-inbox/src/inbox.ts`).
+ *
+ *   `N`  → `inbox.reject`: one `learning.reject` row.
+ *   `y`  → `inbox.approve`. A verdict other than `pass` (a `user`-mode candidate
+ *          is never replayed) needs a reason, so `askReason` is called first;
+ *          the inbox refuses a blank one with `override_required`, which writes
+ *          nothing, and that refusal is reported as `cancelled` — the candidate
+ *          stays waiting. A landed approval writes one `learning.override` (or
+ *          `learning.approve`) row.
+ *
+ * No reason is ever supplied on the human's behalf. Exported for the test;
+ * `runPersonalityEvolve` is its one caller.
+ */
+export async function decideExpressionCandidate(args: {
+  inbox: Pick<LearningInbox, 'approve' | 'reject'>;
+  candidate: LearningCandidate;
+  approved: boolean;
+  /** Asked only after `y`, and only when the candidate has not passed a replay. */
+  askReason: () => Promise<string>;
+}): Promise<
+  | { outcome: 'applied'; revisionId: string }
+  | { outcome: 'declined' }
+  | { outcome: 'cancelled'; reason: string }
+  | { outcome: 'refused'; reason: string }
+> {
+  const who = { actor: 'cli', decidedBy: DECIDED_BY };
+  if (!args.approved) {
+    const rejected = await args.inbox.reject(args.candidate.id, {
+      ...who,
+      reason: 'declined at `ethos personality evolve`',
+    });
+    if (!rejected.ok) return { outcome: 'refused', reason: rejected.reason };
+    return { outcome: 'declined' };
+  }
+  const reason = args.candidate.verdict === 'pass' ? '' : await args.askReason();
+  const result = await args.inbox.approve(args.candidate.id, {
+    ...who,
+    override: reason ? { reason } : undefined,
+  });
+  if (!result.ok) {
+    return result.code === 'override_required'
+      ? { outcome: 'cancelled', reason: result.reason }
+      : { outcome: 'refused', reason: result.reason };
+  }
+  return {
+    outcome: 'applied',
+    revisionId: result.value.record.kind === 'expression' ? result.value.record.revisionId : '',
+  };
+}
+
+function printCancelled(candidateId: string): void {
+  console.log('Not applied — no reason given, so nothing was approved.');
+  console.log(
+    `The candidate is still waiting: \`ethos learning approve ${candidateId} --override "<reason>"\`.`,
+  );
+}
+
 export interface RecentPrompts {
   prompts: Array<{ id: string; prompt: string }>;
+  /**
+   * The session turn behind each prompt, in the same order, with `messageId`
+   * equal to the prompt's `id` — which is the `task_id` the Judge's run file
+   * records. `judgeZeroScoredTurns` resolves a scored prompt back through this.
+   */
+  turns: SessionCaseTurn[];
   windowStart: string;
   windowEnd: string;
   elapsedHours: number;
@@ -94,6 +191,23 @@ const LEARNING_EVIDENCE_FILTER = {
   excludeKeyPrefixes: [...LEARNING_EXCLUDED_KEY_PREFIXES],
 };
 
+type EvidenceMessage = import('@ethosagent/types').StoredMessage;
+
+// Up to `CASE_CONTEXT_MESSAGES` plain-text messages before `index`, oldest
+// first — the same context a frozen session case carries everywhere else.
+function precedingPlainText(
+  msgs: readonly (EvidenceMessage | undefined)[],
+  index: number,
+): string[] {
+  const context: string[] = [];
+  for (let j = index - 1; j >= 0 && context.length < CASE_CONTEXT_MESSAGES; j--) {
+    const m = msgs[j];
+    if (!m || (m.role !== 'user' && m.role !== 'assistant') || !m.content.trim()) continue;
+    context.push(m.content);
+  }
+  return context.reverse();
+}
+
 // Gather recent raw USER-role prompts for the Judge, newest sessions first.
 // Falls back to all-personality sessions (with a note) when none are scoped to
 // this personality yet.
@@ -111,6 +225,7 @@ export async function gatherRecentUserPrompts(
   sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 
   const prompts: Array<{ id: string; prompt: string }> = [];
+  const turns: SessionCaseTurn[] = [];
   const timestamps: number[] = [];
   for (const s of sessions) {
     if (prompts.length >= MAX_PROMPTS) break;
@@ -119,7 +234,14 @@ export async function gatherRecentUserPrompts(
       const m = msgs[i];
       if (m?.role !== 'user') continue;
       if (prompts.length >= MAX_PROMPTS) break;
-      prompts.push({ id: m.id || `${s.id}:${i}`, prompt: m.content });
+      const promptId = m.id || `${s.id}:${i}`;
+      prompts.push({ id: promptId, prompt: m.content });
+      turns.push({
+        sessionKey: s.key,
+        messageId: promptId,
+        prompt: m.content,
+        context: precedingPlainText(msgs, i),
+      });
       timestamps.push(m.timestamp.getTime());
     }
   }
@@ -130,6 +252,7 @@ export async function gatherRecentUserPrompts(
 
   return {
     prompts,
+    turns,
     windowStart: new Date(oldest).toISOString(),
     windowEnd: new Date(newest).toISOString(),
     elapsedHours,
@@ -137,13 +260,29 @@ export async function gatherRecentUserPrompts(
   };
 }
 
+export interface EvidenceDigest {
+  /** The joined digest text the drafters read. */
+  digest: string;
+  /** Whether any sessions were found (callers decide how to handle the empty case). */
+  hasSessions: boolean;
+  /** Every message the digest quotes, in digest order (newest first). */
+  messageIds: string[];
+  /** The sessions those messages belong to, in the order the digest first quotes them. */
+  sessionIds: string[];
+  /**
+   * The USER messages among `messageIds`, same order, as freezable turns. A
+   * nightly skill candidate's target cases are frozen from exactly these
+   * (Design §2) — never from a recent turn the digest did not quote.
+   */
+  userTurns: SessionCaseTurn[];
+}
+
 // Build a newest-first user+assistant evidence digest for the Expression draft
-// and memory consolidation. Returns the joined digest text and whether any
-// sessions were found (callers decide how to handle the empty case).
+// and memory consolidation, and report which messages it quoted.
 export async function buildEvidenceDigest(
   store: import('@ethosagent/session-sqlite').SQLiteSessionStore,
   id: string,
-): Promise<{ digest: string; hasSessions: boolean }> {
+): Promise<EvidenceDigest> {
   const digestLines: string[] = [];
   let totalChars = 0;
   const MAX_MSGS = 20;
@@ -151,9 +290,14 @@ export async function buildEvidenceDigest(
 
   let sessions = await store.listSessions({ personalityId: id, ...LEARNING_EVIDENCE_FILTER });
   if (sessions.length === 0) sessions = await store.listSessions({ ...LEARNING_EVIDENCE_FILTER });
-  if (sessions.length === 0) return { digest: '', hasSessions: false };
+  if (sessions.length === 0) {
+    return { digest: '', hasSessions: false, messageIds: [], sessionIds: [], userTurns: [] };
+  }
   sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 
+  const messageIds: string[] = [];
+  const sessionIds: string[] = [];
+  const userTurns: SessionCaseTurn[] = [];
   let capped = false;
   for (const s of sessions) {
     if (capped) break;
@@ -170,10 +314,88 @@ export async function buildEvidenceDigest(
       }
       digestLines.push(line);
       totalChars += line.length;
+      const messageId = m.id || `${s.id}:${i}`;
+      messageIds.push(messageId);
+      if (!sessionIds.includes(s.id)) sessionIds.push(s.id);
+      if (m.role === 'user') {
+        userTurns.push({
+          sessionKey: s.key,
+          messageId,
+          prompt: m.content,
+          context: precedingPlainText(msgs, i),
+        });
+      }
     }
   }
 
-  return { digest: digestLines.join('\n'), hasSessions: true };
+  return { digest: digestLines.join('\n'), hasSessions: true, messageIds, sessionIds, userTurns };
+}
+
+/**
+ * The prompts the Judge scored 0 in one run file, resolved to the turns they
+ * were drawn from — a nightly Expression candidate's target cases (Design §2).
+ *
+ * The run file is `EvalRunner`'s output (`extensions/eval-harness/src/runner.ts`):
+ * one JSON `AtroposRecord` per line, a `user` record (the prompt) then an
+ * `assistant` record carrying `score` for each task, both keyed by `task_id`,
+ * which is the prompt's `id` from `gatherRecentUserPrompts`.
+ *
+ * A task that errored also carries `score: 0`, but the runner never graded it
+ * (`score` stays 0 when `errorMsg` is set) — that is a failed run, not a bad
+ * answer, so it is not a target. An unparseable line is skipped. A zero-scored
+ * `task_id` with no matching turn is dropped rather than frozen from the run
+ * file's text alone, because without the turn there is no session key to hold
+ * against `LEARNING_EXCLUDED_KEY_PREFIXES`.
+ *
+ * No zero-scored prompt means an empty list, and the caller must not fill it:
+ * a candidate with no target replays `incomplete` (`computeVerdict` rule (a)).
+ */
+export function judgeZeroScoredTurns(
+  runFile: string | null,
+  judgedTurns: readonly SessionCaseTurn[],
+): SessionCaseTurn[] {
+  if (!runFile) return [];
+  const zeroScored = new Set<string>();
+  for (const line of runFile.split('\n')) {
+    if (!line.trim()) continue;
+    let record: unknown;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!record || typeof record !== 'object') continue;
+    const { role, task_id, score, error } = record as Record<string, unknown>;
+    if (role === 'assistant' && typeof task_id === 'string' && score === 0 && error === undefined) {
+      zeroScored.add(task_id);
+    }
+  }
+  return judgedTurns.filter((t) => zeroScored.has(t.messageId));
+}
+
+/**
+ * Freeze target cases from exactly `turns`, in order, at most
+ * `MAX_TARGET_CASES` (L-D6), and return their ids. A turn whose session key is
+ * under `LEARNING_EXCLUDED_KEY_PREFIXES` is refused by `caseFromSessionTurn`
+ * and never becomes a target. Nothing is added to make up a short list.
+ */
+export async function freezeTargetTurnCases(
+  ctx: Parameters<typeof personalityCore>[0],
+  personalityId: string,
+  turns: readonly SessionCaseTurn[],
+): Promise<string[]> {
+  if (turns.length === 0) return [];
+  const core = await personalityCore(ctx, personalityId);
+  const frozenAt = new Date().toISOString();
+  const ids: string[] = [];
+  for (const turn of turns) {
+    if (ids.length >= MAX_TARGET_CASES) break;
+    const learningCase = caseFromSessionTurn(personalityId, turn, core, frozenAt);
+    if (!learningCase || ids.includes(learningCase.id)) continue;
+    await freezeCase(ctx.storage, ctx.dataDir, learningCase);
+    ids.push(learningCase.id);
+  }
+  return ids;
 }
 
 // Build an EvalRunner the Judge can drive: real AgentLoop, LLM judge scorer,
@@ -181,7 +403,7 @@ export async function buildEvidenceDigest(
 export async function buildJudgeRunner(
   config: EthosConfig,
   id: string,
-): Promise<{ runner: EvalRunner; release: () => Promise<void> }> {
+): Promise<{ runner: EvalRunner; release: () => Promise<void>; outputPath: string }> {
   const { ethosDir } = await import('@ethosagent/config');
   const { join } = await import('node:path');
   const storage = getStorage();
@@ -189,9 +411,10 @@ export async function buildJudgeRunner(
   await storage.mkdir(runsDir);
   const runtime = await createAgentLoop(config);
   const llm = await createLLM(config);
+  const outputPath = join(runsDir, `${Date.now()}.jsonl`);
   const runner = new EvalRunner(runtime.loop, {
     concurrency: 4,
-    outputPath: join(runsDir, `${Date.now()}.jsonl`),
+    outputPath,
     defaultScorer: 'llm',
     llmProvider: llm,
     storage,
@@ -202,6 +425,8 @@ export async function buildJudgeRunner(
   return {
     runner,
     release: () => releaseCommandRuntime(runtime, { label: 'judge agent loop' }),
+    // The run file this runner writes — what `judgeZeroScoredTurns` reads.
+    outputPath,
   };
 }
 
@@ -362,42 +587,54 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
 
     const autoMode = described.config.evolution_approval_mode === 'auto';
     const soul = await reg.readLivingSoul(id);
+    const dataDir = ethosDir();
+    const learningCtx = { storage, dataDir, personalities: reg };
 
-    // A draft the nightly pass queued instead of applying (B-T1) is offered
-    // first, and before any evidence gathering: a queued draft must stay
-    // reachable on a personality with no NEW sessions to draft from. `auto`
-    // never queues, so it never has one to offer.
+    // Drafts parked by an older release (B-T1's `learning/pending-expression/`
+    // and the skill queues) become inbox candidates first, once.
+    await importLegacyLearningQueues({
+      ...learningCtx,
+      defaultPersonalityId: reg.getDefault().id,
+    });
+
+    // An Expression candidate already waiting — typically tonight's nightly
+    // draft — is offered first, before any evidence gathering: it must stay
+    // reachable on a personality with no NEW sessions to draft from. Only in
+    // user mode; an `auto` personality's candidates wait for replay.
     if (!autoMode) {
-      const offered = await offerPendingExpression({
-        storage,
-        dataDir: ethosDir(),
-        personalityId: id,
-        currentExpression: soul.expression,
-        async confirm(pending) {
-          console.log(
-            `=== Queued Expression draft (${pending.evidenceRef || 'no evidence ref'}) ===`,
-          );
-          if (pending.at) console.log(`drafted ${pending.at}`);
-          await printExpressionProposal(soul.expression, pending.newExpression, pending.rationale);
-          return confirm('Apply this queued Expression update? [y/N] ');
-        },
-        async apply(pending) {
-          const { entry } = await reg.evolveExpression(id, pending.newExpression, {
-            summary: pending.rationale.slice(0, 120) || 'queued expression update',
-            evidenceRef: pending.evidenceRef || `queued:${new Date().toISOString()}`,
-          });
-          return { revisionId: entry.revisionId };
-        },
-        log: (msg) => console.log(msg),
-      });
-      if (offered.outcome === 'applied') {
-        console.log(`✓ Expression updated (revision ${offered.revisionId}).`);
-        console.log('Undo with `ethos personality revert <id>`.');
+      const [waiting] = await listPendingExpressionCandidates(learningCtx, id);
+      if (waiting) {
+        console.log(
+          `=== Waiting Expression candidate ${waiting.id} (${waiting.origin}, ${
+            waiting.verdict ? `replay: ${waiting.verdict}` : 'not replayed'
+          }) ===`,
+        );
+        console.log(`drafted ${waiting.submittedAt}`);
+        await printExpressionProposal(
+          soul.expression,
+          waiting.content,
+          waiting.evidence.digest ?? '',
+        );
+        const decided = await decideExpressionCandidate({
+          inbox: await createCliLearningInbox(config),
+          candidate: waiting,
+          approved: await confirm('Apply this Expression update? [y/N] '),
+          askReason: () => ask(OVERRIDE_REASON_PROMPT),
+        });
+        if (decided.outcome === 'applied') {
+          console.log(`✓ Expression updated (revision ${decided.revisionId}).`);
+          console.log('Undo with `ethos personality revert <id>`.');
+        } else if (decided.outcome === 'cancelled') {
+          printCancelled(waiting.id);
+        } else if (decided.outcome === 'refused') {
+          console.log(`Not applied: ${decided.reason}. Re-run to draft a fresh one.`);
+        } else {
+          // Declined: the user just said no to this personality's Expression
+          // changing. Drafting a fresh one and asking again would be arguing.
+          console.log('Aborted — no changes. The candidate was rejected.');
+        }
         return;
       }
-      // Declined: the user just said no to this personality's Expression
-      // changing. Drafting a fresh one and asking again would be arguing.
-      if (offered.outcome === 'declined') return;
     }
 
     // Gather both the raw USER prompts (for the Judge) and the newest-first
@@ -430,7 +667,7 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
       if (scopedNote) console.log(scopedNote);
 
       const priorLowStreak = await readJudgeStreak(id);
-      const { runner, release } = await buildJudgeRunner(config, id);
+      const { runner, release, outputPath } = await buildJudgeRunner(config, id);
       const judge = described.config.nightly?.judge;
       const outcome = await scorePersonality({
         personalityId: id,
@@ -465,12 +702,26 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
         { core: soul.core, currentExpression: soul.expression, evidence },
         llm,
       );
-      const { entry } = await reg.evolveExpression(id, draft.newExpression, {
-        summary: draft.rationale.slice(0, 120) || 'auto expression update',
+      // L-D2: the Judge said draft; it does not say apply. An unevaluated draft
+      // waits for a `pass` replay. Its target cases are the prompts the Judge
+      // scored 0 in the run it just performed (Design §2) — and none when it
+      // scored none: no recent turn is frozen to fill the gap, so a candidate
+      // without a target replays `incomplete` and waits for a human.
+      const targetCaseIds = await freezeTargetTurnCases(
+        learningCtx,
+        id,
+        judgeZeroScoredTurns(await storage.read(outputPath), recent.turns),
+      );
+      const candidate = await submitExpressionCandidate(learningCtx, {
+        personalityId: id,
+        origin: 'cli',
+        newExpression: draft.newExpression,
+        rationale: draft.rationale,
         evidenceRef: `judge:${result.alignmentScore.toFixed(2)}@${result.windowEnd}`,
+        targetCaseIds,
       });
       console.log(
-        `✓ auto-applied Expression update behind Judge gate (alignment ${pct}%, revision ${entry.revisionId}). Undo with \`ethos personality revert ${id}\`.`,
+        `✓ Expression draft submitted as learning candidate ${candidate.id} (alignment ${pct}%). It goes live only after a passing replay: run \`ethos learning replay ${candidate.id}\`, or let the nightly pass replay it.`,
       );
       return;
     }
@@ -488,17 +739,39 @@ export async function runPersonalityEvolve(argv: string[]): Promise<void> {
     console.log(evidence);
     await printExpressionProposal(soul.expression, draft.newExpression, draft.rationale);
 
-    const ok = await confirm('Apply this Expression update? [y/N] ');
-    if (!ok) {
+    // Submitted before the answer, so a declined draft is still on the record
+    // (as `rejected`) rather than gone.
+    const candidate = await submitExpressionCandidate(learningCtx, {
+      personalityId: id,
+      origin: 'cli',
+      newExpression: draft.newExpression,
+      rationale: draft.rationale,
+      evidenceRef: `sessions:${new Date().toISOString()}`,
+      // No target cases: user mode runs no Judge, so there is no failure
+      // evidence to target — the digest is recent turns, not a record of what
+      // went wrong, and Design §2 names no target source for this path. The
+      // human's y/N decides this candidate, not a replay verdict.
+      targetCaseIds: [],
+    });
+    const decided = await decideExpressionCandidate({
+      inbox: await createCliLearningInbox(config),
+      candidate,
+      approved: await confirm('Apply this Expression update? [y/N] '),
+      askReason: () => ask(OVERRIDE_REASON_PROMPT),
+    });
+    if (decided.outcome === 'declined') {
       console.log('Aborted — no changes.');
       return;
     }
-
-    const { entry } = await reg.evolveExpression(id, draft.newExpression, {
-      summary: draft.rationale.slice(0, 120) || 'expression update',
-      evidenceRef: `sessions:${new Date().toISOString()}`,
-    });
-    console.log(`✓ Expression updated (revision ${entry.revisionId}).`);
+    if (decided.outcome === 'cancelled') {
+      printCancelled(candidate.id);
+      return;
+    }
+    if (decided.outcome === 'refused') {
+      console.log(`Not applied: ${decided.reason}.`);
+      return;
+    }
+    console.log(`✓ Expression updated (revision ${decided.revisionId}).`);
     console.log('Undo with `ethos personality revert <id>`.');
   } catch (err) {
     surface(err);

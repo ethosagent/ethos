@@ -37,6 +37,7 @@ export { restoreArchivedSlug } from './memory-restore';
 export type {
   NightlyEvidence,
   NightlyGates,
+  NightlyLearningDeps,
   NightlyPassDeps,
   NightlyPassResult,
   NightlyState,

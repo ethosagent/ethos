@@ -330,15 +330,14 @@ const RULES: readonly ScopeRule[] = [
   // this is that design being handed the largest duplicate it can produce.
   // Tiny, one JSON object of integers, so it costs the archive nothing.
   { path: 'channel-digest-watermarks.json', kind: 'file', scope: 'state' },
-  // Governed-learning drafts waiting on the operator. Today that is the
-  // pending-Expression queue (`learning/pending-expression/<id>.json`), which
-  // the nightly pass writes instead of applying whenever
-  // `evolution_approval_mode` is not `auto` — a draft nobody has approved yet,
-  // and the only copy of it. Losing it in a restore loses the approval
-  // decision, not a derived artifact: the evidence window it was drafted from
-  // has rolled off by then, so nothing can reproduce it. `state` rather than
-  // `identity` because the file is pending work, not who the agent is — the
-  // Expression it proposes is not part of the personality until approved.
+  // Governed-learning drafts waiting on the operator: the learning inbox
+  // (`learning/candidates/`, its `audit.jsonl`, and the frozen replay cases in
+  // `learning/cases/`). A candidate is a draft nobody has approved yet, and the
+  // only copy of it. Losing it in a restore loses the approval decision, not a
+  // derived artifact: the evidence window it was drafted from has rolled off
+  // by then, so nothing can reproduce it. `state` rather than `identity`
+  // because it is pending work, not who the agent is — a proposed change is not
+  // part of the personality until it is promoted.
   { path: 'learning', kind: 'dir', scope: 'state' },
   // Plugin pins: what npm installed under the `plugins/` prefix, not the tree.
   { path: 'plugins/package.json', kind: 'file', scope: 'state' },

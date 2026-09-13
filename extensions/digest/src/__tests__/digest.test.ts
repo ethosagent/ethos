@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { PersonalityConfig } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import { buildWeeklyDigest, isoWeek, isoWeekLabel } from '../index';
+import { buildWeeklyDigest, isoWeek, isoWeekLabel, waitingSkillNamesByPersonality } from '../index';
 
 const DATA_DIR = '/tmp/ethos-digest-test';
 
@@ -41,11 +41,6 @@ async function seedNightly(
   );
 }
 
-async function seedSkillCandidate(storage: InMemoryStorage, id: string, fileName: string) {
-  await storage.mkdir(join(DATA_DIR, 'skills', '.pending', id));
-  await storage.write(join(DATA_DIR, 'skills', '.pending', id, fileName), '# candidate');
-}
-
 describe('isoWeek helpers', () => {
   it('computes ISO week label', () => {
     // 2026-06-17 is a Wednesday in ISO week 25.
@@ -63,13 +58,15 @@ describe('buildWeeklyDigest', () => {
     const storage = new InMemoryStorage();
     await seedJudge(storage, 'coder', 0.82, 'drift');
     await seedNightly(storage, 'coder', '2026-06-16T03:00:00Z', ['judge', 'evolve']);
-    await seedSkillCandidate(storage, 'coder', 'use-rg.md');
 
     const md = await buildWeeklyDigest({
       personalities: [personality('coder')],
       storage,
       dataDir: DATA_DIR,
       now,
+      pendingSkillCandidatesByPersonality: waitingSkillNamesByPersonality([
+        { personalityId: 'coder', destination: '/ethos/skills/use-rg.md' },
+      ]),
       learningLogByPersonality: {
         coder: [
           {
@@ -94,6 +91,31 @@ describe('buildWeeklyDigest', () => {
     expect(md).toContain('use-rg.md');
     expect(md).toContain('Expressions evolved: 1');
     expect(md).toContain('New skill candidates: 1');
+  });
+
+  // L-T8 — the count is the learning inbox's waiting candidates. A file left in
+  // the retired `skills/.pending/<id>/` queue is not one.
+  it('counts inbox candidates per personality, not the retired .pending directory', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(join(DATA_DIR, 'skills', '.pending', 'coder'));
+    await storage.write(join(DATA_DIR, 'skills', '.pending', 'coder', 'stale.md'), '# old');
+
+    const md = await buildWeeklyDigest({
+      personalities: [personality('coder'), personality('scout')],
+      storage,
+      dataDir: DATA_DIR,
+      now,
+      pendingSkillCandidatesByPersonality: waitingSkillNamesByPersonality([
+        { personalityId: 'scout', destination: '/ethos/skills/cite.md' },
+        { personalityId: 'scout', destination: '/ethos/personalities/scout/skills/brief.md' },
+      ]),
+    });
+
+    expect(md).toContain('New skill candidates (2)');
+    expect(md).toContain('- cite.md');
+    expect(md).toContain('- brief.md');
+    expect(md).not.toContain('stale.md');
+    expect(md).toContain('New skill candidates: 2');
   });
 
   it('renders "No activity" for a personality with nothing', async () => {

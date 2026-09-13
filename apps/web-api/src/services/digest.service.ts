@@ -1,5 +1,9 @@
 import { join } from 'node:path';
-import { buildWeeklyDigest, isoWeekLabel } from '@ethosagent/digest';
+import {
+  buildWeeklyDigest,
+  isoWeekLabel,
+  waitingSkillNamesByPersonality,
+} from '@ethosagent/digest';
 import type { FilePersonalityRegistry } from '@ethosagent/personalities';
 import type { LearningLogEntry, Storage } from '@ethosagent/types';
 import type { DigestLatest } from '@ethosagent/web-contracts';
@@ -15,6 +19,13 @@ export interface DigestServiceOptions {
   /** Shared with the loop so generation sees the same hot-reloaded set the
    *  rest of the web-api works against. */
   personalities: FilePersonalityRegistry;
+  /**
+   * The learning inbox's waiting skill candidates (`LearningService.pendingSkills`),
+   * which the digest counts. Absent (tests) → no candidates.
+   */
+  learning?: {
+    pendingSkills(): Promise<ReadonlyArray<{ personalityId: string; destination: string }>>;
+  };
 }
 
 export class DigestService {
@@ -71,6 +82,8 @@ export class DigestService {
       }
     }
 
+    const waiting = (await this.opts.learning?.pendingSkills()) ?? [];
+
     const now = new Date();
     const markdown = await buildWeeklyDigest({
       personalities: targets,
@@ -78,6 +91,7 @@ export class DigestService {
       dataDir,
       now,
       learningLogByPersonality,
+      pendingSkillCandidatesByPersonality: waitingSkillNamesByPersonality(waiting),
     });
 
     const label = isoWeekLabel(now);

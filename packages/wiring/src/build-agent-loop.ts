@@ -64,6 +64,7 @@ import type {
   WiringConfig,
   WiringProfile,
 } from './index';
+import { freezeLatestUserTurnCase, learningSubmitPort } from './learning-pipeline';
 import type { LoadPluginsResult } from './load-plugins';
 import { detectLocalRuntime } from './local-models';
 import { approvalLimits, createMemoryBundle, createUndecoratedBackend } from './memory-backend';
@@ -618,7 +619,6 @@ export async function buildAgentLoop(
   // -------------------------------------------------------------------------
 
   let onSkillProposedFn: ((skillId: string, personalityId: string) => void) | undefined;
-  let onSkillAppliedFn: ((skillId: string, personalityId: string) => void) | undefined;
 
   // Used by the fork below AND by the SOUL measurement and the delegation tools
   // further down, so it is declared outside the gate. `wiringCtx.storage` is
@@ -631,15 +631,16 @@ export async function buildAgentLoop(
   // is a security gate, not a toggle. The fork turns what a turn SAID into a
   // skill on disk; in a process whose turns are driven by an external MCP
   // client, that is the client writing the operator's skills unattended — a
-  // persistent-injection path. The whole block is gated, not just `register()`:
-  // with no fork there is nothing for the `agent_done` auto-approve refresh
-  // below to keep fresh either. Pinned by
-  // `packages/wiring/src/__tests__/post-turn-learning.test.ts`.
+  // persistent-injection path. The whole block is gated, not just `register()`.
+  // Pinned by `packages/wiring/src/__tests__/post-turn-learning.test.ts`.
+  //
+  // The fork SUBMITS to the learning inbox and never writes a live skill (L-T6).
+  // The global `evolve-config.json` `autoApprove` is no longer read here: it is
+  // one of the three knobs `learningPolicyFor` (`./learning-pipeline.ts`) reads
+  // after a replay, and a replay never runs on `agent_done` (L-D9).
   if (!opts.disablePostTurnLearning) {
-    const { ImprovementFork, loadEvolveConfig: loadEvolveConfigFn } = await import(
-      '@ethosagent/skill-evolver'
-    );
-    const evolveConfigPath = join(dataDir, 'evolve-config.json');
+    const { ImprovementFork } = await import('@ethosagent/skill-evolver');
+    const learningCtx = { storage: wiringStorage, dataDir, personalities };
     const improvementFork = new ImprovementFork({
       hooks,
       runtime: {
@@ -652,36 +653,25 @@ export async function buildAgentLoop(
       personalities,
       dataDir,
       storage: wiringStorage,
-      onSkillProposed: (skillId, personalityId) => {
-        onSkillProposedFn?.(skillId, personalityId);
+      learning: learningSubmitPort(learningCtx),
+      // The triggering turn becomes the candidate's target case. Its session
+      // key is what `caseFromSessionTurn` checks against X-D7's excluded
+      // prefixes, so an eval or cron turn yields no case.
+      targetCaseIds: async (payload, personalityId) => {
+        const parent = await session.getSession(payload.sessionId);
+        if (!parent) return [];
+        const id = await freezeLatestUserTurnCase(learningCtx, session, {
+          sessionId: payload.sessionId,
+          sessionKey: parent.key,
+          personalityId,
+        });
+        return id ? [id] : [];
       },
-      autoApprove: () => {
-        return autoApproveCache;
-      },
-      onSkillApplied: (skillId, personalityId) => {
-        onSkillAppliedFn?.(skillId, personalityId);
+      onSkillProposed: (candidateId, personalityId) => {
+        onSkillProposedFn?.(candidateId, personalityId);
       },
     });
     improvementFork.register();
-
-    let autoApproveCache = false;
-    (async () => {
-      try {
-        const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
-        autoApproveCache = cfg.autoApprove;
-      } catch {
-        // Non-fatal — keep the default.
-      }
-    })();
-
-    hooks.registerVoid('agent_done', async () => {
-      try {
-        const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
-        autoApproveCache = cfg.autoApprove;
-      } catch {
-        // Non-fatal.
-      }
-    });
   }
 
   // -------------------------------------------------------------------------
@@ -1607,9 +1597,6 @@ export async function buildAgentLoop(
     },
     setOnSkillProposed: (fn) => {
       onSkillProposedFn = fn;
-    },
-    setOnSkillApplied: (fn) => {
-      onSkillAppliedFn = fn;
     },
     ...(onMemoryCapturedFn ? { onMemoryCaptured: onMemoryCapturedFn } : {}),
     ...(runCallCaptureFn ? { runCallCapture: runCallCaptureFn } : {}),

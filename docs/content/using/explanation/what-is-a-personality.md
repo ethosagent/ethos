@@ -4,7 +4,7 @@ description: "A personality is a directory of three files that atomically swaps 
 kind: explanation
 audience: user
 slug: what-is-a-personality
-updated: 2026-08-14
+updated: 2026-09-13
 ---
 
 ## Context
@@ -211,7 +211,7 @@ The rule of thumb that has held up: a personality earns its place when it answer
 
 ### Personalities can learn from usage
 
-A personality can opt into automatic skill evolution. When `skill_evolution.enabled: true` is set in the personality's `config.yaml`, the skill evolver analyzes tool-call patterns after qualifying turns — those exceeding `skill_evolution.min_tool_calls` and outside `skill_evolution.cooldown_minutes` — and proposes new skills or rewrites existing ones. Proposed skills land in `~/.ethos/skills/.pending/<personalityId>/` for review.
+A personality can opt into skill evolution. When `skill_evolution.enabled: true` is set in the personality's `config.yaml`, a post-turn fork reviews turns that made at least `skill_evolution.min_tool_calls` successful tool calls, outside `skill_evolution.cooldown_minutes`, and the nightly pass drafts skills from the personality's recent sessions. Each draft becomes a candidate in the [learning inbox](learning-inbox.md), not a live file. It goes live only after a replay against this personality's past tasks scores `pass` and the auto-promotion rules allow it, or when a human approves it.
 
 The `engineer` built-in ships with skill evolution enabled by default. This is how a personality adapts to the user's working patterns without the user writing skill files by hand.
 
