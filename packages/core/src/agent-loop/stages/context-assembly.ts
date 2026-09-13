@@ -91,6 +91,22 @@ async function saveAgingState(
 }
 
 /**
+ * The per-run memory read gate. `RunOptions` (`../../agent-loop`) extends it,
+ * so the field is declared beside the step that enforces it.
+ */
+export interface MemoryPrefetchGate {
+  /**
+   * Skip the context-assembly memory prefetch for this run, in full: the
+   * personality-scope `prefetch`, its `search` fallback, AND the
+   * `user:<userId>` scope `read`. No `MemoryProvider` method is called and no
+   * memory section is built. A read gate, not a write gate — turn-end memory
+   * flushes are untouched. Enforced by Step 5 of `assembleContext` below;
+   * pinned by `packages/core/src/__tests__/skip-memory-prefetch.test.ts`.
+   */
+  skipMemoryPrefetch?: boolean;
+}
+
+/**
  * Context-assembly stage: PII redaction, user message persistence, history
  * load, memory prefetch + sanitize, system prompt build (injectors, memory,
  * hooks, dry-run), context_meta event, history-to-LLM messages, compaction.
@@ -101,13 +117,10 @@ export async function* assembleContext(
   deps: LoopDeps,
   setup: TurnSetup,
   text: string,
-  opts: {
+  opts: MemoryPrefetchGate & {
     attachments?: Attachment[];
     userId?: string;
     dryRun?: boolean;
-    /** Skip Step 5 entirely — no memory provider call, no memory section.
-     *  See `RunOptions.skipMemoryPrefetch` in `../../agent-loop`. */
-    skipMemoryPrefetch?: boolean;
     /** T3 — max output tokens for the pending completion; reserved from the
      *  context window by compaction so the response can't overflow. */
     maxCompletionTokens?: number;
