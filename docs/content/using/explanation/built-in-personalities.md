@@ -19,11 +19,11 @@ You did not have to pick three. A super-agent that does everything was the easie
 
 | Personality | What it is for | Toolset shape | Model | Memory |
 |---|---|---|---|---|
-| `researcher` | Gathers and summarises with citations | Web + read + memory + session_search | `model.default: claude-opus-4-7`, applied on Anthropic | Its own (`personality:researcher`) |
-| `engineer` | Writes, edits, runs, tests code | Terminal + read/write/patch + execute + lint + todos | `model.default: claude-sonnet-4-6`, applied on Anthropic | Its own (`personality:engineer`) |
+| `researcher` | Gathers and summarises with citations | Web + read + memory + session_search | Your deployment model (declares `model.default: claude-opus-4-7`, not read) | Its own (`personality:researcher`) |
+| `engineer` | Writes, edits, runs, tests code | Terminal + read/write/patch + execute + lint + todos | Your deployment model (declares `model.default: claude-sonnet-4-6`, not read) | Its own (`personality:engineer`) |
 | `reviewer` | Critiques code and designs | Read + search_files + session_search (no write) | Your deployment model | Its own (`personality:reviewer`) |
 
-Tool counts are illustrative; the actual lists are in each personality's `toolset.yaml` under `extensions/personalities/data/<id>/`. `researcher` and `engineer` declare `provider: anthropic` and `model.<tier>` keys, which apply only while Anthropic is the active provider; on any other provider they run on your configured model. `reviewer` writes a plain `model: claude-sonnet-4-6`, which the loader parses and turn setup never applies (`resolveModelWithTier`, `packages/core/src/agent-loop/turn-context.ts`). Pin any personality's model with `modelRouting.<id>` in `~/.ethos/config.yaml`.
+Tool counts are illustrative; the actual lists are in each personality's `toolset.yaml` under `extensions/personalities/data/<id>/`. All three declare vendor model ids, written before the model registry. A declaration now names a role or a `modelRegistry` alias (`parseModelDeclaration` (`packages/core/src/model-resolution.ts`)), and with no registry configured turn setup does not read it at all, so every built-in runs on your configured model (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)). Pin any personality's model with `modelRouting.<id>` in `~/.ethos/config.yaml`.
 
 Switch with `/personality <id>` in chat. The change takes effect on the next turn; the conversation thread does not fork.
 
@@ -41,7 +41,7 @@ The toolset is web-shaped: `web_search`, `web_extract`, `web_crawl`, plus `read_
 
 Its `MEMORY.md` is its own. Research findings reach the engineer's writing turn through the thread after a `/personality` switch, or through team memory when both run in a team.
 
-On Anthropic it runs Opus by default because depth matters more than throughput here. Long reads, careful summarisation, and source provenance benefit from a stronger reasoning model.
+It declares Opus by default because depth matters more than throughput here. Long reads, careful summarisation, and source provenance benefit from a stronger reasoning model.
 
 ### engineer
 
@@ -51,7 +51,7 @@ The toolset is the widest of the three: `terminal`, the file-write trio (`read_f
 
 `context_layering.mode: progressive` is set in `config.yaml` — sub-AGENTS.md files are discovered as the agent navigates the workspace, so deeper conventions surface as work moves into them. `skill_evolution.enabled: true` lets the skill evolver draft a skill from an engineer turn with at least five successful tool calls (`skill_evolution.min_tool_calls: 5`). A draft is a candidate, not a skill: it waits in the [learning inbox](learning-inbox.md) and goes live only after a replay passes and the promotion rules allow it. The engineer sets no `skill_evolution.scope`, so its drafts are shared skills — visible to every capability-matched personality — and a shared skill never auto-promotes: it always needs a human approval (`autoPromotionDecision` in `extensions/learning-inbox/src/auto-promotion.ts`).
 
-On Anthropic it runs Sonnet by default because engineer turns iterate. Fast feedback dominates depth here — when you want depth, switch to researcher first, then come back.
+It declares Sonnet by default because engineer turns iterate. Fast feedback dominates depth here — when you want depth, switch to researcher first, then come back.
 
 ### reviewer
 
@@ -61,7 +61,7 @@ The restriction is the point. A reviewer that can edit the thing under review is
 
 Its memory is its own, as every personality's is. The reviewer's running notes about what is wrong with the codebase stay in its own `MEMORY.md` and do not bleed into the engineer's. A reviewer absorbs the opinions it reviews if you let it; a fixed per-personality scope says you do not.
 
-It names Sonnet with a plain `model: claude-sonnet-4-6`, which is never applied, so the reviewer runs on your deployment model. Review is a per-fragment activity — a function, a diff, a design doc — and speed compounds across many small judgements, so pin a fast model with `modelRouting.reviewer` if yours is a slow one.
+It declares `model: claude-sonnet-4-6`, which no turn reads while no model registry is configured, so the reviewer runs on your deployment model. Review is a per-fragment activity — a function, a diff, a design doc — and speed compounds across many small judgements, so pin a fast model with `modelRouting.reviewer` if yours is a slow one.
 
 ### System personalities
 

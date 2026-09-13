@@ -162,7 +162,7 @@ A personality lives at `~/.ethos/personalities/<id>/` — three files (`SOUL.md`
 - **System prompt** (from `SOUL.md`)
 - **Tool access** (from `toolset.yaml`)
 - **Memory scope** (`personality:<id>`, derived from the personality id — not a setting)
-- **Model** (from the `model.<tier>` keys in `config.yaml`, when its `provider` matches the active one)
+- **Model** (the `model` role or `modelRegistry` alias in `config.yaml`, as `resolveTurnModel` resolves it)
 
 The mental model is: a personality is a *role-bound configuration of the agent*, not a prompt string. The researcher and the engineer are not the same agent in different costumes — they have different tools, different memories, different models. The next page explains why that matters.
 

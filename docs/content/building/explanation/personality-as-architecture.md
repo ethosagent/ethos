@@ -24,11 +24,11 @@ A personality directory is built around three files, and only one of them has to
 ```
 ~/.ethos/personalities/<id>/
 ├── SOUL.md        first-person identity — who am I, how do I speak
-├── config.yaml     name, provider, model tiers, fs_reach, mcp_servers, plugins
+├── config.yaml     name, provider, model, fs_reach, mcp_servers, plugins
 └── toolset.yaml    flat list of allowed tool names
 ```
 
-`SOUL.md` becomes the system prompt baseline. `config.yaml` parameterises model tiers, filesystem reach, MCP allowlist, plugin allowlist. `toolset.yaml` is the allowlist `DefaultToolRegistry.toDefinitions(allowedTools)` filters the visible toolset against.
+`SOUL.md` becomes the system prompt baseline. `config.yaml` parameterises the model declaration, filesystem reach, MCP allowlist, plugin allowlist. `toolset.yaml` is the allowlist `DefaultToolRegistry.toDefinitions(allowedTools)` filters the visible toolset against.
 
 The [memory scope](../../getting-started/glossary.md#memory-scope) (the key that decides which memory files a turn reads and writes) is in none of the three files. Turn setup derives it from the directory name as `personality:<id>` (`memScopeId` in `packages/core/src/agent-loop/stages/turn-setup.ts`), so it moves with the personality without anyone configuring it.
 
@@ -66,13 +66,13 @@ Three things you cannot get from a prompt string.
 
 ### The three user-facing built-ins are not three prompt presets
 
-Ethos ships three user-facing [built-in personalities](../../getting-started/glossary.md#built-in-personality) at `extensions/personalities/data/`: `researcher`, `engineer`, `reviewer`. They are not three voices on top of one agent. Each has its own toolset and its own memory scope, and two of them declare model tiers that suit their work.
+Ethos ships three user-facing [built-in personalities](../../getting-started/glossary.md#built-in-personality) at `extensions/personalities/data/`: `researcher`, `engineer`, `reviewer`. They are not three voices on top of one agent. Each has its own toolset and its own memory scope, and two of them declare per-role models that suit their work.
 
 | Personality | What its `toolset.yaml` allows | Memory scope | Models in `config.yaml` |
 |---|---|---|---|
 | `researcher` | Read, search, web, citations | `personality:researcher` | `trivial` `claude-haiku-4-5`, `default` and `deep` `claude-opus-4-7` |
 | `engineer` | Read, write, run, test | `personality:engineer` | `trivial` `claude-haiku-4-5`, `default` `claude-sonnet-4-6`, `deep` `claude-opus-4-7` |
-| `reviewer` | Read-only | `personality:reviewer` | `model: claude-sonnet-4-6`, a plain string routing never reads |
+| `reviewer` | Read-only | `personality:reviewer` | `model: claude-sonnet-4-6` |
 
 No built-in chooses its memory scope, because no personality can: `config.yaml` has no memory-scope key, and every turn reads and writes `personality:<id>`. The default markdown backend stores that scope under `personalities/<id>/` in the Ethos data directory (`resolveScopeDir` in `extensions/memory-markdown/src/index.ts`). The reviewer's notes on what it reviewed never reach the engineer's `MEMORY.md`, and the researcher's never reach either. The roles share context through the session instead, whose history continues across a switch.
 
@@ -122,30 +122,34 @@ This is the [fs_reach](../../getting-started/glossary.md#fs-reach) boundary. It 
 
 ### The personality determines model routing
 
-A personality declares its models as tiers in `config.yaml`: `model.trivial`, `model.default`, `model.deep` and `model.dreaming`. The loader folds them into a `ModelTierConfig` (`buildModelConfig` in `extensions/personalities/src/index.ts`; the type lives in `packages/types/src/personality.ts`). The same file declares `provider`, the LLM provider those model ids belong to. The built-in `engineer` and `researcher` both declare `provider: anthropic` and three tiers.
+A personality declares its model in `config.yaml` as a **role** — `trivial`, `default`, `deep` or `dreaming` — or as an **alias** the operator defined under `modelRegistry.*` in `~/.ethos/config.yaml`: one string (`model: deep`), or one value per role as dotted keys (`model.default: sonnet`, `model.deep: opus`). A vendor model id is neither and does not parse (`parseModelDeclaration` in `packages/core/src/model-resolution.ts`). The personality says what kind of model each role needs; the registry says which vendor model and which provider entry answer for it. A resolved model carries the provider entry its own registry row names (`toResolved`, same file), so no personality can pair an Anthropic id with an Ollama endpoint.
 
-`resolveModelWithTier` (`packages/core/src/agent-loop/turn-context.ts`) picks each turn's model. The first source that applies wins:
+`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`) picks each turn's model, called once per turn from `turn-setup.ts`. With a registry, the first rung that declares wins (`resolveModel`):
 
-| Rank | Source | Applies when |
+| Rung | Source | Applies when |
 |---|---|---|
-| 1 | `RunOptions.modelOverride` | A surface pins one model for one run; the voice stack uses it to answer a spoken lane on a fast model. `turn-setup.ts` checks it before calling the resolver. |
-| 2 | `modelRouting.<id>` in `~/.ethos/config.yaml` | The operator names a model for this personality id. It overrides every tier. |
-| 3 | The personality's tier map | `provider` equals the active LLM provider's name. The requested tier is used, falling back to `model.default`. |
-| 4 | The deployment's default model | Nothing above applies. |
+| 0 | `RunOptions.modelOverride` | A surface pins one model for one run; the voice stack uses it to answer a spoken lane on a fast model. |
+| 1 | The team manifest | The turn runs in a team whose manifest names a model for the coordinator or for this personality. |
+| 2 | `modelRouting.<id>` in `~/.ethos/config.yaml` | The operator names a model for this personality id. |
+| 3 | The personality's `model` | It declares one. A per-role map is indexed by the requested role, falling back to `model.default`. |
+| 4 | `modelRegistry.roles.<role>` | The requested role is bound to an alias. |
+| 5 | `modelRegistry.default` | Nothing above applies. |
 
-The provider check in rank 3 exists because a tier map holds provider-specific model ids, and an Anthropic id sent to OpenRouter, Ollama or Gemini fails. A plain `model: <id>` string is never applied: the resolver reads a tier map only, so the `reviewer`'s `model: claude-sonnet-4-6` is inert and its turns run on rank 2 or 4. `ethos personality show <id>` prints which source won and flags an ignored declaration as `INERT` (`resolveCharacterSheetRouting` in `packages/wiring/src/tier-diagnostics.ts`).
+A declaration that does not resolve refuses the turn with `model_unresolved` (`turn-setup.ts`) rather than running on something else.
 
-Every turn starts on the `default` tier (`activeTier` in `turn-setup.ts`). Nothing classifies a message as trivial on its own. Three triggers move a turn off `default`:
+The wiring does not build that registry for the loop yet: `modelResolution` in `packages/wiring/src/build-agent-loop.ts` passes an empty one, and `resolveTurnModel` treats an empty registry as the legacy path — rung 0, then `modelRouting.<id>`, then the deployment's `model`. The personality's own `model` is not read on that path, so the built-ins' declarations, which are vendor ids from before the registry, change nothing today. `ethos personality show <id>` prints which source won and flags an unread declaration as `INERT` (`resolveCharacterSheetRouting` in `packages/wiring/src/tier-diagnostics.ts`).
 
-| Trigger | Tier | Lasts |
+Every turn starts on the `default` role (`activeTier` in `turn-setup.ts`). Nothing classifies a message as trivial on its own. Three triggers request another role:
+
+| Trigger | Role | Lasts |
 |---|---|---|
 | `/tier trivial`, `/tier default` or `/tier deep` in `ethos chat` (`apps/ethos/src/commands/chat.ts`) | The one named | The next turn |
 | The dream executor (`extensions/gateway/src/dream-executor.ts`) | `dreaming` | Each dreaming turn |
 | A successful `think_deeper` call (`extensions/tools-tier/src/index.ts`) | `deep` | The next LLM call only — set in `tool-processing.ts`, consumed in `stream-step.ts` |
 
-`think_deeper` escalates only when the personality declares a tier map and its `provider` matches the active LLM. Both `engineer` and `researcher` list it in `toolset.yaml`. Personalities can also declare a `streamingTimeoutMs` so a slow-thinking model (Opus extended thinking) gets a longer watchdog than a fast one (Haiku).
+A successful `think_deeper` call asks for `deep` on the next LLM call, which `stream-step.ts` re-resolves through `resolveTurnModel`. On the legacy path that answer is the model the turn started on, and an escalation that does not resolve keeps that model too. Both `engineer` and `researcher` list `think_deeper` in `toolset.yaml`. Personalities can also declare a `streamingTimeoutMs` so a slow-thinking model (Opus extended thinking) gets a longer watchdog than a fast one (Haiku).
 
-The tier map is part of the personality's structural identity. Giving `researcher` Opus as its default and `engineer` Sonnet is a role decision. A turn can move between tiers, but only among the models the personality declared, unless the operator overrides the personality with `modelRouting` or a surface pins a model for the run.
+The declaration is part of the personality's structural identity. Saying `researcher` needs deep reasoning by default and `engineer` an everyday model is a role decision; which vendor model each role means on a given machine is the operator's call, made in the registry, unless `modelRouting` or a surface pins a model for the run.
 
 ### How the wiring threads a personality into the loop
 

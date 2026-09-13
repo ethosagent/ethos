@@ -97,20 +97,20 @@ description: Builds and ships features for this repo.
 
 ## model {#model}
 
-Type: dotted tier keys · Default: the deployment's `model` in `~/.ethos/config.yaml`. `resolveModelWithTier` ([`packages/core/src/agent-loop/turn-context.ts`](../../../../packages/core/src/agent-loop/turn-context.ts)) picks each turn's model in this order: [`modelRouting.<id>`](./config-yaml.md#model-routing) in `config.yaml`; then this personality's tier map, only when its [`provider`](#provider) equals the active LLM provider's name (unset or different, the map is ignored); otherwise the deployment's `model`.
+Type: string, or dotted role keys · Default: the deployment's `model` in `~/.ethos/config.yaml`. A declaration names a **role** (`trivial`, `default`, `deep`, `dreaming`) or an **alias** the operator defined under `modelRegistry.*` in `~/.ethos/config.yaml`. A vendor model id is neither and does not parse (`parseModelDeclaration`, [`packages/core/src/model-resolution.ts`](../../../../packages/core/src/model-resolution.ts)). `resolveTurnModel` ([`packages/core/src/agent-loop/turn-model.ts`](../../../../packages/core/src/agent-loop/turn-model.ts)) picks each turn's model:
+
+- **With a model registry**, the first rung that declares wins: a `/model` pin for the run, a team manifest entry, [`modelRouting.<id>`](./config-yaml.md#model-routing), this `model`, `modelRegistry.roles.<role>`, then `modelRegistry.default`. A declaration that does not resolve refuses the turn with `model_unresolved` instead of running on something else.
+- **Without one** — every deployment today, because the wiring hands the loop an empty registry (`modelResolution` in `packages/wiring/src/build-agent-loop.ts`) — a `/model` pin, then `modelRouting.<id>`, then the deployment's `model`. This `model` is not read and `provider` is not compared; `ethos personality show <id>` marks it inert (`resolveCharacterSheetRouting`, `packages/wiring/src/tier-diagnostics.ts`). To pin one model today, use `modelRouting.<id>`.
 
 | Key | Used for |
 |---|---|
-| `model.default` | Every turn with no tier override, and the fallback for any tier left unset. |
-| `model.trivial`, `model.deep` | Turns run at that tier (`/tier trivial`, `/tier deep`). |
-| `model.dreaming` | Dreaming runs, which set the `dreaming` tier (`extensions/gateway/src/dream-executor.ts`). |
+| `model.default` | Turns that request no other role, and the fallback for any role left unset. |
+| `model.trivial`, `model.deep`, `model.dreaming` | Turns that request that role: `/tier trivial`, `/tier deep`, a `think_deeper` escalation, or a dreaming run (`extensions/gateway/src/dream-executor.ts`). |
 
 ```yaml
-provider: anthropic
-model.default: claude-opus-4-7
+model.default: sonnet   # aliases defined under modelRegistry.*
+model.deep: opus
 ```
-
-- A plain `model: <id>` string is parsed and written back on save, but never applied: `resolveModelWithTier` reads a tier map only. `ethos personality show <id>` marks it inert (`resolveCharacterSheetRouting`, `packages/wiring/src/tier-diagnostics.ts`). To pin one model, set `model.default` with a matching `provider`, or use `modelRouting.<id>`.
 
 ## provider {#provider}
 

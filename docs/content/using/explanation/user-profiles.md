@@ -147,7 +147,7 @@ You can edit it yourself. Add a line, remove a line, correct a fact. The agent r
 
 USER.md is not a credentials store. It should not contain API keys, passwords, tokens, or secrets. The file lives on disk as plain text — the same threat model as your `.bashrc`. The agent is instructed not to write secrets to memory, and the [injection guard](../../security/controls.md#prompt-injection-defenses) scans memory content on write, but the primary defense is not writing secrets there in the first place.
 
-USER.md is also not a preferences file for the agent's behaviour. "Use Opus for my turns" is a model-routing concern (the personality's `model.<tier>` keys, or `modelRouting.<id>` in `~/.ethos/config.yaml`), not a user profile concern. "I prefer concise answers" is a legitimate user fact; "always use extended thinking" is not.
+USER.md is also not a preferences file for the agent's behaviour. "Use Opus for my turns" is a model-routing concern (the personality's `model`, or `modelRouting.<id>` in `~/.ethos/config.yaml`), not a user profile concern. "I prefer concise answers" is a legitimate user fact; "always use extended thinking" is not.
 
 ## Trade-offs
 

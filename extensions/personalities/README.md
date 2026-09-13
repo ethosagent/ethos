@@ -18,14 +18,14 @@ Built-ins shipped in `data/`:
 
 | id | model | purpose |
 |---|---|---|
-| `researcher` | `model.default: claude-opus-4-7` (`provider: anthropic`) | Methodical research, primary sources, flagged uncertainty. Default. |
-| `engineer` | `model.default: claude-sonnet-4-6` (`provider: anthropic`) | Terse, code-first. |
+| `researcher` | deployment model (declares `model.default: claude-opus-4-7`) | Methodical research, primary sources, flagged uncertainty. Default. |
+| `engineer` | deployment model (declares `model.default: claude-sonnet-4-6`) | Terse, code-first. |
 | `reviewer` | deployment model | Code/plan review personality. |
 | `personality-architect` | deployment model | System personality: authors other personalities. |
 | `team-architect` | deployment model | System personality: composes personalities into teams. |
 | `debug` | deployment model | System personality (`SYSTEM_PERSONALITY_IDS`). |
 
-Tier keys apply only while `provider` matches the active LLM. `reviewer` and the system personalities write a plain `model:` string, which the loader parses and turn setup never applies (`resolveModelWithTier`, `packages/core/src/agent-loop/turn-context.ts`). Retired personalities (`coach`, `coordinator`, `operator`, `task-tracker`) sit under `data/archived/`; that directory has no `config.yaml` or `SOUL.md` of its own, so the loader skips it.
+Every built-in declares vendor model ids, written before the model registry. A declaration now names a role or a `modelRegistry` alias (`parseModelDeclaration` (`packages/core/src/model-resolution.ts`)), and with no registry configured turn setup does not read it at all (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)). Retired personalities (`coach`, `coordinator`, `operator`, `task-tracker`) sit under `data/archived/`; that directory has no `config.yaml` or `SOUL.md` of its own, so the loader skips it.
 
 ## How it works
 
@@ -43,7 +43,7 @@ The YAML parsers are intentionally minimal — `parseConfigYaml` reads line by l
 
 ```
 ~/.ethos/personalities/<id>/
-  config.yaml      # name, description, provider, platform, model.<tier>,
+  config.yaml      # name, description, provider, platform, model / model.<role>,
                    # memory.provider, capabilities (CSV), streamingTimeoutMs
                    # (this or SOUL.md must exist)
   SOUL.md         # first-person identity prompt (this or config.yaml must exist)

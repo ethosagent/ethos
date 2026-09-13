@@ -215,7 +215,7 @@ What changed in one slash command:
 
 - **System prompt** — swapped from `researcher`'s `SOUL.md` to `engineer`'s.
 - **Tool catalog** — `terminal`, `write_file`, `patch_file`, `run_tests` came into scope; the LLM now sees them. `web_search` and `web_extract` left scope.
-- **Model** — on Anthropic, researcher runs `claude-opus-4-7` and engineer `claude-sonnet-4-6`, from each personality's `model.default` key. Those keys replace your configured model only while the personality's `provider` (`anthropic` for both) is the active one; on another provider both run on the model you configured.
+- **Model** — both run on the model you configured. Each declares per-role models in `config.yaml` (researcher `claude-opus-4-7`, engineer `claude-sonnet-4-6`), but with no model registry configured a turn does not read a personality's `model` at all (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)); `modelRouting.<id>` in `~/.ethos/config.yaml` is how you give one personality a different model.
 - **Memory scope** — each personality reads and writes its own `MEMORY.md` (scope `personality:<id>`), so the engineer does not see what the researcher noted. No setting shares it; memory that has to cross personalities goes in team memory.
 
 That atomic four-dimensional swap is the headline claim of Ethos. The personality is the unit of architecture; the LLM is the substrate. The [What is a personality?](../explanation/what-is-a-personality.md) page argues for the design choice; the [Personality config reference](../reference/personality-yaml.md) lists every field.

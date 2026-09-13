@@ -69,8 +69,9 @@ describe('strategist personality plugin', () => {
     const p = registries.personalities.get('strategist');
     expect(p).toBeDefined();
     expect(p?.name).toBe('Strategist');
-    expect(p?.provider).toBe('anthropic');
-    expect(p?.model).toEqual({ default: 'claude-opus-4-7' });
+    // A role, not a vendor id: `parseModelDeclaration` accepts only a role or a
+    // modelRegistry alias (packages/core/src/model-resolution.ts).
+    expect(p?.model).toBe('deep');
   });
 
   it('strategist toolset contains web and memory tools', () => {

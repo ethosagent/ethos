@@ -269,7 +269,7 @@ Drop a directory in ~/.ethos/personalities/<id>/:
 
 <id>/
 ├── SOUL.md        ← first-person identity (who am I, how do I speak)
-├── config.yaml     ← name, description, model tiers (model.default / model.deep / …)
+├── config.yaml     ← name, description, model (a role or a modelRegistry alias)
 └── toolset.yaml    ← flat list of allowed tool names
 config.yaml is simple key: value (no nested YAML). Parsed by parseConfigYaml() in extensions/personalities/src/index.ts.
 

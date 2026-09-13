@@ -25,7 +25,7 @@ Switching from `researcher` to `engineer` mid-chat does not just swap a system p
 - The system prompt (`SOUL.md`)
 - The tools the agent can call (`toolset.yaml`)
 - Whose memory the agent reads and writes (always the personality's own, scope `personality:<id>`; no setting changes it)
-- Which model handles the next turn (`model.trivial`, `model.default`, `model.deep`, used when the personality's `provider` matches the active provider)
+- Which model handles the next turn (the `model` role or `modelRegistry` alias in `config.yaml`, resolved each turn by `resolveTurnModel`)
 
 You cannot accidentally run the engineer personality's write-shaped tools under the reviewer's read-only toolset. The four dimensions move together.
 

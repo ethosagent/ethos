@@ -74,4 +74,4 @@ These mutations affect the on-disk personality directory under `~/.ethos/persona
 | See toolset | Yes — `toolset` array in the response | |
 | Expand toolset at runtime | | No — server-side enforcement in `toDefinitions` |
 | Manage per-personality skills | Yes — `skillsList`, `skillsCreate`, etc. | |
-| Change model routing mid-turn | | No — resolved once per turn in turn setup (`resolveModelWithTier`) |
+| Change model routing mid-turn | | No — resolved once per turn in turn setup (`resolveTurnModel`) |

@@ -42,7 +42,7 @@ In Ethos, a personality is a directory. Swapping it changes:
 - The system prompt (via `SOUL.md`)
 - The tool access (via `toolset.yaml`)
 - The memory scope (always the personality's own, `personality:<id>`; there is no setting for it)
-- The model in use (via `model.default` and its sibling tier keys in `config.yaml`)
+- The model in use (via the `model` role or `modelRegistry` alias in `config.yaml`)
 
 All four change atomically. You cannot accidentally run the engineer personality's tools under the reviewer's restricted toolset.
 

@@ -83,8 +83,7 @@ The personality picks how it ingests the global skill pool. The default is `capa
 ```yaml title="~/.ethos/personalities/researcher/config.yaml"
 name: Researcher
 description: Methodical research agent
-provider: anthropic
-model.default: claude-opus-4-7
+model: deep
 
 # default — required_tools must subset personality.toolset
 skills.global_ingest.mode: capability

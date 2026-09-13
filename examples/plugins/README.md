@@ -216,7 +216,7 @@ api.registerPersonality({
   name: 'Strategist',
   description: 'Thinks in frameworks, presents options with tradeoffs',
   provider: 'anthropic',
-  model: { default: 'claude-opus-4-7' }, // tier map: a plain string is never applied
+  model: 'deep', // a role or a modelRegistry alias, never a vendor id
   toolset: ['web_search', 'read_file', 'memory_read'],
 });
 

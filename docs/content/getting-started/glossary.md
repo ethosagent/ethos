@@ -37,7 +37,7 @@ One user message in, one streamed response out. A turn may include multiple [too
 
 ### LLM provider {#llm-provider}
 
-The abstraction the [AgentLoop](#agent-loop) calls to perform inference. Implements `LLMProvider` from `@ethosagent/types`: a `name`, a `model` id, and a streaming `complete()` method that returns `AsyncIterable<CompletionChunk>`. Built-ins cover Anthropic, OpenAI-compatible endpoints (OpenRouter, Ollama, Gemini), and Azure OpenAI; custom providers ship via plugin and register through `registerLLMProvider`. Personalities select a provider via the `provider:` field in `config.yaml` and route tiers with the dotted keys `model.trivial`, `model.default`, `model.deep` and `model.dreaming`, which apply only while that `provider` is the active one (`resolveModelWithTier`, `packages/core/src/agent-loop/turn-context.ts`). See [Write an LLM provider plugin](../building/how-to/write-an-llm-provider-plugin.md).
+The abstraction the [AgentLoop](#agent-loop) calls to perform inference. Implements `LLMProvider` from `@ethosagent/types`: a `name`, a `model` id, and a streaming `complete()` method that returns `AsyncIterable<CompletionChunk>`. Built-ins cover Anthropic, OpenAI-compatible endpoints (OpenRouter, Ollama, Gemini), and Azure OpenAI; custom providers ship via plugin and register through `registerLLMProvider`. A personality does not pair a model with a provider itself: its `model` names a role or a `modelRegistry` alias, and the registry entry behind that alias carries the provider (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)). See [Write an LLM provider plugin](../building/how-to/write-an-llm-provider-plugin.md).
 
 ## CLI modes {#cli-modes}
 
@@ -49,7 +49,7 @@ Non-interactive one-shot execution via `ethos -z "prompt"`. Streams the response
 
 ### Personality {#personality}
 
-A directory at `~/.ethos/personalities/` built around three files: `SOUL.md` (identity), `config.yaml` (provider, model tiers, reach), `toolset.yaml` (allowed tools). Only `SOUL.md` or `config.yaml` has to exist. The unit of architecture in Ethos. Switching personalities atomically changes prompt, tools, memory scope, and model. See [Why is personality the unit?](../using/explanation/what-is-a-personality.md).
+A directory at `~/.ethos/personalities/` built around three files: `SOUL.md` (identity), `config.yaml` (provider, model, reach), `toolset.yaml` (allowed tools). Only `SOUL.md` or `config.yaml` has to exist. The unit of architecture in Ethos. Switching personalities atomically changes prompt, tools, memory scope, and model. See [Why is personality the unit?](../using/explanation/what-is-a-personality.md).
 
 ### Built-in personality {#built-in-personality}
 

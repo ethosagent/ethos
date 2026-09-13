@@ -9,7 +9,7 @@ A personality is a structural component (not just a system prompt string) that s
 - **Identity / voice** — `SOUL.md` (first-person), injected at priority 110.
 - **Tool access** — `toolset.yaml` declares which tools the personality is allowed to call. The registry enforces this at execution time — calls outside the allowlist return a `tool_result` with `is_error: true`.
 - **Skills** — optional `skills/` directory of `*.md` files injected into the system prompt by `SkillsInjector` (priority 100).
-- **Routing & runtime** — `config.yaml` sets the model tiers, provider, platform, and mesh-advertised capabilities. Memory scope is not configured: a personality's memory is always its own (`personality:<id>`).
+- **Routing & runtime** — `config.yaml` sets the model declaration, provider, platform, and mesh-advertised capabilities. Memory scope is not configured: a personality's memory is always its own (`personality:<id>`).
 
 A personality is loaded by `FilePersonalityRegistry.loadFromDirectory()` (mtime-cached, hot-reloadable).
 
@@ -17,7 +17,7 @@ A personality is loaded by `FilePersonalityRegistry.loadFromDirectory()` (mtime-
 
 ```
 <id>/                  ← directory name = personality id (lowercase, no spaces)
-├── config.yaml        ← name, description, provider, model.<tier>, capabilities
+├── config.yaml        ← name, description, provider, model, capabilities
 ├── SOUL.md           ← first-person identity ("I am ...", "I do ...")
 ├── toolset.yaml       ← optional but recommended: flat list of allowed tool names
 └── skills/            ← optional: per-personality skill markdown files
@@ -43,8 +43,8 @@ For a packaged personality (npm or local plugin), use `api.registerPersonality({
 |---|---|---|
 | `name` | yes | Display name (e.g. `Engineer`). Defaults to title-cased id. |
 | `description` | yes | One-line summary used in `/personality` listings. |
-| `provider` | no | The provider the model tiers are written for (`anthropic`, `openai-compat`). The tiers apply only while this matches the active provider. |
-| `model.trivial` / `model.default` / `model.deep` / `model.dreaming` | no | Model id per tier (e.g. `model.default: claude-sonnet-4-6`). A plain `model: <id>` string is parsed but never applied — `resolveModelWithTier` in `packages/core/src/agent-loop/turn-context.ts`. Unset runs on the deployment model; `modelRouting.<id>` in `~/.ethos/config.yaml` overrides both. |
+| `provider` | no | Shown on the character sheet. Model selection does not read it: a registry alias carries its own provider entry (`toResolved` in `packages/core/src/model-resolution.ts`). |
+| `model` or `model.trivial` / `model.default` / `model.deep` / `model.dreaming` | no | A role (`trivial`, `default`, `deep`, `dreaming`) or a `modelRegistry` alias — one string, or one per role. A vendor id does not parse (`parseModelDeclaration` (`packages/core/src/model-resolution.ts`)). With no registry configured the declaration is not read and turns run on the deployment model (`resolveTurnModel` (`packages/core/src/agent-loop/turn-model.ts`)); `modelRouting.<id>` in `~/.ethos/config.yaml` overrides it either way. |
 | `platform` | no | Restrict to a platform (`cli`, `telegram`). |
 | `capabilities` | no | Comma-separated mesh roles, e.g. `code, review`. Advisory; not the same as `toolset`. |
 
@@ -102,11 +102,11 @@ Discovery: top-level `*.md`, plus `<dir>/<slug>/SKILL.md`, plus `<dir>/<scope>/<
 ## Workflow for creating a new personality
 
 1. **Pick the id** — lowercase, single word, no spaces. The directory name is the id.
-2. **Pick the model tiers** — set `provider` and `model.default` (plus `model.trivial` / `model.deep` if the role needs them): `haiku` for fast lookups, `sonnet` for code/review, `opus` for planning/coaching.
+2. **Pick the model** — name a role: `trivial` for fast lookups, `default` for code/review, `deep` for planning/coaching; use per-role keys (`model.default`, `model.deep`) or registry aliases only when the role needs them.
 3. **Decide what must be shared** — a personality's memory is always its own. Anything another agent needs goes in team memory: add `team_memory_read` / `team_memory_write` to the toolset.
 4. **Write SOUL.md first** — identity drives every other choice.
 5. **Derive toolset from identity** — a coach doesn't need `terminal`; an operator does.
-6. **Write config.yaml last** — name, description, provider, model tiers, capabilities.
+6. **Write config.yaml last** — name, description, provider, model, capabilities.
 7. **Verify** — start `ethos`, run `/personality <id>`, check the personality loads and the model resolves.
 
 ## Common mistakes
@@ -116,7 +116,7 @@ Discovery: top-level `*.md`, plus `<dir>/<slug>/SKILL.md`, plus `<dir>/<scope>/<
 - **Missing `SOUL.md`** — a directory with only `config.yaml` will register, but the agent has no identity injection. Always include both.
 - **`toolset.yaml` with hyphens but indented** — lines must start with `- ` at column 0 (after trimming). Indented entries are ignored.
 - **Identity written in third person** — "The agent should be terse" reads like a spec, not a self. Rewrite as "I am terse."
-- **A plain `model:` string** — `model: claude-sonnet-4-6` loads without error and is never applied, so the personality silently runs on the deployment model. Use `model.default` with a matching `provider`.
+- **A vendor id as the model** — `model: claude-sonnet-4-6` is neither a role nor an alias. With no registry it is not read and the personality runs on the deployment model; once a registry exists the turn is refused with `model_unresolved`. Write a role or an alias.
 - **Expecting shared memory** — there is no `memoryScope` field. One personality's `MEMORY.md` never reaches another's prompt; use team memory for anything that must cross.
 - **Writing the personality as a plugin without registering an identity injector** — `api.registerPersonality({...})` adds the config, but you also need an injector at priority 110 to inject the SOUL.md content.
 - **Choosing a model id that doesn't exist** — model resolution happens per-turn; an unknown model throws at runtime, not at load time.

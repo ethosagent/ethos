@@ -296,9 +296,9 @@ export interface RunOptions extends MemoryPrefetchGate {
    */
   tierOverride?: import('@ethosagent/types').ModelTierName;
   /**
-   * Route THIS run to a named model, whatever routing resolves. Top rung: this >
-   * `modelRouting[<id>]` > the personality's tier map (only when its `provider`
-   * matches the active LLM; `tierOverride` picks the tier) > deployment default.
+   * Route THIS run to a named model: rung 0 (`run-override`) of
+   * `resolveTurnModel` (`./agent-loop/turn-model`), above `modelRouting[<id>]`,
+   * the personality's declaration (`tierOverride` picks its role) and the default.
    *
    * Generic on purpose — core never learns WHY a surface pinned the model. The
    * voice stack sets it so a spoken lane answers on a fast model instead of the
