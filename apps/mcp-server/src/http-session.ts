@@ -21,6 +21,17 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { McpLogger } from './logger';
 
+/**
+ * What {@link ServeMcpHttpOptions.authorize} answers for ONE request.
+ *
+ * A refusal carries the HTTP status and a short code the host wants written —
+ * the helper renders it as a JSON-RPC error body and never learns WHY (whose
+ * key, which scope, which personality): that is the host's business, and
+ * keeping it there is what stops this transport growing a second auth model
+ * beside the export server's.
+ */
+export type McpHttpAuthDecision = { ok: true } | { ok: false; status: number; message: string };
+
 export interface ServeMcpHttpOptions {
   /** TCP port. `0` binds an ephemeral port — read the real one off the handle. */
   port: number;
@@ -31,11 +42,41 @@ export interface ServeMcpHttpOptions {
   /**
    * Builds the `Server` for ONE session. Called once per new session, never
    * shared — see bug 1 above. Register handlers on the returned instance.
+   *
+   * It receives the request that OPENED the session so a host whose handlers
+   * are per-credential (the personality export binds its session key to the
+   * caller's bearer key) can read it off the same request `authorize` just
+   * accepted, instead of guessing from a shared slot two concurrent
+   * initializes would race over.
    */
-  serverFactory: () => Server | Promise<Server>;
+  serverFactory: (ctx: { req: IncomingMessage }) => Server | Promise<Server>;
   logger: McpLogger;
   /** Extra `Host` header values to accept, beyond the loopback names. */
   allowedHosts?: string[];
+  /**
+   * Per-REQUEST authorization, run after the Host check and before any session
+   * lookup or `Server` allocation. Absent → the endpoint is unauthenticated,
+   * which is what the global operator console is (M-D14).
+   *
+   * Every request, not just `initialize`: a bearer key that is revoked mid
+   * session must stop working on the caller's next call, and an MCP session is
+   * a long-lived thing that would otherwise outlive its own credential
+   * (`export-server.ts`, M-T6). `sessionId` is the `Mcp-Session-Id` header as
+   * sent — `undefined` on the initialize request — so a host that binds a
+   * session to a credential can check the binding here too.
+   */
+  authorize?: (ctx: {
+    req: IncomingMessage;
+    sessionId: string | undefined;
+  }) => Promise<McpHttpAuthDecision> | McpHttpAuthDecision;
+  /**
+   * Called once with the id of each newly created session, after `authorize`
+   * accepted the request that created it. The hook for binding a session to
+   * whatever credential opened it.
+   */
+  onSessionOpened?: (sessionId: string, req: IncomingMessage) => void;
+  /** Called when a session's transport closes — release the binding. */
+  onSessionClosed?: (sessionId: string) => void;
 }
 
 export interface McpHttpHandle {
@@ -53,8 +94,11 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 /**
  * Start an MCP Streamable-HTTP listener.
  *
- * Refuses a non-loopback bind: this server is unauthenticated and full-trust,
- * so there is no safe non-loopback story until auth ships.
+ * Refuses a non-loopback bind. The operator console that first used this helper
+ * is unauthenticated and full-trust, so it had no safe non-loopback story at
+ * all; the personality export supplies an {@link ServeMcpHttpOptions.authorize}
+ * hook, but a bearer key over plaintext HTTP is not one either — a remote
+ * caller needs the operator's own TLS-terminating proxy in front (M-D15).
  */
 export async function serveMcpHttp(opts: ServeMcpHttpOptions): Promise<McpHttpHandle> {
   const host = opts.host ?? '127.0.0.1';
@@ -71,12 +115,12 @@ export async function serveMcpHttp(opts: ServeMcpHttpOptions): Promise<McpHttpHa
 
   const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: Server }>();
 
-  const forbidden = (res: ServerResponse): void => {
-    res.writeHead(403, { 'Content-Type': 'application/json' });
+  const refuse = (res: ServerResponse, status: number, message: string): void => {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         jsonrpc: '2.0',
-        error: { code: -32000, message: 'Invalid Host header' },
+        error: { code: -32000, message },
         id: null,
       }),
     );
@@ -91,12 +135,22 @@ export async function serveMcpHttp(opts: ServeMcpHttpOptions): Promise<McpHttpHa
       // `validateRequestHeaders` rejected it.
       if (!allowedHosts.includes(req.headers.host ?? '')) {
         opts.logger.warn('mcp_http_host_rejected', { host: req.headers.host ?? null });
-        forbidden(res);
+        refuse(res, 403, 'Invalid Host header');
         return;
       }
 
       const sessionId = req.headers['mcp-session-id'];
-      const existing = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
+      const presentedSession = typeof sessionId === 'string' ? sessionId : undefined;
+
+      if (opts.authorize) {
+        const decision = await opts.authorize({ req, sessionId: presentedSession });
+        if (!decision.ok) {
+          refuse(res, decision.status, decision.message);
+          return;
+        }
+      }
+
+      const existing = presentedSession ? sessions.get(presentedSession) : undefined;
       if (existing) {
         await existing.transport.handleRequest(req, res);
         return;
@@ -108,7 +162,7 @@ export async function serveMcpHttp(opts: ServeMcpHttpOptions): Promise<McpHttpHa
         enableDnsRebindingProtection: true,
         allowedHosts,
       });
-      const server = await opts.serverFactory();
+      const server = await opts.serverFactory({ req });
       sessions.set(id, { transport, server });
       // `server.close()` closes the transport, which fires `onclose` again —
       // without the latch that is infinite recursion, not a double close.
@@ -117,8 +171,10 @@ export async function serveMcpHttp(opts: ServeMcpHttpOptions): Promise<McpHttpHa
         if (closed) return;
         closed = true;
         sessions.delete(id);
+        opts.onSessionClosed?.(id);
         void server.close().catch(() => {});
       };
+      opts.onSessionOpened?.(id, req);
       await server.connect(transport);
       await transport.handleRequest(req, res);
       return;

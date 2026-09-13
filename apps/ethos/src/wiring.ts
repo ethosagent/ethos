@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { meshRegistryPath, setMeshObservabilityService } from '@ethosagent/agent-mesh';
 import { type EthosConfig, ethosDir, readKeys, readRawConfig } from '@ethosagent/config';
-import type { AgentLoop } from '@ethosagent/core';
+import type { AgentLoop, DefaultToolRegistry } from '@ethosagent/core';
 import type { CronJob } from '@ethosagent/cron';
 import type { BusySource, IdleWatcherCapabilities } from '@ethosagent/idle-watcher';
 import {
@@ -19,13 +19,7 @@ import {
   MergedSecretsResolver,
 } from '@ethosagent/storage-fs';
 import { hasLiveTeamProcesses, parseTeamManifest, teamsDir } from '@ethosagent/team-supervisor';
-import type {
-  LLMProvider,
-  SecretsResolver,
-  Storage,
-  TeamManifest,
-  ToolRegistry,
-} from '@ethosagent/types';
+import type { LLMProvider, SecretsResolver, Storage, TeamManifest } from '@ethosagent/types';
 import { RETENTION_DEFAULTS } from '@ethosagent/types';
 import {
   type CreateAgentLoopResult,
@@ -575,6 +569,26 @@ export async function createAgentLoop(
      * else, and both tools behave exactly as they did before Part 2.
      */
     outbox?: import('@ethosagent/wiring').OutboxWiring;
+    /**
+     * Pin the working directory tools resolve relative paths against, instead
+     * of `process.cwd()`.
+     *
+     * One caller: `ethos mcp serve --personality <id>` (M-D11,
+     * plan/phases/trust-before-reach.md Part 3). That process is spawned BY an
+     * MCP client whose working directory is arbitrary — Claude Desktop's is
+     * whatever the OS handed the app — so the launch directory is not a reach
+     * anyone chose. Every other command runs where the operator typed it and
+     * leaves this unset.
+     */
+    workingDir?: string;
+    /**
+     * Turn off the post-turn learners (M-D6) — see
+     * `CreateAgentLoopOptions.disablePostTurnLearning` for what that means and
+     * why it is a security property rather than a preference. Set by any host
+     * that lets someone other than the operator start a turn; the MCP export is
+     * the first.
+     */
+    disablePostTurnLearning?: boolean;
   } = {},
 ): Promise<CreateAgentLoopResult> {
   const rotated = await withRotation(config);
@@ -613,7 +627,7 @@ export async function createAgentLoop(
   };
   const result = await packageCreateAgentLoop(wiringConfig, {
     dataDir: ethosDir(),
-    workingDir: process.cwd(),
+    workingDir: opts.workingDir ?? process.cwd(),
     profile: opts.profile ?? 'cli',
     logger,
     meshRegistryPath: opts.meshRegistryPath,
@@ -627,6 +641,7 @@ export async function createAgentLoop(
     ...(opts.probeWindowRefresh === true ? { probeWindowRefresh: true } : {}),
     ...(opts.livekit ? { livekit: opts.livekit } : {}),
     ...(opts.outbox ? { outbox: opts.outbox } : {}),
+    ...(opts.disablePostTurnLearning === true ? { disablePostTurnLearning: true } : {}),
   });
 
   return result;
@@ -638,7 +653,10 @@ export async function createAgentLoop(
 
 export interface TeamLoopInfo {
   loop: AgentLoop;
-  toolRegistry: ToolRegistry;
+  /** The concrete registry `createAgentLoop` returned — `serve.ts` resolves
+   *  `mcp_export` against it for the character sheet, which needs
+   *  `toolNamesForPersonality`. */
+  toolRegistry: DefaultToolRegistry;
   /** Personality the coordinator runs as. */
   coordinatorPersonality: string;
   /** Mesh name (team name unless manifest.mesh overrides it). */

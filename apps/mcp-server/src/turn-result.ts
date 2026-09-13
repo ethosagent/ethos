@@ -27,6 +27,16 @@ export interface TurnResult {
   turnCount: number;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * The turn's observability trace id, from the `run_start` event (the first
+   * event of a turn) — `undefined` when no observability is wired, never `''`.
+   *
+   * Here because the MCP export's audit entries carry it (Part 3, "Audit"):
+   * the `mcp.export.call` event is metadata only, so the trace id is the ONLY
+   * handle joining a refused or expensive external call to what the turn
+   * actually did in `observability.db`.
+   */
+  traceId?: string;
   /** Present when the turn carried an `error` or `halt` event. First one wins. */
   error?: TurnFailure;
 }
@@ -44,9 +54,13 @@ export async function collectTurnResult(events: AsyncIterable<AgentEvent>): Prom
   let inputTokens = 0;
   let outputTokens = 0;
   let error: TurnFailure | undefined;
+  let traceId: string | undefined;
 
   for await (const event of events) {
     switch (event.type) {
+      case 'run_start':
+        traceId = event.traceId;
+        break;
       case 'text_delta':
         text += event.text;
         break;
@@ -75,5 +89,12 @@ export async function collectTurnResult(events: AsyncIterable<AgentEvent>): Prom
     }
   }
 
-  return { text, turnCount, inputTokens, outputTokens, ...(error ? { error } : {}) };
+  return {
+    text,
+    turnCount,
+    inputTokens,
+    outputTokens,
+    ...(traceId ? { traceId } : {}),
+    ...(error ? { error } : {}),
+  };
 }

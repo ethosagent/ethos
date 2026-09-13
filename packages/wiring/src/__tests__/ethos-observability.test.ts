@@ -90,6 +90,17 @@ describe('EthosObservability', () => {
       expect(ETHOS_EVENT_CATEGORIES).toContain('grounding.finding');
     });
 
+    // M-T3 (plan/phases/trust-before-reach.md Part 3) — the MCP export's
+    // metadata-only audit trail. Three categories, following the `a2a.*`
+    // precedent: the export server's fail-open sink maps each audit entry to
+    // one of them via `recordEthosEvent`. Bodies never land here — an exported
+    // turn's transcript lives in `sessions.db` under its session key.
+    it('ETHOS_EVENT_CATEGORIES carries the three mcp.export.* categories', () => {
+      expect(ETHOS_EVENT_CATEGORIES).toContain('mcp.export.auth');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('mcp.export.discovery');
+      expect(ETHOS_EVENT_CATEGORIES).toContain('mcp.export.call');
+    });
+
     it('ETHOS_TRACE_KINDS enumerates ethos trace kinds', () => {
       expect(ETHOS_TRACE_KINDS).toEqual([
         'turn',

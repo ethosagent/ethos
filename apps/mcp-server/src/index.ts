@@ -3,8 +3,23 @@ export { continueClient } from './clients/continue';
 export { cursor } from './clients/cursor';
 export { opencode } from './clients/opencode';
 export type { ClientAdapter, McpEntry } from './clients/types';
+export { DEFAULT_ENTRY_NAME, entryName } from './clients/types';
 export { zed } from './clients/zed';
-export type { McpHttpHandle, ServeMcpHttpOptions } from './http-session';
+export type {
+  ExportPersonalityView,
+  McpExportAuditEntry,
+  McpExportAuditKind,
+  McpExportAuditSink,
+  PersonalityExportServerConfig,
+} from './export-server';
+export {
+  exportSessionKey,
+  exportSessionKeyPrefix,
+  PersonalityExportServer,
+  safeExportAudit,
+  stdioClientId,
+} from './export-server';
+export type { McpHttpAuthDecision, McpHttpHandle, ServeMcpHttpOptions } from './http-session';
 export { serveMcpHttp } from './http-session';
 export type { LogLevel, McpLogger } from './logger';
 export { logger } from './logger';

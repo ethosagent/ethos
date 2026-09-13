@@ -516,6 +516,17 @@ export interface CreateWebApiOptions {
     personalityId: string,
   ) => Promise<import('@ethosagent/personalities').CharacterSheetBoundary | null>;
   /**
+   * M-T8 — resolved `mcp_export` seam for the `## MCP export` block of the
+   * `personalities.characterSheet` RPC. The provider computes it via
+   * `resolveMcpExportScope()` from `@ethosagent/wiring` against the live tool
+   * registry — the SAME resolver `ethos mcp serve` runs an exported turn under.
+   * Absent or resolving `null` → the block still states whether the personality
+   * is exported, without the resolved slice.
+   */
+  mcpExport?: (
+    personalityId: string,
+  ) => Promise<import('@ethosagent/personalities').CharacterSheetMcpExport | null>;
+  /**
    * Protocol route modules (A2A, Phase 3) contributed to the Hono app via the
    * explicit, reviewable seam. Each declares its mount path, auth posture, and
    * description; `enabled: false` skips it. Modules inherit the app-wide CORS +
@@ -879,6 +890,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     ...(opts.modelFit ? { modelFit: opts.modelFit } : {}),
     ...(opts.scriptSurface ? { scriptSurface: opts.scriptSurface } : {}),
     ...(opts.boundary ? { boundary: opts.boundary } : {}),
+    ...(opts.mcpExport ? { mcpExport: opts.mcpExport } : {}),
   });
   // Connected wake satellites. Constructed BEFORE `ConfigService` because the
   // Settings write path pushes to it: eng-review D5 makes a Settings save the

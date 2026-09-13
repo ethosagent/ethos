@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { DefaultToolRegistry } from '@ethosagent/core';
 import {
   type CharacterSheetModelFit,
   FilePersonalityRegistry,
@@ -6,7 +7,14 @@ import {
 } from '@ethosagent/personalities';
 import { SkillsInjector, SkillsLibrary, UniversalScanner } from '@ethosagent/skills';
 import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
-import type { CompletionChunk, LLMProvider, Message } from '@ethosagent/types';
+import type {
+  CompletionChunk,
+  LLMProvider,
+  Message,
+  PersonalityConfig,
+  Tool,
+} from '@ethosagent/types';
+import { resolveMcpExportScope } from '@ethosagent/wiring';
 import { describe, expect, it } from 'vitest';
 import { PersonalitiesService } from '../../services/personalities.service';
 import { makeStubPersonalityRegistry } from '../test-helpers';
@@ -915,5 +923,135 @@ Emit an echarts fence.`;
       const { markdown } = await service.characterSheet('researcher');
       expect(markdown).not.toContain('Renders:');
     });
+  });
+});
+
+// M-T8 — the `## MCP export` block on the Web Personalities tab. The block
+// existed before this; what was missing was a caller that RESOLVED the slice,
+// so every sheet the RPC rendered fell back to "not available in this
+// rendering". The seam is driven here with the REAL resolver over a REAL
+// `DefaultToolRegistry` — `resolveMcpExportScope` is the one owner of that
+// resolution and the same function `ethos mcp serve` runs the exported turn
+// under, so a stub scope would pin the plumbing and not the answer.
+describe('PersonalitiesService — resolved ## MCP export block (M-T8)', () => {
+  function tool(name: string): Tool {
+    return {
+      name,
+      description: '',
+      schema: {},
+      capabilities: {},
+      execute: async () => ({ ok: true, value: '' }),
+    };
+  }
+
+  async function makeExportService(mcpExportDeclared: boolean) {
+    const storage = new InMemoryStorage();
+    const soulPath = join(DATA, 'personalities', 'exporter', 'SOUL.md');
+    await storage.mkdir(join(DATA, 'personalities', 'exporter'));
+    await storage.write(soulPath, '# Exporter\n\nI answer questions from other apps.\n');
+    const registry = new FilePersonalityRegistry(storage, DATA);
+    const config: PersonalityConfig = {
+      id: 'exporter',
+      name: 'Exporter',
+      soulFile: soulPath,
+      toolset: ['read_file', 'memory_read'],
+      ...(mcpExportDeclared
+        ? {
+            mcp_export: {
+              enabled: true,
+              // `terminal` is NOT in the toolset — `expose_tools` can only ever
+              // remove reach, so the sheet must name it as dropped.
+              expose_tools: ['read_file', 'memory_read', 'terminal'],
+              expose_memory: 'scoped' as const,
+            },
+          }
+        : {}),
+    };
+    registry.define(config);
+    registry.setDefault('exporter');
+    const library = new SkillsLibrary({ dataDir: DATA, storage });
+
+    const tools = new DefaultToolRegistry();
+    tools.register(tool('read_file'));
+    tools.register(tool('memory_read'));
+    tools.register(tool('terminal'));
+
+    const service = new PersonalitiesService({
+      personalities: registry,
+      library,
+      // Exactly what `serve.ts` wires: the live registry, the one resolver.
+      mcpExport: async (id) => {
+        const described = registry.describe(id);
+        return described ? resolveMcpExportScope(described.config, tools) : null;
+      },
+    });
+    return { service, config, registry, tools };
+  }
+
+  it('names the tools a caller may use and the ones the declaration did not get', async () => {
+    const { service } = await makeExportService(true);
+    const { markdown } = await service.characterSheet('exporter');
+    expect(markdown).toContain('- Status: exported — `ethos mcp serve --personality exporter`');
+    expect(markdown).toContain("- Caller's turn may use: memory_read, read_file");
+    expect(markdown).toContain("    - terminal — dropped, not in this personality's reach");
+    expect(markdown).toContain('- Memory: scoped — personality:exporter, read-only');
+    expect(markdown).not.toContain('not available in this rendering');
+  });
+
+  // One generator, both surfaces: the RPC markdown IS `renderCharacterSheet`'s
+  // output for the resolved scope — and an `McpExportScope` satisfies the
+  // sheet's 9th parameter structurally, with no cast on either call site.
+  it('renders through the same generator the CLI does, with the resolver output passed straight in', async () => {
+    const { service, config, registry, tools } = await makeExportService(true);
+    const { markdown } = await service.characterSheet('exporter');
+    const soulMd = await registry.readSoulMd('exporter');
+    expect(markdown).toBe(
+      renderCharacterSheet(
+        config,
+        soulMd,
+        undefined,
+        undefined,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        resolveMcpExportScope(config, tools),
+      ),
+    );
+  });
+
+  it('still says not exported for a personality that declares no mcp_export', async () => {
+    const { service } = await makeExportService(false);
+    const { markdown } = await service.characterSheet('exporter');
+    expect(markdown).toContain(
+      '- Status: not exported — no other app can ask this personality anything.',
+    );
+    expect(markdown).not.toContain("Caller's turn may use");
+  });
+
+  // Fail-soft, the same posture as the modelFit / boundary seams above it: a
+  // host that wires no registry renders the block without the resolved slice
+  // rather than inventing one.
+  it('falls back to the unresolved block when no seam is wired', async () => {
+    const storage = new InMemoryStorage();
+    const soulPath = join(DATA, 'personalities', 'exporter', 'SOUL.md');
+    await storage.mkdir(join(DATA, 'personalities', 'exporter'));
+    await storage.write(soulPath, '# Exporter\n\nI answer questions from other apps.\n');
+    const registry = new FilePersonalityRegistry(storage, DATA);
+    registry.define({
+      id: 'exporter',
+      name: 'Exporter',
+      soulFile: soulPath,
+      toolset: ['read_file'],
+      mcp_export: { enabled: true, expose_tools: ['read_file'] },
+    });
+    registry.setDefault('exporter');
+    const service = new PersonalitiesService({
+      personalities: registry,
+      library: new SkillsLibrary({ dataDir: DATA, storage }),
+    });
+    const { markdown } = await service.characterSheet('exporter');
+    expect(markdown).toContain('- Status: exported');
+    expect(markdown).toContain('- Resolved slice: not available in this rendering.');
   });
 });

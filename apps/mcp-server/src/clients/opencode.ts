@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { ClientAdapter, McpEntry } from './types';
+import { type ClientAdapter, entryName, type McpEntry } from './types';
 
 export const opencode: ClientAdapter = {
   name: 'opencode',
@@ -23,7 +23,12 @@ export const opencode: ClientAdapter = {
   injectEntry(config, entry: McpEntry) {
     const mcp = (config.mcp ?? {}) as Record<string, unknown>;
     const servers = (mcp.servers ?? {}) as Record<string, unknown>;
-    servers.ethos = { type: 'local', command: [entry.command, ...entry.args] };
+    // OpenCode names the env block `environment` on a local server, not `env`.
+    servers[entryName(entry)] = {
+      type: 'local',
+      command: [entry.command, ...entry.args],
+      ...(entry.env ? { environment: entry.env } : {}),
+    };
     return { ...config, mcp: { ...mcp, servers } };
   },
 

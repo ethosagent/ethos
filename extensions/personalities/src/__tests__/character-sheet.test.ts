@@ -1205,3 +1205,180 @@ describe('renderCharacterSheet — Publishing line (O-D10)', () => {
     expect(sheet.indexOf('Publishing:')).toBeLessThan(sheet.indexOf('## Boundary'));
   });
 });
+
+// M-T8 — the `## MCP export` block. `mcp_export` was schema-only until Part 3;
+// the sheet is where an operator finds out whether another app can ask this
+// personality anything, on what terms, and what the export deliberately does
+// NOT bound (M-D15). The resolved slice is computed by `resolveMcpExportScope`
+// (packages/wiring/src/mcp-export.ts) and PASSED IN — `extensions/` sits below
+// `packages/wiring` in the layer model and cannot import it.
+describe('renderCharacterSheet — ## MCP export block (M-T8)', () => {
+  type Scope = Parameters<typeof renderCharacterSheet>[8];
+
+  function block(config: PersonalityConfig, scope?: Scope): string {
+    const sheet = renderCharacterSheet(
+      config,
+      soulMd,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      scope,
+    );
+    const start = sheet.indexOf('## MCP export');
+    expect(start).toBeGreaterThan(-1);
+    return sheet.slice(start).split('\n\n')[0] ?? '';
+  }
+
+  const exported: NonNullable<Scope> = {
+    enabled: true,
+    allowed: ['read_file', 'web_search'],
+    dropped: [],
+    memory: 'none',
+    sessions: false,
+    auth: 'localhost',
+  };
+
+  it('sits directly after the ## MCP servers block', () => {
+    const sheet = renderCharacterSheet(fullConfig, soulMd);
+    expect(sheet.indexOf('## MCP export')).toBeGreaterThan(sheet.indexOf('## MCP servers'));
+    expect(sheet.indexOf('## MCP export')).toBeLessThan(sheet.indexOf('## Plugins'));
+  });
+
+  it('says not exported when the personality declares no mcp_export', () => {
+    expect(block(fullConfig)).toBe(
+      [
+        '## MCP export',
+        '- Status: not exported — no other app can ask this personality anything.',
+        '- To export it: set mcp_export.enabled: true in config.yaml, then run `ethos mcp serve --personality engineer`.',
+      ].join('\n'),
+    );
+  });
+
+  // Fail-closed, the same predicate `resolveMcpExportScope` uses: anything
+  // short of a literal `true` is not an export.
+  it('says not exported for an explicit enabled: false', () => {
+    const sheet = block({ ...fullConfig, mcp_export: { enabled: false, expose_tools: 'all' } });
+    expect(sheet).toContain('- Status: not exported');
+    expect(sheet).not.toContain('read_file');
+  });
+
+  it('says not exported when the resolved scope fails closed, whatever the declaration reads', () => {
+    const sheet = block(
+      { ...fullConfig, mcp_export: { enabled: true } },
+      { ...exported, enabled: false },
+    );
+    expect(sheet).toContain('- Status: not exported');
+  });
+
+  it('renders the status, command, tools, memory, conversations, auth and limitations', () => {
+    expect(block({ ...fullConfig, mcp_export: { enabled: true } }, exported)).toBe(
+      [
+        '## MCP export',
+        '- Status: exported — `ethos mcp serve --personality engineer`',
+        "- Caller's turn may use: read_file, web_search",
+        '- Memory: none — no prefetch, no memory tools',
+        '- Conversations: not exposed',
+        '- Auth: localhost — stdio only; the boundary is whoever can spawn ethos as this OS user',
+        '- No rate limit: an admitted client may call as often as it likes. What bounds the cost is budgetCapUsd per session key, one in-flight call per client, and revoking the key.',
+        "- Loopback only, no TLS: HTTP binds 127.0.0.1 and the traffic is not encrypted. A remote caller needs the operator's own TLS-terminating proxy.",
+      ].join('\n'),
+    );
+  });
+
+  // The point of the block: a tool an operator NAMED and never saw again is
+  // shown as dropped with the reason, not silently omitted.
+  it('prints a dropped tool under the allowed list rather than omitting it', () => {
+    expect(
+      block(
+        { ...fullConfig, mcp_export: { enabled: true } },
+        { ...exported, dropped: ['terminal'] },
+      ),
+    ).toBe(
+      [
+        '## MCP export',
+        '- Status: exported — `ethos mcp serve --personality engineer`',
+        "- Caller's turn may use: read_file, web_search",
+        "    - terminal — dropped, not in this personality's reach",
+        '- Memory: none — no prefetch, no memory tools',
+        '- Conversations: not exposed',
+        '- Auth: localhost — stdio only; the boundary is whoever can spawn ethos as this OS user',
+        '- No rate limit: an admitted client may call as often as it likes. What bounds the cost is budgetCapUsd per session key, one in-flight call per client, and revoking the key.',
+        "- Loopback only, no TLS: HTTP binds 127.0.0.1 and the traffic is not encrypted. A remote caller needs the operator's own TLS-terminating proxy.",
+      ].join('\n'),
+    );
+  });
+
+  it('lists every dropped tool, one line each', () => {
+    const sheet = block(
+      { ...fullConfig, mcp_export: { enabled: true } },
+      { ...exported, dropped: ['run_code', 'terminal'] },
+    );
+    expect(sheet).toContain("    - run_code — dropped, not in this personality's reach");
+    expect(sheet).toContain("    - terminal — dropped, not in this personality's reach");
+  });
+
+  it('renders a bearer export with sessions and full memory', () => {
+    expect(
+      block(
+        { ...fullConfig, mcp_export: { enabled: true } },
+        {
+          enabled: true,
+          allowed: ['memory_read', 'memory_write'],
+          dropped: [],
+          memory: 'full',
+          sessions: true,
+          auth: 'bearer',
+        },
+      ),
+    ).toBe(
+      [
+        '## MCP export',
+        '- Status: exported — `ethos mcp serve --personality engineer`',
+        "- Caller's turn may use: memory_read, memory_write",
+        '- Memory: full — personality:engineer, memory_write exposed',
+        "- Conversations: exposed — this client's own only, under mcp:engineer:<client>:",
+        '- Auth: bearer — an sk-ethos- key scoped mcp:engineer, over stdio or HTTP',
+        '- No rate limit: an admitted client may call as often as it likes. What bounds the cost is budgetCapUsd per session key, one in-flight call per client, and revoking the key.',
+        "- Loopback only, no TLS: HTTP binds 127.0.0.1 and the traffic is not encrypted. A remote caller needs the operator's own TLS-terminating proxy.",
+      ].join('\n'),
+    );
+  });
+
+  it('names the read-only personality scope for expose_memory: scoped', () => {
+    const sheet = block(
+      { ...fullConfig, mcp_export: { enabled: true } },
+      { ...exported, memory: 'scoped' },
+    );
+    expect(sheet).toContain('- Memory: scoped — personality:engineer, read-only');
+  });
+
+  it('says conversation-only when the declaration exposes no tools', () => {
+    const sheet = block(
+      { ...fullConfig, mcp_export: { enabled: true } },
+      { ...exported, allowed: [] },
+    );
+    expect(sheet).toContain("- Caller's turn may use: (none) — conversation only");
+  });
+
+  // Without a registry the resolver cannot run, and the sheet says so rather
+  // than restating M-D4's defaults — a second copy of them would be a second
+  // thing to drift.
+  it('says the slice is unresolved when the caller passes no resolved scope', () => {
+    const sheet = block({ ...fullConfig, mcp_export: { enabled: true, expose_tools: 'all' } });
+    expect(sheet).toContain('- Status: exported — `ethos mcp serve --personality engineer`');
+    expect(sheet).toContain('- Resolved slice: not available in this rendering.');
+    expect(sheet).not.toContain('- Memory:');
+    expect(sheet).not.toContain('- Auth:');
+  });
+
+  it('discloses both M-D15 limitations on every exported sheet', () => {
+    for (const auth of ['localhost', 'bearer'] as const) {
+      const sheet = block({ ...fullConfig, mcp_export: { enabled: true } }, { ...exported, auth });
+      expect(sheet).toContain('- No rate limit:');
+      expect(sheet).toContain('- Loopback only, no TLS:');
+    }
+  });
+});

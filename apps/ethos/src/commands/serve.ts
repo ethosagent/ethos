@@ -25,7 +25,12 @@ import {
   readRawConfig,
   writeConfig,
 } from '@ethosagent/config';
-import { type AgentLoop, scriptCallableFor, toolsDeclaringNetwork } from '@ethosagent/core';
+import {
+  type AgentLoop,
+  type DefaultToolRegistry,
+  scriptCallableFor,
+  toolsDeclaringNetwork,
+} from '@ethosagent/core';
 import { buildCronTriggers, CronScheduler, type CronTriggers } from '@ethosagent/cron';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { LangfusePollLoop } from '@ethosagent/export-langfuse';
@@ -78,6 +83,7 @@ import {
   createMemoryBundle,
   createSessionStore,
   IdentityMap,
+  resolveMcpExportScope,
   resolvePersonalityModelFit,
   sanitize,
   seedAllSystemJobs,
@@ -446,7 +452,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const loopProfile = SERVE_LOOP_PROFILE;
 
   let loop: AgentLoop;
-  let toolRegistry: ToolRegistry | undefined;
+  // The CONCRETE registry, not the `ToolRegistry` interface: the character
+  // sheet's `mcpExport` seam calls `resolveMcpExportScope`, which needs
+  // `toolNamesForPersonality` (a personality's full reach). Every branch below
+  // assigns a `CreateAgentLoopResult.toolRegistry`, which already is one.
+  let toolRegistry: DefaultToolRegistry | undefined;
   let mcpManager: McpManager | undefined;
   let pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
   let notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
@@ -2011,7 +2021,9 @@ export interface BuildServeWebApiOptions {
   attachmentCache: FsAttachmentCache;
   apiKeys: SqliteApiKeyStore;
   idempotencyStore: IdempotencyStore;
-  toolRegistry: ToolRegistry | undefined;
+  /** The concrete registry — the character sheet's `mcpExport` seam resolves
+   *  `mcp_export` against it, which needs `toolNamesForPersonality`. */
+  toolRegistry: DefaultToolRegistry | undefined;
   mcpManager: McpManager | undefined;
   pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
   notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
@@ -2207,6 +2219,18 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
             const described = personalities.describe(personalityId);
             if (!described) return null;
             return { networkTools: toolsDeclaringNetwork(described.config, registry) };
+          },
+          // M-T8 — the resolved `mcp_export` slice for the sheet's
+          // `## MCP export` block. Same resolver `ethos mcp serve` runs the
+          // exported turn under, so the tab names the tools the export would
+          // actually admit and the ones it dropped. Resolves null for unknown
+          // ids.
+          mcpExport: async (personalityId: string) => {
+            const registry = toolRegistry;
+            if (!registry) return null;
+            const described = personalities.describe(personalityId);
+            if (!described) return null;
+            return resolveMcpExportScope(described.config, registry);
           },
         }
       : {}),

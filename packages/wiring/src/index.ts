@@ -3,6 +3,7 @@ import {
   type AgentLoop,
   ChainedProvider,
   DefaultLLMProviderRegistry,
+  type DefaultToolRegistry,
   type SummarizerFn,
 } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
@@ -26,7 +27,6 @@ import type {
   SecretsResolver,
   SessionStore,
   Storage,
-  ToolRegistry,
 } from '@ethosagent/types';
 
 export type { WiringContext } from './types';
@@ -465,7 +465,14 @@ export interface WiringConfig {
   pluginsAutoInstall?: boolean;
 }
 
-export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp';
+/**
+ * The surface a loop was assembled for. Stamped on every turn as
+ * `AgentLoop.options.platform`, and therefore on the sessions the loop
+ * creates — `'mcp'` is what makes an externally-driven conversation
+ * distinguishable from the operator's own in `sessions.db` (M-D13,
+ * plan/phases/trust-before-reach.md Part 3). Metadata: nothing branches on it.
+ */
+export type WiringProfile = 'cli' | 'tui' | 'web' | 'acp' | 'mcp';
 
 /**
  * Minimal structural shape of the app-layer slash command registry. Wiring
@@ -530,6 +537,27 @@ export interface CreateAgentLoopOptions {
   /** Skip Docker init and the tools that depend on it (run_code, browser).
    *  Useful in containers / CI / web profiles where Docker isn't reachable. */
   disableDocker?: boolean;
+  /**
+   * Turn OFF everything that writes back what a turn said: the improvement
+   * fork's `agent_done` learner (`ImprovementFork.register()`) and proactive
+   * memory capture's (`MemoryCaptureRunner.registerHook`), both in
+   * `build-agent-loop.ts`.
+   *
+   * A security property, not a preference (M-D6, plan/phases/trust-before-reach.md
+   * Part 3). In a process whose turns are driven by an EXTERNAL MCP client, a
+   * post-turn learner makes that client's text into the operator's memory and
+   * skills with nobody in the loop — a persistent-injection path that survives
+   * the session. Any host that lets someone other than the operator start a
+   * turn sets this; the export server (`ethos mcp serve --personality <id>`) is
+   * the first.
+   *
+   * What it does NOT disable: an explicit `memory_write` the turn itself makes.
+   * That is a tool call, visible in the transcript and gated by the toolset and
+   * by `expose_memory` (`resolveMcpExportScope`, `./mcp-export.ts`).
+   *
+   * Pinned by `packages/wiring/src/__tests__/post-turn-learning.test.ts`.
+   */
+  disablePostTurnLearning?: boolean;
   /** Optional log sink for non-fatal warnings (e.g. Docker missing, skill
    *  skipped). Defaults to a no-op so the package stays headless. */
   logger?: Logger;
@@ -1136,10 +1164,23 @@ async function createLLMFromRegistry(
   });
 }
 
+// Part 3 (plan/phases/trust-before-reach.md) — honouring `mcp_export`: the pure
+// declaration→scope resolver and the per-client bearer check the export server
+// runs on every call.
+export {
+  type CreateMcpClientAuthenticatorOptions,
+  createMcpClientAuthenticator,
+  type McpApiKeyStoreView,
+  type McpClientAuthenticator,
+  type McpClientAuthResult,
+  type McpClientDenyReason,
+  type McpExportScope,
+  type McpExportToolView,
+  resolveMcpExportScope,
+} from './mcp-export';
 // Skill passthrough helpers live in a separate file so tests can import them
 // without pulling in the heavy plugin-loader / docker / mcp dependency chain.
 export { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
-
 // Tool-scope helper — turns an allowlist into the `toolsetExclude` denylist
 // that also reaches MCP, plugin and `alwaysInclude` tools. Separate file, no
 // heavy imports, so a caller can take it without the composition chain.
@@ -1151,7 +1192,20 @@ export { complementExclude } from './tool-scope';
 
 export interface CreateAgentLoopResult {
   loop: AgentLoop;
-  toolRegistry: ToolRegistry;
+  /**
+   * The registry the loop runs on — the CONCRETE `DefaultToolRegistry`, not the
+   * narrower `ToolRegistry` contract from `@ethosagent/types`.
+   *
+   * It always was one (`buildInfrastructure` constructs it); the field merely
+   * stopped saying so, and `toolNamesForPersonality` — the personality's full
+   * reach, which `resolveMcpExportScope` (`./mcp-export`) needs on every
+   * exported call — lives only on the class. Narrowing it here cost every
+   * caller that wants the reach an `as` cast at the call site, which is a
+   * worse trade than naming the type once. Every consumer that only wants the
+   * contract (`createWebApi`, the realtime surface, the tool-settings service)
+   * keeps taking `ToolRegistry` and accepts this unchanged.
+   */
+  toolRegistry: DefaultToolRegistry;
   /**
    * F06 — release everything this call started or opened, in exactly this
    * order (the reverse of construction, `DisposerStack`):
@@ -1301,6 +1355,18 @@ export interface CreateAgentLoopResult {
   /** The resolved active personality for this loop. Exposed so gateway.ts can
    *  read the plugins allowlist without duplicating the personality load. */
   activePersonality: import('@ethosagent/types').PersonalityConfig;
+  /**
+   * THIS loop's personality registry — the one `refreshPersonalities()`
+   * reloads and the one every injector and tool closed over.
+   *
+   * Exposed so a host that must re-read a declaration between turns (the MCP
+   * export server re-resolves `mcp_export` on every call, M-D13) reads the
+   * registry the turn will actually run against. An app constructing its own
+   * `FilePersonalityRegistry` would get a second mtime cache and a second
+   * answer; there is one registry per loop, and this is it. Borrowers do not
+   * dispose it.
+   */
+  personalities: import('@ethosagent/personalities/compose').PersonalityCompose['personalities'];
   /** Re-load this loop's personality registry from `~/.ethos/personalities/`.
    *  Cheap when nothing changed (mtime-fingerprint cache → ~4 stat() calls per
    *  dir). Callers refresh before resolving a personality so a newly dropped or

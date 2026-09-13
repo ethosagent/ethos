@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ethosDir, readConfig, readRawConfig } from '@ethosagent/config';
-import type { ClientAdapter } from '@ethosagent/mcp-server';
+import type { ClientAdapter, McpEntry } from '@ethosagent/mcp-server';
 import {
   claudeDesktop,
   continueClient,
@@ -20,9 +20,10 @@ import {
   EthosMcpServer,
   logger as mcpLogger,
   opencode,
+  PersonalityExportServer,
   zed,
 } from '@ethosagent/mcp-server';
-import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
+import { SQLiteSessionStore, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { PersonalityScopedSecrets } from '@ethosagent/storage-fs';
 import type { McpServerConfig, OAuthConfig, TokenSet } from '@ethosagent/tools-mcp';
 import {
@@ -36,10 +37,34 @@ import {
   storeEnvSecrets,
 } from '@ethosagent/tools-mcp';
 import type { SecretsResolver } from '@ethosagent/types';
-import { createMemoryProviderFromConfig } from '@ethosagent/wiring';
+import {
+  APPROVAL_SURFACE_ALWAYS_ASK,
+  createApprovalDangerPredicate,
+  createLazyProvider,
+  createMcpClientAuthenticator,
+  createMemoryProviderFromConfig,
+  createSessionStore,
+  resolveMcpExportScope,
+} from '@ethosagent/wiring';
 import { writeJson } from '../json-output';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
-import { createAgentLoop, getSecretsResolver, getStorage } from '../wiring';
+import {
+  createAgentLoop,
+  createLLM,
+  getEthosObservability,
+  getSecretsResolver,
+  getStorage,
+} from '../wiring';
+import {
+  buildExportEntry,
+  createExportApprovalGate,
+  createMcpExportAuditSink,
+  exportEntryName,
+  exportServeGate,
+  formatExportError,
+  formatExportSummary,
+  resolveExportWorkingDir,
+} from './mcp-export';
 import { buildPresetArgs, collectArgFlags } from './mcp-preset-args';
 
 const mcpStore = new McpJsonStore(getStorage());
@@ -52,7 +77,9 @@ Subcommands:
   serve [options]  Start the Ethos MCP server
     --http           Use Streamable HTTP transport instead of stdio
     --port <n>       HTTP port (default: 3300, implies --http)
+    --personality <id>  Export ONE personality (its mcp_export declaration)
   install <client> Install Ethos into a supported MCP client's config
+    --personality <id>  Install that personality's export as 'ethos-<id>'
   init [client]    Print quick-start config snippet
   doctor           Verify server configuration
   inspect          List available tools, resources, and prompts
@@ -106,6 +133,7 @@ export async function runMcp(argv: string[]): Promise<void> {
 async function runServe(argv: string[]): Promise<void> {
   let useHttp = false;
   let port = 3300;
+  let personalityId: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--http') {
@@ -125,7 +153,23 @@ async function runServe(argv: string[]): Promise<void> {
         return;
       }
       i++;
+    } else if (arg === '--personality') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        console.error('--personality requires a personality id');
+        process.exitCode = 1;
+        return;
+      }
+      personalityId = next;
+      i++;
     }
+  }
+
+  // Two different servers behind one subcommand (M-D1/M-D14): without the flag
+  // this is the operator console — full trust, every personality, every session
+  // on the machine. With it, ONE personality bounded by its own `mcp_export`.
+  if (personalityId !== undefined) {
+    return runServeExport({ personalityId, useHttp, port });
   }
 
   const storage = getStorage();
@@ -193,6 +237,158 @@ async function runServe(argv: string[]): Promise<void> {
   }
 }
 
+/**
+ * `ethos mcp serve --personality <id>` — publish ONE personality to ONE
+ * external MCP client, bounded by that personality's own `mcp_export`
+ * declaration (M-T7, plan/phases/trust-before-reach.md Part 3).
+ *
+ * This function is the composition root the export server is built by, and it
+ * is deliberately the only place four things are decided:
+ *
+ *  - the admission check (`exportServeGate`, M-D4) — an unknown id or an export
+ *    that is not literally `enabled: true` exits 1 with JSON on stderr;
+ *  - the pinned working directory (`resolveExportWorkingDir`, M-D11);
+ *  - the fail-closed approval hook (`createExportApprovalGate`, M-D10);
+ *  - which secret a stdio client presented (`ETHOS_MCP_KEY`).
+ *
+ * `resolveScope` and `authenticator` are INJECTED into the server rather than
+ * imported by it (M-D13): the server holds no opinion about where a scope or a
+ * key comes from, so a second host can supply different ones without the export
+ * surface growing a dependency on `@ethosagent/wiring`.
+ */
+async function runServeExport(opts: {
+  personalityId: string;
+  useHttp: boolean;
+  port: number;
+}): Promise<void> {
+  const { personalityId, useHttp, port } = opts;
+  const refuse = (refusal: Parameters<typeof formatExportError>[0]): void => {
+    // stderr, always — a client that already spawned us reads stdout as
+    // JSON-RPC frames and a stray line there corrupts the stream.
+    process.stderr.write(formatExportError(refusal));
+  };
+
+  const storage = getStorage();
+  const config = await readConfig(storage, await getSecretsResolver());
+  if (!config) {
+    refuse({
+      ok: false,
+      code: 'unknown_personality',
+      message: 'No ~/.ethos/config.yaml found. Run: ethos setup',
+    });
+    process.exit(1);
+  }
+
+  const dataDir = ethosDir();
+  const runtime = await createAgentLoop(config, {
+    profile: 'mcp',
+    // M-D6 — an external client's text must never become the operator's memory
+    // or skills. This is the flag that stops it, not a preference.
+    disablePostTurnLearning: true,
+    // M-D11 — never the launcher's cwd.
+    workingDir: resolveExportWorkingDir({ personalityId, dataDir }),
+  });
+
+  // The gate reads THIS loop's registry (M-D13) — the one the turn will run
+  // against — so boot and every later call answer from one mtime cache.
+  await runtime.refreshPersonalities();
+  const personality = runtime.personalities.get(personalityId);
+  const scope = personality ? resolveMcpExportScope(personality, runtime.toolRegistry) : undefined;
+  const gate = exportServeGate({ personalityId, personality, scope, http: useHttp });
+  if (!gate.ok) {
+    refuse(gate);
+    await runtime.dispose().catch(() => {});
+    process.exit(1);
+  }
+  // M-D10 — approval fails closed. There is no human at an MCP transport to
+  // answer a prompt, so a dangerous call is REJECTED rather than queued or
+  // waved through. Registering this also satisfies core's approval-posture
+  // guard, which throws at the first tool dispatch when a `gated` loop has
+  // nothing behind its `before_tool_call` fire site.
+  const { scope: admitted } = gate;
+  const danger = createApprovalDangerPredicate({
+    hooks: [runtime.loop.hooks],
+    personalities: runtime.personalities,
+    getProvider: createLazyProvider(() => createLLM(config)),
+    model: config.model,
+    alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+  });
+  runtime.loop.hooks.registerModifying('before_tool_call', createExportApprovalGate(danger));
+
+  // Conversation tools and the transcript both live in sessions.db; the store
+  // comes from wiring (M-D13), and the caller that opened it closes it.
+  const sessionStore = createSessionStore({
+    dataDir,
+    ...(config.retention ? { retention: config.retention } : {}),
+  });
+  // Bearer only. Under `localhost` no key is read, so no store is opened.
+  const keyStore =
+    admitted.auth === 'bearer' ? new SqliteApiKeyStore(join(dataDir, 'sessions.db')) : undefined;
+  const authenticator = keyStore
+    ? createMcpClientAuthenticator({ personalityId, keys: keyStore })
+    : undefined;
+  const stdioSecret = process.env.ETHOS_MCP_KEY?.trim();
+
+  const server = new PersonalityExportServer({
+    personalityId,
+    loop: runtime.loop,
+    personalities: runtime.personalities,
+    refreshPersonalities: runtime.refreshPersonalities,
+    toolRegistry: runtime.toolRegistry,
+    resolveScope: resolveMcpExportScope,
+    logger: mcpLogger,
+    ...(authenticator ? { authenticator } : {}),
+    ...(stdioSecret ? { stdioSecret } : {}),
+    sessionStore,
+    audit: createMcpExportAuditSink((event) => {
+      getEthosObservability().recordEthosEvent(event);
+    }),
+  });
+
+  let shuttingDown: Promise<void> | null = null;
+  const shutdown = (): Promise<void> => {
+    shuttingDown ??= (async () => {
+      await server.close().catch((err: unknown) => {
+        process.stderr.write(
+          `[shutdown] mcp export server: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      });
+      const also: Array<readonly [string, () => Promise<void>]> = [
+        ['mcp export sessions.db', async () => sessionStore.close()],
+      ];
+      if (keyStore) also.push(['mcp export api keys', async () => keyStore.close()]);
+      await releaseCommandRuntime(runtime, { label: 'mcp export agent loop', also });
+      process.exit(0);
+    })();
+    return shuttingDown;
+  };
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
+
+  try {
+    if (useHttp) {
+      await server.serveHttp({ port });
+    } else {
+      await server.start();
+    }
+  } catch (err) {
+    // `serveHttp` refuses a non-bearer export and a missing authenticator by
+    // throwing. `exportServeGate` catches the first before we get here; this
+    // turns anything left into the same readable JSON line rather than an
+    // unhandled stack trace on a client's stderr.
+    refuse({
+      ok: false,
+      code: 'missing_authenticator',
+      message: err instanceof Error ? err.message : String(err),
+    });
+    await runtime.dispose().catch(() => {});
+    process.exit(1);
+  }
+
+  // One line, the operator's only chance to see what they just published.
+  process.stderr.write(`${formatExportSummary(personalityId, admitted)}\n`);
+}
+
 async function runInstall(argv: string[]): Promise<void> {
   const clientName = argv[0];
   if (!clientName) {
@@ -209,18 +405,115 @@ async function runInstall(argv: string[]): Promise<void> {
     return;
   }
 
-  const configPath = adapter.configPath();
-  const existing = adapter.readConfig(configPath);
-  const entry = { command: process.execPath, args: [process.argv[1] ?? 'ethos', 'mcp', 'serve'] };
-  const updated = adapter.injectEntry(existing, entry);
-  const serialised = adapter.serialise(updated);
-
-  if (!existsSync(dirname(configPath))) {
-    mkdirSync(dirname(configPath), { recursive: true });
+  const personalityIdx = argv.indexOf('--personality');
+  const personalityId =
+    personalityIdx === -1 ? undefined : (argv[personalityIdx + 1] ?? '').trim() || undefined;
+  if (personalityIdx !== -1 && !personalityId) {
+    console.error('--personality requires a personality id');
+    process.exitCode = 1;
+    return;
   }
-  writeFileSync(configPath, serialised, 'utf8');
-  console.log(`✓ Installed Ethos MCP server into ${adapter.displayName}`);
-  console.log(`  Config: ${configPath}`);
+
+  const scriptPath = process.argv[1] ?? 'ethos';
+  const install = (entry: McpEntry): void => {
+    const configPath = adapter.configPath();
+    const existing = adapter.readConfig(configPath);
+    const serialised = adapter.serialise(adapter.injectEntry(existing, entry));
+    if (!existsSync(dirname(configPath))) {
+      mkdirSync(dirname(configPath), { recursive: true });
+    }
+    writeFileSync(configPath, serialised, 'utf8');
+    console.log(`  Config: ${configPath}`);
+  };
+
+  if (personalityId === undefined) {
+    install({ command: process.execPath, args: [scriptPath, 'mcp', 'serve'] });
+    console.log(`✓ Installed Ethos MCP server into ${adapter.displayName}`);
+    return;
+  }
+
+  await installPersonalityExport({ adapter, personalityId, scriptPath, install });
+}
+
+/**
+ * `ethos mcp install <client> --personality <id>` — write an `ethos-<id>` entry
+ * BESIDE whatever `ethos` entry the client already has (M-D14: the console and
+ * an export are different surfaces with different trust, so installing one must
+ * never remove the other). Every adapter keys off `McpEntry.name`, so the two
+ * cannot collide.
+ *
+ * Under `auth: 'bearer'` this also mints the client's key with scope
+ * `mcp:<id>` (M-D9) straight into the entry's `env` as `ETHOS_MCP_KEY`. Only
+ * the PREFIX is printed: the full secret goes to the client's own config file
+ * and never to the terminal's scrollback, where it would outlive the install in
+ * a shell history, a screen share or a CI log.
+ */
+async function installPersonalityExport(opts: {
+  adapter: ClientAdapter;
+  personalityId: string;
+  scriptPath: string;
+  install: (entry: McpEntry) => void;
+}): Promise<void> {
+  const { adapter, personalityId, scriptPath } = opts;
+  const storage = getStorage();
+  const config = await readConfig(storage, await getSecretsResolver());
+  if (!config) {
+    console.error('No ~/.ethos/config.yaml found. Run: ethos setup');
+    process.exitCode = 1;
+    return;
+  }
+
+  // Read the declaration through a real loop's registry, the same one
+  // `ethos mcp serve --personality` gates on, so install and serve can never
+  // disagree about whether an export exists or which auth it wants.
+  const runtime = await createAgentLoop(config, { profile: 'mcp' });
+  try {
+    await runtime.refreshPersonalities();
+    const personality = runtime.personalities.get(personalityId);
+    const scope = personality
+      ? resolveMcpExportScope(personality, runtime.toolRegistry)
+      : undefined;
+    const gate = exportServeGate({ personalityId, personality, scope, http: false });
+    if (!gate.ok) {
+      console.error(gate.message);
+      process.exitCode = 1;
+      return;
+    }
+
+    let secret: string | undefined;
+    let prefix: string | undefined;
+    let keyStore: SqliteApiKeyStore | undefined;
+    if (gate.scope.auth === 'bearer') {
+      keyStore = new SqliteApiKeyStore(join(ethosDir(), 'sessions.db'));
+      try {
+        const minted = await keyStore.create({
+          name: `${adapter.displayName} — ${personalityId}`,
+          scopes: [`mcp:${personalityId}`],
+        });
+        secret = minted.secret;
+        prefix = minted.record.prefix;
+      } finally {
+        keyStore.close();
+      }
+    }
+
+    opts.install(
+      buildExportEntry({
+        command: process.execPath,
+        scriptPath,
+        personalityId,
+        ...(secret ? { secret } : {}),
+      }),
+    );
+    console.log(`✓ Installed ${exportEntryName(personalityId)} into ${adapter.displayName}`);
+    console.log(`  ${formatExportSummary(personalityId, gate.scope)}`);
+    if (prefix) {
+      console.log(`  Client key: ${prefix}  (written to the entry's ETHOS_MCP_KEY)`);
+      console.log(`  Revoke with: ethos api-key revoke ${prefix}`);
+    }
+  } finally {
+    await releaseCommandRuntime(runtime, { label: 'mcp install agent loop', drainMs: 0 });
+  }
 }
 
 function runInit(clientName?: string): void {

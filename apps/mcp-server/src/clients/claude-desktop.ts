@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { ClientAdapter, McpEntry } from './types';
+import { type ClientAdapter, entryName, type McpEntry } from './types';
 
 export const claudeDesktop: ClientAdapter = {
   name: 'claude-desktop',
@@ -35,7 +35,11 @@ export const claudeDesktop: ClientAdapter = {
 
   injectEntry(config, entry: McpEntry) {
     const servers = (config.mcpServers ?? {}) as Record<string, unknown>;
-    servers.ethos = { command: entry.command, args: entry.args };
+    servers[entryName(entry)] = {
+      command: entry.command,
+      args: entry.args,
+      ...(entry.env ? { env: entry.env } : {}),
+    };
     return { ...config, mcpServers: servers };
   },
 

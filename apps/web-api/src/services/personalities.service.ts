@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { declaredWorkdirs } from '@ethosagent/core';
 import {
   type CharacterSheetBoundary,
+  type CharacterSheetMcpExport,
   type CharacterSheetModelFit,
   type CharacterSheetRouting,
   type CharacterSheetScriptSurface,
@@ -128,6 +129,16 @@ export interface PersonalitiesServiceOptions {
    * inapplicability verdict for reach it cannot see.
    */
   boundary?: (personalityId: string) => Promise<CharacterSheetBoundary | null>;
+  /**
+   * M-T8 — the resolved `mcp_export` slice for the sheet's `## MCP export`
+   * block. A closure over wiring's `resolveMcpExportScope` against the live
+   * tool registry: the SAME resolver `ethos mcp serve` runs an exported turn
+   * under, so the tab cannot name a tool the export would refuse. Absent,
+   * resolving `null`, or throwing → the block still says whether the
+   * personality is exported, and says the slice was not resolved here rather
+   * than inventing one.
+   */
+  mcpExport?: (personalityId: string) => Promise<CharacterSheetMcpExport | null>;
 }
 
 export class PersonalitiesService {
@@ -218,6 +229,16 @@ export class PersonalitiesService {
         boundary = undefined;
       }
     }
+    // M-T8 — the resolved export slice. Same fail-soft posture as the seams
+    // above: no seam, no resolved slice, and the block says so.
+    let mcpExport: CharacterSheetMcpExport | undefined;
+    if (this.opts.mcpExport) {
+      try {
+        mcpExport = (await this.opts.mcpExport(id)) ?? undefined;
+      } catch {
+        mcpExport = undefined;
+      }
+    }
     // skill-declared-renderers Lane E — reuse `renderers()` rather than a second
     // path to the injector, so the sheet's claim and the RPC the web renderer
     // gates on are literally the same call. Already fail-closed to `[]`.
@@ -254,6 +275,7 @@ export class PersonalitiesService {
           renderers,
           boundary,
           routing,
+          mcpExport,
         ),
         posture: null,
       };
@@ -296,6 +318,7 @@ export class PersonalitiesService {
         renderers,
         boundary,
         routing,
+        mcpExport,
       ),
       posture,
     };

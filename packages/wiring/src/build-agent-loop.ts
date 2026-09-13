@@ -573,53 +573,65 @@ export async function buildAgentLoop(
   let onSkillProposedFn: ((skillId: string, personalityId: string) => void) | undefined;
   let onSkillAppliedFn: ((skillId: string, personalityId: string) => void) | undefined;
 
-  const { ImprovementFork, loadEvolveConfig: loadEvolveConfigFn } = await import(
-    '@ethosagent/skill-evolver'
-  );
-  const evolveConfigPath = join(dataDir, 'evolve-config.json');
+  // Used by the fork below AND by the SOUL measurement and the delegation tools
+  // further down, so it is declared outside the gate.
   const wiringStorage = new FsStorage();
-  const improvementFork = new ImprovementFork({
-    hooks,
-    runtime: {
-      llm,
-      model: config.model,
-      memoryProvider: memory,
-      sessionStore: session,
-      safety,
-    },
-    personalities,
-    dataDir,
-    storage: wiringStorage,
-    onSkillProposed: (skillId, personalityId) => {
-      onSkillProposedFn?.(skillId, personalityId);
-    },
-    autoApprove: () => {
-      return autoApproveCache;
-    },
-    onSkillApplied: (skillId, personalityId) => {
-      onSkillAppliedFn?.(skillId, personalityId);
-    },
-  });
-  improvementFork.register();
+  // M-D6 (plan/phases/trust-before-reach.md Part 3) — `disablePostTurnLearning`
+  // is a security gate, not a toggle. The fork turns what a turn SAID into a
+  // skill on disk; in a process whose turns are driven by an external MCP
+  // client, that is the client writing the operator's skills unattended — a
+  // persistent-injection path. The whole block is gated, not just `register()`:
+  // with no fork there is nothing for the `agent_done` auto-approve refresh
+  // below to keep fresh either. Pinned by
+  // `packages/wiring/src/__tests__/post-turn-learning.test.ts`.
+  if (!opts.disablePostTurnLearning) {
+    const { ImprovementFork, loadEvolveConfig: loadEvolveConfigFn } = await import(
+      '@ethosagent/skill-evolver'
+    );
+    const evolveConfigPath = join(dataDir, 'evolve-config.json');
+    const improvementFork = new ImprovementFork({
+      hooks,
+      runtime: {
+        llm,
+        model: config.model,
+        memoryProvider: memory,
+        sessionStore: session,
+        safety,
+      },
+      personalities,
+      dataDir,
+      storage: wiringStorage,
+      onSkillProposed: (skillId, personalityId) => {
+        onSkillProposedFn?.(skillId, personalityId);
+      },
+      autoApprove: () => {
+        return autoApproveCache;
+      },
+      onSkillApplied: (skillId, personalityId) => {
+        onSkillAppliedFn?.(skillId, personalityId);
+      },
+    });
+    improvementFork.register();
 
-  let autoApproveCache = false;
-  (async () => {
-    try {
-      const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
-      autoApproveCache = cfg.autoApprove;
-    } catch {
-      // Non-fatal — keep the default.
-    }
-  })();
+    let autoApproveCache = false;
+    (async () => {
+      try {
+        const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
+        autoApproveCache = cfg.autoApprove;
+      } catch {
+        // Non-fatal — keep the default.
+      }
+    })();
 
-  hooks.registerVoid('agent_done', async () => {
-    try {
-      const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
-      autoApproveCache = cfg.autoApprove;
-    } catch {
-      // Non-fatal.
-    }
-  });
+    hooks.registerVoid('agent_done', async () => {
+      try {
+        const cfg = await loadEvolveConfigFn(evolveConfigPath, wiringStorage);
+        autoApproveCache = cfg.autoApprove;
+      } catch {
+        // Non-fatal.
+      }
+    });
+  }
 
   // -------------------------------------------------------------------------
   // Gap 10 — process_complete notification via notificationRouter
@@ -1348,7 +1360,13 @@ export async function buildAgentLoop(
     | undefined;
   /** Present only when proactive capture is enabled — see `drain` below. */
   let captureIdle: (() => Promise<void>) | undefined;
-  if (config.memoryCapture?.enabled && (memoryName === 'markdown' || memoryName === 'vault')) {
+  // The second half of M-D6: capture reads the turn and writes memory with no
+  // human in the loop, so an export process must not run it either.
+  if (
+    config.memoryCapture?.enabled &&
+    !opts.disablePostTurnLearning &&
+    (memoryName === 'markdown' || memoryName === 'vault')
+  ) {
     const captureConfig = config.memoryCapture;
     // Undecorated write provider + its own HistoryStore: the runner records
     // history itself (with hint + capture hashes), so it must not double-record
@@ -1549,6 +1567,10 @@ export async function buildAgentLoop(
     ...(jobRunnerRegistry ? { jobRunners: jobRunnerRegistry } : {}),
     ...(meshProxyReconciler ? { meshProxyReconciler } : {}),
     activePersonality: activePerson,
+    // The loop's OWN registry (M-D13): a host that re-reads a declaration
+    // between turns must read the one the turn runs against, not a second one
+    // it built itself.
+    personalities,
     refreshPersonalities: () => personalities.loadFromDirectory(join(dataDir, 'personalities')),
     sttProviders: infra.sttProviders,
     ttsProviders: infra.ttsProviders,

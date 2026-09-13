@@ -62,6 +62,18 @@ export const ETHOS_EVENT_CATEGORIES = [
   'a2a.auth',
   'a2a.rpc',
   'a2a.task',
+  // Personality-as-service over MCP (plan/phases/trust-before-reach.md Part 3,
+  // M-T3). METADATA ONLY — who asked, which personality, which session key,
+  // accepted or denied and why. Never the prompt and never the answer: the
+  // transcript of an exported turn lives in `sessions.db` under that session
+  // key (`platform = 'mcp'`), and duplicating it into observability.db would
+  // put conversation bodies under a retention window meant for telemetry.
+  // Written by the export server's fail-open audit sink via
+  // `recordEthosEvent`, the same shape the `a2a.*` sink uses in
+  // `apps/ethos/src/commands/serve.ts`.
+  'mcp.export.auth',
+  'mcp.export.discovery',
+  'mcp.export.call',
   'funnel.setup_completed',
   'funnel.first_reply',
   'funnel.channel_first_reply',

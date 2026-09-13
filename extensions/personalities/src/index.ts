@@ -42,6 +42,7 @@ export {
 export {
   type CharacterSheetBoundary,
   type CharacterSheetExecution,
+  type CharacterSheetMcpExport,
   type CharacterSheetModelFit,
   type CharacterSheetRouting,
   type CharacterSheetScriptSurface,

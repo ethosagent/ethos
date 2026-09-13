@@ -115,11 +115,133 @@ export interface PersonalityMemoryConfig {
   options?: Record<string, unknown>;
 }
 
+/**
+ * What ONE personality publishes to an external MCP client, and on what terms.
+ *
+ * The declaration is inert until the personality is served:
+ * `ethos mcp serve --personality <id>` (`runServeExport`,
+ * `apps/ethos/src/commands/mcp.ts`) builds a `PersonalityExportServer`
+ * (`apps/mcp-server/src/export-server.ts`) that publishes exactly ONE tool,
+ * `ask`. `ask` runs one whole `AgentLoop` turn with the personality, the
+ * session key, `toolsetNarrow`, `toolsetExclude` and `skipMemoryPrefetch` all
+ * pinned by the server — the client can name none of them, and there is no
+ * `personality_id` parameter anywhere in its schema (pinned by "pins every run
+ * option the client could otherwise name",
+ * `apps/mcp-server/src/__tests__/export-server.test.ts`).
+ *
+ * `resolveMcpExportScope` (`packages/wiring/src/mcp-export.ts`) is the one
+ * place this declaration becomes those bounds, and the server re-runs it —
+ * after `refreshPersonalities()` — on EVERY call. That is what makes an edited
+ * declaration and a revoked key take effect on the caller's next call rather
+ * than at the next restart ("refuses an export disabled mid-process on the very
+ * next call", same test file). What each value resolves to is pinned by
+ * `packages/wiring/src/__tests__/mcp-export-scope.test.ts`.
+ *
+ * Written in `config.yaml` as flat dotted keys (`mcp_export.enabled: true`),
+ * parsed by `buildMcpExportConfig` (`extensions/personalities/src/index.ts`).
+ * A value outside the unions below is IGNORED there, leaving the fail-closed
+ * default — `mcp_export.expose_memory: Scoped` resolves to `none`.
+ *
+ * LIMITATIONS, recorded rather than built (M-D15,
+ * plan/phases/trust-before-reach.md):
+ *
+ *  - **No rate limit.** An admitted client may call as often as it likes.
+ *    What bounds the cost is `budgetCapUsd` per session key
+ *    (`AgentLoop.getPersonalityBudgetCap`, `packages/core/src/agent-loop.ts`),
+ *    one in-flight `ask` per client (the `_inFlight` set in
+ *    `PersonalityExportServer`, pinned by "allows at most one ask in flight per
+ *    client"), and revoking the client's key. None of the three is a
+ *    request-rate limit.
+ *  - **No non-loopback bind and no TLS.** `serveMcpHttp`
+ *    (`apps/mcp-server/src/http-session.ts`) throws for any host outside
+ *    `127.0.0.1` / `localhost` / `::1` (pinned by "refuses a non-loopback
+ *    bind", `apps/mcp-server/src/__tests__/export-http.test.ts`), and what it
+ *    does carry is plaintext. A remote caller needs the operator's own
+ *    TLS-terminating proxy in front.
+ */
 export interface PersonalityMcpExportConfig {
+  /**
+   * The export exists only when this is literally `true`. Anything else —
+   * `false`, or no `mcp_export` block at all — takes `resolveMcpExportScope`'s
+   * `declaration?.enabled !== true` branch, which grants nothing and excludes
+   * every registered tool ("a personality with no mcp_export exports nothing
+   * and excludes everything"). `buildMcpExportConfig` compares the YAML string
+   * `=== 'true'`, so `yes`, `True` and `1` all parse as `false`.
+   *
+   * Setting it back to `false` withdraws the export on the caller's next call,
+   * and `tools/list` then publishes nothing rather than advertising a tool
+   * whose every call would be refused.
+   */
   enabled: boolean;
+  /**
+   * Which tools the exported TURN may use. They are never published as MCP
+   * tools — the client always sees just `ask` (M-D2): a whole turn is the only
+   * way SOUL, `fs_reach`, the `before_tool_call` hooks, the watcher and the
+   * injection prelude apply, and `ToolRegistry.executeParallel` on its own
+   * would skip all of them.
+   *
+   * `allowed = expose_tools ∩ toolNamesForPersonality(personality)`, so this
+   * key can only ever REMOVE reach: naming a tool the personality does not have
+   * grants nothing and lands in `McpExportScope.dropped`, which the character
+   * sheet and the serve summary print. `'all'` is the personality's full reach,
+   * never the machine's; `'none'` — and an ABSENT key — is a conversation-only
+   * specialist.
+   *
+   * The complement of `allowed` is passed as `toolsetExclude` as well
+   * (`complementExclude`, M-D3), because `toolsetNarrow` gates built-ins only:
+   * without it an `expose_tools: none` export could still call every `mcp__*`,
+   * plugin and `alwaysInclude` tool on the machine.
+   */
   expose_tools?: 'all' | 'none' | string[];
+  /**
+   * How much of this personality's OWN memory the exported turn reaches.
+   * `'none'` (the default) sets `RunOptions.skipMemoryPrefetch` and strips both
+   * memory tools; `'scoped'` keeps the loop's normal `personality:<id>`
+   * prefetch and `memory_read`; `'full'` adds `memory_write`.
+   *
+   * No value reaches another personality, a team, or `user:<id>`: the memory
+   * scope is fixed at `personality:<id>` by `setupTurn`
+   * (`packages/core/src/agent-loop/stages/turn-setup.ts`) and the export never
+   * sets `userId`. Memory is never published as an MCP resource either — the
+   * export server's capabilities are `{ tools: {} }` and nothing else ("offers
+   * no resources and no prompts").
+   *
+   * LIMITATION: the strip covers `memory_read`/`memory_write` only. The
+   * `team_memory_*` tools are gated by the personality's toolset and
+   * `expose_tools`, not by this key (`resolveMcpExportScope`).
+   */
   expose_memory?: 'scoped' | 'none' | 'full';
+  /**
+   * Adds `list_conversations` and `get_conversation` beside `ask`. Default
+   * `false`, and they are never offered when the host wired no session store.
+   *
+   * They see only THIS client's own conversations with THIS personality: both
+   * build their key from the server-built prefix `mcp:<id>:<clientId>:`
+   * (`exportSessionKeyPrefix`), so the operator's own `cli:` and `mcp-console:`
+   * sessions with the same personality stay private, and no reachable input
+   * names another client's (pinned by "cannot read another client's
+   * conversation by naming it").
+   */
   expose_sessions?: boolean;
+  /**
+   * How a caller proves it may ask at all.
+   *
+   * `'localhost'` (the default) is stdio only — `PersonalityExportServer.serveHttp`
+   * throws rather than binding a port, because the boundary it relies on is
+   * "whoever can spawn `ethos` as this OS user", and a listening socket is not
+   * that boundary even on loopback ("refuses to serve a localhost export over
+   * HTTP at all"). LIMITATION (M-D8): under `'localhost'`, two stdio clients
+   * that self-report the same `clientInfo.name` share a session-key prefix, and
+   * therefore each other's conversations (`stdioClientId`).
+   *
+   * `'bearer'` requires an `sk-ethos-` key carrying the scope `mcp:<id>`,
+   * presented in `ETHOS_MCP_KEY` (stdio) or `Authorization` (HTTP) and verified
+   * by `createMcpClientAuthenticator` (`packages/wiring/src/mcp-export.ts`) at
+   * initialize AND on every call — so revoking it locks that client out on its
+   * next call, and no one else ("refuses a REVOKED key — no restart needed",
+   * `packages/wiring/src/__tests__/mcp-export-auth.test.ts`). A key minted for
+   * another export or another surface is refused by the same check.
+   */
   auth?: 'localhost' | 'bearer';
 }
 
@@ -494,9 +616,27 @@ export interface PersonalityConfig {
    */
   memory?: PersonalityMemoryConfig;
   /**
-   * Per-personality MCP server export. Declares what slice of the personality
-   * is visible to external MCP clients. When `enabled: true`, the personality
-   * can be served via `ethos mcp-server --personality <id>`.
+   * Per-personality MCP export — the one slice of this personality another app
+   * (Claude Desktop, Cursor) may reach, and nothing else of Ethos.
+   *
+   * `ethos mcp serve --personality <id>` is what serves it, and only while that
+   * process runs: the declaration alone publishes nothing. What the caller gets
+   * is ONE tool, `ask`, running one whole turn as this personality with every
+   * run option pinned by the server; it can never name the personality, the
+   * session key or the tool set. The terms come from `resolveMcpExportScope`
+   * (`packages/wiring/src/mcp-export.ts`), re-resolved on every call by
+   * `PersonalityExportServer` (`apps/mcp-server/src/export-server.ts`).
+   *
+   * Fail-closed throughout: `enabled` must be literally `true`, `expose_tools`
+   * defaults to `none`, `expose_memory` to `none`, `expose_sessions` to
+   * `false`, `auth` to `localhost`. See {@link PersonalityMcpExportConfig} for
+   * each key's enforcer and for the two limitations this export does not have
+   * (no rate limit; no non-loopback bind and no TLS).
+   *
+   * The global `ethos mcp serve` — no `--personality` — is a DIFFERENT surface:
+   * the operator console, full trust, every personality and every session on
+   * the machine (M-D14). Nothing here bounds it.
+   *
    * Counts as ONE field for the schema-freeze gate.
    */
   mcp_export?: PersonalityMcpExportConfig;

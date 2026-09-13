@@ -1253,6 +1253,7 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
     formatSshTarget,
     resolveActiveLlmName,
     resolveCharacterSheetRouting,
+    resolveMcpExportScope,
     resolvePersonalityModelFit,
   } = await import('@ethosagent/wiring');
   const posture = await buildExecutionPosture({
@@ -1289,6 +1290,7 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
   let modelFit: import('@ethosagent/personalities').CharacterSheetModelFit | undefined;
   let scriptSurface: import('@ethosagent/personalities').CharacterSheetScriptSurface | undefined;
   let boundary: import('@ethosagent/personalities').CharacterSheetBoundary | undefined;
+  let mcpExport: import('@ethosagent/personalities').CharacterSheetMcpExport | undefined;
   let renderers: string[] | undefined;
   let loopConstructed = false;
   let releaseLoop: (() => Promise<void>) | undefined;
@@ -1309,6 +1311,16 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
       // section can say G-NET is inapplicable rather than implying reach this
       // personality does not have. Same declaration G-CAP intersects per call.
       boundary = { networkTools: toolsDeclaringNetwork(described.config, result.toolRegistry) };
+      // M-T8 — the resolved `mcp_export` slice, so the sheet names the tools a
+      // caller's turn may actually use and the ones the declaration asked for
+      // and did not get. `resolveMcpExportScope` is the ONE owner of that
+      // resolution (`packages/wiring/src/mcp-export.ts`) — the same function
+      // `ethos mcp serve` runs the exported turn under, so the sheet cannot
+      // promise a slice the export would refuse. Pure over the live registry,
+      // so it sits above the probing seams: a failed probe must not cost the
+      // export block. An `McpExportScope` satisfies `CharacterSheetMcpExport`
+      // structurally — no cast, and `extensions/` never imports wiring.
+      mcpExport = resolveMcpExportScope(described.config, result.toolRegistry);
       const model = cfg.modelRouting?.[id] ?? cfg.model;
       modelFit = await resolvePersonalityModelFit({
         personality: described.config,
@@ -1347,6 +1359,7 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
       renderers,
       boundary,
       routing,
+      mcpExport,
     )}`,
   );
 

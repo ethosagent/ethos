@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { ClientAdapter, McpEntry } from './types';
+import { type ClientAdapter, entryName, type McpEntry } from './types';
 
 export const zed: ClientAdapter = {
   name: 'zed',
@@ -29,10 +29,11 @@ export const zed: ClientAdapter = {
 
   injectEntry(config, entry: McpEntry) {
     const servers = (config.context_servers ?? {}) as Record<string, unknown>;
-    servers.ethos = {
+    servers[entryName(entry)] = {
       command: {
         path: entry.command,
         args: entry.args,
+        ...(entry.env ? { env: entry.env } : {}),
       },
     };
     return { ...config, context_servers: servers };
