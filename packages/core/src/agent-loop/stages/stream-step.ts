@@ -5,6 +5,7 @@ import type {
   LLMProvider,
   Message,
   MessageContent,
+  ModelResolutionContext,
   ModelTierName,
   PersonalityConfig,
   PersonalityObservabilityConfig,
@@ -17,7 +18,7 @@ import type { AgentLoopObservability } from '../../observability/agent-loop-obse
 import { handleChunk } from '../chunk-handler';
 import { isContextOverflowError } from '../overflow';
 import type { WatcherTap } from '../turn-context';
-import { resolveModelWithTier } from '../turn-context';
+import { resolveTurnModel } from '../turn-model';
 import type { TurnUsageAccumulator } from './turn-finalizer';
 
 // ---------------------------------------------------------------------------
@@ -75,7 +76,10 @@ export interface StreamStepDeps {
   /** A1 — per-turn rollup accumulator, flushed by the turn finalizer. */
   turnUsage: TurnUsageAccumulator;
   streamingTimeoutMs: number;
-  modelRouting: Record<string, string>;
+  /** D7 — the same resolution context `setupTurn` used, so a mid-turn
+   *  escalation re-resolves through the one resolver instead of a second rung
+   *  order. */
+  modelResolution: ModelResolutionContext;
 }
 
 export interface StreamStepContext {
@@ -206,25 +210,36 @@ export async function* streamStep(
   };
 
   // Consume one-shot tier escalation from think_deeper tool result (run-local).
+  //
+  // D8/V10 — no `typeof ctx.personality.model === 'object'` gate: a personality
+  // declaring a plain string (or a role, or nothing at all) escalates too. The
+  // requested ROLE is what changes; which model answers it is the resolver's
+  // business.
   let iterModelOverride = ctx.modelOverride;
-  if (pendingTierEscalation.value && typeof ctx.personality.model === 'object') {
+  if (pendingTierEscalation.value) {
     const tier = pendingTierEscalation.value as ModelTierName;
     pendingTierEscalation.value = undefined;
-    const { model: tierModel } = resolveModelWithTier(
-      ctx.personality,
-      tier,
-      deps.modelRouting,
-      deps.llm.name,
-      deps.llm.model,
-    );
-    iterModelOverride = tierModel !== deps.llm.model ? tierModel : undefined;
-    deps.observability?.recordTierEscalation({
-      traceId: ctx.traceId ?? '',
-      from: ctx.activeTier,
-      to: tier,
-      reason: 'tool_escalation',
-      personalityId: ctx.personality.id,
+    const escalated = resolveTurnModel({
+      personality: ctx.personality,
+      role: tier,
+      ctx: deps.modelResolution,
+      llmName: deps.llm.name,
+      llmModel: deps.llm.model,
     });
+    // A mid-turn refusal would abandon a turn that is already streaming and has
+    // already been billed for its first iteration, so an unresolvable
+    // escalation keeps the model the turn started on. The refusal belongs at
+    // turn setup, where nothing has run yet (D6).
+    if (escalated.ok) {
+      iterModelOverride = escalated.model !== deps.llm.model ? escalated.model : undefined;
+      deps.observability?.recordTierEscalation({
+        traceId: ctx.traceId ?? '',
+        from: ctx.activeTier,
+        to: tier,
+        reason: 'tool_escalation',
+        personalityId: ctx.personality.id,
+      });
+    }
   }
 
   const llmSpanId = deps.observability?.startSpan({

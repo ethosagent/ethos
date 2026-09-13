@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { SessionStreamBuffer } from '@ethosagent/agent-bridge';
 import { AgentMesh, defaultRegistryPath } from '@ethosagent/agent-mesh';
-import { resolveSecretRef, type VoiceBargeInTuning } from '@ethosagent/config';
+import { parseConfigYaml, resolveSecretRef, type VoiceBargeInTuning } from '@ethosagent/config';
 import { type AgentLoop, clarifyUnresolvedMessage, satelliteLaneKey } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
 import {
@@ -84,6 +84,7 @@ import { LabService } from './services/lab.service';
 import { McpService } from './services/mcp.service';
 import { MemoryService } from './services/memory.service';
 import { MeshService } from './services/mesh.service';
+import { ModelRegistryService } from './services/model-registry.service';
 import { NamedSecretsService } from './services/named-secrets.service';
 import { ObservedChatsService } from './services/observed-chats.service';
 import { OnboardingService } from './services/onboarding.service';
@@ -1028,6 +1029,16 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   // Settings › Execution. Reads `execution.ssh.*` from the same config.yaml the
   // rest of this app reads, and probes through the LOOP's backend registry when
   // the composition root hands one in.
+  // Settings → Models: the on-demand model test (T1.24). Reads the SAME
+  // `<dataDir>/config.yaml` the rest of this app reads — `modelRegistry.*` is
+  // parsed by `@ethosagent/config`, not by `ConfigRepository`'s own shape.
+  const modelRegistryService = new ModelRegistryService({
+    readConfig: async () => {
+      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
+      return src === null ? null : parseConfigYaml(src);
+    },
+    secrets,
+  });
   const executionService = new ExecutionService({
     config: configRepo,
     personalities: opts.personalities,
@@ -1835,6 +1846,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       apiKeys: apiKeysService,
       digest: digestService,
       documents: documentsService,
+      modelRegistry: modelRegistryService,
       namedSecrets: namedSecretsService,
       keys: keysService,
       backup: backupService,

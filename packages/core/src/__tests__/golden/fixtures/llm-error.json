@@ -4,7 +4,7 @@
       "type": "run_start",
       "provider": "scripted",
       "model": "mock-model",
-      "source": "global"
+      "source": "default"
     },
     {
       "type": "error",

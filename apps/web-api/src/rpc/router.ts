@@ -37,6 +37,7 @@ import { mcpRouter } from './mcp';
 import { memoryRouter } from './memory';
 import { meshRouter } from './mesh';
 import { metaRouter } from './meta';
+import { modelRegistryRouter } from './model-registry';
 import { modelsRouter } from './models';
 import { namedSecretsRouter } from './named-secrets';
 import { onboardingRouter } from './onboarding';
@@ -101,6 +102,7 @@ export const apiRouter = {
   apiKeys: apiKeysRouter,
   meta: metaRouter,
   models: modelsRouter,
+  modelRegistry: modelRegistryRouter,
   dashboards: dashboardsRouter,
   admin: adminRouter,
   context: contextRouter,

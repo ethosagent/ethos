@@ -244,11 +244,44 @@ export const DryRunSummaryEventSchema = z.object({
   capped: z.number().int().nonnegative(),
 });
 
+/** D17 — the deviation a `run_start` may carry. Mirrors `ModelDeviation` in
+ *  `@ethosagent/types`; every surface renders it through `describeDeviation`
+ *  rather than restating the copy. */
+export const ModelDeviationSchema = z.object({
+  kind: z.enum([
+    'role-unbound',
+    'entry-fallback',
+    'chain-failover',
+    'credential-rejected',
+    'legacy-id-mapped',
+    'outranked',
+  ]),
+  declared: z.string(),
+  effective: z.string(),
+  reason: z.string(),
+  fix: z.string().optional(),
+  once: z.boolean(),
+});
+
 export const RunStartEventSchema = z.object({
   type: z.literal('run_start'),
   provider: z.string(),
   model: z.string(),
-  source: z.enum(['team-coordinator', 'team-personality', 'personality', 'global']),
+  /** T1.15a / D7 — the seven rung labels `resolveModel` returns. A zod mirror
+   *  of `ModelResolutionSource` (`@ethosagent/types`); the two widen together,
+   *  and `'global'` became `'default'` in the same audit. */
+  source: z.enum([
+    'run-override',
+    'team-coordinator',
+    'team-personality',
+    'routing-override',
+    'personality',
+    'role-binding',
+    'default',
+  ]),
+  /** D17 — set when the turn is running on something other than what was
+   *  declared. Rendered as an inline notice, never as an error (T2.11). */
+  deviation: ModelDeviationSchema.optional(),
   /** B3 (additive-optional) — the turn's observability trace id. This is the
    *  turn identity a tab quotes in a bug report; it joins the SSE stream to
    *  `observability.db`, `messages.trace_id`, and (later) the provider request

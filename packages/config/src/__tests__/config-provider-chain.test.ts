@@ -415,6 +415,15 @@ describe('providerChainVersion', () => {
     ).not.toBe(base);
     expect(providerChainVersion([a, { ...b, passthrough: { fooBar: 'y' } }])).not.toBe(base);
   });
+
+  // The two fields model-registry T1.2 added are modelled, so they move the
+  // token like every other modelled field — a concurrent edit that only renames
+  // an entry or takes it out of the chain is still a conflict.
+  it('changes with an entry id or its failover flag', () => {
+    const base = providerChainVersion([a, b]);
+    expect(providerChainVersion([{ ...a, id: 'openai-work' }, b])).not.toBe(base);
+    expect(providerChainVersion([{ ...a, failover: false }, b])).not.toBe(base);
+  });
 });
 
 describe('a plaintext secret in an unknown chain field', () => {

@@ -157,7 +157,7 @@ describe('applyEvent — an answer that arrives only as `done.text`', () => {
     // anchor that says this stream saw the turn from its beginning.
     let next = applyEvent(
       s,
-      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'global' },
+      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'default' },
       NOW,
     );
     next = applyEvent(
@@ -206,7 +206,7 @@ describe('applyEvent — an answer that arrives only as `done.text`', () => {
   it('after a streamed preamble (live, no reload): the preamble, then the answer', () => {
     let s: ChatState = applyEvent(
       initialChatState,
-      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'global' },
+      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'default' },
       NOW,
     );
     s = applyEvent(s, { type: 'text_delta', text: 'Let me look that up.' }, NOW);
@@ -322,7 +322,7 @@ describe('applyEvent — an answer that arrives only as `done.text`', () => {
     });
     s = applyEvent(
       s,
-      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'global' },
+      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'default' },
       NOW,
     );
     s = applyEvent(s, { type: 'text_delta', text: 'Let me check.' }, NOW);

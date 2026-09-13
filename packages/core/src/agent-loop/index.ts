@@ -23,5 +23,6 @@ export type {
   TurnSetupResult,
   WatcherTap,
 } from './turn-context';
-export { resolveModelWithTier } from './turn-context';
+export type { TurnModel, TurnModelResult } from './turn-model';
+export { describeResolutionFailure, resolveTurnModel } from './turn-model';
 export { createWatcherTap } from './watcher-tap';

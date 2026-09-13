@@ -119,6 +119,8 @@ export interface ServiceContainer {
   digest: import('../services/digest.service').DigestService;
   /** Browse / delete files under a personality's declared workdir. */
   documents: import('../services/documents.service').DocumentsService;
+  /** On-demand model probe (T1.24). */
+  modelRegistry: import('../services/model-registry.service').ModelRegistryService;
   namedSecrets: import('../services/named-secrets.service').NamedSecretsService;
   /** Masked inventory of the whole secrets vault, by category. */
   keys: import('../services/keys.service').KeysService;

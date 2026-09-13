@@ -8,6 +8,9 @@ import { REF_TO_ENV } from '@ethosagent/storage-fs';
 import type {
   LogLevel,
   ModelProfile,
+  ModelRegistry,
+  ModelRegistryEntry,
+  ModelRoleName,
   RealtimeProviderEntry,
   RetentionConfig,
   RetentionEventsConfig,
@@ -16,7 +19,23 @@ import type {
   SttProviderEntry,
   TtsProviderEntry,
 } from '@ethosagent/types';
-import { EthosError, isRetentionDuration, SECRET_NAME_RE } from '@ethosagent/types';
+import {
+  EthosError,
+  isRetentionDuration,
+  MODEL_ROLE_NAMES,
+  SECRET_NAME_RE,
+} from '@ethosagent/types';
+
+// D25/T1.3 — the registry's refusals and the config-shaped declaration parser.
+// They live in their own module because this one is the CODEC and deliberately
+// refuses nothing (see `buildModelRegistry`); re-exported here because
+// `packages/config` has one public surface.
+export {
+  type ModelRegistryProblem,
+  type ModelRegistryProblemCode,
+  parseModelDeclaration,
+  validateModelRegistry,
+} from './model-registry';
 
 // ---------------------------------------------------------------------------
 // Value scalars — the one reader of a `key: <value>`, and the CLI's writer
@@ -1012,6 +1031,20 @@ export interface ProviderConfig extends ProviderChainEntry {
  */
 export interface ProviderChainEntry {
   provider: string;
+  /**
+   * Stable operator-chosen key for THIS entry, independent of its position in
+   * the chain (D2/D24 of plan/phases/model-registry.md).
+   *
+   * It exists because a `modelRegistry.<alias>.provider` names a provider
+   * ENTRY, not a provider TYPE: two entries can both be `anthropic` — two
+   * accounts, two keys — and a registry that named only the type could not say
+   * which credential to bill. `deriveProviderKey` synthesizes a key for an
+   * entry that carries none, but that synthesized key is POSITIONAL and is for
+   * display only; a registry alias may reference only an entry with an
+   * explicit `id:` here (D24, enforced by `validateModelRegistry` in T1.3,
+   * which does not exist yet).
+   */
+  id?: string;
   apiKey?: string;
   model?: string;
   baseUrl?: string;
@@ -1027,6 +1060,20 @@ export interface ProviderChainEntry {
    *  means a per-model `ModelProfile` (`models.*`) in this config. */
   awsProfile?: string;
   /**
+   * Whether this entry is a failover hop for the default rung. Absent means
+   * `true` — every entry that ever existed was one (D23b).
+   *
+   * `failover: false` makes an entry a CREDENTIAL that is not a chain hop: it
+   * is still in the provider map, still referenceable by a registry alias,
+   * still probed and testable, and still shown in Settings → Models — but it is
+   * not in the `ChainedProvider` the default rung rides, so adding a model for
+   * one vision or compression slot cannot silently give every unpinned turn a
+   * failover hop to that vendor. Nothing reads this field yet: chain membership
+   * is `createLLMFromRegistry` / `buildProviderMap` in `packages/wiring`
+   * (T1.20), and this task is the codec only.
+   */
+  failover?: boolean;
+  /**
    * Every other `providers.<n>.<field>` line, keyed by `<field>`. It belongs to
    * THIS entry: `renderProviderChain` re-emits it under whatever index the
    * entry has at write time, so it moves with the entry on reorder and is gone
@@ -1038,23 +1085,45 @@ export interface ProviderChainEntry {
 }
 
 /**
- * The modelled fields, in render order. These are exactly the fields
- * `createLLM` (packages/wiring/src/index.ts) forwards to a chain entry's
- * provider factory; any other field lands in `passthrough`.
+ * The modelled fields, in render order. These are the fields `createLLM`
+ * (packages/wiring/src/index.ts) forwards to a chain entry's provider factory,
+ * plus the two that describe the entry itself rather than its transport — `id`
+ * (who this entry is, D2/D24) and `failover` (whether it is a chain hop, D23b).
+ * Any other field lands in `passthrough`.
+ *
+ * `id` renders directly after `provider` because the pair names the entry, and
+ * `failover` last because it qualifies the whole entry. A config that carried
+ * either as an unmodelled passthrough field before this landed reads back as a
+ * modelled one and renders in this order instead of the sorted passthrough
+ * tail — one line moves, nothing is duplicated (`renderProviderChain` never
+ * emits a passthrough field that shadows a modelled one) and no migration is
+ * needed. Pinned by `__tests__/config-model-registry.test.ts`.
  */
 const PROVIDER_CHAIN_FIELDS = [
   'provider',
+  'id',
   'apiKey',
   'model',
   'baseUrl',
   'apiVersion',
   'region',
   'awsProfile',
+  'failover',
 ] as const;
 type ProviderChainField = (typeof PROVIDER_CHAIN_FIELDS)[number];
+/** The modelled fields whose value is a string — every one but `failover`, the
+ *  namespace's only boolean, which parse and render handle by hand. */
+type ProviderChainStringField = Exclude<ProviderChainField, 'failover'>;
+
+const PROVIDER_CHAIN_STRING_FIELDS: readonly ProviderChainStringField[] =
+  PROVIDER_CHAIN_FIELDS.filter((f): f is ProviderChainStringField => f !== 'failover');
 
 function isProviderChainField(field: string): field is ProviderChainField {
   return (PROVIDER_CHAIN_FIELDS as readonly string[]).includes(field);
+}
+
+function isProviderChainStringField(field: string): field is ProviderChainStringField {
+  return (PROVIDER_CHAIN_STRING_FIELDS as readonly string[]).includes(field);
 }
 
 /** A `<field>` both writers can interpolate into a key unquoted: no space, no
@@ -1144,7 +1213,21 @@ export function parseProviderChain(
     const passthrough: Record<string, string> = {};
     for (const [field, value] of slot) {
       if (field === 'provider') continue;
-      if (isProviderChainField(field)) entry[field] = value;
+      if (field === 'failover') {
+        // The namespace's only boolean, and absent means `true` (D23b) — so an
+        // unreadable value is NOT silently taken as the default: it says so and
+        // the line is gone on the next write, the same trade the reserved-name
+        // drop above makes.
+        if (value === 'true' || value === 'false') entry.failover = value === 'true';
+        else {
+          notices?.push(
+            `config.yaml: 'providers.${idx}.failover' must be true or false, so '${value}' was ` +
+              'ignored — this entry stays a failover hop.',
+          );
+        }
+        continue;
+      }
+      if (isProviderChainStringField(field)) entry[field] = value;
       else passthrough[field] = value;
     }
     if (Object.keys(passthrough).length > 0) entry.passthrough = passthrough;
@@ -1160,6 +1243,10 @@ export function parseProviderChain(
  * caller's — each config writer applies its own scalar rule to the whole file.
  * A passthrough field that fails the line grammar, is reserved, or shadows a
  * modelled field is not rendered.
+ *
+ * `failover` is emitted whenever it is set, `true` included: the default is
+ * absence, not `false`, so an operator who wrote the line out in full keeps it
+ * rather than watching an unrelated save delete it.
  */
 export function renderProviderChain(
   entries: readonly ProviderChainEntry[],
@@ -1167,6 +1254,12 @@ export function renderProviderChain(
   const out: Array<[string, string]> = [];
   for (const [i, entry] of entries.entries()) {
     for (const field of PROVIDER_CHAIN_FIELDS) {
+      if (field === 'failover') {
+        if (entry.failover !== undefined) {
+          out.push([`providers.${i}.failover`, String(entry.failover)]);
+        }
+        continue;
+      }
       const value = entry[field];
       if (field === 'provider' || value) out.push([`providers.${i}.${field}`, value ?? '']);
     }
@@ -1181,6 +1274,35 @@ export function renderProviderChain(
 }
 
 /**
+ * A DISPLAY and DIAGNOSTIC name for one chain entry: its explicit `id` when it
+ * has one, otherwise `<provider>` at index 0 and `<provider>-<n>` after it.
+ *
+ * **A registry alias must never reference a derived key (D24.)** The derived
+ * half is positional: it renames when the chain is reordered or when
+ * `providers.0` is deleted, and reordering the chain is the ordinary way an
+ * operator changes failover priority. Under D6/D14 a renamed key dangles every
+ * `modelRegistry.<alias>.provider` that pointed at it and refuses every
+ * personality that named that alias — a routine edit becoming a fleet-wide
+ * outage. So `modelRegistry.<alias>.provider` may name only an entry carrying
+ * an explicit `providers.<n>.id`, which is deterministic under reorder and
+ * survives credential rotation in place. That refusal is `validateModelRegistry`
+ * in `packages/config/src/model-registry.ts` (T1.3), which does not exist yet —
+ * nothing enforces it at the time this function landed. Use this key to LABEL an
+ * entry in a listing, a doctor row or an error message, never to bind one.
+ *
+ * Two arguments, so "first entry of that type" is read as "index 0" rather than
+ * as the first entry with this `provider` value — a lone `openai` at index 3
+ * is `openai-3`, not `openai`. That is a deliberate narrowing of D2's wording:
+ * the un-narrowed rule is not computable from `(entry, index)`, and carrying
+ * the index in the name is the more honest spelling for a key D24 has already
+ * demoted to positional.
+ */
+export function deriveProviderKey(entry: ProviderChainEntry, index: number): string {
+  if (entry.id) return entry.id;
+  return index === 0 ? entry.provider : `${entry.provider}-${index}`;
+}
+
+/**
  * `entry` with every modelled field it lacks taken from `top` — the top-level
  * `provider` / `apiKey` / `model` / … as a chain entry — when both name the
  * same provider; `entry` unchanged otherwise.
@@ -1192,6 +1314,13 @@ export function renderProviderChain(
  * base URL, model and provider-specific fields — or the primary loses its key
  * the moment a fallback is added. Used by apps/web-api's `ConfigService.update`
  * and `ethos fallback add`.
+ *
+ * `failover` is not inherited: it describes whether the ENTRY is a chain hop,
+ * and the top-level spelling IS chain index 0 (D2), so it has no separate
+ * chain membership to donate. `id` is in the loop like every other string
+ * field, but neither caller's top-level entry carries one
+ * (`topLevelChainEntry` in apps/web-api's config.service.ts, and the literal in
+ * `ethos fallback add`), so in practice nothing is inherited there either.
  */
 export function fillFromTopLevel<E extends ProviderChainEntry>(
   entry: E,
@@ -1199,7 +1328,7 @@ export function fillFromTopLevel<E extends ProviderChainEntry>(
 ): E {
   if (entry.provider !== top.provider) return entry;
   const next: E = { ...entry };
-  for (const field of PROVIDER_CHAIN_FIELDS) {
+  for (const field of PROVIDER_CHAIN_STRING_FIELDS) {
     const value = top[field];
     if (field !== 'provider' && !next[field] && value) (next as ProviderChainEntry)[field] = value;
   }
@@ -2444,6 +2573,33 @@ export interface EthosConfig {
    *   modelCatalog.providers.<id>.url: https://internal.example.com/anthropic.json
    */
   modelCatalog?: ModelCatalogConfig;
+  /**
+   * The deployment's model roster — which models this deployment may use, under
+   * operator-chosen aliases (D2 of plan/phases/model-registry.md).
+   *
+   * It takes its own prefix rather than sharing `models.*`: that namespace is
+   * the §7 per-model profile override, keyed `<providerId>/<modelId>`, and an
+   * alias literally named `anthropic/claude-sonnet-5` would be genuinely
+   * ambiguous with it.
+   *
+   * An entry holds NO credential. `provider` names a provider ENTRY — the `id`
+   * on a `providers.<n>` line, not a provider TYPE — and that entry already
+   * owns the key, the base URL and the region. Config keys:
+   *   modelRegistry.sonnet.provider: anthropic-work
+   *   modelRegistry.sonnet.modelId: claude-sonnet-5
+   *   modelRegistry.sonnet.label: everyday driver
+   *   modelRegistry.sonnet.contextWindow: 200000
+   *   modelRegistry.sonnet.costPer1kInput: 0.003
+   *   modelRegistry.sonnet.costPer1kOutput: 0.015
+   *   modelRegistry.sonnet.fallbacks: sonnet-eu,sonnet-old
+   *   modelRegistry.default: sonnet
+   *   modelRegistry.roles.deep: opus
+   *
+   * The codec does not judge what it reads: a missing `provider` or `modelId`
+   * reaches the config as `''` rather than being dropped, so
+   * `validateModelRegistry` (T1.3, not yet written) can refuse it by name.
+   */
+  modelRegistry?: ModelRegistry;
   /**
    * Logging settings. `rotation` controls when `~/.ethos/logs/errors.jsonl` is
    * rotated; `level` is the lowest severity `ConsoleLogger` prints (records
@@ -3904,6 +4060,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
       }
     }
   }
+  if (config.modelRegistry) lines.push(...renderModelRegistry(config.modelRegistry));
   if (config.logs?.rotation) {
     const r = config.logs.rotation;
     if (r.maxBytes !== undefined) lines.push(`logs.rotation.maxBytes: ${r.maxBytes}`);
@@ -4347,7 +4504,15 @@ export async function resolveConfigSecrets(
 /** Accepted `logs.level` values, ordered by severity. Mirrors `LogLevel`. */
 const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
-function parseConfigYaml(src: string): EthosConfig {
+/**
+ * The ONE parser for `config.yaml`'s flat-key dialect.
+ *
+ * Exported because `readRawConfig` reads only `ethosDir()/config.yaml`, and a
+ * host that owns its own data directory (apps/web-api's `opts.dataDir`) must
+ * parse the file it actually reads rather than re-deriving a second, poorer
+ * parser for the keys it happens to care about.
+ */
+export function parseConfigYaml(src: string): EthosConfig {
   const kv: Record<string, string> = {};
   const modelRouting: Record<string, string> = {};
   const toolSettings: ToolSettingsMap = {};
@@ -4371,6 +4536,13 @@ function parseConfigYaml(src: string): EthosConfig {
   const webKv: Record<string, string> = {};
   const modelCatalogKv: Record<string, string> = {};
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
+  // D2 — modelRegistry.<alias>.<field>: <value>, keyed by alias; field → raw
+  // value. `modelRegistry.default` goes in `kv`, the role bindings here.
+  const modelRegistryKv: Record<string, Record<string, string>> = {};
+  const modelRegistryRolesKv: Record<string, string> = {};
+  // What the registry codec dropped and why — filed under `parseWarningsByConfig`
+  // beside `providerNotices`, the same channel `parseProviderChain` uses.
+  const modelRegistryNotices: string[] = [];
   // §7 — models.<providerId>/<modelId>.<field>: <value>. Keyed by the full
   // `<providerId>/<modelId>` string; field path → raw value.
   const modelsKv: Record<string, Record<string, string>> = {};
@@ -4924,6 +5096,53 @@ function parseConfigYaml(src: string): EthosConfig {
       modelCatalogKv[mc[1]] = parseConfigScalar(mc[2]);
       continue;
     }
+    // modelRegistry.default: <alias>  (D2) — the roster-level default, matched
+    // BEFORE the per-alias branch so it can never be read as an alias named
+    // `default`. The colon immediately after `default` already separates the
+    // two grammars; this is belt and braces, and it documents the hazard.
+    const mrd = line.match(/^modelRegistry\.default:\s*(.+)$/);
+    if (mrd) {
+      kv['modelRegistry.default'] = parseConfigScalar(mrd[1]);
+      continue;
+    }
+    // modelRegistry.roles.<role>: <alias>  (D2). Claimed only when `<role>` is
+    // one of MODEL_ROLE_NAMES; anything else falls through to the per-alias
+    // branch, so a registry entry may still be called `roles`. `roles.deep` is
+    // the one line that entry could not then own — a role binding wins over an
+    // alias field of the same spelling, which is the reading an operator means.
+    const mrr = line.match(/^modelRegistry\.roles\.([A-Za-z0-9_-]+):\s*(.+)$/);
+    const mrrRole = mrr?.[1];
+    if (mrr && mrrRole && (MODEL_ROLE_NAMES as readonly string[]).includes(mrrRole)) {
+      modelRegistryRolesKv[mrrRole] = parseConfigScalar(mrr[2]);
+      continue;
+    }
+    // modelRegistry.<alias>.<field>: <value>  (D2). The alias charset has no
+    // dot and no slash — it is an operator-chosen key, unlike §7's
+    // `<providerId>/<modelId>` below — so the three segments split
+    // unambiguously. The leaf is an anchored fixed set, the same shape §7 uses:
+    // a line with an unmodelled leaf is NOT claimed, falls out of the cascade
+    // unmatched, and is preserved verbatim by `unexpressibleLines` on the next
+    // write rather than being dropped or shovelled into an untyped passthrough
+    // on a `@ethosagent/types` contract.
+    const mreg = line.match(
+      /^modelRegistry\.([A-Za-z0-9_-]+)\.(provider|modelId|label|contextWindow|costPer1kInput|costPer1kOutput|fallbacks):\s*(.+)$/,
+    );
+    const mrAlias = mreg?.[1];
+    if (mreg && mrAlias) {
+      // Never a computed own-key on the roster — see RESERVED_TOOL_SETTINGS_KEYS.
+      // Said out loud rather than skipped in silence: `__proto__` is not a
+      // future field name the way an unmodelled leaf might be, so an operator
+      // who typed one is never getting the entry they meant.
+      if (RESERVED_TOOL_SETTINGS_KEYS.has(mrAlias)) {
+        modelRegistryNotices.push(
+          `config.yaml: 'modelRegistry.${mrAlias}.${mreg[2]}' uses a reserved alias name and was ignored.`,
+        );
+        continue;
+      }
+      modelRegistryKv[mrAlias] ??= {};
+      modelRegistryKv[mrAlias][mreg[2]] = parseConfigScalar(mreg[3]);
+      continue;
+    }
     // models.<providerId>/<modelId>.<field>: <value>  (§7 per-model profile).
     // The model key is greedy `.+` so ids containing `/` and `.` round-trip;
     // the trailing field is one of a fixed set, anchored so the split is
@@ -5345,6 +5564,12 @@ function parseConfigYaml(src: string): EthosConfig {
           ...(modelCatalogProviders ? { providers: modelCatalogProviders } : {}),
         }
       : undefined;
+  const modelRegistry = buildModelRegistry(
+    modelRegistryKv,
+    modelRegistryRolesKv,
+    kv['modelRegistry.default'],
+    modelRegistryNotices,
+  );
   const models = buildModelProfiles(modelsKv);
   const compaction = buildCompaction(compactionKv);
   const memoryCharLimits = buildMemoryCharLimits(memoryCharLimitsKv);
@@ -5713,6 +5938,7 @@ function parseConfigYaml(src: string): EthosConfig {
     web: webConfig,
     webhooks: webhooksResult.webhooks,
     modelCatalog,
+    modelRegistry,
     logs:
       logsRotation || logsLevel
         ? {
@@ -5821,6 +6047,7 @@ function parseConfigYaml(src: string): EthosConfig {
     ...auxTimeoutWarnings,
     ...retentionWarnings,
     ...providerNotices,
+    ...modelRegistryNotices,
   ]);
   return config;
 }
@@ -7986,6 +8213,123 @@ function buildChannelToolsets(kv: Record<string, string>): Record<string, string
     if (tools.length > 0) result[platform] = tools;
   }
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * D2 — assemble the model registry from parsed flat keys: the per-alias fields,
+ * the role bindings, and the roster-level `default`.
+ *
+ * **It refuses nothing.** An entry missing `provider` or `modelId` is built
+ * anyway, with `''` in the missing slot, and an alias the `default` or a role
+ * binding names need not exist. That is deliberate and it is where this codec
+ * parts company with `parseProviderChain`, which DROPS an index carrying no
+ * `provider` line: `validateModelRegistry` (T1.3, not yet written) owes the
+ * operator a refusal that names the offending alias and lists the configured
+ * set, and it cannot say any of that about an entry this function threw away.
+ * The line that produced the half-entry survives a rewrite either way, because
+ * `renderModelRegistry` omits empty values and re-emits what is left.
+ *
+ * Numeric fields are dropped when non-finite, the rule `buildModelProfiles`
+ * uses; `fallbacks` is a comma list, trimmed, empties removed. Returns
+ * `undefined` when nothing at all is configured, so a deployment with no
+ * registry has no `modelRegistry` key rather than an empty one.
+ */
+function buildModelRegistry(
+  kv: Record<string, Record<string, string>>,
+  rolesKv: Record<string, string>,
+  defaultAlias: string | undefined,
+  notices: string[],
+): ModelRegistry | undefined {
+  const entries: Record<string, ModelRegistryEntry> = {};
+  for (const [alias, fields] of Object.entries(kv)) {
+    const entry: ModelRegistryEntry = {
+      alias,
+      provider: fields.provider ?? '',
+      modelId: fields.modelId ?? '',
+    };
+    if (fields.label) entry.label = fields.label;
+    for (const key of ['contextWindow', 'costPer1kInput', 'costPer1kOutput'] as const) {
+      const raw = fields[key];
+      if (raw === undefined) continue;
+      const n = Number(raw);
+      if (Number.isFinite(n)) entry[key] = n;
+      else {
+        notices.push(
+          `config.yaml: 'modelRegistry.${alias}.${key}' is not a number ('${raw}'), so it was ignored.`,
+        );
+      }
+    }
+    const fallbacks = (fields.fallbacks ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (fallbacks.length > 0) entry.fallbacks = fallbacks;
+    entries[alias] = entry;
+  }
+  const roles: Partial<Record<ModelRoleName, string>> = {};
+  for (const role of MODEL_ROLE_NAMES) {
+    const alias = rolesKv[role];
+    if (alias) roles[role] = alias;
+  }
+  const hasAny =
+    Object.keys(entries).length > 0 || Object.keys(roles).length > 0 || defaultAlias !== undefined;
+  if (!hasAny) return undefined;
+  return {
+    entries,
+    ...(defaultAlias ? { default: defaultAlias } : {}),
+    roles,
+  };
+}
+
+/**
+ * D2 — the registry as `key: value` lines, the inverse of the parse branch.
+ *
+ * Entries keep the order the config gave them (object insertion order, the
+ * rule `modelRouting` and `modelCatalog.providers` already follow) so an
+ * unrelated save does not reshuffle an operator's file into alphabetical
+ * order; fields within an entry follow the D2 listing; then `default`, then the
+ * role bindings in `MODEL_ROLE_NAMES` order. Empty values are omitted, which is
+ * what lets a half-typed entry round-trip byte-identically.
+ *
+ * Symmetry with the parser is the point, not a nicety: a `modelRegistry.*` line
+ * this function could not produce would be preserved verbatim by
+ * `unexpressibleLines` forever, and no writer could ever delete it.
+ *
+ * **Limitation, named rather than half-guarded.** Nothing here checks that
+ * `alias` is inside the parse branch's `[A-Za-z0-9_-]+` charset. Every alias
+ * that came from a config file is, by construction; one handed in by a future
+ * programmatic writer (the `modelRegistry.upsert` RPC, T2.2) need not be, and
+ * an alias containing a space or a colon renders a line no reader claims — the
+ * entry would be gone on the next read. The refusal belongs to
+ * `validateModelRegistry` (T1.3, not yet written), which can name the alias and
+ * say what is legal; a silent skip here would be a second, quieter place for
+ * the same entry to vanish. Until T1.3 lands, nothing enforces it.
+ */
+function renderModelRegistry(registry: ModelRegistry): string[] {
+  const lines: string[] = [];
+  for (const [alias, entry] of Object.entries(registry.entries)) {
+    if (entry.provider) lines.push(`modelRegistry.${alias}.provider: ${entry.provider}`);
+    if (entry.modelId) lines.push(`modelRegistry.${alias}.modelId: ${entry.modelId}`);
+    if (entry.label) lines.push(`modelRegistry.${alias}.label: ${entry.label}`);
+    if (entry.contextWindow !== undefined) {
+      lines.push(`modelRegistry.${alias}.contextWindow: ${entry.contextWindow}`);
+    }
+    if (entry.costPer1kInput !== undefined) {
+      lines.push(`modelRegistry.${alias}.costPer1kInput: ${entry.costPer1kInput}`);
+    }
+    if (entry.costPer1kOutput !== undefined) {
+      lines.push(`modelRegistry.${alias}.costPer1kOutput: ${entry.costPer1kOutput}`);
+    }
+    if (entry.fallbacks && entry.fallbacks.length > 0) {
+      lines.push(`modelRegistry.${alias}.fallbacks: ${entry.fallbacks.join(',')}`);
+    }
+  }
+  if (registry.default) lines.push(`modelRegistry.default: ${registry.default}`);
+  for (const role of MODEL_ROLE_NAMES) {
+    const alias = registry.roles[role];
+    if (alias) lines.push(`modelRegistry.roles.${role}: ${alias}`);
+  }
+  return lines;
 }
 
 /**

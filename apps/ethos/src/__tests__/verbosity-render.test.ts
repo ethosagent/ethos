@@ -1,4 +1,5 @@
-import type { AgentEvent } from '@ethosagent/core';
+import { type AgentEvent, describeDeviation } from '@ethosagent/core';
+import type { ModelDeviation } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { isVerbosity, nextVerbosity, projectEvent, unstreamedDoneText } from '../lib/verbosity';
 
@@ -18,6 +19,23 @@ const ev = {
   usage(inputTokens: number, outputTokens: number): AgentEvent {
     return { type: 'usage', inputTokens, outputTokens, estimatedCostUsd: 0.001 };
   },
+  runStart(deviation?: ModelDeviation): AgentEvent {
+    return {
+      type: 'run_start',
+      provider: 'anthropic',
+      model: 'claude-sonnet-5',
+      source: 'default',
+      ...(deviation ? { deviation } : {}),
+    };
+  },
+};
+
+const deviation: ModelDeviation = {
+  kind: 'role-unbound',
+  declared: 'deep',
+  effective: 'sonnet',
+  reason: "anthropic · claude-sonnet-5 is this machine's default model.",
+  once: true,
 };
 
 describe('FW-10 verbosity projection', () => {
@@ -32,6 +50,20 @@ describe('FW-10 verbosity projection', () => {
       expect(projectEvent(ev.progress('ls', 'half', 'user'), 'quiet')).toEqual([]);
       expect(projectEvent(ev.toolEnd('ls', true, 50), 'quiet')).toEqual([]);
       expect(projectEvent(ev.usage(10, 20), 'quiet')).toEqual([]);
+      expect(projectEvent(ev.runStart(), 'quiet')).toEqual([]);
+    });
+
+    // D17 — the one exception, and the whole of the contract: a person reading
+    // a reply at `quiet` is exactly who needs to know the turn did not run on
+    // what was declared.
+    it('a run_start carrying a deviation renders at quiet verbosity', () => {
+      const lines = projectEvent(ev.runStart(deviation), 'quiet');
+
+      expect(lines).toHaveLength(1);
+      expect(lines[0]?.kind).toBe('run_start');
+      // The copy is describeDeviation's, never restated at the render site.
+      const { line, fix } = describeDeviation(deviation);
+      expect(lines[0]?.text).toBe(`${line} ${fix}`);
     });
   });
 

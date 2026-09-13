@@ -147,18 +147,19 @@ function modelFitSection(fit: CharacterSheetModelFit): string[] {
  * Lane 5(i) follow-on — WHICH MODEL A TURN ACTUALLY SENDS, as PLAIN DATA.
  *
  * A personality's declared `model` is not automatically the model that runs.
- * `resolveModelWithTier` (`packages/core/src/agent-loop/turn-context.ts`)
- * honours a personality's tier map only when its declared `provider` matches
- * the active LLM's name, and it reads a tier MAP only — a plain `model:`
- * string is never applied. Everything else falls through to the deployment's
- * global model. Without this block the sheet printed the DECLARED value as
- * fact, so a deployment running `codex` still read `claude-sonnet-4-6`.
+ * A declaration is an alias or a role resolved against the deployment's
+ * `modelRegistry` (`resolveTurnModel`,
+ * `packages/core/src/agent-loop/turn-model.ts`), and on a deployment that has
+ * no registry yet every declaration falls through to the deployment's global
+ * model. Without this block the sheet printed the DECLARED value as fact, so a
+ * deployment running `codex` still read `claude-sonnet-4-6`.
  *
  * Computed by `resolveCharacterSheetRouting()` in `@ethosagent/wiring` (which
- * calls that same resolver, so this cannot drift from the guard) and passed in
- * here; the personalities package never reaches up into wiring. Absent → the
- * sheet renders the declared value exactly as it did before, which is all a
- * caller that cannot see the active LLM is entitled to claim.
+ * calls that same resolver, so the sheet cannot claim a model the turn would
+ * not send) and passed in here; the personalities package never reaches up
+ * into wiring. Absent → the sheet renders the declared value exactly as it did
+ * before, which is all a caller that cannot see the active LLM is entitled to
+ * claim.
  */
 export interface CharacterSheetRouting {
   /** `LLMProvider.name` of the active LLM — the value the guard compares

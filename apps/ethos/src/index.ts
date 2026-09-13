@@ -41,6 +41,7 @@ import { runLearn } from './commands/learn';
 import { runLogs } from './commands/logs';
 import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
+import { runModels } from './commands/models';
 import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
 import { runProcessCommand } from './commands/process';
@@ -74,7 +75,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | memory | acp | batch | bench | eval | evolve | learn | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | memory | acp | batch | bench | eval | evolve | learn | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 // Declared here, not beside getBootCliRegistry() below, because dispatch runs at
 // module top level: the `default` branch calls getBootCliRegistry() while a `let`
@@ -824,6 +825,11 @@ try {
       break;
     }
 
+    case 'models': {
+      await runModels(args.slice(1));
+      break;
+    }
+
     case 'backup': {
       await runBackup(args.slice(1));
       break;
@@ -1257,12 +1263,13 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
   });
 
   // Which model this personality's turns ACTUALLY send. Declared and executed
-  // routinely differ — `resolveModelWithTier`
-  // (packages/core/src/agent-loop/turn-context.ts) honours a tier map only when
-  // the declared `provider` matches the active LLM — so the sheet prints the
-  // executed model and names an ignored declaration as inert. Computed OUTSIDE
-  // the loop-construction block below: it is pure config arithmetic, and an
-  // unbuildable loop must not cost the sheet its routing line.
+  // routinely differ — until a `modelRegistry` exists, every declaration falls
+  // through to the deployment default (`resolveTurnModel`,
+  // packages/core/src/agent-loop/turn-model.ts, the same function the turn
+  // calls) — so the sheet prints the executed model and names an ignored
+  // declaration as inert. Computed OUTSIDE the loop-construction block below:
+  // it is pure config arithmetic, and an unbuildable loop must not cost the
+  // sheet its routing line.
   const routing = cfg
     ? resolveCharacterSheetRouting(
         described.config,

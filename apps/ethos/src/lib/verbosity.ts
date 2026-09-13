@@ -5,7 +5,7 @@
 // `audience: 'user'` to opt-in. `verbose` lifts the gate so internal
 // `audience: 'internal'` events surface too. `debug` adds raw JSON.
 
-import type { AgentEvent } from '@ethosagent/core';
+import { type AgentEvent, describeDeviation } from '@ethosagent/core';
 import { answerSuffix } from '@ethosagent/types';
 
 export type Verbosity = 'quiet' | 'default' | 'verbose' | 'debug';
@@ -76,7 +76,15 @@ export function projectEvent(
 ): RenderedLine[] {
   const doneAnswer = turn ? unstreamedDoneText(event, turn.streamedText) : undefined;
   if (verbosity === 'quiet') {
-    // Only final assistant text surfaces.
+    // Only final assistant text surfaces — plus, per D17, a `run_start`
+    // carrying a deviation. This is the one line of that contract: the moment a
+    // person needs to know the turn is not running on what was declared is the
+    // moment the answer is in front of them, and `quiet` is where somebody
+    // reading a reply actually is.
+    if (event.type === 'run_start' && event.deviation) {
+      const { line, fix } = describeDeviation(event.deviation);
+      return [{ text: fix ? `${line} ${fix}` : line, kind: 'run_start' }];
+    }
     if (event.type === 'text_delta') return [{ text: event.text, kind: 'text' }];
     if (doneAnswer) return [{ text: doneAnswer, kind: 'text' }];
     return [];
@@ -124,7 +132,15 @@ export function projectEvent(
     case 'error':
       out.push({ text: `[${event.code}] ${event.error}`, kind: 'error' });
       break;
-    case 'run_start':
+    case 'run_start': {
+      // D17 — a `run_start` carrying a deviation renders at EVERY verbosity,
+      // `quiet` included; the plain "ran on X" line keeps its verbose-only
+      // gate. The sentence is `describeDeviation`'s, never restated here.
+      const deviation = event.deviation;
+      if (deviation) {
+        const { line, fix } = describeDeviation(deviation);
+        out.push({ text: fix ? `${line} ${fix}` : line, kind: 'run_start' });
+      }
       if (verbosity === 'verbose' || verbosity === 'debug') {
         out.push({
           text: `↳ ${event.provider}/${event.model} (${event.source})`,
@@ -132,6 +148,7 @@ export function projectEvent(
         });
       }
       break;
+    }
     case 'done':
       // Only the answer `done` alone carries (see `unstreamedDoneText`); the
       // turn summary is rendered inline in the REPL.

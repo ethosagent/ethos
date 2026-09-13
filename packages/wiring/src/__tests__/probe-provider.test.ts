@@ -98,6 +98,88 @@ describe('probeProvider', () => {
     if (!outcome.ok) expect(outcome.reason).toBe('unreachable');
   });
 
+  it('captures the model the provider echoed on its usage chunk', async () => {
+    mockCreateLLM.mockResolvedValueOnce({
+      name: 'anthropic',
+      model: 'claude-sonnet-5',
+      complete: async function* () {
+        yield { type: 'text_delta' as const, text: 'p' };
+        yield {
+          type: 'usage' as const,
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            estimatedCostUsd: 0,
+          },
+          metadata: { model: 'claude-sonnet-5-20260114' },
+        };
+      },
+    });
+    const outcome = await probeProvider({
+      provider: 'anthropic',
+      model: 'claude-sonnet-5',
+      apiKey: 'k',
+    });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect(outcome.echoedModel).toBe('claude-sonnet-5-20260114');
+  });
+
+  it('leaves echoedModel absent when no chunk reports one — the case every shipped transport is in', async () => {
+    mockCreateLLM.mockResolvedValueOnce({
+      name: 'anthropic',
+      model: 'x',
+      complete: async function* () {
+        yield {
+          type: 'usage' as const,
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            estimatedCostUsd: 0,
+          },
+          metadata: {},
+        };
+      },
+    });
+    const outcome = await probeProvider({ provider: 'anthropic', model: 'x', apiKey: 'k' });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect('echoedModel' in outcome).toBe(false);
+  });
+
+  it('reports a timeout as unreachable, never as a rejected key', async () => {
+    let aborted = false;
+    mockCreateLLM.mockResolvedValueOnce({
+      name: 'anthropic',
+      model: 'x',
+      complete: async function* (_m: unknown, _t: unknown, options: { abortSignal?: AbortSignal }) {
+        options.abortSignal?.addEventListener('abort', () => {
+          aborted = true;
+        });
+        // Never resolves on its own — only the bound can end this probe.
+        await new Promise<void>((resolve) => {
+          options.abortSignal?.addEventListener('abort', () => resolve());
+        });
+        throw new Error('aborted');
+      },
+    });
+    const outcome = await probeProvider({
+      provider: 'anthropic',
+      model: 'x',
+      apiKey: 'k',
+      timeoutMs: 20,
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('unreachable');
+      // Composed into `could not reach anthropic (…)` by the surfaces.
+      expect(outcome.error).toBe('timed out after 20ms');
+    }
+    expect(aborted).toBe(true);
+  });
+
   it('returns ok with latency when complete() drains cleanly', async () => {
     mockCreateLLM.mockResolvedValueOnce({
       name: 'anthropic',

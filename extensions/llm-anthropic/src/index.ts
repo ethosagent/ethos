@@ -12,9 +12,11 @@ import type {
   ToolOrder,
 } from '@ethosagent/types';
 import { DEFAULT_LLM_REQUEST_TIMEOUT_MS, orderToolDefinitions } from '@ethosagent/types';
+import { modelRejectionMessage } from './model-rejection';
 import { reduceToolSchemas } from './tool-schema';
 import { type AnthropicStreamParams, streamAnthropicMessages } from './transport';
 
+export { modelRejectionMessage } from './model-rejection';
 export { attributeToolSchemaBytes, reduceToolSchemas } from './tool-schema';
 export { streamAnthropicMessages } from './transport';
 export type { AnthropicStreamParams };
@@ -297,7 +299,27 @@ export class AnthropicProvider implements LLMProvider {
       requestTokens,
     };
 
-    yield* streamAnthropicMessages(this.client, streamParams, options.abortSignal);
+    try {
+      yield* streamAnthropicMessages(this.client, streamParams, options.abortSignal);
+    } catch (err) {
+      // V8 — a model rejection reads as a bare vendor error and nothing else.
+      // Keep the vendor's body verbatim, add the model id and the fix. Every
+      // other error, and every rejection the narrow predicate does not match,
+      // passes through exactly as before. The sibling is the codex 400 path
+      // (`extensions/llm-codex/src/index.ts`).
+      if (err instanceof Anthropic.APIError) {
+        // The SDK parses the body before we ever see it, so this is the only
+        // form of it available; it is also the form the SDK's own message
+        // carries, so nothing is lost against the error this replaces.
+        const rejection = modelRejectionMessage(
+          err.status,
+          JSON.stringify(err.error),
+          effectiveModel,
+        );
+        if (rejection) throw new Error(rejection, { cause: err });
+      }
+      throw err;
+    }
   }
 
   async countTokens(messages: Message[]): Promise<number> {

@@ -1,10 +1,10 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentEvent, ModelTierName, ToolFilterOpts } from '@ethosagent/types';
+import type { AgentEvent, ModelDeviation, ModelTierName, ToolFilterOpts } from '@ethosagent/types';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
 import { parseSmallWindowToolset } from '../small-window-toolset';
 import type { LoopDeps, TurnSetupResult } from '../turn-context';
-import { resolveModelWithTier } from '../turn-context';
+import { describeResolutionFailure, resolveTurnModel } from '../turn-model';
 
 /**
  * Turn-setup stage: session resolve/create, personality, trace, budget-cap
@@ -153,9 +153,11 @@ export async function* setupTurn(
   // previous compaction fired (0 = never).
   const { turnNumber, lastCompactionTurn } = await deps.session.recordTurnStart(sessionId);
 
-  // Resolve effective model with tier support.
-  // Priority: modelRouting[id] > personality tier config > llm.model.
-  // User tier override (from /tier command via RunOptions) applies for this entire turn.
+  // Resolve the model this turn runs on — the six rungs of D7, through the ONE
+  // resolver (`resolveModel`, reached via `resolveTurnModel`, which adds the
+  // D11b shim for a deployment that has no registry yet).
+  // A tier override (from /tier command via RunOptions) is the ROLE asked for,
+  // and applies for this entire turn.
   const turnTierOverride = opts.tierOverride;
   if (turnTierOverride) {
     deps.observability?.recordTierOverride({
@@ -167,25 +169,56 @@ export async function* setupTurn(
   }
 
   const activeTier = turnTierOverride ?? 'default';
-  const tierResolved = resolveModelWithTier(
+  // An explicit per-run model pin is rung 0 — it outranks the manifest, the
+  // routing override, the personality's own declaration and the deployment
+  // default. A caller naming a model for one turn knows something no static
+  // declaration does, and `source: 'run-override'` now says so rather than
+  // borrowing the `personality` label the frozen union used to force.
+  const turnModel = resolveTurnModel({
     personality,
-    activeTier,
-    deps.modelRouting,
-    deps.llm.name,
-    deps.llm.model,
-  );
-  // An explicit per-run model pin is the TOP rung: it outranks the tier
-  // resolution above and therefore the personality's configured model and the
-  // deployment default too. A caller naming a model for one turn knows
-  // something no static declaration does.
-  //
-  // `source` reports 'personality' for a pin because the frozen `run_start`
-  // union has no per-run variant and the caller's knowledge is always about WHO
-  // is running (today: a personality's fast-lane voice model). Reporting the
-  // tier source instead would name the model this turn did NOT use.
-  const effectiveModel = opts.modelOverride ?? tierResolved.model;
-  const modelSource = opts.modelOverride ? 'personality' : tierResolved.source;
+    role: activeTier,
+    ctx: deps.modelResolution,
+    ...(opts.modelOverride ? { runOverride: opts.modelOverride } : {}),
+    llmName: deps.llm.name,
+    llmModel: deps.llm.model,
+  });
+
+  // D6/D14 — the declaration names a model this machine does not have, so
+  // nothing runs. A refusal, never a silent reroute: substituting another model
+  // changes the agent while keeping its name, and the substitution is
+  // discovered on the invoice. The personality itself still LOADED — its
+  // toolset, memory and skills are intact; only the turn is refused.
+  if (turnModel.ok === false) {
+    if (traceId) deps.observability?.endTrace(traceId, 'error');
+    deps.observability?.flush();
+    yield {
+      type: 'error',
+      error: describeResolutionFailure(personality.id, turnModel),
+      code: 'model_unresolved',
+    };
+    yield { type: 'done', text: '', turnCount: 0, ...(traceId ? { traceId } : {}) };
+    return { kind: 'refused' };
+  }
+
+  const effectiveModel = turnModel.model;
+  // What reaches `CompletionOptions.modelOverride`. Still compared against the
+  // LOOP's provider model: selecting the provider the alias names, rather than
+  // sending its model id to whatever provider the loop holds, is T1.20/T1.16
+  // (`LoopDeps.providerFor`) and is deliberately not done here.
   const modelOverride = effectiveModel !== deps.llm.model ? effectiveModel : undefined;
+
+  // D17 — the `once` suppression set, owned by the loop instance. A config fact
+  // (an unbound role, a manifest outranking a declaration) is true until
+  // someone edits a file, so repeating it every turn trains people to stop
+  // reading it; a live condition (`once: false`) is announced every time.
+  let deviation: ModelDeviation | undefined = turnModel.deviation;
+  if (deviation?.once) {
+    // NUL-joined: a separator no id, no kind and no declared value can
+    // contain, so two different triples cannot collide into one suppression.
+    const key = `${personality.id}\u0000${deviation.kind}\u0000${deviation.declared}`;
+    if (deps.deviationSeen.has(key)) deviation = undefined;
+    else deps.deviationSeen.set(key, true);
+  }
 
   // Phase 5: emit run_start trace so consumers (TUI, CLI verbose, telemetry)
   // can surface the resolved provider/model and routing source.
@@ -194,9 +227,10 @@ export async function* setupTurn(
   // any output arrives. Omitted when no observability adapter is wired.
   yield {
     type: 'run_start',
-    provider: deps.llm.name,
+    provider: turnModel.provider,
     model: effectiveModel,
-    source: modelSource,
+    source: turnModel.source,
+    ...(deviation ? { deviation } : {}),
     ...(traceId ? { traceId } : {}),
   };
 

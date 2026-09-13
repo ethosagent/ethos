@@ -13,7 +13,7 @@ import type {
   DryRunToolPlan,
   RunOptions,
 } from '@ethosagent/core';
-import type { ClarifySurfaceType } from '@ethosagent/types';
+import type { ClarifySurfaceType, ModelDeviation, ModelResolutionSource } from '@ethosagent/types';
 import { InMemorySteerSink } from './in-memory-steer-sink';
 
 export type BridgeOpts = Omit<RunOptions, 'abortSignal'>;
@@ -87,12 +87,16 @@ interface BridgeEventMap {
   idle: [];
   queued: [input: string, queueDepth: number];
   /** Phase 5 — emitted once per turn with the resolved provider/model and routing source.
-   *  B3 — the trailing `traceId` is the turn identity; see `done` above. */
+   *  B3 — the trailing `traceId` is the turn identity; see `done` above.
+   *  T1.15a — `source` is the seven-label `ModelResolutionSource` (`'global'`
+   *  renamed `'default'`), and `deviation` is APPENDED as the last slot so a
+   *  handler written against the four-arg signature keeps working. */
   run_start: [
     provider: string,
     model: string,
-    source: 'team-coordinator' | 'team-personality' | 'personality' | 'global',
+    source: ModelResolutionSource,
     traceId: string | undefined,
+    deviation?: ModelDeviation,
   ];
   /** Emitted when dryRun is active — carries the planned tool calls. */
   dry_run_summary: [plan: DryRunToolPlan[], capped: number];
@@ -363,7 +367,14 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
             this.emit('error', event.error, event.code);
             break;
           case 'run_start':
-            this.emit('run_start', event.provider, event.model, event.source, event.traceId);
+            this.emit(
+              'run_start',
+              event.provider,
+              event.model,
+              event.source,
+              event.traceId,
+              event.deviation,
+            );
             break;
           case 'dry_run_summary':
             this.emit('dry_run_summary', event.plan, event.capped);

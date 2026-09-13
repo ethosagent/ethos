@@ -94,7 +94,10 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop({
       llm,
       safety: createTestSafety(),
-      modelRouting: { default: 'routed-model' },
+      modelResolution: {
+        registry: { entries: {}, roles: {} },
+        routing: { default: 'routed-model' },
+      },
     });
     await collect(loop.run('hi'));
     expect(capturedOpts[0]?.modelOverride).toBe('routed-model');
@@ -106,7 +109,8 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop({
       llm,
       safety: createTestSafety(),
-      modelRouting: { default: 'mock-model' }, // same as llm.model
+      // same as llm.model
+      modelResolution: { registry: { entries: {}, roles: {} }, routing: { default: 'mock-model' } },
     });
     await collect(loop.run('hi'));
     expect(capturedOpts[0]?.modelOverride).toBeUndefined();

@@ -41,7 +41,7 @@ describe('x-request-id middleware (B1)', () => {
       memoryBundle: makeStubMemoryBundle(),
       agentLoop: makeStubAgentLoop({
         events: [
-          { type: 'run_start', provider: 'anthropic', model: 'm', source: 'global' },
+          { type: 'run_start', provider: 'anthropic', model: 'm', source: 'default' },
           { type: 'text_delta', text: 'pong' },
           { type: 'done', text: 'pong', turnCount: 1 },
         ],

@@ -9,6 +9,7 @@ import type {
   LLMProvider,
   McpPolicy,
   MemoryProvider,
+  ModelResolutionContext,
   ModelTierName,
   PersonalityConfig,
   PersonalityObservabilityConfig,
@@ -50,7 +51,16 @@ export interface LoopDeps {
   /** Lane 3(b) — small-window mode (resolved once by wiring); gates declared
    *  `context_engine_options.small_window_toolset` narrowing in turn setup. */
   smallWindow: boolean;
-  modelRouting: Record<string, string>;
+  /** D7 — the registry, the role bindings, `modelRouting` and (on a team turn)
+   *  the manifest's model slots: everything `resolveModel` reads besides the
+   *  personality and the role. Replaces the bare `modelRouting` map. */
+  modelResolution: ModelResolutionContext;
+  /** D17 — the `once` suppression set, keyed `(personalityId, kind, declared)`.
+   *  Owned by the `AgentLoop` INSTANCE and handed down, never module state: a
+   *  process running two loops must not have one loop's announcement silence
+   *  the other's. Per process, never persisted — a restart re-announces, which
+   *  is correct, because a restart is when a config change takes effect. */
+  deviationSeen: Map<string, true>;
   /** §5 — resolved compaction gate config (pressure/target fractions +
    *  per-model charsPerToken). Undefined → gate uses its 0.8/0.7 + char/4
    *  defaults. Phase 3 adds `autoCompact` (turn-end trigger; default on since
@@ -218,31 +228,4 @@ export type HaltDecision = Extract<
 export interface WatcherTap {
   observe: (event: WatcherEvent) => void;
   getHalt: () => HaltDecision | null;
-}
-
-// ---------------------------------------------------------------------------
-// resolveModelWithTier — extracted from AgentLoop private method
-// ---------------------------------------------------------------------------
-
-export function resolveModelWithTier(
-  personality: PersonalityConfig,
-  tier: ModelTierName,
-  modelRouting: Record<string, string>,
-  llmName: string,
-  llmModel: string,
-): { model: string; source: 'personality' | 'global' } {
-  const personalityOverride = modelRouting[personality.id];
-  if (personalityOverride) return { model: personalityOverride, source: 'personality' };
-
-  // Only use tier config when the personality declares a provider that matches
-  // the active LLM. This prevents Anthropic-specific model IDs from being
-  // injected into OpenRouter/Ollama/Gemini providers. Without a matching
-  // provider declaration, fall through to the global model.
-  const modelConfig = personality.model;
-  if (modelConfig && typeof modelConfig === 'object' && personality.provider === llmName) {
-    const tierModel = modelConfig[tier] ?? modelConfig.default;
-    if (tierModel) return { model: tierModel, source: 'personality' };
-  }
-
-  return { model: llmModel, source: 'global' };
 }

@@ -534,15 +534,17 @@ export async function* processTools(
     }
   }
 
-  // Detect think_deeper tool success → set run-local tier escalation for next LLM call.
-  // Only fires when: (1) the personality declares a tier object, (2) its provider matches
-  // the active LLM, and (3) the tool named 'think_deeper' returned ok.
-  if (typeof ctx.personality.model === 'object' && ctx.personality.provider === deps.llm.name) {
-    for (const r of execResults) {
-      if (r.name === 'think_deeper' && r.result.ok) {
-        ctx.tierEscalationRef.value = 'deep';
-        break;
-      }
+  // Detect think_deeper tool success → set run-local tier escalation for the
+  // next LLM call. D8/V17 — this is the site that SETS the flag, and its
+  // `personality.provider === deps.llm.name` guard is deleted with the other
+  // two: it made the escalation unreachable on every chained deployment (the
+  // active name is `chain(a,b)`, which no personality can declare) and on every
+  // plain-string declaration. Which model answers `deep` is the resolver's
+  // business (`stream-step.ts`); the tool's job is only to ask.
+  for (const r of execResults) {
+    if (r.name === 'think_deeper' && r.result.ok) {
+      ctx.tierEscalationRef.value = 'deep';
+      break;
     }
   }
 

@@ -9,6 +9,7 @@ import {
   type AgentEvent,
   type AgentLoop,
   clarifyUnresolvedMessage,
+  describeDeviation,
   stripAnsiEscapes,
 } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
@@ -1031,11 +1032,21 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       out(`\n${c.red}[${event.code}] ${event.error}${c.reset}`);
       break;
 
-    case 'run_start':
+    case 'run_start': {
+      // D17 — a deviation renders at EVERY verbosity, `quiet` included: the
+      // moment a person needs to know the turn is not running on what was
+      // declared is the moment the answer is in front of them. The routine
+      // "ran on sonnet" line keeps its verbose-only gate. The copy comes from
+      // `describeDeviation`, never from a restatement here.
+      if (event.deviation) {
+        const { line, fix } = describeDeviation(event.deviation);
+        out(`${c.yellow}⚠ ${line}${fix ? ` ${fix}` : ''}${c.reset}\n`);
+      }
       if (state.verbosity === 'verbose' || state.verbosity === 'debug') {
         out(`${c.dim}↳ ${event.provider}/${event.model} (${event.source})${c.reset}\n`);
       }
       break;
+    }
 
     case 'dry_run_summary': {
       const label = `Dry-run plan (${event.plan.length} tool call${event.plan.length === 1 ? '' : 's'}${event.capped > 0 ? `, ${event.capped} capped` : ''}):`;

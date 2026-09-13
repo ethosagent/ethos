@@ -28,6 +28,7 @@ export * from './logger';
 export * from './mcp';
 export * from './memory';
 export * from './model-catalog';
+export * from './model-registry';
 export * from './monitor';
 export * from './notification-router';
 export * from './oauth';

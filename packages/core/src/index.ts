@@ -46,10 +46,11 @@ export {
   type ScriptToolBridgeDeps,
 } from './agent-loop/stages/script-tool-bridge';
 export { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
-// Lane 5(i) — the tier resolution (with its provider-match guard), exported so
-// wiring's tier-mismatch startup diagnostic is tested against EXACTLY the
-// guard the loop runs, not a drifting re-statement of it.
-export { resolveModelWithTier } from './agent-loop/turn-context';
+// D7 — the turn's model resolution (the six rungs plus the D11b empty-registry
+// shim), exported so wiring's character sheet asks the enforcer the turn runs
+// rather than restating it.
+export type { TurnModel, TurnModelResult } from './agent-loop/turn-model';
+export { describeResolutionFailure, resolveTurnModel } from './agent-loop/turn-model';
 export { buildAttachmentAnnotation } from './attachment-annotation';
 export { deriveBotKey } from './bot-key';
 export { toolsDeclaringNetwork } from './capability-reach';
@@ -139,6 +140,17 @@ export {
   LazyOnDemandPolicy,
   MemoryConflictError,
 } from './memory-policies';
+// The ONE model resolver (plan/phases/model-registry.md D7/D17/D25). The rung
+// order, the declaration grammar and the deviation copy have exactly one
+// implementation each; every surface that answers "which model, and why"
+// consumes these rather than restating them.
+export {
+  attemptWithFallbacks,
+  describeDeviation,
+  ModelFallbacksExhaustedError,
+  parseModelDeclaration,
+  resolveModel,
+} from './model-resolution';
 export { DefaultNotificationRouter } from './notification-router';
 export type { AgentLoopObservability } from './observability/agent-loop-observability';
 export { assertWithinBase, BoundaryEscapeError } from './path-boundary';

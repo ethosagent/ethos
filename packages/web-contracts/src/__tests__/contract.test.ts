@@ -303,6 +303,7 @@ describe('contract router', () => {
       'memory',
       'mesh',
       'meta',
+      'modelRegistry',
       'models',
       'namedSecrets',
       'onboarding',

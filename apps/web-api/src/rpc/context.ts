@@ -24,6 +24,7 @@ import type { LabService } from '../services/lab.service';
 import type { McpService } from '../services/mcp.service';
 import type { MemoryService } from '../services/memory.service';
 import type { MeshService } from '../services/mesh.service';
+import type { ModelRegistryService } from '../services/model-registry.service';
 import type { NamedSecretsService } from '../services/named-secrets.service';
 import type { ObservedChatsService } from '../services/observed-chats.service';
 import type { OnboardingService } from '../services/onboarding.service';
@@ -77,6 +78,9 @@ export interface RpcContext {
   digest: DigestService;
   /** Browse / delete files under a personality's declared workdir. */
   documents: DocumentsService;
+  /** On-demand model probe (T1.24). Not optional: it answers `unconfigured`
+   *  on a deployment with no registry, which is a state, not an absence. */
+  modelRegistry: ModelRegistryService;
   /** Global named-secrets vault manager (Phase 2). */
   namedSecrets: NamedSecretsService;
   /** Masked inventory of the whole secrets vault, by category. */

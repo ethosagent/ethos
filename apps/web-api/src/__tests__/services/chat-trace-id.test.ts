@@ -65,7 +65,7 @@ describe('ChatService — turn identity (B3)', () => {
         type: 'run_start',
         provider: 'anthropic',
         model: 'm',
-        source: 'global',
+        source: 'default',
         traceId: 'trace-9',
       },
       { type: 'text_delta', text: 'hi' },
@@ -82,7 +82,7 @@ describe('ChatService — turn identity (B3)', () => {
 
   it('omits traceId on the wire when the loop emitted none', async () => {
     const service = makeService([
-      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'global' },
+      { type: 'run_start', provider: 'anthropic', model: 'm', source: 'default' },
       { type: 'done', text: '', turnCount: 1 },
     ]);
     const { sessionId } = await service.send({ clientId: 'tab-1', text: 'hi' });

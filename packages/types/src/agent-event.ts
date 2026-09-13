@@ -14,6 +14,8 @@
 // can iterate it.
 // ---------------------------------------------------------------------------
 
+import type { ModelDeviation, ModelResolutionSource } from './model-registry';
+
 export const KNOWN_AGENT_EVENT_TYPES = [
   'text_delta',
   'thinking_delta',
@@ -208,7 +210,25 @@ export type AgentEvent =
       type: 'run_start';
       provider: string;
       model: string;
-      source: 'team-coordinator' | 'team-personality' | 'personality' | 'global';
+      /**
+       * T1.15a / D7 — the SEVEN rung labels `resolveModel` returns, not a
+       * parallel vocabulary. `'global'` was renamed `'default'` in the same
+       * audit: one fact, one spelling. Widening a union on a frozen event is an
+       * ARCHITECTURE.md §VII consumer audit — every consumer was walked
+       * (`packages/agent-bridge`, `packages/web-contracts/src/events.ts`, the
+       * CLI render gates, the web reducers, the golden fixtures).
+       */
+      source: ModelResolutionSource;
+      /**
+       * D17 — set when this turn is running on something other than what was
+       * declared. Every surface renders it through `describeDeviation`
+       * (`packages/core/src/model-resolution.ts`) rather than restating the
+       * copy; `turn-setup.ts` attaches it, suppressing a `once: true` row it
+       * has already announced for this `(personalityId, kind, declared)`.
+       *
+       * Additive-optional: absent → byte-identical to before.
+       */
+      deviation?: ModelDeviation;
       traceId?: string;
     }
   | {

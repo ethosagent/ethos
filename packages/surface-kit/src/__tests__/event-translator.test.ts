@@ -77,7 +77,7 @@ describe('createEventTranslator', () => {
     // A hypothetical future variant — must be a no-op, not throw.
     t.push({ type: 'future_event', foo: 1 } as unknown as AgentEvent);
     t.push({ type: 'thinking_delta', thinking: 'hmm' });
-    t.push({ type: 'run_start', provider: 'x', model: 'y', source: 'global' });
+    t.push({ type: 'run_start', provider: 'x', model: 'y', source: 'default' });
     expect(t.text).toBe('');
     expect(t.stopped).toBe(false);
   });

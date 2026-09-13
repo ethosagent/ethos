@@ -1,53 +1,29 @@
-// Lane 5(i) — tier-mismatch startup diagnostic.
+// What `## Routing` on the character sheet says, and how the active LLM's name
+// is derived for it.
 //
-// `resolveModelWithTier` (packages/core/src/agent-loop/turn-context.ts) only
-// honors a personality's `model` tier map when the personality's declared
-// `provider` matches the active LLM's name — the guard prevents e.g.
-// Anthropic-specific model IDs from being injected into an Ollama/OpenRouter
-// provider, and it STAYS. Its side effect is that a personality declaring
-// tiers without a matching `provider` gets them silently dropped: every turn
-// falls through to the global model. This helper makes the mismatch visible
-// at loop construction. Warning, not refusal (plan risk note: surfacing
-// latent misconfiguration is the point).
+// `evaluateTierMismatch` lived here and is GONE (D8/T1.7). It existed only to
+// describe the damage done by the `personality.provider === llmName` guard in
+// `resolveModelWithTier` — a guard that made every tier map inert on any
+// chained deployment (V2) and every plain-string declaration inert everywhere
+// (V1). The guard is deleted at all three of its sites and its stated purpose —
+// stop an Anthropic SKU reaching an Ollama endpoint — is served structurally
+// now: a resolved model carries the provider entry its own registry row names
+// (`toResolved` in `packages/core/src/model-resolution.ts`), so there is no
+// path left that pairs a model with a provider it did not name.
 
-import { resolveModelWithTier } from '@ethosagent/core';
+import { resolveTurnModel } from '@ethosagent/core';
 import type { CharacterSheetRouting } from '@ethosagent/personalities';
-import type { PersonalityConfig } from '@ethosagent/types';
+import type { ModelRegistry, PersonalityConfig } from '@ethosagent/types';
 
-/**
- * Returns a warning message when `personality` declares a model tier map that
- * the active LLM will silently ignore, or `undefined` when there is nothing
- * to say (no `model` block, a plain string model, or a matching provider).
- * Pure — the caller decides where the warning goes.
- */
-export function evaluateTierMismatch(
-  personality: PersonalityConfig,
-  activeLlmName: string,
-): string | undefined {
-  const tierMap = personality.model;
-  if (!tierMap || typeof tierMap !== 'object') return undefined;
-  if (personality.provider === activeLlmName) return undefined;
-  const tiers = Object.entries(tierMap)
-    .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== '')
-    .map(([tier, model]) => `${tier}=${model}`)
-    .join(', ');
-  return (
-    `personality \`${personality.id}\` declares model tiers (${tiers}) for provider ` +
-    `"${personality.provider ?? '(none)'}", but the active LLM is "${activeLlmName}" — ` +
-    'the tiers are inert and every turn falls through to the global model. ' +
-    `Declare \`provider: ${activeLlmName}\` (with model ids that provider serves) ` +
-    "in the personality's config.yaml to activate them."
-  );
-}
+/** The D11b legacy context: no registry yet, so only `modelRouting` declares. */
+const EMPTY_REGISTRY: ModelRegistry = { entries: {}, roles: {} };
 
 /**
  * The `name` the LLM assembled by `createLLM` (`packages/wiring/src/index.ts`)
- * will report — the value `resolveModelWithTier` compares
- * `personality.provider` against. A fallback chain of two or more providers is
- * wrapped in `ChainedProvider`, whose name is `chain(a,b)`
- * (`packages/core/src/providers/chained-provider.ts`), so in a chained
- * deployment NO personality provider matches and every tier map is inert.
- * Pinned against the real provider by `tier-diagnostics.test.ts`.
+ * will report. A fallback chain of two or more providers is wrapped in
+ * `ChainedProvider`, whose name is `chain(a,b)`
+ * (`packages/core/src/providers/chained-provider.ts`). Pinned against the real
+ * provider by `tier-diagnostics.test.ts`.
  *
  * Derived from config rather than read off a live provider because the
  * character sheet is a read-only diagnostic — building an LLM to print one
@@ -76,18 +52,19 @@ function declaredModelText(model: PersonalityConfig['model']): string | undefine
 
 /**
  * What `## Routing` on the character sheet should say — the model a turn will
- * ACTUALLY send, and, when the personality declares one the active LLM ignores,
- * why nothing reads it.
+ * ACTUALLY send, and, when the personality declares one nothing reads, why.
  *
- * Asks the enforcer rather than restating its rule: `resolveModelWithTier`
- * (`packages/core/src/agent-loop/turn-context.ts`) is the function every turn
- * calls, so the sheet cannot drift from the guard. It is called with an EMPTY
- * routing map so the personality's own declaration is evaluated in isolation;
- * the `modelRouting` override is applied here, on top, because it is a
- * different source and the sheet has to name which one won.
+ * Asks the enforcer rather than restating its rule: `resolveTurnModel`
+ * (`packages/core/src/agent-loop/turn-model.ts`) is the function `setupTurn`
+ * calls, so the sheet cannot claim a model the turn would not send.
  *
- * This is the read-only sibling of {@link evaluateTierMismatch}, which logs the
- * same mismatch once at loop construction.
+ * **Interim shape (T1.5).** It is called with an EMPTY registry, so it renders
+ * the D11b legacy path only: a `modelRouting` entry wins, otherwise the
+ * deployment default, and any personality declaration is reported inert — which
+ * is exactly what a turn on a registry-less deployment does. T1.11 replaces
+ * this with the real rung chain once `ModelResolutionContext` is assembled from
+ * config (T1.8) and threaded to the sheet; the `CharacterSheetRouting` shape is
+ * unchanged here on purpose, because widening it is that task's job.
  */
 export function resolveCharacterSheetRouting(
   personality: PersonalityConfig,
@@ -95,27 +72,29 @@ export function resolveCharacterSheetRouting(
   globalModel: string,
   modelRouting: Record<string, string> = {},
 ): CharacterSheetRouting {
-  const declared = resolveModelWithTier(personality, 'default', {}, activeProvider, globalModel);
+  const resolved = resolveTurnModel({
+    personality,
+    role: 'default',
+    ctx: { registry: EMPTY_REGISTRY, routing: modelRouting },
+    llmName: activeProvider,
+    llmModel: globalModel,
+  });
   const override = modelRouting[personality.id];
-  const source: CharacterSheetRouting['source'] = override
-    ? 'routing-override'
-    : declared.source === 'personality'
-      ? 'personality'
-      : 'global';
+  const source: CharacterSheetRouting['source'] =
+    resolved.ok && resolved.source === 'routing-override' ? 'routing-override' : 'global';
   const routing: CharacterSheetRouting = {
     activeProvider,
-    effectiveModel: override ?? declared.model,
+    effectiveModel: resolved.ok ? resolved.model : globalModel,
     source,
   };
   const text = declaredModelText(personality.model);
-  if (text !== undefined && source !== 'personality') {
+  if (text !== undefined) {
     routing.inert = {
       declared: text,
       reason: override
         ? `\`modelRouting.${personality.id}\` in config.yaml overrides it`
-        : typeof personality.model === 'string'
-          ? 'a plain `model:` string is never applied — resolveModelWithTier reads a tier map only'
-          : `declares provider "${personality.provider ?? '(none)'}", active LLM is "${activeProvider}"`,
+        : 'no model registry is configured on this machine, so every declaration falls ' +
+          'through to the deployment default — run `ethos migrate models` to build one',
     };
   }
   return routing;

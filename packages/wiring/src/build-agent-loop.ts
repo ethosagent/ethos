@@ -83,7 +83,6 @@ import {
   RESULT_BUDGET_CEILING_CHARS,
   resolveResultBudgetGate,
 } from './static-floor';
-import { evaluateTierMismatch } from './tier-diagnostics';
 import type { WiringContext } from './types';
 import { buildVoiceStack } from './voice-stack';
 
@@ -826,16 +825,6 @@ export async function buildAgentLoop(
   });
   if (contextFit.message) log.warn(contextFit.message);
 
-  // Lane 5(i) — tier-mismatch startup diagnostic. Any loaded personality can
-  // take a turn on this loop, and each one's tier map faces the same
-  // provider-match guard against the same active LLM, so every loaded
-  // personality is checked — not just the active one. The guard in
-  // resolveModelWithTier stays; this only makes the silent drop visible.
-  for (const p of personalities.list()) {
-    const tierWarning = evaluateTierMismatch(p, llm.name);
-    if (tierWarning) log.warn(tierWarning);
-  }
-
   // Lane 3(b) — declared small-window toolset narrowing (D20). The narrowing
   // itself is enforced in the loop's turn setup (per-turn personality, gating
   // BOTH toDefinitions and executeParallel); here wiring makes it VISIBLE —
@@ -926,7 +915,11 @@ export async function buildAgentLoop(
     dataDir,
     contentStore,
     contextLog,
-    modelRouting: config.modelRouting,
+    // D7/T1.5 — the resolver's context, replacing the bare `modelRouting` map.
+    // The registry itself is empty here: assembling it from `config` is T1.8,
+    // and an empty registry is the D11b legacy path, which is today's behaviour
+    // exactly.
+    modelResolution: { registry: { entries: {}, roles: {} }, routing: config.modelRouting ?? {} },
     ...(modelSampling ? { modelSampling } : {}),
     compaction: {
       ...compaction,

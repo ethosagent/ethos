@@ -11,6 +11,7 @@ import type {
   LLMProvider,
   Logger,
   MemoryProvider,
+  ModelResolutionContext,
   PersonalityRegistry,
   RequestDumpStore,
   SessionStore,
@@ -39,6 +40,7 @@ import { setupTurn } from './agent-loop/stages/turn-setup';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
 import type { LoopDeps } from './agent-loop/turn-context';
 import { buildTurnEndCtx, maybeConsolidateAtTurnEnd } from './agent-loop/turn-end';
+import { emptyModelResolution } from './agent-loop/turn-model';
 import { createWatcherTap } from './agent-loop/watcher-tap';
 import type { ClarifyBridge } from './clarify/clarify-bridge';
 import { DefaultContextEngineRegistry } from './context-engines/registry';
@@ -109,8 +111,10 @@ export interface AgentLoopConfig {
    * observability writes occur.
    */
   observability?: AgentLoopObservability;
-  // Maps personality ID → model ID. Resolution: modelRouting[id] → personality.model → llm.model
-  modelRouting?: Record<string, string>;
+  // D7 — registry + role bindings + `modelRouting` + (team) manifest slots,
+  // read by `resolveTurnModel`; replaces the bare `modelRouting` map. Absent →
+  // the D11b legacy path, exactly as today.
+  modelResolution?: ModelResolutionContext;
   modelSampling?: ModelSamplingDefaults; // §7 — applied when the per-call value is unset
   // biome-ignore format: §5 gate + Phase 3 turn-end/overflow/engine + Lane 1a knobs; one line keeps agent-loop.ts under the size guardrail.
   compaction?: { pressure?: number; target?: number; charsPerToken?: number; gateDelta?: number; autoCompact?: boolean; retryOnOverflow?: boolean; abortOnSummaryFailure?: boolean; defaultEngine?: string; maxContextTokens?: number; minTailUserMessages?: number; maxSingleToolResultTokens?: number };
@@ -366,7 +370,8 @@ export class AgentLoop {
   private readonly toolLoopWarn: NonNullable<AgentLoopConfig['options']>;
   private readonly streamingTimeoutMs: number;
   private readonly smallWindow: boolean;
-  private readonly modelRouting: Record<string, string>;
+  private readonly modelResolution: ModelResolutionContext;
+  private readonly deviationSeen = new Map<string, true>(); // D17 `once`, per loop
   private readonly modelSampling?: AgentLoopConfig['modelSampling'];
   private readonly compaction?: AgentLoopConfig['compaction'];
   private readonly memoryConsolidation?: AgentLoopConfig['memoryConsolidation'];
@@ -431,7 +436,7 @@ export class AgentLoop {
     this.toolLoopWarn = config.options ?? {};
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? DEFAULT_STREAMING_TIMEOUT_MS;
     this.smallWindow = config.options?.smallWindow ?? false;
-    this.modelRouting = config.modelRouting ?? {};
+    this.modelResolution = config.modelResolution ?? emptyModelResolution();
     this.modelSampling = config.modelSampling;
     if (config.compaction) this.compaction = config.compaction;
     if (config.memoryConsolidation) this.memoryConsolidation = config.memoryConsolidation;
@@ -555,7 +560,8 @@ export class AgentLoop {
       maxConsecutiveIdenticalCalls: this.maxConsecutiveIdenticalCalls,
       streamingTimeoutMs: this.streamingTimeoutMs,
       smallWindow: this.smallWindow,
-      modelRouting: this.modelRouting,
+      modelResolution: this.modelResolution,
+      deviationSeen: this.deviationSeen,
       compaction: this.compaction,
       memoryConsolidation: this.memoryConsolidation,
       promptBudget: this.promptBudget,
@@ -723,7 +729,7 @@ export class AgentLoop {
       sessionCosts: this.sessionCosts,
       turnUsage,
       streamingTimeoutMs: this.streamingTimeoutMs,
-      modelRouting: this.modelRouting,
+      modelResolution: this.modelResolution,
     };
 
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {

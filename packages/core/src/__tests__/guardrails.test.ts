@@ -127,7 +127,17 @@ describe('Orchestrator guardrails', () => {
     // so a tool the memory flush dispatches gets the contract the batch path
     // gives it. Two pass-through properties on the existing `turnEndExtras`
     // object; the ToolContext they feed is built in agent-loop/turn-end.ts.
-    expect(lineCount).toBeLessThanOrEqual(996);
+    // Bumped 996 -> 1001 (model-registry T1.5/T1.15a): `modelRouting:
+    // Record<string, string>` becomes `modelResolution: ModelResolutionContext`
+    // — the same single optional config field, its private field and its
+    // one-line constructor assignment — plus the D17 `once` suppression map,
+    // which the decision requires the LOOP INSTANCE to own (module state would
+    // leak one loop's announcements into another's). 5 pass-through lines: the
+    // type import, the turn-model import, one comment line, the map field and
+    // its deps-getter line. All the resolution, the refusal and the deviation
+    // attachment live in agent-loop/turn-model.ts and
+    // agent-loop/stages/turn-setup.ts.
+    expect(lineCount).toBeLessThanOrEqual(1001);
   });
 
   it('no stage file exceeds 700 lines', () => {

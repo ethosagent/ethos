@@ -8,7 +8,7 @@
 // `createLLM` lives here and both apps/ethos and apps/tui depend on this
 // package.
 
-import type { LLMProvider } from '@ethosagent/types';
+import type { CompletionChunk, CompletionOptions, LLMProvider } from '@ethosagent/types';
 import { createLLM } from './index';
 
 export interface ProbeProviderConfig {
@@ -17,10 +17,37 @@ export interface ProbeProviderConfig {
   apiKey: string;
   baseUrl?: string;
   apiVersion?: string;
+  /**
+   * Abort the probe after this many milliseconds and report `unreachable`.
+   * Absent means no bound — the pre-existing behaviour every setup path has.
+   *
+   * A timeout is `unreachable`, never `rejected`: a probe that never got an
+   * answer learned nothing about the key (W1.2).
+   */
+  timeoutMs?: number;
 }
 
 export type ProbeProviderOutcome =
-  | { ok: true; latencyMs: number }
+  | {
+      ok: true;
+      latencyMs: number;
+      /**
+       * The model id the PROVIDER reported serving, when it reported one —
+       * `claude-sonnet-5-20260114` for a request that said `claude-sonnet-5`
+       * (T1.23 / D19).
+       *
+       * Read from the `usage` chunk's `metadata.model`, which is the only slot
+       * on `CompletionChunk` (`packages/types/src/llm.ts`) that can carry it.
+       * **No shipped transport populates it today** — every one of them emits
+       * `metadata: {}` (anthropic, openai-compat, bedrock, codex; gemini builds
+       * its usage chunk in `geminiUsage`) — so in practice this field is absent
+       * and the surfaces that render it print nothing extra. It is captured
+       * here rather than left unwritten so that a transport which starts
+       * reporting the served model surfaces it without a second change, and so
+       * the "print it only when it differs" rule has one implementation.
+       */
+      echoedModel?: string;
+    }
   | { ok: false; reason: 'rejected' | 'unreachable'; error: string };
 
 function errorMessage(err: unknown): string {
@@ -63,6 +90,17 @@ export function classifyProbeError(err: unknown): 'rejected' | 'unreachable' {
   return 'unreachable';
 }
 
+/** The model a chunk says the provider served, or `undefined`. See
+ *  `ProbeProviderOutcome.echoedModel` for why this is the only place to look. */
+function echoedModelOf(chunk: CompletionChunk): string | undefined {
+  if (chunk.type !== 'usage') return undefined;
+  const reported = chunk.metadata?.model;
+  return typeof reported === 'string' && reported.length > 0 ? reported : undefined;
+}
+
+/** Race sentinel — a unique object, so it can never collide with a drain result. */
+const TIMED_OUT = Symbol('probe-timed-out');
+
 export async function probeProvider(config: ProbeProviderConfig): Promise<ProbeProviderOutcome> {
   let llm: LLMProvider;
   try {
@@ -73,14 +111,59 @@ export async function probeProvider(config: ProbeProviderConfig): Promise<ProbeP
     return { ok: false, reason: 'unreachable', error: errorMessage(err) };
   }
   const start = Date.now();
-  try {
-    for await (const _chunk of llm.complete([{ role: 'user', content: 'ping' }], [], {
-      maxTokens: 1,
-    })) {
-      // drain — we only need to confirm the provider responds
+  const bounded = config.timeoutMs !== undefined;
+  const controller = bounded ? new AbortController() : undefined;
+  const options: CompletionOptions = {
+    maxTokens: 1,
+    ...(controller ? { abortSignal: controller.signal } : {}),
+  };
+
+  // One token, drained to exhaustion — we only need to confirm the provider
+  // answers, and the model it says it answered with.
+  const drain = (async (): Promise<string | undefined> => {
+    let echoed: string | undefined;
+    for await (const chunk of llm.complete([{ role: 'user', content: 'ping' }], [], options)) {
+      echoed ??= echoedModelOf(chunk);
     }
-    return { ok: true, latencyMs: Date.now() - start };
+    return echoed;
+  })();
+
+  const timeoutMs = config.timeoutMs;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    if (timeoutMs !== undefined) {
+      const raced = await Promise.race([
+        drain,
+        new Promise<typeof TIMED_OUT>((resolve) => {
+          timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
+        }),
+      ]);
+      if (raced === TIMED_OUT) {
+        controller?.abort();
+        // The drain rejects once the abort lands and nothing awaits it any more.
+        drain.catch(() => {});
+        return {
+          ok: false,
+          reason: 'unreachable',
+          // Lower-case and unpunctuated on purpose: surfaces compose it into a
+          // sentence — `could not reach anthropic (timed out after 10s).`
+          // Sub-second bounds are named in ms rather than rounded down to `0s`.
+          error: `timed out after ${
+            timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`
+          }`,
+        };
+      }
+      return { ok: true, latencyMs: Date.now() - start, ...(raced ? { echoedModel: raced } : {}) };
+    }
+    const echoedModel = await drain;
+    return {
+      ok: true,
+      latencyMs: Date.now() - start,
+      ...(echoedModel ? { echoedModel } : {}),
+    };
   } catch (err) {
     return { ok: false, reason: classifyProbeError(err), error: errorMessage(err) };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }

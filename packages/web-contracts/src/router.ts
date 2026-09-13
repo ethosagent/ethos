@@ -3239,6 +3239,83 @@ const models = {
 };
 
 // ---------------------------------------------------------------------------
+// Model registry — the operator's model roster (plan/phases/model-registry.md).
+//
+// `test` is the namespace's ONLY member today: the D19 on-demand probe, moved
+// up out of T2.8 by D28 so a headless CLI and a browser share one definition of
+// what a test is before D18's cache wraps it. T2.2 extends this namespace with
+// `list` / `upsert` / `remove` / `setDefault` / `setRole`.
+// ---------------------------------------------------------------------------
+
+const ModelRegistryTestInput = z.object({
+  /** A `modelRegistry.<alias>` key. */
+  alias: z.string().min(1).max(200),
+});
+
+/**
+ * What one test learned — the SAME value `ethos models test` prints, produced
+ * by the same `testModelAlias` in `@ethosagent/wiring`.
+ *
+ * `rate_limited` is a state, not a thrown error: the 10s per-alias-per-caller
+ * limit is enforced in the HANDLER (D19), because a test is a real billable
+ * completion reachable by anything that can call this RPC, and a limit that
+ * lives only in the button is a hint the button happens to respect. The
+ * client-side disable (T2.8) sits on top so the ordinary path never sees this.
+ */
+export const ModelRegistryTestOutput = z.discriminatedUnion('state', [
+  z.object({
+    state: z.literal('ok'),
+    alias: z.string(),
+    providerKey: z.string(),
+    provider: z.string(),
+    modelId: z.string(),
+    latencyMs: z.number().int().nonnegative(),
+    /** The model the provider said it served. Absent when it named none, and
+     *  rendered ONLY when it differs from `modelId` (D19). */
+    echoedModel: z.string().optional(),
+  }),
+  z.object({
+    state: z.literal('rejected'),
+    alias: z.string(),
+    providerKey: z.string(),
+    provider: z.string(),
+    modelId: z.string(),
+    /** The vendor's own body, verbatim and untruncated. Never paraphrased. */
+    error: z.string(),
+    fix: z.string(),
+  }),
+  z.object({
+    /** The probe never got an answer. NOT a verdict on the credential. */
+    state: z.literal('unreachable'),
+    alias: z.string(),
+    providerKey: z.string(),
+    provider: z.string(),
+    modelId: z.string(),
+    error: z.string(),
+  }),
+  z.object({
+    /** Nothing was probed — the alias, its provider entry or its credential is missing. */
+    state: z.literal('unconfigured'),
+    alias: z.string(),
+    reason: z.string(),
+    fix: z.string().optional(),
+  }),
+  z.object({
+    state: z.literal('rate_limited'),
+    alias: z.string(),
+    /** Named so the refusal can say how long to wait, rather than just "no". */
+    retryAfterSeconds: z.number().int().nonnegative(),
+  }),
+]);
+
+export type ModelRegistryTestResult = z.infer<typeof ModelRegistryTestOutput>;
+
+/** @experimental */
+const modelRegistry = {
+  test: oc.input(ModelRegistryTestInput).output(ModelRegistryTestOutput),
+};
+
+// ---------------------------------------------------------------------------
 // Dashboards — widget templates from plugins + dashboard/panel CRUD
 // ---------------------------------------------------------------------------
 
@@ -5152,6 +5229,7 @@ export const contract = {
   apiKeys,
   meta,
   models,
+  modelRegistry,
   dashboards,
   admin,
   context,

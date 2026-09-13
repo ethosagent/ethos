@@ -1579,6 +1579,22 @@ export {
 export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolver';
 // Re-export the resolver so callers don't need a separate import.
 export { resolveModelTarget } from './model-resolver';
+// The on-demand model test (T1.23/T1.24) — one function behind the CLI's
+// `ethos models test` and the `modelRegistry.test` RPC.
+export {
+  findProviderEntry,
+  MODEL_TEST_TIMEOUT_MS,
+  MODEL_TEST_WINDOW_MS,
+  type ModelTestOutcome,
+  type ModelTestProbe,
+  ModelTestRateLimiter,
+  type ModelTestRequest,
+  modelTestRateLimiter,
+  type ProviderEntryRef,
+  providerEntries,
+  providerEntryProbes,
+  testModelAlias,
+} from './model-test';
 // Shared live provider-credential probe (W2.2 / W2.4) with W1.2 liveness
 // classification — used by the readline fallback, TUI AuthStep, and --from-env.
 export {
@@ -1655,11 +1671,7 @@ export {
   type ResolveExecutionPostureInput,
   resolveExecutionPosture,
 } from './resolve-execution-posture';
-export {
-  evaluateTierMismatch,
-  resolveActiveLlmName,
-  resolveCharacterSheetRouting,
-} from './tier-diagnostics';
+export { resolveActiveLlmName, resolveCharacterSheetRouting } from './tier-diagnostics';
 
 // ---------------------------------------------------------------------------
 // OAuth service factory

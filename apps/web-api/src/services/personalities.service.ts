@@ -222,13 +222,13 @@ export class PersonalitiesService {
     // path to the injector, so the sheet's claim and the RPC the web renderer
     // gates on are literally the same call. Already fail-closed to `[]`.
     const { renderers } = await this.renderers(id);
-    // Which model a turn on this personality ACTUALLY sends. The declared
-    // `model:` is only honoured when the personality's `provider` matches the
-    // active LLM (`resolveModelWithTier`,
-    // packages/core/src/agent-loop/turn-context.ts), so the tab printed a model
-    // that never executed on every mismatched personality. Same resolver the
-    // CLI `personality show` calls — one generator, one verdict. No config
-    // repository (onboarding mode, tests) → the sheet renders as before.
+    // Which model a turn on this personality ACTUALLY sends. Until a
+    // `modelRegistry` exists the declared `model:` is not honoured at all and
+    // the turn runs on the deployment default (`resolveTurnModel`,
+    // packages/core/src/agent-loop/turn-model.ts), so the tab printed a model
+    // that never executed. Same resolver the CLI `personality show` calls —
+    // one generator, one verdict. No config repository (onboarding mode,
+    // tests) → the sheet renders as before.
     const raw = (await this.opts.config?.read()) ?? null;
     let routing: CharacterSheetRouting | undefined;
     if (raw?.provider && raw.model) {
