@@ -8,6 +8,17 @@ import {
   resolveModelDisplay,
 } from '@ethosagent/types';
 import { parseLivingSoul } from './living-soul';
+import {
+  bulletList,
+  type CharacterSheetMcpExport,
+  filesystemReachLines,
+  mcpExportSection,
+  mcpServersLines,
+  permissionSurface,
+  pluginsLines,
+  publishingLine,
+  toolsetLines,
+} from './permission-surface';
 import { normalizeWorkdir } from './workdirs';
 
 // The generated character sheet — the "tight character sheet" promise from
@@ -37,11 +48,6 @@ export function firstParagraph(soulMd: string): string {
     para.push(trimmed);
   }
   return para.join(' ');
-}
-
-function bulletList(items: readonly string[], emptyLabel: string): string[] {
-  if (items.length === 0) return [`- ${emptyLabel}`];
-  return items.map((item) => `- ${item}`);
 }
 
 // Rough char/4 token estimate for the injection-defense prelude — a static
@@ -709,42 +715,6 @@ function guaranteeRows(
 }
 
 /**
- * The egress paths the outbound-approval gate does NOT cover (O-D10). Printed
- * on every gated sheet rather than left implied: covering MCP tools and
- * `a2a_send` would mean classifying arbitrary third-party tools, and a sheet
- * that said nothing would read as blanket coverage.
- */
-const PUBLISHING_NOT_COVERED = 'not covered: MCP tools, a2a_send';
-
-/**
- * The `Publishing:` line — what `outbound_policy` does for THIS personality,
- * and what it does not.
- *
- * This function only RENDERS. The gate it describes is in `executeSendMessage`
- * (extensions/tools-messaging/src/index.ts); the queue, the immutable
- * revisions and the content binding are `SQLiteOutboxStore` / `OutboxService`
- * in `@ethosagent/outbox`; the `channels` list it reads was validated at load
- * by `parseOutboundChannels` (./index.ts).
- *
- * Deliberately one self-contained function returning one line, so P-T3 can
- * lift it into the shared `permissionSurface` module unchanged.
- */
-export function publishingLine(config: PersonalityConfig): string {
-  const policy = config.outbound_policy;
-  if (!policy?.approve_before_send) {
-    return 'Publishing: not gated — send_message goes out as soon as the agent calls it';
-  }
-  const where =
-    policy.channels && policy.channels.length > 0
-      ? `on ${policy.channels.join(', ')}`
-      : 'on every platform';
-  const reviewer = policy.approver_personality
-    ? `reviewer: ${policy.approver_personality}`
-    : 'reviewer: none — a human approves directly';
-  return `Publishing: approval required ${where} · ${reviewer} · ${PUBLISHING_NOT_COVERED}`;
-}
-
-/**
  * Render the `## Boundary` block — which published guarantees are enforced,
  * narrowed, relaxed, or inapplicable for THIS personality.
  *
@@ -823,132 +793,6 @@ function voiceSection(
 }
 
 /**
- * The resolved `mcp_export` slice, as the sheet needs to PRINT it.
- *
- * Structurally the print-relevant half of `McpExportScope` — the return of
- * `resolveMcpExportScope` (`packages/wiring/src/mcp-export.ts`, M-T2), which is
- * the one owner of the resolution and the thing `PersonalityExportServer`
- * (`apps/mcp-server/src/export-server.ts`) actually runs a turn under. Declared
- * here rather than imported because `packages/wiring` sits ABOVE `extensions/`
- * in the layer model (ARCHITECTURE.md §II, enforced by
- * `scripts/check-architecture.mjs`), so this package cannot reach it; an
- * `McpExportScope` satisfies this interface as is, and the caller passes the
- * resolved value in.
- */
-export interface CharacterSheetMcpExport {
-  /** `mcp_export.enabled === true`, literally — fail-closed (M-D4). */
-  enabled: boolean;
-  /** Tools an exported turn may use: the declaration ∩ the personality's reach. */
-  allowed: readonly string[];
-  /** Tools the declaration named that are OUTSIDE that reach — printed, not dropped silently. */
-  dropped: readonly string[];
-  /** `expose_memory`, defaulted to `'none'`. */
-  memory: 'none' | 'scoped' | 'full';
-  /** `expose_sessions`, defaulted to `false`. */
-  sessions: boolean;
-  /** `auth`, defaulted to `'localhost'`. */
-  auth: 'localhost' | 'bearer';
-}
-
-/**
- * M-D15 — the two bounds the export does NOT have, printed on every exported
- * sheet rather than left implied, the same way `PUBLISHING_NOT_COVERED` is.
- *
- * What each clause names as the actual bound:
- *  - `budgetCapUsd` per session key — `AgentLoop.getPersonalityBudgetCap`
- *    (packages/core/src/agent-loop.ts), applied to the turn the export runs;
- *  - one in-flight call per client — the `_inFlight` set in
- *    `PersonalityExportServer` (apps/mcp-server/src/export-server.ts);
- *  - revocation — `SqliteApiKeyStore.findByHash` filters `revoked_at IS NULL`,
- *    and `createMcpClientAuthenticator` re-verifies on every call;
- *  - loopback — `serveMcpHttp` (apps/mcp-server/src/http-session.ts)
- *    refuses a non-loopback bind outright.
- * None of them is a request-rate limit and none of them is transport
- * encryption, which is why both lines are stated as limitations.
- */
-const MCP_EXPORT_LIMITATIONS: readonly string[] = [
-  '- No rate limit: an admitted client may call as often as it likes. What bounds the cost is ' +
-    'budgetCapUsd per session key, one in-flight call per client, and revoking the key.',
-  '- Loopback only, no TLS: HTTP binds 127.0.0.1 and the traffic is not encrypted. A remote ' +
-    "caller needs the operator's own TLS-terminating proxy.",
-];
-
-/** `expose_memory` in prose — what the exported turn can actually reach. */
-function mcpExportMemoryLine(memory: CharacterSheetMcpExport['memory'], id: string): string {
-  if (memory === 'none') return '- Memory: none — no prefetch, no memory tools';
-  if (memory === 'full') return `- Memory: full — personality:${id}, memory_write exposed`;
-  return `- Memory: scoped — personality:${id}, read-only`;
-}
-
-/**
- * Render the `## MCP export` block — whether another app can ask THIS
- * personality anything, and on exactly what terms.
- *
- * `scope` is the resolved slice; without it the sheet says the slice was not
- * resolved rather than guessing one, because the defaults that would produce a
- * guess live in `resolveMcpExportScope` and a second copy here would be a
- * second thing to drift. The status line needs no resolver: "exported" is
- * `mcp_export.enabled === true` read literally, the same predicate
- * `resolveMcpExportScope` fails closed on.
- *
- * Dropped tools are PRINTED. An operator who names `terminal` in
- * `expose_tools` and never sees it again should learn from the sheet that the
- * personality never had it — `expose_tools` can only ever remove reach.
- *
- * Deliberately one self-contained function returning lines, so P-T3 can lift it
- * into the shared `permissionSurface` module unchanged, next to
- * {@link publishingLine}.
- */
-export function mcpExportSection(
-  config: PersonalityConfig,
-  scope?: CharacterSheetMcpExport,
-): string[] {
-  const lines: string[] = ['## MCP export'];
-  const enabled = scope ? scope.enabled : config.mcp_export?.enabled === true;
-
-  if (!enabled) {
-    lines.push('- Status: not exported — no other app can ask this personality anything.');
-    lines.push(
-      `- To export it: set mcp_export.enabled: true in config.yaml, then run \`ethos mcp serve --personality ${config.id}\`.`,
-    );
-    return lines;
-  }
-
-  lines.push(`- Status: exported — \`ethos mcp serve --personality ${config.id}\``);
-
-  if (!scope) {
-    lines.push(
-      "- Resolved slice: not available in this rendering. Which tools the caller's turn may use, " +
-        'and the memory, conversation and auth terms, are resolved at serve time against the tools ' +
-        `registered then; \`ethos mcp serve --personality ${config.id}\` prints them on start.`,
-    );
-    return lines;
-  }
-
-  lines.push(
-    scope.allowed.length > 0
-      ? `- Caller's turn may use: ${scope.allowed.join(', ')}`
-      : "- Caller's turn may use: (none) — conversation only",
-  );
-  for (const tool of scope.dropped) {
-    lines.push(`    - ${tool} — dropped, not in this personality's reach`);
-  }
-  lines.push(mcpExportMemoryLine(scope.memory, config.id));
-  lines.push(
-    scope.sessions
-      ? `- Conversations: exposed — this client's own only, under mcp:${config.id}:<client>:`
-      : '- Conversations: not exposed',
-  );
-  lines.push(
-    scope.auth === 'bearer'
-      ? `- Auth: bearer — an sk-ethos- key scoped mcp:${config.id}, over stdio or HTTP`
-      : '- Auth: localhost — stdio only; the boundary is whoever can spawn ethos as this OS user',
-  );
-  lines.push(...MCP_EXPORT_LIMITATIONS);
-  return lines;
-}
-
-/**
  * Render a personality's character sheet as Markdown. Pure — takes the
  * loaded config and the SOUL.md body, returns the artifact. Optional
  * fields render as explicit `(none)` / `(engine default)` states so a
@@ -1018,12 +862,11 @@ export function renderCharacterSheet(
   lines.push(`- Memory scope: personality:${config.id}`);
   lines.push('');
 
-  const toolset = config.toolset ?? [];
-  lines.push('## Toolset');
-  if (toolset.length > 0) {
-    lines.push(`${toolset.length} tool${toolset.length === 1 ? '' : 's'}:`);
-  }
-  lines.push(...bulletList(toolset, '(none)'));
+  // P-D11 — every permission section below reads the same extraction the
+  // permission diff classifies, so the sheet and the diff cannot disagree.
+  const surface = permissionSurface(config, mcpExport);
+  const toolset = surface.toolset.tools;
+  lines.push(...toolsetLines(surface));
   // Lane G — the in-script tool surface (`toolset ∩ SCRIPT_SAFE`), shown only
   // when the personality can run scripts at all. The exclusion list mirrors
   // the categories in core's SCRIPT_SAFE policy (script-safe.ts).
@@ -1067,39 +910,20 @@ export function renderCharacterSheet(
   }
   lines.push('');
 
-  lines.push('## MCP servers');
-  lines.push(...bulletList(config.mcp_servers ?? [], '(none)'));
+  lines.push(...mcpServersLines(surface));
   lines.push('');
 
   // Ethos as an MCP SERVER, directly under Ethos as an MCP client — the two
   // share the name and an operator reading one is owed the other. Unconditional
   // for the same reason the `Publishing:` line is: "not exported" is the answer
   // a reader most needs, so it does not earn its place by being interesting.
-  lines.push(...mcpExportSection(config, mcpExport));
+  lines.push(...mcpExportSection(surface));
   lines.push('');
 
-  lines.push('## Plugins');
-  lines.push(...bulletList(config.plugins ?? [], '(none)'));
+  lines.push(...pluginsLines(surface));
   lines.push('');
 
-  lines.push('## Filesystem reach');
-  const reach = config.fs_reach;
-  const read = reach?.read ?? [];
-  const write = reach?.write ?? [];
-  if (read.length > 0 || write.length > 0) {
-    lines.push(`- Read: ${read.length > 0 ? read.join(', ') : '(none)'}`);
-    lines.push(`- Write: ${write.length > 0 ? write.join(', ') : '(none)'}`);
-  } else {
-    lines.push(
-      '- (default — read: own directory, ~/.ethos/skills/, working directory; write: own directory, working directory)',
-    );
-  }
-  // Same `, `-joined form and same "empty array declares nothing" rule as the
-  // G-FS row above; the label pluralises the way the web sheet's does.
-  const workdirs = normalizeWorkdir(reach?.workdir);
-  if (workdirs.length > 0) {
-    lines.push(`- Workdir${workdirs.length === 1 ? '' : 's'}: ${workdirs.join(', ')}`);
-  }
+  lines.push(...filesystemReachLines(surface));
 
   // O-D10 — the outbound-approval posture, directly under the filesystem reach
   // because publishing is channel reach the way `fs_reach` is disk reach, and
@@ -1107,7 +931,7 @@ export function renderCharacterSheet(
   // gated" is the answer an ungated personality's reader most needs, so this
   // line does not earn its existence by being interesting.
   lines.push('');
-  lines.push(publishingLine(config));
+  lines.push(publishingLine(surface));
 
   // §4.7 — the register's per-personality state, directly under the reach it
   // summarises and BEFORE the conditional sections, so adding a posture or a

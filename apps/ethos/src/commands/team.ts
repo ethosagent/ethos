@@ -6,6 +6,7 @@ import {
   parseTeamManifest,
   readRuntime,
   removeRuntime,
+  serializeTeamManifest,
   teamsDir,
   validateForStart,
 } from '@ethosagent/team-supervisor';
@@ -47,52 +48,6 @@ function resolveManifestPath(name: string): string {
     cause: `No team manifest found for "${name}"`,
     action: `Create one with: ethos team create ${name}`,
   });
-}
-
-// ---------------------------------------------------------------------------
-// YAML serialiser (hand-written — avoids adding yaml dep to the CLI)
-// ---------------------------------------------------------------------------
-
-function serializeTeamManifest(manifest: TeamManifest): string {
-  const lines: string[] = [
-    `name: ${manifest.name}`,
-    `description: ${manifest.description || `${manifest.name} team`}`,
-  ];
-
-  if (manifest.domain_capabilities.length === 0) {
-    lines.push('domain_capabilities: []');
-  } else {
-    lines.push('domain_capabilities:');
-    for (const cap of manifest.domain_capabilities) lines.push(`  - ${cap}`);
-  }
-
-  if (manifest.dispatch_mode) lines.push(`dispatch_mode: ${manifest.dispatch_mode}`);
-  if (manifest.coordinator) lines.push(`coordinator: ${manifest.coordinator}`);
-  if (manifest.coordinator_model) lines.push(`coordinator_model: ${manifest.coordinator_model}`);
-  if (manifest.personality_models && Object.keys(manifest.personality_models).length > 0) {
-    lines.push('personality_models:');
-    for (const [id, model] of Object.entries(manifest.personality_models)) {
-      lines.push(`  ${id}: ${model}`);
-    }
-  }
-  if (manifest.mesh) lines.push(`mesh: ${manifest.mesh}`);
-
-  if (manifest.members.length === 0) {
-    lines.push('members: []');
-  } else {
-    lines.push('members:');
-    for (const m of manifest.members) {
-      lines.push(`  - personality: ${m.personality}`);
-      if (m.auto_restart !== undefined) lines.push(`    auto_restart: ${m.auto_restart}`);
-      if (m.port !== undefined) lines.push(`    port: ${m.port}`);
-      if (m.capabilities?.length) {
-        lines.push('    capabilities:');
-        for (const cap of m.capabilities) lines.push(`      - ${cap}`);
-      }
-    }
-  }
-
-  return `${lines.join('\n')}\n`;
 }
 
 // ---------------------------------------------------------------------------

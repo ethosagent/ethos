@@ -1,6 +1,7 @@
+import type { TeamManifest } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
-import { parseTeamManifest, validateForStart } from '../schema';
+import { parseTeamManifest, serializeTeamManifest, validateForStart } from '../schema';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -551,5 +552,64 @@ description: [unclosed bracket
       const e = err as EthosError;
       expect(e.code).toBe('TEAM_MANIFEST_INVALID');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// serializeTeamManifest — the one writer of the format parseTeamManifest reads
+// ---------------------------------------------------------------------------
+
+describe('serializeTeamManifest', () => {
+  // Every field the contract declares, so a serializer that drops one fails here.
+  const FULL: TeamManifest = {
+    name: 'neutral-team',
+    description: 'A neutral team: used only by this test',
+    domain_capabilities: ['alpha', 'beta'],
+    dispatch_mode: 'coordinator',
+    coordinator: 'coordinator',
+    coordinator_model: 'model-x',
+    personality_models: { 'member-a': 'model-y' },
+    mesh: 'neutral-mesh',
+    dispatch_prefer_reliable: true,
+    dispatch_as_background_job: false,
+    postmortems: true,
+    trust_policy: {
+      mode: 'tiered',
+      thresholds: { standard_min_completed: 3, standard_min_ratio: 0.5 },
+    },
+    members: [
+      { personality: 'coordinator', role: 'coordinator', port: 4100, auto_restart: true },
+      { personality: 'member-a', role: 'member', capabilities: ['alpha'] },
+      { personality: 'member-b', capabilities: ['beta', 'gamma'], auto_restart: false },
+    ],
+    channels: [{ platform: 'test', botKey: 'bot-1', config: { room: 'r1' } }],
+    kanban: { stale_ms: 90_000, poll_ms: 1_000, staleness_threshold_ms: 300_000 },
+  };
+
+  it('round-trips a multi-member manifest with coordinator, member roles and kanban', () => {
+    expect(parseTeamManifest(serializeTeamManifest(FULL))).toEqual(FULL);
+  });
+
+  it('round-trips a draft with an empty description and no members', () => {
+    const draft: TeamManifest = {
+      name: 'draft',
+      description: '',
+      domain_capabilities: [],
+      dispatch_mode: 'self-routing',
+      members: [],
+    };
+    expect(parseTeamManifest(serializeTeamManifest(draft))).toEqual(draft);
+  });
+
+  it('quotes scalars so a value cannot inject a sibling field', () => {
+    const hostile: TeamManifest = {
+      name: 'quoted',
+      description: 'line one\nmesh: injected',
+      domain_capabilities: ['true', '42', 'a: b'],
+      members: [{ personality: 'member-a' }],
+    };
+    const parsed = parseTeamManifest(serializeTeamManifest(hostile));
+    expect(parsed).toEqual(hostile);
+    expect(parsed.mesh).toBeUndefined();
   });
 });

@@ -40,6 +40,7 @@ import type {
 } from '@ethosagent/types';
 import { isValidSecretName } from '@ethosagent/types';
 import { derivePluginId, isGrantRevoked, readGrants } from './grants';
+import { readPluginPermissions } from './install-record';
 import {
   DEFAULT_REGISTRY,
   isValidPluginId,
@@ -70,6 +71,17 @@ export {
   revokeGrant,
   writeGrants,
 } from './grants';
+export type {
+  DraftPluginGrantInput,
+  PinPluginToPersonalityInput,
+  PluginGrantDraft,
+} from './install-record';
+export {
+  draftPluginGrant,
+  pinPluginToPersonality,
+  readPluginPermissions,
+  updatePersonalityPluginConfig,
+} from './install-record';
 export type { PluginLockEntry, PluginLockfile } from './lockfile';
 export {
   computeIntegrity,
@@ -1283,21 +1295,17 @@ export function topologicalSort<
 // Safety-scan helpers
 // ---------------------------------------------------------------------------
 
-/** Extract declared permissions from an already-parsed package.json object. */
-function readPluginPermissions(pkgJson: Record<string, unknown>): PluginScanPermissions {
-  const ethos = pkgJson.ethos;
-  if (typeof ethos !== 'object' || ethos === null || Array.isArray(ethos)) return {};
-  const perms = (ethos as Record<string, unknown>).permissions;
-  if (typeof perms !== 'object' || perms === null || Array.isArray(perms)) return {};
-  const p = perms as Record<string, unknown>;
-  const result: PluginScanPermissions = {};
-  if (p.shell === true) result.shell = true;
-  if (Array.isArray(p.network)) {
-    result.network = p.network.filter((x): x is string => typeof x === 'string');
-  } else if (p.network === true) {
-    result.network = []; // declared but no host restriction
-  }
-  return result;
+/**
+ * Scan an installed package's source tree against its declared
+ * `ethos.permissions` — the same scan the loader runs before importing it.
+ * The web install records this result in the plugin's grant.
+ */
+export async function scanPluginPackage(
+  storage: Storage,
+  pkgDir: string,
+  pkgJson: unknown,
+): Promise<{ hasRed: boolean; hasYellow: boolean; findings: PluginScanFindingRecord[] }> {
+  return scanPluginTree(storage, pkgDir, readPluginPermissions(pkgJson));
 }
 
 /**

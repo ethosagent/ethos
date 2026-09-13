@@ -3,7 +3,7 @@ import { os } from './context';
 export const pluginsRouter = {
   list: os.plugins.list.handler(({ context }) => context.plugins.list()),
   install: os.plugins.install.handler(async ({ context, input }) => {
-    await context.plugins.install(input.packageSpec);
+    await context.plugins.install(input.packageSpec, { personalityId: input.personalityId });
     return { ok: true as const };
   }),
   uninstall: os.plugins.uninstall.handler(async ({ context, input }) => {

@@ -816,9 +816,11 @@ export class RecipesService {
       const restore = before.values;
       await this.opts.toolSettings.setForPersonality(personalityId, {
         ...restore,
-        [secret.toolName]: {
-          ...restore[secret.toolName],
-          [schema.providerKey]: binding.provider,
+        [schema.settingsKey]: {
+          ...restore[schema.settingsKey],
+          // A single-provider tool has no provider field: its namespace is
+          // fixed by its own `capabilities.secrets`, so only the NAME is stored.
+          ...(schema.providerKey ? { [schema.providerKey]: binding.provider } : {}),
           [schema.secretKey]: binding.secret,
         },
       });
@@ -941,9 +943,10 @@ export class RecipesService {
    * accepts are offered — an option the page could not act on is not an option.
    *
    * An entry is omitted (not "unsatisfied") whenever the deployment cannot
-   * answer — no key store wired, the tool absent, or no provider/secret-binding
-   * field on it. Preflight turns an omission into a warning, because a row the
-   * page has no way to clear is the D14 bug in a different costume.
+   * answer — no key store wired, the tool absent, or no credential contract
+   * `secretSchemaFor` can read off it. Preflight turns an omission into a
+   * warning, because a row the page has no way to clear is the D14 bug in a
+   * different costume.
    *
    * Reads masked previews only: `keys.list` returns `set` and a redacted
    * preview, never a value, and only the NAME half of a ref is carried out.
@@ -971,17 +974,22 @@ export class RecipesService {
         const names = under
           .map((row) => ({ row, name: row.f.ref.slice(prefix.length) }))
           .filter((r) => r.name.length > 0 && !r.name.includes('/'));
-        // The tool's fallback ref is the one the CATALOG claims for this
-        // provider (`providers/<id>/apiKey`); `keys.list` emits it set or
-        // unset. Anything else under the prefix is a user-named key and
-        // surfaces under `custom`, so it is never mistaken for the fallback.
+        // Multi-provider: the tool's fallback ref is the one the CATALOG
+        // claims for this provider (`providers/<id>/apiKey`); `keys.list` emits
+        // it set or unset. Anything else under the prefix is a user-named key
+        // and surfaces under `custom`, so it is never mistaken for the fallback.
+        // Single-provider: the tool DECLARES its fallback name, so no catalog
+        // row is needed — a plugin's namespace has none, and requiring one is
+        // what left every such credential at SECRET_STATUS_UNKNOWN.
         const fallback = names.find((r) => r.row.e.category !== 'custom') ?? names[0];
-        if (!fallback) continue;
+        const defaultSecretName = provider.defaultSecretName ?? fallback?.name;
+        if (!defaultSecretName) continue;
+        const getKeyUrl = fallback?.row.e.getKeyUrl ?? provider.getKeyUrl;
         options.push({
           provider: provider.id,
           label: provider.label,
-          defaultSecretName: fallback.name,
-          ...(fallback.row.e.getKeyUrl ? { getKeyUrl: fallback.row.e.getKeyUrl } : {}),
+          defaultSecretName,
+          ...(getKeyUrl ? { getKeyUrl } : {}),
         });
         for (const { row, name } of names) {
           if (row.f.set) existing.push({ provider: provider.id, name });
@@ -997,43 +1005,82 @@ export class RecipesService {
   /**
    * The tool's own contract for a credential requirement: which providers it
    * offers, which settings keys a binding is written under, and the category of
-   * named secret it accepts. Read off `settingsSchema` — the same declaration
-   * the personality tool-settings form renders — so the recipe layer holds no
-   * provider list and no field names to go stale.
+   * named secret it accepts. Read off `settingsSchema` and `capabilities` — the
+   * same declarations the personality tool-settings form renders from — so the
+   * recipe layer holds no provider list and no field names to go stale.
    *
-   * `undefined` when the tool is absent or declares no such pair: with no way
-   * to write a binding there is nothing the page could do, and preflight is
-   * better off saying it could not check.
+   * Two shapes, tried in this order:
+   *   1. MULTI-PROVIDER — an `enum` field whose options name providers, plus a
+   *      `secret-binding` (`web_search`: Exa / Tavily / Brave).
+   *   2. SINGLE-PROVIDER — no provider enum, exactly one `secret-binding`, and
+   *      exactly one `providers/<p>/*` prefix in `capabilities.secrets`
+   *      (`engine_ask`, `x_search`, the Search Console pair). The provider is
+   *      that prefix, parsed by `deriveProviderRoster` — the same parser the
+   *      named-secrets vault's roster comes from — and its fallback name is the
+   *      field's `defaultSecretName ?? 'apiKey'`, the convention
+   *      `ToolSettingsService.probeCredentials` resolves with.
+   *
+   * `undefined` when the tool is absent or fits neither shape: with no way to
+   * write a binding there is nothing the page could do, and preflight is better
+   * off saying it could not check. Several prefixes with no enum is ambiguous —
+   * nothing says which namespace a bare name resolves in — so it stays unknown.
    */
   private secretSchemaFor(toolName: string): ToolSecretSchema | undefined {
     const tool = this.opts.toolRegistry?.getAvailable().find((t) => t.name === toolName);
-    const fields = tool?.settingsSchema?.fields ?? [];
-    const enumField = fields.find((f) => f.kind === 'enum');
-    const bindingField = fields.find((f) => f.kind === 'secret-binding');
-    // The `kind` re-tests are what narrow the union — `find` returns
-    // `ToolSettingsField | undefined`, not the arm the predicate matched.
-    if (enumField?.kind !== 'enum') return undefined;
-    if (bindingField?.kind !== 'secret-binding') return undefined;
+    if (!tool) return undefined;
+    const fields = tool.settingsSchema?.fields ?? [];
+    const bindings = fields.flatMap((f) => (f.kind === 'secret-binding' ? [f] : []));
+    const bindingField = bindings[0];
+    if (!bindingField) return undefined;
+    const settingsKey = tool.settingsKey ?? tool.name;
     // Only providers the named-secrets vault can store a key for: a provider
     // the page cannot write is not one it can offer. That set is the DERIVED
     // roster — the same one `NamedSecretsService.create` accepts — so a tool
     // whose provider list grows needs no edit here (D1).
-    const writable = new Set(
+    const writable = new Map(
       deriveProviderRoster(this.opts.toolRegistry, NAMED_SECRET_SEED_PROVIDERS).providers.map(
-        (p) => p.provider,
+        (p) => [p.provider, p],
       ),
     );
-    const providers: Array<{ id: string; label: string }> = [];
-    for (const option of enumField.options) {
-      if (writable.has(option.value))
-        providers.push({ id: option.value, label: option.label ?? option.value });
+
+    // The `kind` re-test is what narrows the union — `find` returns
+    // `ToolSettingsField | undefined`, not the arm the predicate matched.
+    const enumField = fields.find((f) => f.kind === 'enum');
+    if (enumField?.kind === 'enum') {
+      const providers: ToolSecretSchema['providers'] = [];
+      for (const option of enumField.options) {
+        if (writable.has(option.value))
+          providers.push({ id: option.value, label: option.label ?? option.value });
+      }
+      if (providers.length > 0) {
+        return {
+          providers,
+          providerKey: enumField.key,
+          secretKey: bindingField.key,
+          secretKind: bindingField.secretKind,
+          settingsKey,
+        };
+      }
+      // An enum naming no writable provider is not a provider picker (or offers
+      // nothing); fall through and read the tool as single-provider.
     }
-    if (providers.length === 0) return undefined;
+
+    if (bindings.length !== 1) return undefined;
+    const own = deriveProviderRoster({ getAvailable: () => [tool] }).providers;
+    const provider = own.length === 1 && own[0] ? writable.get(own[0].provider) : undefined;
+    if (!provider) return undefined;
     return {
-      providers,
-      providerKey: enumField.key,
+      providers: [
+        {
+          id: provider.provider,
+          label: provider.label,
+          defaultSecretName: bindingField.defaultSecretName ?? 'apiKey',
+          ...(provider.getKeyUrl ? { getKeyUrl: provider.getKeyUrl } : {}),
+        },
+      ],
       secretKey: bindingField.key,
       secretKind: bindingField.secretKind,
+      settingsKey,
     };
   }
 
@@ -1200,11 +1247,22 @@ interface ApplyChannelSetup {
  */
 interface ToolSecretSchema {
   /** Providers the tool offers that the named-secrets vault can store. */
-  providers: Array<{ id: string; label: string }>;
-  /** `settingsSchema` key the chosen provider is written under. */
-  providerKey: string;
+  providers: Array<{
+    id: string;
+    label: string;
+    /** Single-provider only: the name the tool falls back to with no binding. */
+    defaultSecretName?: string;
+    /** Single-provider only: from the roster, used when no catalog row has one. */
+    getKeyUrl?: string;
+  }>;
+  /** `settingsSchema` key the chosen provider is written under. Absent for a
+   *  single-provider tool, whose namespace is fixed by its capabilities. */
+  providerKey?: string;
   /** `settingsSchema` key the chosen secret NAME is written under. */
   secretKey: string;
+  /** Tool-settings slot the binding lives in: `settingsKey ?? name`, the key
+   *  `ToolSettingsService.assertClaimedKeys` accepts and the tool reads. */
+  settingsKey: string;
   /** Category of named secret the picker filters the vault by. */
   secretKind: string;
 }

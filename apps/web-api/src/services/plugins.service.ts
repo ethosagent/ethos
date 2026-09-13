@@ -2,9 +2,15 @@ import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  draftPluginGrant,
   type InstalledPluginManifest,
+  isValidNpmPackageName,
+  isValidPluginId,
   type PluginLoader,
+  pinPluginToPersonality,
+  recordGrant,
   scanInstalledPlugins,
+  scanPluginPackage,
 } from '@ethosagent/plugin-loader';
 import { loadMcpConfig, type McpServerConfig } from '@ethosagent/tools-mcp';
 import type { PluginPageSpec, Storage, ToolRegistry } from '@ethosagent/types';
@@ -53,15 +59,80 @@ export interface PluginsServiceOptions {
    * preventing a plugin from declaring another plugin's tool in its page spec.
    */
   pluginToolOwnership?: Map<string, string>;
+  /** Runs npm with an argv array. Defaults to spawning `npm`; tests inject a fake. */
+  runNpm?: (args: string[]) => Promise<void>;
 }
 
 export class PluginsService {
   constructor(private readonly opts: PluginsServiceOptions) {}
 
-  async install(packageSpec: string): Promise<void> {
+  /**
+   * Install a plugin from npm and leave behind what `ethos plugin install`
+   * does: a capability grant (`consent: 'interactive'`) in the plugins dir's
+   * `grants.json`, and — when `personalityId` is given — a `plugins.lock` pin
+   * plus the personality's `plugins:` line (only if its `config.yaml` already
+   * exists). Both are built by the same helpers the CLI uses
+   * (`draftPluginGrant`, `pinPluginToPersonality` in
+   * `extensions/plugin-loader/src/install-record.ts`).
+   *
+   * No current web caller passes `personalityId`: the Library page and the
+   * personality create wizard both install globally. The option is the seam a
+   * future install surface for an existing personality would use.
+   *
+   * Unlike the CLI, the grant is written AFTER npm has put the code on disk:
+   * its capabilities are the installed package's declared `ethos.permissions`,
+   * which cannot be read before the package exists. If recording fails this
+   * throws with the package installed and no grant — the state every web
+   * install left before grants were recorded here.
+   */
+  async install(packageSpec: string, opts: { personalityId?: string } = {}): Promise<void> {
+    const { personalityId } = opts;
+    // The id becomes a path segment under `personalities/`.
+    if (personalityId !== undefined && !isValidPluginId(personalityId)) {
+      throw new Error(`Invalid personality id "${personalityId}"`);
+    }
+    const { storage } = this.opts;
     const dir = join(this.opts.dataDir, 'plugins');
     await mkdir(dir, { recursive: true });
-    await spawnNpm(['install', '--prefix', dir, '--ignore-scripts', '--no-audit', packageSpec]);
+    const before = await readPrefixDependencies(storage, dir);
+    await (this.opts.runNpm ?? spawnNpm)([
+      'install',
+      '--prefix',
+      dir,
+      '--ignore-scripts',
+      '--no-audit',
+      packageSpec,
+    ]);
+
+    const after = await readPrefixDependencies(storage, dir);
+    const pkgDir = join(dir, 'node_modules', installedPackageName(packageSpec, before, after));
+    let pkgJson: unknown;
+    try {
+      const src = await storage.read(join(pkgDir, 'package.json'));
+      pkgJson = src === null ? undefined : JSON.parse(src);
+    } catch {
+      pkgJson = undefined;
+    }
+    const scan = await scanPluginPackage(storage, pkgDir, pkgJson);
+    const { draft } = draftPluginGrant({
+      pkgJson,
+      requestedSpec: packageSpec,
+      // npm packages are always `community` — the tier `installPlugin` records.
+      scan: { tier: 'community', ...scan },
+    });
+    await recordGrant(storage, dir, {
+      ...draft,
+      grantedAt: new Date().toISOString(),
+      consent: 'interactive',
+    });
+    if (personalityId !== undefined) {
+      await pinPluginToPersonality({
+        storage,
+        pluginsDir: dir,
+        personalityDir: join(this.opts.dataDir, 'personalities', personalityId),
+        draft,
+      });
+    }
   }
 
   async uninstall(pluginId: string): Promise<void> {
@@ -283,6 +354,45 @@ export class PluginsService {
       return { ok: false, value: '', error: err instanceof Error ? err.message : String(err) };
     }
   }
+}
+
+/** The `dependencies` map npm keeps in the prefix's own package.json. */
+async function readPrefixDependencies(
+  storage: Storage,
+  prefix: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const src = await storage.read(join(prefix, 'package.json'));
+    if (src === null) return {};
+    const deps = (JSON.parse(src) as { dependencies?: unknown } | null)?.dependencies;
+    if (deps === null || typeof deps !== 'object' || Array.isArray(deps)) return {};
+    return deps as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Which package `npm install <spec>` put under the prefix. A plain registry
+ * spec (`name`, `name@range`, `@scope/name@tag`) names it; any other form (a
+ * tarball, a git URL, a path) is found as the one dependency npm added or
+ * changed. Anything else is refused rather than guessed: a grant recorded
+ * against the wrong package is worse than none.
+ */
+function installedPackageName(
+  spec: string,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): string {
+  const at = spec.startsWith('@') ? spec.indexOf('@', 1) : spec.indexOf('@');
+  const named = at === -1 ? spec : spec.slice(0, at);
+  if (isValidNpmPackageName(named) && after[named] !== undefined) return named;
+  const changed = Object.keys(after).filter((name) => after[name] !== before[name]);
+  const [only] = changed;
+  if (changed.length === 1 && only !== undefined) return only;
+  throw new Error(
+    `npm installed '${spec}' but the installed package could not be identified, so no capability grant was recorded. Install it with: ethos plugin install ${spec}`,
+  );
 }
 
 /**

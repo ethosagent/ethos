@@ -2647,7 +2647,23 @@ const PluginsListOutput = z.object({
   mcpServers: z.array(McpServerInfoSchema),
 });
 
-const PluginsInstallInput = z.object({ packageSpec: z.string().min(1) });
+/** Mirrors `isValidPluginId` (`extensions/plugin-loader/src/lockfile.ts`), the rule
+ *  `PluginsService.install` applies before running npm — web-contracts cannot import
+ *  plugin-loader. `apps/web-api/src/__tests__/routes/plugins-install-rpc.test.ts` pins
+ *  the two to the same verdicts. */
+const PluginsInstallPersonalityId = z
+  .string()
+  .max(214)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
+/** `personalityId` is `ethos plugin install --personality`: when present the install
+ *  also writes that personality's `plugins.lock` entry; when absent it records only
+ *  the capability grant. No current web caller sends it — both web install surfaces
+ *  (the Library page and the create wizard) install globally; a lock entry from the
+ *  web needs an install surface for an EXISTING personality, which does not exist yet. */
+const PluginsInstallInput = z.object({
+  packageSpec: z.string().min(1),
+  personalityId: PluginsInstallPersonalityId.optional(),
+});
 const PluginsInstallOutput = z.object({ ok: z.literal(true) });
 const PluginsUninstallInput = z.object({ pluginId: z.string().min(1) });
 const PluginsUninstallOutput = z.object({ ok: z.literal(true) });

@@ -1,9 +1,11 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { parseTeamManifest, serializeTeamManifest } from '@ethosagent/team-supervisor';
 import type {
   PersonalityRegistry,
   Skill,
   Storage,
+  TeamManifest,
   Tool,
   ToolContext,
   ToolRegistry,
@@ -429,40 +431,6 @@ function yamlScalar(value: string): string {
   return value;
 }
 
-function serializeTeamYaml(args: ScaffoldTeamArgs): string {
-  const lines: string[] = [
-    `name: ${yamlScalar(args.name)}`,
-    `description: ${yamlScalar(args.description)}`,
-  ];
-
-  const caps = args.domain_capabilities ?? [];
-  if (caps.length === 0) {
-    lines.push('domain_capabilities: []');
-  } else {
-    lines.push('domain_capabilities:');
-    for (const cap of caps) lines.push(`  - ${yamlScalar(cap)}`);
-  }
-
-  if (args.dispatch_mode) lines.push(`dispatch_mode: ${yamlScalar(args.dispatch_mode)}`);
-  if (args.coordinator) lines.push(`coordinator: ${yamlScalar(args.coordinator)}`);
-
-  if (args.members.length === 0) {
-    lines.push('members: []');
-  } else {
-    lines.push('members:');
-    for (const m of args.members) {
-      lines.push(`  - personality: ${yamlScalar(m.personality)}`);
-      if (m.role) lines.push(`    role: ${yamlScalar(m.role)}`);
-      if (m.capabilities?.length) {
-        lines.push('    capabilities:');
-        for (const cap of m.capabilities) lines.push(`      - ${yamlScalar(cap)}`);
-      }
-    }
-  }
-
-  return `${lines.join('\n')}\n`;
-}
-
 function scaffoldTeamTool(storage: Storage): Tool {
   return {
     name: 'scaffold_team',
@@ -515,7 +483,30 @@ function scaffoldTeamTool(storage: Storage): Tool {
         };
       }
 
-      const yaml = serializeTeamYaml(args);
+      const manifest: TeamManifest = {
+        name: args.name,
+        description: args.description,
+        domain_capabilities: args.domain_capabilities ?? [],
+        dispatch_mode: args.dispatch_mode,
+        coordinator: args.coordinator,
+        members: args.members.map((m) => ({
+          personality: m.personality,
+          role: m.role,
+          capabilities: m.capabilities,
+        })),
+      };
+      const yaml = serializeTeamManifest(manifest);
+      // Validate before writing: a manifest parseTeamManifest rejects would
+      // otherwise fail later at team load, disconnected from this call.
+      try {
+        parseTeamManifest(yaml);
+      } catch (err) {
+        return {
+          ok: false,
+          error: `Team "${args.name}" was not written: the manifest would not load — ${err instanceof Error ? err.message : String(err)}`,
+          code: 'input_invalid',
+        };
+      }
       const teamsBase = join(homedir(), '.ethos', 'teams');
       const dest = join(teamsBase, `${args.name}.yaml`);
 

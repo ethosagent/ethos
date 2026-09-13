@@ -42,7 +42,6 @@ export {
 export {
   type CharacterSheetBoundary,
   type CharacterSheetExecution,
-  type CharacterSheetMcpExport,
   type CharacterSheetModelFit,
   type CharacterSheetRouting,
   type CharacterSheetScriptSurface,
@@ -55,6 +54,18 @@ export {
 // byte-identical to what is on disk. The grammar has one owner
 // (`./living-soul`); re-exported here rather than reimplemented there.
 export { parseLivingSoul, serializeLivingSoul } from './living-soul';
+// P-T3 — the structured permission surface the sheet's permission sections
+// render from, and the diff that classifies a change as widening or narrowing.
+export {
+  type CharacterSheetMcpExport,
+  diffPermissionSurface,
+  formatPermissionDiff,
+  type PermissionChange,
+  type PermissionDiff,
+  type PermissionDirection,
+  type PermissionSurface,
+  permissionSurface,
+} from './permission-surface';
 
 import { normalizeWorkdir } from './workdirs';
 

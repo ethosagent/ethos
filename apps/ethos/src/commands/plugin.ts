@@ -5,22 +5,21 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ethosDir } from '@ethosagent/config';
 import {
-  computeIntegrity,
-  derivePluginId,
+  draftPluginGrant,
   grantsPath,
   migrateLegacyPluginCredentials,
   type PluginGrant,
-  type PluginLockEntry,
+  type PluginGrantDraft,
+  pinPluginToPersonality,
   pluginCredentialPrefix,
   pluginCredentialRef,
   readGrants,
-  readLockfile,
+  readPluginPermissions,
   recordGrant,
   revokeGrant,
-  writeLockfile,
 } from '@ethosagent/plugin-loader';
 import { FileSecretsResolver } from '@ethosagent/storage-fs';
-import type { SecretsResolver, Storage } from '@ethosagent/types';
+import type { SecretsResolver } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import {
   canInstall,
@@ -167,7 +166,7 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
   // `finally` — `process.exit()` skips `finally`, which would leave the temp
   // scan tree behind.
   let blockedBy: string | undefined;
-  let draft: Omit<PluginGrant, 'grantedAt' | 'consent'> | undefined;
+  let draft: PluginGrantDraft | undefined;
 
   try {
     // Step 2: locate the installed package dir from the manifest npm wrote —
@@ -176,7 +175,7 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
     const pkgDir = await findInstalledPkgDir(tmpDir, pkg);
 
     // Step 3: read declared permissions from package.json (ethos.permissions)
-    const permissions = await readPluginPermissions(pkgDir);
+    const permissions = readPluginPermissions(await readPackageJson(pkgDir));
 
     // Step 4: recursive scan
     const findings: ScanFinding[] = [];
@@ -189,30 +188,16 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
     let author = '(unsigned)';
     let networkDisplay = '(none declared)';
     let shellDisplay = '(none declared)';
-    let pkgName = pkg;
-    let pkgVersion = 'unknown';
-    let pluginId = derivePluginId(undefined, pkg);
+    let rawMeta: unknown;
     try {
-      const rawMeta = JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf-8')) as Record<
-        string,
-        unknown
-      >;
-      const rawAuthor = rawMeta.author;
+      rawMeta = JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf-8'));
+      const rawAuthor = (rawMeta as Record<string, unknown>).author;
       if (typeof rawAuthor === 'string' && rawAuthor) {
         author = rawAuthor;
       } else if (typeof rawAuthor === 'object' && rawAuthor !== null) {
         const a = rawAuthor as Record<string, unknown>;
         if (typeof a.name === 'string' && a.name) author = a.name;
       }
-      // Pin to the exact resolved version so the final install commits what was scanned.
-      const metaName = typeof rawMeta.name === 'string' ? rawMeta.name : undefined;
-      const metaVersion = typeof rawMeta.version === 'string' ? rawMeta.version : undefined;
-      if (metaName) pkgName = metaName;
-      if (metaVersion) pkgVersion = metaVersion;
-      if (metaName && metaVersion) exactSpec = `${metaName}@${metaVersion}`;
-      // Key the grant by the id the LOADER resolves, so a revocation recorded
-      // here is the one the loader looks up.
-      pluginId = derivePluginId(rawMeta, pkgName);
     } catch {
       // package.json already verified to exist; malformed JSON is safe to ignore here
     }
@@ -252,19 +237,16 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
     if (!decision.allowed && hasRed) {
       blockedBy = decision.blockedBy ?? 'red safety finding';
     } else {
-      draft = {
-        id: pluginId,
-        package: pkgName,
-        version: pkgVersion,
-        source: `npm:${exactSpec}`,
-        capabilities: {
-          shell: permissions.shell === true,
-          network: permissions.network ?? null,
-        },
+      // The shared install-record helper keys the grant by the id the LOADER
+      // resolves and pins the exact resolved version, so the final install
+      // commits what was scanned.
+      ({ draft, exactSpec } = draftPluginGrant({
+        pkgJson: rawMeta,
+        requestedSpec: pkg,
         // Verbatim, as shown above. A later reviewer needs what the operator
         // saw, not a re-scan of code that may have changed since.
         scan: { tier, findings, hasRed, hasYellow },
-      };
+      }));
     }
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
@@ -334,17 +316,13 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
   console.log(`\n${c.green}✓ Installed.${c.reset} Restart ethos to load the plugin.`);
 
   if (personalityId) {
-    const pkgJsonPath = join(pluginsDir(), 'node_modules', draft.package, 'package.json');
-    const integrity = await computeIntegrity(pkgJsonPath);
-    const entry: PluginLockEntry = {
-      package: draft.package,
-      version: draft.version,
-      registry: 'https://registry.npmjs.org',
-      integrity,
-    };
     const personalityDir = join(ethosDir(), 'personalities', personalityId);
-    const storage = getStorage();
-    await updatePersonalityPluginConfig(storage, personalityDir, draft.id, entry);
+    await pinPluginToPersonality({
+      storage: getStorage(),
+      pluginsDir: dir,
+      personalityDir,
+      draft,
+    });
     console.log(
       `${c.green}✓${c.reset} Added ${c.cyan}${draft.id}${c.reset} to personality ${c.bold}${personalityId}${c.reset}.`,
     );
@@ -367,7 +345,7 @@ export const PLUGIN_CONSEQUENCE =
   'Installing a plugin is equivalent to running arbitrary code as your user.';
 
 /** Print the consequence block plus the capabilities the grant will record. */
-function printPluginConsequence(draft: Omit<PluginGrant, 'grantedAt' | 'consent'>): void {
+function printPluginConsequence(draft: PluginGrantDraft): void {
   const network =
     draft.capabilities.network === null
       ? '(none declared)'
@@ -559,27 +537,14 @@ export async function findInstalledPkgDir(tmpDir: string, pkgArg: string): Promi
   return pkgDir;
 }
 
-async function readPluginPermissions(pkgDir: string): Promise<PluginScanPermissions> {
+/** The parsed package.json, or `undefined` when unreadable or malformed. The
+ *  `ethos.permissions` inside it is parsed by plugin-loader's `readPluginPermissions`,
+ *  the same parser `draftPluginGrant` uses — not by a copy here. */
+async function readPackageJson(pkgDir: string): Promise<unknown> {
   try {
-    const raw = JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf-8')) as Record<
-      string,
-      unknown
-    >;
-    const ethos = raw.ethos;
-    if (typeof ethos !== 'object' || ethos === null || Array.isArray(ethos)) return {};
-    const perms = (ethos as Record<string, unknown>).permissions;
-    if (typeof perms !== 'object' || perms === null || Array.isArray(perms)) return {};
-    const p = perms as Record<string, unknown>;
-    const result: PluginScanPermissions = {};
-    if (p.shell === true) result.shell = true;
-    if (Array.isArray(p.network)) {
-      result.network = p.network.filter((x): x is string => typeof x === 'string');
-    } else if (p.network === true) {
-      result.network = [];
-    }
-    return result;
+    return JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf-8'));
   } catch {
-    return {};
+    return undefined;
   }
 }
 
@@ -826,36 +791,9 @@ async function clearCredential(
 // List
 // ---------------------------------------------------------------------------
 
-export async function updatePersonalityPluginConfig(
-  storage: Storage,
-  personalityDir: string,
-  pluginId: string,
-  entry: PluginLockEntry,
-): Promise<void> {
-  const lockfile = await readLockfile(storage, personalityDir);
-  lockfile[pluginId] = entry;
-  await writeLockfile(storage, personalityDir, lockfile);
-
-  const configPath = join(personalityDir, 'config.yaml');
-  const configContent = await storage.read(configPath);
-  if (!configContent) return;
-
-  const lines = configContent.split('\n');
-  const pluginsIdx = lines.findIndex((l) => l.startsWith('plugins:'));
-
-  if (pluginsIdx >= 0) {
-    const existing = lines[pluginsIdx].replace('plugins:', '').trim();
-    const ids = existing ? existing.split(/\s+/) : [];
-    if (!ids.includes(pluginId)) {
-      ids.push(pluginId);
-      lines[pluginsIdx] = `plugins: ${ids.join(' ')}`;
-    }
-  } else {
-    lines.push(`plugins: ${pluginId}`);
-  }
-
-  await storage.write(configPath, lines.join('\n'));
-}
+// The personality write-back lives with the rest of the install record in
+// `@ethosagent/plugin-loader` (`install-record.ts`), shared with the web install.
+export { updatePersonalityPluginConfig } from '@ethosagent/plugin-loader';
 
 async function listPlugins(args: string[] = []): Promise<void> {
   const jsonMode = args.includes('--json');

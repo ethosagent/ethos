@@ -1328,7 +1328,10 @@ export async function runPersonalityImport(argv: string[]): Promise<void> {
     const expectedStamp = createHmac('sha256', 'ethos-personality-export-v1')
       .update(manifest.bundleSha256)
       .digest('hex');
-    const unstamped = !manifest.export.stamp || manifest.export.stamp !== expectedStamp;
+    // Two distinct findings: no stamp at all, or a stamp that does not
+    // recompute (the bundle's bytes changed after export).
+    const stampMissing = !manifest.export.stamp;
+    const stampMismatched = !stampMissing && manifest.export.stamp !== expectedStamp;
 
     // Check for existing personality
     const dataDir = ethosDir();
@@ -1384,8 +1387,17 @@ export async function runPersonalityImport(argv: string[]): Promise<void> {
       } else {
         console.log('    Memory:      none');
       }
-      if (unstamped) {
-        console.log('    WARNING:     Bundle is NOT stamped by an official ethos export.');
+      // The stamp is an HMAC keyed with the public constant ETHOS_EXPORT_KEY
+      // (personality-export.ts), so anyone can recompute it: it detects
+      // alteration or corruption, never who published.
+      if (stampMissing) {
+        console.log(
+          '    WARNING:     no integrity stamp — the stamp detects corruption in transit; it does not identify the publisher',
+        );
+      } else if (stampMismatched) {
+        console.log(
+          '    WARNING:     integrity stamp does not match — the bundle was altered after export or corrupted in transit; the stamp does not identify the publisher',
+        );
       }
       console.log('');
 

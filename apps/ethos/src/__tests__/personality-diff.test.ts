@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { FilePersonalityRegistry, renderCharacterSheet } from '@ethosagent/personalities';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -94,4 +96,74 @@ describe('personality diff', () => {
     const desc = reg.describe('nonexistent');
     expect(desc).toBeNull();
   });
+});
+
+// P-T3 — `ethos personality diff` classifies permission changes over the
+// structured surface. Driven as a REAL process, like
+// `personality-show-mcp-export.test.ts`: `apps/ethos/src/index.ts` dispatches at
+// module top level, so there is no exported function to call.
+describe('ethos personality diff — classified permission changes (P-T3)', () => {
+  const run = promisify(execFile);
+  const ROOT = join(import.meta.dirname, '..', '..', '..', '..');
+
+  async function diffOutput(a: string, b: string): Promise<string> {
+    const result = await run(
+      process.execPath,
+      ['--import', 'tsx', join(ROOT, 'apps/ethos/src/index.ts'), 'personality', 'diff', a, b],
+      {
+        cwd: ROOT,
+        env: { ...process.env, ETHOS_STATE_DIR: testDir, NO_COLOR: '1' },
+        timeout: 240_000,
+      },
+    );
+    return result.stdout;
+  }
+
+  async function seedState(): Promise<void> {
+    // A dead `baseUrl` keeps the export case hermetic: the loop is built only
+    // for its tool registry, never to answer anything.
+    await writeFile(
+      join(testDir, 'config.yaml'),
+      [
+        'schemaVersion: 1',
+        'provider: anthropic',
+        'baseUrl: http://127.0.0.1:1',
+        'model: test',
+        'personality: gated',
+        '',
+      ].join('\n'),
+    );
+  }
+
+  it('marks a widening change', async () => {
+    await seedState();
+    await seedPersonality('gated', 'name: Gated\noutbound_policy.approve_before_send: true\n');
+    await seedPersonality(
+      'ungated',
+      'name: Ungated\noutbound_policy.approve_before_send: false\n',
+      undefined,
+      '- read_file\n- terminal\n',
+    );
+
+    const out = await diffOutput('gated', 'ungated');
+    expect(out).toContain('Permission changes: gated → ungated — 2 widen, 0 narrow, 0 other');
+    expect(out).toContain('  + WIDENS   toolset: + terminal');
+    expect(out).toContain('  + WIDENS   outbound_policy.approve_before_send: true → false');
+    // The text diff still follows the classified rows.
+    expect(out).toContain('+++ ungated');
+  }, 300_000);
+
+  it('classifies an export from the resolved slice', async () => {
+    await seedState();
+    await seedPersonality('gated', 'name: Gated\n');
+    await seedPersonality(
+      'exporter',
+      'name: Exporter\nmcp_export.enabled: true\nmcp_export.expose_tools: read_file\n',
+    );
+
+    const out = await diffOutput('gated', 'exporter');
+    expect(out).toContain(
+      '  + WIDENS   mcp_export.enabled: not exported → exported (tools: read_file; memory none; conversations not exposed; auth localhost)',
+    );
+  }, 300_000);
 });

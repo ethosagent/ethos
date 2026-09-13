@@ -1,4 +1,5 @@
 import { InMemoryStorage } from '@ethosagent/storage-fs';
+import { parseTeamManifest } from '@ethosagent/team-supervisor';
 import type {
   PersonalityConfig,
   PersonalityRegistry,
@@ -391,6 +392,80 @@ describe('scaffold_team', () => {
     expect(yaml).toContain('coordinator: engineer');
     expect(yaml).toContain('personality: engineer');
     expect(yaml).toContain('personality: reviewer');
+  });
+
+  it('writes a manifest parseTeamManifest accepts, member roles intact', async () => {
+    const storage = new InMemoryStorage();
+    const teamTools = createTeamDesignTools({
+      personalityRegistry: makePersonalityRegistry([]),
+      storage,
+    });
+
+    const scaffoldTool = teamTools.find((t) => t.name === 'scaffold_team');
+    const result = await scaffoldTool?.execute(
+      {
+        name: 'neutral-team',
+        description: 'Neutral: team with a colon',
+        domain_capabilities: ['alpha'],
+        dispatch_mode: 'coordinator',
+        coordinator: 'coordinator',
+        members: [
+          { personality: 'coordinator', role: 'coordinator' },
+          { personality: 'member-a', role: 'member', capabilities: ['alpha'] },
+          { personality: 'member-b' },
+        ],
+      },
+      makeCtx(),
+    );
+    expect(result?.ok).toBe(true);
+
+    const yaml = await storage.read(
+      `${process.env.HOME ?? '/root'}/.ethos/teams/neutral-team.yaml`,
+    );
+    expect(parseTeamManifest(yaml ?? '')).toEqual({
+      name: 'neutral-team',
+      description: 'Neutral: team with a colon',
+      domain_capabilities: ['alpha'],
+      dispatch_mode: 'coordinator',
+      coordinator: 'coordinator',
+      members: [
+        { personality: 'coordinator', role: 'coordinator' },
+        { personality: 'member-a', role: 'member', capabilities: ['alpha'] },
+        { personality: 'member-b' },
+      ],
+    });
+  });
+
+  it('writes nothing and names the parser problem when the manifest would not parse', async () => {
+    const storage = new InMemoryStorage();
+    const teamTools = createTeamDesignTools({
+      personalityRegistry: makePersonalityRegistry([]),
+      storage,
+    });
+
+    const scaffoldTool = teamTools.find((t) => t.name === 'scaffold_team');
+    const result = await scaffoldTool?.execute(
+      {
+        name: 'no-coordinator-role',
+        description: 'Coordinator team with no member carrying role: coordinator',
+        dispatch_mode: 'coordinator',
+        coordinator: 'coordinator',
+        members: [{ personality: 'coordinator' }, { personality: 'member-a', role: 'member' }],
+      },
+      makeCtx(),
+    );
+
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect(result.code).toBe('input_invalid');
+      expect(result.error).toContain('was not written');
+      expect(result.error).toContain(
+        'dispatch_mode=coordinator requires exactly one member with role=coordinator (found 0)',
+      );
+    }
+    const teamsBase = `${process.env.HOME ?? '/root'}/.ethos/teams`;
+    expect(await storage.read(`${teamsBase}/no-coordinator-role.yaml`)).toBeNull();
+    expect(await storage.exists(teamsBase)).toBe(false);
   });
 
   it('rejects invalid team name', async () => {

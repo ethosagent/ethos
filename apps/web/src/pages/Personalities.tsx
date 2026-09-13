@@ -1439,7 +1439,7 @@ function WizardConfigTab({
   );
 }
 
-function WizardPluginsTab({
+export function WizardPluginsTab({
   selected,
   onChange,
 }: {
@@ -1457,6 +1457,11 @@ function WizardPluginsTab({
   });
 
   const installMut = useMutation({
+    // No `personalityId`: this tab runs inside the create wizard, and the
+    // personality does not exist until the wizard is submitted
+    // (`rpc.personalities.create` in `CreateWizard`). The install is global — a
+    // consent grant and no `plugins.lock` entry, like `ethos plugin install`
+    // without `--personality`.
     mutationFn: () => rpc.plugins.install({ packageSpec: packageSpec.trim() }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['plugins', 'list'] });

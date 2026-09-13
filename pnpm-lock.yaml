@@ -2202,6 +2202,9 @@ importers:
 
   extensions/tools-personality-design:
     dependencies:
+      '@ethosagent/team-supervisor':
+        specifier: workspace:*
+        version: link:../team-supervisor
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

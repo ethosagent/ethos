@@ -1,8 +1,8 @@
 import { noopLogger } from '@ethosagent/logger';
 import { isSafePathSegment } from '@ethosagent/storage-fs';
-import type { Logger, TeamManifest } from '@ethosagent/types';
+import type { Logger, TeamManifest, TeamMember } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { z } from 'zod';
 
 const TeamMemberSchema = z.object({
@@ -156,6 +156,62 @@ export function parseTeamManifest(
   }
 
   return manifest;
+}
+
+// Emission order for `serializeTeamManifest`. Typed as a complete record of the
+// contract's keys, so a field added to `TeamManifest` or `TeamMember` fails the
+// typecheck here until the serializer emits it — the drift that let the CLI
+// rewrite drop `role`, `kanban`, `trust_policy` and `channels` on every
+// `ethos team <name> add|remove`.
+const MANIFEST_KEYS: Record<keyof TeamManifest, true> = {
+  name: true,
+  description: true,
+  domain_capabilities: true,
+  dispatch_mode: true,
+  coordinator: true,
+  coordinator_model: true,
+  personality_models: true,
+  mesh: true,
+  dispatch_prefer_reliable: true,
+  dispatch_as_background_job: true,
+  postmortems: true,
+  trust_policy: true,
+  members: true,
+  channels: true,
+  kanban: true,
+};
+
+const MEMBER_KEYS: Record<keyof TeamMember, true> = {
+  personality: true,
+  role: true,
+  auto_restart: true,
+  port: true,
+  capabilities: true,
+};
+
+function pickDefined<T extends object>(
+  value: T,
+  keys: Record<keyof T, true>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(keys) as (keyof T & string)[]) {
+    if (value[key] !== undefined) out[key] = value[key];
+  }
+  return out;
+}
+
+/**
+ * Serialize a team manifest to the YAML `parseTeamManifest` reads — the one
+ * writer of the format, used by `ethos team` (apps/ethos/src/commands/team.ts)
+ * and the `scaffold_team` tool (extensions/tools-personality-design). Scalars
+ * are quoted by the `yaml` library, so a value carrying a newline or `key:`
+ * cannot inject a sibling field. `parseTeamManifest(serializeTeamManifest(m))`
+ * deep-equals `m` — pinned by `schema.test.ts` ("serializeTeamManifest").
+ */
+export function serializeTeamManifest(manifest: TeamManifest): string {
+  const doc = pickDefined(manifest, MANIFEST_KEYS);
+  doc.members = manifest.members.map((member) => pickDefined(member, MEMBER_KEYS));
+  return stringifyYaml(doc, { aliasDuplicateObjects: false, lineWidth: 0 });
 }
 
 /**

@@ -1439,8 +1439,9 @@ export function unifiedDiff(a: string, b: string, labelA: string, labelB: string
   return out.join('\n');
 }
 
-// `ethos personality diff <a> <b>` — render both character sheets and print
-// a unified diff so you can see what changed between two personalities.
+// `ethos personality diff <a> <b>` — classify what changed in what the two
+// personalities may reach (widens / narrows / changes), then print a unified
+// diff of their character sheets so you can see everything else that changed.
 // TODO(phase-5d): extend with version-ref args (<a>[@ref] <b>[@ref])
 // when a personality version store is available (deferred — depends on Phase 3 amendment history).
 async function runPersonalityDiff(argv: string[]): Promise<void> {
@@ -1449,9 +1450,13 @@ async function runPersonalityDiff(argv: string[]): Promise<void> {
     console.log('Usage: ethos personality diff <a> <b>');
     process.exit(1);
   }
-  const { createPersonalityRegistry, renderCharacterSheet } = await import(
-    '@ethosagent/personalities'
-  );
+  const {
+    createPersonalityRegistry,
+    diffPermissionSurface,
+    formatPermissionDiff,
+    permissionSurface,
+    renderCharacterSheet,
+  } = await import('@ethosagent/personalities');
   const { ethosDir } = await import('@ethosagent/config');
   const storage = getStorage();
   const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
@@ -1470,18 +1475,70 @@ async function runPersonalityDiff(argv: string[]): Promise<void> {
     process.exit(1);
   }
 
+  // P-T3 — the RESOLVED `mcp_export` slice for each side, from
+  // `resolveMcpExportScope` against the loop's own tool registry, exactly as
+  // `runPersonalityShow` resolves it. Only when either side is exported: the
+  // resolver grants nothing to a personality that is not, so a loop would be
+  // built for no answer. Fail-soft — without a slice the permission diff says
+  // it could not compute the export's direction rather than guessing one.
+  type McpExport = import('@ethosagent/personalities').CharacterSheetMcpExport;
+  let exportA: McpExport | undefined;
+  let exportB: McpExport | undefined;
+  let loopConstructed = false;
+  let releaseLoop: (() => Promise<void>) | undefined;
+  if (descA.config.mcp_export?.enabled === true || descB.config.mcp_export?.enabled === true) {
+    try {
+      const cfg = await readConfig(storage, await getSecretsResolver());
+      if (cfg) {
+        const { resolveMcpExportScope } = await import('@ethosagent/wiring');
+        const { createAgentLoop } = await import('./wiring');
+        const { releaseCommandRuntime } = await import('./lib/release-command-runtime');
+        const result = await createAgentLoop(cfg);
+        loopConstructed = true;
+        releaseLoop = () =>
+          releaseCommandRuntime(result, { label: 'personality diff agent loop', drainMs: 0 });
+        exportA = resolveMcpExportScope(descA.config, result.toolRegistry);
+        exportB = resolveMcpExportScope(descB.config, result.toolRegistry);
+      }
+    } catch {
+      // The slice is advisory here; both diffs still print without it.
+    }
+  }
+
+  // Classified over the structured surface, never the sheet text (P-D11).
+  const permissions = diffPermissionSurface(
+    permissionSurface(descA.config, exportA),
+    permissionSurface(descB.config, exportB),
+  );
+  console.log(`\n${formatPermissionDiff(permissions, idA, idB)}`);
+
   const soulA = await reg.readSoulMd(idA);
   const soulB = await reg.readSoulMd(idB);
-  const sheetA = renderCharacterSheet(descA.config, soulA);
-  const sheetB = renderCharacterSheet(descB.config, soulB);
+  const sheet = (config: typeof descA.config, soul: string, mcpExport: McpExport | undefined) =>
+    renderCharacterSheet(
+      config,
+      soul,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mcpExport,
+    );
+  const sheetA = sheet(descA.config, soulA, exportA);
+  const sheetB = sheet(descB.config, soulB, exportB);
 
   if (sheetA === sheetB) {
     console.log(`\nNo differences between "${idA}" and "${idB}".\n`);
-    return;
+  } else {
+    console.log(`\n${unifiedDiff(sheetA, sheetB, idA, idB)}`);
   }
 
-  const diff = unifiedDiff(sheetA, sheetB, idA, idB);
-  console.log(`\n${diff}`);
+  // Same release-then-exit posture as `runPersonalityShow`: the loop leaves
+  // live handles, and nothing was dispatched, so there is nothing to drain.
+  await releaseLoop?.();
+  if (loopConstructed) process.exit(process.exitCode ?? 0);
 }
 
 // ---------------------------------------------------------------------------

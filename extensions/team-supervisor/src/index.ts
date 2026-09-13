@@ -25,7 +25,7 @@ export {
   teamsDir,
   writeRuntime,
 } from './runtime';
-export { parseTeamManifest, validateForStart } from './schema';
+export { parseTeamManifest, serializeTeamManifest, validateForStart } from './schema';
 export type { RestartLimits, RestartLoopGuardConfig } from './supervisor';
 export {
   buildMemberLaunchArgs,
