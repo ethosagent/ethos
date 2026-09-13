@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: answer-phone-calls
 time: "45 min"
-updated: 2026-08-15
+updated: 2026-09-13
 ---
 
 ## Task
@@ -132,7 +132,7 @@ The order is fixed, and each step can end the call:
 2. **Parsed.** A verified request that is not a call event — a status callback, a keepalive — gets `200 {"ignored": true}` so the provider stops retrying it. A call gets `202` immediately; nothing blocks a ringing phone.
 3. **Routed.** `voice.bots[].match` picks the bot and its personality. No match writes a `screened` row and notifies the owner anyway — a call nobody hears about is the failure this exists to prevent.
 4. **Gated,** cheapest refusal first: daily budget, then per-caller hourly limit, then the concurrency cap, then the allowlist. A refusal releases whatever it took, so a wall of refused calls leaves the concurrency counter at zero.
-5. **Answered or screened.** An allowlisted caller reaches the bot's own personality. Anyone else reaches `voice.inbound.receptionist`, whose own `memoryScope` and `toolset` *are* the restriction — no owner memory, no privileged tools, by construction. With no receptionist configured, a non-allowlisted caller is refused instead.
+5. **Answered or screened.** An allowlisted caller reaches the bot's own personality. Anyone else reaches `voice.inbound.receptionist`, whose own memory (scope `personality:<receptionist-id>`, fixed by turn setup) and `toolset` *are* the restriction — the call turn carries no user id, so no owner memory and no privileged tools, by construction. With no receptionist configured, a non-allowlisted caller is refused instead.
 6. **Logged.** A row in `~/.ethos/calls.db` moves `ringing` → `live` → `completed`, or lands terminal as `screened`, `refused`, or `failed`. Live rows are never pruned at any age.
 7. **Summarised.** On hang-up the transcript runs through the post-call summary, which is written onto the row and delivered to `voice.inbound.owner` through the delivery ledger — a pending obligation before the platform call, confirmed only on a real ack, redelivered by the next gateway start if it was lost.
 

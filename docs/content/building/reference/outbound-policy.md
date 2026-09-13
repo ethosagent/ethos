@@ -4,7 +4,7 @@ description: "The outbound_policy personality field: its three sub-keys, the sen
 kind: reference
 audience: developer
 slug: outbound-policy
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 `outbound_policy` is the [personality](../../getting-started/glossary.md#personality) field (a directory of files that decides an agent's tools, memory, and model) that turns an agent-initiated `send_message` into a queued proposal instead of a send. A human approves one exact revision of one text to one destination from one bot, and only then does it go out.
@@ -22,6 +22,7 @@ The queue is durable SQLite at `~/.ethos/outbox.db`. The agent's [tool](../../ge
 | Store, lifecycle, hash | [`extensions/outbox/src/`](https://github.com/ethosagent/ethos/tree/main/extensions/outbox/src) — `SQLiteOutboxStore`, `OutboxService`, `computeContentHash` |
 | Sender, reviewer, dispatcher, cards | [`apps/ethos/src/lib/outbox-wiring.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/lib/outbox-wiring.ts) |
 | Delivery | [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts) — `Gateway.deliverPublication` |
+| Terminal approval surface | [`apps/ethos/src/commands/outbox.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/outbox.ts) — `ethos outbox list \| show \| approve \| reject` |
 | Web approval surface | [`packages/web-contracts/src/router.ts`](https://github.com/ethosagent/ethos/blob/main/packages/web-contracts/src/router.ts) (`outbox.*`), [`apps/web-api/src/services/outbox.service.ts`](https://github.com/ethosagent/ethos/blob/main/apps/web-api/src/services/outbox.service.ts), [`apps/web/src/pages/Outbox.tsx`](https://github.com/ethosagent/ethos/blob/main/apps/web/src/pages/Outbox.tsx) |
 
 ## Fields {#fields}
@@ -69,9 +70,22 @@ The list is a deliberate copy of `SEND_MESSAGE_PLATFORMS` in `extensions/tools-m
 | `send_message` to the operator's chat (`channel_filter.<platform>.ownerUserId`) | No — exempt | `gateSend` via `OutboxGate.ownerTarget` |
 | A target outside the operator allowlist | Refused, never queued | The `getAllowedTargets` check runs **before** `gateSend` in `executeSendMessage`, so approval can never widen what the operator allowed |
 | `watcher_create` with a `deliver` target that is neither exempt destination | Refused, pointed at `wake` | `refuseForeignDeliver` in [`extensions/tools-watchers/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/tools-watchers/src/index.ts) |
+| A stored watcher's `deliver`, on every change, to a target that is neither exempt destination | Withheld, not sent. The reason, pointing at `wake`, is stored on the watcher (`deliveryWithheld`), logged, and shown by `watcher_list`; a `wake` on the same watcher still fires | `WatcherManager.dispatchChange` in [`extensions/watchers/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/watchers/src/index.ts), through the same `isForeignDeliverForGatedOwner` predicate the creation refusal uses |
 | Conversational replies, cron delivery to `job.origin`, goal notes, owner notices, channel digests, team/mesh dispatch | No | None of them publishes agent-drafted text to a third party; they never call the gate |
 | MCP tools that post, and `a2a_send` | **No — not covered at all** | Nothing. Stated on every character sheet by `publishingLine` (`extensions/personalities/src/character-sheet.ts`): `not covered: MCP tools, a2a_send` |
 | Dry runs and replays | Never reach the gate | `executeParallel` returns `synthesizeDryRunResult` without calling `execute` (`packages/core/src/tool-registry.ts`) |
+
+## Where the gate is wired {#surfaces}
+
+A turn reaches a channel through two seams. `send_message` sends only after the host calls `setMessagingSend`; until then it returns wiring's default `gatewaySendRef` error, `Gateway not active — send_message requires gateway mode` (`packages/wiring/src/compose-tools.ts`). A watcher's `deliver` needs the watcher tools, which are registered only when the host constructs a `WatcherManager`. Every command that holds either seam builds the outbox from [`apps/ethos/src/lib/outbox-wiring.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/lib/outbox-wiring.ts):
+
+| Command | Path to a channel | Outbox |
+|---|---|---|
+| `ethos gateway start`, `ethos boot` | Adapters in the process | The whole outbox, `createOutboxRuntime`: gate, reviewer, Telegram cards, and the dispatcher that delivers |
+| `ethos serve` | No adapters. Its watcher tools store `deliver` targets in `~/.ethos/watchers/watchers.json`, and a gateway on the machine sends from them | The proposal side, `createOutboxProposalSide`: gate and reviewer, no dispatcher, no card. A `send_message` it queues is delivered by a gateway's dispatcher once approved |
+| `ethos chat`, `cron`, `mcp`, `batch`, `eval`, `acp`, `bench` | None. Nothing calls `setMessagingSend` and no watcher tools are registered, so `send_message` fails with `Gateway not active` for every personality | None, because there is nothing to gate |
+
+`apps/ethos/src/__tests__/outbox-gate-live.test.ts` pins every row: it checks the wiring in the first two rows, and fails if either seam appears in a command that builds no outbox.
 
 A gate that throws refuses the send: `gateSend` converts any error from `gates`, `ownerTarget` or `propose` into an `execution_failed` tool result reading "Nothing was sent." It never falls through to the adapter.
 
@@ -185,19 +199,19 @@ Module constants in `extensions/outbox/src/store.ts`. Not configuration, and the
 
 `OutboxService` writes one `recordSafetyApproval` row per human decision, with codes `outbox.approve`, `outbox.reject`, `outbox.edit`, `outbox.revoke` and `outbox.retry` (`OUTBOX_AUDIT_CODES`). `approve` and `retry` record as `approved`; `reject`, `edit` and `revoke` record as `denied`, separated by their code. The details carry the content hash, never the text.
 
-**Limitation — only web decisions are audited today.** The sink is optional, and the two call sites that construct the gateway-side runtime (`createOutboxRuntime` in `apps/ethos/src/commands/gateway.ts` and `apps/ethos/src/commands/boot.ts`) pass no `observability`. Web-api's `OutboxService` does receive one (`apps/web-api/src/index.ts`), so a decision made in the web Outbox pane appears in `ethos audit decisions` and the same decision taken by tapping a Telegram card does not.
+Every surface that decides passes the sink: web-api's `OutboxService` (`apps/web-api/src/index.ts`), the runtimes in `gateway.ts` and `boot.ts` (a Telegram tap), `ethos serve`, and `ethos outbox` (`runOutbox`). The gateway, boot and serve sinks are pinned by `apps/ethos/src/__tests__/outbox-gate-live.test.ts`. The sink is optional in `OutboxService` itself and fail-open, so a broken sink costs an audit row, never a decision.
 
 ## Limitations {#limitations}
 
 Each of these is a fact about the shipped code, not a caveat about intent.
 
-- **Only two surfaces wire the gate.** `ethos gateway start` and `ethos boot` construct the outbox runtime. `ethos chat`, `ethos serve`, `ethos cron`, `ethos mcp`, `ethos batch`, `ethos eval` and `ethos acp` pass no `outbox`, so `send_message` there behaves exactly as it did before the policy existed — it sends. `createOutboxGate` is only built when `ComposeToolsDeps.outbox` is supplied (`packages/wiring/src/compose-tools.ts`), and `gateSend` returns `undefined` when no gate is present.
+- **Only a gateway process delivers.** `ethos serve` queues but holds no adapters. An item it queues sits in `approved` until an `ethos gateway start` or `ethos boot` that holds the sending bot is running, and the approval expires after 24 hours. The commands with no outbox cannot publish at all — see [Where the gate is wired](#surfaces).
 - **MCP tools and `a2a_send` are not covered.** Covering them would mean classifying arbitrary third-party tools. The character sheet prints the exclusion rather than letting the field read as blanket coverage.
 - **The reviewer cannot approve or block.** A human approves every publication.
 - **Delivery is at-least-once.** There is no exactly-once promise anywhere on this path: the ledger redelivers, and per-adapter honesty varies — Telegram's chunked send reports `ok: true` on a partially delivered multi-chunk message.
 - **A sent publication cannot be unsent.** Ethos offers no recall; the web pane says so and points at the platform.
-- **Only watcher *creation* is gated.** A watcher stored before the policy was switched on keeps delivering: `WatcherManager` runs `onChange.deliver` off the cron tick, reads no personality policy, and nothing re-validates stored records.
-- **Approval cards exist on Telegram only.** `postOutboxCard` / `updateOutboxCard` / `onOutboxDecision` are implemented by `TelegramAdapter` alone. A gated personality that publishes on Slack or WhatsApp is approved in the web pane.
+- **A watcher with no recorded owner is never re-checked.** `WatcherManager.dispatchChange` re-asks the gate on every change, so a watcher stored before the policy was switched on stops delivering to a foreign chat. It can ask only about a record that names the personality that created it (`WatcherRecord.owner`). Watchers created before owners were recorded, or outside an agent turn, carry none and still deliver: delete and recreate them.
+- **Approval cards exist on Telegram only, and only from the process holding the sending bot.** `postOutboxCard` / `updateOutboxCard` / `onOutboxDecision` are implemented by `TelegramAdapter` alone, and `createOutboxApprovalSurface` posts a card only through the item's own bot's adapter. A publication on Slack or WhatsApp, or any item queued under `ethos serve`, gets no card: approve it in the web pane or with `ethos outbox approve <id> --revision <n>`.
 - **On the web, any authenticated `/rpc` session counts as the operator** (the rule `deliveries` already rides on). `clientId` on an approve is a label for the audit trail, not a gate.
 - **Publications land at the chat root.** `send_message` has no thread parameter, so `threadId` is always absent on a proposal.
 - **`channels` is validated only when `approve_before_send` is present.** A `config.yaml` with `outbound_policy.channels` and no `outbound_policy.approve_before_send` parses to nothing, gates nothing, and reports no unknown name.

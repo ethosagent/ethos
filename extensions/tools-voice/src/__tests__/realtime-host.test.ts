@@ -1,5 +1,12 @@
 import { DefaultToolRegistry } from '@ethosagent/core';
-import type { HookRegistry, Tool } from '@ethosagent/types';
+import { createMemoryReadTool, createMemoryWriteTool } from '@ethosagent/tools-memory';
+import type {
+  HookRegistry,
+  MemoryContext,
+  MemoryProvider,
+  MemoryUpdate,
+  Tool,
+} from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { AGENT_CONSULT_TOOL, deriveRealtimeToolset } from '../agent-consult';
 import { createRealtimeToolHost, REALTIME_UNKNOWN_TOOL } from '../realtime-host';
@@ -268,5 +275,80 @@ describe('ToolContext parity — the realtime host', () => {
     const other: Array<Parameters<Tool['execute']>[1]> = [];
     await hostWith(other).dispatch({ callId: 'c3', name: 'read_file', args: {} }, dispatchCtx);
     expect(other[0]?.getContext?.('who')).toBeUndefined();
+  });
+});
+
+describe('memory scope', () => {
+  // A voice call is a conversation with a personality, so the real memory
+  // tools run against that personality's scope — the one AgentLoop stamps.
+  class ScopedMemory implements MemoryProvider {
+    readonly store = new Map<string, string>();
+    async prefetch() {
+      return null;
+    }
+    async read(key: string, ctx: MemoryContext) {
+      const content = this.store.get(`${ctx.scopeId}/${key}`);
+      return content === undefined ? null : { key, content };
+    }
+    async search() {
+      return [];
+    }
+    async sync(updates: MemoryUpdate[], ctx: MemoryContext) {
+      for (const u of updates) {
+        if (u.action === 'add' || u.action === 'replace') {
+          this.store.set(`${ctx.scopeId}/${u.key}`, u.content);
+        }
+      }
+    }
+    async list() {
+      return [];
+    }
+  }
+
+  function memoryHost(memory: MemoryProvider) {
+    const registry = registryWith(createMemoryWriteTool(memory), createMemoryReadTool(memory));
+    return createRealtimeToolHost({
+      registry,
+      personalityToolset: ['memory_read', 'memory_write'],
+      safeTools: new Set(['memory_read', 'memory_write']),
+    });
+  }
+
+  it("writes and reads the speaking personality's memory scope", async () => {
+    const memory = new ScopedMemory();
+    const host = memoryHost(memory);
+    const ctx = { ...dispatchCtx, personalityId: 'researcher' };
+
+    const write = await host.dispatch(
+      {
+        callId: 'w1',
+        name: 'memory_write',
+        args: { store: 'memory', action: 'replace', content: 'Prefers morning calls.' },
+      },
+      ctx,
+    );
+    expect(write.ok).toBe(true);
+    expect([...memory.store.keys()]).toEqual(['personality:researcher/MEMORY.md']);
+
+    const read = await host.dispatch(
+      { callId: 'r1', name: 'memory_read', args: { store: 'memory' } },
+      ctx,
+    );
+    expect(read.ok).toBe(true);
+    expect(read.output).toContain('Prefers morning calls.');
+  });
+
+  it('without a personality there is no scope, and the memory tools say so', async () => {
+    const memory = new ScopedMemory();
+    const host = memoryHost(memory);
+
+    const result = await host.dispatch(
+      { callId: 'r1', name: 'memory_read', args: { store: 'memory' } },
+      dispatchCtx,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('not_available');
+    expect(memory.store.size).toBe(0);
   });
 });

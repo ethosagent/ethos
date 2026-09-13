@@ -85,6 +85,18 @@ beforeEach(() => {
   clock = Date.parse('2026-09-13T00:00:00.000Z');
 });
 
+describe('LEARNING_AUDIT_CODES', () => {
+  it('the human decision codes are unchanged; the automatic promotion code is not one of them', () => {
+    expect(LEARNING_AUDIT_CODES).toEqual({
+      approve: 'learning.approve',
+      override: 'learning.override',
+      reject: 'learning.reject',
+      rollback: 'learning.rollback',
+    });
+    expect(Object.values(LEARNING_AUDIT_CODES)).not.toContain('learning.auto_promote');
+  });
+});
+
 describe('LearningInbox.approve — the override rule', () => {
   it('refuses a never-replayed candidate without an override, and changes nothing', async () => {
     const candidate = await submitSkill();

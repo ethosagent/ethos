@@ -73,6 +73,7 @@ import { Eval } from './pages/Eval';
 import { GoalDetail } from './pages/GoalDetail';
 import { Goals } from './pages/Goals';
 import { Kanban } from './pages/Kanban';
+import { Learning } from './pages/Learning';
 import { Mcp } from './pages/Mcp';
 import { Memory } from './pages/Memory';
 import { Mesh } from './pages/Mesh';
@@ -333,6 +334,7 @@ export function App() {
               renders the same component as an additional path, not a
               replacement. */}
           <Route path="/skills" element={<Skills />} />
+          <Route path="/learning" element={<Learning />} />
           {/* Library Advanced's "System cron" destination (P2): the SAME
               <Cron/> component, rendered with no `:personalityId` so it
               lists `source === 'system'` jobs — the old bare `/cron` above

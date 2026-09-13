@@ -115,12 +115,14 @@ describe('resolvePluginConsent', () => {
 
 describe('install ordering', () => {
   it('records the grant before the package is installed', () => {
-    // No grant, no code on disk: the write happens before the final
-    // `npm install --prefix <plugins dir>`, so a failed grant write aborts
-    // the install rather than leaving unconsented code behind.
+    // No grant, no code on disk: inside `installScannedPlugin` the write happens
+    // before the final install into the plugins dir (`installPackedTarball`,
+    // which packs, verifies and runs `npm install --prefix <plugins dir>`), so a
+    // failed grant write aborts the install rather than leaving unconsented code
+    // behind. Pinned by behaviour too, in plugin-install.test.ts.
     const src = pluginSource();
-    const recordIdx = src.indexOf('await recordGrant(getStorage()');
-    const finalInstallIdx = src.indexOf("['install', '--prefix', dir,");
+    const recordIdx = src.indexOf('await recordGrant(storage, pluginsDir, grant)');
+    const finalInstallIdx = src.indexOf('await installPackedTarball({');
     expect(recordIdx).toBeGreaterThan(-1);
     expect(finalInstallIdx).toBeGreaterThan(-1);
     expect(recordIdx).toBeLessThan(finalInstallIdx);
@@ -129,7 +131,7 @@ describe('install ordering', () => {
   it('takes consent after the scan decision, and before recording', () => {
     const src = pluginSource();
     const consentIdx = src.indexOf('const mode = resolvePluginConsent(');
-    const recordIdx = src.indexOf('await recordGrant(getStorage()');
+    const recordIdx = src.indexOf('await installScannedPlugin({');
     expect(consentIdx).toBeGreaterThan(-1);
     expect(consentIdx).toBeLessThan(recordIdx);
   });
@@ -139,7 +141,7 @@ describe('install ordering', () => {
     const declineIdx = src.indexOf(
       'Install cancelled. Nothing was installed and no grant recorded.',
     );
-    const recordIdx = src.indexOf('await recordGrant(getStorage()');
+    const recordIdx = src.indexOf('await installScannedPlugin({');
     expect(declineIdx).toBeGreaterThan(-1);
     expect(declineIdx).toBeLessThan(recordIdx);
   });

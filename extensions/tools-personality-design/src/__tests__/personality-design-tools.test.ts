@@ -462,6 +462,9 @@ describe('scaffold_team', () => {
       expect(result.error).toContain(
         'dispatch_mode=coordinator requires exactly one member with role=coordinator (found 0)',
       );
+      // The error names the file the tool writes, not the `team.yaml` default.
+      expect(result.error).toContain('no-coordinator-role.yaml is invalid');
+      expect(result.error).not.toContain('team.yaml');
     }
     const teamsBase = `${process.env.HOME ?? '/root'}/.ethos/teams`;
     expect(await storage.read(`${teamsBase}/no-coordinator-role.yaml`)).toBeNull();

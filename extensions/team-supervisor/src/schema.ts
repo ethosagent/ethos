@@ -113,12 +113,18 @@ function firstIssueMessage(err: z.ZodError): string {
  * Throws `EthosError('TEAM_MANIFEST_INVALID', ...)` on any parse or
  * validation failure. Logs a warning (but does not fail) when
  * `dispatch_mode: self-routing` is set alongside a `coordinator:` field.
+ *
+ * `source` names the file in those messages. It defaults to `team.yaml`, the
+ * wording every loader of an on-disk manifest has always shown; a caller that
+ * validates a manifest it is about to write under another name (`scaffold_team`
+ * writes `<name>.yaml`) passes that name so the error points at a real file.
  */
 export function parseTeamManifest(
   yamlContent: string,
-  opts: { logger?: Logger } = {},
+  opts: { logger?: Logger; source?: string } = {},
 ): TeamManifest {
   const logger = opts.logger ?? noopLogger;
+  const source = opts.source ?? 'team.yaml';
   let raw: unknown;
   try {
     raw = parseYaml(yamlContent);
@@ -126,7 +132,7 @@ export function parseTeamManifest(
     throw new EthosError({
       code: 'TEAM_MANIFEST_INVALID',
       cause: `YAML parse error: ${err instanceof Error ? err.message : String(err)}`,
-      action: 'Fix the YAML syntax in team.yaml and re-run.',
+      action: `Fix the YAML syntax in ${source} and re-run.`,
     });
   }
 
@@ -134,8 +140,8 @@ export function parseTeamManifest(
   if (!result.success) {
     throw new EthosError({
       code: 'TEAM_MANIFEST_INVALID',
-      cause: `team.yaml is invalid — ${firstIssueMessage(result.error)}`,
-      action: 'Fix the offending field in team.yaml and re-run `ethos team start`.',
+      cause: `${source} is invalid — ${firstIssueMessage(result.error)}`,
+      action: `Fix the offending field in ${source} and re-run \`ethos team start\`.`,
       details: result.error.issues,
     });
   }
@@ -150,7 +156,7 @@ export function parseTeamManifest(
     // Not fatal — coordinator field is ignored at runtime, but warn so the
     // author knows their intent doesn't match the configured mode.
     logger.warn(
-      `[team-supervisor] team.yaml: \`coordinator\` field is set but dispatch_mode is "self-routing" — the coordinator field will be ignored`,
+      `[team-supervisor] ${source}: \`coordinator\` field is set but dispatch_mode is "self-routing" — the coordinator field will be ignored`,
       { component: 'team-supervisor', team: manifest.name },
     );
   }

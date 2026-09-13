@@ -92,15 +92,7 @@ mcp_export.expose_sessions: false
 mcp_export.auth: localhost
 ```
 
-| Key | Default | What it means |
-|---|---|---|
-| `enabled` | absent — no export | Must be the literal `true`. `yes`, `True` and `1` parse as `false` (`buildMcpExportConfig` compares `=== 'true'`). |
-| `expose_tools` | `none` | Tools the exported **turn** may use — never published to the caller. `all` is this personality's full reach; a list is intersected with it, and a name outside it is dropped, not granted. |
-| `expose_memory` | `none` | `none` skips the memory prefetch and both memory tools; `scoped` adds read-only `personality:<id>`; `full` adds `memory_write`. |
-| `expose_sessions` | `false` | Adds `list_conversations` and `get_conversation`, over this client's own conversations only. |
-| `auth` | `localhost` | `localhost` is stdio only. `bearer` requires an `sk-ethos-` key scoped `mcp:<id>`, and is the only value that can serve HTTP. |
-
-A value outside a key's vocabulary is ignored and the fail-closed default stands — `expose_memory: Scoped` resolves to `none`.
+What each key means, its default and its vocabulary are in the [`mcp_export.*` reference](../reference/personality-yaml.md#mcp-export). Every key fails closed: `enabled` must be the literal `true`, and a value outside a key's vocabulary leaves the default (`expose_memory: Scoped` resolves to `none`). `expose_tools` names what the exported turn may use; it is never published to the caller, and it only narrows this personality's reach.
 
 ### 3. Check what the export resolved to
 
@@ -199,6 +191,61 @@ exporting reviewer — tools: read_file, web_search · memory: none · conversat
 
 Both servers speak JSON-RPC on stdin/stdout. Every log line, the summary above and every refusal go to stderr — anything stray on stdout corrupts the frame and the client disconnects.
 
+### 7. Manage the export from the web dashboard
+
+The personality's page in the web dashboard shows the same resolved export as `ethos personality show`, plus the clients holding a key, their recent calls, and the calls that were refused. Start the dashboard:
+
+```bash
+ethos serve --web
+```
+
+It serves on port 3000 by default ([Use the web dashboard](use-web-dashboard.md)). Open the personality's **Identity** pane (`/p/<id>/identity`) and scroll to **MCP export**. The section is `McpExportSection` (`apps/web/src/components/personality/McpExportSection.tsx`), fed by the `personalities.mcpExport` RPC (`PersonalitiesService.mcpExport`, `apps/web-api/src/services/personalities.service.ts`).
+
+**See what a caller can reach.** A personality whose `mcp_export.enabled` is not literally `true` shows a **Not exported** pill and names the key and its `config.yaml`. An exported one shows **Exported over MCP** and the slice `resolveMcpExportScope` resolved — the same resolver the server runs on every call:
+
+| Row | What it shows |
+|---|---|
+| Caller's turn may use | One chip per tool the exported turn may use. A name in `expose_tools` outside this personality's toolset is struck through, with a line saying it is dropped rather than granted. `none — conversation only` when nothing is exposed |
+| Memory | `none`, `scoped` or `full`, with what each withholds |
+| Conversations | Whether `list_conversations` and `get_conversation` are published, over the calling client's own conversations only |
+| Auth | `bearer` (stdio + HTTP, loopback only) or `localhost` (stdio only, no key checked) |
+| Command | `ethos mcp serve --personality <id>` |
+
+Below the rows, a notice says the declaration is read-only here and names every `mcp_export.*` key to edit in `config.yaml`. The page never writes the declaration.
+
+**Add a client and copy its Claude Desktop entry.** **Add client** is enabled only under `mcp_export.auth: bearer`; under `localhost` the page says so and shows a key-less Claude Desktop entry instead. Name the client and press **Create key**. The page mints a key scoped `mcp:<id>` through `apiKeys.create` and shows it once:
+
+```
+NEW CLIENT — SHOWN ONCE
+Copy this now. Ethos stores only its hash and cannot show it again.
+sk-ethos-a1b2c3d4e5f6...
+```
+
+Beneath the key is a **Claude Desktop entry** with that key already in `ETHOS_MCP_KEY`:
+
+```json
+{
+  "mcpServers": {
+    "ethos-reviewer": {
+      "command": "/usr/local/bin/node",
+      "args": ["/usr/local/lib/node_modules/@ethosagent/cli/dist/index.js", "mcp", "serve", "--personality", "reviewer"],
+      "env": { "ETHOS_MCP_KEY": "sk-ethos-a1b2c3d4e5f6..." }
+    }
+  }
+}
+```
+
+The server builds it with `claudeDesktopExportEntry` (`apps/ethos/src/commands/mcp-export.ts`), which calls the same `buildExportEntry` that `ethos mcp install` writes, so the two cannot disagree. The server sends a placeholder, and your browser swaps in the key, which never leaves it except in the `apiKeys.create` response. Paste the `ethos-<id>` entry into `mcpServers` in `claude_desktop_config.json` and restart Claude Desktop. The `command` and `args` are the Node binary and CLI script running `ethos serve`, so copy the entry from a dashboard on the machine where Claude Desktop runs. Press **Done** to drop the key from the page.
+
+**Revoke a client.** The **Clients** table lists every unrevoked key carrying `mcp:<id>`, by name, key prefix, creation date and last use. **Revoke** asks for confirmation — "Its next call is refused. A revoked key cannot be restored." — then calls `apiKeys.revoke`. The server re-verifies the key on every call, so the client is locked out on its next one.
+
+**Read recent calls and denials.** **Recent external calls** lists the last 20 sessions with `platform = mcp` whose key starts `mcp:<id>:`, with the client, conversation title, cost and an **Open** button into the transcript. **Recent denials** lists the newest 20 refusals recorded under `mcp.export.auth`, `mcp.export.discovery` and `mcp.export.call` for this personality, with the client and the reason code.
+
+Two limits on those tables:
+
+- **Denials come from a fixed window.** The event store filters by category, not by personality, so the service reads the newest 500 events in each of the three categories on the machine and keeps this personality's afterwards (`MCP_EXPORT_EVENT_SCAN`). A denial pushed out of that window by other exports' traffic is not shown, even though it happened.
+- **An empty table is not proof of nothing.** Each source fails soft: a missing or throwing event store, session store or key store empties its table rather than failing the section.
+
 ## What an exported caller can and cannot reach
 
 | Can a caller of `ask`… | Answer | Enforced by |
@@ -236,24 +283,22 @@ Ethos MCP doctor
 
 ## Troubleshoot
 
-**The client starts but no Ethos tools appear.** — The client resolved `ethos` with a stripped `PATH`. Re-run `ethos mcp install <client>`, which writes absolute paths.
-
-**The export lists no tools at all.** — A withdrawn export publishes nothing rather than advertising a tool it would refuse. So `mcp_export.enabled` is not literally `true`, the personality is gone, or the key was refused. Run `ethos personality show <id>` and read the Status line.
-
-**`export_disabled` on stderr, exit 1.** — The same cause at startup. Serve and install read the declaration through the same resolver, so the two cannot disagree.
-
-**A call comes back `busy`.** — One `ask` per client runs at a time. Wait for the previous one; this is a concurrency bound, not a rate limit.
-
-**A tool the export should have is missing.** — It was dropped. `expose_tools` intersects with the personality's own toolset, MCP servers and plugins; add it there first, then to `expose_tools`.
-
-**Garbled output in the client log.** — Something wrote to stdout. Run the server directly and look for stray writes; a plugin's `console.log` breaks the channel.
-
-**`No ~/.ethos/config.yaml found.`** — Run `ethos setup`. The error goes to stderr and the client surfaces it as a startup failure.
-
-**Two installs, the wrong one resolves.** — The install writes the `node` binary that ran it. Re-run from the shell whose `ethos` you want, then restart the client.
+| Symptom | Cause and fix |
+|---|---|
+| The client starts but no Ethos tools appear. | The client resolved `ethos` with a stripped `PATH`. Re-run `ethos mcp install <client>`, which writes absolute paths. |
+| The export lists no tools at all. | A withdrawn export publishes nothing rather than advertising a tool it would refuse. So `mcp_export.enabled` is not literally `true`, the personality is gone, or the key was refused. Run `ethos personality show <id>` and read the Status line. |
+| `export_disabled` on stderr, exit 1. | The same cause at startup. Serve and install read the declaration through the same resolver, so the two cannot disagree. |
+| A call comes back `busy`. | One `ask` per client runs at a time. Wait for the previous one; this is a concurrency bound, not a rate limit. |
+| A tool the export should have is missing. | It was dropped. `expose_tools` intersects with the personality's own toolset, MCP servers and plugins; add it there first, then to `expose_tools`. |
+| Garbled output in the client log. | Something wrote to stdout. Run the server directly and look for stray writes; a plugin's `console.log` breaks the channel. |
+| `No ~/.ethos/config.yaml found.` | Run `ethos setup`. The error goes to stderr and the client surfaces it as a startup failure. |
+| Add client is greyed out. | The export runs under `mcp_export.auth: localhost`, which checks no key. Set `mcp_export.auth: bearer` in `config.yaml`; the section re-reads the declaration on the next load. |
+| A denial you expected is missing from Recent denials. | It fell outside the newest 500 events of its category. The events are still in the observability store: `ethos audit --category mcp.export.auth` (or `.discovery`, `.call`) lists them. |
+| Two installs, the wrong one resolves. | The install writes the `node` binary that ran it. Re-run from the shell whose `ethos` you want, then restart the client. |
 
 ## See also
 
 - [Set up MCP for a personality](set-up-mcp-for-a-personality.md) — the other direction: Ethos as an MCP client.
 - [MCP configuration reference](../reference/mcp-config.md) — `~/.ethos/mcp.json` in full.
 - [outbound_policy](../../building/reference/outbound-policy.md) — the other field that bounds what an agent may do on your behalf.
+- [Use the web dashboard](use-web-dashboard.md) — starting `ethos serve --web` and finding a personality's page.

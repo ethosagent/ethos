@@ -33,8 +33,8 @@ describe('documents RPC', () => {
     await mkdir(secondRoot, { recursive: true });
     await writeFile(join(workdir, 'notes.md'), 'hi');
     await writeFile(join(secondRoot, 'old.md'), 'older');
-    await mkdir(join(dataDir, 'teams', 'marketing', 'brand'), { recursive: true });
-    await writeFile(join(dataDir, 'teams', 'marketing', 'outcomes.md'), '# Outcomes');
+    await mkdir(join(dataDir, 'teams', 'alpha', 'brand'), { recursive: true });
+    await writeFile(join(dataDir, 'teams', 'alpha', 'outcomes.md'), '# Outcomes');
 
     store = new SQLiteSessionStore(':memory:');
     app = createWebApi({
@@ -96,15 +96,15 @@ describe('documents RPC', () => {
   });
 
   it('root and list address a team work directory with `team`', async () => {
-    const res = await call('root', { team: 'marketing' });
+    const res = await call('root', { team: 'alpha' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { json: unknown };
     expect(body.json).toEqual({
-      roots: [{ id: '0', path: join(dataDir, 'teams', 'marketing') }],
-      team: 'marketing',
+      roots: [{ id: '0', path: join(dataDir, 'teams', 'alpha') }],
+      team: 'alpha',
     });
 
-    const listed = await call('list', { team: 'marketing', root: '0' });
+    const listed = await call('list', { team: 'alpha', root: '0' });
     expect(listed.status).toBe(200);
     const listBody = (await listed.json()) as { json: { entries: Array<{ name: string }> } };
     expect(listBody.json.entries.map((e) => e.name).sort()).toEqual(['brand', 'outcomes.md']);
@@ -121,7 +121,7 @@ describe('documents RPC', () => {
     expect(unsafe.status).toBe(400);
     expect(((await unsafe.json()) as { json: { code: string } }).json.code).toBe('INVALID_INPUT');
 
-    const escaped = await call('list', { team: 'marketing', root: '0', path: '../../workspace' });
+    const escaped = await call('list', { team: 'alpha', root: '0', path: '../../workspace' });
     expect(escaped.status).toBe(403);
     expect(((await escaped.json()) as { json: { code: string } }).json.code).toBe('FORBIDDEN');
   });

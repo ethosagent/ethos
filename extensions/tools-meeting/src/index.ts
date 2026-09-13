@@ -22,6 +22,7 @@ import {
   createMemoryTranscriptWriter,
   type MeetingClient,
 } from '@ethosagent/platform-meeting';
+import { NO_MEMORY_SCOPE } from '@ethosagent/tools-memory';
 import type {
   MemoryContext,
   MemoryProvider,
@@ -95,6 +96,11 @@ async function executeMeetJoin(
       error: 'Meeting attendance is not configured — no meeting client is wired.',
     };
   }
+  // Checked before joining: a transcript with nowhere to go is a meeting
+  // attended for nothing. There is no shared scope to fall back to — every
+  // built-in memory backend rejects or strands one (see NO_MEMORY_SCOPE).
+  const memoryContext = buildMeetingMemoryContext(ctx);
+  if (!memoryContext) return NO_MEMORY_SCOPE;
   const meetingClient = opts.meetingClient;
   const memory = opts.memory;
   const url = args.meeting_url?.trim();
@@ -130,7 +136,7 @@ async function executeMeetJoin(
 
   const entries = parser.transcript();
   const artifact = buildTranscriptArtifact({ meetingUrl: url, entries });
-  const writer = createMemoryTranscriptWriter(memory, buildMeetingMemoryContext(ctx));
+  const writer = createMemoryTranscriptWriter(memory, memoryContext);
   await writer.write(artifact);
 
   return {
@@ -146,9 +152,10 @@ function waitForAbort(signal: AbortSignal): Promise<void> {
   });
 }
 
-function buildMeetingMemoryContext(ctx: ToolContext): MemoryContext {
+function buildMeetingMemoryContext(ctx: ToolContext): MemoryContext | undefined {
+  if (!ctx.memoryScopeId) return undefined;
   return {
-    scopeId: ctx.memoryScopeId ?? 'global',
+    scopeId: ctx.memoryScopeId,
     sessionId: ctx.sessionId,
     sessionKey: ctx.sessionKey,
     platform: ctx.platform,

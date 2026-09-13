@@ -14,14 +14,16 @@
 // thing that may promote one without a human.
 import { join } from 'node:path';
 import { type EthosConfig, resolveLearningReplay } from '@ethosagent/config';
-import type { SessionCaseTurn } from '@ethosagent/learning-inbox';
+import type { CaptureCasesResult, SessionCaseTurn } from '@ethosagent/learning-inbox';
 import {
   type ConsolidationInput,
   consolidateMemory,
   type MemoryMeta,
+  type NightlyCaseFreeze,
   type NightlyEvidence,
   type NightlyPassDeps,
   type NightlyState,
+  type NightlyStepLog,
   parseMemoryMeta,
   runNightlyPass,
 } from '@ethosagent/nightly-loop';
@@ -35,6 +37,7 @@ import {
   formatError,
   type LLMProvider,
   type MemoryUpdate,
+  type PersonalityRegistry,
   type Storage,
   toEthosError,
 } from '@ethosagent/types';
@@ -149,6 +152,61 @@ async function writeMemoryMeta(
   const dir = join(memoryRoot, 'personalities', id);
   await storage.mkdir(dir);
   await storage.writeAtomic(join(dir, 'memory-meta.json'), JSON.stringify(meta, null, 2));
+}
+
+/**
+ * The nightly pass's `skills` step. `skill_evolution.enabled` gates it (absent or
+ * `false` drafts nothing and makes no LLM call); `scope` decides the destination;
+ * `model` routes the drafting call. The draft is submitted to the learning inbox
+ * and waits for replay — nothing here promotes.
+ */
+export function nightlySkillDrafter(args: {
+  reg: Pick<PersonalityRegistry, 'get'>;
+  llm: LLMProvider;
+  dataDir: string;
+  learningCtx: Parameters<typeof freezeTargetTurnCases>[0];
+  digests: ReadonlyMap<string, EvidenceDigest>;
+}): NonNullable<NightlyPassDeps['createSkills']> {
+  const { reg, llm, dataDir, learningCtx, digests } = args;
+  return async (id, evidence) => {
+    const cfg = reg.get(id)?.skill_evolution;
+    if (!cfg?.enabled) return 0;
+
+    // Target cases are the user turns the evidence digest quoted — the same
+    // digest `evidence.evidenceDigest` carries to the drafter.
+    const digest = digests.get(id);
+    const targetCaseIds = await freezeTargetTurnCases(learningCtx, id, digest?.userTurns ?? []);
+    const result = await proposeSkillFromEvidence({
+      personalityId: id,
+      scope: cfg.scope,
+      ...(cfg.model ? { model: cfg.model } : {}),
+      evidenceDigest: evidence.evidenceDigest,
+      windowEnd: evidence.windowEnd,
+      dataDir,
+      llm,
+      learning: learningSubmitPort(learningCtx),
+      evidenceSessionIds: digest?.sessionIds ?? [],
+      targetCaseIds,
+    });
+    console.log(
+      `  skill candidate ${result.candidateId ?? '(none)'}: ${result.decision} — ${result.reason}`,
+    );
+    return result.decision === 'submitted' ? 1 : 0;
+  };
+}
+
+/**
+ * The replay step's view of a freeze pass. `pinned` and `overflow` travel with
+ * the count so the step can say why nothing was frozen while pinned targets hold
+ * the pool over its cap (`casePoolOverflowNotice` in `@ethosagent/nightly-loop`).
+ */
+export function nightlyCaseFreeze(result: CaptureCasesResult): NightlyCaseFreeze {
+  return { frozen: result.frozen.length, pinned: result.pinned, overflow: result.overflow };
+}
+
+/** One step's line in `ethos nightly` output. */
+export function nightlyStepLine(step: NightlyStepLog): string {
+  return `  ${step.step.padEnd(12)} ${step.status.padEnd(8)} ${step.detail}`;
 }
 
 // Build the real per-personality dependency object the orchestrator drives.
@@ -286,30 +344,7 @@ function buildDeps(args: {
       return { candidateId: candidate.id };
     },
 
-    async createSkills(id, evidence): Promise<number> {
-      const cfg = reg.get(id);
-      if (!cfg?.skill_evolution?.enabled) return 0;
-
-      // Target cases are the user turns the evidence digest quoted — the same
-      // digest `evidence.evidenceDigest` carries to the drafter.
-      const digest = digests.get(id);
-      const targetCaseIds = await freezeTargetTurnCases(learningCtx, id, digest?.userTurns ?? []);
-      const result = await proposeSkillFromEvidence({
-        personalityId: id,
-        scope: cfg.skill_evolution?.scope,
-        evidenceDigest: evidence.evidenceDigest,
-        windowEnd: evidence.windowEnd,
-        dataDir: ethosDir,
-        llm,
-        learning: learningSubmitPort(learningCtx),
-        evidenceSessionIds: digest?.sessionIds ?? [],
-        targetCaseIds,
-      });
-      console.log(
-        `  skill candidate ${result.candidateId ?? '(none)'}: ${result.decision} — ${result.reason}`,
-      );
-      return result.decision === 'submitted' ? 1 : 0;
-    },
+    createSkills: nightlySkillDrafter({ reg, llm, dataDir: ethosDir, learningCtx, digests }),
 
     learning: {
       enabled: replaySettings.enabled,
@@ -322,7 +357,7 @@ function buildDeps(args: {
             kanbanDbPath: resolveKanbanDbPath({}, ethosDir),
           }),
         );
-        return result.frozen.length;
+        return nightlyCaseFreeze(result);
       },
       pendingReplay(id) {
         return pendingReplayCandidateIds(learningCtx, id);
@@ -488,7 +523,7 @@ export async function runNightlyOnce(config: EthosConfig, opts?: { id?: string }
       const result = await runNightlyPass(target, deps, gates);
       console.log(`\n=== Nightly pass: ${target} (window ${result.windowEnd}) ===`);
       for (const step of result.steps) {
-        console.log(`  ${step.step.padEnd(12)} ${step.status.padEnd(8)} ${step.detail}`);
+        console.log(nightlyStepLine(step));
       }
       // Single-rotator: roll last month's history out of the live JSONL.
       await backend.history.rotate(`personality:${target}`);

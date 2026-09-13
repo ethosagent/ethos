@@ -41,8 +41,8 @@ In Ethos, a personality is a directory. Swapping it changes:
 
 - The system prompt (via `SOUL.md`)
 - The tool access (via `toolset.yaml`)
-- The memory scope (via `memoryScope` in `config.yaml`)
-- The model in use (via `model` in `config.yaml`)
+- The memory scope (always the personality's own, `personality:<id>`; there is no setting for it)
+- The model in use (via `model.default` and its sibling tier keys in `config.yaml`)
 
 All four change atomically. You cannot accidentally run the engineer personality's tools under the reviewer's restricted toolset.
 
@@ -104,7 +104,7 @@ Ethos has a skill evolution loop. The `skill-evolver` watches eval output, ident
 - **Rewrites** for skills that score below a configurable threshold — the evolver reads the skill source and failing transcripts, then generates a rewritten version.
 - **New skills** for recurring unassisted patterns — when the agent repeatedly handles a task type without a matching skill, the evolver proposes one.
 
-Proposals land in the learning inbox as candidates, not live files. A candidate goes live only after a replay against the personality's own past tasks scores `pass` and the auto-promotion rules allow it, or when a human approves it with `ethos learning approve <id>` or from the web dashboard's Skills page. Approving anything that did not pass needs a written reason, recorded in the audit log. `autoApprove: true` does not remove the gate: it lets a candidate promote itself only after a `pass`, and only when the skill is visible to that one personality. A replay measures approach, not answers that depend on real tool output. See [Why does a learned change need a replay before it goes live?](../using/explanation/learning-inbox.md).
+Proposals land in the learning inbox as candidates, not live files. A candidate goes live only after a replay against the personality's own past tasks scores `pass` and the auto-promotion rules allow it, or when a human approves it with `ethos learning approve <id>` or from the web dashboard's Learning page. Approving anything that did not pass needs a written reason, recorded in the audit log. `autoApprove: true` does not remove the gate: it lets a candidate promote itself only after a `pass`, and only when the skill is visible to that one personality. A replay measures approach, not answers that depend on real tool output. See [Why does a learned change need a replay before it goes live?](../using/explanation/learning-inbox.md).
 
 No other framework in this comparison does this. Hermes has skill self-creation, but it is immediate and ungated — the agent writes and activates skills in the same turn. Ethos separates observation (eval runs) from proposal (evolver) from activation (a measured replay or a human approval), which means the feedback loop is auditable.
 
@@ -138,7 +138,7 @@ Ethos stores LLM provider credentials as plain API keys in `~/.ethos/config.yaml
 
 ### Markdown memory files, not embeddings
 
-`~/.ethos/MEMORY.md` and `~/.ethos/USER.md` are plain text. Edit them in your editor. Grep them. Diff them. Commit them if you like.
+Each personality's `MEMORY.md` and `USER.md` are plain text under `~/.ethos/personalities/<id>/`. When a gateway resolves who is speaking, that person's `USER.md` comes from `~/.ethos/users/<userId>/` instead. Memory shared across personalities is team memory, through the `team_memory_*` tools. Edit any of these files in your editor. Grep them. Diff them. Commit them if you like.
 
 **Why:** memory you cannot read is memory you cannot trust. Embedding-based retrieval has its place, but as the default mechanism it adds an embedding model, a vector store, a similarity threshold, and a debugging surface — for the privilege of giving the agent context the user cannot audit. We picked legibility.
 

@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { assertWithinBase } from '@ethosagent/core';
 import { noopLogger } from '@ethosagent/logger';
 import {
@@ -42,12 +42,12 @@ import { isValidSecretName } from '@ethosagent/types';
 import { derivePluginId, isGrantRevoked, readGrants } from './grants';
 import { readPluginPermissions } from './install-record';
 import {
-  DEFAULT_REGISTRY,
   isValidPluginId,
   type PluginLockEntry,
   type PluginLockfile,
   readLockfile,
 } from './lockfile';
+import { execNpm, installPinnedTarball, type NpmRunner, PluginIntegrityError } from './tarball-pin';
 
 // Plugin credential refs — re-exported so the CLI writer mints refs from the
 // same definition the loader and `PluginApiImpl` use, instead of a second copy.
@@ -68,6 +68,7 @@ export {
   isGrantRevoked,
   readGrants,
   recordGrant,
+  restoreGrant,
   revokeGrant,
   writeGrants,
 } from './grants';
@@ -79,9 +80,30 @@ export type {
 export {
   draftPluginGrant,
   pinPluginToPersonality,
+  pluginLockEntryFor,
   readPluginPermissions,
   updatePersonalityPluginConfig,
 } from './install-record';
+export type {
+  DescribeUndoneInstallInput,
+  FindPreviousCopyInput,
+  GrantToRestore,
+  InstallStage,
+  InstallUndoOutcome,
+  PackageUndoOutcome,
+  PinToRestore,
+  PreviousPluginCopy,
+  RecordUndoOutcome,
+  RestorePin,
+  UndoPluginInstallInput,
+} from './install-undo';
+export {
+  describeInstallFailure,
+  describeUndoneInstall,
+  findPreviousCopy,
+  installedPackageDir,
+  undoPluginInstall,
+} from './install-undo';
 export type { PluginLockEntry, PluginLockfile } from './lockfile';
 export {
   computeIntegrity,
@@ -92,6 +114,21 @@ export {
   verifyIntegrity,
   writeLockfile,
 } from './lockfile';
+export type {
+  FetchTarballIntegrityInput,
+  InstallPackedTarballInput,
+  InstallPinnedTarballInput,
+  NpmRunner,
+} from './tarball-pin';
+export {
+  execNpm,
+  fetchTarballIntegrity,
+  installPackedTarball,
+  installPinnedTarball,
+  isTarballPin,
+  legacyPinWarning,
+  PluginIntegrityError,
+} from './tarball-pin';
 export { loadWidgetTemplates } from './widgets-loader';
 
 /**
@@ -185,6 +222,8 @@ export interface PluginLoaderOptions {
   dataDir?: string;
   /** Called when a plugin registers an HTTP route. */
   onRouteRegistered?: (entry: PluginRouteEntry) => void;
+  /** Runs npm for lockfile auto-install. Defaults to `execNpm`; tests inject a fake. */
+  runNpm?: NpmRunner;
 }
 
 export class PluginLoader {
@@ -206,8 +245,10 @@ export class PluginLoader {
   private readonly pluginPaths = new Map<string, string>();
   private readonly pluginHasWidgets = new Map<string, boolean>();
   private readonly pluginScanFindings = new Map<string, PluginScanFindingRecord[]>();
+  private readonly runNpm: NpmRunner;
 
   constructor(registries: PluginRegistries, opts: PluginLoaderOptions) {
+    this.runNpm = opts.runNpm ?? execNpm;
     this.registries = registries;
     this.storage = opts.storage;
     this.credentialStorage = opts.credentialStorage ?? opts.storage;
@@ -612,14 +653,16 @@ export class PluginLoader {
     }
 
     for (const entry of missing) {
-      await this.installFromLockEntry(entry);
+      await this.installFromLockEntry(entry, basename(personalityDir));
     }
 
     return missing;
   }
 
-  private async installFromLockEntry(entry: PluginLockEntry & { id: string }): Promise<void> {
-    const { execFileSync } = await import('node:child_process');
+  private async installFromLockEntry(
+    entry: PluginLockEntry & { id: string },
+    personalityId: string,
+  ): Promise<void> {
     const pluginsDir = join(this.dataDir, 'plugins');
     const exactSpec = `${entry.package}@${entry.version}`;
 
@@ -645,16 +688,29 @@ export class PluginLoader {
       );
       return;
     }
-    // npm is invoked with an ARGV ARRAY through `execFileSync` — no shell, so
-    // no field here can be quoted or escaped out of. Every field additionally
-    // passed `validateLockEntry` on the way out of `readLockfile`; the argv
-    // array is the second half of the defence, not the only half.
-    const args = ['install', '--prefix', pluginsDir, '--ignore-scripts', '--no-audit'];
-    if (entry.registry !== DEFAULT_REGISTRY) args.push('--registry', entry.registry);
-    args.push(exactSpec);
-
+    // npm is invoked with an ARGV ARRAY through `execFile` (`execNpm`) — no
+    // shell, so no field here can be quoted or escaped out of. Every field
+    // additionally passed `validateLockEntry` on the way out of `readLockfile`;
+    // the argv array is the second half of the defence, not the only half.
+    //
+    // FU-1: the tarball is fetched with `npm pack` and checked against the pin
+    // BEFORE `npm install` runs, and the verified file is what gets installed
+    // (`installPinnedTarball`, tarball-pin.ts). A mismatch throws and installs
+    // nothing; a legacy package.json-digest pin warns and installs unverified.
     try {
-      execFileSync('npm', args, { stdio: 'pipe', timeout: 60_000 });
+      const { verified } = await installPinnedTarball({
+        pluginId: entry.id,
+        entry,
+        personalityId,
+        pluginsDir,
+        storage: this.storage,
+        runNpm: this.runNpm,
+        warn: (message) =>
+          this.logger.warn(`[plugin-loader] ${message}`, {
+            component: 'plugin-loader',
+            pluginId: entry.id,
+          }),
+      });
 
       // No `npm rebuild` here, deliberately. `npm rebuild` re-runs the
       // preinstall/install/postinstall scripts that `--ignore-scripts`
@@ -668,12 +724,19 @@ export class PluginLoader {
       // the operator rebuilds it deliberately. The two sibling install paths
       // (`ethos plugin install`, personality import) never rebuilt either.
       this.logger.info(
-        `[plugin-loader] Auto-installed plugin ${entry.id} (${exactSpec}) — lifecycle scripts were not run; if it ships a native addon, run: npm rebuild --prefix ${pluginsDir} ${entry.package}`,
+        `[plugin-loader] Auto-installed plugin ${entry.id} (${exactSpec}, ${verified ? 'tarball verified against plugins.lock' : 'UNVERIFIED legacy pin'}) — lifecycle scripts were not run; if it ships a native addon, run: npm rebuild --prefix ${pluginsDir} ${entry.package}`,
         { component: 'plugin-loader', pluginId: entry.id },
       );
 
       await this.loadFromNodeModules(join(pluginsDir, 'node_modules'));
     } catch (err) {
+      if (err instanceof PluginIntegrityError) {
+        this.logger.error(`[plugin-loader] ${err.message}`, {
+          component: 'plugin-loader',
+          pluginId: entry.id,
+        });
+        return;
+      }
       this.logger.warn(
         `[plugin-loader] Failed to auto-install plugin ${entry.id}: ${err instanceof Error ? err.message : String(err)}`,
         { component: 'plugin-loader', pluginId: entry.id },

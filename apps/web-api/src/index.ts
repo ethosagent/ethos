@@ -543,6 +543,25 @@ export interface CreateWebApiOptions {
     personalityId: string,
   ) => Promise<import('@ethosagent/personalities').CharacterSheetMcpExport | null>;
   /**
+   * M-T9 — the Claude Desktop config for an exported personality, for the MCP
+   * export section. Boot code builds it with the CLI's own entry builder and
+   * client adapter (`claudeDesktopExportEntry`,
+   * `apps/ethos/src/commands/mcp-export.ts`). Omitted → the section shows no
+   * entry.
+   */
+  mcpExportDesktopEntry?: (
+    personalityId: string,
+    opts: { bearer: boolean },
+  ) => Promise<import('@ethosagent/web-contracts').McpExportDesktopEntryWire>;
+  /**
+   * M-T9 — `ObservabilityStore.getEvents` over the shared observability store,
+   * backing the MCP export section's Recent denials. Omitted → no denials.
+   */
+  readObservabilityEvents?: (filter: {
+    category: string;
+    limit: number;
+  }) => import('@ethosagent/types').ObsEvent[];
+  /**
    * Protocol route modules (A2A, Phase 3) contributed to the Hono app via the
    * explicit, reviewable seam. Each declares its mount path, auth posture, and
    * description; `enabled: false` skips it. Modules inherit the app-wide CORS +
@@ -927,6 +946,11 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     ...(opts.scriptSurface ? { scriptSurface: opts.scriptSurface } : {}),
     ...(opts.boundary ? { boundary: opts.boundary } : {}),
     ...(opts.mcpExport ? { mcpExport: opts.mcpExport } : {}),
+    ...(opts.apiKeys ? { apiKeys: opts.apiKeys } : {}),
+    ...(opts.mcpExportDesktopEntry ? { mcpExportDesktopEntry: opts.mcpExportDesktopEntry } : {}),
+    ...(opts.readObservabilityEvents
+      ? { readObservabilityEvents: opts.readObservabilityEvents }
+      : {}),
   });
   // Connected wake satellites. Constructed BEFORE `ConfigService` because the
   // Settings write path pushes to it: eng-review D5 makes a Settings save the

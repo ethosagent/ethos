@@ -1179,7 +1179,7 @@ export function buildChatHelpText(
     `  /personality <id>     start a new session bound to <id>\n` +
     `  /model <name>         switch model for this session\n` +
     `  /tier <name>          override tier for next turn (trivial|default|deep)\n` +
-    `  /memory               show ~/.ethos/MEMORY.md and USER.md\n` +
+    `  /memory               show the active personality's MEMORY.md and USER.md\n` +
     `  /usage                show token and cost stats\n` +
     `  /budget               show session spend against cap\n` +
     `  /budget reset         reset the session budget counter\n` +

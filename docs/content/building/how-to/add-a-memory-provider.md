@@ -1,247 +1,307 @@
 ---
 title: "Add a memory provider"
-description: "Implement MemoryProvider against the prefetch/sync contract and wire it via @ethosagent/wiring so the agent uses your backend."
+description: "Implement the five-method MemoryProvider contract against your own backend, register it from a plugin, and select it per personality with memory.provider."
 kind: how-to
 audience: developer
 slug: add-a-memory-provider
 time: "15 min"
-updated: 2026-05-12
+updated: 2026-09-13
 ---
 
 ## Task
 
-Implement the [MemoryProvider](../../getting-started/glossary.md#memory-provider) interface against a backend of your choice — Postgres, a vector store, a remote API — and wire it in so it replaces `MarkdownFileMemoryProvider` in `~/.ethos/`.
+Implement the [MemoryProvider](../../getting-started/glossary.md#memory-provider) interface against a backend of your choice — Postgres, a vector store, a remote API — register it from a plugin, and point a [personality](../../getting-started/glossary.md#personality) at it.
 
 ## Result
 
-`prefetch()` runs at the start of every [turn](../../getting-started/glossary.md#turn) and injects your memory into the system prompt; `sync()` runs after the turn and persists the `MemoryUpdate[]` the LLM emitted. Switching `~/.ethos/config.yaml` between `memory: markdown` and `memory: <your-id>` flips backends without code changes elsewhere.
+At the start of every [turn](../../getting-started/glossary.md#turn) for that personality, `prefetch()` reads your backend and the entries land in the system prompt. A personality whose `config.yaml` does not name your provider keeps the deployment backend.
 
 ## Prereqs
 
 - TypeScript familiarity, Node 24+, pnpm on `PATH`.
 - A backend ready to talk to — a Postgres database, a vector store, an API endpoint. The interface is backend-agnostic.
-- Workspace access to `@ethosagent/types` (`workspace:*` inside the monorepo, or the published `@ethosagent/types` from npm). The provider has zero other dependencies on Ethos.
+- `@ethosagent/types` and `@ethosagent/plugin-sdk` (`workspace:*` inside the monorepo, or the published packages from npm).
 
 ## Steps
 
 ### 1. Read the interface
 
-`MemoryProvider` is two methods. Both receive a `MemoryLoadContext` describing the active [session](../../getting-started/glossary.md#session) and [personality](../../getting-started/glossary.md#personality); `sync` also takes the `MemoryUpdate[]` the agent decided to apply.
+`MemoryProvider` is five methods, and every one receives a `MemoryContext`. The drift gate `packages/types/src/__tests__/memory-method-count.test.ts` fails if a sixth appears.
 
 ```ts title="packages/types/src/memory.ts"
-export interface MemoryProvider {
-  prefetch(ctx: MemoryLoadContext): Promise<MemoryContext | null>;
-  sync(ctx: MemoryLoadContext, updates: MemoryUpdate[]): Promise<void>;
-}
-
-export interface MemoryLoadContext {
+export interface MemoryContext {
+  /** Opaque scope id. Conventional prefixes: `personality:<id>`, `team:<id>`. */
+  scopeId: string;
   sessionId: string;
   sessionKey: string;
-  userId?: string;
   platform: string;
-  personalityId?: string;
-  memoryScope?: 'global' | 'per-personality';
-  /** Current user message — used by VectorMemoryProvider for semantic retrieval. */
-  query?: string;
+  workingDir: string;
 }
 
-export interface MemoryContext {
-  content: string;
-  source: 'markdown' | 'vector' | 'honcho' | 'custom';
-  truncated: boolean;
+export interface MemorySnapshot {
+  entries: Array<{ key: string; content: string }>;
 }
 
-export type MemoryStore = 'memory' | 'user';
+export type MemoryUpdate =
+  | { action: 'add'; key: string; content: string }
+  | { action: 'replace'; key: string; content: string }
+  | { action: 'remove'; key: string; substringMatch: string }
+  | { action: 'delete'; key: string };
 
-export interface MemoryUpdate {
-  store: MemoryStore;
-  action: 'add' | 'replace' | 'remove';
-  content: string;
-  /** Required when action === 'remove'. */
-  substringMatch?: string;
+export interface MemoryProvider {
+  prefetch(ctx: MemoryContext): Promise<MemorySnapshot | null>;
+  read(key: string, ctx: MemoryContext): Promise<MemoryEntry | null>;
+  search(query: string, ctx: MemoryContext, opts?: SearchOpts): Promise<MemoryEntry[]>;
+  sync(updates: MemoryUpdate[], ctx: MemoryContext): Promise<void>;
+  list(ctx: MemoryContext, opts?: ListOpts): Promise<MemoryEntryRef[]>;
 }
 ```
 
+The provider never decides whose memory it is reading. Ethos issues the scope id, and your backend partitions by it:
+
+| `scopeId` | Issued by | Keys you will see |
+|---|---|---|
+| `personality:<id>` | Turn setup, for every turn (`memScopeId` in `packages/core/src/agent-loop/stages/turn-setup.ts`). There is no setting that changes it | `MEMORY.md`, `USER.md`, arbitrary keys via `memory_read { key }` |
+| `user:<userId>` | Context assembly, when the turn carries a user id — a gateway sender its identity map resolved (`context-assembly.ts`) | `USER.md` |
+| `team:<id>` | The `team_memory_*` tools only | One key per topic |
+
 Three rules are non-negotiable:
 
-- `prefetch` returns `null` when there is nothing to inject. Do not return an empty string — the system prompt builder will render an empty section.
+- `prefetch` returns `null` when there is nothing to inject. An empty `entries` array renders an empty memory section.
 - `sync` may be called with an empty array. Return early; do not write.
-- `'memory'` and `'user'` are separate stores. `'memory'` is the rolling project context; `'user'` is who the human is. Apply each update against the right backing row.
+- A scope id you do not recognise is an error. The built-in backends throw `unrecognised memory scope` (`resolveScopeDir` in `extensions/memory-markdown/src/index.ts`); a provider that quietly maps it to a shared row leaks memory across personalities.
 
 ### 2. Implement the provider
 
-The implementation below is a Postgres provider. It scopes the `'memory'` store by [memory scope](../../getting-started/glossary.md#memory-scope) (per-personality vs global) and always stores `'user'` content on a single shared row keyed by `userId` or the session id.
+The implementation below keeps one row per `(scope_id, key)` in Postgres.
 
 ```ts title="src/postgres-memory.ts"
 import type {
+  ListOpts,
   MemoryContext,
-  MemoryLoadContext,
+  MemoryEntry,
+  MemoryEntryRef,
   MemoryProvider,
-  MemoryStore,
+  MemorySnapshot,
   MemoryUpdate,
+  SearchOpts,
 } from '@ethosagent/types';
 import { Pool } from 'pg';
 
+const PREFETCH_KEYS = ['MEMORY.md', 'USER.md'];
+
 export class PostgresMemoryProvider implements MemoryProvider {
-  private readonly pool: Pool;
+  readonly pool: Pool;
 
   constructor(connectionString: string) {
     this.pool = new Pool({ connectionString });
   }
 
-  async prefetch(ctx: MemoryLoadContext): Promise<MemoryContext | null> {
-    const userContent = (await this.read(this.userKey(ctx), 'user')).trim();
-    const memoryContent = (await this.read(this.memoryKey(ctx), 'memory')).trim();
-    const parts: string[] = [];
-    if (userContent) parts.push(`## About You\n\n${userContent}`);
-    if (memoryContent) parts.push(`## Memory\n\n${memoryContent}`);
-    if (parts.length === 0) return null;
-    return { content: parts.join('\n\n'), source: 'custom', truncated: false };
+  async prefetch(ctx: MemoryContext): Promise<MemorySnapshot | null> {
+    const res = await this.pool.query<{ key: string; content: string }>(
+      'SELECT key, content FROM memory_rows WHERE scope_id = $1 AND key = ANY($2)',
+      [assertScope(ctx.scopeId), PREFETCH_KEYS],
+    );
+    const entries = PREFETCH_KEYS.flatMap((key) => {
+      const content = res.rows.find((row) => row.key === key)?.content ?? '';
+      return content.trim() ? [{ key, content }] : [];
+    });
+    return entries.length > 0 ? { entries } : null;
   }
 
-  async sync(ctx: MemoryLoadContext, updates: MemoryUpdate[]): Promise<void> {
+  async read(key: string, ctx: MemoryContext): Promise<MemoryEntry | null> {
+    const res = await this.pool.query<{ content: string; updated_at: Date }>(
+      'SELECT content, updated_at FROM memory_rows WHERE scope_id = $1 AND key = $2',
+      [assertScope(ctx.scopeId), key],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    return { key, content: row.content, metadata: { lastUpdatedAt: row.updated_at.getTime() } };
+  }
+
+  async search(query: string, ctx: MemoryContext, opts?: SearchOpts): Promise<MemoryEntry[]> {
+    const res = await this.pool.query<{ key: string; content: string }>(
+      `SELECT key, content FROM memory_rows
+       WHERE scope_id = $1 AND content ILIKE '%' || $2 || '%'
+       ORDER BY updated_at DESC LIMIT $3`,
+      [assertScope(ctx.scopeId), query, opts?.limit ?? 10],
+    );
+    return res.rows.map((row) => ({ key: row.key, content: row.content }));
+  }
+
+  async sync(updates: MemoryUpdate[], ctx: MemoryContext): Promise<void> {
     if (updates.length === 0) return;
+    const scopeId = assertScope(ctx.scopeId);
     for (const update of updates) {
-      const key = update.store === 'memory' ? this.memoryKey(ctx) : this.userKey(ctx);
-      const next = applyUpdate(await this.read(key, update.store), update).trim();
-      if (!next) {
-        await this.pool.query('DELETE FROM memory_rows WHERE key = $1 AND store = $2', [
-          key,
-          update.store,
+      if (update.action === 'delete') {
+        await this.pool.query('DELETE FROM memory_rows WHERE scope_id = $1 AND key = $2', [
+          scopeId,
+          update.key,
         ]);
         continue;
       }
+      const current = (await this.read(update.key, ctx))?.content ?? '';
       await this.pool.query(
-        `INSERT INTO memory_rows (key, store, content, updated_at)
+        `INSERT INTO memory_rows (scope_id, key, content, updated_at)
          VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (key, store) DO UPDATE
+         ON CONFLICT (scope_id, key) DO UPDATE
            SET content = EXCLUDED.content, updated_at = NOW()`,
-        [key, update.store, next],
+        [scopeId, update.key, applyUpdate(current, update)],
       );
     }
   }
 
-  private async read(key: string, store: MemoryStore): Promise<string> {
-    const res = await this.pool.query(
-      'SELECT content FROM memory_rows WHERE key = $1 AND store = $2',
-      [key, store],
+  async list(ctx: MemoryContext, opts?: ListOpts): Promise<MemoryEntryRef[]> {
+    const res = await this.pool.query<{ key: string; updated_at: Date }>(
+      'SELECT key, updated_at FROM memory_rows WHERE scope_id = $1 ORDER BY key LIMIT $2',
+      [assertScope(ctx.scopeId), opts?.limit ?? 1000],
     );
-    return res.rows[0]?.content ?? '';
-  }
-
-  /** Per-personality scope routes 'memory' through the personality id. */
-  private memoryKey(ctx: MemoryLoadContext): string {
-    if (ctx.memoryScope === 'per-personality' && ctx.personalityId) {
-      return `${ctx.sessionKey}:${ctx.personalityId}`;
-    }
-    return ctx.sessionKey;
-  }
-
-  /** 'user' is always shared — it describes the human, not the personality. */
-  private userKey(ctx: MemoryLoadContext): string {
-    return ctx.userId ?? ctx.sessionKey;
+    return res.rows.map((row) => ({
+      key: row.key,
+      metadata: { lastUpdatedAt: row.updated_at.getTime() },
+    }));
   }
 }
 
-function applyUpdate(current: string, update: MemoryUpdate): string {
+/** Refuse anything but the three prefixes Ethos issues, as the built-in backends do. */
+function assertScope(scopeId: string): string {
+  if (/^(personality|user|team):[A-Za-z0-9_-]+$/.test(scopeId)) return scopeId;
+  throw new Error(`unrecognised memory scope: ${scopeId}`);
+}
+
+function applyUpdate(current: string, update: Exclude<MemoryUpdate, { action: 'delete' }>): string {
   switch (update.action) {
     case 'add':
-      return current ? `${current.trimEnd()}\n\n${update.content.trim()}` : update.content.trim();
+      return current ? `${current.trimEnd()}\n${update.content}` : update.content;
     case 'replace':
-      return update.content.trim();
-    case 'remove': {
-      const needle = update.substringMatch;
-      if (!needle) return current;
+      return update.content;
+    case 'remove':
       return current
         .split('\n')
-        .filter((line) => !line.includes(needle))
+        .filter((line) => !line.includes(update.substringMatch))
         .join('\n');
-    }
   }
 }
 ```
 
-The table is one row per `(key, store)`. Migrate it with:
+Create the table:
 
 ```sql
 CREATE TABLE memory_rows (
+  scope_id TEXT NOT NULL,
   key TEXT NOT NULL,
-  store TEXT NOT NULL CHECK (store IN ('memory', 'user')),
   content TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (key, store)
+  PRIMARY KEY (scope_id, key)
 );
 ```
 
-### 3. Wire it into the agent
+### 3. Register it from a plugin
 
-`packages/wiring/src/index.ts` selects the memory provider based on `config.memory`. To plug in a custom provider without modifying the wiring package, instantiate `AgentLoop` directly:
+`registerMemoryProvider` qualifies a bare name with your plugin id, so `postgres` registers as `<plugin-id>/postgres` (`EthosPluginApi.registerMemoryProvider`, `packages/plugin-sdk/src/index.ts`). The factory receives the personality's `memory.options.*` values as `config`.
 
-```ts title="apps/ethos/src/wiring.ts"
-import { AgentLoop } from '@ethosagent/core';
+```ts title="src/index.ts"
+import type { EthosPlugin, EthosPluginApi } from '@ethosagent/plugin-sdk';
 import { PostgresMemoryProvider } from './postgres-memory';
 
-const memory = new PostgresMemoryProvider(process.env.ETHOS_PG_URL ?? '');
+export function activate(api: EthosPluginApi): void {
+  api.registerMemoryProvider('postgres', ({ config }) => {
+    const url = typeof config.connectionString === 'string' ? config.connectionString : '';
+    return new PostgresMemoryProvider(url || process.env.ETHOS_PG_URL || '');
+  });
+}
 
-const loop = new AgentLoop({ llm, tools, hooks, session, personalities, memory });
+const plugin: EthosPlugin = { activate };
+export default plugin;
 ```
 
-For a packaged path, ship the provider inside a plugin and instantiate it in `activate()`. See [Publish a plugin](publish-a-plugin.md) for the activation contract.
+Install the plugin as described in [Publish a plugin](publish-a-plugin.md). Wiring runs `loadPlugins` before it builds the agent loop, so the provider is in the registry when the loop maps provider names (`packages/wiring/src/index.ts`, `build-agent-loop.ts`).
 
-### 4. Cover the contract with tests
+### 4. Select it on a personality
 
-A provider that violates the `prefetch returns null when empty` rule silently pollutes every system prompt with an empty memory block. Pin both branches.
+Add two keys to the personality's `config.yaml`:
+
+```yaml title="~/.ethos/personalities/researcher/config.yaml"
+memory.provider: <plugin-id>/postgres
+memory.options.connectionString: postgres://localhost/ethos_dev
+```
+
+Know what this switches. Context assembly resolves `personality.memory.provider` for the turn-start `prefetch` and its `search` fallback, and nothing else (`packages/core/src/agent-loop/stages/context-assembly.ts`). The `memory_read` and `memory_write` tools stay bound to the deployment backend (`createMemoryTools(memory, session)` in `packages/wiring/src/build-agent-loop.ts`), and the deployment-wide `memory:` key in `~/.ethos/config.yaml` accepts only `markdown`, `vector` or `vault` (`packages/config/src/index.ts`). Your backend therefore feeds the prompt; writes the agent makes mid-turn still land in the deployment store. Populate your rows from your own pipeline, or treat this as a read path.
+
+### 5. Cover the contract with tests
+
+A provider that violates the "`prefetch` returns null when empty" rule silently adds an empty memory block to every system prompt. Pin that, a round trip, and the scope refusal.
 
 ```ts title="src/__tests__/postgres-memory.test.ts"
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { PostgresMemoryProvider } from '../postgres-memory';
 
-const ctx = { sessionId: 's1', sessionKey: 'cli:test', platform: 'cli' } as const;
+const ctx = {
+  scopeId: 'personality:researcher',
+  sessionId: 's1',
+  sessionKey: 'cli:test',
+  platform: 'cli',
+  workingDir: '/tmp',
+};
 const provider = new PostgresMemoryProvider(process.env.TEST_PG_URL ?? '');
 
 describe('PostgresMemoryProvider', () => {
-  beforeEach(() => provider['pool'].query('TRUNCATE memory_rows'));
-  afterAll(() => provider['pool'].end());
+  beforeEach(async () => {
+    await provider.pool.query('TRUNCATE memory_rows');
+  });
+  afterAll(() => provider.pool.end());
 
-  it('returns null when both stores are empty', async () => {
+  it('returns null when the scope is empty', async () => {
     expect(await provider.prefetch(ctx)).toBeNull();
   });
 
   it('round-trips an add then a remove', async () => {
-    await provider.sync(ctx, [{ store: 'memory', action: 'add', content: 'first fact' }]);
-    expect((await provider.prefetch(ctx))?.content).toContain('first fact');
-    await provider.sync(ctx, [
-      { store: 'memory', action: 'remove', content: '', substringMatch: 'first' },
-    ]);
+    await provider.sync([{ action: 'add', key: 'MEMORY.md', content: 'first fact' }], ctx);
+    expect((await provider.prefetch(ctx))?.entries[0]?.content).toContain('first fact');
+    await provider.sync([{ action: 'remove', key: 'MEMORY.md', substringMatch: 'first' }], ctx);
     expect(await provider.prefetch(ctx)).toBeNull();
+  });
+
+  it('refuses a scope id Ethos never issues', async () => {
+    await expect(provider.prefetch({ ...ctx, scopeId: 'global' })).rejects.toThrow(
+      'unrecognised memory scope',
+    );
   });
 });
 ```
 
 ## Verify
 
-Boot the agent against the provider and confirm the memory section flows through two turns.
+Seed a row for the personality, then ask it something only that row answers.
 
 ```bash
-export ETHOS_PG_URL="postgres://localhost/ethos_dev"
-ethos chat -q "remember that the project deadline is friday"
-ethos chat -q "what's the project deadline?"
+psql "$ETHOS_PG_URL" -c "INSERT INTO memory_rows (scope_id, key, content) VALUES ('personality:researcher', 'MEMORY.md', 'The project deadline is Friday.')"
 ```
 
-If the second turn answers correctly, `prefetch` is reading what `sync` wrote. Inspect the row directly:
+```
+INSERT 0 1
+```
 
 ```bash
-psql "$ETHOS_PG_URL" -c "SELECT key, store, length(content) FROM memory_rows"
+ethos -z "what is the project deadline?" --personality researcher
 ```
+
+```
+The project deadline is Friday.
+```
+
+A correct answer means `prefetch` read your row into the prompt. [Zero mode](../../getting-started/glossary.md#zero-mode) runs one turn and exits, so nothing else touched the store.
 
 ## Troubleshoot
 
-**Agent never remembers anything across turns.** — `sync` is being called but writing nothing. Log the `updates` array; if it's empty, the LLM did not produce updates this turn. If it's non-empty but the row stays empty, your `applyUpdate` collapsed the content — check the `'add'` branch.
+**The agent never sees your rows.** — `memory.provider` names something the registry does not hold, and context assembly falls back to the deployment backend without an error (`?? deps.memory` in `context-assembly.ts`). Check the qualified name is `<plugin-id>/postgres` and that the plugin activated.
 
-**Every turn appends an empty `## Memory` block to the prompt.** — `prefetch` is returning `{ content: '', ... }` instead of `null`. Add the empty-check before constructing the result.
+**`memory_write` writes do not appear in Postgres.** — Expected. The memory tools use the deployment backend, not the personality's `memory.provider` (step 4).
 
-**`per-personality` writes leak into the global pool.** — The provider is ignoring `ctx.memoryScope`. Route `'memory'` writes through `memoryKey()` (or its equivalent in your backend), not `sessionKey` alone. `'user'` always stays global.
+**Every turn appends an empty memory block to the prompt.** — `prefetch` is returning `{ entries: [] }` instead of `null`. Return `null` when nothing is non-empty.
 
-**`'remove'` does nothing.** — `substringMatch` is `undefined`. The contract is `substringMatch`, not `content` — see `packages/types/src/memory.ts`.
+**`unrecognised memory scope: global`.** — A tool ran without a `memoryScopeId` on its context and fell back to the scope id `global` (`buildMemoryContext`, `extensions/tools-memory/src/index.ts`). That is a wiring bug upstream; do not map `global` to a row.
 
-**`prefetch` is the slow path of every turn.** — It runs before the LLM call on the critical path. Cache hot rows in memory keyed by `(memoryKey, userKey)`; invalidate on `sync`. Index `memory_rows(key, store)`.
+**`'remove'` does nothing.** — The update carries `substringMatch`, not `content`. Filter on `update.substringMatch`.
+
+**`prefetch` is the slow path of every turn.** — It runs before the LLM call. Index `memory_rows (scope_id, key)` (the primary key above does) and cache hot scopes, invalidated in `sync`.

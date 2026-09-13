@@ -12,9 +12,9 @@ import { createMessagingTools, type OutboxGate, type OutboxProposal } from '../i
 
 function ctx(partial: Partial<ToolContext> = {}): ToolContext {
   return {
-    personalityId: 'cmo',
+    personalityId: 'coordinator',
     platform: 'telegram',
-    sessionKey: 'telegram:marketing-bot:C9',
+    sessionKey: 'telegram:example-bot:C9',
     ...partial,
   } as ToolContext;
 }
@@ -65,7 +65,7 @@ describe('send_message — the approval outbox gate', () => {
     const result = await tool.execute({ platform: 'telegram', target: 'C1', body: 'hi' }, ctx());
 
     expect(result).toEqual({ ok: true, value: 'Message sent to telegram:C1' });
-    expect(send).toHaveBeenCalledWith('telegram', 'C1', 'hi', 'marketing-bot');
+    expect(send).toHaveBeenCalledWith('telegram', 'C1', 'hi', 'example-bot');
   });
 
   it('queues instead of sending, and says NOT sent', async () => {
@@ -79,12 +79,12 @@ describe('send_message — the approval outbox gate', () => {
     expect(send).not.toHaveBeenCalled();
     expect(proposals).toEqual([
       {
-        personalityId: 'cmo',
+        personalityId: 'coordinator',
         platform: 'telegram',
         target: '-100777',
         body: 'We are SOC2 certified.',
-        laneBotKey: 'marketing-bot',
-        sessionKey: 'telegram:marketing-bot:C9',
+        laneBotKey: 'example-bot',
+        sessionKey: 'telegram:example-bot:C9',
       },
     ]);
     expect(result.ok).toBe(true);
@@ -102,7 +102,7 @@ describe('send_message — the approval outbox gate', () => {
 
     expect(result.ok).toBe(true);
     expect(proposals).toHaveLength(0);
-    expect(send).toHaveBeenCalledWith('telegram', 'C9', 'on it', 'marketing-bot');
+    expect(send).toHaveBeenCalledWith('telegram', 'C9', 'on it', 'example-bot');
   });
 
   it('does not gate a send to the operator’s own chat', async () => {
@@ -117,7 +117,7 @@ describe('send_message — the approval outbox gate', () => {
 
     expect(result.ok).toBe(true);
     expect(proposals).toHaveLength(0);
-    expect(send).toHaveBeenCalledWith('telegram', '4242', 'draft for you', 'marketing-bot');
+    expect(send).toHaveBeenCalledWith('telegram', '4242', 'draft for you', 'example-bot');
   });
 
   it('does not gate a platform the policy’s channels list leaves out', async () => {
@@ -131,10 +131,10 @@ describe('send_message — the approval outbox gate', () => {
       ctx({ origin: 'telegram:C9' }),
     );
 
-    expect(gates).toHaveBeenCalledWith('cmo', 'telegram');
+    expect(gates).toHaveBeenCalledWith('coordinator', 'telegram');
     expect(result.ok).toBe(true);
     expect(proposals).toHaveLength(0);
-    expect(send).toHaveBeenCalledWith('telegram', '-100777', 'ship it', 'marketing-bot');
+    expect(send).toHaveBeenCalledWith('telegram', '-100777', 'ship it', 'example-bot');
   });
 
   it('refuses a target outside the operator allowlist before it can be queued', async () => {
@@ -158,7 +158,7 @@ describe('send_message — the approval outbox gate', () => {
     const { tool, send } = harness({
       propose: async () => ({
         ok: false,
-        error: 'ambiguous sender: 2 telegram bots speak for cmo',
+        error: 'ambiguous sender: 2 telegram bots speak for coordinator',
       }),
     });
 

@@ -575,17 +575,47 @@ export interface PersonalityConfig {
    * leaf type).
    */
   skill_evolution?: {
+    /**
+     * Turns on this personality's two automatic drafters: the post-turn
+     * improvement fork (`ImprovementFork.shouldFork`,
+     * `extensions/skill-evolver/src/improvement-fork.ts`) and the nightly skill
+     * drafter (`nightlySkillDrafter`, `apps/ethos/src/commands/nightly.ts`).
+     * Absent or `false` = neither runs. Does not gate `ethos evolve` /
+     * `ethos eval --evolve`, which draft whenever invoked.
+     */
     enabled?: boolean;
+    /**
+     * Successful tool calls a turn needs before the fork runs. Default 5.
+     * Fork only (`ImprovementFork.shouldFork`).
+     */
     min_tool_calls?: number;
+    /**
+     * Minimum minutes between fork runs for this personality, counted from the
+     * previous run's start. Default 60. In memory per process — a restart
+     * clears it. Fork only (`ImprovementFork.shouldFork`).
+     */
     cooldown_minutes?: number;
+    /**
+     * Model id this personality's skill drafting runs on, sent as
+     * `modelOverride` to the configured provider (it does not switch provider):
+     * the fork's turn (`ImprovementFork.run`), the nightly drafter
+     * (`proposeSkillFromEvidence`), and `ethos evolve` / `ethos eval --evolve`
+     * (`skillEvolutionEvolveOptions`, `extensions/skill-evolver/src/evolver.ts`).
+     * Absent = the provider's own model. Not read by the chat-turn
+     * `skill_propose` tool. Pinned by
+     * `apps/ethos/src/commands/__tests__/skill-evolution-keys.test.ts`.
+     */
     model?: string;
     /**
-     * Intended to gate the rewrite branch of eval-driven evolution —
-     * `SkillEvolver`'s `evolveExisting` option
-     * (`extensions/skill-evolver/src/evolver.ts`, default `true`).
-     * Limitation: no caller maps this key onto that option (`ethos evolve`,
-     * `ethos eval --evolve`), so only the web Personalities form reads it and
-     * rewrites are always considered.
+     * `false` stops rewrites of existing skills while new skills still draft:
+     * `SkillEvolver`'s `evolveExisting` (`ethos evolve`, `ethos eval --evolve`,
+     * mapped by `skillEvolutionEvolveOptions`) skips the rewrite branch, and
+     * both `skill_propose` tools — the fork's and the chat turn's
+     * (`packages/wiring/src/compose-tools.ts`) — refuse a `targetFile`
+     * (`SkillProposeTarget.evolveExisting`). The nightly drafter only creates.
+     * Absent = rewrites allowed. Pinned by
+     * `apps/ethos/src/commands/__tests__/skill-evolution-keys.test.ts` and, for
+     * the chat turn, `packages/wiring/src/__tests__/chat-skill-propose.test.ts`.
      */
     evolve_existing?: boolean;
     /**
@@ -671,20 +701,29 @@ export interface PersonalityConfig {
    * content binding a human approves live in `SQLiteOutboxStore` /
    * `OutboxService` (`@ethosagent/outbox`).
    *
-   * LIMITATION — the field is enforced on TWO surfaces, not everywhere. The
-   * gate is built only when a surface supplies `ComposeToolsDeps.outbox`
-   * (packages/wiring/src/compose-tools.ts), and only `ethos gateway start`
-   * and `ethos boot` do — both through `createOutboxRuntime`
-   * (apps/ethos/src/lib/outbox-wiring.ts), pinned by
-   * `apps/ethos/src/__tests__/outbox-gate-live.test.ts`. Every other surface
-   * that can run a turn — `chat`, `serve`, `cron`, `mcp`, `batch`, `eval`,
-   * `acp`, `bench` — wires none, so a gated personality running under one of
-   * them sends UNGATED: `gateSend` returns `undefined` for want of a seam and
-   * that deployment sends exactly as it did before (pinned by "sends exactly
-   * as today when no outbox is wired" in
-   * `extensions/tools-messaging/src/__tests__/outbox-gate.test.ts`). The
-   * policy is a property of the personality; whether it binds is a property of
-   * the process it runs in.
+   * WHERE it binds. The gate is built only when a surface supplies
+   * `ComposeToolsDeps.outbox` (packages/wiring/src/compose-tools.ts), and
+   * every root that can reach a channel does, through
+   * apps/ethos/src/lib/outbox-wiring.ts:
+   *  - `ethos gateway start` and `ethos boot` hold the adapters and build the
+   *    whole outbox (`createOutboxRuntime`): gate, reviewer, Telegram cards,
+   *    and the dispatcher that delivers approved items;
+   *  - `ethos serve` holds no adapters, but its watcher tools store `deliver`
+   *    targets a gateway later sends from, so it builds the proposal side
+   *    (`createOutboxProposalSide`): gate and reviewer, no dispatcher, no card.
+   *    What it queues is delivered by a gateway's dispatcher.
+   * The other roots that run a turn — `chat`, `cron`, `mcp`, `batch`, `eval`,
+   * `acp`, `bench` — wire no gate because they cannot publish at all: none
+   * calls `setMessagingSend`, so `send_message` fails with the default
+   * "Gateway not active" error (`gatewaySendRef` in compose-tools.ts), and
+   * none registers the watcher tools. Both halves are pinned by
+   * `apps/ethos/src/__tests__/outbox-gate-live.test.ts`, which fails if either
+   * seam appears in a root without the gate.
+   *
+   * A human approves in the web Outbox pane, with `ethos outbox approve`
+   * (apps/ethos/src/commands/outbox.ts), or on a Telegram card. A card is
+   * posted only by a process holding the sending bot's adapter, so an item
+   * proposed under `ethos serve` gets none.
    *
    * `channels` names platforms (`slack`, `telegram`, `discord`, `whatsapp`,
    * `email`); absent means every platform. An unknown name FAILS the

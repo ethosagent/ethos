@@ -36,9 +36,9 @@ export interface PendingSkillsPort {
  */
 export const SKILL_APPROVAL_IS_HUMAN_ONLY =
   'Approving a proposed skill is a human decision and cannot be made from chat. ' +
-  'Ask the user to run `ethos learning approve <id>` in a terminal (adding ' +
-  '`--override "<reason>"` when it has not passed a replay), or to approve it ' +
-  'from the Skills page approval queue in the web UI, which asks for a reason when one is needed. ' +
+  'Ask the user to approve it on the Learning page in the web UI, which asks for a reason ' +
+  'when it has not passed a replay, or to run `ethos learning approve <id>` in a terminal ' +
+  '(adding `--override "<reason>"` when it has not passed a replay). ' +
   'Rejecting still works here, with skills_pending_reject.';
 
 export interface SkillsToolsOptions {
@@ -152,7 +152,7 @@ export function createSkillsTools(opts: SkillsToolsOptions): Tool[] {
         .join('\n');
       return {
         ok: true,
-        value: `${items.length} proposed skill(s) awaiting review:\n\n${formatted}\n\nUse skills_pending_view to read one in full. The user approves with \`ethos learning approve <id>\` or from the Skills page approval queue in the web UI; skills_pending_reject discards one.`,
+        value: `${items.length} proposed skill(s) awaiting review:\n\n${formatted}\n\nUse skills_pending_view to read one in full. The user approves on the Learning page in the web UI, or with \`ethos learning approve <id> [--override "<reason>"]\` in a terminal; skills_pending_reject discards one.`,
       };
     },
   };
@@ -207,7 +207,7 @@ export function createSkillsTools(opts: SkillsToolsOptions): Tool[] {
   const pendingApproveTool: Tool = {
     name: 'skills_pending_approve',
     description:
-      'Does not approve. Approving a proposed skill is a human decision made outside chat — with `ethos learning approve <id>` in a terminal, or from the Skills page approval queue in the web UI. Call this only to tell the user how to approve a skill they asked about.',
+      'Does not approve. Approving a proposed skill is a human decision made outside chat — on the Learning page in the web UI, or with `ethos learning approve <id> [--override "<reason>"]` in a terminal. Call this only to tell the user how to approve a skill they asked about.',
     toolset: 'skills',
     maxResultChars: 2_000,
     requiresApproval: true,

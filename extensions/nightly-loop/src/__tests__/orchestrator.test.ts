@@ -330,7 +330,7 @@ describe('runNightlyPass', () => {
     }
 
     function learning(overrides: Partial<NightlyLearningDeps> = {}) {
-      const freezeCases = vi.fn(async () => 2);
+      const freezeCases = vi.fn(async () => ({ frozen: 2, pinned: 0, overflow: 0 }));
       const pendingReplay = vi.fn(async () => ['c-1', 'c-2', 'c-3', 'c-4', 'c-5']);
       const replay = vi.fn(async () => ({ verdict: 'pass', promoted: false }));
       const deps: NightlyLearningDeps = {
@@ -349,7 +349,7 @@ describe('runNightlyPass', () => {
       const l = learning({
         freezeCases: async () => {
           order.push('freeze');
-          return 1;
+          return { frozen: 1, pinned: 0, overflow: 0 };
         },
         pendingReplay: async () => {
           order.push('pending');
@@ -383,6 +383,31 @@ describe('runNightlyPass', () => {
         'memory',
       ]);
       expect(res.steps.find((s) => s.step === 'replay')?.detail).toContain('1 promoted');
+    });
+
+    it('says why when pinned targets push the case pool over its cap', async () => {
+      const l = learning({
+        freezeCases: async () => ({ frozen: 0, pinned: 43, overflow: 3 }),
+        pendingReplay: async () => ['c-1'],
+        replay: async () => ({ verdict: 'incomplete', promoted: false }),
+      });
+      const { deps } = makeDeps({ learning: l.deps });
+
+      const res = await runNightlyPass('sage', deps);
+
+      const detail = res.steps.find((s) => s.step === 'replay')?.detail ?? '';
+      expect(detail).toContain('0 case(s) frozen, 1 replayed, 0 promoted');
+      expect(detail).toContain('case pool is 3 over its cap: 43 case(s) are targets');
+      expect(detail).toContain('incomplete');
+    });
+
+    it('adds no pool notice while the pool is within its cap', async () => {
+      const l = learning({ freezeCases: async () => ({ frozen: 1, pinned: 5, overflow: 0 }) });
+      const { deps } = makeDeps({ learning: l.deps });
+
+      const res = await runNightlyPass('sage', deps);
+
+      expect(res.steps.find((s) => s.step === 'replay')?.detail).not.toContain('case pool');
     });
 
     it('never runs replay (or freezes cases) when learningReplay.enabled is false', async () => {

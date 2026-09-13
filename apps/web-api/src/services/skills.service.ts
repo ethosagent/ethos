@@ -9,8 +9,9 @@ import type { Skill } from '@ethosagent/web-contracts';
 export interface SkillsServiceOptions {
   library: SkillsLibrary;
   /**
-   * Skill candidates waiting in the learning inbox — the "Approval queue"
-   * badge. Borrowed from `LearningService` at wiring time (L-T8); absent → 0.
+   * How many skill candidates wait in the learning inbox, returned as
+   * `skills.list`'s `pendingCount`. Borrowed from `LearningService` at wiring
+   * time (L-T8); absent → 0.
    */
   pendingCount?: () => Promise<number>;
 }

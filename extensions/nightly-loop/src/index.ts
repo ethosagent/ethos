@@ -35,6 +35,7 @@ export { retractSlug, supersedeSlug } from './memory-lifecycle';
 export type { RestoreResult } from './memory-restore';
 export { restoreArchivedSlug } from './memory-restore';
 export type {
+  NightlyCaseFreeze,
   NightlyEvidence,
   NightlyGates,
   NightlyLearningDeps,
@@ -43,4 +44,4 @@ export type {
   NightlyState,
   NightlyStepLog,
 } from './orchestrator';
-export { runNightlyPass } from './orchestrator';
+export { casePoolOverflowNotice, runNightlyPass } from './orchestrator';

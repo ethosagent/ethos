@@ -64,7 +64,6 @@ The schema is frozen — adding a top-level field requires the `personality-sche
 # ~/.ethos/personalities/researcher/config.yaml
 name: Researcher
 description: Deep reading and synthesis.
-model: claude-opus-4-7
 ```
 
 ```yaml
@@ -98,13 +97,20 @@ description: Builds and ships features for this repo.
 
 ## model {#model}
 
-Type: string · Default: top-level `config.yaml` `model`
+Type: dotted tier keys · Default: the deployment's `model` in `~/.ethos/config.yaml`. `resolveModelWithTier` ([`packages/core/src/agent-loop/turn-context.ts`](../../../../packages/core/src/agent-loop/turn-context.ts)) picks each turn's model in this order: [`modelRouting.<id>`](./config-yaml.md#model-routing) in `config.yaml`; then this personality's tier map, only when its [`provider`](#provider) equals the active LLM provider's name (unset or different, the map is ignored); otherwise the deployment's `model`.
 
-Per-personality model override. Used by the LLM provider when this personality drives the turn. Falls back to the global `model` from `~/.ethos/config.yaml` when unset. The wiring layer also honours `modelRouting.<id>` from `config.yaml` — both routes converge on the same per-personality model.
+| Key | Used for |
+|---|---|
+| `model.default` | Every turn with no tier override, and the fallback for any tier left unset. |
+| `model.trivial`, `model.deep` | Turns run at that tier (`/tier trivial`, `/tier deep`). |
+| `model.dreaming` | Dreaming runs, which set the `dreaming` tier (`extensions/gateway/src/dream-executor.ts`). |
 
 ```yaml
-model: claude-opus-4-7
+provider: anthropic
+model.default: claude-opus-4-7
 ```
+
+- A plain `model: <id>` string is parsed and written back on save, but never applied: `resolveModelWithTier` reads a tier map only. `ethos personality show <id>` marks it inert (`resolveCharacterSheetRouting`, `packages/wiring/src/tier-diagnostics.ts`). To pin one model, set `model.default` with a matching `provider`, or use `modelRouting.<id>`.
 
 ## provider {#provider}
 
@@ -312,11 +318,11 @@ Source: `skill_evolution` on `PersonalityConfig` in [`packages/types/src/persona
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `skill_evolution.enabled` | boolean | `false` | Turns on the two drafters that read it: the post-turn improvement fork (`ImprovementFork.shouldFork`, `extensions/skill-evolver/src/improvement-fork.ts`) and the nightly pass's skill drafter (`createSkills`, `apps/ethos/src/commands/nightly.ts`). |
-| `skill_evolution.min_tool_calls` | integer | `5` | Successful tool calls a turn needs before the fork runs. |
-| `skill_evolution.cooldown_minutes` | integer | `60` | Minimum minutes between fork runs for this personality. Held in memory per process, so a restart clears it. |
-| `skill_evolution.model` | string | unset | Loaded and saved, but nothing reads it at run time. Setting it does not change which model drafts skills. |
-| `skill_evolution.evolve_existing` | boolean | unset | Intended to let eval-driven evolution skip rewrites of existing skills (`false`) while still drafting new ones. Loaded and saved, but no command passes it to `SkillEvolver`, so `ethos evolve` and `ethos eval --evolve` always consider rewrites (`evolveExisting` defaults to `true` in `extensions/skill-evolver/src/evolver.ts`). |
+| `skill_evolution.enabled` | boolean | `false` | Turns on this personality's two automatic drafters: the post-turn improvement fork (`ImprovementFork.shouldFork`, `extensions/skill-evolver/src/improvement-fork.ts`) and the nightly pass's skill drafter (`nightlySkillDrafter`, `apps/ethos/src/commands/nightly.ts`). Unset or `false` = neither runs, and neither makes an LLM call. Does not gate `ethos evolve` or `ethos eval --evolve`, which draft whenever they are run. |
+| `skill_evolution.min_tool_calls` | integer | `5` | Successful tool calls a turn needs before the fork runs (`ImprovementFork.shouldFork`). A turn with fewer does not fork. Fork only. |
+| `skill_evolution.cooldown_minutes` | integer | `60` | Minimum minutes between fork runs for this personality, counted from the start of the previous run whether or not it drafted anything. Held in memory per process, so a restart clears it. Fork only. |
+| `skill_evolution.model` | string | unset | Model id this personality's skill drafting runs on, sent as `modelOverride` to the configured provider: the fork's turn, the nightly skill drafter, and `ethos evolve` / `ethos eval --evolve` for the configured default personality (`skillEvolutionEvolveOptions`, `extensions/skill-evolver/src/evolver.ts`). Must be a model that provider serves; it does not switch provider. Unset = the provider's own model. |
+| `skill_evolution.evolve_existing` | boolean | unset | `false` stops rewrites of existing skills while new skills still draft. `ethos evolve` and `ethos eval --evolve` skip the rewrite branch (`evolveExisting` on `SkillEvolver`), and the fork's `skill_propose` refuses a `targetFile`. The nightly drafter only drafts new skills, so the key does not change it. Unset or `true` = rewrites are drafted. |
 | `skill_evolution.promotion` | `review` \| `auto` | unset | Whether this personality's skill candidates may promote without a human. Values below. |
 | `skill_evolution.scope` | `shared` \| `personality` | `shared` | Where a promoted skill is written (`liveSkillDir`, `extensions/skill-evolver/src/skill-dir.ts`). Values below. |
 
@@ -335,6 +341,7 @@ Source: `skill_evolution` on `PersonalityConfig` in [`packages/types/src/persona
 skill_evolution.enabled: true
 skill_evolution.min_tool_calls: 5
 skill_evolution.cooldown_minutes: 60
+skill_evolution.evolve_existing: false
 skill_evolution.promotion: auto
 skill_evolution.scope: personality
 ```
@@ -344,6 +351,7 @@ Notes:
 - Nothing here skips replay. A skill candidate goes live only on a `pass` replay that the rules above allow, or on a human approval; approving anything that is not a `pass` needs a reason, recorded in the audit log. Replay measures approach, not answers that depend on real tool output. See [Why does a learned change need a replay before it goes live?](../explanation/learning-inbox.md).
 - `promotion` and `scope` are read when a candidate is replayed or promoted, not when it is drafted (`learningPolicyFor`, `packages/wiring/src/learning-pipeline.ts`; `promote`, `extensions/learning-inbox/src/promote.ts`). A candidate drafted against the other scope becomes `stale` instead of promoting.
 - An unrecognised `promotion` or `scope` value, or a non-integer `min_tool_calls` or `cooldown_minutes`, is ignored as if unset.
+- `evolve_existing` and `model` are read when a draft is made, not when it is replayed. The chat-turn `skill_propose` tool (`packages/wiring/src/compose-tools.ts`) reads neither, so a rewrite proposed from a chat turn is still submitted.
 - The global evolver schedule lives in [`config.yaml`](./config-yaml.md#evolver-cron-enabled) (`evolver.cron_enabled`, `evolver.schedule`), not here.
 
 ## safety {#safety}
@@ -423,6 +431,18 @@ Notes:
 - Call-look precedence, resolved in one function (`resolveCallTreatment` in `packages/types/src/personality.ts`) so every surface agrees: `voice.call_style` > a concrete `display.call_style` > derived from the personality id. `display.call_style: personality` is the default and is not a pin — it defers to the derivation.
 - Confirm what parsed with `ethos personality show <id>` — it emits a `## Voice` block, and omits the section entirely when the personality declares no `voice` block. Its `Call look` line names the derived treatment when the key is unset, because there is no blank state to report.
 
+## mcp_export.\* {#mcp-export}
+
+Type: dotted block · Default: unset (not exported). Lets `ethos mcp serve --personality <id>` export this personality as one `ask` tool — walkthrough in [Use Ethos as an MCP server](../how-to/use-as-mcp-server.md). Parsed by `buildMcpExportConfig` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts). A value outside a key's vocabulary is ignored and the fail-closed default stands — `expose_memory: Scoped` resolves to `none`.
+
+| Field | Default | Description |
+|---|---|---|
+| `mcp_export.enabled` | absent — no export | Must be the literal `true`. `yes`, `True` and `1` parse as `false` (`buildMcpExportConfig` compares `=== 'true'`). |
+| `mcp_export.expose_tools` | `none` | Tools the exported **turn** may use — never published to the caller. `all` is this personality's full reach; a whitespace-separated list is intersected with it, and a name outside it is dropped, not granted. |
+| `mcp_export.expose_memory` | `none` | `none` skips the memory prefetch and both memory tools; `scoped` adds read-only `personality:<id>`; `full` adds `memory_write`. |
+| `mcp_export.expose_sessions` | `false` | `true` adds `list_conversations` and `get_conversation`, over the calling client's own conversations only. |
+| `mcp_export.auth` | `localhost` | `localhost` is stdio only. `bearer` requires an `sk-ethos-` key scoped `mcp:<id>`, and is the only value that can serve HTTP. |
+
 ## outbound_policy.\* {#outbound-policy}
 
 Type: dotted block · Default: unset (the agent's `send_message` publishes as soon as it calls it)
@@ -473,7 +493,7 @@ The file is mtime-cached by `FilePersonalityRegistry.loadFromDirectory()`; the l
 
 ## skills/ {#skills}
 
-Optional sibling directory at `~/.ethos/personalities/<id>/skills/`. Per-personality skill files (markdown with frontmatter). The universal skill scanner picks them up alongside the global `~/.ethos/skills/` directory. Per-personality skills are always loaded unfiltered; global skills are filtered by `capability` mode by default.
+Optional sibling directory at `~/.ethos/personalities/<id>/skills/`. Per-personality skill files (markdown with frontmatter). The universal skill scanner picks them up alongside the global `~/.ethos/skills/` directory. Per-personality skills are always loaded unfiltered; global skills are filtered by `capability` mode by default. Set the filter with the dotted [`skills.global_ingest.*` keys](../../building/reference/skills-tools.md#skills-global-ingest); an indented `skills:` block fails the load.
 
 ## See also {#see-also}
 

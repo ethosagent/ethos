@@ -135,6 +135,6 @@ Minimum for an OpenAI-compatible client: chat.
 
 Session: { id, key, platform, model, provider, personalityId, title, usage, ... }
 StoredMessage: { id, sessionId, role, content, toolCalls, timestamp }
-Personality: { id, name, description, model, toolset, capabilities, memoryScope, ... }
+Personality: { id, name, description, model, provider, toolset, capabilities, mcp_servers, plugins, ... }
 MemoryFile: { store, content, path, modifiedAt }
 SseEvent: discriminated union on `type` — see event types above.

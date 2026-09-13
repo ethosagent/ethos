@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { isCheckLine } from '@ethosagent/safety-groundtruth';
 import type { Storage } from '@ethosagent/types';
 import { casePath, casesDir } from './paths';
+import { type CandidateStatus, listCandidates } from './store';
 
 /**
  * Session keys that NEVER feed learning (X-D7). One list, imported by case
@@ -280,18 +281,109 @@ export async function listCases(
   return out.sort((a, b) => a.frozenAt.localeCompare(b.frozenAt) || a.id.localeCompare(b.id));
 }
 
-/** Trim the pool to `cap`, oldest first. Returns the case ids removed. */
+/**
+ * Candidate statuses whose target cases the pool cap never evicts.
+ *
+ * Exactly the statuses a candidate can still be replayed or decided from —
+ * `replay.ts` `REPLAYABLE`, `inbox.ts` `AWAITING_DECISION`, `promote.ts`
+ * `PROMOTABLE` — because those are the only candidates whose targets will be
+ * measured again (verdict rules (a) and (c)). Everything else is terminal FOR
+ * ITS EVIDENCE: `promoted` and `rejected` were decided; `rolled_back` restores
+ * bytes without replaying; `invalid` and `stale` can be rejected but never
+ * replayed or promoted. Their targets are ordinary pool cases, oldest first.
+ */
+export const CASE_PINNING_STATUSES: readonly CandidateStatus[] = [
+  'pending_replay',
+  'pending_review',
+];
+
+/**
+ * Every case id that is a target of a non-terminal candidate of this
+ * personality (`CASE_PINNING_STATUSES`). Read from the candidate store each
+ * time the cap runs, so no capture path has to remember to pass it.
+ *
+ * LIMITATIONS: a `candidate.json` that does not parse pins nothing
+ * (`readCandidate` returns null for it). And like every status check in this
+ * package (L-D10) it is check-then-act: a candidate submitted by another
+ * process after this read is not seen by the trim already running. Its targets
+ * are frozen moments before it is submitted, so they are the NEWEST cases in
+ * the pool and FIFO reaches them last.
+ */
+export async function pinnedCaseIds(
+  storage: Storage,
+  dataDir: string,
+  personalityId: string,
+): Promise<Set<string>> {
+  const candidates = await listCandidates(storage, dataDir, {
+    personalityId,
+    status: CASE_PINNING_STATUSES,
+  });
+  return new Set(candidates.flatMap((c) => c.targetCaseIds));
+}
+
+export interface CasePoolTrim {
+  /** Case ids removed, oldest first. */
+  evicted: string[];
+  /** Cases left in the pool that are pinned by a non-terminal candidate. */
+  pinned: number;
+  /**
+   * How far the pool still sits above `cap` after the trim. Non-zero only when
+   * pinned cases alone exceed the cap — see `enforceCasePoolCap`.
+   */
+  overflow: number;
+}
+
+/**
+ * Trim the pool to `cap`, oldest first, never evicting a case that is a target
+ * of a non-terminal candidate (`pinnedCaseIds`). This is the ONE place the cap
+ * is enforced — the nightly freeze (`packages/wiring/src/learning-pipeline.ts`
+ * `freezeNightlyCases`) and the regression top-up (`replay.ts`
+ * `topUpRegressionPool`) both reach it through `captureCases`, so a top-up for
+ * one candidate cannot evict another pending candidate's targets. Pinned by
+ * `__tests__/cases.test.ts` ("the pool — pinned target cases").
+ *
+ * OVERFLOW: when pinned cases alone exceed `cap`, every unpinned case is
+ * evicted and the pool stays above `cap` by `overflow`. The trade-off is chosen
+ * to fail safe: destroying a pending candidate's target would make its replay
+ * `incomplete` — or measure it against cases other than the ones it was
+ * drafted to fix — with nothing recording why, whereas an oversized pool costs
+ * disk bounded by the targets of undecided candidates, and a human deciding
+ * them releases it. While it lasts the pool holds only pinned targets and no
+ * session or ticket case, and nothing new is frozen (`captureCases`), so the
+ * regression top-up cannot add one. A replay still regresses against every
+ * pool case except its OWN targets (`replay.ts` `selectReplayCases`), so other
+ * undecided candidates' targets count as its regression cases; it fails closed
+ * as `incomplete` rather than passing on nothing (rule (a)) only when no such
+ * case exists. The `ethos nightly` notice says the same (`nightly-loop`
+ * `casePoolOverflowNotice`).
+ */
 export async function enforceCasePoolCap(
   storage: Storage,
   dataDir: string,
   personalityId: string,
   cap: number = CASE_POOL_CAP,
-): Promise<string[]> {
+): Promise<CasePoolTrim> {
+  const pinned = await pinnedCaseIds(storage, dataDir, personalityId);
+  return trimPool(storage, dataDir, personalityId, cap, pinned);
+}
+
+async function trimPool(
+  storage: Storage,
+  dataDir: string,
+  personalityId: string,
+  cap: number,
+  pinned: ReadonlySet<string>,
+): Promise<CasePoolTrim> {
   const cases = await listCases(storage, dataDir, personalityId);
-  if (cases.length <= cap) return [];
-  const evicted = cases.slice(0, cases.length - cap);
+  const pinnedCount = cases.filter((c) => pinned.has(c.id)).length;
+  const excess = Math.max(0, cases.length - cap);
+  const evicted = cases.filter((c) => !pinned.has(c.id)).slice(0, excess);
   for (const c of evicted) await storage.remove(casePath(dataDir, personalityId, c.id));
-  return evicted.map((c) => c.id);
+  return {
+    evicted: evicted.map((c) => c.id),
+    pinned: pinnedCount,
+    overflow: Math.max(0, cases.length - evicted.length - cap),
+  };
 }
 
 export interface CaptureCasesOptions {
@@ -318,17 +410,41 @@ export interface CaptureCasesResult {
   /** Cases already on disk that this pass left untouched. */
   skipped: number;
   evicted: string[];
+  /** Cases left in the pool that are pinned by a non-terminal candidate. */
+  pinned: number;
+  /** How far the pool sits above `cap` afterwards (`CasePoolTrim.overflow`). */
+  overflow: number;
 }
 
 /**
  * One freeze pass for one personality: at most `limit` new cases, strongest
- * source first, then the pool trimmed back to `cap`.
+ * source first, then the pool trimmed back to `cap` without evicting a pinned
+ * target (`enforceCasePoolCap`).
+ *
+ * The pass also freezes no more than the pool has room for once pinned cases
+ * are counted: a case frozen past that room would be the newest unpinned case
+ * and the same trim would have to evict it — or, with pinned cases already at
+ * or over the cap, every new case would be. So an overflowing pool freezes
+ * nothing, and `overflow` on the result says why.
  */
 export async function captureCases(opts: CaptureCasesOptions): Promise<CaptureCasesResult> {
   const { storage, dataDir, personalityId } = opts;
   const limit = opts.limit ?? CASE_FREEZE_BATCH;
   const frozenAt = new Date((opts.now ?? Date.now)()).toISOString();
-  const result: CaptureCasesResult = { frozen: [], skipped: 0, evicted: [] };
+  const cap = opts.cap ?? CASE_POOL_CAP;
+  const result: CaptureCasesResult = {
+    frozen: [],
+    skipped: 0,
+    evicted: [],
+    pinned: 0,
+    overflow: 0,
+  };
+  // Read once for the pass: the room below and the trim after use the same set.
+  const pinned = await pinnedCaseIds(storage, dataDir, personalityId);
+  const pinnedInPool = (await listCases(storage, dataDir, personalityId)).filter((c) =>
+    pinned.has(c.id),
+  ).length;
+  const room = Math.min(limit, Math.max(0, cap - pinnedInPool));
 
   const candidates: LearningCase[] = [];
   for (const task of (await opts.kanbanTasks?.()) ?? []) {
@@ -345,12 +461,12 @@ export async function captureCases(opts: CaptureCasesOptions): Promise<CaptureCa
   }
 
   for (const c of candidates) {
-    if (result.frozen.length >= limit) break;
+    if (result.frozen.length >= room) break;
     const outcome = await freezeCase(storage, dataDir, c);
     if (outcome === 'frozen') result.frozen.push(c.id);
     else result.skipped += 1;
   }
 
-  result.evicted = await enforceCasePoolCap(storage, dataDir, personalityId, opts.cap);
-  return result;
+  const trim = await trimPool(storage, dataDir, personalityId, cap, pinned);
+  return { ...result, ...trim };
 }

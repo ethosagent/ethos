@@ -60,6 +60,7 @@ import {
   createExportApprovalGate,
   createMcpExportAuditSink,
   exportEntryName,
+  exportLauncher,
   exportServeGate,
   formatExportError,
   formatExportSummary,
@@ -414,7 +415,8 @@ async function runInstall(argv: string[]): Promise<void> {
     return;
   }
 
-  const scriptPath = process.argv[1] ?? 'ethos';
+  const launcher = exportLauncher();
+  const scriptPath = launcher.scriptPath;
   const install = (entry: McpEntry): void => {
     const configPath = adapter.configPath();
     const existing = adapter.readConfig(configPath);
@@ -427,7 +429,7 @@ async function runInstall(argv: string[]): Promise<void> {
   };
 
   if (personalityId === undefined) {
-    install({ command: process.execPath, args: [scriptPath, 'mcp', 'serve'] });
+    install({ command: launcher.command, args: [scriptPath, 'mcp', 'serve'] });
     console.log(`✓ Installed Ethos MCP server into ${adapter.displayName}`);
     return;
   }
@@ -499,7 +501,7 @@ async function installPersonalityExport(opts: {
 
     opts.install(
       buildExportEntry({
-        command: process.execPath,
+        command: exportLauncher().command,
         scriptPath,
         personalityId,
         ...(secret ? { secret } : {}),

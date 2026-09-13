@@ -4,7 +4,7 @@ description: "Tool, ToolResult, ToolContext, ToolResultReducer, and ToolResultRe
 kind: reference
 audience: developer
 slug: tool-interface
-updated: 2026-05-20
+updated: 2026-09-13
 ---
 
 The [tool](../../getting-started/glossary.md#tool) contract: what a tool must provide, how its results are shaped, and the reducer pipeline that trims output before it enters the context window.
@@ -111,9 +111,15 @@ export interface ToolContext {
   platform: string;
   workingDir: string;
   agentId?: string;
+  rootSessionKey?: string;
+  jobId?: string;
+  origin?: string;
+  a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean };
+  scriptTools?: import('@ethosagent/types').ScriptToolsApi;
+  toolCallId?: string;
   personalityId?: string;
-  memoryScope?: 'global' | 'per-personality';
   memoryScopeId?: string;
+  userScopeId?: string;
   teamId?: string;
   currentTurn: number;
   messageCount: number;
@@ -134,8 +140,13 @@ export interface ToolContext {
   scopedProcess?: import('@ethosagent/types').ScopedProcess;
   attachments?: import('@ethosagent/types').ScopedAttachments;
   dryRun?: boolean;
+  getContext?: <T>(key: string) => T | undefined;
+  setContext?: <T>(key: string, value: T) => void;
+  llm?: import('@ethosagent/types').SimpleCompletion;
 }
 ```
+
+Field order and types match [`packages/types/src/tool.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/tool.ts). Doc comments are omitted, and the source's relative `import('./storage')`-style paths are written as the `@ethosagent/types` re-exports.
 
 ### Members {#tool-context-members}
 
@@ -146,9 +157,15 @@ export interface ToolContext {
 | `platform` | `string` | Surface the turn is running on (`cli`, `telegram`, `discord`, ...). |
 | `workingDir` | `string` | Process cwd at turn start. Anchor relative paths against this. |
 | `agentId` | `string \| undefined` | Stable agent identity (multi-agent / [mesh](../../getting-started/glossary.md#mesh) deployments). |
+| `rootSessionKey` | `string \| undefined` | Root session key for background-job scoping. Set by the background executor on a detached child so nested spawns inherit the same root. Absent on ordinary turns; background tools fall back to `sessionKey`. |
+| `jobId` | `string \| undefined` | The background job id, stamped by `BackgroundExecutor.runOne`. Always `undefined` on a foreground turn — there is no fallback. `clarify` keys its question lane on `jobId ?? sessionId`. |
+| `origin` | `string \| undefined` | Where the turn came from, as `platform:chatId`, on channel turns. Unset otherwise. `goal_create` stamps it onto `Goal.origin`. |
+| `a2aDelegation` | object \| undefined | Set by the A2A runner when the turn services an inbound A2A task. The outbound A2A tool signs an onward call at `depth + 1` and calls `reserveOutbound()` against the per-trace fan-out budget. Absent on normal turns. |
+| `scriptTools` | `ScriptToolsApi \| undefined` | Set per turn when a `ScriptToolBridge` is wired. `run_code` threads it so an in-script `ethos.call(name, args)` goes through the same enforcement as a model-issued call. Holds live callbacks, so it never travels in the serializable `ToolExecuteRequest`. |
+| `toolCallId` | `string \| undefined` | This call's own id, copied from `ToolExecuteRequest.toolCallId`. `run_code` passes it as `parentToolCallId` to namespace inner calls. Hand-built contexts may omit it; tools must tolerate absence. |
 | `personalityId` | `string \| undefined` | Active [personality](../../getting-started/glossary.md#personality). Thread through to memory and storage. |
-| `memoryScope` | `'global' \| 'per-personality' \| undefined` | Resolved [memory scope](../../getting-started/glossary.md#memory-scope) for this turn. |
-| `memoryScopeId` | `string \| undefined` | Opaque scope id resolved by AgentLoop. When present, memory tools use it directly instead of deriving `personality:<id>` from `personalityId` and `memoryScope`. |
+| `memoryScopeId` | `string \| undefined` | The turn's [memory scope](../../getting-started/glossary.md#memory-scope), always `personality:<personalityId>` (`memScopeId` in `packages/core/src/agent-loop/stages/turn-setup.ts`). Memory tools pass it to the provider unchanged. AgentLoop sets it on every call, and the realtime voice host sets the same scope for a call with a personality (`createRealtimeToolHost` in `extensions/tools-voice/src/realtime-host.ts`). A context built outside any personality's conversation — the web tool-test probe, a plugin panel call — has none, and `memory_read` / `memory_write` / `meet_join` then return `not_available` rather than invent a scope (`NO_MEMORY_SCOPE` in `extensions/tools-memory/src/index.ts`). |
+| `userScopeId` | `string \| undefined` | `user:<userId>` when the turn carries a user id — a gateway turn whose sender the identity map resolved. Memory tools use it for `store: 'user'`. Absent under `ethos chat`, where `store: 'user'` reads the personality's own `USER.md`. |
 | `teamId` | `string \| undefined` | Active team id. Set by AgentLoop when the loop runs inside a team (`WiringConfig.teamName`). Team memory tools use this to build the `team:<id>` scope id. Absent when running solo. |
 | `currentTurn` | `number` | 1-indexed [turn](../../getting-started/glossary.md#turn) counter for the session. |
 | `messageCount` | `number` | Total messages in the session so far. |
@@ -165,6 +182,9 @@ export interface ToolContext {
 | `scopedProcess` | `ScopedProcess \| undefined` | Scoped process execution capability. See [tool-capabilities](./tool-capabilities.md). |
 | `attachments` | `ScopedAttachments \| undefined` | Attachment handling capability. See [tool-capabilities](./tool-capabilities.md). |
 | `dryRun` | `boolean \| undefined` | When true, the tool should return synthetic results without performing side effects. |
+| `getContext` | `(<T>(key: string) => T \| undefined) \| undefined` | Reads a value from the run's shared context store (`ContextStore`, `packages/core/src/context-store.ts`). Absent where the context belongs to no run, such as the web tool-test probe. |
+| `setContext` | `(<T>(key: string, value: T) => void) \| undefined` | Writes a value into the same store, visible to later tool calls in the run. Absent under the same conditions as `getContext`. |
+| `llm` | `SimpleCompletion \| undefined` | A one-shot completion client (`packages/types/src/plugin-llm.ts`). AgentLoop sets it on the turn's effective model (`SimpleCompletionImpl` in `packages/core/src/agent-loop/stages/tool-processing.ts`). Absent on contexts built outside a turn; a tool must tolerate that. |
 
 ### Notes {#tool-context-notes}
 

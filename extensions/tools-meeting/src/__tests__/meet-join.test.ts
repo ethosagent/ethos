@@ -3,6 +3,7 @@ import type {
   MeetingJoinOptions,
   RawCaptionFragment,
 } from '@ethosagent/platform-meeting';
+import { NO_MEMORY_SCOPE } from '@ethosagent/tools-memory';
 import type {
   MemoryContext,
   MemoryProvider,
@@ -166,5 +167,23 @@ describe('meet_join tool — join flow', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toContain('Saved transcript to meeting-');
+  });
+});
+
+describe('meet_join tool — memory scope', () => {
+  it('returns NO_MEMORY_SCOPE without joining or writing when the call has no memory scope', async () => {
+    const memory = new RecordingMemory();
+    const meeting = new FakeMeetingClient(() => {});
+    const tool = meetJoinTool(meeting, memory);
+    const { memoryScopeId: _dropped, ...unscoped } = ctxWith(new AbortController().signal);
+
+    const result = await tool.execute(
+      { meeting_url: 'https://meet.google.com/abc-defg-hij' },
+      unscoped as ToolContext,
+    );
+
+    expect(result).toEqual(NO_MEMORY_SCOPE);
+    expect(meeting.joined).toHaveLength(0);
+    expect(memory.synced).toHaveLength(0);
   });
 });

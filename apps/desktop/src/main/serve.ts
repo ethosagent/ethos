@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readConfig, resolveLearningReplay } from '@ethosagent/config';
+import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import type { SecretsResolver, Storage } from '@ethosagent/types';
@@ -128,6 +129,34 @@ export function desktopLearningReplay(opts: {
         settings,
         actor: 'web',
       })(candidateId),
+  };
+}
+
+/**
+ * The `readObservabilityEvents` option `createWebApi` takes — the MCP export
+ * section's Recent denials (M-T9). `ethos mcp serve --personality` records its
+ * `mcp.export.*` events into `observability.db`; `ethos serve` reads them from
+ * its process-wide store (`apps/ethos/src/commands/serve.ts`), and the desktop
+ * reads the same file under its data dir.
+ *
+ * Opened per read and closed again: the desktop records nothing into this
+ * store, so a handle held open would only be one more resource for
+ * `shutdownDesktopRuntime` to release. A missing file reads as no events,
+ * because the store's constructor would otherwise CREATE an empty database on
+ * a machine that never exported a personality.
+ */
+export function desktopReadObservabilityEvents(
+  dataDir: string,
+): NonNullable<Parameters<typeof createWebApi>[0]['readObservabilityEvents']> {
+  const dbPath = join(dataDir, 'observability.db');
+  return (filter) => {
+    if (!existsSync(dbPath)) return [];
+    const store = new SQLiteObservabilityStore(dbPath);
+    try {
+      return store.getEvents(filter);
+    } finally {
+      store.close();
+    }
   };
 }
 
@@ -381,6 +410,18 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
       dataDir,
       personalities,
     }),
+    // M-T9 — the MCP export section's Recent denials, from the file
+    // `ethos mcp serve --personality` records into.
+    readObservabilityEvents: desktopReadObservabilityEvents(dataDir),
+    // `mcpExportDesktopEntry` is deliberately NOT passed, so the section shows
+    // no Claude Desktop entry here. The entry names the program Claude Desktop
+    // launches: `ethos serve` builds it from its own `process.execPath` and CLI
+    // script (`exportLauncher` + `claudeDesktopExportEntry`,
+    // `apps/ethos/src/commands/mcp-export.ts`, not exported by `@ethosagent/cli`).
+    // In this process those are the Electron binary and the desktop's main
+    // bundle, neither of which has an `mcp serve` command, and the packaged app
+    // ships no CLI script to name instead (`electron-builder.yml`). An entry
+    // that launches the wrong program is worse than none.
     toolRegistry,
     // F1 — the desktop runs the in-process backend with Docker disabled, so the
     // character sheet must render the honest local (un-sandboxed) posture rather

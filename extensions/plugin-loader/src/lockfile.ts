@@ -9,8 +9,9 @@
 //
 //   1. This file validates every field before an entry is handed to any caller
 //      (`validateLockEntry`), and
-//   2. `installFromLockEntry` invokes npm through `execFileSync` with an argv
-//      array — no shell, so there is nothing to quote or escape.
+//   2. `installFromLockEntry` invokes npm through `execFile` with an argv array
+//      (`execNpm`, or the injected `runNpm`, in `tarball-pin.ts`) — no shell,
+//      so there is nothing to quote or escape.
 //
 // Validation lives HERE rather than at the use site because `readLockfile` is
 // exported and has callers outside this package (`ethos plugin install` does a
@@ -32,7 +33,18 @@ export interface PluginLockEntry {
   package: string;
   version: string;
   registry: string;
+  /**
+   * With `integrityOf: 'tarball'`: npm's SRI for the published `package@version`
+   * tarball (`sha512-…`), the value `installPinnedTarball` (`tarball-pin.ts`)
+   * checks before any of the package's code lands on disk.
+   *
+   * WITHOUT it the entry is legacy: `integrity` is a digest of the installed
+   * `package.json`, which pins none of the package's code. Both are `sha512-`
+   * strings of the same length, so the marker is the only way to tell them
+   * apart; a legacy entry installs unverified, with a warning (FU-1).
+   */
   integrity: string;
+  integrityOf?: 'tarball';
 }
 
 export type PluginLockfile = Record<string, PluginLockEntry>;
@@ -124,7 +136,13 @@ export function validateLockEntry(id: unknown, raw: unknown): LockEntryValidatio
     return { ok: false, reason: 'entry is not an object' };
   }
 
-  const { package: pkg, version, registry, integrity } = raw as Record<string, unknown>;
+  const {
+    package: pkg,
+    version,
+    registry,
+    integrity,
+    integrityOf,
+  } = raw as Record<string, unknown>;
 
   if (typeof pkg !== 'string' || !isValidNpmPackageName(pkg)) {
     return { ok: false, reason: 'package is not a valid npm package name' };
@@ -141,8 +159,22 @@ export function validateLockEntry(id: unknown, raw: unknown): LockEntryValidatio
   if (typeof integrity !== 'string' || !INTEGRITY_RE.test(integrity)) {
     return { ok: false, reason: 'integrity is not a sha256/384/512 digest' };
   }
+  if (integrityOf === undefined) {
+    return { ok: true, entry: { package: pkg, version, registry, integrity } };
+  }
+  if (integrityOf !== 'tarball') {
+    return { ok: false, reason: 'integrityOf is not "tarball"' };
+  }
+  // `computeIntegrity` is sha512-only, so a tarball pin in any other algorithm
+  // could never match. Refused here rather than as a confusing mismatch later.
+  if (!integrity.startsWith('sha512-')) {
+    return { ok: false, reason: 'a tarball integrity must be a sha512 digest' };
+  }
 
-  return { ok: true, entry: { package: pkg, version, registry, integrity } };
+  return {
+    ok: true,
+    entry: { package: pkg, version, registry, integrity, integrityOf: 'tarball' },
+  };
 }
 
 export interface ReadLockfileOptions {

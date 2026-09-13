@@ -40,8 +40,8 @@ describe('parseCliOverrideFlags', () => {
   });
 
   it('extracts --personality from argv', () => {
-    const flags = parseCliOverrideFlags(['chat', '--personality', 'brand-guide']);
-    expect(flags.personality).toBe('brand-guide');
+    const flags = parseCliOverrideFlags(['chat', '--personality', 'writer']);
+    expect(flags.personality).toBe('writer');
   });
 
   it('extracts --toolsets from argv (comma-separated)', () => {
@@ -262,7 +262,7 @@ describe('applyCliOverrides', () => {
 
     async function seedBrandGuide(): Promise<InMemoryStorage> {
       const storage = new InMemoryStorage();
-      const dir = `${STATE_DIR}/personalities/brand-guide`;
+      const dir = `${STATE_DIR}/personalities/writer`;
       await storage.mkdir(dir);
       await storage.write(`${dir}/config.yaml`, 'name: Brand Guide\ndescription: Brand voice.\n');
       await storage.write(`${dir}/SOUL.md`, '# Brand Guide\n\nI keep the brand consistent.\n');
@@ -272,25 +272,25 @@ describe('applyCliOverrides', () => {
 
     it('reaches the personality resolveActiveLoop reads', async () => {
       const storage = await seedBrandGuide();
-      const flags = parseCliOverrideFlags(['chat', '--personality', 'brand-guide']);
+      const flags = parseCliOverrideFlags(['chat', '--personality', 'writer']);
       const result = await applyCliOverrides({ ...BASE_CONFIG }, flags, storage);
 
-      expect(result.personality).toBe('brand-guide');
+      expect(result.personality).toBe('writer');
       // Mirrors resolveActiveLoop() in apps/ethos/src/wiring.ts, which reads
       // activeContext.name first — setting only `personality` would be ignored
       // whenever a context is set.
-      expect(result.activeContext?.name ?? result.personality).toBe('brand-guide');
+      expect(result.activeContext?.name ?? result.personality).toBe('writer');
       expect(BASE_CONFIG.personality).toBe('researcher');
     });
 
     it('overrides an active team context for this invocation', async () => {
       const storage = await seedBrandGuide();
       const result = await applyCliOverrides(
-        { ...BASE_CONFIG, activeContext: { type: 'team', name: 'marketing' } },
-        { personality: 'brand-guide' },
+        { ...BASE_CONFIG, activeContext: { type: 'team', name: 'example-team' } },
+        { personality: 'writer' },
         storage,
       );
-      expect(result.activeContext).toEqual({ type: 'personality', name: 'brand-guide' });
+      expect(result.activeContext).toEqual({ type: 'personality', name: 'writer' });
     });
 
     it('throws EthosError(PERSONALITY_NOT_FOUND) naming an unknown id', async () => {

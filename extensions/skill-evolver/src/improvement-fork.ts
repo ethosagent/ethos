@@ -39,7 +39,6 @@ import { createSkillProposeTool, createSkillReadTool } from './tools';
 
 export interface ImprovementRuntime {
   llm: LLMProvider;
-  model: string;
   memoryProvider: MemoryProvider;
   /** Parent's session store — used to read turn messages for context. */
   sessionStore: SessionStore;
@@ -155,6 +154,7 @@ export class ImprovementFork {
         target: () => ({
           personalityId: personality.id,
           scope: personality.skill_evolution?.scope,
+          evolveExisting: personality.skill_evolution?.evolve_existing,
         }),
         targetCaseIds: async () => (await this.opts.targetCaseIds?.(payload, personality.id)) ?? [],
         // The fork's own session is in-memory; the evidence is the parent turn.
@@ -193,10 +193,13 @@ export class ImprovementFork {
       safety: this.opts.runtime.safety,
     });
 
-    // 5. Run the fork — single turn, drain all events.
+    // 5. Run the fork — single turn, drain all events. `skill_evolution.model`
+    //    pins the fork's LLM calls; unset = the provider's own model.
+    const model = personality.skill_evolution?.model;
     try {
       for await (const _event of forkLoop.run(userPrompt, {
         sessionKey: `improvement-fork-${Date.now()}`,
+        ...(model ? { modelOverride: model } : {}),
       })) {
         // drain — no streaming
       }

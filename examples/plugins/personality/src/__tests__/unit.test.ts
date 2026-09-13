@@ -69,7 +69,8 @@ describe('strategist personality plugin', () => {
     const p = registries.personalities.get('strategist');
     expect(p).toBeDefined();
     expect(p?.name).toBe('Strategist');
-    expect(p?.model).toBe('claude-opus-4-7');
+    expect(p?.provider).toBe('anthropic');
+    expect(p?.model).toEqual({ default: 'claude-opus-4-7' });
   });
 
   it('strategist toolset contains web and memory tools', () => {

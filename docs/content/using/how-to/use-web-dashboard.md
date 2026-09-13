@@ -187,15 +187,19 @@ Navigate to `/admin` for operational management. The admin panel has three tabs:
 
 For the full walkthrough, see [Use the admin panel](use-admin-panel.md).
 
-### 12. Review skill proposals
+### 12. Review learned changes
 
-Open the **Skills** page, then the **Evolver** tab. Its count badge shows how many skill candidates wait in the learning inbox. Open the **Approval queue** sub-tab to see them.
+Open **Learning** in the Library section of the sidebar. Its count badge shows how many candidates a replay has measured that wait on you. The page lists every skill and Expression candidate, grouped into **Needs review**, **Waiting for replay**, **Promoted**, and **Rejected & rolled back**.
 
-Click **Approve** to promote a candidate to a live skill. If the candidate has not passed a replay, a prompt asks for a reason first; the reason is recorded in the audit log.
+Select a candidate to see its evidence, diff, replay scorecard and timeline. For an Expression, the diff shows the Core greyed and locked above the change.
 
-Click **Reject** to mark a candidate rejected. No live skill file changes, and the candidate stays visible with `ethos learning list --all`.
+Click **Approve** to promote a candidate that passed its replay. On any other verdict the button reads **Approve anyway…** and asks for a reason first; the reason is recorded in the audit log.
 
-Expression candidates are applied from a personality's **Living Soul** section. No dashboard page lists every candidate together yet; run `ethos learning list` for that.
+Click **Reject…** to mark a candidate rejected. No live file changes, and the candidate stays visible under **Rejected & rolled back**.
+
+Click **Run replay** to measure a waiting candidate now. On a promoted candidate, **Rollback** undoes the promotion. When rollback is not allowed, the button is disabled and the reason is shown beside it.
+
+The Skills page's **Approval queue** tab links to this page, filtered to skills. A personality's **Living Soul** section links to that personality's waiting candidates.
 
 For the full workflow, see [Manage skill evolution](manage-skill-evolution.md).
 

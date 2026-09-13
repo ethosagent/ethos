@@ -33,7 +33,7 @@ describe('OutboxService', () => {
     teamCalls.length = 0;
     teamMembers = async (teamId: string) => {
       teamCalls.push(teamId);
-      return ['cmo', 'scout'];
+      return ['coordinator', 'scout'];
     };
     service = new OutboxService({
       dataDir: dir,
@@ -50,7 +50,7 @@ describe('OutboxService', () => {
 
   function propose(overrides: Partial<Parameters<OutboxStore['propose']>[0]> = {}) {
     return store.propose({
-      personalityId: 'cmo',
+      personalityId: 'coordinator',
       botKey: 'bot-a',
       platform: 'telegram',
       chatId: '-100',
@@ -214,36 +214,36 @@ describe('OutboxService', () => {
   // -- listing --------------------------------------------------------------
 
   it('list filters by personality', async () => {
-    propose({ personalityId: 'cmo', text: 'one' });
+    propose({ personalityId: 'coordinator', text: 'one' });
     propose({ personalityId: 'scout', text: 'two' });
     propose({ personalityId: 'unrelated', text: 'three' });
 
     const all = await service.list();
     expect(all.items).toHaveLength(3);
 
-    const cmo = await service.list({ personalityId: 'cmo' });
-    expect(cmo.items.map((i) => i.personalityId)).toEqual(['cmo']);
-    expect(cmo.items[0]?.text).toBe('one');
+    const coordinator = await service.list({ personalityId: 'coordinator' });
+    expect(coordinator.items.map((i) => i.personalityId)).toEqual(['coordinator']);
+    expect(coordinator.items[0]?.text).toBe('one');
   });
 
   it('list filters by team, expanding it to the team roster', async () => {
-    propose({ personalityId: 'cmo', text: 'one' });
+    propose({ personalityId: 'coordinator', text: 'one' });
     propose({ personalityId: 'scout', text: 'two' });
     propose({ personalityId: 'unrelated', text: 'three' });
 
-    const team = await service.list({ teamId: 'marketing' });
-    expect(teamCalls).toEqual(['marketing']);
-    expect(team.items.map((i) => i.personalityId).sort()).toEqual(['cmo', 'scout']);
+    const team = await service.list({ teamId: 'alpha' });
+    expect(teamCalls).toEqual(['alpha']);
+    expect(team.items.map((i) => i.personalityId).sort()).toEqual(['coordinator', 'scout']);
   });
 
   it('list given both filters takes the intersection', async () => {
-    propose({ personalityId: 'cmo', text: 'one' });
+    propose({ personalityId: 'coordinator', text: 'one' });
     propose({ personalityId: 'unrelated', text: 'three' });
 
-    const inTeam = await service.list({ teamId: 'marketing', personalityId: 'cmo' });
-    expect(inTeam.items.map((i) => i.personalityId)).toEqual(['cmo']);
+    const inTeam = await service.list({ teamId: 'alpha', personalityId: 'coordinator' });
+    expect(inTeam.items.map((i) => i.personalityId)).toEqual(['coordinator']);
 
-    const notInTeam = await service.list({ teamId: 'marketing', personalityId: 'unrelated' });
+    const notInTeam = await service.list({ teamId: 'alpha', personalityId: 'unrelated' });
     expect(notInTeam.items).toEqual([]);
   });
 
@@ -260,7 +260,7 @@ describe('OutboxService', () => {
     const awaiting = await service.list({ states: ['awaiting_approval'] });
     expect(awaiting.items.map((i) => i.text)).toEqual(['two']);
 
-    const capped = await service.list({ teamId: 'marketing', limit: 1 });
+    const capped = await service.list({ teamId: 'alpha', limit: 1 });
     expect(capped.items).toHaveLength(1);
   });
 

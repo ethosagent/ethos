@@ -36,6 +36,11 @@ extensions/platform-callcapture/native/vendor/
 # (standalone .js files with no .ts counterpart are still tracked)
 src/**/*.js
 src/**/*.js.map
+# The root-anchored patterns above never matched these nested src/ dirs, so stale mirrors got committed
+apps/tui/src/**/*.js
+apps/tui/src/**/*.js.map
+packages/ui-components/src/**/*.js
+packages/ui-components/src/**/*.js.map
 .mcp.json
 
 # Adapter state accidentally written to the process CWD. The Telegram, Discord

@@ -4,7 +4,7 @@ description: "Three personalities ship by default — researcher, engineer, revi
 kind: explanation
 audience: user
 slug: built-in-personalities
-updated: 2026-05-21
+updated: 2026-09-13
 ---
 
 ## Context
@@ -17,13 +17,13 @@ You did not have to pick three. A super-agent that does everything was the easie
 
 ### The three roles at a glance
 
-| Personality | What it is for | Toolset shape | Model | Memory scope |
+| Personality | What it is for | Toolset shape | Model | Memory |
 |---|---|---|---|---|
-| `researcher` | Gathers and summarises with citations | Web + read + memory + session_search | `claude-opus-4-7` | `global` |
-| `engineer` | Writes, edits, runs, tests code | Terminal + read/write/patch + execute + lint + todos | `claude-sonnet-4-6` | `global` |
-| `reviewer` | Critiques code and designs | Read + search_files + session_search (no write) | `claude-sonnet-4-6` | `per-personality` |
+| `researcher` | Gathers and summarises with citations | Web + read + memory + session_search | `model.default: claude-opus-4-7`, applied on Anthropic | Its own (`personality:researcher`) |
+| `engineer` | Writes, edits, runs, tests code | Terminal + read/write/patch + execute + lint + todos | `model.default: claude-sonnet-4-6`, applied on Anthropic | Its own (`personality:engineer`) |
+| `reviewer` | Critiques code and designs | Read + search_files + session_search (no write) | Your deployment model | Its own (`personality:reviewer`) |
 
-Tool counts are illustrative; the actual lists are in each personality's `toolset.yaml` under `extensions/personalities/data/<id>/`. Model assignments are defaults — override per-personality via `~/.ethos/config.yaml`.
+Tool counts are illustrative; the actual lists are in each personality's `toolset.yaml` under `extensions/personalities/data/<id>/`. `researcher` and `engineer` declare `provider: anthropic` and `model.<tier>` keys, which apply only while Anthropic is the active provider; on any other provider they run on your configured model. `reviewer` writes a plain `model: claude-sonnet-4-6`, which the loader parses and turn setup never applies (`resolveModelWithTier`, `packages/core/src/agent-loop/turn-context.ts`). Pin any personality's model with `modelRouting.<id>` in `~/.ethos/config.yaml`.
 
 Switch with `/personality <id>` in chat. The change takes effect on the next turn; the conversation thread does not fork.
 
@@ -31,7 +31,7 @@ Switch with `/personality <id>` in chat. The change takes effect on the next tur
 
 Notice the pattern across the table. Every personality answers four questions identically: what is it for, what can it touch, where does its memory live, which model handles its turns. The three entries differ in their answers; the framework treats them uniformly. That symmetry is the load-bearing claim — every role is a structural component, not a special case.
 
-The split between `global` and `per-personality` scope is not arbitrary. The two roles that compose into shared work (`researcher` → `engineer`) share `MEMORY.md`. The role whose job is to keep its own counsel (`reviewer` critiquing without contamination) is isolated. The scope reads off the role, not vice versa.
+Memory is the one answer that does not vary. Every personality's memory is its own: turn setup fixes the scope at `personality:<id>` (`memScopeId` in `packages/core/src/agent-loop/stages/turn-setup.ts`), and there is no setting that widens it. The researcher's notes do not reach the engineer's prompt, and the reviewer's do not reach either. Work that has to cross roles travels in the conversation thread, which a `/personality` switch keeps, or in [team memory](../how-to/use-team-memory.md) (`team_memory_*`), which `researcher` and `engineer` list in their toolsets.
 
 ### researcher
 
@@ -39,9 +39,9 @@ A methodical research agent that prioritises primary sources, flags uncertainty,
 
 The toolset is web-shaped: `web_search`, `web_extract`, `web_crawl`, plus `read_file`, `search_files`, the memory pair, and `session_search`. No terminal. No write tools. The agent literally cannot execute code or edit a file — that is a different role.
 
-`memoryScope: global` is deliberate. Research findings exist to be consumed by the engineer's writing turn. Isolating the researcher's notes would defeat its job.
+Its `MEMORY.md` is its own. Research findings reach the engineer's writing turn through the thread after a `/personality` switch, or through team memory when both run in a team.
 
-Opus by default because depth matters more than throughput here. Long reads, careful summarisation, and source provenance benefit from a stronger reasoning model.
+On Anthropic it runs Opus by default because depth matters more than throughput here. Long reads, careful summarisation, and source provenance benefit from a stronger reasoning model.
 
 ### engineer
 
@@ -49,9 +49,9 @@ A terse, code-first agent that writes working code immediately and explains only
 
 The toolset is the widest of the three: `terminal`, the file-write trio (`read_file`, `write_file`, `patch_file`), `search_files`, web reads, code execution, tests, lint, and the todo list. This is the role you reach for when the next step is to *change something*.
 
-`context_layering.mode: progressive` is set in `config.yaml` — sub-AGENTS.md files are discovered as the agent navigates the workspace, so deeper conventions surface as work moves into them. `skill_evolution.enabled: true` flags the engineer's turns for the skill evolver to analyse, so repeated patterns can be promoted into reusable skills.
+`context_layering.mode: progressive` is set in `config.yaml` — sub-AGENTS.md files are discovered as the agent navigates the workspace, so deeper conventions surface as work moves into them. `skill_evolution.enabled: true` lets the skill evolver draft a skill from an engineer turn with at least five successful tool calls (`skill_evolution.min_tool_calls: 5`). A draft is a candidate, not a skill: it waits in the [learning inbox](learning-inbox.md) and goes live only after a replay passes and the promotion rules allow it. The engineer sets no `skill_evolution.scope`, so its drafts are shared skills — visible to every capability-matched personality — and a shared skill never auto-promotes: it always needs a human approval (`autoPromotionDecision` in `extensions/learning-inbox/src/auto-promotion.ts`).
 
-Sonnet by default because engineer turns iterate. Fast feedback dominates depth here — when you want depth, switch to researcher first, then come back.
+On Anthropic it runs Sonnet by default because engineer turns iterate. Fast feedback dominates depth here — when you want depth, switch to researcher first, then come back.
 
 ### reviewer
 
@@ -59,9 +59,9 @@ A critical, evidence-based reviewer that raises concerns directly and always exp
 
 The restriction is the point. A reviewer that can edit the thing under review is not a reviewer — it is an engineer with one more excuse. The toolset boundary makes "reviewer cannot modify files" a property of the registry, not a request in the prompt.
 
-`memoryScope: per-personality`. The reviewer's running notes about what is wrong with the codebase do not bleed into the engineer's memory. A reviewer absorbs the opinions it reviews if you let it; this scope says you do not.
+Its memory is its own, as every personality's is. The reviewer's running notes about what is wrong with the codebase stay in its own `MEMORY.md` and do not bleed into the engineer's. A reviewer absorbs the opinions it reviews if you let it; a fixed per-personality scope says you do not.
 
-Sonnet by default because review is a per-fragment activity — a function, a diff, a design doc — and speed compounds across many small judgements.
+It names Sonnet with a plain `model: claude-sonnet-4-6`, which is never applied, so the reviewer runs on your deployment model. Review is a per-fragment activity — a function, a diff, a design doc — and speed compounds across many small judgements, so pin a fast model with `modelRouting.reviewer` if yours is a slow one.
 
 ### System personalities
 
@@ -81,7 +81,7 @@ A point that catches people: the conversation thread does *not* fork on a person
 
 ### What's shared across all built-ins
 
-Every personality reads from the same `~/.ethos/USER.md` regardless of `memoryScope`. That file describes the person, not the agent, and stays shared on purpose. Switching from researcher to engineer does not change who you are; only what role is currently helping you.
+`USER.md` is not shared by default. Under `ethos chat`, each personality reads its own copy at `~/.ethos/personalities/<id>/USER.md`, so what the researcher learned about you is not in the engineer's prompt. A gateway turn whose sender the identity map resolves also reads `~/.ethos/users/<userId>/USER.md`, and that per-person profile does follow you across personalities — see [Why are user profiles keyed by userId?](user-profiles.md).
 
 LLM credentials are also person-scoped, not personality-scoped. Personalities pick a model; the keys to call models live in `~/.ethos/config.yaml`. A reviewer that uses Sonnet and a researcher that uses Opus call out from the same machine using the same Anthropic key.
 
@@ -134,7 +134,7 @@ Alternatives considered:
 ## See also
 
 - [Why is personality the unit?](what-is-a-personality.md) — why each personality gets its own directory
-- [Why MEMORY.md and USER.md?](memory-model.md) — what global vs per-personality memory means in practice
+- [Why MEMORY.md and USER.md?](memory-model.md) — where personality memory lives and why it is plain markdown
 - [Personality config reference](../reference/personality-yaml.md) — every field these built-ins use
 - [Create your first personality](../tutorials/first-personality.md) — author your own role from scratch
 - [Slash commands reference](../reference/slash-commands.md) — `/personality` and friends

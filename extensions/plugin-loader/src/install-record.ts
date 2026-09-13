@@ -20,13 +20,8 @@ import {
   type PluginGrantCapabilities,
   type PluginGrantScan,
 } from './grants';
-import {
-  computeIntegrity,
-  DEFAULT_REGISTRY,
-  type PluginLockEntry,
-  readLockfile,
-  writeLockfile,
-} from './lockfile';
+import { DEFAULT_REGISTRY, type PluginLockEntry, readLockfile, writeLockfile } from './lockfile';
+import { fetchTarballIntegrity, type NpmRunner } from './tarball-pin';
 
 /** A grant before consent is taken: everything except when and how. */
 export type PluginGrantDraft = Omit<PluginGrant, 'grantedAt' | 'consent'>;
@@ -95,11 +90,24 @@ export function draftPluginGrant(input: DraftPluginGrantInput): {
 
 export interface PinPluginToPersonalityInput {
   storage: Storage;
-  /** The npm prefix the package was installed under — `<dataDir>/plugins`. */
-  pluginsDir: string;
+  /**
+   * @deprecated Unused since FU-1: the pin is the published tarball's digest,
+   * not a digest of a file under this prefix. Kept only so existing callers
+   * compile; remove once `PluginsService.install` stops passing it.
+   */
+  pluginsDir?: string;
   /** `<dataDir>/personalities/<id>`. */
   personalityDir: string;
   draft: PluginGrantDraft;
+  /**
+   * The SRI of the tarball that was installed — `installPackedTarball`'s
+   * result. Given, nothing is fetched and the pin is exactly the bytes on disk
+   * (`ethos plugin install`). Omitted, the published tarball is packed to
+   * compute it.
+   */
+  integrity?: string;
+  /** Runs `npm pack` when `integrity` is omitted. Defaults to `execNpm`. */
+  runNpm?: NpmRunner;
 }
 
 /**
@@ -108,26 +116,43 @@ export interface PinPluginToPersonalityInput {
  * exists (`updatePersonalityPluginConfig` returns early otherwise). Returns the
  * entry written.
  *
- * `integrity` is `computeIntegrity` of the INSTALLED `package.json`, not of the
- * tarball, and nothing on the install or load path calls `verifyIntegrity`
- * against it. That is a known gap tracked as FU-1 in
- * `plan/phases/trust-before-reach.md`; it is recorded here unchanged.
+ * `integrity` is npm's SRI for the published `draft.package@draft.version`
+ * tarball — `input.integrity` when the caller installed it through
+ * `installPackedTarball`, otherwise fetched (`fetchTarballIntegrity`,
+ * `tarball-pin.ts`) — marked `integrityOf: 'tarball'`;
+ * `PluginLoader.installFromLockEntry` verifies it before installing. Throws —
+ * writing nothing — when it has to fetch and the version is not exact or the
+ * tarball cannot be fetched.
  */
 export async function pinPluginToPersonality(
   input: PinPluginToPersonalityInput,
 ): Promise<PluginLockEntry> {
-  const { storage, pluginsDir, personalityDir, draft } = input;
-  const integrity = await computeIntegrity(
-    join(pluginsDir, 'node_modules', draft.package, 'package.json'),
-  );
-  const entry: PluginLockEntry = {
+  const { storage, personalityDir, draft } = input;
+  const integrity =
+    input.integrity ??
+    (await fetchTarballIntegrity({
+      package: draft.package,
+      version: draft.version,
+      runNpm: input.runNpm,
+    }));
+  const entry = pluginLockEntryFor(draft, integrity);
+  await updatePersonalityPluginConfig(storage, personalityDir, draft.id, entry);
+  return entry;
+}
+
+/**
+ * The `plugins.lock` entry `pinPluginToPersonality` writes for `draft` pinned to
+ * `integrity`. Exported so an undo can recognise that entry
+ * (`undoPluginInstall`, `install-undo.ts`) without assembling a second copy.
+ */
+export function pluginLockEntryFor(draft: PluginGrantDraft, integrity: string): PluginLockEntry {
+  return {
     package: draft.package,
     version: draft.version,
     registry: DEFAULT_REGISTRY,
     integrity,
+    integrityOf: 'tarball',
   };
-  await updatePersonalityPluginConfig(storage, personalityDir, draft.id, entry);
-  return entry;
 }
 
 export async function updatePersonalityPluginConfig(

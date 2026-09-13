@@ -20,6 +20,7 @@
     "@ethosagent/config": "workspace:*",
     "@ethosagent/design-tokens": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",
+    "@ethosagent/observability-sqlite": "workspace:*",
     "@ethosagent/personalities": "workspace:*",
     "@ethosagent/platform-callcapture": "workspace:*",
     "@ethosagent/sdk": "workspace:*",

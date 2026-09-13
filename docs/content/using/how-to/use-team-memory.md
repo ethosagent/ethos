@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: use-team-memory
 time: "8 min"
-updated: 2026-05-17
+updated: 2026-09-13
 ---
 
 ## Task
@@ -19,13 +19,13 @@ A populated `~/.ethos/teams/<name>/memory/` directory with one markdown file per
 ## Prereqs
 
 - A running team. See [Run a team with a shared kanban board](./run-a-team-with-kanban).
-- The team's members include the `team_memory` toolset in their `toolset.yaml`. The built-in `coordinator`, `engineer`, and `researcher` personalities already do.
+- The team's members include the `team_memory` toolset in their `toolset.yaml`. The built-in `engineer` and `researcher` personalities already do.
 
 ## What team memory is
 
 Team memory is a team-scoped key/value store backed by plain markdown files. The wiring layer instantiates a [MemoryProvider](../../getting-started/glossary.md#memory-provider) per running team, rooted at `~/.ethos/teams/<name>/memory/`. Each key is one file (`<key>.md`); each write is one file write. Files survive restarts and are visible to any tool that reads markdown — `cat`, `bat`, your editor.
 
-Team memory is a distinct store from personality memory (`memory_read` / `memory_write`, which touch `MEMORY.md` and `USER.md` in `~/.ethos/`). Personality memory is per-personality state; team memory is the team's shared brain.
+Team memory is a distinct store from personality memory (`memory_read` / `memory_write`, which touch `MEMORY.md` and `USER.md` in `~/.ethos/personalities/<id>/`). Personality memory is per-personality state; team memory is the team's shared brain.
 
 When the supervisor seeds a brand-new team, two empty topics are created: `onboarding.md` and `decisions.md`. The session-start injector lists available topic names in the system prompt so agents know what is on the shelf — content is loaded on demand.
 
@@ -101,9 +101,9 @@ That is the loop: write once, read on demand, append decisions as they land.
 
 | | Team memory | Personality memory |
 |---|---|---|
-| Scope | One team, all members | One personality (or global, per its `memoryScope`) |
+| Scope | One team, all members | One personality — always `personality:<id>`, not configurable |
 | Tools | `team_memory_read` / `_write` / `_search` | `memory_read` / `memory_write` |
-| File location | `~/.ethos/teams/<name>/memory/<key>.md` | `~/.ethos/MEMORY.md` and `~/.ethos/USER.md` (or per-personality dir) |
+| File location | `~/.ethos/teams/<name>/memory/<key>.md` | `~/.ethos/personalities/<id>/MEMORY.md` and `USER.md`; a gateway turn with a resolved sender also reads `~/.ethos/users/<userId>/USER.md` |
 | Shape | One file per topic, arbitrary keys | Two fixed files: `MEMORY.md` and `USER.md` |
 | Use it for | Shared team conventions, architecture decisions, onboarding | Personal context the agent should remember; user identity |
 

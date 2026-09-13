@@ -7,7 +7,7 @@ import { type LearningService, learningRefusalError } from './learning.service';
 // Evolver-tab service. Composes:
 //
 //   • EvolverRepository (web-only) — EvolveConfig file + run-history log
-//   • LearningService — the approval queue, which is now the learning inbox
+//   • LearningService — the learning inbox, which replaced the skills approval queue
 //
 // The actual SkillEvolver.evolve() is invoked by the CLI today
 // (`ethos skills evolve`); this service only owns the data the web tab
@@ -21,7 +21,7 @@ import { type LearningService, learningRefusalError } from './learning.service';
 // override rule as `learning.approve`: `pendingApprove` has no field for a
 // reason, so a candidate whose replay did not pass is refused with
 // `INVALID_INPUT` naming the paths that can carry one — `ethos learning approve
-// <id> --override`, and the Skills page, which approves through
+// <id> --override`, and the web Learning page, which approves through
 // `learning.approve` and prompts for the reason.
 
 export interface EvolverServiceOptions {
@@ -51,15 +51,20 @@ export class EvolverService {
       throw learningRefusalError(
         result,
         result.code === 'override_required'
-          ? 'Approve it with a reason from the Skills page approval queue, or run `ethos learning approve <id> --override "<reason>"`.'
-          : 'Reload the approval queue; `ethos learning show <id>` prints this candidate’s timeline.',
+          ? 'Approve it with a reason on the Learning page, or run `ethos learning approve <id> --override "<reason>"`.'
+          : 'Reopen the Learning page to see where this candidate stands; `ethos learning show <id>` prints its timeline.',
       );
     }
   }
 
   async rejectPending(id: string): Promise<void> {
     const result = await this.opts.learning.reject({ candidateId: id, decidedBy: 'web:evolver' });
-    if (!result.ok) throw learningRefusalError(result, 'Reload the approval queue.');
+    if (!result.ok) {
+      throw learningRefusalError(
+        result,
+        'Reopen the Learning page to see where this candidate stands.',
+      );
+    }
   }
 
   async listHistory(limit: number = 20): Promise<{ runs: EvolverRun[] }> {

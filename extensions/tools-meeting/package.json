@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@ethosagent/platform-meeting": "workspace:*",
+    "@ethosagent/tools-memory": "workspace:*",
     "@ethosagent/types": "workspace:*"
   }
 }

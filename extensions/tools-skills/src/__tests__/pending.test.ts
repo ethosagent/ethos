@@ -102,7 +102,7 @@ describe('skills_pending_view', () => {
 });
 
 describe('skills_pending_approve (L-D13 — approval is human-only)', () => {
-  it('refuses and names both human paths that exist: `ethos learning approve <id>` and the web Skills approval queue', async () => {
+  it('refuses and names both human paths that exist: the web Learning page and `ethos learning approve <id>`', async () => {
     const result = await tool('skills_pending_approve').execute({ id: 'new-1754-abc123' }, ctx);
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -110,10 +110,12 @@ describe('skills_pending_approve (L-D13 — approval is human-only)', () => {
     expect(result.error).toBe(SKILL_APPROVAL_IS_HUMAN_ONLY);
     expect(result.error).toContain('ethos learning approve <id>');
     expect(result.error).toContain('--override "<reason>"');
-    expect(result.error).toContain('Skills page approval queue');
-    // `apps/web/src/pages/Learning.tsx` is not built (L-T9); the model must not
-    // send a user to it.
-    expect(result.error).not.toContain('Learning page');
+    expect(result.error).toContain('Learning page');
+    // The Skills page's Approval queue tab is only a link to Learning now
+    // (`ApprovalQueueLink`, `apps/web/src/pages/Skills.tsx`); it approves
+    // nothing, so the model must not send a user there.
+    expect(result.error).not.toContain('Skills page');
+    expect(result.error).not.toContain('approval queue');
   });
 
   it('promotes nothing, for a queued id, an unknown id, or an unsafe id', async () => {

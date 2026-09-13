@@ -24,6 +24,12 @@ export interface SkillProposeTarget {
   personalityId: string;
   /** The personality's `skill_evolution.scope`, read at submit time. */
   scope: 'personality' | 'shared' | undefined;
+  /**
+   * The personality's `skill_evolution.evolve_existing`, read at submit time.
+   * `false` refuses a `targetFile` rewrite; a new skill is still accepted.
+   * Absent = rewrites allowed.
+   */
+  evolveExisting?: boolean;
 }
 
 export interface SkillProposeToolOptions {
@@ -86,6 +92,15 @@ export function createSkillProposeTool(opts: SkillProposeToolOptions): Tool<Skil
         return {
           ok: false,
           error: 'No personality is bound to this turn, so a proposed skill has no destination.',
+          code: 'not_available',
+        };
+      }
+
+      if (args.targetFile && target.evolveExisting === false) {
+        return {
+          ok: false,
+          error:
+            'This personality does not rewrite existing skills (skill_evolution.evolve_existing: false). Omit targetFile to propose a new skill.',
           code: 'not_available',
         };
       }

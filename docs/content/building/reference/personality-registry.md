@@ -4,7 +4,7 @@ description: "FilePersonalityRegistry — disk-backed personality loader with mt
 kind: reference
 audience: developer
 slug: personality-registry
-updated: 2026-05-22
+updated: 2026-09-13
 ---
 
 `FilePersonalityRegistry` is the disk-backed loader for [personalities](../../getting-started/glossary.md#personality). It walks one or more directories of `<id>/{SOUL.md, config.yaml, toolset.yaml}` triples, parses them into `PersonalityConfig` values, and caches based on file mtimes so `loadFromDirectory` is cheap to call every turn for hot-reload.
@@ -86,10 +86,28 @@ export interface CreatePersonalityInput {
   id: string;
   name: string;
   description?: string;
-  model?: string;
+  model?: string | ModelTierConfig;
   toolset: string[];
   soulMd: string;
-  memoryScope?: 'global' | 'per-personality';
+  provider?: string;
+  capabilities?: string[];
+  mcp_servers?: string[];
+  plugins?: string[];
+  fs_reach?: { read?: string[]; write?: string[]; workdir?: string | string[] };
+  skill_evolution?: {
+    enabled?: boolean;
+    min_tool_calls?: number;
+    cooldown_minutes?: number;
+    model?: string;
+    evolve_existing?: boolean;
+    promotion?: 'review' | 'auto';
+    scope?: 'personality' | 'shared';
+  };
+  dreaming?: DreamingConfig;
+  evolution_approval_mode?: 'auto' | 'user';
+  nightly?: PersonalityConfig['nightly'];
+  voice?: EditableVoiceConfig;
+  safety?: Pick<NonNullable<PersonalityConfig['safety']>, 'network'>;
 }
 ```
 
@@ -99,25 +117,31 @@ export interface CreatePersonalityInput {
 export interface UpdatePersonalityPatch {
   name?: string;
   description?: string;
-  model?: string;
+  model?: string | ModelTierConfig;
   toolset?: string[];
   soulMd?: string;
-  memoryScope?: 'global' | 'per-personality';
   mcp_servers?: string[];
   plugins?: string[];
-  skin?: string | null;
+  capabilities?: string[];
+  provider?: string;
+  fs_reach?: { read?: string[]; write?: string[]; workdir?: string | string[] };
+  dreaming?: Partial<DreamingConfig>;
+  dreamingEnable?: boolean;
+  evolution_approval_mode?: 'auto' | 'user';
+  skill_evolution?: PersonalityConfig['skill_evolution'];
+  safety?: PersonalityConfig['safety'];
+  memory?: PersonalityConfig['memory'];
+  nightly?: PersonalityConfig['nightly'];
+  voice?: EditableVoiceConfig;
+  display?: { avatar_url?: string };
 }
 ```
 
-`skin === undefined` leaves the existing value alone; `skin === null` clears the override; a string sets it.
+Neither shape has a memory scope field: a personality's memory scope is always `personality:<id>`. A `model` given as a tier map is written as `model.<tier>` keys and applies only when `provider` matches the active LLM; a plain string is parsed but never applied (`resolveModelWithTier`). `voice.*` and `display.avatar_url` treat `''` as clear and `undefined` as leave-alone.
 
 ## mtime caching {#mtime-caching}
 
-`loadOne()` fingerprints each personality dir by joining the mtimes of `config.yaml`, `SOUL.md`, and `toolset.yaml`:
-
-```
-<configMtime>|<ethosMtime>|<toolsetMtime>
-```
+`loadOne()` fingerprints each personality dir from the mtimes of six paths: `config.yaml`, `SOUL.md`, `toolset.yaml`, `mcp.yaml`, `tools.yaml` and the `skills/` directory (`fileFingerprint`). The `skills/` entry is the directory's own mtime, so adding or removing a skill file reloads the personality and editing one in place does not.
 
 Cache stored in `fingerprintCache: Map<dir, fingerprint>`. If the recomputed fingerprint matches the cached value, the load is a no-op. Hot-reload at turn-start is therefore cheap when nothing changed.
 

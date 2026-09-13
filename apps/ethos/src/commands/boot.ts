@@ -65,6 +65,7 @@ import { WatcherManager, type WatcherWakeEvent } from '@ethosagent/watchers';
 import { IdempotencyStore, WebTokenRepository } from '@ethosagent/web-api';
 import {
   createLazyProvider,
+  createOutboundPolicyGate,
   createSessionStore,
   IdentityMap,
   initPairingDb,
@@ -389,6 +390,16 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       if (watcherDeliverFn) await watcherDeliverFn(target, text);
     },
     wake: watcherWake,
+    // The approval outbox's delivery-time hold (O-T12): one gate per manager,
+    // in place before the first tick rather than late-bound by whichever loop
+    // is composed last. The policy is looked up on every delivery, after
+    // `reload` brings the registry up to date — a tick is not a turn, so
+    // `personalityDirectory.refresh()` has not run.
+    deliveryGate: createOutboundPolicyGate({
+      lookupPersonality: (id) => personalities.get(id),
+      ownerTarget: (platform) => cfg.channelFilter?.[platform]?.ownerUserId,
+      reload: () => personalities.loadFromDirectory(join(dir, 'personalities')),
+    }),
   });
   const scheduler = new CronScheduler({
     storage,

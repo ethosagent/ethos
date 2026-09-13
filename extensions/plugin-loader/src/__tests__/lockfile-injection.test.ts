@@ -11,13 +11,21 @@
 //     string — asserted on the exact argv, not on "it did not throw".
 //
 // The assertions deliberately look at what was passed to the child-process
-// call, and at BOTH routes (`execFileSync` argv and `execSync` shell string).
-// Two weaker shapes were tried and discarded because they pass against the
-// vulnerable implementation: asserting only that nothing threw (the injected
-// command succeeds silently), and asserting only on `execFileSync` (a shell
+// call, and at EVERY route (`execFile`/`execFileSync` argv and `execSync` shell
+// string). Two weaker shapes were tried and discarded because they pass against
+// the vulnerable implementation: asserting only that nothing threw (the injected
+// command succeeds silently), and asserting only on the argv route (a shell
 // string sink records no argv at all, so every rejection test goes green).
+//
+// Since FU-1 an install is two npm calls — `npm pack` into an os.tmpdir()
+// scratch directory, then `npm install` of that tarball — so the fake `execFile`
+// writes a tarball where `pack` was told to. These entries carry no
+// `integrityOf`, i.e. they are legacy pins and install unverified; the
+// verification itself is pinned in `tarball-pin.test.ts`.
 // ---------------------------------------------------------------------------
 
+import type { ChildProcess } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   DefaultHookRegistry,
@@ -32,11 +40,12 @@ import type { ContextInjector, Logger } from '@ethosagent/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('node:child_process', () => ({
+  execFile: vi.fn(),
   execFileSync: vi.fn(() => Buffer.from('')),
   execSync: vi.fn(() => Buffer.from('')),
 }));
 
-import { execFileSync, execSync } from 'node:child_process';
+import { execFile, execFileSync, execSync } from 'node:child_process';
 import { recordGrant } from '../grants';
 import { PluginLoader } from '../index';
 import { validateLockEntry } from '../lockfile';
@@ -45,6 +54,11 @@ const DATA_DIR = '/data';
 const PLUGINS_DIR = '/data/plugins';
 const PERSONALITY_DIR = '/data/personalities/trader';
 const ID = 'demo-plugin';
+const TARBALL_NAME = 'ethos-plugins-tools-zerodha-1.4.2.tgz';
+const SCRATCH = expect.stringContaining('ethos-plugin-pack-');
+const SCRATCH_TARBALL = expect.stringMatching(
+  new RegExp(`ethos-plugin-pack-[^/\\\\]+[/\\\\]${TARBALL_NAME.replace(/\./g, '\\.')}$`),
+);
 
 const VALID = {
   package: '@ethos-plugins/tools-zerodha',
@@ -111,9 +125,9 @@ async function attemptInstall(lockContent: string, ids: string[] = [ID]): Promis
   const loader = new PluginLoader(makeRegistries(), { storage, dataDir: DATA_DIR, logger });
   await loader.resolveFromLockfile(PERSONALITY_DIR, ids);
 
-  const argvs = vi
-    .mocked(execFileSync)
-    .mock.calls.map((call) => [call[0] as string, ...((call[1] as string[]) ?? [])]);
+  const argvs = [...vi.mocked(execFile).mock.calls, ...vi.mocked(execFileSync).mock.calls].map(
+    (call) => [call[0] as string, ...((call[1] as string[]) ?? [])],
+  );
   const shellCommands = vi.mocked(execSync).mock.calls.map((call) => String(call[0]));
   return {
     warnings,
@@ -131,6 +145,22 @@ function lock(entry: Record<string, unknown>, id = ID): string {
 beforeEach(() => {
   vi.mocked(execFileSync).mockClear();
   vi.mocked(execSync).mockClear();
+  vi.mocked(execFile).mockReset();
+  // A stand-in npm: `pack` leaves a tarball in its --pack-destination, as the
+  // real one does; everything else succeeds silently.
+  vi.mocked(execFile).mockImplementation(((
+    _cmd: string,
+    args: string[],
+    _opts: unknown,
+    cb: (err: Error | null) => void,
+  ) => {
+    if (args[0] === 'pack') {
+      const dest = args[args.indexOf('--pack-destination') + 1] ?? '';
+      writeFileSync(join(dest, TARBALL_NAME), 'tarball bytes');
+    }
+    cb(null);
+    return {} as ChildProcess;
+  }) as unknown as typeof execFile);
 });
 
 // ---------------------------------------------------------------------------
@@ -229,8 +259,10 @@ describe('a hostile plugins.lock cannot execute a command', () => {
     });
     const { argvs, shellCommands } = await attemptInstall(content, [ID, 'hostile']);
 
-    expect(argvs).toHaveLength(1);
+    // One install is a pack plus an install; the hostile sibling adds neither.
+    expect(argvs).toHaveLength(2);
     expect(argvs[0]).toContain('@ethos-plugins/tools-zerodha@1.4.2');
+    expect(argvs[1]?.[1]).toBe('install');
     expect(shellCommands).toEqual([]);
   });
 });
@@ -246,12 +278,20 @@ describe('npm is invoked with an argv array', () => {
     expect(argvs).toEqual([
       [
         'npm',
+        'pack',
+        '@ethos-plugins/tools-zerodha@1.4.2',
+        '--pack-destination',
+        SCRATCH,
+        '--ignore-scripts',
+      ],
+      [
+        'npm',
         'install',
         '--prefix',
         PLUGINS_DIR,
         '--ignore-scripts',
         '--no-audit',
-        '@ethos-plugins/tools-zerodha@1.4.2',
+        SCRATCH_TARBALL,
       ],
     ]);
   });
@@ -264,6 +304,16 @@ describe('npm is invoked with an argv array', () => {
     expect(argvs).toEqual([
       [
         'npm',
+        'pack',
+        '@ethos-plugins/tools-zerodha@1.4.2',
+        '--pack-destination',
+        SCRATCH,
+        '--ignore-scripts',
+        '--registry',
+        'https://npm.internal.company.com',
+      ],
+      [
+        'npm',
         'install',
         '--prefix',
         PLUGINS_DIR,
@@ -271,7 +321,7 @@ describe('npm is invoked with an argv array', () => {
         '--no-audit',
         '--registry',
         'https://npm.internal.company.com',
-        '@ethos-plugins/tools-zerodha@1.4.2',
+        SCRATCH_TARBALL,
       ],
     ]);
   });
@@ -283,8 +333,10 @@ describe('npm is invoked with an argv array', () => {
     const registry = 'https://reg.io/$(id)';
     const { argvs } = await attemptInstall(lock({ ...VALID, registry }));
 
-    expect(argvs[0]).toContain(registry);
-    expect(argvs[0]?.filter((a) => a.includes('$('))).toEqual([registry]);
+    expect(argvs).toHaveLength(2);
+    for (const argv of argvs) {
+      expect(argv.filter((a) => a.includes('$('))).toEqual([registry]);
+    }
     expect(vi.mocked(execSync)).not.toHaveBeenCalled();
   });
 
@@ -333,9 +385,25 @@ describe('validateLockEntry', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('returns only the four known fields, dropping anything else in the entry', () => {
+  it('returns only the known fields, dropping anything else in the entry', () => {
     const result = validateLockEntry(ID, { ...VALID, extra: 'ignored' });
     expect(result.ok && result.entry).toEqual(VALID);
+    expect(Object.keys(result.ok ? result.entry : {})).not.toContain('integrityOf');
+  });
+
+  it('keeps the tarball marker, so a read-modify-write does not demote a pin to legacy', () => {
+    const pin = { ...VALID, integrity: `sha512-${'A'.repeat(86)}==`, integrityOf: 'tarball' };
+    expect(validateLockEntry(ID, pin)).toEqual({ ok: true, entry: pin });
+  });
+
+  it('rejects an unknown integrityOf, and a tarball pin that is not sha512', () => {
+    expect(validateLockEntry(ID, { ...VALID, integrityOf: 'package.json' })).toEqual({
+      ok: false,
+      reason: 'integrityOf is not "tarball"',
+    });
+    expect(
+      validateLockEntry(ID, { ...VALID, integrity: 'sha256-abc', integrityOf: 'tarball' }),
+    ).toEqual({ ok: false, reason: 'a tarball integrity must be a sha512 digest' });
   });
 
   it('requires an integrity digest', () => {

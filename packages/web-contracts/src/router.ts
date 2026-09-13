@@ -57,6 +57,7 @@ import {
   McpCompleteInputSchema,
   McpCompleteOutputSchema,
   McpDeleteInputSchema,
+  McpExportViewSchema,
   McpListOutputSchema,
   McpPersonalityServersInputSchema,
   McpPersonalityServersOutputSchema,
@@ -141,6 +142,8 @@ const SessionListInput = z.object({
   /** Opaque rowid cursor from the previous response's `nextCursor`. */
   cursor: z.string().nullable().optional(),
   personalityId: z.string().optional(),
+  /** Only sessions whose origin platform is exactly this (`cli`, `web`, `mcp`, …). */
+  platform: z.string().optional(),
 });
 const SessionListOutput = z.object({
   items: z.array(SessionSchema),
@@ -741,8 +744,9 @@ const PersonalityApplyExpressionInput = z.object({
   /**
    * Apply is an approval of a learning candidate that has not been replayed,
    * so it needs a human reason (plan `trust-before-reach.md` Design §6). Absent
-   * → `INVALID_INPUT` naming the override. `summary` is the drafter's text and
-   * does not count.
+   * → `OVERRIDE_REQUIRED`, the learning inbox's refusal code, mapped by
+   * `learningRpcError` (`apps/web-api/src/rpc/learning.ts`) like every other
+   * refusal (`STALE`, …). `summary` is the drafter's text and does not count.
    */
   overrideReason: z.string().trim().min(1).optional(),
 });
@@ -753,6 +757,10 @@ const PersonalityRevertExpressionOutput = z.object({
   ok: z.literal(true),
   revertedTo: z.string(),
 });
+
+// M-T9 — the MCP export section. A read: mapped to `personalities:read`, so the
+// output carries no secret (see `McpExportViewSchema`).
+const PersonalityMcpExportInput = z.object({ id: z.string().min(1) });
 
 const PersonalityProposeSoulSplitInput = z.object({ soulMd: z.string() });
 const PersonalityProposeSoulSplitOutput = z.object({
@@ -787,6 +795,7 @@ const personalities = {
   mcpSetToken: oc.input(PersonalityMcpSetTokenInput).output(PersonalityMcpSetTokenOutput),
   mcpDeleteToken: oc.input(PersonalityMcpDeleteTokenInput).output(PersonalityMcpDeleteTokenOutput),
   livingSoul: oc.input(PersonalityLivingSoulInput).output(PersonalityLivingSoulOutput),
+  mcpExport: oc.input(PersonalityMcpExportInput).output(McpExportViewSchema),
   proposeExpression: oc
     .input(PersonalityProposeExpressionInput)
     .output(PersonalityProposeExpressionOutput),
@@ -2657,9 +2666,10 @@ const PluginsInstallPersonalityId = z
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 /** `personalityId` is `ethos plugin install --personality`: when present the install
  *  also writes that personality's `plugins.lock` entry; when absent it records only
- *  the capability grant. No current web caller sends it — both web install surfaces
- *  (the Library page and the create wizard) install globally; a lock entry from the
- *  web needs an install surface for an EXISTING personality, which does not exist yet. */
+ *  the capability grant. The workspace plugins page (`/p/:personalityId/plugins`)
+ *  sends its route's id, so its installs write the pin; the global Library Plugins
+ *  page and the create wizard send none and install globally (the wizard because
+ *  the personality does not exist until it is submitted). */
 const PluginsInstallInput = z.object({
   packageSpec: z.string().min(1),
   personalityId: PluginsInstallPersonalityId.optional(),

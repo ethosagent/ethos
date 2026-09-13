@@ -12,8 +12,8 @@ import { describe, expect, it } from 'vitest';
 import { createOutboxGate, type OutboxWiring } from '../compose-tools';
 
 const GATED: PersonalityConfig = {
-  id: 'cmo',
-  name: 'CMO',
+  id: 'coordinator',
+  name: 'Coordinator',
   outbound_policy: { approve_before_send: true },
 };
 
@@ -50,8 +50,8 @@ function gateOver(...people: PersonalityConfig[]) {
 describe('createOutboxGate', () => {
   it('gates every platform when channels is absent', () => {
     const { gate } = gateOver(GATED);
-    expect(gate.gates('cmo', 'telegram')).toBe(true);
-    expect(gate.gates('cmo', 'slack')).toBe(true);
+    expect(gate.gates('coordinator', 'telegram')).toBe(true);
+    expect(gate.gates('coordinator', 'slack')).toBe(true);
   });
 
   it('gates only the platforms channels names', () => {
@@ -100,7 +100,12 @@ describe('createOutboxGate', () => {
     expect(gate.ownerTarget('telegram')).toBe('4242');
     expect(gate.ownerTarget('slack')).toBeUndefined();
     await expect(
-      gate.propose({ personalityId: 'cmo', platform: 'telegram', target: 'C1', body: 'hi' }),
+      gate.propose({
+        personalityId: 'coordinator',
+        platform: 'telegram',
+        target: 'C1',
+        body: 'hi',
+      }),
     ).resolves.toEqual({ ok: true, itemId: 'obx_1', revision: 1 });
   });
 });

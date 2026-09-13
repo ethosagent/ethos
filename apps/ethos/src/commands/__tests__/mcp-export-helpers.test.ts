@@ -1,11 +1,13 @@
 // The two export helpers the CLI composition root owns but no other test
 // exercises directly: the audit→observability mapping and the client entry.
 
-import type { McpExportAuditEntry } from '@ethosagent/mcp-server';
+import { claudeDesktop, type McpExportAuditEntry } from '@ethosagent/mcp-server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildExportEntry,
+  claudeDesktopExportEntry,
   createMcpExportAuditSink,
+  DESKTOP_ENTRY_SECRET_PLACEHOLDER,
   exportEntryName,
   formatExportError,
   resolveExportWorkingDir,
@@ -121,5 +123,37 @@ describe('formatExportError', () => {
     });
     expect(line.endsWith('\n')).toBe(true);
     expect(JSON.parse(line)).toEqual({ level: 'error', code: 'export_disabled', msg: 'nope' });
+  });
+});
+
+describe('claudeDesktopExportEntry', () => {
+  const base = {
+    command: '/usr/local/bin/node',
+    scriptPath: '/opt/ethos/index.js',
+    personalityId: 'specialist',
+  };
+
+  it('is byte-identical to what `ethos mcp install claude-desktop` writes into an empty config', () => {
+    const out = claudeDesktopExportEntry({ ...base, bearer: true });
+    const installed = claudeDesktop.serialise(
+      claudeDesktop.injectEntry(
+        {},
+        buildExportEntry({ ...base, secret: DESKTOP_ENTRY_SECRET_PLACEHOLDER }),
+      ),
+    );
+    expect(out.json).toBe(installed);
+    expect(out.name).toBe('ethos-specialist');
+    expect(out.secretPlaceholder).toBe(DESKTOP_ENTRY_SECRET_PLACEHOLDER);
+    expect(JSON.parse(out.json).mcpServers['ethos-specialist']).toEqual({
+      command: '/usr/local/bin/node',
+      args: ['/opt/ethos/index.js', 'mcp', 'serve', '--personality', 'specialist'],
+      env: { ETHOS_MCP_KEY: DESKTOP_ENTRY_SECRET_PLACEHOLDER },
+    });
+  });
+
+  it('carries no env and no placeholder under localhost auth', () => {
+    const out = claudeDesktopExportEntry({ ...base, bearer: false });
+    expect(out.secretPlaceholder).toBeNull();
+    expect(JSON.parse(out.json).mcpServers['ethos-specialist'].env).toBeUndefined();
   });
 });

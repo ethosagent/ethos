@@ -5,7 +5,7 @@ kind: how-to
 audience: developer
 slug: add-a-skill
 time: "10 min"
-updated: 2026-08-21
+updated: 2026-09-13
 ---
 
 ## Task
@@ -78,17 +78,16 @@ Other frontmatter fields from the agentskills.io spec are accepted by the parser
 
 ### 3. Configure the per-personality filter
 
-The personality picks how it ingests the global skill pool. The default is `capability` — a skill is visible only if every entry in its `required_tools` is in the personality's `toolset.yaml`. Override in the personality's `config.yaml`:
+The personality picks how it ingests the global skill pool. The default is `capability` — a skill is visible only if every entry in its `required_tools` is in the personality's `toolset.yaml`. Override it in the personality's `config.yaml` with flat dotted `skills.global_ingest.*` keys. Do not indent a `skills:` block: the loader allows only `safety:` to nest, and any other indented key fails the personality load.
 
 ```yaml title="~/.ethos/personalities/researcher/config.yaml"
 name: Researcher
 description: Methodical research agent
-model: claude-opus-4-7
-memoryScope: global
+provider: anthropic
+model.default: claude-opus-4-7
 
-skills:
-  global_ingest:
-    mode: capability   # default — required_tools must subset personality.toolset
+# default — required_tools must subset personality.toolset
+skills.global_ingest.mode: capability
 ```
 
 Four modes are available.
@@ -100,22 +99,19 @@ Four modes are available.
 | `explicit` | Default-deny — only skills in `allow` are loaded. Capability check still runs after. | Narrow-purpose personalities with hand-curated libraries. |
 | `none` | Disable global ingest entirely. | Personalities that should only use skills in their own `~/.ethos/personalities/<id>/skills/` folder. |
 
-Example `tags` and `explicit` configs (skill names use the qualified `<source>/<name>` format from the boot output):
+Example `tags` and `explicit` configs. Lists are comma-separated, skill names use the qualified `<source>/<name>` format from the boot output, and a comment goes on its own line — the loader reads everything after `key:` as the value. Every key is in the [`skills.global_ingest.*` reference](../reference/skills-tools.md#skills-global-ingest):
 
 ```yaml
-skills:
-  global_ingest:
-    mode: tags
-    accept_tags: [research, citation]
-    reject_tags: [deploy, irreversible]
+skills.global_ingest.mode: tags
+skills.global_ingest.accept_tags: research, citation
+skills.global_ingest.reject_tags: deploy, irreversible
 ```
 
 ```yaml
-skills:
-  global_ingest:
-    mode: explicit
-    allow: [claude-code/code-review, ethos/explain-code]
-    deny:  [claude-code/auto-commit]    # checked first; wins over every mode
+skills.global_ingest.mode: explicit
+skills.global_ingest.allow: claude-code/code-review, ethos/explain-code
+# deny is checked first and wins over every mode
+skills.global_ingest.deny: claude-code/auto-commit
 ```
 
 `deny` is checked first — anything listed is rejected even if the mode would have allowed it.

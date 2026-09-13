@@ -18,7 +18,7 @@
 // `toolset` — both derived from the personality in
 // `packages/core/.../stages/turn-setup.ts`. Pinning the consulted turn to
 // `voice.inbound.receptionist` therefore denies owner memory and privileged
-// tools by construction: the receptionist's `memoryScope` is its own, and a tool
+// tools by construction: its scope is `personality:<receptionist>`, and a tool
 // it does not list is rejected by `ToolRegistry.executeParallel` exactly as any
 // other disallowed tool is. There is no second restriction system to keep in
 // step with the first.

@@ -520,13 +520,48 @@ export function createRemoteExecutionInjector(opts: {
  *
  * The returned object satisfies both `OutboxGate` (`@ethosagent/tools-messaging`)
  * and `WatcherOutboxGate` (`@ethosagent/tools-watchers`) structurally — neither
- * extension imports the other, or this.
+ * extension imports the other, or this. Its policy half is
+ * {@link createOutboundPolicyGate}.
  */
 export function createOutboxGate(deps: {
-  lookupPersonality: (id: string) => PersonalityConfig | undefined;
+  lookupPersonality: (id: string) => PersonalityConfig | null | undefined;
   outbox: OutboxWiring;
 }): OutboxGate {
   return {
+    ...createOutboundPolicyGate({
+      lookupPersonality: deps.lookupPersonality,
+      ownerTarget: (platform) => deps.outbox.ownerTarget(platform),
+    }),
+    propose: (proposal) => deps.outbox.propose(proposal),
+  };
+}
+
+/**
+ * The policy half of the approval-outbox gate, with no queue behind it: does
+ * this personality's `outbound_policy.approve_before_send` gate this platform,
+ * and which chat is the operator's own. The one reading of `outbound_policy`
+ * for a publication — {@link createOutboxGate} is built on it.
+ *
+ * Satisfies `WatcherDeliveryGate` (`@ethosagent/watchers`) structurally. The
+ * app roots that construct a `WatcherManager` (`ethos gateway start`,
+ * `ethos boot`, `ethos serve`) build one from their own personality registry
+ * and pass it as `WatcherManagerConfig.deliveryGate`, so the delivery-time hold
+ * exists before the first tick. The policy is looked up on every call.
+ *
+ * `reload` becomes the gate's `refresh`, which `WatcherManager.dispatchChange`
+ * awaits before every delivery decision. A watcher fires off the cron tick, not
+ * a turn, so nothing else reloads the registry first — and `ethos serve` reloads
+ * it only through the web API. Pass `registry.loadFromDirectory(dir)`: it is
+ * mtime-cached, so an unchanged directory costs a few `mtime` reads. Pinned by
+ * `packages/wiring/src/__tests__/watcher-policy-refresh.test.ts`.
+ */
+export function createOutboundPolicyGate(deps: {
+  lookupPersonality: (id: string) => PersonalityConfig | null | undefined;
+  ownerTarget: OutboxGate['ownerTarget'];
+  reload?: () => Promise<void>;
+}): Pick<OutboxGate, 'gates' | 'ownerTarget'> & { refresh?: () => Promise<void> } {
+  return {
+    ...(deps.reload ? { refresh: deps.reload } : {}),
     gates(personalityId, platform) {
       const policy = deps.lookupPersonality(personalityId)?.outbound_policy;
       if (!policy?.approve_before_send) return false;
@@ -536,8 +571,7 @@ export function createOutboxGate(deps: {
       const channels = policy.channels;
       return channels === undefined || channels.length === 0 || channels.includes(platform);
     },
-    ownerTarget: (platform) => deps.outbox.ownerTarget(platform),
-    propose: (proposal) => deps.outbox.propose(proposal),
+    ownerTarget: (platform) => deps.ownerTarget(platform),
   };
 }
 
@@ -1025,16 +1059,18 @@ export async function createExecutionRouting(
  *
  * `ownerTarget` is `channel_filter.<platform>.ownerUserId`, which lives on the
  * surface's channel config and not on `WiringConfig`. `propose` queues the
- * publication and resolves its sending bot (O-T4), which needs the process's
- * adapters and bindings.
+ * publication and resolves its sending bot (O-T4) from the config's bot
+ * roster and bindings.
  *
- * Two surfaces supply it: `ethos gateway start` and `ethos boot`, each from
- * `createOutboxRuntime` (`apps/ethos/src/lib/outbox-wiring.ts`), arriving
- * through `ComposeToolsDeps` (built at the `composeAllTools` call in
- * `packages/wiring/src/index.ts`) — pinned by
- * `apps/ethos/src/__tests__/outbox-gate-live.test.ts`. Every other surface
- * leaves it absent, so no gate is built there and both tools behave as they
- * always have.
+ * Every root that can reach a channel supplies it, from
+ * `apps/ethos/src/lib/outbox-wiring.ts`: `ethos gateway start` and
+ * `ethos boot` from `createOutboxRuntime`, and `ethos serve` — no adapters,
+ * but watcher tools whose stored `deliver` a gateway sends — from
+ * `createOutboxProposalSide`. It arrives through `ComposeToolsDeps` (built at
+ * the `composeAllTools` call in `packages/wiring/src/index.ts`). The roots that
+ * leave it absent cannot publish: no `setMessagingSend`, so `send_message`
+ * returns the default `gatewaySendRef` error below, and no watcher tools. Both
+ * halves are pinned by `apps/ethos/src/__tests__/outbox-gate-live.test.ts`.
  */
 export interface OutboxWiring {
   ownerTarget: OutboxGate['ownerTarget'];
@@ -1047,11 +1083,11 @@ export interface ComposeToolsDeps {
   /** Where each resource this stage opens registers its release (F06). */
   disposers: DisposerStack;
   /**
-   * Approval outbox. Supplied by `ethos gateway start` and `ethos boot`;
-   * absent on every other surface (`chat`, `serve`, `cron`, `mcp`, `batch`,
-   * `eval`, `acp`, `bench`), where both `send_message` and `watcher_create`
-   * behave exactly as they did before Part 2 — pinned by
-   * `src/__tests__/outbox-gate.test.ts`.
+   * Approval outbox. Supplied by `ethos gateway start`, `ethos boot` and
+   * `ethos serve`; absent on `chat`, `cron`, `mcp`, `batch`, `eval`, `acp` and
+   * `bench`, none of which can reach a channel (see {@link OutboxWiring}).
+   * Where absent, `send_message` and `watcher_create` behave exactly as they
+   * did before Part 2 — pinned by `src/__tests__/outbox-gate.test.ts`.
    */
   outbox?: OutboxWiring;
 }
@@ -1635,7 +1671,12 @@ export async function composeAllTools(
       target: (ctx) => {
         const personality = personalities.get(ctx.personalityId ?? activePerson.id);
         return personality
-          ? { personalityId: personality.id, scope: personality.skill_evolution?.scope }
+          ? {
+              personalityId: personality.id,
+              scope: personality.skill_evolution?.scope,
+              // Same key the fork passes: `false` refuses a `targetFile` rewrite.
+              evolveExisting: personality.skill_evolution?.evolve_existing,
+            }
           : null;
       },
       targetCaseIds: async (ctx, personalityId) => {

@@ -15,6 +15,19 @@ import type {
 import type { BlobStore } from './blob-store';
 
 /**
+ * The observability kill switch: a file of this name directly under the data
+ * directory (`~/.ethos/`) suppresses observability writes while it exists.
+ * `ethos data` writes it for the duration of a reset
+ * (`apps/ethos/src/commands/data.ts`). Its readers are the CLI's singleton,
+ * which binds it as this service's `isDisabled` predicate
+ * (`apps/ethos/src/wiring.ts` `getObservabilityService`), and
+ * `learningAuditSink` (`packages/wiring/src/learning-pipeline.ts`). Every one of
+ * them spells the name through this constant; the service itself never reads
+ * the filesystem.
+ */
+export const OBSERVABILITY_KILL_SWITCH_FILE = '.observability.disabled';
+
+/**
  * ObservabilityService — thin coordinator over ObservabilityStore + BlobStore.
  *
  * Responsibilities:

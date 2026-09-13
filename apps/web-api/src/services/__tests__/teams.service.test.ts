@@ -9,29 +9,29 @@ import { KanbanService } from '../kanban.service';
 import { TeamsService } from '../teams.service';
 
 // Service-level tests over a temp teams dir (nothing touches ~/.ethos):
-//   marketing — running, coordinator, tiered trust, a board with history
+//   alpha — running, coordinator, tiered trust, a board with history
 //   research  — stopped (no runtime), flat trust, a board
 //   ops       — running, no board yet
 //   idle      — manifest only
 //   broken    — malformed YAML, must be skipped by list()
 
-const MARKETING_YAML = `name: marketing
-description: Marketing scouts
-domain_capabilities: [marketing]
-coordinator: cmo
+const ALPHA_YAML = `name: alpha
+description: Alpha pod
+domain_capabilities: [alpha]
+coordinator: coordinator
 trust_policy:
   mode: tiered
 channels:
   - platform: slack
-    botKey: mkt-bot
+    botKey: alpha-bot
 kanban:
   stale_ms: 60000
 members:
-  - personality: cmo
+  - personality: coordinator
     role: coordinator
     capabilities: [strategy]
-  - personality: reddit-scout
-  - personality: x-scout
+  - personality: member-a
+  - personality: member-b
 `;
 
 const RESEARCH_YAML = `name: research
@@ -64,7 +64,7 @@ describe('TeamsService', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'teams-service-'));
-    writeFileSync(join(dir, 'marketing.yaml'), MARKETING_YAML);
+    writeFileSync(join(dir, 'alpha.yaml'), ALPHA_YAML);
     writeFileSync(join(dir, 'research.yaml'), RESEARCH_YAML);
     writeFileSync(join(dir, 'ops.yaml'), OPS_YAML);
     writeFileSync(join(dir, 'idle.yaml'), IDLE_YAML);
@@ -88,32 +88,32 @@ describe('TeamsService', () => {
           })),
         }),
       );
-    runtime('marketing', [
-      ['cmo', 'running'],
-      ['reddit-scout', 'degraded'],
+    runtime('alpha', [
+      ['coordinator', 'running'],
+      ['member-a', 'degraded'],
     ]);
     runtime('ops', [['sre', 'running']]);
 
-    // marketing board: a little of everything the ledger reads.
-    mkdirSync(join(dir, 'marketing'), { recursive: true });
-    const store = new KanbanStore(join(dir, 'marketing', 'board.db'), { teamId: 'marketing' });
+    // alpha board: a little of everything the ledger reads.
+    mkdirSync(join(dir, 'alpha'), { recursive: true });
+    const store = new KanbanStore(join(dir, 'alpha', 'board.db'), { teamId: 'alpha' });
     const done = store.createTask({ title: 'Draft launch post', actor: 'human:control-center' });
-    store.assign(done.id, 'cmo', 'human:control-center');
+    store.assign(done.id, 'coordinator', 'human:control-center');
     store.updateStatus(done.id, 'running', 'dispatched', 'dispatcher');
-    store.completeRun(done.id, 'posted', 'cmo');
+    store.completeRun(done.id, 'posted', 'coordinator');
 
-    const reclaimed = store.createTask({ title: 'Scan r/startups', assignee: 'x-scout' });
+    const reclaimed = store.createTask({ title: 'Scan r/startups', assignee: 'member-b' });
     store.updateStatus(reclaimed.id, 'running', 'dispatched', 'dispatcher');
     store.reclaimTask(reclaimed.id, 'orphan_stale', 'dispatcher');
 
-    const rejected = store.createTask({ title: 'Weekly digest', assignee: 'reddit-scout' });
+    const rejected = store.createTask({ title: 'Weekly digest', assignee: 'member-a' });
     store.updateStatus(rejected.id, 'running', 'dispatched', 'dispatcher');
-    store.updateStatus(rejected.id, 'needs_revision', 'no source links', 'reddit-scout');
+    store.updateStatus(rejected.id, 'needs_revision', 'no source links', 'member-a');
     store.updateStatus(rejected.id, 'done', 'approved — verifier bypassed', 'human:control-center');
 
-    const blocked = store.createTask({ title: 'Pull X mentions', assignee: 'x-scout' });
+    const blocked = store.createTask({ title: 'Pull X mentions', assignee: 'member-b' });
     store.updateStatus(blocked.id, 'running', 'dispatched', 'dispatcher');
-    store.blockRun(blocked.id, 'waiting on API key', 'x-scout');
+    store.blockRun(blocked.id, 'waiting on API key', 'member-b');
 
     const archived = store.createTask({ title: 'Old idea' });
     store.updateStatus(archived.id, 'archived', undefined, 'human:control-center');
@@ -147,36 +147,36 @@ describe('TeamsService', () => {
   describe('list', () => {
     it('lists every parseable team, skips the malformed one and the global board', async () => {
       const { items } = await service.list();
-      expect(items.map((t) => t.name).sort()).toEqual(['idle', 'marketing', 'ops', 'research']);
+      expect(items.map((t) => t.name).sort()).toEqual(['alpha', 'idle', 'ops', 'research']);
     });
 
     it('shapes a running team: coordinator, members with status/tier/role, channels, startedAt', async () => {
       const { items } = await service.list();
-      const marketing = items.find((t) => t.name === 'marketing');
-      expect(marketing).toBeDefined();
-      if (!marketing) return;
-      expect(marketing.health).toBe('running');
-      expect(marketing.dispatchMode).toBe('coordinator');
-      expect(marketing.coordinator).toBe('cmo');
-      expect(marketing.startedAt).toBe('2026-09-04T09:00:00.000Z');
-      expect(marketing.channels).toEqual([{ platform: 'slack', botKey: 'mkt-bot' }]);
-      expect(marketing.members).toEqual([
+      const alpha = items.find((t) => t.name === 'alpha');
+      expect(alpha).toBeDefined();
+      if (!alpha) return;
+      expect(alpha.health).toBe('running');
+      expect(alpha.dispatchMode).toBe('coordinator');
+      expect(alpha.coordinator).toBe('coordinator');
+      expect(alpha.startedAt).toBe('2026-09-04T09:00:00.000Z');
+      expect(alpha.channels).toEqual([{ platform: 'slack', botKey: 'alpha-bot' }]);
+      expect(alpha.members).toEqual([
         {
-          personalityId: 'cmo',
+          personalityId: 'coordinator',
           role: 'coordinator',
           tier: 'probationary',
           status: 'running',
           capabilities: ['strategy'],
         },
         {
-          personalityId: 'reddit-scout',
+          personalityId: 'member-a',
           role: 'member',
           tier: 'probationary',
           status: 'degraded',
           capabilities: [],
         },
         {
-          personalityId: 'x-scout',
+          personalityId: 'member-b',
           role: 'member',
           tier: 'probationary',
           status: 'offline',
@@ -214,23 +214,23 @@ describe('TeamsService', () => {
       const union = new Set(items.flatMap((t) => t.members.map((m) => m.personalityId)));
       expect([...union].sort()).toEqual([
         'analyst',
-        'cmo',
+        'coordinator',
         'librarian',
-        'reddit-scout',
+        'member-a',
+        'member-b',
         'sre',
-        'x-scout',
       ]);
-      const all = ['cmo', 'solo', 'sre', 'x-scout'];
+      const all = ['coordinator', 'solo', 'sre', 'member-b'];
       expect(all.filter((id) => !union.has(id))).toEqual(['solo']);
     });
   });
 
   describe('get', () => {
     it('returns the detail with the raw manifest, trust policy, kanban tuning and runtime', async () => {
-      const detail = await service.get('marketing');
-      expect(detail.name).toBe('marketing');
-      expect(detail.manifestYaml).toBe(MARKETING_YAML);
-      expect(detail.manifestPath).toBe(join(dir, 'marketing.yaml'));
+      const detail = await service.get('alpha');
+      expect(detail.name).toBe('alpha');
+      expect(detail.manifestYaml).toBe(ALPHA_YAML);
+      expect(detail.manifestPath).toBe(join(dir, 'alpha.yaml'));
       expect(detail.trustPolicy).toEqual({ mode: 'tiered' });
       expect(detail.kanban).toEqual({ staleMs: 60000, pollMs: 1000, stalenessThresholdMs: 300000 });
       expect(detail.memoryTopics).toEqual([]);
@@ -238,9 +238,9 @@ describe('TeamsService', () => {
         supervisorPid: 4242,
         startedAt: '2026-09-04T09:00:00.000Z',
         members: [
-          { personality: 'cmo', port: 7000, pid: 100, status: 'running', failureCount: 0 },
+          { personality: 'coordinator', port: 7000, pid: 100, status: 'running', failureCount: 0 },
           {
-            personality: 'reddit-scout',
+            personality: 'member-a',
             port: 7001,
             pid: null,
             status: 'degraded',
@@ -276,7 +276,7 @@ describe('TeamsService', () => {
 
   describe('ledger', () => {
     it('labels the board history newest first, one line per decision', async () => {
-      const { items } = await service.ledger({ team: 'marketing' });
+      const { items } = await service.ledger({ team: 'alpha' });
       for (let i = 1; i < items.length; i++) {
         expect(items[i - 1]?.id).toBeGreaterThan(items[i]?.id ?? Number.POSITIVE_INFINITY);
       }
@@ -303,7 +303,7 @@ describe('TeamsService', () => {
       expect(blocked?.taskId).toBe(taskIds.blocked);
       expect(blocked?.taskTitle).toBe('Pull X mentions');
       expect(blocked?.detail).toBe('waiting on API key');
-      expect(blocked?.personalityId).toBe('x-scout');
+      expect(blocked?.personalityId).toBe('member-b');
       const rejected = items.find((l) => l.kind === 'verifier_rejected');
       expect(rejected?.detail).toBe('no source links · retry 0 of ∞');
       const reclaim = items.find((l) => l.kind === 'stale_reclaim');
@@ -313,10 +313,10 @@ describe('TeamsService', () => {
     });
 
     it('filters by personalityId and honors limit', async () => {
-      const { items } = await service.ledger({ team: 'marketing', personalityId: 'x-scout' });
+      const { items } = await service.ledger({ team: 'alpha', personalityId: 'member-b' });
       expect(items.length).toBeGreaterThan(0);
-      for (const l of items) expect(l.personalityId).toBe('x-scout');
-      const capped = await service.ledger({ team: 'marketing', limit: 2 });
+      for (const l of items) expect(l.personalityId).toBe('member-b');
+      const capped = await service.ledger({ team: 'alpha', limit: 2 });
       expect(capped.items).toHaveLength(2);
     });
 
@@ -327,41 +327,39 @@ describe('TeamsService', () => {
 
   describe('memory', () => {
     it('round-trips a topic: replace → add → list → read → delete', async () => {
-      expect((await service.memoryList('marketing')).items).toEqual([]);
-      expect(await service.memoryRead('marketing', 'decisions')).toEqual({
+      expect((await service.memoryList('alpha')).items).toEqual([]);
+      expect(await service.memoryRead('alpha', 'decisions')).toEqual({
         key: 'decisions',
         content: '',
       });
 
       await service.memoryWrite({
-        team: 'marketing',
+        team: 'alpha',
         key: 'decisions',
         action: 'replace',
         content: '# Decisions',
       });
       await service.memoryWrite({
-        team: 'marketing',
+        team: 'alpha',
         key: 'decisions',
         action: 'add',
         content: '- never post, only report',
       });
-      expect((await service.memoryList('marketing')).items).toEqual([{ key: 'decisions' }]);
-      expect((await service.get('marketing')).memoryTopics).toEqual(['decisions']);
-      const { content } = await service.memoryRead('marketing', 'decisions');
+      expect((await service.memoryList('alpha')).items).toEqual([{ key: 'decisions' }]);
+      expect((await service.get('alpha')).memoryTopics).toEqual(['decisions']);
+      const { content } = await service.memoryRead('alpha', 'decisions');
       expect(content).toBe('# Decisions\n\n- never post, only report\n');
 
-      await service.memoryWrite({ team: 'marketing', key: 'decisions', action: 'delete' });
-      expect((await service.memoryList('marketing')).items).toEqual([]);
-      expect((await service.memoryRead('marketing', 'decisions')).content).toBe('');
+      await service.memoryWrite({ team: 'alpha', key: 'decisions', action: 'delete' });
+      expect((await service.memoryList('alpha')).items).toEqual([]);
+      expect((await service.memoryRead('alpha', 'decisions')).content).toBe('');
     });
 
     it('rejects unsafe keys and content-less writes', async () => {
-      await expect(service.memoryRead('marketing', '../secrets')).rejects.toThrow(
-        /invalid memory key/,
-      );
-      await expect(service.memoryRead('marketing', 'a.b')).rejects.toThrow(/invalid memory key/);
+      await expect(service.memoryRead('alpha', '../secrets')).rejects.toThrow(/invalid memory key/);
+      await expect(service.memoryRead('alpha', 'a.b')).rejects.toThrow(/invalid memory key/);
       await expect(
-        service.memoryWrite({ team: 'marketing', key: 'x', action: 'replace' }),
+        service.memoryWrite({ team: 'alpha', key: 'x', action: 'replace' }),
       ).rejects.toThrow(/content is required/);
       await expect(service.memoryList('nope')).rejects.toThrow(/team not found/);
     });

@@ -117,3 +117,41 @@ describe('proposeSkillFromEvidence (L-T6, path 2: nightly)', () => {
     expect(await listCandidates(storage, DATA_DIR)).toHaveLength(1);
   });
 });
+
+describe('proposeSkillFromEvidence honours skill_evolution.model', () => {
+  function recordingLLM() {
+    const options: Array<Parameters<LLMProvider['complete']>[2]> = [];
+    const llm: LLMProvider = {
+      name: 'mock',
+      model: 'mock',
+      maxContextTokens: 100_000,
+      supportsCaching: false,
+      supportsThinking: false,
+      complete(...args: Parameters<LLMProvider['complete']>): AsyncIterable<CompletionChunk> {
+        options.push(args[2]);
+        return (async function* () {
+          yield { type: 'text_delta', text: GOOD_DRAFT };
+          yield { type: 'done', finishReason: 'end_turn' };
+        })();
+      },
+      async countTokens() {
+        return 0;
+      },
+    };
+    return { llm, options };
+  }
+
+  it('sends the model as modelOverride on the drafting call', async () => {
+    const { llm, options } = recordingLLM();
+    await proposeSkillFromEvidence(input(llm, { model: 'drafter-model' }));
+    expect(options).toHaveLength(1);
+    expect(options[0]?.modelOverride).toBe('drafter-model');
+  });
+
+  it('leaves modelOverride unset when no model is given', async () => {
+    const { llm, options } = recordingLLM();
+    await proposeSkillFromEvidence(input(llm));
+    expect(options).toHaveLength(1);
+    expect(options[0]?.modelOverride).toBeUndefined();
+  });
+});

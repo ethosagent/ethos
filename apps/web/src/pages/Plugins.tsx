@@ -28,17 +28,26 @@ import { useCreateFlag } from '../hooks/useCreateFlag';
 import { splitByAttachment, usedByPersonalityIds } from '../lib/attachmentLists';
 import { client, rpc } from '../rpc';
 
-function InstallPluginSection() {
+// `personalityId` absent: a global install (`ethos plugin install <pkg>`), the
+// capability grant only. Present: `ethos plugin install --personality <id>` —
+// `PluginsService.install` also pins the plugin in that personality's
+// `plugins.lock` and adds it to its `plugins:` line.
+function InstallPluginSection({ personalityId }: { personalityId?: string }) {
   const { notification } = AntApp.useApp();
   const qc = useQueryClient();
   const [packageSpec, setPackageSpec] = useState('');
 
   const mut = useMutation({
-    mutationFn: (spec: string) => rpc.plugins.install({ packageSpec: spec }),
+    mutationFn: (spec: string) =>
+      rpc.plugins.install({ packageSpec: spec, ...(personalityId ? { personalityId } : {}) }),
     onSuccess: () => {
       notification.success({ message: 'Plugin installed' });
       setPackageSpec('');
       qc.invalidateQueries({ queryKey: ['plugins', 'list'] });
+      if (personalityId) {
+        qc.invalidateQueries({ queryKey: personalityKeys.list() });
+        qc.invalidateQueries({ queryKey: personalityKeys.detail(personalityId) });
+      }
     },
     onError: (err) => {
       notification.error({
@@ -212,6 +221,7 @@ function WorkspacePluginsPanel({ personalityId }: { personalityId: string }) {
   const qc = useQueryClient();
   const { notification } = AntApp.useApp();
   const personalityQuery = usePersonalityGet(personalityId);
+  const [installOpen, setInstallOpen] = useState(false);
   const { data: pluginsData, isLoading: pluginsLoading } = useQuery({
     queryKey: ['plugins', 'list'],
     queryFn: () => rpc.plugins.list(),
@@ -264,7 +274,12 @@ function WorkspacePluginsPanel({ personalityId }: { personalityId: string }) {
         <span className="page-subtitle">
           {attached.length} {attached.length === 1 ? 'plugin' : 'plugins'}
         </span>
+        <div style={{ flex: 1 }} />
+        <button type="button" className="page-action-btn" onClick={() => setInstallOpen((o) => !o)}>
+          + New Plugin
+        </button>
       </header>
+      {installOpen && <InstallPluginSection personalityId={personalityId} />}
       {isLoading ? (
         <Skeleton active paragraph={{ rows: 5 }} />
       ) : (

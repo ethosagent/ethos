@@ -1,4 +1,4 @@
-import type { EvolverRun, PendingSkill, Personality, Skill } from '@ethosagent/web-contracts';
+import type { EvolverRun, Personality, Skill } from '@ethosagent/web-contracts';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App as AntApp,
@@ -19,8 +19,9 @@ import {
   Typography,
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
+import { learningKeys } from '../features/learning/api/keys';
 import { personalityKeys } from '../features/personalities/api/keys';
 import {
   usePersonalityList,
@@ -32,8 +33,7 @@ import {
   splitByAttachment,
   usedByPersonalityIds,
 } from '../lib/attachmentLists';
-import { getClientId } from '../lib/clientId';
-import { learningRefusal } from '../lib/learning-refusal';
+import { LEARNING_WAITING, learningPath, waitingLinkText } from '../lib/learning';
 import { rpc } from '../rpc';
 
 type SkillOrigin = 'built-in' | 'user' | 'evolver' | 'personality';
@@ -697,7 +697,7 @@ function EvolverPanel() {
         defaultActiveKey="config"
         items={[
           { key: 'config', label: 'Config', children: <EvolverConfigForm /> },
-          { key: 'pending', label: 'Approval queue', children: <PendingQueue /> },
+          { key: 'pending', label: 'Approval queue', children: <ApprovalQueueLink /> },
           { key: 'history', label: 'Run history', children: <EvolverHistory /> },
         ]}
       />
@@ -797,211 +797,26 @@ function EvolverConfigForm() {
   );
 }
 
-// Pending ids are learning candidate ids (`EvolverService.listPending`), so
-// Approve decides through `learning.approve`, which returns the inbox's refusal
-// codes. A candidate that has not passed a replay is refused `OVERRIDE_REQUIRED`
-// (`LearningInbox.approve`); that opens a prompt for the human's reason instead
-// of an error. The reason is never supplied for them.
-export function PendingQueue() {
-  const qc = useQueryClient();
-  const { notification } = AntApp.useApp();
-  const [overrideFor, setOverrideFor] = useState<{ skill: PendingSkill; refusal: string } | null>(
-    null,
-  );
-  const [overrideReason, setOverrideReason] = useState('');
-
-  const closeOverride = () => {
-    setOverrideFor(null);
-    setOverrideReason('');
-  };
-
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['evolver', 'pending'],
-    queryFn: () => rpc.evolver.pendingList(),
+// The approval queue used to live here, reading only one of three skill
+// queues. Every learned change now waits in the Learning inbox (plan
+// `trust-before-reach.md` Part 4, "Existing screens link here instead of
+// keeping their own queues"), so this tab is a count and a link.
+export function ApprovalQueueLink() {
+  const { data } = useQuery({
+    queryKey: learningKeys.count({ kind: 'skill', statuses: LEARNING_WAITING }),
+    queryFn: () =>
+      rpc.learning.list({ kind: 'skill', statuses: [...LEARNING_WAITING], limit: 500 }),
   });
 
-  const approveMut = useMutation({
-    mutationFn: (input: { skill: PendingSkill; overrideReason?: string }) =>
-      rpc.learning.approve({
-        candidateId: input.skill.id,
-        clientId: getClientId(),
-        ...(input.overrideReason ? { override: { reason: input.overrideReason } } : {}),
-      }),
-    onSuccess: () => {
-      closeOverride();
-      qc.invalidateQueries({ queryKey: ['evolver', 'pending'] });
-      qc.invalidateQueries({ queryKey: ['skills', 'list'] });
-      notification.success({ message: 'Approved — skill is now live.', placement: 'topRight' });
-    },
-    onError: (err, input) => {
-      const refusal = learningRefusal(err, 'Approve failed');
-      if (refusal.code === 'OVERRIDE_REQUIRED' && !input.overrideReason) {
-        setOverrideFor({ skill: input.skill, refusal: refusal.detail });
-        return;
-      }
-      notification.error({ message: refusal.title, description: refusal.detail });
-    },
-  });
-
-  const trimmedReason = overrideReason.trim();
-
-  const rejectMut = useMutation({
-    mutationFn: (id: string) => rpc.evolver.pendingReject({ id }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['evolver', 'pending'] });
-      qc.invalidateQueries({ queryKey: ['skills', 'list'] });
-      notification.success({ message: 'Rejected', placement: 'topRight' });
-    },
-    onError: (err) =>
-      notification.error({ message: 'Reject failed', description: (err as Error).message }),
-  });
-
-  if (isLoading) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', height: 200 }}>
-        <Spin />
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <Typography.Text type="danger">
-        Failed to load queue: {(error as Error).message}
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <Typography.Text type="secondary">
+        Skill candidates are reviewed in Learning, with their evidence, diff and replay scorecard.
       </Typography.Text>
-    );
-  }
-
-  const pending = data?.pending ?? [];
-
-  if (pending.length === 0) {
-    return (
-      <Empty
-        image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="No pending candidates. Run `ethos skills evolve` against an eval JSONL to populate this queue."
-      />
-    );
-  }
-
-  return (
-    <>
-      <Modal
-        open={overrideFor !== null}
-        title="Approve without a passing replay?"
-        okText="Approve anyway"
-        okButtonProps={{ disabled: trimmedReason === '', loading: approveMut.isPending }}
-        onOk={() =>
-          overrideFor &&
-          trimmedReason !== '' &&
-          approveMut.mutate({ skill: overrideFor.skill, overrideReason: trimmedReason })
-        }
-        onCancel={closeOverride}
-        destroyOnClose
-      >
-        {overrideFor ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <Typography.Text>
-              <Typography.Text strong>{overrideFor.skill.name}</Typography.Text> has not passed a
-              replay. {overrideFor.refusal}
-            </Typography.Text>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Say why you are approving it anyway — the reason is recorded in the audit trail.
-              Required.
-            </Typography.Text>
-            <Input.TextArea
-              aria-label="Reason to approve anyway"
-              data-testid="skills-override-reason"
-              value={overrideReason}
-              onChange={(e) => setOverrideReason(e.target.value)}
-              autoSize={{ minRows: 2, maxRows: 6 }}
-            />
-          </div>
-        ) : null}
-      </Modal>
-      <Table<PendingSkill>
-        rowKey="id"
-        dataSource={pending}
-        pagination={false}
-        size="small"
-        expandable={{
-          expandedRowRender: (row) => <PendingPreview skill={row} />,
-        }}
-        columns={[
-          {
-            title: 'Name',
-            dataIndex: 'name',
-            key: 'name',
-            render: (name: string, row) => (
-              <div>
-                <div style={{ fontWeight: 500 }}>{name}</div>
-                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{row.id}.md</div>
-              </div>
-            ),
-          },
-          {
-            title: 'Description',
-            dataIndex: 'description',
-            key: 'description',
-            render: (d: string | null) =>
-              d ? d : <Typography.Text type="secondary">—</Typography.Text>,
-          },
-          {
-            title: 'Proposed',
-            dataIndex: 'proposedAt',
-            key: 'proposedAt',
-            width: 140,
-            render: (iso: string) => formatRelative(iso),
-          },
-          {
-            title: '',
-            key: 'actions',
-            width: 200,
-            render: (_, row) => (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Button
-                  size="small"
-                  type="primary"
-                  onClick={() => approveMut.mutate({ skill: row })}
-                  loading={approveMut.isPending && approveMut.variables?.skill.id === row.id}
-                >
-                  Approve
-                </Button>
-                <Popconfirm
-                  title="Reject this candidate?"
-                  description="The candidate is marked rejected and stays on the record; it will not go live."
-                  onConfirm={() => rejectMut.mutate(row.id)}
-                  okText="Reject"
-                  okButtonProps={{ danger: true }}
-                >
-                  <Button size="small" danger>
-                    Reject
-                  </Button>
-                </Popconfirm>
-              </div>
-            ),
-          },
-        ]}
-      />
-    </>
-  );
-}
-
-function PendingPreview({ skill }: { skill: PendingSkill }) {
-  return (
-    <pre
-      style={{
-        margin: 0,
-        fontFamily: 'Geist Mono, monospace',
-        fontSize: 12,
-        maxHeight: 320,
-        overflow: 'auto',
-        background: 'rgba(255,255,255,0.02)',
-        padding: 12,
-        borderRadius: 6,
-        whiteSpace: 'pre-wrap',
-      }}
-    >
-      {skill.body}
-    </pre>
+      <Link to={learningPath({ kind: 'skill' })} data-testid="skills-learning-link">
+        {waitingLinkText(data?.candidates.length, 'skill change')}
+      </Link>
+    </div>
   );
 }
 

@@ -4,7 +4,7 @@ description: "What an external dashboard can read about a personality, what it c
 kind: explanation
 audience: developer
 slug: personality-from-outside
-updated: 2026-05-13
+updated: 2026-09-13
 ---
 
 ## Context
@@ -15,7 +15,7 @@ A [personality](../../getting-started/glossary.md#personality) is a structural u
 
 The `personalities` namespace in the contract exposes three read operations that matter for dashboard rendering:
 
-**`personalities.list`** returns every personality with its `id`, `name`, `description`, `model`, `memoryScope`, and `toolset` array. A dashboard uses this to populate a picker — the user selects which personality to chat with or inspect.
+**`personalities.list`** returns every personality with its `id`, `name`, `description`, `model`, `provider`, and `toolset` array. A dashboard uses this to populate a picker — the user selects which personality to chat with or inspect.
 
 **`personalities.get`** takes a personality `id` and returns the full `PersonalityConfig` plus the raw Markdown body of `SOUL.md`. A dashboard can render the identity document directly — it is Markdown, designed to be read.
 
@@ -53,15 +53,15 @@ A dashboard that manages per-personality skills uses these endpoints. The skills
 
 ## Memory scope from a dashboard perspective
 
-A personality's `memoryScope` field (`'global'` or `'per-personality'`) determines whether MEMORY.md and USER.md are shared across personalities or scoped to each one. A dashboard displaying memory content needs to know which personality is active and what its scope is, because the same `memory.get` call returns different content depending on the active personality's scope setting.
+A personality has no memory scope field. Its memory is always its own: turn setup fixes the scope at `personality:<id>` (`memScopeId` in `packages/core/src/agent-loop/stages/turn-setup.ts`), so the researcher's `MEMORY.md` and `USER.md` are never the engineer's. `memory.get` therefore takes a `personalityId` and returns that personality's file. Passing a `userId` with `store: 'user'` returns a person's profile from `user:<userId>` instead — the copy a gateway turn reads for a sender its identity map resolved.
 
-The SDK's `memory` namespace handles scoping server-side — a dashboard does not construct file paths or manage directories. But a dashboard that lets users switch personalities should re-fetch memory content after the switch, since the backing file may differ.
+The SDK's `memory` namespace builds every path server-side — a dashboard does not construct file paths or manage directories. A dashboard that lets users switch personalities re-fetches memory content after the switch, because the backing file is a different one.
 
 ## Create, duplicate, delete
 
 The contract supports full lifecycle management for personalities. `personalities.create` takes an `id` (lowercase, directory-safe), `name`, `toolset` array, and `soulMd` body. `personalities.duplicate` clones an existing personality to a new `id`. `personalities.delete` removes it.
 
-These mutations affect the on-disk personality directory under `~/.ethos/personalities/`. The `FilePersonalityRegistry` is mtime-cached — it re-reads a personality only when `config.yaml` changes. A dashboard that creates or updates a personality sees the change reflected immediately in subsequent `list` or `get` calls because the server writes the file and the next registry load picks it up.
+These mutations affect the on-disk personality directory under `~/.ethos/personalities/`. The `FilePersonalityRegistry` is mtime-cached — it re-reads a personality only when one of the files it fingerprints changes. A dashboard that creates or updates a personality sees the change reflected immediately in subsequent `list` or `get` calls because the server writes the file and the next registry load picks it up.
 
 ## Summary of boundaries
 
@@ -74,4 +74,4 @@ These mutations affect the on-disk personality directory under `~/.ethos/persona
 | See toolset | Yes — `toolset` array in the response | |
 | Expand toolset at runtime | | No — server-side enforcement in `toDefinitions` |
 | Manage per-personality skills | Yes — `skillsList`, `skillsCreate`, etc. | |
-| Change model routing mid-turn | | No — read at loop construction |
+| Change model routing mid-turn | | No — resolved once per turn in turn setup (`resolveModelWithTier`) |

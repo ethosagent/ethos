@@ -59,7 +59,8 @@ export function activate(api: EthosPluginApi): void {
     name: 'Strategist',
     description:
       'Thinks in frameworks. Identifies core constraints. Presents options with tradeoffs.',
-    model: 'claude-opus-4-7',
+    provider: 'anthropic',
+    model: { default: 'claude-opus-4-7' }, // tier map: a plain string is never applied
     toolset: ['web_search', 'web_extract', 'read_file', 'memory_read', 'memory_write'],
   });
 

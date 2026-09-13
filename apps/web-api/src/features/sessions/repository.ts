@@ -39,6 +39,8 @@ export interface ListOptions {
   limit: number;
   cursor: string | null;
   personalityId?: string;
+  /** Exact origin platform (`mcp`, `web`, …). */
+  platform?: string;
 }
 
 export class SessionsRepository {
@@ -79,7 +81,8 @@ export class SessionsRepository {
       const matchedIds = intersected.slice(0, opts.limit);
       const sessions = (await Promise.all(matchedIds.map((id) => this.store.getSession(id))))
         .filter((s): s is Session => s !== null)
-        .filter((s) => !s.key.startsWith('goal:'));
+        .filter((s) => !s.key.startsWith('goal:'))
+        .filter((s) => opts.platform === undefined || s.platform === opts.platform);
       return { sessions, nextCursor: null };
     }
 
@@ -90,6 +93,7 @@ export class SessionsRepository {
       excludeKeyPrefixes: ['goal:'],
     };
     if (opts.personalityId) filter.personalityId = opts.personalityId;
+    if (opts.platform) filter.platform = opts.platform;
 
     const rows = await this.store.listSessions(filter);
     const more = rows.length > opts.limit;

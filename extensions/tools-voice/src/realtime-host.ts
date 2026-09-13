@@ -148,7 +148,17 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
         rootSessionKey: ctx.sessionKey,
         platform: ctx.platform,
         workingDir: ctx.workingDir,
-        ...(ctx.personalityId ? { personalityId: ctx.personalityId } : {}),
+        // A voice call is a conversation with this personality, so its tools
+        // see that personality's memory — the same `personality:<id>` scope
+        // AgentLoop stamps on every turn (`memScopeId` in
+        // packages/core/src/agent-loop/stages/turn-setup.ts). No resolved user
+        // id reaches this host, so `userScopeId` stays unset and USER.md reads
+        // fall back to the personality scope, as a turn without a user does.
+        // Without a personality there is no scope, and the memory tools say so
+        // (`NO_MEMORY_SCOPE`, extensions/tools-memory/src/index.ts).
+        ...(ctx.personalityId
+          ? { personalityId: ctx.personalityId, memoryScopeId: `personality:${ctx.personalityId}` }
+          : {}),
         currentTurn: 1,
         messageCount: 0,
         abortSignal: ctx.abortSignal,

@@ -113,6 +113,7 @@ import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   createApprovalDangerPredicate,
   createLazyProvider,
+  createOutboundPolicyGate,
   createSessionStore,
   fileMemoryUnsupportedReason,
   IdentityMap,
@@ -665,6 +666,17 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const watcherWake = async (event: WatcherWakeEvent): Promise<void> => {
     if (watcherWakeFn) await watcherWakeFn(event);
   };
+  // The registry this process answers personality-policy questions from —
+  // `personalityDirectory.refresh()` below reloads it. Built here, ahead of
+  // the watcher manager, because the manager's delivery gate reads it.
+  const personalitiesDir = join(ethosDir(), 'personalities');
+  const seamPersonalities = await createPersonalityRegistry(getStorage());
+  await seamPersonalities.loadFromDirectory(personalitiesDir);
+  try {
+    seamPersonalities.setDefault(config.personality);
+  } catch {
+    // Configured default not on disk — keep the registry's built-in default.
+  }
   const watcherManager = new WatcherManager({
     storage: getStorage(),
     logger: new ConsoleLogger({}, logLevel),
@@ -672,6 +684,16 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       if (watcherDeliverFn) await watcherDeliverFn(target, text);
     },
     wake: watcherWake,
+    // The approval outbox's delivery-time hold (O-T12): one gate per manager,
+    // in place before the first tick rather than late-bound by whichever loop
+    // is composed last. The policy is looked up on every delivery, after
+    // `reload` brings the registry up to date — a tick is not a turn, so the
+    // per-turn refresh has not run.
+    deliveryGate: createOutboundPolicyGate({
+      lookupPersonality: (id) => seamPersonalities.get(id),
+      ownerTarget: (platform) => config.channelFilter?.[platform]?.ownerUserId,
+      reload: () => seamPersonalities.loadFromDirectory(personalitiesDir),
+    }),
   });
   const scheduler = new CronScheduler({
     storage: getStorage(),
@@ -807,11 +829,10 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // it: a personality whose `outbound_policy.approve_before_send` is on queues
   // its publications here instead of sending them.
   //
-  // `approverFor` is late-bound through `outboxApproverLookup` below. The
-  // registry that answers it (`seamPersonalities`) is constructed after the
-  // loops, and the lookup is only ever called from inside a tool call, which
-  // is long after that. Reading it live is what makes a policy edited on disk
-  // apply on the next call rather than the next restart.
+  // `approverFor` is late-bound through `outboxApproverLookup` below, and the
+  // lookup is only ever called from inside a tool call, which is long after
+  // that. Reading `seamPersonalities` live is what makes a policy edited on
+  // disk apply on the next call rather than the next restart.
   let outboxApproverLookup: ((personalityId: string) => string | undefined) | undefined;
   // O-T7/O-T8. Every seam the approval surface needs — the system loop the
   // review turn runs on, the adapter that DMs the card, the registry that says
@@ -968,16 +989,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // personality dropped into or edited under `~/.ethos/personalities/` is
   // usable on the next turn/command without a restart. `has()`/`list()` read
   // the dedicated registry, which `refresh()` keeps in sync with the same disk
-  // the loops resolve against.
-  const personalitiesDir = join(ethosDir(), 'personalities');
-  const seamPersonalities = await createPersonalityRegistry(getStorage());
-  await seamPersonalities.loadFromDirectory(personalitiesDir);
-  try {
-    seamPersonalities.setDefault(config.personality);
-  } catch {
-    // Configured default not on disk — keep the registry's built-in default.
-  }
-  // The outbox's advisory-reviewer lookup, bound now that a registry exists.
+  // the loops resolve against (`seamPersonalities`, built above the watcher
+  // manager).
+  // The outbox's advisory-reviewer lookup.
   // `seamPersonalities` is the one `personalityDirectory.refresh()` reloads, so
   // a changed `approver_personality` is picked up without a restart (O-D4).
   outboxApproverLookup = (personalityId) =>

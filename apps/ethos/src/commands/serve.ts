@@ -82,6 +82,7 @@ import {
   createBrowserTakeoverRegistry,
   createLazyProvider,
   createMemoryBundle,
+  createOutboundPolicyGate,
   createSessionStore,
   IdentityMap,
   resolveMcpExportScope,
@@ -98,6 +99,7 @@ import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { bumpKanbanHeartbeats, KanbanPollLoop, writeRunActivityComments } from '../lib/kanban-poll';
 import { createLateBoundGoals } from '../lib/late-goals';
 import { adoptBootedLoop } from '../lib/onboarding-boot';
+import { createOutboxProposalSide } from '../lib/outbox-wiring';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
@@ -119,6 +121,7 @@ import {
   getStorage,
 } from '../wiring';
 import { runCronTurn } from './cron-turn';
+import { buildBotSpeakers } from './gateway';
 import { createA2aRunner } from './serve-a2a-runner';
 import {
   a2aZeroSkillsWarning,
@@ -566,6 +569,13 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // this stream in `ethos serve`.
     }
   };
+  // The registry this process answers personality-policy questions from.
+  // Built here, ahead of the watcher manager, because its delivery gate reads it.
+  const personalities = await createPersonalityRegistry({
+    storage: getStorage(),
+    userPersonalitiesDir: dir,
+  });
+  await personalities.loadFromDirectory(join(dir, 'personalities'));
   const watcherManager = new WatcherManager({
     storage: getStorage(),
     logger: watcherLogger,
@@ -575,7 +585,41 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       );
     },
     wake: watcherWake,
+    // The approval outbox's delivery-time hold (O-T12): one gate per manager,
+    // in place before the first tick rather than late-bound by whichever loop
+    // is composed last. The policy is looked up on every delivery, after
+    // `reload` brings the registry up to date — this process otherwise reloads
+    // it only through the web API.
+    deliveryGate: createOutboundPolicyGate({
+      lookupPersonality: (id) => personalities.get(id),
+      ownerTarget: (platform) => config.channelFilter?.[platform]?.ownerUserId,
+      reload: () => personalities.loadFromDirectory(join(dir, 'personalities')),
+    }),
   });
+  // The approval outbox, proposal side only (Part 2,
+  // plan/phases/trust-before-reach.md). `serve` holds no adapters, so it never
+  // delivers and never posts a card — but its loops DO reach a channel: the
+  // watcher tools above store a `deliver` target in `watchers.json`, which a
+  // gateway on this machine loads and sends from. Gating here refuses a gated
+  // personality's foreign `deliver` at creation, and turns its `send_message`
+  // into a queued proposal the gateway's dispatcher delivers once a human
+  // approves — the same result as a web turn under `ethos boot`.
+  // `createOutboxProposalSide` (`../lib/outbox-wiring`) is the one construction;
+  // pinned by `__tests__/outbox-gate-live.test.ts`.
+  const outboxSide = createOutboxProposalSide({
+    speakers: buildBotSpeakers(config),
+    ownerTarget: (platform) => config.channelFilter?.[platform]?.ownerUserId,
+    // The same registry the watcher manager's delivery gate reads.
+    personalities: { get: (id) => personalities.get(id) },
+    loop: () => loop,
+    // X-D11 — a decision taken through this process lands in `ethos audit
+    // decisions`. Lazy, so a serve that never decides never opens the DB.
+    observability: {
+      recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+    },
+    logger: new ConsoleLogger({}, logLevel),
+  });
+  const outbox = outboxSide.wiring;
   cronScheduler = new CronScheduler({
     storage: getStorage(),
     logger: new ConsoleLogger({}, logLevel),
@@ -681,7 +725,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     activePersonality = personalityOverride;
     const result = await createAgentLoop(
       { ...config, teamName: teamFlag, ...(roleFlag ? { role: roleFlag } : {}) },
-      serveLoopOptions({ meshName: activeMeshName, cronScheduler, watcherManager }),
+      serveLoopOptions({ meshName: activeMeshName, cronScheduler, watcherManager, outbox }),
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
@@ -746,7 +790,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     activePersonality = config.personality;
     const result = await createAgentLoop(
       config,
-      serveLoopOptions({ meshName: activeMeshName, cronScheduler, watcherManager }),
+      serveLoopOptions({ meshName: activeMeshName, cronScheduler, watcherManager, outbox }),
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
@@ -789,12 +833,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   }
 
   const mesh = new AgentMesh(meshRegistryPath(activeMeshName), { storage: getStorage() });
-
-  const personalities = await createPersonalityRegistry({
-    storage: getStorage(),
-    userPersonalitiesDir: dir,
-  });
-  await personalities.loadFromDirectory(join(dir, 'personalities'));
 
   // Team members (and team coordinators — both boot through this same shared
   // path) are dispatch targets for the team-supervisor's `Dispatcher`, which
@@ -1363,6 +1401,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // then drops (serve-shutdown-notice.test.ts).
       await created.closeChat();
       if (webShutdown) await webShutdown();
+      // Outbox reviews run on the loop, so they finish before it is disposed.
+      // Fail-open: a review that cannot finish costs a receipt, never shutdown.
+      await outboxSide.drain().catch(() => {});
       // F06 — the web API first (it borrowed the loop), then the loop's own
       // runtime: background executor, reconciler, stores, MCP, plugins.
       await disposeBeforeExit(
@@ -1384,6 +1425,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
           // process's own handles, like the ones above.
           ['a2a tasks.db', async () => a2a.taskStore.close()],
           ['notify-queue.db', async () => notifyQueue?.close()],
+          ['outbox.db', async () => outboxSide.close()],
           // The process-wide observability store — after everything above, which
           // records into it while it winds down.
           ['observability.db', async () => closeObservabilityStore()],
@@ -1564,19 +1606,28 @@ const SERVE_LOOP_PROFILE = 'web' as const;
 /**
  * The `createAgentLoop` options of an `ethos serve` loop, shared by the normal
  * branch and the loop onboarding boots in-process so the two cannot drift.
- * Cron and watchers exist only when serve starts with a config, so onboarding
- * passes neither. Pinned by commands/__tests__/serve-onboarding-bind.test.ts.
+ * Cron, watchers and the approval outbox exist only when serve starts with a
+ * config, so onboarding passes none of them. Pinned by
+ * commands/__tests__/serve-onboarding-bind.test.ts.
+ *
+ * `outbox` travels with `watcherManager` because the watcher tools are what
+ * give a serve loop a path to a channel (see `createOutboxProposalSide`). The
+ * two loops without them — onboarding and `--team` coordinator — cannot reach a
+ * channel at all: `send_message` answers "Gateway not active", because nothing
+ * in this process calls `setMessagingSend`.
  */
 export function serveLoopOptions(opts: {
   meshName: string;
   cronScheduler?: ServeLoopOptions['cronScheduler'] | null;
   watcherManager?: ServeLoopOptions['watcherManager'];
+  outbox?: ServeLoopOptions['outbox'];
 }): ServeLoopOptions {
   return {
     profile: SERVE_LOOP_PROFILE,
     meshRegistryPath: meshRegistryPath(opts.meshName),
     ...(opts.cronScheduler ? { cronScheduler: opts.cronScheduler } : {}),
     ...(opts.watcherManager ? { watcherManager: opts.watcherManager } : {}),
+    ...(opts.outbox ? { outbox: opts.outbox } : {}),
   };
 }
 
@@ -2236,6 +2287,22 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
           },
         }
       : {}),
+    // M-T9 — the MCP export section's copy-ready Claude Desktop entry, built by
+    // the CLI's own `buildExportEntry` + `claudeDesktop` adapter so the web and
+    // `ethos mcp install` cannot disagree. Lazy: the adapter pulls in the MCP SDK.
+    mcpExportDesktopEntry: async (personalityId: string, entryOpts: { bearer: boolean }) => {
+      const { claudeDesktopExportEntry, exportLauncher } = await import('./mcp-export');
+      return claudeDesktopExportEntry({ ...exportLauncher(), personalityId, ...entryOpts });
+    },
+    // M-T9 — Recent denials, read from the `mcp.export.*` events `ethos mcp
+    // serve --personality` records into this same observability store.
+    readObservabilityEvents: (filter) => {
+      try {
+        return getObservabilityStore().getEvents(filter);
+      } catch {
+        return [];
+      }
+    },
     chatDefaults: {
       model: config.model,
       provider: config.provider,

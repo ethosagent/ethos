@@ -3,8 +3,9 @@ import { contract } from '../index';
 
 // `plugins.install` carries an optional `personalityId` — the RPC form of
 // `ethos plugin install --personality <id>`. Present, the install also writes that
-// personality's `plugins.lock` entry; absent, it records only the grant. No current
-// web caller sends it. The id
+// personality's `plugins.lock` entry; absent, it records only the grant. The
+// workspace plugins page (`/p/:personalityId/plugins`) sends its route's id; the
+// global Library Plugins page and the create wizard send none. The id
 // becomes a path segment under `personalities/`, so a non-plain identifier is
 // refused here, before the handler (and npm) ever runs.
 

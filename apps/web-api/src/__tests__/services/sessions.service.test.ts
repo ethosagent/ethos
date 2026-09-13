@@ -63,6 +63,18 @@ describe('SessionsService', () => {
     expect(captured?.limit).toBe(50);
   });
 
+  it('list passes a platform filter through to the repository', async () => {
+    let captured: { platform?: string } | undefined;
+    const service = makeService({
+      list: async (opts: unknown) => {
+        captured = opts as { platform?: string };
+        return { sessions: [], nextCursor: null };
+      },
+    });
+    await service.list({ platform: 'mcp' });
+    expect(captured?.platform).toBe('mcp');
+  });
+
   it('list converts Date fields to ISO strings on the wire', async () => {
     const service = makeService({
       list: async () => ({ sessions: [aSession], nextCursor: null }),

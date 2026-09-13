@@ -197,7 +197,7 @@ describe('KanbanPollLoop', () => {
       store.updateStatus(task.id, 'running', 'claimed via poll dispatch', 'agent-a');
       store.addComment(task.id, 'agent-a', '🔧 web_fetch({"url":"https://example.com"})');
       store.blockRun(task.id, 'Which X handle should I read?', 'agent-a', 'needs_input');
-      store.addComment(task.id, 'human:control-center', 'Use @rudderstack on X.');
+      store.addComment(task.id, 'human:control-center', 'Use @example-bot on X.');
       store.updateStatus(task.id, 'ready', 'unblocked by operator', 'human:control-center');
     });
 
@@ -226,7 +226,7 @@ describe('KanbanPollLoop', () => {
     });
 
     const [prompt, , , , runId] = runner.mock.calls[0] ?? [];
-    expect(prompt).toContain('Use @rudderstack on X.');
+    expect(prompt).toContain('Use @example-bot on X.');
     expect(prompt).toContain('Your previous attempt stopped with: Which X handle should I read?');
     expect(prompt).not.toContain('web_fetch');
     // The runner is handed the run this claim opened.

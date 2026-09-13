@@ -44,10 +44,13 @@ import type {
 } from '@ethosagent/types';
 import {
   type AssertionKind,
+  type CaptureCasesResult,
   type CaseSource,
+  captureCases,
   type LearningCase,
   listCases,
   readCase,
+  type SessionCaseTurn,
 } from './cases';
 import type { OverlayShadow } from './overlay-storage';
 import {
@@ -191,6 +194,32 @@ export function selectReplayCases(
     selected.push({ role: 'regression', case: c });
   }
   return { selected, skipped };
+}
+
+/**
+ * How many more REGRESSION cases this selection needs before rule (a) can hold:
+ * at least one, and enough that targets plus regressions reach
+ * `MIN_REPLAY_CASES`. Zero when the selection already has them. Computed on
+ * `selectReplayCases`'s own output, so a target the case cap skipped, an
+ * ungradable pool case, or a pool case that IS a target never counts as a
+ * regression case here either.
+ *
+ * With no selectable target the answer is still positive: topping up the pool
+ * cannot give the candidate a target, and rule (a) keeps it `incomplete`.
+ */
+export function regressionShortfall(
+  targets: readonly LearningCase[],
+  pool: readonly LearningCase[],
+  maxCases: number,
+): number {
+  const limit = Math.max(0, Math.min(Math.floor(maxCases), MAX_REPLAY_CASES));
+  const { selected } = selectReplayCases(targets, pool, maxCases);
+  const targetCount = selected.filter((s) => s.role === 'target').length;
+  const regressionCount = selected.length - targetCount;
+  const wanted = Math.max(1, MIN_REPLAY_CASES - targetCount);
+  // A regression slot the case cap does not leave cannot be filled by freezing.
+  const fillable = Math.max(0, limit - targetCount);
+  return Math.max(0, Math.min(wanted, fillable) - regressionCount);
 }
 
 // --- Report shapes ---------------------------------------------------------
@@ -532,6 +561,21 @@ export async function runReplay(input: RunReplayInput): Promise<ReplayReport> {
 /** Statuses a candidate may be replayed from. */
 const REPLAYABLE: readonly CandidateStatus[] = ['pending_replay', 'pending_review'];
 
+/**
+ * Where a replay finds more REGRESSION cases when the frozen pool is short.
+ * Wiring's `learningRegressionTopUp` binds it to the personality's recent
+ * sessions (`packages/wiring/src/learning-pipeline.ts`). It feeds
+ * `captureCases`' `sessionTurns` — the same path the nightly freeze uses — so
+ * `LEARNING_EXCLUDED_KEY_PREFIXES`, `CASE_FREEZE_BATCH` and `CASE_POOL_CAP`
+ * apply unchanged.
+ */
+export interface RegressionTopUp {
+  /** The personality's Core, for the session-turn assertion. */
+  core(personalityId: string): Promise<string>;
+  /** Recent user turns, newest first. Excluded keys are dropped by `caseFromSessionTurn`. */
+  sessionTurns(personalityId: string): Promise<SessionCaseTurn[]>;
+}
+
 export interface ReplayCandidateDeps {
   storage: Storage;
   dataDir: string;
@@ -543,6 +587,12 @@ export interface ReplayCandidateDeps {
   settings: { maxCases: number; maxCostUsd: number };
   /** `shadowForCandidate` from `packages/wiring/src/learning-replay.ts`. */
   shadowFor: (candidate: LearningCandidate) => Promise<OverlayShadow>;
+  /**
+   * Absent → a short pool stays short and the run is `incomplete`. Present →
+   * `replayCandidate` freezes regression cases from recent sessions first, but
+   * only when `regressionShortfall` says rule (a) cannot otherwise hold.
+   */
+  regressionTopUp?: RegressionTopUp;
   /** Recorded on the audit line. */
   actor?: string;
   now?: () => number;
@@ -555,6 +605,14 @@ export interface ReplayCandidateDeps {
  * takes the new verdict. Promotion is not decided here.
  *
  * A target case id with no frozen file is listed in `skipped`.
+ *
+ * The regression top-up lives HERE, so every replay — `ethos learning replay`,
+ * the web's Run replay, the nightly step and `--auto-approve` — goes through
+ * the same one. It never touches target cases: targets are read only from
+ * `targetCaseIds`, a frozen file is write-once (`freezeCase`), and the pool cap
+ * never evicts a target of any non-terminal candidate — this one's or another's
+ * (`cases.ts` `enforceCasePoolCap`). It does not lower rule (a):
+ * when the sessions cannot fill the shortfall the run is still `incomplete`.
  */
 export async function replayCandidate(
   deps: ReplayCandidateDeps,
@@ -576,7 +634,11 @@ export async function replayCandidate(
     if (c) targets.push(c);
     else missing.push({ caseId: id, reason: 'target case not found' });
   }
-  const pool = await listCases(storage, dataDir, current.personalityId);
+  let pool = await listCases(storage, dataDir, current.personalityId);
+  if (deps.regressionTopUp && regressionShortfall(targets, pool, deps.settings.maxCases) > 0) {
+    await topUpRegressionPool(deps, deps.regressionTopUp, current);
+    pool = await listCases(storage, dataDir, current.personalityId);
+  }
 
   const report = await runReplay({
     candidateId,
@@ -608,4 +670,20 @@ export async function replayCandidate(
     deps.now,
   );
   return { candidate, report };
+}
+
+async function topUpRegressionPool(
+  deps: ReplayCandidateDeps,
+  topUp: RegressionTopUp,
+  candidate: LearningCandidate,
+): Promise<CaptureCasesResult> {
+  const { personalityId } = candidate;
+  return captureCases({
+    storage: deps.storage,
+    dataDir: deps.dataDir,
+    personalityId,
+    core: await topUp.core(personalityId),
+    sessionTurns: () => topUp.sessionTurns(personalityId),
+    ...(deps.now ? { now: deps.now } : {}),
+  });
 }

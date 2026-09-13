@@ -1,7 +1,14 @@
-import { ContentRenderer } from '@ethosagent/ui-components';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, Button, Input, Modal, Spin, Typography } from 'antd';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { learningKeys } from '../features/learning/api/keys';
+import {
+  candidateIdFromEvidenceRef,
+  LEARNING_WAITING,
+  learningPath,
+  waitingLinkText,
+} from '../lib/learning';
 import { learningRefusal } from '../lib/learning-refusal';
 import { rpc } from '../rpc';
 
@@ -175,143 +182,31 @@ function ExpressionPanel({ label, text }: { label: string; text: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Pending skill candidates — the manual-mode review queue. The nightly
-// skill-evolver drafts candidates and leaves them in `.pending/`; here a
-// human promotes (approve) or discards (reject) each one.
+// Changes waiting in Learning. This used to be the per-personality "Pending
+// skill candidates" queue with its own Approve button; every learned change
+// now waits in one inbox (plan `trust-before-reach.md` Part 4, "Existing
+// screens link here instead of keeping their own queues"), so this is a count
+// and a link filtered to this personality.
 // ---------------------------------------------------------------------------
 
-function SkillCandidatesSection({ personalityId }: { personalityId: string }) {
-  const qc = useQueryClient();
-  const { notification, modal } = AntApp.useApp();
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['personalities', 'skillCandidates', personalityId],
-    queryFn: () => rpc.personalities.skillCandidatesList({ personalityId }),
+function LearningWaitingLink({ personalityId }: { personalityId: string }) {
+  const { data } = useQuery({
+    queryKey: learningKeys.count({ personalityId, statuses: LEARNING_WAITING }),
+    queryFn: () =>
+      rpc.learning.list({ personalityId, statuses: [...LEARNING_WAITING], limit: 500 }),
   });
-
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['personalities', 'skillCandidates', personalityId] });
-    qc.invalidateQueries({ queryKey: ['personalities', 'skills', personalityId] });
-    qc.invalidateQueries({ queryKey: ['personalities', 'livingSoul', personalityId] });
-  };
-
-  const approveMut = useMutation({
-    mutationFn: (fileName: string) =>
-      rpc.personalities.skillCandidateApprove({ personalityId, fileName }),
-    onSuccess: () => {
-      invalidate();
-      notification.success({ message: 'Skill promoted to live', placement: 'topRight' });
-    },
-    onError: (err) =>
-      notification.error({
-        message: 'Approve failed',
-        description: err instanceof Error ? err.message : String(err),
-      }),
-  });
-
-  const rejectMut = useMutation({
-    mutationFn: (fileName: string) =>
-      rpc.personalities.skillCandidateReject({ personalityId, fileName }),
-    onSuccess: () => {
-      invalidate();
-      notification.success({ message: 'Candidate rejected', placement: 'topRight' });
-    },
-    onError: (err) =>
-      notification.error({
-        message: 'Reject failed',
-        description: err instanceof Error ? err.message : String(err),
-      }),
-  });
-
-  const confirmApprove = (fileName: string) => {
-    modal.confirm({
-      title: 'Promote this skill to live?',
-      content: `"${fileName}" becomes an active skill for this personality.`,
-      okText: 'Promote',
-      cancelText: 'Cancel',
-      onOk: () => approveMut.mutateAsync(fileName),
-    });
-  };
-
-  const confirmReject = (fileName: string) => {
-    modal.confirm({
-      title: 'Reject this skill candidate?',
-      content: `"${fileName}" is deleted and will not be promoted.`,
-      okText: 'Reject',
-      okButtonProps: { danger: true },
-      cancelText: 'Cancel',
-      onOk: () => rejectMut.mutateAsync(fileName),
-    });
-  };
 
   return (
     <div style={{ marginTop: 32 }}>
       <Typography.Text type="secondary" style={LABEL_STYLE}>
-        Pending skill candidates
+        Learning
       </Typography.Text>
-      {isLoading ? (
-        <div style={{ display: 'grid', placeItems: 'center', height: 64 }}>
-          <Spin />
-        </div>
-      ) : !data || data.candidates.length === 0 ? (
-        <Typography.Text type="secondary">No skill candidates awaiting review.</Typography.Text>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {data.candidates.map((c) => (
-            <div
-              key={c.fileName}
-              style={{
-                border: '1px solid var(--border-subtle, #2A2A2A)',
-                borderRadius: 'var(--radius-md)',
-                padding: '12px',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 12,
-                  marginBottom: 8,
-                }}
-              >
-                <Typography.Text style={{ fontFamily: MONO, fontSize: 12 }}>
-                  {c.fileName}
-                </Typography.Text>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <Button
-                    type="primary"
-                    size="small"
-                    loading={approveMut.isPending}
-                    onClick={() => confirmApprove(c.fileName)}
-                  >
-                    Approve
-                  </Button>
-                  <Button
-                    type="text"
-                    size="small"
-                    danger
-                    loading={rejectMut.isPending}
-                    onClick={() => confirmReject(c.fileName)}
-                  >
-                    Reject
-                  </Button>
-                </div>
-              </div>
-              <div
-                style={{
-                  maxHeight: 240,
-                  overflowY: 'auto',
-                  fontSize: 13,
-                  lineHeight: 1.5,
-                }}
-              >
-                <ContentRenderer content={c.content} format="markdown" />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <Link
+        to={learningPath({ personality: personalityId })}
+        data-testid="living-soul-learning-link"
+      >
+        {waitingLinkText(data?.candidates.length)}
+      </Link>
     </div>
   );
 }
@@ -513,13 +408,14 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
                   </Typography.Text>
                 </div>
                 <Typography.Text style={{ fontSize: 13 }}>{entry.summary}</Typography.Text>
+                <LearningLogCandidateLink evidenceRef={entry.evidenceRef} />
               </div>
             ))}
           </div>
         )}
       </div>
 
-      <SkillCandidatesSection personalityId={personalityId} />
+      <LearningWaitingLink personalityId={personalityId} />
 
       <Modal
         open={proposal !== null}
@@ -629,6 +525,23 @@ export function LivingSoulSection({ personalityId }: { personalityId: string }) 
           </div>
         ) : null}
       </Modal>
+    </div>
+  );
+}
+
+/** A Learning Log entry promoted from a candidate links back to it. */
+function LearningLogCandidateLink({ evidenceRef }: { evidenceRef: string }) {
+  const candidateId = candidateIdFromEvidenceRef(evidenceRef);
+  if (!candidateId) return null;
+  return (
+    <div>
+      <Link
+        to={learningPath({ candidate: candidateId })}
+        style={{ fontSize: 12 }}
+        data-testid="living-soul-log-candidate-link"
+      >
+        View in Learning →
+      </Link>
     </div>
   );
 }

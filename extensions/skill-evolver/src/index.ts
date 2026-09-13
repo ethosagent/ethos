@@ -14,7 +14,7 @@ export {
   runEvolveStatus,
 } from './evolve-helpers';
 export type { EvolveOptions, EvolveResult } from './evolver';
-export { SkillEvolver } from './evolver';
+export { SkillEvolver, skillEvolutionEvolveOptions } from './evolver';
 export {
   draftExpressionUpdate,
   type ExpressionDraft,

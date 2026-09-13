@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { useConfig } from '../features/config/api/queries';
 import { useDocumentsList } from '../features/documents/api/queries';
 import { kanbanKeys } from '../features/kanban/api/keys';
+import { learningKeys } from '../features/learning/api/keys';
 import {
   usePersonalityList,
   usePersonalitySkillsList,
@@ -14,6 +15,7 @@ import { useRecentSessions } from '../features/sessions/api/queries';
 import { useTeam, useTeamsList } from '../features/teams/api/queries';
 import { teamAccents } from '../features/teams/lib/membership';
 import { useNewSessionModal } from '../hooks/useNewSessionModal';
+import { LEARNING_AWAITING_REVIEW } from '../lib/learning';
 import { buildNewSessionPath } from '../lib/newSessionPicker';
 import {
   capitalize,
@@ -122,6 +124,19 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
     enabled: teamAltitude,
     retry: false,
   });
+  // The Learning row's count: candidates a replay has measured and a person
+  // now has to decide (plan `trust-before-reach.md` Part 4, "What the user
+  // sees"). Library altitude only — the row is Library chrome, and a
+  // workspace or team column must not poll it.
+  const libraryAltitude = personalityId === null && teamId === null;
+  const learningAwaitingQuery = useQuery({
+    queryKey: learningKeys.count({ statuses: LEARNING_AWAITING_REVIEW }),
+    queryFn: () => rpc.learning.list({ statuses: [...LEARNING_AWAITING_REVIEW], limit: 500 }),
+    enabled: libraryAltitude,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const learningAwaiting = learningAwaitingQuery.data?.candidates.length ?? 0;
   const memberIds = useMemo(
     () => (team ? new Set(team.members.map((m) => m.personalityId)) : undefined),
     [team],
@@ -287,73 +302,115 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
         </div>
       ) : personalityId ? (
         <div className="sidebar-nav">
-          <NavRow path={`${wsPrefix}/chat`} icon="💬" label="Chat" pathname={pathname} />
-          <NavRow path={`${wsPrefix}/sessions`} icon="📋" label="Sessions" pathname={pathname} />
-          <NavRow path={`${wsPrefix}/memory`} icon="🧠" label="Memory" pathname={pathname} />
-          <NavRow path={`${wsPrefix}/documents`} icon="📄" label="Documents" pathname={pathname} />
-          <NavRow path={`${wsPrefix}/schedule`} icon="⏰" label="Schedule" pathname={pathname} />
-          <NavRow path={`${wsPrefix}/outbox`} icon="📤" label="Outbox" pathname={pathname} />
+          <NavRow path={`${wsPrefix}/chat`} glyph="chat" label="Chat" pathname={pathname} />
+          <NavRow
+            path={`${wsPrefix}/sessions`}
+            glyph="sessions"
+            label="Sessions"
+            pathname={pathname}
+          />
+          <NavRow path={`${wsPrefix}/memory`} glyph="memory" label="Memory" pathname={pathname} />
+          <NavRow
+            path={`${wsPrefix}/documents`}
+            glyph="documents"
+            label="Documents"
+            pathname={pathname}
+          />
+          <NavRow path={`${wsPrefix}/schedule`} glyph="cron" label="Schedule" pathname={pathname} />
+          <NavRow path={`${wsPrefix}/outbox`} glyph="outbox" label="Outbox" pathname={pathname} />
           <NavRow
             path={`${wsPrefix}/skills`}
-            icon="⚡"
+            glyph="skills"
             label="Skills"
             hint={skillsFraction}
             pathname={pathname}
           />
           <NavRow
             path={`${wsPrefix}/mcp`}
-            icon="🔌"
+            glyph="mcp"
             label="MCP Servers"
             hint={mcpFraction}
             pathname={pathname}
           />
           <NavRow
             path={`${wsPrefix}/plugins`}
-            icon="🧩"
+            glyph="plugins"
             label="Plugins"
             hint={pluginsFraction}
             pathname={pathname}
           />
-          <NavRow path={`${wsPrefix}/goals`} icon="🎯" label="Goals" pathname={pathname} />
+          <NavRow path={`${wsPrefix}/goals`} glyph="goals" label="Goals" pathname={pathname} />
           <NavRow
             path={`${wsPrefix}/tasks`}
-            icon="🧵"
+            glyph="tasks"
             label="Tasks"
             pathname={pathname}
             badge={needsYouCount}
           />
-          <NavRow path={`${wsPrefix}/activity`} icon="📊" label="Activity" pathname={pathname} />
-          <NavRow path={`${wsPrefix}/identity`} icon="🪪" label="Identity" pathname={pathname} />
+          <NavRow
+            path={`${wsPrefix}/activity`}
+            glyph="activity"
+            label="Activity"
+            pathname={pathname}
+          />
+          <NavRow
+            path={`${wsPrefix}/identity`}
+            glyph="identity"
+            label="Identity"
+            pathname={pathname}
+          />
         </div>
       ) : (
         <>
           <div className="sidebar-nav">
-            <NavRow path="/personalities" icon="🎭" label="Personalities" pathname={pathname} />
+            <NavRow
+              path="/personalities"
+              glyph="personalities"
+              label="Personalities"
+              pathname={pathname}
+            />
             {/* No fraction hint: unlike Skills/MCP/Plugins, "3 of 3" means
                 nothing for a catalog you install FROM. */}
-            <NavRow path="/recipes" icon="📖" label="Recipes" pathname={pathname} />
-            <NavRow path="/skills" icon="⚡" label="All skills" pathname={pathname} exact />
-            <NavRow path="/plugins" icon="🧩" label="All plugins" pathname={pathname} />
-            <NavRow path="/mcp" icon="🔌" label="All servers" pathname={pathname} exact />
+            <NavRow path="/recipes" glyph="recipes" label="Recipes" pathname={pathname} />
+            <NavRow path="/skills" glyph="skills" label="All skills" pathname={pathname} exact />
+            <NavRow path="/plugins" glyph="plugins" label="All plugins" pathname={pathname} />
+            <NavRow path="/mcp" glyph="mcp" label="All servers" pathname={pathname} exact />
             <NavRow
               path="/library/tasks"
-              icon="🧵"
+              glyph="tasks"
               label="All tasks"
               pathname={pathname}
               exact
               badge={needsYouCount}
             />
-            <NavRow path="/communications" icon="📡" label="Platforms" pathname={pathname} exact />
+            {/* Cross-personality, so Library chrome: neutral, with a count of
+                candidates awaiting review. Each row inside the page carries its
+                own personality mark. */}
+            <NavRow
+              path="/learning"
+              glyph="learning"
+              label="Learning"
+              pathname={pathname}
+              exact
+              badge={learningAwaiting}
+            />
+            <NavRow
+              path="/communications"
+              glyph="platforms"
+              label="Platforms"
+              pathname={pathname}
+              exact
+            />
           </div>
           <div className="sidebar-divider" />
           <div className="sidebar-nav">
-            <NavRow path="/teams" icon="👥" label="Teams" pathname={pathname} />
-            <NavRow path="/kanban" icon="📋" label="Kanban" pathname={pathname} exact />
+            <NavRow path="/teams" glyph="teams" label="Teams" pathname={pathname} />
+            <NavRow path="/kanban" glyph="board" label="Kanban" pathname={pathname} exact />
           </div>
           <div className="sidebar-divider" />
           <div className="sidebar-nav">
-            <NavRow path="/activity" icon="📊" label="Activity" pathname={pathname} exact />
-            <NavRow path="/mesh" icon="🕸️" label="Mesh" pathname={pathname} exact />
+            <NavRow path="/activity" glyph="activity" label="Activity" pathname={pathname} exact />
+            <NavRow path="/mesh" glyph="mesh" label="Mesh" pathname={pathname} exact />
           </div>
           <button
             type="button"
@@ -365,18 +422,29 @@ export function ScopeNav({ needsYouCount = 0 }: { needsYouCount?: number }) {
           </button>
           {advancedOpen && (
             <div className="sidebar-nav">
-              <NavRow path="/dashboards" icon="📊" label="Dashboards" pathname={pathname} />
-              <NavRow path="/batch" icon="📦" label="Batch" pathname={pathname} exact />
-              <NavRow path="/eval" icon="🧪" label="Eval" pathname={pathname} exact />
+              <NavRow
+                path="/dashboards"
+                glyph="dashboards"
+                label="Dashboards"
+                pathname={pathname}
+              />
+              <NavRow path="/batch" glyph="batch" label="Batch" pathname={pathname} exact />
+              <NavRow path="/eval" glyph="eval" label="Eval" pathname={pathname} exact />
               {config?.adminEnabled && (
-                <NavRow path="/admin" icon="🛡️" label="Admin" pathname={pathname} exact />
+                <NavRow path="/admin" glyph="admin" label="Admin" pathname={pathname} exact />
               )}
-              <NavRow path="/settings" icon="⚙️" label="Settings" pathname={pathname} />
+              <NavRow path="/settings" glyph="settings" label="Settings" pathname={pathname} />
               {/* P2: system jobs only, machine-wide — not the personal
                   /schedule pane. `/library/cron` is a distinct address from
                   the legacy `/cron` bookmark redirect above (that one always
                   bounces into a workspace, so it can't double as this). */}
-              <NavRow path="/library/cron" icon="🗓️" label="System cron" pathname={pathname} exact />
+              <NavRow
+                path="/library/cron"
+                glyph="cron"
+                label="System cron"
+                pathname={pathname}
+                exact
+              />
             </div>
           )}
         </>
@@ -510,7 +578,6 @@ function RenameSessionModal({
 
 function NavRow({
   path,
-  icon,
   glyph,
   label,
   hint,
@@ -520,9 +587,8 @@ function NavRow({
   trailing,
 }: {
   path: string;
-  icon?: string;
-  /** 16px stroke icon (DESIGN.md sidebar rule) — the team rows use these. */
-  glyph?: NavIconKey;
+  /** 16px stroke icon (DESIGN.md "Sidebar → Icons") — every row carries one. */
+  glyph: NavIconKey;
   label: string;
   hint?: string | null;
   pathname: string;
@@ -543,7 +609,7 @@ function NavRow({
       className={`sidebar-nav-item${active ? ' active' : ''}`}
       title={badge && badge > 0 ? `${label} — ${badge} needs you` : label}
     >
-      {glyph ? <NavIcon icon={glyph} /> : icon ? <span className="nav-icon">{icon}</span> : null}
+      <NavIcon icon={glyph} />
       <span className="sidebar-nav-label">{label}</span>
       {/* A count paired with the row's own title text — never colour alone
           (§4.11), and the title is what a screen reader announces. */}

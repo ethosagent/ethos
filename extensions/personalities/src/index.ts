@@ -960,7 +960,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
   /** Per-personality tool config loaded from tools.yaml (source of truth,
    *  sibling artifact — NOT on PersonalityConfig). Keyed by personality id. */
   private readonly toolsConfigs = new Map<string, PersonalityToolsConfig>();
-  // dir → fingerprint of config.yaml + SOUL.md + toolset.yaml + mcp.yaml mtimes
+  // dir → mtime fingerprint of the paths `loadOne` lists (the one owner of that list)
   private readonly fingerprintCache = new Map<string, string>();
   private defaultId = 'researcher';
   private readonly storage: Storage;
@@ -1883,6 +1883,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     const nightlyConfig = buildNightlyConfig(cfg);
     const memoryConfig = buildMemoryConfig(cfg);
     const mcpExport = buildMcpExportConfig(cfg);
+    const skills = buildSkillsConfig(cfg);
     const outboundPolicy = buildOutboundPolicy(cfg);
     const voice = buildVoiceConfig(cfg);
     const display = buildDisplayConfig(cfg);
@@ -1917,6 +1918,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(nightlyConfig !== undefined ? { nightly: nightlyConfig } : {}),
       ...(memoryConfig !== undefined ? { memory: memoryConfig } : {}),
       ...(mcpExport !== undefined ? { mcp_export: mcpExport } : {}),
+      ...(skills !== undefined ? { skills } : {}),
       ...(outboundPolicy !== undefined ? { outbound_policy: outboundPolicy } : {}),
       ...(evolutionApprovalMode !== undefined
         ? { evolution_approval_mode: evolutionApprovalMode }
@@ -2403,6 +2405,55 @@ function buildMcpExportConfig(
   return out;
 }
 
+const INGEST_MODES = ['capability', 'tags', 'explicit', 'none'] as const;
+const INGEST_FALLBACKS = ['deny', 'warn', 'allow'] as const;
+
+const INJECTION_MODES = ['full', 'index'] as const;
+
+/**
+ * `skills.*` dotted keys → `PersonalityConfig.skills`. `skills` is not in
+ * `NESTED_BLOCKS`, so the dotted form is the only way to write it.
+ *
+ * - `skills.global_ingest.*` → `skills.global_ingest`, the filter
+ *   `extensions/skills/src/ingest-filter.ts` applies to the global skill pool.
+ *   Lists are comma-separated, like `fs_reach.*`.
+ * - `skills.injection_mode` → `skills.injection_mode`, read by
+ *   `SkillsInjector` (`extensions/skills/src/skills-injector.ts`) to pick a
+ *   skill index or full bodies, and by `usesSkillIndexMode`
+ *   (`packages/core/src/agent-loop/ghost-skills.ts`) for the ghost-skill markers.
+ *
+ * A `mode`, `fallback_unknown` or `injection_mode` outside its vocabulary is
+ * ignored and the reader's default (`capability` / `allow` / `index`) stands,
+ * the same as leaving the key out.
+ */
+function buildSkillsConfig(cfg: Record<string, string>): PersonalityConfig['skills'] | undefined {
+  const prefix = 'skills.global_ingest.';
+  const mode = cfg[`${prefix}mode`];
+  const fallback = cfg[`${prefix}fallback_unknown`];
+  const acceptTags = parseCsv(cfg[`${prefix}accept_tags`]);
+  const rejectTags = parseCsv(cfg[`${prefix}reject_tags`]);
+  const allow = parseCsv(cfg[`${prefix}allow`]);
+  const deny = parseCsv(cfg[`${prefix}deny`]);
+  const ingest: NonNullable<NonNullable<PersonalityConfig['skills']>['global_ingest']> = {};
+  if (INGEST_MODES.includes(mode as (typeof INGEST_MODES)[number])) {
+    ingest.mode = mode as (typeof INGEST_MODES)[number];
+  }
+  if (INGEST_FALLBACKS.includes(fallback as (typeof INGEST_FALLBACKS)[number])) {
+    ingest.fallback_unknown = fallback as (typeof INGEST_FALLBACKS)[number];
+  }
+  if (acceptTags) ingest.accept_tags = acceptTags;
+  if (rejectTags) ingest.reject_tags = rejectTags;
+  if (allow) ingest.allow = allow;
+  if (deny) ingest.deny = deny;
+  const skills: NonNullable<PersonalityConfig['skills']> = {};
+  if (Object.keys(ingest).length > 0) skills.global_ingest = ingest;
+  const injectionMode = cfg['skills.injection_mode'];
+  if (INJECTION_MODES.includes(injectionMode as (typeof INJECTION_MODES)[number])) {
+    skills.injection_mode = injectionMode as (typeof INJECTION_MODES)[number];
+  }
+  return Object.keys(skills).length > 0 ? skills : undefined;
+}
+
 function buildModelConfig(cfg: Record<string, string>): string | ModelTierConfig | undefined {
   const trivial = cfg['model.trivial'];
   const defaultModel = cfg['model.default'];
@@ -2660,6 +2711,7 @@ type RenderConfigInput = Omit<CreatePersonalityInput, 'id' | 'soulMd' | 'safety'
     | 'context_layering'
     | 'memory'
     | 'mcp_export'
+    | 'skills'
     | 'outbound_policy'
     | 'voice'
     | 'display'
@@ -2735,6 +2787,23 @@ function renderConfigYaml(input: RenderConfigInput): string {
       lines.push(`skill_evolution.evolve_existing: ${se.evolve_existing}`);
     if (se.promotion !== undefined) lines.push(`skill_evolution.promotion: ${se.promotion}`);
     if (se.scope !== undefined) lines.push(`skill_evolution.scope: ${se.scope}`);
+  }
+  if (input.skills?.injection_mode !== undefined) {
+    lines.push(`skills.injection_mode: ${input.skills.injection_mode}`);
+  }
+  const ingest = input.skills?.global_ingest;
+  if (ingest !== undefined) {
+    const p = 'skills.global_ingest';
+    if (ingest.mode !== undefined) lines.push(`${p}.mode: ${ingest.mode}`);
+    if (ingest.accept_tags?.length)
+      lines.push(`${p}.accept_tags: ${ingest.accept_tags.join(', ')}`);
+    if (ingest.reject_tags?.length)
+      lines.push(`${p}.reject_tags: ${ingest.reject_tags.join(', ')}`);
+    if (ingest.allow?.length) lines.push(`${p}.allow: ${ingest.allow.join(', ')}`);
+    if (ingest.deny?.length) lines.push(`${p}.deny: ${ingest.deny.join(', ')}`);
+    if (ingest.fallback_unknown !== undefined) {
+      lines.push(`${p}.fallback_unknown: ${ingest.fallback_unknown}`);
+    }
   }
   if (input.memory !== undefined) {
     lines.push(`memory.provider: ${yamlScalar(input.memory.provider)}`);

@@ -19,5 +19,8 @@
     "@ethosagent/platform-voice": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/voice-text": "workspace:*"
+  },
+  "devDependencies": {
+    "@ethosagent/tools-memory": "workspace:*"
   }
 }

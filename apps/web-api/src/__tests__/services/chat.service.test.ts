@@ -721,7 +721,9 @@ describe('ChatService — team-scoped loops', () => {
     store.close();
   });
 
-  const MEMBERSHIP = [{ name: 'marketing', members: ['cmo', 'writer'], coordinator: 'cmo' }];
+  const MEMBERSHIP = [
+    { name: 'alpha', members: ['coordinator', 'writer'], coordinator: 'coordinator' },
+  ];
 
   function makeRouted(opts: { failTeamBuild?: boolean } = {}) {
     const ran: Array<{ loop: string; personalityId: unknown }> = [];
@@ -729,7 +731,7 @@ describe('ChatService — team-scoped loops', () => {
       ran.push({ loop, personalityId: (runOpts as { personalityId?: string }).personalityId });
     };
     const mainLoop = makeStubAgentLoop({ onRun: record('main') });
-    const teamLoop = makeStubAgentLoop({ onRun: record('team:marketing') });
+    const teamLoop = makeStubAgentLoop({ onRun: record('team:alpha') });
     let mainRefreshes = 0;
     let teamRefreshes = 0;
     const teamLoops = new TeamLoopRegistry({
@@ -767,7 +769,7 @@ describe('ChatService — team-scoped loops', () => {
 
     await service.send({ clientId: 'tab-1', text: 'hi', personalityId: 'writer' });
     await waitFor(() => ran.length === 1);
-    expect(ran[0]).toEqual({ loop: 'team:marketing', personalityId: 'writer' });
+    expect(ran[0]).toEqual({ loop: 'team:alpha', personalityId: 'writer' });
 
     await service.send({ clientId: 'tab-1', text: 'hi', personalityId: 'researcher' });
     await waitFor(() => ran.length === 2);
@@ -776,19 +778,23 @@ describe('ChatService — team-scoped loops', () => {
 
   it('the coordinator and a member share the team loop — one scope, two doors', async () => {
     const { service, ran } = makeRouted();
-    await service.send({ clientId: 'tab-1', text: 'hi', personalityId: 'cmo' });
+    await service.send({ clientId: 'tab-1', text: 'hi', personalityId: 'coordinator' });
     await service.send({ clientId: 'tab-2', text: 'hi', personalityId: 'writer' });
     await waitFor(() => ran.length === 2);
-    expect(ran.map((r) => r.loop)).toEqual(['team:marketing', 'team:marketing']);
+    expect(ran.map((r) => r.loop)).toEqual(['team:alpha', 'team:alpha']);
   });
 
   it('a follow-up turn without personalityId routes by the session personality', async () => {
     const { service, ran } = makeRouted();
-    const first = await service.send({ clientId: 'tab-1', text: 'hi', personalityId: 'cmo' });
+    const first = await service.send({
+      clientId: 'tab-1',
+      text: 'hi',
+      personalityId: 'coordinator',
+    });
     await waitFor(() => ran.length === 1);
     await service.send({ sessionId: first.sessionId, clientId: 'tab-1', text: 'again' });
     await waitFor(() => ran.length === 2);
-    expect(ran[1]?.loop).toBe('team:marketing');
+    expect(ran[1]?.loop).toBe('team:alpha');
   });
 
   it('refreshes the personality registry of the loop the turn runs on', async () => {
@@ -810,7 +816,7 @@ describe('ChatService — team-scoped loops', () => {
       expect(isEthosError(err)).toBe(true);
       if (isEthosError(err)) {
         expect(err.code).toBe('CONFIG_INVALID');
-        expect(err.message).toContain('marketing');
+        expect(err.message).toContain('alpha');
       }
     }
     expect(ran).toHaveLength(0);
@@ -825,7 +831,7 @@ describe('ChatService — team-scoped loops', () => {
       activityBuffer,
       defaults: { model: 'claude-test', provider: 'anthropic' },
     });
-    await service.send({ clientId: 'tab-1', text: 'hi', personalityId: 'cmo' });
+    await service.send({ clientId: 'tab-1', text: 'hi', personalityId: 'coordinator' });
     await waitFor(() => ran.length === 1);
     expect(ran).toEqual(['main']);
   });

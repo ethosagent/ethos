@@ -13,7 +13,7 @@ import {
   submitCandidate,
 } from '../../../learning-inbox/src/store';
 import { DEFAULT_EVOLVE_CONFIG } from '../analyze';
-import { type EvolveOptions, SkillEvolver } from '../evolver';
+import { type EvolveOptions, SkillEvolver, skillEvolutionEvolveOptions } from '../evolver';
 
 let testDir: string;
 let skillsDir: string;
@@ -422,5 +422,115 @@ describe('SkillEvolver', () => {
     const result = await evolver.evolve();
     expect(result.newSkillsSubmitted).toEqual(['stock-add.md']);
     expect(result.skipped).toEqual([]);
+  });
+});
+
+/** A low-scoring `json.md` (rewrite candidate) and a high-score skill-less bundle (new-skill candidate). */
+async function seedRewriteAndNew(): Promise<void> {
+  await writeFile(join(skillsDir, 'json.md'), 'old content', 'utf-8');
+  const lines: object[] = [];
+  for (let i = 0; i < 12; i++) {
+    lines.push(
+      {
+        schema_version: '1.0',
+        task_id: `r${i}`,
+        turn: 0,
+        role: 'assistant',
+        content: `a${i}`,
+        score: 0.2,
+        skill_files_used: ['json.md'],
+      },
+      {
+        schema_version: '1.0',
+        task_id: `n${i}`,
+        turn: 0,
+        role: 'assistant',
+        content: `answer${i}`,
+        score: 1,
+        skill_files_used: [],
+      },
+    );
+  }
+  await writeFile(evalPath, jsonl(...lines), 'utf-8');
+}
+
+describe('SkillEvolver honours skill_evolution.model', () => {
+  function recordingLLM() {
+    const options: Array<Parameters<LLMProvider['complete']>[2]> = [];
+    const responses = [
+      '<skill>\nrewritten body\n</skill>',
+      '<filename>map-over-loops.md</filename>\n<skill>\nPrefer map().\n</skill>',
+    ];
+    const llm: LLMProvider = {
+      name: 'mock',
+      model: 'mock',
+      maxContextTokens: 100_000,
+      supportsCaching: false,
+      supportsThinking: false,
+      complete(...args: Parameters<LLMProvider['complete']>): AsyncIterable<CompletionChunk> {
+        const text = responses[options.length] ?? '';
+        options.push(args[2]);
+        return (async function* () {
+          yield { type: 'text_delta', text };
+          yield { type: 'done', finishReason: 'end_turn' };
+        })();
+      },
+      async countTokens() {
+        return 0;
+      },
+    };
+    return { llm, options };
+  }
+
+  it('routes the rewrite and the new-skill drafting calls to the model via modelOverride', async () => {
+    await seedRewriteAndNew();
+    const { llm, options } = recordingLLM();
+    const result = await new SkillEvolver({
+      evalOutputPath: evalPath,
+      skillsDir,
+      ...base(),
+      config: DEFAULT_EVOLVE_CONFIG,
+      llm,
+      model: 'drafter-model',
+      storage: new FsStorage(),
+    }).evolve();
+
+    expect(result.rewritesSubmitted).toEqual(['json.md']);
+    expect(result.newSkillsSubmitted).toEqual(['map-over-loops.md']);
+    expect(options.map((o) => o?.modelOverride)).toEqual(['drafter-model', 'drafter-model']);
+  });
+
+  it('leaves modelOverride unset when no model is configured', async () => {
+    await seedRewriteAndNew();
+    const { llm, options } = recordingLLM();
+    await new SkillEvolver({
+      evalOutputPath: evalPath,
+      skillsDir,
+      ...base(),
+      config: DEFAULT_EVOLVE_CONFIG,
+      llm,
+      storage: new FsStorage(),
+    }).evolve();
+
+    expect(options).toHaveLength(2);
+    expect(options.every((o) => o?.modelOverride === undefined)).toBe(true);
+  });
+});
+
+describe('skillEvolutionEvolveOptions', () => {
+  it('maps scope, evolve_existing and model onto the evolver options', () => {
+    expect(
+      skillEvolutionEvolveOptions({
+        enabled: true,
+        scope: 'personality',
+        evolve_existing: false,
+        model: 'drafter-model',
+      }),
+    ).toEqual({ scope: 'personality', evolveExisting: false, model: 'drafter-model' });
+  });
+
+  it('contributes nothing for absent keys, so the evolver defaults apply', () => {
+    expect(skillEvolutionEvolveOptions(undefined)).toEqual({});
+    expect(skillEvolutionEvolveOptions({ enabled: true, min_tool_calls: 5 })).toEqual({});
   });
 });

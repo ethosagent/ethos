@@ -5,7 +5,7 @@ kind: tutorial
 audience: user
 slug: first-agent
 time: "10 min"
-updated: 2026-05-22
+updated: 2026-09-13
 ---
 
 The CLI is installed and one provider is configured. This tutorial walks the agent turn cycle while you run it: pick a personality, send three messages, watch usage accumulate, prove sessions survive a restart, then switch personality and watch the same prompt behave differently.
@@ -170,9 +170,9 @@ A few session conventions worth knowing now:
 
 - The session key is `cli:<cwd-basename>`. `cd` to a different directory and you get a different session. The agent does not see across directories unless you copy memory explicitly.
 - `/new` starts a fresh session in the same directory by appending `:<timestamp>` to the key. The old session stays on disk, just out of reach for this conversation. The outbound-dedup cache is keyed by the old session id, so `/new` releases any prior dedup blocks — the same response text can be sent again under the fresh key.
-- `/memory` prints `~/.ethos/MEMORY.md` and `~/.ethos/USER.md` when those files are non-empty. Memory is rolling context across sessions; sessions are the per-conversation log. Memory and sessions are different layers — do not confuse them.
+- `/memory` prints the active personality's `MEMORY.md` and `USER.md` — `~/.ethos/personalities/<id>/` under the default markdown backend — when they are non-empty. Memory is rolling context across sessions; sessions are the per-conversation log. Memory and sessions are different layers — do not confuse them.
 - Sessions are pruned by the retention TTLs in [`config.yaml`](../reference/config-yaml.md). The default `retention.messages: 365d` keeps a year of history; tighten it if disk grows or loosen it if you want forever.
-- The session store is FTS5-indexed. The `session_search` tool (available to researcher and engineer) can grep across prior sessions for relevant context — handy when you remember solving something in a different working directory.
+- The session store is FTS5-indexed. The `session_search` tool (in the researcher's and reviewer's toolsets) can grep across prior sessions for relevant context — handy when you remember solving something in a different working directory.
 
 Try one now:
 
@@ -215,8 +215,8 @@ What changed in one slash command:
 
 - **System prompt** — swapped from `researcher`'s `SOUL.md` to `engineer`'s.
 - **Tool catalog** — `terminal`, `write_file`, `patch_file`, `run_tests` came into scope; the LLM now sees them. `web_search` and `web_extract` left scope.
-- **Model** — researcher defaults to `claude-opus-4-7`; engineer ships with `claude-sonnet-4-6`. The personality's `model` field overrode the global default for this turn.
-- **Memory scope** — both researcher and engineer ship with `memoryScope: global`, so they share `MEMORY.md`. If you had switched to `reviewer`, its `memoryScope: per-personality` would have isolated its memory from the others.
+- **Model** — on Anthropic, researcher runs `claude-opus-4-7` and engineer `claude-sonnet-4-6`, from each personality's `model.default` key. Those keys replace your configured model only while the personality's `provider` (`anthropic` for both) is the active one; on another provider both run on the model you configured.
+- **Memory scope** — each personality reads and writes its own `MEMORY.md` (scope `personality:<id>`), so the engineer does not see what the researcher noted. No setting shares it; memory that has to cross personalities goes in team memory.
 
 That atomic four-dimensional swap is the headline claim of Ethos. The personality is the unit of architecture; the LLM is the substrate. The [What is a personality?](../explanation/what-is-a-personality.md) page argues for the design choice; the [Personality config reference](../reference/personality-yaml.md) lists every field.
 

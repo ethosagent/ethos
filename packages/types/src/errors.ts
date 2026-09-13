@@ -70,6 +70,11 @@ export type EthosErrorCode =
   // Plugins (Phase 30.6 surface)
   | 'PLUGIN_CONTRACT_INCOMPATIBLE'
   | 'PLUGIN_INSTALL_FAILED'
+  | 'PLUGIN_SPEC_UNVERIFIABLE'
+  | 'PLUGIN_PACKAGE_NOT_FOUND'
+  | 'PLUGIN_REGISTRY_FAILED'
+  | 'PLUGIN_INTEGRITY_MISMATCH'
+  | 'PLUGIN_PACKAGE_MISMATCH'
   // Team manifest (Teamwork Core)
   | 'TEAM_MANIFEST_INVALID'
   // Backup / import

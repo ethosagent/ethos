@@ -10,7 +10,11 @@ import {
   summarizeRepairs,
 } from '@ethosagent/eval-harness';
 import { SQLiteObservabilityStore } from '@ethosagent/observability-sqlite';
-import { loadEvolveConfig, SkillEvolver } from '@ethosagent/skill-evolver';
+import {
+  loadEvolveConfig,
+  SkillEvolver,
+  skillEvolutionEvolveOptions,
+} from '@ethosagent/skill-evolver';
 import { EthosError } from '@ethosagent/types';
 import { learningSubmitPort } from '@ethosagent/wiring';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
@@ -229,7 +233,7 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
  * eval tasks it was drawn from (`caseFromEvalTask`, keeping their `match` kind).
  * `--auto-approve` replays synchronously (L-D9); it no longer renames files live.
  */
-async function runEvolveAfter(
+export async function runEvolveAfter(
   config: EthosConfig,
   evalOutputPath: string,
   autoApprove: boolean,
@@ -259,7 +263,8 @@ async function runEvolveAfter(
     learning: learningSubmitPort({ storage, dataDir: dir }),
     dataDir: dir,
     personalityId,
-    scope: reg.get(personalityId)?.skill_evolution?.scope,
+    // `scope`, `evolve_existing` and `model` from the personality the drafts belong to.
+    ...skillEvolutionEvolveOptions(reg.get(personalityId)?.skill_evolution),
     targetCaseIds: async (summaries) => {
       const ids: string[] = [];
       for (const summary of summaries.slice(0, 3)) {

@@ -69,7 +69,7 @@ A *case* is one past task, frozen to `~/.ethos/learning/cases/<personality>/<cas
 | Eval tasks with authored expected values | The task | The authored value, keeping its `match` kind |
 | Session turns | A real user message, with up to 4 preceding messages as context | "stays true to this Core: …" and "directly addresses the request" |
 
-Sessions Ethos drove itself are never captured: eval runs, replays, the fork, nightly and cron turns, MCP clients, outbox reviews and pack checks (`LEARNING_EXCLUDED_KEY_PREFIXES`). The nightly pass freezes up to 10 new cases per personality per run, and the pool keeps at most 40, evicting the oldest (`CASE_FREEZE_BATCH`, `CASE_POOL_CAP`).
+Sessions Ethos drove itself are never captured: eval runs, replays, the fork, nightly and cron turns, MCP clients, outbox reviews and pack checks (`LEARNING_EXCLUDED_KEY_PREFIXES`). The nightly pass freezes up to 10 new cases per personality per run, and the pool keeps at most 40, evicting the oldest (`CASE_FREEZE_BATCH`, `CASE_POOL_CAP`). A case that is a target of a candidate still in `pending_replay` or `pending_review` is never evicted (`enforceCasePoolCap`, `cases.ts`); if those targets alone exceed 40, the pool holds them all, keeps no other cases, and freezes nothing new until candidates are decided.
 
 A candidate's target cases come from its own evidence: the triggering turn for a fork or chat proposal, the evidence sessions for a nightly skill, the prompts the Judge scored 0 for an `auto`-mode Expression draft, and the low-scoring tasks for an eval rewrite. The rest of the replay is *regression cases* drawn from the pool, newest first. `selectReplayCases` (`replay.ts`) picks at most 8 cases (`learningReplay.maxCases`), at most 3 of them targets, and always keeps one slot for a regression case.
 
@@ -113,22 +113,22 @@ Every other candidate waits in `pending_review` (or in `pending_replay`, until s
 
 | Surface | What you can do there |
 |---|---|
-| `ethos learning` | Everything: `list`, `show` (evidence, content, scorecard, timeline), `replay`, `approve [--override "<reason>"]`, `reject`, `rollback`. The only surface that replays on demand. |
-| Web dashboard, **Skills** page | Approve or reject a waiting skill candidate from the approval queue. |
+| `ethos learning` | Everything: `list`, `show` (evidence, content, scorecard, timeline), `replay`, `approve [--override "<reason>"]`, `reject`, `rollback`. |
+| Web dashboard, **Learning** page (`/learning`, `apps/web/src/pages/Learning.tsx`) | Every candidate in one queue, grouped into Needs review, Waiting for replay, Promoted, and Rejected & rolled back. Each shows its evidence, diff, replay scorecard and timeline, with **Approve**, **Approve anyway…**, **Reject…**, **Run replay** and **Rollback**. |
 | Web dashboard, **Living Soul** section of a personality | Apply a drafted Expression. |
 | `ethos personality evolve <id>` | Answer `y` or `N` on an Expression candidate. `N` rejects it. |
 | `ethos evolve apply`, `--approve`, `--reject`, `prune` | Older skill verbs, now adapters onto the inbox. `apply` approves only a `pass`. |
 
-A dedicated Learning inbox page in the web dashboard, with every candidate in one queue, is not shipped yet. The `learning.*` RPCs it would use exist (`apps/web-api/src/rpc/learning.ts`), but no page calls them. Until it ships, the terminal is the one place to see every candidate together.
+The Learning page is where the web dashboard decides on candidates. The Skills page's **Approval queue** tab approves nothing: it is a link to the Learning page filtered to skills (`/learning?kind=skill`). The Living Soul section's list of waiting changes is a link filtered to that personality (`/learning?personality=<id>`). The **Learning** row in the sidebar's Library section counts candidates waiting in `pending_review`.
 
 Two rules cannot drift between these surfaces:
 
-- **Approving anything that is not a `pass` needs a reason.** That includes a candidate that was never replayed. `LearningInbox.approve` refuses with `override_required` when the reason is blank, and writes the reason to `audit.jsonl` on the promotion line. In the terminal, pass `ethos learning approve <id> --override "<reason>"`. On the web, Approve on the Skills page and Apply in the Living Soul section each prompt for a required reason when the candidate has not passed a replay. At `ethos personality evolve`, answering `y` prompts for a reason, and an empty reason cancels the approval: nothing is promoted and the candidate keeps waiting.
+- **Approving anything that is not a `pass` needs a reason.** That includes a candidate that was never replayed. `LearningInbox.approve` refuses with `override_required` when the reason is blank, and writes the reason to `audit.jsonl` on the promotion line. In the terminal, pass `ethos learning approve <id> --override "<reason>"`. On the web, the Learning page shows **Approve anyway…** in place of **Approve** on any verdict other than `pass`, and its confirm button stays disabled until a reason is typed. Apply in the Living Soul section requires a reason too. At `ethos personality evolve`, answering `y` prompts for a reason, and an empty reason cancels the approval: nothing is promoted and the candidate keeps waiting.
 - **Every decision that lands writes one audit row.** `learning.approve`, `learning.override`, `learning.reject` or `learning.rollback` appears in `ethos audit decisions` next to outbox decisions. A refusal writes none.
 
-**Approval is human-only.** The agent's `skills_pending_approve` tool promotes nothing: it returns a refusal that sends the user to `ethos learning approve <id>` (`SKILL_APPROVAL_IS_HUMAN_ONLY`, `extensions/tools-skills/src/index.ts`). A model approving its own proposal would be a second non-human path, and on the CLI, where no approval prompt appears, it would promote with no human at all. `skills_pending_reject` still works, because rejecting only narrows what the agent does.
+**Approval is human-only.** The agent's `skills_pending_approve` tool promotes nothing: it returns a refusal that sends the user to the web Learning page or `ethos learning approve <id>` (`SKILL_APPROVAL_IS_HUMAN_ONLY`, `extensions/tools-skills/src/index.ts`). A model approving its own proposal would be a second non-human path, and on the CLI, where no approval prompt appears, it would promote with no human at all. `skills_pending_reject` still works, because rejecting only narrows what the agent does.
 
-The `learning.*` RPCs, when a page uses them, accept the dashboard's session cookie only. `learning` is absent from `SCOPE_MAP` in `apps/web-api/src/middleware/dual-auth.ts`, so a bearer API key is refused.
+The `learning.*` RPCs behind the Learning page (`apps/web-api/src/rpc/learning.ts`) accept the dashboard's session cookie only. `learning` is absent from `SCOPE_MAP` in `apps/web-api/src/middleware/dual-auth.ts`, so a bearer API key is refused.
 
 ### What promotion checks, and how rollback works
 
@@ -146,7 +146,7 @@ Replay never runs on `agent_done`. It costs minutes and money, and the end of a 
 | Trigger | Notes |
 |---|---|
 | The nightly pass's `replay` step, after `skills` | Freezes new cases, then replays `pending_replay` candidates oldest first, capped by `learningReplay.maxCandidatesPerRun` across the whole run (`extensions/nightly-loop/src/orchestrator.ts`). |
-| `ethos learning replay <id>` | On demand, from the terminal only. Refuses with `replay_unavailable` when `learningReplay.enabled` is false. |
+| `ethos learning replay <id>`, or **Run replay** on the Learning page | On demand. Both go through `LearningInbox.replay`, which refuses with `replay_unavailable` when `learningReplay.enabled` is false. |
 | `--auto-approve` on `ethos eval --evolve` or `ethos evolve` | Replays each new candidate synchronously inside that command. |
 
 The operator settings live in `~/.ethos/config.yaml` (`resolveLearningReplay`, `packages/config/src/index.ts`; full reference at [`learningReplay.*`](../reference/config-yaml.md#learning-replay)):
@@ -168,11 +168,11 @@ These are limitations, written down so nobody reads the scorecard as more than i
 
 **Status changes are check-then-write, not atomic across processes.** Candidates are files through `Storage`, not a transactional store. A human approval and a nightly auto-promotion landing in the same instant can both read `pending_review` and both apply. Both transitions appear in `audit.jsonl`, and rollback stays available.
 
-**A new personality waits for a human.** Rule (a) needs a regression case, and regression cases come from the frozen pool. A personality that has never had a nightly pass has an empty pool, so its candidates replay `incomplete` for too few cases. That fails closed. Candidates with no target case do the same: a draft from `ethos personality evolve` in `user` mode carries none, and neither does an `auto`-mode draft when the Judge scored no prompt 0.
+**A new personality needs recent sessions, not a nightly pass.** Rule (a) needs a regression case. When a replay finds too few in the frozen pool, `replayCandidate` (`extensions/learning-inbox/src/replay.ts`) first freezes regression cases from the personality's recent sessions, through the same `captureCases` path the nightly pass uses, so excluded session keys, the 10-case batch and the 40-case pool cap all apply, and the candidate's target cases are never rewritten or evicted. If there are still too few eligible sessions, the replay is `incomplete` and fails closed. Candidates with no target case stay `incomplete` whatever the pool holds, because nothing backfills a target: a draft from `ethos personality evolve` in `user` mode carries none, and neither does an `auto`-mode draft when the Judge scored no prompt 0.
 
-**Automatic promotions are not in `ethos audit decisions`.** `replayAndResolve` records the promotion in the candidate's own `audit.jsonl`, with actor `auto` and the replay run id, but writes no `learning.*` row. That log records human decisions. To see what promoted itself, run `ethos learning list --all` and look for status `promoted`, then `ethos learning show <id>` for its timeline.
+**Automatic promotions are in `ethos audit decisions`.** When `replayAndResolve` (`extensions/learning-inbox/src/auto-promotion.ts`) promotes a candidate, it writes one `learning.auto_promote` row attributed to the system (`actor: auto`, `decidedBy: system`), carrying the verdict, the replay run id, and the reason: which knob resolved auto and why only the replayed personality can see the destination. A replay that does not promote, or a promotion `promote()` refuses, writes none. The candidate's own `audit.jsonl` still records the promotion too.
 
-**Without the nightly pass, candidates wait.** `nightlyPass.enabled` defaults to false (the `nightly-pass` job in `packages/wiring/src/system-jobs.ts`). On an install that has not turned it on, nothing replays on a schedule, and every candidate waits for `ethos learning replay <id>`, `ethos nightly run`, or a human approval with a reason. With `autoApprove` on, a fork's skill now waits for that replay instead of going live instantly.
+**Without the nightly pass, candidates wait.** `nightlyPass.enabled` defaults to false (the `nightly-pass` job in `packages/wiring/src/system-jobs.ts`). On an install that has not turned it on, nothing replays on a schedule, and every candidate waits for an on-demand replay (`ethos learning replay <id>`, or **Run replay** on the Learning page), `ethos nightly run`, or a human approval with a reason. With `autoApprove` on, a fork's skill now waits for that replay instead of going live instantly.
 
 **The overlay compares paths lexically.** `OverlayStorage` shadows a destination under the name it was given, not its symlink target, and it synthesizes the shadowed file but never a missing parent directory.
 

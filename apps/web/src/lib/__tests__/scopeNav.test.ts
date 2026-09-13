@@ -148,6 +148,14 @@ describe('resolveBreadcrumb', () => {
     });
   });
 
+  it('library altitude: /learning resolves to "Learning" (trust-before-reach L-T9)', () => {
+    expect(resolveBreadcrumb('/learning', null)).toEqual({
+      altitude: 'library',
+      scopeLabel: 'Library',
+      paneLabel: 'Learning',
+    });
+  });
+
   it('library altitude: unrecognized top-level segment falls back to "Library"', () => {
     expect(resolveBreadcrumb('/some-future-page', null)).toEqual({
       altitude: 'library',

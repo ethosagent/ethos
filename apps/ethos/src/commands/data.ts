@@ -8,6 +8,7 @@ import {
   getSqliteStats,
   listArchives,
   mergeRetentionConfig,
+  OBSERVABILITY_KILL_SWITCH_FILE,
   ObservabilityService,
   pruneObservabilityByPath,
   SQLiteObservabilityStore,
@@ -248,7 +249,7 @@ async function runReset(argv: string[]): Promise<void> {
   }
 
   const storage = getStorage();
-  const killSwitchPath = join(dir, '.observability.disabled');
+  const killSwitchPath = join(dir, OBSERVABILITY_KILL_SWITCH_FILE);
 
   // Signal active writers to skip writes during the reset window.
   await storage.writeAtomic(killSwitchPath, `reset started at ${new Date().toISOString()}`);

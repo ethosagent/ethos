@@ -12,7 +12,7 @@ import type { OutboxService, OutboxServiceResult } from '../../services/outbox.s
 
 const ITEM = {
   id: 'obx_1',
-  personalityId: 'cmo',
+  personalityId: 'coordinator',
   botKey: 'bot-a',
   platform: 'telegram',
   chatId: '-100',
@@ -142,12 +142,10 @@ describe('outbox RPC', () => {
     const { context, recorded } = makeContext();
     const res = await call(
       outboxRouter.list,
-      { teamId: 'marketing', states: ['awaiting_approval'], limit: 50 },
+      { teamId: 'alpha', states: ['awaiting_approval'], limit: 50 },
       { context },
     );
     expect(res.items).toHaveLength(1);
-    expect(recorded.list).toEqual([
-      { teamId: 'marketing', states: ['awaiting_approval'], limit: 50 },
-    ]);
+    expect(recorded.list).toEqual([{ teamId: 'alpha', states: ['awaiting_approval'], limit: 50 }]);
   });
 });

@@ -2,6 +2,8 @@
 // in one place and shared by the CLI and web install surfaces. These tests pin
 // what it produces, including the FU-1 meaning of `integrity`.
 
+import { createHash } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +11,7 @@ import { FsStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PluginGrantScan } from '../grants';
 import { draftPluginGrant, pinPluginToPersonality } from '../install-record';
-import { computeIntegrity, DEFAULT_REGISTRY, readLockfile } from '../lockfile';
+import { DEFAULT_REGISTRY, readLockfile } from '../lockfile';
 
 const scan: PluginGrantScan = { tier: 'community', findings: [], hasRed: false, hasYellow: false };
 
@@ -83,29 +85,47 @@ describe('pinPluginToPersonality', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it('writes a lock entry whose integrity is the installed package.json digest (FU-1) and lists the plugin', async () => {
+  it('writes a lock entry whose integrity is the sha512 SRI of the npm tarball, not of package.json, and lists the plugin', async () => {
     const storage = new FsStorage();
-    const pluginsDir = join(root, 'plugins');
-    const pkgJsonPath = join(pluginsDir, 'node_modules', '@ethos-plugins', 'demo', 'package.json');
-    await mkdir(join(pkgJsonPath, '..'), { recursive: true });
-    await writeFile(pkgJsonPath, JSON.stringify({ name: '@ethos-plugins/demo', version: '2.0.1' }));
+    const pkgJson = JSON.stringify({ name: '@ethos-plugins/demo', version: '2.0.1' });
+    const tarball = Buffer.from('the published tarball bytes');
+    const sri = (bytes: string | Buffer) =>
+      `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
     const personalityDir = join(root, 'personalities', 'researcher');
     await mkdir(personalityDir, { recursive: true });
     await writeFile(join(personalityDir, 'config.yaml'), 'name: researcher\n');
 
+    const npmCalls: string[][] = [];
+    const runNpm = async (args: string[]) => {
+      npmCalls.push(args);
+      const dest = args[args.indexOf('--pack-destination') + 1] ?? '';
+      writeFileSync(join(dest, 'ethos-plugins-demo-2.0.1.tgz'), tarball);
+    };
+
     const { draft } = draftPluginGrant({
-      pkgJson: { name: '@ethos-plugins/demo', version: '2.0.1' },
+      pkgJson: JSON.parse(pkgJson),
       requestedSpec: '@ethos-plugins/demo',
       scan,
     });
-    const entry = await pinPluginToPersonality({ storage, pluginsDir, personalityDir, draft });
+    const entry = await pinPluginToPersonality({ storage, personalityDir, draft, runNpm });
 
     expect(entry).toEqual({
       package: '@ethos-plugins/demo',
       version: '2.0.1',
       registry: DEFAULT_REGISTRY,
-      integrity: await computeIntegrity(pkgJsonPath),
+      integrity: sri(tarball),
+      integrityOf: 'tarball',
     });
+    expect(entry.integrity).not.toBe(sri(pkgJson));
+    expect(npmCalls).toEqual([
+      [
+        'pack',
+        '@ethos-plugins/demo@2.0.1',
+        '--pack-destination',
+        expect.stringContaining('ethos-plugin-pack-'),
+        '--ignore-scripts',
+      ],
+    ]);
     // readLockfile validates every entry; surviving it means the pin is well-formed.
     expect((await readLockfile(storage, personalityDir)).demo).toEqual(entry);
     expect(await storage.read(join(personalityDir, 'config.yaml'))).toContain('plugins: demo');

@@ -50,6 +50,7 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
         // content before it's written), not here at read time. Do not add
         // outputIsUntrusted to this tool on that basis.
         const memCtx = buildMemoryContext(ctx);
+        if (!memCtx) return NO_MEMORY_SCOPE;
         const entry = await memory.read(key, memCtx);
         if (!entry) {
           // 'not_found' is not a member of ToolResult's frozen error-code union
@@ -72,6 +73,7 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
 
       if (store === 'user') {
         const userCtx = buildUserMemoryContext(ctx);
+        if (!userCtx) return NO_MEMORY_SCOPE;
         const entry = await memory.read('USER.md', userCtx);
         return {
           ok: true,
@@ -80,6 +82,7 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
       }
 
       const memCtx = buildMemoryContext(ctx);
+      if (!memCtx) return NO_MEMORY_SCOPE;
 
       if (store === 'memory') {
         const entry = await memory.read('MEMORY.md', memCtx);
@@ -92,6 +95,7 @@ export function createMemoryReadTool(memory: MemoryProvider): Tool {
       // store === 'both'
       const parts: string[] = [];
       const userCtx = buildUserMemoryContext(ctx);
+      if (!userCtx) return NO_MEMORY_SCOPE;
       const userEntry = await memory.read('USER.md', userCtx);
       if (userEntry?.content.trim())
         parts.push(`## About You\n\n${sanitize(userEntry.content.trim())}`);
@@ -158,6 +162,7 @@ export function createMemoryWriteTool(memory: MemoryProvider): Tool {
       }
 
       const memCtx = store === 'user' ? buildUserMemoryContext(ctx) : buildMemoryContext(ctx);
+      if (!memCtx) return NO_MEMORY_SCOPE;
       const key = store === 'memory' ? 'MEMORY.md' : 'USER.md';
 
       if (action === 'remove') {
@@ -535,9 +540,33 @@ export function createTeamMemoryTools(teamMemory: MemoryProvider): Tool[] {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildMemoryContext(ctx: ToolContext): MemoryContext {
+/**
+ * Returned when a call carries no memory scope. AgentLoop stamps
+ * `memoryScopeId: personality:<id>` on every tool call it makes (`memScopeId`
+ * in packages/core/src/agent-loop/stages/turn-setup.ts, threaded by
+ * tool-processing.ts and turn-end.ts), and the realtime voice host stamps the same
+ * scope for a call with a personality (extensions/tools-voice/src/realtime-host.ts).
+ * A ToolContext built outside any personality's conversation carries none — the web
+ * tool-test probe (apps/web-api/src/services/tool-inspection.ts), a plugin panel
+ * call (apps/web-api/src/services/plugins.service.ts). There is no shared
+ * scope to fall back to: the markdown and vault backends throw on anything but
+ * `personality:` / `user:` / `team:` (`resolveScopeDir`), and memory-vector would
+ * file the entry under a scope no personality ever reads.
+ *
+ * Exported so every memory-writing tool refuses the same way — `meet_join`
+ * (extensions/tools-meeting/src/index.ts) returns it too.
+ */
+export const NO_MEMORY_SCOPE: ToolResult = {
+  ok: false,
+  code: 'not_available',
+  error:
+    "No memory scope for this call. Memory belongs to a personality and is scoped by the agent loop (personality:<id>); this call was made outside a personality's conversation (for example a tool test or a plugin panel), so there is no memory to read or write.",
+};
+
+function buildMemoryContext(ctx: ToolContext): MemoryContext | undefined {
+  if (!ctx.memoryScopeId) return undefined;
   return {
-    scopeId: ctx.memoryScopeId ?? 'global',
+    scopeId: ctx.memoryScopeId,
     sessionId: ctx.sessionId,
     sessionKey: ctx.sessionKey,
     platform: ctx.platform,
@@ -545,9 +574,11 @@ function buildMemoryContext(ctx: ToolContext): MemoryContext {
   };
 }
 
-function buildUserMemoryContext(ctx: ToolContext): MemoryContext {
+function buildUserMemoryContext(ctx: ToolContext): MemoryContext | undefined {
+  const scopeId = ctx.userScopeId ?? ctx.memoryScopeId;
+  if (!scopeId) return undefined;
   return {
-    scopeId: ctx.userScopeId ?? ctx.memoryScopeId ?? 'global',
+    scopeId,
     sessionId: ctx.sessionId,
     sessionKey: ctx.sessionKey,
     platform: ctx.platform,

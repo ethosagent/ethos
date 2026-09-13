@@ -6,6 +6,7 @@ import {
   WATCHER_SYSTEM_TASK,
   type WatcherCreateInput,
   type WatcherDeliverTarget,
+  type WatcherDeliveryGate,
   WatcherManager,
   type WatcherSchedulerPort,
   type WatcherWakeEvent,
@@ -22,7 +23,7 @@ interface Harness {
   probeAlive: { value: boolean; error?: Error };
 }
 
-function makeHarness(): Harness {
+function makeHarness(deliveryGate?: WatcherDeliveryGate): Harness {
   const storage = new InMemoryStorage();
   const delivered: Array<{ target: WatcherDeliverTarget; text: string }> = [];
   const woken: WatcherWakeEvent[] = [];
@@ -44,6 +45,7 @@ function makeHarness(): Harness {
       if (probeAlive.error) throw probeAlive.error;
       return probeAlive.value;
     },
+    ...(deliveryGate ? { deliveryGate } : {}),
   });
   return { storage, manager, delivered, woken, fetchImpl, probeAlive };
 }
@@ -313,6 +315,68 @@ describe('callbacks', () => {
       promptPrefix: 'Check this.',
       summary: expect.stringContaining('file changed'),
     });
+  });
+});
+
+describe('delivery gate', () => {
+  const gateAll = {
+    gates: () => true,
+    ownerTarget: () => undefined,
+  };
+
+  async function changeOnce(): Promise<void> {
+    await h.manager.tick('my-file');
+    await h.storage.write('/watched/app.log', 'v2');
+    await h.manager.tick('my-file');
+  }
+
+  beforeEach(async () => {
+    await h.storage.write('/watched/app.log', 'v1');
+  });
+
+  /** Rebuild the harness with a gate given at construction, file seeded again. */
+  async function withGate(gate: WatcherDeliveryGate): Promise<void> {
+    h = makeHarness(gate);
+    await h.storage.mkdir('/watched');
+    await h.storage.write('/watched/app.log', 'v1');
+  }
+
+  it('a record with no owner delivers unchanged — no personality to re-check', async () => {
+    await withGate(gateAll);
+    await h.manager.createWatcher(fileWatcher());
+
+    await changeOnce();
+
+    expect(h.delivered).toHaveLength(1);
+  });
+
+  it('a withheld deliver still fires the same watcher’s wake', async () => {
+    await withGate(gateAll);
+    await h.manager.createWatcher(
+      fileWatcher({
+        owner: { personalityId: 'coordinator', origin: 'telegram:C9' },
+        onChange: {
+          deliver: { platform: 'telegram', chatId: '-100777' },
+          wake: { personalityId: 'coordinator' },
+        },
+      }),
+    );
+
+    await changeOnce();
+
+    expect(h.delivered).toHaveLength(0);
+    expect(h.woken).toHaveLength(1);
+    expect((await h.manager.getWatcher('my-file'))?.deliveryWithheld?.reason).toContain('wake');
+  });
+
+  it('delivers when no gate is attached, owner or not', async () => {
+    await h.manager.createWatcher(
+      fileWatcher({ owner: { personalityId: 'coordinator', origin: 'telegram:C9' } }),
+    );
+
+    await changeOnce();
+
+    expect(h.delivered).toHaveLength(1);
   });
 });
 

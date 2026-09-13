@@ -219,12 +219,6 @@ body,
   font-weight: 500;
 }
 
-.nav-icon {
-  flex-shrink: 0;
-  font-size: 16px;
-  line-height: 1;
-}
-
 .sidebar-new-btn {
   display: flex;
   align-items: center;
@@ -9423,4 +9417,510 @@ a.stage-header-scope:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ethos-text-tertiary);
+}
+
+/* ── Learning inbox (plan `trust-before-reach.md` Part 4, L-T9) ───────────
+
+   Library-level and cross-personality, so the chrome is neutral: the selected
+   row and focus ring use `--ethos-info`, never a personality's `--accent`, and
+   each row carries its own personality mark instead.
+
+   Rows, not cards: the queue is a repeated list unit, the right pane is
+   bordered containers assembled from primitives, and the `Card` primitive is
+   unused. No colored left border — state is a pill with an icon AND a word.
+   Every colour is a token. */
+
+.learning-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.learning-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+}
+
+.learning-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+}
+
+.learning-panes {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 820px) {
+  .learning-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.learning-empty {
+  color: var(--ethos-text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.learning-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.learning-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.learning-group-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ethos-text-tertiary);
+}
+
+.learning-group-count {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--ethos-text-dim);
+}
+
+.learning-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  font: inherit;
+  color: var(--ethos-text);
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-default, 180ms) var(--ease, ease),
+    border-color var(--motion-default, 180ms) var(--ease, ease);
+}
+
+.learning-row:hover {
+  background: var(--ethos-bg-overlay);
+}
+
+.learning-row-sel {
+  border-color: var(--ethos-info);
+}
+
+.learning-row:focus-visible,
+.learning-case-toggle:focus-visible,
+.learning-textarea:focus-visible {
+  outline: 2px solid var(--ethos-info);
+  outline-offset: 1px;
+}
+
+.learning-row-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.learning-row-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.learning-row-bot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+}
+
+.learning-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 6px;
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  background: var(--ethos-bg-overlay);
+  font-size: 11px;
+  color: var(--ethos-text-dim);
+  white-space: nowrap;
+}
+
+.learning-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 6px;
+  border: 1px solid;
+  border-radius: 4px;
+  background: none;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.learning-pill-ic {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+}
+
+.learning-pill-ok {
+  color: var(--ethos-success);
+  border-color: var(--ethos-success);
+}
+
+.learning-pill-bad {
+  color: var(--ethos-error);
+  border-color: var(--ethos-error);
+}
+
+.learning-pill-wait {
+  color: var(--ethos-warning);
+  border-color: var(--ethos-warning);
+}
+
+.learning-pill-muted {
+  color: var(--ethos-text-tertiary);
+  border-color: var(--ethos-border-strong);
+}
+
+.learning-mono {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.learning-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.learning-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  background: var(--ethos-bg-elevated);
+  border: 1px solid var(--ethos-border);
+  border-radius: 8px;
+}
+
+.learning-panel h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--ethos-text);
+}
+
+.learning-sub {
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+}
+
+.learning-kv {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.learning-digest {
+  margin: 0;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ethos-text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.learning-diff {
+  overflow-x: auto;
+  background: var(--ethos-bg);
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ethos-text-dim);
+}
+
+.learning-diff-line {
+  padding: 1px 12px;
+  white-space: pre;
+}
+
+.learning-diff-core {
+  color: var(--ethos-text-tertiary);
+  background: var(--ethos-bg-overlay);
+}
+
+.learning-diff-add {
+  color: var(--ethos-success);
+}
+
+.learning-diff-del {
+  color: var(--ethos-error);
+}
+
+.learning-locked {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--ethos-border);
+  background: var(--ethos-bg-overlay);
+  font-family: var(--font-sans, "Geist", system-ui, sans-serif);
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+}
+
+.learning-tablewrap {
+  overflow-x: auto;
+}
+
+.learning-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.learning-table th {
+  padding: 0 12px 8px 0;
+  border-bottom: 1px solid var(--ethos-border);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--ethos-text-tertiary);
+}
+
+.learning-panel .learning-table td {
+  padding: 6px 12px 6px 0;
+  border-bottom: 1px solid var(--ethos-border);
+  vertical-align: baseline;
+}
+
+.learning-panel .learning-table tr:last-child td {
+  border-bottom: none;
+}
+
+.learning-panel .learning-table .learning-num {
+  padding-right: 16px;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Δ carries the meaning: green up, red down, grey for no change. */
+.learning-delta-up {
+  color: var(--ethos-success);
+}
+
+.learning-delta-down {
+  color: var(--ethos-error);
+}
+
+.learning-delta-flat,
+.learning-delta-none {
+  color: var(--ethos-text-tertiary);
+}
+
+.learning-case-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.learning-arms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.learning-arm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.learning-arm-text {
+  max-height: 320px;
+  margin: 0;
+  padding: 8px 12px;
+  overflow: auto;
+  background: var(--ethos-bg);
+  border: 1px solid var(--ethos-border);
+  border-radius: 4px;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ethos-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.learning-asserts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.learning-assert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+}
+
+.learning-assert-ic,
+.learning-assert-word {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+}
+
+.learning-assert-pass .learning-assert-ic,
+.learning-assert-pass .learning-assert-word {
+  color: var(--ethos-success);
+}
+
+.learning-assert-fail .learning-assert-ic,
+.learning-assert-fail .learning-assert-word {
+  color: var(--ethos-error);
+}
+
+.learning-caveat {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ethos-text-dim);
+}
+
+.learning-caveat-ic {
+  flex: none;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  color: var(--ethos-text-tertiary);
+}
+
+.learning-caveat-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.learning-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ethos-text-dim);
+}
+
+.learning-tl-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.learning-tl-t {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ethos-text-tertiary);
+}
+
+.learning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.learning-why {
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+}
+
+/* "Approve anyway…" must not look like "Approve": overriding a measurement
+   gets the warning outline, never the primary fill. */
+.learning-btn-warn.ant-btn,
+.learning-btn-warn.ant-btn:not(:disabled):hover {
+  color: var(--ethos-warning);
+  border-color: var(--ethos-warning);
+}
+
+.learning-textarea {
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 12px;
+  background: var(--ethos-bg);
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ethos-text);
+  resize: vertical;
+}
+
+.learning-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--ethos-border-strong);
+  border-radius: 4px;
+  background: var(--ethos-bg-overlay);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ethos-text-dim);
+}
+
+.learning-notice-ic {
+  flex: none;
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  color: var(--ethos-error);
 }

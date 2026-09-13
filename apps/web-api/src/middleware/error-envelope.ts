@@ -58,6 +58,29 @@ const STATUS_BY_CODE: Partial<Record<EthosErrorCode, number>> = {
   // The caller supplied a credential or a chat the platform did not accept.
   RECIPE_CHANNEL_SETUP_FAILED: 400,
   NETWORK_ERROR: 502,
+  // `PluginsService.install` refusals (services/plugins.service.ts —
+  // `resolveRegistrySpec`, `classifyNpmFailure`, `install`). Nothing is left
+  // installed by any of them unless the cause says so: a failure once `npm install`
+  // has run is undone by `undoPluginInstall` and described from the end state it
+  // confirmed by `describeUndoneInstall` (extensions/plugin-loader/src/install-undo.ts).
+  // The spec names no exact published version with a sha512 digest: the caller fixes the spec.
+  PLUGIN_SPEC_UNVERIFIABLE: 400,
+  // `npm view` reported E404 for the package name: the named thing does not resolve,
+  // the same convention as RECIPE_NOT_FOUND / SKILL_NOT_FOUND for a name given in the body.
+  PLUGIN_PACKAGE_NOT_FOUND: 404,
+  // `npm view` could not get an answer from the registry (network, registry 5xx, auth): upstream failure.
+  PLUGIN_REGISTRY_FAILED: 502,
+  // The registry served a tarball that does not match its own digest: upstream misbehaving, not the caller.
+  PLUGIN_INTEGRITY_MISMATCH: 502,
+  // npm installed a package.json naming another package/version than resolved: upstream, not the caller.
+  PLUGIN_PACKAGE_MISMATCH: 502,
+  // `npm pack` / `npm install` failed for a reason that is neither the registry
+  // (network errno, E5xx → PLUGIN_REGISTRY_FAILED) nor a missing npm (NOT_CONFIGURED):
+  // a dependency npm cannot resolve, disk, permissions. Not the caller's spec (the
+  // version was already verified) and not proven upstream, so 500 — npm's own code
+  // in the cause is what tells these apart. The CLI raises the same code for its own
+  // install refusals (apps/ethos/src/commands/plugin.ts); this status applies only here.
+  PLUGIN_INSTALL_FAILED: 500,
   // This server is not set up to do that (no LLM, no goal executor, no
   // approval queue, no attachment cache, …): a precondition of the deployment,
   // not a crash and not the caller's fault. 503 matches /healthz's degraded

@@ -30,6 +30,7 @@ export interface ListInput {
   limit?: number;
   cursor?: string | null;
   personalityId?: string;
+  platform?: string;
 }
 
 export class SessionsService {
@@ -42,6 +43,7 @@ export class SessionsService {
       limit,
       cursor: input.cursor ?? null,
       ...(input.personalityId ? { personalityId: input.personalityId } : {}),
+      ...(input.platform ? { platform: input.platform } : {}),
     });
     return {
       items: page.sessions.map(toWireSession),

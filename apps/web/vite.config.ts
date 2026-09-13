@@ -36,12 +36,13 @@ export default defineConfig({
       // fails the build if that stops being true.
       '@ethosagent/voice-realtime-protocol': resolve(root, 'packages/voice-realtime-protocol/src'),
     },
-    // Vite's default order puts '.js' ahead of '.ts'/'.tsx'. Several workspace
-    // packages still carry committed compiled mirrors next to their sources
-    // (`packages/ui-components/src/*.js`), which silently shadowed the real
-    // `.tsx` in every build — edits to the source were no-ops. TypeScript
-    // first matches what esbuild/tsup already do, so one resolution order
-    // holds across bundlers. Same class of bug as f7e920f.
+    // Vite's default order puts '.js' ahead of '.ts'/'.tsx'. Committed compiled
+    // mirrors next to their sources (`packages/ui-components/src/*.js`) once
+    // silently shadowed the real `.tsx` in every build — edits to the source
+    // were no-ops. Those copies have been removed and `.gitignore` now keeps
+    // them out; the order stays as defence against any future stray compile
+    // output. TypeScript first also matches what esbuild/tsup already do, so
+    // one resolution order holds across bundlers. Same class of bug as f7e920f.
     extensions: ['.mts', '.ts', '.tsx', '.mjs', '.js', '.jsx', '.json'],
   },
   server: {

@@ -14,9 +14,15 @@
 //   - `formatExportSummary` — the one stderr line the operator reads.
 //   - `createMcpExportAuditSink` — `McpExportAuditEntry` → `mcp.export.*`.
 //   - `buildExportEntry` — the `ethos-<id>` MCP client entry.
+//   - `claudeDesktopExportEntry` — that entry as Claude Desktop config, for the web.
 
 import { join } from 'node:path';
-import type { McpEntry, McpExportAuditEntry, McpExportAuditSink } from '@ethosagent/mcp-server';
+import {
+  claudeDesktop,
+  type McpEntry,
+  type McpExportAuditEntry,
+  type McpExportAuditSink,
+} from '@ethosagent/mcp-server';
 import type { PersonalityConfig } from '@ethosagent/types';
 import type { DangerPredicate, EthosEventCategory, McpExportScope } from '@ethosagent/wiring';
 
@@ -284,5 +290,47 @@ export function buildExportEntry(opts: {
     command: opts.command,
     args: [opts.scriptPath, 'mcp', 'serve', '--personality', opts.personalityId],
     ...(opts.secret ? { env: { ETHOS_MCP_KEY: opts.secret } } : {}),
+  };
+}
+
+/**
+ * The process an installed entry launches: this Node binary running this CLI
+ * script. One helper for `ethos mcp install` and the web's Desktop entry, so the
+ * two name the same launcher — Claude Desktop does not inherit a shell `PATH`,
+ * which is why neither writes a bare `ethos`.
+ */
+export function exportLauncher(): { command: string; scriptPath: string } {
+  return { command: process.execPath, scriptPath: process.argv[1] ?? 'ethos' };
+}
+
+/** Stands in for the client key in a Desktop entry shown before one is minted. */
+export const DESKTOP_ENTRY_SECRET_PLACEHOLDER = '<client key>';
+
+/**
+ * The Claude Desktop config `ethos mcp install claude-desktop --personality <id>`
+ * writes into an EMPTY config — the same `buildExportEntry`, the same
+ * `claudeDesktop.injectEntry` and `serialise`, so the web's copy-ready entry
+ * (M-T9) and the CLI's install cannot disagree about its shape.
+ *
+ * It never holds a secret. Under `bearer` the key slot carries
+ * {@link DESKTOP_ENTRY_SECRET_PLACEHOLDER}; the web replaces that JSON string
+ * with the secret `apiKeys.create` returned to the operator's browser.
+ */
+export function claudeDesktopExportEntry(opts: {
+  command: string;
+  scriptPath: string;
+  personalityId: string;
+  bearer: boolean;
+}): { name: string; json: string; secretPlaceholder: string | null } {
+  const entry = buildExportEntry({
+    command: opts.command,
+    scriptPath: opts.scriptPath,
+    personalityId: opts.personalityId,
+    ...(opts.bearer ? { secret: DESKTOP_ENTRY_SECRET_PLACEHOLDER } : {}),
+  });
+  return {
+    name: exportEntryName(opts.personalityId),
+    json: claudeDesktop.serialise(claudeDesktop.injectEntry({}, entry)),
+    secretPlaceholder: opts.bearer ? DESKTOP_ENTRY_SECRET_PLACEHOLDER : null,
   };
 }

@@ -138,12 +138,39 @@ export interface NightlyLearningDeps {
    * personality in a run, so the cap is per RUN, not per personality.
    */
   budget: { take(): boolean };
-  /** Freeze new cases for this personality (at most 10, pool capped at 40). Returns the count frozen. */
-  freezeCases(id: string): Promise<number>;
+  /** Freeze new cases for this personality (at most 10, pool capped at 40). */
+  freezeCases(id: string): Promise<NightlyCaseFreeze>;
   /** This personality's `pending_replay` candidate ids, oldest first. */
   pendingReplay(id: string): Promise<string[]>;
   /** Replay one candidate and let `replayAndResolve` decide whether it promotes. */
   replay(id: string, candidateId: string): Promise<{ verdict: string; promoted: boolean }>;
+}
+
+/** What one freeze pass did to the case pool (`captureCases` in `@ethosagent/learning-inbox`). */
+export interface NightlyCaseFreeze {
+  /** New cases frozen this pass. */
+  frozen: number;
+  /** Cases left in the pool that are targets of an undecided candidate. */
+  pinned: number;
+  /** How far the pool sits above its cap because pinned cases alone exceed it; 0 normally. */
+  overflow: number;
+}
+
+/**
+ * Why an overflowing pool matters, for the `replay` step's detail. While pinned
+ * targets alone exceed the cap, the trim evicts every unpinned case and the
+ * freeze pass freezes nothing (`enforceCasePoolCap` / `captureCases`), so the
+ * only cases left to regress against are other candidates' targets — the
+ * replay pool is every case (`replayCandidate`), minus the candidate's own
+ * targets (`selectReplayCases`). A replay with none of those is `incomplete`.
+ */
+export function casePoolOverflowNotice(freeze: NightlyCaseFreeze): string {
+  return (
+    `case pool is ${freeze.overflow} over its cap: ${freeze.pinned} case(s) are targets of ` +
+    'undecided candidates, so nothing new was frozen and no session or ticket case is kept ' +
+    'to regress against — a replay with no other candidate’s target to use comes back ' +
+    'incomplete; approving or rejecting pending candidates frees the pool'
+  );
 }
 
 function errMessage(err: unknown): string {
@@ -314,7 +341,7 @@ export async function runNightlyPass(
     steps.push({ step: 'replay', status: 'skipped', detail: 'learningReplay.enabled is false' });
   } else {
     try {
-      const frozen = await learning.freezeCases(personalityId);
+      const freeze = await learning.freezeCases(personalityId);
       const failures: string[] = [];
       let replayed = 0;
       let promoted = 0;
@@ -332,9 +359,9 @@ export async function runNightlyPass(
           failures.push(`${candidateId}: ${errMessage(err)}`);
         }
       }
-      const detail = `${frozen} case(s) frozen, ${replayed} replayed, ${promoted} promoted${
+      const detail = `${freeze.frozen} case(s) frozen, ${replayed} replayed, ${promoted} promoted${
         deferred ? `, ${deferred} deferred (maxCandidatesPerRun)` : ''
-      }`;
+      }${freeze.overflow > 0 ? `; ${casePoolOverflowNotice(freeze)}` : ''}`;
       if (failures.length > 0) {
         steps.push({
           step: 'replay',

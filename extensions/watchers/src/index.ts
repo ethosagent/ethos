@@ -45,6 +45,64 @@ export interface WatcherOnChange {
   wake?: WatcherWakeTarget;
 }
 
+/** The agent turn that created a watcher. Recorded by `watcher_create`
+ *  (`@ethosagent/tools-watchers`) so a delivery can be re-checked against the
+ *  creating personality's `outbound_policy` on every tick. */
+export interface WatcherOwner {
+  personalityId: string;
+  /** `platform:chatId` of the creating turn (`ToolContext.origin`), when it had one. */
+  origin?: string;
+}
+
+/** Why the last change was not delivered, persisted on the record so
+ *  `watcher_list` can show it. Cleared by the next delivery that goes out. */
+export interface WatcherDeliveryWithheld {
+  at: string;
+  reason: string;
+}
+
+/**
+ * The approval-outbox questions a delivery must ask (O-T12,
+ * plan/phases/trust-before-reach.md): does this personality's
+ * `outbound_policy.approve_before_send` gate this platform, and which chat is
+ * the operator's own. Declared structurally — `createOutboundPolicyGate` in
+ * `packages/wiring/src/compose-tools.ts` satisfies it, and each app root hands
+ * one to its manager at construction (`WatcherManagerConfig.deliveryGate`).
+ */
+export interface WatcherDeliveryGate {
+  gates(personalityId: string, platform: string): boolean;
+  ownerTarget(platform: string): string | undefined;
+  /**
+   * Bring the policy source up to date before `gates` is asked. The manager
+   * awaits it before every delivery decision (`WatcherManager.dispatchChange`),
+   * because a watcher fires off the cron tick with no turn in between to
+   * reload personalities. A rejection is logged and the last-loaded policy
+   * answers. Absent = the policy source is already current.
+   */
+  refresh?(): Promise<void>;
+}
+
+/**
+ * True when `target` would publish a gated personality's watcher output to a
+ * third party. The one predicate behind both the creation refusal
+ * (`watcher_create`) and the delivery-time hold (`WatcherManager.dispatchChange`).
+ *
+ * The two exempt destinations are the ones the `send_message` gate exempts: the
+ * creating turn's own chat is the conversation, and the operator's own chat is
+ * the person who would be approving.
+ */
+export function isForeignDeliverForGatedOwner(
+  gate: WatcherDeliveryGate,
+  owner: WatcherOwner,
+  target: WatcherDeliverTarget,
+): boolean {
+  if (!gate.gates(owner.personalityId, target.platform)) return false;
+  if (owner.origin !== undefined && `${target.platform}:${target.chatId}` === owner.origin) {
+    return false;
+  }
+  return target.chatId !== gate.ownerTarget(target.platform);
+}
+
 export interface WatcherRecord {
   id: string;
   kind: WatcherKind;
@@ -56,6 +114,10 @@ export interface WatcherRecord {
   /** Paused watchers keep their record + state but have no backing job. */
   enabled: boolean;
   createdAt: string;
+  /** Absent on records created outside an agent turn, and on records written
+   *  before owners were stored — neither can be re-checked against a policy. */
+  owner?: WatcherOwner;
+  deliveryWithheld?: WatcherDeliveryWithheld;
 }
 
 export interface WatcherCreateInput {
@@ -64,6 +126,7 @@ export interface WatcherCreateInput {
   target: string;
   intervalSeconds: number;
   onChange: WatcherOnChange;
+  owner?: WatcherOwner;
 }
 
 export interface WatcherWakeEvent {
@@ -105,6 +168,12 @@ export interface WatcherManagerConfig {
   deliver?: (target: WatcherDeliverTarget, text: string) => Promise<void>;
   /** Bound at wiring time to lane message synthesis (webhook-wake style). */
   wake?: (event: WatcherWakeEvent) => Promise<void>;
+  /** The approval-outbox questions every delivery asks (`dispatchChange`).
+   *  Given at construction, so it exists before the first tick and a manager
+   *  has exactly one. Consulted on every delivery, never cached, and its
+   *  `refresh` is awaited first, so an `outbound_policy` edited on disk applies
+   *  on the next tick. Absent = every stored `deliver` goes out. */
+  deliveryGate?: WatcherDeliveryGate;
   /** Injected fetch for http/rss differs. Defaults to global fetch. */
   fetchFn?: typeof fetch;
   /** Injected alive-probe for process watchers. Defaults to pid / pid-file /
@@ -171,6 +240,7 @@ export class WatcherManager {
   private readonly fetchFn: typeof fetch;
   private readonly processProbe: ProcessProbe;
   private scheduler: WatcherSchedulerPort | null = null;
+  private readonly deliveryGate: WatcherDeliveryGate | undefined;
 
   constructor(config: WatcherManagerConfig) {
     this.storage = config.storage;
@@ -180,6 +250,7 @@ export class WatcherManager {
     this.logger = config.logger ?? noopLogger;
     this.deliver = config.deliver;
     this.wake = config.wake;
+    this.deliveryGate = config.deliveryGate;
     this.fetchFn = config.fetchFn ?? fetch;
     this.processProbe = config.processProbe ?? createDefaultProcessProbe(config.storage);
   }
@@ -232,6 +303,7 @@ export class WatcherManager {
       onChange: input.onChange,
       enabled: true,
       createdAt: new Date().toISOString(),
+      ...(input.owner ? { owner: input.owner } : {}),
     };
     watchers.push(record);
     await this.writeWatchers(watchers);
@@ -338,7 +410,20 @@ export class WatcherManager {
    *  state still advances (at-least-once alerting is the accepted posture). */
   private async dispatchChange(watcher: WatcherRecord, summary: string): Promise<void> {
     const { deliver, wake } = watcher.onChange;
-    if (deliver) {
+    if (deliver) await this.refreshDeliveryGate(watcher.id);
+    const withheld = deliver ? this.withheldReason(watcher, deliver) : undefined;
+    if (withheld) {
+      this.logger.warn(`[watchers] delivery withheld for "${watcher.id}"`, {
+        component: 'watchers',
+        watcherId: watcher.id,
+        reason: withheld,
+      });
+      await this.setDeliveryWithheld(watcher.id, {
+        at: new Date().toISOString(),
+        reason: withheld,
+      });
+    } else if (deliver) {
+      if (watcher.deliveryWithheld) await this.setDeliveryWithheld(watcher.id, undefined);
       if (this.deliver) {
         try {
           await this.deliver(deliver, `[watcher ${watcher.id}] ${summary}`);
@@ -380,6 +465,50 @@ export class WatcherManager {
         });
       }
     }
+  }
+
+  /** Reload the gate's policy source before a delivery decision. Failure keeps
+   *  the last-loaded policy — the same last-good posture the gateway's
+   *  per-turn personality refresh takes — and says so in the log. */
+  private async refreshDeliveryGate(watcherId: string): Promise<void> {
+    if (!this.deliveryGate?.refresh) return;
+    try {
+      await this.deliveryGate.refresh();
+    } catch (err) {
+      this.logger.warn(`[watchers] policy refresh failed for "${watcherId}" — using last-loaded`, {
+        component: 'watchers',
+        watcherId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** The reason a stored `deliver` may not go out now, or `undefined`. Re-read
+   *  on every change: the owner's policy may have been switched on after the
+   *  watcher was created, when `watcher_create`'s refusal could not see it. */
+  private withheldReason(watcher: WatcherRecord, target: WatcherDeliverTarget): string | undefined {
+    const owner = watcher.owner;
+    if (!this.deliveryGate || !owner) return undefined;
+    if (!isForeignDeliverForGatedOwner(this.deliveryGate, owner, target)) return undefined;
+    return (
+      `Delivery to ${target.platform}:${target.chatId} withheld: personality ` +
+      `"${owner.personalityId}" publishes only through the approval outbox ` +
+      `(outbound_policy.approve_before_send), and this watcher's deliver would send the change ` +
+      `verbatim with nobody reviewing it. Recreate the watcher with wake instead: the woken ` +
+      `personality's send_message is queued for approval like any other publication.`
+    );
+  }
+
+  private async setDeliveryWithheld(
+    id: string,
+    withheld: WatcherDeliveryWithheld | undefined,
+  ): Promise<void> {
+    const watchers = await this.readWatchers();
+    const watcher = watchers.find((w) => w.id === id);
+    if (!watcher) return;
+    if (withheld) watcher.deliveryWithheld = withheld;
+    else delete watcher.deliveryWithheld;
+    await this.writeWatchers(watchers);
   }
 
   // -------------------------------------------------------------------------

@@ -27,6 +27,14 @@ describe('buildHelpText', () => {
     expect(text).not.toContain('[plugin]');
   });
 
+  it("describes /memory as the active personality's memory, not a global file", () => {
+    const text = buildHelpText(state);
+    expect(text).toContain(
+      "/memory                       show the active personality's MEMORY.md and USER.md",
+    );
+    expect(text).not.toContain('~/.ethos/MEMORY.md');
+  });
+
   it('reflects readonly and verbose state', () => {
     const text = buildHelpText({ readonlyMode: true, verbose: false });
     expect(text).toContain('readonly mode (now: on)');

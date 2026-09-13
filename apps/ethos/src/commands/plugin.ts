@@ -1,25 +1,39 @@
 import { spawnSync } from 'node:child_process';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ethosDir } from '@ethosagent/config';
 import {
+  describeInstallFailure,
+  describeUndoneInstall,
   draftPluginGrant,
+  execNpm,
+  findPreviousCopy,
   grantsPath,
+  type InstallStage,
+  type InstallUndoOutcome,
+  installPackedTarball,
   migrateLegacyPluginCredentials,
+  type NpmRunner,
   type PluginGrant,
   type PluginGrantDraft,
+  PluginIntegrityError,
+  type PluginLockEntry,
   pinPluginToPersonality,
   pluginCredentialPrefix,
   pluginCredentialRef,
+  pluginLockEntryFor,
   readGrants,
+  readLockfile,
   readPluginPermissions,
   recordGrant,
   revokeGrant,
+  type UndoPluginInstallInput,
+  undoPluginInstall,
 } from '@ethosagent/plugin-loader';
 import { FileSecretsResolver } from '@ethosagent/storage-fs';
-import type { SecretsResolver } from '@ethosagent/types';
+import type { SecretsResolver, Storage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 import {
   canInstall,
@@ -158,8 +172,10 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
   // Exact name@version resolved during the scan — used for the final install so we
   // commit exactly what was scanned rather than re-resolving the original spec (which
   // could yield a different version if a range, dist-tag, git ref, or mutable URL
-  // changed between the scan and the install).
+  // changed between the scan and the install). The final install fetches it again,
+  // so it is also held to the digest npm recorded for the scanned copy.
   let exactSpec = pkg;
+  let scannedIntegrity: string | undefined;
 
   // Consent is taken AFTER the temp scan dir is cleaned up, so the grant draft
   // is carried out of the `try`. `blockedBy` is likewise reported after the
@@ -237,6 +253,8 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
     if (!decision.allowed && hasRed) {
       blockedBy = decision.blockedBy ?? 'red safety finding';
     } else {
+      // Read while the scan prefix still exists: the final install must match it.
+      scannedIntegrity = await readScannedIntegrity(tmpDir, pkgDir, pkg);
       // The shared install-record helper keys the grant by the id the LOADER
       // resolves and pins the exact resolved version, so the final install
       // commits what was scanned.
@@ -252,7 +270,7 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
     await rm(tmpDir, { recursive: true, force: true });
   }
 
-  if (blockedBy !== undefined || draft === undefined) {
+  if (blockedBy !== undefined || draft === undefined || scannedIntegrity === undefined) {
     console.log(
       `\n${c.red}✗ Install blocked:${c.reset} ${blockedBy ?? 'the package could not be scanned'}`,
     );
@@ -283,50 +301,246 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
     consent = 'interactive';
   }
 
-  // Recorded BEFORE the code lands on disk: if the grant cannot be written,
-  // the install does not happen. A grant for an install that then fails is
-  // harmless (it grants nothing on its own and is revocable); code on disk
-  // with no recorded consent is the thing we refuse to produce.
-  await recordGrant(getStorage(), dir, {
-    ...draft,
-    grantedAt: new Date().toISOString(),
-    consent,
-  });
+  // Step 9: approved — record the grant, then install what was scanned
+  // (`installScannedPlugin`). It packs the exact resolved spec, refuses a
+  // tarball whose SRI differs from the one npm recorded for the scanned copy,
+  // and installs that verified file with --ignore-scripts: lifecycle scripts
+  // (preinstall/install/postinstall) are not scanned and can execute arbitrary
+  // code, so plugins must not rely on them. The personality pin is written from
+  // the same SRI. Any failure after the grant is recorded is undone and reported
+  // from the end state the undo confirmed (`PluginInstallUndoneError`).
+  console.log(
+    `\n${c.dim}Installing ${c.reset}${c.bold}${exactSpec}${c.reset}${c.dim} from its verified tarball to ${dir}...${c.reset}\n`,
+  );
+  let entry: PluginLockEntry | undefined;
+  try {
+    entry = await installScannedPlugin({
+      storage: getStorage(),
+      pluginsDir: dir,
+      grant: { ...draft, grantedAt: new Date().toISOString(), consent },
+      scannedIntegrity,
+      personalitiesDir: join(ethosDir(), 'personalities'),
+      personalityId,
+    });
+  } catch (err) {
+    if (err instanceof PluginInstallUndoneError) {
+      console.error(`${c.red}✗ ${err.message}${c.reset}`);
+      console.error(`${c.dim}→ ${err.action}${c.reset}`);
+    } else {
+      // Everything `installScannedPlugin` throws once the grant is recorded is a
+      // `PluginInstallUndoneError`; anything else failed before `recordGrant`
+      // wrote (its `writeGrants` is a `writeAtomic`), so nothing changed.
+      console.error(
+        `${c.red}Install failed before anything was installed or granted:${c.reset} ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    process.exit(1);
+  }
   console.log(
     `${c.green}✓${c.reset} Grant recorded for ${c.cyan}${draft.id}${c.reset} ${c.dim}(ethos plugin grants)${c.reset}`,
   );
-
-  // Step 9: approved — install into the final plugins dir using the exact resolved
-  // spec captured during the scan. --ignore-scripts is intentional: lifecycle
-  // scripts (preinstall/install/postinstall) are not scanned and can execute
-  // arbitrary code. Plugins must not rely on npm lifecycle scripts for their
-  // runtime behaviour.
-  console.log(
-    `\n${c.dim}Installing ${c.reset}${c.bold}${exactSpec}${c.reset}${c.dim} to ${dir}...${c.reset}\n`,
-  );
-  const result = spawnSync(
-    'npm',
-    ['install', '--prefix', dir, '--ignore-scripts', '--no-audit', exactSpec],
-    { stdio: 'inherit' },
-  );
-  if (result.status !== 0) {
-    console.error(`${c.red}Install failed.${c.reset}`);
-    process.exit(result.status ?? 1);
-  }
   console.log(`\n${c.green}✓ Installed.${c.reset} Restart ethos to load the plugin.`);
 
-  if (personalityId) {
-    const personalityDir = join(ethosDir(), 'personalities', personalityId);
-    await pinPluginToPersonality({
-      storage: getStorage(),
-      pluginsDir: dir,
-      personalityDir,
-      draft,
-    });
+  if (entry && personalityId) {
     console.log(
-      `${c.green}✓${c.reset} Added ${c.cyan}${draft.id}${c.reset} to personality ${c.bold}${personalityId}${c.reset}.`,
+      `${c.green}✓${c.reset} Added ${c.cyan}${draft.id}${c.reset} to personality ${c.bold}${personalityId}${c.reset} ${c.dim}(pinned ${entry.package}@${entry.version} tarball ${entry.integrity.slice(0, 23)}…)${c.reset}.`,
     );
   }
+}
+
+export interface InstallScannedPluginInput {
+  storage: Storage;
+  /** The npm prefix — `~/.ethos/plugins`. */
+  pluginsDir: string;
+  /** The grant to record: the scanned draft, plus when and how consent was taken. */
+  grant: PluginGrant;
+  /** The SRI npm recorded for the copy the safety scan read (`readScannedIntegrity`). */
+  scannedIntegrity: string;
+  /** `<dataDir>/personalities` — pins `--personality` into, and is searched for a pin that can restore a replaced copy. */
+  personalitiesDir: string;
+  /** `--personality`; omitted, nothing is pinned. */
+  personalityId?: string;
+  /** Defaults to `execNpm`; tests inject a fake. */
+  runNpm?: NpmRunner;
+}
+
+/**
+ * The commit half of `ethos plugin install`, run once consent is taken:
+ *
+ *   1. Record `grant` — BEFORE any code lands on disk, so there is never code
+ *      from this install without its consent record. A failure here throws
+ *      with nothing changed (`writeGrants` is a `writeAtomic`).
+ *   2. Pack `grant.package@grant.version`, refuse it unless its SRI is
+ *      `scannedIntegrity`, install that tarball (`installPackedTarball`, which
+ *      also leaves the plugins folder resolvable without the scratch file).
+ *   3. With `personalityId`, pin it from the SRI just verified — no second
+ *      fetch, so the pin names the bytes on disk. Returns the lock entry.
+ *
+ * A failure in 2 or 3 goes through `undoPluginInstall`
+ * (extensions/plugin-loader/src/install-undo.ts, the routine the web install
+ * also uses): the package is uninstalled and a copy it replaced reinstalled
+ * from a verified pin, the grant and pin go back to what they were before, and
+ * `PluginInstallUndoneError` carries the message built from the end state the
+ * undo confirmed. A pin that cannot be written undoes the install too, the same
+ * as the web install: the operator asked for both, and an upgrade left
+ * half-done would leave the new version on disk under a `plugins.lock` pin that
+ * still names the old one.
+ */
+export async function installScannedPlugin(
+  input: InstallScannedPluginInput,
+): Promise<PluginLockEntry | undefined> {
+  const { storage, pluginsDir, grant, personalityId } = input;
+  const runNpm = input.runNpm ?? execNpm;
+  const spec = `${grant.package}@${grant.version}`;
+  // Both read before anything changes: `npm install` replaces the previous
+  // copy, and `recordGrant` replaces the previous grant.
+  const previous = await findPreviousCopy({
+    storage,
+    pluginsDir,
+    personalitiesDir: input.personalitiesDir,
+    name: grant.package,
+    preferredPersonality: personalityId,
+  });
+  const previousGrant = (await readGrants(storage, pluginsDir))[grant.id] ?? null;
+  await recordGrant(storage, pluginsDir, grant);
+
+  const undo: UndoPluginInstallInput = {
+    storage,
+    pluginsDir,
+    name: grant.package,
+    previous,
+    runNpm,
+    grant: { id: grant.id, recorded: grant, previous: previousGrant },
+  };
+  const retry = `Fix what the error reports, then retry: ethos plugin install ${spec}${personalityId === undefined ? '' : ` --personality ${personalityId}`}`;
+  let stage: InstallStage = 'before-npm-install';
+  let integrity: string;
+  try {
+    ({ integrity } = await installPackedTarball({
+      package: grant.package,
+      version: grant.version,
+      pluginsDir,
+      storage,
+      expected: {
+        integrity: input.scannedIntegrity,
+        from: 'npm recorded for the copy the safety scan read',
+      },
+      runNpm: async (args) => {
+        if (args[0] === 'install') stage = 'npm-install-failed';
+        await runNpm(args);
+        if (args[0] === 'install') stage = 'after-npm-install';
+      },
+    }));
+  } catch (err) {
+    if (err instanceof PluginIntegrityError) {
+      throw await undoneInstall(undo, stage, {
+        found: `The npm tarball of ${spec} does not match the copy the safety scan read (expected ${err.expected}, got ${err.actual}).`,
+        action:
+          'Retry the install. If it is refused again, do not install this package: the registry served bytes that differ from the ones the safety scan read.',
+      });
+    }
+    const failed = describeInstallFailure(err);
+    const found =
+      stage === 'before-npm-install'
+        ? `Fetching the verified tarball of ${spec} failed (${failed}).`
+        : stage === 'npm-install-failed'
+          ? `npm install of the verified tarball of ${spec} failed (${failed}).`
+          : `npm installed the verified tarball of ${spec}, but rewriting ${join(pluginsDir, 'package.json')} and package-lock.json to record it failed (${failed}).`;
+    throw await undoneInstall(undo, stage, { found, action: retry });
+  }
+  if (personalityId === undefined) return undefined;
+
+  const personalityDir = join(input.personalitiesDir, personalityId);
+  try {
+    // Read first: the pin replaces any entry already pinned under this id.
+    const previousPin = (await readLockfile(storage, personalityDir))[grant.id] ?? null;
+    undo.pin = {
+      personalityId,
+      personalityDir,
+      pluginId: grant.id,
+      written: pluginLockEntryFor(grant, integrity),
+      previous: previousPin,
+    };
+    return await pinPluginToPersonality({ storage, personalityDir, draft: grant, integrity });
+  } catch (err) {
+    throw await undoneInstall(undo, 'after-npm-install', {
+      found: `npm installed the verified tarball of ${spec}, but pinning it to personality ${personalityId} failed (${describeInstallFailure(err)}).`,
+      action: retry,
+    });
+  }
+}
+
+/**
+ * `ethos plugin install` failed after its grant was recorded, and was undone
+ * (`undoPluginInstall`). The message is the failure plus the end state the undo
+ * confirmed (`describeUndoneInstall`); `outcome` is that end state.
+ */
+export class PluginInstallUndoneError extends Error {
+  constructor(
+    readonly outcome: InstallUndoOutcome,
+    message: string,
+    readonly action: string,
+  ) {
+    super(message);
+    this.name = 'PluginInstallUndoneError';
+  }
+}
+
+async function undoneInstall(
+  undo: UndoPluginInstallInput,
+  stage: InstallStage,
+  failure: { found: string; action: string },
+): Promise<PluginInstallUndoneError> {
+  const outcome = await undoPluginInstall({ ...undo, stage });
+  const { cause, action } = describeUndoneInstall({
+    undo,
+    outcome,
+    found: failure.found,
+    action: failure.action,
+    restartsWhen: 'ethos next starts',
+  });
+  return new PluginInstallUndoneError(outcome, cause, action);
+}
+
+const SHA512_SRI_RE = /^sha512-[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * The SRI npm recorded for the package the safety scan read — the registry's
+ * `dist.integrity`, which npm checked the download against. Read from the scan
+ * prefix's `package-lock.json`, else the hidden `node_modules/.package-lock.json`
+ * npm writes even under `package-lock=false` (both verified on npm 11.12.1).
+ *
+ * Fails closed: no sha512 integrity means npm did not fetch a registry tarball
+ * for it (a git URL, a local path), so there is nothing to hold the final
+ * install to — and that install fetches `name@version` from the registry, which
+ * is not what was scanned.
+ */
+export async function readScannedIntegrity(
+  tmpDir: string,
+  pkgDir: string,
+  pkgArg: string,
+): Promise<string> {
+  const key = relative(tmpDir, pkgDir).split(sep).join('/');
+  const locks = [
+    join(tmpDir, 'package-lock.json'),
+    join(tmpDir, 'node_modules', '.package-lock.json'),
+  ];
+  for (const lockPath of locks) {
+    let lock: { packages?: Record<string, { integrity?: unknown } | null> } | null;
+    try {
+      lock = JSON.parse(await readFile(lockPath, 'utf-8')) as typeof lock;
+    } catch {
+      continue;
+    }
+    const integrity = lock?.packages?.[key]?.integrity;
+    if (typeof integrity === 'string' && SHA512_SRI_RE.test(integrity)) return integrity;
+  }
+  throw new EthosError({
+    code: 'PLUGIN_INSTALL_FAILED',
+    cause: `npm recorded no sha512 integrity for the package scanned from '${pkgArg}', so the install cannot be held to the bytes the safety scan read`,
+    action:
+      'Install a published npm package by name (e.g. ethos-plugin-foo or ethos-plugin-foo@1.2.3), not a git URL, tarball, or local path.',
+  });
 }
 
 // ---------------------------------------------------------------------------

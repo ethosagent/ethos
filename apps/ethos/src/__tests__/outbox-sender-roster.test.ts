@@ -14,10 +14,10 @@ vi.mock('../wiring', async (importOriginal) => {
   return {
     ...orig,
     loadTeamManifest: (teamName: string) => {
-      if (teamName !== 'marketing') throw new Error(`no manifest for ${teamName}`);
+      if (teamName !== 'example-team') throw new Error(`no manifest for ${teamName}`);
       return {
-        name: 'marketing',
-        members: [{ personality: 'cmo' }, { personality: 'scout' }],
+        name: 'example-team',
+        members: [{ personality: 'coordinator' }, { personality: 'member-a' }],
       };
     },
   };
@@ -33,8 +33,8 @@ function config(): EthosConfig {
     personality: 'default',
     telegram: {
       bots: [
-        { id: 'bot-a', token: 't-a', bind: { type: 'personality', name: 'cmo' } },
-        { id: 'bot-b', token: 't-b', bind: { type: 'personality', name: 'cmo' } },
+        { id: 'bot-a', token: 't-a', bind: { type: 'personality', name: 'coordinator' } },
+        { id: 'bot-b', token: 't-b', bind: { type: 'personality', name: 'coordinator' } },
         { id: 'bot-support', token: 't-s', bind: { type: 'personality', name: 'support' } },
       ],
     },
@@ -45,7 +45,7 @@ function config(): EthosConfig {
           botToken: 'xoxb',
           appToken: 'xapp',
           signingSecret: 's',
-          bind: { type: 'team', name: 'marketing' },
+          bind: { type: 'team', name: 'example-team' },
         },
       ],
     },
@@ -54,13 +54,16 @@ function config(): EthosConfig {
 
 describe('buildBotSpeakers', () => {
   it('returns every telegram bot bound to the personality, and only those', () => {
-    expect(buildBotSpeakers(config()).candidates('telegram', 'cmo')).toEqual(['bot-a', 'bot-b']);
+    expect(buildBotSpeakers(config()).candidates('telegram', 'coordinator')).toEqual([
+      'bot-a',
+      'bot-b',
+    ]);
   });
 
   it('resolves a team-bound bot for a member of that team', () => {
     const speakers = buildBotSpeakers(config());
-    expect(speakers.candidates('slack', 'cmo')).toEqual(['slack-team']);
-    expect(speakers.speaksFor('slack-team', 'scout')).toBe(true);
+    expect(speakers.candidates('slack', 'coordinator')).toEqual(['slack-team']);
+    expect(speakers.speaksFor('slack-team', 'member-a')).toBe(true);
     expect(speakers.speaksFor('slack-team', 'support')).toBe(false);
   });
 
@@ -78,10 +81,10 @@ describe('buildBotSpeakers', () => {
     const speakers = buildBotSpeakers(config());
     const channel = buildChannelSpeakers(config());
     for (const [platform, id] of [
-      ['telegram', 'cmo'],
+      ['telegram', 'coordinator'],
       ['telegram', 'support'],
       ['telegram', 'ghost'],
-      ['slack', 'cmo'],
+      ['slack', 'coordinator'],
       ['slack', 'support'],
     ] as const) {
       expect(channel(platform, id)).toBe(speakers.candidates(platform, id).length > 0);

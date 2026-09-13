@@ -178,3 +178,51 @@ describe('skill_propose submits to the learning inbox (L-T6, path 6: chat)', () 
     expect(await listCandidates(storage, DATA)).toEqual([]);
   });
 });
+
+describe('skill_propose honours skill_evolution.evolve_existing', () => {
+  function toolFor(storage: InMemoryStorage, evolveExisting: boolean | undefined) {
+    return createSkillProposeTool({
+      learning: port(storage),
+      dataDir: DATA,
+      origin: 'fork',
+      target: (ctx) => ({
+        personalityId: ctx.personalityId ?? 'me',
+        scope: undefined,
+        evolveExisting,
+      }),
+      now: () => 1700000000000,
+    });
+  }
+
+  it('false refuses a targetFile rewrite and submits nothing', async () => {
+    const storage = new InMemoryStorage();
+    const result = await toolFor(storage, false).execute(
+      { content: '# body', reason: 'because', targetFile: 'json.md' },
+      makeCtx(),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'not_available' });
+    expect(await listCandidates(storage, DATA)).toEqual([]);
+  });
+
+  it('false still accepts a new skill', async () => {
+    const storage = new InMemoryStorage();
+    const result = await toolFor(storage, false).execute(
+      { content: '# body', reason: 'because' },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(true);
+    const [candidate] = await listCandidates(storage, DATA);
+    expect(candidate?.op).toBe('create');
+  });
+
+  it('absent allows a rewrite', async () => {
+    const storage = new InMemoryStorage();
+    const result = await toolFor(storage, undefined).execute(
+      { content: '# body', reason: 'because', targetFile: 'json.md' },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(true);
+    const [candidate] = await listCandidates(storage, DATA);
+    expect(candidate?.op).toBe('rewrite');
+  });
+});

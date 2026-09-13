@@ -41,7 +41,7 @@ describe('POST /documents/upload', () => {
     await mkdir(join(workdir, 'reports'), { recursive: true });
     await writeFile(join(workdir, 'notes.md'), 'original');
     await symlink(outside, join(workdir, 'escape'));
-    await mkdir(join(dataDir, 'teams', 'marketing'), { recursive: true });
+    await mkdir(join(dataDir, 'teams', 'alpha'), { recursive: true });
 
     store = new SQLiteSessionStore(':memory:');
     app = createWebApi({
@@ -111,12 +111,12 @@ describe('POST /documents/upload', () => {
   });
 
   it('writes into a team work directory with `team=`, and never outside it', async () => {
-    const res = await upload('team=marketing&root=0&path=brief.md', 'ours');
+    const res = await upload('team=alpha&root=0&path=brief.md', 'ours');
     expect(res.status).toBe(200);
-    expect(await readFile(join(dataDir, 'teams', 'marketing', 'brief.md'), 'utf-8')).toBe('ours');
+    expect(await readFile(join(dataDir, 'teams', 'alpha', 'brief.md'), 'utf-8')).toBe('ours');
 
     const escaped = await upload(
-      `team=marketing&root=0&path=${encodeURIComponent('../../workspace/writer/planted.md')}`,
+      `team=alpha&root=0&path=${encodeURIComponent('../../workspace/writer/planted.md')}`,
       'theirs',
     );
     expect(escaped.status).toBe(403);

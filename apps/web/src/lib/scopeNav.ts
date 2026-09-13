@@ -111,6 +111,7 @@ const LIBRARY_PANE_LABELS: Record<string, string> = {
   personalities: 'Personalities',
   recipes: 'Recipes',
   skills: 'All skills',
+  learning: 'Learning',
   plugins: 'All plugins',
   mcp: 'All servers',
   communications: 'Platforms',

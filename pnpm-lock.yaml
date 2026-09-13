@@ -101,6 +101,9 @@ importers:
       '@ethosagent/llm-codex':
         specifier: workspace:*
         version: link:../../extensions/llm-codex
+      '@ethosagent/observability-sqlite':
+        specifier: workspace:*
+        version: link:../../extensions/observability-sqlite
       '@ethosagent/personalities':
         specifier: workspace:*
         version: link:../../extensions/personalities
@@ -2166,6 +2169,9 @@ importers:
       '@ethosagent/platform-meeting':
         specifier: workspace:*
         version: link:../platform-meeting
+      '@ethosagent/tools-memory':
+        specifier: workspace:*
+        version: link:../tools-memory
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2318,6 +2324,10 @@ importers:
       '@ethosagent/voice-text':
         specifier: workspace:*
         version: link:../../packages/voice-text
+    devDependencies:
+      '@ethosagent/tools-memory':
+        specifier: workspace:*
+        version: link:../tools-memory
 
   extensions/tools-watchers:
     dependencies:

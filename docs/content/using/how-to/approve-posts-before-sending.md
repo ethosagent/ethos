@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: approve-posts-before-sending
 time: 20 min
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 An agent that can post to your team's Slack channel will, eventually, post something you would not have. The approval outbox puts a human between the draft and the channel: the agent writes, you read the exact text, and nothing reaches anybody until you tap Approve.
@@ -16,7 +16,7 @@ Configure a [personality](../../getting-started/glossary.md#personality)'s `outb
 
 ## Result
 
-Every agent-initiated post from that personality on the named platforms lands in a durable queue at `~/.ethos/outbox.db`. You approve one exact revision from a Telegram card or the web Outbox pane, and the [gateway](../../getting-started/glossary.md#gateway) (the long-running process that holds the channel adapters) publishes it from the bot that was named on the card.
+Every agent-initiated post from that personality on the named platforms lands in a durable queue at `~/.ethos/outbox.db`. You approve one exact revision from a Telegram card, the web Outbox pane, or `ethos outbox approve`, and the [gateway](../../getting-started/glossary.md#gateway) (the long-running process that holds the channel adapters) publishes it from the bot that was named on the card.
 
 ## Prereqs
 
@@ -63,9 +63,15 @@ An ungated personality prints `Publishing: not gated — send_message goes out a
 ethos gateway start
 ```
 
-`ethos gateway start` and `ethos boot` are the only two commands that construct the outbox. `ethos chat`, `ethos serve` and `ethos cron` wire none, so a gated personality sends immediately there — check which process is running the turn before you trust the gate.
+The gateway holds the bots, so it is the only process that publishes. Its dispatcher starts after the adapters are up and polls every 5 seconds.
 
-The dispatcher starts after the adapters are up and polls every 5 seconds.
+Which command runs the turn decides what happens to a draft:
+
+| Turn runs under | A gated `send_message` |
+|---|---|
+| `ethos gateway start` or `ethos boot` | Queues, and this process delivers it once you approve. |
+| `ethos serve` | Queues. A gateway holding the sending bot has to be running to deliver it. |
+| `ethos chat`, `ethos cron`, `ethos mcp` and the other one-shot commands | Nothing is queued and nothing is sent. These commands have no path to a channel, so `send_message` fails with `Gateway not active` for every personality. |
 
 ## 4. Let the agent draft
 
@@ -93,7 +99,7 @@ The verdict is advisory and nothing more. A `FAIL` still reaches you, and a `PAS
 **On Telegram.** The bot that will publish DMs the card to your owner chat:
 
 ```
-cmo wants to post to telegram:-1001234567890 as @EthosMarketingBot — revision 2
+writer wants to post to telegram:-1001234567890 as @ExampleBot — revision 2
 
 Ethos 0.9 ships tomorrow. Voice replies now redeliver after a restart.
 
@@ -109,6 +115,24 @@ Only the configured owner's tap counts — anyone else who can see the card is t
 
 Editing writes revision n+1 and voids any approval on the previous one. Approving carries the revision and hash you read; if anything moved while you were looking, the call fails with `changed since you viewed it` and nothing is approved.
 
+**From the terminal.** No card and no browser needed:
+
+```bash
+ethos outbox list
+ethos outbox show obx_9f3c1a4b7d2e5081
+```
+
+`show` prints the destination, the sending bot, the reviewer receipt and the content hash, then the draft between `-----BEGIN DRAFT-----` and `-----END DRAFT-----`, byte for byte. Approve the revision you read:
+
+```bash
+ethos outbox approve obx_9f3c1a4b7d2e5081 --revision 2
+ethos outbox reject obx_9f3c1a4b7d2e5081 --reason "wrong channel"
+```
+
+`--revision` is required, because an approval binds one exact text. If the draft was edited after you ran `show`, the approve fails with `changed since you viewed it` and nothing is approved. The command does not send anything itself. A gateway holding the sending bot publishes the approved revision on its next poll.
+
+An item queued under `ethos serve` never gets a Telegram card, because a card is posted only by the process holding the sending bot. Approve it in the web pane or from the terminal.
+
 ## 7. Watch it publish
 
 The dispatcher claims the approved row within about 5 seconds and publishes it from the bot named on the card, byte for byte. Until the claim lands you can still **Revoke**. After it lands you cannot: the pane says `Ethos cannot unsend this — delete it on Telegram.`
@@ -121,7 +145,7 @@ Check the queue's own record of what happened:
 ethos audit decisions --limit 5
 ```
 
-A web approval prints a row with the code `outbox.approve` carrying the item id, the bot, the destination and the content hash:
+An approval prints a row with the code `outbox.approve` carrying the item id, the bot, the destination and the content hash:
 
 ```
 ethos audit  audit — decisions (1)
@@ -131,7 +155,7 @@ ethos audit  audit — decisions (1)
   2026-09-12 14:02:11  info               audit.approval outbox.approve  → outbox obx_9f3c1a4b7d2e5081: approved revision 2
 ```
 
-A decision taken by tapping the Telegram card writes **no** audit row today — the gateway's outbox runtime is constructed without an observability sink, so only web decisions reach `ethos audit decisions`.
+Every decision writes one row, whether you took it in the web pane, on the Telegram card, or with `ethos outbox`.
 
 Then confirm the post arrived in the destination channel, from the bot the card named.
 
@@ -139,7 +163,8 @@ Then confirm the post arrived in the destination channel, from the bot the card 
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| The agent says it sent something and nothing queued | This surface wires no outbox (`ethos chat`, `ethos serve`, `ethos cron`) | Run the turn under `ethos gateway start` or `ethos boot`. |
+| `send_message` fails with `Gateway not active — send_message requires gateway mode` | The turn ran under a command with no path to a channel (`ethos chat`, `ethos cron`, `ethos mcp`, …). Nothing was queued or sent | Run the turn under `ethos gateway start`, `ethos boot` or `ethos serve`. |
+| An item queued from `ethos serve` has no Telegram card | Only the process holding the sending bot posts cards, and `ethos serve` holds none | Approve it in the web pane or with `ethos outbox approve <id> --revision <n>`. |
 | `Ambiguous sender: 2 telegram bots are bound to personality "<id>"` | More than one bound bot and the turn names none | Run the request in the lane of the bot that should publish, or leave exactly one bound. |
 | `no <platform> bot is bound to personality "<id>"` | No bot roster for that platform. `discord` and `email` have none at all | Bind a Telegram bot, Slack app or WhatsApp entry, or publish on a platform that has one. |
 | `Target "<platform>:<target>" is not in the personality's allowed messaging targets` | The operator allowlist is checked before the queue | Add the target to `~/.ethos/messaging.json`. Approval never widens what the operator allowed. |
@@ -150,7 +175,7 @@ Then confirm the post arrived in the destination channel, from the bot the card 
 ## Limits
 
 - **The reviewer is advisory.** A human approves every publication; no verdict can approve or block one.
-- **MCP tools and `a2a_send` are not gated.** Neither is a watcher created *before* you turned the policy on — only watcher creation is gated, so delete and recreate any watcher that delivers to a channel.
+- **MCP tools and `a2a_send` are not gated.** A watcher's `deliver` is: it is refused at creation, and re-checked on every change, so a watcher stored before you turned the policy on stops posting to a third-party chat on its next change. `watcher_list` shows the withheld reason, which points you at `wake`. A watcher created before owners were recorded names no personality and still delivers — delete and recreate it.
 - **Delivery is at-least-once.** An item handed to the delivery ledger without confirmation becomes `unconfirmed`, and the ledger — the record of every [delivery obligation](../../getting-started/glossary.md#delivery-obligation) Ethos owes — owns the retry from there. Telegram reports success on a multi-part message even when only part of it landed.
 - **A sent publication cannot be unsent.** Delete it on the platform.
 - **The windows are fixed in code**, not configurable: 7 days waiting for a human, 24 hours holding an approval, 10 minutes before a claimed-but-silent item is reconciled.

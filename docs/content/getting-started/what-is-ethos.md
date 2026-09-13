@@ -16,7 +16,7 @@ A `personality` lives at `~/.ethos/personalities/<id>/` and contains three files
 ```
 <id>/
 ├── SOUL.md        first-person identity (how do I speak, what am I for)
-├── config.yaml     name, description, model, memoryScope, budget, fs_reach
+├── config.yaml     name, description, model.*, budget, fs_reach
 └── toolset.yaml    flat list of allowed tool names
 ```
 
@@ -24,8 +24,8 @@ Switching from `researcher` to `engineer` mid-chat does not just swap a system p
 
 - The system prompt (`SOUL.md`)
 - The tools the agent can call (`toolset.yaml`)
-- Whether memory is shared with the user-default scope or isolated (`memoryScope`)
-- Which model handles the next turn (`model`)
+- Whose memory the agent reads and writes (always the personality's own, scope `personality:<id>`; no setting changes it)
+- Which model handles the next turn (`model.trivial`, `model.default`, `model.deep`, used when the personality's `provider` matches the active provider)
 
 You cannot accidentally run the engineer personality's write-shaped tools under the reviewer's read-only toolset. The four dimensions move together.
 
@@ -51,7 +51,7 @@ Beyond personalities, the framework ships:
 - **Nine surfaces** — CLI, web dashboard, desktop app, VS Code extension, and five channel adapters (Telegram, Discord, Slack, WhatsApp, Email). Same agent, same memory, same sessions across all of them.
 - **Plugin ecosystem** — plugins register tools, hooks, providers, [slash commands](../using/explanation/plugin-commands.md), and data sources. Plugins declare widget templates in `widgets.yaml`. Default-deny allowlists per personality. See [Plugin SDK reference](../building/reference/plugin-sdk.md).
 - **Custom dashboards** — draggable panel grid powered by plugin data sources, SQL queries, cron auto-refresh, and inter-panel communication. See [Build a custom dashboard](../building/tutorials/build-custom-dashboard.md).
-- **Skill evolution** — `@ethosagent/skill-evolver` analyzes eval output, proposes skill rewrites and new skills as candidates that go live only after a passing replay against past tasks or a human approval (`ethos learning`, or the web dashboard's Skills page). See [Manage skill evolution](../using/how-to/manage-skill-evolution.md).
+- **Skill evolution** — `@ethosagent/skill-evolver` analyzes eval output, proposes skill rewrites and new skills as candidates that go live only after a passing replay against past tasks or a human approval (`ethos learning`, or the web dashboard's Learning page). See [Manage skill evolution](../using/how-to/manage-skill-evolution.md).
 - **Persistent sessions** in SQLite, scoped per working directory.
 - **Plain-text memory** files (`MEMORY.md`, `USER.md`) you can read, grep, edit, and commit.
 - **Skill discovery** that picks up your existing libraries from Claude Code, OpenClaw, OpenCode, and Hermes — no porting.

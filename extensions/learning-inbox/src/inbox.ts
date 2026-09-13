@@ -19,7 +19,9 @@
 //      `learning.override`, `learning.reject` or `learning.rollback` — so
 //      `ethos audit decisions` lists it beside Part 2's `outbox.*` rows. A
 //      refusal writes none. Enforced in `recordDecision`; pinned by
-//      `__tests__/inbox.test.ts`.
+//      `__tests__/inbox.test.ts`. The one promotion no human makes writes its
+//      own `learning.auto_promote` row from `replayAndResolve`
+//      (`auto-promotion.ts`), not from here.
 //
 // What this class does NOT do, and who does (rule 12): promotion, its
 // snapshot and its refusals are `promote.ts`; the replay and the auto decision
@@ -74,8 +76,8 @@ export type LearningDecision = keyof typeof LEARNING_AUDIT_CODES;
 /**
  * How a decision maps onto `recordSafetyApproval`'s three-value `decision`.
  * A rollback undoes an approval, so it reads `denied`, like a rejection. Nothing
- * here is `auto`: the one non-human promotion path is `replayAndResolve`, and
- * it is not a decision this class records.
+ * here is `auto`: the one non-human promotion path is `replayAndResolve`, which
+ * records its own `learning.auto_promote` row (`LEARNING_AUTO_PROMOTE_CODE`).
  */
 const AUDIT_DECISION: Record<LearningDecision, 'approved' | 'denied'> = {
   approve: 'approved',

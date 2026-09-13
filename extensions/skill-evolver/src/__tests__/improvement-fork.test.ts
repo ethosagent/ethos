@@ -1,6 +1,7 @@
 import { DefaultHookRegistry } from '@ethosagent/core';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type {
+  AgentDonePayload,
   LLMProvider,
   MemoryProvider,
   PersonalityConfig,
@@ -218,7 +219,6 @@ describe('ImprovementFork', () => {
       hooks,
       runtime: {
         llm: createMockLLM(),
-        model: 'test-model',
         memoryProvider: createMockMemoryProvider(),
         sessionStore: createMockSessionStore([]),
         safety: createTestSafety(),
@@ -295,7 +295,6 @@ describe('ImprovementFork', () => {
       hooks,
       runtime: {
         llm: mockLLM,
-        model: 'test-model',
         memoryProvider: createMockMemoryProvider(),
         sessionStore: createMockSessionStore([
           { role: 'user', content: 'Hello' },
@@ -337,7 +336,6 @@ describe('ImprovementFork', () => {
       hooks,
       runtime: {
         llm: mockLLM,
-        model: 'test-model',
         memoryProvider: createMockMemoryProvider(),
         sessionStore: createMockSessionStore([
           { role: 'user', content: 'Hello' },
@@ -409,7 +407,6 @@ describe('ImprovementFork', () => {
       hooks,
       runtime: {
         llm: skillProposeLLM(),
-        model: 'test-model',
         memoryProvider: createMockMemoryProvider(),
         sessionStore: createMockSessionStore([
           { role: 'user', content: 'Hello' },
@@ -493,7 +490,6 @@ describe('ImprovementFork', () => {
       hooks,
       runtime: {
         llm: mockLLM,
-        model: 'test-model',
         memoryProvider: createMockMemoryProvider(),
         sessionStore: createMockSessionStore([
           { role: 'user', content: 'Hello' },
@@ -518,5 +514,202 @@ describe('ImprovementFork', () => {
 
     await hooks.fireVoid('agent_done', basePayload);
     expect(calls).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// skill_evolution keys → the post-turn fork. Each test counts the fork's LLM
+// calls (a fork that does not run makes none) or inspects what they carried.
+// ---------------------------------------------------------------------------
+
+describe('ImprovementFork honours skill_evolution', () => {
+  type CallOptions = Parameters<LLMProvider['complete']>[2];
+
+  const usage = {
+    type: 'usage' as const,
+    usage: {
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostUsd: 0,
+    },
+  };
+
+  /** Records each completion's options. With `propose`, the first call invokes `skill_propose`. */
+  function recordingLLM(propose?: Record<string, string>) {
+    const calls: CallOptions[] = [];
+    const llm: LLMProvider = {
+      name: 'test-provider',
+      model: 'test-model',
+      supportsCaching: false,
+      supportsThinking: false,
+      maxContextTokens: 100000,
+      async *complete(...args: Parameters<LLMProvider['complete']>) {
+        calls.push(args[2]);
+        if (propose && calls.length === 1) {
+          const json = JSON.stringify(propose);
+          yield { type: 'tool_use_start' as const, toolCallId: 'tc1', toolName: 'skill_propose' };
+          yield { type: 'tool_use_delta' as const, toolCallId: 'tc1', partialJson: json };
+          yield { type: 'tool_use_end' as const, toolCallId: 'tc1', inputJson: json };
+          yield usage;
+          yield { type: 'done' as const, finishReason: 'tool_use' as const };
+          return;
+        }
+        yield { type: 'text_delta' as const, text: 'NOTHING.' };
+        yield usage;
+        yield { type: 'done' as const, finishReason: 'end_turn' as const };
+      },
+      async countTokens() {
+        return 100;
+      },
+    };
+    return { llm, calls };
+  }
+
+  function forkFor(
+    skillEvolution: PersonalityConfig['skill_evolution'],
+    llm: LLMProvider,
+    storage: InMemoryStorage,
+    now?: () => number,
+  ) {
+    const hooks = new DefaultHookRegistry();
+    new ImprovementFork({
+      hooks,
+      runtime: {
+        llm,
+        memoryProvider: createMockMemoryProvider(),
+        sessionStore: createMockSessionStore([
+          { role: 'user', content: 'Hello' },
+          { role: 'assistant', content: 'World' },
+        ]),
+        safety: createTestSafety(),
+      },
+      personalities: makeRegistry({ skill_evolution: skillEvolution }),
+      dataDir: DATA_DIR,
+      storage,
+      learning: learningPort(storage),
+      now,
+    }).register();
+    return hooks;
+  }
+
+  const turn = (successfulToolCalls: number): AgentDonePayload => ({
+    sessionId: 'sess1',
+    text: 'Done.',
+    turnCount: 1,
+    personalityId: 'engineer',
+    successfulToolCalls,
+    totalToolCalls: successfulToolCalls,
+  });
+
+  it('enabled: false — the fork never runs, however many tool calls the turn made', async () => {
+    const { llm, calls } = recordingLLM();
+    const hooks = forkFor({ enabled: false, min_tool_calls: 0 }, llm, new InMemoryStorage());
+    await hooks.fireVoid('agent_done', turn(50));
+    expect(calls).toHaveLength(0);
+  });
+
+  it('enabled absent — the fork never runs (off by default)', async () => {
+    const { llm, calls } = recordingLLM();
+    const hooks = forkFor({ min_tool_calls: 0 }, llm, new InMemoryStorage());
+    await hooks.fireVoid('agent_done', turn(50));
+    expect(calls).toHaveLength(0);
+  });
+
+  it('min_tool_calls — a turn below the threshold does not fork; a turn at it does', async () => {
+    const { llm, calls } = recordingLLM();
+    const hooks = forkFor({ enabled: true, min_tool_calls: 3 }, llm, new InMemoryStorage());
+
+    await hooks.fireVoid('agent_done', turn(2));
+    expect(calls).toHaveLength(0);
+
+    await hooks.fireVoid('agent_done', turn(3));
+    expect(calls).toHaveLength(1);
+  });
+
+  it('min_tool_calls absent — the threshold is 5', async () => {
+    const { llm, calls } = recordingLLM();
+    const hooks = forkFor({ enabled: true }, llm, new InMemoryStorage());
+    await hooks.fireVoid('agent_done', turn(4));
+    expect(calls).toHaveLength(0);
+    await hooks.fireVoid('agent_done', turn(5));
+    expect(calls).toHaveLength(1);
+  });
+
+  it('cooldown_minutes — a second draft inside the window is suppressed; one after it runs', async () => {
+    let now = 1_000_000_000_000;
+    const { llm, calls } = recordingLLM();
+    const hooks = forkFor(
+      { enabled: true, min_tool_calls: 1, cooldown_minutes: 10 },
+      llm,
+      new InMemoryStorage(),
+      () => now,
+    );
+
+    await hooks.fireVoid('agent_done', turn(1));
+    expect(calls).toHaveLength(1);
+
+    now += 9 * 60_000; // inside the 10-minute window
+    await hooks.fireVoid('agent_done', turn(1));
+    expect(calls).toHaveLength(1);
+
+    now += 2 * 60_000; // 11 minutes after the first run — outside it
+    await hooks.fireVoid('agent_done', turn(1));
+    expect(calls).toHaveLength(2);
+  });
+
+  it("model — the fork's LLM calls carry skill_evolution.model as modelOverride", async () => {
+    const pinned = recordingLLM();
+    await forkFor(
+      { enabled: true, min_tool_calls: 1, model: 'cheap-drafter' },
+      pinned.llm,
+      new InMemoryStorage(),
+    ).fireVoid('agent_done', turn(1));
+    expect(pinned.calls.length).toBeGreaterThan(0);
+    expect(pinned.calls.map((o) => o?.modelOverride)).toEqual(
+      pinned.calls.map(() => 'cheap-drafter'),
+    );
+
+    const unpinned = recordingLLM();
+    await forkFor(
+      { enabled: true, min_tool_calls: 1 },
+      unpinned.llm,
+      new InMemoryStorage(),
+    ).fireVoid('agent_done', turn(1));
+    expect(unpinned.calls.length).toBeGreaterThan(0);
+    expect(unpinned.calls.every((o) => o?.modelOverride === undefined)).toBe(true);
+  });
+
+  it('evolve_existing: false — a rewrite proposal is refused while a new skill still drafts', async () => {
+    const rewrite = { content: '# Better json', reason: 'Improves it', targetFile: 'json.md' };
+    const create = { content: '# New skill', reason: 'Reusable' };
+
+    const refused = new InMemoryStorage();
+    await forkFor(
+      { enabled: true, min_tool_calls: 1, evolve_existing: false },
+      recordingLLM(rewrite).llm,
+      refused,
+    ).fireVoid('agent_done', turn(1));
+    expect(await listCandidates(refused, DATA_DIR)).toEqual([]);
+
+    const created = new InMemoryStorage();
+    await forkFor(
+      { enabled: true, min_tool_calls: 1, evolve_existing: false },
+      recordingLLM(create).llm,
+      created,
+    ).fireVoid('agent_done', turn(1));
+    const [newSkill] = await listCandidates(created, DATA_DIR);
+    expect(newSkill).toMatchObject({ op: 'create', origin: 'fork' });
+
+    // Absent keeps today's default: the same rewrite is submitted.
+    const allowed = new InMemoryStorage();
+    await forkFor(
+      { enabled: true, min_tool_calls: 1 },
+      recordingLLM(rewrite).llm,
+      allowed,
+    ).fireVoid('agent_done', turn(1));
+    const [rewritten] = await listCandidates(allowed, DATA_DIR);
+    expect(rewritten).toMatchObject({ op: 'rewrite', origin: 'fork' });
   });
 });

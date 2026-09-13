@@ -13,11 +13,14 @@ import { checkSkillFrontmatter } from '../../../skills/src/skill-compat';
 import {
   type AutoPromotionKnobs,
   autoPromotionDecision,
+  explainAutoPromotion,
+  LEARNING_AUTO_PROMOTE_CODE,
   type ReplayAndResolveDeps,
   replayAndResolve,
   resolveAutoPromotion,
 } from '../auto-promotion';
 import { freezeCase, type LearningCase } from '../cases';
+import type { LearningObservability } from '../inbox';
 import type { ExpressionRevisions, SkillScope } from '../promote';
 import type { CreateReplayArm } from '../replay';
 import { readCandidate, submitCandidate } from '../store';
@@ -63,6 +66,18 @@ describe('resolveAutoPromotion (L-D3)', () => {
       expect(resolveAutoPromotion(kind, knobs)).toBe(expected);
     });
   }
+
+  it('explainAutoPromotion names the knob that decided', () => {
+    expect(explainAutoPromotion('skill', { promotion: 'auto', globalAutoApprove: true })).toEqual({
+      mode: 'auto',
+      knob: 'skill_evolution.promotion',
+    });
+    expect(explainAutoPromotion('skill', { globalAutoApprove: true }).knob).toBe('autoApprove');
+    expect(explainAutoPromotion('expression', { approvalMode: 'auto' }).knob).toBe(
+      'evolution_approval_mode',
+    );
+    expect(explainAutoPromotion('skill', {})).toEqual({ mode: 'review', knob: null });
+  });
 });
 
 describe('autoPromotionDecision (L-D1, L-D11)', () => {
@@ -156,6 +171,7 @@ function deps(opts: {
   scope: SkillScope | undefined;
   regress?: boolean;
   evolveExpression?: ExpressionRevisions['evolveExpression'];
+  observability?: LearningObservability;
 }): ReplayAndResolveDeps {
   return {
     storage,
@@ -184,6 +200,8 @@ function deps(opts: {
       now,
     },
     policyFor: async () => ({ knobs: opts.knobs, scope: opts.scope }),
+    actor: 'cli',
+    ...(opts.observability ? { observability: opts.observability } : {}),
   };
 }
 
@@ -300,5 +318,119 @@ describe('replayAndResolve', () => {
     expect(result.promotion).toBeNull();
     expect(evolveExpression).not.toHaveBeenCalled();
     expect((await readCandidate(storage, DATA, c.id))?.status).toBe('pending_review');
+  });
+});
+
+type AuditRow = Parameters<LearningObservability['recordSafetyApproval']>[0];
+
+describe('replayAndResolve — the learning.auto_promote audit row', () => {
+  let rows: AuditRow[];
+  const observability: LearningObservability = { recordSafetyApproval: (row) => rows.push(row) };
+  beforeEach(() => {
+    rows = [];
+  });
+
+  async function submitSkill(scope: SkillScope | undefined, origin: 'fork' | 'nightly' = 'fork') {
+    const target = await seedCases();
+    const destination = join(liveSkillDir(DATA, PID, scope), 'cite.md');
+    const c = await submitCandidate(storage, DATA, {
+      kind: 'skill',
+      op: 'create',
+      personalityId: PID,
+      origin,
+      destination,
+      content: SKILL,
+      targetCaseIds: [target],
+    });
+    return { c, destination };
+  }
+
+  it('an automatic promotion writes exactly one learning.auto_promote row with the verdict and the reason', async () => {
+    const { c, destination } = await submitSkill('personality');
+
+    const result = await replayAndResolve(
+      deps({ knobs: { globalAutoApprove: true }, scope: 'personality', observability }),
+      c.id,
+    );
+
+    expect(result.promotion?.ok).toBe(true);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      decision: 'auto',
+      code: LEARNING_AUTO_PROMOTE_CODE,
+      details: {
+        candidateId: c.id,
+        personalityId: PID,
+        kind: 'skill',
+        destination,
+        status: 'promoted',
+        actor: 'auto',
+        decidedBy: 'system',
+        trigger: 'cli',
+        verdict: 'pass',
+        replayRunId: result.report.runId,
+        knob: 'autoApprove',
+        scope: 'personality',
+      },
+    });
+    const reason = String(rows[0]?.details?.reason);
+    expect(reason).toContain('autoApprove resolved auto');
+    expect(reason).toContain('skill_evolution.scope: personality');
+    expect(rows[0]?.cause).toContain(reason);
+    // The hash, never the content.
+    expect(JSON.stringify(rows[0])).not.toContain('Cite every claim.');
+  });
+
+  it('a replay that does not promote writes none', async () => {
+    const shared = await submitSkill(undefined);
+    await replayAndResolve(
+      deps({ knobs: { globalAutoApprove: true }, scope: undefined, observability }),
+      shared.c.id,
+    );
+    const review = await submitSkill('personality', 'nightly');
+    await replayAndResolve(
+      deps({ knobs: { promotion: 'review' }, scope: 'personality', observability }),
+      review.c.id,
+    );
+    const regress = await submitSkill('personality', 'nightly');
+    await replayAndResolve(
+      deps({ knobs: { promotion: 'auto' }, scope: 'personality', regress: true, observability }),
+      regress.c.id,
+    );
+
+    expect(rows).toEqual([]);
+  });
+
+  it('a promotion promote() refuses writes none', async () => {
+    const { c, destination } = await submitSkill('personality');
+    // A file appeared at the destination after the draft: the candidate is stale.
+    await storage.mkdir(liveSkillDir(DATA, PID, 'personality'));
+    await storage.write(destination, 'someone else wrote this');
+
+    const result = await replayAndResolve(
+      deps({ knobs: { promotion: 'auto' }, scope: 'personality', observability }),
+      c.id,
+    );
+
+    expect(result.decision.promote).toBe(true);
+    expect(result.promotion).toMatchObject({ ok: false, code: 'stale' });
+    expect(rows).toEqual([]);
+  });
+
+  it('a sink that throws does not undo the promotion', async () => {
+    const { c, destination } = await submitSkill('personality');
+    const broken: LearningObservability = {
+      recordSafetyApproval: () => {
+        throw new Error('store down');
+      },
+    };
+
+    const result = await replayAndResolve(
+      deps({ knobs: { promotion: 'auto' }, scope: 'personality', observability: broken }),
+      c.id,
+    );
+
+    expect(result.promotion?.ok).toBe(true);
+    expect(await storage.read(destination)).toBe(SKILL);
   });
 });

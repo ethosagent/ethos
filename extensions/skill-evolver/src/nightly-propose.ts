@@ -52,6 +52,11 @@ export interface ProposeSkillInput {
   /** ~/.ethos root. */
   dataDir: string;
   llm: LLMProvider;
+  /**
+   * `skill_evolution.model`. Sent as `modelOverride` on the drafting call;
+   * unset = the provider's own model.
+   */
+  model?: string;
   learning: LearningSubmitPort;
   /** The evidence sessions the digest was built from. */
   evidenceSessionIds?: string[];
@@ -59,10 +64,11 @@ export interface ProposeSkillInput {
   targetCaseIds?: readonly string[];
 }
 
-async function callLLM(llm: LLMProvider, prompt: string): Promise<string> {
+async function callLLM(llm: LLMProvider, prompt: string, model?: string): Promise<string> {
   const messages: Message[] = [{ role: 'user', content: prompt }];
   let text = '';
-  for await (const chunk of llm.complete(messages, [], { maxTokens: 2048, temperature: 0.2 })) {
+  const options = { maxTokens: 2048, temperature: 0.2, ...(model ? { modelOverride: model } : {}) };
+  for await (const chunk of llm.complete(messages, [], options)) {
     if (chunk.type === 'text_delta') text += chunk.text;
   }
   return text;
@@ -108,7 +114,7 @@ export async function proposeSkillFromEvidence(
     score: 1,
     skillFilesUsed: [],
   };
-  const raw = await callLLM(input.llm, renderNewSkillPrompt({ tasks: [task] }));
+  const raw = await callLLM(input.llm, renderNewSkillPrompt({ tasks: [task] }), input.model);
   const parsed = parseNewSkillResponse(raw);
   if (parsed.kind === 'skip') {
     return {

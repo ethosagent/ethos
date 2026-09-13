@@ -498,8 +498,9 @@ function scaffoldTeamTool(storage: Storage): Tool {
       const yaml = serializeTeamManifest(manifest);
       // Validate before writing: a manifest parseTeamManifest rejects would
       // otherwise fail later at team load, disconnected from this call.
+      const fileName = `${args.name}.yaml`;
       try {
-        parseTeamManifest(yaml);
+        parseTeamManifest(yaml, { source: fileName });
       } catch (err) {
         return {
           ok: false,
@@ -508,7 +509,7 @@ function scaffoldTeamTool(storage: Storage): Tool {
         };
       }
       const teamsBase = join(homedir(), '.ethos', 'teams');
-      const dest = join(teamsBase, `${args.name}.yaml`);
+      const dest = join(teamsBase, fileName);
 
       await storage.mkdir(teamsBase);
       await storage.writeAtomic(dest, yaml);

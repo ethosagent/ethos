@@ -30,7 +30,7 @@ export {
   pruneObservability,
   pruneObservabilityByPath,
 } from './retention';
-export { ObservabilityService } from './service';
+export { OBSERVABILITY_KILL_SWITCH_FILE, ObservabilityService } from './service';
 export type {
   ClaimedTrace,
   SkillUsageRow,

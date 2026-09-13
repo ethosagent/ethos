@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { ScanFinding, TrustTier } from '@ethosagent/safety-scanner';
 import type { Storage } from '@ethosagent/types';
 
@@ -183,6 +184,57 @@ export async function recordGrant(
   const grants = await readGrants(storage, pluginsDir);
   grants[grant.id] = grant;
   await writeGrants(storage, pluginsDir, grants);
+}
+
+/** A grant as it round-trips through `grants.json`: absent optional keys and all. */
+function asStored(grant: PluginGrant | null | undefined): unknown {
+  return grant ? JSON.parse(JSON.stringify(grant)) : null;
+}
+
+export interface RestoreGrantInput {
+  id: string;
+  /** The grant the install attempt recorded over whatever was there. */
+  recorded: PluginGrant;
+  /** `readGrants(…)[id]` as it stood before the attempt recorded `recorded`, or null. */
+  previous: PluginGrant | null;
+}
+
+/**
+ * Put one id's grant back the way it was before an install attempt recorded
+ * `recorded` over it — the grant half of `undoPluginInstall` (`install-undo.ts`).
+ *
+ * With no previous record the entry is DELETED, not revoked: a revoked record
+ * is a state of its own, not "never granted". The loader refuses to import a
+ * plugin whose grant is revoked (`PluginLoader.revokedGrantId`, `index.ts`), so a
+ * revocation written here would stop a copy of the plugin that loaded before
+ * the attempt; a missing grant does not (only the auto-install gate,
+ * `PluginLoader.installFromLockEntry`, reads a missing grant, and it treats
+ * missing and revoked alike). Deleting leaves exactly the pre-attempt state.
+ *
+ * Only touches the entry when it is still the one the attempt recorded: if
+ * something else rewrote it meanwhile — an `ethos plugin revoke` from another
+ * process, say — that newer decision is left alone (`'changed-since'`), so an
+ * undo can never un-revoke. `'unchanged'` means the attempt's record never
+ * landed. Sibling entries are rewritten as `readGrants` returns them, the same
+ * read-modify-write `recordGrant` does.
+ */
+export async function restoreGrant(
+  storage: Storage,
+  pluginsDir: string,
+  input: RestoreGrantInput,
+): Promise<'restored' | 'removed' | 'unchanged' | 'changed-since'> {
+  const grants = await readGrants(storage, pluginsDir);
+  const current = asStored(grants[input.id]);
+  if (!isDeepStrictEqual(current, asStored(input.recorded))) {
+    return isDeepStrictEqual(current, asStored(input.previous)) ? 'unchanged' : 'changed-since';
+  }
+  if (input.previous === null) {
+    delete grants[input.id];
+  } else {
+    grants[input.id] = input.previous;
+  }
+  await writeGrants(storage, pluginsDir, grants);
+  return input.previous === null ? 'removed' : 'restored';
 }
 
 /**

@@ -43,6 +43,7 @@ import { runLogs } from './commands/logs';
 import { runMcp } from './commands/mcp';
 import { runMeshCommand } from './commands/mesh';
 import { runModels } from './commands/models';
+import { runOutbox } from './commands/outbox';
 import { runPerf } from './commands/perf';
 import { runPlugin } from './commands/plugin';
 import { runProcessCommand } from './commands/process';
@@ -76,7 +77,7 @@ const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
-  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | memory | acp | batch | bench | eval | evolve | learn | learning | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
+  'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';
 
 // Declared here, not beside getBootCliRegistry() below, because dispatch runs at
 // module top level: the `default` branch calls getBootCliRegistry() while a `let`
@@ -731,6 +732,11 @@ try {
     case 'learning': {
       const config = await loadRequiredConfig();
       await runLearning(args.slice(1), config);
+      break;
+    }
+
+    case 'outbox': {
+      await runOutbox(args.slice(1));
       break;
     }
 

@@ -1,4 +1,5 @@
-import { basename, join } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { declaredWorkdirs } from '@ethosagent/core';
 import {
   type CharacterSheetBoundary,
@@ -21,13 +22,30 @@ import {
   EthosError,
   type ExecutionPosture,
   type LearningLogEntry,
+  type ObsEvent,
   type PersonalityConfig,
+  type PersonalityMcpExportConfig,
   type Storage,
 } from '@ethosagent/types';
-import type { McpPolicy, Personality, PersonalitySkill } from '@ethosagent/web-contracts';
+import type {
+  McpExportCallWire,
+  McpExportClientWire,
+  McpExportDenialWire,
+  McpExportDesktopEntryWire,
+  McpExportScopeViewWire,
+  McpExportViewWire,
+  McpPolicy,
+  Personality,
+  PersonalitySkill,
+} from '@ethosagent/web-contracts';
 import { listPendingExpressionCandidates, submitExpressionCandidate } from '@ethosagent/wiring';
+import type { ApiKeyRecord } from '../middleware/bearer-auth';
 import type { ConfigRepository } from '../repositories/config.repository';
-import { type LearningService, learningRefusalError } from './learning.service';
+import {
+  type LearningRefusalCode,
+  type LearningService,
+  learningRefusalError,
+} from './learning.service';
 
 /** Latest Personality-Judge alignment, mapped from `.judge-history/state.json`. */
 interface JudgeWire {
@@ -148,7 +166,68 @@ export interface PersonalitiesServiceOptions {
    * than inventing one.
    */
   mcpExport?: (personalityId: string) => Promise<CharacterSheetMcpExport | null>;
+  /**
+   * M-T9 — the API-key store, read for the MCP export section's Clients table.
+   * Only `list` is called. The records carry a hash, never a secret, and the
+   * section copies out prefix and label only (`mcpExport`). Absent → no clients.
+   */
+  apiKeys?: { list(): Promise<ApiKeyRecord[]> };
+  /**
+   * M-T9 — the Claude Desktop config for `ethos-<id>`, built by the CLI's own
+   * `buildExportEntry` and `claudeDesktop` adapter (`claudeDesktopExportEntry`,
+   * `apps/ethos/src/commands/mcp-export.ts`) so the web and `ethos mcp install`
+   * cannot disagree about its shape. Absent or throwing → no entry.
+   */
+  mcpExportDesktopEntry?: (
+    personalityId: string,
+    opts: { bearer: boolean },
+  ) => Promise<McpExportDesktopEntryWire>;
+  /**
+   * M-T9 — `ObservabilityStore.getEvents` over the shared observability.db,
+   * read for the section's Recent denials. Absent or throwing → no denials.
+   */
+  readObservabilityEvents?: (filter: { category: string; limit: number }) => ObsEvent[];
 }
+
+/**
+ * The five `mcp_export.*` keys the read-only notice names. Checked against the
+ * frozen `PersonalityMcpExportConfig` in both directions: `satisfies` refuses a
+ * key the type does not have, and `_mcpExportKeysComplete` fails typecheck when
+ * the type gains one this list does not name.
+ */
+const MCP_EXPORT_DECLARATION_KEYS = [
+  'enabled',
+  'expose_tools',
+  'expose_memory',
+  'expose_sessions',
+  'auth',
+] as const satisfies readonly (keyof PersonalityMcpExportConfig)[];
+type UnlistedMcpExportKey = Exclude<
+  keyof PersonalityMcpExportConfig,
+  (typeof MCP_EXPORT_DECLARATION_KEYS)[number]
+>;
+const _mcpExportKeysComplete: [UnlistedMcpExportKey] extends [never] ? true : never = true;
+
+/** Rows per MCP export table. */
+const MCP_EXPORT_RECENT = 20;
+/**
+ * Events read per `mcp.export.*` category before filtering to this personality.
+ *
+ * LIMITATION (CLAUDE.md rule 12): `getEvents` filters by category, not by
+ * `details.personalityId`, so the filter runs here over the newest
+ * `MCP_EXPORT_EVENT_SCAN` rows of each category on the machine. A denial older
+ * than that window — pushed out by other exports' traffic — is not shown.
+ */
+const MCP_EXPORT_EVENT_SCAN = 500;
+const MCP_EXPORT_EVENT_KINDS = ['auth', 'discovery', 'call'] as const;
+
+/**
+ * `applyExpression`'s answer. A refusal keeps the learning inbox's code so the
+ * RPC can map it to the same typed error `learning.approve` returns.
+ */
+export type ApplyExpressionResult =
+  | { ok: true; value: { revisionId: string } }
+  | { ok: false; code: LearningRefusalCode; reason: string; action: string };
 
 export class PersonalitiesService {
   constructor(private readonly opts: PersonalitiesServiceOptions) {}
@@ -330,6 +409,166 @@ export class PersonalitiesService {
         mcpExport,
       ),
       posture,
+    };
+  }
+
+  /**
+   * The MCP export section (M-T9): the resolved export slice, the clients that
+   * may call it, its recent calls and its recent refusals.
+   *
+   * Bearer-reachable (`personalities:read`, `SCOPE_MAP` in
+   * `middleware/dual-auth.ts`), so it carries NO SECRET: clients are copied out
+   * field by field — label and `sk-ethos-XXXXXXXX` prefix — never spread from
+   * the store record, and the Desktop entry holds a placeholder where the key
+   * goes. Pinned by `personalities-mcp-export.test.ts`.
+   *
+   * The slice comes from the same `mcpExport` seam the character sheet uses —
+   * `resolveMcpExportScope` against the live registry — never a second
+   * resolution. Every other source is fail-soft: a missing or throwing seam
+   * empties its table rather than failing the section.
+   */
+  async mcpExport(id: string): Promise<McpExportViewWire> {
+    await this.opts.refresh?.();
+    const described = this.opts.personalities.describe(id);
+    if (!described) throw notFound(id);
+
+    let resolved: CharacterSheetMcpExport | null = null;
+    if (this.opts.mcpExport) {
+      try {
+        resolved = await this.opts.mcpExport(id);
+      } catch {
+        resolved = null;
+      }
+    }
+    // Without a resolved slice, `enabled` is still the literal-`true` check the
+    // resolver itself makes (M-D4) — the character sheet reports it the same way.
+    const exported = resolved ? resolved.enabled : described.config.mcp_export?.enabled === true;
+    const scope: McpExportScopeViewWire | null =
+      resolved?.enabled === true
+        ? {
+            allowed: [...resolved.allowed],
+            dropped: [...resolved.dropped],
+            memory: resolved.memory,
+            sessions: resolved.sessions,
+            auth: resolved.auth,
+          }
+        : null;
+
+    let desktopEntry: McpExportDesktopEntryWire | null = null;
+    if (scope && this.opts.mcpExportDesktopEntry) {
+      try {
+        desktopEntry = await this.opts.mcpExportDesktopEntry(id, {
+          bearer: scope.auth === 'bearer',
+        });
+      } catch {
+        desktopEntry = null;
+      }
+    }
+
+    let keys: ApiKeyRecord[] = [];
+    if (this.opts.apiKeys) {
+      try {
+        keys = await this.opts.apiKeys.list();
+      } catch {
+        keys = [];
+      }
+    }
+    // `key-<prefix>` is the clientId `createMcpClientAuthenticator` stamps
+    // (`packages/wiring/src/mcp-export.ts`). Revoked keys still name their old
+    // calls and denials.
+    const nameByClientId = new Map(keys.map((k) => [`key-${k.prefix}`, k.name]));
+    const requiredScope = `mcp:${id}`;
+    const clients: McpExportClientWire[] = keys
+      .filter((k) => !k.revokedAt && k.scopes.includes(requiredScope))
+      .map((k) => ({
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        createdAt: k.createdAt.toISOString(),
+        lastUsed: k.lastUsed ? k.lastUsed.toISOString() : null,
+      }));
+
+    // `mcp:<id>:<clientId>:<conversation>` — `exportSessionKey`
+    // (`apps/mcp-server/src/export-server.ts`).
+    const keyPrefix = `mcp:${id}:`;
+    let calls: McpExportCallWire[] = [];
+    if (this.opts.sessions) {
+      try {
+        const rows = await this.opts.sessions.listSessions({
+          platform: 'mcp',
+          keyPrefix,
+          limit: MCP_EXPORT_RECENT,
+        });
+        calls = rows
+          .filter((s) => s.key.startsWith(keyPrefix))
+          .map((s) => {
+            const clientId = s.key.slice(keyPrefix.length).split(':')[0] || '-';
+            return {
+              sessionId: s.id,
+              updatedAt: s.updatedAt.toISOString(),
+              clientId,
+              clientName: nameByClientId.get(clientId) ?? null,
+              title: s.title ?? null,
+              costUsd: s.usage.estimatedCostUsd,
+            };
+          });
+      } catch {
+        calls = [];
+      }
+    }
+
+    const denials: McpExportDenialWire[] = [];
+    if (this.opts.readObservabilityEvents) {
+      for (const kind of MCP_EXPORT_EVENT_KINDS) {
+        let events: ObsEvent[];
+        try {
+          events = this.opts.readObservabilityEvents({
+            category: `mcp.export.${kind}`,
+            limit: MCP_EXPORT_EVENT_SCAN,
+          });
+        } catch {
+          events = [];
+        }
+        // Shape written by `createMcpExportAuditSink`
+        // (`apps/ethos/src/commands/mcp-export.ts`): code = wire event,
+        // cause = reason code, details = { decision, personalityId, clientId }.
+        for (const e of events) {
+          const details = e.details ?? {};
+          if (details.personalityId !== id || details.decision !== 'denied') continue;
+          const clientId = typeof details.clientId === 'string' ? details.clientId : '-';
+          denials.push({
+            ts: new Date(e.ts).toISOString(),
+            kind,
+            event: e.code ?? '-',
+            clientId,
+            clientName: nameByClientId.get(clientId) ?? null,
+            reason: e.cause ?? 'unspecified',
+          });
+        }
+      }
+      denials.sort((a, b) => b.ts.localeCompare(a.ts));
+      denials.splice(MCP_EXPORT_RECENT);
+    }
+
+    const soulFile = described.config.soulFile;
+    const configFile = soulFile
+      ? join(dirname(soulFile), 'config.yaml')
+      : join(this.opts.dataDir ?? join(homedir(), '.ethos'), 'personalities', id, 'config.yaml');
+    const home = homedir();
+
+    return {
+      personalityId: id,
+      exported,
+      scope,
+      declarationKeys: [...MCP_EXPORT_DECLARATION_KEYS],
+      configPath: configFile.startsWith(`${home}/`)
+        ? `~${configFile.slice(home.length)}`
+        : configFile,
+      command: `ethos mcp serve --personality ${id}`,
+      desktopEntry,
+      clients,
+      calls,
+      denials,
     };
   }
 
@@ -535,7 +774,8 @@ export class PersonalitiesService {
   // What changed for a caller: `skillCandidateApprove` carries no reason, so it
   // approves only a candidate whose replay passed; any other is refused with
   // `INVALID_INPUT` naming the paths that can carry a reason: `ethos learning
-  // approve <id> --override`, and the web Skills approval queue.
+  // approve <id> --override`, and the web Learning page, which approves through
+  // `learning.approve` and prompts for one.
   // Approving no longer "treats an existing live file as already promoted" —
   // `promote()` refuses a stale candidate instead of silently dropping it.
   // ---------------------------------------------------------------------------
@@ -566,7 +806,7 @@ export class PersonalitiesService {
       throw learningRefusalError(
         result,
         result.code === 'override_required'
-          ? `Approve ${found.value.id} with a reason from the Skills page approval queue, or run \`ethos learning approve ${found.value.id} --override "<reason>"\`.`
+          ? `Approve ${found.value.id} with a reason on the Learning page, or run \`ethos learning approve ${found.value.id} --override "<reason>"\`.`
           : `Run \`ethos learning show ${found.value.id}\` for its timeline.`,
       );
     }
@@ -808,13 +1048,17 @@ export class PersonalitiesService {
   // goes through `LearningService.approve` like every other approval (L-T8)
   // and needs `overrideReason` — the inbox refuses a non-`pass` approval
   // without one. `summary` is the drafter's rationale and is not a reason.
+  //
+  // A refusal is RETURNED with the inbox's own code (`stale`,
+  // `override_required`, …), not thrown as one envelope code: the RPC maps it
+  // with the table `learning.*` uses (`learningRpcError`, `rpc/learning.ts`).
   async applyExpression(
     id: string,
     newExpression: string,
     summary: string,
     evidenceRef: string,
     overrideReason?: string,
-  ): Promise<{ revisionId: string }> {
+  ): Promise<ApplyExpressionResult> {
     const { storage, dataDir } = this.opts;
     if (!storage || !dataDir) throw storageNotConfigured();
     const learning = this.requireLearning();
@@ -839,18 +1083,20 @@ export class PersonalitiesService {
       override: overrideReason ? { reason: overrideReason } : undefined,
     });
     if (!result.ok) {
-      throw learningRefusalError(
-        { code: result.code, reason: `Expression not applied: ${result.reason}` },
-        result.code === 'override_required'
-          ? `Give a reason (overrideReason) to apply ${candidate.id} anyway, or run \`ethos learning replay ${candidate.id}\` first.`
-          : 'Reload the Living Soul and draft the change again.',
-        'INVALID_INPUT',
-      );
+      return {
+        ok: false,
+        code: result.code,
+        reason: `Expression not applied: ${result.reason}`,
+        action:
+          result.code === 'override_required'
+            ? `Give a reason (overrideReason) to apply ${candidate.id} anyway, or run \`ethos learning replay ${candidate.id}\` first.`
+            : 'Reload the Living Soul and draft the change again.',
+      };
     }
     if (result.value.promotion.kind !== 'expression') {
       throw new Error(`applyExpression: candidate ${candidate.id} is not an Expression`);
     }
-    return { revisionId: result.value.promotion.revisionId };
+    return { ok: true, value: { revisionId: result.value.promotion.revisionId } };
   }
 
   async revertExpression(id: string): Promise<{ ok: true; revertedTo: string }> {

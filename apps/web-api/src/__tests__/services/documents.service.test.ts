@@ -304,16 +304,16 @@ describe('DocumentsService', () => {
     let teamDir: string;
 
     beforeEach(async () => {
-      teamDir = join(dataDir, 'teams', 'marketing');
+      teamDir = join(dataDir, 'teams', 'alpha');
       await mkdir(join(teamDir, 'brand'), { recursive: true });
       await writeFile(join(teamDir, 'outcomes.md'), '# Outcomes\n');
       await writeFile(join(teamDir, 'brand', 'voice.md'), 'warm');
     });
 
     it('roots at the team work directory when it exists, else has no roots', async () => {
-      expect(await service.root({ team: 'marketing' })).toEqual({
+      expect(await service.root({ team: 'alpha' })).toEqual({
         roots: [{ id: '0', path: teamDir }],
-        team: 'marketing',
+        team: 'alpha',
       });
       expect(await service.root({ team: 'ghost' })).toEqual({ roots: [], team: 'ghost' });
       await expect(service.list({ team: 'ghost', root: '0' })).rejects.toMatchObject({
@@ -325,21 +325,21 @@ describe('DocumentsService', () => {
       for (const team of ['..', '../outside', '.hidden', 'a/b']) {
         await expect(service.root({ team })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
       }
-      await expect(
-        service.root({ team: 'marketing', personalityId: 'writer' }),
-      ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+      await expect(service.root({ team: 'alpha', personalityId: 'writer' })).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+      });
     });
 
     it('lists and reads inside the team directory', async () => {
-      const top = await service.list({ team: 'marketing', root: '0' });
+      const top = await service.list({ team: 'alpha', root: '0' });
       expect(top.entries.map((e) => [e.name, e.isDir])).toEqual([
         ['brand', true],
         ['outcomes.md', false],
       ]);
-      const nested = await service.list({ team: 'marketing', root: '0', path: 'brand' });
+      const nested = await service.list({ team: 'alpha', root: '0', path: 'brand' });
       expect(nested.entries[0]?.path).toBe(join('brand', 'voice.md'));
       expect(
-        await service.resolveDownload({ team: 'marketing', root: '0', path: 'outcomes.md' }),
+        await service.resolveDownload({ team: 'alpha', root: '0', path: 'outcomes.md' }),
       ).toEqual({ absolutePath: join(teamDir, 'outcomes.md'), filename: 'outcomes.md', size: 11 });
     });
 
@@ -347,13 +347,13 @@ describe('DocumentsService', () => {
       await mkdir(join(dataDir, 'teams', 'dev'));
       await writeFile(join(dataDir, 'teams', 'dev', 'plan.md'), 'theirs');
       await expect(
-        service.list({ team: 'marketing', root: '0', path: '../dev' }),
+        service.list({ team: 'alpha', root: '0', path: '../dev' }),
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       await expect(
-        service.resolveDownload({ team: 'marketing', root: '0', path: '../dev/plan.md' }),
+        service.resolveDownload({ team: 'alpha', root: '0', path: '../dev/plan.md' }),
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       await expect(
-        service.delete({ team: 'marketing', root: '0', path: join(outside, 'secret.txt') }),
+        service.delete({ team: 'alpha', root: '0', path: join(outside, 'secret.txt') }),
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     });
 
@@ -361,29 +361,29 @@ describe('DocumentsService', () => {
       await symlink(join(outside, 'secret.txt'), join(teamDir, 'link.txt'));
       await symlink(outside, join(teamDir, 'escape'));
 
-      const listed = await service.list({ team: 'marketing', root: '0' });
+      const listed = await service.list({ team: 'alpha', root: '0' });
       expect(listed.entries).toContainEqual(
         expect.objectContaining({ name: 'link.txt', isSymlink: true }),
       );
       await expect(
-        service.resolveDownload({ team: 'marketing', root: '0', path: 'link.txt' }),
+        service.resolveDownload({ team: 'alpha', root: '0', path: 'link.txt' }),
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       await expect(
         service.resolveDownload({
-          team: 'marketing',
+          team: 'alpha',
           root: '0',
           path: join('escape', 'secret.txt'),
         }),
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       await expect(
-        service.list({ team: 'marketing', root: '0', path: 'escape' }),
+        service.list({ team: 'alpha', root: '0', path: 'escape' }),
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     });
 
     it('creates folders, writes and deletes under the team directory', async () => {
-      await service.createFolder({ team: 'marketing' }, '0', 'narratives');
+      await service.createFolder({ team: 'alpha' }, '0', 'narratives');
       const entry = await service.write(
-        { team: 'marketing' },
+        { team: 'alpha' },
         '0',
         join('narratives', 'q4.md'),
         Buffer.from('draft'),
@@ -392,7 +392,7 @@ describe('DocumentsService', () => {
       expect(entry.path).toBe(join('narratives', 'q4.md'));
       expect(await readFile(join(teamDir, 'narratives', 'q4.md'), 'utf-8')).toBe('draft');
       expect(
-        await service.delete({ team: 'marketing', root: '0', path: join('narratives', 'q4.md') }),
+        await service.delete({ team: 'alpha', root: '0', path: join('narratives', 'q4.md') }),
       ).toEqual({ ok: true });
     });
 
@@ -409,7 +409,7 @@ describe('DocumentsService', () => {
         roots: [{ id: '0', path: join(elsewhere, 'ops') }],
         team: 'ops',
       });
-      expect(await custom.root({ team: 'marketing' })).toEqual({ roots: [], team: 'marketing' });
+      expect(await custom.root({ team: 'alpha' })).toEqual({ roots: [], team: 'alpha' });
     });
   });
 

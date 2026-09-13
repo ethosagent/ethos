@@ -645,7 +645,6 @@ export async function buildAgentLoop(
       hooks,
       runtime: {
         llm,
-        model: config.model,
         memoryProvider: memory,
         sessionStore: session,
         safety,

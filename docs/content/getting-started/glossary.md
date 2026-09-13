@@ -4,7 +4,7 @@ description: "Every Ethos domain term in one place: personality, skill, tool, ho
 kind: reference
 audience: shared
 slug: glossary
-updated: 2026-08-14
+updated: 2026-09-13
 ---
 
 Every domain term used elsewhere in the docs has one canonical entry here. Pages link to the entry on first use. The list is alphabetical inside each cluster; clusters are ordered by how often a newcomer hits them.
@@ -37,7 +37,7 @@ One user message in, one streamed response out. A turn may include multiple [too
 
 ### LLM provider {#llm-provider}
 
-The abstraction the [AgentLoop](#agent-loop) calls to perform inference. Implements `LLMProvider` from `@ethosagent/types`: a `name`, a `model` id, and a streaming `complete()` method that returns `AsyncIterable<CompletionChunk>`. Built-ins cover Anthropic, OpenAI-compatible endpoints (OpenRouter, Ollama, Gemini), and Azure OpenAI; custom providers ship via plugin and register through `registerLLMProvider`. Personalities select a provider via the `provider:` field in `config.yaml` and route specific tiers via `model: { trivial, default, deep }`. See [Write an LLM provider plugin](../building/how-to/write-an-llm-provider-plugin.md).
+The abstraction the [AgentLoop](#agent-loop) calls to perform inference. Implements `LLMProvider` from `@ethosagent/types`: a `name`, a `model` id, and a streaming `complete()` method that returns `AsyncIterable<CompletionChunk>`. Built-ins cover Anthropic, OpenAI-compatible endpoints (OpenRouter, Ollama, Gemini), and Azure OpenAI; custom providers ship via plugin and register through `registerLLMProvider`. Personalities select a provider via the `provider:` field in `config.yaml` and route tiers with the dotted keys `model.trivial`, `model.default`, `model.deep` and `model.dreaming`, which apply only while that `provider` is the active one (`resolveModelWithTier`, `packages/core/src/agent-loop/turn-context.ts`). See [Write an LLM provider plugin](../building/how-to/write-an-llm-provider-plugin.md).
 
 ## CLI modes {#cli-modes}
 
@@ -49,7 +49,7 @@ Non-interactive one-shot execution via `ethos -z "prompt"`. Streams the response
 
 ### Personality {#personality}
 
-A directory at `~/.ethos/personalities/` containing three files: `SOUL.md` (identity), `config.yaml` (model and memory scope), `toolset.yaml` (allowed tools). The unit of architecture in Ethos. Switching personalities atomically changes prompt, tools, memory scope, and model. See [Why is personality the unit?](../using/explanation/what-is-a-personality.md).
+A directory at `~/.ethos/personalities/` built around three files: `SOUL.md` (identity), `config.yaml` (provider, model tiers, reach), `toolset.yaml` (allowed tools). Only `SOUL.md` or `config.yaml` has to exist. The unit of architecture in Ethos. Switching personalities atomically changes prompt, tools, memory scope, and model. See [Why is personality the unit?](../using/explanation/what-is-a-personality.md).
 
 ### Built-in personality {#built-in-personality}
 
@@ -61,7 +61,7 @@ The first-person identity file inside a personality directory. Defines who the a
 
 ### Memory scope {#memory-scope}
 
-A field in a personality's `config.yaml` controlling whether its agent reads and writes the shared user-default memory files (`MEMORY.md`, `USER.md`) or a personality-scoped copy. Lets the reviewer have a different running context than the engineer without leaking either to the other.
+The key that decides which memory files a turn reads and writes. It is not a setting: turn setup derives it from the personality id as `personality:<id>` (`memScopeId` in `packages/core/src/agent-loop/stages/turn-setup.ts`), so the reviewer keeps a different running context than the engineer without leaking either to the other. A gateway turn that resolves its sender to a user id also reads `USER.md` from `user:<userId>`; `team:<id>` is reached only through the `team_memory_*` tools.
 
 ### fs_reach {#fs-reach}
 
@@ -219,7 +219,7 @@ The `@ethosagent/skill-evolver` extension that drives [skill evolution](#skill-e
 
 ### Skill proposal {#skill-proposal}
 
-A drafted skill change (rewrite or new skill) from the [skill evolver](#skill-evolver) or the agent's `skill_propose` tool, held as a candidate in the learning inbox. It goes live only when a replay against past tasks returns `pass` and the auto-promotion rules allow it, or when a human approves it with `ethos learning approve <id>` or on the web Skills page. Approving one that has not passed a replay needs a reason, recorded in the audit log (`LearningInbox.approve`, `extensions/learning-inbox/src/inbox.ts`). `autoApprove` no longer skips the replay. See [Why does a learned change need a replay before it goes live?](../using/explanation/learning-inbox.md).
+A drafted skill change (rewrite or new skill) from the [skill evolver](#skill-evolver) or the agent's `skill_propose` tool, held as a candidate in the learning inbox. It goes live only when a replay against past tasks returns `pass` and the auto-promotion rules allow it, or when a human approves it with `ethos learning approve <id>` or on the web Learning page (`/learning`; the Skills page's Approval queue only links there). Approving one that has not passed a replay needs a reason, recorded in the audit log (`LearningInbox.approve`, `extensions/learning-inbox/src/inbox.ts`). `autoApprove` no longer skips the replay. See [Why does a learned change need a replay before it goes live?](../using/explanation/learning-inbox.md).
 
 ### Skin {#skin}
 

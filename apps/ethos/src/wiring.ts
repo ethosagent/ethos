@@ -7,6 +7,7 @@ import type { CronJob } from '@ethosagent/cron';
 import type { BusySource, IdleWatcherCapabilities } from '@ethosagent/idle-watcher';
 import {
   BlobStore,
+  OBSERVABILITY_KILL_SWITCH_FILE,
   ObservabilityService,
   SQLiteObservabilityStore,
 } from '@ethosagent/observability-sqlite';
@@ -106,7 +107,7 @@ export function getObservabilityService(): ObservabilityService {
     const store = new SQLiteObservabilityStore(join(dir, 'observability.db'));
     obsStoreSingleton = store;
     const blobStore = new BlobStore(join(dir, 'blobs'), storage);
-    const killSwitchPath = join(dir, '.observability.disabled');
+    const killSwitchPath = join(dir, OBSERVABILITY_KILL_SWITCH_FILE);
     obsSingleton = new ObservabilityService(store, blobStore, () => existsSync(killSwitchPath));
     ethosObsSingleton = new EthosObservability(obsSingleton);
     setObservabilityService(ethosObsSingleton);

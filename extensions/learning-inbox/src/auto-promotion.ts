@@ -18,11 +18,28 @@
 //      capability-matched one, so it always needs a human.
 // Anything else leaves the candidate in `pending_review` for a human.
 //
+// Every promotion that lands here also writes ONE `learning.auto_promote`
+// `recordSafetyApproval` row, attributed to the system, so `ethos audit
+// decisions` lists the promotion no human made beside the ones a human did
+// (X-D11). Written here, the one place automatic promotion happens, so the
+// nightly step, `ethos learning replay` and the web's Run replay are all
+// covered. A replay that does not promote, or a promotion `promote()` refuses,
+// writes none.
+//
 // Pinned by `__tests__/auto-promotion.test.ts`.
 
+import type { LearningObservability } from './inbox';
 import { type PromoteDeps, type PromoteResult, promote, type SkillScope } from './promote';
 import { type ReplayCandidateDeps, type ReplayReport, replayCandidate } from './replay';
-import type { CandidateKind, CandidateVerdict, LearningCandidate } from './store';
+import {
+  type CandidateKind,
+  type CandidateVerdict,
+  type LearningCandidate,
+  sha256Hex,
+} from './store';
+
+/** The audit code of an automatic promotion. Not one of `LEARNING_AUDIT_CODES`: no human decided it. */
+export const LEARNING_AUTO_PROMOTE_CODE = 'learning.auto_promote';
 
 export type AutoPromotionMode = 'auto' | 'review';
 
@@ -36,20 +53,47 @@ export interface AutoPromotionKnobs {
   globalAutoApprove?: boolean;
 }
 
+/** The knob that decided, by its config name; `null` when none was set. */
+export type AutoPromotionKnob =
+  | 'skill_evolution.promotion'
+  | 'evolution_approval_mode'
+  | 'autoApprove'
+  | null;
+
 /**
- * L-D3. Skills: `promotion` > `evolution_approval_mode` > global `autoApprove`
- * > review — the first knob that is SET decides, so an explicit `review` or
- * `user` on a personality beats a global `autoApprove: true`. Expression:
- * `evolution_approval_mode === 'auto'` only; the skill knobs do not reach it.
+ * L-D3, with the knob that decided. Skills: `promotion` >
+ * `evolution_approval_mode` > global `autoApprove` > review — the first knob
+ * that is SET decides, so an explicit `review` or `user` on a personality beats
+ * a global `autoApprove: true`. Expression: `evolution_approval_mode === 'auto'`
+ * only; the skill knobs do not reach it.
  */
+export function explainAutoPromotion(
+  kind: CandidateKind,
+  knobs: AutoPromotionKnobs,
+): { mode: AutoPromotionMode; knob: AutoPromotionKnob } {
+  const byApprovalMode = {
+    mode: knobs.approvalMode === 'auto' ? 'auto' : 'review',
+    knob: 'evolution_approval_mode',
+  } as const;
+  if (kind === 'expression') {
+    return knobs.approvalMode === undefined ? { mode: 'review', knob: null } : byApprovalMode;
+  }
+  if (knobs.promotion !== undefined) {
+    return { mode: knobs.promotion, knob: 'skill_evolution.promotion' };
+  }
+  if (knobs.approvalMode !== undefined) return byApprovalMode;
+  if (knobs.globalAutoApprove !== undefined) {
+    return { mode: knobs.globalAutoApprove ? 'auto' : 'review', knob: 'autoApprove' };
+  }
+  return { mode: 'review', knob: null };
+}
+
+/** `explainAutoPromotion`'s mode alone. */
 export function resolveAutoPromotion(
   kind: CandidateKind,
   knobs: AutoPromotionKnobs,
 ): AutoPromotionMode {
-  if (kind === 'expression') return knobs.approvalMode === 'auto' ? 'auto' : 'review';
-  if (knobs.promotion !== undefined) return knobs.promotion;
-  if (knobs.approvalMode !== undefined) return knobs.approvalMode === 'auto' ? 'auto' : 'review';
-  return knobs.globalAutoApprove === true ? 'auto' : 'review';
+  return explainAutoPromotion(kind, knobs).mode;
 }
 
 export interface AutoPromotionDecision {
@@ -88,6 +132,11 @@ export interface ReplayAndResolveDeps extends ReplayCandidateDeps {
     knobs: AutoPromotionKnobs;
     scope: SkillScope | undefined;
   }>;
+  /**
+   * The `ethos audit decisions` sink. Absent (tests, or a host with no store)
+   * → no `learning.auto_promote` row; the promotion itself is unaffected.
+   */
+  observability?: LearningObservability;
 }
 
 export interface ReplayAndResolveResult {
@@ -109,10 +158,11 @@ export async function replayAndResolve(
 ): Promise<ReplayAndResolveResult> {
   const { candidate, report } = await replayCandidate(deps, candidateId);
   const policy = await deps.policyFor(candidate);
+  const resolved = explainAutoPromotion(candidate.kind, policy.knobs);
   const decision = autoPromotionDecision({
     candidate,
     verdict: candidate.verdict,
-    mode: resolveAutoPromotion(candidate.kind, policy.knobs),
+    mode: resolved.mode,
     scope: policy.scope,
   });
   if (!decision.promote) return { candidate, report, decision, promotion: null };
@@ -121,10 +171,79 @@ export async function replayAndResolve(
     actor: 'auto',
     reason: `replay ${report.runId}: pass`,
   });
+  if (promotion.ok) {
+    recordAutoPromotion(deps, promotion.candidate, report, {
+      knob: resolved.knob,
+      scope: policy.scope,
+    });
+  }
   return {
     candidate: promotion.candidate ?? candidate,
     report,
     decision,
     promotion,
   };
+}
+
+/**
+ * The why of an automatic promotion, in words: which knob said auto, and what
+ * made the destination one only the replayed personality can see (L-D11).
+ */
+function autoPromotionReason(
+  candidate: LearningCandidate,
+  knob: AutoPromotionKnob,
+  scope: SkillScope | undefined,
+): string {
+  const visibility =
+    candidate.kind === 'expression'
+      ? `an Expression, visible only to ${candidate.personalityId}`
+      : `skill_evolution.scope: ${scope ?? 'shared'}, visible only to ${candidate.personalityId}`;
+  return `${knob ?? 'no knob'} resolved auto; ${visibility}`;
+}
+
+/**
+ * ONE `learning.auto_promote` row per automatic promotion that landed.
+ * Fail-open, like `LearningInbox.recordDecision`: a broken sink never undoes a
+ * promotion that already happened (it is in `audit.jsonl` either way).
+ */
+function recordAutoPromotion(
+  deps: ReplayAndResolveDeps,
+  candidate: LearningCandidate,
+  report: ReplayReport,
+  resolved: { knob: AutoPromotionKnob; scope: SkillScope | undefined },
+): void {
+  const obs = deps.observability;
+  if (!obs) return;
+  const reason = autoPromotionReason(candidate, resolved.knob, resolved.scope);
+  try {
+    obs.recordSafetyApproval({
+      decision: 'auto',
+      severity: 'info',
+      code: LEARNING_AUTO_PROMOTE_CODE,
+      cause: `learning ${candidate.id}: auto_promote ${candidate.kind} for ${candidate.personalityId} — ${reason}`,
+      details: {
+        candidateId: candidate.id,
+        personalityId: candidate.personalityId,
+        kind: candidate.kind,
+        op: candidate.op,
+        origin: candidate.origin,
+        destination: candidate.destination,
+        status: candidate.status,
+        // The hash, never the content — the trail ships in support bundles.
+        contentHash: sha256Hex(candidate.content),
+        // Attributed to the system: no human decided this.
+        actor: 'auto',
+        decidedBy: 'system',
+        // Which surface ran the replay (`nightly`, `cli`, `web`, `evolve`).
+        trigger: deps.actor ?? 'replay',
+        verdict: report.verdict,
+        replayRunId: report.runId,
+        reason,
+        knob: resolved.knob,
+        scope: candidate.kind === 'expression' ? null : (resolved.scope ?? null),
+      },
+    });
+  } catch {
+    // Audit is fail-open.
+  }
 }

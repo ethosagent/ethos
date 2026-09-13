@@ -6,9 +6,9 @@ import type { RpcContext } from '../../rpc/context';
 import { pluginsRouter } from '../../rpc/plugins';
 
 // The `plugins.install` RPC hands `personalityId` to `PluginsService.install`,
-// which writes the `plugins.lock` entry only when it gets one. No current web
-// caller sends one (both web install surfaces install globally); this pins the
-// pass-through a future install surface for an existing personality would rely on.
+// which writes the `plugins.lock` entry only when it gets one. The workspace
+// plugins page (`/p/:personalityId/plugins`) sends its route's id; the global
+// Library Plugins page and the create wizard send none. This pins the pass-through.
 // The service's own behaviour is covered in
 // `../services/plugins.service.install.test.ts`.
 

@@ -1423,3 +1423,112 @@ describe('display round-trip', () => {
     });
   });
 });
+
+describe('skills.global_ingest round-trip', () => {
+  it('parses dotted skills.global_ingest keys into PersonalityConfig.skills', async () => {
+    await seedPersonality(
+      'ingest-parse',
+      [
+        'name: IngestParse',
+        'skills.global_ingest.mode: explicit',
+        'skills.global_ingest.allow: claude-code/code-review, ethos/explain-code',
+        'skills.global_ingest.deny: claude-code/auto-commit',
+        'skills.global_ingest.accept_tags: research, citation',
+        'skills.global_ingest.reject_tags: deploy',
+        'skills.global_ingest.fallback_unknown: deny',
+        '',
+      ].join('\n'),
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    expect(registry.get('ingest-parse')?.skills).toEqual({
+      global_ingest: {
+        mode: 'explicit',
+        allow: ['claude-code/code-review', 'ethos/explain-code'],
+        deny: ['claude-code/auto-commit'],
+        accept_tags: ['research', 'citation'],
+        reject_tags: ['deploy'],
+        fallback_unknown: 'deny',
+      },
+    });
+  });
+
+  it('ignores an out-of-vocabulary mode, leaving the capability default', async () => {
+    await seedPersonality('ingest-typo', 'name: IngestTypo\nskills.global_ingest.mode: None\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('ingest-typo')?.skills).toBeUndefined();
+  });
+
+  it('does NOT drop skills.global_ingest when an unrelated field is updated', async () => {
+    await seedPersonality(
+      'ingest-keep',
+      'name: IngestKeep\nskills.global_ingest.mode: tags\nskills.global_ingest.accept_tags: research\n',
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('ingest-keep', { description: 'changed' });
+
+    const raw = await readFile(
+      join(testDir, 'personalities', 'ingest-keep', 'config.yaml'),
+      'utf-8',
+    );
+    expect(raw).toContain('skills.global_ingest.mode: tags');
+    expect(raw).toContain('skills.global_ingest.accept_tags: research');
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('ingest-keep')?.skills).toEqual({
+      global_ingest: { mode: 'tags', accept_tags: ['research'] },
+    });
+  });
+});
+
+describe('skills.injection_mode round-trip', () => {
+  it.each(['full', 'index'] as const)('parses skills.injection_mode: %s', async (mode) => {
+    await seedPersonality(`inject-${mode}`, `name: Inject\nskills.injection_mode: ${mode}\n`);
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get(`inject-${mode}`)?.skills).toEqual({ injection_mode: mode });
+  });
+
+  it('ignores an out-of-vocabulary injection_mode, leaving the index default', async () => {
+    await seedPersonality('inject-typo', 'name: InjectTypo\nskills.injection_mode: Full\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('inject-typo')?.skills).toBeUndefined();
+  });
+
+  it('parses injection_mode alongside skills.global_ingest.*', async () => {
+    await seedPersonality(
+      'inject-both',
+      'name: InjectBoth\nskills.injection_mode: full\nskills.global_ingest.mode: tags\n',
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('inject-both')?.skills).toEqual({
+      injection_mode: 'full',
+      global_ingest: { mode: 'tags' },
+    });
+  });
+
+  it('does NOT drop skills.injection_mode when an unrelated field is updated', async () => {
+    await seedPersonality('inject-keep', 'name: InjectKeep\nskills.injection_mode: full\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('inject-keep', { description: 'changed' });
+
+    const raw = await readFile(
+      join(testDir, 'personalities', 'inject-keep', 'config.yaml'),
+      'utf-8',
+    );
+    expect(raw).toContain('skills.injection_mode: full');
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('inject-keep')?.skills).toEqual({ injection_mode: 'full' });
+  });
+});

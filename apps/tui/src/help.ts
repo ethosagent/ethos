@@ -17,7 +17,7 @@ export function buildHelpText(
     '/personality [list|<id>]      start a new session bound to <id>',
     '/model                        open model picker',
     '/sessions                     open session picker',
-    '/memory                       show ~/.ethos/MEMORY.md',
+    "/memory                       show the active personality's MEMORY.md and USER.md",
     '/usage                        token + cost stats',
     '/budget                       show session spend vs cap',
     '/budget reset                 reset budget counter',

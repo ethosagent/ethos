@@ -4,7 +4,7 @@ description: "How Ethos works: AgentLoop streams typed events, components are in
 kind: explanation
 audience: shared
 slug: architecture-90-seconds
-updated: 2026-06-09
+updated: 2026-09-13
 ---
 
 Ethos has one core abstraction and a handful of interfaces around it. This page is the 90-second tour. Every term linked below has an entry in the [glossary](glossary.md).
@@ -161,8 +161,8 @@ A personality lives at `~/.ethos/personalities/<id>/` — three files (`SOUL.md`
 
 - **System prompt** (from `SOUL.md`)
 - **Tool access** (from `toolset.yaml`)
-- **Memory scope** (from `memoryScope` in `config.yaml`)
-- **Model** (from `model` in `config.yaml`)
+- **Memory scope** (`personality:<id>`, derived from the personality id — not a setting)
+- **Model** (from the `model.<tier>` keys in `config.yaml`, when its `provider` matches the active one)
 
 The mental model is: a personality is a *role-bound configuration of the agent*, not a prompt string. The researcher and the engineer are not the same agent in different costumes — they have different tools, different memories, different models. The next page explains why that matters.
 

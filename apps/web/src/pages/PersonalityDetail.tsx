@@ -18,6 +18,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ConnectMcpModal } from '../components/mcp/ConnectMcpModal';
 import { A2aPeersSection } from '../components/personality/A2aPeersSection';
 import { CharacterSheetView } from '../components/personality/CharacterSheetView';
+import { McpExportSection } from '../components/personality/McpExportSection';
 import { TriggersSection } from '../components/personality/TriggersSection';
 import { AddSecretModal, providersOfKind } from '../components/tool-settings/SecretPicker';
 import { ToolSettingsForm } from '../components/tool-settings/ToolSettingsForm';
@@ -1102,6 +1103,8 @@ export function PersonalityDetail() {
       <TriggersSection personalityId={id} />
 
       <A2aPeersSection personalityId={id} />
+
+      <McpExportSection personalityId={id} />
 
       {editModalOpen ? (
         <EditModal

@@ -4,14 +4,14 @@ description: "A personality is a structural component — a directory that binds
 kind: explanation
 audience: developer
 slug: personality-as-architecture
-updated: 2026-08-14
+updated: 2026-09-13
 ---
 
 ## Context
 
 Most agent frameworks treat "personality" as a string. You hand the model a system prompt — "you are a careful reviewer" — and the agent's voice shifts. Its tools do not. Its memory does not. Its model does not. The runtime is one generalist with a costume rack.
 
-A [personality](../../getting-started/glossary.md#personality) in Ethos is something else. It is a structural component of the runtime. A directory at `~/.ethos/personalities/<id>/` with three files inside it. Switching to it atomically rebinds four dimensions of the agent: which prompt it carries, which [tools](../../getting-started/glossary.md#tool) it can call, which memory file it reads and writes, and which model handles its turns. The four move together because the framework refuses to expose them as independent knobs.
+A [personality](../../getting-started/glossary.md#personality) in Ethos is something else. It is a structural component of the runtime. A directory at `~/.ethos/personalities/<id>/`, built around three plain-text files. Switching to it atomically rebinds four dimensions of the agent: which prompt it carries, which [tools](../../getting-started/glossary.md#tool) it can call, which memory file it reads and writes, and which model handles its turns. The four move together because the framework refuses to expose them as independent knobs.
 
 This page is the headline thesis. It explains why "personality is architecture" is a load-bearing claim rather than slogan, what the structural shape buys you that a prompt string cannot, and what the design explicitly refuses to let inside the boundary. The [using-side page](../../using/explanation/what-is-a-personality.md) covers the user-facing story of switching personalities mid-chat; this page is for the developer asking why the schema is shaped this way.
 
@@ -19,16 +19,18 @@ This page is the headline thesis. It explains why "personality is architecture" 
 
 ### The four dimensions, joined at the registry
 
-A personality directory contains exactly three files. None of them is optional.
+A personality directory is built around three files, and only one of them has to exist: `SOUL.md` or `config.yaml`.
 
 ```
 ~/.ethos/personalities/<id>/
 ├── SOUL.md        first-person identity — who am I, how do I speak
-├── config.yaml     name, model, memoryScope, fs_reach, mcp_servers, plugins
+├── config.yaml     name, provider, model tiers, fs_reach, mcp_servers, plugins
 └── toolset.yaml    flat list of allowed tool names
 ```
 
-`SOUL.md` becomes the system prompt baseline. `config.yaml` parameterises model routing, [memory scope](../../getting-started/glossary.md#memory-scope), filesystem reach, MCP allowlist, plugin allowlist. `toolset.yaml` is the allowlist `DefaultToolRegistry.toDefinitions(allowedTools)` filters the visible toolset against.
+`SOUL.md` becomes the system prompt baseline. `config.yaml` parameterises model tiers, filesystem reach, MCP allowlist, plugin allowlist. `toolset.yaml` is the allowlist `DefaultToolRegistry.toDefinitions(allowedTools)` filters the visible toolset against.
+
+The [memory scope](../../getting-started/glossary.md#memory-scope) (the key that decides which memory files a turn reads and writes) is in none of the three files. Turn setup derives it from the directory name as `personality:<id>` (`memScopeId` in `packages/core/src/agent-loop/stages/turn-setup.ts`), so it moves with the personality without anyone configuring it.
 
 When you switch personality, all four change in one step. The `AgentLoop.run()` generator reads the active personality once at the top of the turn (see `packages/core/src/agent-loop.ts`) and uses it to parameterise every subsystem call: which model to ask, which tools to expose, which memory directory to resolve, which MCP servers and plugins to fire. None of those subsystems know about the others. The personality is the binding point.
 
@@ -36,7 +38,7 @@ This is the structural property. The four dimensions are not bundled by conventi
 
 ### A `PersonalityConfig` is a contract, not a config dump
 
-The schema lives at `packages/types/src/personality.ts`. It has zero runtime dependencies — anyone in the monorepo can import the type without dragging in concrete implementations. The interface is small and load-bearing: `id`, `name`, `toolset`, `model`, `memoryScope`, `fs_reach`, `mcp_servers`, `plugins`, `safety`, plus a handful of nested leaves like `skill_evolution` and `context_layering`.
+The schema lives at `packages/types/src/personality.ts`. It has zero runtime dependencies — anyone in the monorepo can import the type without dragging in concrete implementations. The interface is small and load-bearing: `id`, `name`, `toolset`, `provider`, `model`, `fs_reach`, `mcp_servers`, `plugins`, `safety`, plus a handful of nested leaves like `skill_evolution` and `context_layering`.
 
 The fact that the *count* is enforced is the design statement. A CI test (`packages/types/src/__tests__/personality-field-count.test.ts`) parses the interface, counts its fields, and fails if the result drifts from `.personality-field-count` at the repo root. Adding a field requires the `personality-schema-change` label, two-maintainer approval, and a bump to the count file in the same commit.
 
@@ -44,11 +46,11 @@ The friction is deliberate. The schema is the load-bearing surface — it is the
 
 ### Concretely, what `loadFromDirectory` does
 
-The mechanical loader lives at `extensions/personalities/src/index.ts`. `FilePersonalityRegistry.loadFromDirectory(dir)` walks the immediate subdirectories of `dir`, reads each one's three files, and produces a `PersonalityConfig` for each valid directory.
+The mechanical loader lives at `extensions/personalities/src/index.ts`. `FilePersonalityRegistry.loadFromDirectory(dir)` walks the immediate subdirectories of `dir`, reads each one's files, and produces a `PersonalityConfig` for each directory that qualifies.
 
-A "valid directory" is the minimum the contract asks: an `SOUL.md` (at least empty), a `config.yaml` with at least `name`, and a `toolset.yaml` (which may be an empty list). Missing files produce a load-time error pointing at the directory and the field; malformed YAML produces a parse error with the line number. The loader does not guess.
+A directory qualifies when it holds a `config.yaml` or a `SOUL.md` (`buildConfig` in the same file). Everything else has a fallback: `name` defaults to the title-cased directory id, and a missing `toolset.yaml` leaves the personality with no toolset filter, so every registered tool is visible to it. A directory with neither file is skipped silently — no error, no warning — so a directory holding only a misspelled `config.yml` produces no personality at all. Missing files are never a load-time error; some malformed content is, such as nesting a key `parseConfigYaml` does not allow to nest, which throws naming the key.
 
-The per-directory load is `mtime`-fingerprinted. The registry caches the parsed `PersonalityConfig` keyed by directory id; on the next `loadFromDirectory` call, it stats the three files and reuses the cached config if no `mtime` changed. Calling `loadFromDirectory` per turn is cheap on the steady state and reflects edits on the changed-files state.
+The per-directory load is `mtime`-fingerprinted. The registry caches the parsed `PersonalityConfig` keyed by directory id; on the next `loadFromDirectory` call, it reads the `mtime` of every path it fingerprints (listed [below](#hot-reload-as-a-property-of-the-file-format)) and reuses the cached config if none changed. Calling `loadFromDirectory` per turn is cheap on the steady state and reflects edits on the changed-files state.
 
 The implication: a personality directory is the unit of *configuration change*. Editing one file in one directory updates one personality. There is no global rebuild, no migration, no restart. The mechanism is the property; the property is what makes the iterative workflow ("tune the reviewer's tone, send a message, see the change") work.
 
@@ -64,15 +66,15 @@ Three things you cannot get from a prompt string.
 
 ### The three user-facing built-ins are not three prompt presets
 
-Ethos ships three user-facing [built-in personalities](../../getting-started/glossary.md#built-in-personality) at `extensions/personalities/data/`: `researcher`, `engineer`, `reviewer`. They are not three voices on top of one agent. Each has its own toolset, its own memory scope, and a model assignment that suits its work.
+Ethos ships three user-facing [built-in personalities](../../getting-started/glossary.md#built-in-personality) at `extensions/personalities/data/`: `researcher`, `engineer`, `reviewer`. They are not three voices on top of one agent. Each has its own toolset and its own memory scope, and two of them declare model tiers that suit their work.
 
-| Personality | What its `toolset.yaml` allows | `memoryScope` |
-|---|---|---|
-| `researcher` | Read, search, web, citations | `global` |
-| `engineer` | Read, write, run, test | `global` |
-| `reviewer` | Read-only | `per-personality` |
+| Personality | What its `toolset.yaml` allows | Memory scope | Models in `config.yaml` |
+|---|---|---|---|
+| `researcher` | Read, search, web, citations | `personality:researcher` | `trivial` `claude-haiku-4-5`, `default` and `deep` `claude-opus-4-7` |
+| `engineer` | Read, write, run, test | `personality:engineer` | `trivial` `claude-haiku-4-5`, `default` `claude-sonnet-4-6`, `deep` `claude-opus-4-7` |
+| `reviewer` | Read-only | `personality:reviewer` | `model: claude-sonnet-4-6`, a plain string routing never reads |
 
-The `reviewer` is `per-personality` on purpose: opinions about what was reviewed should not leak into what gets built. The other two share `global` memory because their work composes — a researcher gathering primary sources hands context to an engineer who acts on it.
+No built-in chooses its memory scope, because no personality can: `config.yaml` has no memory-scope key, and every turn reads and writes `personality:<id>`. The default markdown backend stores that scope under `personalities/<id>/` in the Ethos data directory (`resolveScopeDir` in `extensions/memory-markdown/src/index.ts`). The reviewer's notes on what it reviewed never reach the engineer's `MEMORY.md`, and the researcher's never reach either. The roles share context through the session instead, whose history continues across a switch.
 
 Two system personalities — `personality-architect` and `team-architect` — are also available for building and managing other personalities. They appear in the web UI under a "System" divider.
 
@@ -91,11 +93,11 @@ Each rejection has the same shape: the property is real, but the personality is 
 
 ### Hot reload as a property of the file format
 
-`FilePersonalityRegistry.loadFromDirectory()` fingerprints each personality's three files by `mtime`. Calling it on every turn is cheap when nothing changed; when one of the three files changes on disk, the next turn sees the new content. No restart, no session loss, no cache to invalidate by hand.
+`FilePersonalityRegistry.loadFromDirectory()` fingerprints each personality directory by the `mtime` of six paths: `config.yaml`, `SOUL.md`, `toolset.yaml`, `mcp.yaml`, `tools.yaml` and the `skills/` directory (`loadOne` in `extensions/personalities/src/index.ts`). Calling it on every turn is cheap when nothing changed; when any of them changes on disk, the next turn sees the new content. No restart, no session loss, no cache to invalidate by hand.
 
 This is the property that lets you tune a personality interactively. Edit `SOUL.md`, send the next message, watch the voice change. Edit `toolset.yaml`, ask the agent to do something it now cannot do, see the rejection. The fast feedback loop is the difference between "I can iterate on this personality" and "I have to restart the process to see if my edit worked".
 
-The performance cost is one `stat` per file per turn. For a registry with twenty personalities that is sixty stat calls before the model is asked anything. On a fast filesystem this is in the noise; on a network filesystem it is measurable but bounded.
+The performance cost is one `Storage.mtime` call per fingerprinted path per turn. For a registry with twenty personalities that is 120 calls before the model is asked anything. On a fast filesystem this is in the noise; on a network filesystem it is measurable but bounded.
 
 ### The `fs_reach` boundary is the personality's filesystem identity
 
@@ -120,11 +122,30 @@ This is the [fs_reach](../../getting-started/glossary.md#fs-reach) boundary. It 
 
 ### The personality determines model routing
 
-`personality.model` is a string label — Anthropic-specific by historical accident, and intentionally skipped when the wiring resolves the actual model. The CLAUDE.md note explains: those IDs break non-Anthropic providers (OpenRouter, Gemini, Ollama), so the wiring layer routes through an explicit `modelRouting` map in `~/.ethos/config.yaml` keyed by personality id.
+A personality declares its models as tiers in `config.yaml`: `model.trivial`, `model.default`, `model.deep` and `model.dreaming`. The loader folds them into a `ModelTierConfig` (`buildModelConfig` in `extensions/personalities/src/index.ts`; the type lives in `packages/types/src/personality.ts`). The same file declares `provider`, the LLM provider those model ids belong to. The built-in `engineer` and `researcher` both declare `provider: anthropic` and three tiers.
 
-The shape is two-step. `~/.ethos/config.yaml` declares `modelRouting: { researcher: claude-opus-4-7, engineer: claude-sonnet-4-6 }`. The wiring passes that map to `AgentLoopConfig.modelRouting`. `AgentLoop.run()` looks up the active personality's id, finds the model, and uses it for this turn's LLM call. Personalities can also declare a `streamingTimeoutMs` so a slow-thinking model (Opus extended thinking) gets a longer watchdog than a fast one (Haiku).
+`resolveModelWithTier` (`packages/core/src/agent-loop/turn-context.ts`) picks each turn's model. The first source that applies wins:
 
-The model is part of the personality's structural identity even when the value comes from a side table. Picking Opus for `researcher` and Sonnet for `engineer` is a deliberate role decision, not a knob set per turn.
+| Rank | Source | Applies when |
+|---|---|---|
+| 1 | `RunOptions.modelOverride` | A surface pins one model for one run; the voice stack uses it to answer a spoken lane on a fast model. `turn-setup.ts` checks it before calling the resolver. |
+| 2 | `modelRouting.<id>` in `~/.ethos/config.yaml` | The operator names a model for this personality id. It overrides every tier. |
+| 3 | The personality's tier map | `provider` equals the active LLM provider's name. The requested tier is used, falling back to `model.default`. |
+| 4 | The deployment's default model | Nothing above applies. |
+
+The provider check in rank 3 exists because a tier map holds provider-specific model ids, and an Anthropic id sent to OpenRouter, Ollama or Gemini fails. A plain `model: <id>` string is never applied: the resolver reads a tier map only, so the `reviewer`'s `model: claude-sonnet-4-6` is inert and its turns run on rank 2 or 4. `ethos personality show <id>` prints which source won and flags an ignored declaration as `INERT` (`resolveCharacterSheetRouting` in `packages/wiring/src/tier-diagnostics.ts`).
+
+Every turn starts on the `default` tier (`activeTier` in `turn-setup.ts`). Nothing classifies a message as trivial on its own. Three triggers move a turn off `default`:
+
+| Trigger | Tier | Lasts |
+|---|---|---|
+| `/tier trivial`, `/tier default` or `/tier deep` in `ethos chat` (`apps/ethos/src/commands/chat.ts`) | The one named | The next turn |
+| The dream executor (`extensions/gateway/src/dream-executor.ts`) | `dreaming` | Each dreaming turn |
+| A successful `think_deeper` call (`extensions/tools-tier/src/index.ts`) | `deep` | The next LLM call only — set in `tool-processing.ts`, consumed in `stream-step.ts` |
+
+`think_deeper` escalates only when the personality declares a tier map and its `provider` matches the active LLM. Both `engineer` and `researcher` list it in `toolset.yaml`. Personalities can also declare a `streamingTimeoutMs` so a slow-thinking model (Opus extended thinking) gets a longer watchdog than a fast one (Haiku).
+
+The tier map is part of the personality's structural identity. Giving `researcher` Opus as its default and `engineer` Sonnet is a role decision. A turn can move between tiers, but only among the models the personality declared, unless the operator overrides the personality with `modelRouting` or a surface pins a model for the run.
 
 ### How the wiring threads a personality into the loop
 
@@ -166,7 +187,7 @@ You can read it. `cat ~/.ethos/personalities/reviewer/SOUL.md` is a complete ans
 
 You can version it. Commit the directory to a repo and the personality your team uses is in source control alongside the code it operates on. There is no separate "personality database" to back up, restore, or replicate across machines.
 
-You can swap the backend without changing the contract. `PersonalityRegistry` is an interface; `FilePersonalityRegistry` is one implementation. A remote registry that fetches personalities from a service is the same contract with a different `loadFromDirectory`. The data model — three files, a memory scope, a toolset — is what's invariant.
+You can swap the backend without changing the contract. `PersonalityRegistry` is an interface; `FilePersonalityRegistry` is one implementation. A remote registry that fetches personalities from a service is the same contract with a different `loadFromDirectory`. The data model — an identity, a config, a toolset, and a memory scope derived from the id — is what's invariant.
 
 You can hand-edit it. `SOUL.md` is markdown. `config.yaml` is `key: value` YAML. `toolset.yaml` is a flat list. No GUI, no admin panel, no migration tool — the file is the source of truth.
 
@@ -185,7 +206,7 @@ The CLAUDE.md note labels the convention: missing or empty means no access. Ther
 Some boundaries are *not* personality-scoped, on purpose. Switching personalities does not change:
 
 - The current [session](../../getting-started/glossary.md#session) and its history. The thread continues; the next message reaches a different role.
-- `USER.md`. Who you are is a person fact, not a role fact.
+- `USER.md`, when the surface knows who you are. A turn that carries a `userId` reads your profile from the `user:<userId>` scope, which no personality owns (`userScopeId` in `packages/core/src/agent-loop/stages/context-assembly.ts`); the gateway passes the sender's id. A turn without one reads `USER.md` from the personality's own scope, so in `ethos chat`, which passes none, it does change.
 - LLM credentials. Personalities pick a model; the keys live in `~/.ethos/config.yaml`.
 - The CLI surface and channel adapters. Telegram and Discord do not reload when you `/personality researcher`.
 
@@ -195,7 +216,7 @@ The personality controls "what the agent does and says". The boundary it does no
 
 A subtle property of the design is what *isn't* in `PersonalityConfig`. There is no `tone`, no `style`, no `personality_traits`. The agent's voice and reasoning style live in `SOUL.md` — markdown, first-person, opinionated. The schema is the structural surface; the prose is the identity.
 
-This split is load-bearing. A future you can read `SOUL.md` and reason about who the agent is. A future you can read `config.yaml` and reason about what the agent can touch. Mixing them — putting "be concise" alongside `memoryScope` — would smear the boundary; structural and behavioural concerns would interleave on every page of the spec.
+This split is load-bearing. A future you can read `SOUL.md` and reason about who the agent is. A future you can read `config.yaml` and reason about what the agent can touch. Mixing them — putting "be concise" alongside `fs_reach` — would smear the boundary; structural and behavioural concerns would interleave on every page of the spec.
 
 The cost is `SOUL.md` carries the load of being readable, opinionated, and concrete. The CLAUDE.md note labels the convention: *first-person identity (who am I, how do I speak)*. A vague `SOUL.md` produces vague behaviour. The reviewer's `SOUL.md` reads "I am a critical, evidence-based reviewer. I cite specific lines. I refuse to soften concerns to be polite." Not "you are a careful reviewer". The grammatical first person is harder for the model to argue itself out of.
 
@@ -203,17 +224,25 @@ The cost is `SOUL.md` carries the load of being readable, opinionated, and concr
 
 A common confusion: "is a [skill](../../getting-started/glossary.md#skill) part of a personality?" The answer is no — skills are discovered globally and filtered per personality by tool reach.
 
-`extensions/skills/` walks several discovery roots (`~/.claude/skills/`, `~/.openclaw/skills/`, `~/.opencode/skills/`, `~/.hermes/skills/`, `~/.ethos/skills/`) and produces a global skill pool. For each personality, an ingest filter checks whether each skill's `required_tools` are a subset of the personality's effective tool reach. The researcher sees skills whose required tools are read/search/browse; the engineer sees skills that touch write/run/test; the reviewer sees only read-only skills.
+`extensions/skills/` scans `~/.ethos/skills/` plus the Claude Code and project skill directories (`~/.claude/skills/`, `<cwd>/.claude/skills/`, `<cwd>/.opencode/skills/`) into a global skill pool. Other tools' home directories (`~/.openclaw/skills/`, `~/.hermes/skills/`) join the pool only when a caller opts in with `externalSources` (`extensions/skills/src/universal-scanner.ts`). For each personality, an ingest filter checks whether each skill's `required_tools` are a subset of the personality's effective tool reach (`extensions/skills/src/ingest-filter.ts`). The researcher sees skills whose required tools are read/search/browse; the engineer sees skills that touch write/run/test; the reviewer does not see skills that need write tools. A skill that declares no `required_tools` passes this check by default (`fallback_unknown` defaults to `allow`).
 
-This means a skill the user installed for `engineer` does not implicitly load under `reviewer`. The skill is the same file on disk, but the per-personality filter makes it invisible to roles that lack the tools to execute it. The personality is the gate; the skill is the reusable capability that passes through it.
+This means a skill that needs `write_file` does not load under `reviewer`. The skill is the same file on disk, but the per-personality filter makes it invisible to roles that lack the tools to execute it. The personality is the gate; the skill is the reusable capability that passes through it.
+
+One directory skips the tool-reach filter. When a personality directory has a `skills/` subdirectory, the loader records it as `skillsDirs`, and `SkillsInjector.resolveSkills` (`extensions/skills/src/skills-injector.ts`) loads every skill in it for that personality alone.
 
 ### Skill evolution and the personality lifecycle
 
-A personality is not static — it learns and adapts over time through skill evolution. The `skill_evolution` field on `PersonalityConfig` controls whether a personality tracks which skills it uses, how often, and with what success rate. Over time, the personality builds a usage profile that informs skill ranking and recommendation. A researcher that frequently uses citation-heavy skills surfaces those skills first; an engineer that never uses a formatting skill stops seeing it in suggestions.
+A personality can change after you write it. The agent drafts skills from its own work and can revise the Expression region of its `SOUL.md`. The structure decides where those changes land and who lets them in.
 
-Skill evolution is personality-scoped by design. Each personality accumulates its own usage history, so switching from `engineer` to `reviewer` does not carry over skill preferences. The mechanism is the same mtime-fingerprinted reload — skill evolution state persists in the personality directory alongside `SOUL.md`, `config.yaml`, and `toolset.yaml`.
+The `skill_evolution` block on `PersonalityConfig` turns drafting on. With `enabled: true`, the post-turn improvement fork (`extensions/skill-evolver/src/improvement-fork.ts`) runs after a turn with at least `min_tool_calls` successful tool calls (default 5), at most once per `cooldown_minutes` (default 60) for each personality. It can propose a new skill or an update to one. All three user-facing built-ins ship with it enabled.
 
-This is the lifecycle dimension of personality-as-architecture: the personality is not just a static configuration, but a living unit that adapts to how it is used. The adaptation is bounded by the schema — `skill_evolution` is a leaf on `PersonalityConfig`, not a separate subsystem — and gated by the same per-personality filter that gates tool access and memory scope.
+`skill_evolution.scope` decides where a promoted skill lives. `liveSkillDir` (`extensions/skill-evolver/src/skill-dir.ts`) is the one function that maps it: `shared`, the default, writes to `~/.ethos/skills/`, where every personality whose tool reach matches can load it; `personality` writes to `~/.ethos/personalities/<id>/skills/`, which only that personality loads.
+
+Nothing drafted goes live directly. Every draft becomes a candidate in the [learning inbox](../../using/explanation/learning-inbox.md) (`extensions/learning-inbox`). A candidate is promoted on a human approval, or on a `pass` replay when the auto-promotion rules allow it. Those rules (`autoPromotionDecision` in `extensions/learning-inbox/src/auto-promotion.ts`) never auto-promote a shared skill: a replay tests one personality, and a shared skill reaches all of them.
+
+Expression revisions keep their history in the personality directory. `FilePersonalityRegistry.evolveExpression` (`extensions/personalities/src/index.ts`) snapshots the previous Expression to `.expression-history/<revision-id>.md` before it rewrites `SOUL.md`, and `revertExpression` restores from those snapshots.
+
+Ethos does not track skill usage per personality, and nothing ranks or recommends skills by use. The observability store counts skill exposures and `get_skill` invocations for the whole deployment, grouped by skill with no personality breakdown (`skillCounts` in `extensions/observability-sqlite/src/store.ts`, read by `ethos usage`). No code feeds those counts back into which skills load.
 
 ### How this differs from neighbouring frameworks
 
@@ -233,11 +262,11 @@ Ethos's claim is that *all four* dimensions move together, every time, and that 
 
 **You commit to a small schema.** `PersonalityConfig` is frozen. If you want a new top-level field, you do the work of justifying why it is not a [skill](../../getting-started/glossary.md#skill), not a channel-adapter config, and not a per-tool option. The friction is the feature; without it the schema would have grown to the same god-object shape every other framework's persona config eventually does.
 
-**You give up cross-personality memory by default.** A `per-personality` memory scope means the reviewer cannot see the engineer's notes. This is intentional — opinions about what was reviewed should not leak into what gets built — but it has to be reasoned about per personality. Use `global` scope when continuity matters across roles; use `per-personality` when isolation matters more.
+**You give up cross-personality memory.** Every personality reads and writes its own `personality:<id>` scope, and no `config.yaml` key widens it; there is no shared scope to opt into. The reviewer cannot see the engineer's notes, which is the point: opinions about what was reviewed should not leak into what gets built. The cost is that a researcher's findings reach the engineer only through the session history, which survives a switch, or through team memory (`team:<name>`, read and written with the `team_memory_*` tools) in a team deployment.
 
 **You give up dynamic per-turn personality assembly.** A personality is loaded at the start of the turn and used for the duration of that turn. You cannot rewrite the toolset mid-turn or swap models on the fly. The structural unit is the turn-bound role, not the per-LLM-call configuration. Use a [mesh](../../getting-started/glossary.md#mesh) of personalities (`extensions/agent-mesh/`, `extensions/team-supervisor/`) when you need different roles in one workflow.
 
-**You pay a small cost on every turn.** The mtime-fingerprinted reload is cheap but not zero — three `stat` calls per personality per turn. On a fast filesystem this is negligible; on a network filesystem it is measurable. The trade is the live-edit story: tuning a personality without restarting beats process restart costs by a large margin.
+**You pay a small cost on every turn.** The mtime-fingerprinted reload is cheap but not zero — six `mtime` reads per personality per turn. On a fast filesystem this is negligible; on a network filesystem it is measurable. The trade is the live-edit story: tuning a personality without restarting beats process restart costs by a large margin.
 
 Alternatives considered:
 

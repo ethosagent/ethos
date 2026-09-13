@@ -15,6 +15,7 @@ import type {
   Tool,
 } from '@ethosagent/types';
 import { createLearningInbox, resolveMcpExportScope } from '@ethosagent/wiring';
+import { call, ORPCError } from '@orpc/server';
 import { describe, expect, it } from 'vitest';
 // Relative on purpose: web-api reaches the inbox through `@ethosagent/wiring`
 // and has no workspace link to the package; the test reads the real store.
@@ -23,6 +24,8 @@ import {
   submitCandidate,
   updateCandidate,
 } from '../../../../../extensions/learning-inbox/src/store';
+import type { RpcContext } from '../../rpc/context';
+import { personalitiesLearningRouter } from '../../rpc/personalities-learning';
 import { LearningService } from '../../services/learning.service';
 import { PersonalitiesService } from '../../services/personalities.service';
 import { makeStubPersonalityRegistry } from '../test-helpers';
@@ -442,14 +445,14 @@ describe('PersonalitiesService', () => {
 
     it('applyExpression writes a revision and returns its id', async () => {
       const { service } = await makeSoulService({});
-      const { revisionId } = await service.applyExpression(
+      const result = await service.applyExpression(
         'agent',
         'I speak even more plainly.\n',
         'tighten voice',
         'sessions:test',
         'reviewed by hand',
       );
-      expect(revisionId).toBe('expr-rev-1');
+      expect(result).toEqual({ ok: true, value: { revisionId: 'expr-rev-1' } });
       const soul = await service.livingSoul('agent');
       expect(soul.expression).toContain('I speak even more plainly.');
       expect(soul.learningLog).toHaveLength(1);
@@ -460,15 +463,67 @@ describe('PersonalitiesService', () => {
     // `LearningInbox.approve`). The drafter's `summary` does not count.
     it('applyExpression without an override reason is refused and changes nothing', async () => {
       const { service, storage } = await makeSoulService({});
-      await expect(
-        service.applyExpression('agent', 'I speak even more plainly.\n', 'tighten voice', 'x'),
-      ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+      expect(
+        await service.applyExpression(
+          'agent',
+          'I speak even more plainly.\n',
+          'tighten voice',
+          'x',
+        ),
+      ).toMatchObject({ ok: false, code: 'override_required' });
 
       const soul = await service.livingSoul('agent');
       expect(soul.expression).toContain('I speak plainly.');
       expect(soul.learningLog).toHaveLength(0);
       const [candidate] = await listCandidates(storage, DATA);
       expect(candidate?.status).toBe('pending_replay');
+    });
+
+    // F8 — the RPC keeps the inbox's refusal code, mapped by the same table as
+    // `learning.approve` (`learningRpcError`, `rpc/learning.ts`), so the Living
+    // Soul UI can tell a stale draft from a missing reason.
+    async function applyViaRpc(
+      service: PersonalitiesService,
+      input: { newExpression: string; overrideReason?: string },
+    ): Promise<unknown> {
+      try {
+        await call(
+          personalitiesLearningRouter.applyExpression,
+          { id: 'agent', summary: 'tighten voice', evidenceRef: 'web:test', ...input },
+          { context: { personalities: service } as unknown as RpcContext },
+        );
+      } catch (err) {
+        return err;
+      }
+      throw new Error('expected applyExpression to be refused');
+    }
+
+    it('the applyExpression RPC refuses a missing reason as OVERRIDE_REQUIRED', async () => {
+      const { service } = await makeSoulService({});
+      const err = await applyViaRpc(service, { newExpression: 'I speak even more plainly.\n' });
+      expect(err).toBeInstanceOf(ORPCError);
+      expect(err).toMatchObject({ code: 'OVERRIDE_REQUIRED', status: 400 });
+      expect((await service.livingSoul('agent')).learningLog).toHaveLength(0);
+    });
+
+    it('the applyExpression RPC refuses a stale candidate as STALE', async () => {
+      const { service, storage } = await makeSoulService({});
+      const newExpression = 'I speak even more plainly.\n';
+      // Submits the candidate against today's SOUL.md; refused for want of a reason.
+      await applyViaRpc(service, { newExpression });
+      // The live file moves on before the human approves.
+      await storage.write(
+        join(DATA, 'personalities', 'agent', 'SOUL.md'),
+        '# Core\nI am the agent.\n\n# Expression\nI speak in riddles now.\n',
+      );
+
+      const err = await applyViaRpc(service, { newExpression, overrideReason: 'reviewed' });
+      expect(err).toBeInstanceOf(ORPCError);
+      expect(err).toMatchObject({ code: 'STALE', status: 409 });
+      expect((err as Error).message).toMatch(/^Expression not applied: /);
+      const soul = await service.livingSoul('agent');
+      expect(soul.expression).toContain('I speak in riddles now.');
+      expect(soul.learningLog).toHaveLength(0);
     });
 
     it('revertExpression on an empty learning log throws INVALID_INPUT', async () => {

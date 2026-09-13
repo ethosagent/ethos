@@ -19,15 +19,14 @@
 // unrelated tarball — the way a backup tool ends up eating something it did
 // not create.
 
-import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
 import { type EthosConfig, ethosDir } from '@ethosagent/config';
 import type { SecretsResolver, Storage } from '@ethosagent/types';
 import { createBackup } from './backup/create';
 import type { ExternalMemoryNotice } from './backup/external-memory';
-import { classifyHolder, currentBootId } from './backup/holder-identity';
 import { DEFAULT_SCOPES, parseScopes, type ScopeName } from './backup/scopes';
+import { acquireSentinelLock } from './backup/sentinel-lock';
 import type { TarSkip } from './backup/tar';
 import type { MemoryBackendSelection } from './memory-backend';
 
@@ -147,199 +146,38 @@ export function backupLockPath(dir: string): string {
   return join(dir, '.lock');
 }
 
-/** The lock file's exact bytes, or `null` when it is not there. */
-function readLockBody(lockPath: string): string | null {
-  try {
-    return readFileSync(lockPath, 'utf-8');
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Was this lock left behind by a backup that is gone?
+ * Exclusive-create sentinel: a manual `ethos backup` and the scheduled job must
+ * not stream the same databases into two archives at once.
  *
- * A readable pid alone is not an identity: a pid the OS recycled after a crash
- * reads as alive, and the lock would then never expire. That was capped with a
- * wall clock, which cured the wedge by introducing a worse failure — past the
- * bound a demonstrably LIVE holder was preempted, putting two writers on the
- * same databases. The pid is now qualified by the BOOT it belongs to instead,
- * which answers the recycled-pid case exactly rather than by elapsed time. The
- * rule, in order:
- *
- * - a holder from another boot — abandoned, whatever its pid answers now. Its
- *   pid cannot refer to the same process. See `backup/holder-identity.ts`.
- * - a pid that is gone — abandoned NOW, without waiting out a clock that only
- *   ever existed because there was nothing better to ask.
- * - a pid that is alive, from this boot — HELD, at any age. Nothing expires it;
- *   the refusal names it and says how to clear it by hand.
- * - no readable pid (truncated write, foreign writer) — the clock, as before.
- */
-function lockIsStale(lockPath: string, body: string): boolean {
-  const pid = readPid(body);
-  if (pid !== null) return classifyHolder(pid, readBoot(body)) !== 'live';
-  let ageMs: number;
-  try {
-    ageMs = Date.now() - statSync(lockPath).mtimeMs;
-  } catch {
-    return true; // no mtime to judge by — the lock is gone or unreadable
-  }
-  return ageMs > LOCK_STALE_MS;
-}
-
-function readLockField(body: string, field: 'pid' | 'boot'): unknown {
-  try {
-    const parsed: unknown = JSON.parse(body);
-    if (typeof parsed !== 'object' || parsed === null || !(field in parsed)) return undefined;
-    return (parsed as Record<string, unknown>)[field];
-  } catch {
-    /* not JSON — a truncated or foreign write */
-    return undefined;
-  }
-}
-
-function readPid(body: string): number | null {
-  const pid = readLockField(body, 'pid');
-  return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null;
-}
-
-/**
- * The boot the lock's pid belongs to, or null when the body does not carry one
- * — a lock written before this field existed, or on a platform with no boot
- * identity to record. `classifyHolder` reads null as "cannot prove a different
- * boot", so the live pid holds.
- */
-function readBoot(body: string): string | null {
-  const boot = readLockField(body, 'boot');
-  return typeof boot === 'string' && boot !== '' ? boot : null;
-}
-
-/**
- * Exclusive-create sentinel, the agent-mesh `wx` idiom
- * (`extensions/agent-mesh/src/index.ts`): a manual `ethos backup` and the
- * scheduled job must not stream the same databases into two archives at once.
- *
- * Raw `node:fs` on purpose. An atomic create-if-absent has no equivalent in the
- * `Storage` contract — `exists()` then `write()` is the race this exists to
- * close — the same carve-out `acquireRegistryLock` and `acquirePidFile` carry.
- * Everything else this module touches goes through `Storage`.
- *
- * The lock is OWNED, not just present: its body carries a `token` unique to the
- * acquiring call. Exactly ONE step below is atomic, and it is the only one that
- * decides anything — the `wx` create. Whoever's create returns without EEXIST
- * won; every read, compare and unlink around it is confirmation, never
- * arbitration. The protocol:
- *
- *  1. `wx` create. Succeeding means we MAY hold the lock.
- *  2. Re-read, and confirm the file still carries OUR bytes. A contender that
- *     had already classified the lock we displaced as stale can unlink ours and
- *     install its own in the gap after step 1. If it did, we do not hold the
- *     lock — so we abandon the attempt and go back to waiting rather than hand
- *     the caller a release closure for someone else's file. This is what makes
- *     "two contenders both took over the same abandoned lock" settle on one
- *     holder instead of two.
- *  3. On EEXIST, classify the incumbent. Stale (pid gone, a holder from another
- *     boot, or unreadable and past the stale window) means re-read and unlink
- *     only if the bytes are still the ones we judged. That comparison makes the losing contender
- *     decline in the common case; it is NOT the guarantee. Step 2 is.
- *
- * What this does NOT do, plainly. POSIX has no atomic compare-and-delete for a
- * pathname: `unlink` names a path, not the inode that was read, so every
- * check-then-unlink here — the takeover's and `release`'s alike — leaves a
- * window in which the file can be replaced between the compare and the unlink,
- * and the unlink then removes a successor's live lock. Step 2 answers that
- * without curing it: a contender notices the loss only if its confirmation read
- * lands after the unlink that took its lock away. Should it land before, two
- * processes both believe they hold the lock and stream the same databases into
- * the same directory at once. Both windows are a few microseconds of adjacent
- * synchronous syscalls, reachable only when two contenders classify the SAME
- * abandoned lock as stale inside that span. Narrowed and stated, not closed.
- *
- * Comparing the open descriptor's inode against a `stat` of the path just
- * before unlinking was considered and rejected: it relocates the window rather
- * than closing it, and buys nothing the `token` does not already buy — a
- * successor's body is never byte-equal to the one we read.
- *
- * `release` keeps the same comparison, for the same reason and with the same
- * residual: a holder that overran the stale window and was legitimately taken
- * over must not delete its successor's lock on the way out. Step 2 cannot help
- * there — by then the backup has already run and there is nothing left to
- * retry — so declining to unlink bytes that are not ours is the whole of what
- * release can do, and it does that much.
- *
- * The token is what makes every byte comparison sound: `pid` + `startedAt`
- * alone repeat if one process re-acquires within the same millisecond.
+ * The protocol — `wx` create, token confirmation, stale takeover by pid and
+ * boot only when the incumbent is unchanged since read, release that deletes
+ * only its own bytes, and the residual windows it does NOT close — lives in
+ * `acquireSentinelLock` (`backup/sentinel-lock.ts`), shared with
+ * `acquireIdentityMapLock`. What is this lock's own: the 5s default wait (the
+ * CLI passes `timeoutMs: 0` to refuse at once), the 100ms poll, the one-hour
+ * clock for a body with no readable pid, and the refusal text below.
  */
 export async function acquireBackupLock(
   dir: string,
   opts?: { timeoutMs?: number },
 ): Promise<() => void> {
-  mkdirSync(dir, { recursive: true });
   const lockPath = backupLockPath(dir);
-  const body = JSON.stringify({
-    token: randomUUID(),
-    pid: process.pid,
-    boot: currentBootId(),
-    startedAt: new Date().toISOString(),
+  return await acquireSentinelLock({
+    lockPath,
+    timeoutMs: opts?.timeoutMs ?? LOCK_ACQUIRE_TIMEOUT_MS,
+    retryMs: LOCK_RETRY_MS,
+    unreadableStaleMs: LOCK_STALE_MS,
+    refusal: (pid) =>
+      `another backup is already in progress — ${lockPath} is held` +
+      `${pid === null ? '' : ` by process ${pid}`}. ` +
+      (pid === null
+        ? 'Wait for it to finish, or remove that file if no backup is running.'
+        : `Wait for it to finish. Check with \`ps -p ${pid}\`: if process ${pid} is genuinely ` +
+          `not running, delete ${lockPath} and retry. Removing it while that process IS ` +
+          'backing up puts two writers on the same databases and two rotations deleting ' +
+          "against each other's archives, so only do this once you have confirmed it is gone."),
   });
-  const release = (): void => {
-    try {
-      if (readLockBody(lockPath) === body) unlinkSync(lockPath);
-    } catch {
-      /* already gone */
-    }
-  };
-  const deadline = Date.now() + (opts?.timeoutMs ?? LOCK_ACQUIRE_TIMEOUT_MS);
-  for (;;) {
-    let created = false;
-    let reclaimed = false;
-    try {
-      // Step 1 — the atomic one. Nothing else in this loop decides a winner.
-      writeFileSync(lockPath, body, { flag: 'wx' });
-      created = true;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      // Step 3 — classify the incumbent, and reclaim it only if it is stale.
-      const observed = readLockBody(lockPath);
-      if (observed !== null && lockIsStale(lockPath, observed)) {
-        try {
-          // The lock we judged stale may already have been taken over and
-          // replaced with a live one since the read above.
-          if (readLockBody(lockPath) === observed) {
-            unlinkSync(lockPath);
-            reclaimed = true;
-          }
-        } catch {
-          // Another contender reclaimed it first, or we may not remove it.
-          // Either way fall through to the wait so this cannot spin.
-        }
-      }
-    }
-    // Step 2 — we created it, but do we still hold it? If a racing takeover
-    // unlinked our lock and installed its own, the answer is no, and returning
-    // `release` here would hand out a closure over that contender's file.
-    if (created && readLockBody(lockPath) === body) return release;
-    // A reclaim frees the path for us; retry the create at once rather than
-    // sleeping out the retry interval first.
-    if (reclaimed) continue;
-    if (Date.now() >= deadline) {
-      // Name the holder, so "is anything actually running?" is answerable by
-      // the person reading this rather than a guess about a file they cannot see.
-      const holder = readLockBody(lockPath);
-      const pid = holder === null ? null : readPid(holder);
-      throw new Error(
-        `another backup is already in progress — ${lockPath} is held` +
-          `${pid === null ? '' : ` by process ${pid}`}. ` +
-          (pid === null
-            ? 'Wait for it to finish, or remove that file if no backup is running.'
-            : `Wait for it to finish. Check with \`ps -p ${pid}\`: if process ${pid} is genuinely ` +
-              `not running, delete ${lockPath} and retry. Removing it while that process IS ` +
-              'backing up puts two writers on the same databases and two rotations deleting ' +
-              "against each other's archives, so only do this once you have confirmed it is gone."),
-      );
-    }
-    await new Promise<void>((r) => setTimeout(r, LOCK_RETRY_MS));
-  }
 }
 
 // ---------------------------------------------------------------------------

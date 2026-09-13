@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App as AntApp } from 'antd';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 Object.defineProperty(window, 'matchMedia', {
@@ -32,7 +33,7 @@ globalThis.ResizeObserver = class {
 };
 
 const livingSoul = vi.fn();
-const skillCandidatesList = vi.fn();
+const learningList = vi.fn();
 const proposeExpression = vi.fn();
 const applyExpression = vi.fn();
 
@@ -40,10 +41,10 @@ vi.mock('../../rpc', () => ({
   rpc: {
     personalities: {
       livingSoul: (...args: unknown[]) => livingSoul(...args),
-      skillCandidatesList: (...args: unknown[]) => skillCandidatesList(...args),
       proposeExpression: (...args: unknown[]) => proposeExpression(...args),
       applyExpression: (...args: unknown[]) => applyExpression(...args),
     },
+    learning: { list: (...args: unknown[]) => learningList(...args) },
   },
 }));
 
@@ -92,25 +93,33 @@ async function typeReason(value: string): Promise<void> {
   await flush();
 }
 
-async function openProposal(): Promise<void> {
+async function mount(): Promise<void> {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   await act(async () => {
     root.render(
       createElement(
         QueryClientProvider,
         { client },
-        createElement(AntApp, null, createElement(LivingSoulSection, { personalityId: 'sage' })),
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(AntApp, null, createElement(LivingSoulSection, { personalityId: 'sage' })),
+        ),
       ),
     );
   });
   await flush();
+}
+
+async function openProposal(): Promise<void> {
+  await mount();
   await click(button('Propose voice update'));
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   livingSoul.mockResolvedValue({ expression: 'I speak slowly.', learningLog: [] });
-  skillCandidatesList.mockResolvedValue({ candidates: [] });
+  learningList.mockResolvedValue({ candidates: [] });
   proposeExpression.mockResolvedValue({
     currentExpression: 'I speak slowly.',
     newExpression: 'I speak plainly.',
@@ -176,5 +185,57 @@ describe('LivingSoulSection — Apply on an unreplayed draft', () => {
       'Not applied — the live file changed since this was drafted',
     );
     expect(document.body.textContent).toContain('the live SOUL.md changed since submit');
+  });
+});
+
+describe('LivingSoulSection — links to Learning instead of keeping a queue', () => {
+  it('shows how many changes wait in Learning, filtered to this personality, and no Approve button', async () => {
+    learningList.mockResolvedValue({ candidates: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] });
+    await mount();
+
+    expect(learningList).toHaveBeenCalledWith({
+      personalityId: 'sage',
+      statuses: ['pending_replay', 'pending_review'],
+      limit: 500,
+    });
+    const link = document.querySelector<HTMLAnchorElement>(
+      '[data-testid="living-soul-learning-link"]',
+    );
+    expect(link?.textContent).toBe('3 changes waiting in Learning →');
+    expect(link?.getAttribute('href')).toBe('/learning?personality=sage');
+    expect(document.body.textContent).not.toContain('Pending skill candidates');
+    expect(
+      [...document.querySelectorAll('button')].map((b) => b.textContent?.trim()),
+    ).not.toContain('Approve');
+  });
+
+  it('links a Learning Log entry to the candidate it was promoted from, where there is one', async () => {
+    livingSoul.mockResolvedValue({
+      expression: 'I speak plainly.',
+      learningLog: [
+        {
+          revisionId: 'expr-rev-2',
+          at: '2026-09-12T00:00:00.000Z',
+          summary: 'learning candidate cand-7',
+          evidenceRef: 'learning:cand-7',
+          prevExpressionRef: 'expr-rev-1',
+        },
+        {
+          revisionId: 'expr-rev-1',
+          at: '2026-09-11T00:00:00.000Z',
+          summary: 'applied from the web',
+          evidenceRef: 'web:2026-09-11T00:00:00.000Z',
+          prevExpressionRef: '',
+        },
+      ],
+    });
+    await mount();
+
+    const links = [
+      ...document.querySelectorAll<HTMLAnchorElement>(
+        '[data-testid="living-soul-log-candidate-link"]',
+      ),
+    ];
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['/learning?candidate=cand-7']);
   });
 });

@@ -35,8 +35,8 @@ describe('GET /documents/download', () => {
     await mkdir(outside, { recursive: true });
     await writeFile(join(outside, 'secret.txt'), 'do not leak');
     await writeFile(join(workdir, 'notes.md'), '# hello\n');
-    await mkdir(join(dataDir, 'teams', 'marketing'), { recursive: true });
-    await writeFile(join(dataDir, 'teams', 'marketing', 'outcomes.md'), 'ours');
+    await mkdir(join(dataDir, 'teams', 'alpha'), { recursive: true });
+    await writeFile(join(dataDir, 'teams', 'alpha', 'outcomes.md'), 'ours');
     await writeFile(join(workdir, 'rapport financier — été.txt'), 'accents');
     await symlink(join(outside, 'secret.txt'), join(workdir, 'link.txt'));
 
@@ -91,12 +91,12 @@ describe('GET /documents/download', () => {
   });
 
   it('streams a team file with `team=`, and refuses escaping the team directory', async () => {
-    const res = await get('team=marketing&root=0&path=outcomes.md');
+    const res = await get('team=alpha&root=0&path=outcomes.md');
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('ours');
 
     const escaped = await get(
-      `team=marketing&root=0&path=${encodeURIComponent('../../workspace/writer/notes.md')}`,
+      `team=alpha&root=0&path=${encodeURIComponent('../../workspace/writer/notes.md')}`,
     );
     expect(escaped.status).toBe(403);
     const unsafe = await get('team=..&root=0&path=outcomes.md');

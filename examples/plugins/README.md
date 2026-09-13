@@ -215,8 +215,8 @@ api.registerPersonality({
   id: 'strategist',
   name: 'Strategist',
   description: 'Thinks in frameworks, presents options with tradeoffs',
-  model: 'claude-opus-4-7',
-  memoryScope: 'global',
+  provider: 'anthropic',
+  model: { default: 'claude-opus-4-7' }, // tier map: a plain string is never applied
   toolset: ['web_search', 'read_file', 'memory_read'],
 });
 

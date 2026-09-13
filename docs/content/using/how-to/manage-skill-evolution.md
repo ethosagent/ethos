@@ -152,9 +152,19 @@ A rewrite gets its previous file back. A new skill's file is removed.
 
 ### 7. Decide on the web instead
 
-Start the dashboard with `ethos serve`. Open the **Skills** page. Its approval queue lists waiting skill candidates with **Approve** and **Reject**. If a candidate has not passed a replay, **Approve** prompts for a required reason before it approves.
+Start the dashboard with `ethos serve`. Open **Learning** in the Library section of the sidebar. Its count shows candidates a replay has measured that now wait on you.
 
-The web dashboard has no page yet that shows every candidate, runs a replay, or rolls back. Use `ethos learning` for those.
+The page groups candidates into **Needs review**, **Waiting for replay**, **Promoted**, and **Rejected & rolled back**. Select one to see its evidence, its diff, its replay scorecard with the dry-run caveat beside the numbers, and its timeline.
+
+| Button | Shown when | What it does |
+|---|---|---|
+| **Approve** | Waiting, verdict `pass` | Promotes the candidate. |
+| **Approve anyway…** | Waiting, any other verdict | Asks for a reason. **Approve anyway** stays disabled until you type one. |
+| **Reject…** | Waiting, `invalid` or `stale` | Rejects, with an optional reason. |
+| **Run replay** | Waiting | Replays now, the same as `ethos learning replay <id>`. |
+| **Rollback** | Promoted | Rolls back, with an optional reason. When rollback is not allowed, it is disabled and the reason is shown beside it. |
+
+The Skills page's **Approval queue** tab approves nothing. It links to this page, filtered to skill candidates.
 
 ### 8. Archive skills you no longer use
 
@@ -195,7 +205,7 @@ Confirm your decision was recorded:
 ethos audit decisions --since 1d
 ```
 
-Each human decision prints one `audit.approval` line with code `learning.approve`, `learning.override`, `learning.reject` or `learning.rollback`. A candidate that promoted itself writes no line here. Its timeline in `ethos learning show <id>` records it instead.
+Each human decision prints one `audit.approval` line with code `learning.approve`, `learning.override`, `learning.reject` or `learning.rollback`. A candidate that promoted itself prints one line too, with code `learning.auto_promote`, attributed to the system rather than a person.
 
 ## Troubleshoot
 

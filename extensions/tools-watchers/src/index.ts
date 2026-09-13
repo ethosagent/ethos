@@ -7,12 +7,15 @@
 // the watcher record's explicit targets — nothing is added to
 // PersonalityConfig (plan gap-event-triggers §3e).
 
-import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
+import type { Tool, ToolResult } from '@ethosagent/types';
 import {
+  isForeignDeliverForGatedOwner,
   MIN_INTERVAL_SECONDS,
+  type WatcherDeliveryGate,
   type WatcherKind,
   type WatcherManager,
   type WatcherOnChange,
+  type WatcherOwner,
   type WatcherRecord,
 } from '@ethosagent/watchers';
 
@@ -31,7 +34,8 @@ function formatWatcher(w: WatcherRecord): string {
   }
   if (w.onChange.wake) actions.push(`wake → ${w.onChange.wake.personalityId}`);
   const status = w.enabled ? 'active' : 'paused';
-  return `${w.id} [${w.kind}] ${w.target} — every ${w.intervalSeconds}s, ${actions.join(', ')} (${status})`;
+  const line = `${w.id} [${w.kind}] ${w.target} — every ${w.intervalSeconds}s, ${actions.join(', ')} (${status})`;
+  return w.deliveryWithheld ? `${line}\n  ${w.deliveryWithheld.reason}` : line;
 }
 
 interface DeliverArg {
@@ -50,38 +54,53 @@ interface WakeArg {
 // A watcher's `deliver` sends the change summary VERBATIM to whatever channel
 // the agent names, with no LLM turn and nobody reading it first. For a
 // personality whose `outbound_policy.approve_before_send` is on, that is the
-// exact publication the policy exists to hold back — so the watcher is refused
-// at creation and pointed at `wake`, where the woken agent's `send_message`
-// meets the gate in `@ethosagent/tools-messaging`.
+// exact publication the policy exists to hold back — so it is stopped at both
+// ends and pointed at `wake`, where the woken agent's `send_message` meets the
+// gate in `@ethosagent/tools-messaging`:
 //
-// Declared structurally, for the same reason that gate is: extensions do not
-// import each other (ARCHITECTURE.md §II). This is the half of
-// `OutboxGate` a watcher needs — the questions, not the queue; a watcher never
-// proposes anything. `createOutboxGate` in
-// `packages/wiring/src/compose-tools.ts` satisfies both.
+// - At CREATION, `watcher_create` refuses the foreign target (`refuseForeignDeliver`
+//   below).
+// - At DELIVERY, `WatcherManager.dispatchChange` (`@ethosagent/watchers`) asks
+//   the same question again on every change, so a watcher stored before the
+//   policy was switched on stops delivering on its next tick. The withheld
+//   change is not dropped silently: the reason, naming `wake`, is persisted as
+//   `WatcherRecord.deliveryWithheld` (shown by `watcher_list`) and logged; any
+//   `wake` on the same watcher still fires. Pinned by "a watcher stored before
+//   gating stops delivering and records why" in
+//   `src/__tests__/outbox-deliver-refusal.test.ts`.
 //
-// The limitation: only CREATION is gated. A watcher stored before the policy
-// was switched on keeps delivering — `WatcherManager` (`@ethosagent/watchers`)
-// runs its `onChange.deliver` off the cron tick and reads no personality
-// policy, and nothing re-validates stored records. An operator turning approval
-// on for a personality that already owns delivering watchers has to delete
-// them.
+// Both ends share one predicate, `isForeignDeliverForGatedOwner`, and read the
+// policy through the gate on every call — both gates look the personality up
+// each time, so a hot-reloaded policy applies without a restart.
+// `createWatcherTools` records the creating turn as `WatcherRecord.owner`. It
+// does NOT hand its gate to the manager: the delivery-time half reads the gate
+// the app root gave the manager at construction
+// (`WatcherManagerConfig.deliveryGate`), so a tick that fires before any loop is
+// composed is still checked, and a second loop composed in a multi-bot gateway
+// cannot replace it. Pinned by "a tick before any loop is composed still
+// withholds a gated foreign deliver" and "composing more loops does not replace
+// the manager's gate" in `src/__tests__/outbox-deliver-refusal.test.ts`.
+//
+// The gate is `WatcherDeliveryGate` from `@ethosagent/watchers` — the questions,
+// not the queue; a watcher never proposes anything. Declared structurally, for
+// the same reason the messaging gate is. Both halves come from
+// `packages/wiring/src/compose-tools.ts`: `createOutboxGate` (this option, per
+// loop) builds on `createOutboundPolicyGate` (the manager's, per app root), so
+// the policy reading has one owner.
+//
+// The limitation: a record with no `owner` — written before owners were
+// recorded, or created outside an agent turn — names no personality whose
+// policy could apply, so it still delivers. An operator turning approval on for
+// a personality that owns such watchers has to recreate them.
 // ---------------------------------------------------------------------------
 
-export interface WatcherOutboxGate {
-  /** Does `outbound_policy` gate agent-initiated sends by this personality to
-   *  this platform? */
-  gates(personalityId: string, platform: string): boolean;
-  /** The operator's own chat on `platform`, or `undefined` when none is
-   *  configured. Delivering to the person who approves is not publishing. */
-  ownerTarget(platform: string): string | undefined;
-}
+export type WatcherOutboxGate = WatcherDeliveryGate;
 
 export interface WatcherToolsOptions {
   /**
    * Approval outbox. Absent — every surface that wires none — and
    * `watcher_create` behaves exactly as it did before O-T12 (pinned by "an
-   * ungated personality creates a delivering watcher unchanged" in
+   * ungated personality unchanged" in
    * `src/__tests__/outbox-deliver-refusal.test.ts`).
    */
   outbox?: WatcherOutboxGate;
@@ -89,22 +108,17 @@ export interface WatcherToolsOptions {
 
 /**
  * Refuse a `deliver` target that would publish to a third party, for a gated
- * personality. `undefined` means the watcher may be created.
- *
- * The two exempt destinations are the ones the `send_message` gate exempts, for
- * the same reasons: the turn's own chat (`ctx.origin`) is the conversation, and
- * the operator's own chat is the person who would be approving.
+ * personality. `undefined` means the watcher may be created. The exemptions
+ * live in `isForeignDeliverForGatedOwner`, shared with the delivery-time hold.
  */
 function refuseForeignDeliver(
   gate: WatcherOutboxGate | undefined,
-  ctx: ToolContext,
+  owner: WatcherOwner | undefined,
   platform: string,
   chatId: string,
 ): ToolResult | undefined {
-  const personalityId = ctx.personalityId;
-  if (!gate || !personalityId || !gate.gates(personalityId, platform)) return undefined;
-  if (ctx.origin !== undefined && `${platform}:${chatId}` === ctx.origin) return undefined;
-  if (chatId === gate.ownerTarget(platform)) return undefined;
+  if (!gate || !owner) return undefined;
+  if (!isForeignDeliverForGatedOwner(gate, owner, { platform, chatId })) return undefined;
   return fail(
     'This personality publishes only through the approval outbox ' +
       `(outbound_policy.approve_before_send), and a watcher's deliver would send every change ` +
@@ -187,12 +201,21 @@ export function createWatcherTools(
         return fail('at least one of deliver or wake is required');
       }
 
+      // The creating turn, recorded so every later delivery can be re-checked
+      // against this personality's policy (`WatcherManager.dispatchChange`).
+      const owner: WatcherOwner | undefined = ctx.personalityId
+        ? {
+            personalityId: ctx.personalityId,
+            ...(ctx.origin !== undefined ? { origin: ctx.origin } : {}),
+          }
+        : undefined;
+
       const onChange: WatcherOnChange = {};
       if (deliver) {
         if (!deliver.platform || !deliver.chat_id) {
           return fail('deliver requires explicit platform and chat_id');
         }
-        const refusal = refuseForeignDeliver(opts.outbox, ctx, deliver.platform, deliver.chat_id);
+        const refusal = refuseForeignDeliver(opts.outbox, owner, deliver.platform, deliver.chat_id);
         if (refusal) return refusal;
         onChange.deliver = { platform: deliver.platform, chatId: deliver.chat_id };
       }
@@ -211,6 +234,7 @@ export function createWatcherTools(
           target,
           intervalSeconds: interval_seconds,
           onChange,
+          ...(owner ? { owner } : {}),
         });
         return { ok: true, value: `Watcher created: ${formatWatcher(record)}` };
       } catch (err) {

@@ -40,13 +40,28 @@ const STATUS: Record<LearningRefusalCode, number> = {
   replay_unavailable: 503,
 };
 
-/** `override_required` → `OVERRIDE_REQUIRED`, and so on: the code IS the contract with the UI. */
+/**
+ * A learning refusal as a typed oRPC error: `override_required` →
+ * `OVERRIDE_REQUIRED`, and so on — the code IS the contract with the UI.
+ * Exported for `personalities.applyExpression` (`rpc/personalities-learning.ts`),
+ * which decides through the same inbox and so answers with the same codes.
+ * `action`, when given, rides in `data.action` — the slot `routes/rpc.ts` gives
+ * an `EthosError`'s action.
+ */
+export function learningRpcError(
+  refusal: { code: LearningRefusalCode; reason: string },
+  action?: string,
+) {
+  return new ORPCError(refusal.code.toUpperCase(), {
+    status: STATUS[refusal.code],
+    message: refusal.reason,
+    ...(action ? { data: { action } } : {}),
+  });
+}
+
 function unwrap<T>(result: LearningServiceResult<T>): T {
   if (result.ok) return result.value;
-  throw new ORPCError(result.code.toUpperCase(), {
-    status: STATUS[result.code],
-    message: result.reason,
-  });
+  throw learningRpcError(result);
 }
 
 export const learningRouter = {

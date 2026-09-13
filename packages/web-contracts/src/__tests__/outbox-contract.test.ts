@@ -34,7 +34,7 @@ describe('outbox contract', () => {
   it('an item view carries the full text, untruncated, plus the hash to approve', () => {
     const item = {
       id: 'obx_1',
-      personalityId: 'cmo',
+      personalityId: 'coordinator',
       botKey: 'bot-a',
       platform: 'telegram',
       chatId: '-100',
@@ -45,7 +45,7 @@ describe('outbox contract', () => {
       state: 'awaiting_approval' as const,
       createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_000_001,
-      approverPersonality: 'brand-editor',
+      approverPersonality: 'reviewer',
       review: {
         verdict: 'fail' as const,
         reasons: "'SOC2 certified' is not in truth-pack.md",

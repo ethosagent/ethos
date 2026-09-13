@@ -329,6 +329,32 @@ describe('ScopeNav — a member workspace inside a team (D6)', () => {
       '/p/researcher/chat',
     );
   });
+
+  it('gives every workspace row a 16px stroke icon, none an emoji', async () => {
+    await mount(ScopeNav, '/p/researcher/chat', {});
+    const rows = [...container.querySelectorAll('.sidebar-nav-item')];
+    expect(rows).toHaveLength(13);
+    for (const r of rows) {
+      expect(r.querySelector('svg')).not.toBeNull();
+      expect(r.textContent).not.toMatch(/\p{Extended_Pictographic}/u);
+    }
+  });
+
+  it('draws Activity with the same glyph in the workspace and team columns', async () => {
+    const activityPath = () =>
+      [...container.querySelectorAll('.sidebar-nav-item')]
+        .find((r) => r.querySelector('.sidebar-nav-label')?.textContent === 'Activity')
+        ?.querySelector('path')
+        ?.getAttribute('d');
+    await mount(ScopeNav, '/p/researcher/chat', {});
+    const workspace = activityPath();
+    // A fresh root: MemoryRouter reads `initialEntries` only on mount.
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await mount(ScopeNav, '/t/marketing/overview', {});
+    expect(workspace).toBeTruthy();
+    expect(activityPath()).toBe(workspace);
+  });
 });
 
 describe('StageHeader — the scope switcher (§2)', () => {

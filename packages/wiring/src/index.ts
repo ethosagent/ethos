@@ -648,8 +648,11 @@ export interface CreateAgentLoopOptions {
    * `runtime.wiring`.
    *
    * Absent → no gate is constructed at all and both tools behave exactly as
-   * they did before Part 2, which is the right answer for every surface with
-   * no adapters to publish through (CLI chat, one-shot runs, tests).
+   * they did before Part 2. That is the right answer only for a surface with
+   * no path to a channel — one that never calls `setMessagingSend` and passes
+   * no `watcherManager` (CLI chat, one-shot runs, tests). Holding no adapters
+   * is not the test: `ethos serve` holds none and still passes one, because
+   * its watchers' stored `deliver` targets are sent by a gateway.
    */
   outbox?: OutboxWiring;
 
@@ -1570,9 +1573,10 @@ async function assembleAgentLoop(
     profile,
     disposers,
     // The approval outbox (O-T3/O-T4, plan/phases/trust-before-reach.md).
-    // Absent for every surface that wires none — CLI chat, one-shot runs, the
-    // desktop app, tests — and `send_message` behaves exactly as it did before
-    // Part 2. `ethos gateway` and `ethos boot` supply one, which is what makes
+    // Absent for every surface with no path to a channel — CLI chat, one-shot
+    // runs, the desktop app, tests — and `send_message` behaves exactly as it
+    // did before Part 2 (there, the "Gateway not active" error). `ethos
+    // gateway`, `ethos boot` and `ethos serve` supply one, which is what makes
     // `outbound_policy.approve_before_send` a gate rather than a doc comment.
     ...(opts.outbox ? { outbox: opts.outbox } : {}),
   });
@@ -1886,6 +1890,7 @@ export * from './backup-schedule';
 // The approval outbox's app-layer seam. `apps/ethos` builds one of these and
 // passes it as `CreateAgentLoopOptions.outbox`; `createOutboxGate` combines it
 // with the personality's `outbound_policy` to produce the gate the two
-// publishing tools see.
-export { createOutboxGate, type OutboxWiring } from './compose-tools';
+// publishing tools see. `createOutboundPolicyGate` is its policy half alone —
+// what an app root hands a `WatcherManager` at construction.
+export { createOutboundPolicyGate, createOutboxGate, type OutboxWiring } from './compose-tools';
 export * from './system-jobs';

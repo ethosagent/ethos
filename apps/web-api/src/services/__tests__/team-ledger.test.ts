@@ -17,7 +17,7 @@ function task(partial: Partial<KanbanTask> = {}): KanbanTask {
     title: 'Draft launch post',
     body: '',
     status: 'running',
-    assignee: 'cmo',
+    assignee: 'coordinator',
     priority: 0,
     workspaceMode: 'scratch',
     workspacePath: null,
@@ -53,9 +53,9 @@ describe('describeLedgerEvent', () => {
       expect: {
         kind: 'dispatched',
         headline: 'Dispatch tick',
-        detail: 'claimed for cmo',
+        detail: 'claimed for coordinator',
         severity: 'ok',
-        personalityId: 'cmo',
+        personalityId: 'coordinator',
       },
     },
     {
@@ -65,13 +65,13 @@ describe('describeLedgerEvent', () => {
         actor: 'dispatcher',
         data: { from: 'running', to: 'ready', reason: 'orphan_stale' },
       }),
-      task: task({ assignee: 'x-scout' }),
+      task: task({ assignee: 'member-b' }),
       expect: {
         kind: 'stale_reclaim',
         headline: 'Stale reclaim',
-        detail: 'x-scout heartbeat went stale · back to ready',
+        detail: 'member-b heartbeat went stale · back to ready',
         severity: 'err',
-        personalityId: 'x-scout',
+        personalityId: 'member-b',
       },
     },
     {
@@ -81,52 +81,52 @@ describe('describeLedgerEvent', () => {
         actor: 'dispatcher',
         data: { from: 'running', to: 'ready', reason: 'orphan_no_owner' },
       }),
-      task: task({ assignee: 'x-scout' }),
+      task: task({ assignee: 'member-b' }),
       expect: {
         kind: 'stale_reclaim',
         headline: 'Stale reclaim',
-        detail: 'x-scout owner process is gone · back to ready',
+        detail: 'member-b owner process is gone · back to ready',
         severity: 'err',
-        personalityId: 'x-scout',
+        personalityId: 'member-b',
       },
     },
     {
       name: 'verifier rejection (actor is the assignee that called kanban_complete)',
       event: event({
         kind: 'status_changed',
-        actor: 'reddit-scout',
+        actor: 'member-a',
         data: { from: 'running', to: 'needs_revision', reason: 'no source links' },
       }),
-      task: task({ assignee: 'reddit-scout', retryCount: 1, maxRetries: 3 }),
+      task: task({ assignee: 'member-a', retryCount: 1, maxRetries: 3 }),
       expect: {
         kind: 'verifier_rejected',
         headline: 'Verifier rejected',
         detail: 'no source links · retry 1 of 3',
         severity: 'warn',
-        personalityId: 'reddit-scout',
+        personalityId: 'member-a',
       },
     },
     {
       name: 'completion without acceptance criteria',
       event: event({
         kind: 'run_completed',
-        actor: 'cmo',
+        actor: 'coordinator',
         data: { outcome: 'completed', summary: 'posted', completedBy: null },
       }),
       task: task(),
       expect: {
         kind: 'completed',
         headline: 'Completed',
-        detail: 'cmo · posted',
+        detail: 'coordinator · posted',
         severity: 'ok',
-        personalityId: 'cmo',
+        personalityId: 'coordinator',
       },
     },
     {
       name: 'completion with acceptance criteria reads as a verifier pass',
       event: event({
         kind: 'run_completed',
-        actor: 'cmo',
+        actor: 'coordinator',
         data: { outcome: 'completed', summary: 'posted', completedBy: null },
       }),
       task: task({ acceptanceCriteria: 'has three links' }),
@@ -134,23 +134,23 @@ describe('describeLedgerEvent', () => {
         kind: 'completed',
         headline: 'Verifier passed',
         severity: 'ok',
-        personalityId: 'cmo',
+        personalityId: 'coordinator',
       },
     },
     {
       name: 'block',
       event: event({
         kind: 'run_completed',
-        actor: 'x-scout',
+        actor: 'member-b',
         data: { outcome: 'blocked', summary: 'waiting on API key', completedBy: null },
       }),
-      task: task({ assignee: 'x-scout' }),
+      task: task({ assignee: 'member-b' }),
       expect: {
         kind: 'blocked',
         headline: 'Blocked',
         detail: 'waiting on API key',
         severity: 'err',
-        personalityId: 'x-scout',
+        personalityId: 'member-b',
       },
     },
     {
@@ -158,15 +158,15 @@ describe('describeLedgerEvent', () => {
       event: event({
         kind: 'assigned',
         actor: 'human:control-center',
-        data: { assignee: 'cmo' },
+        data: { assignee: 'coordinator' },
       }),
       task: task({ status: 'ready' }),
       expect: {
         kind: 'operator_assigned',
         headline: 'Operator assigned',
-        detail: 'to cmo · ready',
+        detail: 'to coordinator · ready',
         severity: 'ok',
-        personalityId: 'cmo',
+        personalityId: 'coordinator',
       },
     },
     {
@@ -181,7 +181,7 @@ describe('describeLedgerEvent', () => {
         kind: 'operator_approved',
         headline: 'Operator approved',
         severity: 'ok',
-        personalityId: 'cmo',
+        personalityId: 'coordinator',
       },
     },
     {
@@ -191,13 +191,13 @@ describe('describeLedgerEvent', () => {
         actor: 'human:control-center',
         data: { from: 'blocked', to: 'ready', reason: 'unblocked by operator' },
       }),
-      task: task({ status: 'ready', assignee: 'x-scout' }),
+      task: task({ status: 'ready', assignee: 'member-b' }),
       expect: {
         kind: 'operator_unblocked',
         headline: 'Operator unblocked',
-        detail: 'back to ready for x-scout',
+        detail: 'back to ready for member-b',
         severity: 'ok',
-        personalityId: 'x-scout',
+        personalityId: 'member-b',
       },
     },
     {
@@ -212,7 +212,7 @@ describe('describeLedgerEvent', () => {
         kind: 'operator_archived',
         headline: 'Operator archived',
         severity: 'dim',
-        personalityId: 'cmo',
+        personalityId: 'coordinator',
       },
     },
     {
@@ -250,22 +250,28 @@ describe('describeLedgerEvent', () => {
     const line = describeLedgerEvent(
       event({
         kind: 'status_changed',
-        actor: 'reddit-scout',
+        actor: 'member-a',
         data: { from: 'running', to: 'needs_revision', reason: 'nope' },
       }),
       undefined,
     );
     expect(line?.taskTitle).toBeNull();
     expect(line?.detail).toBe('nope');
-    expect(line?.personalityId).toBe('reddit-scout');
+    expect(line?.personalityId).toBe('member-a');
   });
 
   const ignored: Array<[string, KanbanEvent]> = [
-    ['heartbeat', event({ kind: 'heartbeat', actor: 'cmo', data: { note: null } })],
+    ['heartbeat', event({ kind: 'heartbeat', actor: 'coordinator', data: { note: null } })],
     ['run_started', event({ kind: 'run_started', actor: 'dispatcher' })],
-    ['linked', event({ kind: 'linked', actor: 'cmo', data: { parentId: 'a', childId: 'b' } })],
-    ['unlinked', event({ kind: 'unlinked', actor: 'cmo', data: { parentId: 'a', childId: 'b' } })],
-    ['comment', event({ kind: 'commented', actor: 'cmo', data: { commentId: 'c_1' } })],
+    [
+      'linked',
+      event({ kind: 'linked', actor: 'coordinator', data: { parentId: 'a', childId: 'b' } }),
+    ],
+    [
+      'unlinked',
+      event({ kind: 'unlinked', actor: 'coordinator', data: { parentId: 'a', childId: 'b' } }),
+    ],
+    ['comment', event({ kind: 'commented', actor: 'coordinator', data: { commentId: 'c_1' } })],
     [
       'cancelled run_completed',
       event({
@@ -276,7 +282,7 @@ describe('describeLedgerEvent', () => {
     ],
     [
       'agent-driven assign',
-      event({ kind: 'assigned', actor: 'cmo', data: { assignee: 'reddit-scout' } }),
+      event({ kind: 'assigned', actor: 'coordinator', data: { assignee: 'member-a' } }),
     ],
     [
       'plain status change (todo → ready)',

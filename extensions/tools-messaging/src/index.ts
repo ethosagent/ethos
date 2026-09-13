@@ -108,15 +108,18 @@ export interface MessagingToolsOptions {
   send: MessagingSendFn;
   getAllowedTargets?: (personalityId?: string) => string[] | null;
   /**
-   * The approval outbox. Supplied by `ethos gateway start` and `ethos boot`,
-   * each from `createOutboxRuntime` (`apps/ethos/src/lib/outbox-wiring.ts`)
-   * and threaded down through `ComposeToolsDeps.outbox` — pinned by
+   * The approval outbox. Supplied by every root that can reach a channel —
+   * `ethos gateway start` and `ethos boot` (`createOutboxRuntime`) and
+   * `ethos serve` (`createOutboxProposalSide`), both in
+   * `apps/ethos/src/lib/outbox-wiring.ts` — and threaded down through
+   * `ComposeToolsDeps.outbox`, pinned by
    * `apps/ethos/src/__tests__/outbox-gate-live.test.ts`.
    *
-   * Absent on every other surface that can run a turn (`chat`, `serve`,
-   * `cron`, `mcp`, `batch`, `eval`, `acp`, `bench`), and there `send_message`
-   * behaves exactly as it did before O-T3 — a gated personality running under
-   * one of them sends ungated (pinned by "sends exactly as today when no
+   * Absent on `chat`, `cron`, `mcp`, `batch`, `eval`, `acp` and `bench`. None
+   * of them installs `send`, so the call below fails with wiring's default
+   * "Gateway not active" error and nothing publishes, gated or not; that test
+   * fails if one of them gains a send path. Where absent, the tool behaves
+   * exactly as it did before O-T3 (pinned by "sends exactly as today when no
    * outbox is wired" in `src/__tests__/outbox-gate.test.ts`).
    */
   outbox?: OutboxGate;

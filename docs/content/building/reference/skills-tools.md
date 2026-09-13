@@ -4,7 +4,7 @@ description: "Agent-callable skill introspection. List the skills the personalit
 kind: reference
 audience: developer
 slug: skills-tools
-updated: 2026-05-17
+updated: 2026-09-13
 ---
 
 # Skills tools — `skills_list`, `skill_view`
@@ -50,6 +50,51 @@ The skill set returned by `skills_list` is gated by:
 4. **Team scope (when present).** Skills authored at the team layer surface to all members of that team.
 
 `skills_list` reflects the final intersection, not the raw scan output — what the agent sees is what it would get if it invoked the workflow described in the skill.
+
+## skills.global_ingest.\* {#skills-global-ingest}
+
+Type: dotted block in the personality's `config.yaml` · Default: unset (`capability` mode)
+
+Filters which skills from the global pool this personality sees. Skills in the personality's own `skills/` directory are never filtered. Walkthrough: [Add a skill](../how-to/add-a-skill.md).
+
+Source: `skills` on `PersonalityConfig` in [`packages/types/src/personality.ts`](https://github.com/ethosagent/ethos/blob/main/packages/types/src/personality.ts) (shape `IngestConfig`, `packages/types/src/skill.ts`), parsed by `buildSkillsConfig` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts), applied by [`extensions/skills/src/ingest-filter.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/skills/src/ingest-filter.ts).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `skills.global_ingest.mode` | enum | `capability` | `capability` — a skill is visible when its `required_tools` are all in this personality's reach (default). `tags` — accepted when a tag is in `accept_tags`, rejected when a tag is in `reject_tags`; the capability check still runs. `explicit` — only skills named in `allow`; the capability check still runs. `none` — the global pool is hidden. A value outside these four is ignored and `capability` stands. |
+| `skills.global_ingest.accept_tags` | comma-separated tags | unset | Tags `tags` mode accepts. |
+| `skills.global_ingest.reject_tags` | comma-separated tags | unset | Tags `tags` mode rejects. |
+| `skills.global_ingest.allow` | comma-separated `<source>/<name>` | unset | Loaded in every mode, `none` included, once the reach, env and permission checks pass (`filterSkill` checks `allow` before the mode). In `explicit` mode these are the only global skills loaded. |
+| `skills.global_ingest.deny` | comma-separated `<source>/<name>` | unset | Checked before the mode; a listed skill is rejected in every mode. |
+| `skills.global_ingest.fallback_unknown` | enum | `allow` | What `capability` mode does with a skill that declares no `required_tools`: `allow` (default), `warn`, or `deny`. A value outside these three is ignored. |
+
+```yaml
+skills.global_ingest.mode: explicit
+skills.global_ingest.allow: claude-code/code-review, ethos/explain-code
+skills.global_ingest.deny: claude-code/auto-commit
+```
+
+## skills.injection_mode {#skills-injection-mode}
+
+Type: enum in the personality's `config.yaml` · Default: `index`
+
+How global-pool skills enter the system prompt. Parsed by `buildSkillsConfig` in [`extensions/personalities/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/personalities/src/index.ts), read by `SkillsInjector` in [`extensions/skills/src/skills-injector.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/skills/src/skills-injector.ts) and by `usesSkillIndexMode` in [`packages/core/src/agent-loop/ghost-skills.ts`](https://github.com/ethosagent/ethos/blob/main/packages/core/src/agent-loop/ghost-skills.ts).
+
+| Value | Meaning |
+|---|---|
+| `index` | A table of skill names and descriptions; the agent loads a body on demand (default). |
+| `full` | Every matching skill's full body. Suited to small collections only. |
+
+A value outside these two is ignored and `index` stands.
+
+```yaml
+skills.injection_mode: full
+```
+
+Notes:
+
+- Write the dotted form. An indented `skills:` block fails the personality load — only `safety:` may nest (`NESTED_BLOCKS`).
+- Put comments on their own line. The loader reads everything after `key:` as the value, so a trailing `# comment` becomes part of it.
 
 ## Capability rationale {#capabilities}
 
@@ -106,4 +151,4 @@ Without these tools, an agent asked "do you have a skill for handling PRs?" woul
 
 - [`use-skills`](../../using/how-to/use-skills.md) — operator how-to for installing and authoring skills.
 - [`ethos-skill-authoring`](https://github.com/ethosagent/ethos/blob/main/skills/data/framework/ethos-skill-authoring/SKILL.md) — the bundled skill that documents skill authoring.
-- [Personality registry reference](personality-registry.md) — where the `skills.global_ingest` block is documented.
+- [Add a skill](../how-to/add-a-skill.md) — setting `skills.global_ingest.*` on a personality, with worked examples.

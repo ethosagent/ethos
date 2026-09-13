@@ -9,7 +9,7 @@ A personality is a structural component (not just a system prompt string) that s
 - **Identity / voice** — `SOUL.md` (first-person), injected at priority 110.
 - **Tool access** — `toolset.yaml` declares which tools the personality is allowed to call. The registry enforces this at execution time — calls outside the allowlist return a `tool_result` with `is_error: true`.
 - **Skills** — optional `skills/` directory of `*.md` files injected into the system prompt by `SkillsInjector` (priority 100).
-- **Routing & runtime** — `config.yaml` sets the model, provider, platform, memory scope, and mesh-advertised capabilities.
+- **Routing & runtime** — `config.yaml` sets the model tiers, provider, platform, and mesh-advertised capabilities. Memory scope is not configured: a personality's memory is always its own (`personality:<id>`).
 
 A personality is loaded by `FilePersonalityRegistry.loadFromDirectory()` (mtime-cached, hot-reloadable).
 
@@ -17,8 +17,8 @@ A personality is loaded by `FilePersonalityRegistry.loadFromDirectory()` (mtime-
 
 ```
 <id>/                  ← directory name = personality id (lowercase, no spaces)
-├── config.yaml        ← required: name, description, model, memoryScope, capabilities
-├── SOUL.md           ← required: first-person identity ("I am ...", "I do ...")
+├── config.yaml        ← name, description, provider, model.<tier>, capabilities
+├── SOUL.md           ← first-person identity ("I am ...", "I do ...")
 ├── toolset.yaml       ← optional but recommended: flat list of allowed tool names
 └── skills/            ← optional: per-personality skill markdown files
     ├── <skill>.md
@@ -30,8 +30,7 @@ At least one of `config.yaml` or `SOUL.md` must exist for the directory to regis
 ## Installation locations
 
 ```
-~/.ethos/personalities/<id>/         global (any project)
-.ethos/personalities/<id>/            project-local
+~/.ethos/personalities/<id>/         user (any project)
 extensions/personalities/data/       built-in (monorepo only)
 examples/plugins/personality/        packaged via plugin (api.registerPersonality)
 ```
@@ -44,13 +43,12 @@ For a packaged personality (npm or local plugin), use `api.registerPersonality({
 |---|---|---|
 | `name` | yes | Display name (e.g. `Engineer`). Defaults to title-cased id. |
 | `description` | yes | One-line summary used in `/personality` listings. |
-| `model` | yes | LLM model id (e.g. `claude-sonnet-4-6`, `claude-opus-4-7`, `claude-haiku-4-5-20251001`). |
-| `provider` | no | Override provider (`anthropic`, `openai-compat`). Defaults to wiring config. |
+| `provider` | no | The provider the model tiers are written for (`anthropic`, `openai-compat`). The tiers apply only while this matches the active provider. |
+| `model.trivial` / `model.default` / `model.deep` / `model.dreaming` | no | Model id per tier (e.g. `model.default: claude-sonnet-4-6`). A plain `model: <id>` string is parsed but never applied — `resolveModelWithTier` in `packages/core/src/agent-loop/turn-context.ts`. Unset runs on the deployment model; `modelRouting.<id>` in `~/.ethos/config.yaml` overrides both. |
 | `platform` | no | Restrict to a platform (`cli`, `telegram`). |
-| `memoryScope` | yes | `global` (shared `~/.ethos/MEMORY.md`) or `per-personality` (isolated). |
 | `capabilities` | no | Comma-separated mesh roles, e.g. `code, review`. Advisory; not the same as `toolset`. |
 
-The parser is `parseConfigYaml()` in `extensions/personalities/src/index.ts`. It supports only `key: value` lines — no nested YAML, no lists, no multiline. Quotes around values are stripped.
+The parser is `parseConfigYaml()` in `extensions/personalities/src/index.ts`. It supports `key: value` lines and dotted keys (`model.default`, `memory.provider`) — no lists, no multiline. Nesting any key other than `safety` fails the load. Quotes around values are stripped.
 
 ## `toolset.yaml` schema (flat YAML list)
 
@@ -85,10 +83,10 @@ First-person identity. Read like the agent describing itself, not a manual about
 
 Reference exemplars in `extensions/personalities/data/`:
 - `engineer/SOUL.md` — terse, code-first
-- `coach/SOUL.md` — warm but direct, asks questions
+- `archived/coach/SOUL.md` — warm but direct, asks questions (archived: not loaded)
 - `researcher/SOUL.md` — methodical, primary-source bias
 - `reviewer/SOUL.md` — critical, evidence-based
-- `operator/SOUL.md` — cautious, confirms before irreversible actions
+- `archived/operator/SOUL.md` — cautious, confirms before irreversible actions (archived: not loaded)
 
 ## Per-personality `skills/`
 
@@ -104,28 +102,29 @@ Discovery: top-level `*.md`, plus `<dir>/<slug>/SKILL.md`, plus `<dir>/<scope>/<
 ## Workflow for creating a new personality
 
 1. **Pick the id** — lowercase, single word, no spaces. The directory name is the id.
-2. **Pick the model** — `haiku` for fast lookups, `sonnet` for code/review, `opus` for planning/coaching.
-3. **Decide memory scope** — `global` lets the personality see other agents' MEMORY.md notes; `per-personality` isolates it (good for reviewer/operator).
+2. **Pick the model tiers** — set `provider` and `model.default` (plus `model.trivial` / `model.deep` if the role needs them): `haiku` for fast lookups, `sonnet` for code/review, `opus` for planning/coaching.
+3. **Decide what must be shared** — a personality's memory is always its own. Anything another agent needs goes in team memory: add `team_memory_read` / `team_memory_write` to the toolset.
 4. **Write SOUL.md first** — identity drives every other choice.
 5. **Derive toolset from identity** — a coach doesn't need `terminal`; an operator does.
-6. **Write config.yaml last** — name, description, model, memoryScope, capabilities.
+6. **Write config.yaml last** — name, description, provider, model tiers, capabilities.
 7. **Verify** — start `ethos`, run `/personality <id>`, check the personality loads and the model resolves.
 
 ## Common mistakes
 
-- **Nested YAML in `config.yaml`** — the parser only handles flat `key: value`. `model:\n  default: claude-...` silently produces `model: ''`.
+- **Nested YAML in `config.yaml`** — only `safety` may be nested. `model:\n  default: claude-...` fails the load; write `model.default: claude-...`.
 - **`capabilities` written as YAML list** — must be a comma-separated string (`code, review`), not `- code\n- review`.
 - **Missing `SOUL.md`** — a directory with only `config.yaml` will register, but the agent has no identity injection. Always include both.
 - **`toolset.yaml` with hyphens but indented** — lines must start with `- ` at column 0 (after trimming). Indented entries are ignored.
 - **Identity written in third person** — "The agent should be terse" reads like a spec, not a self. Rewrite as "I am terse."
-- **Memory scope mismatch** — declaring `memoryScope: per-personality` but expecting context from a `global` session means MEMORY.md writes won't carry over.
+- **A plain `model:` string** — `model: claude-sonnet-4-6` loads without error and is never applied, so the personality silently runs on the deployment model. Use `model.default` with a matching `provider`.
+- **Expecting shared memory** — there is no `memoryScope` field. One personality's `MEMORY.md` never reaches another's prompt; use team memory for anything that must cross.
 - **Writing the personality as a plugin without registering an identity injector** — `api.registerPersonality({...})` adds the config, but you also need an injector at priority 110 to inject the SOUL.md content.
 - **Choosing a model id that doesn't exist** — model resolution happens per-turn; an unknown model throws at runtime, not at load time.
 
 ## Where to look for help
 
 - `extensions/personalities/src/index.ts` — `FilePersonalityRegistry`, `parseConfigYaml`, `parseToolsetYaml`, `loadFromDirectory`
-- `extensions/personalities/data/<built-in>/` — five reference personalities
+- `extensions/personalities/data/<built-in>/` — the loaded built-ins; retired ones sit under `data/archived/`, which the loader skips
 - `packages/types/src/personality.ts` — `PersonalityConfig` interface
 - `extensions/skills/src/skills-injector.ts` — how `skillsDirs` and `~/.ethos/skills/` are merged and injected
 - `examples/plugins/personality/src/index.ts` — packaging a personality as a plugin

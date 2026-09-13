@@ -61,6 +61,9 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     skillsList: 'personalities:read',
     skillsGet: 'personalities:read',
     livingSoul: 'personalities:read',
+    // M-T9 — the MCP export section. Bearer-reachable, which is why its output
+    // carries key prefixes and never a secret (`McpExportViewSchema`).
+    mcpExport: 'personalities:read',
     skillCandidatesList: 'personalities:read',
     // Mutating / config-writing methods — cookie-only (no bearer scope grants them).
     create: COOKIE_ONLY,

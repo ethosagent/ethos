@@ -222,6 +222,31 @@ members:
 // ---------------------------------------------------------------------------
 
 describe('parseTeamManifest — field validation errors', () => {
+  it('names team.yaml by default and the given source when one is passed', () => {
+    const yaml = `
+description: No name field
+domain_capabilities: [x]
+members:
+  - personality: member-a
+`;
+    const causeOf = (opts?: { source: string }) => {
+      try {
+        parseTeamManifest(yaml, opts);
+      } catch (err) {
+        return err as EthosError;
+      }
+      throw new Error('expected parseTeamManifest to throw');
+    };
+
+    const byDefault = causeOf();
+    expect(byDefault.cause).toMatch(/^team\.yaml is invalid — /);
+    expect(byDefault.action).toContain('team.yaml');
+
+    const labelled = causeOf({ source: 'example-team.yaml' });
+    expect(labelled.cause).toMatch(/^example-team\.yaml is invalid — /);
+    expect(labelled.action).toContain('example-team.yaml');
+  });
+
   it('throws TEAM_MANIFEST_INVALID when name is missing', () => {
     const yaml = `
 description: No name field

@@ -290,7 +290,7 @@ ethos evolve --reject <candidate-id | filename>
 
 ## ethos learning {#ethos-learning}
 
-Review, replay, approve, reject and roll back learning candidates: every skill and Expression change a learning path drafted. Decisions go through `LearningInbox` ([`extensions/learning-inbox/src/inbox.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/learning-inbox/src/inbox.ts)), the same class the web Skills page's approval queue and the Living Soul section decide through. A dedicated web inbox page is not shipped yet. For what a replay measures and when a candidate promotes itself, see [Why does a learned change need a replay before it goes live?](../explanation/learning-inbox.md).
+Review, replay, approve, reject and roll back learning candidates: every skill and Expression change a learning path drafted. Decisions go through `LearningInbox` ([`extensions/learning-inbox/src/inbox.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/learning-inbox/src/inbox.ts)), the same class the web dashboard's Learning page and Living Soul section decide through. For what a replay measures and when a candidate promotes itself, see [Why does a learned change need a replay before it goes live?](../explanation/learning-inbox.md).
 
 Synopsis:
 
@@ -465,7 +465,7 @@ Synopsis: `ethos audit [transitions | decisions] [--since <duration>] [--categor
 |---|---|
 | (none) | Every audit event, filtered by `--category` when given. |
 | `transitions` | Events in category `audit.transition`. |
-| `decisions` | Human and safety decisions: categories `audit.approval`, `audit.block` and `audit.watcher`, merged. Learning decisions appear here with codes `learning.approve`, `learning.override`, `learning.reject` and `learning.rollback`, beside outbox decisions (`outbox.approve`, `outbox.reject` and the rest). A candidate that promoted itself after a `pass` replay writes no row here; see [`ethos learning show`](#ethos-learning). |
+| `decisions` | Human and safety decisions: categories `audit.approval`, `audit.block` and `audit.watcher`, merged. Learning decisions appear here with codes `learning.approve`, `learning.override`, `learning.reject` and `learning.rollback`, beside outbox decisions (`outbox.approve`, `outbox.reject` and the rest). A candidate that promoted itself after a `pass` replay appears with code `learning.auto_promote`, attributed to the system. |
 | `--since <duration>` | Only events newer than the duration: an integer plus `ms`, `s`, `m`, `h` or `d` (`30m`, `7d`). Any other shape is ignored and no time filter applies. |
 | `--category <pattern>` | Without a subcommand, an exact category. With one, a case-insensitive substring filter on the category. |
 | `--limit <n>` | Maximum events shown. Default `50`. |

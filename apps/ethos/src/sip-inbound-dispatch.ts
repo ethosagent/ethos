@@ -162,7 +162,8 @@ function describeReason(reason: string): string {
  *    concurrency, allowlist. A refusal releases whatever it took, so a wall of
  *    refused calls leaves `concurrency.active()` at zero.
  * 3. **Personality selection** — `restricted` (not allowlisted) pins the
- *    receptionist, whose own `memoryScope` and `toolset` ARE the restriction.
+ *    receptionist, whose `personality:<id>` memory scope and `toolset` ARE the
+ *    restriction.
  * 4. **The call-log row** — `ringing` at dispatch, `live` on answer,
  *    `completed`/`failed` at end, `endedAt` on every terminal transition.
  * 5. **The slot** — released in a `finally` when setup did not reach a live
@@ -269,7 +270,7 @@ export function createSipInboundHandler(
     }
 
     // Restricted = not allowlisted = the receptionist answers. Nothing else
-    // changes: the receptionist's own `memoryScope` denies owner memory and its
+    // changes: its `personality:<id>` memory scope denies owner memory and its
     // own `toolset` denies privileged tools, both by construction in the turn
     // setup. There is no second restriction system to keep in step.
     const personalityId = decision.restricted ? gates.receptionist : deps.botPersonalityId(bot);

@@ -8,6 +8,7 @@ import {
   runEvolvePrune,
   runEvolveStatus,
   SkillEvolver,
+  skillEvolutionEvolveOptions,
 } from '@ethosagent/skill-evolver';
 import { AWAITING_DECISION, type LearningInbox, learningSubmitPort } from '@ethosagent/wiring';
 import { createCliLearningInbox, createLearningReplayer, createLLM, getStorage } from '../wiring';
@@ -301,7 +302,8 @@ export async function runAnalyze(
     learning: learningSubmitPort({ storage: getStorage(), dataDir: ethosDir() }),
     dataDir: ethosDir(),
     personalityId,
-    scope: reg.get(personalityId)?.skill_evolution?.scope,
+    // `scope`, `evolve_existing` and `model` from the personality the drafts belong to.
+    ...skillEvolutionEvolveOptions(reg.get(personalityId)?.skill_evolution),
     ...(targetCaseIds ? { targetCaseIds } : {}),
   });
 

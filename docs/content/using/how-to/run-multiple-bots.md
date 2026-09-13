@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-multiple-bots
 time: "10 min"
-updated: 2026-05-22
+updated: 2026-09-13
 ---
 
 ## Task
@@ -113,7 +113,7 @@ This is the structural shift from single-bot mode. Concretely:
 
 Two bots in the same Slack channel (or the same Telegram group) get separate sessions. The user's history with `researcher-bot` never leaks into `engineer-bot`'s context, and vice versa.
 
-Memory follows the same boundary. A bot bound to a personality with `memoryScope: 'per-personality'` writes to `~/.ethos/personalities/<id>/MEMORY.md` — and only sees that file. `USER.md` is shared across bots within one Ethos process, because it represents the same human regardless of which bot they happen to be talking to.
+Memory follows the personality, not the bot. Every turn reads and writes its personality's own `~/.ethos/personalities/<id>/MEMORY.md` and `USER.md` — the scope is fixed at `personality:<id>`, with no setting to widen it — so bots bound to different personalities never see each other's memory, and bots bound to the same personality share it. The gateway also resolves each sender through `~/.ethos/users/identity-map.json`, keyed by platform and platform user id, and a turn with a resolved user reads `~/.ethos/users/<userId>/USER.md`; when that file is non-empty it replaces the personality's copy in the prompt. That profile follows one account across every bot on its platform. The same person on Telegram and on Slack has two user ids until you point both entries at one.
 
 ### 4. Understand what `/personality` does on identity-bound bots
 

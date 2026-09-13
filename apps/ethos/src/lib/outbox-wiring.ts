@@ -8,6 +8,7 @@ import {
   type ReviewVerdict,
   SQLiteOutboxStore,
 } from '@ethosagent/outbox';
+import type { PersonalityConfig } from '@ethosagent/types';
 import { type OutboxWiring, wrapUntrusted } from '@ethosagent/wiring';
 
 // ---------------------------------------------------------------------------
@@ -794,7 +795,7 @@ export interface OutboxApprovalSurfaceDeps {
   /**
    * How the sending bot is named on the card, when the host wants to override
    * it. Unset — the normal case — the card asks the bot's OWN adapter
-   * (`senderHandle`, `@EthosMarketingBot` on Telegram) and falls back to the
+   * (`senderHandle`, `@EthosExampleBot` on Telegram) and falls back to the
    * botKey when that has not resolved.
    */
   senderLabel?: (botKey: string) => string;
@@ -1597,4 +1598,88 @@ export function createOutboxDispatcher(deps: OutboxDispatcherDeps): OutboxDispat
       timer = undefined;
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// The proposal side, for a root that holds no adapters
+//
+// `ethos gateway start` and `ethos boot` build the whole outbox inline: the
+// runtime, the reviewer, the Telegram card glue and the dispatcher. A root that
+// holds no adapters needs only the first two. `ethos serve` is the one such
+// root with a working egress: its loops register the watcher tools, and a
+// watcher's `deliver` is stored in `~/.ethos/watchers/watchers.json`, which a
+// gateway sharing the machine loads and delivers from. Its `send_message`, which
+// on its own fails with "Gateway not active", becomes a queued proposal the
+// gateway's dispatcher delivers once a human approves — the same result as a
+// web turn under `ethos boot` (O-D8/O-D9).
+//
+// What this does NOT build, on purpose:
+//
+//  - a dispatcher. Delivery needs adapters, and only the gateway process holds
+//    them. A second dispatcher here would claim rows it can never send.
+//  - approval cards. A card is DM'd by the bot that will publish, and this
+//    process holds no bot. The item is approved in the web pane, with
+//    `ethos outbox approve`, or on a card the gateway posts for its own
+//    proposals — never on one for an item proposed here.
+//
+// It does run the advisory reviewer, because the reviewer is part of proposing:
+// an item that names an approver sits in `awaiting_review` until a receipt
+// lands, and without a reviewer here it would wait out the gateway's 10-minute
+// stale reconciler before any human saw it.
+// ---------------------------------------------------------------------------
+
+export interface OutboxProposalSideDeps {
+  /** The bot roster — `buildBotSpeakers(config)` in `../commands/gateway`. */
+  speakers: OutboxSenderCandidates;
+  /** `channel_filter.<platform>.ownerUserId`. */
+  ownerTarget: (platform: string) => string | undefined;
+  /**
+   * The hot-reloaded personality registry. Read on every proposal for
+   * `outbound_policy.approver_personality`, and by the reviewer to ask whether
+   * that approver exists.
+   */
+  personalities: { get(id: string): PersonalityConfig | null | undefined };
+  /** The loop the review turn runs on, read late — see `OutboxReviewerDeps.loop`. */
+  loop: () => OutboxReviewLoop | null | undefined;
+  /** Audit sink for decisions this process takes (X-D11). */
+  observability?: OutboxObservability;
+  /** Test seam. Defaults to `SQLiteOutboxStore` on `<dataDir>/outbox.db`. */
+  store?: OutboxStore;
+  dataDir?: string;
+  logger?: { warn(message: string): void };
+}
+
+export interface OutboxProposalSide extends OutboxRuntime {
+  /** Await reviews still in flight. Call on shutdown before the loop goes. */
+  drain(): Promise<void>;
+}
+
+export function createOutboxProposalSide(deps: OutboxProposalSideDeps): OutboxProposalSide {
+  const runtime = createOutboxRuntime({
+    speakers: deps.speakers,
+    ownerTarget: deps.ownerTarget,
+    approverFor: (personalityId) =>
+      deps.personalities.get(personalityId)?.outbound_policy?.approver_personality,
+    // Fire-and-forget, as in both gateway roots: the item IS queued.
+    onProposed: (item, created) => surface.proposed(item, created),
+    ...(deps.observability ? { observability: deps.observability } : {}),
+    ...(deps.store ? { store: deps.store } : {}),
+    ...(deps.dataDir ? { dataDir: deps.dataDir } : {}),
+    ...(deps.logger ? { logger: deps.logger } : {}),
+  });
+  const surface = createOutboxApprovalSurface({
+    service: runtime.service,
+    reviewer: createOutboxReviewer({
+      service: runtime.service,
+      loop: deps.loop,
+      hasPersonality: (id) => deps.personalities.get(id) != null,
+      ...(deps.logger ? { logger: deps.logger } : {}),
+    }),
+    // No adapters in this process, so no card: `postCard` returns before
+    // posting anything when there is no adapter for the item's bot.
+    adapterFor: () => undefined,
+    ownerTarget: deps.ownerTarget,
+    ...(deps.logger ? { logger: deps.logger } : {}),
+  });
+  return { ...runtime, drain: () => surface.drain() };
 }

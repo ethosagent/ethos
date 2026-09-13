@@ -1,9 +1,10 @@
 // Who holds a backup lock, and is that holder still there?
 //
-// Two files in this package guard a directory with an advisory `wx` sentinel —
-// `backup/restore.ts`'s `.restore-in-progress` and `backup-schedule.ts`'s
-// `backups/.lock` — and both have to answer the same question about the body
-// they find: is the process that wrote this still running?
+// Three files in this package guard a directory with an advisory `wx` sentinel —
+// `backup/restore.ts`'s `.restore-in-progress`, `backup-schedule.ts`'s
+// `backups/.lock` and `identity-map.ts`'s `users/identity-map.json.lock` — and
+// all have to answer the same question about the body they find: is the process
+// that wrote this still running?
 //
 // `process.kill(pid, 0)` answers a WEAKER question: "is SOME process wearing
 // this number". After a reboot the OS hands low pids out again, so a dead

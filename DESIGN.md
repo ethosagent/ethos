@@ -469,6 +469,17 @@ Icon assignments:
 | Structure | Three circles linked by lines (one above two) |
 | Channels | Envelope (same glyph as Communications) |
 | Board | Three vertical bars (same glyph as Kanban) |
+| Learning | Inbox tray (open tray with a notch where proposed changes wait) |
+| Recipes | Open book (two facing pages joined at a centre spine) |
+| Tasks | Checklist (two ticked rows, each a checkmark beside a line) |
+| Dashboards | Panels (four rectangles of unequal height in two columns) |
+| Admin | Shield (with a checkmark inside) |
+| System cron | Clock (same glyph as Cron) |
+| Documents | Page with a folded top-right corner and two text lines |
+| Schedule | Clock (same glyph as Cron) |
+| Outbox | Tray with an upward arrow above it (the draft has not gone out yet) |
+| Goals | Target (two concentric circles) |
+| Identity | ID card (head-and-shoulders portrait beside two text lines) |
 
 ### Active state
 `background: rgba(74,158,255,0.18); border-left: 2px solid #4A9EFF; padding-left: 10px` (compensate padding for the 2px border). Text color: `var(--text-primary)` (full brightness — not dimmed blue).

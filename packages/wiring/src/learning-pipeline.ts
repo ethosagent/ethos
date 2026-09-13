@@ -11,7 +11,13 @@
 //                               skill drafter, the eval-driven evolver
 //   - `learningPromoteDeps`     every human approval and the auto path
 //   - `learningPolicyFor`       the ONE reader of the three auto knobs (L-D3)
-//   - `createLearningReplayer`  the nightly `replay` step and `--auto-approve`
+//   - `createLearningReplayer`  every replay: the nightly `replay` step,
+//                               `--auto-approve`, `ethos learning replay` and
+//                               the web's Run replay. It binds the regression
+//                               top-up (`learningRegressionTopUp`) and the
+//                               `learning.auto_promote` audit sink
+//                               (`learningAuditSink`) that `replayAndResolve`
+//                               writes through
 //   - `importLegacyLearningQueues`  the one-time drain of the four old queues
 //   - `createLearningInbox`     the review inbox every HUMAN decision goes
 //                               through (L-T8): web `learning.*`, `ethos
@@ -43,6 +49,7 @@ import {
   type PromoteOptions,
   type PromoteResult,
   promote,
+  type RegressionTopUp,
   type ReplayAndResolveResult,
   readCandidate,
   replayAndResolve,
@@ -51,7 +58,14 @@ import {
   submitCandidate,
   updateCandidate,
 } from '@ethosagent/learning-inbox';
+import {
+  BlobStore,
+  OBSERVABILITY_KILL_SWITCH_FILE,
+  ObservabilityService,
+  SQLiteObservabilityStore,
+} from '@ethosagent/observability-sqlite';
 import { parseLivingSoul } from '@ethosagent/personalities';
+import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { type LearningSubmitPort, liveSkillDir, loadEvolveConfig } from '@ethosagent/skill-evolver';
 import { checkSkillFrontmatter, parseSkillFrontmatter } from '@ethosagent/skills';
 import type { PendingSkillSummary, PendingSkillsPort } from '@ethosagent/tools-skills';
@@ -65,6 +79,7 @@ import type {
 } from '@ethosagent/types';
 import type { WiringConfig } from './index';
 import { createReplayLoop, REPLAY_RUN_OPTIONS, shadowForCandidate } from './learning-replay';
+import { EthosObservability } from './observability/ethos-observability';
 
 /** What every helper here reads. */
 export interface LearningContext {
@@ -246,19 +261,33 @@ export interface LearningReplayerOptions extends LearningContext {
   /** Recorded on the audit line. */
   actor?: string;
   autoApproveOverride?: boolean;
+  /**
+   * Where `learning.auto_promote` rows go. Absent → `learningAuditSink`, which
+   * writes to `observability.db` under `dataDir` — the store `ethos audit
+   * decisions` reads — so a host that passes nothing is still audited.
+   */
+  observability?: LearningObservability;
+  /**
+   * Where the regression top-up reads recent sessions. Absent → `sessions.db`
+   * under `dataDir`, opened for the top-up only (`learningRegressionTopUp`).
+   */
+  sessions?: CaseSessionSource;
 }
 
 /**
  * Replay a candidate on two real, isolated dry-run loops and let
  * `replayAndResolve` decide whether it promotes. L-D9 decides WHEN this is
- * called: the nightly `replay` step, or synchronously under `--auto-approve`.
+ * called: the nightly `replay` step, `ethos learning replay`, the web's Run
+ * replay, or synchronously under `--auto-approve`. Every one of them gets the
+ * regression top-up and the `learning.auto_promote` row from here.
  */
 export function createLearningReplayer(
   config: WiringConfig,
   opts: LearningReplayerOptions,
 ): (candidateId: string) => Promise<ReplayAndResolveResult> {
   const { storage, dataDir } = opts;
-  return (candidateId) =>
+  const regressionTopUp = learningRegressionTopUp(opts, opts.sessions);
+  return async (candidateId) =>
     replayAndResolve(
       {
         storage,
@@ -276,11 +305,71 @@ export function createLearningReplayer(
         settings: opts.settings,
         shadowFor: (candidate) => shadowForCandidate(candidate, { storage }),
         actor: opts.actor ?? 'replay',
+        regressionTopUp,
         promote: learningPromoteDeps(opts),
         policyFor: learningPolicyFor(opts),
+        observability: opts.observability ?? (await learningAuditSink(opts)),
       },
       candidateId,
     );
+}
+
+/**
+ * A `learning.auto_promote` sink on `observability.db`, for a replayer whose
+ * host passed none. The database is opened only when a row is written — an
+ * automatic promotion, a handful a night at most — and closed right after,
+ * because `ObservabilityService.recordEvent` is a synchronous insert. The kill
+ * switch is read once, when the replay starts: `Storage` has no synchronous
+ * `exists`, and the sink's `recordSafetyApproval` is synchronous.
+ */
+export async function learningAuditSink(ctx: LearningContext): Promise<LearningObservability> {
+  const disabled = await ctx.storage.exists(join(ctx.dataDir, OBSERVABILITY_KILL_SWITCH_FILE));
+  return {
+    recordSafetyApproval: (row) => {
+      if (disabled) return;
+      const store = new SQLiteObservabilityStore(join(ctx.dataDir, 'observability.db'));
+      try {
+        const service = new ObservabilityService(
+          store,
+          new BlobStore(join(ctx.dataDir, 'blobs'), ctx.storage),
+        );
+        new EthosObservability(service).recordSafetyApproval(row);
+      } finally {
+        store.close();
+      }
+    },
+  };
+}
+
+/**
+ * The regression top-up `replayCandidate` runs when the frozen pool cannot
+ * satisfy rule (a): recent real user turns of the personality, read the way the
+ * nightly freeze reads them (`recentSessionTurns`, excluded keys filtered at the
+ * query), with the Core for the session-turn assertion.
+ *
+ * With no `sessions` source it opens `sessions.db` under `dataDir` for the one
+ * read and closes it — and only when the file exists, because
+ * `SQLiteSessionStore` creates the database, and a replay must not leave one
+ * on a machine that has never held a session.
+ */
+export function learningRegressionTopUp(
+  ctx: LearningContext & { personalities: PersonalityLookup },
+  sessions?: CaseSessionSource,
+): RegressionTopUp {
+  return {
+    core: (personalityId) => personalityCore(ctx, personalityId),
+    sessionTurns: async (personalityId) => {
+      if (sessions) return recentSessionTurns(sessions, personalityId);
+      const dbPath = join(ctx.dataDir, 'sessions.db');
+      if (!(await ctx.storage.exists(dbPath))) return [];
+      const store = new SQLiteSessionStore(dbPath);
+      try {
+        return await recentSessionTurns(store, personalityId);
+      } finally {
+        store.close();
+      }
+    },
+  };
 }
 
 // --- Review inbox (L-T8) ------------------------------------------------------

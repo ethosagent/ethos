@@ -6,5 +6,6 @@ export const sessionsList = os.sessions.list.handler(({ input, context }) =>
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
     ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
     ...(input.personalityId ? { personalityId: input.personalityId } : {}),
+    ...(input.platform ? { platform: input.platform } : {}),
   }),
 );

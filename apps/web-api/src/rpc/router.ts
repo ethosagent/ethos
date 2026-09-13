@@ -44,6 +44,7 @@ import { namedSecretsRouter } from './named-secrets';
 import { onboardingRouter } from './onboarding';
 import { outboxRouter } from './outbox';
 import { personalitiesRouter } from './personalities';
+import { personalitiesMcpExportRouter } from './personalities-mcp-export';
 import { platformsRouter } from './platforms';
 import { pluginsRouter } from './plugins';
 import { recipesRouter } from './recipes';
@@ -82,7 +83,8 @@ export const apiRouter = {
   debug: {
     chat: debugChat,
   },
-  personalities: personalitiesRouter,
+  // `personalities.ts` sits at the handler-file line cap; M-T9's read mounts beside it.
+  personalities: { ...personalitiesRouter, ...personalitiesMcpExportRouter },
   config: configRouter,
   onboarding: onboardingRouter,
   tools: toolsRouter,
