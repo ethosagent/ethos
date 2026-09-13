@@ -895,6 +895,12 @@ export interface UpdatePersonalityPatch {
    *  Written by `writeAvatar`/`deleteAvatar` below; not a general editor
    *  field (there is no raw-URL-paste flow in v1). */
   display?: { avatar_url?: string };
+  /** `mcp_export.*` sub-keys, shallow-merged onto the stored declaration like
+   *  `safety` / `memory` / `nightly`, so `{ enabled: false }` withdraws the
+   *  export and keeps `expose_tools` / `expose_memory` / `expose_sessions` /
+   *  `auth` for when it is turned back on. `enabled` falls back to the stored
+   *  value, then to `false` — a patch never turns export ON by omission. */
+  mcp_export?: Partial<import('@ethosagent/types').PersonalityMcpExportConfig>;
 }
 
 /**
@@ -1232,7 +1238,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.memory !== undefined ||
       patch.nightly !== undefined ||
       patch.voice !== undefined ||
-      patch.display !== undefined
+      patch.display !== undefined ||
+      patch.mcp_export !== undefined
     ) {
       const config = existing.config;
       if (patch.provider !== undefined && patch.provider !== '') {
@@ -1294,6 +1301,29 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
               code: 'INVALID_INPUT',
               cause: `fs_reach entry "${p}" must start with "/" or a substitution token (\${ETHOS_HOME}, \${self}, \${CWD}), must not contain "..", and must not be "/".`,
               action: 'Fix the path and retry.',
+            });
+          }
+        }
+      }
+      const exposeTools = patch.mcp_export?.expose_tools;
+      if (Array.isArray(exposeTools)) {
+        // Each name lands verbatim on ONE config.yaml line, space-joined, and is
+        // read back split on whitespace (`buildMcpExportConfig`). Whitespace
+        // would split a name in two; a newline would write a key of the
+        // caller's choosing. An empty list would render as an absent key.
+        if (exposeTools.length === 0) {
+          throw new EthosError({
+            code: 'INVALID_INPUT',
+            cause: 'mcp_export.expose_tools must name at least one tool when it is a list.',
+            action: "Name at least one tool, or use 'none' for a conversation-only export.",
+          });
+        }
+        for (const name of exposeTools) {
+          if (!MCP_EXPORT_TOOL_NAME.test(name)) {
+            throw new EthosError({
+              code: 'INVALID_INPUT',
+              cause: `mcp_export.expose_tools entry "${name.replace(/[\n\r]/g, '\\n')}" is not a tool name (letters, digits, _ . : - only).`,
+              action: 'Fix the tool name and retry.',
             });
           }
         }
@@ -1361,6 +1391,14 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
         voice:
           patch.voice === undefined ? config.voice : mergeVoiceConfig(config.voice, patch.voice),
         display: mergeDisplayConfig(config.display, patch.display),
+        mcp_export:
+          patch.mcp_export === undefined
+            ? config.mcp_export
+            : {
+                ...config.mcp_export,
+                ...patch.mcp_export,
+                enabled: patch.mcp_export.enabled ?? config.mcp_export?.enabled ?? false,
+              },
       };
       // renderConfigYaml's safety emission is suppressed here (render with
       // `safety: undefined`) so we append exactly one safety block — never a
@@ -2384,6 +2422,14 @@ function parseOutboundChannels(raw: string): string[] {
   }
   return names;
 }
+
+/**
+ * The shape of one `mcp_export.expose_tools` entry the update path will write.
+ * Kept in step with the `personalities.update` input in
+ * `packages/web-contracts/src/router.ts` (`McpExportToolNameInput`), which
+ * refuses the same names at the wire.
+ */
+const MCP_EXPORT_TOOL_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/;
 
 function buildMcpExportConfig(
   cfg: Record<string, string>,

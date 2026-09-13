@@ -166,4 +166,49 @@ describe('update validation rejects bad inputs', () => {
       await expect(registry.update('v-clear-prov', { provider: '' })).resolves.not.toThrow();
     });
   });
+
+  describe('mcp_export validation', () => {
+    // A tool name is written verbatim onto one config.yaml line, space-joined.
+    // Whitespace would split it into two names on read; a newline would write
+    // an arbitrary key of the attacker's choosing (e.g. `fs_reach.write`).
+    it('rejects an expose_tools name carrying a newline or whitespace', async () => {
+      await seedPersonality('v-me-newline');
+      const registry = makeRegistry();
+      await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+      await expect(
+        registry.update('v-me-newline', {
+          mcp_export: { enabled: true, expose_tools: ['read_file\nfs_reach.write: /'] },
+        }),
+      ).rejects.toThrow(/mcp_export.expose_tools/);
+      await expect(
+        registry.update('v-me-newline', {
+          mcp_export: { enabled: true, expose_tools: ['read file'] },
+        }),
+      ).rejects.toThrow(/mcp_export.expose_tools/);
+    });
+
+    it('rejects an empty expose_tools list', async () => {
+      await seedPersonality('v-me-empty');
+      const registry = makeRegistry();
+      await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+      await expect(
+        registry.update('v-me-empty', { mcp_export: { enabled: true, expose_tools: [] } }),
+      ).rejects.toThrow(/mcp_export.expose_tools/);
+    });
+
+    it('refuses an mcp_export patch on a built-in personality', async () => {
+      const registry = makeRegistry();
+      registry.define({
+        id: 'v-me-builtin',
+        name: 'Builtin',
+        soulFile: '/usr/share/ethos/personalities/v-me-builtin/SOUL.md',
+      });
+
+      await expect(
+        registry.update('v-me-builtin', { mcp_export: { enabled: true } }),
+      ).rejects.toMatchObject({ code: 'PERSONALITY_READ_ONLY' });
+    });
+  });
 });

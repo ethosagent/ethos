@@ -1428,8 +1428,8 @@ export type ApiKeyMetadata = z.infer<typeof ApiKeyMetadataSchema>;
 
 // ---------------------------------------------------------------------------
 // MCP export — the personality detail page's export section (M-T9,
-// plan/phases/trust-before-reach.md Part 3). Read-only: the declaration lives
-// in the personality's config.yaml and the schema is frozen.
+// plan/phases/trust-before-reach.md Part 3). The declaration lives in the
+// personality's config.yaml; it is written through `personalities.update`.
 //
 // NO SECRET crosses this shape. `personalities.mcpExport` is reachable by a
 // bearer key carrying `personalities:read`, so a client is its key PREFIX and
@@ -1501,10 +1501,29 @@ export const McpExportDesktopEntrySchema = z.object({
 });
 export type McpExportDesktopEntryWire = z.infer<typeof McpExportDesktopEntrySchema>;
 
+/**
+ * The stored `mcp_export` block as parsed (`PersonalityMcpExportConfig`,
+ * `buildMcpExportConfig` in `extensions/personalities/src/index.ts`). The
+ * export section's form pre-fills from this, not from `scope`: the resolved
+ * slice cannot tell `expose_tools: all` from a list, drops the memory tools and
+ * the out-of-reach names, and is null while export is off. Loose on purpose —
+ * a hand-written config.yaml must not fail this output.
+ */
+export const McpExportDeclarationViewSchema = z.object({
+  enabled: z.boolean(),
+  expose_tools: z.union([z.literal('all'), z.literal('none'), z.array(z.string())]).optional(),
+  expose_memory: z.enum(['none', 'scoped', 'full']).optional(),
+  expose_sessions: z.boolean().optional(),
+  auth: z.enum(['localhost', 'bearer']).optional(),
+});
+export type McpExportDeclarationViewWire = z.infer<typeof McpExportDeclarationViewSchema>;
+
 export const McpExportViewSchema = z.object({
   personalityId: z.string(),
   /** `mcp_export.enabled === true`, literally. */
   exported: z.boolean(),
+  /** The stored declaration; null when config.yaml has no `mcp_export` block. */
+  declaration: McpExportDeclarationViewSchema.nullable(),
   /** Null when this server could not resolve the slice (no live tool registry). */
   scope: McpExportScopeViewSchema.nullable(),
   /** The `mcp_export.*` keys the declaration is edited through. */

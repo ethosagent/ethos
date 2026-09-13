@@ -1104,7 +1104,7 @@ export function PersonalityDetail() {
 
       <A2aPeersSection personalityId={id} />
 
-      <McpExportSection personalityId={id} />
+      <McpExportSection personalityId={id} toolset={personality.toolset} />
 
       {editModalOpen ? (
         <EditModal

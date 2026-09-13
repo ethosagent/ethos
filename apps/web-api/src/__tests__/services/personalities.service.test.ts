@@ -25,6 +25,7 @@ import {
   updateCandidate,
 } from '../../../../../extensions/learning-inbox/src/store';
 import type { RpcContext } from '../../rpc/context';
+import { personalitiesRouter } from '../../rpc/personalities';
 import { personalitiesLearningRouter } from '../../rpc/personalities-learning';
 import { LearningService } from '../../services/learning.service';
 import { PersonalitiesService } from '../../services/personalities.service';
@@ -988,6 +989,85 @@ describe('PersonalitiesService', () => {
       const reloaded = await service.get('agent');
       expect(reloaded.personality.safety?.approvalMode).toBe('smart');
       expect(reloaded.personality.memory?.provider).toBe('vector');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // mcp_export — the web export section's write path, through the real RPC
+  // handler (contract input parse → service → registry → config.yaml).
+  // -------------------------------------------------------------------------
+  describe('mcp_export update', () => {
+    async function makeExportService() {
+      const storage = new InMemoryStorage();
+      const registry = new FilePersonalityRegistry(storage, DATA);
+      const library = new SkillsLibrary({ dataDir: DATA, storage });
+      const service = new PersonalitiesService({ personalities: registry, library });
+      await service.create({ id: 'agent', name: 'Agent', toolset: ['read_file'], soulMd: '# A' });
+      const context = { personalities: service } as unknown as RpcContext;
+      return { service, context };
+    }
+
+    it('passes mcp_export through to the registry, and mcpExport reports the declaration', async () => {
+      const { service, context } = await makeExportService();
+
+      await call(
+        personalitiesRouter.update,
+        {
+          id: 'agent',
+          mcp_export: {
+            enabled: true,
+            expose_tools: ['read_file'],
+            expose_memory: 'scoped',
+            expose_sessions: false,
+            auth: 'bearer',
+          },
+        },
+        { context },
+      );
+
+      const view = await service.mcpExport('agent');
+      expect(view.exported).toBe(true);
+      expect(view.declaration).toEqual({
+        enabled: true,
+        expose_tools: ['read_file'],
+        expose_memory: 'scoped',
+        expose_sessions: false,
+        auth: 'bearer',
+      });
+
+      await call(
+        personalitiesRouter.update,
+        { id: 'agent', mcp_export: { enabled: false } },
+        {
+          context,
+        },
+      );
+      const off = await service.mcpExport('agent');
+      expect(off.exported).toBe(false);
+      expect(off.declaration).toEqual({
+        enabled: false,
+        expose_tools: ['read_file'],
+        expose_memory: 'scoped',
+        expose_sessions: false,
+        auth: 'bearer',
+      });
+    });
+
+    it('mcpExport reports a null declaration when the personality declares none', async () => {
+      const { service } = await makeExportService();
+      expect((await service.mcpExport('agent')).declaration).toBeNull();
+    });
+
+    it('the handler refuses an empty tools list before anything is written', async () => {
+      const { service, context } = await makeExportService();
+      await expect(
+        call(
+          personalitiesRouter.update,
+          { id: 'agent', mcp_export: { enabled: true, expose_tools: [] } },
+          { context },
+        ),
+      ).rejects.toThrow();
+      expect((await service.mcpExport('agent')).declaration).toBeNull();
     });
   });
 

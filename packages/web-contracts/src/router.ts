@@ -545,6 +545,29 @@ const PersonalityCreateInput = z.object({
 });
 const PersonalityCreateOutput = z.object({ personality: PersonalitySchema });
 
+/** One `mcp_export.expose_tools` entry. Written verbatim onto one space-joined
+ *  config.yaml line, so whitespace, quotes and newlines are refused here and
+ *  again by the registry (`MCP_EXPORT_TOOL_NAME`, extensions/personalities). */
+const McpExportToolNameInput = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/);
+
+/** Every sub-key optional: the registry shallow-merges this onto the stored
+ *  declaration, so `{ enabled: false }` turns export off and keeps the rest. */
+const PersonalityMcpExportPatchInput = z.object({
+  enabled: z.boolean().optional(),
+  /** `'all'` is the personality's full reach, `'none'` conversation only; a
+   *  list must name at least one tool. */
+  expose_tools: z
+    .union([z.literal('all'), z.literal('none'), z.array(McpExportToolNameInput).min(1).max(512)])
+    .optional(),
+  expose_memory: z.enum(['none', 'scoped', 'full']).optional(),
+  expose_sessions: z.boolean().optional(),
+  auth: z.enum(['localhost', 'bearer']).optional(),
+});
+
 const PersonalityUpdateInput = z.object({
   id: z.string().min(1),
   /** Patch — only present fields are written. */
@@ -631,6 +654,8 @@ const PersonalityUpdateInput = z.object({
    *  carrying only `tts_voice` leaves a hand-written `languages` map alone.
    *  `''` clears that sub-key. */
   voice: PersonalityVoiceInput,
+  /** `mcp_export.*` — see `PersonalityMcpExportPatchInput`. */
+  mcp_export: PersonalityMcpExportPatchInput.optional(),
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 

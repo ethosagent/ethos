@@ -559,6 +559,8 @@ export class PersonalitiesService {
     return {
       personalityId: id,
       exported,
+      // The stored block, for the section's edit form — see `McpExportDeclarationViewSchema`.
+      declaration: described.config.mcp_export ? { ...described.config.mcp_export } : null,
       scope,
       declarationKeys: [...MCP_EXPORT_DECLARATION_KEYS],
       configPath: configFile.startsWith(`${home}/`)

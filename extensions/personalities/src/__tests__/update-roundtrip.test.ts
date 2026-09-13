@@ -1532,3 +1532,126 @@ describe('skills.injection_mode round-trip', () => {
     expect(fresh.get('inject-keep')?.skills).toEqual({ injection_mode: 'full' });
   });
 });
+
+describe('mcp_export round-trip', () => {
+  const reload = async (): Promise<FilePersonalityRegistry> => {
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    return fresh;
+  };
+
+  it('an mcp_export patch writes the mcp_export.* keys', async () => {
+    await seedPersonality('me-write', 'name: MeWrite\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('me-write', {
+      mcp_export: {
+        enabled: true,
+        expose_tools: ['read_file', 'mcp__github__list_issues'],
+        expose_memory: 'scoped',
+        expose_sessions: true,
+        auth: 'bearer',
+      },
+    });
+
+    const yaml = await readFile(join(testDir, 'personalities', 'me-write', 'config.yaml'), 'utf8');
+    expect(yaml).toContain('mcp_export.enabled: true\n');
+    expect(yaml).toContain('mcp_export.expose_tools: read_file mcp__github__list_issues\n');
+    expect(yaml).toContain('mcp_export.expose_memory: scoped\n');
+    expect(yaml).toContain('mcp_export.expose_sessions: true\n');
+    expect(yaml).toContain('mcp_export.auth: bearer\n');
+  });
+
+  it('{ enabled: false } turns export off and keeps every other setting', async () => {
+    await seedPersonality(
+      'me-off',
+      [
+        'name: MeOff',
+        'mcp_export.enabled: true',
+        'mcp_export.expose_tools: read_file web_search',
+        'mcp_export.expose_memory: full',
+        'mcp_export.expose_sessions: true',
+        'mcp_export.auth: bearer',
+        '',
+      ].join('\n'),
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('me-off', { mcp_export: { enabled: false } });
+
+    expect((await reload()).get('me-off')?.mcp_export).toEqual({
+      enabled: false,
+      expose_tools: ['read_file', 'web_search'],
+      expose_memory: 'full',
+      expose_sessions: true,
+      auth: 'bearer',
+    });
+  });
+
+  it('a patch with no enabled key on a personality with no declaration writes enabled: false', async () => {
+    await seedPersonality('me-noenable', 'name: MeNoEnable\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('me-noenable', { mcp_export: { auth: 'bearer' } });
+
+    expect((await reload()).get('me-noenable')?.mcp_export).toEqual({
+      enabled: false,
+      auth: 'bearer',
+    });
+  });
+
+  it('a selected-tools array, "all" and "none" each round-trip through config.yaml', async () => {
+    await seedPersonality('me-tools', 'name: MeTools\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    const selected = ['read_file', 'mcp__github__list_issues', 'nse.get-quote'];
+    await registry.update('me-tools', { mcp_export: { enabled: true, expose_tools: selected } });
+    expect((await reload()).get('me-tools')?.mcp_export?.expose_tools).toEqual(selected);
+
+    await registry.update('me-tools', { mcp_export: { expose_tools: 'all' } });
+    expect((await reload()).get('me-tools')?.mcp_export?.expose_tools).toBe('all');
+
+    await registry.update('me-tools', { mcp_export: { expose_tools: 'none' } });
+    expect((await reload()).get('me-tools')?.mcp_export?.expose_tools).toBe('none');
+  });
+
+  it('an unrelated update preserves mcp_export and outbound_policy', async () => {
+    await seedPersonality(
+      'me-unrelated',
+      [
+        'name: MeUnrelated',
+        'description: before',
+        'mcp_export.enabled: true',
+        'mcp_export.expose_tools: read_file',
+        'mcp_export.expose_memory: scoped',
+        'mcp_export.expose_sessions: false',
+        'mcp_export.auth: localhost',
+        'outbound_policy.approve_before_send: true',
+        'outbound_policy.channels: telegram slack',
+        '',
+      ].join('\n'),
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('me-unrelated', { description: 'after' });
+
+    const fresh = await reload();
+    expect(fresh.get('me-unrelated')?.description).toBe('after');
+    expect(fresh.get('me-unrelated')?.mcp_export).toEqual({
+      enabled: true,
+      expose_tools: ['read_file'],
+      expose_memory: 'scoped',
+      expose_sessions: false,
+      auth: 'localhost',
+    });
+    expect(fresh.get('me-unrelated')?.outbound_policy).toMatchObject({
+      approve_before_send: true,
+      channels: ['telegram', 'slack'],
+    });
+  });
+});

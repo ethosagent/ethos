@@ -1,27 +1,29 @@
 import type {
   McpExportCallWire,
   McpExportClientWire,
+  McpExportDeclarationViewWire,
   McpExportDenialWire,
   McpExportDesktopEntryWire,
   McpExportScopeViewWire,
   McpExportViewWire,
 } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Input, Popconfirm, Spin, Typography } from 'antd';
+import { Button, Checkbox, Input, Popconfirm, Radio, Segmented, Spin, Typography } from 'antd';
 import { type CSSProperties, type ReactNode, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { sessionOpenPath } from '../../lib/workspaceRoutes';
 import { rpc } from '../../rpc';
 
 // MCP export section — plan/phases/trust-before-reach.md Part 3, M-T9, built to
-// the approved mockup. Read-only over the declaration: `mcp_export` lives in the
-// personality's config.yaml and the schema is frozen, so this names the file and
-// the keys instead of offering an edit with nowhere to write.
+// the approved mockups. `mcp_export` lives in the personality's config.yaml
+// (the field already exists on the frozen schema); the form writes it through
+// `personalities.update`, which shallow-merges the patch onto the stored block.
 //
 // Containers are raw primitives with token colour — "Cards earn existence"
 // reserves the Card primitive for three other surfaces. The personality accent
-// (the workspace scope's `--accent` and Antd `colorPrimary`) appears on exactly
-// two things: the Add client action and the one-time key reveal.
+// (the workspace scope's `--accent` and Antd `colorPrimary`) appears on the
+// primary action of each state — Set up export, Turn on export / Save changes,
+// Add client — and on the one-time key reveal.
 
 const MONO = "'Geist Mono', ui-monospace, monospace";
 
@@ -247,7 +249,14 @@ function errorMessage(err: unknown): string {
 // Section
 // ---------------------------------------------------------------------------
 
-export function McpExportSection({ personalityId }: { personalityId: string }) {
+export function McpExportSection({
+  personalityId,
+  toolset,
+}: {
+  personalityId: string;
+  /** The personality's own toolset (`personalities.get`); null when unrestricted. */
+  toolset: string[] | null;
+}) {
   const query = useQuery({
     queryKey: ['personalities', 'mcpExport', personalityId],
     queryFn: () => rpc.personalities.mcpExport({ id: personalityId }),
@@ -265,43 +274,534 @@ export function McpExportSection({ personalityId }: { personalityId: string }) {
           ✗ MCP export status unavailable — {errorMessage(query.error)}
         </span>
       ) : query.data ? (
-        <McpExportBody view={query.data} />
+        <McpExportBody view={query.data} toolset={toolset} />
       ) : null}
     </div>
   );
 }
 
-function McpExportBody({ view }: { view: McpExportViewWire }) {
+type McpExportPatch = NonNullable<Parameters<typeof rpc.personalities.update>[0]['mcp_export']>;
+
+function McpExportBody({ view, toolset }: { view: McpExportViewWire; toolset: string[] | null }) {
+  const qc = useQueryClient();
+  const personalityId = view.personalityId;
+  const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState<{ enabled: boolean; at: string } | null>(null);
+
+  const saveMut = useMutation({
+    mutationFn: (patch: McpExportPatch) =>
+      rpc.personalities.update({ id: personalityId, mcp_export: patch }),
+    onSuccess: async (_res, patch) => {
+      // Close the form only once the view has refetched, so the section never
+      // flashes the state it just left.
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['personalities', 'mcpExport', personalityId] }),
+        qc.invalidateQueries({ queryKey: ['personalities', 'get', personalityId] }),
+        qc.invalidateQueries({ queryKey: ['personalities', 'characterSheet', personalityId] }),
+      ]);
+      setSaved({ enabled: patch.enabled === true, at: clock(new Date()) });
+      setEditing(false);
+    },
+  });
+
+  const openForm = () => {
+    saveMut.reset();
+    setEditing(true);
+  };
+  const closeForm = () => {
+    saveMut.reset();
+    setEditing(false);
+  };
+
+  const feedback = saveMut.isError ? (
+    <SaveFailedRow
+      message={errorMessage(saveMut.error)}
+      onRetry={() => {
+        if (saveMut.variables) saveMut.mutate(saveMut.variables);
+      }}
+    />
+  ) : saved ? (
+    <SavedRow enabled={saved.enabled} at={saved.at} />
+  ) : null;
+
+  const form = editing ? (
+    <ExportForm
+      view={view}
+      toolset={toolset}
+      saving={saveMut.isPending}
+      feedback={feedback}
+      onSubmit={(patch) => saveMut.mutate(patch)}
+      onCancel={closeForm}
+    />
+  ) : null;
+
   if (!view.exported) {
     return (
-      <div style={panelStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <h3 style={headingStyle}>{view.personalityId}</h3>
-          <Pill tone="off" icon="✗">
-            Not exported
-          </Pill>
+      form ?? (
+        <div style={panelStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <h3 style={headingStyle}>{personalityId}</h3>
+            <Pill tone="off" icon="✗">
+              Not exported
+            </Pill>
+          </div>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)', maxWidth: '65ch' }}>
+            No external app can consult {personalityId}. Exporting lets an MCP client — Claude
+            Desktop, Cursor — ask it a question and get a full, safeguarded turn back.
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Button type="primary" onClick={openForm}>
+              Set up export
+            </Button>
+            <span style={mechStyle}>Nothing changes until you save.</span>
+          </div>
+          {feedback}
         </div>
-        <div style={noticeStyle}>
-          <span aria-hidden="true" style={{ ...dimStyle, fontFamily: MONO }}>
-            →
-          </span>
-          <span>
-            No external app can consult this personality. Set <Mono>mcp_export.enabled: true</Mono>{' '}
-            in <Mono>{view.configPath}</Mono> to export it. Export is off unless that value is
-            literally <Mono>true</Mono>.
-          </span>
-        </div>
-      </div>
+      )
     );
   }
 
   return (
     <>
-      <ScopePanel view={view} />
+      {form ?? (
+        <ScopePanel
+          view={view}
+          feedback={feedback}
+          turningOff={saveMut.isPending}
+          onEdit={openForm}
+          onTurnOff={() => saveMut.mutate({ enabled: false })}
+        />
+      )}
       <ClientsBlock view={view} />
-      <CallsBlock personalityId={view.personalityId} calls={view.calls} />
+      <CallsBlock personalityId={personalityId} calls={view.calls} />
       <DenialsBlock denials={view.denials} />
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Save feedback — the `.activity-row` of `FeedbackRow`
+// (components/ui/FeedbackRow.tsx, DESIGN.md "Feedback rows outside chat"),
+// carrying the approved words "saved" / "not saved" where `RowState` would say
+// the generic "ok" / "failed". Persistent, never a toast.
+// ---------------------------------------------------------------------------
+
+const mechStyle: CSSProperties = { fontSize: 12, color: 'var(--text-tertiary)' };
+
+function SavedRow({ enabled, at }: { enabled: boolean; at: string }) {
+  return (
+    <div className="activity-row activity-row-ok" role="status" data-testid="mcp-export-save-row">
+      <span className="activity-row-state">
+        <span aria-hidden="true">✓</span> saved
+      </span>
+      <span className="activity-row-subject">mcp_export.enabled: {String(enabled)}</span>
+      <span className="activity-row-result">applies on each app's next call</span>
+      <span className="activity-row-meta">{at}</span>
+    </div>
+  );
+}
+
+function SaveFailedRow({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
+      <div
+        className="activity-row activity-row-failed"
+        role="status"
+        data-testid="mcp-export-save-row"
+      >
+        <span className="activity-row-state">
+          <span aria-hidden="true">✗</span> not saved
+        </span>
+        <span className="activity-row-result" style={{ whiteSpace: 'normal' }}>
+          {message}
+        </span>
+      </div>
+      <Button size="small" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Setup / edit form
+// ---------------------------------------------------------------------------
+
+type ToolsMode = 'none' | 'selected' | 'all';
+
+export interface ExportDraft {
+  tools: ToolsMode;
+  selected: string[];
+  memory: 'none' | 'scoped' | 'full';
+  sessions: boolean;
+  auth: 'localhost' | 'bearer';
+}
+
+/**
+ * Where the form starts: the stored declaration when there is one (including a
+ * turned-off one, whose settings Turn off keeps), else the defaults
+ * `resolveMcpExportScope` (packages/wiring/src/mcp-export.ts) gives an absent
+ * key — no tools, no memory, no conversations, localhost.
+ */
+export function draftFromDeclaration(
+  declaration: McpExportDeclarationViewWire | null,
+): ExportDraft {
+  const tools = declaration?.expose_tools;
+  return {
+    tools: tools === 'all' ? 'all' : Array.isArray(tools) ? 'selected' : 'none',
+    selected: Array.isArray(tools) ? [...tools] : [],
+    memory: declaration?.expose_memory ?? 'none',
+    sessions: declaration?.expose_sessions ?? false,
+    auth: declaration?.auth ?? 'localhost',
+  };
+}
+
+function joinAnd(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? '';
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** The plain-language line under the form, derived from the current choices. */
+export function exportSummary(draft: ExportDraft, id: string): string {
+  const who = draft.auth === 'bearer' ? 'An app with a key' : 'An app started on this machine';
+  const can = [
+    draft.tools === 'all'
+      ? `use all of ${id}'s tools`
+      : draft.tools === 'selected'
+        ? `use ${draft.selected.length} of ${id}'s tools`
+        : 'use none of its tools',
+  ];
+  const cannot: string[] = [];
+  if (draft.memory === 'full') {
+    can.push('read and write its memory');
+  } else if (draft.memory === 'scoped') {
+    can.push('read its memory');
+    cannot.push('write memory');
+  } else {
+    cannot.push('use memory');
+  }
+  if (draft.sessions) can.push('list and reopen its own past conversations');
+  else cannot.push('open past conversations');
+  const tail = cannot.length > 0 ? `, and cannot ${cannot.join(' or ')}` : '';
+  return `${who} will see one tool, ask. Its turn can ${joinAnd(can)}${tail}.`;
+}
+
+function Field({
+  name,
+  label,
+  hint,
+  first = false,
+  children,
+}: {
+  name: string;
+  label: string;
+  hint?: ReactNode;
+  first?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      data-field={name}
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '8px 16px',
+        paddingTop: first ? 0 : 16,
+        borderTop: first ? 'none' : '1px solid var(--border-subtle)',
+      }}
+    >
+      <div style={{ flex: '0 0 190px', fontSize: 13, fontWeight: 500 }}>
+        {label}
+        {hint ? (
+          <span
+            style={{ ...dimStyle, display: 'block', fontWeight: 400, fontSize: 12, marginTop: 2 }}
+          >
+            {hint}
+          </span>
+        ) : null}
+      </div>
+      <div
+        style={{ flex: '1 1 280px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Choice({ title, desc }: { title: string; desc: ReactNode }) {
+  return (
+    <span style={{ fontSize: 13 }}>
+      {title}
+      <span style={{ ...dimStyle, display: 'block', fontSize: 12 }}>{desc}</span>
+    </span>
+  );
+}
+
+function ExportForm({
+  view,
+  toolset,
+  saving,
+  feedback,
+  onSubmit,
+  onCancel,
+}: {
+  view: McpExportViewWire;
+  toolset: string[] | null;
+  saving: boolean;
+  feedback: ReactNode;
+  onSubmit: (patch: McpExportPatch) => void;
+  onCancel: () => void;
+}) {
+  const id = view.personalityId;
+  const [draft, setDraft] = useState(() => draftFromDeclaration(view.declaration));
+  // The picker lists the personality's OWN toolset, never the machine's. A name
+  // the stored declaration already carries but the toolset lacks stays listed
+  // (and ticked) so a save never silently rewrites what the file says;
+  // `resolveMcpExportScope` drops it at serve time either way.
+  const [options] = useState(() => {
+    const own = toolset ?? [];
+    return [...own, ...draft.selected.filter((tool) => !own.includes(tool))];
+  });
+  const [filter, setFilter] = useState('');
+  const set = (next: Partial<ExportDraft>) => setDraft((d) => ({ ...d, ...next }));
+
+  const own = new Set(toolset ?? []);
+  const needle = filter.trim().toLowerCase();
+  const visible = options.filter((tool) => tool.toLowerCase().includes(needle));
+  const needsTool = draft.tools === 'selected' && draft.selected.length === 0;
+  const monoInline: CSSProperties = { fontFamily: MONO };
+
+  const submit = () =>
+    onSubmit({
+      enabled: true,
+      expose_tools:
+        draft.tools === 'selected'
+          ? options.filter((tool) => draft.selected.includes(tool))
+          : draft.tools,
+      expose_memory: draft.memory,
+      expose_sessions: draft.sessions,
+      auth: draft.auth,
+    });
+
+  return (
+    <div style={{ ...panelStyle, gap: 16 }}>
+      <h3 style={headingStyle}>Export {id} over MCP</h3>
+
+      <Field
+        name="tools"
+        first
+        label="Tools the caller's turn may use"
+        hint={
+          <>
+            The app never sees these as tools — it sees one tool,{' '}
+            <span style={monoInline}>ask</span>.
+          </>
+        }
+      >
+        <div style={{ maxWidth: '100%', overflowX: 'auto' }}>
+          <Segmented<ToolsMode>
+            value={draft.tools}
+            onChange={(tools) => set({ tools })}
+            options={[
+              { label: 'None — conversation only', value: 'none' },
+              { label: 'Selected', value: 'selected' },
+              { label: `All of ${id}'s tools`, value: 'all' },
+            ]}
+          />
+        </div>
+        {draft.tools === 'selected' ? (
+          <>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Input
+                type="search"
+                size="small"
+                aria-label="Filter tools"
+                placeholder={`Filter ${options.length} tools`}
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                style={{ maxWidth: 280 }}
+              />
+              <span style={{ ...mechStyle, fontVariantNumeric: 'tabular-nums' }}>
+                {draft.selected.length} of {options.length} selected
+              </span>
+            </div>
+            <fieldset
+              data-testid="mcp-export-tool-grid"
+              aria-label={`${id} tools`}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+                gap: '2px 12px',
+                maxHeight: 216,
+                overflowY: 'auto',
+                padding: '4px 0',
+                margin: 0,
+                border: 0,
+                minWidth: 0,
+              }}
+            >
+              {options.length === 0 ? (
+                <span style={{ ...dimStyle, fontSize: 13 }}>{id}'s toolset lists no tools.</span>
+              ) : null}
+              {visible.map((tool) => (
+                <Checkbox
+                  key={tool}
+                  checked={draft.selected.includes(tool)}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setDraft((d) => ({
+                      ...d,
+                      selected: on ? [...d.selected, tool] : d.selected.filter((t) => t !== tool),
+                    }));
+                  }}
+                  style={{ fontFamily: MONO, fontSize: 12, minWidth: 0 }}
+                >
+                  {tool}
+                  {own.has(tool) ? null : (
+                    <span style={{ ...dimStyle, fontFamily: 'inherit', fontSize: 11 }}>
+                      {' '}
+                      not in toolset
+                    </span>
+                  )}
+                </Checkbox>
+              ))}
+            </fieldset>
+          </>
+        ) : null}
+        {draft.tools !== 'none' ? (
+          // True of every exported turn: `createExportApprovalGate`
+          // (apps/ethos/src/commands/mcp-export.ts) turns the approval danger
+          // predicate into a `before_tool_call` REJECTION (M-D10). No per-tool
+          // "needs approval" flag is shown: `Tool.requiresApproval` is
+          // announcement-only (packages/core/src/agent-loop/stages/tool-processing.ts),
+          // and the real predicate flags by name and by approvalMode in
+          // packages/wiring/src/danger-predicate.ts, which the web never receives.
+          <span style={mechStyle}>
+            Calls that would need approval are refused in an exported turn — nobody is there to
+            approve them.
+          </span>
+        ) : null}
+      </Field>
+
+      <Field
+        name="memory"
+        label="Memory"
+        hint={`Only ${id}'s own memory, never another personality's.`}
+      >
+        <Radio.Group
+          value={draft.memory}
+          onChange={(e) => set({ memory: e.target.value })}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          <Radio value="none">
+            <Choice title="None" desc="No memory is loaded and no memory tools are offered." />
+          </Radio>
+          <Radio value="scoped">
+            <Choice
+              title="Read"
+              desc={
+                <>
+                  The turn sees {id}'s memory; <span style={monoInline}>memory_write</span> is
+                  withheld.
+                </>
+              }
+            />
+          </Radio>
+          <Radio value="full">
+            <Choice
+              title="Read and write"
+              desc={`An outside app can change what ${id} remembers.`}
+            />
+          </Radio>
+        </Radio.Group>
+        {draft.memory === 'full' ? (
+          <div
+            role="note"
+            style={{ ...noticeStyle, borderColor: 'var(--warning)', color: 'var(--text-primary)' }}
+          >
+            <span aria-hidden="true" style={{ fontFamily: MONO, color: 'var(--warning)' }}>
+              ⚠
+            </span>
+            <span>
+              Any app with access can change what {id} remembers, and those changes carry into your
+              own chats with it.
+            </span>
+          </div>
+        ) : null}
+      </Field>
+
+      <Field name="sessions" label="Conversations">
+        <Checkbox checked={draft.sessions} onChange={(e) => set({ sessions: e.target.checked })}>
+          <Choice
+            title="Let each app list and reopen its own conversations"
+            desc={
+              <>
+                Adds <span style={monoInline}>list_conversations</span> and{' '}
+                <span style={monoInline}>get_conversation</span>. An app never sees yours or another
+                app's.
+              </>
+            }
+          />
+        </Checkbox>
+      </Field>
+
+      <Field name="auth" label="Who can connect">
+        <Radio.Group
+          value={draft.auth}
+          onChange={(e) => set({ auth: e.target.value })}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          <Radio value="localhost">
+            <Choice
+              title="Apps started on this machine, no key"
+              desc={
+                <>
+                  stdio only. Anything that can run <span style={monoInline}>ethos</span> as you can
+                  connect.
+                </>
+              }
+            />
+          </Radio>
+          <Radio value="bearer">
+            <Choice
+              title="Apps holding a client key"
+              desc="stdio or loopback HTTP. You issue and revoke keys below, per app."
+            />
+          </Radio>
+        </Radio.Group>
+      </Field>
+
+      <div style={noticeStyle} data-testid="mcp-export-summary">
+        <span aria-hidden="true" style={{ ...dimStyle, fontFamily: MONO }}>
+          →
+        </span>
+        <span>{exportSummary(draft, id)}</span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Button type="primary" loading={saving} disabled={needsTool} onClick={submit}>
+          {view.exported ? 'Save changes' : 'Turn on export'}
+        </Button>
+        <Button onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        {needsTool ? (
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            Tick at least one tool, or choose None — conversation only.
+          </span>
+        ) : null}
+      </div>
+      {feedback}
+      {/* "No restart" is `PersonalityExportServer` re-running
+          `refreshPersonalities()` and `resolveScope` before every gate
+          (apps/mcp-server/src/export-server.ts). */}
+      <div style={mechStyle}>
+        Saves <span style={monoInline}>mcp_export.*</span> in{' '}
+        <span style={monoInline}>{view.configPath}</span>. Takes effect on the app's next call — no
+        restart.
+      </div>
+    </div>
   );
 }
 
@@ -320,7 +820,19 @@ function listKeys(keys: string[]): ReactNode {
   ));
 }
 
-function ScopePanel({ view }: { view: McpExportViewWire }) {
+function ScopePanel({
+  view,
+  feedback,
+  turningOff,
+  onEdit,
+  onTurnOff,
+}: {
+  view: McpExportViewWire;
+  feedback: ReactNode;
+  turningOff: boolean;
+  onEdit: () => void;
+  onTurnOff: () => void;
+}) {
   const scope = view.scope;
   return (
     <div style={panelStyle}>
@@ -329,7 +841,33 @@ function ScopePanel({ view }: { view: McpExportViewWire }) {
         <Pill tone="on" icon="✓">
           Exported over MCP
         </Pill>
+        <span style={{ flex: 1 }} />
+        <Button size="small" onClick={onEdit}>
+          Edit settings
+        </Button>
+        {/* Turning off sends `{ enabled: false }` only; the registry's shallow
+            merge keeps every other key, and client keys live in the api-key
+            store, untouched. */}
+        <Popconfirm
+          title={`Turn off export for ${view.personalityId}?`}
+          description={
+            <span style={{ display: 'block', maxWidth: 320 }}>
+              Every connected app is refused on its next call. Its client keys are kept, so turning
+              export back on lets them in again. To lock one app out for good, revoke its key
+              instead.
+            </span>
+          }
+          okText="Turn off"
+          cancelText="Keep it on"
+          okButtonProps={{ danger: true }}
+          onConfirm={onTurnOff}
+        >
+          <Button size="small" danger loading={turningOff}>
+            Turn off export
+          </Button>
+        </Popconfirm>
       </div>
+      {feedback}
 
       <dl
         style={{
@@ -396,8 +934,8 @@ function ScopePanel({ view }: { view: McpExportViewWire }) {
           →
         </span>
         <span>
-          This declaration is read-only here. Edit <Mono>mcp_export.*</Mono> in{' '}
-          <Mono>{view.configPath}</Mono> — the keys are {listKeys(view.declarationKeys)}.
+          Edit settings writes <Mono>mcp_export.*</Mono> in <Mono>{view.configPath}</Mono> — the
+          keys are {listKeys(view.declarationKeys)}.
         </span>
       </div>
     </div>

@@ -39,12 +39,16 @@ const navigateFn = vi.fn();
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigateFn }));
 
 const mcpExportFn = vi.fn();
+const updateFn = vi.fn();
 const createFn = vi.fn();
 const revokeFn = vi.fn();
 
 vi.mock('../../../rpc', () => ({
   rpc: {
-    personalities: { mcpExport: (...args: unknown[]) => mcpExportFn(...args) },
+    personalities: {
+      mcpExport: (...args: unknown[]) => mcpExportFn(...args),
+      update: (...args: unknown[]) => updateFn(...args),
+    },
     apiKeys: {
       create: (...args: unknown[]) => createFn(...args),
       revoke: (...args: unknown[]) => revokeFn(...args),
@@ -61,6 +65,13 @@ function view(over: Partial<McpExportViewWire> = {}): McpExportViewWire {
   return {
     personalityId: 'specialist',
     exported: true,
+    declaration: {
+      enabled: true,
+      expose_tools: ['read_file', 'web_search', 'terminal'],
+      expose_memory: 'none',
+      expose_sessions: false,
+      auth: 'bearer',
+    },
     scope: {
       allowed: ['read_file', 'web_search'],
       dropped: ['terminal'],
@@ -120,6 +131,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   mcpExportFn.mockReset();
+  updateFn.mockReset();
   createFn.mockReset();
   revokeFn.mockReset();
 });
@@ -138,7 +150,12 @@ async function flush(): Promise<void> {
   }
 }
 
-async function mount(data: McpExportViewWire): Promise<void> {
+const TOOLSET = ['read_file', 'web_search', 'write_file', 'memory_read'];
+
+async function mount(
+  data: McpExportViewWire,
+  toolset: string[] | null = TOOLSET,
+): Promise<QueryClient> {
   mcpExportFn.mockResolvedValue(data);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   await act(async () => {
@@ -146,11 +163,12 @@ async function mount(data: McpExportViewWire): Promise<void> {
       createElement(
         QueryClientProvider,
         { client },
-        createElement(McpExportSection, { personalityId: 'specialist' }),
+        createElement(McpExportSection, { personalityId: 'specialist', toolset }),
       ),
     );
   });
   await flush();
+  return client;
 }
 
 function button(label: string, scope: ParentNode = document.body): HTMLButtonElement {
@@ -175,10 +193,13 @@ describe('McpExportSection', () => {
     expect(container.textContent).toContain('~/.ethos/personalities/specialist/config.yaml');
   });
 
-  it('shows the "Not exported" pill and how to export, with no client controls', async () => {
-    await mount(view({ exported: false, scope: null, desktopEntry: null }));
+  it('shows the "Not exported" pill, what exporting does, and Set up export — no client controls', async () => {
+    await mount(view({ exported: false, declaration: null, scope: null, desktopEntry: null }));
     expect(container.querySelector('[data-pill="off"]')?.textContent).toBe('✗Not exported');
-    expect(container.textContent).toContain('mcp_export.enabled: true');
+    expect(container.textContent).toContain(
+      'No external app can consult specialist. Exporting lets an MCP client — Claude Desktop, Cursor — ask it a question and get a full, safeguarded turn back.',
+    );
+    expect(button('Set up export', container)).toBeTruthy();
     expect(container.textContent).not.toContain('Add client');
   });
 
@@ -297,6 +318,219 @@ describe('McpExportSection', () => {
       secretPlaceholder: null,
     };
     expect(desktopEntryWithSecret(keyless, SECRET)).toBe('{"mcpServers":{}}');
+  });
+});
+
+/** The `<label>` wrapping a radio/checkbox/segment whose text is `text`. */
+function labelled(text: string, scope: ParentNode = container): HTMLInputElement {
+  const label = [...scope.querySelectorAll('label')].find((l) =>
+    l.textContent?.trim().startsWith(text),
+  );
+  const input = label?.querySelector('input');
+  if (!input) throw new Error(`no input labelled "${text}"`);
+  return input;
+}
+
+const OFF = (): McpExportViewWire =>
+  view({ exported: false, declaration: null, scope: null, desktopEntry: null });
+
+describe('McpExportSection — setting up and editing the export', () => {
+  it('Set up export opens the form on the fail-closed defaults', async () => {
+    await mount(OFF());
+    await click(button('Set up export', container));
+
+    expect(container.textContent).toContain('Export specialist over MCP');
+    expect(labelled('None — conversation only').checked).toBe(true);
+    expect(
+      labelled('None', container.querySelector('[data-field="memory"]') ?? container).checked,
+    ).toBe(true);
+    expect(labelled('Let each app list and reopen its own conversations').checked).toBe(false);
+    expect(labelled('Apps started on this machine, no key').checked).toBe(true);
+    expect(button('Turn on export', container).disabled).toBe(false);
+    expect(container.textContent).toContain(
+      "Saves mcp_export.* in ~/.ethos/personalities/specialist/config.yaml. Takes effect on the app's next call — no restart.",
+    );
+  });
+
+  it('with export off but a declaration kept, the form starts from that declaration', async () => {
+    await mount(
+      view({
+        exported: false,
+        scope: null,
+        desktopEntry: null,
+        declaration: {
+          enabled: false,
+          expose_tools: 'all',
+          expose_memory: 'scoped',
+          auth: 'bearer',
+        },
+      }),
+    );
+    await click(button('Set up export', container));
+    expect(labelled("All of specialist's tools").checked).toBe(true);
+    expect(
+      labelled('Read', container.querySelector('[data-field="memory"]') ?? container).checked,
+    ).toBe(true);
+    expect(labelled('Apps holding a client key').checked).toBe(true);
+  });
+
+  it('Selected with no tool ticked disables the submit and says why', async () => {
+    await mount(OFF());
+    await click(button('Set up export', container));
+    await click(labelled('Selected'));
+
+    expect(container.textContent).toContain('0 of 4 selected');
+    expect(button('Turn on export', container).disabled).toBe(true);
+    expect(container.textContent).toContain(
+      'Tick at least one tool, or choose None — conversation only.',
+    );
+
+    await click(labelled('read_file'));
+    expect(container.textContent).toContain('1 of 4 selected');
+    expect(button('Turn on export', container).disabled).toBe(false);
+    expect(container.textContent).not.toContain('Tick at least one tool');
+  });
+
+  it('the tool grid filters by name', async () => {
+    await mount(OFF());
+    await click(button('Set up export', container));
+    await click(labelled('Selected'));
+    const filter = container.querySelector<HTMLInputElement>('input[aria-label="Filter tools"]');
+    if (!filter) throw new Error('no filter');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(filter, 'web');
+      filter.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+    const grid = container.querySelector('[data-testid="mcp-export-tool-grid"]');
+    expect(grid?.textContent).toContain('web_search');
+    expect(grid?.textContent).not.toContain('read_file');
+  });
+
+  it('Turn on export sends the whole declaration with enabled: true', async () => {
+    updateFn.mockResolvedValue({ personality: {} });
+    await mount(OFF());
+    await click(button('Set up export', container));
+    await click(labelled('Selected'));
+    await click(labelled('read_file'));
+    await click(labelled('web_search'));
+    await click(labelled('Read', container.querySelector('[data-field="memory"]') ?? container));
+    await click(labelled('Let each app list and reopen its own conversations'));
+    await click(labelled('Apps holding a client key'));
+
+    expect(container.textContent).toContain(
+      "An app with a key will see one tool, ask. Its turn can use 2 of specialist's tools, read its memory and list and reopen its own past conversations, and cannot write memory.",
+    );
+
+    await click(button('Turn on export', container));
+
+    expect(updateFn).toHaveBeenCalledTimes(1);
+    expect(updateFn.mock.calls[0]?.[0]).toEqual({
+      id: 'specialist',
+      mcp_export: {
+        enabled: true,
+        expose_tools: ['read_file', 'web_search'],
+        expose_memory: 'scoped',
+        expose_sessions: true,
+        auth: 'bearer',
+      },
+    });
+  });
+
+  it('Edit settings on an exported personality pre-fills from the declaration, including a dropped tool', async () => {
+    await mount(view());
+    await click(button('Edit settings', container));
+
+    expect(labelled('Selected').checked).toBe(true);
+    expect(labelled('read_file').checked).toBe(true);
+    expect(labelled('web_search').checked).toBe(true);
+    expect(labelled('write_file').checked).toBe(false);
+    // Named by the declaration but outside the toolset: still listed, so a save
+    // never silently changes what the file says.
+    expect(labelled('terminal').checked).toBe(true);
+    expect(container.textContent).toContain('3 of 5 selected');
+    expect(labelled('Apps holding a client key').checked).toBe(true);
+    expect(button('Save changes', container)).toBeTruthy();
+    expect(container.querySelector('[data-pill="on"]')).toBeNull();
+
+    await click(button('Cancel', container));
+    expect(container.querySelector('[data-pill="on"]')).not.toBeNull();
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it('Read and write memory shows the warning', async () => {
+    await mount(OFF());
+    await click(button('Set up export', container));
+    expect(container.textContent).not.toContain('Any app with access can change');
+    await click(labelled('Read and write'));
+    expect(container.textContent).toContain(
+      'Any app with access can change what specialist remembers, and those changes carry into your own chats with it.',
+    );
+  });
+
+  it('Turn off export asks first, then sends only enabled: false', async () => {
+    updateFn.mockResolvedValue({ personality: {} });
+    await mount(view());
+
+    await click(button('Turn off export', container));
+    expect(updateFn).not.toHaveBeenCalled();
+    const popover = document.body.querySelector('.ant-popconfirm');
+    expect(popover?.textContent).toContain(
+      'Every connected app is refused on its next call. Its client keys are kept, so turning export back on lets them in again. To lock one app out for good, revoke its key instead.',
+    );
+    await click(button('Keep it on', popover ?? document.body));
+    expect(updateFn).not.toHaveBeenCalled();
+
+    await click(button('Turn off export', container));
+    const again =
+      document.body.querySelector('.ant-popconfirm:not(.ant-popover-hidden)') ?? document.body;
+    await click(button('Turn off', again));
+    expect(updateFn).toHaveBeenCalledTimes(1);
+    expect(updateFn.mock.calls[0]?.[0]).toEqual({
+      id: 'specialist',
+      mcp_export: { enabled: false },
+    });
+  });
+
+  it('a failed save keeps the form and the choices, and shows the row with Retry', async () => {
+    updateFn.mockRejectedValueOnce(new Error('Could not write config.yaml: permission denied'));
+    await mount(OFF());
+    await click(button('Set up export', container));
+    await click(labelled('Apps holding a client key'));
+    await click(button('Turn on export', container));
+
+    const row = container.querySelector('[data-testid="mcp-export-save-row"]');
+    expect(row?.textContent).toContain('✗ not saved');
+    expect(row?.textContent).toContain('Could not write config.yaml: permission denied');
+    expect(container.textContent).toContain('Export specialist over MCP');
+    expect(labelled('Apps holding a client key').checked).toBe(true);
+
+    updateFn.mockResolvedValueOnce({ personality: {} });
+    await click(button('Retry', container));
+    expect(updateFn).toHaveBeenCalledTimes(2);
+    expect(updateFn.mock.calls[1]?.[0]).toEqual(updateFn.mock.calls[0]?.[0]);
+  });
+
+  it('a successful save invalidates the export, personality and character-sheet queries and shows the saved row', async () => {
+    updateFn.mockResolvedValue({ personality: {} });
+    const client = await mount(OFF());
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    await click(button('Set up export', container));
+    mcpExportFn.mockResolvedValue(view());
+    await click(button('Turn on export', container));
+
+    const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: unknown }).queryKey);
+    expect(keys).toContainEqual(['personalities', 'mcpExport', 'specialist']);
+    expect(keys).toContainEqual(['personalities', 'get', 'specialist']);
+    expect(keys).toContainEqual(['personalities', 'characterSheet', 'specialist']);
+
+    const row = container.querySelector('[data-testid="mcp-export-save-row"]');
+    expect(row?.textContent).toContain('✓ saved');
+    expect(row?.textContent).toContain('mcp_export.enabled: true');
+    expect(row?.textContent).toContain("applies on each app's next call");
+    expect(row?.textContent).toMatch(/\d{2}:\d{2}/);
+    expect(container.textContent).not.toContain('Export specialist over MCP');
   });
 });
 
