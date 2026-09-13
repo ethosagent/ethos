@@ -11,6 +11,7 @@ import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import type { EthosConfig } from '@ethosagent/config';
 import { EvalRunner } from '@ethosagent/eval-harness';
+import { LEARNING_EXCLUDED_KEY_PREFIXES } from '@ethosagent/learning-inbox';
 import {
   GOOD_ALIGNMENT_THRESHOLD,
   type JudgeResult,
@@ -76,6 +77,23 @@ export interface RecentPrompts {
 
 const MAX_PROMPTS = 20;
 
+/**
+ * Sessions Ethos itself drove are not evidence about how Ethos is doing
+ * (plan `trust-before-reach.md` L-D12). Without this the Judge's own replays
+ * — `eval:<pid>:<promptId>` rows `EvalRunner` writes to `sessions.db` — were
+ * read back as user prompts the next night, so the drafts and the case pool
+ * were built from the system's output; Parts 2 and 3 added `mcp:`,
+ * `outbox-review:` and `replay:` turns to the same pile.
+ *
+ * `LEARNING_EXCLUDED_KEY_PREFIXES` is the ONE list (X-D7) and lives in
+ * `extensions/learning-inbox/src/cases.ts`, beside the case capture that is
+ * its other reader. Imported, not copied: `apps/ethos` sits above
+ * `extensions/` in the layer model, so the edge runs the right way.
+ */
+const LEARNING_EVIDENCE_FILTER = {
+  excludeKeyPrefixes: [...LEARNING_EXCLUDED_KEY_PREFIXES],
+};
+
 // Gather recent raw USER-role prompts for the Judge, newest sessions first.
 // Falls back to all-personality sessions (with a note) when none are scoped to
 // this personality yet.
@@ -84,9 +102,9 @@ export async function gatherRecentUserPrompts(
   id: string,
 ): Promise<RecentPrompts> {
   let scopedNote = '';
-  let sessions = await store.listSessions({ personalityId: id });
+  let sessions = await store.listSessions({ personalityId: id, ...LEARNING_EVIDENCE_FILTER });
   if (sessions.length === 0) {
-    sessions = await store.listSessions();
+    sessions = await store.listSessions({ ...LEARNING_EVIDENCE_FILTER });
     scopedNote =
       'evidence drawn from recent sessions across all personalities (none recorded for this personality yet)';
   }
@@ -131,8 +149,8 @@ export async function buildEvidenceDigest(
   const MAX_MSGS = 20;
   const MAX_CHARS = 4000;
 
-  let sessions = await store.listSessions({ personalityId: id });
-  if (sessions.length === 0) sessions = await store.listSessions();
+  let sessions = await store.listSessions({ personalityId: id, ...LEARNING_EVIDENCE_FILTER });
+  if (sessions.length === 0) sessions = await store.listSessions({ ...LEARNING_EVIDENCE_FILTER });
   if (sessions.length === 0) return { digest: '', hasSessions: false };
   sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 

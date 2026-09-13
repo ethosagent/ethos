@@ -1,4 +1,9 @@
 export {
+  collectDryRunPlan,
+  type ToolCallExpectation,
+  toolCalledScorer,
+} from './dry-run-plan';
+export {
   aggregateByCategory,
   type CategoryStat,
   categoryOf,

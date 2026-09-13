@@ -74,15 +74,36 @@ export function parseLivingSoul(body: string): LivingSoul {
   };
 }
 
+/**
+ * A section body as it must appear when a header FOLLOWS it: ending in a line
+ * break. A header only counts when it starts its own line (`recognizeHeader`
+ * is fed whole lines), so a body without a trailing `\n` would glue the next
+ * header onto its last line and the parser would never see that section.
+ *
+ * Adds nothing to a body that is empty or already ends in `\n` — which is
+ * every body `parseLivingSoul` returns from a well-formed file — so parse →
+ * serialize stays byte-identical there.
+ */
+function beforeHeader(body: string): string {
+  return body === '' || body.endsWith('\n') ? body : `${body}\n`;
+}
+
 export function serializeLivingSoul(soul: LivingSoul): string {
   // Flat soul: emit `core` verbatim (no synthetic headers).
   if (soul.expression === '' && soul.learningLog.length === 0) {
     return soul.core;
   }
-  let out = `${CORE_HEADER}\n${soul.core}${EXPRESSION_HEADER}\n${soul.expression}`;
-  if (soul.learningLog.length > 0) {
-    out += `${LEARNING_LOG_HEADER}\n${soul.learningLog.map(serializeLogEntry).join('\n')}\n`;
+  // Every header is preceded by a line break (`beforeHeader`). Without it, an
+  // Expression draft lacking a trailing newline swallowed `# Learning Log`, the
+  // log read back empty, and the next `evolveExpression` reused its revision id
+  // — overwriting the `.expression-history/` snapshot rollback restores from.
+  // Pinned by `__tests__/living-soul-core-invariant.test.ts` ("header joins").
+  let out = `${CORE_HEADER}\n${beforeHeader(soul.core)}${EXPRESSION_HEADER}\n`;
+  if (soul.learningLog.length === 0) {
+    // Nothing follows the Expression: emit it verbatim, final newline or not.
+    return out + soul.expression;
   }
+  out += `${beforeHeader(soul.expression)}${LEARNING_LOG_HEADER}\n${soul.learningLog.map(serializeLogEntry).join('\n')}\n`;
   return out;
 }
 

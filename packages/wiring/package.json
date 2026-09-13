@@ -52,6 +52,7 @@
     "@ethosagent/job-runner": "workspace:*",
     "@ethosagent/job-store": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
+    "@ethosagent/learning-inbox": "workspace:*",
     "@ethosagent/llm-anthropic": "workspace:*",
     "@ethosagent/llm-azure": "workspace:*",
     "@ethosagent/llm-bedrock": "workspace:*",

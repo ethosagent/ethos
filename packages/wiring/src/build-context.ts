@@ -47,7 +47,10 @@ export function buildWiringContext(
   };
 
   const wiringCtx: WiringContext = {
-    storage: new FsStorage(),
+    // L-T3 — a replay arm reads the whole tree through its `OverlayStorage`:
+    // one shadowed path, every write refused (`CreateAgentLoopOptions.replay`).
+    // Every other caller gets the plain filesystem, exactly as before.
+    storage: opts.replay ? opts.replay.storage : new FsStorage(),
     dataDir,
     workingDir,
     log,

@@ -677,10 +677,13 @@ describe('createOutboxReviewer', () => {
 
   // The learning exclusion itself (X-D7) is `LEARNING_EXCLUDED_KEY_PREFIXES` in
   // `extensions/learning-inbox/src/cases.ts`, which carries `'outbox-review:'`.
-  // It is not asserted from here: `@ethosagent/learning-inbox` is not a
-  // dependency of this app, and adding one to reach a constant would be a real
-  // package edge bought for a test. The pin that matters is the literal below —
-  // if it changes, the prefix in that file has to change with it.
+  // It is not asserted from here — this test is about what the reviewer stamps
+  // on the turn, and the list's own membership belongs to the reader that
+  // enforces it: `apps/ethos/src/commands/__tests__/evidence-excluded-sessions.test.ts`
+  // (added with Part 4's L-D12, which is also what put the package edge to
+  // `@ethosagent/learning-inbox` on this app) asserts both ends together. The
+  // pin that matters here is the literal below — if it changes, the prefix in
+  // that file has to change with it.
   it('stamps the excluded session-key prefix on every review turn', async () => {
     const item = reviewableItem(store);
     const { loop, calls } = reviewLoop('PASS');

@@ -331,6 +331,9 @@ importers:
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store
+      '@ethosagent/learning-inbox':
+        specifier: workspace:*
+        version: link:../../extensions/learning-inbox
       '@ethosagent/llm-codex':
         specifier: workspace:*
         version: link:../../extensions/llm-codex
@@ -1287,6 +1290,9 @@ importers:
 
   extensions/learning-inbox:
     dependencies:
+      '@ethosagent/eval-harness':
+        specifier: workspace:*
+        version: link:../eval-harness
       '@ethosagent/safety-groundtruth':
         specifier: workspace:*
         version: link:../../packages/safety/groundtruth
@@ -1294,6 +1300,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
     devDependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
@@ -2684,6 +2693,9 @@ importers:
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store
+      '@ethosagent/learning-inbox':
+        specifier: workspace:*
+        version: link:../../extensions/learning-inbox
       '@ethosagent/llm-anthropic':
         specifier: workspace:*
         version: link:../../extensions/llm-anthropic

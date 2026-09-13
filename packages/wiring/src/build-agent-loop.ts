@@ -47,6 +47,7 @@ import type {
   MemoryContext,
   MemoryProvider,
   RequestDumpStore,
+  SessionStore,
 } from '@ethosagent/types';
 import {
   createClarifyEscalator,
@@ -196,6 +197,29 @@ async function closeMemoryProvider(provider: MemoryProvider): Promise<void> {
 }
 
 /**
+ * L-T3 — the replay arm's memory: reads pass through, `sync` does nothing.
+ *
+ * A replay is a measurement: it must not record what it said. The backends
+ * write through `WiringContext.storage`, which under replay IS the overlay, so
+ * the alternative to a no-op is a `BoundaryError` — a `memory_write` coming
+ * back as a tool failure the model then reasons about, which changes the very
+ * behaviour the arm is measuring. A no-op `sync` is the honest shape: memory is
+ * READ exactly as the live agent reads it, and nothing is written.
+ *
+ * Local to this module rather than exported: it is not a reusable policy, it is
+ * one arm of `CreateAgentLoopOptions.replay`.
+ */
+function readOnlyMemory(base: MemoryProvider): MemoryProvider {
+  return {
+    prefetch: (ctx) => base.prefetch(ctx),
+    read: (key, ctx) => base.read(key, ctx),
+    search: (query, ctx, opts) => base.search(query, ctx, opts),
+    list: (ctx, opts) => base.list(ctx, opts),
+    sync: async () => {},
+  };
+}
+
+/**
  * Final assembly phase: resolve memory, wire vision tools, wire the improvement
  * fork and safety subsystems, construct AgentLoop, register delegation tools,
  * validate tool capabilities, and return the CreateAgentLoopResult.
@@ -248,10 +272,21 @@ export async function buildAgentLoop(
   // Memory provider
   // -------------------------------------------------------------------------
 
-  const session = sessionCompose.sessionStore;
+  // L-T3 — a replay arm runs on the injected in-memory store, so a measured
+  // turn never lands in `sessions.db` (`CreateAgentLoopOptions.replay`). The
+  // three sqlite connections are still OPEN (assembly opens them); nothing in
+  // the loop reads or writes through them under replay.
+  const session: SessionStore = opts.replay ? opts.replay.session : sessionCompose.sessionStore;
   // Model-visible ⟺ logged (plan/phases/model-visible-logged.md, Phase B).
   // `contextLog` shares `sessions.db` with `session` (D5); `contentStore` is
   // the content-addressed blob store the log's Tier A/B events reference.
+  // Both are left OFF a replay arm. Not only hygiene — it is REQUIRED: the log
+  // resolves the turn's message BY ID out of `sessions.db`
+  // (`SQLiteContextLog.resolveAt`), and a replay's messages live in the
+  // injected in-memory store, so the lookup throws and the turn dies. Wanting
+  // it off is the same answer arrived at twice: a measurement has no business
+  // writing sessions.db rows or CAS blobs the operator will later read as
+  // history. `stages/context-emit.ts` is a no-op unless BOTH are set.
   const contextLog = sessionCompose.contextLog;
   const contentStore = new FsContentStore(join(dataDir, 'cas'), new FsStorage());
   const memoryName = config.memory ?? 'markdown';
@@ -269,7 +304,19 @@ export async function buildAgentLoop(
     logger: log,
   });
   disposers.push('memory provider', () => closeMemoryProvider(baseMemory));
-  const memory = new EagerPrefetchPolicy(baseMemory);
+  // L-T3 — under replay the provider is read-only: `sync` becomes a no-op, so
+  // nothing a measurement says is recorded, and the write does not trip the
+  // overlay's refusal (the markdown backend writes through
+  // `WiringContext.storage`, which IS the overlay here).
+  //
+  // Defence in depth, honestly labelled: the only caller of this handle's
+  // `sync` is the `memory_write` tool (`extensions/tools-memory/src/index.ts`),
+  // and under `RunOptions.dryRun` no tool executes at all — so a replay as
+  // L-T4 runs it never reaches here. The wrapper is what keeps that true if a
+  // later turn-end flush, or an arm run without `dryRun`, does. Pinned by
+  // "a memory_write that does run writes nothing and does not fail" in
+  // `__tests__/replay-isolation.test.ts`.
+  const memory = new EagerPrefetchPolicy(opts.replay ? readOnlyMemory(baseMemory) : baseMemory);
   for (const tool of createMemoryTools(memory, session)) tools.register(tool);
   // F04 — the host-side memory surfaces (web/desktop editor, Timeline, restore,
   // approve queue), selected from the SAME `config` + storage the registry
@@ -574,8 +621,12 @@ export async function buildAgentLoop(
   let onSkillAppliedFn: ((skillId: string, personalityId: string) => void) | undefined;
 
   // Used by the fork below AND by the SOUL measurement and the delegation tools
-  // further down, so it is declared outside the gate.
-  const wiringStorage = new FsStorage();
+  // further down, so it is declared outside the gate. `wiringCtx.storage` is
+  // `new FsStorage()` for every ordinary caller (`build-context.ts`); under
+  // replay it is the overlay, so the static-floor estimate below is sized on
+  // the SHADOWED soul rather than the live one — the two arms must differ only
+  // in the candidate.
+  const wiringStorage = wiringCtx.storage;
   // M-D6 (plan/phases/trust-before-reach.md Part 3) — `disablePostTurnLearning`
   // is a security gate, not a toggle. The fork turns what a turn SAID into a
   // skill on disk; in a process whose turns are driven by an external MCP
@@ -922,11 +973,16 @@ export async function buildAgentLoop(
     injectors,
     injectorPluginIds,
     hooks,
-    storage: new FsStorage(),
+    // The handle the loop reads SOUL.md and skills through
+    // (`stages/context-assembly.ts` `deps.storage.read(personality.soulFile)`,
+    // `SkillsInjector`). `wiringCtx.storage` is `new FsStorage()` for every
+    // ordinary caller (`build-context.ts`) and the replay overlay for a replay
+    // arm — which is what makes the shadowed bytes the ones the model sees.
+    storage: wiringCtx.storage,
     attachmentCache: infra.capabilityBackends.attachmentCache,
     dataDir,
-    contentStore,
-    contextLog,
+    // Off under replay — see `session`/`contextLog` above.
+    ...(opts.replay ? {} : { contentStore, contextLog }),
     // D7/T1.5 — the resolver's context, replacing the bare `modelRouting` map.
     // The registry itself is empty here: assembling it from `config` is T1.8,
     // and an empty registry is the D11b legacy path, which is today's behaviour

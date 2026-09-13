@@ -558,6 +558,39 @@ export interface CreateAgentLoopOptions {
    * Pinned by `packages/wiring/src/__tests__/post-turn-learning.test.ts`.
    */
   disablePostTurnLearning?: boolean;
+  /**
+   * Assemble this loop as ONE ARM OF A REPLAY (L-T3, plan/phases/trust-before-reach.md
+   * Part 4, Design section 3). A replay measures a learning candidate against
+   * frozen past cases: one arm runs on what is live, the other on a loop that
+   * sees exactly one path differently. Set by `createReplayLoop`
+   * (`./learning-replay.ts`); no other caller should set it by hand.
+   *
+   * What it changes, all of it isolation:
+   *  - `WiringContext.storage` becomes `storage` — an `OverlayStorage`
+   *    (`@ethosagent/learning-inbox`) that shadows the candidate's one path and
+   *    throws `BoundaryError` on every write. The SAME handle is what the
+   *    `AgentLoop` reads SOUL.md and skills through (`build-agent-loop.ts`), so
+   *    the shadow is what the model actually sees.
+   *  - the loop's `SessionStore` becomes `session` — an in-memory store, so a
+   *    replay turn never lands in `sessions.db`. The isolation precedent is
+   *    `ImprovementFork.run` step 4 (`extensions/skill-evolver/src/improvement-fork.ts`).
+   *  - `disablePostTurnLearning` is forced on in `createAgentLoop`, so the
+   *    `ImprovementFork` is not registered and proactive memory capture does not
+   *    run: a replay must never feed learning. One gate, not a second mechanism.
+   *  - the memory provider is wrapped read-only (`sync` is a no-op), so a
+   *    turn-end memory flush neither writes nor trips the overlay's refusal.
+   *  - `contextLog` and `contentStore` are left off the loop, so the
+   *    model-visible⟺logged path writes no `sessions.db` rows and no CAS blobs
+   *    for a measurement (`stages/context-emit.ts` is a no-op unless both are
+   *    set).
+   *
+   * What it does NOT change, and cannot: assembling ANY loop opens
+   * `sessions.db` (three raw-SQLite connections, `build-infrastructure.ts`) —
+   * `Storage` does not police a raw path. What keeps a replay from PUBLISHING
+   * is `RunOptions.dryRun` (X-D6), which is the runner's job to pass, not this
+   * option's. Pinned by `./__tests__/replay-isolation.test.ts`.
+   */
+  replay?: { storage: Storage; session: SessionStore };
   /** Optional log sink for non-fatal warnings (e.g. Docker missing, skill
    *  skipped). Defaults to a no-op so the package stays headless. */
   logger?: Logger;
@@ -1438,8 +1471,17 @@ export interface CreateAgentLoopResult {
 
 export async function createAgentLoop(
   config: WiringConfig,
-  opts: CreateAgentLoopOptions,
+  rawOpts: CreateAgentLoopOptions,
 ): Promise<CreateAgentLoopResult> {
+  // L-T3 — a replay must never feed learning. That is exactly what
+  // `disablePostTurnLearning` already means (M-D6), so a replay IS that flag
+  // rather than a second gate beside it: the two places that read it
+  // (`ImprovementFork.register`, `MemoryCaptureRunner.registerHook`, both in
+  // `build-agent-loop.ts`) stay untouched, and `__tests__/post-turn-learning.test.ts`
+  // keeps guarding them.
+  const opts: CreateAgentLoopOptions = rawOpts.replay
+    ? { ...rawOpts, disablePostTurnLearning: true }
+    : rawOpts;
   const { wiringCtx, profile, log } = buildWiringContext(config, opts);
   // F06 — ONE stack for the whole assembly. Every stage pushes the release of
   // each resource it opens right after opening it, so a stage that throws

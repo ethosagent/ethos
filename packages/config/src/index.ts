@@ -2787,6 +2787,46 @@ export interface EthosConfig {
     costWarnUsdPerLane?: number;
   };
   /**
+   * Replay-gated learning (plan `trust-before-reach.md` L-D8). Operator
+   * settings, not identity: `PersonalityConfig` is deliberately untouched,
+   * because two deployments of the same personality can reasonably disagree
+   * about how much a nightly replay may spend.
+   *
+   * Every field is optional and absent means "the default". The defaults are
+   * `LEARNING_REPLAY_DEFAULTS`; read the block through `resolveLearningReplay`
+   * rather than spelling `?? 8` at each use, so the four numbers have one
+   * owner. Config keys:
+   *   learningReplay.enabled: true
+   *   learningReplay.maxCases: 8
+   *   learningReplay.maxCostUsd: 0.50
+   *   learningReplay.maxCandidatesPerRun: 5
+   */
+  learningReplay?: {
+    /**
+     * `false` stops replay running at all: the nightly `replay` step is a
+     * no-op and candidates wait for a human. It does NOT re-open the ungated
+     * auto-apply paths replay replaced (L-D1) — a candidate with no verdict is
+     * never auto-promoted.
+     */
+    enabled?: boolean;
+    /**
+     * Cases replayed per candidate, at most 3 of them target cases (L-D6).
+     * The floor of 3 is the verdict rule's, not this key's: below 3 no run can
+     * reach verdict `pass`, so a smaller value is refused here rather than
+     * quietly making every candidate `incomplete`.
+     */
+    maxCases?: number;
+    /**
+     * USD ceiling for one candidate's replay, summed from the replay loops'
+     * `usage` events (L-D7). Exceeding it stops the run with verdict
+     * `incomplete`, so the gate fails closed. Grader calls are not counted in
+     * dollars (`llmJudgeScorer` reports no usage); they are bounded by count.
+     */
+    maxCostUsd?: number;
+    /** Candidates one nightly `replay` step may run (L-D9). */
+    maxCandidatesPerRun?: number;
+  };
+  /**
    * Kanban poll loop: periodically checks the board for tasks assigned to
    * this agent's personalityId with status=ready, and enqueues a stimulus.
    * Also runs board housekeeping (promote, rollup, reclaim).
@@ -4155,6 +4195,14 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (cd.costWarnUsdPerLane !== undefined)
       lines.push(`channelDigest.costWarnUsdPerLane: ${cd.costWarnUsdPerLane}`);
   }
+  if (config.learningReplay) {
+    const lr = config.learningReplay;
+    if (lr.enabled !== undefined) lines.push(`learningReplay.enabled: ${lr.enabled}`);
+    if (lr.maxCases !== undefined) lines.push(`learningReplay.maxCases: ${lr.maxCases}`);
+    if (lr.maxCostUsd !== undefined) lines.push(`learningReplay.maxCostUsd: ${lr.maxCostUsd}`);
+    if (lr.maxCandidatesPerRun !== undefined)
+      lines.push(`learningReplay.maxCandidatesPerRun: ${lr.maxCandidatesPerRun}`);
+  }
   if (config.toolLoop) {
     if (config.toolLoop.maxToolCallsWarnAt !== undefined)
       lines.push(`toolLoop.maxToolCallsWarnAt: ${config.toolLoop.maxToolCallsWarnAt}`);
@@ -5314,6 +5362,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       kv[`channelDigest.${cd[1]}`] = parseConfigScalar(cd[2]);
       continue;
     }
+    // learningReplay.<field>: <value>
+    const lrp = line.match(/^learningReplay\.(\w+):\s*(.+)$/);
+    if (lrp) {
+      kv[`learningReplay.${lrp[1]}`] = parseConfigScalar(lrp[2]);
+      continue;
+    }
     // toolLoop.<field>: <value>  (hard caps and their soft-warn tiers)
     const tl = line.match(
       /^toolLoop\.(maxToolCallsWarnAt|maxIdenticalToolCallsWarnAt|maxToolCallsPerTurn|maxIdenticalToolCalls):\s*(.+)$/,
@@ -6005,6 +6059,7 @@ export function parseConfigYaml(src: string): EthosConfig {
           }
         : undefined,
     channelDigest: buildChannelDigestConfig(kv),
+    learningReplay: buildLearningReplayConfig(kv),
     toolLoop: buildToolLoop(toolLoopKv),
     kanban: buildKanban(kanbanKv),
     grounding: groundingResult.grounding,
@@ -7171,6 +7226,102 @@ function buildChannelDigestConfig(kv: Record<string, string>): EthosConfig['chan
     ...(maxMessagesRaw !== undefined ? { maxMessagesPerLane: maxMessages } : {}),
     ...(maxLanesRaw !== undefined ? { maxLanesPerRun: maxLanes } : {}),
     ...(costWarnRaw !== undefined ? { costWarnUsdPerLane: costWarn } : {}),
+  };
+}
+
+/**
+ * The four numbers replay-gated learning runs on when `config.yaml` says
+ * nothing (plan `trust-before-reach.md` L-D8). One owner: the block on
+ * `EthosConfig` is all-optional, so every reader goes through
+ * `resolveLearningReplay` instead of repeating a `??` per call site, which is
+ * how the three auto-promotion knobs this part replaces drifted apart.
+ */
+export const LEARNING_REPLAY_DEFAULTS = {
+  enabled: true,
+  maxCases: 8,
+  maxCostUsd: 0.5,
+  maxCandidatesPerRun: 5,
+} as const;
+
+export interface LearningReplaySettings {
+  enabled: boolean;
+  maxCases: number;
+  maxCostUsd: number;
+  maxCandidatesPerRun: number;
+}
+
+/** `config.learningReplay` with `LEARNING_REPLAY_DEFAULTS` filled in. */
+export function resolveLearningReplay(
+  config: Pick<EthosConfig, 'learningReplay'>,
+): LearningReplaySettings {
+  const lr = config.learningReplay;
+  return {
+    enabled: lr?.enabled ?? LEARNING_REPLAY_DEFAULTS.enabled,
+    maxCases: lr?.maxCases ?? LEARNING_REPLAY_DEFAULTS.maxCases,
+    maxCostUsd: lr?.maxCostUsd ?? LEARNING_REPLAY_DEFAULTS.maxCostUsd,
+    maxCandidatesPerRun: lr?.maxCandidatesPerRun ?? LEARNING_REPLAY_DEFAULTS.maxCandidatesPerRun,
+  };
+}
+
+/**
+ * `learningReplay.*` (L-D8). Absent block → `undefined`, the same shape every
+ * other optional namespace here has: the defaults live in
+ * `LEARNING_REPLAY_DEFAULTS` and are applied by `resolveLearningReplay`, not
+ * baked into the parse output, so a round trip does not write four lines into
+ * a file the operator never touched.
+ *
+ * Every number is validated as a WHOLE string, for the reason
+ * `buildChannelDigestConfig` and `buildBackupConfig` give: `parseInt` and
+ * `parseFloat` stop at the first character they cannot use, so "8 cases" would
+ * otherwise be accepted as 8 and "0.5usd" as 0.5.
+ */
+function buildLearningReplayConfig(kv: Record<string, string>): EthosConfig['learningReplay'] {
+  const present = Object.keys(kv).some((k) => k.startsWith('learningReplay.'));
+  if (!present) return undefined;
+
+  const maxCasesRaw = kv['learningReplay.maxCases'];
+  const maxCases =
+    maxCasesRaw !== undefined && /^\d+$/.test(maxCasesRaw) ? Number(maxCasesRaw) : Number.NaN;
+  // The floor is the verdict rule's, not this key's: rule (a) needs at least 3
+  // cases in both arms, so a lower cap makes every candidate `incomplete`
+  // forever — a gate that never opens, with nothing on screen saying why.
+  if (maxCasesRaw !== undefined && !(Number.isSafeInteger(maxCases) && maxCases >= 3)) {
+    throw new Error(
+      `Invalid learningReplay.maxCases "${maxCasesRaw}". Expected an integer of 3 or more — ` +
+        'a replay of fewer than 3 cases can never reach a pass verdict.',
+    );
+  }
+
+  const maxCostRaw = kv['learningReplay.maxCostUsd'];
+  const maxCost =
+    maxCostRaw !== undefined && /^\d+(\.\d+)?$/.test(maxCostRaw) ? Number(maxCostRaw) : Number.NaN;
+  if (maxCostRaw !== undefined && !(Number.isFinite(maxCost) && maxCost > 0)) {
+    throw new Error(
+      `Invalid learningReplay.maxCostUsd "${maxCostRaw}". Expected a positive number.`,
+    );
+  }
+
+  const maxCandidatesRaw = kv['learningReplay.maxCandidatesPerRun'];
+  const maxCandidates =
+    maxCandidatesRaw !== undefined && /^\d+$/.test(maxCandidatesRaw)
+      ? Number(maxCandidatesRaw)
+      : Number.NaN;
+  if (
+    maxCandidatesRaw !== undefined &&
+    !(Number.isSafeInteger(maxCandidates) && maxCandidates >= 1)
+  ) {
+    throw new Error(
+      `Invalid learningReplay.maxCandidatesPerRun "${maxCandidatesRaw}". Expected a positive integer.`,
+    );
+  }
+
+  return {
+    ...(kv['learningReplay.enabled'] !== undefined
+      ? { enabled: kv['learningReplay.enabled'] === 'true' }
+      : {}),
+    ...(maxCasesRaw !== undefined ? { maxCases } : {}),
+    ...(maxCostRaw !== undefined ? { maxCostUsd: maxCost } : {}),
+    ...(maxCandidatesRaw !== undefined ? { maxCandidatesPerRun: maxCandidates } : {}),
   };
 }
 

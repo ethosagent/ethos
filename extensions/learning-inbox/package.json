@@ -14,10 +14,12 @@
     "build": "tsup src/index.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/eval-harness": "workspace:*",
     "@ethosagent/safety-groundtruth": "workspace:*",
     "@ethosagent/types": "workspace:*"
   },
   "devDependencies": {
+    "@ethosagent/core": "workspace:*",
     "@ethosagent/storage-fs": "workspace:*"
   }
 }

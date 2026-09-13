@@ -49,6 +49,12 @@ export {
   firstParagraph,
   renderCharacterSheet,
 } from './character-sheet';
+// L-T3 — `packages/wiring/src/learning-replay.ts` builds an Expression
+// candidate's shadow bytes as `serializeLivingSoul({ core, expression:
+// candidate, learningLog: current })`, so Core and the learning log stay
+// byte-identical to what is on disk. The grammar has one owner
+// (`./living-soul`); re-exported here rather than reimplemented there.
+export { parseLivingSoul, serializeLivingSoul } from './living-soul';
 
 import { normalizeWorkdir } from './workdirs';
 

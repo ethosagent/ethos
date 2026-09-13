@@ -103,6 +103,7 @@
     "@ethosagent/idle-watcher": "workspace:*",
     "@ethosagent/inbound-dedup": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
+    "@ethosagent/learning-inbox": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",
     "@ethosagent/logger": "workspace:*",
     "@ethosagent/mcp-server": "workspace:*",
