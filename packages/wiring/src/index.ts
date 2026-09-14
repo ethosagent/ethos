@@ -1,10 +1,12 @@
 import { join } from 'node:path';
+import { deriveProviderKey } from '@ethosagent/config';
 import {
   type AgentLoop,
   ChainedProvider,
   DefaultLLMProviderRegistry,
   type DefaultToolRegistry,
   type SummarizerFn,
+  tagProviderEntry,
 } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
@@ -34,6 +36,7 @@ export type { WiringContext } from './types';
 import { buildAgentLoop } from './build-agent-loop';
 import { buildWiringContext } from './build-context';
 import { buildInfrastructure } from './build-infrastructure';
+import { selectServingProviderEntries } from './chain-hops';
 import { composeAllTools, type OutboxWiring } from './compose-tools';
 import { DisposerStack } from './disposer-stack';
 import { loadPlugins } from './load-plugins';
@@ -88,6 +91,12 @@ export interface RotationKey {
 
 export interface WiringProviderConfig {
   provider: string;
+  /** `providers.<n>.id` — the stable entry key a `modelRegistry` alias names
+   *  (D2/D24). Absent → `deriveProviderKey`'s positional default. */
+  id?: string;
+  /** `providers.<n>.failover` — `false` keeps the entry out of the chain the
+   *  default rung rides (D23b). Absent → `true`. */
+  failover?: boolean;
   apiKey: string;
   model?: string;
   baseUrl?: string;
@@ -239,6 +248,12 @@ export interface WiringConfig {
   toolPayloadLimitChars?: number;
   /** Maps personality ID → model ID for per-personality model overrides. */
   modelRouting?: Record<string, string>;
+  /**
+   * `modelRegistry.*` exactly as `parseConfigYaml` built it (T1.8). Handed to
+   * the loop's resolver in `build-agent-loop.ts`; absent or empty → the D11b
+   * legacy path (`config.model`), unchanged.
+   */
+  modelRegistry?: import('@ethosagent/types').ModelRegistry;
   /**
    * §7 — per-model profile overrides, keyed by `<providerId>/<modelId>`. Merged
    * OVER the catalog `profile` at provider construction (override wins). Threads
@@ -1038,6 +1053,7 @@ async function createLLMFromRegistry(
   log: Logger,
   allowedPlugins?: string[],
   windowProbe?: WindowProbeContext,
+  observability?: EthosObservability,
 ): Promise<LLMProvider> {
   const secrets: import('@ethosagent/types').SecretsResolver = {
     get: async () => null,
@@ -1046,15 +1062,18 @@ async function createLLMFromRegistry(
     list: async () => [],
   };
 
-  const resolveOne = async (cfg: {
-    provider: string;
-    model: string;
-    apiKey: string;
-    baseUrl?: string;
-    apiVersion?: string;
-    region?: string;
-    awsProfile?: string;
-  }): Promise<LLMProvider> => {
+  const resolveOne = async (
+    cfg: {
+      provider: string;
+      model: string;
+      apiKey: string;
+      baseUrl?: string;
+      apiVersion?: string;
+      region?: string;
+      awsProfile?: string;
+    },
+    opts: { chainHop?: boolean } = {},
+  ): Promise<LLMProvider> => {
     // §4.B trust gate: plugin-contributed providers (pluginId/name) require
     // the plugin to be in the personality's allowed-plugins list.
     if (!isProviderAllowed(cfg.provider, allowedPlugins)) {
@@ -1148,7 +1167,23 @@ async function createLLMFromRegistry(
         ...(config.requestTimeoutMs !== undefined
           ? { requestTimeoutMs: config.requestTimeoutMs }
           : {}),
-        ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+        //
+        // A hop in a chain of two or more does NOT retry on its own: the SDKs'
+        // retries honour `retry-after`, so a 429 with `retry-after: 30` held a
+        // turn on the failing hop for ~60s (three attempts) before
+        // `ChainedProvider` could fail over. In a chain the failover + cooldown
+        // IS the retry policy, so hops get `maxRetries: 0`. An explicit
+        // operator `maxRetries` still wins — it is documented as global, one
+        // value for every resolved provider (`EthosConfig.maxRetries` in
+        // packages/config/src/index.ts). A single provider keeps the SDK
+        // default. Pinned by `provider-chain-wiring.test.ts`. A pinned call
+        // cannot fail over (D21), so `ChainedProvider.complete` gives it a
+        // bounded retry of its own entry instead (`PINNED_MAX_ATTEMPTS` in
+        // packages/core/src/providers/chained-provider.ts).
+        ...(() => {
+          const maxRetries = config.maxRetries ?? (opts.chainHop ? 0 : undefined);
+          return maxRetries !== undefined ? { maxRetries } : {};
+        })(),
         // Lane 3(a) — llamacpp-class runtimes (llama.cpp server, Ollama,
         // LM Studio — all GBNF grammar compilers) get the schema sanitizer at
         // the provider boundary (D7). vLLM is local but not llamacpp-class
@@ -1183,21 +1218,47 @@ async function createLLMFromRegistry(
   };
 
   if (config.providers && config.providers.length >= 2) {
+    // Every instance is tagged with its provider ENTRY key (`providers.<n>.id`,
+    // else `deriveProviderKey`'s positional default) so a turn can scope a
+    // model to the entry a registry alias names (`routeTurnModel` in
+    // packages/core/src/agent-loop/model-route.ts).
+    //
+    // D23b — which entries are hops (`failover: false` ones are not, and the
+    // all-opted-out fallback) is `selectServingProviderEntries`, the rule the
+    // character sheet's `resolveActiveLlmName` names the LLM by.
+    const serving = selectServingProviderEntries(config.providers, config.modelRegistry);
+    // Only a real chain disables per-hop SDK retries; one hop left is used
+    // directly below and keeps the single-provider behaviour.
+    const chainHop = serving.length >= 2;
     const instances = await Promise.all(
-      config.providers.map((p) =>
-        resolveOne({
-          provider: p.provider,
-          model: p.model ?? config.model,
-          apiKey: p.apiKey,
-          ...(p.baseUrl !== undefined ? { baseUrl: p.baseUrl } : {}),
-          ...(p.apiVersion !== undefined ? { apiVersion: p.apiVersion } : {}),
-          ...(p.region !== undefined ? { region: p.region } : {}),
-          ...(p.awsProfile !== undefined ? { awsProfile: p.awsProfile } : {}),
-        }),
+      serving.map((hop) =>
+        resolveOne(
+          {
+            provider: hop.entry.provider,
+            model: hop.entry.model ?? config.model,
+            apiKey: hop.entry.apiKey,
+            ...(hop.entry.baseUrl !== undefined ? { baseUrl: hop.entry.baseUrl } : {}),
+            ...(hop.entry.apiVersion !== undefined ? { apiVersion: hop.entry.apiVersion } : {}),
+            ...(hop.entry.region !== undefined ? { region: hop.entry.region } : {}),
+            ...(hop.entry.awsProfile !== undefined ? { awsProfile: hop.entry.awsProfile } : {}),
+          },
+          { chainHop },
+        ).then((instance) => tagProviderEntry(instance, hop.key)),
       ),
     );
-    return new ChainedProvider(instances);
+    // One hop left: use it directly, exactly as the single-provider path does.
+    const [only] = instances;
+    if (instances.length === 1 && only) return only;
+    return new ChainedProvider(
+      instances,
+      observability ? { onFailover: (event) => observability.recordProviderFailover(event) } : {},
+    );
   }
+
+  // The top-level spelling IS chain entry 0 (D2), so it carries that entry's key.
+  const [head] = config.providers ?? [];
+  const topKey =
+    head && head.provider === config.provider ? deriveProviderKey(head, 0) : config.provider;
 
   // Anthropic rotation pool is provider-specific (rotates across API keys for
   // the same model). Handled inline — rotation is an Anthropic concern, not a
@@ -1205,7 +1266,7 @@ async function createLLMFromRegistry(
   if (config.provider === 'anthropic') {
     const rotation = config.rotationKeys ?? [];
     if (rotation.length > 0) {
-      return new AuthRotatingProvider(
+      const pool = new AuthRotatingProvider(
         [
           { id: 'primary', apiKey: config.apiKey, priority: 100 },
           ...rotation.map((k, i) => ({
@@ -1228,10 +1289,11 @@ async function createLLMFromRegistry(
             }
           : undefined,
       );
+      return tagProviderEntry(pool, topKey);
     }
   }
 
-  return resolveOne({
+  const primary = await resolveOne({
     provider: config.provider,
     model: config.model,
     apiKey: config.apiKey,
@@ -1240,6 +1302,7 @@ async function createLLMFromRegistry(
     ...(config.region !== undefined ? { region: config.region } : {}),
     ...(config.awsProfile !== undefined ? { awsProfile: config.awsProfile } : {}),
   });
+  return tagProviderEntry(primary, topKey);
 }
 
 // Part 3 (plan/phases/trust-before-reach.md) — honouring `mcp_export`: the pure
@@ -1631,6 +1694,8 @@ async function assembleAgentLoop(
       dataDir: wiringCtx.dataDir,
       ...(opts.probeWindowRefresh === true ? { forceRefresh: true } : {}),
     },
+    // D17 — every chain failover lands in observability.db as `llm.failover`.
+    opts.observability,
   );
 
   // -------------------------------------------------------------------------
@@ -1761,21 +1826,28 @@ export {
 export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolver';
 // Re-export the resolver so callers don't need a separate import.
 export { resolveModelTarget } from './model-resolver';
-// The on-demand model test (T1.23/T1.24) — one function behind the CLI's
-// `ethos models test` and the `modelRegistry.test` RPC.
+// The on-demand model test (T1.23/T1.24/T2.8) — one probe behind the CLI's
+// `ethos models test` and the `modelRegistry.test` / `testAll` RPCs.
 export {
   findProviderEntry,
   MODEL_TEST_TIMEOUT_MS,
   MODEL_TEST_WINDOW_MS,
+  type ModelTestAnyRequest,
   type ModelTestOutcome,
   type ModelTestProbe,
   ModelTestRateLimiter,
   type ModelTestRequest,
+  type ModelTestTarget,
   modelTestRateLimiter,
+  type ProviderCredentialStatus,
   type ProviderEntryRef,
+  type ProviderTestRequest,
+  providerCredentialStatus,
   providerEntries,
   providerEntryProbes,
+  testModel,
   testModelAlias,
+  testProviderEntry,
 } from './model-test';
 // Shared live provider-credential probe (W2.2 / W2.4) with W1.2 liveness
 // classification — used by the readline fallback, TUI AuthStep, and --from-env.

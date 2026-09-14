@@ -31,6 +31,9 @@ export interface AzureOpenAIProviderConfig {
    *  preview versions change behavior between releases. */
   apiVersion: string;
   maxContextTokens?: number;
+  /** SDK retry count. Wiring sets `0` on a hop in a provider chain so failover
+   *  is not delayed by `retry-after`-honouring retries. Absent → SDK default. */
+  maxRetries?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +86,7 @@ export class AzureOpenAIProvider implements LLMProvider {
       apiKey: config.apiKey,
       endpoint: config.endpoint,
       apiVersion: config.apiVersion,
+      ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
     });
   }
 
@@ -137,6 +141,7 @@ export const azureFactory: LLMProviderFactory = async ({ config: cfg, secrets, l
     apiKey,
     endpoint: cfg.baseUrl as string,
     apiVersion: (cfg.apiVersion as string) ?? AZURE_DEFAULT_API_VERSION,
+    ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
   });
 };
 

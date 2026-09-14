@@ -191,6 +191,8 @@ export interface TurnSetup {
   activeTier: ModelTierName;
   effectiveModel: string;
   modelOverride: string | undefined;
+  /** Which provider entry `modelOverride` belongs to — `routeTurnModel` (`agent-loop/model-route.ts`). */
+  providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
   allowedTools: string[] | undefined;
   allowedPlugins: string[];
   filterOpts: ToolFilterOpts;

@@ -220,6 +220,9 @@ describe('classifyProviderError still reads the new message the old way', () => 
 
     expect(before).toContain('ALL_PROVIDERS_FAILED');
     expect(after).toContain('ALL_PROVIDERS_FAILED');
-    expect(after).toContain('(unknown)');
+    // Both hops, in chain order, recorded as `unknown` — so the reason is what
+    // moved the chain from `a` to `b`, not some other failover-eligible one.
+    expect(after).toContain(`Tried: a (a/${MODEL}): unknown — "`);
+    expect(after).toContain(`"; b-1 (b/${MODEL}): unknown — "`);
   });
 });

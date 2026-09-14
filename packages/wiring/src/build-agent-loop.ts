@@ -69,6 +69,7 @@ import type { LoadPluginsResult } from './load-plugins';
 import { detectLocalRuntime } from './local-models';
 import { approvalLimits, createMemoryBundle, createUndecoratedBackend } from './memory-backend';
 import {
+  lookupLegacyCatalogModelId,
   lookupProfile,
   mergeModelProfile,
   resolveCompactionGate,
@@ -972,11 +973,16 @@ export async function buildAgentLoop(
     dataDir,
     // Off under replay — see `session`/`contextLog` above.
     ...(opts.replay ? {} : { contentStore, contextLog }),
-    // D7/T1.5 — the resolver's context, replacing the bare `modelRouting` map.
-    // The registry itself is empty here: assembling it from `config` is T1.8,
-    // and an empty registry is the D11b legacy path, which is today's behaviour
-    // exactly.
-    modelResolution: { registry: { entries: {}, roles: {} }, routing: config.modelRouting ?? {} },
+    // D7/T1.5/T1.8 — the resolver's context. The registry is the one
+    // `parseConfigYaml` already built from `modelRegistry.*` (never re-parsed
+    // here); absent or empty it is the D11b legacy path, which is today's
+    // behaviour exactly (`resolveTurnModel` in packages/core/src/agent-loop/turn-model.ts).
+    modelResolution: {
+      registry: config.modelRegistry ?? { entries: {}, roles: {} },
+      routing: config.modelRouting ?? {},
+      // D11c — the catalog the legacy family shim reads; core cannot import it.
+      catalogModelId: lookupLegacyCatalogModelId,
+    },
     ...(modelSampling ? { modelSampling } : {}),
     compaction: {
       ...compaction,

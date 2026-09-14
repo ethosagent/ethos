@@ -47,6 +47,9 @@ import type {
 import type { VoiceLaneClientKind } from '@ethosagent/core';
 import {
   deriveBotKey,
+  describeDeviation,
+  describeResolutionFailure,
+  mapLegacyModelDeclaration,
   resolveSttProviderForPersonality,
   resolveTtsProviderForPersonality,
   resolveVoicePreferences,
@@ -92,6 +95,7 @@ import type {
 } from '@ethosagent/voice-session';
 import { BufferedVoiceSpanWriter, EnergyVad, VoiceSession } from '@ethosagent/voice-session';
 import type { WiringConfig } from './index';
+import { lookupLegacyCatalogModelId } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 
 /**
@@ -414,6 +418,10 @@ export async function buildVoiceStack(deps: BuildVoiceStackDeps): Promise<VoiceS
     for (const failure of failures) deps.logger.warn(`voice: ${failure}`);
   }
 
+  // D17 `once` for the D11c `voice.model` notice: one line per personality per
+  // process, not one per lane that personality opens.
+  const legacyVoiceModelAnnounced = new Set<string>();
+
   const spanWriter = new BufferedVoiceSpanWriter({
     sink: deps.observability ? createObservabilitySpanSink(deps.observability) : DISCARD_SINK,
     onError: (err) => deps.logger.warn(`voice: span flush failed: ${String(err)}`),
@@ -484,7 +492,18 @@ export async function buildVoiceStack(deps: BuildVoiceStackDeps): Promise<VoiceS
       // anything else handing us a runner) gets the routing without having to
       // remember it, and a lane whose personality declares no `voice.model`
       // gets the untouched runner.
-      runner: preferences.model ? pinRunnerModel(opts.runner, preferences.model) : opts.runner,
+      runner: preferences.model
+        ? pinRunnerModel(
+            opts.runner,
+            voiceLaneModel({
+              declared: preferences.model,
+              personalityId: opts.personality?.id ?? '(no personality)',
+              config: deps.config,
+              logger: deps.logger,
+              announced: legacyVoiceModelAnnounced,
+            }),
+          )
+        : opts.runner,
       // Batch-only providers get the utterance-buffered fallback inside
       // VoiceSession — WAV bytes in memory, no temp file, nothing to inject.
       stt: stt.provider,
@@ -639,6 +658,51 @@ function providerConfigFrom(
     ...(cfg.timeout !== undefined ? { timeout: cfg.timeout } : {}),
     ...(cfg.maxTextLength !== undefined ? { maxTextLength: cfg.maxTextLength } : {}),
   };
+}
+
+/**
+ * D11c for `voice.model` — the value the lane pins, after the same legacy shim a
+ * personality's `model` goes through at turn setup (`mapLegacyModelDeclaration`
+ * in `packages/core/src/model-resolution.ts`).
+ *
+ * The pin rides the turn as a run override (rung 0), where the resolver does
+ * NOT shim — a `/model` pin was never ignored pre-registry. So the lane maps
+ * here, before pinning, and pins the alias or role the shim chose. A mapping is
+ * recorded in the log and never spoken (D17, "nothing is ever spoken on a voice
+ * lane"). A refusal is logged and the raw value is pinned unchanged, so the turn
+ * refuses exactly as it did before rather than running on some other model
+ * (D6). No registry → the D11b legacy path, and the raw value is pinned as today.
+ */
+function voiceLaneModel(input: {
+  declared: string;
+  personalityId: string;
+  config: WiringConfig;
+  logger: Logger;
+  announced: Set<string>;
+}): string {
+  const registry = input.config.modelRegistry;
+  if (!registry || Object.keys(registry.entries).length === 0) return input.declared;
+  const legacy = mapLegacyModelDeclaration({
+    personalityId: input.personalityId,
+    declared: input.declared,
+    key: 'voice.model',
+    ctx: { registry, routing: {}, catalogModelId: lookupLegacyCatalogModelId },
+  });
+  if (legacy.kind === 'not-legacy') return input.declared;
+  const onceKey = `${input.personalityId}\x00${input.declared}`;
+  const firstTime = !input.announced.has(onceKey);
+  input.announced.add(onceKey);
+  if (legacy.kind === 'refused') {
+    if (firstTime) {
+      input.logger.warn(`voice: ${describeResolutionFailure(input.personalityId, legacy.failure)}`);
+    }
+    return input.declared;
+  }
+  if (firstTime) {
+    const { line, fix } = describeDeviation(legacy.deviation);
+    input.logger.info(`voice: ${input.personalityId}: ${line}${fix ? ` ${fix}` : ''}`);
+  }
+  return legacy.declaration.kind === 'alias' ? legacy.declaration.alias : legacy.declaration.role;
 }
 
 /**

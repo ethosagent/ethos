@@ -591,6 +591,44 @@ export function lookupContextWindow(providerId: string, modelId: string): number
 }
 
 /**
+ * The catalog's `label` and `contextWindow` for a `(providerId, modelId)` pair,
+ * or `undefined` on a miss — the `CatalogModelLookup` `@ethosagent/config`'s
+ * chain-model importer (`planChainModelImport`) takes, so the importer prefills
+ * a registry entry from the same catalog every other surface reads. The catalog
+ * carries no cost, so none is returned.
+ */
+export function lookupCatalogModel(
+  providerId: string,
+  modelId: string,
+): { label: string; contextWindow: number } | undefined {
+  const entry = MODEL_CATALOG.find((m) => m.providerId === providerId && m.modelId === modelId);
+  return entry ? { label: entry.label, contextWindow: entry.contextWindow } : undefined;
+}
+
+/**
+ * D11c — the catalog `modelId` a legacy personality declaration names, on ANY
+ * provider, or `undefined`. Injected into `ModelResolutionContext.catalogModelId`
+ * by `build-agent-loop.ts` and `tier-diagnostics.ts`, and read only by the
+ * family rows of `mapLegacyModelDeclaration` (`packages/core/src/model-resolution.ts`).
+ *
+ * An exact id wins. Otherwise an UNDATED vendor alias names its dated snapshot —
+ * `claude-sonnet-4-5` is how Anthropic addresses `claude-sonnet-4-5-20250929`,
+ * which is the only form this catalog carries — so an id followed by exactly
+ * `-YYYYMMDD` counts. Nothing looser: a near-miss is a typo, and the shim must
+ * not guess about one. Bundled catalog only, the same one `lookupContextWindow`
+ * reads. Deleted with the shim at `0.10.0`.
+ */
+export function lookupLegacyCatalogModelId(declared: string): string | undefined {
+  const exact = MODEL_CATALOG.find((m) => m.modelId === declared);
+  if (exact) return exact.modelId;
+  const dated = MODEL_CATALOG.find(
+    (m) =>
+      m.modelId.startsWith(`${declared}-`) && /^\d{8}$/.test(m.modelId.slice(declared.length + 1)),
+  );
+  return dated?.modelId;
+}
+
+/**
  * Look up the per-model `profile` for a `(providerId, modelId)` pair. Same
  * lookup shape as {@link lookupContextWindow} (DRY). Returns `undefined` on a
  * miss OR when the entry carries no profile — callers then apply no defaults.

@@ -55,6 +55,9 @@ export function createConfigOnlyFactory(manifest: ConfigOnlyProviderManifest): L
       ...(contextWindow !== undefined ? { maxContextTokens: contextWindow } : {}),
       ...(toolCallFormat !== undefined ? { toolCallFormat } : {}),
       ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+      // Retry count threaded by wiring's resolveOne (`0` on a chain hop, so
+      // failover is not delayed by SDK retries). Absent → SDK default.
+      ...(typeof ctx.config.maxRetries === 'number' ? { maxRetries: ctx.config.maxRetries } : {}),
     });
 
     // Attach capabilities from manifest

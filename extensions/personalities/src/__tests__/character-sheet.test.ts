@@ -1021,7 +1021,7 @@ describe('renderCharacterSheet — ## Routing effective model', () => {
     expect(routingLine(sheet)).toBe('- Model: gpt-5.6-terra (deployment default)');
   });
 
-  it('marks a declaration the active LLM ignores as INERT, with the reason', () => {
+  it('marks a declaration a turn does not use as not used, with the reason', () => {
     const sheet = renderCharacterSheet(
       { ...fullConfig, model: { default: 'claude-sonnet-4-6' } },
       soulMd,
@@ -1033,7 +1033,7 @@ describe('renderCharacterSheet — ## Routing effective model', () => {
       mismatched,
     );
     expect(declaredLine(sheet)).toBe(
-      '- Declared model: default=claude-sonnet-4-6 — INERT: declares provider "anthropic", active LLM is "codex"',
+      '- Declared model: default=claude-sonnet-4-6 — not used: declares provider "anthropic", active LLM is "codex"',
     );
   });
 
@@ -1067,7 +1067,7 @@ describe('renderCharacterSheet — ## Routing effective model', () => {
       },
     );
     expect(routingLine(sheet)).toBe(
-      "- Model: claude-sonnet-4-6 (this personality's model tier map)",
+      "- Model: claude-sonnet-4-6 (declared in this personality's config.yaml)",
     );
     expect(declaredLine(sheet)).toBeNull();
     expect(providerLine(sheet)).toBe('- Provider: anthropic');
@@ -1112,7 +1112,91 @@ describe('renderCharacterSheet — ## Routing effective model', () => {
     expect(routingLine(sheet)).toBe(
       '- Model: claude-opus-4-7 (modelRouting override in config.yaml)',
     );
-    expect(declaredLine(sheet)).toContain('INERT: `modelRouting.engineer`');
+    expect(declaredLine(sheet)).toContain('not used: `modelRouting.engineer`');
+  });
+
+  const withRouting = (config: PersonalityConfig, routing: CharacterSheetRouting) =>
+    renderCharacterSheet(
+      config,
+      soulMd,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      routing,
+    );
+
+  it('names the resolved vendor id and the alias a declared alias reached', () => {
+    const sheet = withRouting(
+      { ...fullConfig, model: 'opus' },
+      {
+        activeProvider: 'anthropic',
+        effectiveModel: 'claude-opus-5',
+        source: 'personality',
+        alias: 'opus',
+      },
+    );
+    expect(routingLine(sheet)).toBe(
+      "- Model: claude-opus-5 (alias `opus`; declared in this personality's config.yaml)",
+    );
+    expect(declaredLine(sheet)).toBeNull();
+  });
+
+  it('names the role a bound role declaration went through', () => {
+    const sheet = withRouting(
+      { ...fullConfig, model: 'deep' },
+      {
+        activeProvider: 'anthropic',
+        effectiveModel: 'claude-opus-5',
+        source: 'personality',
+        alias: 'opus',
+        role: { name: 'deep', bound: true },
+      },
+    );
+    expect(routingLine(sheet)).toBe(
+      "- Model: claude-opus-5 (alias `opus`, via role `deep`; declared in this personality's config.yaml)",
+    );
+  });
+
+  it('says what an unbound role falls through to, and that a routing override outranks the declaration', () => {
+    const sheet = withRouting(
+      { ...fullConfig, id: 'pr-reviewer', model: 'sonnet' },
+      {
+        activeProvider: 'anthropic',
+        effectiveModel: 'claude-sonnet-5',
+        source: 'routing-override',
+        alias: 'sonnet',
+        role: { name: 'deep', bound: false },
+        inert: {
+          declared: 'sonnet',
+          reason: '`modelRouting.pr-reviewer` in config.yaml takes priority',
+        },
+      },
+    );
+    expect(routingLine(sheet)).toBe(
+      '- Model: claude-sonnet-5 (via role `deep` (unbound, using default `sonnet`); modelRouting override in config.yaml)',
+    );
+    expect(declaredLine(sheet)).toBe(
+      '- Declared model: sonnet — not used: `modelRouting.pr-reviewer` in config.yaml takes priority',
+    );
+  });
+
+  it('shows the refusal a turn would show when nothing resolves', () => {
+    const sheet = withRouting(
+      { ...fullConfig, model: 'opsu' },
+      {
+        activeProvider: 'anthropic',
+        source: 'personality',
+        refusal: 'Personality "engineer" declares the model "opsu", which does not resolve.',
+      },
+    );
+    expect(routingLine(sheet)).toBe(
+      "- Model: does not resolve — turns are refused (declared in this personality's config.yaml)",
+    );
+    expect(sheet).toContain(
+      '- Refusal: Personality "engineer" declares the model "opsu", which does not resolve.',
+    );
   });
 
   it('degrades to the declared value when no routing is injected', () => {

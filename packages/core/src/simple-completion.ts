@@ -1,10 +1,18 @@
-import type { LLMProvider, SimpleCompletion, SimpleCompletionOptions } from '@ethosagent/types';
+import type {
+  CompletionOptions,
+  LLMProvider,
+  SimpleCompletion,
+  SimpleCompletionOptions,
+} from '@ethosagent/types';
 
 export class SimpleCompletionImpl implements SimpleCompletion {
   constructor(
     private readonly provider: LLMProvider,
     private readonly defaultModel: string,
     private readonly onUsage: (tokens: { input: number; output: number }) => void,
+    /** The turn's provider-entry scope (`routeTurnModel`), so a tool's own LLM
+     *  call obeys the same pin the turn does. Absent → an unscoped override. */
+    private readonly providerEntry?: CompletionOptions['providerEntry'],
   ) {}
 
   async complete(prompt: string, options?: SimpleCompletionOptions): Promise<string> {
@@ -17,6 +25,7 @@ export class SimpleCompletionImpl implements SimpleCompletion {
       system: options?.systemPrompt,
       maxTokens: options?.maxTokens ?? 1024,
       modelOverride: model !== this.provider.model ? model : undefined,
+      ...(this.providerEntry ? { providerEntry: this.providerEntry } : {}),
     });
 
     for await (const chunk of stream) {

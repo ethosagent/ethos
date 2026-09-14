@@ -12,6 +12,7 @@ import {
   attemptWithFallbacks,
   describeDeviation,
   ModelFallbacksExhaustedError,
+  mapLegacyModelDeclaration,
   parseModelDeclaration,
   resolveModel,
 } from '../model-resolution';
@@ -543,7 +544,18 @@ describe('parseModelDeclaration (D25)', () => {
       // a single slot's value) calls the same input invalid. Both are right, and
       // neither is a grammar disagreement.
       if (typeof row.value !== 'string' || row.value.trim().length === 0) continue;
-      expect('ok' in resolved).toBe(parsed.kind === 'invalid');
+      // The ONE sanctioned exception: a raw vendor id the D11c shim maps (here
+      // `claude-sonnet-5`, the modelId of exactly one entry) resolves although
+      // the grammar refuses it. Named through the shim itself, so any other
+      // disagreement still fails. Deleted with the shim at 0.10.0.
+      const shimmed =
+        mapLegacyModelDeclaration({
+          personalityId: 'engineer',
+          declared: row.value,
+          key: 'model',
+          ctx: { registry, routing: {} },
+        }).kind === 'mapped';
+      expect('ok' in resolved).toBe(parsed.kind === 'invalid' && !shimmed);
     }
   });
 });

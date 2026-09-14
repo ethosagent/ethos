@@ -305,6 +305,16 @@ export interface ModelResolutionContext {
     coordinatorModel?: string;
     personalityModels?: Record<string, string>;
   };
+  /**
+   * D11c — "is this vendor id in the model catalog, and under which catalog
+   * `modelId`". The catalog lives in `packages/wiring` (`lookupLegacyCatalogModelId`
+   * in `packages/wiring/src/model-catalog.ts`), which core may not import, so
+   * wiring injects the lookup here. Read only by `mapLegacyModelDeclaration` in
+   * `packages/core/src/model-resolution.ts`, for the family rows of the D11c
+   * table. Absent → those rows never fire and an unconfigured vendor id refuses.
+   * A shim seam, deleted with the shim at `0.10.0`.
+   */
+  catalogModelId?: (declared: string) => string | undefined;
 }
 
 /**

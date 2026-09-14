@@ -16,6 +16,7 @@ import type {
 } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { handleChunk } from '../chunk-handler';
+import { routeTurnModel } from '../model-route';
 import { isContextOverflowError } from '../overflow';
 import type { WatcherTap } from '../turn-context';
 import { resolveTurnModel } from '../turn-model';
@@ -92,6 +93,7 @@ export interface StreamStepContext {
   activeTier: ModelTierName;
   effectiveModel: string;
   modelOverride: string | undefined;
+  providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
   allowedPlugins: string[];
   allowedTools: string[] | undefined;
   filterOpts: ToolFilterOpts;
@@ -216,6 +218,7 @@ export async function* streamStep(
   // requested ROLE is what changes; which model answers it is the resolver's
   // business.
   let iterModelOverride = ctx.modelOverride;
+  let iterProviderEntry = ctx.providerEntry;
   if (pendingTierEscalation.value) {
     const tier = pendingTierEscalation.value as ModelTierName;
     pendingTierEscalation.value = undefined;
@@ -230,8 +233,14 @@ export async function* streamStep(
     // already been billed for its first iteration, so an unresolvable
     // escalation keeps the model the turn started on. The refusal belongs at
     // turn setup, where nothing has run yet (D6).
-    if (escalated.ok) {
-      iterModelOverride = escalated.model !== deps.llm.model ? escalated.model : undefined;
+    // The same entry scoping turn setup applies (`routeTurnModel`); an
+    // escalation to an entry this loop cannot reach keeps the turn's model.
+    const route = escalated.ok
+      ? routeTurnModel(deps.llm, escalated, deps.modelResolution)
+      : undefined;
+    if (route?.ok) {
+      iterModelOverride = route.modelOverride;
+      iterProviderEntry = route.providerEntry;
       deps.observability?.recordTierEscalation({
         traceId: ctx.traceId ?? '',
         from: ctx.activeTier,
@@ -274,6 +283,7 @@ export async function* streamStep(
       // client-id convention ignore it.
       requestId,
       ...(iterModelOverride ? { modelOverride: iterModelOverride } : {}),
+      ...(iterProviderEntry ? { providerEntry: iterProviderEntry } : {}),
       ...(ctx.cacheBreakpoints ? { cacheBreakpoints: ctx.cacheBreakpoints } : {}),
       ...(ctx.opts.temperature !== undefined ? { temperature: ctx.opts.temperature } : {}),
       ...(ctx.opts.topP !== undefined ? { topP: ctx.opts.topP } : {}),

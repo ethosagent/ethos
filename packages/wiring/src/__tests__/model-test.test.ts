@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 import {
   MODEL_TEST_TIMEOUT_MS,
   ModelTestRateLimiter,
+  providerCredentialStatus,
   providerEntries,
   providerEntryProbes,
+  testModel,
   testModelAlias,
 } from '../model-test';
 import type { ProbeProviderConfig, ProbeProviderOutcome } from '../probe-provider';
@@ -155,6 +157,80 @@ describe('provider entry selection', () => {
   it('an empty registry yields nothing to sweep', () => {
     expect(providerEntryProbes(undefined)).toEqual([]);
     expect(providerEntryProbes({ entries: {}, roles: {} })).toEqual([]);
+  });
+});
+
+describe('testModel — an unsaved (providerKey, modelId)', () => {
+  it('probes through the same entry resolution as an alias, and carries no alias', async () => {
+    const p = spyProbe();
+    const out = await testModel({
+      target: { providerKey: 'work', modelId: 'claude-haiku-5' },
+      config: config(),
+      secrets,
+      caller: 'cookie',
+      limiter: new ModelTestRateLimiter(),
+      probe: p.probe,
+    });
+    expect(out).toEqual({
+      state: 'ok',
+      providerKey: 'work',
+      provider: 'anthropic',
+      modelId: 'claude-haiku-5',
+      latencyMs: 7,
+    });
+    // The same credential read the alias path makes.
+    expect(p.calls[0]).toEqual({
+      provider: 'anthropic',
+      model: 'claude-haiku-5',
+      apiKey: 'sk-from-vault',
+      timeoutMs: MODEL_TEST_TIMEOUT_MS,
+    });
+  });
+
+  it('rate-limits on providerKey/modelId, separately from any alias', async () => {
+    const limiter = new ModelTestRateLimiter(10_000, () => 0);
+    const p = spyProbe();
+    const base = { config: config(), secrets, caller: 'cookie', limiter, probe: p.probe };
+    const target = { providerKey: 'work', modelId: 'claude-opus-5' };
+    expect((await testModel({ ...base, target })).state).toBe('ok');
+    const again = await testModel({ ...base, target });
+    expect(again).toEqual({ state: 'rate_limited', ...target, retryAfterSeconds: 10 });
+    // `opus` resolves to the very same pair, but a saved alias is its own bucket.
+    expect((await testModel({ ...base, target: { alias: 'opus' } })).state).toBe('ok');
+    expect(p.calls).toHaveLength(2);
+  });
+
+  it('refuses an unknown provider entry without spending a slot', async () => {
+    const p = spyProbe();
+    const out = await testModel({
+      target: { providerKey: 'nowhere', modelId: 'x' },
+      config: config(),
+      secrets,
+      caller: 'cookie',
+      limiter: new ModelTestRateLimiter(),
+      probe: p.probe,
+    });
+    expect(out.state).toBe('unconfigured');
+    expect(out.state === 'unconfigured' && out.reason).toContain('work, local');
+    expect(p.calls).toEqual([]);
+  });
+});
+
+describe('providerCredentialStatus', () => {
+  it('reports set / missing / not_needed without returning the value', async () => {
+    const ref = (path: string) => ['${', 'secrets:', path, '}'].join('');
+    const work = { provider: 'anthropic', id: 'work', apiKey: ref('providers/0/apiKey') };
+    expect(await providerCredentialStatus(work, secrets)).toBe('set');
+    expect(await providerCredentialStatus({ ...work, apiKey: ref('gone') }, secrets)).toBe(
+      'missing',
+    );
+    expect(await providerCredentialStatus({ provider: 'anthropic' }, secrets)).toBe('missing');
+    expect(await providerCredentialStatus({ provider: 'ollama' }, secrets)).toBe('not_needed');
+    expect(await providerCredentialStatus({ provider: 'bedrock' }, secrets)).toBe('not_needed');
+    // Uncatalogued and keyless: the common case is a local endpoint.
+    expect(await providerCredentialStatus({ provider: 'openai-compat' }, secrets)).toBe(
+      'not_needed',
+    );
   });
 });
 

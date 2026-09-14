@@ -85,6 +85,7 @@ export interface ToolProcessingContext {
   traceId: string | undefined;
   obsConfig: PersonalityObservabilityConfig | undefined;
   effectiveModel: string;
+  providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
   allowedTools: string[] | undefined;
   allowedPlugins: string[];
   filterOpts: ToolFilterOpts;
@@ -208,10 +209,15 @@ export async function* processTools(
     ...(scopedStorage ? { storage: scopedStorage } : {}),
     ...(ctx.personality.safety?.network ? { networkPolicy: ctx.personality.safety.network } : {}),
     ...ctx.contextStore.asContextMethods(),
-    llm: new SimpleCompletionImpl(deps.llm, ctx.effectiveModel, ({ input, output }) => {
-      ctx.usageSink.llmInputTokens += input;
-      ctx.usageSink.llmOutputTokens += output;
-    }),
+    llm: new SimpleCompletionImpl(
+      deps.llm,
+      ctx.effectiveModel,
+      ({ input, output }) => {
+        ctx.usageSink.llmInputTokens += input;
+        ctx.usageSink.llmOutputTokens += output;
+      },
+      ctx.providerEntry,
+    ),
   };
 
   // tools-as-code-api Lane B — attach the per-turn bridge to this batch's

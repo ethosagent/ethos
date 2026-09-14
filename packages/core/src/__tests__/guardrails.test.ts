@@ -137,7 +137,12 @@ describe('Orchestrator guardrails', () => {
     // its deps-getter line. All the resolution, the refusal and the deviation
     // attachment live in agent-loop/turn-model.ts and
     // agent-loop/stages/turn-setup.ts.
-    expect(lineCount).toBeLessThanOrEqual(1001);
+    // Bumped 1001 -> 1004 (model-registry D21/D23b, chain override scoping):
+    // `providerEntry` — which provider entry a turn's `modelOverride` belongs
+    // to — is destructured from the setup and passed to the stream-step and
+    // tool-processing contexts. 3 pass-through lines; the routing lives in
+    // agent-loop/model-route.ts.
+    expect(lineCount).toBeLessThanOrEqual(1004);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -238,7 +243,12 @@ describe('Orchestrator guardrails', () => {
       // lines, no new values computed) plus the five-line comment recording why
       // absence was not neutral. No logic — the branch's own handling of
       // `result`/`llmContent` is untouched.
-      if (lineCount > 848) {
+      // Bumped 848 -> 853 (model-registry D21, chain override scoping):
+      // tool-processing.ts's context gains the turn's `providerEntry` (1 line)
+      // and hands it to the tool's `SimpleCompletionImpl`, a 4th constructor
+      // argument that the formatter spreads over five lines. No logic — the
+      // scoping lives in providers/chained-provider.ts.
+      if (lineCount > 853) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

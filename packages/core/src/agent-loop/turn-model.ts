@@ -24,7 +24,11 @@ import type {
   ModelRoleName,
   PersonalityConfig,
 } from '@ethosagent/types';
-import { parseModelDeclaration, resolveModel } from '../model-resolution';
+import {
+  mapLegacyModelDeclaration,
+  parseModelDeclaration,
+  resolveModel,
+} from '../model-resolution';
 
 /** What a turn resolved to, flattened to what `run_start` and the LLM call need. */
 export interface TurnModel {
@@ -34,6 +38,12 @@ export interface TurnModel {
   /** The vendor id to send on the wire. */
   model: string;
   source: ModelResolutionSource;
+  /**
+   * `ResolvedModel.pinned` (D21): someone named this model, so it never rides
+   * the provider chain. On the legacy path a `/model` pin or a routing
+   * override is pinned and the deployment default is not.
+   */
+  pinned: boolean;
   deviation?: ModelDeviation;
 }
 
@@ -83,12 +93,32 @@ export function resolveTurnModel(input: {
 }): TurnModelResult {
   if (Object.keys(input.ctx.registry.entries).length === 0) {
     const pin = input.runOverride?.trim();
-    if (pin) return { ok: true, provider: input.llmName, model: pin, source: 'run-override' };
+    if (pin) {
+      return {
+        ok: true,
+        provider: input.llmName,
+        model: pin,
+        source: 'run-override',
+        pinned: true,
+      };
+    }
     const routed = lookup(input.ctx.routing, input.personality.id);
     if (routed) {
-      return { ok: true, provider: input.llmName, model: routed, source: 'routing-override' };
+      return {
+        ok: true,
+        provider: input.llmName,
+        model: routed,
+        source: 'routing-override',
+        pinned: true,
+      };
     }
-    return { ok: true, provider: input.llmName, model: input.llmModel, source: 'default' };
+    return {
+      ok: true,
+      provider: input.llmName,
+      model: input.llmModel,
+      source: 'default',
+      pinned: false,
+    };
   }
 
   const resolved = resolveModel({
@@ -105,6 +135,7 @@ export function resolveTurnModel(input: {
     provider: resolved.providerKey,
     model: resolved.modelId,
     source: resolved.source,
+    pinned: resolved.pinned,
     ...(resolved.deviation ? { deviation: resolved.deviation } : {}),
   };
 }
@@ -137,8 +168,21 @@ function personalityForRole(
   const parsed = parseModelDeclaration(personality.model, {
     aliases: Object.keys(ctx.registry.entries),
   });
-  if (parsed.kind !== 'role') return personality;
-  return { id: personality.id };
+  if (parsed.kind === 'role') return { id: personality.id };
+  // A legacy vendor id the D11c shim reads as a ROLE is a role declaration for
+  // this purpose too — otherwise `model: claude-sonnet-4-6` would pin every
+  // escalation to the `default` role. One mapped to an ALIAS stays a pin.
+  if (parsed.kind === 'invalid') {
+    const legacy = mapLegacyModelDeclaration({
+      personalityId: personality.id,
+      declared: personality.model,
+      key: 'model',
+      ctx,
+    });
+    if (legacy.kind === 'mapped' && legacy.declaration.kind === 'role')
+      return { id: personality.id };
+  }
+  return personality;
 }
 
 /**

@@ -38,6 +38,32 @@ function fakeLogger(): Logger {
   return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
 }
 
+describe('AnthropicProvider — client retry count', () => {
+  const retriesOf = (provider: unknown): number =>
+    (provider as { client: { maxRetries: number } }).client.maxRetries;
+
+  it('with no maxRetries the SDK default stands', () => {
+    const provider = new AnthropicProvider({ apiKey: 'k', model: 'claude-sonnet-4-20250514' });
+    expect(retriesOf(provider)).toBe(2);
+  });
+
+  it('a configured maxRetries reaches the client, directly and through the factory', async () => {
+    const direct = new AnthropicProvider({
+      apiKey: 'k',
+      model: 'claude-sonnet-4-20250514',
+      maxRetries: 0,
+    });
+    expect(retriesOf(direct)).toBe(0);
+
+    const viaFactory = await anthropicFactory({
+      config: { apiKey: 'k', model: 'claude-sonnet-4-20250514', maxRetries: 0 },
+      secrets: new InMemorySecretsResolver(),
+      logger: fakeLogger(),
+    });
+    expect(retriesOf(viaFactory)).toBe(0);
+  });
+});
+
 describe('AnthropicProvider — client request deadline', () => {
   it('with no requestTimeoutMs, the client carries the 20-minute Ethos default, not the SDK 10-minute one', async () => {
     const provider = new AnthropicProvider({ apiKey: 'k', model: 'claude-sonnet-4-20250514' });

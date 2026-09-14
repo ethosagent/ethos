@@ -43,6 +43,10 @@ export interface AnthropicProviderConfig {
    *  overriding the SDK's own 10-minute default. `0` is honoured as "no
    *  deadline". */
   requestTimeoutMs?: number;
+  /** SDK retry count, the same operator key `maxRetries` `OpenAICompatProvider`
+   *  honours. Wiring sets `0` on a hop in a provider chain so failover is not
+   *  delayed by `retry-after`-honouring retries. Absent → the SDK's own default. */
+  maxRetries?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +220,7 @@ export class AnthropicProvider implements LLMProvider {
     this.client = new Anthropic({
       apiKey: config.apiKey,
       timeout: config.requestTimeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+      ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
       ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
       ...(config.fetchImpl ? { fetch: config.fetchImpl } : {}),
     });
@@ -448,6 +453,8 @@ export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secret
     // shape `openaiCompatFactory` uses. Absent → the provider's 20-minute
     // default.
     ...(typeof cfg.requestTimeoutMs === 'number' ? { requestTimeoutMs: cfg.requestTimeoutMs } : {}),
+    // Retry count threaded from wiring (`0` on a chain hop). Absent → SDK default.
+    ...(typeof cfg.maxRetries === 'number' ? { maxRetries: cfg.maxRetries } : {}),
     // Lane 2a — tool-ordering escape hatch threaded from config; invalid
     // values fall through to the 'stable' default.
     ...(cfg.toolOrder === 'insertion' || cfg.toolOrder === 'stable'

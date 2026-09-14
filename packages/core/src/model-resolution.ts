@@ -80,12 +80,12 @@ function nearMisses(value: string, candidates: readonly string[]): string[] {
  * one value, and checking roles first is a statement of that reservation rather
  * than a precedence rule with teeth.
  *
- * The precedence that DOES have teeth is a different pair and lives elsewhere:
- * an alias literally named like a vendor id must beat the D11c shim's
- * exact-`modelId` match (T3.6, `extensions/personalities/src/index.ts`). That
- * shim calls this parser FIRST and only guesses when this returns `invalid`,
- * which is what makes the alias win. Pinned there by `an alias literally named
- * like a vendor id wins over the exact-modelId match`.
+ * The precedence that DOES have teeth is a different pair: an alias literally
+ * named like a vendor id must beat the D11c shim's exact-`modelId` match. That
+ * shim (`mapLegacyModelDeclaration`, below) calls this parser FIRST and only
+ * guesses when this returns `invalid`, which is what makes the alias win.
+ * Pinned by `an alias literally named like a vendor id wins over the
+ * exact-modelId match` in `packages/core/src/__tests__/model-resolution.test.ts`.
  */
 export function parseModelDeclaration(
   value: unknown,
@@ -122,6 +122,154 @@ function allCandidates(aliases: readonly string[]): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// D11c — the legacy-declaration shim (removed at 0.10.0,
+// follow-up `model-registry-shim-removal`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Family → role, the whole table, deliberately small and literal (D11c).
+ * Matched against the CATALOG `modelId` in this order; first hit wins.
+ */
+const LEGACY_FAMILY_ROLES: readonly {
+  family: string;
+  matches: (catalogId: string) => boolean;
+  role: ModelRoleName;
+}[] = [
+  { family: 'haiku', matches: (id) => id.includes('haiku'), role: 'trivial' },
+  { family: 'sonnet', matches: (id) => id.includes('sonnet'), role: 'default' },
+  { family: 'opus', matches: (id) => id.includes('opus'), role: 'deep' },
+  { family: 'gpt-*-mini', matches: (id) => /gpt-.*-mini/.test(id), role: 'trivial' },
+  { family: 'o*-mini', matches: (id) => /(^|\/)o[^/]*-mini/.test(id), role: 'trivial' },
+  { family: 'gpt-*', matches: (id) => id.includes('gpt-'), role: 'default' },
+];
+
+/** What the D11c shim made of a declaration that is neither a role nor an alias. */
+export type LegacyDeclarationMapping =
+  /** Not something the shim speaks for — the caller's ordinary refusal stands. */
+  | { kind: 'not-legacy' }
+  /** Mapped in memory, never written back; `deviation` is D17 row 7. */
+  | { kind: 'mapped'; declaration: ModelDeclaration; deviation: ModelDeviation }
+  /** A legacy id the shim recognised but will not guess about (D6/D14). */
+  | { kind: 'refused'; failure: ModelResolutionFailure };
+
+const SHIM_SUNSET = 'This automatic mapping is removed in 0.10.0.';
+
+/**
+ * The D11c table, applied at resolution time to a personality's OWN
+ * declaration — a plain string, the tier-map leaf a role indexes, or
+ * `voice.model` — in memory and never written back to disk.
+ *
+ * | Declared | Result |
+ * |---|---|
+ * | a role or a registry alias | `not-legacy` — `parseModelDeclaration` already reads it; checked FIRST, so an alias named like a vendor id wins |
+ * | the `modelId` of exactly one registry entry | `mapped` to that alias |
+ * | the `modelId` of more than one entry | `refused`, listing the candidates |
+ * | in no entry, in the catalog under a known family, that role UNBOUND | `mapped` to the role — which falls to the default, i.e. today's model |
+ * | the same, but that role BOUND | `refused`, naming the binding it would silently have adopted |
+ * | anything else | `not-legacy` — the caller's ordinary refusal |
+ *
+ * The bound-role refusal is what keeps the shim inside its safety argument:
+ * a legacy id resolved to the global model before the registry was wired, and
+ * an UNBOUND role still does; a bound one would be a silent upgrade (D11,
+ * amended).
+ *
+ * Only a personality's own declaration goes through here. A `/model` pin,
+ * `modelRouting` and a team manifest are refused as before: none of them was
+ * ignored pre-registry, so mapping them would change what they ran on.
+ *
+ * `key` is the config line the declaration came from (`model`, `model.deep`,
+ * `voice.model`), so the fix names the one line to write.
+ */
+export function mapLegacyModelDeclaration(input: {
+  personalityId: string;
+  declared: string;
+  key: string;
+  ctx: ModelResolutionContext;
+}): LegacyDeclarationMapping {
+  const registry = input.ctx.registry;
+  const aliases = Object.keys(registry.entries);
+  const declared = input.declared.trim();
+  if (parseModelDeclaration(declared, { aliases }).kind !== 'invalid')
+    return { kind: 'not-legacy' };
+  const where = `${input.personalityId}'s config.yaml`;
+
+  const matches = Object.values(registry.entries).filter((e) => e.modelId === declared);
+  const [only] = matches;
+  if (matches.length === 1 && only) {
+    return {
+      kind: 'mapped',
+      declaration: { kind: 'alias', alias: only.alias },
+      deviation: {
+        kind: 'legacy-id-mapped',
+        declared,
+        effective: only.alias,
+        reason: `It matched your model "${only.alias}" (${only.provider} · ${only.modelId}).`,
+        fix: `Make it explicit: set \`${input.key}: ${only.alias}\` in ${where}. ${SHIM_SUNSET}`,
+        once: true,
+      },
+    };
+  }
+  if (matches.length > 1) {
+    const candidates = matches.map((e) => e.alias);
+    return {
+      kind: 'refused',
+      failure: unresolved({
+        declared,
+        reason: `"${declared}" is the model id of more than one configured model (${candidates.join(', ')}), so which one was meant is not guessed.`,
+        aliases,
+        fix: `Set \`${input.key}\` in ${where} to one of: ${candidates.join(', ')}.`,
+      }),
+    };
+  }
+
+  const catalogId = input.ctx.catalogModelId?.(declared);
+  if (catalogId === undefined) return { kind: 'not-legacy' };
+  const lowered = catalogId.toLowerCase();
+  const family = LEGACY_FAMILY_ROLES.find((row) => row.matches(lowered));
+  if (!family) return { kind: 'not-legacy' };
+  const { role } = family;
+
+  const bound = registry.roles[role];
+  if (bound) {
+    const boundEntry = lookupEntry(registry, bound);
+    const boundText = boundEntry
+      ? `"${bound}" (${boundEntry.provider} · ${boundEntry.modelId})`
+      : `"${bound}"`;
+    return {
+      kind: 'refused',
+      failure: unresolved({
+        declared,
+        reason:
+          `It is a ${family.family}-family model id, which would map to the "${role}" role — but ` +
+          `"${role}" is bound to ${boundText} on this machine, so it is not mapped silently: ` +
+          `that would move ${input.personalityId} off the default model it ran on before.`,
+        aliases,
+        fix:
+          `Make it explicit in ${where}: \`${input.key}: ${role}\` to run on "${bound}", or ` +
+          `\`${input.key}: <a configured model>\`. ${SHIM_SUNSET}`,
+      }),
+    };
+  }
+
+  const defaultEntry = registry.default ? lookupEntry(registry, registry.default) : undefined;
+  return {
+    kind: 'mapped',
+    declaration: { kind: 'role', role },
+    deviation: {
+      kind: 'legacy-id-mapped',
+      declared,
+      effective: defaultEntry?.alias ?? role,
+      reason:
+        `It is a ${family.family}-family model id, so it was read as the "${role}" role. ` +
+        `Nothing is bound to "${role}" on this machine, so it runs on the deployment default` +
+        (defaultEntry ? ` — ${defaultEntry.provider} · ${defaultEntry.modelId}.` : '.'),
+      fix: `Make it explicit: set \`${input.key}: ${role}\` in ${where}. ${SHIM_SUNSET}`,
+      once: true,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // D7 — one resolver, one rung order
 // ---------------------------------------------------------------------------
 
@@ -153,6 +301,12 @@ function personalityDeclaration(
   if (typeof picked !== 'string') return undefined;
   const trimmed = picked.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** The config line `personalityDeclaration` read for this role — the line a fix names. */
+function personalityDeclarationKey(model: PersonalityConfig['model'], role: ModelRoleName): string {
+  if (typeof model === 'string' || !model) return 'model';
+  return model[role] != null ? `model.${role}` : 'model.default';
 }
 
 function declaringRungs(input: {
@@ -329,9 +483,28 @@ export function resolveModel(input: {
   // default (D17, "what is deliberately NOT announced"), so that case asks for
   // nothing and announces nothing.
   let roleWasAsked = input.role !== 'default';
+  // D17 row 7 — set when the D11c shim mapped the personality's own legacy id.
+  let legacyDeviation: ModelDeviation | undefined;
 
   if (winner) {
-    const parsed = parseModelDeclaration(winner.value, { aliases });
+    let parsed: ModelDeclaration | ModelDeclarationError = parseModelDeclaration(winner.value, {
+      aliases,
+    });
+    // D11c — only the personality's OWN declaration (rung 3) is shimmed; see
+    // `mapLegacyModelDeclaration` for why rungs 0–2 are not.
+    if (parsed.kind === 'invalid' && winner.rung === 3) {
+      const legacy = mapLegacyModelDeclaration({
+        personalityId: input.personality.id,
+        declared: winner.value,
+        key: personalityDeclarationKey(input.personality.model, input.role),
+        ctx: input.ctx,
+      });
+      if (legacy.kind === 'refused') return legacy.failure;
+      if (legacy.kind === 'mapped') {
+        parsed = legacy.declaration;
+        legacyDeviation = legacy.deviation;
+      }
+    }
     if (parsed.kind === 'invalid') {
       return unresolved({
         declared: winner.value,
@@ -350,7 +523,7 @@ export function resolveModel(input: {
           entry,
           winner.source,
           true,
-          outrankedDeviation(winner, input.personality, input.role, entry.alias),
+          legacyDeviation ?? outrankedDeviation(winner, input.personality, input.role, entry.alias),
         );
       }
       return unresolved({
@@ -383,7 +556,10 @@ export function resolveModel(input: {
       // nothing declared is the deployment's own choice, not a pin, and stays
       // eligible for the provider chain.
       winner !== undefined,
-      winner ? outrankedDeviation(winner, input.personality, input.role, entry.alias) : undefined,
+      legacyDeviation ??
+        (winner
+          ? outrankedDeviation(winner, input.personality, input.role, entry.alias)
+          : undefined),
     );
   }
 
@@ -420,11 +596,14 @@ export function resolveModel(input: {
         once: true,
       }
     : undefined;
-  // One slot, two candidate facts. `role-unbound` wins: `source` already names
-  // the rung that outranked the declaration, so that half survives without the
-  // deviation, while "the role you asked for is bound to nothing" is recoverable
-  // from nothing else on the event.
+  // One slot, up to three candidate facts. A shim mapping wins: its reason
+  // already says the mapped role is unbound, and "your declaration is a legacy
+  // id that was rewritten" is recoverable from nothing else. Then `role-unbound`:
+  // `source` already names the rung that outranked the declaration, so that half
+  // survives without the deviation, while "the role you asked for is bound to
+  // nothing" is recoverable from nothing else on the event.
   const deviation =
+    legacyDeviation ??
     roleUnbound ??
     (winner ? outrankedDeviation(winner, input.personality, input.role, entry.alias) : undefined);
 
@@ -448,7 +627,9 @@ function deviationFrame(d: ModelDeviation): string {
     case 'credential-rejected':
       return `The key for provider entry "${d.declared}" was rejected. Every model that uses it is unavailable until it is replaced; this turn ran on "${d.effective}".`;
     case 'legacy-id-mapped':
-      return `Declares the model "${d.declared}", which is not a configured model on this machine. It matched "${d.effective}" and is running on that.`;
+      // The HOW (an exact-id match, or a family read as a role) is in `reason`,
+      // which the shim fills — "it matched" would be false for a role mapping.
+      return `Declares the model "${d.declared}", which is not a configured model on this machine, so it is running on "${d.effective}".`;
     default:
       return `Declares the model "${d.declared}", which is outranked for this turn — running on "${d.effective}".`;
   }

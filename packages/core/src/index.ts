@@ -144,10 +144,12 @@ export {
 // order, the declaration grammar and the deviation copy have exactly one
 // implementation each; every surface that answers "which model, and why"
 // consumes these rather than restating them.
+export type { LegacyDeclarationMapping } from './model-resolution';
 export {
   attemptWithFallbacks,
   describeDeviation,
   ModelFallbacksExhaustedError,
+  mapLegacyModelDeclaration,
   parseModelDeclaration,
   resolveModel,
 } from './model-resolution';
@@ -156,8 +158,16 @@ export type { AgentLoopObservability } from './observability/agent-loop-observab
 export { assertWithinBase, BoundaryEscapeError } from './path-boundary';
 export type { PluginFactory } from './plugin-registry';
 export { PluginRegistry } from './plugin-registry';
-export type { ChainedProviderOptions } from './providers/chained-provider';
-export { ChainedProvider } from './providers/chained-provider';
+export type {
+  ChainedProviderOptions,
+  ChainFailoverEvent,
+  ReachableProviderEntry,
+} from './providers/chained-provider';
+export {
+  ChainedProvider,
+  providerEntriesOf,
+  tagProviderEntry,
+} from './providers/chained-provider';
 export { DefaultDocumentExtractorRegistry } from './providers/document-extractor-registry';
 export { DefaultExecutionBackendRegistry } from './providers/execution-registry';
 export { DefaultJobRunnerRegistry } from './providers/job-runner-registry';

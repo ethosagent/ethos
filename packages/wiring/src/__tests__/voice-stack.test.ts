@@ -13,11 +13,12 @@ import type {
   SttProvider,
   TtsProvider,
 } from '@ethosagent/types';
-import { STT_CONTRACT_VERSION } from '@ethosagent/types';
+import { type ModelRegistry, STT_CONTRACT_VERSION } from '@ethosagent/types';
 import type { AgentTurnRunner, VoiceSession, VoiceSessionConfig } from '@ethosagent/voice-session';
 import { describe, expect, it } from 'vitest';
 import { createTestSafety } from '../../../core/src/__tests__/helpers/test-safety';
 import type { WiringConfig } from '../index';
+import { lookupLegacyCatalogModelId } from '../model-catalog';
 import { buildVoiceStack } from '../voice-stack';
 
 const warnings: string[] = [];
@@ -731,7 +732,10 @@ describe('buildVoiceStack', () => {
     // setup -> CompletionOptions) has to be live for them to pass.
     describe('fast-lane model', () => {
       /** The model the provider served for one spoken turn on this lane. */
-      async function modelUsedFor(personality?: PersonalityConfig): Promise<string> {
+      async function modelUsedFor(
+        personality?: PersonalityConfig,
+        modelRegistry?: ModelRegistry,
+      ): Promise<string> {
         const served: string[] = [];
         const llm: LLMProvider = {
           name: 'mock',
@@ -748,9 +752,23 @@ describe('buildVoiceStack', () => {
             return 10;
           },
         };
-        const loop = new AgentLoop({ llm, safety: createTestSafety() });
+        const loop = new AgentLoop({
+          llm,
+          safety: createTestSafety(),
+          ...(modelRegistry
+            ? {
+                modelResolution: {
+                  registry: modelRegistry,
+                  routing: {},
+                  catalogModelId: lookupLegacyCatalogModelId,
+                },
+              }
+            : {}),
+        });
 
-        const stack = await buildVoiceStack(deps(config({ voice: { bots: [] } })));
+        const stack = await buildVoiceStack(
+          deps(config({ voice: { bots: [] }, ...(modelRegistry ? { modelRegistry } : {}) })),
+        );
         if (!stack) throw new Error('expected a voice stack');
         const session = await stack.createSession({
           laneKey: 'voice:bot:caller',
@@ -775,6 +793,23 @@ describe('buildVoiceStack', () => {
         await expect(modelUsedFor(personalityWithVoice({ model: 'fast-haiku' }))).resolves.toBe(
           'fast-haiku',
         );
+      });
+
+      // D11c — a legacy vendor id in `voice.model` goes through the same shim as
+      // `model`. Pinned raw it would reach the turn as a `/model` pin (rung 0,
+      // not shimmed) and refuse; mapped, `claude-haiku-4-5` pins the `trivial`
+      // role, which is unbound here and so runs on the deployment default.
+      it('maps a legacy vendor voice.model through the D11c shim before pinning it', async () => {
+        const modelRegistry: ModelRegistry = {
+          entries: {
+            terra: { alias: 'terra', provider: 'codex', modelId: 'deployment-default' },
+          },
+          default: 'terra',
+          roles: {},
+        };
+        await expect(
+          modelUsedFor(personalityWithVoice({ model: 'claude-haiku-4-5' }), modelRegistry),
+        ).resolves.toBe('deployment-default');
       });
 
       it('sends the deployment default when the personality declares no voice.model', async () => {

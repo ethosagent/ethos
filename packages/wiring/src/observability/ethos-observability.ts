@@ -83,6 +83,10 @@ export const ETHOS_EVENT_CATEGORIES = [
   // Ground-truth verification (R5) — a turn auditor's verdict on the final
   // text. See `recordGroundingFinding` below.
   'grounding.finding',
+  // D17 — one failed attempt inside a provider chain: which entry, what the
+  // vendor said (bounded, key-shaped tokens redacted), what the chain did next.
+  // See `recordProviderFailover` below.
+  'llm.failover',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
 
@@ -272,6 +276,39 @@ export class EthosObservability {
 
   recordError(opts: EventBase & { severity?: EventSeverity }): void {
     this.emit('error', 'error', opts);
+  }
+
+  /**
+   * One failed `ChainedProvider` attempt (`onFailover`, wired in
+   * `createLLMFromRegistry`). `code` is the failover reason and `cause` the
+   * vendor's bounded, redacted message, so the text a chain used to discard is
+   * queryable. Severity `error` when the chain gave up, `warn` when it moved on.
+   * No `traceId`: one chain serves every concurrent turn (D17 row 3 moves this
+   * onto `CompletionOptions` for turn identity in T1.16).
+   */
+  recordProviderFailover(event: {
+    entryKey: string;
+    provider: string;
+    model: string;
+    reason: string;
+    message: string;
+    outcome: string;
+    nextEntryKey?: string;
+    pinned: boolean;
+  }): void {
+    this.emit(
+      'llm.failover',
+      event.outcome === 'give-up' ? 'error' : 'warn',
+      { code: event.reason, cause: event.message },
+      {
+        entryKey: event.entryKey,
+        provider: event.provider,
+        model: event.model,
+        outcome: event.outcome,
+        ...(event.nextEntryKey !== undefined ? { nextEntryKey: event.nextEntryKey } : {}),
+        pinned: event.pinned,
+      },
+    );
   }
 
   recordSafetyTransition(opts: {

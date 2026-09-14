@@ -1,10 +1,48 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import type { AgentEvent, ModelDeviation, ModelTierName, ToolFilterOpts } from '@ethosagent/types';
+import { dirname, join } from 'node:path';
+import type {
+  AgentEvent,
+  ModelDeviation,
+  ModelResolutionFailure,
+  ModelTierName,
+  PersonalityConfig,
+  ToolFilterOpts,
+} from '@ethosagent/types';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
+import { routeTurnModel } from '../model-route';
 import { parseSmallWindowToolset } from '../small-window-toolset';
 import type { LoopDeps, TurnSetupResult } from '../turn-context';
 import { describeResolutionFailure, resolveTurnModel } from '../turn-model';
+
+/**
+ * Where a declaration that did not resolve lives, and the edit that fixes it —
+ * appended to the D6/D14 refusal so it names a file and a line, not a concept.
+ * Only for the DECLARATION failures: the role-binding and no-default failures
+ * already carry their own fix from `resolveModel` (none of them lists
+ * "Configured models:").
+ */
+function declarationFix(
+  personality: PersonalityConfig,
+  failure: ModelResolutionFailure,
+  deps: LoopDeps,
+  runOverride: string | undefined,
+): string {
+  if (failure.fix !== undefined && !failure.fix.includes('Configured models:')) return '';
+  if (runOverride?.trim())
+    return ' It came from this run’s model pin: pin a configured model instead.';
+  const id = personality.id;
+  if (Object.hasOwn(deps.modelResolution.routing, id)) {
+    return ` It comes from \`modelRouting.${id}\` in ~/.ethos/config.yaml: set it to a configured model or a role.`;
+  }
+  const file = personality.soulFile
+    ? join(dirname(personality.soulFile), 'config.yaml')
+    : `the "${id}" personality's config.yaml`;
+  return (
+    ` To fix it, either add \`modelRouting.${id}: default\` to ~/.ethos/config.yaml (it outranks ` +
+    `the personality's own declaration), or change the \`model\` lines in ${file} to a configured ` +
+    `model or a role.`
+  );
+}
 
 /**
  * Turn-setup stage: session resolve/create, personality, trace, budget-cap
@@ -193,7 +231,9 @@ export async function* setupTurn(
     deps.observability?.flush();
     yield {
       type: 'error',
-      error: describeResolutionFailure(personality.id, turnModel),
+      error:
+        describeResolutionFailure(personality.id, turnModel) +
+        declarationFix(personality, turnModel, deps, opts.modelOverride),
       code: 'model_unresolved',
     };
     yield { type: 'done', text: '', turnCount: 0, ...(traceId ? { traceId } : {}) };
@@ -201,11 +241,21 @@ export async function* setupTurn(
   }
 
   const effectiveModel = turnModel.model;
-  // What reaches `CompletionOptions.modelOverride`. Still compared against the
-  // LOOP's provider model: selecting the provider the alias names, rather than
-  // sending its model id to whatever provider the loop holds, is T1.20/T1.16
-  // (`LoopDeps.providerFor`) and is deliberately not done here.
-  const modelOverride = effectiveModel !== deps.llm.model ? effectiveModel : undefined;
+  // What reaches `CompletionOptions.modelOverride` / `.providerEntry` (D21,
+  // D23b): compared against the provider ENTRY the model names, never against
+  // `deps.llm.model`, which on a chain moves with cooldown state
+  // (`routeTurnModel`). Selecting a provider OUTSIDE the loop's LLM is
+  // T1.20 (`LoopDeps.providerFor`); until then an entry the loop cannot reach
+  // refuses rather than being sent to whichever provider it holds.
+  const route = routeTurnModel(deps.llm, turnModel, deps.modelResolution);
+  if (!route.ok) {
+    if (traceId) deps.observability?.endTrace(traceId, 'error');
+    deps.observability?.flush();
+    yield { type: 'error', error: route.reason, code: 'model_unresolved' };
+    yield { type: 'done', text: '', turnCount: 0, ...(traceId ? { traceId } : {}) };
+    return { kind: 'refused' };
+  }
+  const { modelOverride, providerEntry } = route;
 
   // D17 — the `once` suppression set, owned by the loop instance. A config fact
   // (an unbound role, a manifest outranking a declaration) is true until
@@ -336,6 +386,7 @@ export async function* setupTurn(
       activeTier,
       effectiveModel,
       modelOverride,
+      providerEntry,
       allowedTools,
       allowedPlugins,
       filterOpts,

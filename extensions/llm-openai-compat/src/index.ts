@@ -394,8 +394,15 @@ export class OpenAICompatProvider implements LLMProvider {
     // SDK clears the timer once `fetch` resolves; see the constant's own doc
     // for what actually bounds stream duration. `maxRetries` is untouched:
     // absent → the SDK's 2. Both asserted by client-timeout.test.ts.
+    // A self-hosted runtime (ollama / vLLM / llama.cpp / LM Studio) usually has
+    // no key, but the OpenAI SDK refuses to construct a client without one
+    // ("Missing credentials" — its constructor tests `!apiKey`, so `''` fails
+    // too), which crashed boot for a keyless local chain entry. Those servers
+    // ignore the Authorization header unless started with a key, and a key the
+    // operator did configure is sent unchanged.
+    const apiKey = config.apiKey || (localRuntime !== undefined ? 'not-needed' : config.apiKey);
     this.client = new OpenAI({
-      apiKey: config.apiKey,
+      apiKey,
       baseURL,
       timeout: config.requestTimeoutMs ?? DEFAULT_LLM_REQUEST_TIMEOUT_MS,
       ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),

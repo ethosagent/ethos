@@ -179,9 +179,9 @@ describe('D17 rows 4, 5 and 6 — the refusal form', () => {
 
 describe('D17 row 7 — a legacy vendor id mapped by the D11c shim', () => {
   it('renders through describeDeviation, naming the declaration and the sunset', () => {
-    // The shim itself lives in `extensions/personalities` (T3.6) and is not on
-    // this path yet. What T1.15a owns is that its row has a wording at all, and
-    // that the wording is `describeDeviation`'s rather than the shim's.
+    // The shim itself is `mapLegacyModelDeclaration` in `model-resolution.ts`,
+    // pinned row by row in `model-legacy-shim.test.ts`. What this owns is that its
+    // row has a wording, and that the wording is `describeDeviation`'s.
     const { line, fix } = describeDeviation({
       kind: 'legacy-id-mapped',
       declared: 'claude-sonnet-4-6',

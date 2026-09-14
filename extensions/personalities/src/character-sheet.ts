@@ -167,24 +167,62 @@ function modelFitSection(fit: CharacterSheetModelFit): string[] {
  * before, which is all a caller that cannot see the active LLM is entitled to
  * claim.
  */
-export interface CharacterSheetRouting {
-  /** `LLMProvider.name` of the active LLM — the value the guard compares
-   *  `personality.provider` against. */
+export type CharacterSheetRouting = {
+  /** `LLMProvider.name` of the active LLM. */
   activeProvider: string;
-  /** The model a turn will actually send. */
-  effectiveModel: string;
-  /** Where `effectiveModel` came from. */
+  /** The rung that DECLARED the model: a `modelRouting` entry, the
+   *  personality's own `model:`, or nothing (the deployment default). */
   source: 'personality' | 'global' | 'routing-override';
-  /** Set when the personality declares a model the active LLM will ignore:
-   *  what it declared, and why nothing reads it. */
+  /** Set when the personality declares a model a turn does not use: what it
+   *  declared, and why. */
   inert?: { declared: string; reason: string };
-}
+  /** A deviation the resolver attached to this personality's own declaration
+   *  (today only D17 row 7, a legacy vendor id the D11c shim mapped), already
+   *  rendered through `describeDeviation` — the sheet does not restate the copy. */
+  notice?: string;
+} & (
+  | {
+      /** The vendor model id a turn will actually send. */
+      effectiveModel: string;
+      /** The registry alias that resolved. Absent on a deployment with no
+       *  registry, where the model is the raw configured id. */
+      alias?: string;
+      /** The role the resolution went through, when it went through one.
+       *  `bound: false` → nothing is bound to it and `alias` is the default. */
+      role?: { name: string; bound: boolean };
+      refusal?: undefined;
+    }
+  | {
+      /** Nothing resolves, so a turn is refused — the refusal a turn shows
+       *  (`describeResolutionFailure`, `packages/core/src/agent-loop/turn-model.ts`). */
+      refusal: string;
+      effectiveModel?: undefined;
+    }
+);
 
 const ROUTING_SOURCE_LABEL: Record<CharacterSheetRouting['source'], string> = {
-  personality: "this personality's model tier map",
+  personality: "declared in this personality's config.yaml",
   global: 'deployment default',
   'routing-override': 'modelRouting override in config.yaml',
 };
+
+/** The `- Model:` line: the resolved id, then how it was reached. Pure. */
+function modelLine(routing: CharacterSheetRouting): string {
+  const label = ROUTING_SOURCE_LABEL[routing.source];
+  if (routing.refusal !== undefined)
+    return `- Model: does not resolve — turns are refused (${label})`;
+  const how: string[] = [];
+  if (routing.role && !routing.role.bound) {
+    how.push(
+      `via role \`${routing.role.name}\` (unbound, using default \`${routing.alias ?? '?'}\`)`,
+    );
+  } else {
+    if (routing.alias) how.push(`alias \`${routing.alias}\``);
+    if (routing.role) how.push(`via role \`${routing.role.name}\``);
+  }
+  const detail = how.length > 0 ? `${how.join(', ')}; ${label}` : label;
+  return `- Model: ${routing.effectiveModel} (${detail})`;
+}
 
 /** Render the `- Model:` / `- Provider:` pair of `## Routing`. Pure. */
 function routingLines(
@@ -197,9 +235,11 @@ function routingLines(
       `- Provider: ${config.provider ?? '(engine default)'}`,
     ];
   }
-  const lines = [`- Model: ${routing.effectiveModel} (${ROUTING_SOURCE_LABEL[routing.source]})`];
+  const lines = [modelLine(routing)];
+  if (routing.refusal !== undefined) lines.push(`- Refusal: ${routing.refusal}`);
+  if (routing.notice !== undefined) lines.push(`- Notice: ${routing.notice}`);
   if (routing.inert) {
-    lines.push(`- Declared model: ${routing.inert.declared} — INERT: ${routing.inert.reason}`);
+    lines.push(`- Declared model: ${routing.inert.declared} — not used: ${routing.inert.reason}`);
   }
   const declaredProvider = config.provider ?? '(engine default)';
   lines.push(

@@ -81,6 +81,21 @@ export interface CompletionOptions {
   stopSequences?: string[];
   modelOverride?: string;
   /**
+   * Which provider ENTRY (`providers.<n>.id`, D2/D24 of
+   * plan/phases/model-registry.md) `modelOverride` belongs to.
+   *
+   * `pinned: true` — the call names this one entry and must not fail over to
+   * another provider (D21). `pinned: false` — a default-rung call whose model
+   * differs from the entry's configured one: only that entry receives the
+   * override, and every other hop runs its own model (D23b).
+   *
+   * Read only by `ChainedProvider` (`packages/core/src/providers/chained-provider.ts`,
+   * `optionsFor` and the pinned branch of `complete`), which strips it before
+   * calling a hop. A single provider IS its own entry and ignores it; absent →
+   * an unscoped override, handled by the same `optionsFor`.
+   */
+  providerEntry?: { key: string; pinned: boolean };
+  /**
    * B2 — the agent loop's per-LLM-call id (minted in `stream-step.ts`), sent
    * OUTBOUND where the provider supports it: openai-compat puts it on the
    * `X-Client-Request-Id` request header so a provider-side log line can be
