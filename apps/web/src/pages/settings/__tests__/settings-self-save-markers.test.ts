@@ -10,12 +10,15 @@ import { describe, expect, it } from 'vitest';
 import { backupKeys } from '../../../features/settings/api/backup';
 import { vaultKeyKeys } from '../../../features/settings/api/keys';
 import { WakePanel } from '../../../features/voice/WakePanel';
+import { modelRegistryKeys } from '../lib/model-registry';
 import { SETTINGS_INDEX } from '../lib/settings-index';
 import type { SettingsPaneContext } from '../pane-context';
 import { BackupPane } from '../panes/backup';
 import { GeneralPane } from '../panes/general';
 import { KeysPane } from '../panes/keys';
+import { ModelsPane } from '../panes/models';
 import { SecurityPane } from '../panes/security';
+import { registryList } from './model-registry-fixture';
 
 // T10 — plan/phases/settings-navigation.md D11 / §6.4. Every `SETTINGS_INDEX`
 // entry with `saves: 'self'` must render `SelfSaveMarker` somewhere on
@@ -59,11 +62,6 @@ function Harness() {
     config: undefined,
     personalities: [],
     personalitiesLoading: false,
-    providerRows: [],
-    addProviderRow: noop,
-    updateProviderRow: noop,
-    moveProviderRow: noop,
-    removeProviderRow: noop,
     quickCommandRows: [],
     setQuickCommandRows: noop,
     channelToolsetRows: [],
@@ -96,9 +94,10 @@ function seedToolSettingsSchema(queryClient: QueryClient): void {
   });
 }
 
-function markup(pane: ComponentType): string {
+function markup(pane: ComponentType, seed?: (queryClient: QueryClient) => void): string {
   const queryClient = new QueryClient();
   seedToolSettingsSchema(queryClient);
+  seed?.(queryClient);
   return renderToStaticMarkup(
     createElement(
       QueryClientProvider,
@@ -257,6 +256,8 @@ describe('SETTINGS_INDEX self-saving sections match what this test covers', () =
       // Derived, not listed: the Keys pane has one self-saving section per
       // canonical category.
       ...[...KEY_CATEGORY_IDS].map((id) => `keys/${id}`).sort(),
+      'models/models',
+      'models/per-personality-routing',
       'security/a2a',
       'security/api-keys',
       'security/named-secrets',
@@ -280,6 +281,24 @@ describe('every self-saving section renders SelfSaveMarker', () => {
 
     it.each(['named-secrets', 'web-search-defaults', 'api-keys', 'a2a'])('%s', (id) => {
       expect(sectionBlock(html, id)).toContain(MARKER_TEXT);
+    });
+  });
+
+  // The registry sections render nothing until `modelRegistry.list` resolves,
+  // so the list is seeded — the same way the Keys pane's categories are.
+  describe('models — ModelsPane, checked per section', () => {
+    const html = markup(ModelsPane, (queryClient) =>
+      queryClient.setQueryData(modelRegistryKeys.list(), registryList()),
+    );
+
+    it.each(['models', 'per-personality-routing'])('%s', (id) => {
+      expect(sectionBlock(html, id)).toContain(MARKER_TEXT);
+    });
+
+    // Providers moved into the self-saving providers & models list; the old
+    // page-Save provider-chain section is gone rather than left unmarked.
+    it('has no separate provider-chain section', () => {
+      expect(html).not.toContain('id="provider-chain"');
     });
   });
 

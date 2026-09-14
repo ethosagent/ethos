@@ -27,13 +27,7 @@ import {
   type VoiceTtsProviderPatch,
 } from './config-types';
 import { auxPatchFromForm, type FormShape } from './form-shape';
-import type {
-  ChannelToolsetRow,
-  ProviderChainBase,
-  ProviderRow,
-  QuickCommandRow,
-  RetentionRow,
-} from './rows';
+import type { ChannelToolsetRow, QuickCommandRow, RetentionRow } from './rows';
 import { type VoiceBotRow, voiceBotsPatchFromRows } from './voice-bots';
 import {
   audioFormatOrNull,
@@ -54,9 +48,8 @@ import {
 } from './voice-roster';
 import { voiceTelephonyPatch } from './voice-telephony';
 
-/** The eight row-state arrays `SettingsShell` owns (D4). */
+/** The row-state arrays `SettingsShell` owns (D4). */
 export interface SettingsRows {
-  providerRows: ProviderRow[];
   quickCommandRows: QuickCommandRow[];
   channelToolsetRows: ChannelToolsetRow[];
   voiceTtsProviderRows: VoiceProviderRow[];
@@ -72,19 +65,11 @@ export type BuildConfigPatchResult =
 
 /**
  * Patch keys that are NOT written from a same-named form field — they come from
- * the row arrays, from the saved config, or from the provider chain. Everything
- * else in the patch is `values.<sameName>`, which is what lets the absent-field
- * guard at the bottom of this function be a set difference rather than a second
- * copy of `FormShape`.
+ * the row arrays or from the saved config. Everything else in the patch is
+ * `values.<sameName>`, which is what lets the absent-field guard at the bottom
+ * of this function be a set difference rather than a second copy of `FormShape`.
  */
 const DERIVED_PATCH_KEYS = new Set<string>([
-  'provider',
-  'model',
-  'apiKey',
-  'baseUrl',
-  'providers',
-  'providersVersion',
-  'modelRouting',
   'retention',
   'personalityRetention',
   'quickCommands',
@@ -99,10 +84,8 @@ export function buildConfigPatch(
   values: FormShape,
   rows: SettingsRows,
   saved: ConfigGetData | undefined,
-  chainBase?: ProviderChainBase,
 ): BuildConfigPatchResult {
   const {
-    providerRows,
     quickCommandRows,
     channelToolsetRows,
     voiceTtsProviderRows,
@@ -111,10 +94,6 @@ export function buildConfigPatch(
     retentionRows,
     voiceBotRows,
   } = rows;
-  const primary = providerRows[0];
-  if (!primary?.provider || !primary.model) {
-    return { ok: false, error: 'Primary provider and model are required.' };
-  }
 
   // -- Record-editor validation (mirrors the contract's Zod bounds) --------
   const fail = (message: string): { ok: false; error: string } => ({ ok: false, error: message });
@@ -278,21 +257,6 @@ export function buildConfigPatch(
     }
   }
 
-  // Build the providers array for the update. `sourceIndex` names the stored
-  // entry a row was loaded from, so the server keeps what this editor does not
-  // show — the key reference, `region`, `apiVersion`, … (`overlayProviderRow`
-  // in apps/web-api's config.service.ts).
-  const providers = providerRows.map((row) => {
-    const entry: NonNullable<ConfigUpdatePatch['providers']>[number] = {
-      provider: row.provider,
-    };
-    if (row.model) entry.model = row.model;
-    if (row.apiKey) entry.apiKey = row.apiKey;
-    if (row.baseUrl) entry.baseUrl = row.baseUrl;
-    if (row.sourceIndex !== undefined) entry.sourceIndex = row.sourceIndex;
-    return entry;
-  });
-
   const patch: ConfigUpdatePatch = {
     personality: values.personality,
     memory: values.memory,
@@ -369,10 +333,18 @@ export function buildConfigPatch(
             ? { voiceTtsModel: values.voiceTtsModel }
             : {}),
         }),
-    modelRouting: Object.fromEntries(
-      Object.entries(saved?.modelRouting ?? {}).filter(([k]) => k !== '__fallbackChain'),
-    ),
-    providers,
+    // `modelRouting` is deliberately absent. Its one writer is
+    // `modelRegistry.setRouting` (the routing section saves on its own), and
+    // `config.update` MERGES the record (`ConfigRepository.update`), so echoing
+    // the last `config.get` back here would resurrect an override the section
+    // just removed and revert one it just changed.
+    //
+    // `providers` (and `providersVersion`, and the top-level `provider` /
+    // `model` / `apiKey` / `baseUrl`) are deliberately absent for the same
+    // reason. Providers save on confirm through `modelRegistry.addProvider` /
+    // `updateProvider` / `moveProvider` / `setProviderFailover` /
+    // `setFallbackModel` / `removeProvider`, so a chain echoed from the last
+    // `config.get` would undo a drawer write the page never saw.
     // -- Settings-page additions ------------------------------------------
     // Scalars: null clears the config.yaml key back to its built-in default.
     // Records (quickCommands, channelToolsets, retention,
@@ -537,23 +509,6 @@ export function buildConfigPatch(
     voiceSttProviders,
     voiceRealtimeProviders,
   };
-  // The top-level `provider` / `model` / `baseUrl` / `apiKey` are written from
-  // the primary row only when the operator EDITED that row — changed its
-  // provider, model, key or base URL, or moved another entry to the top. The
-  // top-level fields are a pair with the top-level key, and on a config whose
-  // top-level provider differs from chain row 0 an unrelated save used to
-  // rewrite `provider` to row 0's while the key stayed the old provider's.
-  // Without a `chainBase` (no loaded snapshot) the primary is always written.
-  if (!chainBase?.loadedPrimary || primaryRowEdited(primary, chainBase.loadedPrimary)) {
-    patch.provider = primary.provider;
-    patch.model = primary.model;
-    if (primary.apiKey) patch.apiKey = primary.apiKey;
-    if (primary.baseUrl !== undefined) patch.baseUrl = primary.baseUrl;
-  }
-  // The chain version the rows were loaded from; a stale one is refused
-  // (`CONFIG_CONFLICT`) instead of overlaid onto entries that moved.
-  if (chainBase) patch.providersVersion = chainBase.providersVersion;
-
   // The absent-field guard — the behavioural half of the invariant in §5.1.
   //
   // Every key left in the patch that is not derived above is written from the
@@ -572,15 +527,4 @@ export function buildConfigPatch(
   }
 
   return { ok: true, patch };
-}
-
-/** Whether the operator changed the primary row since it was loaded. */
-function primaryRowEdited(primary: ProviderRow, loaded: ProviderRow): boolean {
-  return (
-    primary.sourceIndex !== loaded.sourceIndex ||
-    primary.provider !== loaded.provider ||
-    primary.model !== loaded.model ||
-    primary.baseUrl !== loaded.baseUrl ||
-    primary.apiKey !== ''
-  );
 }

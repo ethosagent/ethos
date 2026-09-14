@@ -33,9 +33,10 @@ export const PRISTINE: DirtyState = { count: 0, categories: [] };
 /**
  * Which category owns each row set. The row arrays are not `Form.Item`s, so
  * `categoryForFormName` cannot reach them and the mapping is stated once here.
+ * There is no provider row set: providers save on confirm, so an edit to one is
+ * never an unsaved change.
  */
 const ROW_SET_CATEGORY: Record<keyof SettingsRows, string> = {
-  providerRows: 'models',
   quickCommandRows: 'automation',
   channelToolsetRows: 'automation',
   voiceTtsProviderRows: 'voice',
@@ -47,11 +48,8 @@ const ROW_SET_CATEGORY: Record<keyof SettingsRows, string> = {
 
 const ROW_SET_KEYS = Object.keys(ROW_SET_CATEGORY) as (keyof SettingsRows)[];
 
-/**
- * Row fields that are UI state, not config: the React list key and the inline
- * provider test's result. Testing a provider must not read as an unsaved edit.
- */
-const ROW_IGNORED_FIELDS = new Set(['_id', 'testStatus', 'testError']);
+/** Row fields that are UI state, not config: the React list key. */
+const ROW_IGNORED_FIELDS = new Set(['_id']);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -112,7 +110,7 @@ export function computeDirty(
   }
 
   // A roster is counted as ONE change however many of its cells moved: the
-  // patch it produces replaces the whole set, so "the provider chain changed"
+  // patch it produces replaces the whole set, so "the quick commands changed"
   // is the honest unit and a per-cell number would promise a precision the
   // save does not have.
   for (const key of ROW_SET_KEYS) {

@@ -1105,13 +1105,37 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   // Settings › Execution. Reads `execution.ssh.*` from the same config.yaml the
   // rest of this app reads, and probes through the LOOP's backend registry when
   // the composition root hands one in.
-  // Settings → Models: the on-demand model test (T1.24). Reads the SAME
-  // `<dataDir>/config.yaml` the rest of this app reads — `modelRegistry.*` is
-  // parsed by `@ethosagent/config`, not by `ConfigRepository`'s own shape.
+  // Settings → Models (T1.24, T2.2). Reads the SAME `<dataDir>/config.yaml` the
+  // rest of this app reads through `parseConfigYaml`; every registry write goes
+  // through `configRepo.transform` (the same lock `config.update` takes), and a
+  // repoint rewrites a custom personality's `model:` through the personality
+  // registry's own Storage-backed `update`.
   const modelRegistryService = new ModelRegistryService({
+    // A provider write's orphaned vault entries go through the same cleanup a
+    // Settings save uses, rather than a second copy of it.
+    deleteOrphanedSecrets: (refs) => configService.deleteOrphanedSecrets(refs),
     readConfig: async () => {
       const src = await storage.read(join(opts.dataDir, 'config.yaml'));
       return src === null ? null : parseConfigYaml(src);
+    },
+    config: configRepo,
+    personalities: {
+      refresh: async () => {
+        await opts.personalities.loadFromDirectory(join(opts.dataDir, 'personalities'));
+      },
+      list: () =>
+        opts.personalities.describeAll().map((d) => ({
+          id: d.config.id,
+          model: d.config.model,
+          voiceModel: d.config.voice?.model,
+          builtin: d.builtin,
+        })),
+      setModel: async (id, patch) => {
+        await opts.personalities.update(id, {
+          ...(patch.model !== undefined ? { model: patch.model } : {}),
+          ...(patch.voiceModel !== undefined ? { voice: { model: patch.voiceModel } } : {}),
+        });
+      },
     },
     secrets,
   });

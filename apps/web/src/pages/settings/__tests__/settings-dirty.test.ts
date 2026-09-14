@@ -12,7 +12,6 @@ import { computeDirty, type DirtySnapshot } from '../lib/settings-dirty';
 
 function rows(over: Partial<SettingsRows> = {}): SettingsRows {
   return {
-    providerRows: [],
     quickCommandRows: [],
     channelToolsetRows: [],
     voiceTtsProviderRows: [],
@@ -132,22 +131,20 @@ describe('computeDirty', () => {
   });
 
   it('ignores the row fields that are UI state rather than config', () => {
-    // Clicking Test on a provider row must not read as an unsaved edit.
-    const row = {
-      _id: 1,
-      provider: 'anthropic',
-      model: 'claude',
-      apiKey: '',
-      apiKeyPreview: 'sk-…',
-      baseUrl: '',
-      testStatus: 'idle' as const,
-    };
+    // A re-hydrate mints fresh React list keys; that is not an unsaved edit.
+    const row = { _id: 1, personalityId: '', subkey: 'messages' as const, duration: '90d' };
     const dirty = computeDirty(
-      { values: values(), rows: rows({ providerRows: [row] }) },
+      { values: values(), rows: rows({ retentionRows: [row] }) },
       values(),
-      rows({ providerRows: [{ ...row, _id: 99, testStatus: 'success', testError: undefined }] }),
+      rows({ retentionRows: [{ ...row, _id: 99 }] }),
     );
     expect(dirty.count).toBe(0);
+  });
+
+  // Providers save on confirm (Settings → Models › providers & models), so the
+  // page tracks no provider row set and a provider write never dots the rail.
+  it('has no provider row set to diff', () => {
+    expect(Object.keys(rows())).not.toContain('providerRows');
   });
 
   it('adds form changes and row changes into one count', () => {

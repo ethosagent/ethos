@@ -1,143 +1,29 @@
-// Models & providers — provider chain, catalog & backends, auxiliary models,
-// per-personality routing. Off `Card`, onto `SettingRow` (§4.2 rows 1, 10, 16;
-// plan Phase 3).
+// Models & providers — providers & models (one list, each provider with its
+// models beneath it), catalog & backends, auxiliary models, per-personality
+// routing. Off `Card`, onto `SettingRow` (§4.2 rows 1, 10, 16; plan Phase 3).
 //
-// `per-personality-routing` is a read-only view with no controls — one of the
-// two sections Phase 2 records as legitimately empty (`EXPECTED_EMPTY_SECTIONS`).
-// It renders a `SectionHeading` and the explanatory view, nothing forced in.
+// Providers & models and per-personality routing save ON THEIR OWN through
+// `modelRegistry.*` (plan/phases/model-registry.md T2.3, T2.7, and the approved
+// "Providers & models" mockup). Nothing in them is on the page Save:
+// `buildConfigPatch` sends no `providers`. Catalog & backends and auxiliary
+// models stay on the page Save.
 
-import { Button, Form, Input, InputNumber, Select, Switch, Tag, Tooltip, Typography } from 'antd';
-import { rpc } from '../../../rpc';
+import { Form, Input, InputNumber, Select, Switch, Typography } from 'antd';
 import { AdvancedBlock } from '../components/advanced';
+import { ModelRegistrySection } from '../components/model-registry-section';
+import { ModelRoutingSection } from '../components/model-routing-section';
 import { ROW_BOX_STYLE } from '../components/primitives';
 import { SectionHeading } from '../components/section-heading';
 import { SettingRow } from '../components/setting-row';
-import { SettingTable } from '../components/setting-table';
-import type { ProviderRow } from '../lib/rows';
 import { useSettingsPane } from '../pane-context';
 
 export function ModelsPane() {
-  const {
-    config: configData,
-    providerRows,
-    addProviderRow,
-    updateProviderRow,
-    moveProviderRow,
-    removeProviderRow,
-  } = useSettingsPane();
-  const addRow = addProviderRow;
-  const updateRow = updateProviderRow;
-  const moveRow = moveProviderRow;
-  const removeRow = removeProviderRow;
+  const { config: configData, personalities } = useSettingsPane();
 
   return (
     <>
-      <SectionHeading id="provider-chain">provider chain</SectionHeading>
-      <SettingTable<ProviderRow>
-        rowKey={(row) => row._id}
-        rows={providerRows}
-        addLabel="Add fallback"
-        onAdd={addRow}
-        columns={[
-          {
-            key: 'provider',
-            header: 'Provider',
-            render: (row, idx) => (
-              <Input
-                size="small"
-                placeholder="anthropic | openrouter | openai-compat | ollama"
-                value={row.provider}
-                onChange={(e) => updateRow(idx, { provider: e.target.value })}
-              />
-            ),
-          },
-          {
-            key: 'model',
-            header: 'Model',
-            render: (row, idx) => (
-              <Input
-                size="small"
-                placeholder="e.g. claude-opus-4-7"
-                value={row.model}
-                onChange={(e) => updateRow(idx, { model: e.target.value })}
-              />
-            ),
-          },
-          {
-            key: 'key',
-            header: 'Key',
-            render: (row, idx) => (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <Input.Password
-                  size="small"
-                  autoComplete="off"
-                  placeholder={row.apiKeyPreview || 'paste new key'}
-                  value={row.apiKey}
-                  onChange={(e) => updateRow(idx, { apiKey: e.target.value, testStatus: 'idle' })}
-                />
-                {row.apiKeyPreview && !row.apiKey && (
-                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                    Active: {row.apiKeyPreview}
-                  </Typography.Text>
-                )}
-                <RowTestButton
-                  row={row}
-                  onStatusChange={(status, error) =>
-                    updateRow(idx, { testStatus: status, testError: error })
-                  }
-                />
-              </div>
-            ),
-          },
-          {
-            key: 'order',
-            header: 'Order',
-            render: (_row, idx) => (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  {idx === 0 ? 'Primary' : `Fallback ${idx}`}
-                </Typography.Text>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {idx > 0 && (
-                    <Tooltip title="Move up">
-                      <Button size="small" onClick={() => moveRow(idx, -1)}>
-                        Up
-                      </Button>
-                    </Tooltip>
-                  )}
-                  {idx < providerRows.length - 1 && (
-                    <Tooltip title="Move down">
-                      <Button size="small" onClick={() => moveRow(idx, 1)}>
-                        Down
-                      </Button>
-                    </Tooltip>
-                  )}
-                  {idx > 0 && (
-                    <Tooltip title="Remove this fallback">
-                      <Button size="small" danger onClick={() => removeRow(idx)}>
-                        Remove
-                      </Button>
-                    </Tooltip>
-                  )}
-                </div>
-              </div>
-            ),
-          },
-          {
-            key: 'base-url',
-            header: 'Base URL',
-            advanced: true,
-            render: (row, idx) => (
-              <Input
-                size="small"
-                placeholder="https://openrouter.ai/api/v1"
-                value={row.baseUrl}
-                onChange={(e) => updateRow(idx, { baseUrl: e.target.value })}
-              />
-            ),
-          },
-        ]}
-      />
+      <SectionHeading id="models">providers & models</SectionHeading>
+      <ModelRegistrySection />
 
       <AdvancedBlock>
         <SectionHeading id="catalog-and-backends">catalog & backends</SectionHeading>
@@ -157,71 +43,9 @@ export function ModelsPane() {
 
       <AdvancedBlock>
         <SectionHeading id="per-personality-routing">per-personality routing</SectionHeading>
-        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-          Per-personality model overrides. Edit ~/.ethos/config.yaml directly to add entries — this
-          surface lists the current overrides; full editing lands later.
-        </Typography.Paragraph>
-        <ModelRoutingView routing={configData?.modelRouting ?? {}} />
+        <ModelRoutingSection personalityIds={personalities.map((p) => p.id)} />
       </AdvancedBlock>
     </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Inline test button for a single provider row
-// ---------------------------------------------------------------------------
-
-function RowTestButton({
-  row,
-  onStatusChange,
-}: {
-  row: ProviderRow;
-  onStatusChange: (status: ProviderRow['testStatus'], error?: string) => void;
-}) {
-  const handleTest = async () => {
-    if (!row.provider || !row.apiKey) return;
-    onStatusChange('testing');
-    try {
-      const result = await rpc.onboarding.validateProvider({
-        provider: row.provider as
-          | 'anthropic'
-          | 'openai'
-          | 'openrouter'
-          | 'openai-compat'
-          | 'ollama'
-          | 'azure',
-        apiKey: row.apiKey,
-        ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
-      });
-      if (result.ok) {
-        onStatusChange('success');
-      } else {
-        onStatusChange('error', result.error ?? 'Validation failed');
-      }
-    } catch (err) {
-      onStatusChange('error', (err as Error).message);
-    }
-  };
-
-  const hasKey = row.apiKey.length > 0;
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <Tooltip
-        title={hasKey ? 'Test connection with the new API key' : 'Enter a new API key to test'}
-      >
-        <Button
-          size="small"
-          onClick={handleTest}
-          loading={row.testStatus === 'testing'}
-          disabled={!hasKey}
-        >
-          Test
-        </Button>
-      </Tooltip>
-      {row.testStatus === 'success' && <Tag color="success">Connected</Tag>}
-      {row.testStatus === 'error' && <Tag color="error">{row.testError ?? 'Failed'}</Tag>}
-    </div>
   );
 }
 
@@ -375,23 +199,5 @@ function AuxiliaryModelsFields({
         preview={auxPreviews.web}
       />
     </>
-  );
-}
-
-function ModelRoutingView({ routing }: { routing: Record<string, string> }) {
-  const entries = Object.entries(routing);
-  if (entries.length === 0) {
-    return <Typography.Text type="secondary">No per-personality overrides set.</Typography.Text>;
-  }
-  return (
-    <ul style={{ margin: 0, paddingLeft: 16 }}>
-      {entries.map(([personality, model]) => (
-        <li key={personality} style={{ fontSize: 13, color: 'var(--ethos-text)' }}>
-          <Typography.Text code>{personality}</Typography.Text>
-          {' → '}
-          <Typography.Text code>{model}</Typography.Text>
-        </li>
-      ))}
-    </ul>
   );
 }

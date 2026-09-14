@@ -8,7 +8,7 @@ export const configRouter = {
   get: os.config.get.handler(({ context }) => context.config.get()),
 
   update: os.config.update.handler(async ({ input, context }) => {
-    await context.config.update(input);
-    return { ok: true as const };
+    const { adoptedModels } = await context.config.update(input);
+    return { ok: true as const, ...(adoptedModels.length > 0 ? { adoptedModels } : {}) };
   }),
 };

@@ -23,7 +23,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, Form, Spin, Typography } from 'antd';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { isDesktop } from '../../lib/desktop';
 import { errorCode } from '../../lib/recipes';
@@ -32,20 +32,16 @@ import { CategoryRail } from './CategoryRail';
 import { buildConfigPatch, type SettingsRows } from './lib/build-config-patch';
 import type { ConfigUpdatePatch } from './lib/config-types';
 import { auxFormFromConfig, type FormShape } from './lib/form-shape';
+import { modelRegistryKeys } from './lib/model-registry';
 import { parseSettingsPath } from './lib/parse-settings-path';
 import { resolveSettingsRoute } from './lib/resolve-settings-route';
 import {
   type ChannelToolsetRow,
   channelToolsetRowsFromConfig,
-  emptyRow,
-  type ProviderChainBase,
-  type ProviderRow,
   type QuickCommandRow,
   quickCommandRowsFromConfig,
   type RetentionRow,
   retentionRowsFromConfig,
-  rowsFromConfig,
-  shouldRebuildRows,
 } from './lib/rows';
 import { type SectionRoute, shouldScrollToSection } from './lib/section-scroll';
 import { computeDirty, type DirtySnapshot } from './lib/settings-dirty';
@@ -71,7 +67,6 @@ export function SettingsShell() {
   const { notification } = AntApp.useApp();
   const { pathname } = useLocation();
   const [form] = Form.useForm<FormShape>();
-  const [providerRows, setProviderRows] = useState<ProviderRow[]>([emptyRow()]);
   const [quickCommandRows, setQuickCommandRows] = useState<QuickCommandRow[]>([]);
   const [channelToolsetRows, setChannelToolsetRows] = useState<ChannelToolsetRow[]>([]);
   const [voiceTtsProviderRows, setVoiceTtsProviderRows] = useState<VoiceProviderRow[]>([]);
@@ -82,8 +77,6 @@ export function SettingsShell() {
   const [retentionRows, setRetentionRows] = useState<RetentionRow[]>([]);
   const [voiceBotRows, setVoiceBotRows] = useState<VoiceBotRow[]>([]);
   const hydratedRef = useRef(false);
-  // The chain version and primary row the provider rows were built from.
-  const rowsBaseRef = useRef<ProviderChainBase | undefined>(undefined);
   // What hydration last wrote — the left-hand side of the dirty diff (D9).
   const [saved, setSaved] = useState<DirtySnapshot | null>(null);
   // The form store mutates outside React, so nothing re-renders when a field
@@ -100,7 +93,9 @@ export function SettingsShell() {
     queryFn: () => rpc.personalities.list({}),
   });
 
-  // Hydrate form + provider rows whenever config data arrives or refreshes.
+  // Hydrate the form whenever config data arrives or refreshes, and the rows on
+  // first load and after a save. Providers are not here: they save on confirm
+  // through `modelRegistry.*` and are read from `modelRegistry.list`.
   useEffect(() => {
     if (configQuery.data) {
       const hydrated: FormShape = {
@@ -265,24 +260,9 @@ export function SettingsShell() {
         webBaseUrl: configQuery.data.webBaseUrl ?? '',
       };
       form.setFieldsValue(hydrated);
-      // Rows rebuild on first load, after a save or a refused save, and when
-      // the stored chain is no longer the one they were built from
-      // (`shouldRebuildRows` — keyed on `providersVersion`).
-      if (
-        shouldRebuildRows(
-          hydratedRef.current,
-          rowsBaseRef.current?.providersVersion,
-          configQuery.data.providersVersion,
-        )
-      ) {
+      // Rows rebuild on first load and after a save or a refused save.
+      if (!hydratedRef.current) {
         const hydratedRows: SettingsRows = {
-          providerRows: rowsFromConfig(
-            configQuery.data.providers,
-            configQuery.data.provider,
-            configQuery.data.model,
-            configQuery.data.apiKeyPreview,
-            configQuery.data.baseUrl,
-          ),
           quickCommandRows: quickCommandRowsFromConfig(configQuery.data.quickCommands),
           channelToolsetRows: channelToolsetRowsFromConfig(configQuery.data.channelToolsets),
           voiceTtsProviderRows: voiceTtsProviderRowsFromConfig(configQuery.data.voiceTtsProviders),
@@ -296,7 +276,6 @@ export function SettingsShell() {
           ),
           voiceBotRows: voiceBotRowsFromConfig(configQuery.data.voiceBots),
         };
-        setProviderRows(hydratedRows.providerRows);
         setQuickCommandRows(hydratedRows.quickCommandRows);
         setChannelToolsetRows(hydratedRows.channelToolsetRows);
         setVoiceTtsProviderRows(hydratedRows.voiceTtsProviderRows);
@@ -305,10 +284,6 @@ export function SettingsShell() {
         setRetentionRows(hydratedRows.retentionRows);
         setVoiceBotRows(hydratedRows.voiceBotRows);
         hydratedRef.current = true;
-        rowsBaseRef.current = {
-          providersVersion: configQuery.data.providersVersion,
-          loadedPrimary: hydratedRows.providerRows[0],
-        };
         // The snapshot the dirty diff reads from. Set with the rows rather than
         // on every payload, so the two halves it compares always come from the
         // same `config.get` — a values-only refresh would make a row edit made
@@ -323,6 +298,9 @@ export function SettingsShell() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['config'] });
       qc.invalidateQueries({ queryKey: ['meta', 'capabilities'] });
+      // The page Save writes no providers, but it rewrites config.yaml, which
+      // is what `modelRegistry.list` reads.
+      qc.invalidateQueries({ queryKey: modelRegistryKeys.all() });
       hydratedRef.current = false;
       notification.success({ message: 'Settings saved', placement: 'topRight' });
     },
@@ -345,32 +323,6 @@ export function SettingsShell() {
     },
   });
 
-  const updateProviderRow = useCallback((index: number, patch: Partial<ProviderRow>) => {
-    setProviderRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
-  }, []);
-
-  const moveProviderRow = useCallback((index: number, direction: -1 | 1) => {
-    setProviderRows((prev) => {
-      const next = [...prev];
-      const target = index + direction;
-      if (target < 0 || target >= next.length) return prev;
-      const a = next[index];
-      const b = next[target];
-      if (!a || !b) return prev;
-      next[index] = b;
-      next[target] = a;
-      return next;
-    });
-  }, []);
-
-  const removeProviderRow = useCallback((index: number) => {
-    setProviderRows((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const addProviderRow = useCallback(() => {
-    setProviderRows((prev) => [...prev, emptyRow()]);
-  }, []);
-
   // Above the early returns, because it is a hook. Recomputed whenever a field
   // or a row set moves: `storeRevision` is the dependency that makes a keystroke
   // count, since the form store mutates outside React and nothing else here
@@ -379,7 +331,6 @@ export function SettingsShell() {
   const dirty = useMemo(
     () =>
       computeDirty(saved, form.getFieldsValue(true), {
-        providerRows,
         quickCommandRows,
         channelToolsetRows,
         voiceTtsProviderRows,
@@ -392,7 +343,6 @@ export function SettingsShell() {
       saved,
       form,
       storeRevision,
-      providerRows,
       quickCommandRows,
       channelToolsetRows,
       voiceTtsProviderRows,
@@ -471,7 +421,6 @@ export function SettingsShell() {
     const built = buildConfigPatch(
       values,
       {
-        providerRows,
         quickCommandRows,
         channelToolsetRows,
         voiceTtsProviderRows,
@@ -481,7 +430,6 @@ export function SettingsShell() {
         voiceBotRows,
       },
       configQuery.data,
-      rowsBaseRef.current,
     );
     if (!built.ok) {
       notification.error({ message: built.error });
@@ -495,11 +443,6 @@ export function SettingsShell() {
     config: configQuery.data,
     personalities,
     personalitiesLoading: personalitiesQuery.isLoading,
-    providerRows,
-    addProviderRow,
-    updateProviderRow,
-    moveProviderRow,
-    removeProviderRow,
     quickCommandRows,
     setQuickCommandRows,
     channelToolsetRows,

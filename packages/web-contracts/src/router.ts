@@ -1442,7 +1442,16 @@ const ConfigGetOutput = z.object({
   modelRouting: z.record(z.string(), z.string()),
   /** Currently selected skin (one of the BUILTIN_SKINS names). */
   skin: z.string(),
-  providers: z.array(ProviderEntrySchema),
+  providers: z.array(
+    ProviderEntrySchema.extend({
+      /** `providers.<n>.id` — the stable key a `modelRegistry.<alias>.provider`
+       *  may reference (D24). Null when the entry carries none. */
+      id: z.string().nullable(),
+      /** `providers.<n>.failover`, resolved: absent in the file reads `true`
+       *  (D23b). `false` = a credential that is not a chain hop. */
+      failover: z.boolean(),
+    }),
+  ),
   /** Opaque token for the stored chain `providers` came from. `config.update`
    *  requires it back with a `providers` list and refuses a stale one with
    *  `CONFIG_CONFLICT` (409). */
@@ -1963,6 +1972,16 @@ const ConfigUpdateInput = z.object({
         model: z.string().optional(),
         apiKey: z.string().optional(),
         baseUrl: z.string().optional(),
+        /** `providers.<n>.id`. Omitted = keep the stored entry's id; `null` or
+         *  `''` = clear it; a string = set it (`[A-Za-z0-9_-]+`, unique across
+         *  the rows). Clearing or renaming an id a `modelRegistry` entry
+         *  references is refused naming the aliases (`assertProviderIds`,
+         *  apps/web-api config.service.ts). */
+        id: z.string().max(200).nullable().optional(),
+        /** `providers.<n>.failover`. Omitted = keep the stored flag; `false`
+         *  writes `failover: false`; `true` restores the default (a stored
+         *  `false` line is removed, a stored `true` line is kept). */
+        failover: z.boolean().optional(),
         /** Index in `config.get`'s `providers` the row was loaded from; the
          *  server keeps that entry's key and provider-specific fields
          *  (`overlayProviderRow`, apps/web-api config.service.ts). Absent for
@@ -2411,7 +2430,29 @@ const ConfigUpdateInput = z.object({
     })
     .optional(),
 });
-const ConfigUpdateOutput = z.object({ ok: z.literal(true) });
+/**
+ * One model adopted into `modelRegistry.*` from a provider-chain entry that
+ * declared it — by `config.update` (adopt on save) or `modelRegistry.importChain`.
+ * Both run `planChainModelImport` (`@ethosagent/config`), the one importer.
+ */
+export const ModelRegistryAdoptedModelSchema = z.object({
+  alias: z.string(),
+  /** The provider entry id the alias references. */
+  providerKey: z.string(),
+  modelId: z.string(),
+});
+export type ModelRegistryAdoptedModel = z.infer<typeof ModelRegistryAdoptedModelSchema>;
+
+const ConfigUpdateOutput = z.object({
+  ok: z.literal(true),
+  /**
+   * Models this save adopted into the registry, in the same config.yaml write:
+   * a saved provider row whose `model` had no registry entry for its
+   * `(providerKey, modelId)` pair. Absent when nothing was adopted. A row sent
+   * with `id: null` / `''` is never adopted (adopting would write its id back).
+   */
+  adoptedModels: z.array(ModelRegistryAdoptedModelSchema).optional(),
+});
 
 /** @experimental */
 const config = {
@@ -3339,22 +3380,245 @@ const models = {
 // ---------------------------------------------------------------------------
 // Model registry — the operator's model roster (plan/phases/model-registry.md).
 //
-// `test` is the namespace's ONLY member today: the D19 on-demand probe, moved
-// up out of T2.8 by D28 so a headless CLI and a browser share one definition of
-// what a test is before D18's cache wraps it. T2.2 extends this namespace with
-// `list` / `upsert` / `remove` / `setDefault` / `setRole`.
+// Handlers: apps/web-api `rpc/model-registry.ts` → `ModelRegistryService`.
+// `list` reads; `upsert` / `setDefault` / `setRole` / `setRouting` / `remove`
+// each save immediately as ONE config.yaml write; `test` / `testAll` probe.
+//
+// Refusals are DATA, not thrown ORPCErrors — the same choice `test` makes for
+// `rate_limited`: every write answers `{ ok: true, … } | ModelRegistryRefusal`,
+// because the pane renders a refusal (a referenced alias is a dialog with
+// "Repoint them to…", not an error toast). Transport failures still throw.
 // ---------------------------------------------------------------------------
 
-const ModelRegistryTestInput = z.object({
-  /** A `modelRegistry.<alias>` key. */
-  alias: z.string().min(1).max(200),
+const ModelRegistryAliasInput = z.string().min(1).max(200);
+
+/** The three role bindings `setRole` writes. `default` is not one of them: the
+ *  roster default is `setDefault` (`modelRegistry.default`). */
+export const ModelRegistryBindableRoleSchema = z.enum(['trivial', 'deep', 'dreaming']);
+
+/** One `validateModelRegistry` problem (`@ethosagent/config`). */
+export const ModelRegistryProblemSchema = z.object({
+  code: z.enum([
+    'invalid_alias',
+    'reserved_alias',
+    'missing_provider',
+    'missing_model_id',
+    'unknown_provider_key',
+    'derived_provider_key',
+    'unknown_default',
+    'unknown_role_binding',
+    'unknown_fallback',
+    'cross_provider_fallback',
+    'alias_cycle',
+  ]),
+  /** The alias the problem is about (for `default`/roles: the alias they NAME). */
+  alias: z.string(),
+  /** The config key, e.g. `modelRegistry.roles.deep`. */
+  key: z.string(),
+  /** One sentence naming the offender and the configured set. */
+  message: z.string(),
+  /** The exact line to add or change, where there is one. */
+  fix: z.string().optional(),
 });
+export type ModelRegistryProblemView = z.infer<typeof ModelRegistryProblemSchema>;
+
+/** One place that names an alias — "used by", and what `remove` refuses on. */
+export const ModelReferentSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('personality'),
+    personalityId: z.string(),
+    /** The personality's own slot: `model`, one tier-map leaf, or `voice.model`. */
+    field: z.enum([
+      'model',
+      'model.trivial',
+      'model.default',
+      'model.deep',
+      'model.dreaming',
+      'voice.model',
+    ]),
+    /** A built-in personality — read-only, so a repoint cannot rewrite it. */
+    readOnly: z.boolean(),
+  }),
+  z.object({ kind: z.literal('role'), role: z.enum(['trivial', 'default', 'deep', 'dreaming']) }),
+  z.object({ kind: z.literal('default') }),
+  /** `modelRouting.<personalityId>`. */
+  z.object({ kind: z.literal('routing'), personalityId: z.string() }),
+  /** Another registry entry's `fallbacks` list. */
+  z.object({ kind: z.literal('fallback'), alias: z.string() }),
+]);
+export type ModelReferent = z.infer<typeof ModelReferentSchema>;
+
+/** Whether a provider entry has a credential — never the credential itself.
+ *  `not_needed`: self-hosted / device-auth / IAM providers, or an uncatalogued
+ *  provider with no `apiKey` (`providerCredentialStatus`, @ethosagent/wiring). */
+export const ModelCredentialStatusSchema = z.enum(['set', 'missing', 'not_needed']);
+export type ModelCredentialStatus = z.infer<typeof ModelCredentialStatusSchema>;
+
+export const ModelRegistryRefusalSchema = z.object({
+  ok: z.literal(false),
+  code: z.enum([
+    'config_missing',
+    'unknown_alias',
+    'duplicate_alias',
+    'invalid_entry',
+    'referenced',
+    'invalid_repoint',
+    'unknown_personality',
+    'invalid_declaration',
+  ]),
+  /** Names the offender and the configured set; render verbatim. */
+  message: z.string(),
+  /** The `validateModelRegistry` problems behind `invalid_entry` / `invalid_repoint`. */
+  problems: z.array(ModelRegistryProblemSchema),
+  /** Who names the alias — populated for `referenced` (and `invalid_repoint`). */
+  referents: z.array(ModelReferentSchema),
+});
+export type ModelRegistryRefusal = z.infer<typeof ModelRegistryRefusalSchema>;
+
+export const ModelRegistryEntryViewSchema = z.object({
+  alias: z.string(),
+  /** `modelRegistry.<alias>.provider` — a provider ENTRY id. */
+  providerKey: z.string(),
+  modelId: z.string(),
+  label: z.string().nullable(),
+  contextWindow: z.number().nullable(),
+  costPer1kInput: z.number().nullable(),
+  costPer1kOutput: z.number().nullable(),
+  fallbacks: z.array(z.string()),
+  /** The provider entry's credential status; `missing` when no entry has that key. */
+  credential: ModelCredentialStatusSchema,
+  referents: z.array(ModelReferentSchema),
+});
+export type ModelRegistryEntryView = z.infer<typeof ModelRegistryEntryViewSchema>;
+
+export const ModelProviderEntryViewSchema = z.object({
+  /** The explicit id, else the positional display name (`deriveProviderKey`). */
+  key: z.string(),
+  /** Chain position (`providers.<index>`); 0 for a top-level-only config. */
+  index: z.number().int().nonnegative(),
+  /** Provider TYPE, e.g. `anthropic`. */
+  provider: z.string(),
+  id: z.string().nullable(),
+  explicitId: z.boolean(),
+  /** The entry's own `model`, if any. */
+  model: z.string().nullable(),
+  failover: z.boolean(),
+  /** The entry's `apiVersion` line (azure reads it); null when absent. Not a secret. */
+  apiVersion: z.string().nullable(),
+  /** The entry's `region` line (bedrock reads it); null when absent. Not a secret. */
+  region: z.string().nullable(),
+  /** The entry's `awsProfile` line (bedrock reads it) — a profile NAME, never a
+   *  credential; null when absent. */
+  awsProfile: z.string().nullable(),
+  credential: ModelCredentialStatusSchema,
+  /** Whether a registry entry may name it — only with an explicit id (D24). */
+  referenceable: z.boolean(),
+  /** Why not, when `referenceable` is false. */
+  reason: z.string().nullable(),
+});
+export type ModelProviderEntryView = z.infer<typeof ModelProviderEntryViewSchema>;
+
+/** A model a provider-chain entry declares that the registry does not have yet
+ *  (`planChainModelImport` candidates). A configured model is never hidden:
+ *  `importChain` adopts it. */
+export const ModelRegistryChainModelSchema = z.object({
+  /** The entry's explicit id, or the id adopting it would write (D24). */
+  providerKey: z.string(),
+  /** Chain position (`providers.<index>`); 0 for a top-level-only config. */
+  index: z.number().int().nonnegative(),
+  /** Provider TYPE, e.g. `codex`. */
+  provider: z.string(),
+  modelId: z.string(),
+  /** The alias `importChain` writes for it. */
+  suggestedAlias: z.string(),
+  /** False when adopting it also writes `providers.<index>.id`. */
+  idIsExplicit: z.boolean(),
+});
+export type ModelRegistryChainModel = z.infer<typeof ModelRegistryChainModelSchema>;
+
+export const ModelRegistryListOutput = z.object({
+  /** Chain models not yet in the registry, in chain order. */
+  chainModels: z.array(ModelRegistryChainModelSchema),
+  /** In config-file order. */
+  entries: z.array(ModelRegistryEntryViewSchema),
+  /** `modelRegistry.default`. */
+  default: z.string().nullable(),
+  /** `modelRegistry.roles.<role>`; null = unbound (falls through to `default`). */
+  roles: z.object({
+    trivial: z.string().nullable(),
+    default: z.string().nullable(),
+    deep: z.string().nullable(),
+    dreaming: z.string().nullable(),
+  }),
+  /** Every provider entry, in chain order — what the Add/Edit drawer lists. */
+  providerEntries: z.array(ModelProviderEntryViewSchema),
+  /** `modelRouting.<personalityId>` → role or alias. */
+  routing: z.record(z.string(), z.string()),
+  /** Every current `validateModelRegistry` problem. */
+  problems: z.array(ModelRegistryProblemSchema),
+});
+export type ModelRegistryListResult = z.infer<typeof ModelRegistryListOutput>;
+
+export const ModelRegistryUpsertInput = z.object({
+  /** `create` refuses an existing alias; `update` refuses a missing one (no rename). */
+  mode: z.enum(['create', 'update']),
+  alias: ModelRegistryAliasInput,
+  /** A provider entry with an explicit id. Emptiness and unknown/derived keys
+   *  are refused by `validateModelRegistry`, naming the configured set. */
+  provider: z.string().max(200),
+  /** The vendor id. An empty one is refused by `validateModelRegistry`. */
+  modelId: z.string().max(500),
+  /** Optional display fields. On `update` they are REPLACED: omitted clears. */
+  label: z.string().max(200).optional(),
+  contextWindow: z.number().int().positive().optional(),
+  costPer1kInput: z.number().nonnegative().optional(),
+  costPer1kOutput: z.number().nonnegative().optional(),
+});
+export type ModelRegistryUpsertRequest = z.infer<typeof ModelRegistryUpsertInput>;
+
+const ModelRegistryOk = z.object({ ok: z.literal(true) });
+
+/** Output of `upsert` / `setDefault` / `setRole` / `setRouting`. */
+export const ModelRegistryWriteOutput = z.union([ModelRegistryOk, ModelRegistryRefusalSchema]);
+export type ModelRegistryWriteResult = z.infer<typeof ModelRegistryWriteOutput>;
+
+export const ModelRegistryRemoveInput = z.object({
+  alias: ModelRegistryAliasInput,
+  /** "Repoint them to…": rewrite every writable referent to this alias, then remove. */
+  repointTo: ModelRegistryAliasInput.optional(),
+  /** "Remove anyway": remove and leave every referent to refuse at turn time. */
+  force: z.boolean().optional(),
+});
+
+export const ModelRegistryRemoveOutput = z.union([
+  z.object({
+    ok: z.literal(true),
+    alias: z.string(),
+    repointedTo: z.string().nullable(),
+    /** Referents now naming `repointedTo`. */
+    rewritten: z.array(ModelReferentSchema),
+    /** Referents still naming the removed alias (built-ins on repoint; all on force). */
+    needsAttention: z.array(ModelReferentSchema),
+  }),
+  ModelRegistryRefusalSchema,
+]);
+export type ModelRegistryRemoveResult = z.infer<typeof ModelRegistryRemoveOutput>;
+
+/** A saved alias, or an unsaved `(providerKey, modelId)` — the Add/Edit form's
+ *  "Test before saving" (D19.1). Same probe, same 10s limit, keyed on the alias
+ *  or on `providerKey/modelId`. */
+export const ModelRegistryTestInput = z.union([
+  z.object({ alias: ModelRegistryAliasInput }),
+  z.object({ providerKey: z.string().min(1).max(200), modelId: z.string().min(1).max(500) }),
+]);
 
 /**
  * What one test learned — the SAME value `ethos models test` prints, produced
- * by the same `testModelAlias` in `@ethosagent/wiring`.
+ * by the same `testModel` in `@ethosagent/wiring`. `alias` is present exactly
+ * when the test named an alias; an unsaved test is identified by
+ * `providerKey` / `modelId`.
  *
- * `rate_limited` is a state, not a thrown error: the 10s per-alias-per-caller
+ * `rate_limited` is a state, not a thrown error: the 10s per-subject-per-caller
  * limit is enforced in the HANDLER (D19), because a test is a real billable
  * completion reachable by anything that can call this RPC, and a limit that
  * lives only in the button is a hint the button happens to respect. The
@@ -3363,7 +3627,7 @@ const ModelRegistryTestInput = z.object({
 export const ModelRegistryTestOutput = z.discriminatedUnion('state', [
   z.object({
     state: z.literal('ok'),
-    alias: z.string(),
+    alias: z.string().optional(),
     providerKey: z.string(),
     provider: z.string(),
     modelId: z.string(),
@@ -3374,7 +3638,7 @@ export const ModelRegistryTestOutput = z.discriminatedUnion('state', [
   }),
   z.object({
     state: z.literal('rejected'),
-    alias: z.string(),
+    alias: z.string().optional(),
     providerKey: z.string(),
     provider: z.string(),
     modelId: z.string(),
@@ -3385,7 +3649,7 @@ export const ModelRegistryTestOutput = z.discriminatedUnion('state', [
   z.object({
     /** The probe never got an answer. NOT a verdict on the credential. */
     state: z.literal('unreachable'),
-    alias: z.string(),
+    alias: z.string().optional(),
     providerKey: z.string(),
     provider: z.string(),
     modelId: z.string(),
@@ -3394,13 +3658,17 @@ export const ModelRegistryTestOutput = z.discriminatedUnion('state', [
   z.object({
     /** Nothing was probed — the alias, its provider entry or its credential is missing. */
     state: z.literal('unconfigured'),
-    alias: z.string(),
+    alias: z.string().optional(),
+    providerKey: z.string().optional(),
+    modelId: z.string().optional(),
     reason: z.string(),
     fix: z.string().optional(),
   }),
   z.object({
     state: z.literal('rate_limited'),
-    alias: z.string(),
+    alias: z.string().optional(),
+    providerKey: z.string().optional(),
+    modelId: z.string().optional(),
     /** Named so the refusal can say how long to wait, rather than just "no". */
     retryAfterSeconds: z.number().int().nonnegative(),
   }),
@@ -3408,9 +3676,208 @@ export const ModelRegistryTestOutput = z.discriminatedUnion('state', [
 
 export type ModelRegistryTestResult = z.infer<typeof ModelRegistryTestOutput>;
 
+/** One outcome per provider ENTRY the registry references (`providerEntryProbes`,
+ *  the grouping `ethos models test --all` uses). */
+export const ModelRegistryTestAllOutput = z.object({
+  results: z.array(
+    z.object({
+      providerKey: z.string(),
+      /** Every alias on that entry; the first (alphabetically) was probed. */
+      aliases: z.array(z.string()),
+      outcome: ModelRegistryTestOutput,
+    }),
+  ),
+});
+export type ModelRegistryTestAllResult = z.infer<typeof ModelRegistryTestAllOutput>;
+
+/** `importChain` — adopt chain models; `providerKeys` absent = every candidate. */
+export const ModelRegistryImportChainInput = z.object({
+  providerKeys: z.array(z.string().min(1).max(200)).max(100).optional(),
+});
+
+export const ModelRegistryImportChainOutput = z.union([
+  z.object({
+    ok: z.literal(true),
+    adopted: z.array(ModelRegistryAdoptedModelSchema),
+    /** The alias written to `modelRegistry.default`; null when none was written. */
+    defaultSet: z.string().nullable(),
+    /** Provider ids made explicit (`providers.<n>.id`) by this import. */
+    idsWritten: z.array(z.string()),
+  }),
+  ModelRegistryRefusalSchema,
+]);
+export type ModelRegistryImportChainResult = z.infer<typeof ModelRegistryImportChainOutput>;
+
+/** A refused provider write. Data, not a thrown error — the drawer renders it. */
+export const ModelRegistryProviderRefusalSchema = z.object({
+  ok: z.literal(false),
+  code: z.enum([
+    'config_missing',
+    /** `key` names no provider entry. */
+    'unknown_provider',
+    /** Empty provider type. */
+    'invalid_provider',
+    /** Id outside `[A-Za-z0-9_-]+` (or empty). */
+    'invalid_id',
+    /** Id already names another provider entry. */
+    'duplicate_id',
+    /** Empty or repeated modelId, a `validateModelRegistry` problem, or clearing
+     *  the primary provider's own model. */
+    'invalid_model',
+    /** A requested alias already exists. */
+    'duplicate_alias',
+    /** `removeProvider` while registry models reference the entry (`aliases`). */
+    'referenced',
+    /** `removeProvider` of the deployment's only provider. */
+    'last_provider',
+    /** `moveProvider` past either end, or with no chain. */
+    'cannot_move',
+    /** `setProviderFailover(false)` on a top-level-only config. */
+    'not_in_chain',
+    /** `setFallbackModel` names no configured model. */
+    'unknown_alias',
+    /** `setFallbackModel` names a model on another provider entry (`aliases` =
+     *  the models this entry does have). */
+    'cross_provider_alias',
+  ]),
+  /** Names the offender and what would have worked; render verbatim. */
+  message: z.string(),
+  /** `validateModelRegistry` problems behind an `invalid_model`. */
+  problems: z.array(ModelRegistryProblemSchema),
+  /** The aliases the refusal is about (`referenced`, `cross_provider_alias`). */
+  aliases: z.array(z.string()),
+});
+export type ModelRegistryProviderRefusal = z.infer<typeof ModelRegistryProviderRefusalSchema>;
+
+const ModelRegistryProviderKeyInput = z.string().min(1).max(200);
+
+export const ModelRegistryAddProviderInput = z.object({
+  /** Provider TYPE, e.g. `anthropic`. Empty is refused as `invalid_provider`. */
+  provider: z.string().max(100),
+  /** `providers.<n>.id` — required and immutable afterwards (D24). */
+  id: z.string().max(200),
+  /** Plaintext; stored in the vault, the file gets a `${secrets:…}` ref. */
+  apiKey: z.string().max(4096).optional(),
+  baseUrl: z.string().max(2000).optional(),
+  apiVersion: z.string().max(100).optional(),
+  region: z.string().max(100).optional(),
+  awsProfile: z.string().max(200).optional(),
+  /** `false` = a credential that is not a failover hop (D23b). */
+  failover: z.boolean().optional(),
+  /** Upserted into the registry in the same write. The first model's id
+   *  becomes `providers.<n>.model`. */
+  models: z
+    .array(
+      z.object({
+        modelId: z.string().max(500),
+        /** Absent = the importer's slug rule, `-<id>` suffixed on collision. */
+        alias: z.string().max(200).optional(),
+        label: z.string().max(200).optional(),
+        contextWindow: z.number().int().positive().optional(),
+        costPer1kInput: z.number().nonnegative().optional(),
+        costPer1kOutput: z.number().nonnegative().optional(),
+      }),
+    )
+    .max(50),
+});
+export type ModelRegistryAddProviderRequest = z.infer<typeof ModelRegistryAddProviderInput>;
+
+export const ModelRegistryAddProviderOutput = z.union([
+  z.object({
+    ok: z.literal(true),
+    providerKey: z.string(),
+    /** Chain position the entry landed at. */
+    index: z.number().int().nonnegative(),
+    /** Every model written, with its final alias. */
+    models: z.array(ModelRegistryAdoptedModelSchema),
+  }),
+  ModelRegistryProviderRefusalSchema,
+]);
+export type ModelRegistryAddProviderResult = z.infer<typeof ModelRegistryAddProviderOutput>;
+
+/** Omitted = keep. `apiKey: ''` also keeps (an empty key never erases one);
+ *  `''` for the other fields removes the line. The id is immutable. */
+export const ModelRegistryUpdateProviderInput = z.object({
+  key: ModelRegistryProviderKeyInput,
+  apiKey: z.string().max(4096).optional(),
+  baseUrl: z.string().max(2000).optional(),
+  apiVersion: z.string().max(100).optional(),
+  region: z.string().max(100).optional(),
+  awsProfile: z.string().max(200).optional(),
+});
+
+/** Output of `updateProvider` / `removeProvider` / `moveProvider` /
+ *  `setProviderFailover` / `setFallbackModel`. `providerKey` is the entry's key
+ *  AFTER the write (an id-less entry's derived key moves with it); `index` is
+ *  its position after the write (for `removeProvider`, where it was). */
+export const ModelRegistryProviderWriteOutput = z.union([
+  z.object({
+    ok: z.literal(true),
+    providerKey: z.string(),
+    index: z.number().int().nonnegative(),
+  }),
+  ModelRegistryProviderRefusalSchema,
+]);
+export type ModelRegistryProviderWriteResult = z.infer<typeof ModelRegistryProviderWriteOutput>;
+
 /** @experimental */
 const modelRegistry = {
+  list: oc.output(ModelRegistryListOutput),
+  upsert: oc.input(ModelRegistryUpsertInput).output(ModelRegistryWriteOutput),
+  setDefault: oc
+    .input(z.object({ alias: ModelRegistryAliasInput }))
+    .output(ModelRegistryWriteOutput),
+  /** `alias: null` deletes the `modelRegistry.roles.<role>` line. */
+  setRole: oc
+    .input(
+      z.object({
+        role: ModelRegistryBindableRoleSchema,
+        alias: ModelRegistryAliasInput.nullable(),
+      }),
+    )
+    .output(ModelRegistryWriteOutput),
+  /** `modelRouting.<personalityId>`: a role or a configured alias; `null` deletes the line. */
+  setRouting: oc
+    .input(
+      z.object({
+        personalityId: z.string().min(1).max(200),
+        declaration: z.string().min(1).max(200).nullable(),
+      }),
+    )
+    .output(ModelRegistryWriteOutput),
+  remove: oc.input(ModelRegistryRemoveInput).output(ModelRegistryRemoveOutput),
   test: oc.input(ModelRegistryTestInput).output(ModelRegistryTestOutput),
+  testAll: oc.output(ModelRegistryTestAllOutput),
+  /** Adopt chain models (`list.chainModels`) in ONE config.yaml write. */
+  importChain: oc.input(ModelRegistryImportChainInput).output(ModelRegistryImportChainOutput),
+  /** Append a provider entry with an explicit id and its models, one write. */
+  addProvider: oc.input(ModelRegistryAddProviderInput).output(ModelRegistryAddProviderOutput),
+  updateProvider: oc
+    .input(ModelRegistryUpdateProviderInput)
+    .output(ModelRegistryProviderWriteOutput),
+  /** Refused while any registry model references the entry. */
+  removeProvider: oc
+    .input(z.object({ key: ModelRegistryProviderKeyInput }))
+    .output(ModelRegistryProviderWriteOutput),
+  moveProvider: oc
+    .input(z.object({ key: ModelRegistryProviderKeyInput, direction: z.enum(['up', 'down']) }))
+    .output(ModelRegistryProviderWriteOutput),
+  setProviderFailover: oc
+    .input(z.object({ key: ModelRegistryProviderKeyInput, failover: z.boolean() }))
+    .output(ModelRegistryProviderWriteOutput),
+  /** `providers.<n>.model` = the alias's modelId; `null` removes the line. The
+   *  alias must be one of THIS entry's models. */
+  setFallbackModel: oc
+    .input(
+      z.object({ key: ModelRegistryProviderKeyInput, alias: ModelRegistryAliasInput.nullable() }),
+    )
+    .output(ModelRegistryProviderWriteOutput),
+  /** Test connection for a SAVED provider with its stored credential. Probes
+   *  `providers.<n>.model`, else its first registry model; neither →
+   *  `unconfigured`. Rate-limited per provider entry (10s). */
+  testProvider: oc
+    .input(z.object({ providerKey: ModelRegistryProviderKeyInput }))
+    .output(ModelRegistryTestOutput),
 };
 
 // ---------------------------------------------------------------------------

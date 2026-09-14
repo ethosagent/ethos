@@ -1,17 +1,9 @@
 import { InfoCircleOutlined } from '@ant-design/icons';
-import type {
-  McpPolicy,
-  ModelTierConfigWire,
-  Personality,
-  PersonalitySkill,
-  ProviderId,
-  Skill,
-} from '@ethosagent/web-contracts';
+import type { McpPolicy, Personality, PersonalitySkill, Skill } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
-  AutoComplete,
   Button,
   Checkbox,
   Divider,
@@ -45,6 +37,7 @@ import {
   uploadAvatarBytes,
 } from '../components/personality/avatarActions';
 import { ExecutionTab } from '../components/personality/ExecutionTab';
+import { ModelDeclarationSelect } from '../components/personality/ModelDeclarationSelect';
 import {
   type PersonalityVoice,
   PersonalityVoiceFields,
@@ -57,7 +50,6 @@ import { ToolDetailModal } from '../components/personality/ToolDetailModal';
 import { PersonalityMark } from '../components/ui/PersonalityMark';
 import { PersonalityRingAvatar } from '../components/ui/PersonalityRingAvatar';
 import { TeamRing } from '../components/ui/TeamRing';
-import { useConfig } from '../features/config/api/queries';
 import { useTeamMembership } from '../features/teams/api/queries';
 import { teamAccents } from '../features/teams/lib/membership';
 import { useCreateFlag } from '../hooks/useCreateFlag';
@@ -71,74 +63,6 @@ import {
 } from '../lib/toolset-categories';
 import { buildTeamPath } from '../lib/workspaceRoutes';
 import { rpc } from '../rpc';
-
-// Shape of one suggestion entry returned by the models.catalog RPC.
-type CatalogModel = { id: string; label: string; contextWindow: number; default?: boolean };
-
-export function modelOptionsForProvider(
-  catalog: { providers: Record<string, { models: CatalogModel[] }> } | undefined,
-  provider: string | undefined,
-): { value: string; label: string }[] {
-  if (!catalog || !provider) return [];
-  const models = catalog.providers[provider]?.models ?? [];
-  return models.map((m) => ({ value: m.id, label: `${m.id} — ${m.label}` }));
-}
-
-// Case-insensitive substring match on the model id (option value) so typing
-// narrows the suggestion list. AutoComplete still accepts arbitrary input.
-export const modelFilterOption = (input: string, option?: { value: string; label: string }) =>
-  (option?.value ?? '').toLowerCase().includes(input.toLowerCase());
-
-// Every provider the editor knows how to name. Which of them it OFFERS is a
-// separate question — see `providerOptionsFor`.
-const PROVIDER_LABELS: Record<string, string> = {
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  codex: 'Codex',
-  openrouter: 'OpenRouter',
-  'openai-compat': 'OpenAI Compatible',
-  ollama: 'Ollama',
-  azure: 'Azure',
-};
-
-/**
- * Providers this deployment can actually reach: the primary `provider` plus
- * every entry of the fallback chain, as `config.get` reports them. Offering the
- * rest is how the editor ended up suggesting `claude-opus-4-7` to a deployment
- * with no Anthropic key.
- */
-export function configuredProviderIds(
-  config: { provider: string; providers: { provider: string }[] } | undefined,
-): string[] {
-  if (!config) return [];
-  return [...new Set([config.provider, ...config.providers.map((p) => p.provider)])].filter(
-    (id) => id.length > 0,
-  );
-}
-
-/**
- * Provider options for the personality editor, narrowed to what is configured.
- * `current` — the value already on the personality — is always kept, flagged
- * when it is not configured: dropping it would blank the control and the next
- * save would silently erase a provider the user set by hand.
- *
- * An EMPTY `configured` (config not loaded yet, or the RPC failed) offers every
- * known provider rather than none: a picker with nothing in it is worse than
- * today's behaviour, and the character sheet still tells the truth either way.
- */
-export function providerOptionsFor(
-  configured: readonly string[],
-  current?: string,
-): { label: string; value: string }[] {
-  const ids = configured.length > 0 ? configured : Object.keys(PROVIDER_LABELS);
-  const shown = current && !ids.includes(current) ? [...ids, current] : ids;
-  return shown.map((id) => ({
-    value: id,
-    label:
-      (PROVIDER_LABELS[id] ?? id) +
-      (configured.length > 0 && !configured.includes(id) ? ' (not configured)' : ''),
-  }));
-}
 
 // Personalities tab — v1.
 //
@@ -518,16 +442,16 @@ function PersonalityRowActions({
 // Create wizard (4 steps)
 // ---------------------------------------------------------------------------
 
+/** Frame 4's behaviour line, under both model pickers. */
+const MODEL_FIELD_HELP =
+  'Choose a role to follow whatever that role is bound to. Choose a model to pin this personality to it.';
+
 interface WizardState {
   id: string;
   name: string;
   description: string;
+  /** A role, a registry alias, or `''` for "Use default" (plan model-registry D1). */
   model: string;
-  modelTrivial: string;
-  modelDefault: string;
-  modelDeep: string;
-  modelTiered: boolean;
-  provider: string;
   capabilities: string[];
   fsReachRead: string[];
   fsReachWrite: string[];
@@ -568,11 +492,6 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
     name: '',
     description: '',
     model: '',
-    modelTrivial: '',
-    modelDefault: '',
-    modelDeep: '',
-    modelTiered: false,
-    provider: '',
     capabilities: [],
     fsReachRead: [],
     fsReachWrite: [],
@@ -594,18 +513,7 @@ function CreateWizard({ existingIds, onClose }: { existingIds: Set<string>; onCl
         id: state.id,
         name: state.name,
         ...(state.description ? { description: state.description } : {}),
-        ...(state.modelTiered
-          ? (() => {
-              const tier: Record<string, string> = {};
-              if (state.modelTrivial) tier.trivial = state.modelTrivial;
-              if (state.modelDefault) tier.default = state.modelDefault;
-              if (state.modelDeep) tier.deep = state.modelDeep;
-              return Object.keys(tier).length > 0 ? { model: tier } : {};
-            })()
-          : state.model
-            ? { model: state.model }
-            : {}),
-        ...(state.provider ? { provider: state.provider as ProviderId } : {}),
+        ...(state.model ? { model: state.model } : {}),
         ...(state.capabilities.length > 0 ? { capabilities: state.capabilities } : {}),
         ...wizardFsReach(state),
         ...(state.plugins.length > 0 ? { plugins: state.plugins } : {}),
@@ -775,6 +683,7 @@ function IdentityStep({
       </Form.Item>
       <PersonalityVoiceFields
         value={state.voice}
+        agenticModel={state.model}
         onChange={(voice) => setState((s) => ({ ...s, voice }))}
       />
     </Form>
@@ -1278,104 +1187,16 @@ function WizardConfigTab({
   state: WizardState;
   setState: React.Dispatch<React.SetStateAction<WizardState>>;
 }) {
-  const catalogQuery = useQuery({
-    queryKey: ['models', 'catalog'],
-    queryFn: () => rpc.models.catalog(),
-  });
-  // The catalog lists every model Ethos knows; this deployment can only reach
-  // the providers it has configured. Suggest against the provider this
-  // personality will ACTUALLY run on — its own when it declares one, otherwise
-  // the deployment's — never against a provider with no credentials.
-  const configQuery = useConfig();
-  const configured = configuredProviderIds(configQuery.data);
-  const effectiveProvider = state.provider || configQuery.data?.provider || undefined;
-  const modelOptions = modelOptionsForProvider(catalogQuery.data, effectiveProvider);
-  const modelPlaceholder = modelOptions[0]?.value ?? 'model id';
   return (
     <Form layout="vertical">
       <Typography.Paragraph type="secondary">
         Optional. Leave blank to use the global default from Settings.
       </Typography.Paragraph>
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <Typography.Text strong>Models</Typography.Text>
-          <Switch
-            size="small"
-            checked={state.modelTiered}
-            onChange={(checked) =>
-              setState((prev) => ({
-                ...prev,
-                modelTiered: checked,
-                model: checked ? '' : prev.model,
-                modelTrivial: checked ? prev.modelTrivial : '',
-                modelDefault: checked ? prev.modelDefault : '',
-                modelDeep: checked ? prev.modelDeep : '',
-              }))
-            }
-            checkedChildren="tiered"
-            unCheckedChildren="single"
-          />
-        </div>
-        {state.modelTiered ? (
-          <>
-            <Form.Item label="Trivial">
-              <AutoComplete
-                value={state.modelTrivial}
-                placeholder={modelPlaceholder}
-                options={modelOptions}
-                filterOption={modelFilterOption}
-                onChange={(val) => setState((prev) => ({ ...prev, modelTrivial: val }))}
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-            <Form.Item label="Default">
-              <AutoComplete
-                value={state.modelDefault}
-                placeholder={modelPlaceholder}
-                options={modelOptions}
-                filterOption={modelFilterOption}
-                onChange={(val) => setState((prev) => ({ ...prev, modelDefault: val }))}
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-            <Form.Item label="Deep">
-              <AutoComplete
-                value={state.modelDeep}
-                placeholder={modelPlaceholder}
-                options={modelOptions}
-                filterOption={modelFilterOption}
-                onChange={(val) => setState((prev) => ({ ...prev, modelDeep: val }))}
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              default is the model used unless a tier is explicitly selected. trivial and deep are
-              selectable tiers. Automatic per-task tier routing is not configured here.
-            </Typography.Text>
-          </>
-        ) : (
-          <Form.Item label="Model">
-            <AutoComplete
-              value={state.model}
-              placeholder={modelPlaceholder}
-              options={modelOptions}
-              filterOption={modelFilterOption}
-              onChange={(val) => setState((prev) => ({ ...prev, model: val }))}
-              style={{ width: '100%' }}
-            />
-          </Form.Item>
-        )}
-      </div>
-      <Form.Item
-        label="Provider"
-        extra="Engine default is set in Settings. Set this only if this personality must route to a specific provider."
-      >
-        <Select
-          allowClear
-          placeholder="engine default"
-          value={state.provider || undefined}
-          onChange={(val) => setState((s) => ({ ...s, provider: val ?? '' }))}
-          options={providerOptionsFor(configured, state.provider || undefined)}
+      <Form.Item label="Model" extra={MODEL_FIELD_HELP}>
+        <ModelDeclarationSelect
+          ariaLabel="Model"
+          value={state.model}
+          onChange={(model) => setState((s) => ({ ...s, model }))}
         />
       </Form.Item>
       <Form.Item
@@ -2065,11 +1886,6 @@ export function ConfigEditor({
   const [form] = Form.useForm<{
     name: string;
     description: string;
-    provider: ProviderId | '';
-    model: string;
-    modelTrivial: string;
-    modelDefault: string;
-    modelDeep: string;
     capabilities: string[];
     fsReachRead: string[];
     fsReachWrite: string[];
@@ -2094,41 +1910,23 @@ export function ConfigEditor({
     nightlyJudgeMinInteractions: number;
     nightlyExpression: boolean;
   }>();
-  const [tieredMode, setTieredMode] = useState(
-    typeof personality.model === 'object' && personality.model !== null,
-  );
+  // The model declaration lives outside the Antd form too. `null` = untouched:
+  // the patch then omits `model`, and `update` keeps the stored value
+  // (`patch.model ?? config.model` in FilePersonalityRegistry.update,
+  // extensions/personalities/src/index.ts), so a tier map or an unrecognized
+  // id survives a save of some other field.
+  const [modelChoice, setModelChoice] = useState<string | null>(null);
   // Voice lives outside the Antd form: `PersonalityVoiceFields` is a controlled
   // pair (the voice control switches between a select and free text as the
   // provider changes), and threading that through registered Form.Items buys
   // nothing but indirection.
   const [voice, setVoice] = useState<PersonalityVoice>(BLANK_VOICE);
-  const catalogQuery = useQuery({
-    queryKey: ['models', 'catalog'],
-    queryFn: () => rpc.models.catalog(),
-  });
-  const watchedProvider = Form.useWatch('provider', form);
-  // Same narrowing the wizard does: suggest against the provider this
-  // personality will actually run on, and offer only configured providers.
-  const configQuery = useConfig();
-  const configured = configuredProviderIds(configQuery.data);
-  const modelOptions = modelOptionsForProvider(
-    catalogQuery.data,
-    watchedProvider || configQuery.data?.provider || undefined,
-  );
-  const modelPlaceholder = modelOptions[0]?.value ?? 'model id';
 
   useEffect(() => {
-    const m = personality.model;
-    const isObj = typeof m === 'object' && m !== null;
-    setTieredMode(isObj);
+    setModelChoice(null);
     form.setFieldsValue({
       name: personality.name,
       description: personality.description ?? '',
-      provider: (personality.provider ?? '') as ProviderId | '',
-      model: isObj ? '' : (m ?? ''),
-      modelTrivial: isObj ? (m.trivial ?? '') : '',
-      modelDefault: isObj ? (m.default ?? '') : '',
-      modelDeep: isObj ? (m.deep ?? '') : '',
       capabilities: personality.capabilities ?? [],
       fsReachRead: personality.fs_reach?.read ?? [],
       fsReachWrite: personality.fs_reach?.write ?? [],
@@ -2173,11 +1971,6 @@ export function ConfigEditor({
     mutationFn: (values: {
       name: string;
       description: string;
-      provider: ProviderId | '';
-      model: string;
-      modelTrivial: string;
-      modelDefault: string;
-      modelDeep: string;
       capabilities: string[];
       fsReachRead: string[];
       fsReachWrite: string[];
@@ -2202,22 +1995,16 @@ export function ConfigEditor({
       nightlyJudgeMinInteractions: number;
       nightlyExpression: boolean;
     }) => {
-      let model: string | ModelTierConfigWire;
-      if (tieredMode) {
-        const tier: ModelTierConfigWire = {};
-        if (values.modelTrivial) tier.trivial = values.modelTrivial;
-        if (values.modelDefault) tier.default = values.modelDefault;
-        if (values.modelDeep) tier.deep = values.modelDeep;
-        model = Object.keys(tier).length > 0 ? tier : '';
-      } else {
-        model = values.model;
-      }
       return rpc.personalities.update({
         id,
         name: values.name,
         description: values.description,
-        model,
-        provider: values.provider || '',
+        // Omitted while untouched, so a stored tier map or vendor id is kept.
+        // `provider` is never sent: it is not editable here (plan
+        // model-registry D4), and an omitted `provider` keeps the stored value
+        // (`patch.provider === undefined ? config.provider` in
+        // FilePersonalityRegistry.update).
+        ...(modelChoice !== null ? { model: modelChoice } : {}),
         capabilities: values.capabilities,
         // `workdir` is always sent, the empty LIST included: the registry
         // shallow-merges fs_reach sub-keys, so omitting it would preserve the
@@ -2299,11 +2086,6 @@ export function ConfigEditor({
         mut.mutate({
           name: values.name,
           description: values.description,
-          provider: values.provider,
-          model: values.model,
-          modelTrivial: values.modelTrivial ?? '',
-          modelDefault: values.modelDefault ?? '',
-          modelDeep: values.modelDeep ?? '',
           capabilities: values.capabilities ?? [],
           fsReachRead: values.fsReachRead ?? [],
           fsReachWrite: values.fsReachWrite ?? [],
@@ -2338,83 +2120,22 @@ export function ConfigEditor({
       </Form.Item>
       <PersonalityVoiceFields
         value={voice}
+        agenticModel={modelChoice ?? personality.model}
         onChange={(next) => {
           setVoice(next);
           setDirty(true);
         }}
       />
-      <Form.Item
-        label="Provider"
-        name="provider"
-        extra="Engine default is set in Settings. Set this only if this personality must route to a specific provider."
-      >
-        <Select
-          allowClear
-          placeholder="engine default"
-          options={providerOptionsFor(configured, watchedProvider || undefined)}
+      <Form.Item label="Model" extra={MODEL_FIELD_HELP}>
+        <ModelDeclarationSelect
+          ariaLabel="Model"
+          value={modelChoice ?? personality.model}
+          onChange={(next) => {
+            setModelChoice(next);
+            setDirty(true);
+          }}
         />
       </Form.Item>
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <Typography.Text strong>Models</Typography.Text>
-          <Switch
-            size="small"
-            checked={tieredMode}
-            onChange={(checked) => {
-              setTieredMode(checked);
-              setDirty(true);
-              if (!checked) {
-                form.setFieldsValue({ modelTrivial: '', modelDefault: '', modelDeep: '' });
-              } else {
-                form.setFieldsValue({ model: '' });
-              }
-            }}
-            checkedChildren="tiered"
-            unCheckedChildren="single"
-          />
-        </div>
-        {tieredMode ? (
-          <>
-            <Form.Item label="Trivial" name="modelTrivial" style={{ marginBottom: 8 }}>
-              <AutoComplete
-                placeholder={modelPlaceholder}
-                options={modelOptions}
-                filterOption={modelFilterOption}
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-            <Form.Item label="Default" name="modelDefault" style={{ marginBottom: 8 }}>
-              <AutoComplete
-                placeholder={modelPlaceholder}
-                options={modelOptions}
-                filterOption={modelFilterOption}
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-            <Form.Item label="Deep" name="modelDeep" style={{ marginBottom: 8 }}>
-              <AutoComplete
-                placeholder={modelPlaceholder}
-                options={modelOptions}
-                filterOption={modelFilterOption}
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              default is the model used unless a tier is explicitly selected. trivial and deep are
-              selectable tiers. Automatic per-task tier routing is not configured here.
-            </Typography.Text>
-          </>
-        ) : (
-          <Form.Item label="Model" name="model" style={{ marginBottom: 0 }}>
-            <AutoComplete
-              placeholder="optional override"
-              options={modelOptions}
-              filterOption={modelFilterOption}
-              style={{ width: '100%' }}
-            />
-          </Form.Item>
-        )}
-      </div>
       <Form.Item label="Memory scope">
         <Typography.Text>per-personality</Typography.Text>
       </Form.Item>

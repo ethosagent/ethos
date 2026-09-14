@@ -26,11 +26,26 @@ import {
   SECRET_NAME_RE,
 } from '@ethosagent/types';
 
+// D11(a) — the ONE chain-model importer (`ethos migrate models`,
+// `modelRegistry.importChain` / `list.chainModels`, `config.update` adopt-on-save).
+export {
+  type AdoptedModel,
+  type CatalogModelFacts,
+  type CatalogModelLookup,
+  type ChainModelCandidate,
+  type ChainModelImportOptions,
+  type ChainModelImportPlan,
+  type ChainModelImportSource,
+  planChainModelImport,
+  slugifyModelAlias,
+  uniqueModelAlias,
+} from './model-import';
 // D25/T1.3 — the registry's refusals and the config-shaped declaration parser.
 // They live in their own module because this one is the CODEC and deliberately
 // refuses nothing (see `buildModelRegistry`); re-exported here because
 // `packages/config` has one public surface.
 export {
+  introducedModelRegistryProblems,
   type ModelRegistryProblem,
   type ModelRegistryProblemCode,
   parseModelDeclaration,
@@ -1992,8 +2007,12 @@ export interface EthosConfig {
    */
   approvalTimeoutMs?: number;
   /**
-   * Lane 4a(d) — retry count for the OpenAI-compat client. Absent → the
-   * OpenAI SDK default (2 retries). Flat-key shape:
+   * Lane 4a(d) — SDK retry count for every SDK-backed provider (OpenAI-compat,
+   * Azure, Anthropic; codex/gemini/bedrock/xai do not retry). Absent → the SDK
+   * default (2 retries) for a single provider, and `0` for each hop of a
+   * provider chain, where failover + cooldown is the retry policy
+   * (`createLLMFromRegistry` in packages/wiring/src/index.ts). Set explicitly,
+   * it applies to chain hops too. Flat-key shape:
    *   maxRetries: 0
    */
   maxRetries?: number;
@@ -4584,13 +4603,12 @@ export function parseConfigYaml(src: string): EthosConfig {
   const webKv: Record<string, string> = {};
   const modelCatalogKv: Record<string, string> = {};
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
-  // D2 — modelRegistry.<alias>.<field>: <value>, keyed by alias; field → raw
-  // value. `modelRegistry.default` goes in `kv`, the role bindings here.
-  const modelRegistryKv: Record<string, Record<string, string>> = {};
-  const modelRegistryRolesKv: Record<string, string> = {};
   // What the registry codec dropped and why — filed under `parseWarningsByConfig`
   // beside `providerNotices`, the same channel `parseProviderChain` uses.
   const modelRegistryNotices: string[] = [];
+  // D2 — every `modelRegistry.*` line, claimed by `claimModelRegistryLine`, the
+  // one reader apps/web-api's ConfigRepository shares via `parseModelRegistry`.
+  const modelRegistryLines = newModelRegistryLineAcc(modelRegistryNotices);
   // §7 — models.<providerId>/<modelId>.<field>: <value>. Keyed by the full
   // `<providerId>/<modelId>` string; field path → raw value.
   const modelsKv: Record<string, Record<string, string>> = {};
@@ -5144,53 +5162,8 @@ export function parseConfigYaml(src: string): EthosConfig {
       modelCatalogKv[mc[1]] = parseConfigScalar(mc[2]);
       continue;
     }
-    // modelRegistry.default: <alias>  (D2) — the roster-level default, matched
-    // BEFORE the per-alias branch so it can never be read as an alias named
-    // `default`. The colon immediately after `default` already separates the
-    // two grammars; this is belt and braces, and it documents the hazard.
-    const mrd = line.match(/^modelRegistry\.default:\s*(.+)$/);
-    if (mrd) {
-      kv['modelRegistry.default'] = parseConfigScalar(mrd[1]);
-      continue;
-    }
-    // modelRegistry.roles.<role>: <alias>  (D2). Claimed only when `<role>` is
-    // one of MODEL_ROLE_NAMES; anything else falls through to the per-alias
-    // branch, so a registry entry may still be called `roles`. `roles.deep` is
-    // the one line that entry could not then own — a role binding wins over an
-    // alias field of the same spelling, which is the reading an operator means.
-    const mrr = line.match(/^modelRegistry\.roles\.([A-Za-z0-9_-]+):\s*(.+)$/);
-    const mrrRole = mrr?.[1];
-    if (mrr && mrrRole && (MODEL_ROLE_NAMES as readonly string[]).includes(mrrRole)) {
-      modelRegistryRolesKv[mrrRole] = parseConfigScalar(mrr[2]);
-      continue;
-    }
-    // modelRegistry.<alias>.<field>: <value>  (D2). The alias charset has no
-    // dot and no slash — it is an operator-chosen key, unlike §7's
-    // `<providerId>/<modelId>` below — so the three segments split
-    // unambiguously. The leaf is an anchored fixed set, the same shape §7 uses:
-    // a line with an unmodelled leaf is NOT claimed, falls out of the cascade
-    // unmatched, and is preserved verbatim by `unexpressibleLines` on the next
-    // write rather than being dropped or shovelled into an untyped passthrough
-    // on a `@ethosagent/types` contract.
-    const mreg = line.match(
-      /^modelRegistry\.([A-Za-z0-9_-]+)\.(provider|modelId|label|contextWindow|costPer1kInput|costPer1kOutput|fallbacks):\s*(.+)$/,
-    );
-    const mrAlias = mreg?.[1];
-    if (mreg && mrAlias) {
-      // Never a computed own-key on the roster — see RESERVED_TOOL_SETTINGS_KEYS.
-      // Said out loud rather than skipped in silence: `__proto__` is not a
-      // future field name the way an unmodelled leaf might be, so an operator
-      // who typed one is never getting the entry they meant.
-      if (RESERVED_TOOL_SETTINGS_KEYS.has(mrAlias)) {
-        modelRegistryNotices.push(
-          `config.yaml: 'modelRegistry.${mrAlias}.${mreg[2]}' uses a reserved alias name and was ignored.`,
-        );
-        continue;
-      }
-      modelRegistryKv[mrAlias] ??= {};
-      modelRegistryKv[mrAlias][mreg[2]] = parseConfigScalar(mreg[3]);
-      continue;
-    }
+    // modelRegistry.* (D2) — the grammar lives in `claimModelRegistryLine`.
+    if (claimModelRegistryLine(line, modelRegistryLines)) continue;
     // models.<providerId>/<modelId>.<field>: <value>  (§7 per-model profile).
     // The model key is greedy `.+` so ids containing `/` and `.` round-trip;
     // the trailing field is one of a fixed set, anchored so the split is
@@ -5618,12 +5591,7 @@ export function parseConfigYaml(src: string): EthosConfig {
           ...(modelCatalogProviders ? { providers: modelCatalogProviders } : {}),
         }
       : undefined;
-  const modelRegistry = buildModelRegistry(
-    modelRegistryKv,
-    modelRegistryRolesKv,
-    kv['modelRegistry.default'],
-    modelRegistryNotices,
-  );
+  const modelRegistry = buildModelRegistryFromLines(modelRegistryLines);
   const models = buildModelProfiles(modelsKv);
   const compaction = buildCompaction(compactionKv);
   const memoryCharLimits = buildMemoryCharLimits(memoryCharLimitsKv);
@@ -8446,41 +8414,155 @@ function buildModelRegistry(
  * this function could not produce would be preserved verbatim by
  * `unexpressibleLines` forever, and no writer could ever delete it.
  *
- * **Limitation, named rather than half-guarded.** Nothing here checks that
- * `alias` is inside the parse branch's `[A-Za-z0-9_-]+` charset. Every alias
- * that came from a config file is, by construction; one handed in by a future
- * programmatic writer (the `modelRegistry.upsert` RPC, T2.2) need not be, and
+ * **Alias charset.** Nothing here checks that `alias` is inside the parse
+ * branch's `[A-Za-z0-9_-]+` charset. Every alias that came from a config file
+ * is, by construction; one handed in by a programmatic writer need not be, and
  * an alias containing a space or a colon renders a line no reader claims — the
- * entry would be gone on the next read. The refusal belongs to
- * `validateModelRegistry` (T1.3, not yet written), which can name the alias and
- * say what is legal; a silent skip here would be a second, quieter place for
- * the same entry to vanish. Until T1.3 lands, nothing enforces it.
+ * entry would be gone on the next read. The refusal is `validateModelRegistry`'s
+ * `invalid_alias` (`./model-registry`), which the one programmatic writer —
+ * `ModelRegistryService.upsert` in apps/web-api — runs before it writes; a
+ * silent skip here would be a second, quieter place for the entry to vanish.
  */
-function renderModelRegistry(registry: ModelRegistry): string[] {
-  const lines: string[] = [];
+export function renderModelRegistry(registry: ModelRegistry): string[] {
+  return renderModelRegistryPairs(registry).map(([key, value]) => `${key}: ${value}`);
+}
+
+/**
+ * {@link renderModelRegistry} as `[key, value]` pairs, value encoding left to
+ * the caller — the shape `renderProviderChain` has, for the same reason: each
+ * config writer applies its own scalar rule to the whole file (apps/web-api's
+ * ConfigRepository quotes a label carrying a colon; `writeConfig` does not).
+ */
+export function renderModelRegistryPairs(registry: ModelRegistry): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
   for (const [alias, entry] of Object.entries(registry.entries)) {
-    if (entry.provider) lines.push(`modelRegistry.${alias}.provider: ${entry.provider}`);
-    if (entry.modelId) lines.push(`modelRegistry.${alias}.modelId: ${entry.modelId}`);
-    if (entry.label) lines.push(`modelRegistry.${alias}.label: ${entry.label}`);
+    if (entry.provider) out.push([`modelRegistry.${alias}.provider`, entry.provider]);
+    if (entry.modelId) out.push([`modelRegistry.${alias}.modelId`, entry.modelId]);
+    if (entry.label) out.push([`modelRegistry.${alias}.label`, entry.label]);
     if (entry.contextWindow !== undefined) {
-      lines.push(`modelRegistry.${alias}.contextWindow: ${entry.contextWindow}`);
+      out.push([`modelRegistry.${alias}.contextWindow`, String(entry.contextWindow)]);
     }
     if (entry.costPer1kInput !== undefined) {
-      lines.push(`modelRegistry.${alias}.costPer1kInput: ${entry.costPer1kInput}`);
+      out.push([`modelRegistry.${alias}.costPer1kInput`, String(entry.costPer1kInput)]);
     }
     if (entry.costPer1kOutput !== undefined) {
-      lines.push(`modelRegistry.${alias}.costPer1kOutput: ${entry.costPer1kOutput}`);
+      out.push([`modelRegistry.${alias}.costPer1kOutput`, String(entry.costPer1kOutput)]);
     }
     if (entry.fallbacks && entry.fallbacks.length > 0) {
-      lines.push(`modelRegistry.${alias}.fallbacks: ${entry.fallbacks.join(',')}`);
+      out.push([`modelRegistry.${alias}.fallbacks`, entry.fallbacks.join(',')]);
     }
   }
-  if (registry.default) lines.push(`modelRegistry.default: ${registry.default}`);
+  if (registry.default) out.push(['modelRegistry.default', registry.default]);
   for (const role of MODEL_ROLE_NAMES) {
     const alias = registry.roles[role];
-    if (alias) lines.push(`modelRegistry.roles.${role}: ${alias}`);
+    if (alias) out.push([`modelRegistry.roles.${role}`, alias]);
   }
-  return lines;
+  return out;
+}
+
+/** What the `modelRegistry.*` line grammar collects before `buildModelRegistry`. */
+interface ModelRegistryLineAcc {
+  /** alias → field → raw value. */
+  entries: Record<string, Record<string, string>>;
+  /** role → alias. */
+  roles: Record<string, string>;
+  default?: string;
+  /** What was dropped and why. */
+  notices: string[];
+}
+
+function newModelRegistryLineAcc(notices: string[]): ModelRegistryLineAcc {
+  return { entries: {}, roles: {}, notices };
+}
+
+/**
+ * D2 — the ONE reader of a `modelRegistry.*` line. `parseConfigYaml` and
+ * {@link parseModelRegistry} (apps/web-api's ConfigRepository) both call it, so
+ * a line one of them claims the other cannot drop. Returns whether the line was
+ * claimed.
+ */
+function claimModelRegistryLine(line: string, acc: ModelRegistryLineAcc): boolean {
+  // modelRegistry.default: <alias> — the roster-level default, matched BEFORE
+  // the per-alias branch so it can never be read as an alias named `default`.
+  // The colon immediately after `default` already separates the two grammars;
+  // this is belt and braces, and it documents the hazard.
+  const mrd = line.match(/^modelRegistry\.default:\s*(.+)$/);
+  if (mrd?.[1] !== undefined) {
+    acc.default = parseConfigScalar(mrd[1]);
+    return true;
+  }
+  // modelRegistry.roles.<role>: <alias>. Claimed only when `<role>` is one of
+  // MODEL_ROLE_NAMES; anything else falls through to the per-alias branch, so a
+  // registry entry may still be called `roles`. `roles.deep` is the one line
+  // that entry could not then own — a role binding wins over an alias field of
+  // the same spelling, which is the reading an operator means.
+  const mrr = line.match(/^modelRegistry\.roles\.([A-Za-z0-9_-]+):\s*(.+)$/);
+  const mrrRole = mrr?.[1];
+  if (
+    mrr?.[2] !== undefined &&
+    mrrRole &&
+    (MODEL_ROLE_NAMES as readonly string[]).includes(mrrRole)
+  ) {
+    acc.roles[mrrRole] = parseConfigScalar(mrr[2]);
+    return true;
+  }
+  // modelRegistry.<alias>.<field>: <value>. The alias charset has no dot and no
+  // slash — it is an operator-chosen key, unlike §7's `<providerId>/<modelId>` —
+  // so the three segments split unambiguously. The leaf is an anchored fixed
+  // set, the same shape §7 uses: a line with an unmodelled leaf is NOT claimed,
+  // and is preserved verbatim by `unexpressibleLines` (and by apps/web-api's
+  // passthrough block) on the next write rather than being dropped or shovelled
+  // into an untyped passthrough on a `@ethosagent/types` contract.
+  const mreg = line.match(
+    /^modelRegistry\.([A-Za-z0-9_-]+)\.(provider|modelId|label|contextWindow|costPer1kInput|costPer1kOutput|fallbacks):\s*(.+)$/,
+  );
+  const mrAlias = mreg?.[1];
+  const mrField = mreg?.[2];
+  if (mreg?.[3] === undefined || !mrAlias || !mrField) return false;
+  // Never a computed own-key on the roster — see RESERVED_TOOL_SETTINGS_KEYS.
+  // Said out loud rather than skipped in silence: `__proto__` is not a future
+  // field name the way an unmodelled leaf might be, so an operator who typed
+  // one is never getting the entry they meant.
+  if (RESERVED_TOOL_SETTINGS_KEYS.has(mrAlias)) {
+    acc.notices.push(
+      `config.yaml: 'modelRegistry.${mrAlias}.${mrField}' uses a reserved alias name and was ignored.`,
+    );
+    return true;
+  }
+  acc.entries[mrAlias] ??= {};
+  acc.entries[mrAlias][mrField] = parseConfigScalar(mreg[3]);
+  return true;
+}
+
+function buildModelRegistryFromLines(acc: ModelRegistryLineAcc): ModelRegistry | undefined {
+  return buildModelRegistry(acc.entries, acc.roles, acc.default, acc.notices);
+}
+
+/**
+ * True for a line the `modelRegistry.*` codec claims. A line parser that models
+ * the registry (apps/web-api's ConfigRepository) skips these and hands the
+ * whole file to {@link parseModelRegistry}; an unclaimed `modelRegistry.*` line
+ * (an unmodelled leaf) is NOT one, and stays wherever that parser keeps
+ * unknown keys.
+ */
+export function isModelRegistryLine(line: string): boolean {
+  return claimModelRegistryLine(line, newModelRegistryLineAcc([]));
+}
+
+/**
+ * Parse every `modelRegistry.*` line of a file into a {@link ModelRegistry} —
+ * the same grammar and the same refuse-nothing build `parseConfigYaml` uses,
+ * for a writer that holds lines rather than an `EthosConfig`. `undefined` when
+ * the file configures no registry at all. `notices` is the optional sink for
+ * what was dropped and why, as for `parseProviderChain`.
+ */
+export function parseModelRegistry(
+  lines: Iterable<string>,
+  notices?: string[],
+): ModelRegistry | undefined {
+  const acc = newModelRegistryLineAcc(notices ?? []);
+  for (const line of lines) claimModelRegistryLine(line, acc);
+  return buildModelRegistryFromLines(acc);
 }
 
 /**

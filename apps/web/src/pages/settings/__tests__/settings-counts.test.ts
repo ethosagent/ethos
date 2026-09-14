@@ -64,9 +64,10 @@ describe('the sections that are empty on purpose', () => {
     );
   });
 
-  it('names the two sections that are a readout and a paragraph', () => {
-    expect(isExpectedEmptySection('models', 'per-personality-routing')).toBe(true);
+  it('names the one section that is a paragraph', () => {
     expect(isExpectedEmptySection('data', 'built-in-defaults')).toBe(true);
+    // Editable since plan/phases/model-registry.md T2.7, so it holds controls.
+    expect(isExpectedEmptySection('models', 'per-personality-routing')).toBe(false);
     expect(isExpectedEmptySection('voice', 'trunk')).toBe(false);
   });
 });

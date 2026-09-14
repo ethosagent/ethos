@@ -20,16 +20,190 @@ const testIn = schemaOf(contract.modelRegistry.test, 'inputSchema');
 const testOut = schemaOf(contract.modelRegistry.test, 'outputSchema');
 
 describe('modelRegistry namespace', () => {
-  it('mounts on the root contract with `test` as its only member', () => {
-    // T2.2 extends this namespace with list/upsert/remove/setDefault/setRole —
-    // it must EXTEND what T1.24 created, not create it a second time.
-    expect(Object.keys(contract.modelRegistry)).toEqual(['test']);
+  it('mounts on the root contract with the T1.24 test and the T2.2 members', () => {
+    // T2.2 EXTENDS the namespace T1.24 created, rather than creating another.
+    expect(Object.keys(contract.modelRegistry)).toEqual([
+      'list',
+      'upsert',
+      'setDefault',
+      'setRole',
+      'setRouting',
+      'remove',
+      'test',
+      'testAll',
+      'importChain',
+      'addProvider',
+      'updateProvider',
+      'removeProvider',
+      'moveProvider',
+      'setProviderFailover',
+      'setFallbackModel',
+      'testProvider',
+    ]);
   });
 
-  it('takes an alias and refuses an empty one', () => {
+  it('takes an alias, or an unsaved providerKey + modelId, and refuses an empty one', () => {
     expect(testIn.parse({ alias: 'opus' })).toEqual({ alias: 'opus' });
+    expect(testIn.parse({ providerKey: 'local', modelId: 'qwen3' })).toEqual({
+      providerKey: 'local',
+      modelId: 'qwen3',
+    });
     expect(() => testIn.parse({ alias: '' })).toThrow();
+    expect(() => testIn.parse({ providerKey: 'local', modelId: '' })).toThrow();
     expect(() => testIn.parse({})).toThrow();
+  });
+});
+
+describe('modelRegistry writes and listing', () => {
+  const listOut = schemaOf(contract.modelRegistry.list, 'outputSchema');
+  const upsertIn = schemaOf(contract.modelRegistry.upsert, 'inputSchema');
+  const writeOut = schemaOf(contract.modelRegistry.upsert, 'outputSchema');
+  const setRoleIn = schemaOf(contract.modelRegistry.setRole, 'inputSchema');
+  const setRoutingIn = schemaOf(contract.modelRegistry.setRouting, 'inputSchema');
+  const removeIn = schemaOf(contract.modelRegistry.remove, 'inputSchema');
+  const removeOut = schemaOf(contract.modelRegistry.remove, 'outputSchema');
+  const testAllOut = schemaOf(contract.modelRegistry.testAll, 'outputSchema');
+
+  const referents = [
+    { kind: 'personality', personalityId: 'reviewer', field: 'model', readOnly: false },
+    { kind: 'personality', personalityId: 'engineer', field: 'model.deep', readOnly: true },
+    { kind: 'role', role: 'deep' },
+    { kind: 'default' },
+    { kind: 'routing', personalityId: 'writer' },
+    { kind: 'fallback', alias: 'opus-batch' },
+  ];
+
+  it('round-trips a full listing, credential status and referents included', () => {
+    const value = {
+      chainModels: [],
+      entries: [
+        {
+          alias: 'opus',
+          providerKey: 'anthropic-work',
+          modelId: 'claude-opus-5',
+          label: 'deep work',
+          contextWindow: 200000,
+          costPer1kInput: 0.015,
+          costPer1kOutput: 0.075,
+          fallbacks: [],
+          credential: 'set',
+          referents,
+        },
+        {
+          alias: 'qwen',
+          providerKey: 'local',
+          modelId: 'qwen2.5-coder:32b',
+          label: null,
+          contextWindow: null,
+          costPer1kInput: null,
+          costPer1kOutput: null,
+          fallbacks: [],
+          credential: 'not_needed',
+          referents: [],
+        },
+      ],
+      default: 'opus',
+      roles: { trivial: null, default: null, deep: 'opus', dreaming: null },
+      providerEntries: [
+        {
+          key: 'openai-2',
+          index: 2,
+          provider: 'openai',
+          id: null,
+          explicitId: false,
+          model: null,
+          failover: true,
+          apiVersion: null,
+          region: null,
+          awsProfile: null,
+          credential: 'missing',
+          referenceable: false,
+          reason: 'Provider entry "openai-2" has no explicit id.',
+        },
+      ],
+      routing: { writer: 'opus' },
+      problems: [
+        {
+          code: 'derived_provider_key',
+          alias: 'gpt',
+          key: 'modelRegistry.gpt.provider',
+          message: 'Model "gpt" names a derived key.',
+          fix: 'providers.2.id: openai-2',
+        },
+      ],
+    };
+    expect(listOut.parse(value)).toEqual(value);
+  });
+
+  it('upsert takes create|update and leaves emptiness to the validator, not to the schema', () => {
+    const value = {
+      mode: 'create',
+      alias: 'qwen',
+      provider: '',
+      modelId: '',
+      contextWindow: 131072,
+    };
+    expect(upsertIn.parse(value)).toEqual(value);
+    expect(() => upsertIn.parse({ ...value, mode: 'rename' })).toThrow();
+    expect(() => upsertIn.parse({ ...value, alias: '' })).toThrow();
+  });
+
+  it('a refusal is a value carrying its problems and referents, beside `{ ok: true }`', () => {
+    expect(writeOut.parse({ ok: true })).toEqual({ ok: true });
+    const refusal = {
+      ok: false,
+      code: 'referenced',
+      message: '"opus" is used by 6 referents.',
+      problems: [],
+      referents,
+    };
+    expect(writeOut.parse(refusal)).toEqual(refusal);
+    expect(removeOut.parse(refusal)).toEqual(refusal);
+  });
+
+  it('setRole binds three roles and null deletes; `default` is setDefault, not a role binding', () => {
+    expect(setRoleIn.parse({ role: 'deep', alias: null })).toEqual({ role: 'deep', alias: null });
+    expect(() => setRoleIn.parse({ role: 'default', alias: 'opus' })).toThrow();
+    expect(setRoutingIn.parse({ personalityId: 'writer', declaration: null })).toEqual({
+      personalityId: 'writer',
+      declaration: null,
+    });
+  });
+
+  it('remove takes repointTo or force, and reports what it rewrote and what still needs attention', () => {
+    expect(removeIn.parse({ alias: 'opus', repointTo: 'sonnet' })).toEqual({
+      alias: 'opus',
+      repointTo: 'sonnet',
+    });
+    const done = {
+      ok: true,
+      alias: 'opus',
+      repointedTo: 'sonnet',
+      rewritten: referents.slice(0, 1),
+      needsAttention: referents.slice(1, 2),
+    };
+    expect(removeOut.parse(done)).toEqual(done);
+  });
+
+  it('testAll carries one outcome per provider entry, with an unsaved-style outcome allowed', () => {
+    const value = {
+      results: [
+        {
+          providerKey: 'local',
+          aliases: ['qwen'],
+          outcome: { state: 'rate_limited', alias: 'qwen', retryAfterSeconds: 3 },
+        },
+      ],
+    };
+    expect(testAllOut.parse(value)).toEqual(value);
+    const unsaved = {
+      state: 'ok',
+      providerKey: 'local',
+      provider: 'ollama',
+      modelId: 'x',
+      latencyMs: 1,
+    };
+    expect(testOut.parse(unsaved)).toEqual(unsaved);
   });
 });
 

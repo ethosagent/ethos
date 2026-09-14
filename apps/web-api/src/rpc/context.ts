@@ -80,8 +80,10 @@ export interface RpcContext {
   digest: DigestService;
   /** Browse / delete files under a personality's declared workdir. */
   documents: DocumentsService;
-  /** On-demand model probe (T1.24). Not optional: it answers `unconfigured`
-   *  on a deployment with no registry, which is a state, not an absence. */
+  /** Settings → Models: the registry listing, its immediate-save writes and the
+   *  on-demand probe (T1.24, T2.2). Not optional: on a deployment with no
+   *  registry it lists nothing and a test answers `unconfigured`, which is a
+   *  state, not an absence. */
   modelRegistry: ModelRegistryService;
   /** Global named-secrets vault manager (Phase 2). */
   namedSecrets: NamedSecretsService;

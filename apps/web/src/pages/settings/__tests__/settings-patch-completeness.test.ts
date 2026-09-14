@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { buildConfigPatch, type SettingsRows } from '../lib/build-config-patch';
 import type { RetentionSubkey } from '../lib/config-types';
 import type { FormShape } from '../lib/form-shape';
-import { emptyRow, type ProviderRow, rowsFromConfig } from '../lib/rows';
 
 // T2 — plan/phases/settings-navigation.md §5 and §10.
 //
@@ -193,17 +192,6 @@ function store(): FormShape {
 
 function rows(): SettingsRows {
   return {
-    providerRows: [
-      {
-        _id: 1,
-        provider: 'anthropic',
-        model: 'claude-opus-4-7',
-        apiKey: '',
-        apiKeyPreview: 'sk-…abc1',
-        baseUrl: '',
-        testStatus: 'idle',
-      },
-    ],
     quickCommandRows: [],
     channelToolsetRows: [],
     voiceTtsProviderRows: [],
@@ -259,99 +247,27 @@ describe('buildConfigPatch', () => {
 
   it('keeps the rows-derived keys, which have no same-named form field', () => {
     const patch = build(store());
-    expect(patch.provider).toBe('anthropic');
-    expect(patch.model).toBe('claude-opus-4-7');
-    expect(patch.providers).toEqual([{ provider: 'anthropic', model: 'claude-opus-4-7' }]);
+    expect(patch.quickCommands).toEqual({});
+    expect(patch.retention).toEqual({});
   });
 
-  it('refuses a chain with no primary provider rather than saving a blank one', () => {
-    const result = buildConfigPatch(store(), { ...rows(), providerRows: [] }, undefined);
-    expect(result).toEqual({ ok: false, error: 'Primary provider and model are required.' });
-  });
-});
-
-// F01 follow-up: a loaded provider row sends back `sourceIndex`, its position
-// in `config.get`'s `providers`, so the server keeps the stored entry's key
-// reference and the fields this editor does not show (`overlayProviderRow`,
-// apps/web-api config.service.ts). Loading is pinned in
-// `settings-provider-rows.test.ts`.
-describe('buildConfigPatch — provider chain identity', () => {
-  const chain = rowsFromConfig([
-    { provider: 'anthropic', model: 'claude-opus-4-7', apiKeyPreview: 'sk-…abc1', baseUrl: null },
-    { provider: 'bedrock', model: null, apiKeyPreview: '<unset>', baseUrl: null },
-    { provider: 'azure', model: 'gpt-4o', apiKeyPreview: 'az-…9f00', baseUrl: 'https://x.az' },
-  ]);
-
-  function providers(providerRows: ProviderRow[]) {
-    const result = buildConfigPatch(store(), { ...rows(), providerRows }, undefined);
-    if (!result.ok) throw new Error(`expected a patch, got: ${result.error}`);
-    return result.patch.providers;
-  }
-
-  it('sends each loaded row sourceIndex, in the rows current order', () => {
-    const [anthropic, bedrock, azure] = chain;
-    if (!anthropic || !bedrock || !azure) throw new Error('fixture chain missing');
-    expect(providers([azure, anthropic, bedrock])).toEqual([
-      { provider: 'azure', model: 'gpt-4o', baseUrl: 'https://x.az', sourceIndex: 2 },
-      { provider: 'anthropic', model: 'claude-opus-4-7', sourceIndex: 0 },
-      { provider: 'bedrock', sourceIndex: 1 },
-    ]);
-  });
-
-  it('sends the chain version the rows were loaded from', () => {
-    const result = buildConfigPatch(store(), { ...rows(), providerRows: chain }, undefined, {
-      providersVersion: 'v-loaded',
-      loadedPrimary: chain[0],
-    });
-    if (!result.ok) throw new Error(result.error);
-    expect(result.patch.providersVersion).toBe('v-loaded');
-  });
-
-  // verify-f01: top-level `provider: anthropic` + its key, chain row 0 openai.
-  // An unrelated save rewrote `provider` to openai and kept anthropic's key.
-  it('leaves the top-level provider fields out when the primary row is untouched', () => {
-    const result = buildConfigPatch(store(), { ...rows(), providerRows: chain }, undefined, {
-      providersVersion: 'v',
-      loadedPrimary: chain[0],
-    });
-    if (!result.ok) throw new Error(result.error);
-    for (const key of ['provider', 'model', 'baseUrl', 'apiKey']) {
-      expect(key in result.patch, key).toBe(false);
+  // Providers save on confirm through `modelRegistry.addProvider` /
+  // `updateProvider` / `moveProvider` / `setProviderFailover` /
+  // `setFallbackModel` / `removeProvider`. A page Save that sent the chain it
+  // loaded would undo every one of those writes made since, so it sends none
+  // of it — not the chain, not its version, not the top-level primary fields.
+  it('never sends providers, which the providers & models section saves on its own', () => {
+    const patch = build(store());
+    for (const key of ['providers', 'providersVersion', 'provider', 'model', 'apiKey', 'baseUrl']) {
+      expect(key in patch, key).toBe(false);
     }
   });
 
-  it('writes the top-level provider fields once the primary row is edited or replaced', () => {
-    const [anthropic, bedrock, azure] = chain;
-    if (!anthropic || !bedrock || !azure) throw new Error('fixture chain missing');
-    const base = { providersVersion: 'v', loadedPrimary: anthropic };
-
-    const edited = buildConfigPatch(
-      store(),
-      { ...rows(), providerRows: [{ ...anthropic, model: 'claude-sonnet-5' }, bedrock] },
-      undefined,
-      base,
-    );
-    if (!edited.ok) throw new Error(edited.error);
-    expect(edited.patch).toMatchObject({ provider: 'anthropic', model: 'claude-sonnet-5' });
-
-    const moved = buildConfigPatch(
-      store(),
-      { ...rows(), providerRows: [azure, anthropic] },
-      undefined,
-      base,
-    );
-    if (!moved.ok) throw new Error(moved.error);
-    expect(moved.patch).toMatchObject({ provider: 'azure', model: 'gpt-4o' });
-  });
-
-  it('sends a new row without sourceIndex, and a key only where retyped', () => {
-    const [anthropic] = chain;
-    if (!anthropic) throw new Error('fixture chain missing');
-    const added = { ...emptyRow(), provider: 'ollama', model: 'llama3' };
-    expect(providers([{ ...anthropic, apiKey: 'sk-new' }, added])).toEqual([
-      { provider: 'anthropic', model: 'claude-opus-4-7', apiKey: 'sk-new', sourceIndex: 0 },
-      { provider: 'ollama', model: 'llama3' },
-    ]);
+  // `modelRouting` has one web writer, `modelRegistry.setRouting`, and
+  // `config.update` MERGES the record — so a page Save that echoed the last
+  // `config.get` back would resurrect an override the routing section removed.
+  it('never sends modelRouting, which the routing section saves on its own', () => {
+    expect('modelRouting' in build(store())).toBe(false);
   });
 });
 

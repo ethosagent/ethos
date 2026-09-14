@@ -147,6 +147,10 @@ function providerSet(index: ProviderKeyIndex): string {
 /** The alias charset the codec's own parse branch in `./index` can read back. */
 const ALIAS_RE = /^[A-Za-z0-9_-]+$/;
 
+/** Object-model keys the codec's parse branch refuses as an alias — the same
+ *  set as `RESERVED_TOOL_SETTINGS_KEYS` in `./index`, and they change together. */
+const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /**
  * `MODEL_ROLE_NAMES` contains `default`, so `modelRegistry.default` and
  * `modelRegistry.roles.default` are BOTH legal keys meaning different rungs of
@@ -207,6 +211,27 @@ export function validateModelRegistry(
   return problems;
 }
 
+/**
+ * The problems `after` has that `before` did not — what a write would
+ * INTRODUCE, keyed on code + key + alias. A pre-existing problem (a hand edit)
+ * never blocks an unrelated write. Each side is validated against its own chain,
+ * because a write can change the chain too (an id the importer adds).
+ *
+ * The one diff every registry writer refuses on: apps/web-api's
+ * `ModelRegistryService` (upsert, remove, importChain, addProvider) and
+ * `ConfigService.update`'s adopt-on-save.
+ */
+export function introducedModelRegistryProblems(
+  before: ModelRegistry | undefined,
+  beforeProviders: readonly ProviderChainEntry[],
+  after: ModelRegistry | undefined,
+  afterProviders: readonly ProviderChainEntry[],
+): ModelRegistryProblem[] {
+  const key = (p: ModelRegistryProblem): string => `${p.code}\x00${p.key}\x00${p.alias}`;
+  const existing = new Set(validateModelRegistry(before, beforeProviders).map(key));
+  return validateModelRegistry(after, afterProviders).filter((p) => !existing.has(key(p)));
+}
+
 function checkAliasName(
   alias: string,
   registry: ModelRegistry,
@@ -224,7 +249,10 @@ function checkAliasName(
     });
     return;
   }
-  if (!ALIAS_RE.test(alias)) {
+  // `__proto__` / `constructor` / `prototype` match the charset but the codec's
+  // parse branch drops them (RESERVED_TOOL_SETTINGS_KEYS in `./index`), so an
+  // entry written under one would also be gone on the next read.
+  if (!ALIAS_RE.test(alias) || RESERVED_OBJECT_KEYS.has(alias)) {
     problems.push({
       code: 'invalid_alias',
       alias,

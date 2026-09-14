@@ -51,7 +51,10 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     label: 'Models & providers',
     group: 'Agent',
     sections: [
-      section('provider-chain', 'provider chain'),
+      // One list, grouped by provider in chain order — it replaced the
+      // separate models table and provider-chain table. The slug stays
+      // `models` so existing links still land here.
+      section('models', 'providers & models'),
       section('catalog-and-backends', 'catalog & backends'),
       section('auxiliary-models', 'auxiliary models'),
       section('per-personality-routing', 'per-personality routing'),

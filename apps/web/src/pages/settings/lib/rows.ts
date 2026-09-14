@@ -1,108 +1,15 @@
 // The repeatable-row shapes the page keeps in `useState` alongside the form
-// store: the provider chain, the quick commands, the channel toolsets and the
-// retention rules. Moved verbatim out of `Settings.tsx` (Phase 1); they live in
-// `SettingsShell` and pass down to the panes as props, because they have no
-// `preserve` to survive a pane unmount the way form fields do (D4).
+// store: the quick commands, the channel toolsets and the retention rules.
+// Moved verbatim out of `Settings.tsx` (Phase 1); they live in `SettingsShell`
+// and pass down to the panes as props, because they have no `preserve` to
+// survive a pane unmount the way form fields do (D4).
+//
+// The provider chain used to be one of these. It saves on confirm now, through
+// `modelRegistry.*` (Settings → Models › providers & models), so the page keeps
+// no copy of it.
 
-import type { ProviderEntry } from '@ethosagent/web-contracts';
 import { type ConfigGetData, RETENTION_SUBKEYS, type RetentionSubkey } from './config-types';
 import { nextRowId } from './row-id';
-
-// ---------------------------------------------------------------------------
-// Provider chain row — local state for the editor
-// ---------------------------------------------------------------------------
-
-export interface ProviderRow {
-  /** Stable key for React list rendering. */
-  _id: number;
-  provider: string;
-  model: string;
-  apiKey: string;
-  apiKeyPreview: string;
-  baseUrl: string;
-  testStatus: 'idle' | 'testing' | 'success' | 'error';
-  testError?: string;
-  /** Position in `config.get`'s `providers` this row was loaded from. Sent
-   *  back on save so the server keeps the stored entry's key reference and the
-   *  fields this editor does not show (`region`, `apiVersion`, …). Absent for a
-   *  row added here, and for the legacy single-provider row. */
-  sourceIndex?: number;
-}
-
-/**
- * What the provider rows were loaded from: `config.get`'s `providersVersion`
- * (sent back on save, so a chain changed elsewhere is refused rather than
- * overwritten) and the primary row as loaded (a save writes the top-level
- * provider fields only when the operator edited it).
- */
-export interface ProviderChainBase {
-  providersVersion: string;
-  loadedPrimary?: ProviderRow;
-}
-
-/**
- * Whether the page must rebuild its rows from a `config.get` response: on the
- * first load, after a save or a refused save (`hydrated` reset), and whenever
- * the stored chain is no longer the one the rows were built from — keyed on
- * `providersVersion`, not on the response object, because a save that swaps
- * two same-looking entries returns a response React Query sees as unchanged
- * while the rows' `sourceIndex` values now point at the other entry.
- */
-export function shouldRebuildRows(
-  hydrated: boolean,
-  rowsVersion: string | undefined,
-  dataVersion: string,
-): boolean {
-  return !hydrated || rowsVersion !== dataVersion;
-}
-
-export function emptyRow(): ProviderRow {
-  return {
-    _id: nextRowId(),
-    provider: '',
-    model: '',
-    apiKey: '',
-    apiKeyPreview: '',
-    baseUrl: '',
-    testStatus: 'idle',
-  };
-}
-
-export function rowsFromConfig(
-  providers: ProviderEntry[],
-  legacyProvider?: string,
-  legacyModel?: string,
-  legacyApiKeyPreview?: string,
-  legacyBaseUrl?: string | null,
-): ProviderRow[] {
-  if (providers.length > 0) {
-    return providers.map((p, i) => ({
-      _id: nextRowId(),
-      provider: p.provider,
-      model: p.model ?? '',
-      apiKey: '',
-      apiKeyPreview: p.apiKeyPreview,
-      baseUrl: p.baseUrl ?? '',
-      testStatus: 'idle' as const,
-      sourceIndex: i,
-    }));
-  }
-  // Backward compat: populate from single-field config
-  if (legacyProvider) {
-    return [
-      {
-        _id: nextRowId(),
-        provider: legacyProvider,
-        model: legacyModel ?? '',
-        apiKey: '',
-        apiKeyPreview: legacyApiKeyPreview ?? '',
-        baseUrl: legacyBaseUrl ?? '',
-        testStatus: 'idle' as const,
-      },
-    ];
-  }
-  return [emptyRow()];
-}
 
 export interface QuickCommandRow {
   _id: number;

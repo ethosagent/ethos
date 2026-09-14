@@ -346,9 +346,14 @@ export class PersonalitiesService {
       );
       routing = resolveCharacterSheetRouting(
         described.config,
-        resolveActiveLlmName({ provider: raw.provider, providers: raw.providers }),
+        resolveActiveLlmName({
+          provider: raw.provider,
+          providers: raw.providers,
+          ...(raw.modelRegistry !== undefined ? { modelRegistry: raw.modelRegistry } : {}),
+        }),
         raw.model,
         raw.modelRouting,
+        raw.modelRegistry,
       );
     }
     const dataDir = this.opts.dataDir;

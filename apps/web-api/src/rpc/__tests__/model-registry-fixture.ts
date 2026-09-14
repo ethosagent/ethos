@@ -4,13 +4,17 @@
 // cap `__tests__/layering.test.ts` enforces over this directory.
 
 import type { EthosConfig } from '@ethosagent/config';
-import { InMemorySecretsResolver } from '@ethosagent/storage-fs';
+import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import {
   ModelTestRateLimiter,
   type ProbeProviderConfig,
   type ProbeProviderOutcome,
 } from '@ethosagent/wiring';
-import { ModelRegistryService } from '../../services/model-registry.service';
+import { ConfigRepository } from '../../repositories/config.repository';
+import {
+  ModelRegistryService,
+  type ModelRegistryServiceOptions,
+} from '../../services/model-registry.service';
 
 export function config(): EthosConfig {
   return {
@@ -30,6 +34,18 @@ export function config(): EthosConfig {
   } as EthosConfig;
 }
 
+/** The writer and personality seams a test-only service never exercises. */
+export function inertSeams(): Pick<ModelRegistryServiceOptions, 'config' | 'personalities'> {
+  return {
+    config: new ConfigRepository({
+      dataDir: '/data',
+      storage: new InMemoryStorage(),
+      secrets: new InMemorySecretsResolver(),
+    }),
+    personalities: { refresh: async () => {}, list: () => [], setModel: async () => {} },
+  };
+}
+
 /** The service with its probe stubbed — no test touches the network or a key. */
 export function service(
   outcome: (cfg: ProbeProviderConfig) => ProbeProviderOutcome,
@@ -37,6 +53,7 @@ export function service(
 ) {
   const probed: ProbeProviderConfig[] = [];
   const svc = new ModelRegistryService({
+    ...inertSeams(),
     readConfig: async () => config(),
     secrets: new InMemorySecretsResolver(),
     // A FRESH limiter per service by default: the process-wide one would make

@@ -106,16 +106,35 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       keyUnresolved: "Navigation button (navigate('/onboarding')); writes no config key itself.",
     },
   ]),
-  ...group('models', 'provider-chain', [
+  // Providers & models: one list, each provider with its models beneath it.
+  // Every control here saves on confirm through `modelRegistry.*`; none is on
+  // the page Save (`buildConfigPatch` sends no `providers`).
+  ...group('models', 'models', [
     {
-      key: 'providers.<n>.provider | .model | .apiKey',
-      label: 'Provider chain rows',
+      key: 'providers.<n>.provider | .id | .apiKey | .baseUrl',
+      label: 'Providers (Add provider, Edit provider)',
+      saves: 'self',
+      stateBacked: true,
+    },
+    { key: 'providers.<n>', label: 'Provider order (Up / Down)', saves: 'self', stateBacked: true },
+    { key: 'providers.<n>.failover', label: 'Provider failover', saves: 'self', stateBacked: true },
+    {
+      key: 'providers.<n>.model',
+      label: 'Provider fallback model',
+      saves: 'self',
       stateBacked: true,
     },
     {
-      key: 'providers.<n>.baseUrl',
-      label: 'Provider chain — Base URL',
-      advanced: true,
+      key: 'modelRegistry.<alias>.provider | .modelId | .label | .contextWindow | .costPer1kInput | .costPer1kOutput',
+      label: 'Models',
+      saves: 'self',
+      stateBacked: true,
+    },
+    { key: 'modelRegistry.default', label: 'Default model', saves: 'self', stateBacked: true },
+    {
+      key: 'modelRegistry.roles.<role>',
+      label: 'Role bindings (trivial, deep, dreaming)',
+      saves: 'self',
       stateBacked: true,
     },
   ]),
@@ -218,6 +237,14 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       formName: 'auxWeb.baseUrl',
       label: 'Web summarizer — Base URL',
       advanced: true,
+    },
+  ]),
+  ...group('models', 'per-personality-routing', [
+    {
+      key: 'modelRouting.<personalityId>',
+      label: 'Per-personality routing overrides',
+      saves: 'self',
+      stateBacked: true,
     },
   ]),
   ...group('memory', 'store', [
@@ -1284,13 +1311,12 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
 
 /**
  * Sections that hold zero controls BY DESIGN, so a rail count of `0` there is
- * the truth rather than drift: `per-personality-routing` is a read-only routing
- * readout ("edit config.yaml directly to add entries") and `built-in-defaults`
- * is explanatory prose. T5 and T6 read this list rather than tolerating any
- * empty section, which is what keeps a genuinely-emptied section a failure.
+ * the truth rather than drift: `built-in-defaults` is explanatory prose. T5 and
+ * T6 read this list rather than tolerating any empty section, which is what
+ * keeps a genuinely-emptied section a failure. (`per-personality-routing` left
+ * this list when it became editable — plan/phases/model-registry.md T2.7.)
  */
 export const EXPECTED_EMPTY_SECTIONS: readonly { category: string; section: string }[] = [
-  { category: 'models', section: 'per-personality-routing' },
   { category: 'data', section: 'built-in-defaults' },
 ];
 

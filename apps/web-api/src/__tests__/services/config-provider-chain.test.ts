@@ -54,8 +54,8 @@ describe('ConfigService.update — provider chain from the Settings page', () =>
     }));
   }
 
-  function save(patch: ConfigUpdateInput): Promise<void> {
-    return service.update({ providersVersion: loadedVersion, ...patch });
+  async function save(patch: ConfigUpdateInput): Promise<void> {
+    await service.update({ providersVersion: loadedVersion, ...patch });
   }
 
   async function chain() {
@@ -104,6 +104,10 @@ describe('ConfigService.update — provider chain from the Settings page', () =>
       { provider: 'anthropic', apiKey: secretRef('providers/0/anthropic/apiKey') },
       {
         provider: 'bedrock',
+        // The one addition: bedrock declares a model, so the save adopts it into
+        // the registry and makes the id it references explicit (D11a/D24,
+        // `adoptChainModelsOnSave` in config.service.ts).
+        id: 'bedrock-1',
         apiKey: secretRef('providers/1/bedrock/apiKey'),
         model: 'anthropic.claude-v2',
         region: 'eu-west-1',
@@ -138,6 +142,8 @@ describe('ConfigService.update — provider chain from the Settings page', () =>
     const [, b, a] = await chain();
     expect(b).toEqual({
       provider: 'bedrock',
+      // Adopted on save (D11a): the id its new registry entry references.
+      id: 'bedrock-1',
       apiKey: secretRef('providers/1/bedrock/apiKey'),
       model: 'anthropic.claude-v3',
       region: 'eu-west-1',
@@ -227,7 +233,8 @@ describe('ConfigService.update — provider chain from the Settings page', () =>
     });
 
     const after = await chain();
-    expect(after[3]).toEqual({ provider: 'ollama', apiKey: '', model: 'llama3' });
+    // A new row with a model is adopted on save (D11a), which writes its id.
+    expect(after[3]).toEqual({ provider: 'ollama', id: 'ollama-3', apiKey: '', model: 'llama3' });
     expect(after[4]).toEqual({ provider: 'bedrock', apiKey: '' });
   });
 

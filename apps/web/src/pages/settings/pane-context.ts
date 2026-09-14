@@ -2,8 +2,12 @@
 //
 // Everything stateful is in this object because nothing stateful may be in a
 // pane: panes mount and unmount as you navigate, and the form store plus the
-// eight row arrays have to outlive that (plan/phases/settings-navigation.md §5,
+// row arrays have to outlive that (plan/phases/settings-navigation.md §5,
 // D1 and D4). A pane reads and writes through these handles; it never owns them.
+//
+// The provider chain is NOT here: providers save on confirm through
+// `modelRegistry.*` (Settings → Models › providers & models) and are read from
+// `modelRegistry.list`, so the page holds no copy of them to go stale.
 
 import type { FormInstance } from 'antd';
 import type { Dispatch, SetStateAction } from 'react';
@@ -11,7 +15,7 @@ import { useOutletContext } from 'react-router-dom';
 import type { rpc } from '../../rpc';
 import type { ConfigGetData } from './lib/config-types';
 import type { FormShape } from './lib/form-shape';
-import type { ChannelToolsetRow, ProviderRow, QuickCommandRow, RetentionRow } from './lib/rows';
+import type { ChannelToolsetRow, QuickCommandRow, RetentionRow } from './lib/rows';
 import type { VoiceBotRow } from './lib/voice-bots';
 import type { VoiceProviderRow } from './lib/voice-roster';
 
@@ -27,12 +31,6 @@ export interface SettingsPaneContext {
   config: ConfigGetData | undefined;
   personalities: PersonalityListItem[];
   personalitiesLoading: boolean;
-
-  providerRows: ProviderRow[];
-  addProviderRow: () => void;
-  updateProviderRow: (index: number, patch: Partial<ProviderRow>) => void;
-  moveProviderRow: (index: number, direction: -1 | 1) => void;
-  removeProviderRow: (index: number) => void;
 
   quickCommandRows: QuickCommandRow[];
   setQuickCommandRows: Dispatch<SetStateAction<QuickCommandRow[]>>;

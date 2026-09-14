@@ -3,13 +3,16 @@ import {
   assertWritableConfigLines,
   externalizeProviderChain,
   externalizeSecret,
+  isModelRegistryLine,
   isProviderChainLine,
   normalizeWebSearchRecency,
   type ProviderChainEntry,
   parseConfigScalar,
+  parseModelRegistry,
   parseProviderChain,
   providerChainVersion,
   quoteConfigScalar,
+  renderModelRegistryPairs,
   renderProviderChain,
   type SecretRefContext,
   secretRefForConfigKey,
@@ -18,6 +21,7 @@ import { deriveBotKey } from '@ethosagent/core';
 import {
   EthosError,
   isValidSecretName,
+  type ModelRegistry,
   type RealtimeProviderEntry,
   type SecretsResolver,
   type Storage,
@@ -130,6 +134,21 @@ export interface RawConfig {
   toolSettings: Record<string, ToolSettingsSlot>;
   /** Ordered provider chain for ChainedProvider failover. */
   providers: RawProviderEntry[];
+  /**
+   * `modelRegistry.*` — entries in file order, `default`, role bindings — read
+   * and rendered by `@ethosagent/config`'s `parseModelRegistry` /
+   * `renderModelRegistryPairs`, the grammar `parseConfigYaml` uses, so a line
+   * the CLI reads cannot be dropped by a web save (T2.1). Absent when the file
+   * configures no registry. A `modelRegistry.*` line with a leaf the codec does
+   * not model is not claimed and rides on `passthrough` like any other unknown
+   * key (pinned by `__tests__/repositories/config-model-registry.test.ts`, "an
+   * unrelated setting save preserves every registry entry and its unmodelled
+   * fields").
+   */
+  modelRegistry?: ModelRegistry;
+  /** What the registry codec dropped and why (a reserved alias name, a
+   *  non-numeric `contextWindow`). Never written. */
+  modelRegistryNotices?: string[];
   /** Every other top-level key the file contained (telegramToken etc.).
    *  Round-tripped through writes verbatim. */
   passthrough: Record<string, string>;
@@ -189,19 +208,26 @@ export class ConfigRepository {
     ]);
     const lines = src.split('\n');
     const providerNotices: string[] = [];
+    const modelRegistryNotices: string[] = [];
+    const modelRegistry = parseModelRegistry(lines, modelRegistryNotices);
     const config: RawConfig = {
       modelRouting: {},
       toolSettings: {},
       // Every `providers.<n>.*` line, unmodelled fields included, through the
       // codec the CLI writer shares (F01).
       providers: parseProviderChain(lines, providerNotices),
+      ...(modelRegistry ? { modelRegistry } : {}),
       passthrough: {},
       providerNotices,
+      modelRegistryNotices,
     };
 
     for (const line of lines) {
       // `providers.<n>.<field>: <value>` — parsed above; never passthrough.
       if (isProviderChainLine(line)) continue;
+      // `modelRegistry.*` lines the shared codec claims — parsed above. An
+      // unmodelled leaf is not claimed and falls through to passthrough.
+      if (isModelRegistryLine(line)) continue;
 
       // `modelRouting.<id>: <model>` — per-personality overrides
       const mr = line.match(/^modelRouting\.(\S+):\s*(.+)$/);
@@ -369,10 +395,15 @@ export class ConfigRepository {
    * the chain read INSIDE the write lock, and a mismatch throws
    * `CONFIG_CONFLICT` before anything — file or vault — is written. The
    * caller built `patch.providers` from that version of the chain.
+   *
+   * `opts.beforeWrite` receives the MERGED config inside the same lock and
+   * returns what is written — so a change derived from the merged state (the
+   * model adoption `ConfigService.update` makes on a chain save) lands in the
+   * same write, decided against the state it overwrites.
    */
   async update(
     patch: Partial<RawConfig>,
-    opts: { providersVersion?: string } = {},
+    opts: { providersVersion?: string; beforeWrite?: (next: RawConfig) => RawConfig } = {},
   ): Promise<RawConfig> {
     let next!: RawConfig;
     const op = this.writeChain
@@ -401,13 +432,51 @@ export class ConfigRepository {
           // When providers is explicitly provided in the patch, replace entirely;
           // otherwise keep the current array.
           providers: patch.providers !== undefined ? patch.providers : current.providers,
+          // Same rule for the registry: only a patch that NAMES it replaces it,
+          // so every settings save that does not preserves every entry.
+          modelRegistry: 'modelRegistry' in patch ? patch.modelRegistry : current.modelRegistry,
           passthrough: { ...current.passthrough, ...(patch.passthrough ?? {}) },
         };
+        if (opts.beforeWrite) next = opts.beforeWrite(next);
         await this.write(next);
       });
     this.writeChain = op.catch(() => {});
     await op;
     return next;
+  }
+
+  /**
+   * Read-modify-write under the same write lock `update` takes: `fn` receives
+   * the config as it is INSIDE the lock and returns the whole next config, or
+   * `null` to write nothing. The check a caller bases a refusal on is therefore
+   * made against the state it would overwrite, not a copy read earlier.
+   *
+   * The one writer that needs it is `ModelRegistryService` (apps/web-api): a
+   * registry action both validates against and rewrites `modelRegistry` and
+   * `modelRouting`, and `update`'s merge cannot DELETE a `modelRouting` key or
+   * a role binding. Returns what `fn` returned.
+   */
+  async transform<T>(
+    fn: (current: RawConfig) => { next: RawConfig | null; result: T },
+  ): Promise<T> {
+    let result!: T;
+    const op = this.writeChain
+      .catch(() => {})
+      .then(async () => {
+        const current: RawConfig = (await this.read()) ?? {
+          modelRouting: {},
+          toolSettings: {},
+          providers: [],
+          passthrough: {},
+          providerNotices: [],
+        };
+        const out = fn(current);
+        result = out.result;
+        if (out.next) await this.write(out.next);
+      });
+    this.writeChain = op.catch(() => {});
+    await op;
+    return result;
   }
 
   /**
@@ -583,6 +652,13 @@ export class ConfigRepository {
     // Keys come from the codec, shape-checked there; values are quoted here.
     for (const [key, value] of renderProviderChain(config.providers)) {
       lines.push(`${key}: ${yamlScalar(value)}`);
+    }
+    // Same codec as the CLI writer (`renderModelRegistry`): entries in their
+    // stored order, then `default`, then role bindings. Values quoted here.
+    if (config.modelRegistry) {
+      for (const [key, value] of renderModelRegistryPairs(config.modelRegistry)) {
+        lines.push(`${key}: ${yamlScalar(value)}`);
+      }
     }
     // Stable-order passthrough — keep keys the CLI cares about across
     // round-trips even if it adds new ones in the future.

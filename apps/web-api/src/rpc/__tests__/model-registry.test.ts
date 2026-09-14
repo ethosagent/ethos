@@ -6,7 +6,7 @@ import {
 } from '@ethosagent/wiring';
 import { describe, expect, it } from 'vitest';
 import { ModelRegistryService } from '../../services/model-registry.service';
-import { config, service } from './model-registry-fixture';
+import { config, inertSeams, service } from './model-registry-fixture';
 
 // `modelRegistry.test` (T1.24). The service IS the handler's whole body, so
 // these exercise it directly. The rate limit has its own file.
@@ -91,6 +91,7 @@ describe('modelRegistry.test', () => {
 
   it('reports a missing config as unconfigured rather than throwing', async () => {
     const svc = new ModelRegistryService({
+      ...inertSeams(),
       readConfig: async () => null,
       secrets: new InMemorySecretsResolver(),
       probe: async () => ({ ok: true, latencyMs: 1 }),

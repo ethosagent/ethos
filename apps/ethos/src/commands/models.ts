@@ -83,15 +83,21 @@ export function renderModelTest(outcome: ModelTestOutcome, covers?: string[]): s
         `${c.yellow}?${c.reset} ${outcome.modelId} · ${c.cyan}${outcome.providerKey}${c.reset} — could not reach ${outcome.provider} (${outcome.error}). This is not a bad key — try again.${also}`,
       ];
     case 'unconfigured': {
-      const lines = [`${c.red}✗${c.reset} ${outcome.alias} — ${outcome.reason}`];
+      const lines = [`${c.red}✗${c.reset} ${subjectOf(outcome)} — ${outcome.reason}`];
       if (outcome.fix) lines.push(`  ${c.yellow}Fix:${c.reset} ${outcome.fix}`);
       return lines;
     }
     case 'rate_limited':
       return [
-        `${c.red}✗${c.reset} ${outcome.alias} — tested moments ago. Wait ${outcome.retryAfterSeconds}s before testing it again.`,
+        `${c.red}✗${c.reset} ${subjectOf(outcome)} — tested moments ago. Wait ${outcome.retryAfterSeconds}s before testing it again.`,
       ];
   }
+}
+
+/** What an outcome is about: its alias, or — for an unsaved model, which only
+ *  the RPC can test — its `providerKey/modelId` pair. */
+function subjectOf(outcome: { alias?: string; providerKey?: string; modelId?: string }): string {
+  return outcome.alias ?? `${outcome.providerKey ?? '?'}/${outcome.modelId ?? '?'}`;
 }
 
 /** An outcome that means the command did not do what was asked. An

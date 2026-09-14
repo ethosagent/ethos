@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { MODEL_REGISTRY_LIST_KEY } from '../ModelDeclarationSelect';
 import {
   type PersonalityVoice,
   PersonalityVoiceFields,
@@ -45,6 +48,27 @@ function markup(value: PersonalityVoice): string {
     roster: {},
   });
   queryClient.setQueryData(['voice', 'realtimeEntries'], { roster: {}, defaultEntryName: null });
+  queryClient.setQueryData(MODEL_REGISTRY_LIST_KEY, {
+    entries: [
+      {
+        alias: 'haiku',
+        providerKey: 'anthropic-main',
+        modelId: 'claude-haiku-4-5',
+        label: 'fast',
+        contextWindow: null,
+        costPer1kInput: null,
+        costPer1kOutput: null,
+        fallbacks: [],
+        credential: 'set',
+        referents: [],
+      },
+    ],
+    default: 'haiku',
+    roles: { trivial: null, default: null, deep: null, dreaming: null },
+    providerEntries: [],
+    routing: {},
+    problems: [],
+  });
   return renderToStaticMarkup(
     createElement(
       QueryClientProvider,
@@ -62,11 +86,41 @@ describe('PersonalityVoiceFields — the three sub-keys that were yaml-only', ()
     expect(html).toContain('Voices by language');
   });
 
-  it('offers the fast-lane model as free text, since it is a model id', () => {
-    // Antd renders `help` through a CSSMotion child that server-side rendering
-    // skips, so the copy itself is not assertable here — the control is.
-    expect(markup(blank({ model: 'claude-haiku-4-5' }))).toContain('value="claude-haiku-4-5"');
-    expect(markup(blank())).toContain('placeholder="claude-haiku-4-5"');
+  it('offers the fast-lane model as the closed registry picker, not free text', () => {
+    // A role or an alias, never a vendor id (plan model-registry D5/D13).
+    const html = markup(blank({ model: 'haiku' }));
+    expect(html).toContain('aria-label="Fast-lane model"');
+    expect(html).toContain('ant-select');
+    expect(html).not.toContain('placeholder="claude-haiku-4-5"');
+    expect(html).not.toContain('value="haiku"');
+  });
+
+  it('the voice.model help text states what the code does', () => {
+    // V19: the old copy said setting it did not yet change which model answers;
+    // `pinRunnerModel` (packages/wiring/src/voice-stack.ts) pins it on every
+    // spoken turn.
+    const source = readFileSync(
+      join(import.meta.dirname, '..', 'PersonalityVoiceFields.tsx'),
+      'utf8',
+    );
+    expect(source).not.toContain('has not landed');
+    expect(source).not.toContain('does not yet change which model answers');
+    expect(markup(blank())).toContain(
+      'The model that answers spoken turns. For voice, it takes priority over this',
+    );
+  });
+
+  it('keeps source citations out of the visible voice.model help text', () => {
+    // The enforcer citation lives in a code comment beside the string; the
+    // rendered help is read by end users.
+    const html = markup(blank());
+    const start = html.indexOf('The model that answers spoken turns.');
+    expect(start).toBeGreaterThan(-1);
+    const help = html.slice(start, html.indexOf('<', start));
+    expect(help).not.toContain('packages/');
+    expect(help).not.toMatch(/\.ts\b/);
+    expect(help).not.toContain('pinRunnerModel');
+    expect(help).not.toContain('resolveModel');
   });
 
   it('lets the tier fall through to the deployment, rather than forcing a choice', () => {

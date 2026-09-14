@@ -4,6 +4,8 @@ import { Button, Form, Input, Select, Space, Typography } from 'antd';
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { rpc } from '../../rpc';
+import { ModelDeclarationSelect } from './ModelDeclarationSelect';
+import type { DeclaredModel } from './modelDeclaration';
 
 // How a personality sounds and looks — the identity fields that sit beside its
 // name and its mark, not config knobs — plus the one technical override that
@@ -54,7 +56,8 @@ export interface PersonalityVoice {
   callStyle: CallTreatment | '';
   /** Which voice stack serves this personality; `''` = the deployment's own. */
   tier: 'pipeline' | 'realtime' | '';
-  /** Fast-lane model for spoken turns; `''` = the personality's normal model. */
+  /** Fast-lane model for spoken turns — a role or a registry alias; `''` = the
+   *  personality's normal model. */
   model: string;
   /** `voice.languages.<tag>` as an ordered row list — a Record cannot hold a
    *  half-typed tag while the operator is still typing it. */
@@ -190,9 +193,13 @@ const LANGUAGE_ROW_STYLE: CSSProperties = {
 export function PersonalityVoiceFields({
   value,
   onChange,
+  agenticModel,
 }: {
   value: PersonalityVoice;
   onChange: (next: PersonalityVoice) => void;
+  /** The personality's own `model` declaration as the editor currently holds
+   *  it — what "Use default" on the fast-lane model tests. */
+  agenticModel?: DeclaredModel;
 }) {
   const ttsQuery = useQuery({
     queryKey: ['voice', 'ttsEntries'],
@@ -382,14 +389,20 @@ export function PersonalityVoiceFields({
           options={[...TIER_OPTIONS]}
         />
       </Form.Item>
+      {/* Enforced by `pinRunnerModel` in packages/wiring/src/voice-stack.ts,
+          which pins every turn on a voice lane to this model; it resolves
+          through the same registry as the agentic model, ahead of the
+          personality's own declaration (rung 0 of `resolveModel`,
+          packages/core/src/model-resolution.ts). */}
       <Form.Item
         label="Fast-lane model"
-        help="The model that answers on the voice lane. Conversational latency and agentic depth want different models; this is how a personality says which one talks. Blank uses its normal model. The fast-lane model is pinned onto the lane directly, so it wins over the tier and provider routing the agentic path goes through."
+        extra="The model that answers spoken turns. For voice, it takes priority over this personality's Model below. Use default keeps spoken turns on the personality's model."
       >
-        <Input
-          placeholder="claude-haiku-4-5"
+        <ModelDeclarationSelect
+          ariaLabel="Fast-lane model"
           value={value.model}
-          onChange={(e) => onChange({ ...value, model: e.target.value })}
+          onChange={(model) => onChange({ ...value, model })}
+          inherit={{ hint: 'this personality’s model', declared: agenticModel }}
         />
       </Form.Item>
       {configured ? (

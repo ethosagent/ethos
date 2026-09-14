@@ -1,17 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, AutoComplete, Button, Form, Input, Modal } from 'antd';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { App as AntApp, Button, Form, Input, Modal } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useConfig } from '../features/config/api/queries';
 import { usePersonalityList } from '../features/personalities/api/queries';
 import { buildWorkspaceChatPath } from '../lib/workspaceRoutes';
-import {
-  modelFilterOption,
-  modelOptionsForProvider,
-  SkillsPicker,
-  slugify,
-  ToolsetPicker,
-} from '../pages/Personalities';
+import { SkillsPicker, slugify, ToolsetPicker } from '../pages/Personalities';
 import { rpc } from '../rpc';
 import { AvatarPicker } from './personality/AvatarPicker';
 import {
@@ -19,6 +12,7 @@ import {
   attachAvatarAfterCreate,
   uploadAvatarBytes,
 } from './personality/avatarActions';
+import { ModelDeclarationSelect } from './personality/ModelDeclarationSelect';
 import { PersonalityMark } from './ui/PersonalityMark';
 
 // P5 item 1 (plan/phases/personality-first-ui.md) — the "New agent" fast
@@ -86,22 +80,6 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
     setPreviewUrl(url);
     setState((s) => ({ ...s, avatarSelection: { kind: 'file', file } }));
   }
-
-  // No provider field in the fast path (that's an advanced/wizard concern), so
-  // the personality this creates runs on the DEPLOYMENT's provider — and that
-  // is the only provider whose models may be suggested. Gathering them across
-  // every provider in the catalog offered `claude-opus-4-7` to a deployment
-  // with no Anthropic key. Same `modelOptionsForProvider` mapping the wizard
-  // uses, pointed at the configured provider.
-  const catalogQuery = useQuery({
-    queryKey: ['models', 'catalog'],
-    queryFn: () => rpc.models.catalog(),
-  });
-  const configQuery = useConfig();
-  const modelOptions = useMemo(
-    () => modelOptionsForProvider(catalogQuery.data, configQuery.data?.provider),
-    [catalogQuery.data, configQuery.data?.provider],
-  );
 
   const createMut = useMutation({
     mutationFn: () =>
@@ -266,17 +244,14 @@ export function NewAgentDialog({ onClose }: { onClose: () => void }) {
           />
         </Form.Item>
 
-        <Form.Item
-          label="Model"
-          help="Optional. Leave blank to use the global default from Settings."
-        >
-          <AutoComplete
+        {/* Same closed control as the create wizard (plan model-registry D5):
+            a role or a registry alias, never a typed vendor id. "Use default"
+            is `''`, which the create call above omits. */}
+        <Form.Item label="Model" help="Optional. Use default follows the default from Settings.">
+          <ModelDeclarationSelect
+            ariaLabel="Model"
             value={state.model}
-            placeholder={modelOptions[0]?.value ?? 'model id'}
-            options={modelOptions}
-            filterOption={modelFilterOption}
-            onChange={(val) => setState((s) => ({ ...s, model: val }))}
-            style={{ width: '100%' }}
+            onChange={(model) => setState((s) => ({ ...s, model }))}
           />
         </Form.Item>
 

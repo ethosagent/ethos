@@ -1,9 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import {
+  type AdoptedModel,
+  type CatalogModelLookup,
+  type ChainModelImportSource,
   fillFromTopLevel,
+  introducedModelRegistryProblems,
   isProviderChainSecretRef,
   isVoiceChannelPlatform,
   normalizeAuxTimeoutSeconds,
+  planChainModelImport,
   providerChainVersion,
   secretRefFromValue,
   VOICE_CHANNEL_PLATFORMS,
@@ -11,9 +16,11 @@ import {
 } from '@ethosagent/config';
 import {
   EthosError,
+  type ModelRegistry,
   RETENTION_NO_PERSONALITY_SCOPE,
   type SecretsResolver,
 } from '@ethosagent/types';
+import { lookupCatalogModel } from '@ethosagent/wiring/model-catalog';
 import {
   type ConfigRepository,
   parseRealtimeRoster,
@@ -1362,6 +1369,10 @@ export interface ConfigGetResult {
     model: string | null;
     apiKeyPreview: string;
     baseUrl: string | null;
+    /** `providers.<n>.id`; null when the entry carries none. */
+    id: string | null;
+    /** `providers.<n>.failover`, absent read as `true` (D23b). */
+    failover: boolean;
   }>;
   /** `providerChainVersion` of the stored chain these `providers` came from.
    *  `update` requires it back with any `providers` list. */
@@ -1620,6 +1631,12 @@ export interface ProviderRowInput {
   model?: string;
   apiKey?: string;
   baseUrl?: string;
+  /** `providers.<n>.id`. Omitted keeps the stored entry's id; `null` or `''`
+   *  clears it; a string sets it. Checked by `assertProviderIds`. */
+  id?: string | null;
+  /** `providers.<n>.failover`. Omitted keeps the stored flag; `false` writes
+   *  it; `true` removes a stored `false` (absent means true, D23b). */
+  failover?: boolean;
   /** Position in `get().providers` (= the repository's chain) the row was
    *  loaded from. Absent for a row added in the editor. */
   sourceIndex?: number;
@@ -1649,7 +1666,57 @@ function overlayProviderRow(
   if (row.baseUrl) entry.baseUrl = row.baseUrl;
   else delete entry.baseUrl;
   if (row.apiKey) entry.apiKey = row.apiKey;
+  // `id` / `failover` are OPTIONAL on a row, unlike `model` / `baseUrl`: a page
+  // that does not send them (an older client, or a save touching neither) keeps
+  // the stored values. Pinned by `__tests__/repositories/config-model-registry.test.ts`,
+  // "a provider entry's id and failover flag survive a settings save that
+  // touches neither".
+  if (row.id !== undefined) {
+    if (row.id) entry.id = row.id;
+    else delete entry.id;
+  }
+  // Absent means `true` (D23b): `true` only has to undo a stored `false`, so a
+  // stored explicit `failover: true` line is kept rather than churned.
+  if (row.failover === false) entry.failover = false;
+  else if (row.failover === true && entry.failover === false) delete entry.failover;
   return entry;
+}
+
+/**
+ * Refuse a chain whose ids the model registry cannot live with: an id outside
+ * `[A-Za-z0-9_-]+`, two entries claiming one id (`findProviderEntry` would
+ * silently pick the first), or a stored id that a `modelRegistry.<alias>.provider`
+ * references disappearing — a clear or a rename would dangle every such alias
+ * and refuse every personality naming one (D24's outage, by a different edit).
+ * Throws `CONFIG_INVALID` naming the aliases; nothing is written.
+ */
+function assertProviderIds(
+  next: readonly RawProviderEntry[],
+  stored: readonly RawProviderEntry[],
+  registry: ModelRegistry | undefined,
+): void {
+  const ids = new Set<string>();
+  for (const [index, entry] of next.entries()) {
+    if (entry.id === undefined) continue;
+    checkRecordKey(`providers.${index}.id`, entry.id);
+    if (ids.has(entry.id)) {
+      invalidValue(`providers.${index}.id`, `"${entry.id}" is already another provider row's id`);
+    }
+    ids.add(entry.id);
+  }
+  for (const entry of stored) {
+    if (!entry.id || ids.has(entry.id)) continue;
+    const id = entry.id;
+    const aliases = Object.values(registry?.entries ?? {})
+      .filter((e) => e.provider === id)
+      .map((e) => e.alias);
+    if (aliases.length === 0) continue;
+    throw new EthosError({
+      code: 'CONFIG_INVALID',
+      cause: `Provider entry id "${id}" is used by ${aliases.length === 1 ? 'the model' : 'the models'} ${aliases.join(', ')}; removing or renaming it would leave ${aliases.length === 1 ? 'it' : 'them'} pointing at nothing. Nothing was saved.`,
+      action: `Keep the id, or repoint or remove ${aliases.join(', ')} in Settings → Models first.`,
+    });
+  }
 }
 
 /**
@@ -1984,6 +2051,12 @@ export interface ConfigUpdateInput {
   };
 }
 
+/** What `update` reports beyond "it saved". */
+export interface ConfigUpdateResult {
+  /** Models adopted into the registry by this save (`adoptChainModelsOnSave`). */
+  adoptedModels: AdoptedModel[];
+}
+
 export interface ConfigServiceOptions {
   config: ConfigRepository;
   /** Resolves `${secrets:ref}` indirection in stored API keys (admin
@@ -2012,6 +2085,8 @@ export interface ConfigServiceOptions {
    * must not fail the config write that already landed.
    */
   onUpdated?: () => void | Promise<void>;
+  /** Catalog facts for a model adopted on save. Absent = the in-process catalog. */
+  lookupCatalog?: CatalogModelLookup;
 }
 
 export class ConfigService {
@@ -2042,6 +2117,9 @@ export class ConfigService {
           model: p.model ?? null,
           apiKeyPreview: (await this.keyPreview(p.apiKey)) ?? redactKey(undefined),
           baseUrl: p.baseUrl ?? null,
+          id: p.id ?? null,
+          // Absent in the file means a failover hop (D23b).
+          failover: p.failover ?? true,
         })),
       ),
       providersVersion: providerChainVersion(raw.providers),
@@ -2411,7 +2489,7 @@ export class ConfigService {
     return resolved;
   }
 
-  async update(patch: ConfigUpdateInput): Promise<void> {
+  async update(patch: ConfigUpdateInput): Promise<ConfigUpdateResult> {
     // Empty-string apiKey would erase the existing key. Treat as no-op.
     const cleaned: typeof patch = { ...patch };
     if (cleaned.apiKey !== undefined && cleaned.apiKey === '') delete cleaned.apiKey;
@@ -2425,6 +2503,12 @@ export class ConfigService {
     const before = await this.opts.config.read();
     if (patch.providers !== undefined) {
       assertProviderRows(patch.providers, patch.providersVersion);
+      const storedChain = before?.providers ?? [];
+      assertProviderIds(
+        patch.providers.map((row) => overlayProviderRow(row, storedChain)),
+        storedChain,
+        before?.modelRegistry,
+      );
       if (providerChainVersion(before?.providers ?? []) !== patch.providersVersion) {
         throw new EthosError({
           code: 'CONFIG_CONFLICT',
@@ -3162,10 +3246,29 @@ export class ConfigService {
     delete cleaned.voiceTier;
     delete cleaned.voiceRealtimeDefault;
     delete cleaned.voiceRealtimeSessionBudgetUsd;
+    // The rows are not repository entries — `repoProviders` below is what they
+    // overlay onto (an `id: null` row means "clear", which a stored entry cannot
+    // hold).
+    const { providers: _providerRows, ...settings } = cleaned;
+
+    // Adopt on save (D11a): a saved chain row declaring a model the registry
+    // lacks is adopted in THIS write, decided inside the repository's lock
+    // against the merged config (`adoptChainModelsOnSave`). Only a save that
+    // writes a chain adopts — the legacy single row never materializes one.
+    const skipAdoption =
+      repoProviders !== undefined && patch.providers
+        ? new Set(
+            patch.providers.flatMap((row, index) =>
+              row.id === null || row.id === '' ? [index] : [],
+            ),
+          )
+        : undefined;
+    let adoptedModels: AdoptedModel[] = [];
+    const lookupCatalog = this.opts.lookupCatalog ?? lookupCatalogModel;
 
     await this.opts.config.update(
       {
-        ...cleaned,
+        ...settings,
         ...mirror.fields,
         ...(repoProviders !== undefined ? { providers: repoProviders } : {}),
         ...(passthrough !== undefined ? { passthrough } : {}),
@@ -3193,7 +3296,18 @@ export class ConfigService {
           ? { voiceTtsModel: patch.voiceTtsModel || undefined }
           : {}),
       },
-      patch.providers !== undefined ? { providersVersion: patch.providersVersion } : {},
+      {
+        ...(patch.providers !== undefined ? { providersVersion: patch.providersVersion } : {}),
+        ...(skipAdoption !== undefined
+          ? {
+              beforeWrite: (next: RawConfig) => {
+                const adoption = adoptChainModelsOnSave(next, skipAdoption, lookupCatalog);
+                adoptedModels = adoption.adopted;
+                return adoption.next;
+              },
+            }
+          : {}),
+      },
     );
 
     await this.deleteOrphanedSecrets([
@@ -3206,6 +3320,7 @@ export class ConfigService {
     } catch {
       // The write landed; a broken listener is not the caller's problem.
     }
+    return { adoptedModels };
   }
 
   /**
@@ -3295,8 +3410,11 @@ export class ConfigService {
    * A failing delete propagates (ARCHITECTURE.md §V S7 — no silent failure).
    * The config change already landed; the error is how the operator learns
    * credential material was left behind.
+   *
+   * Public because `ModelRegistryService`'s provider writes (a replaced key, a
+   * removed entry) end the same way and must not grow a second copy.
    */
-  private async deleteOrphanedSecrets(refs: string[]): Promise<void> {
+  async deleteOrphanedSecrets(refs: string[]): Promise<void> {
     const secrets = this.opts.secrets;
     if (!secrets || refs.length === 0) return;
     const surviving = await this.opts.config.secretRefsInUse();
@@ -3314,7 +3432,7 @@ const SECRETS_REF_RE = /\$\{secrets:([^}]+)\}/g;
 /** The top-level provider fields as a chain entry, for `fillFromTopLevel`.
  *  `apiVersion` / `region` / `awsProfile` are top-level lines this repository
  *  does not model, so they sit in `passthrough`. */
-function topLevelChainEntry(raw: RawConfig): RawProviderEntry {
+export function topLevelChainEntry(raw: RawConfig): RawProviderEntry {
   const p = raw.passthrough;
   return {
     provider: raw.provider ?? '',
@@ -3327,6 +3445,59 @@ function topLevelChainEntry(raw: RawConfig): RawProviderEntry {
   };
 }
 
+/** What `planChainModelImport` (`@ethosagent/config`) reads from a repository
+ *  config: the top-level provider (`topLevelChainEntry`), the chain, the registry. */
+export function chainImportSource(raw: RawConfig): ChainModelImportSource {
+  return {
+    ...topLevelChainEntry(raw),
+    providers: raw.providers,
+    modelRegistry: raw.modelRegistry,
+  };
+}
+
+/**
+ * The adopt-on-save half of `ConfigService.update`, run inside the repository
+ * lock on the merged config: every chain model the registry lacks is adopted
+ * through `planChainModelImport` — the importer `ethos migrate models` and
+ * `modelRegistry.importChain` use — except rows at `skipRows` (sent with
+ * `id: null`/`''`, whose cleared id adoption would write back).
+ *
+ * Adoption never blocks a save: a config with no chain adopts nothing (a save
+ * must not materialize one), and a plan that would introduce a registry problem
+ * (`introducedModelRegistryProblems`) is dropped — the settings still save and
+ * the model stays listed in `modelRegistry.list().chainModels`.
+ */
+function adoptChainModelsOnSave(
+  next: RawConfig,
+  skipRows: ReadonlySet<number>,
+  lookupCatalog: CatalogModelLookup,
+): { next: RawConfig; adopted: AdoptedModel[] } {
+  const none = { next, adopted: [] };
+  if (next.providers.length === 0) return none;
+  const source = chainImportSource(next);
+  const providerKeys = planChainModelImport(source)
+    .candidates.filter((c) => !skipRows.has(c.index))
+    .map((c) => c.providerKey);
+  if (providerKeys.length === 0) return none;
+  const plan = planChainModelImport(source, { providerKeys, lookupCatalog });
+  if (plan.adopted.length === 0) return none;
+  const problems = introducedModelRegistryProblems(
+    next.modelRegistry,
+    next.providers,
+    plan.registry,
+    plan.providers,
+  );
+  if (problems.length > 0) return none;
+  return {
+    next: {
+      ...next,
+      providers: plan.providers,
+      ...(plan.registry ? { modelRegistry: plan.registry } : {}),
+    },
+    adopted: plan.adopted,
+  };
+}
+
 /**
  * The deletion candidate among the top-level key fields: the `apiKey` the
  * config held BEFORE the save, and only when it is an index-named chain secret
@@ -3336,7 +3507,7 @@ function topLevelChainEntry(raw: RawConfig): RawProviderEntry {
  * `auxiliary/*`) are read by name by provider factories and tools and are
  * never candidates. `deleteOrphanedSecrets` keeps any still referenced.
  */
-function topLevelChainSecretRefs(before: RawConfig | null): string[] {
+export function topLevelChainSecretRefs(before: RawConfig | null): string[] {
   const ref = before?.apiKey ? secretRefFromValue(before.apiKey) : null;
   return ref && isProviderChainSecretRef(ref) ? [ref] : [];
 }
@@ -3346,7 +3517,7 @@ function topLevelChainSecretRefs(before: RawConfig | null): string[] {
  *  @ethosagent/config). Read strictly (`secretRefFromValue`) and limited to
  *  that namespace because these are DELETION candidates: a hand-written ref to
  *  some other secret is not the chain's to remove. */
-function providerChainSecretRefs(chain: readonly RawProviderEntry[]): string[] {
+export function providerChainSecretRefs(chain: readonly RawProviderEntry[]): string[] {
   const refs: string[] = [];
   for (const entry of chain) {
     for (const value of [entry.apiKey ?? '', ...Object.values(entry.passthrough ?? {})]) {
