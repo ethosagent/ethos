@@ -99,4 +99,69 @@ describe('CodexTokenStore', () => {
     // A second load (now from the secret store) still returns the creds.
     expect(await store.load()).toEqual(creds);
   });
+
+  it('two concurrent callers make one refresh', async () => {
+    const store = new CodexTokenStore(new InMemorySecretsResolver());
+    await store.save(makeCreds(-60)); // already expired
+
+    const freshAccess = jwtWithExp(Math.floor(Date.now() / 1_000) + 3_600);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchFn = vi.fn(async () => {
+      await gate; // hold the refresh open until both callers are waiting on it
+      return {
+        ok: true,
+        json: async () => ({
+          access_token: freshAccess,
+          refresh_token: 'new-refresh',
+          id_token: 'a.b.c',
+        }),
+      };
+    }) as unknown as typeof globalThis.fetch;
+
+    const first = store.ensureValid(fetchFn);
+    const second = store.ensureValid(fetchFn);
+    release();
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(a.accessToken).toBe(freshAccess);
+    expect(b.accessToken).toBe(freshAccess);
+    expect((await store.load())?.refreshToken).toBe('new-refresh');
+
+    // The token is fresh now: a later caller neither refreshes nor waits.
+    await store.ensureValid(fetchFn);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed shared refresh rejects every caller, saves nothing, and the next call retries', async () => {
+    const store = new CodexTokenStore(new InMemorySecretsResolver());
+    const expired = makeCreds(-60);
+    await store.save(expired);
+
+    const fetchFn = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      text: async () => 'invalid_grant',
+    })) as unknown as typeof globalThis.fetch;
+
+    const results = await Promise.allSettled([
+      store.ensureValid(fetchFn),
+      store.ensureValid(fetchFn),
+    ]);
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    for (const r of results) {
+      expect(r.status).toBe('rejected');
+      if (r.status === 'rejected') expect(String(r.reason)).toMatch(/Token refresh failed \(400\)/);
+    }
+    // Nothing was saved over the stored credentials.
+    expect(await store.load()).toEqual(expired);
+
+    // The in-flight slot was cleared: a later call makes its own attempt.
+    await expect(store.ensureValid(fetchFn)).rejects.toThrow(/Token refresh failed/);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
 });

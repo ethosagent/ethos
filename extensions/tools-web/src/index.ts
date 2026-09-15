@@ -65,6 +65,16 @@ interface WebSearchSelectionOptions {
   toolSettings?: Record<string, { web_search?: WebSearchSetting } | undefined>;
 }
 
+/**
+ * `max_chars` — characters of text kept per hit (D45). The default is the
+ * length every caller got before the argument existed; the ceiling keeps ten
+ * hits near the tool's `maxResultChars`, past which executeParallel truncates
+ * the whole result.
+ */
+const DEFAULT_EXCERPT_CHARS = 400;
+const MIN_EXCERPT_CHARS = 100;
+const MAX_EXCERPT_CHARS = 2_000;
+
 function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
   const { searchBackend, resolvePersonalitySetting, toolSettings } = opts;
   const searxng = opts.searxngUrl ? createSearxngBackend(opts.searxngUrl) : null;
@@ -194,17 +204,40 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
           description:
             'Only return results published within this window, as a duration: <number><d|w|m|y>, e.g. 30d, 2w, 6m, 1y. Omit for no recency filter.',
         },
+        max_chars: {
+          type: 'number',
+          description: `Maximum characters of text kept per result (default ${DEFAULT_EXCERPT_CHARS}, clamped to ${MIN_EXCERPT_CHARS}–${MAX_EXCERPT_CHARS}). Some providers return shorter snippets than asked for.`,
+        },
       },
       required: ['query'],
     },
     async execute(args, ctx): Promise<ToolResult> {
-      const { query, num_results, max_age } = args as {
+      const { query, num_results, max_age, max_chars } = args as {
         query: string;
         num_results?: number;
         max_age?: string;
+        max_chars?: unknown;
       };
 
       if (!query) return { ok: false, error: 'query is required', code: 'input_invalid' };
+
+      // Refused when not a finite number, clamped when out of range: a
+      // non-number is the caller's own mistake in this request, while an
+      // out-of-range length still has one obvious nearest meaning.
+      if (
+        max_chars !== undefined &&
+        (typeof max_chars !== 'number' || !Number.isFinite(max_chars))
+      ) {
+        return {
+          ok: false,
+          error: `max_chars must be a number (got ${JSON.stringify(max_chars)})`,
+          code: 'input_invalid',
+        };
+      }
+      const maxChars =
+        max_chars === undefined
+          ? DEFAULT_EXCERPT_CHARS
+          : Math.min(MAX_EXCERPT_CHARS, Math.max(MIN_EXCERPT_CHARS, Math.round(max_chars)));
 
       // Refused, not ignored: an unparseable window that quietly fell through
       // would return unfiltered results to a caller who believes it filtered.
@@ -246,7 +279,10 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
       // refusing it would break every search the personality ever runs.
       const maxAge = argMaxAge ?? parseMaxAge(resolveSetting(ctx)?.recency);
 
-      const options = maxAge ? { maxAge } : undefined;
+      const options =
+        maxAge || max_chars !== undefined
+          ? { ...(maxAge ? { maxAge } : {}), ...(max_chars !== undefined ? { maxChars } : {}) }
+          : undefined;
 
       try {
         const providerId = 'searxng' in selected ? selected.searxng.id : selected.backend.id;
@@ -277,7 +313,7 @@ function makeWebSearchTool(opts: WebSearchSelectionOptions = {}): Tool {
           .map((r, i) => {
             const iso = toIsoDate(r.publishedDate);
             const date = iso ? ` (${iso})` : '';
-            const snippet = r.text?.trim().slice(0, 400) ?? '';
+            const snippet = r.text?.trim().slice(0, maxChars) ?? '';
             return `${i + 1}. **${r.title ?? 'Untitled'}**${date}\n   ${r.url}\n   ${snippet}`;
           })
           .join('\n\n');

@@ -142,7 +142,14 @@ describe('Orchestrator guardrails', () => {
     // to — is destructured from the setup and passed to the stream-step and
     // tool-processing contexts. 3 pass-through lines; the routing lives in
     // agent-loop/model-route.ts.
-    expect(lineCount).toBeLessThanOrEqual(1004);
+    // Bumped 1004 -> 1010 (brand-brain-quality D48, watcher pause ends with a
+    // reply): the pause exit now calls `replyAfterWatcherPause` and folds its
+    // text and turn into the turn (import, comment, call, fatal return, two
+    // accumulators). The step context became a `stepCtx()` closure so the main
+    // stream call and the closing call share one object literal instead of
+    // two. The closing call, its system note and the tool_result for an
+    // unoffered tool call live in agent-loop/stages/watcher-pause.ts.
+    expect(lineCount).toBeLessThanOrEqual(1010);
   });
 
   it('no stage file exceeds 700 lines', () => {

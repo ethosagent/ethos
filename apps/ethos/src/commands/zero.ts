@@ -1,3 +1,4 @@
+import { fstatSync } from 'node:fs';
 import { readConfig } from '@ethosagent/config';
 import { answerSuffix } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from '../cli-overrides';
@@ -11,10 +12,28 @@ import { getSecretsResolver, getStorage, resolveActiveLoop } from '../wiring';
  * shell pipelines: `echo "explain this" | ethos -z` or
  * `ethos -z "summarise" < file.txt`.
  */
+/**
+ * Whether stdin carries input to read: a pipe or a redirected file. A TTY, a
+ * character device (`/dev/null`) or an inherited socket is skipped — reading
+ * one waits for an EOF that a background launch never sends, so
+ * `ethos -z "<prompt>" &` hung forever. Pinned by
+ * `__tests__/zero-exit-code.test.ts` "does not read stdin that is not a pipe or a file".
+ */
+function stdinHasInput(): boolean {
+  if (process.stdin.isTTY) return false;
+  try {
+    const stat = fstatSync(0);
+    return stat.isFIFO() || stat.isFile();
+  } catch {
+    // fd 0 closed or unreadable: there is nothing to read.
+    return false;
+  }
+}
+
 export async function runZero(argv: string[], prompt: string): Promise<void> {
-  // Read piped stdin if not a TTY
+  // Read piped or redirected stdin only — see stdinHasInput.
   let stdinContent = '';
-  if (!process.stdin.isTTY) {
+  if (stdinHasInput()) {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
       chunks.push(chunk as Buffer);

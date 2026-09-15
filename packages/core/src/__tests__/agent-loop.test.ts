@@ -1334,4 +1334,125 @@ describe('AgentLoop', () => {
       ]);
     });
   });
+
+  // Q-152 / D48 — a watcher pause ends the turn with a reply.
+  describe('watcher pause', () => {
+    const pauseOnToolEnd = {
+      resetTurn() {},
+      observe: (e: { type: string }) =>
+        e.type === 'tool_end'
+          ? ({ action: 'pause', rule: 'test-rule', reason: 'too many probes' } as const)
+          : ({ action: 'allow' } as const),
+    };
+
+    /** Call 1 asks for `probe`; every later call answers `closing`. */
+    function makePauseLLM(
+      calls: Array<{ tools: unknown[]; system: string | undefined }>,
+      closing: (id: string) => CompletionChunk[],
+    ): LLMProvider {
+      return {
+        name: 'mock',
+        model: 'mock-model',
+        maxContextTokens: 200_000,
+        supportsCaching: false,
+        supportsThinking: false,
+        async *complete(
+          _messages: Message[],
+          tools: unknown,
+          opts: CompletionOptions,
+        ): AsyncIterable<CompletionChunk> {
+          calls.push({ tools: tools as unknown[], system: opts.system });
+          if (calls.length === 1) {
+            yield { type: 'tool_use_start', toolCallId: 'c1', toolName: 'probe' };
+            yield { type: 'tool_use_end', toolCallId: 'c1', inputJson: '{}' };
+            yield { type: 'done', finishReason: 'tool_use' };
+            return;
+          }
+          for (const chunk of closing(`c${calls.length}`)) yield chunk;
+        },
+        async countTokens() {
+          return 1;
+        },
+      };
+    }
+
+    async function probeRegistry(counter: { runs: number }) {
+      const { DefaultToolRegistry } = await import('../tool-registry');
+      const tools = new DefaultToolRegistry();
+      tools.register({
+        name: 'probe',
+        description: 'probe',
+        schema: { type: 'object' },
+        capabilities: {},
+        execute: async () => {
+          counter.runs++;
+          return { ok: true, value: 'probed' };
+        },
+      });
+      return tools;
+    }
+
+    it('a watcher pause ends with a model reply and no tool call', async () => {
+      const calls: Array<{ tools: unknown[]; system: string | undefined }> = [];
+      const counter = { runs: 0 };
+      const loop = new AgentLoop({
+        llm: makePauseLLM(calls, () => [
+          { type: 'text_delta', text: 'I was paused by the watcher.' },
+          { type: 'done', finishReason: 'end_turn' },
+        ]),
+        tools: await probeRegistry(counter),
+        safety: createTestSafety({ watcher: pauseOnToolEnd }),
+      });
+      const events = await collect(loop.run('go'));
+
+      // Exactly one closing call, offered no tools, told why.
+      expect(calls).toHaveLength(2);
+      expect(calls[1]?.tools).toEqual([]);
+      expect(calls[1]?.system).toContain('test-rule');
+      expect(calls[1]?.system).toContain('too many probes');
+      expect(counter.runs).toBe(1);
+
+      // halt → the reply → done, with no tool started after the halt.
+      const haltIdx = events.findIndex((e) => e.type === 'halt');
+      const doneIdx = events.findIndex((e) => e.type === 'done');
+      expect(haltIdx).toBeGreaterThanOrEqual(0);
+      expect(doneIdx).toBeGreaterThan(haltIdx);
+      const afterHalt = events.slice(haltIdx + 1, doneIdx);
+      expect(afterHalt.some((e) => e.type === 'tool_start')).toBe(false);
+      expect(afterHalt.some((e) => e.type === 'text_delta')).toBe(true);
+      const done = events[doneIdx] as Extract<AgentEvent, { type: 'done' }>;
+      expect(done.text).toBe('I was paused by the watcher.');
+    });
+
+    it('a tool the closing call asks for is not run and still gets a tool_result', async () => {
+      const calls: Array<{ tools: unknown[]; system: string | undefined }> = [];
+      const counter = { runs: 0 };
+      const session = new InMemorySessionStore();
+      const loop = new AgentLoop({
+        llm: makePauseLLM(calls, (id) => [
+          { type: 'text_delta', text: 'Stopping.' },
+          { type: 'tool_use_start', toolCallId: id, toolName: 'probe' },
+          { type: 'tool_use_end', toolCallId: id, inputJson: '{}' },
+          { type: 'done', finishReason: 'tool_use' },
+        ]),
+        tools: await probeRegistry(counter),
+        session,
+        safety: createTestSafety({ watcher: pauseOnToolEnd }),
+      });
+      const events = await collect(loop.run('go', { sessionKey: 'cli:pause' }));
+
+      expect(calls).toHaveLength(2);
+      expect(counter.runs).toBe(1);
+      expect(events.filter((e) => e.type === 'tool_start')).toHaveLength(1);
+      expect(events.find((e) => e.type === 'done')).toBeDefined();
+
+      const s = await session.getSessionByKey('cli:pause');
+      if (!s) throw new Error('expected a session');
+      const results = (await session.getMessages(s.id)).filter(
+        (m) => m.role === 'tool_result' && m.toolCallId === 'c2',
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0]?.content).toMatch(/paused/);
+    });
+  });
 });

@@ -11,6 +11,15 @@ const TOKENS_REF = 'providers/codex/tokens';
  * of a raw-fs credential file. The stored value is `JSON.stringify(creds)`.
  */
 export class CodexTokenStore {
+  /**
+   * The refresh in flight, shared by every concurrent `ensureValid` caller so
+   * an expiring token is refreshed once rather than once per caller (a
+   * refresh token can be single-use, so a second request can fail or revoke
+   * the first). Cleared when it settles, success or failure. Pinned by
+   * `__tests__/token-store.test.ts` "two concurrent callers make one refresh".
+   */
+  private refreshing: Promise<CodexCredentials> | null = null;
+
   constructor(private readonly secrets: SecretsResolver) {}
 
   async load(): Promise<CodexCredentials | null> {
@@ -34,9 +43,20 @@ export class CodexTokenStore {
     }
     if (!isTokenExpiringSoon(creds)) return creds;
 
-    const refreshed = await refreshTokens(fetchFn, creds.refreshToken);
-    await this.save(refreshed);
-    return refreshed;
+    if (!this.refreshing) {
+      this.refreshing = (async () => {
+        try {
+          // Only a successful refresh is saved — a thrown refresh leaves the
+          // stored credentials untouched.
+          const refreshed = await refreshTokens(fetchFn, creds.refreshToken);
+          await this.save(refreshed);
+          return refreshed;
+        } finally {
+          this.refreshing = null;
+        }
+      })();
+    }
+    return this.refreshing;
   }
 
   private async migrate(): Promise<void> {

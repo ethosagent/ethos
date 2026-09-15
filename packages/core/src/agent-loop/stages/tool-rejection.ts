@@ -99,12 +99,14 @@ export async function persistAbortedToolCalls(
   sessionId: string,
   traceId: string | undefined,
   calls: CompletedToolCall[],
+  // The watcher-pause closing call (agent-loop.ts, D48) passes its own reason.
+  content: string = ABORTED_TOOL_RESULT,
 ): Promise<void> {
   for (const tc of calls) {
     await session.appendMessage({
       sessionId,
       role: 'tool_result',
-      content: ABORTED_TOOL_RESULT,
+      content,
       toolCallId: tc.toolCallId,
       toolName: tc.toolName,
       traceId,

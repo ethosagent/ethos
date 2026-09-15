@@ -1195,3 +1195,92 @@ describe('web_search settingsSchema (Phase 2 contract)', () => {
     expect(recency.options.some((o) => o.value === '')).toBe(false);
   });
 });
+
+// Q-130 / Q-149 / D45 — per-hit excerpt length.
+describe('web_search — max_chars', () => {
+  // 'z' appears nowhere in the header or the title, so the longest run of it
+  // is exactly the kept excerpt.
+  const LONG = 'z'.repeat(3_000);
+
+  function excerptLength(value: string): number {
+    return Math.max(0, ...(value.match(/z+/g) ?? []).map((m) => m.length));
+  }
+
+  async function search(
+    backend: 'exa' | 'tavily' | 'brave',
+    args: Record<string, unknown>,
+  ): Promise<{ result: Awaited<ReturnType<typeof webSearchTool.execute>>; call?: RequestInit }> {
+    const saved = saveSearchEnv();
+    setOnly(`${backend.toUpperCase()}_API_KEY` as (typeof SEARCH_ENV_KEYS)[number]);
+    try {
+      const response =
+        backend === 'exa'
+          ? { results: [{ title: 'T', url: 'https://e.com', text: LONG }] }
+          : backend === 'tavily'
+            ? { results: [{ title: 'T', url: 'https://t.com', content: LONG }] }
+            : { web: { results: [{ title: 'T', url: 'https://b.com', description: LONG }] } };
+      const rec = makeRecordingFetch(response);
+      const tool = createWebTools({ searchBackend: backend })[0];
+      const result = await tool.execute({ query: 'q', ...args }, ctxWith(rec.scopedFetch));
+      return { result, call: rec.calls[0]?.init };
+    } finally {
+      restoreSearchEnv(saved);
+    }
+  }
+
+  it('defaults to 400 characters per hit, with the Exa request unchanged', async () => {
+    const { result, call } = await search('exa', {});
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(excerptLength(result.value)).toBe(400);
+    expect(JSON.parse(String(call?.body)).contents).toEqual({ text: { maxCharacters: 1500 } });
+  });
+
+  it('keeps 1,200 characters when asked, still requesting 1,500 from Exa', async () => {
+    const { result, call } = await search('exa', { max_chars: 1_200 });
+    if (!result.ok) throw new Error(result.error);
+    expect(excerptLength(result.value)).toBe(1_200);
+    expect(JSON.parse(String(call?.body)).contents.text.maxCharacters).toBe(1500);
+  });
+
+  it('asks Exa for max_chars when it exceeds 1,500', async () => {
+    const { result, call } = await search('exa', { max_chars: 1_800 });
+    if (!result.ok) throw new Error(result.error);
+    expect(excerptLength(result.value)).toBe(1_800);
+    expect(JSON.parse(String(call?.body)).contents.text.maxCharacters).toBe(1_800);
+  });
+
+  it.each([
+    [50, 100],
+    [0, 100],
+    [99_999, 2_000],
+    [700.6, 701],
+  ])('clamps max_chars %s to %s', async (asked, kept) => {
+    const { result } = await search('exa', { max_chars: asked });
+    if (!result.ok) throw new Error(result.error);
+    expect(excerptLength(result.value)).toBe(kept);
+  });
+
+  it.each(['tavily', 'brave'] as const)(
+    'cuts %s text to max_chars without changing the request',
+    async (backend) => {
+      const { result, call } = await search(backend, { max_chars: 1_200 });
+      if (!result.ok) throw new Error(result.error);
+      expect(excerptLength(result.value)).toBe(1_200);
+      const sent = `${call?.body ?? ''}`;
+      expect(sent).not.toMatch(/max_?chars|maxCharacters/i);
+    },
+  );
+
+  it('refuses a max_chars that is not a number', async () => {
+    const { result } = await search('exa', { max_chars: '1200' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('input_invalid');
+  });
+
+  // D37's enforcer: a caller (the Brand Brain plugin) may send arguments an
+  // older or newer web_search does not know; the call must still succeed.
+  it('an unrecognised argument does not fail the call', async () => {
+    const { result } = await search('exa', { not_a_real_argument: true });
+    expect(result.ok).toBe(true);
+  });
+});

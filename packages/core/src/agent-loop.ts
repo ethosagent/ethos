@@ -37,6 +37,7 @@ import { processTools } from './agent-loop/stages/tool-processing';
 import { persistAbortedToolCalls } from './agent-loop/stages/tool-rejection';
 import { createTurnUsage, finalizeTurn, flushTurnUsage } from './agent-loop/stages/turn-finalizer';
 import { setupTurn } from './agent-loop/stages/turn-setup';
+import { replyAfterWatcherPause } from './agent-loop/stages/watcher-pause';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
 import type { LoopDeps } from './agent-loop/turn-context';
 import { buildTurnEndCtx, maybeConsolidateAtTurnEnd } from './agent-loop/turn-end';
@@ -744,6 +745,32 @@ export class AgentLoop {
         return;
       }
 
+      // One LLM call's context, read at call time (cacheBreakpoints and
+      // turnCount change between iterations).
+      const stepCtx = () => ({
+        sessionId,
+        sessionKey,
+        personalityId: personality.id,
+        personality,
+        traceId,
+        obsConfig,
+        activeTier,
+        effectiveModel,
+        modelOverride,
+        providerEntry,
+        allowedPlugins,
+        allowedTools,
+        filterOpts,
+        systemPrompt,
+        llmMessages,
+        cacheBreakpoints,
+        abortSignal,
+        turnCount,
+        watcherTap,
+        // §7 — per-call sampling wins; profile defaults fill the gaps.
+        opts: applySamplingDefaults(opts, this.modelSampling),
+      });
+
       // Ch.6a — the watcher fired a non-allow decision since the last
       // boundary check. Pause = stop this turn cleanly with a chip the
       // user sees. Terminate = error event + return. force_approval is
@@ -772,6 +799,11 @@ export class AgentLoop {
           audience: 'user',
         };
         yield { type: 'halt', kind: 'watcher', rule: halt.rule, message: halt.reason };
+        // D48 — a pause still ends with a reply (agent-loop/stages/watcher-pause.ts).
+        const reply = yield* replyAfterWatcherPause(streamDeps, stepCtx(), halt, tierEscalationRef);
+        if (reply.fatal) return;
+        fullText += reply.textDelta;
+        turnCount += reply.turns;
         break;
       }
 
@@ -781,33 +813,7 @@ export class AgentLoop {
       if (yield* budgetGuardEvents(checkBudgets(), budgetCounters)) break;
 
       // Stage: Stream one LLM call
-      const stepResult = yield* streamStep(
-        streamDeps,
-        {
-          sessionId,
-          sessionKey,
-          personalityId: personality.id,
-          personality,
-          traceId,
-          obsConfig,
-          activeTier,
-          effectiveModel,
-          modelOverride,
-          providerEntry,
-          allowedPlugins,
-          allowedTools,
-          filterOpts,
-          systemPrompt,
-          llmMessages,
-          cacheBreakpoints,
-          abortSignal,
-          turnCount,
-          watcherTap,
-          // §7 — per-call sampling wins; profile defaults fill the gaps.
-          opts: applySamplingDefaults(opts, this.modelSampling),
-        },
-        tierEscalationRef,
-      );
+      const stepResult = yield* streamStep(streamDeps, stepCtx(), tierEscalationRef);
 
       // Phase 3 — a context-overflow rejection is recoverable (the assistant
       // message was NOT persisted): compact the in-memory history and retry once.

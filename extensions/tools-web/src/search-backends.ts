@@ -41,6 +41,14 @@ export interface SearchOptions {
    * option existed — no backend adds an empty parameter.
    */
   maxAge?: MaxAge;
+  /**
+   * The caller's per-hit excerpt length (`web_search`'s `max_chars`, already
+   * clamped). Only Exa takes a length parameter, so only Exa reads it: it asks
+   * for `max(1500, maxChars)`, which is 1500 — today's request — for every
+   * value up to 1500. Tavily, Brave and SearXNG return what they return and
+   * the formatter cuts it.
+   */
+  maxChars?: number;
 }
 
 /** Cutoff (and today) as `YYYY-MM-DD`, the shape Tavily and Brave both want. */
@@ -192,7 +200,7 @@ export const exaBackend: SearchBackend = {
     const body: Record<string, unknown> = {
       query,
       numResults,
-      contents: { text: { maxCharacters: 1500 } },
+      contents: { text: { maxCharacters: Math.max(1500, options?.maxChars ?? 0) } },
     };
     if (options?.maxAge) body.startPublishedDate = exaStartPublishedDate(options.maxAge);
 

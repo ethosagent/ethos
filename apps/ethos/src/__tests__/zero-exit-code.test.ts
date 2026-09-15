@@ -14,6 +14,15 @@ vi.mock('@ethosagent/config', () => ({
   readConfig: vi.fn(),
 }));
 
+// Only `fstatSync` is replaced, and it delegates to the real one unless a test
+// says otherwise — Q-151 / D47 decide what stdin is from its fstat.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, fstatSync: vi.fn(actual.fstatSync) };
+});
+
+import { fstatSync } from 'node:fs';
+import { PassThrough, Readable } from 'node:stream';
 import { readConfig } from '@ethosagent/config';
 import { runZero } from '../commands/zero';
 import { resolveActiveLoop } from '../wiring';
@@ -120,5 +129,68 @@ describe('runZero exit-code propagation (G5)', () => {
 
     await runZero(['-z', 'hello'], 'hello');
     expect(process.exitCode).toBeUndefined();
+  });
+
+  // Q-151 / D47 — stdin is read only when it is a pipe or a redirected file.
+  describe('stdin', () => {
+    afterEach(() => {
+      // Undo the stdin getter spy before the outer afterEach restores isTTY on
+      // the real process.stdin.
+      vi.restoreAllMocks();
+    });
+
+    function mockLoop() {
+      const run = vi.fn(async function* (_prompt: string) {
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+      });
+      vi.mocked(readConfig).mockResolvedValue(FAKE_CONFIG as never);
+      vi.mocked(resolveActiveLoop).mockResolvedValue({
+        loop: { run },
+        personalityId: 'default',
+      } as never);
+      return run;
+    }
+
+    function useStdin(stream: NodeJS.ReadableStream, kind: 'fifo' | 'file' | 'char'): void {
+      vi.spyOn(process, 'stdin', 'get').mockReturnValue(stream as never);
+      vi.mocked(fstatSync).mockImplementationOnce(
+        () =>
+          ({
+            isFIFO: () => kind === 'fifo',
+            isFile: () => kind === 'file',
+          }) as never,
+      );
+    }
+
+    it('does not read stdin that is not a pipe or a file', async () => {
+      const run = mockLoop();
+      // Never ends: reading it would hang the test until it times out.
+      useStdin(new PassThrough(), 'char');
+
+      await runZero(['-z', 'hello'], 'hello');
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[0]).toBe('hello');
+    }, 2_000);
+
+    it('does not read stdin when fstat on it fails', async () => {
+      const run = mockLoop();
+      vi.spyOn(process, 'stdin', 'get').mockReturnValue(new PassThrough() as never);
+      vi.mocked(fstatSync).mockImplementationOnce(() => {
+        throw new Error('EBADF');
+      });
+
+      await runZero(['-z', 'hello'], 'hello');
+      expect(run.mock.calls[0]?.[0]).toBe('hello');
+    }, 2_000);
+
+    it.each(['fifo', 'file'] as const)('reads stdin that is a %s', async (kind) => {
+      const run = mockLoop();
+      useStdin(Readable.from([Buffer.from('piped text')]), kind);
+
+      await runZero(['-z', 'hello'], 'hello');
+      const prompt = String(run.mock.calls[0]?.[0]);
+      expect(prompt.startsWith('hello')).toBe(true);
+      expect(prompt).toContain('piped text');
+    });
   });
 });
