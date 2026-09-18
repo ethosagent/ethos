@@ -4,7 +4,7 @@ description: "Every field in a personality's config.yaml and toolset.yaml — mo
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-09-13
+updated: 2026-09-17
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -25,7 +25,7 @@ engine_ask: { secret: openai-brand }
 youtube: { secret: yt-main }
 ```
 
-`web_search` binds a provider, a named secret, and an optional `recency` default (documented below). `x_search` binds an xAI named secret (`providers/xai/<name>`). `engine_ask` binds an OpenAI named secret (`providers/openai/<name>` — the same namespace the OpenAI model provider uses; absent, it falls back to `providers/openai/apiKey`). `youtube` binds a Google named secret (`providers/google/<name>`) shared by `youtube_search` and `youtube_comments` — the same API key, the same daily quota; absent, it falls back to `providers/google/apiKey`.
+`web_search` binds a provider, a named secret, and an optional `recency` default (documented below). `x_search` binds an xAI named secret (`providers/xai/<name>`). `engine_ask` binds an OpenAI named secret (`providers/openai/<name>` — the same namespace the OpenAI model provider uses; absent, it falls back to `providers/openai/apiKey`) that covers the ChatGPT engine only. `engine_ask` called with `engine: perplexity` reads one operator-wide key at the vault ref `providers/perplexity/apiKey`, set in Settings > Keys or from the environment variable `PERPLEXITY_API_KEY`; it cannot be bound per personality. `youtube` binds a Google named secret (`providers/google/<name>`) shared by `youtube_search` and `youtube_comments` — the same API key, the same daily quota; absent, it falls back to `providers/google/apiKey`.
 
 `secret` is a NAME only (resolving to `providers/<provider>/<name>` in the vault) — never a value — so the directory stays shareable and committable ([§V S9](https://github.com/ethosagent/ethos/blob/main/ARCHITECTURE.md)). The personality's own `tools.yaml` is the source of truth; the global `~/.ethos/config.yaml` `toolSettings` map is a fallback layer for personalities (especially read-only built-ins) that don't declare the tool. Resolution order: `tools.yaml` → `toolSettings.<id>` → `toolSettings._default` → the tool's default key.
 

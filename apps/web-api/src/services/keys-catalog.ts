@@ -182,6 +182,20 @@ export const KEY_CATALOG: readonly KeyCatalogEntry[] = [
     getKeyUrl: 'https://platform.openai.com/api-keys',
   },
   {
+    // One key, one consumer — the `engine_ask` Perplexity engine. No `probe`:
+    // that field is a closed union of the live probes and this adds none. No
+    // `reflectsNamedSecret`: nothing mints this ref into the named-secrets
+    // vault — the tool declares the EXACT ref `providers/perplexity/apiKey`,
+    // not a `providers/perplexity/*` prefix, so it never becomes a manageable
+    // named-secret namespace.
+    id: 'tools.perplexity',
+    category: 'tools',
+    label: 'Perplexity (answer engine)',
+    refPattern: 'providers/perplexity/apiKey',
+    shape: { kind: 'single', field: 'apiKey' },
+    getKeyUrl: 'https://console.perplexity.ai/project/keys',
+  },
+  {
     id: 'tools.replicate',
     category: 'tools',
     label: 'Replicate (image generation)',

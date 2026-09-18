@@ -112,6 +112,19 @@ describe('KEY_CATALOG', () => {
     expect(xai[0]?.reflectsNamedSecret).toBeUndefined();
   });
 
+  it('keeps the Perplexity answer-engine key as one tools row with no probe', () => {
+    const perplexity = KEY_CATALOG.filter((e) => e.refPattern === 'providers/perplexity/apiKey');
+    expect(perplexity).toHaveLength(1);
+    expect(perplexity[0]?.id).toBe('tools.perplexity');
+    expect(perplexity[0]?.category).toBe('tools');
+    expect(perplexity[0]?.shape).toEqual({ kind: 'single', field: 'apiKey' });
+    // Both absences are design decisions, not oversights: `probe` is a closed
+    // union of the live probes and this engine adds none, and nothing mints
+    // this exact ref into the named-secrets vault.
+    expect(perplexity[0]?.probe).toBeUndefined();
+    expect(perplexity[0]?.reflectsNamedSecret).toBeUndefined();
+  });
+
   it('gives every indexed entry a <n> placeholder, and no other entry one', () => {
     for (const entry of KEY_CATALOG) {
       const hasPlaceholder = refsForEntry(entry).some((ref) => ref.includes('<n>'));

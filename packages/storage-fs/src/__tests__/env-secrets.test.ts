@@ -45,6 +45,11 @@ describe('resolveEnvKey', () => {
     expect(resolveEnvKey('YOUTUBE_API_KEY')).toBe('providers/google/apiKey');
   });
 
+  it('maps PERPLEXITY_API_KEY to providers/perplexity/apiKey', () => {
+    expect(ENV_TO_REF.PERPLEXITY_API_KEY).toBe('providers/perplexity/apiKey');
+    expect(resolveEnvKey('PERPLEXITY_API_KEY')).toBe('providers/perplexity/apiKey');
+  });
+
   it('returns null for unknown env keys', () => {
     expect(resolveEnvKey('SOME_UNKNOWN_KEY')).toBeNull();
     expect(resolveEnvKey('')).toBeNull();
@@ -168,6 +173,12 @@ describe('EnvSecretsResolver.get', () => {
   it('returns null — not an empty string — when XAI_API_KEY is unset', async () => {
     const resolver = new EnvSecretsResolver();
     expect(await resolver.get('providers/xai/apiKey')).toBeNull();
+  });
+
+  it('resolves providers/perplexity/apiKey from PERPLEXITY_API_KEY', async () => {
+    process.env.PERPLEXITY_API_KEY = 'pplx-test';
+    const resolver = new EnvSecretsResolver();
+    expect(await resolver.get('providers/perplexity/apiKey')).toBe('pplx-test');
   });
 
   it('resolves providers/google/apiKey from YOUTUBE_API_KEY', async () => {

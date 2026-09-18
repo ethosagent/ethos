@@ -30,7 +30,7 @@ export interface Citation {
 
 export interface EngineAnswer {
   /** Union grows with the roster. */
-  engine: 'chatgpt';
+  engine: 'chatgpt' | 'perplexity';
   /** As the API reported it, not as requested. */
   model: string;
   query: string;
@@ -55,13 +55,37 @@ export interface EngineAnswer {
   truncated?: boolean;
 }
 
+/** The id of an engine in the roster. */
+export type EngineId = EngineAnswer['engine'];
+
 export interface AnswerEngine {
-  readonly id: EngineAnswer['engine'];
+  readonly id: EngineId;
+  /**
+   * The vendor name used in error text ('OpenAI' / 'Perplexity'), so a failure
+   * names the engine that actually failed.
+   */
+  readonly label: string;
   /** For capabilities.network.allowedHosts. */
   readonly host: string;
   /** 'providers/openai/' — a personality binding resolves `${secretPrefix}${name}`. */
   readonly secretPrefix: string;
   readonly defaultSecretRef: SecretRef;
+  /**
+   * The single `capabilities.secrets` entry this engine contributes —
+   * `'providers/openai/*'` for ChatGPT versus the exact ref
+   * `'providers/perplexity/apiKey'` for Perplexity. This is a per-engine field
+   * rather than derived from `secretPrefix` because `deriveProviderRoster` in
+   * apps/web-api turns a `providers/<x>/*` grant into a manageable namespace
+   * and unions every declared `secretKind` onto it, so a prefix grant for a
+   * second vendor would publish a mislabelled namespace.
+   */
+  readonly secretGrant: string;
+  /** The model (chatgpt) or preset (perplexity) used when nothing overrides it. */
+  readonly defaultModel: string;
+  /** The env var that overrides it. */
+  readonly modelEnvVar: string;
+  /** The `not_available` text used when the ref resolves empty or the API returns 401. */
+  readonly noKeyMessage: string;
   /**
    * Resolves `secretRef` through `ctx.secretsResolver`, then asks. Throws
    * `EngineNoKeyError` when the ref resolves to nothing (before any network
@@ -71,13 +95,18 @@ export interface AnswerEngine {
   ask(req: EngineRequest, ctx: ToolContext, secretRef: SecretRef): Promise<EngineAnswer>;
 }
 
-/** A non-2xx response. `status` lets the tool map 401 to `not_available`. */
+/**
+ * A non-2xx response. `status` lets the tool map 401 to `not_available`;
+ * `label` is the engine's vendor name so the message names the engine that
+ * actually failed.
+ */
 export class EngineHttpError extends Error {
   constructor(
+    label: string,
     readonly status: number,
     body: string,
   ) {
-    super(`OpenAI API error ${status}: ${body}`);
+    super(`${label} API error ${status}: ${body}`);
     this.name = 'EngineHttpError';
   }
 }

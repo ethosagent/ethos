@@ -14,6 +14,7 @@ export const ENV_TO_REF: Record<string, string> = {
   GROQ_API_KEY: 'providers/groq/apiKey',
   DEEPSEEK_API_KEY: 'providers/deepseek/apiKey',
   XAI_API_KEY: 'providers/xai/apiKey',
+  PERPLEXITY_API_KEY: 'providers/perplexity/apiKey',
   OLLAMA_HOST: 'providers/ollama/host',
   EXA_API_KEY: 'providers/exa/apiKey',
   TAVILY_API_KEY: 'providers/tavily/apiKey',

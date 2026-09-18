@@ -66,9 +66,10 @@ export const NAMED_SECRET_SEED_PROVIDERS: readonly DerivedProvider[] = [
  * `providers/<segment>/*` with `<segment>` matching `SECRET_NAME_RE`. A grant
  * that names an EXACT ref (`providers/exa/apiKey`) is a specific credential
  * rather than a namespace someone can add names under, so it contributes
- * nothing and is not reported — three shipped tools do this deliberately
- * (§7.4). A grant that is prefix-SHAPED but malformed contributes nothing and
- * is reported as a diagnostic, because that one is a mistake.
+ * nothing and is not reported — four shipped tools do this deliberately
+ * (§7.4), one of them (`engine_ask`) alongside a prefix grant in the same
+ * declaration. A grant that is prefix-SHAPED but malformed contributes nothing
+ * and is reported as a diagnostic, because that one is a mistake.
  *
  * Presentation, per provider, first declaration wins in registry order:
  *   1. an `enum` option label / getKeyUrl whose value is the provider id —

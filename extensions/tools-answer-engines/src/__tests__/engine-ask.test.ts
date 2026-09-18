@@ -92,6 +92,42 @@ function answerBody(text: string, n = 2) {
   };
 }
 
+/** A searched Perplexity Agent API answer with `n` distinct results, cited by `[web:N]` markers in `text`. */
+function perplexityBody(text: string, n = 2) {
+  return {
+    id: 'resp_1',
+    object: 'response',
+    status: 'completed',
+    model: 'openai/gpt-5.6-luna',
+    output: [
+      {
+        type: 'search_results',
+        queries: ['q'],
+        results: Array.from({ length: n }, (_, i) => ({
+          id: i + 1,
+          url: `https://www.site${i}.example/page`,
+          title: `Site ${i}`,
+          snippet: 'snippet',
+          date: '2026-05-01',
+          last_updated: '2026-05-02',
+          source: 'web',
+        })),
+      },
+      {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text, annotations: [] }],
+      },
+    ],
+    usage: {
+      input_tokens: 5,
+      output_tokens: 7,
+      total_tokens: 12,
+      tool_calls_details: { search_web: { invocation: 1 } },
+    },
+  };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -134,7 +170,7 @@ describe('engine_ask — input validation', () => {
   it('rejects an engine outside the roster, before any network call', async () => {
     const rec = makeRecordingFetch({});
     const result = await engineAskTool.execute(
-      { query: 'q', engine: 'perplexity' },
+      { query: 'q', engine: 'gemini' },
       ctxWith(rec.scopedFetch),
     );
     expect(result.ok).toBe(false);
@@ -223,6 +259,37 @@ describe('engine_ask — no key configured', () => {
     if (!result.ok) {
       expect(result.code).toBe('not_available');
       expect(result.error).toContain('OPENAI_API_KEY');
+    }
+  });
+
+  it('an empty Perplexity ref yields not_available with a message that never mentions OpenAI', async () => {
+    const rec = makeRecordingFetch({});
+    const result = await engineAskTool.execute(
+      { query: 'q', engine: 'perplexity' },
+      ctxWith(rec.scopedFetch, { get: async (_ref: string) => '' }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('not_available');
+      expect(result.error).toContain('PERPLEXITY_API_KEY');
+      expect(result.error).toContain('Settings → Keys (Perplexity)');
+      expect(result.error).not.toContain('OpenAI');
+      expect(result.error).not.toContain('OPENAI_API_KEY');
+    }
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it('a Perplexity HTTP 401 is not_available with the Perplexity no-key message', async () => {
+    const rec = makeRecordingFetch({ error: { message: 'unauthorized' } }, 401);
+    const result = await engineAskTool.execute(
+      { query: 'q', engine: 'perplexity' },
+      ctxWith(rec.scopedFetch),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('not_available');
+      expect(result.error).toContain('PERPLEXITY_API_KEY');
+      expect(result.error).not.toContain('OPENAI_API_KEY');
     }
   });
 });
@@ -321,6 +388,38 @@ describe('engine_ask — named-secret binding', () => {
     await allInvalid.execute({ query: 'q' }, withPersonality(rec.scopedFetch, secrets, 'scout'));
     expect(secrets.refs.at(-1)).toBe('providers/openai/apiKey');
   });
+
+  it('with no binding anywhere, each engine resolves its OWN default secret ref', async () => {
+    const tool = createEngineAskTool();
+    const secrets = makeRecordingSecrets();
+    const recPx = makeRecordingFetch(perplexityBody('A[web:1]'));
+    await tool.execute({ query: 'q', engine: 'perplexity' }, ctxWith(recPx.scopedFetch, secrets));
+    const recCg = makeRecordingFetch(answerBody('A'));
+    await tool.execute({ query: 'q' }, ctxWith(recCg.scopedFetch, secrets));
+    expect(secrets.refs).toEqual(['providers/perplexity/apiKey', 'providers/openai/apiKey']);
+  });
+
+  it('the engine_ask binding names the OpenAI key only: geo-analyst / brand-guide bound { secret: "openai-key" } still resolve providers/perplexity/apiKey on a Perplexity call, on all three rungs', async () => {
+    // All three rungs are gated by the one `engine.id !== 'chatgpt'` branch, so
+    // covering only the first would let the other two rot.
+    const tools = [
+      createEngineAskTool({ resolvePersonalitySetting: () => ({ secret: 'openai-key' }) }),
+      createEngineAskTool({ toolSettings: { scout: { engine_ask: { secret: 'openai-key' } } } }),
+      createEngineAskTool({ toolSettings: { _default: { engine_ask: { secret: 'openai-key' } } } }),
+    ];
+    for (const tool of tools) {
+      const secrets = makeRecordingSecrets();
+      const recCg = makeRecordingFetch(answerBody('A'));
+      await tool.execute({ query: 'q' }, withPersonality(recCg.scopedFetch, secrets, 'scout'));
+      const recPx = makeRecordingFetch(perplexityBody('A[web:1]'));
+      await tool.execute(
+        { query: 'q', engine: 'perplexity' },
+        withPersonality(recPx.scopedFetch, secrets, 'scout'),
+      );
+      expect(secrets.refs).toEqual(['providers/openai/openai-key', 'providers/perplexity/apiKey']);
+      expect(secrets.refs).not.toContain('providers/perplexity/openai-key');
+    }
+  });
 });
 
 describe('engine_ask — format: text', () => {
@@ -368,6 +467,21 @@ describe('engine_ask — format: text', () => {
         ),
       ).toBe(true);
     }
+  });
+
+  it('renders a Perplexity answer with a perplexity footer', async () => {
+    const rec = makeRecordingFetch(
+      perplexityBody('Axis Atlas leads[web:1], then HDFC Infinia[web:2].'),
+    );
+    const result = await engineAskTool.execute(
+      { query: 'cards?', engine: 'perplexity' },
+      ctxWith(rec.scopedFetch),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toContain('Axis Atlas leads[web:1], then HDFC Infinia[web:2].');
+    const footer = result.value.split('\n\n').at(-1) ?? '';
+    expect(footer).toMatch(/^perplexity · openai\/gpt-5\.6-luna · searched · \d{4}-\d{2}-\d{2}T/);
   });
 });
 
@@ -544,6 +658,33 @@ describe('engine_ask — format: json', () => {
       });
     }
   });
+
+  it('a Perplexity answer parses and deep-equals structured', async () => {
+    const rec = makeRecordingFetch(perplexityBody('Axis Atlas leads[web:1].'));
+    const result = await engineAskTool.execute(
+      { query: 'cards?', engine: 'perplexity', format: 'json' },
+      ctxWith(rec.scopedFetch),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const parsed = JSON.parse(result.value);
+    expect(parsed).toEqual(result.structured);
+    expect(parsed).toMatchObject({
+      engine: 'perplexity',
+      model: 'openai/gpt-5.6-luna',
+      query: 'cards?',
+      searched: true,
+      searchCalls: 1,
+      answerText: 'Axis Atlas leads[web:1].',
+      usage: { inputTokens: 5, outputTokens: 7 },
+    });
+    expect(parsed.citations[0]).toEqual({
+      url: 'https://www.site0.example/page',
+      title: 'Site 0',
+      domain: 'site0.example',
+      position: 1,
+    });
+  });
 });
 
 describe('renderJson — reduction ladder', () => {
@@ -640,6 +781,22 @@ describe('engine_ask — network', () => {
       expect(result.error).toContain('allowedHosts');
     }
   });
+
+  it('engine: "perplexity" reaches the Perplexity adapter; omitting engine still goes to OpenAI', async () => {
+    const recPx = makeRecordingFetch(perplexityBody('Axis Atlas leads[web:1].'));
+    const px = await engineAskTool.execute(
+      { query: 'q', engine: 'perplexity' },
+      ctxWith(recPx.scopedFetch),
+    );
+    expect(px.ok).toBe(true);
+    expect(recPx.calls).toHaveLength(1);
+    expect(recPx.calls[0]?.url).toBe('https://api.perplexity.ai/v1/agent');
+
+    const recCg = makeRecordingFetch(answerBody('A'));
+    const cg = await engineAskTool.execute({ query: 'q' }, ctxWith(recCg.scopedFetch));
+    expect(cg.ok).toBe(true);
+    expect(recCg.calls[0]?.url).toBe('https://api.openai.com/v1/responses');
+  });
 });
 
 describe('engine_ask — model override', () => {
@@ -655,9 +812,9 @@ describe('engine_ask — model override', () => {
     }
   });
 
-  it('createEngineAskTool({ model }) overrides the default model in the request body', async () => {
+  it('createEngineAskTool({ models }) overrides the default model in the request body', async () => {
     const rec = makeRecordingFetch(answerBody('A'));
-    const tool = createEngineAskTool({ model: 'gpt-custom' });
+    const tool = createEngineAskTool({ models: { chatgpt: 'gpt-custom' } });
     await tool.execute({ query: 'q' }, ctxWith(rec.scopedFetch));
     expect(JSON.parse(String(rec.calls[0]?.init?.body)).model).toBe('gpt-custom');
   });
@@ -684,18 +841,25 @@ describe('engine_ask — tool contract', () => {
     expect(engineAskTool.outputIsUntrusted).toBe(true);
   });
 
-  it('declares capabilities.network.allowedHosts = [api.openai.com]', () => {
-    expect(engineAskTool.capabilities.network?.allowedHosts).toEqual(['api.openai.com']);
+  it('declares capabilities.network.allowedHosts = [api.openai.com, api.perplexity.ai]', () => {
+    expect(engineAskTool.capabilities.network?.allowedHosts).toEqual([
+      'api.openai.com',
+      'api.perplexity.ai',
+    ]);
   });
 
-  it('declares a prefix grant over providers/openai/* so any bound name stays inside it', () => {
-    expect(engineAskTool.capabilities.secrets).toEqual(['providers/openai/*']);
+  it('declares a prefix grant for OpenAI and an EXACT ref for Perplexity', () => {
+    // Exact equality on purpose: this is the guard that stops a "tidy-up" turning the Perplexity exact ref back into a providers/perplexity/* prefix.
+    expect(engineAskTool.capabilities.secrets).toEqual([
+      'providers/openai/*',
+      'providers/perplexity/apiKey',
+    ]);
   });
 
   it('schema: query required, engine enum from the roster, format and context-size enums', () => {
     const props = engineAskTool.schema.properties as Record<string, { enum?: string[] }>;
     expect(engineAskTool.schema.required).toEqual(['query']);
-    expect(props.engine?.enum).toEqual(['chatgpt']);
+    expect(props.engine?.enum).toEqual(['chatgpt', 'perplexity']);
     expect(props.search_context_size?.enum).toEqual(['low', 'medium', 'high']);
     expect(props.format?.enum).toEqual(['text', 'json']);
   });

@@ -7,6 +7,7 @@ import {
   EngineNoKeyError,
   type EngineRequest,
 } from './types';
+import { domainOf } from './url';
 
 // ---------------------------------------------------------------------------
 // chatgpt — OpenAI's Responses API (`POST https://api.openai.com/v1/responses`)
@@ -40,6 +41,13 @@ const MAX_ERROR_BODY_CHARS = 500;
  */
 export const DEFAULT_MODEL = 'gpt-5.5';
 
+// The `or set OPENAI_API_KEY` clause is true because `ENV_TO_REF` in
+// `packages/storage-fs/src/env-secrets.ts` maps that env var onto
+// `providers/openai/apiKey` — the default ref below. It does NOT cover a
+// personality-bound name, which only the vault holds.
+const NO_KEY_MESSAGE =
+  "No OpenAI key configured — add an OpenAI key in Settings → Security → Named Secrets (provider OpenAI), then bind it to engine_ask in the personality's tool settings, or set OPENAI_API_KEY.";
+
 interface ResponsesAnnotation {
   type?: string;
   url?: unknown;
@@ -63,15 +71,6 @@ interface ResponsesApiBody {
   model?: unknown;
   output?: unknown;
   usage?: { input_tokens?: unknown; output_tokens?: unknown } | null;
-}
-
-/** Hostname lower-cased with a leading `www.` stripped; null when `url` does not parse. */
-function domainOf(url: string): string | null {
-  try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -183,9 +182,14 @@ function parseResponse(body: ResponsesApiBody, req: EngineRequest, askedAt: stri
 
 export const chatgptEngine: AnswerEngine = {
   id: 'chatgpt',
+  label: 'OpenAI',
   host: OPENAI_API_HOST,
   secretPrefix: SECRET_PREFIX,
   defaultSecretRef: DEFAULT_SECRET_REF,
+  secretGrant: 'providers/openai/*',
+  defaultModel: DEFAULT_MODEL,
+  modelEnvVar: 'OPENAI_ANSWER_ENGINE_MODEL',
+  noKeyMessage: NO_KEY_MESSAGE,
 
   async ask(req: EngineRequest, ctx: ToolContext, secretRef: SecretRef): Promise<EngineAnswer> {
     const secrets = ctx.secretsResolver;
@@ -221,7 +225,7 @@ export const chatgptEngine: AnswerEngine = {
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new EngineHttpError(response.status, body.slice(0, MAX_ERROR_BODY_CHARS));
+      throw new EngineHttpError('OpenAI', response.status, body.slice(0, MAX_ERROR_BODY_CHARS));
     }
 
     const data = (await response.json()) as ResponsesApiBody;

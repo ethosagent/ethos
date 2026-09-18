@@ -1,18 +1,25 @@
 import { resolveToolSecretRef } from '@ethosagent/core';
 import type { Tool, ToolContext, ToolResult } from '@ethosagent/types';
-import { DEFAULT_MODEL } from './engines/chatgpt';
 import { ALL_ENGINES, findEngine } from './engines/roster';
 import {
   type AnswerEngine,
   EngineHttpError,
+  type EngineId,
   EngineNoKeyError,
   type EngineRequest,
 } from './engines/types';
 import { renderJson, renderText } from './format';
 
 export { chatgptEngine, DEFAULT_MODEL } from './engines/chatgpt';
+export { PERPLEXITY_DEFAULT_PRESET, perplexityEngine } from './engines/perplexity';
 export { ALL_ENGINES } from './engines/roster';
-export type { AnswerEngine, Citation, EngineAnswer, EngineRequest } from './engines/types';
+export type {
+  AnswerEngine,
+  Citation,
+  EngineAnswer,
+  EngineId,
+  EngineRequest,
+} from './engines/types';
 export { EngineHttpError, EngineNoKeyError } from './engines/types';
 export { renderJson, renderText } from './format';
 
@@ -26,16 +33,12 @@ export { renderJson, renderText } from './format';
 // resolution, same capability declarations, same error mapping.
 // ---------------------------------------------------------------------------
 
-// The `or set OPENAI_API_KEY` clause is true because `ENV_TO_REF` in
-// `packages/storage-fs/src/env-secrets.ts` maps that env var onto
-// `providers/openai/apiKey` — the default ref below. It does NOT cover a
-// personality-bound name, which only the vault holds.
-const NO_KEY_MESSAGE =
-  "No OpenAI key configured — add an OpenAI key in Settings → Security → Named Secrets (provider OpenAI), then bind it to engine_ask in the personality's tool settings, or set OPENAI_API_KEY.";
-
 const SEARCH_CONTEXT_SIZES = ['low', 'medium', 'high'] as const;
 const FORMATS = ['text', 'json'] as const;
 const COUNTRY_RE = /^[A-Z]{2}$/;
+
+// The one engine whose key the `engine_ask` settings binding names.
+const BINDING_OWNER_ENGINE: EngineId = 'chatgpt';
 
 const DEFAULT_NUM_CITATIONS = 20;
 const MAX_NUM_CITATIONS = 50;
@@ -64,8 +67,11 @@ export interface EngineAskSetting {
 }
 
 export interface CreateEngineAskToolOptions {
-  /** Overrides DEFAULT_MODEL / OPENAI_ANSWER_ENGINE_MODEL. See DEFAULT_MODEL's comment. */
-  model?: string;
+  /**
+   * per engine, because with two engines a single option cannot say which one
+   * it means; it overrides the engine's `modelEnvVar` and its `defaultModel`.
+   */
+  models?: Partial<Record<EngineId, string>>;
   /** Personality-owned binding (source of truth), resolved by personalityId. */
   resolvePersonalitySetting?: (personalityId: string) => EngineAskSetting | undefined;
   /** Global FALLBACK map keyed by personalityId or `_default`. */
@@ -73,7 +79,12 @@ export interface CreateEngineAskToolOptions {
 }
 
 export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool {
-  const model = opts.model ?? process.env.OPENAI_ANSWER_ENGINE_MODEL ?? DEFAULT_MODEL;
+  // Resolved once per engine at factory time — factory option, then the
+  // engine's own env var, then the engine's default.
+  const models: Record<string, string> = {};
+  for (const e of ALL_ENGINES) {
+    models[e.id] = opts.models?.[e.id] ?? process.env[e.modelEnvVar] ?? e.defaultModel;
+  }
   const { resolvePersonalitySetting, toolSettings } = opts;
 
   // Same resolution order as x_search: personality tools.yaml → global
@@ -81,6 +92,16 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
   // A rung whose name is blank or fails isValidSecretName falls through to the
   // next one — see resolveToolSecretRef (packages/core/src/tool-secret-ref.ts).
   function selectSecretRef(ctx: ToolContext, engine: AnswerEngine): string {
+    // The `engine_ask` binding names ONE secret, and the `settingsSchema`
+    // field says whose it is — "OpenAI API key (answer engine)".
+    // `resolveToolSecretRef` (packages/core/src/tool-secret-ref.ts) tests a
+    // name's SHAPE and never reads the vault, so without this branch a
+    // personality bound `{ secret: 'openai-key' }` would resolve
+    // `providers/perplexity/openai-key` on a Perplexity call and die
+    // `not_available` — and two live personalities are bound exactly that way.
+    // Every other engine reads its own operator-wide key. This branch is what
+    // a future per-engine binding replaces.
+    if (engine.id !== BINDING_OWNER_ENGINE) return engine.defaultSecretRef;
     const pid = ctx.personalityId;
     return resolveToolSecretRef({
       rungs: [
@@ -96,14 +117,17 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
   return {
     name: 'engine_ask',
     description:
-      "Ask a public AI answer engine (ChatGPT) a question and get its answer with the sources it cited. Use for 'what does the AI-answer layer say about X' questions, not for general web search. Requires an OpenAI API key.",
+      "Ask a public AI answer engine (ChatGPT or Perplexity) a question and get its answer with the sources it cited. Use for 'what does the AI-answer layer say about X' questions, not for general web search. Requires an OpenAI key for chatgpt, a Perplexity key for perplexity. `require_search` is honoured by chatgpt only; perplexity's API has no per-request switch and the result reports whether it searched.",
     toolset: 'web',
     maxResultChars: MAX_RESULT_CHARS,
     capabilities: {
       network: { allowedHosts: ALL_ENGINES.map((e) => e.host) },
-      // Prefix grant per engine namespace: any personality binding is
-      // `providers/openai/<name>`, so it always falls inside this static allowlist.
-      secrets: ALL_ENGINES.map((e) => `${e.secretPrefix}*`),
+      // The grant is per engine — a prefix for OpenAI, because a personality
+      // binding is any `providers/openai/<name>` and must fall inside a static
+      // allowlist, and an exact ref for Perplexity, because that is one
+      // operator-wide key and a prefix there would publish a mislabelled
+      // namespace through `deriveProviderRoster`.
+      secrets: ALL_ENGINES.map((e) => e.secretGrant),
     },
     outputIsUntrusted: true,
     // Per-personality config contract. The settings UI renders a secret picker
@@ -220,7 +244,7 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
 
       const request: EngineRequest = {
         query,
-        model,
+        model: models[engine.id] ?? engine.defaultModel,
         ...(country ? { country } : {}),
         searchContextSize,
         requireSearch: require_search ?? false,
@@ -240,7 +264,7 @@ export function createEngineAskTool(opts: CreateEngineAskToolOptions = {}): Tool
           err instanceof EngineNoKeyError ||
           (err instanceof EngineHttpError && err.status === 401)
         ) {
-          return { ok: false, error: NO_KEY_MESSAGE, code: 'not_available' as const };
+          return { ok: false, error: engine.noKeyMessage, code: 'not_available' as const };
         }
         return {
           ok: false,

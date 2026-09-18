@@ -75,7 +75,7 @@ function inTreeRegistry() {
     tool('fetch_url', ['providers/exa/apiKey']),
     tool(
       'engine_ask',
-      ['providers/openai/*'],
+      ['providers/openai/*', 'providers/perplexity/apiKey'],
       [
         binding('answer-engine', {
           providerLabel: 'OpenAI (ChatGPT answer engine)',
@@ -174,7 +174,7 @@ describe('deriveProviderRoster', () => {
   });
 
   // An exact-ref grant is a specific credential, not a namespace names can be
-  // added under, and three shipped tools declare one deliberately (§7.4). It
+  // added under, and four shipped tools declare one deliberately (§7.4). It
   // contributes nothing and is NOT reported: a diagnostic here would be
   // permanent noise in the operator-visible row for correct declarations.
   it.each(['providers/dataforseo', 'providers/dataforseo/apiKey'])(
@@ -186,6 +186,16 @@ describe('deriveProviderRoster', () => {
       expect(roster).toEqual({ providers: [], diagnostics: [] });
     },
   );
+
+  // The engine_ask case of the rule above, pinned on its own because it is the
+  // one shipped tool that declares a prefix and an exact ref side by side: the
+  // Perplexity key is one operator-wide credential, so it publishes no
+  // namespace — and no diagnostic either, because that is deliberate.
+  it("publishes no perplexity namespace — engine_ask's perplexity grant is an exact ref", () => {
+    const { providers, diagnostics } = deriveProviderRoster(inTreeRegistry());
+    expect(providers.map((p) => p.provider)).not.toContain('perplexity');
+    expect(diagnostics.filter((d) => d.declared.includes('perplexity'))).toEqual([]);
+  });
 
   it('unions the kinds of two tools declaring the same provider into one row', () => {
     const { providers } = deriveProviderRoster(
