@@ -630,6 +630,11 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const outbox = outboxSide.wiring;
   cronScheduler = new CronScheduler({
     storage: getStorage(),
+    // Without this, the scheduler falls back to its own default
+    // (`~/.ethos/cron`, unconditionally) and a server run against an
+    // isolated `ETHOS_STATE_DIR` reads and writes the operator's real cron
+    // jobs. `dir` above is `ethosDir()`, which already honors the override.
+    cronDir: join(dir, 'cron'),
     logger: new ConsoleLogger({}, logLevel),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }

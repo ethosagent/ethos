@@ -412,6 +412,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   });
   const scheduler = new CronScheduler({
     storage,
+    // See `serve.ts`'s identical line: without this the scheduler defaults
+    // to `~/.ethos/cron` regardless of `ETHOS_STATE_DIR`. `dir` is
+    // `ethosDir()`, which already honors the override.
+    cronDir: join(dir, 'cron'),
     logger,
     ...(cfg.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: cfg.cron.maxParallelJobs }

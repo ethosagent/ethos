@@ -93,6 +93,14 @@ export interface CreateRoutesOptions {
    *  booting app (`ethos serve`, the desktop backend) passes its own.
    *  `/healthz` includes the `version` key only when this is set. */
   version?: string;
+  /** State dir this deployment reads `~/.ethos/`-rooted files from —
+   *  `CreateWebApiOptions.dataDir` in `createWebApi`, which already honors
+   *  `ETHOS_STATE_DIR` (see `ethosDir()`, `@ethosagent/config`). `/healthz`
+   *  reads `gateway-health.json` from here instead of the real home
+   *  directory, so a server booted against an isolated state dir reports the
+   *  heartbeat it actually wrote rather than the operator's real one.
+   *  Omitted → falls back to `homedir()/.ethos`, today's behavior. */
+  dataDir?: string;
 }
 
 export interface ServiceContainer {
@@ -237,7 +245,7 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   // adapter health alongside the serve process's own uptime.
   app.get('/healthz', async (c) => {
     const uptime = process.uptime();
-    const healthPath = join(homedir(), '.ethos', 'gateway-health.json');
+    const healthPath = join(opts.dataDir ?? join(homedir(), '.ethos'), 'gateway-health.json');
 
     let gatewayBlock: {
       status: 'ok' | 'down' | 'stale';

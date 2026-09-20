@@ -42,6 +42,9 @@ function makeScheduler(config: EthosConfig): {
 
   const scheduler = new CronScheduler({
     storage: getStorage(),
+    // See `serve.ts`'s identical line: without this the scheduler defaults
+    // to `~/.ethos/cron` regardless of `ETHOS_STATE_DIR`.
+    cronDir: join(ethosDir(), 'cron'),
     logger: new ConsoleLogger({}, config.logs?.level),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }

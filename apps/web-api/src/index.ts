@@ -2116,6 +2116,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     ],
     storage,
     secrets,
+    dataDir: opts.dataDir,
   });
 
   // Dashboard panel refresh — driven by the cron extension's schedule engine

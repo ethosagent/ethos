@@ -698,6 +698,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   });
   const scheduler = new CronScheduler({
     storage: getStorage(),
+    // See `serve.ts`'s identical line: without this the scheduler defaults
+    // to `~/.ethos/cron` regardless of `ETHOS_STATE_DIR`.
+    cronDir: join(ethosDir(), 'cron'),
     logger: new ConsoleLogger({}, logLevel),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
