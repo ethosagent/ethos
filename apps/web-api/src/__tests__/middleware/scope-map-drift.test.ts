@@ -1,6 +1,6 @@
 import { ApiKeyStaticScopeSchema } from '@ethosagent/web-contracts';
 import { describe, expect, it } from 'vitest';
-import { COOKIE_ONLY, SCOPE_MAP } from '../../middleware/dual-auth';
+import { ANY_KEY, COOKIE_ONLY, SCOPE_MAP } from '../../middleware/dual-auth';
 import { apiRouter } from '../../rpc/router';
 
 // WEB-001 drift gate. Every RPC method in a namespace that SCOPE_MAP claims to
@@ -32,9 +32,9 @@ describe('SCOPE_MAP drift — router methods ⊆ SCOPE_MAP per mapped namespace'
       expect(stale).toEqual([]);
     });
 
-    it(`${ns}: every scope value is a real ApiKeyScope or COOKIE_ONLY`, () => {
+    it(`${ns}: every scope value is a real ApiKeyScope, COOKIE_ONLY, or ANY_KEY`, () => {
       for (const scope of Object.values(mapped)) {
-        if (scope === COOKIE_ONLY) continue;
+        if (scope === COOKIE_ONLY || scope === ANY_KEY) continue;
         expect(validScopes.has(scope)).toBe(true);
       }
     });

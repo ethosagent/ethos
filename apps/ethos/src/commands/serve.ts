@@ -105,6 +105,7 @@ import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
 import { notifyReady, startWatchdog } from '../sd-notify';
+import { ETHOS_VERSION } from '../version-info';
 import {
   buildServeBusySources,
   buildSystemTaskHandlers,
@@ -342,6 +343,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       },
       secureCookie: !isLoopbackBind,
       trustProxy,
+      version: ETHOS_VERSION,
+      webHost,
+      webPort,
       ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
       ...(webDist ? { webDist } : {}),
     });
@@ -1277,6 +1281,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     a2aPeering,
     isA2aEnabled,
     setA2aEnabled,
+    webHost,
+    webPort,
   });
   chatService = created.chatService;
   const webApp = created.app;
@@ -2134,6 +2140,10 @@ export interface BuildServeWebApiOptions {
   createTeamLoop?: (teamName: string) => Promise<TeamLoopHandle>;
   /** `--team <name>` — the team `loop` already runs as; the registry skips it. */
   mainLoopTeam?: string;
+  /** The web server's own bind host/port (mobile-app plan S13(b)) — threaded
+   *  into `meta.connectInfo`'s `web.host` fallback. */
+  webHost: string;
+  webPort: number;
 }
 
 /**
@@ -2194,12 +2204,17 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     setA2aEnabled,
     createTeamLoop,
     mainLoopTeam,
+    webHost,
+    webPort,
   } = opts;
   return createWebApi({
     dataDir: dir,
     attachmentCache,
     sessionStore: session,
     contextLog,
+    version: ETHOS_VERSION,
+    webHost,
+    webPort,
     personalitiesLlm: () => createLLM(config),
     // Per-team loops for web chat (D4): a team member's turn runs on its
     // team's loop, built on demand through this factory.

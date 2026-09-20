@@ -21,6 +21,7 @@ import {
   IdentityMap,
 } from '@ethosagent/wiring';
 import { serve as honoServe } from '@hono/node-server';
+import { app as electronApp } from 'electron';
 import { resolveCallCaptureNativeDir, startCallCaptureDesktop } from './call-capture';
 import { getKeychainValue } from './keychain';
 import { type DesktopRuntime, shutdownDesktopRuntime } from './runtime-shutdown';
@@ -455,6 +456,11 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
       : {}),
     ...(skillsCatalogDir ? { catalogDir: skillsCatalogDir } : {}),
     ...(webDistDir ? { webDist: webDistDir } : {}),
+    // `/healthz`'s `version` field and `meta.whoami` (mobile-app plan S12) —
+    // web-api owns no version of its own; the desktop reports Electron's own
+    // app version, which `scripts/sync-version.js`/`verify-version.js` keep
+    // in sync with the root `VERSION` file via `apps/desktop/package.json`.
+    version: electronApp.getVersion(),
   });
   rt.webApi = { dispose: disposeWebApi };
   rt.settleApprovals = forceSettleApprovals;

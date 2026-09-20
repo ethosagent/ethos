@@ -70,12 +70,8 @@ import { appendErrorLog } from './error-log';
 import { writeJson } from './json-output';
 import { CliSubcommandRegistry } from './lib/cli-subcommand-registry';
 import { loadRequiredConfig } from './managed-mode';
+import { ETHOS_VERSION } from './version-info';
 import { getSecretsResolver, getStorage } from './wiring';
-
-// Compile-time injected by tsup via define (or read from env at runtime in dev).
-declare const __ETHOS_VERSION__: string;
-const ETHOS_VERSION =
-  typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 const USAGE =
   'Usage: ethos [-z <prompt> | setup | chat | sessions | serve | boot | dashboard | status | run-all | set | team | mesh | a2a | process | logs | gateway | listen | cron | personality | models | migrate | memory | acp | batch | bench | eval | evolve | learn | learning | outbox | nightly | digest | plugin | skills | commands | keys | secrets | fallback | slack | api-key | claw | doctor | upgrade | mcp | backup | import | trace | audit | security | errors | perf | tail | retention | cas | why | data | support | archive | systemd-unit | usage] [--version | --help]';

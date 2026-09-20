@@ -1,7 +1,10 @@
 import { ethosDir } from '@ethosagent/config';
 
 declare const __ETHOS_VERSION__: string;
-const ETHOS_VERSION =
+// Exported (mobile-app plan S12) so `index.ts` and `commands/serve.ts` import
+// this ONE constant instead of each duplicating the
+// `__ETHOS_VERSION__ ?? process.env.ETHOS_VERSION ?? 'dev'` fallback chain.
+export const ETHOS_VERSION =
   typeof __ETHOS_VERSION__ === 'string' ? __ETHOS_VERSION__ : (process.env.ETHOS_VERSION ?? 'dev');
 
 export interface VersionInfo {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ApiKeyMetadataSchema, ApiKeyScopeSchema, ApiKeyStaticScopeSchema } from '../index';
+import {
+  ApiKeyMetadataSchema,
+  ApiKeyScopeSchema,
+  ApiKeyStaticScopeSchema,
+  PHONE_PRESET_SCOPES,
+} from '../index';
 
 // Regression guard for the two-mint-paths split.
 //
@@ -158,5 +163,42 @@ describe('ApiKeyScopeSchema — `mcp:<personality-id>`', () => {
       revokedAt: null,
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+// mobile-app plan S13(a) — PHONE_PRESET_SCOPES is the ONE source `ethos
+// api-key create --preset phone`, the web's Generate QR code, and the app's
+// `REQUIRED_SCOPES` all read from rather than restating.
+describe('PHONE_PRESET_SCOPES', () => {
+  it('parses under ApiKeyScopeSchema', () => {
+    const parsed = ApiKeyScopeSchema.array().min(1).safeParse(PHONE_PRESET_SCOPES);
+    expect(parsed.success).toBe(true);
+  });
+
+  it('is exactly the Phase-1 scope set (S1)', () => {
+    expect(PHONE_PRESET_SCOPES).toEqual([
+      'sessions:read',
+      'sessions:write',
+      'chat:send',
+      'personalities:read',
+      'tools:approve',
+      'activity:read',
+      'events:subscribe',
+      'push:register',
+    ]);
+  });
+
+  it('round-trips a preset-scoped key through ApiKeyMetadataSchema', () => {
+    const parsed = ApiKeyMetadataSchema.safeParse({
+      id: 'key_5',
+      prefix: 'sk-ethos-mno',
+      name: 'phone-laptop',
+      scopes: PHONE_PRESET_SCOPES,
+      allowedOrigins: [],
+      createdAt: new Date().toISOString(),
+      lastUsed: null,
+      revokedAt: null,
+    });
+    expect(parsed.success).toBe(true);
   });
 });

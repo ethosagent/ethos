@@ -44,6 +44,8 @@ const PUBLIC_PACKAGES = [
   'packages/plugin-sdk',
   'packages/web-contracts',
   'packages/sdk',
+  // See scripts/sync-version.js — mobile-app plan S12.
+  'apps/desktop',
 ];
 
 const pkgs = PUBLIC_PACKAGES.map((dir) => ({

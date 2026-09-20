@@ -88,6 +88,11 @@ export interface CreateRoutesOptions {
    *  so embedders (and this package's own tests) can build an app without
    *  one; omitted → `/cron/fire` is not mounted. */
   cronFireTrigger?: CronFireTrigger;
+  /** This deployment's own version string (mobile-app plan S12) — web-api
+   *  owns no version of its own (`package.json` is `0.0.0`, `private`); the
+   *  booting app (`ethos serve`, the desktop backend) passes its own.
+   *  `/healthz` includes the `version` key only when this is set. */
+  version?: string;
 }
 
 export interface ServiceContainer {
@@ -163,6 +168,13 @@ export interface ServiceContainer {
   /** Durable activity history from the observability store, backing
    *  `activity.history`. Absent where no observability store is wired. */
   activityHistory?: ActivityHistoryFn;
+  /** This deployment's own version string (mobile-app plan S12). See
+   *  `RpcContext.version` (`rpc/context.ts`) for the full rationale. */
+  version?: string;
+  /** The web server's own bind host/port (mobile-app plan S13(b)). See
+   *  `RpcContext.webHost`/`webPort` for the full rationale. */
+  webHost?: string;
+  webPort?: number;
 }
 
 /**
@@ -260,7 +272,14 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     const healthy = gatewayBlock.status === 'ok' && allAdaptersOk;
     const status = healthy ? 'ok' : 'degraded';
 
-    return c.json({ status, uptime, gateway: gatewayBlock }, healthy ? 200 : 503);
+    // `version` (mobile-app plan S12) — present only when the booting app
+    // set one. Omitting the KEY (not just the value) lets the desktop's
+    // `probeConnection` tell "server too old to report a version" apart from
+    // "server reported an empty version".
+    return c.json(
+      { status, uptime, gateway: gatewayBlock, ...(opts.version ? { version: opts.version } : {}) },
+      healthy ? 200 : 503,
+    );
   });
 
   // P2-counters (D2) — ethos_http_requests_total: real tenant traffic

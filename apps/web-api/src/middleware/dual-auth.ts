@@ -34,6 +34,13 @@ const TOUCH_THROTTLE_MS = 60_000;
 // every bearer key that resolves to this sentinel.
 export const COOKIE_ONLY = 'cookie-only';
 
+// Sentinel "scope" for a method reachable by ANY authenticated bearer key,
+// with no scope check at all (mobile-app plan S12). `meta.whoami` is the only
+// member — it reads nothing but the caller's own key row, so a key with zero
+// scopes can still call it. The gate below treats this as "authenticated is
+// enough"; the drift test's value assertion accepts it beside `COOKIE_ONLY`.
+export const ANY_KEY = 'any-key';
+
 // Deliberately UNMAPPED namespaces fail closed for bearer keys (the
 // "experimental" branch in `dualAuth`). `outbox` (Part 2) and `learning`
 // (Part 4, L-T8) are left out on purpose: approving a publication, or a
@@ -109,6 +116,48 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     // reads exactly what those methods act on.
     listPending: 'tools:approve',
   },
+  // Activity tab data (mobile-app S1) — history and the live SSE feed share
+  // one scope.
+  activity: {
+    history: 'activity:read',
+  },
+  // Reuse, not add (mobile-app S1): answering the agent's question is a
+  // steer, so it takes the same scope as `chat.steer`; the foreground
+  // catch-up read is a session read.
+  clarify: {
+    respond: 'chat:send',
+    listPending: 'sessions:read',
+  },
+  // Reuse, not add (mobile-app S1): background job rows are per-session, so
+  // list/get are session reads; cancel is the same trust as `chat.abort`.
+  tasks: {
+    list: 'sessions:read',
+    get: 'sessions:read',
+    cancel: 'chat:send',
+  },
+  // Meta (mobile-app S12, S13(b)). `capabilities` is the coarse
+  // "what's installed" read; `whoami` is reachable by any authenticated key
+  // (it only reads the caller's own row); `connectInfo` names the URL a
+  // phone should scan and is cookie-only — a bearer caller has no business
+  // asking the server where it lives.
+  meta: {
+    capabilities: 'library:read',
+    whoami: ANY_KEY,
+    connectInfo: COOKIE_ONLY,
+  },
+};
+
+// SSE feeds are keyed by the first path segment after `/sse/`, not by an RPC
+// method — `/sse/sessions/<id>` normalizes to `sessions.<id>`, which has no
+// SCOPE_MAP entry. This table replaces the old single `isSseSessionStream`
+// special case (mobile-app plan S2) so every feed gets the same treatment;
+// anything else FORBIDDEN as today (the "experimental" branch below).
+export const SSE_SCOPES: Record<string, string> = {
+  sessions: 'sessions:read',
+  activity: 'activity:read',
+  system: 'events:subscribe',
+  kanban: 'kanban:read',
+  goals: 'library:read',
 };
 
 export function resolveScope(rpcPath: string): string | null {
@@ -207,12 +256,24 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
       });
     }
 
-    // SSE session streams carry the session id as a path param, not an RPC
-    // method: `/sse/sessions/<id>` normalizes to `sessions.<id>`, which has no
-    // SCOPE_MAP entry. Treat any session stream as a read of that session so it
-    // requires `sessions:read` (and doesn't fail closed as an "unmapped method").
-    const isSseSessionStream = c.req.path.startsWith('/sse/sessions/');
-    const requiredScope = isSseSessionStream ? 'sessions:read' : opts.scopeForPath(rpcPath);
+    // SSE feeds: keyed on the first path segment after `/sse/`, not on an
+    // RPC method (SSE_SCOPES table above). An unknown feed falls through to
+    // the same "experimental" refusal every unmapped RPC namespace gets.
+    const isSse = c.req.path.startsWith('/sse/');
+    let requiredScope: string | null;
+    if (isSse) {
+      const feed = c.req.path.slice('/sse/'.length).split('/')[0] ?? '';
+      requiredScope = SSE_SCOPES[feed] ?? null;
+      if (requiredScope === null) {
+        throw new EthosError({
+          code: 'FORBIDDEN',
+          cause: `Feed "${feed}" is experimental and not accessible via API key.`,
+          action: 'Use cookie auth (the Ethos web UI) for experimental feeds.',
+        });
+      }
+    } else {
+      requiredScope = opts.scopeForPath(rpcPath);
+    }
 
     if (requiredScope === COOKIE_ONLY) {
       throw new EthosError({
@@ -221,7 +282,9 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
         action: 'Use cookie auth (the Ethos web UI) for this method.',
       });
     }
-    if (requiredScope) {
+    if (requiredScope === ANY_KEY) {
+      // Authenticated is enough — no scope check.
+    } else if (requiredScope) {
       if (!record.scopes.includes(requiredScope)) {
         throw new EthosError({
           code: 'FORBIDDEN',
@@ -229,7 +292,7 @@ export function dualAuth(opts: DualAuthOptions): MiddlewareHandler {
           action: `Create a key with the "${requiredScope}" scope.`,
         });
       }
-    } else {
+    } else if (!isSse) {
       // No scope resolved. FAIL CLOSED (WEB-001): a known namespace with an
       // unmapped method previously fell through with NO scope enforced. Now it
       // is rejected — mapping a new method is a conscious decision, not an

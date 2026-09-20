@@ -1385,6 +1385,22 @@ export const ApiKeyStaticScopeSchema = z.enum([
   'events:subscribe',
   'metrics:read',
   'cron',
+  'push:register',
+  // The remaining nine Phase-1+ phone scopes (mobile-app plan S1). The enum
+  // is one edit for all ten — SCOPE_MAP coverage is staged per phase (T1
+  // maps only `activity`, `clarify`, `tasks`, `meta`, and `push` is mapped by
+  // its own concurrent task; `kanban`/`teams`/`cron:read` in T5, `voice:talk`
+  // in T7, `documents:*`/`library:read` in T8). An unused scope here is
+  // harmless; a missing one is a contract change later.
+  'activity:read',
+  'kanban:read',
+  'kanban:write',
+  'teams:read',
+  'cron:read',
+  'documents:read',
+  'documents:write',
+  'library:read',
+  'voice:talk',
 ]);
 export type ApiKeyStaticScope = z.infer<typeof ApiKeyStaticScopeSchema>;
 
@@ -1413,6 +1429,22 @@ export const McpExportScopeSchema = z
 // member is admissible (e.g. a default).
 export const ApiKeyScopeSchema = z.union([ApiKeyStaticScopeSchema, McpExportScopeSchema]);
 export type ApiKeyScope = z.infer<typeof ApiKeyScopeSchema>;
+
+// The Phase-1 phone preset (mobile-app plan S13(a)) — the ONE source for
+// `ethos api-key create --preset phone` (apps/ethos/src/commands/api-key.ts),
+// for Settings → Mobile app's "Generate QR code", and for the app's
+// `REQUIRED_SCOPES`, which import this rather than restating it. Later
+// phases extend it in the task that maps each new namespace.
+export const PHONE_PRESET_SCOPES: ApiKeyStaticScope[] = [
+  'sessions:read',
+  'sessions:write',
+  'chat:send',
+  'personalities:read',
+  'tools:approve',
+  'activity:read',
+  'events:subscribe',
+  'push:register',
+];
 
 export const ApiKeyMetadataSchema = z.object({
   id: z.string(),

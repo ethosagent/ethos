@@ -450,6 +450,22 @@ export interface CreateWebApiOptions {
    */
   webBaseUrl?: string;
   /**
+   * This deployment's own version string (mobile-app plan S12) — web-api
+   * owns no version of its own (`package.json` is `0.0.0`, `private`).
+   * `ethos serve` passes `ETHOS_VERSION` (`apps/ethos/src/version-info.ts`);
+   * the desktop backend passes `app.getVersion()`. Omitted → `/healthz` has
+   * no `version` key and `meta.whoami` reports none.
+   */
+  version?: string;
+  /**
+   * The web server's own bind host/port (mobile-app plan S13(b)) — the
+   * `web.host` fallback `meta.connectInfo` resolves to when neither
+   * `ETHOS_PUBLIC_URL` nor `webBaseUrl` (above) is set. Defaults match
+   * `resolveWebHost`/`resolveWebPort`'s own defaults.
+   */
+  webHost?: string;
+  webPort?: number;
+  /**
    * Setter from `CreateAgentLoopResult.setOnSkillProposed`. When provided,
    * `createWebApi` registers a callback that broadcasts an
    * `evolve.skill_pending` SSE event to all connected sessions whenever
@@ -2001,6 +2017,9 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       ...(opts.a2aPeering ? { a2aPeering: opts.a2aPeering } : {}),
       ...(opts.a2aControl ? { a2aControl: opts.a2aControl } : {}),
       ...(opts.activityHistoryFn ? { activityHistory: opts.activityHistoryFn } : {}),
+      ...(opts.version ? { version: opts.version } : {}),
+      ...(opts.webHost ? { webHost: opts.webHost } : {}),
+      ...(opts.webPort ? { webPort: opts.webPort } : {}),
     },
     ...(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {}),
     ...(opts.secureCookie !== undefined ? { secureCookie: opts.secureCookie } : {}),
@@ -2009,6 +2028,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     ...(opts.apiKeys ? { apiKeys: opts.apiKeys } : {}),
     ...(opts.listTeams ? { listTeams: opts.listTeams } : {}),
     ...(opts.webBaseUrl ? { webBaseUrl: opts.webBaseUrl } : {}),
+    ...(opts.version ? { version: opts.version } : {}),
     ...(opts.metricsTextFn ? { metricsTextFn: opts.metricsTextFn } : {}),
     ...(opts.recordHttpRequest ? { recordHttpRequest: opts.recordHttpRequest } : {}),
     ...(opts.cronFireTrigger ? { cronFireTrigger: opts.cronFireTrigger } : {}),
@@ -2221,6 +2241,10 @@ export type { WakeRoute, WakeRoutingTable } from './repositories/config.reposito
 export { WebTokenRepository } from './repositories/web-token.repository';
 export type { RouteModule } from './routes/route-module';
 export { setWhatsAppPairingCode, setWhatsAppQr } from './routes/setup-whatsapp';
+// The connect-URL resolver, exported so `ethos api-key create --preset phone
+// --qr` (apps/ethos) shares the exact precedence `meta.connectInfo` answers
+// with instead of restating it (mobile-app plan S7, S13(b)).
+export { type ConnectInfoResult, resolveConnectInfo } from './rpc/connect-info';
 export type { DangerPredicate, DangerReason } from './services/approval-hook';
 export {
   type BridgedApprovals,

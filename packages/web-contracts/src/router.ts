@@ -3310,7 +3310,11 @@ const OriginSchema = z
 const ApiKeyCreateInput = z.object({
   name: z.string().min(1).max(100),
   scopes: z.array(ApiKeyScopeSchema).min(1),
-  allowedOrigins: z.array(OriginSchema).min(1),
+  // `.min(0)` — mandatory for React Native, which cannot send an `Origin`
+  // header at all (mobile-app plan S1). The store default is already `[]`
+  // (`api-key-store.ts:89`), so an empty array here is not new behaviour on
+  // the write side — only the input schema previously refused it.
+  allowedOrigins: z.array(OriginSchema).min(0),
 });
 const ApiKeyCreateOutput = z.object({
   /** Plaintext secret — shown once, then never again. */
@@ -3351,9 +3355,44 @@ const MetaCapabilitiesOutput = z.object({
   capabilities: z.record(z.string(), z.boolean()),
 });
 
+// `whoami` (mobile-app plan S12) — reachable by ANY valid key, no scope
+// required (the `ANY_KEY` sentinel in `dual-auth.ts`), because it only ever
+// reads the caller's OWN row. Never the secret or its hash.
+const MetaWhoamiKeySchema = z.object({
+  name: z.string(),
+  prefix: z.string(),
+  scopes: z.array(ApiKeyScopeSchema),
+  createdAt: z.string(),
+  lastUsed: z.string().nullable(),
+});
+const MetaWhoamiOutput = z.union([
+  z.object({
+    authMethod: z.literal('bearer'),
+    version: z.string().optional(),
+    key: MetaWhoamiKeySchema,
+  }),
+  z.object({
+    authMethod: z.literal('cookie'),
+    version: z.string().optional(),
+  }),
+]);
+
+// `connectInfo` (mobile-app plan S13(b)) — cookie-only. Answers "what URL
+// should a phone scan a QR code for", resolved with the precedence
+// `ETHOS_PUBLIC_URL` > `webBaseUrl` > `web.host` (packages/config). `loopback`
+// is true when the RESOLVED url's host is a loopback address, so a
+// reverse-proxied or tailnet-fronted loopback bind is not refused.
+const MetaConnectInfoOutput = z.object({
+  url: z.string(),
+  source: z.enum(['ETHOS_PUBLIC_URL', 'webBaseUrl', 'web.host']),
+  loopback: z.boolean(),
+});
+
 /** @stable v1 */
 const meta = {
   capabilities: oc.output(MetaCapabilitiesOutput),
+  whoami: oc.output(MetaWhoamiOutput),
+  connectInfo: oc.output(MetaConnectInfoOutput),
 };
 
 // ---------------------------------------------------------------------------

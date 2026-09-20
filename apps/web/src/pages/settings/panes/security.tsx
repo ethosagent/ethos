@@ -505,6 +505,19 @@ const ALL_SCOPES: ApiKeyScope[] = [
   'events:subscribe',
   'metrics:read',
   'cron',
+  // Phone scopes (mobile-app plan S1) — phased in on the server as each
+  // namespace is mapped, but listed here from T1 since the enum is one edit
+  // for all ten.
+  'activity:read',
+  'kanban:read',
+  'kanban:write',
+  'teams:read',
+  'cron:read',
+  'documents:read',
+  'documents:write',
+  'library:read',
+  'voice:talk',
+  'push:register',
 ];
 
 /**
@@ -515,6 +528,17 @@ const ALL_SCOPES: ApiKeyScope[] = [
 const SCOPE_HINTS: Partial<Record<ApiKeyScope, string>> = {
   chat: 'OpenAI-compatible API (/v1/models, /v1/chat/completions) — for Cursor, Aider, the OpenAI SDKs',
   'chat:send': 'chat.send and chat.abort RPC — for a Mission Control built on @ethosagent/sdk',
+  'activity:read': 'activity.history RPC and the /sse/activity feed — the Activity tab',
+  'kanban:read': 'kanban.list/getBoard/getTask/listAgents and /sse/kanban/:team — Teams, read-only',
+  'kanban:write': 'Task actions — updateStatus, createTask, assign, addComment',
+  'teams:read': 'teams.list/get/ledger/memory — team scope, read-only',
+  'cron:read': 'cron.list/get/history/deliveryTargets — see what a cron job did, read-only',
+  'documents:read': 'documents.root/list and file download — Documents browsing',
+  'documents:write': 'documents.createFolder and file upload — the share-sheet upload',
+  'library:read':
+    'mesh, MCP, plugins, platforms, deliveries, recipes, dashboards, goals, models — read-only "what is installed"',
+  'voice:talk': 'voice.realtimeToken/transcribe/synthesize/runTurn — the Call Stage',
+  'push:register': 'push.register/unregister/test — a phone registering for push notifications',
 };
 
 interface CreateKeyForm {
@@ -691,10 +715,19 @@ function ApiKeysSection() {
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
-        <Typography.Paragraph type="secondary" style={{ margin: 0, flex: 1 }}>
-          Bearer tokens for external Mission Controls. Each key is scoped to specific operations and
-          origins.
-        </Typography.Paragraph>
+        <div style={{ flex: 1 }}>
+          <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
+            Bearer tokens for external Mission Controls. Each key is scoped to specific operations
+            and origins.
+          </Typography.Paragraph>
+          {/* The QR generator and the phone preset live in the dedicated Mobile
+              app pane (mobile-app plan S7, S13) — this section only points to
+              it, so there is one QR generator and one place that mints a
+              phone key rather than two. */}
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Connecting a phone? Use Settings → Mobile app.
+          </Typography.Text>
+        </div>
         <Button type="primary" size="small" onClick={() => setCreateOpen(true)}>
           Create API Key
         </Button>

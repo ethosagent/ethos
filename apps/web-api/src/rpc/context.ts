@@ -144,6 +144,18 @@ export interface RpcContext {
    *  `activity.history`. Absent where no observability store is wired — the RPC
    *  then returns an empty page. */
   activityHistory?: import('../routes/index').ActivityHistoryFn;
+  /** This deployment's own version string (mobile-app plan S12) — `apps/ethos`
+   *  bakes this in at build time (`ETHOS_VERSION`) and the desktop passes
+   *  `app.getVersion()`. Absent when the booting app didn't set one (web-api
+   *  itself owns no version); `meta.whoami` then omits the field entirely. */
+  version?: string;
+  /** The web server's own bind host/port (mobile-app plan S13(b)) — the
+   *  `web.host` fallback `meta.connectInfo` uses when neither
+   *  `ETHOS_PUBLIC_URL` nor `webBaseUrl` is set. Defaults match
+   *  `resolveWebHost`/`resolveWebPort`'s own defaults (`127.0.0.1`, `3000`)
+   *  so a caller that omits these (tests, onboarding) still gets an answer. */
+  webHost?: string;
+  webPort?: number;
 }
 
 export const os = implement(contract).$context<RpcContext>();

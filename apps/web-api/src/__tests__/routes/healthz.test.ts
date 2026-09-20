@@ -57,3 +57,48 @@ describe('GET /healthz', () => {
     expect(res.status).toBe(503);
   });
 });
+
+// mobile-app plan S12 — web-api owns no version of its own; `/healthz`
+// reports whatever the booting app (`ethos serve`, the desktop backend)
+// passed via `CreateWebApiOptions.version`.
+describe('GET /healthz — version', () => {
+  let dir: string;
+  let store: SQLiteSessionStore;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'ethos-webapi-'));
+    store = new SQLiteSessionStore(':memory:');
+  });
+
+  afterEach(async () => {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function buildApp(version?: string) {
+    return createWebApi({
+      dataDir: dir,
+      storage: new InMemoryStorage(),
+      sessionStore: store,
+      memoryBundle: makeStubMemoryBundle(),
+      agentLoop: makeStubAgentLoop(),
+      personalities: makeStubPersonalityRegistry(),
+      chatDefaults: { model: 'claude-test', provider: 'anthropic' },
+      ...(version ? { version } : {}),
+    }).app;
+  }
+
+  it('includes `version` when the option is set', async () => {
+    const app = await buildApp('0.8.0');
+    const res = await app.request('/healthz');
+    const body = (await res.json()) as { version?: string };
+    expect(body.version).toBe('0.8.0');
+  });
+
+  it('has no `version` key when it is not', async () => {
+    const app = await buildApp();
+    const res = await app.request('/healthz');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect('version' in body).toBe(false);
+  });
+});

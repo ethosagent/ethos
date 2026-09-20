@@ -770,6 +770,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     a2aPeering,
     isA2aEnabled: a2a.isA2aEnabled,
     setA2aEnabled,
+    webHost,
+    webPort,
   });
   chatServiceRef = created.chatService;
 

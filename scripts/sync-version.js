@@ -20,6 +20,10 @@ const PUBLIC_PACKAGES = [
   'packages/plugin-sdk',
   'packages/web-contracts',
   'packages/sdk',
+  // The desktop backend reports `app.getVersion()` (which reads THIS file)
+  // to `/healthz`'s `version` field (mobile-app plan S12) — joins the list so
+  // G2 below guards its `0.0.0` placeholder exactly as it guards the CLI's.
+  'apps/desktop',
 ];
 
 let updated = 0;
