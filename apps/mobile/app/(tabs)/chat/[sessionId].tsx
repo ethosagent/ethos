@@ -107,6 +107,9 @@ export default function ChatScreen() {
   // At rest, clear the floating tab bar; with the keyboard up the composer
   // rides the keyboard via KeyboardStickyView's own transform and the tab bar
   // retreats behind it, so `opened` adds nothing on top (see tabBarBottomInset).
+  // KeyboardStickyView's offset is a `translateY` add-on (positive = down), so
+  // lifting the composer clear of the pill needs the NEGATIVE of the
+  // clearance amount, not the clearance itself.
   const restInset = tabBarBottomInset({
     tabBarHeight: TAB_BAR_PILL_HEIGHT,
     safeAreaBottom: insets.bottom,
@@ -173,7 +176,7 @@ export default function ChatScreen() {
           />
         ) : null}
       </View>
-      <KeyboardStickyView offset={{ closed: restInset, opened: 0 }}>
+      <KeyboardStickyView offset={{ closed: -restInset, opened: 0 }}>
         <Status accent={accent} deciding={deciding} online={online} />
         <Composer
           name={name}
