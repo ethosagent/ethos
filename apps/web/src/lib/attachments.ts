@@ -1,4 +1,7 @@
-export type UploadState = 'uploading' | 'ready' | 'error';
+import { formatBytes, type MessageAttachment, type UploadState } from '@ethosagent/chat-state';
+
+export type { MessageAttachment, UploadState };
+export { formatBytes };
 
 export interface AttachmentPreview {
   localId: string;
@@ -8,16 +11,6 @@ export interface AttachmentPreview {
   name: string;
   sizeBytes: number;
   data?: string;
-  previewUrl?: string;
-}
-
-export interface MessageAttachment {
-  localId: string;
-  state: UploadState;
-  type: 'image' | 'file';
-  name: string;
-  mimeType: string;
-  sizeBytes: number;
   previewUrl?: string;
 }
 
@@ -57,12 +50,4 @@ export function readPreviewData(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error('file read failed'));
     reader.readAsDataURL(file);
   });
-}
-
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
-  const mb = kb / 1024;
-  return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
 }

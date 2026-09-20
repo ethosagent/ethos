@@ -1,4 +1,4 @@
-import type { RowStatus } from '../../lib/trail';
+import type { RowStatus } from '@ethosagent/chat-state';
 import { RowState } from '../chat/Trail';
 
 // Feedback rows outside chat — feedback & activity contract §6, DESIGN.md

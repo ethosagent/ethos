@@ -9,14 +9,12 @@
 // `Trail` (once per AssistantBubble render, keyed by turn id) and
 // `formatBytes` (once per UserBubble attachment chip render).
 
+import type { AssistantTurn, ChatMessage, TrailState } from '@ethosagent/chat-state';
+import { emptyClarifyQueue, emptyRunsState } from '@ethosagent/chat-state';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AssistantTurn, ChatMessage } from '../../../lib/chat-reducer';
-import { emptyClarifyQueue } from '../../../lib/clarify-queue';
-import { emptyRunsState } from '../../../lib/pi-run-reducer';
-import type { TrailState } from '../../../lib/trail';
 import type { RunSurface } from '../RunCard';
 
 const trailRenders: string[] = [];

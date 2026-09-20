@@ -1,9 +1,8 @@
+import type { AssistantTurn, ChatMessage, TrailEntry, TrailState } from '@ethosagent/chat-state';
 import type { FenceRendererResolver } from '@ethosagent/ui-components';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useFenceResolver } from '../../features/renderers/resolver';
 import type { OlderHistoryStatus } from '../../hooks/useChat';
-import type { AssistantTurn, ChatMessage } from '../../lib/chat-reducer';
-import type { TrailEntry, TrailState } from '../../lib/trail';
 import { SaveToDashboardContextMenu } from '../dashboard/SaveToDashboardContextMenu';
 import { SaveToDashboardModal } from '../dashboard/SaveToDashboardModal';
 import { TeamRing } from '../ui/TeamRing';

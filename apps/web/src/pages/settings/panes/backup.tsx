@@ -27,6 +27,7 @@
 // wire never said. They are the same `.activity-row` markup with their own two
 // columns — the row language, not a fork of it.
 
+import type { RowStatus } from '@ethosagent/chat-state';
 import { App as AntApp, Button, Form, Input, InputNumber, Select, Switch, Typography } from 'antd';
 import { useState } from 'react';
 import { shellQuote } from '../../../components/mcp/AddMcpModal';
@@ -38,7 +39,6 @@ import {
 } from '../../../features/settings/api/backup-mutations';
 import { useBackupStatus } from '../../../features/settings/api/backup-queries';
 import { formatBytes } from '../../../lib/attachments';
-import type { RowStatus } from '../../../lib/trail';
 import type { rpc } from '../../../rpc';
 import { SectionHeading } from '../components/section-heading';
 import { SelfSaveMarker } from '../components/self-save-marker';

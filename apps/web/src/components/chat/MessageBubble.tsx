@@ -1,10 +1,14 @@
+import type {
+  AssistantBlock,
+  AssistantTurn,
+  TrailEntry,
+  UserMessage,
+} from '@ethosagent/chat-state';
 import { ContentRenderer, type FenceRendererResolver } from '@ethosagent/ui-components';
 import { useQuery } from '@tanstack/react-query';
 import { memo } from 'react';
 import { CardView } from '../../features/cards/CardView';
 import { formatBytes, type MessageAttachment } from '../../lib/attachments';
-import type { AssistantBlock, AssistantTurn, UserMessage } from '../../lib/chat-reducer';
-import type { TrailEntry } from '../../lib/trail';
 import { rpc } from '../../rpc';
 import { HtmlBlock } from './HtmlBlock';
 import { ImageBlock } from './ImageBlock';

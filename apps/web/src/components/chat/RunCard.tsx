@@ -1,16 +1,18 @@
+import {
+  type ClarifyQueueState,
+  questionForRun,
+  type ResolvedClarify,
+  type RunState,
+  type RunsState,
+  resolvedForRun,
+  runCardView,
+} from '@ethosagent/chat-state';
 import { isLightSurface } from '@ethosagent/design-tokens/antd';
 import type { BackgroundJobDetailWire, ClarifyRequestEvent } from '@ethosagent/web-contracts';
 import { Button } from 'antd';
 import { useState } from 'react';
 import { useTaskCancel } from '../../features/tasks/api/mutations';
 import { useTaskDetail } from '../../features/tasks/api/queries';
-import {
-  type ClarifyQueueState,
-  questionForRun,
-  type ResolvedClarify,
-  resolvedForRun,
-} from '../../lib/clarify-queue';
-import { type RunState, type RunsState, runCardView } from '../../lib/pi-run-reducer';
 import { resolveRunner, runnerAccentVars } from '../../lib/runners';
 import { useResolvedTokens } from '../../lib/skin-tokens';
 import { RUN_COPY } from '../../lib/worker-copy';

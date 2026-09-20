@@ -9,13 +9,13 @@
 // wrong place, an effect that reconnects on every refetch, a tool call drawn
 // twice — are all between the pieces rather than inside one.
 
+import { buildGroups, convertHistoryItem, MAX_GROUPS } from '@ethosagent/chat-state';
 import type { ActivityEvent } from '@ethosagent/web-contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type React from 'react';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildGroups, convertHistoryItem, MAX_GROUPS } from '../../lib/activityFeed';
 
 /** The page's own history page size — the amount the visible cap grows by. */
 const PAGE_SIZE = 50;

@@ -6,12 +6,11 @@
 // cases assert both halves: no tool chrome inside, the artifacts still inline,
 // and the account of the work sitting under the bubble as a footer.
 
+import type { AssistantTurn, TrailEntry } from '@ethosagent/chat-state';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AssistantTurn } from '../../../lib/chat-reducer';
-import type { TrailEntry } from '../../../lib/trail';
 
 vi.mock('../../../rpc', () => ({
   rpc: { meta: { capabilities: () => Promise.resolve({ capabilities: { voice_tts: false } }) } },

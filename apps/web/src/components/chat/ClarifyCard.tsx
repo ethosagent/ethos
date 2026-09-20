@@ -1,7 +1,7 @@
+import type { ResolvedClarify } from '@ethosagent/chat-state';
 import type { ClarifyRequestEvent } from '@ethosagent/web-contracts';
 import { Button, Input } from 'antd';
 import { useEffect, useState } from 'react';
-import type { ResolvedClarify } from '../../lib/clarify-queue';
 import { rpc } from '../../rpc';
 
 // Clarify card — the agent asked the user a structured question mid-turn (the

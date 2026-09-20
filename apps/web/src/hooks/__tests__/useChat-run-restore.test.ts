@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
+
+import type { AssistantTurn, ChatState } from '@ethosagent/chat-state';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AssistantTurn, ChatState } from '../../lib/chat-reducer';
 
 // The ONE wiring test in apps/web, and it is here on purpose.
 //

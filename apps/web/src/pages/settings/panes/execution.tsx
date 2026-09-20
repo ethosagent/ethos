@@ -31,10 +31,10 @@
 // The sentence leads with the operationally important half: where tools are
 // STILL running.
 
+import type { RowStatus } from '@ethosagent/chat-state';
 import { Button, Form, Input, InputNumber, Select } from 'antd';
 import { FeedbackRow } from '../../../components/ui/FeedbackRow';
 import { useSshProbe } from '../../../features/settings/api/execution';
-import type { RowStatus } from '../../../lib/trail';
 import type { rpc } from '../../../rpc';
 import { AdvancedBlock } from '../components/advanced';
 import { SectionHeading } from '../components/section-heading';

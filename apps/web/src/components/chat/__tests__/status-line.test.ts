@@ -9,11 +9,11 @@
 // Same jsdom + `react-dom/client` harness as `tab-save-bar.test.ts` — the repo
 // has no testing-library.
 
+import { applyAction, initialChatState } from '@ethosagent/chat-state';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyAction, initialChatState } from '../../../lib/chat-reducer';
 import { ANNOUNCE_THROTTLE_MS, StatusLine, type StatusLineProps } from '../StatusLine';
 import { Trail } from '../Trail';
 

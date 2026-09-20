@@ -1,5 +1,5 @@
+import { applyTrailEvent, closeTrail, type TrailState } from '@ethosagent/chat-state';
 import type { SseEvent } from '@ethosagent/web-contracts';
-import { applyTrailEvent, closeTrail, type TrailState } from './trail';
 
 // Pure event reducer for the right-side activity drawer. Lives outside
 // the hook so it's unit-testable without jsdom — same pattern as

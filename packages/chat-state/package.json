@@ -1,0 +1,22 @@
+{
+  "name": "@ethosagent/chat-state",
+  "version": "0.8.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure chat/session/activity reducers shared across Ethos web and mobile surfaces",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts",
+      "production": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
+  },
+  "dependencies": {
+    "@ethosagent/types": "workspace:*",
+    "@ethosagent/web-contracts": "workspace:*"
+  }
+}

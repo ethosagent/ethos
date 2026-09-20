@@ -1,8 +1,8 @@
+import type { AssistantTurn, ChatMessage, UserMessage } from '@ethosagent/chat-state';
 import { personalityAccent } from '@ethosagent/design-tokens';
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useActivePersonality } from '../hooks/useActivePersonality';
 import { useChat } from '../hooks/useChat';
-import type { AssistantTurn, ChatMessage, UserMessage } from '../lib/chat-reducer';
 
 function extractText(msg: ChatMessage): string {
   if (msg.role === 'user') return (msg as UserMessage).content;

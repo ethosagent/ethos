@@ -1,11 +1,13 @@
-import type { SseEvent } from '@ethosagent/web-contracts';
-import { describe, expect, it } from 'vitest';
 import {
   applyAction as applyChatAction,
   applyEvent as applyChatEvent,
   type ChatState,
   initialChatState,
-} from '../chat-reducer';
+  summariseTrail,
+  type TrailEntry,
+} from '@ethosagent/chat-state';
+import type { SseEvent } from '@ethosagent/web-contracts';
+import { describe, expect, it } from 'vitest';
 import {
   applyEvent,
   applyTurnAborted,
@@ -16,7 +18,6 @@ import {
   RESULT_CHARS_CAP,
   TURNS_CAP,
 } from '../drawer-reducer';
-import { summariseTrail, type TrailEntry } from '../trail';
 
 describe('drawer-reducer', () => {
   const initial: DrawerStreamState = emptyDrawerState('s1');

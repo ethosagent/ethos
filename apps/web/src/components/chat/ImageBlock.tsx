@@ -1,4 +1,4 @@
-import type { ImageBlock as ImageBlockData } from '../../lib/chat-reducer';
+import type { ImageBlock as ImageBlockData } from '@ethosagent/chat-state';
 import { SaveToDashboardButton } from '../dashboard/SaveToDashboardButton';
 
 interface Props {

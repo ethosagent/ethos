@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
+
+import type { ChatState } from '@ethosagent/chat-state';
+import { questionForRun, resolvedForRun } from '@ethosagent/chat-state';
 import type { SseEvent } from '@ethosagent/web-contracts';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatState } from '../../lib/chat-reducer';
-import { questionForRun, resolvedForRun } from '../../lib/clarify-queue';
 
 // The sibling of `useChat-run-restore.test.ts`, and here for the same reason
 // its header gives: D9 tests web state as reducers, and a reducer that is

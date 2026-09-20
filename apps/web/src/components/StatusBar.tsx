@@ -1,10 +1,10 @@
+import { allRuns, type RunsState, runCounts } from '@ethosagent/chat-state';
 import { isLightSurface } from '@ethosagent/design-tokens/antd';
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useConfig } from '../features/config/api/queries';
 import { getLastPersonalityId } from '../lib/lastPersonality';
 import { getLastSessionId } from '../lib/lastSession';
-import { allRuns, type RunsState, runCounts } from '../lib/pi-run-reducer';
 import { resolveRunner, runnerAccentVars } from '../lib/runners';
 import { useResolvedTokens } from '../lib/skin-tokens';
 import { RUN_COPY } from '../lib/worker-copy';

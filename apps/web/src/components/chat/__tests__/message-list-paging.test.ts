@@ -8,11 +8,11 @@
 // jsdom does no layout, so `scrollHeight`/`clientHeight` are stubbed on the
 // list element and `scrollTop` is given a real backing value.
 
+import type { ChatMessage } from '@ethosagent/chat-state';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage } from '../../../lib/chat-reducer';
 import { MessageList, type MessageListProps } from '../MessageList';
 
 // The save modal routes (useNavigate); it is closed and not under test here.

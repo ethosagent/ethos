@@ -1,3 +1,14 @@
+import {
+  allRuns,
+  type ClarifyQueueState,
+  questionForRun,
+  type RunState,
+  type RunsState,
+  runsNeedingYou,
+  type TrailEntry,
+  type TrailState,
+  trailRowId,
+} from '@ethosagent/chat-state';
 import { isLightSurface } from '@ethosagent/design-tokens/antd';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -6,11 +17,8 @@ import {
   type UsageState,
   useDrawerStream,
 } from '../hooks/useDrawerStream';
-import { type ClarifyQueueState, questionForRun } from '../lib/clarify-queue';
-import { allRuns, type RunState, type RunsState, runsNeedingYou } from '../lib/pi-run-reducer';
 import { resolveRunner, runnerAccentVars } from '../lib/runners';
 import { useResolvedTokens } from '../lib/skin-tokens';
-import { type TrailEntry, type TrailState, trailRowId } from '../lib/trail';
 import { RUN_COPY } from '../lib/worker-copy';
 import { TrailRow } from './chat/Trail';
 import { DebugPanel } from './DebugPanel';

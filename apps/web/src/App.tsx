@@ -1,3 +1,4 @@
+import { runsNeedingYou } from '@ethosagent/chat-state';
 import { useQueryClient } from '@tanstack/react-query';
 import { ConfigProvider } from 'antd';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
@@ -42,7 +43,6 @@ import {
   setLastPersonalityId,
   setLastTeamId,
 } from './lib/lastPersonality';
-import { runsNeedingYou } from './lib/pi-run-reducer';
 import {
   extractTeamId,
   extractWorkspacePersonalityId,

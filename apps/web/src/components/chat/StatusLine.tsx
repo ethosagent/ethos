@@ -1,6 +1,6 @@
+import type { TurnPhase } from '@ethosagent/chat-state';
+import { formatDuration } from '@ethosagent/chat-state';
 import { useEffect, useRef, useState } from 'react';
-import type { TurnPhase } from '../../lib/chat-reducer';
-import { formatDuration } from '../../lib/trail';
 
 // The status line — feedback & activity contract §2, DESIGN.md "Feedback &
 // activity". It sits directly above the composer, inside the 800px column, in

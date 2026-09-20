@@ -1,4 +1,4 @@
-import type { RowStatus } from '../../lib/trail';
+import type { RowStatus } from '@ethosagent/chat-state';
 import type { rpc } from '../../rpc';
 import { wakeAge } from '../voice/satellite-rows';
 

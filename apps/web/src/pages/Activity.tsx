@@ -1,7 +1,3 @@
-import { useQuery } from '@tanstack/react-query';
-import { Button, Empty, Select, Spin, Tag, Typography } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
 import {
   type ActivityDetail,
   type ActivityGroup,
@@ -14,7 +10,11 @@ import {
   groupMatchesFilter,
   MAX_GROUPS,
   mergeRows,
-} from '../lib/activityFeed';
+} from '@ethosagent/chat-state';
+import { useQuery } from '@tanstack/react-query';
+import { Button, Empty, Select, Spin, Tag, Typography } from 'antd';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { rpc } from '../rpc';
 import { subscribeToActivity } from '../sse';
 

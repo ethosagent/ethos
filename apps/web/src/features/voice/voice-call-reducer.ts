@@ -1,4 +1,4 @@
-import { type ChatMessage, markInterrupted } from '../../lib/chat-reducer';
+import { type ChatMessage, markInterrupted } from '@ethosagent/chat-state';
 import type { VoiceCallEvent } from './voice-call-client';
 
 // Pure state machine for a live voice call. Extracted from the `useVoiceCall`

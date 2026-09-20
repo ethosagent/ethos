@@ -315,7 +315,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 146 packages: 11 at Tier 0, 27 at Tier 1, 108 at Tier 2.
+# apps/ carries a tier. 148 packages: 11 at Tier 0, 27 at Tier 1, 110 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -667,6 +667,11 @@ tiers:
     package: "ethos-vscode"
     tier: 2
     assigned: 2026-08-12
+
+  apps/mobile:
+    package: "@ethosagent/mobile"
+    tier: 2
+    assigned: 2026-09-19
 
   apps/web:
     package: "@ethosagent/web"
@@ -1167,6 +1172,11 @@ tiers:
     package: "@ethosagent/agent-bridge"
     tier: 2
     assigned: 2026-08-12
+
+  packages/chat-state:
+    package: "@ethosagent/chat-state"
+    tier: 2
+    assigned: 2026-09-19
 
   packages/config:
     package: "@ethosagent/config"

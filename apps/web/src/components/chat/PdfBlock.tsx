@@ -1,4 +1,4 @@
-import type { PdfBlock as PdfBlockData } from '../../lib/chat-reducer';
+import type { PdfBlock as PdfBlockData } from '@ethosagent/chat-state';
 import { SaveToDashboardButton } from '../dashboard/SaveToDashboardButton';
 
 interface Props {

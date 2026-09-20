@@ -6,13 +6,13 @@
 // nothing when there is nothing to say, it never fabricates assurance, and a
 // finding takes you to the evidence it cites.
 
+import type { TrailAction, TrailEntry } from '@ethosagent/chat-state';
+import { applyAction, applyEvent, initialChatState } from '@ethosagent/chat-state';
 import type { SseEvent, StoredMessage } from '@ethosagent/web-contracts';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { applyAction, applyEvent, initialChatState } from '../../../lib/chat-reducer';
-import type { TrailAction, TrailEntry } from '../../../lib/trail';
 import { Trail } from '../Trail';
 
 function action(over: Partial<TrailAction> = {}): TrailAction {

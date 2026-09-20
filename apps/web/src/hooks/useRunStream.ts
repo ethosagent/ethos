@@ -1,7 +1,13 @@
+import {
+  applyClarifyEvent,
+  applyRunEvent,
+  type ClarifyQueueState,
+  emptyClarifyQueue,
+  emptyRunsState,
+  type RunsState,
+} from '@ethosagent/chat-state';
 import { useEffect, useState } from 'react';
-import { applyClarifyEvent, type ClarifyQueueState, emptyClarifyQueue } from '../lib/clarify-queue';
 import { getLastSessionId } from '../lib/lastSession';
-import { applyRunEvent, emptyRunsState, type RunsState } from '../lib/pi-run-reducer';
 import { subscribeToSession } from '../sse';
 
 // Delegated-run state for the SHELL — the drawer Runs pane, the status-bar pill

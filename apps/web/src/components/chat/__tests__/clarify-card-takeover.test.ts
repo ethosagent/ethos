@@ -8,11 +8,11 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ResolvedClarify } from '@ethosagent/chat-state';
 import type { ClarifyRequestEvent } from '@ethosagent/web-contracts';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { ResolvedClarify } from '../../../lib/clarify-queue';
 import { ClarifyCard } from '../ClarifyCard';
 
 const NOW = Date.now();

@@ -1,5 +1,5 @@
+import type { HtmlBlock as HtmlBlockData } from '@ethosagent/chat-state';
 import { useEffect, useRef, useState } from 'react';
-import type { HtmlBlock as HtmlBlockData } from '../../lib/chat-reducer';
 import { SaveToDashboardButton } from '../dashboard/SaveToDashboardButton';
 
 interface Props {

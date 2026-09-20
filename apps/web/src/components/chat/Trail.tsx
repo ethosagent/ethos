@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   formatDuration,
   formatJson,
@@ -9,7 +8,8 @@ import {
   summariseTrail,
   type TrailEntry,
   trailRowId,
-} from '../../lib/trail';
+} from '@ethosagent/chat-state';
+import { useState } from 'react';
 
 // The trail — feedback & activity contract §3/§5, DESIGN.md "Feedback &
 // activity". One collapsed footer line under the bubble, expanding into the

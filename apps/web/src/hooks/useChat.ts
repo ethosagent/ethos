@@ -1,18 +1,18 @@
-import type { ClarifyRequestEvent } from '@ethosagent/web-contracts';
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { type AttachmentPreview, toMessageAttachment } from '../lib/attachments';
 import {
   applyAction,
   applyEvent,
   type ChatAction,
   type ChatState,
   initialChatState,
+  isTerminalRun,
   newestPageIsContiguous,
   type RestoredRun,
-} from '../lib/chat-reducer';
+} from '@ethosagent/chat-state';
+import type { ClarifyRequestEvent } from '@ethosagent/web-contracts';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { type AttachmentPreview, toMessageAttachment } from '../lib/attachments';
 import { getClientId } from '../lib/clientId';
 import { broadcastTurnAborted } from '../lib/lastSession';
-import { isTerminalRun } from '../lib/pi-run-reducer';
 import { rpc } from '../rpc';
 import { subscribeToSession } from '../sse';
 
