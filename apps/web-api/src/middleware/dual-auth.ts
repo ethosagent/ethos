@@ -105,6 +105,9 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     // gate in `services/tool-inspection`). An API key is not a licence to make
     // this deployment run things — cookie-only.
     test: COOKIE_ONLY,
+    // The foreground catch-up (S3) — same scope as `approve`/`deny`, since it
+    // reads exactly what those methods act on.
+    listPending: 'tools:approve',
   },
 };
 

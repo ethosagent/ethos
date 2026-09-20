@@ -307,6 +307,13 @@ function agentActor(actor: string): string | null {
   return actor;
 }
 
+/** `human:key:<name>` (S9, a bearer-authenticated write) renders as
+ *  `key <name>` — the ledger's one spot that shows a raw actor string. */
+function actorLabel(actor: string): string {
+  const prefix = 'human:key:';
+  return actor.startsWith(prefix) ? `key ${actor.slice(prefix.length)}` : actor;
+}
+
 function str(v: unknown): string | null {
   return typeof v === 'string' ? v : null;
 }
@@ -336,7 +343,13 @@ export function describeLedgerEvent(
 
   switch (event.kind) {
     case 'created':
-      return base('created', 'Created', `by ${event.actor}`, 'info', agentActor(event.actor));
+      return base(
+        'created',
+        'Created',
+        `by ${actorLabel(event.actor)}`,
+        'info',
+        agentActor(event.actor),
+      );
 
     case 'status_changed': {
       const to = str(event.data.to);

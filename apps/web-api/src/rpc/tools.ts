@@ -7,22 +7,52 @@ import { os } from './context';
 //
 // `clientId` flows in as `decidedBy` on the resulting `approval.resolved`
 // SSE event so other tabs viewing the same session can auto-dismiss the
-// modal with "approved by another window."
+// modal with "approved by another window." — for a COOKIE caller only: a
+// bearer caller's identity is the API key, not a client-supplied string
+// (S9, `decidedByFor` below).
+//
+// `listPending` is the foreground catch-up (S3): a client that missed the
+// `pending` SSE event reads the current queue instead.
 //
 // `catalog` / `detail` / `test` back the Personality Edit modal's toolset
 // picker: what tools exist, what one of them actually is, and whether it works
 // in this deployment. The detail mapping and the execution safety gate live in
 // `services/tool-inspection`.
 
+/** `human:key:<name>` when the request authenticated by bearer (S9) — the
+ *  API-key row IS the identity, so a phone cannot claim to be anything by
+ *  sending a different `clientId`. Cookie requests keep today's behavior:
+ *  `clientId` is a tab label the client picked, recorded verbatim. Same
+ *  `_authMethod`/`_apiKey` read as `rpc/kanban.ts`. */
+function decidedByFor(context: object, clientId: string): string {
+  const c = context as { _authMethod?: unknown; _apiKey?: { name?: unknown } };
+  if (c._authMethod === 'bearer' && typeof c._apiKey?.name === 'string') {
+    return `human:key:${c._apiKey.name}`;
+  }
+  return clientId;
+}
+
 export const toolsRouter = {
   approve: os.tools.approve.handler(async ({ input, context }) => {
-    await context.approvals.approve(input.approvalId, input.scope, input.clientId);
+    await context.approvals.approve(
+      input.approvalId,
+      input.scope,
+      decidedByFor(context, input.clientId),
+    );
     return { ok: true as const };
   }),
 
   deny: os.tools.deny.handler(async ({ input, context }) => {
-    await context.approvals.deny(input.approvalId, input.reason, input.clientId);
+    await context.approvals.deny(
+      input.approvalId,
+      input.reason,
+      decidedByFor(context, input.clientId),
+    );
     return { ok: true as const };
+  }),
+
+  listPending: os.tools.listPending.handler(async ({ input, context }) => {
+    return context.approvals.listPending(input.sessionId);
   }),
 
   catalog: os.tools.catalog.handler(async ({ context }) => {

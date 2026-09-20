@@ -8,12 +8,29 @@ import type { AllowlistRepository } from '../repositories/allowlist.repository';
 // synchronous `before_tool_call` hook (an awaited Promise) with the user's
 // asynchronous decision arriving as a separate HTTP request hours later.
 //
-//   loop                       ApprovalsService                client tab
-//   ----                       ----------------                ----------
-//   hook fires ── requestApproval ─────► register pending,
-//                                        emit('pending')   ──► SSE event
-//                                                              user clicks
-//   hook awaits ◄────────── promise ◄── approve()/deny() ◄── /rpc/tools/*
+//   loop                  ApprovalsService              surfaces
+//   ----                  ----------------              --------
+//   hook fires ── requestApproval ──► register pending,
+//                                     emit('pending', …, deadline)
+//                                       ├──► SSE `tool.approval_required` ──► web tab / app
+//                                       ├──► PushDispatcher (S5) ──► Expo ──► lock screen
+//                                       │      collapseId = approvalId, threadId = sessionId,
+//                                       │      no args (the phone's extension fetches them)
+//                                       └──► Telegram bridge (S10) ──► owner's chat
+//                                     listPending() ◄── foreground catch-up (S3): a client
+//                                                        that missed the event reads the queue
+//   hook awaits ◄── promise ◄──────── approve()/deny() ◄── /rpc/tools/* — web click, lock-screen
+//                                       │                    action (bearer), Telegram tap
+//                                       │   … or the auto-deny timer (SYSTEM_DECIDER)
+//                                     emit('resolved')
+//                                       ├──► SSE `approval.resolved` (every tab dismisses)
+//                                       ├──► PushDispatcher: on a TIMEOUT only, a replacement
+//                                       │      with the same collapseId, `auto-denied at HH:MM`,
+//                                       │      no categoryId — no live Allow for a dead approval
+//                                       └──► Telegram bridge edits its card to the outcome
+//
+// Every surface's decision reaches `approve()`/`deny()` through the same
+// `/rpc/tools/*` path a browser tab uses; the first decision wins (`take()`).
 //
 // The Promise stored in `pending` is the only thread of control that remembers
 // "the agent is paused on this tool call." Resolving it lets the loop continue;
@@ -40,7 +57,8 @@ interface PendingApproval {
 }
 
 interface ApprovalEventMap {
-  pending: [sessionId: string, request: ApprovalRequest];
+  /** `deadline` — when the auto-deny fires (ISO), `null` with no timer. */
+  pending: [sessionId: string, request: ApprovalRequest, deadline: string | null];
   resolved: [sessionId: string, approvalId: string, decision: 'allow' | 'deny', decidedBy: string];
 }
 
@@ -157,7 +175,11 @@ export class ApprovalsService {
         args: req.args,
         reason: req.reason ?? null,
       };
-      this.emitter.emit('pending', req.sessionId, wireRequest);
+      const deadline =
+        effectiveTimeout > 0
+          ? new Date(Date.now() + Math.min(effectiveTimeout, MAX_TIMER_MS)).toISOString()
+          : null;
+      this.emitter.emit('pending', req.sessionId, wireRequest, deadline);
     });
   }
 
@@ -267,12 +289,37 @@ export class ApprovalsService {
     }
   }
 
+  /**
+   * The pending queue as it stands right now — `tools.listPending` (S3). The
+   * foreground catch-up D13 requires: a client that missed the `pending` SSE
+   * events (a closed tab, a cold app launch) can still learn what is waiting
+   * on it, and the Activity tab's "Needs you" count is this array's length.
+   * Optionally scoped to one session.
+   */
+  listPending(sessionId?: string): ApprovalRequest[] {
+    const out: ApprovalRequest[] = [];
+    for (const [approvalId, p] of this.pending.entries()) {
+      if (sessionId !== undefined && p.request.sessionId !== sessionId) continue;
+      out.push({
+        approvalId,
+        sessionId: p.request.sessionId,
+        toolCallId: p.request.toolCallId,
+        toolName: p.request.toolName,
+        args: p.request.args,
+        reason: p.request.reason ?? null,
+      });
+    }
+    return out;
+  }
+
   /** Visible for tests + internal observability. */
   pendingCount(): number {
     return this.pending.size;
   }
 
-  onPending(handler: (sessionId: string, request: ApprovalRequest) => void): () => void {
+  onPending(
+    handler: (sessionId: string, request: ApprovalRequest, deadline: string | null) => void,
+  ): () => void {
     this.emitter.on('pending', handler);
     return () => {
       this.emitter.off('pending', handler);

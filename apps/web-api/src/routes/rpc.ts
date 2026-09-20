@@ -129,13 +129,18 @@ export function rpcRoutes(opts: RpcRoutesOptions) {
     // `_authMethod` is how a handler learns whether the caller presented a
     // cookie or a bearer API key. It is absent when no api-key store is wired
     // (the cookie-only `authMiddleware` path), which handlers read as "cookie".
+    // `_apiKey` (S9) is the resolved key row `dualAuth` set on the request —
+    // threaded the same way so a handler can stamp an actor label from the
+    // key's own `name` instead of trusting a client-supplied identity string.
     const requestId: string | undefined = c.get('requestId');
     const authMethod: string | undefined = c.get('authMethod');
+    const apiKey = c.get('apiKey');
     const context: ServiceContainer = Object.assign(
       Object.create(null) as ServiceContainer,
       opts.services,
       requestId ? { _requestId: requestId } : {},
       authMethod ? { _authMethod: authMethod } : {},
+      apiKey ? { _apiKey: apiKey } : {},
       mcpPendingState ? { _mcpPendingState: mcpPendingState } : {},
       mcpPendingPersonalityId ? { _mcpPendingPersonalityId: mcpPendingPersonalityId } : {},
       mcpRequestOrigin ? { _mcpRequestOrigin: mcpRequestOrigin } : {},

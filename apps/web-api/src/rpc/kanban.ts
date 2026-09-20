@@ -5,6 +5,18 @@ import { os } from './context';
 // an explicit actor label so the audit trail can distinguish UI edits from
 // agent calls. `listAgents` delegates to mesh-backed discovery.
 
+/** `human:key:<name>` when the request authenticated by bearer (S9) — the
+ *  API-key row IS the identity. Cookie requests (today's only caller) keep
+ *  `human:control-center`. Same `_authMethod`/`_apiKey` read as
+ *  `rpc/tools.ts`. */
+function actorFor(context: object): string {
+  const c = context as { _authMethod?: unknown; _apiKey?: { name?: unknown } };
+  if (c._authMethod === 'bearer' && typeof c._apiKey?.name === 'string') {
+    return `human:key:${c._apiKey.name}`;
+  }
+  return 'human:control-center';
+}
+
 export const kanbanRouter = {
   list: os.kanban.list.handler(({ context }) => context.kanban.list()),
 
@@ -16,7 +28,7 @@ export const kanbanRouter = {
       taskId: input.taskId,
       status: input.status,
       ...(input.reason !== undefined ? { reason: input.reason } : {}),
-      actor: 'human:control-center',
+      actor: actorFor(context),
     }),
   ),
 
@@ -25,14 +37,14 @@ export const kanbanRouter = {
       team: input.team,
       taskIds: input.taskIds,
       status: input.status,
-      actor: 'human:control-center',
+      actor: actorFor(context),
     }),
   ),
 
   createTask: os.kanban.createTask.handler(({ input, context }) =>
     context.kanban.createTask({
       ...input,
-      actor: 'human:control-center',
+      actor: actorFor(context),
     }),
   ),
 
@@ -62,7 +74,7 @@ export const kanbanRouter = {
       team: input.team,
       taskId: input.taskId,
       assignee: input.assignee,
-      actor: 'human:control-center',
+      actor: actorFor(context),
     }),
   ),
 
@@ -71,7 +83,7 @@ export const kanbanRouter = {
       team: input.team,
       taskIds: input.taskIds,
       assignee: input.assignee,
-      actor: 'human:control-center',
+      actor: actorFor(context),
     }),
   ),
 

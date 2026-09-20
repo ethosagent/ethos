@@ -13,6 +13,7 @@ import {
   A2aPeerRowSchema,
   ApiKeyMetadataSchema,
   ApiKeyScopeSchema,
+  ApprovalRequestSchema,
   ApprovalScopeSchema,
   BackgroundJobDetailSchema,
   BackgroundJobSummarySchema,
@@ -944,6 +945,12 @@ const ToolDenyInput = z.object({
 });
 const ToolDenyOutput = z.object({ ok: z.literal(true) });
 
+/** Foreground catch-up (D13) — the pending queue as it stands right now, for
+ *  a client that missed the `pending` SSE events (a closed tab, a cold app
+ *  launch). Also the source of the Activity tab's "Needs you" count. */
+const ToolsListPendingInput = z.object({ sessionId: z.string().optional() });
+const ToolsListPendingOutput = z.array(ApprovalRequestSchema);
+
 const ToolsCatalogInput = z.object({});
 const ToolsCatalogOutput = z.object({
   groups: z.array(
@@ -1071,6 +1078,7 @@ const tools = {
   catalog: oc.input(ToolsCatalogInput).output(ToolsCatalogOutput),
   detail: oc.input(ToolsDetailInput).output(ToolsDetailOutput),
   test: oc.input(ToolsTestInput).output(ToolsTestOutput),
+  listPending: oc.input(ToolsListPendingInput).output(ToolsListPendingOutput),
 };
 
 // ---------------------------------------------------------------------------
