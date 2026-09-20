@@ -88,6 +88,7 @@ import { createA2aTools } from '@ethosagent/tools-a2a';
 // optionalDependencies of @ethosagent/cli. A failed install for any one of
 // them must not crash the CLI for users who don't run that platform.
 import {
+  type ApprovalDecisionEvent,
   answerSuffix,
   type ChannelTranscriptStore,
   type ClarifyResponse,
@@ -2657,6 +2658,11 @@ export function wireApprovalFlow(
     /** Operator's approval SLA (`config.approvalTimeoutMs`). Undefined → the
      *  coordinator's own 10-minute default; `0` → no timeout. */
     approvalTimeoutMs?: number;
+    /** Also receives every Approve/Deny tap. The adapter has ONE decision
+     *  slot, owned here; `ethos boot` forwards taps on the web-api Telegram
+     *  bridge's cards (`createTelegramApprovalBridge`), whose ids the
+     *  coordinator ignores (`settle` is a no-op on an unknown id). */
+    forwardDecision?: (event: ApprovalDecisionEvent) => void;
   },
 ): { shutdown: () => Promise<void>; pendingCount: () => number } {
   const approvalAdapters = adapters.filter(isApprovalCapable);
@@ -2862,6 +2868,7 @@ export function wireApprovalFlow(
       } else {
         void coordinator.deny(event.approvalId, event.decidedBy);
       }
+      seams.forwardDecision?.(event);
     });
   }
 

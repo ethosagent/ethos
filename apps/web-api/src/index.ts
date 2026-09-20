@@ -105,6 +105,7 @@ import { SkillsService } from './services/skills.service';
 import { SystemEventBus } from './services/system-event-bus';
 import { TasksService } from './services/tasks.service';
 import { TeamsService } from './services/teams.service';
+import type { BridgedApprovals } from './services/telegram-approval-bridge';
 import { ToolSettingsService } from './services/tool-settings.service';
 import { VoiceService } from './services/voice.service';
 import { VoiceLaneModeService } from './services/voice-lane-mode.service';
@@ -683,6 +684,10 @@ export interface CreateWebApiResult {
    * (plan/phases/idle-watcher.md §1 check #12).
    */
   pendingApprovalCount: () => number;
+  /** The approval service's decision surface, for an out-of-band surface in
+   *  the same process — the Telegram approval bridge under `ethos boot`
+   *  (`createTelegramApprovalBridge`). */
+  approvals: BridgedApprovals;
   /**
    * F06 — release what THIS call started or opened, newest first: any
    * still-suspended approval (denied and audited), the chat turns it started
@@ -2098,6 +2103,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     forceSettleApprovals: () => approvalsService.forceSettleAll(),
     closeChat: () => chatService.close(),
     pendingApprovalCount: () => approvalsService.pendingCount(),
+    approvals: approvalsService,
     dispose: () => disposers.dispose(),
     bindAgentLoop: (loop, extras = {}) => {
       // A boot that finishes after this surface was released has nothing to
@@ -2216,6 +2222,11 @@ export { WebTokenRepository } from './repositories/web-token.repository';
 export type { RouteModule } from './routes/route-module';
 export { setWhatsAppPairingCode, setWhatsAppQr } from './routes/setup-whatsapp';
 export type { DangerPredicate, DangerReason } from './services/approval-hook';
+export {
+  type BridgedApprovals,
+  createTelegramApprovalBridge,
+  isTelegramApprovalSurface,
+} from './services/telegram-approval-bridge';
 export { IdempotencyStore } from './stores/idempotency-store';
 // The satellite lane, exported so a host that OWNS a satellite client can be
 // tested against the code that actually receives its frames rather than

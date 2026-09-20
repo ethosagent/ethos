@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DefaultHookRegistry } from '@ethosagent/core';
 import type { Gateway, GatewayBotConfig } from '@ethosagent/gateway';
 import type {
+  ApprovalDecisionEvent,
   BeforeToolCallPayload,
   BeforeToolCallResult,
   PersonalityRegistry,
@@ -806,5 +807,40 @@ describe('wireApprovalFlow', () => {
       model: 'test-model',
     });
     await expect(flow.shutdown()).resolves.toBeUndefined();
+  });
+
+  it('forwards every tap to forwardDecision — the web-api Telegram bridge (S10)', () => {
+    let tap: (event: ApprovalDecisionEvent) => void = () => {};
+    const adapter = {
+      id: 'telegram:bot-1',
+      botKey: 'bot-1',
+      postApprovalCard: async () => ({ messageTs: '1' }),
+      updateApprovalCard: async () => ({ ok: true }),
+      onApprovalDecision: (handler: (event: ApprovalDecisionEvent) => void) => {
+        tap = handler;
+      },
+    } as unknown as PlatformAdapter;
+    const bots = [
+      { botKey: 'bot-1', loop: { hooks: new DefaultHookRegistry() } },
+    ] as unknown as GatewayBotConfig[];
+    const forwardDecision = vi.fn();
+    const gateway = { resolveApprovalRoute: () => undefined } as unknown as Gateway;
+    wireApprovalFlow(gateway, bots, [adapter], {
+      personalities: { get: () => undefined } as unknown as PersonalityRegistry,
+      getProvider: async () => {
+        throw new Error('no provider in this test');
+      },
+      model: 'test-model',
+      forwardDecision,
+    });
+    const event: ApprovalDecisionEvent = {
+      approvalId: 'web-api-id',
+      decision: 'allow',
+      decidedBy: 'mitesh',
+      channelId: '42',
+      messageTs: '1',
+    };
+    tap(event);
+    expect(forwardDecision).toHaveBeenCalledWith(event);
   });
 });

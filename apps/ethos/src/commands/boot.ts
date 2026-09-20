@@ -62,7 +62,12 @@ import {
   type PlatformAdapter,
 } from '@ethosagent/types';
 import { WatcherManager, type WatcherWakeEvent } from '@ethosagent/watchers';
-import { IdempotencyStore, WebTokenRepository } from '@ethosagent/web-api';
+import {
+  createTelegramApprovalBridge,
+  IdempotencyStore,
+  isTelegramApprovalSurface,
+  WebTokenRepository,
+} from '@ethosagent/web-api';
 import {
   createLazyProvider,
   createOutboundPolicyGate,
@@ -993,11 +998,23 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     });
   }
 
+  // Plan mobile-app S10 — web-api approvals also reach the operator's bound
+  // Telegram chat. Only this merged profile can do it: the tap arrives on this
+  // process's adapter (see the bridge module's header for `serve` + `gateway`).
+  const telegramApprovalBridge = createTelegramApprovalBridge({
+    approvals: created.approvals,
+    ownerChatId: () => cfg.channelFilter?.telegram?.ownerUserId,
+    adapter: () => {
+      const telegram = gatewayRef?.listAdapters().find((a) => a.id.startsWith('telegram:'));
+      return isTelegramApprovalSurface(telegram) ? telegram : undefined;
+    },
+  });
   const approvalSeams = {
     personalities,
     getProvider: createLazyProvider(() => createLLM(cfg)),
     model: cfg.model,
     ...(cfg.approvalTimeoutMs !== undefined ? { approvalTimeoutMs: cfg.approvalTimeoutMs } : {}),
+    forwardDecision: telegramApprovalBridge.decide,
   };
   /**
    * One approval surface per bot, keyed by botKey. `wireApprovalFlow` binds its
