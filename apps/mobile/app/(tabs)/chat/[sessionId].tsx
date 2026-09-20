@@ -124,7 +124,7 @@ export default function ChatScreen() {
         name={name}
         model={modelName(personality?.model)}
         accent={accent}
-        onOpenSessions={() => router.push('/chat/sessions')}
+        onOpenSessions={() => router.navigate('/chat/sessions')}
         onNew={() => router.push('/chat/new-session')}
       />
       <View style={styles.flex}>
