@@ -1,3 +1,4 @@
+import { normalizeRemoteUrl } from '@ethosagent/sdk';
 import { session } from 'electron';
 import { getKeychainValue } from './keychain';
 import { store } from './store';
@@ -26,48 +27,6 @@ export function getConnectionMode(): ConnectionMode {
  */
 export function isConfigured(): boolean {
   return store.get('connectionMode') !== undefined;
-}
-
-/**
- * Normalizes a user-typed server URL to a bare origin (no trailing slash), or
- * null when it isn't an http(s) URL.
- */
-export function normalizeRemoteUrl(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-  return parsed.origin;
-}
-
-/** Normalizes a remote server URL to its origin, or null if unparseable. */
-export function remoteOrigin(url: string): string | null {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
-}
-
-/** The host (and port) of a remote server URL, for user-facing messages. */
-export function remoteHost(url: string): string | null {
-  try {
-    return new URL(url).host;
-  } catch {
-    return null;
-  }
-}
-
-/** The websocket origin matching an http(s) origin — used by the remote CSP. */
-export function wsOriginFor(origin: string): string {
-  if (origin.startsWith('https://')) return `wss://${origin.slice('https://'.length)}`;
-  if (origin.startsWith('http://')) return `ws://${origin.slice('http://'.length)}`;
-  return origin;
 }
 
 /** The base URL of whichever backend this app is currently pointed at. */

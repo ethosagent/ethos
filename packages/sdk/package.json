@@ -29,6 +29,7 @@
     ".": {
       "import": "./src/index.ts",
       "types": "./src/index.ts",
+      "default": "./src/index.ts",
       "production": "./dist/index.js"
     }
   },

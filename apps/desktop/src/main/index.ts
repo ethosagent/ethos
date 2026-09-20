@@ -1,6 +1,7 @@
 import type { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { remoteHost, remoteOrigin, wsOriginFor } from '@ethosagent/sdk';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { WebTokenRepository } from '@ethosagent/web-api';
 import { app, BrowserWindow, nativeTheme, session, type Tray } from 'electron';
@@ -11,10 +12,7 @@ import {
   applyRemoteAuthCookie,
   getConnectionMode,
   isConfigured,
-  remoteHost,
-  remoteOrigin,
   resolveBackendBaseUrl,
-  wsOriginFor,
 } from './connection';
 import { showConnectionWindow } from './connection-window';
 import { showErrorWindow } from './error-window';

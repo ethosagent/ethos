@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // `connection.ts` reaches for the OS keychain and the Electron cookie jar; the
-// helpers under test do neither, so both are stubbed to whatever lets the
-// module load.
+// function under test does neither, but importing the module pulls both in,
+// so both are stubbed to whatever lets the module load.
 vi.mock('electron', () => ({
   session: { defaultSession: { cookies: { set: async () => {} } } },
   safeStorage: {
@@ -20,66 +20,13 @@ vi.mock('electron-store', () => ({
   },
 }));
 
-import { normalizeRemoteUrl, remoteOrigin, testConnection, wsOriginFor } from '../connection';
+import { testConnection } from '../connection';
 
-describe('normalizeRemoteUrl', () => {
-  it('returns the origin with no trailing slash', () => {
-    expect(normalizeRemoteUrl('https://ethos.example.com/')).toBe('https://ethos.example.com');
-    expect(normalizeRemoteUrl('https://ethos.example.com/some/path?x=1')).toBe(
-      'https://ethos.example.com',
-    );
-  });
-
-  it('trims surrounding whitespace', () => {
-    expect(normalizeRemoteUrl('  https://ethos.example.com  ')).toBe('https://ethos.example.com');
-  });
-
-  it('preserves non-default ports', () => {
-    expect(normalizeRemoteUrl('http://10.0.0.5:3001')).toBe('http://10.0.0.5:3001');
-  });
-
-  it('rejects non-http(s) protocols', () => {
-    expect(normalizeRemoteUrl('ftp://ethos.example.com')).toBeNull();
-    expect(normalizeRemoteUrl('file:///etc/passwd')).toBeNull();
-  });
-
-  it('rejects garbage and empty input', () => {
-    expect(normalizeRemoteUrl('')).toBeNull();
-    expect(normalizeRemoteUrl('   ')).toBeNull();
-    expect(normalizeRemoteUrl('not a url')).toBeNull();
-    expect(normalizeRemoteUrl('ethos.example.com')).toBeNull();
-  });
-});
-
-describe('remoteOrigin', () => {
-  it('normalizes a URL to its origin', () => {
-    expect(remoteOrigin('https://ethos.example.com/some/path?x=1')).toBe(
-      'https://ethos.example.com',
-    );
-    expect(remoteOrigin('https://ethos.example.com/')).toBe('https://ethos.example.com');
-  });
-
-  it('preserves non-default ports', () => {
-    expect(remoteOrigin('http://10.0.0.5:3001')).toBe('http://10.0.0.5:3001');
-  });
-
-  it('returns null for unparseable input', () => {
-    expect(remoteOrigin('')).toBeNull();
-    expect(remoteOrigin('not a url')).toBeNull();
-  });
-});
-
-describe('wsOriginFor', () => {
-  it('maps https to wss and http to ws', () => {
-    expect(wsOriginFor('https://ethos.example.com')).toBe('wss://ethos.example.com');
-    expect(wsOriginFor('http://10.0.0.5:3001')).toBe('ws://10.0.0.5:3001');
-  });
-
-  it('leaves anything else alone', () => {
-    expect(wsOriginFor('wss://ethos.example.com')).toBe('wss://ethos.example.com');
-  });
-});
-
+// `normalizeRemoteUrl`/`remoteOrigin`/`remoteHost`/`wsOriginFor` moved to
+// `@ethosagent/sdk` (T-CONN) and are tested there —
+// `packages/sdk/src/__tests__/connection.test.ts`. `testConnection` stays
+// here: it is cookie-based (the desktop's own auth transport), unlike the
+// sdk's bearer-based `probeConnection`.
 describe('testConnection', () => {
   const healthOk = (body: unknown = { status: 'ok' }) =>
     new Response(JSON.stringify(body), { status: 200 });

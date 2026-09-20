@@ -1,5 +1,6 @@
+import { normalizeRemoteUrl } from '@ethosagent/sdk';
 import { BrowserWindow } from 'electron';
-import { normalizeRemoteUrl, testConnection } from './connection';
+import { testConnection } from './connection';
 
 export type ConnectionChoice = { mode: 'local' } | { mode: 'remote'; url: string; token: string };
 

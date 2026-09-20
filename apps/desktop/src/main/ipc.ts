@@ -2,6 +2,7 @@ import type { EventEmitter } from 'node:events';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { normalizeRemoteUrl } from '@ethosagent/sdk';
 import { FileSecretsResolver, FsStorage } from '@ethosagent/storage-fs';
 import { getDefaultModel, getModelsForProvider } from '@ethosagent/wiring/model-catalog';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, shell } from 'electron';
@@ -11,7 +12,6 @@ import { restartBackend, startBackend } from './backend';
 import {
   applyRemoteAuthCookie,
   getConnectionMode,
-  normalizeRemoteUrl,
   resolveBackendBaseUrl,
   testConnection,
 } from './connection';
