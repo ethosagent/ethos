@@ -19,6 +19,14 @@ const config: ExpoConfig = {
   version: '0.1.0',
   orientation: 'portrait',
   userInterfaceStyle: 'dark',
+  // No web target (D1: the phone is the remote; the browser already has
+  // `apps/web`). It is not just unbuilt, it cannot work: `expo-secure-store`'s
+  // web implementation is an empty stub, and the key lives in the Keychain —
+  // so Connect would fail on its first read. The camera scanner (D3) and the
+  // native tab bar (R11) are likewise iOS/Android only. Declaring this stops
+  // `expo start` offering a `w` that can only ever fail to resolve
+  // `react-native-web`.
+  platforms: ['ios', 'android'],
   ios: {
     bundleIdentifier: bundleId,
     supportsTablet: false,
