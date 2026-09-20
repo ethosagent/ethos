@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@ethosagent/types": ["../../packages/types/src"]
+    }
+  },
+  "include": ["app", "src", "app.config.ts", "vitest.config.ts", "expo-env.d.ts"]
+}

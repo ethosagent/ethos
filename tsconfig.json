@@ -230,6 +230,7 @@
     "**/dist/**",
     "apps/vscode-extension/**",
     "apps/web/**",
+    "apps/mobile/**",
     "apps/desktop/**"
   ]
 }
