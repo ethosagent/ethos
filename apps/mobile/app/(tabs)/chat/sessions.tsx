@@ -25,6 +25,19 @@ const VERBS: Array<{ verb: SessionVerb; label: string }> = [
   { verb: 'delete', label: 'Delete' },
 ];
 
+function NewSessionHeaderButton({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="New session"
+      onPress={onPress}
+      style={styles.headerButton}
+    >
+      <Text style={[type.h4, { color: color.chrome }]}>+</Text>
+    </Pressable>
+  );
+}
+
 /** sessions · session-actions (§4). Long-press opens the verbs as a native
  *  action sheet; Delete alone is destructive. */
 export default function SessionsScreen() {
@@ -77,7 +90,14 @@ export default function SessionsScreen() {
 
   return (
     <View style={styles.screen}>
-      <Stack.Screen options={{ title: 'Sessions' }} />
+      <Stack.Screen
+        options={{
+          title: 'Sessions',
+          headerRight: () => (
+            <NewSessionHeaderButton onPress={() => router.push('/chat/new-session')} />
+          ),
+        }}
+      />
       {failure ? <Row wrap row={failure} /> : null}
       {list.error ? <Row wrap row={errorRow(list.error, 'sessions.list')} /> : null}
       {list.isPending ? <Skeleton height={52} /> : null}
@@ -136,6 +156,7 @@ export default function SessionsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bgBase },
   empty: { padding: 16, gap: 12, alignItems: 'flex-start' },
+  headerButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   item: {
     minHeight: 52,
     paddingHorizontal: 16,

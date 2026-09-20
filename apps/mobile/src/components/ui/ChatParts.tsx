@@ -15,8 +15,10 @@ import { Button } from './Button';
 import { Mark } from './Mark';
 import { Row } from './Row';
 
-/** 3 px accent stripe, mark, name, model; one 50 pt target that opens Sessions,
- *  and `+` New session at 44 pt. No switcher (D5). */
+/** 3 px accent stripe; a `☰` Sessions button at the left edge (44 pt — the
+ *  explicit way out of a chat, since the stack header is hidden here), the
+ *  mark/name/model row (also opens Sessions), and `+` New session at 44 pt.
+ *  No switcher (D5). */
 export function PersonalityBar(props: {
   personalityId: string;
   name: string;
@@ -27,6 +29,14 @@ export function PersonalityBar(props: {
 }) {
   return (
     <View style={[styles.bar, { borderTopColor: props.accent }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Sessions"
+        onPress={props.onOpenSessions}
+        style={styles.hamburger}
+      >
+        <Text style={styles.hamburgerGlyph}>☰</Text>
+      </Pressable>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${props.name}, open sessions`}
@@ -280,10 +290,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
+    gap: 4,
     backgroundColor: color.bgBase,
   },
   barMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, height: '100%' },
   chevron: { color: color.textTertiary, fontSize: 18 },
+  hamburger: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  hamburgerGlyph: { color: color.chrome, fontSize: 18 },
   plus: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   plusButton: {
     width: 28,
