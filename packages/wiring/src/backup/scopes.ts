@@ -76,16 +76,16 @@ export interface WalStoreRecord {
 }
 
 /**
- * Every WAL store in the repo. 21 pragma sites across 20 modules, resolving to
- * 16 distinct database files — `sessions.db` has FIVE tenants sharing one file
+ * Every WAL store in the repo. 22 pragma sites across 21 modules, resolving to
+ * 16 distinct database files — `sessions.db` has SIX tenants sharing one file
  * and `pairing.db` is opened from two commands.
  *
- * Five, not four, and the difference is that tenants are not modules:
+ * Six, not five, and the difference is that tenants are not modules:
  * `extensions/session-sqlite/src/index.ts` holds two of them, which is what its
  * `sites: 2` records — `SQLiteSessionStore` and the key/value store
  * `createKvStoreFactory` opens, both pointed at the same `sessions.db` path by
- * `session-sqlite/src/compose.ts`. Counting the four MODULES that name the file
- * is what makes it look like four.
+ * `session-sqlite/src/compose.ts`. Counting the five MODULES that name the file
+ * is what makes it look like five.
  */
 export const WAL_STORES: readonly WalStoreRecord[] = [
   {
@@ -157,6 +157,15 @@ export const WAL_STORES: readonly WalStoreRecord[] = [
     database: 'sessions.db',
     scope: 'state',
     reason: 'Fourth tenant of sessions.db — what context each turn was assembled from.',
+  },
+  {
+    source: 'extensions/session-sqlite/src/push-device-store.ts',
+    sites: 1,
+    database: 'sessions.db',
+    scope: 'state',
+    reason:
+      'Sixth tenant of sessions.db — phones registered for push (Expo tokens), keyed to the ' +
+      'API keys beside them.',
   },
   {
     source: 'apps/web-api/src/stores/idempotency-store.ts',

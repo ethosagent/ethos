@@ -105,6 +105,9 @@ export interface RpcContext {
   /** Durable per-conversation voice mode, shared with the gateway's lanes.
    *  Not optional: it needs no provider, only Storage. */
   voiceLaneMode: VoiceLaneModeService;
+  /** Phone push (S5). Absent where no API-key store is wired — no bearer key,
+   *  so no phone to push to. */
+  push?: import('../services/push-dispatcher').PushRpcServices;
   /** Read-only delivery-obligation ledger view. Not optional: it degrades to
    *  zeros when the gateway has never run. */
   deliveries: DeliveriesService;

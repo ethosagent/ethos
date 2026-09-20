@@ -51,7 +51,11 @@ import { SQLiteInboundDedupStore } from '@ethosagent/inbound-dedup';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createMetricsTextProvider } from '@ethosagent/observability-sqlite';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
-import { SQLiteContextLog, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
+import {
+  SQLiteContextLog,
+  SqliteApiKeyStore,
+  SqlitePushDeviceStore,
+} from '@ethosagent/session-sqlite';
 import Database from '@ethosagent/sqlite';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import { teamsDir } from '@ethosagent/team-supervisor';
@@ -674,6 +678,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   } = buildServeA2aSurface({ config: cfg, core: a2a, toolRegistry: shared.toolRegistry });
 
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
+  // Phone push devices (S5) — after `apiKeys`, whose table its joins read.
+  const pushDevices = new SqlitePushDeviceStore(join(dir, 'sessions.db'));
   const idempotencyStore = new IdempotencyStore(join(dir, 'sessions.db'));
   const serveAttachmentCache = new FsAttachmentCache(
     new FsStorage(),
@@ -733,6 +739,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     identityMap,
     attachmentCache: serveAttachmentCache,
     apiKeys,
+    pushDevices,
     idempotencyStore,
     toolRegistry: shared.toolRegistry,
     mcpManager: shared.mcpManager,
@@ -2510,6 +2517,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
                 contextLog.close();
                 session.close();
                 apiKeys.close();
+                pushDevices.close();
                 idempotencyStore.close();
                 metricsApiKeys.close();
               },

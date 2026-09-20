@@ -1862,6 +1862,19 @@ describe('CronScheduler mid-execution signal', () => {
     expect(await scheduler.hasRunningJobs()).toBe(false);
   });
 
+  it('tells the setOnFailed listener about a scheduled run that failed', async () => {
+    const failures: Array<[string, string]> = [];
+    const scheduler = makeScheduler({
+      runJob: async () => {
+        throw new Error('provider exploded');
+      },
+    });
+    scheduler.setOnFailed((job, error) => failures.push([job.name, error]));
+    await makeDue(scheduler, 'Throwing Job');
+    await scheduler.fire();
+    expect(failures).toEqual([['Throwing Job', 'provider exploded']]);
+  });
+
   it('clears runningSince when a script job fails', async () => {
     await writeScript('boom.sh', '#!/bin/bash\nexit 3\n');
     const scheduler = makeScheduler();

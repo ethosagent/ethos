@@ -55,7 +55,11 @@ import {
   NotificationGate,
 } from '@ethosagent/platform-callcapture';
 import { SessionLane } from '@ethosagent/session-lane';
-import { SQLiteContextLog, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
+import {
+  SQLiteContextLog,
+  SqliteApiKeyStore,
+  SqlitePushDeviceStore,
+} from '@ethosagent/session-sqlite';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
 import { teamsDir } from '@ethosagent/team-supervisor';
 import { createA2aTools } from '@ethosagent/tools-a2a';
@@ -1025,6 +1029,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // OpenAI-compat surface (F1+F2). Shares sessions.db so `ethos api-key`
   // and `ethos serve` see the same rows.
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
+  // Phone push devices (S5) — after `apiKeys`, whose table its joins read.
+  const pushDevices = new SqlitePushDeviceStore(join(dir, 'sessions.db'));
   // Idempotency cache for `POST /v1/chat/completions` retries — same db,
   // same rationale.
   const idempotencyStore = new IdempotencyStore(join(dir, 'sessions.db'));
@@ -1242,6 +1248,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     identityMap,
     attachmentCache,
     apiKeys,
+    pushDevices,
     idempotencyStore,
     createTeamLoop,
     // With `--team`, `loop` IS that team's loop already; keep that behaviour
@@ -1424,6 +1431,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
               contextLog.close();
               session.close();
               apiKeys.close();
+              pushDevices.close();
               idempotencyStore.close();
             },
           ],
@@ -2079,6 +2087,8 @@ export interface BuildServeWebApiOptions {
   identityMap: IdentityMap;
   attachmentCache: FsAttachmentCache;
   apiKeys: SqliteApiKeyStore;
+  /** Phone push device rows (S5), on the same sessions.db, opened after `apiKeys`. */
+  pushDevices: SqlitePushDeviceStore;
   idempotencyStore: IdempotencyStore;
   /** The concrete registry — the character sheet's `mcpExport` seam resolves
    *  `mcp_export` against it, which needs `toolNamesForPersonality`. */
@@ -2167,6 +2177,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     identityMap,
     attachmentCache,
     apiKeys,
+    pushDevices,
     idempotencyStore,
     toolRegistry,
     mcpManager,
@@ -2207,7 +2218,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     webHost,
     webPort,
   } = opts;
-  return createWebApi({
+  const created = createWebApi({
     dataDir: dir,
     attachmentCache,
     sessionStore: session,
@@ -2367,6 +2378,8 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     ...(pluginLoader ? { pluginLoader } : {}),
     ...(notificationRouter ? { notificationRouter } : {}),
     apiKeys,
+    pushDevices,
+    ...(config.push ? { pushTransport: config.push.transport } : {}),
     idempotencyStore,
     // The screencast takeover lane's session registry (B3). `ethos serve` and
     // `ethos boot` run the browser tools in THIS process, so the session
@@ -2469,4 +2482,10 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     // bearer key carrying the `cron` scope (D2).
     cronFireTrigger: cronTriggers.external,
   });
+  // A scheduled run's failure becomes `cron.failed` on the system bus — the
+  // phone push's cronFailures category (S5) listens there.
+  cronScheduler?.setOnFailed((job, error) =>
+    created.systemBus.emitSystem({ type: 'cron.failed', jobId: job.id, jobName: job.name, error }),
+  );
+  return created;
 }

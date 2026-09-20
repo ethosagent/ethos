@@ -145,6 +145,15 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     whoami: ANY_KEY,
     connectInfo: COOKIE_ONLY,
   },
+  // Push (mobile-app S5, S13(c)). register/unregister/test act only on the
+  // calling key's own device rows (`rpc/push.ts`). `listDevices` shows every
+  // key's phones — the web's Connected phones list — so it is cookie-only.
+  push: {
+    register: 'push:register',
+    unregister: 'push:register',
+    test: 'push:register',
+    listDevices: COOKIE_ONLY,
+  },
 };
 
 // SSE feeds are keyed by the first path segment after `/sse/`, not by an RPC

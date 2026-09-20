@@ -476,6 +476,7 @@ export class CronScheduler {
     decision: CronDecision & { ranAt: string; delivered: boolean },
   ) => void;
   private armingBackend?: CronArmingBackend;
+  private failedListener?: (job: CronJob, error: string) => void;
 
   constructor(config: CronSchedulerConfig) {
     this.cronDir = config.cronDir ?? join(homedir(), '.ethos', 'cron');
@@ -493,6 +494,17 @@ export class CronScheduler {
     this.executionBackend = config.executionBackend ?? null;
     this.onDecision = config.onDecision;
     this.armingBackend = config.armingBackend;
+  }
+
+  /**
+   * Late-bind a listener told when a SCHEDULED run fails (the tick's own catch,
+   * below `lastError`) — `buildServeWebApi` forwards it as `cron.failed` onto the
+   * web API's `SystemEventBus` for the phone push (mobile-app S5). A manual
+   * `runJobNow` reports its failure to its caller instead. One slot; a throwing
+   * listener is swallowed so it can never break the tick.
+   */
+  setOnFailed(listener: ((job: CronJob, error: string) => void) | undefined): void {
+    this.failedListener = listener;
   }
 
   /**
@@ -1035,9 +1047,13 @@ export class CronScheduler {
           jobId: job.id,
           error: String(err),
         });
-        await this.patchJob(job.id, {
-          lastError: err instanceof Error ? err.message : String(err),
-        }).catch(() => {});
+        const lastError = err instanceof Error ? err.message : String(err);
+        await this.patchJob(job.id, { lastError }).catch(() => {});
+        try {
+          this.failedListener?.(job, lastError);
+        } catch {
+          // fail-open: a listener never breaks the tick
+        }
         continue;
       } finally {
         this.inFlight--;

@@ -3344,6 +3344,69 @@ const apiKeys = {
 };
 
 // ---------------------------------------------------------------------------
+// Push — a phone's Expo push token bound to the API key that registered it
+// (mobile-app plan S5, S13(c)). A device row is keyed by `(apiKeyId,
+// expoPushToken)`, so one key on two handsets is two rows. `listDevices` is
+// cookie-only (the web's Connected phones list) and never returns a full token.
+// ---------------------------------------------------------------------------
+
+/** The five notification categories (D11); each device opts in per category. */
+export const PushCategoriesSchema = z.object({
+  approvals: z.boolean(),
+  clarify: z.boolean(),
+  cronFailures: z.boolean(),
+  teamAttention: z.boolean(),
+  runFinished: z.boolean(),
+});
+export type PushCategories = z.infer<typeof PushCategoriesSchema>;
+
+const PushRegisterInput = z.object({
+  expoPushToken: z.string().min(1).max(200),
+  platform: z.enum(['ios', 'android']),
+  categories: PushCategoriesSchema,
+  liveActivities: z.boolean(),
+  appVersion: z.string().min(1).max(50),
+});
+/** `registered: false` with `transport: 'none'` — the operator turned push off
+ *  (`push.transport: none`); nothing was stored and nothing will be sent. */
+const PushRegisterOutput = z.object({
+  registered: z.boolean(),
+  transport: z.enum(['expo', 'none']),
+});
+
+const PushUnregisterInput = z.object({ expoPushToken: z.string().min(1) });
+const PushUnregisterOutput = z.object({ removed: z.boolean() });
+
+/** `apiKeyId` is honoured ONLY on a cookie request; a bearer caller always
+ *  tests its own devices. */
+const PushTestInput = z.object({ apiKeyId: z.string().optional() });
+/** `error` is the Settings diagnostics row's text, e.g. `Expo · 503 · project <owner>`. */
+const PushTestOutput = z.union([
+  z.object({ ok: z.literal(true), sent: z.number().int() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+
+export const PushDeviceRowSchema = z.object({
+  apiKeyId: z.string(),
+  keyName: z.string(),
+  keyPrefix: z.string(),
+  platform: z.enum(['ios', 'android']),
+  appVersion: z.string(),
+  /** The last characters of the Expo push token — never the whole token. */
+  tokenTail: z.string(),
+  lastRegisteredAt: z.string(),
+});
+export type PushDeviceRow = z.infer<typeof PushDeviceRowSchema>;
+
+/** @experimental */
+const push = {
+  register: oc.input(PushRegisterInput).output(PushRegisterOutput),
+  unregister: oc.input(PushUnregisterInput).output(PushUnregisterOutput),
+  test: oc.input(PushTestInput).output(PushTestOutput),
+  listDevices: oc.input(z.object({})).output(z.array(PushDeviceRowSchema)),
+};
+
+// ---------------------------------------------------------------------------
 // Meta — server capabilities (stable from v1)
 //
 // Open-shape `Record<string, boolean>` describing what this server
@@ -6033,6 +6096,7 @@ export const contract = {
   kanban,
   teams,
   apiKeys,
+  push,
   meta,
   models,
   modelRegistry,

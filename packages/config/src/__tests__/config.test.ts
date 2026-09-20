@@ -402,6 +402,34 @@ describe('parseConfigYaml — a2a.enabled', () => {
   });
 });
 
+describe('parseConfigYaml — push.transport', () => {
+  const base = ['provider: anthropic', 'model: m', 'apiKey: sk', 'personality: researcher'];
+
+  it('parses none and expo; drops a typo so the expo default applies', async () => {
+    expect((await loadYaml([...base, 'push.transport: none'].join('\n'))).push).toEqual({
+      transport: 'none',
+    });
+    expect((await loadYaml([...base, 'push.transport: expo'].join('\n'))).push).toEqual({
+      transport: 'expo',
+    });
+    expect((await loadYaml([...base, 'push.transport: apns'].join('\n'))).push).toBeUndefined();
+  });
+
+  it('round-trips through writeConfig and back', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original: EthosConfig = {
+      provider: 'anthropic',
+      model: 'm',
+      apiKey: 'sk',
+      personality: 'researcher',
+      push: { transport: 'none' },
+    };
+    await writeConfig(storage, original, new InMemorySecretsResolver());
+    expect((await readRawConfig(storage))?.push).toEqual({ transport: 'none' });
+  });
+});
+
 describe('parseConfigYaml — security.trusted_github_orgs', () => {
   const base = [
     'provider: anthropic',

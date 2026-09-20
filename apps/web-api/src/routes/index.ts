@@ -158,6 +158,8 @@ export interface ServiceContainer {
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
   agentLoop?: import('@ethosagent/core').AgentLoop;
   systemBus?: import('../services/system-event-bus').SystemEventBus;
+  /** Phone push (S5) — see `RpcContext.push`. */
+  push?: import('../services/push-dispatcher').PushRpcServices;
   /** A2A peering service — shared with the live `/a2a` handshake (one source of
    *  truth, plan §12). Consumed by the peering RPC procedures (later stage). */
   a2aPeering?: import('@ethosagent/wiring').A2aPeeringService;

@@ -26,6 +26,14 @@ export {
 } from './api-key-store';
 export { SQLiteContextLog } from './context-log';
 export {
+  type PushDeviceCategories,
+  type PushDeviceRecord,
+  type PushDeviceWithKey,
+  type PushPlatform,
+  type RegisterPushDeviceInput,
+  SqlitePushDeviceStore,
+} from './push-device-store';
+export {
   decideMigration,
   type MigrateSessionKeysOptions,
   migrateSessionKeys,

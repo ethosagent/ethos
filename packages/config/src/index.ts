@@ -2681,6 +2681,13 @@ export interface EthosConfig {
    */
   a2a?: { enabled?: boolean };
   /**
+   * Phone push delivery (mobile-app plan S5, T-DIST). `expo` (the default when
+   * absent) sends through the Expo Push Service; `none` turns push off — no
+   * dispatcher runs and `push.register` stores nothing. Config key:
+   * push.transport
+   */
+  push?: { transport: 'expo' | 'none' };
+  /**
    * Operator-controlled security settings.
    *
    * `trustedGitHubOrgs` — the GitHub organizations whose skills and plugins
@@ -4139,6 +4146,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
     lines.push(`plugins.auto_install: ${config.pluginsAutoInstall}`);
   if (config.admin?.enabled !== undefined) lines.push(`admin.enabled: ${config.admin.enabled}`);
   if (config.a2a?.enabled !== undefined) lines.push(`a2a.enabled: ${config.a2a.enabled}`);
+  if (config.push) lines.push(`push.transport: ${config.push.transport}`);
   // Written even when the list is empty — `""` is how "trust no org" survives
   // a round-trip, and dropping the line would silently restore the default.
   if (config.security?.trustedGitHubOrgs !== undefined)
@@ -5303,6 +5311,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       kv['a2a.enabled'] = parseConfigScalar(a2a[1]);
       continue;
     }
+    // push.transport: expo | none
+    const pushTransport = line.match(/^push\.transport:\s*(.+)$/);
+    if (pushTransport) {
+      kv['push.transport'] = parseConfigScalar(pushTransport[1]);
+      continue;
+    }
     // security.trusted_github_orgs: <org,list>
     // `(.*)` — not `(.+)` — on purpose: an empty value is a meaningful
     // configuration ("trust no org"), distinct from the key being absent.
@@ -5976,6 +5990,11 @@ export function parseConfigYaml(src: string): EthosConfig {
     admin:
       kv['admin.enabled'] !== undefined ? { enabled: kv['admin.enabled'] === 'true' } : undefined,
     a2a: kv['a2a.enabled'] !== undefined ? { enabled: kv['a2a.enabled'] === 'true' } : undefined,
+    // Only the two known values; a typo is dropped and the `expo` default applies.
+    push:
+      kv['push.transport'] === 'expo' || kv['push.transport'] === 'none'
+        ? { transport: kv['push.transport'] }
+        : undefined,
     // `!== undefined` — not truthiness: an empty value must survive as `[]`
     // (trust no org) instead of collapsing back to the shipped default.
     security:

@@ -313,6 +313,7 @@ describe('contract router', () => {
       'personalities',
       'platforms',
       'plugins',
+      'push',
       'recipes',
       'sessions',
       'skills',

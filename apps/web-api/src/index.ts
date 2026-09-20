@@ -99,6 +99,8 @@ import { OutboxService } from './services/outbox.service';
 import { PersonalitiesService } from './services/personalities.service';
 import { PlatformsService } from './services/platforms.service';
 import { PluginsService } from './services/plugins.service';
+import { PushDispatcher } from './services/push-dispatcher';
+import { ExpoPushTransport } from './services/push-transport';
 import { createLiveChannelSetupWorld } from './services/recipe-channel-setup';
 import { RecipesService } from './services/recipes.service';
 import { SkillsService } from './services/skills.service';
@@ -282,6 +284,16 @@ export interface CreateWebApiOptions {
    * call waits forever. Boot code sources it from `config.approvalTimeoutMs`.
    */
   approvalTimeoutMs?: number;
+  /**
+   * Phone push device rows (mobile-app S5) — boot code constructs
+   * `SqlitePushDeviceStore` against the same `sessions.db` as `apiKeys`, after
+   * it. Borrowed, never closed here. Absent → the `push` namespace refuses and
+   * no dispatcher runs.
+   */
+  pushDevices?: import('@ethosagent/session-sqlite').SqlitePushDeviceStore;
+  /** `push.transport` from config.yaml. `none` → no dispatcher and no Expo
+   *  traffic; `push.register` stores nothing. Default `expo`. */
+  pushTransport?: 'expo' | 'none';
   /**
    * Sink for wake-satellite lane events (`satellite.*`) — today, the turn that
    * ran without speaking because the node declared no loudspeaker. Boot code
@@ -1658,6 +1670,36 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     });
   });
 
+  // Phone push (S5): approvals, cron failures, team attention and finished runs
+  // subscribed here; clarify is fed from the web presenter below. The store is
+  // borrowed; the dispatcher and its receipt timers are this surface's.
+  const pushDevices = opts.pushDevices;
+  let pushDispatcher: PushDispatcher | undefined;
+  if (pushDevices) {
+    // Retention sweep: device rows of keys revoked since the last start.
+    pushDevices.sweepRevoked();
+    if (opts.pushTransport !== 'none') {
+      pushDispatcher = new PushDispatcher({
+        devices: pushDevices,
+        transport: new ExpoPushTransport({
+          accessToken: async () => (await secrets.get('providers/expo/accessToken')) ?? undefined,
+          onDeviceNotRegistered: (token) => pushDevices.removeToken(token),
+        }),
+        personalityFor: async (sessionId) =>
+          (await opts.sessionStore.getSession(sessionId))?.personalityId,
+      });
+      disposers.push(
+        'push dispatcher',
+        pushDispatcher.start({
+          approvals: approvalsService,
+          systemBus,
+          kanban: kanbanService,
+          ...(opts.subscribeJobComplete ? { subscribeJobComplete: opts.subscribeJobComplete } : {}),
+        }),
+      );
+    }
+  }
+
   // Session key ↔ session id translation. The `session_start` hook is the one
   // place both `sessionKey` (what background jobs/routers key by) and
   // `sessionId` (what the SSE buffer/ChatService is keyed by) are known
@@ -1713,6 +1755,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
         // No open session for this key — a CLI/gateway-spawned clarify, or no
         // browser tab open for it. Nothing to present here.
         if (!sessionId) return;
+        void pushDispatcher?.clarify(sessionId, req);
         chatService.broadcast(sessionId, {
           type: 'clarify.request',
           requestId: req.requestId,
@@ -2014,6 +2057,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       pluginLoader: opts.pluginLoader,
       agentLoop,
       systemBus,
+      ...(pushDevices ? { push: { devices: pushDevices, dispatcher: pushDispatcher } } : {}),
       ...(opts.a2aPeering ? { a2aPeering: opts.a2aPeering } : {}),
       ...(opts.a2aControl ? { a2aControl: opts.a2aControl } : {}),
       ...(opts.activityHistoryFn ? { activityHistory: opts.activityHistoryFn } : {}),
