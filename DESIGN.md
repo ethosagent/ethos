@@ -88,6 +88,11 @@ altitude rail is global chrome and keeps `--ethos-info` forever. The contextual
 column and the stage carry the active scope's accent. The furniture moves only
 when you have walked into a different room.
 
+**Global chrome on a phone.** The tab bar and the navigation bar are global
+chrome and stay `--info` at every altitude; a screen's content is the scoped
+chrome. Inside an agent's detail the hero and mark take its accent; the nav bar
+does not.
+
 **Team chrome is neutral**, because a team's identity is plural. The team panes
 (Overview, Board, Structure, Memory, Activity, Channels, Settings) run on
 `--ethos-info` like the Library. Inside a team, a member's workspace
@@ -145,12 +150,23 @@ is not the reviewer accent, and retuning one must never move the other.
 | `--warning` | `#F59E0B` | `#986206` | Pending review, soft warnings. Dark value coincides with the reviewer accent; the light value does not |
 | `--error` | `#F87171` | `#CE2C2C` | Distinct red, never a personality color — failures, rejections |
 | `--info` | `#4A9EFF` | `#4A9EFF` | Informational tags, neutral notifications. The one semantic that does not retune: it is the researcher hue and the permanent altitude-rail blue, so it moves only as an accent decision |
+| `--chrome-text` | `#4A9EFF` | `#1D6FD1` | Light-skin chrome **text** only — a selected tab label, a back-button label, a content link. Icons, dots, rings and 2px indicators keep `--info`; the dark skin is unchanged (`#4A9EFF` on `#0F0F0F` passes) |
 
 Light values keep their dark counterpart's hue and drop lightness until the
 pair clears WCAG AA on `--bg-base` (4.98 / 4.92 / 4.99:1); red also eases its
 saturation so a 5:1 red reads as brick rather than siren beside the ochre and
 the forest green. `--info` on paper-warm is 2.63:1 and is a known shortfall —
 see the 2026-09-04 decisions-log row.
+
+`--info` colours icons everywhere, but on a phone it would also colour
+**text** — 10px tab labels, back labels, links — not only icons, and `#4A9EFF`
+on the light `--bg-base` is that same known 2.63:1 shortfall. `--chrome-text`
+exists for that case alone: same hue, lightness dropped until ≥ 4.5:1 on
+`#FAFAF7` — `#1D6FD1` measures 4.73:1 by the WCAG formula. The researcher
+accent is untouched; only light-skin chrome text moves. The validator gains a
+rule — `chromeText` on `bgBase` at `MIN_CONTRAST_MUTED`
+(`packages/design-tokens/src/validate.ts:111`) for every skin — so it cannot
+regress.
 
 ## Spacing
 
@@ -201,6 +217,22 @@ exemption to buy — build it from primitives. The team Overview's attention til
 the Task tile exemption reused, not a new one; structure-canvas nodes, scope-switcher
 rows and supervisor-ledger rows are bordered containers assembled from primitives.
 
+The phone confirms this: no new exemption. The Recipes two-column grid there
+is the same approved exception as the web's gallery below; the approval panel,
+clarify card, run card and composer are bordered containers built from raw
+primitives on every surface, phone included. Prototype fidelity: the run card
+is border colour by state plus a `PI` badge with no left stripe — parity with
+the web's `.run-card`, which draws none; the task tile's reason is a feedback
+row inside the tile (glyph + word + text), not a stripe; radii snap to
+4 / 8 / 14 / full, with 12 only on the composer and the user bubble; the only
+ring anywhere in the app is the `StatusDot` live glow this file already
+sanctions for the connection dot; "Verifier said" on Task is a bordered box,
+not a `Card`. The anti-slop table's "Colored left-border on cards" row speaks
+of *cards* — the run card is not a `Card` and the web draws no stripe on it,
+so removing the stripe on the phone is web parity, not a new exemption; the
+task tile **is** a `Card` exemption, so its reason stripe was the row's exact
+pattern and removing it there is both parity and compliance.
+
 #### The one approved card grid: the Recipes gallery
 
 `apps/web/src/pages/Recipes.tsx` renders its catalog as a **card grid**, which
@@ -242,6 +274,41 @@ The user always sees what the agent is doing and what it did; the answer itself 
 5. **Findings are trail rows.** A grounding finding, a blocked-page hint, a profile-fallback warning: `⚠` + the word, the claim quoted in mono, the evidence in `--text-secondary`; the row is a button that focuses the tool row it cites. In `correct` mode the next reply's first paragraph is preceded by one mono label `correction · re: "tests pass"` — the only chrome.
 6. **Feedback rows outside chat.** Any action a page takes — a backup, a probe, an install stage, an observe heartbeat — is a row: glyph + word, mono subject, mono timestamp or duration, result text. The same row the trail uses. Persistent, never a toast; outcomes resolve the row in place, they do not remove it.
 7. **Nothing vanishes.** A waiting card (clarify, takeover) resolves to a row stating the outcome; it never disappears. (Call Stage lesson, 2026-08-14.)
+8. **On a phone there are no toasts at all.** The connection indicator is a row (the More tab's server row), and probes, uploads and push registration are rows that resolve in place.
+
+### Approvals and reviews on a phone
+
+**Two containers for two askers.** An approval an agent asks for slides down
+from the personality bar (existing rule, above). A review the system asks for
+— a proposed memory write, a skill proposal — is a bottom sheet
+(`--motion-slow`, 240ms, on the web). On the phone the bottom sheet is the
+platform's native sheet, whose presentation motion is the system's; the 240ms
+figure governs the web only. **Who is asking decides the container.**
+
+**Native action sheets** are allowed for per-item verbs (rename / fork / share
+/ delete) as a platform idiom; destructive alone in red; on Android a bottom
+sheet. One component serves both platforms.
+
+**Permission containers.** No filled primary inside a permission container.
+The approval panel, the memory-write sheet and the Task action row use two
+equal-weight bordered 44px buttons, the affirmative in accent text and the
+negative in `--error` text; the filled 32px send and the Connect button are
+not permissions and keep their fill. On tap both buttons disable with their
+labels unchanged, the reserved slot reads `deciding…`, and the container
+closes on the resolving event (`approval.resolved`; the pending list dropping
+the id; the task's status change) — a second tap is impossible.
+
+### Lock screen and Live Activity
+
+The lock screen is a surface too. Title `Ethos · <personality or team>`, body
+= what + mono subject, actions are verbs (Allow once / Deny); Live Activity
+shows the run's title, its last-seen `now` line and a locally ticking elapsed
+only; app icon is the annulus. On `approval.resolved` — from the decision's own
+response or the app's stream — a local notification, scheduled with the
+approval's identifier, **replaces** the banner and carries the resolved-row
+text (`✓ allowed once · bash · 9:41`, `✗ denied · bash`, or `resolved
+elsewhere` when another client decided), no actions, no sound, no haptic,
+auto-clearing after 60s: the lock screen obeys "nothing vanishes" too.
 
 ### Empty chat state
 When `messages.length === 0` and no turn is active, the chat surface shows a centered empty state (not a placeholder sentence):
@@ -492,6 +559,21 @@ Nav group separators are **thin lines** (`height: 1px; background: var(--border)
 ### Desktop icon-only rail
 Desktop sidebar is 64px wide and always icon-only. Active state uses background + a 2px × 16px rounded bar flush to the left edge (not a full left-border since there's no label text to offset against).
 
+### Phone tab bar
+
+Tab bar icons are the sidebar table's glyphs at 24px stroke (Chat = speech
+bubble; Agents = the annulus, because Agents is the Library; Teams = the
+segmented-ring glyph; Activity = the activity glyph; More = ellipsis), touch
+targets ≥44px. Tab labels are the system's own tab label, not a custom Geist
+label — a `NativeTabs` bar does not reliably apply custom tab-label fonts or
+colours. Large titles on Library-altitude roots (Agents, Teams, Activity,
+More) render as the system's native large title in the platform font, for the
+same class of reason: custom fonts in native large titles have a long history
+of being ignored. Both are system chrome (see "System chrome is the
+platform's" under Cross-surface token mapping); the `--info` tint and
+`--chrome-text` on the light skin still colour the selected tab and the back
+label.
+
 ### Teams (third altitude)
 
 A team is a scope beside Library and Workspace, not a page inside the Library. It
@@ -544,6 +626,28 @@ transition and has no duration token. It still stops under
 `prefers-reduced-motion`, and it is the only place in the system allowed to move
 without a transition.
 
+### Motion on the phone
+
+Stack push and pop keep the native iOS transition — a platform idiom, like the
+action sheets above. A tab switch has no animation. Overlays use the scale —
+the approval slide-down at `--motion-default` 180ms on `--ease` — and the
+native sheet keeps the system's presentation motion, a platform idiom like
+push/pop. Pulses (the status dot, the `now` dot, the connecting dot) stop
+under Reduce Motion and **hold their armed colour** rather than disappearing.
+Skeletons are static — no shimmer, which is motion carrying no information.
+
+### Haptics
+
+| Event | Haptic |
+|---|---|
+| Approval arrives | One soft notification haptic (`Warning`) |
+| Allow / Deny / Send | A light selection tap |
+| Probe turns green | None |
+| Error row | None — the row is the feedback |
+| Everything else | None |
+
+Sound never by default.
+
 ## Personality marks (generative SVG)
 
 Deterministic geometric marks per personality. Same algorithm runs at render time on every surface — no asset pipeline, no PNG bundle.
@@ -566,7 +670,8 @@ annulus, the machine altitude does not generate a mark, and a team's ring is ass
 from its members, not hashed from an id.
 
 The segmented ring renders at 14px (breadcrumb), 18px (switcher rows), 22–30px
-(column identity, rail) and 36px (team Overview). Arc stroke width is
+(column identity, rail), 36px (team Overview) and 40px (the phone's Teams list
+rows). Arc stroke width is
 `max(1.5, size * 0.09)`; the gap between arcs is `min(3px, 18% of an arc)`. Same
 algorithm on every surface. TUI fallback: `◔ ◑ ◕ ●` by member count. Reference
 implementation in `apps/web/src/components/ui/TeamRing.tsx`, with the algorithm twin
@@ -580,16 +685,16 @@ For TUI: render as a 4×4 unicode block-character grid using `▓▒░` charact
 
 Ethos lives across surfaces. The single source of truth is hex values and font choices in this file. Each surface reads them differently:
 
-| Token | Web (CSS var) | TUI (ANSI 256) | VS Code (theme) | Email digest | CLI (chalk) |
-|---|---|---|---|---|---|
-| accent · researcher | `#4A9EFF` | `\x1b[38;5;39m` | matches editor accent | `#4A9EFF` brand | `chalk.hex('#4A9EFF')` |
-| accent · engineer | `#4ADE80` | `\x1b[38;5;41m` | (same) | (same) | `chalk.hex('#4ADE80')` |
-| accent · reviewer | `#F59E0B` | `\x1b[38;5;208m` | (same) | (same) | `chalk.hex('#F59E0B')` |
-| accent · coach | `#E879F9` | `\x1b[38;5;207m` | (same) | (same) | `chalk.hex('#E879F9')` |
-| accent · operator | `#94A3B8` | `\x1b[38;5;247m` | (same) | (same) | `chalk.hex('#94A3B8')` |
-| bg-base (dark) | `#0F0F0F` | (terminal default) | `--vscode-editor-background` | (light only) | (terminal default) |
-| text-primary (dark) | `#E8E8E6` | `\x1b[38;5;253m` | `--vscode-foreground` | `#1A1A1A` | (terminal default) |
-| mono | `Geist Mono` | (terminal mono font) | `editor.fontFamily` | `monospace` fallback | (terminal default) |
+| Token | Web (CSS var) | TUI (ANSI 256) | VS Code (theme) | Email digest | CLI (chalk) | iOS (React Native) |
+|---|---|---|---|---|---|---|
+| accent · researcher | `#4A9EFF` | `\x1b[38;5;39m` | matches editor accent | `#4A9EFF` brand | `chalk.hex('#4A9EFF')` | `#4A9EFF` |
+| accent · engineer | `#4ADE80` | `\x1b[38;5;41m` | (same) | (same) | `chalk.hex('#4ADE80')` | `#4ADE80` |
+| accent · reviewer | `#F59E0B` | `\x1b[38;5;208m` | (same) | (same) | `chalk.hex('#F59E0B')` | `#F59E0B` |
+| accent · coach | `#E879F9` | `\x1b[38;5;207m` | (same) | (same) | `chalk.hex('#E879F9')` | `#E879F9` |
+| accent · operator | `#94A3B8` | `\x1b[38;5;247m` | (same) | (same) | `chalk.hex('#94A3B8')` | `#94A3B8` |
+| bg-base (dark) | `#0F0F0F` | (terminal default) | `--vscode-editor-background` | (light only) | (terminal default) | `#0F0F0F` — the RN root background |
+| text-primary (dark) | `#E8E8E6` | `\x1b[38;5;253m` | `--vscode-foreground` | `#1A1A1A` | (terminal default) | `#E8E8E6` |
+| mono | `Geist Mono` | (terminal mono font) | `editor.fontFamily` | `monospace` fallback | (terminal default) | `Geist Mono`, embedded at build time by the `expo-font` config plugin |
 
 ### Per-surface notes
 
@@ -598,6 +703,21 @@ Ethos lives across surfaces. The single source of truth is hex values and font c
 - **VS Code extension:** uses `--vscode-*` tokens for chrome (so VS Code's user theme stays consistent). Per-personality accent only on personality-specific affordances (chat header stripe, tool chip icon).
 - **Email digests:** light mode only (most email clients render dark mode poorly). Single brand accent (`#4A9EFF`) — no per-personality fingerprint in digests because they aggregate across personalities.
 - **Web UI:** the full system; this file's primary consumer. Applied via Antd `ConfigProvider` theme tokens, see `apps/web/src/lib/theme.ts`.
+- **iOS and Android (React Native):** full system for content, rendered natively. Fonts are embedded in the binary at build time, so nothing waits on them; content never falls back silently to the system font. System chrome — tab bar, navigation bar and large titles, action sheets, sheet grabber, notification banners — is the platform's own (see "System chrome is the platform's" below). Tokens flow through one RN theme object built from `DEFAULT_TOKENS`.
+
+### System chrome is the platform's
+
+System chrome — the tab bar, navigation bar and large titles, action sheets, the
+sheet grabber and notification banners — renders in the platform's own font and
+material on iOS and Android. Geist and Geist Mono are for the app's content,
+never replaced in content by a silent SF fallback. This extends the native
+action sheets and native push/pop rules below: **large titles** render as the
+system's native large title in the platform font (not the h1 token — custom
+fonts in native large titles have a long history of being ignored), and **tab
+labels** are the system's own tab label (not a custom Geist label — a
+`NativeTabs` bar does not reliably apply one). The `--info` tint and the
+light-skin `--chrome-text` token (below) still colour the selected tab and the
+back-button label, because a tint IS honoured even where a custom font is not.
 
 ## Voice (UI copy)
 
@@ -670,3 +790,6 @@ The web UI specifically must avoid these patterns. Code review checks for them.
 | 2026-09-04 | Feedback & activity contract | Owner principle: show every action, never inside the answer, complete, acknowledge every ask. Tool chips leave the bubble; status line on send in a reserved slot; collapsed trail footer; one derived trail for footer + drawer; findings and settings feedback share the row vocabulary. Supersedes ToolChip's "inline between text spans" rationale. |
 | 2026-09-04 | Five token values raised to clear WCAG AA 4.5:1 on `--bg-base`, plus the light `--text-secondary` the fix depended on | Owner-approved accessibility correction, not a restyle. The feedback & activity contract landed the same day assigns `--text-tertiary` to **every** duration and elapsed number at 13px and `--warning` to `⚠ still working` / `⚠ N unverified` — 13px is normal text, so 4.5:1 applies to tokens that were previously only ever carrying captions. Measured against `--bg-base` with `contrastRatio()` in `packages/design-tokens/src/validate.ts`, five pairs failed: `--text-tertiary` dark `#6B6B6A` 3.59:1 → `#7E7E7D` 4.72:1; `--text-tertiary` light `#94948F` 2.91:1 → `#70706B` 4.76:1; `--warning` light `#F59E0B` 2.05:1 → `#986206` 4.92:1; `--success` light `#4ADE80` 1.67:1 → `#177D3C` 4.98:1; `--error` light `#F87171` 2.65:1 → `#CE2C2C` 4.99:1. Every value clears the bar with margin rather than sitting on 4.51, because a token pinned to the threshold fails the next time anyone nudges a background. **The sixth change is the one that needed a decision.** Raising a tertiary compresses the grey ramp toward secondary, and a hierarchy you cannot see is not a hierarchy. In dark that still works: secondary stays `#9A9A98` and the step is ΔL\* 10.8 (was 18.4). In light it did not — secondary was `#6B6B6A` at 5.10:1, which caps a compliant tertiary at ΔL\* 1.9, indistinguishable. So light `--text-secondary` moves too, `#6B6B6A` → `#585857` (5.10:1 → 6.81:1, ΔL\* 9.7), which also makes the two skins' ramps parallel — 15.62/6.80/4.72 dark against 16.64/6.81/4.76 light. The alternative was leaving the single worst failure in the file at 2.91:1, which is not a fix. **The `reviewer` accent is deliberately unchanged at `#F59E0B`, and so is `engineer` at `#4ADE80`.** `--warning` and `reviewer` were never one constant — `DEFAULT_TOKENS.accents.reviewer` and `DEFAULT_TOKENS.semantic.warning` are separate fields that happened to agree — and they now agree only on the dark skin. A personality's identity hue is load-bearing and does not retune per background; a status colour does. The semantic table gains a Light column to say so in the file rather than only in the code. Light semantics keep their dark hue exactly (37.7° / 141.9° / 0.0°) and drop lightness; red also eases saturation 91% → 65% so a 5:1 red reads as brick rather than siren next to an ochre and a forest green. `--info` is knowingly left failing at 2.63:1 on paper-warm: it is the researcher hue and the permanent altitude-rail blue, so moving it is an accent decision under the identity rule above, not a contrast one, and it is not in the approved set. The validator now enforces `--text-secondary` and `--text-tertiary` at AA 4.5 alongside `--text-primary` at AAA 7, so this cannot silently regress; it deliberately does NOT yet cover the semantics, because `paper.info` would fail it. |
 | 2026-09-04 | Teams are a third altitude | Teams-as-a-scope plan (`plan/phases/teams-as-a-scope.md`, D9/D10, §12). A team is a scope beside Library and Workspace, not a page in the Library: the scope switcher (Independent · teams · New team) is the breadcrumb root at every altitude. Team chrome is **neutral** (`--ethos-info`) because a team's identity is plural; a member's workspace inside a team (`/t/:teamId/p/:id/*`) carries that member's accent exactly as `/p/:id/*` does; the team Chat pane is the coordinator's session and carries the coordinator's accent. The team mark is the **segmented ring** — one arc per member in that member's accent, manifest order from 12 o'clock — built from the members, so it can be mistaken for neither the generative mark nor the annulus. No new `Card` exemption: the Overview's attention tiles reuse the Task tile. Prototype: `plan/prototypes/teams-as-a-scope/ethos-team-scope.html` (artifact https://claude.ai/code/artifact/ca79190e-4d8a-4f1a-b4ec-29c53df17fb2). Blocking amendment, landed before any code. |
+| 2026-09-05 | Mobile is a remote; connect with a scoped API key; three altitudes are three tabs; approvals slide down, reviews sheet up; one row vocabulary | Mobile-app plan (`plan/phases/mobile-app.md`), prototype `plan/prototypes/mobile-app/ethos-ios.html`. The phone is a client of the same web-api, never a second agent runtime; it authenticates with a scoped, revocable API key rather than the cookie session; Chat / Library / Teams become the three tabs; who is asking (the agent vs. the system) decides whether an ask slides down or sheets up; every state — skeleton, empty, error, success — resolves as a row in the existing feedback vocabulary, never a spinner or a toast. |
+| 2026-09-06 | Design review: states resolve in place, never a spinner; permissions are two equal-weight verbs; light-skin chrome text gets its own token; motion and haptics written down for the phone | Mobile-app plan, §11a and §12 (design review). Lists load as static skeletons; an empty state is a mark, one sentence, one verb; nothing toasts. The approval panel, the memory-write sheet and the Task action row drop the filled-primary pattern for two equal-weight bordered buttons — an agent asking permission is not the same shape as a user sending a message. `--chrome-text` (above) fixes the light-skin `--info` shortfall for TEXT specifically. Phone-specific motion and a five-row haptics table are written down rather than left to feel. |
+| 2026-09-18 | RN review: system chrome on the phone is the platform's own font and material; Geist is for content | Mobile-app plan, §12 row 17 (RN review, R11). Liquid Glass fidelity, native-chrome accessibility and performance, and two upstream Expo/React Native issues (custom tab-label styling and custom fonts in native large titles both going unapplied) mean the tab bar, navigation bar, large titles, action sheets, sheet grabber and notification banners render in the platform's own material on iOS and Android. Geist and Geist Mono are for the app's content and are never silently replaced by SF there. The `--info` tint and `--chrome-text` for light-skin text still hold on system chrome. |

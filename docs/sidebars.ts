@@ -160,6 +160,7 @@ const sidebars: SidebarsConfig = {
             'building/how-to/build-a-python-client',
             'building/how-to/migrate-cookie-to-api-key',
             'building/how-to/deploy-mission-control-remote',
+            'building/how-to/connect-your-phone',
             'building/how-to/consume-attachments-in-a-tool',
             'building/how-to/enable-storage-encryption',
             'building/how-to/author-a-canvas-template',

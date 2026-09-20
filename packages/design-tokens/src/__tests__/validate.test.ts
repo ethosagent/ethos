@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_TOKENS, type Tokens } from '../index';
-import { BUILTIN_SKINS } from '../skins';
+import { BUILTIN_SKINS, resolveSkin } from '../skins';
 import { contrastRatio, hexToHue, validateSkin, validateTokens } from '../validate';
 
 describe('hexToHue', () => {
@@ -131,6 +131,45 @@ describe('validateTokens (negative cases)', () => {
       }),
     );
     expect(result.findings.some((f) => f.code === 'motion-out-of-range')).toBe(false);
+  });
+
+  it("rejects a chromeText that fails AA on a light bgBase (info's known shortfall)", () => {
+    // `info` itself (#4A9EFF) is a known, accepted 2.63:1 shortfall on the
+    // paper bg — that's exactly why `chromeText` exists as a separate token.
+    // Reusing `info`'s hex as `chromeText` on a light bg must still trip the
+    // new rule, proving it does not silently inherit `info`'s exemption.
+    const result = validateTokens(
+      withOverride({
+        surface: { ...DEFAULT_TOKENS.surface, bgBase: '#FAFAF7' },
+        semantic: { ...DEFAULT_TOKENS.semantic, chromeText: '#4A9EFF' },
+      }),
+    );
+    expect(
+      result.findings.some((f) => f.code === 'low-contrast' && f.path === 'semantic.chromeText'),
+    ).toBe(true);
+  });
+});
+
+describe('chromeText contrast (DESIGN.md §12 amendment 14)', () => {
+  it('dark (default) skin: chromeText clears AA 4.5:1 on bgBase', () => {
+    const ratio = contrastRatio(DEFAULT_TOKENS.semantic.chromeText, DEFAULT_TOKENS.surface.bgBase);
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('light (paper) skin: chromeText clears AA 4.5:1 on bgBase', () => {
+    const paper = resolveSkin(DEFAULT_TOKENS, BUILTIN_SKINS, 'paper');
+    const ratio = contrastRatio(paper.semantic.chromeText, paper.surface.bgBase);
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('`info` itself stays exempt — it is not held to the chromeText bar', () => {
+    // info/bgBase on paper is the documented 2.63:1 shortfall (DESIGN.md,
+    // 2026-09-04 decisions-log row). validateTokens must not flag it.
+    const paper = resolveSkin(DEFAULT_TOKENS, BUILTIN_SKINS, 'paper');
+    const infoRatio = contrastRatio(paper.semantic.info, paper.surface.bgBase);
+    expect(infoRatio).toBeLessThan(4.5);
+    const result = validateTokens(paper);
+    expect(result.findings.some((f) => f.path === 'semantic.info')).toBe(false);
   });
 });
 

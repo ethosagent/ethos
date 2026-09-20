@@ -28,6 +28,11 @@ export const paperSkin: Skin = {
       success: '#177D3C',
       warning: '#986206',
       error: '#CE2C2C',
+      // Light-skin chrome TEXT only (tab/back labels, content links) — the
+      // researcher/`info` hue with lightness dropped until it clears WCAG AA
+      // 4.5:1 on `#FAFAF7` (4.73:1). `info` itself stays at its 2.63:1
+      // shortfall for icons/dots/rings — see DESIGN.md §12 amendment 14.
+      chromeText: '#1D6FD1',
     },
   },
 };

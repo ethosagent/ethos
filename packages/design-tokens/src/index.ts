@@ -42,6 +42,12 @@ export interface Tokens {
     warning: string;
     error: string;
     info: string;
+    /**
+     * Light-skin chrome TEXT only (selected tab label, back label, content
+     * links) — DESIGN.md §12 amendment 14. Icons/dots/rings keep `info`; the
+     * dark value equals `info` unchanged.
+     */
+    chromeText: string;
   };
   typography: {
     fontDisplay: string;
@@ -104,6 +110,7 @@ export const DEFAULT_TOKENS: Tokens = {
     warning: '#F59E0B',
     error: '#F87171',
     info: '#4A9EFF',
+    chromeText: '#4A9EFF',
   },
   typography: {
     fontDisplay: "'Geist', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",

@@ -152,6 +152,20 @@ export function validateTokens(tokens: Tokens): ValidationResult {
     }
   }
 
+  // Rule 2b — `chromeText` (DESIGN.md's light-skin chrome-text token, §12
+  // amendment 14) must clear the same AA bar on every skin. `info` itself
+  // stays exempt (it's the researcher hue and the altitude-rail blue, an
+  // accent decision rather than a contrast one) — `chromeText` is what a
+  // phone's tab/back-label TEXT actually renders in, and it must not regress.
+  const chromeTextRatio = contrastRatio(tokens.semantic.chromeText, tokens.surface.bgBase);
+  if (chromeTextRatio < MIN_CONTRAST_MUTED) {
+    findings.push({
+      code: 'low-contrast',
+      message: `semantic.chromeText/bgBase contrast ratio ${chromeTextRatio.toFixed(2)} is below the WCAG AA threshold of ${MIN_CONTRAST_MUTED}`,
+      path: 'semantic.chromeText',
+    });
+  }
+
   // Rule 3 — typography stays Geist. Skins MUST NOT swap the font family
   // in v1; if they do, we reject so non-Geist fonts can never reach a
   // surface without a one-off design review.
