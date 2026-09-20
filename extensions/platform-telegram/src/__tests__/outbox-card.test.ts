@@ -561,11 +561,17 @@ describe('O-T8 — obx: callback routing', () => {
     expect(decisions[0]).toMatchObject({
       approvalId: 'app1',
       decision: 'allow',
-      decidedBy: 'alice',
+      decidedBy: '200',
+      decidedByDisplay: 'alice',
       channelId: '77',
       messageTs: '55',
     });
-    expect(decisions[1]).toMatchObject({ approvalId: 'app2', decision: 'deny', decidedBy: 'bob' });
+    expect(decisions[1]).toMatchObject({
+      approvalId: 'app2',
+      decision: 'deny',
+      decidedBy: '201',
+      decidedByDisplay: 'bob',
+    });
     expect(taps).toHaveLength(0);
   });
 

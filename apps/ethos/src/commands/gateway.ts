@@ -2696,7 +2696,10 @@ export function wireApprovalFlow(
   // cancel races the API call). Keyed by `approvalId`. The post
   // `.then()` drains this so a card posted into an already-resolved approval
   // is updated immediately instead of being left with live buttons forever.
-  const resolvedBeforePost = new Map<string, { decision: 'allow' | 'deny'; decidedBy: string }>();
+  const resolvedBeforePost = new Map<
+    string,
+    { decision: 'allow' | 'deny'; decidedBy: string; decidedByDisplay?: string }
+  >();
   // `approvalId`s with a `postApprovalCard` call genuinely in flight. Gates
   // `resolvedBeforePost`: without it, a fail-closed deny (no route / no
   // adapter / post failure) would record an outcome that no post
@@ -2754,6 +2757,7 @@ export function wireApprovalFlow(
     card: { adapter: ApprovalCapableAdapter; chatId: string; messageTs: string; toolName: string },
     decision: 'allow' | 'deny',
     decidedBy: string,
+    decidedByDisplay?: string,
   ): void => {
     const update = card.adapter
       .updateApprovalCard({
@@ -2762,6 +2766,7 @@ export function wireApprovalFlow(
         toolName: card.toolName,
         decision,
         decidedBy,
+        decidedByDisplay,
       })
       .then((result) => {
         if (!result.ok) {
@@ -2823,7 +2828,12 @@ export function wireApprovalFlow(
         const racedOutcome = resolvedBeforePost.get(req.approvalId);
         if (racedOutcome) {
           resolvedBeforePost.delete(req.approvalId);
-          updateCard(card, racedOutcome.decision, racedOutcome.decidedBy);
+          updateCard(
+            card,
+            racedOutcome.decision,
+            racedOutcome.decidedBy,
+            racedOutcome.decidedByDisplay,
+          );
           return;
         }
         postedCards.set(req.approvalId, card);
@@ -2846,16 +2856,16 @@ export function wireApprovalFlow(
   // in flight, record the outcome so the post `.then()` can apply it the
   // moment the card exists; when no post is in flight (a fail-closed deny
   // with no route), there's no card to update and nothing to record.
-  coordinator.onResolved((approvalId, decision, decidedBy) => {
+  coordinator.onResolved((approvalId, decision, decidedBy, decidedByDisplay) => {
     const card = postedCards.get(approvalId);
     if (!card) {
       if (inFlightPosts.has(approvalId)) {
-        resolvedBeforePost.set(approvalId, { decision, decidedBy });
+        resolvedBeforePost.set(approvalId, { decision, decidedBy, decidedByDisplay });
       }
       return;
     }
     postedCards.delete(approvalId);
-    updateCard(card, decision, decidedBy);
+    updateCard(card, decision, decidedBy, decidedByDisplay);
   });
 
   // Button click → resolve the approval through the coordinator. The card
@@ -2864,9 +2874,9 @@ export function wireApprovalFlow(
   for (const adapter of approvalAdapters) {
     adapter.onApprovalDecision((event) => {
       if (event.decision === 'allow') {
-        void coordinator.approve(event.approvalId, event.decidedBy);
+        void coordinator.approve(event.approvalId, event.decidedBy, event.decidedByDisplay);
       } else {
-        void coordinator.deny(event.approvalId, event.decidedBy);
+        void coordinator.deny(event.approvalId, event.decidedBy, event.decidedByDisplay);
       }
       seams.forwardDecision?.(event);
     });

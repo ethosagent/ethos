@@ -195,7 +195,16 @@ export interface PlatformAdapter {
 export interface ApprovalDecisionEvent {
   approvalId: string;
   decision: 'allow' | 'deny';
+  /** Platform user id of whoever clicked — must match the same id format the
+   *  adapter puts in `InboundMessage.userId`, since `ApprovalCoordinator.settle`
+   *  binds a pending approval's `requesterUserId` against this field. Never a
+   *  username: a requester who set one could never satisfy the binding against
+   *  their own numeric id (the bug this comment guards against — see
+   *  platform-telegram's regression test in `phase4.test.ts`). */
   decidedBy: string;
+  /** Human-readable identity for display only (e.g. a Telegram `@username`) —
+   *  never read by the binding check. Falls back to `decidedBy` where absent. */
+  decidedByDisplay?: string;
   channelId: string;
   messageTs: string;
 }
@@ -223,6 +232,8 @@ export interface ApprovalCapableAdapter {
     toolName: string;
     decision: 'allow' | 'deny';
     decidedBy: string;
+    /** See `ApprovalDecisionEvent.decidedByDisplay`. */
+    decidedByDisplay?: string;
   }): Promise<DeliveryResult>;
   onApprovalDecision(handler: (event: ApprovalDecisionEvent) => void): void;
 }

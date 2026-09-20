@@ -1059,7 +1059,13 @@ export class TelegramAdapter
             const decisionEvent: ApprovalDecisionEvent = {
               approvalId,
               decision,
-              decidedBy: event.username ?? event.userId ?? 'unknown',
+              // Must be the numeric id, not the username: `ApprovalCoordinator.settle`
+              // binds this against `requesterUserId`, which the gateway sets from
+              // `InboundMessage.userId` (`String(ctx.from.id)`, never a username). A
+              // requester with a username set could never approve their own request
+              // otherwise (mobile-app bug fix).
+              decidedBy: event.userId ?? 'unknown',
+              decidedByDisplay: event.username,
               channelId: event.chatId,
               messageTs: event.messageId,
             };
@@ -1627,9 +1633,10 @@ export class TelegramAdapter
     toolName: string;
     decision: 'allow' | 'deny';
     decidedBy: string;
+    decidedByDisplay?: string;
   }): Promise<DeliveryResult> {
     const verb = input.decision === 'allow' ? 'Approved' : 'Denied';
-    const text = `Tool: ${input.toolName} — ${verb} by @${input.decidedBy}`;
+    const text = `Tool: ${input.toolName} — ${verb} by @${input.decidedByDisplay ?? input.decidedBy}`;
     return this.editToPlainText(input.chatId, input.messageTs, text);
   }
 

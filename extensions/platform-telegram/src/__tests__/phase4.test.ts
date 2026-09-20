@@ -510,9 +510,46 @@ describe('4.2 — onApprovalDecision callback routing', () => {
 
     expect(decisions[0].approvalId).toBe('myApproval123');
     expect(decisions[0].decision).toBe('allow');
-    expect(decisions[0].decidedBy).toBe('alice');
+    // decidedBy is the numeric platform id, not the username — it must match
+    // the id format InboundMessage.userId uses, since ApprovalCoordinator
+    // binds requesterUserId against this field (see index.ts's comment at the
+    // callback_query handler for why a username here would break self-approval).
+    expect(decisions[0].decidedBy).toBe('200');
+    expect(decisions[0].decidedByDisplay).toBe('alice');
     expect(decisions[0].channelId).toBe('100');
     expect(decisions[0].messageTs).toBe('55');
+  });
+
+  it('lets a requester with a username approve their own request (regression)', async () => {
+    // Reproduces the bug: a Telegram-originated turn binds the approval's
+    // requesterUserId to the numeric user id (gateway sessionRouting sets it
+    // from InboundMessage.userId, `String(ctx.from.id)`). Before the fix, the
+    // callback handler sent the USERNAME as decidedBy, so
+    // ApprovalCoordinator.settle's `decidedBy !== requester` check dropped
+    // every tap from a requester who had a username set.
+    const adapter = mk({ token: '1:fake-token', cache });
+    await adapter.start();
+
+    const decisions: ApprovalDecisionEvent[] = [];
+    adapter.onApprovalDecision((evt) => decisions.push(evt));
+
+    const requesterUserId = '200'; // matches String(cq.from.id) below
+    registeredHandlers['callback_query:data']?.[0]({
+      callbackQuery: {
+        id: 'q-self-approve',
+        data: 'approve:ownApproval',
+        message: { message_id: 60, chat: { id: 100 } },
+        from: { id: 200, username: 'alice' },
+      },
+      answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await vi.waitFor(() => {
+      expect(decisions).toHaveLength(1);
+    });
+
+    // The binding check a real ApprovalCoordinator would run.
+    expect(decisions[0].decidedBy).toBe(requesterUserId);
   });
 
   it('routes deny: callbacks to approval handler', async () => {
@@ -540,7 +577,8 @@ describe('4.2 — onApprovalDecision callback routing', () => {
 
     expect(decisions[0].approvalId).toBe('myApproval456');
     expect(decisions[0].decision).toBe('deny');
-    expect(decisions[0].decidedBy).toBe('bob');
+    expect(decisions[0].decidedBy).toBe('201');
+    expect(decisions[0].decidedByDisplay).toBe('bob');
   });
 
   it('routes clr: callbacks to clarify handler (not approval)', async () => {

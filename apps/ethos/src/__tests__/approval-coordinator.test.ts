@@ -107,6 +107,32 @@ describe('ApprovalCoordinator', () => {
     ]);
   });
 
+  it('emits resolved with decidedByDisplay when the decider supplies one', async () => {
+    // decidedByDisplay is display-only (e.g. a Telegram @username) — it must
+    // ride alongside decidedBy without affecting the binding check, which
+    // only ever looks at decidedBy.
+    const coordinator = new ApprovalCoordinator();
+    const pending: PendingApproval[] = [];
+    const resolved: Array<{ decidedBy: string; decidedByDisplay: string | undefined }> = [];
+    coordinator.onPending((p) => pending.push(p));
+    coordinator.onResolved((_approvalId, _decision, decidedBy, decidedByDisplay) =>
+      resolved.push({ decidedBy, decidedByDisplay }),
+    );
+
+    const decision = coordinator.requestApproval({
+      sessionId: 'sid-1',
+      toolCallId: 'tc-1',
+      toolName: 'terminal',
+      args: {},
+      reason: null,
+      requesterUserId: '200',
+    });
+    await coordinator.approve(pending[0].approvalId, '200', 'alice');
+    await decision;
+
+    expect(resolved).toEqual([{ decidedBy: '200', decidedByDisplay: 'alice' }]);
+  });
+
   it('is idempotent — a second decision on the same approval is a no-op', async () => {
     const coordinator = new ApprovalCoordinator();
     const pending: PendingApproval[] = [];

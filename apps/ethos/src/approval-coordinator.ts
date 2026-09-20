@@ -76,7 +76,13 @@ interface PendingEntry {
 
 interface CoordinatorEventMap {
   pending: [PendingApproval];
-  resolved: [approvalId: string, decision: 'allow' | 'deny', decidedBy: string];
+  resolved: [
+    approvalId: string,
+    decision: 'allow' | 'deny',
+    decidedBy: string,
+    /** See `ApprovalDecisionEvent.decidedByDisplay` — display only. */
+    decidedByDisplay?: string,
+  ];
 }
 
 /**
@@ -178,13 +184,18 @@ export class ApprovalCoordinator {
   /** Resolve a pending approval as allowed. Idempotent — a decision for an
    *  already-resolved (or unknown) approvalId is a silent no-op, so a stale
    *  button click from a second surface never throws or flips the result. */
-  async approve(approvalId: string, decidedBy: string): Promise<void> {
-    this.settle(approvalId, { decision: 'allow' }, decidedBy);
+  async approve(approvalId: string, decidedBy: string, decidedByDisplay?: string): Promise<void> {
+    this.settle(approvalId, { decision: 'allow' }, decidedBy, decidedByDisplay);
   }
 
   /** Resolve a pending approval as denied. Idempotent (see `approve`). */
-  async deny(approvalId: string, decidedBy: string): Promise<void> {
-    this.settle(approvalId, { decision: 'deny', reason: 'denied by user' }, decidedBy);
+  async deny(approvalId: string, decidedBy: string, decidedByDisplay?: string): Promise<void> {
+    this.settle(
+      approvalId,
+      { decision: 'deny', reason: 'denied by user' },
+      decidedBy,
+      decidedByDisplay,
+    );
   }
 
   /**
@@ -225,7 +236,12 @@ export class ApprovalCoordinator {
    * may settle it. A bystander's click is dropped, leaving the approval
    * pending for the rightful decider (or the timeout backstop).
    */
-  private settle(approvalId: string, decision: ApprovalDecision, decidedBy: string): void {
+  private settle(
+    approvalId: string,
+    decision: ApprovalDecision,
+    decidedBy: string,
+    decidedByDisplay?: string,
+  ): void {
     const entry = this.pending.get(approvalId);
     if (!entry) return;
     const requester = entry.request.requesterUserId;
@@ -236,7 +252,7 @@ export class ApprovalCoordinator {
     if (entry.timer) clearTimeout(entry.timer);
     this.audit(entry.request, decision, decidedBy);
     entry.resolve(decision);
-    this.emitter.emit('resolved', approvalId, decision.decision, decidedBy);
+    this.emitter.emit('resolved', approvalId, decision.decision, decidedBy, decidedByDisplay);
   }
 
   /**
@@ -284,7 +300,12 @@ export class ApprovalCoordinator {
   }
 
   onResolved(
-    handler: (approvalId: string, decision: 'allow' | 'deny', decidedBy: string) => void,
+    handler: (
+      approvalId: string,
+      decision: 'allow' | 'deny',
+      decidedBy: string,
+      decidedByDisplay?: string,
+    ) => void,
   ): () => void {
     this.emitter.on('resolved', handler);
     return () => {
