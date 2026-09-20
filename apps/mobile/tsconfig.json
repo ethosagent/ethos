@@ -6,5 +6,5 @@
       "@ethosagent/types": ["../../packages/types/src"]
     }
   },
-  "include": ["app", "src", "app.config.ts", "vitest.config.ts", "expo-env.d.ts"]
+  "include": ["app", "src", "app.config.ts", "vitest.config.ts"]
 }
