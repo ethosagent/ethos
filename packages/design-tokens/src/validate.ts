@@ -1,6 +1,6 @@
-import { DEFAULT_TOKENS, type Tokens } from './index';
 import type { Skin } from './skins';
 import { BUILTIN_SKINS, resolveSkin, type SkinRegistry } from './skins';
+import { DEFAULT_TOKENS, type Tokens } from './tokens';
 
 // Anti-slop validator. The DESIGN.md slop blacklist describes patterns
 // that mark a UI as AI-generated. The mechanical ones are caught here at

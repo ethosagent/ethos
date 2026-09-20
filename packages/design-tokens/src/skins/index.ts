@@ -1,4 +1,4 @@
-import { DEFAULT_TOKENS, type Tokens } from '../index';
+import { DEFAULT_TOKENS, type Tokens } from '../tokens';
 import { defaultSkin } from './default';
 import { monoSkin } from './mono';
 import { paperSkin } from './paper';
