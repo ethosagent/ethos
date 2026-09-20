@@ -61,18 +61,28 @@ export class SessionStreamBuffer<E = unknown> {
   }
 
   /**
-   * Return events with seq > sinceSeq. Pass 0 (or omit) to replay everything
-   * still in the buffer. Useful when an SSE client reconnects with a
-   * `Last-Event-ID` header.
+   * Return events with seq > sinceSeq, plus whether that replay is complete.
+   * Pass 0 (or omit) to replay everything still in the buffer — a fresh
+   * connect, not a resume, so `gap` is always false. Useful when an SSE
+   * client reconnects with a `Last-Event-ID` header.
+   *
+   * `gap: true` means events between `sinceSeq` and what's returned were
+   * lost — either capacity eviction spliced them away (D13 in
+   * plan/phases/mobile-app.md), or the session is unknown to this buffer at
+   * all (reaped, or never existed here), which is indistinguishable from
+   * "evicted everything" from the caller's `sinceSeq>0` perspective. Pinned
+   * by `__tests__/session-stream-buffer.test.ts`'s gap cases.
    */
-  replay(sessionId: string, sinceSeq = 0): BufferedEvent<E>[] {
+  replay(sessionId: string, sinceSeq = 0): { events: BufferedEvent<E>[]; gap: boolean } {
     const buf = this.buffers.get(sessionId);
-    if (!buf) return [];
-    if (sinceSeq <= 0) return buf.slice();
+    if (!buf) return { events: [], gap: sinceSeq > 0 };
+    if (sinceSeq <= 0) return { events: buf.slice(), gap: false };
     // Buffer is append-ordered; binary search would be overkill at N≤1000.
     const out: BufferedEvent<E>[] = [];
     for (const e of buf) if (e.seq > sinceSeq) out.push(e);
-    return out;
+    const oldest = buf[0]?.seq;
+    const gap = oldest !== undefined && sinceSeq < oldest - 1;
+    return { events: out, gap };
   }
 
   /** Current head seq for a session (0 if none recorded). */

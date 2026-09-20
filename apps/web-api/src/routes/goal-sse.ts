@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { GoalsService } from '../services/goals.service';
+import { startHeartbeat } from './sse-heartbeat';
 
 export interface GoalSseOptions {
   goals: GoalsService;
@@ -17,9 +18,11 @@ export function goalSseRoutes(opts: GoalSseOptions) {
     return streamSSE(c, async (stream) => {
       let lastSeq = sinceSeq;
       let pollTimer: ReturnType<typeof setInterval> | null = null;
+      const stopHeartbeat = startHeartbeat(stream);
 
       stream.onAbort(() => {
         if (pollTimer) clearInterval(pollTimer);
+        stopHeartbeat();
       });
 
       // Replay stored events (respecting Last-Event-ID for reconnect)
@@ -39,6 +42,7 @@ export function goalSseRoutes(opts: GoalSseOptions) {
           id: String(lastSeq + 1),
           data: JSON.stringify({ type: 'error', error: 'Goal not found' }),
         });
+        stopHeartbeat();
         return;
       }
 
@@ -56,6 +60,7 @@ export function goalSseRoutes(opts: GoalSseOptions) {
           id: String(lastSeq + 1),
           data: JSON.stringify({ type: 'done', goalId, status: goal.status }),
         });
+        stopHeartbeat();
         return;
       }
 
@@ -83,6 +88,7 @@ export function goalSseRoutes(opts: GoalSseOptions) {
               }),
             });
             if (pollTimer) clearInterval(pollTimer);
+            stopHeartbeat();
           }
         })();
       }, 1000);

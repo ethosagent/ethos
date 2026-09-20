@@ -3,8 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { FsStorage } from '@ethosagent/storage-fs';
+import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { ChatService } from '../../features/chat/service';
 import { createWebApi, WebTokenRepository } from '../../index';
+import { sseRoutes } from '../../routes/sse';
 import {
   makeStubAgentLoop,
   makeStubMemoryBundle,
@@ -393,3 +396,83 @@ async function readActivityFrames(
   }
   return out;
 }
+
+// D13 / T1: `ChatService.subscribe`'s `onGap` callback (fired when
+// `SessionStreamBuffer.replay` reports a truncated resume) must reach the
+// wire as an `event: gap` frame, ahead of the surviving tail, with no `id:`
+// line. This is route-level plumbing only — `SessionStreamBuffer`'s own gap
+// detection is pinned in
+// `packages/agent-bridge/src/__tests__/session-stream-buffer.test.ts`, and
+// the SDK's parsing of this frame into `onGap` is pinned in
+// `packages/sdk/src/__tests__/stream.test.ts`. A stub `ChatService` (same
+// no-auth-harness pattern as `kanban-sse.test.ts`) lets this test drive
+// `onGap` directly instead of exhausting a real 1000-frame buffer.
+describe('SSE — /sse/sessions/:id forwards a replay gap', () => {
+  it('writes an `event: gap` frame (no `id:` line) before the surviving tail', async () => {
+    const chat = {
+      subscribe: (
+        _sessionId: string,
+        _sinceSeq: number,
+        onEvent: (e: { seq: number; event: unknown }) => void,
+        onGap?: () => void,
+      ) => {
+        onGap?.();
+        onEvent({ seq: 2, event: { type: 'text_delta', text: 'tail' } });
+        return () => {};
+      },
+      subscribeActivity: () => () => {},
+    } as unknown as ChatService;
+
+    const app = new Hono();
+    app.route('/sse', sseRoutes({ chat }));
+
+    const res = await app.request('/sse/sessions/sess-1', {
+      headers: { 'last-event-id': '1' },
+    });
+    expect(res.status).toBe(200);
+
+    if (!res.body) throw new Error('SSE response has no body');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (let i = 0; i < 5; i++) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) buf += decoder.decode(value, { stream: true });
+      if (buf.includes('event: gap') && buf.includes('"text_delta"')) break;
+    }
+    reader.releaseLock();
+    void res.body.cancel().catch(() => {});
+
+    const gapIndex = buf.indexOf('event: gap');
+    const tailIndex = buf.indexOf('text_delta');
+    expect(gapIndex).toBeGreaterThanOrEqual(0);
+    expect(tailIndex).toBeGreaterThan(gapIndex);
+
+    const gapFrame = buf.slice(gapIndex, buf.indexOf('\n\n', gapIndex));
+    expect(gapFrame).not.toContain('id:');
+  });
+
+  it('a lossless resume (no onGap call) carries no gap frame', async () => {
+    const chat = {
+      subscribe: (
+        _sessionId: string,
+        _sinceSeq: number,
+        onEvent: (e: { seq: number; event: unknown }) => void,
+      ) => {
+        onEvent({ seq: 2, event: { type: 'text_delta', text: 'tail' } });
+        return () => {};
+      },
+      subscribeActivity: () => () => {},
+    } as unknown as ChatService;
+
+    const app = new Hono();
+    app.route('/sse', sseRoutes({ chat }));
+
+    const res = await app.request('/sse/sessions/sess-1', {
+      headers: { 'last-event-id': '1' },
+    });
+    const events = await readSseUntilDone(res, 300);
+    expect(events.some((e) => e.event.type === 'text_delta')).toBe(true);
+  });
+});

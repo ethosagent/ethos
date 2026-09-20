@@ -408,17 +408,24 @@ export class ChatService {
    * `sinceSeq` synchronously, then registers `onEvent` to receive future
    * events as they arrive. Returns an unsubscribe handle that the SSE
    * route calls when the connection drops.
+   *
+   * `onGap`, if given, fires before the replay when `SessionStreamBuffer`
+   * reports the replay is truncated (D13) — `/sse/sessions/:id` uses this
+   * to forward a `gap` frame ahead of the surviving tail.
    */
   subscribe(
     sessionId: string,
     sinceSeq: number,
     onEvent: (e: BufferedEvent<SseEvent>) => void | Promise<void>,
+    onGap?: () => void,
   ): () => void {
     // Tell the buffer the session is active so it cancels any pending reap.
     this.opts.buffer.touch(sessionId);
 
     // 1. Replay missed events first, in seq order.
-    for (const e of this.opts.buffer.replay(sessionId, sinceSeq)) {
+    const { events, gap } = this.opts.buffer.replay(sessionId, sinceSeq);
+    if (gap) onGap?.();
+    for (const e of events) {
       this.invokeSubscriber(onEvent, e);
     }
 
@@ -453,7 +460,10 @@ export class ChatService {
     const matches = (e: ActivityEvent) =>
       personalityId === null || e.personalityId === personalityId;
 
-    for (const e of this.opts.activityBuffer.replay(ACTIVITY_KEY, sinceSeq)) {
+    // The activity feed doesn't forward `gap` (only `/sse/sessions/:id`
+    // does, per T1) — the replay's truncation flag is discarded here.
+    const { events } = this.opts.activityBuffer.replay(ACTIVITY_KEY, sinceSeq);
+    for (const e of events) {
       if (matches(e.event)) this.invokeSubscriber(onEvent, e);
     }
 

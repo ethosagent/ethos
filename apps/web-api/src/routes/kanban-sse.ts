@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { KanbanService } from '../services/kanban.service';
+import { startHeartbeat } from './sse-heartbeat';
 
 export interface KanbanSseOptions {
   kanban: KanbanService;
@@ -33,9 +34,11 @@ export function kanbanSseRoutes(opts: KanbanSseOptions) {
     return streamSSE(c, async (stream) => {
       let lastId = sinceId;
       let pollTimer: ReturnType<typeof setInterval> | null = null;
+      const stopHeartbeat = startHeartbeat(stream);
 
       stream.onAbort(() => {
         if (pollTimer) clearInterval(pollTimer);
+        stopHeartbeat();
       });
 
       // Replay stored events (respecting Last-Event-ID for reconnect). A

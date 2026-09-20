@@ -22,10 +22,10 @@ describe('SessionStreamBuffer', () => {
     buf.append('s1', 'b');
     buf.append('s1', 'c');
 
-    expect(buf.replay('s1').map((e) => e.event)).toEqual(['a', 'b', 'c']);
-    expect(buf.replay('s1', 1).map((e) => e.event)).toEqual(['b', 'c']);
-    expect(buf.replay('s1', 3).map((e) => e.event)).toEqual([]);
-    expect(buf.replay('unknown')).toEqual([]);
+    expect(buf.replay('s1').events.map((e) => e.event)).toEqual(['a', 'b', 'c']);
+    expect(buf.replay('s1', 1).events.map((e) => e.event)).toEqual(['b', 'c']);
+    expect(buf.replay('s1', 3).events.map((e) => e.event)).toEqual([]);
+    expect(buf.replay('unknown').events).toEqual([]);
   });
 
   it('evicts oldest when capacity is exceeded', () => {
@@ -36,9 +36,45 @@ describe('SessionStreamBuffer', () => {
     buf.append('s1', 'd'); // evicts 'a'
     buf.append('s1', 'e'); // evicts 'b'
 
-    const replayed = buf.replay('s1').map((e) => `${e.seq}:${e.event}`);
+    const replayed = buf.replay('s1').events.map((e) => `${e.seq}:${e.event}`);
     expect(replayed).toEqual(['3:c', '4:d', '5:e']);
     expect(buf.head('s1')).toBe(5); // head keeps incrementing past evictions
+  });
+
+  it('reports no gap on a fresh connect (sinceSeq=0) even after eviction', () => {
+    const buf = new SessionStreamBuffer<string>({ capacity: 3 });
+    buf.append('s1', 'a');
+    buf.append('s1', 'b');
+    buf.append('s1', 'c');
+    buf.append('s1', 'd'); // evicts 'a'
+
+    expect(buf.replay('s1').gap).toBe(false);
+    expect(buf.replay('s1', 0).gap).toBe(false);
+  });
+
+  it('reports gap:true when sinceSeq predates what capacity eviction retained', () => {
+    const buf = new SessionStreamBuffer<string>({ capacity: 1000 });
+    for (let i = 0; i < 1200; i++) buf.append('s1', `e${i}`);
+    // 1200 appends at capacity 1000: seq 1-200 evicted, 201-1200 retained.
+
+    const stale = buf.replay('s1', 1);
+    expect(stale.gap).toBe(true);
+    expect(stale.events[0]?.seq).toBe(201);
+    expect(stale.events).toHaveLength(1000);
+
+    const fresh = buf.replay('s1', 1150);
+    expect(fresh.gap).toBe(false);
+    expect(fresh.events).toHaveLength(50);
+  });
+
+  it('reports gap:true when resuming a session this buffer has no record of at all', () => {
+    const buf = new SessionStreamBuffer<string>();
+    // Never appended, or already reaped — either way sinceSeq>0 can't be
+    // proven lossless.
+    expect(buf.replay('unknown-session', 5).gap).toBe(true);
+    // But a fresh connect (sinceSeq=0) to an unknown session is not a
+    // resume, so it's not a gap either — just nothing to replay.
+    expect(buf.replay('unknown-session').gap).toBe(false);
   });
 
   it('reaps a disconnected session after the configured timeout', () => {
@@ -48,10 +84,10 @@ describe('SessionStreamBuffer', () => {
     buf.disconnect('s1');
 
     vi.advanceTimersByTime(999);
-    expect(buf.replay('s1')).toHaveLength(1);
+    expect(buf.replay('s1').events).toHaveLength(1);
 
     vi.advanceTimersByTime(2);
-    expect(buf.replay('s1')).toHaveLength(0);
+    expect(buf.replay('s1').events).toHaveLength(0);
     expect(buf.head('s1')).toBe(0);
   });
 
@@ -108,7 +144,7 @@ describe('SessionStreamBuffer', () => {
     buf.touch('s1'); // client reconnected
     vi.advanceTimersByTime(2000);
 
-    expect(buf.replay('s1')).toHaveLength(1); // not reaped
+    expect(buf.replay('s1').events).toHaveLength(1); // not reaped
   });
 
   it('append re-touches automatically (so a write defers reap)', () => {
@@ -121,7 +157,7 @@ describe('SessionStreamBuffer', () => {
     buf.append('s1', 'b');
     vi.advanceTimersByTime(800);
 
-    expect(buf.replay('s1').map((e) => e.event)).toEqual(['a', 'b']);
+    expect(buf.replay('s1').events.map((e) => e.event)).toEqual(['a', 'b']);
   });
 
   it('clear immediately drops a session', () => {
@@ -130,7 +166,7 @@ describe('SessionStreamBuffer', () => {
     buf.append('s1', 'b');
 
     buf.clear('s1');
-    expect(buf.replay('s1')).toHaveLength(0);
+    expect(buf.replay('s1').events).toHaveLength(0);
     expect(buf.head('s1')).toBe(0);
 
     // Subsequent appends restart at seq=1
@@ -148,7 +184,7 @@ describe('SessionStreamBuffer', () => {
     buf.destroy();
 
     vi.advanceTimersByTime(2000); // would have reaped, but destroy cleared timers
-    expect(buf.replay('s1')).toHaveLength(0);
-    expect(buf.replay('s2')).toHaveLength(0);
+    expect(buf.replay('s1').events).toHaveLength(0);
+    expect(buf.replay('s2').events).toHaveLength(0);
   });
 });

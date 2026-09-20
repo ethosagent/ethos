@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import 'hono/request-id';
 import { streamSSE } from 'hono/streaming';
 import type { ChatService } from '../features/chat/service';
+import { startHeartbeat } from './sse-heartbeat';
 
 // SSE stream for `/sse/sessions/:id`. Delegates to `ChatService.subscribe`,
 // which:
@@ -35,9 +36,11 @@ export function sseRoutes(opts: SseRoutesOptions) {
     return streamSSE(c, async (stream) => {
       let unsubscribe: (() => void) | null = null;
       let aborted = false;
+      const stopHeartbeat = startHeartbeat(stream);
 
       stream.onAbort(() => {
         aborted = true;
+        stopHeartbeat();
         if (unsubscribe) unsubscribe();
       });
 
@@ -57,29 +60,48 @@ export function sseRoutes(opts: SseRoutesOptions) {
         }
       }
 
-      unsubscribe = opts.chat.subscribe(sessionId, sinceSeq, async (buffered) => {
-        // Skip once the stream is aborted (tab-switch / disconnect). Writing to
-        // an aborted stream can reject; a floated rejection here would otherwise
-        // crash the process, so any write error marks us aborted and unsubscribes.
-        //
-        // No `event:` field on purpose. Setting it to a non-default name makes
-        // the browser's `EventSource.onmessage` skip the frame — only matching
-        // `addEventListener('<type>', ...)` would catch it. The client parses
-        // the type out of the JSON `data` payload (every event has a
-        // discriminator `type` field), so an explicit `event:` line is redundant
-        // AND breaks the default handler. Curl users still see the type via
-        // `data:` content.
-        if (aborted) return;
-        try {
-          await stream.writeSSE({
-            id: String(buffered.seq),
-            data: JSON.stringify(buffered.event),
+      unsubscribe = opts.chat.subscribe(
+        sessionId,
+        sinceSeq,
+        async (buffered) => {
+          // Skip once the stream is aborted (tab-switch / disconnect). Writing to
+          // an aborted stream can reject; a floated rejection here would otherwise
+          // crash the process, so any write error marks us aborted and unsubscribes.
+          //
+          // No `event:` field on purpose. Setting it to a non-default name makes
+          // the browser's `EventSource.onmessage` skip the frame — only matching
+          // `addEventListener('<type>', ...)` would catch it. The client parses
+          // the type out of the JSON `data` payload (every event has a
+          // discriminator `type` field), so an explicit `event:` line is redundant
+          // AND breaks the default handler. Curl users still see the type via
+          // `data:` content.
+          if (aborted) return;
+          try {
+            await stream.writeSSE({
+              id: String(buffered.seq),
+              data: JSON.stringify(buffered.event),
+            });
+          } catch {
+            aborted = true;
+            if (unsubscribe) unsubscribe();
+          }
+        },
+        () => {
+          // D13: `SessionStreamBuffer.replay` reported this resume as
+          // truncated. `event: gap` (no `id:` line, so it never advances a
+          // client's `Last-Event-ID` cursor) is written ahead of the
+          // surviving tail above — an old web client with no `gap`
+          // listener just never sees it, same as any other non-default
+          // `event:` name. `packages/sdk/src/stream.ts`'s `EventStream`
+          // parses it into `onGap`. Pinned by
+          // `apps/web-api/src/__tests__/routes/sse.test.ts`'s gap case.
+          if (aborted) return;
+          void stream.writeSSE({ event: 'gap', data: '{}' }).catch(() => {
+            aborted = true;
+            if (unsubscribe) unsubscribe();
           });
-        } catch {
-          aborted = true;
-          if (unsubscribe) unsubscribe();
-        }
-      });
+        },
+      );
 
       // Block forever — `onAbort` is the only way out.
       await new Promise<void>(() => {});
@@ -105,9 +127,11 @@ export function sseRoutes(opts: SseRoutesOptions) {
     return streamSSE(c, async (stream) => {
       let unsubscribe: (() => void) | null = null;
       let aborted = false;
+      const stopHeartbeat = startHeartbeat(stream);
 
       stream.onAbort(() => {
         aborted = true;
+        stopHeartbeat();
         if (unsubscribe) unsubscribe();
       });
 
