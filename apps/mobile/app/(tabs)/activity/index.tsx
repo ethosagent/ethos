@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, SectionList, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activityOpener, streams } from '../../../src/api/client';
 import { errorRow } from '../../../src/api/errors';
 import { usePersonalities, useRpc } from '../../../src/api/queries';
@@ -18,9 +19,10 @@ import { Skeleton } from '../../../src/components/ui/Skeleton';
 import { type ActivityChip, chipKey, historyInput } from '../../../src/features/activity/chips';
 import { NEEDS_YOU_KEY, needsYouCount } from '../../../src/features/activity/needs-you';
 import { clock, type Glyph, type RowData } from '../../../src/lib/row';
+import { tabBarBottomInset } from '../../../src/lib/tab-bar-inset';
 import { useChatStore } from '../../../src/state/chat-store';
 import { useConnection } from '../../../src/state/connection';
-import { color, radius, type } from '../../../src/theme/tokens';
+import { color, radius, TAB_BAR_PILL_HEIGHT, type } from '../../../src/theme/tokens';
 
 export { RouteError as ErrorBoundary };
 
@@ -47,6 +49,12 @@ interface Item {
 export default function ActivityScreen() {
   const rpc = useRpc();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const bottomInset = tabBarBottomInset({
+    tabBarHeight: TAB_BAR_PILL_HEIGHT,
+    safeAreaBottom: insets.bottom,
+    keyboardVisible: false,
+  });
   const agents = usePersonalities();
   const [chip, setChip] = useState<ActivityChip>({ kind: 'all' });
   const feedPersonalityId = chip.kind === 'agent' ? chip.personalityId : null;
@@ -180,6 +188,7 @@ export default function ActivityScreen() {
       <SectionList
         sections={sections}
         keyExtractor={(i) => i.key}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
         refreshing={history.isRefetching}
         onRefresh={() => {
           void history.refetch();

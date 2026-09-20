@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { FlatList, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { errorRow } from '../../../src/api/errors';
 import { useRpc } from '../../../src/api/queries';
 import { Button } from '../../../src/components/ui/Button';
@@ -12,7 +13,8 @@ import { Row } from '../../../src/components/ui/Row';
 import { Skeleton } from '../../../src/components/ui/Skeleton';
 import { runSessionVerb, type SessionVerb } from '../../../src/features/chat/session-verbs';
 import { clock, type RowData } from '../../../src/lib/row';
-import { color, radius, type } from '../../../src/theme/tokens';
+import { tabBarBottomInset } from '../../../src/lib/tab-bar-inset';
+import { color, radius, TAB_BAR_PILL_HEIGHT, type } from '../../../src/theme/tokens';
 
 export { RouteError as ErrorBoundary };
 
@@ -30,6 +32,12 @@ export default function SessionsScreen() {
   const rpc = useRpc();
   const queries = useQueryClient();
   const { showActionSheetWithOptions } = useActionSheet();
+  const insets = useSafeAreaInsets();
+  const bottomInset = tabBarBottomInset({
+    tabBarHeight: TAB_BAR_PILL_HEIGHT,
+    safeAreaBottom: insets.bottom,
+    keyboardVisible: false,
+  });
   const list = useQuery({
     queryKey: ['sessions', 'list'],
     queryFn: () => rpc.sessions.list({ limit: 50 }),
@@ -82,6 +90,7 @@ export default function SessionsScreen() {
       <FlatList
         data={list.data?.items ?? []}
         keyExtractor={(s) => s.id}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
         refreshing={list.isRefetching}
         onRefresh={() => void list.refetch()}
         renderItem={({ item }) =>

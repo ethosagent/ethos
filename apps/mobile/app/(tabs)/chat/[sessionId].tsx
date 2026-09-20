@@ -30,9 +30,10 @@ import {
   sendMessage,
 } from '../../../src/features/chat/session';
 import { clock } from '../../../src/lib/row';
+import { tabBarBottomInset } from '../../../src/lib/tab-bar-inset';
 import { useChatStore } from '../../../src/state/chat-store';
 import { useConnection } from '../../../src/state/connection';
-import { color, type } from '../../../src/theme/tokens';
+import { color, TAB_BAR_PILL_HEIGHT, type } from '../../../src/theme/tokens';
 
 export { RouteError as ErrorBoundary };
 
@@ -103,6 +104,14 @@ export default function ChatScreen() {
 
   const loading = !isNew && row.isPending && messages.length === 0;
   const empty = !loading && messages.length === 0 && !streaming;
+  // At rest, clear the floating tab bar; with the keyboard up the composer
+  // rides the keyboard via KeyboardStickyView's own transform and the tab bar
+  // retreats behind it, so `opened` adds nothing on top (see tabBarBottomInset).
+  const restInset = tabBarBottomInset({
+    tabBarHeight: TAB_BAR_PILL_HEIGHT,
+    safeAreaBottom: insets.bottom,
+    keyboardVisible: false,
+  });
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -132,6 +141,7 @@ export default function ChatScreen() {
             trail={trail}
             stopped={stopped}
             agent={name}
+            bottomInset={restInset}
             onOlder={() => void loadOlder(rpc)}
             onAnswer={(requestId, answer) => {
               void rpc.clarify
@@ -163,7 +173,7 @@ export default function ChatScreen() {
           />
         ) : null}
       </View>
-      <KeyboardStickyView>
+      <KeyboardStickyView offset={{ closed: restInset, opened: 0 }}>
         <Status accent={accent} deciding={deciding} online={online} />
         <Composer
           name={name}
@@ -186,6 +196,7 @@ function Messages(props: {
   trail: Chat['trail'];
   stopped: string[];
   agent: string;
+  bottomInset: number;
   onOlder: () => void;
   onAnswer: (requestId: string, answer: string) => void;
 }) {
@@ -196,7 +207,7 @@ function Messages(props: {
       ref={list}
       data={props.messages}
       keyExtractor={(m) => m.id}
-      contentContainerStyle={styles.list}
+      contentContainerStyle={[styles.list, { paddingBottom: props.bottomInset }]}
       renderScrollComponent={(p: ScrollViewProps) => (
         <KeyboardChatScrollView {...p} keyboardLiftBehavior="whenAtEnd" />
       )}

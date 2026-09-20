@@ -1,13 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { Stack, useRouter } from 'expo-router';
 import { Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { errorRow } from '../../../src/api/errors';
 import { modelName, usePersonalities, useRpc } from '../../../src/api/queries';
 import { Mark } from '../../../src/components/ui/Mark';
 import { RouteError } from '../../../src/components/ui/RouteError';
 import { Row } from '../../../src/components/ui/Row';
 import { Skeleton } from '../../../src/components/ui/Skeleton';
-import { color, type } from '../../../src/theme/tokens';
+import { tabBarBottomInset } from '../../../src/lib/tab-bar-inset';
+import { color, TAB_BAR_PILL_HEIGHT, type } from '../../../src/theme/tokens';
 
 export { RouteError as ErrorBoundary };
 
@@ -16,6 +18,12 @@ export { RouteError as ErrorBoundary };
 export default function NewSession() {
   const router = useRouter();
   const rpc = useRpc();
+  const insets = useSafeAreaInsets();
+  const bottomInset = tabBarBottomInset({
+    tabBarHeight: TAB_BAR_PILL_HEIGHT,
+    safeAreaBottom: insets.bottom,
+    keyboardVisible: false,
+  });
   const agents = usePersonalities();
   const recent = useQuery({
     queryKey: ['sessions', 'recent'],
@@ -55,6 +63,7 @@ export default function NewSession() {
       {agents.isPending ? <Skeleton height={60} /> : null}
       <SectionList
         sections={sections}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
         renderSectionHeader={({ section }) => (
           <Text style={[type.small, styles.header]}>{section.title}</Text>
         )}

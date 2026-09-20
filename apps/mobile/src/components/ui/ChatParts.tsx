@@ -36,6 +36,7 @@ export function PersonalityBar(props: {
         <Mark personalityId={props.personalityId} size={30} />
         <Text style={type.h4}>{props.name}</Text>
         {props.model ? <Text style={type.mono}>{props.model}</Text> : null}
+        <Text style={styles.chevron}>›</Text>
       </Pressable>
       <Pressable
         accessibilityRole="button"
@@ -43,7 +44,9 @@ export function PersonalityBar(props: {
         onPress={props.onNew}
         style={styles.plus}
       >
-        <Text style={[type.h4, { color: props.accent }]}>+</Text>
+        <View style={[styles.plusButton, { borderColor: props.accent }]}>
+          <Text style={[type.h4, { color: props.accent }]}>+</Text>
+        </View>
       </Pressable>
     </View>
   );
@@ -276,11 +279,20 @@ const styles = StyleSheet.create({
     borderBottomColor: color.borderSubtle,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     backgroundColor: color.bgBase,
   },
   barMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, height: '100%' },
+  chevron: { color: color.textTertiary, fontSize: 18 },
   plus: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  plusButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   slot: { height: 28, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8 },
   footer: { minHeight: 28, justifyContent: 'center', paddingVertical: 4 },
   userBubble: {

@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { errorRow } from '../../../src/api/errors';
 import { useRpc } from '../../../src/api/queries';
 import { probeHealth, refusals } from '../../../src/auth/probes';
@@ -11,13 +12,14 @@ import { Button } from '../../../src/components/ui/Button';
 import { RouteError } from '../../../src/components/ui/RouteError';
 import { Row } from '../../../src/components/ui/Row';
 import type { RowData } from '../../../src/lib/row';
+import { tabBarBottomInset } from '../../../src/lib/tab-bar-inset';
 import {
   DEFAULT_PUSH_CATEGORIES,
   registerForPush,
   unregisterCurrentPush,
 } from '../../../src/push/registration';
 import { useConnection } from '../../../src/state/connection';
-import { color, type } from '../../../src/theme/tokens';
+import { color, TAB_BAR_PILL_HEIGHT, type } from '../../../src/theme/tokens';
 
 const CATEGORY_LABELS: Array<{ key: keyof PushCategories; label: string }> = [
   { key: 'approvals', label: 'Tool approvals' },
@@ -37,6 +39,12 @@ export { RouteError as ErrorBoundary };
 export default function SettingsScreen() {
   const rpc = useRpc();
   const { url, disconnect } = useConnection();
+  const insets = useSafeAreaInsets();
+  const bottomInset = tabBarBottomInset({
+    tabBarHeight: TAB_BAR_PILL_HEIGHT,
+    safeAreaBottom: insets.bottom,
+    keyboardVisible: false,
+  });
   const host = (url && remoteHost(url)) ?? '—';
   const health = useQuery({ queryKey: ['healthz', url], queryFn: () => probeHealth(url ?? '') });
   const whoami = useQuery({ queryKey: ['whoami'], queryFn: () => rpc.meta.whoami() });
@@ -68,7 +76,10 @@ export default function SettingsScreen() {
   ];
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.body}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={[styles.body, { paddingBottom: 32 + bottomInset }]}
+    >
       <Stack.Screen options={{ title: 'Settings' }} />
       <Text style={[type.small, styles.header]}>Server</Text>
       {kv.map(([k, v]) => (

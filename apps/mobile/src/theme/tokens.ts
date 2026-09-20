@@ -19,6 +19,22 @@ export const radius = t.radius;
 export const space = t.spacing;
 export const motion = t.motion;
 
+/**
+ * The iOS 26 floating (Liquid Glass) tab bar's own footprint — its pill height
+ * plus the gap it floats above the safe area — NOT including the safe-area
+ * bottom inset itself, which callers add separately (`tabBarBottomInset` in
+ * `src/lib/tab-bar-inset.ts`). `NativeTabs` (`app/(tabs)/_layout.tsx`) renders
+ * through react-native-screens' `Tabs.Host`, and neither expo-router nor
+ * react-native-screens exposes a height hook for it — confirmed against
+ * expo-router@57.0.22 / react-native-screens@4.26.2, and there is no
+ * `@react-navigation/bottom-tabs` installed here for its `useBottomTabBarHeight`
+ * to apply to. This is a fixed approximation of Apple's iOS 26 floating tab
+ * bar (~49pt bar + ~15pt float gap) measured from screenshots, not a device —
+ * re-measure and adjust this one constant if a screen's last row or the chat
+ * composer still sits close to the pill after using it.
+ */
+export const TAB_BAR_PILL_HEIGHT = 64;
+
 export const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
 export const type = StyleSheet.create({
