@@ -13,10 +13,12 @@ long-tail screens come in later phases.
 
 - Node 24 and pnpm 10 (the repo's own).
 - For a device or simulator build: Xcode 26.4+ (iOS) or Android Studio (Android),
-  and an EAS login (`npx eas login`) for a cloud build. `expo export` and the tests
-  need neither.
+  and an EAS login (`npx eas login`) for a cloud build. `expo export`, the tests,
+  and Expo Go need none of this — see "Run it locally" below.
 - A reachable `ethos serve` at 0.8.1 or newer (the first release with
-  `meta.whoami` and `/healthz` `version`).
+  `meta.whoami` and `/healthz` `version`) — or a server run from source under
+  `tsx`, which reports `"version":"dev"` and is treated as satisfying any
+  floor (`versionAtLeast` in `apps/mobile/src/api/scopes.ts`).
 
 ## Commands
 
@@ -36,6 +38,33 @@ tests; the root vitest config excludes `apps/mobile`.
 `APP_VARIANT` (`development` · `preview` · `production`) picks the bundle id —
 `com.ethos.mobile.dev`, `.preview`, `com.ethos.mobile` — so the three builds can
 sit on one phone.
+
+## Run it locally
+
+Three ways to see the app, fastest first:
+
+1. **Expo Go.** `pnpm --filter @ethosagent/mobile start`, then scan the QR code
+   with the Expo Go app (App Store / Play Store) — no Xcode, no Android
+   Studio, no Apple account, no `prebuild`. Nothing in this app's dependency
+   list is a bespoke native module: `expo-camera`, `expo-secure-store` and
+   `expo-haptics` are modules Expo Go ships for every SDK-57 project, and the
+   native tab bar (`expo-router/unstable-native-tabs`) is built on
+   `react-native-screens`, the same native primitive Expo Go already bundles
+   for Expo Router's stack navigation — so Connect, Chat, Sessions and
+   Activity should all render. What does NOT work: registering for remote
+   push. `expo-notifications` dropped push support in Expo Go as of SDK 53 —
+   confirmed in the installed package
+   (`expo-notifications/build/warnOfExpoGoPushUsage.js` throws on Android and
+   warns on iOS, both naming SDK 53). Approvals still arrive over the `/sse`
+   stream while the app is foregrounded; see "Not in this build yet" → Push.
+2. **iOS Simulator** (`pnpm --filter @ethosagent/mobile ios`, or
+   `npx expo run:ios` from `apps/mobile`) — a real dev client, one step
+   closer to a device build, but simulators never receive APNs pushes either
+   way.
+3. **Device dev build via EAS** (`npx eas login`, then an EAS build profile)
+   — the only path that can receive an actual push, exercise the manual
+   device checklist below, and test cleartext / Local Network behavior the
+   way a real phone will see it.
 
 ## Pointing the app at your server
 
@@ -82,8 +111,6 @@ through a real certificate (Tailscale HTTPS, Let's Encrypt behind a proxy).
   until they are embedded with the `expo-font` config plugin.
 - **Markdown, attachments, swipe actions, the list spike.** Assistant text renders as
   plain text; Sessions verbs are on long-press only; the chat list is `FlatList`.
-- **Live Activity rows.** `/sse/activity` frames are `ActivityEvent` envelopes, which
-  the SDK's `EventStream` does not parse yet; Activity refreshes on focus and on pull.
 
 ## Manual device checklist (every TestFlight build)
 
