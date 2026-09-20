@@ -969,6 +969,58 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
   ...group('security', 'a2a', [
     { key: 'a2a.enabled', label: 'A2A enabled', saves: 'self', stateBacked: true },
   ]),
+  // Mobile app (mobile-app plan T-WEB, added 2026-09-18 owner request). Every
+  // control here is `stateBacked`: the device name and host fields are plain
+  // component state (not page-Save `Form.Item`s), and the actions call
+  // `rpc.apiKeys.*`/`rpc.push.*` directly rather than writing a config key.
+  ...group('mobile', 'connect-a-phone', [
+    {
+      key: null,
+      label: 'Device name',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved: 'Local field seeding the phone key name; not a config.yaml key.',
+    },
+    {
+      key: null,
+      label: 'Server URL for the QR',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved: 'Editable host field seeded from meta.connectInfo; not a config.yaml key.',
+    },
+    {
+      key: null,
+      label: 'Generate QR code',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Action button (rpc.apiKeys.create with the phone preset); mints a key, not a config key.',
+    },
+  ]),
+  ...group('mobile', 'connected-phones', [
+    {
+      key: null,
+      label: 'Connected phones — iPhone and other phone keys',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Derived from rpc.apiKeys.list joined to rpc.push.listDevices; not a config.yaml key.',
+    },
+    {
+      key: null,
+      label: 'Send test notification',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved: 'Action button (rpc.push.test); not a config.yaml key.',
+    },
+    {
+      key: null,
+      label: 'Revoke phone',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved: 'Action button (rpc.apiKeys.revoke); not a config.yaml key.',
+    },
+  ]),
   // Keys & secrets. One entry per section, `stateBacked` — the rows are read
   // from `rpc.keys.list()` and vary with what the vault holds, so there is no
   // fixed list of controls to enumerate and no `Form.Item` to name. They are

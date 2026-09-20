@@ -16,6 +16,7 @@ import type { SettingsPaneContext } from '../pane-context';
 import { BackupPane } from '../panes/backup';
 import { GeneralPane } from '../panes/general';
 import { KeysPane } from '../panes/keys';
+import { MobilePane } from '../panes/mobile';
 import { ModelsPane } from '../panes/models';
 import { SecurityPane } from '../panes/security';
 import { registryList } from './model-registry-fixture';
@@ -216,6 +217,28 @@ function backupPaneMarkup(): string {
   );
 }
 
+/**
+ * The Mobile pane's two sections each render nothing until their own RPCs
+ * resolve — `meta.connectInfo` (connect-a-phone) and `apiKeys.list` +
+ * `push.listDevices` (connected-phones) — so all three are seeded, the same
+ * way the Keys/Backup panes' data is. `loopback: false` puts
+ * `ConnectAPhoneSection` past its "not reachable" branch and into the one
+ * that renders `SelfSaveMarker`.
+ */
+function mobilePaneMarkup(): string {
+  const queryClient = new QueryClient();
+  queryClient.setQueryData(['meta', 'connectInfo'], {
+    url: 'http://192.168.1.5:4001',
+    source: 'web.host',
+    loopback: false,
+  });
+  queryClient.setQueryData(['apiKeys'], { items: [] });
+  queryClient.setQueryData(['push', 'listDevices'], []);
+  return renderToStaticMarkup(
+    createElement(QueryClientProvider, { client: queryClient }, createElement(MobilePane)),
+  );
+}
+
 function wakePanelMarkup(): string {
   const queryClient = new QueryClient();
   return renderToStaticMarkup(
@@ -256,6 +279,8 @@ describe('SETTINGS_INDEX self-saving sections match what this test covers', () =
       // Derived, not listed: the Keys pane has one self-saving section per
       // canonical category.
       ...[...KEY_CATEGORY_IDS].map((id) => `keys/${id}`).sort(),
+      'mobile/connect-a-phone',
+      'mobile/connected-phones',
       'models/models',
       'models/per-personality-routing',
       'security/a2a',
@@ -314,6 +339,14 @@ describe('every self-saving section renders SelfSaveMarker', () => {
     const html = backupPaneMarkup();
 
     it.each(['status', 'archives'])('%s', (id) => {
+      expect(sectionBlock(html, id)).toContain(MARKER_TEXT);
+    });
+  });
+
+  describe('mobile — MobilePane, checked per section', () => {
+    const html = mobilePaneMarkup();
+
+    it.each(['connect-a-phone', 'connected-phones'])('%s', (id) => {
       expect(sectionBlock(html, id)).toContain(MARKER_TEXT);
     });
   });

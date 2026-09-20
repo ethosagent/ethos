@@ -163,6 +163,19 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     ],
   },
   {
+    // Connect a phone by QR, and the connected-phones list (mobile-app plan
+    // T-WEB, added 2026-09-18 owner request). Not `desktopOnly`: it renders in
+    // the desktop build too, where `meta.connectInfo` answers for the remote
+    // server the phone must reach.
+    slug: 'mobile',
+    label: 'Mobile app',
+    group: 'Machine',
+    sections: [
+      section('connect-a-phone', 'connect a phone'),
+      section('connected-phones', 'connected phones'),
+    ],
+  },
+  {
     // The whole secrets vault, masked, read through `rpc.keys.*`. Next to
     // Security & access because it is the same kind of decision, and NOT
     // merged into it: that category's named-secrets table owns three refs the
