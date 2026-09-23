@@ -277,3 +277,23 @@ describe('SQLiteContextLog — durability posture', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+/** Reads `PRAGMA busy_timeout` off the store's OWN handle — like `synchronous`
+ *  it is a per-connection setting, so a second connection would prove nothing. */
+function busyPragma(store: unknown): number {
+  const rows = (store as { db: { pragma(s: string): unknown } }).db.pragma('busy_timeout');
+  return (rows as Array<{ timeout: number }>)[0]?.timeout ?? -1;
+}
+
+describe('SQLiteContextLog — busy posture', () => {
+  it('waits up to 5 s for a peer write lock', () => {
+    // Own handle on the shared sessions.db, so it needs its own pin.
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-context-log-busy-'));
+    const sessions = new SQLiteSessionStore(join(dir, 'sessions.db'));
+    const log = new SQLiteContextLog(join(dir, 'sessions.db'));
+    expect(busyPragma(log)).toBe(5000);
+    log.close();
+    sessions.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

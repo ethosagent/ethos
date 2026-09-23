@@ -1,6 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createKvStoreFactory } from '../index';
 import { SqliteKeyValueStore } from '../kv-store';
+import { holdWriteLock } from './hold-write-lock';
 
 describe('SqliteKeyValueStore', () => {
   let db: Database.Database;
@@ -111,4 +116,25 @@ describe('SqliteKeyValueStore', () => {
       expect(await storeB.get('key')).toBe('from-2');
     });
   });
+});
+
+// The factory's handle is a closure, so contention is the only observable of
+// its busy_timeout (plan hermes-0.21.4-fixes Fix 1).
+describe('createKvStoreFactory — a peer process holding the write lock', () => {
+  it('set waits for the peer instead of throwing SQLITE_BUSY', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kv-store-busy-'));
+    try {
+      const dbPath = join(dir, 'sessions.db');
+      const factory = createKvStoreFactory(dbPath);
+      const store = factory('t', 's');
+      const holder = await holdWriteLock(dbPath);
+      // Runs while the peer holds the write lock. Pre-fix this threw.
+      await store.set('k', 'v');
+      expect(await store.get('k')).toBe('v');
+      factory.close();
+      await holder.terminate();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

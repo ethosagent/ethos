@@ -108,6 +108,9 @@ export function decideMigration(
  */
 export function migrateSessionKeys(opts: MigrateSessionKeysOptions): SessionKeyMigrationResult {
   const db = new Database(opts.dbPath);
+  // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
+  // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
+  db.pragma('busy_timeout = 5000');
   let migrated = 0;
   let alreadyMigrated = 0;
   let skippedNoBot = 0;

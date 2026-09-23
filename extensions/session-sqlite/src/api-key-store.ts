@@ -52,6 +52,9 @@ export class SqliteApiKeyStore {
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
+    // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
+    // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
+    this.db.pragma('busy_timeout = 5000');
     this.db.pragma('journal_mode = WAL');
     this.migrate();
   }

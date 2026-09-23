@@ -1,11 +1,18 @@
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import Database from '@ethosagent/sqlite';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { RETENTION_DEFAULTS } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BlobStore } from '../blob-store';
-import { mergeRetentionConfig, parseDuration, pruneObservability } from '../retention';
+import {
+  mergeRetentionConfig,
+  parseDuration,
+  pruneObservability,
+  pruneObservabilityByPath,
+} from '../retention';
 
 // ---------------------------------------------------------------------------
 // parseDuration
@@ -73,8 +80,10 @@ describe('mergeRetentionConfig', () => {
 // pruneObservability
 // ---------------------------------------------------------------------------
 
-function makeTestDb(): Database.Database {
-  const db = new Database(join(tmpdir(), `obs-retention-test-${Date.now()}.db`));
+function makeTestDb(
+  path = join(tmpdir(), `obs-retention-test-${Date.now()}.db`),
+): Database.Database {
+  const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.exec(`
     CREATE TABLE IF NOT EXISTS traces (
@@ -571,8 +580,8 @@ describe('pruneObservability', () => {
 });
 
 // Mirrors the columns of the real sessions.db that retention pruning touches.
-function makeSessDb(): Database.Database {
-  const sessDb = new Database(':memory:');
+function makeSessDb(path = ':memory:'): Database.Database {
+  const sessDb = new Database(path);
   sessDb.exec(`
       CREATE TABLE sessions (
         id                    TEXT PRIMARY KEY,
@@ -700,4 +709,54 @@ describe('pruneObservability — referenced blobs survive', () => {
     const blobPath = `/blobs/${blobKey.slice(0, 2)}/${blobKey}.gz`;
     expect(await storage.exists(blobPath)).toBe(true);
   });
+});
+
+// sessions.db is shared cross-process, and the `observability-prune` system
+// task DELETEs from it next to a live gateway. Plan hermes-0.21.4-fixes Fix 1:
+// the prune's own sessions.db handle waits for a peer's write lock instead of
+// throwing SQLITE_BUSY.
+describe('pruneObservabilityByPath — a peer process holding sessions.db', () => {
+  it('waits for the peer instead of throwing SQLITE_BUSY', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-retention-busy-'));
+    try {
+      const obsPath = join(dir, 'observability.db');
+      const sessDbPath = join(dir, 'sessions.db');
+      makeTestDb(obsPath).close();
+      const seed = makeSessDb(sessDbPath);
+      seed.pragma('journal_mode = WAL');
+      insertMessage(seed, 's1', 'old msg', new Date(NOW - 400 * 86_400_000).toISOString());
+      seed.close();
+
+      // The lock is held from a WORKER, not a second handle on this thread —
+      // `@ethosagent/sqlite` is synchronous, so a same-thread holder could
+      // never release while the prune below blocks. Plain CommonJS source, so
+      // no TypeScript transform is involved in the worker.
+      const holder = new Worker(
+        `const { DatabaseSync } = require('node:sqlite');
+         const { workerData, parentPort } = require('node:worker_threads');
+         const db = new DatabaseSync(workerData.sessDbPath);
+         db.exec('PRAGMA busy_timeout = 5000');
+         db.exec('BEGIN IMMEDIATE');
+         parentPort.postMessage('held');
+         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+         db.exec('COMMIT');
+         db.close();`,
+        { eval: true, workerData: { sessDbPath } },
+      );
+      await new Promise<void>((resolve, reject) => {
+        holder.once('message', () => resolve());
+        holder.once('error', reject);
+      });
+
+      // Runs while the peer holds the write lock. Pre-fix this threw.
+      const result = pruneObservabilityByPath(obsPath, RETENTION_DEFAULTS, {
+        now: NOW,
+        sessDbPath,
+      });
+      expect(result.messages).toBe(1);
+      await holder.terminate();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

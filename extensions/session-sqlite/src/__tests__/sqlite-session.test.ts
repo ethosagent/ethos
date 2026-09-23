@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SQLiteSessionStore } from '../index';
+import { holdWriteLock } from './hold-write-lock';
 
 // Uses an in-memory SQLite database — no disk I/O, no cleanup needed.
 function makeStore() {
@@ -790,4 +794,38 @@ describe('SQLiteSessionStore — durability posture', () => {
     expect(syncPragma(store)).toBe(2);
     store.close();
   });
+});
+
+/** Reads `PRAGMA busy_timeout` off the store's OWN handle — like `synchronous`
+ *  it is a per-connection setting, so a second connection would prove nothing. */
+function busyPragma(store: unknown): number {
+  const rows = (store as { db: { pragma(s: string): unknown } }).db.pragma('busy_timeout');
+  return (rows as Array<{ timeout: number }>)[0]?.timeout ?? -1;
+}
+
+// sessions.db is shared cross-process (gateway + serve + CLI). Plan
+// hermes-0.21.4-fixes Fix 1: a peer's write lock used to make a turn's history
+// write throw `database is locked` at once.
+describe('SQLiteSessionStore — busy posture', () => {
+  it('waits up to 5 s for a peer write lock', () => {
+    const store = new SQLiteSessionStore(':memory:');
+    expect(busyPragma(store)).toBe(5000);
+    store.close();
+  });
+
+  it('appendMessage waits for a peer holding the write lock instead of throwing SQLITE_BUSY', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'session-sqlite-busy-'));
+    try {
+      const store = new SQLiteSessionStore(join(dir, 'sessions.db'));
+      const session = await store.createSession(baseSession);
+      const holder = await holdWriteLock(join(dir, 'sessions.db'));
+      // Runs while the peer holds the write lock. Pre-fix this threw.
+      await store.appendMessage({ sessionId: session.id, role: 'user', content: 'hello' });
+      expect((await store.getMessages(session.id)).map((m) => m.content)).toEqual(['hello']);
+      store.close();
+      await holder.terminate();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

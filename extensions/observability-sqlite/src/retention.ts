@@ -305,10 +305,15 @@ export function pruneObservability(
         ).n;
       } else {
         const sessDb = opts.sessDb;
-        result.messages = sessDb.transaction((): number => {
-          subtractPrunedUsage(sessDb, iso);
-          return sessDb.prepare('DELETE FROM messages WHERE timestamp < ?').run(iso).changes;
-        })();
+        // IMMEDIATE, not deferred: `subtractPrunedUsage` reads before it writes, and
+        // SQLite never calls the busy handler when a read transaction upgrades to a
+        // write, so a deferred BEGIN threw SQLITE_BUSY despite `busy_timeout`.
+        result.messages = sessDb
+          .transaction((): number => {
+            subtractPrunedUsage(sessDb, iso);
+            return sessDb.prepare('DELETE FROM messages WHERE timestamp < ?').run(iso).changes;
+          })
+          .immediate();
       }
     }
   }
@@ -336,6 +341,9 @@ export function pruneObservabilityByPath(
   let sessDb: BetterSqlite3.Database | undefined;
   if (opts.sessDbPath) {
     sessDb = new BetterSqlite3(opts.sessDbPath);
+    // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
+    // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
+    sessDb.pragma('busy_timeout = 5000');
   }
   try {
     return pruneObservability(db, config, { ...opts, sessDb });

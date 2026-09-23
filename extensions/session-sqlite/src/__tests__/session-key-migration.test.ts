@@ -5,6 +5,7 @@ import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SQLiteSessionStore } from '../index';
 import { decideMigration, migrateSessionKeys } from '../session-key-migration';
+import { holdWriteLock } from './hold-write-lock';
 
 // Multi-bot routing session-key migration. Pure decision logic is
 // unit-tested here; the SQLite-touching `migrateSessionKeys` wrapper
@@ -224,4 +225,20 @@ describe('migrateSessionKeys (SQLite integration)', () => {
     expect(result.skippedNoBot).toBe(1);
     expect(readAllKeys()).toEqual(['discord:42']);
   });
+
+  // Runs at gateway boot, possibly next to a live `ethos serve` on the same
+  // sessions.db (plan hermes-0.21.4-fixes Fix 1).
+  it('waits for a peer holding the write lock instead of throwing SQLITE_BUSY', async () => {
+    seed([{ key: 'telegram:42', platform: 'telegram' }]);
+    const holder = await holdWriteLock(dbPath);
+    // Runs while the peer holds the write lock. Pre-fix this threw.
+    const result = migrateSessionKeys({
+      dbPath,
+      knownByPlatform: known,
+      primaryByPlatform: primary,
+    });
+    expect(result.migrated).toBe(1);
+    expect(readAllKeys()).toEqual(['telegram:t1key:42']);
+    await holder.terminate();
+  }, 30_000);
 });

@@ -148,6 +148,9 @@ export function createKvStoreFactory(
   dbPath: string,
 ): ((tool: string, scopeId: string) => KeyValueStore) & { close(): void } {
   const db = new Database(dbPath);
+  // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
+  // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
+  db.pragma('busy_timeout = 5000');
   db.pragma('journal_mode = WAL');
   SqliteKeyValueStore.migrate(db);
   // `close` releases the one connection every store this factory hands out
@@ -189,6 +192,9 @@ export class SQLiteSessionStore implements SessionStore {
 
   constructor(dbPath: string, opts: SQLiteSessionStoreOptions = {}) {
     this.db = new Database(dbPath);
+    // sessions.db is shared cross-process (gateway + serve + CLI). An explicit busy
+    // timeout makes concurrent opens/writes wait instead of throwing SQLITE_BUSY.
+    this.db.pragma('busy_timeout = 5000');
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.migrate();
