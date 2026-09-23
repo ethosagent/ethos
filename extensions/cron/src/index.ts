@@ -707,11 +707,23 @@ export class CronScheduler {
           throw new Error(`Invalid schedule: "${patch.schedule}"`);
         }
         const nextAt = nextRunForSchedule(patch.schedule, new Date(), new Date(existing.createdAt));
+        const wasOneShot = isOneShotSchedule(existing.schedule);
         existing.schedule = patch.schedule;
         existing.nextRunAt = nextAt?.toISOString();
         // Recompute repeat if schedule changed to one-shot and repeat was forever
         if (isOneShotSchedule(patch.schedule) && existing.repeat.kind === 'forever') {
           existing.repeat = { kind: 'once' };
+        } else if (
+          wasOneShot &&
+          !isOneShotSchedule(patch.schedule) &&
+          existing.repeat.kind === 'once'
+        ) {
+          // Inverse of the rule above: a one-shot's `once` was implied by its schedule,
+          // so it goes when the schedule stops being one-shot. An explicit `once` on a
+          // recurring schedule is left alone (D7). `count` and `status` are never
+          // touched here — a retired job comes back only through resumeJob.
+          // Pinned by the "CronScheduler updateJob" tests in __tests__/cron.test.ts.
+          existing.repeat = { kind: 'forever' };
         }
       }
       if (patch.name !== undefined) existing.name = patch.name;

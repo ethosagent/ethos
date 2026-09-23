@@ -447,6 +447,113 @@ describe('CronScheduler updateJob', () => {
     const updated = await scheduler.updateJob(job.id, { schedule: '30m' });
     expect(updated.repeat.kind).toBe('once');
   });
+
+  // Force a job due and run one tick — same shape as "once-repeat job retires
+  // to done after one tick" above.
+  async function forceDueAndTick(scheduler: CronScheduler, id: string): Promise<void> {
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).patchJob(id, {
+      nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).tick();
+  }
+
+  it('switches repeat back to forever when a one-shot becomes recurring, and the job survives its next run', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Delay To Cron',
+      schedule: '30m',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'run-once',
+    });
+    expect(job.repeat.kind).toBe('once');
+
+    const updated = await scheduler.updateJob(job.id, { schedule: '0 9 * * *' });
+    expect(updated.repeat.kind).toBe('forever');
+
+    await forceDueAndTick(scheduler, job.id);
+
+    const after = await scheduler.getJob(job.id);
+    expect(after?.status).toBe('active');
+    expect(after?.runCount).toBe(1);
+    expect(after?.nextRunAt).toBeDefined();
+  });
+
+  it('round-trips recurring → one-shot → recurring back to forever', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Round Trip',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    expect(job.repeat.kind).toBe('forever');
+
+    const oneShot = await scheduler.updateJob(job.id, { schedule: '30m' });
+    expect(oneShot.repeat.kind).toBe('once');
+
+    const recurring = await scheduler.updateJob(job.id, { schedule: '0 9 * * *' });
+    expect(recurring.repeat.kind).toBe('forever');
+  });
+
+  it('keeps an explicit once across a recurring → recurring edit', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Explicit Once',
+      schedule: '0 8 * * *',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      repeat: { kind: 'once' },
+    });
+
+    const updated = await scheduler.updateJob(job.id, { schedule: '0 9 * * *' });
+    expect(updated.repeat).toEqual({ kind: 'once' });
+  });
+
+  it('leaves a count repeat untouched when a one-shot becomes recurring', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Count Delay',
+      schedule: '30m',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+      repeat: { kind: 'count', maxRuns: 3 },
+    });
+
+    const updated = await scheduler.updateJob(job.id, { schedule: '0 9 * * *' });
+    expect(updated.repeat).toEqual({ kind: 'count', maxRuns: 3 });
+  });
+
+  it('does not revive a done job on edit; resume does, and it then stays recurring', async () => {
+    const scheduler = makeScheduler();
+    const job = await scheduler.createJob({
+      name: 'Retired Delay',
+      schedule: '30m',
+      prompt: 'test',
+      personalityId: 'test',
+      missedRunPolicy: 'run-once',
+    });
+
+    await forceDueAndTick(scheduler, job.id);
+    expect((await scheduler.getJob(job.id))?.status).toBe('done');
+
+    const edited = await scheduler.updateJob(job.id, { schedule: '0 9 * * *' });
+    expect(edited.status).toBe('done');
+    expect(edited.repeat.kind).toBe('forever');
+
+    await scheduler.resumeJob(job.id);
+    expect((await scheduler.getJob(job.id))?.status).toBe('active');
+
+    await forceDueAndTick(scheduler, job.id);
+    const after = await scheduler.getJob(job.id);
+    expect(after?.status).toBe('active');
+    expect(after?.runCount).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
