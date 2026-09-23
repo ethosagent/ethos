@@ -171,10 +171,9 @@ try {
   // command switch so it works regardless of positional command parsing.
   const isZeroMode = args.includes('-z') || args.includes('--zero');
   if (isZeroMode) {
-    const zIdx = args.indexOf('-z') !== -1 ? args.indexOf('-z') : args.indexOf('--zero');
-    const prompt = args[zIdx + 1] ?? '';
+    // runZero finds the prompt itself (parseZeroArgs), so flags may come first.
     const { runZero } = await import('./commands/zero');
-    await runZero(args, prompt);
+    await runZero(args);
     // runZero signals failure via process.exitCode — don't clobber it with 0.
     process.exit(process.exitCode ?? 0);
   }
@@ -199,6 +198,9 @@ try {
         '\nOne-shot mode:\n' +
           '  -z, --zero <prompt>   Run a single turn and exit (non-interactive)\n' +
           '                        Compatible flags: --no-stream, --model, --personality, --provider\n' +
+          '  --format text|json|stream-json\n' +
+          '                        Output for -z (default text). stream-json: one JSON object\n' +
+          '                        per line, ending in a result line; json: the result line only\n' +
           '                        Pipe input: echo "code" | ethos -z "explain this"\n',
       );
       break;

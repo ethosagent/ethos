@@ -65,7 +65,7 @@ describe('runZero exit-code propagation (G5)', () => {
       personalityId: 'default',
     } as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     expect(process.exitCode).toBe(1);
   });
 
@@ -81,14 +81,14 @@ describe('runZero exit-code propagation (G5)', () => {
       personalityId: 'default',
     } as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     expect(process.exitCode).toBe(1);
   });
 
   it('sets exitCode 1 when no config exists', async () => {
     vi.mocked(readConfig).mockResolvedValue(null as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     expect(process.exitCode).toBe(1);
   });
 
@@ -106,7 +106,7 @@ describe('runZero exit-code propagation (G5)', () => {
       personalityId: 'default',
     } as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     const written = vi
       .mocked(process.stdout.write)
       .mock.calls.map((c) => String(c[0]))
@@ -127,7 +127,7 @@ describe('runZero exit-code propagation (G5)', () => {
       personalityId: 'default',
     } as never);
 
-    await runZero(['-z', 'hello'], 'hello');
+    await runZero(['-z', 'hello']);
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -167,7 +167,7 @@ describe('runZero exit-code propagation (G5)', () => {
       // Never ends: reading it would hang the test until it times out.
       useStdin(new PassThrough(), 'char');
 
-      await runZero(['-z', 'hello'], 'hello');
+      await runZero(['-z', 'hello']);
       expect(run).toHaveBeenCalledTimes(1);
       expect(run.mock.calls[0]?.[0]).toBe('hello');
     }, 2_000);
@@ -179,7 +179,7 @@ describe('runZero exit-code propagation (G5)', () => {
         throw new Error('EBADF');
       });
 
-      await runZero(['-z', 'hello'], 'hello');
+      await runZero(['-z', 'hello']);
       expect(run.mock.calls[0]?.[0]).toBe('hello');
     }, 2_000);
 
@@ -187,7 +187,7 @@ describe('runZero exit-code propagation (G5)', () => {
       const run = mockLoop();
       useStdin(Readable.from([Buffer.from('piped text')]), kind);
 
-      await runZero(['-z', 'hello'], 'hello');
+      await runZero(['-z', 'hello']);
       const prompt = String(run.mock.calls[0]?.[0]);
       expect(prompt.startsWith('hello')).toBe(true);
       expect(prompt).toContain('piped text');
