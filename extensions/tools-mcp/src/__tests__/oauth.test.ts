@@ -473,3 +473,181 @@ describe('TOCTOU safety', () => {
     expect(secrets.get).toHaveBeenCalledWith('mcp/srv/expires_at');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coalesced refresh (plan hermes-0.21.4-fixes §5.4). Every test uses a distinct
+// refresh-token string, so the process-wide flight map needs no reset hook.
+// ---------------------------------------------------------------------------
+
+describe('refreshToken — coalesced refresh', () => {
+  const config: OAuthConfig = {
+    authorization_endpoint: 'https://auth.example.com/authorize',
+    token_endpoint: 'https://auth.example.com/token',
+    client_id: 'my-client',
+  };
+
+  /** A fetch stub that holds every request until `release()` is called. */
+  function gatedFetch(respond: (refreshToken: string | null) => Response | object) {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const mock = vi.fn(async (_url: string, init: { body: string }) => {
+      await gate;
+      return respond(new URLSearchParams(init.body).get('refresh_token'));
+    });
+    vi.stubGlobal('fetch', mock);
+    return { mock, release: () => open() };
+  }
+
+  function okResponse(body: Record<string, unknown>) {
+    return { ok: true, status: 200, json: async () => body, text: async () => '' };
+  }
+
+  /** Resolver whose store is the given backing map (models one vault behind several resolvers). */
+  function secretsOver(store: Map<string, string>) {
+    return {
+      get: vi.fn(async (ref: string) => store.get(ref) ?? null),
+      set: vi.fn(async (ref: string, value: string) => {
+        store.set(ref, value);
+      }),
+      delete: vi.fn(async (ref: string) => {
+        store.delete(ref);
+      }),
+      list: vi.fn(async () => [...store.keys()]),
+    };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('two concurrent calls on one resolver make one refresh', async () => {
+    const secrets = createMockSecrets();
+    secrets._store.set('mcp/srv/refresh_token', 'rt-coalesce-one');
+    const { mock, release } = gatedFetch(() =>
+      okResponse({ access_token: 'at-one', refresh_token: 'rt-coalesce-one-2', expires_in: 60 }),
+    );
+
+    const a = refreshToken('srv', config, secrets);
+    const b = refreshToken('srv', config, secrets);
+    release();
+
+    await expect(Promise.all([a, b])).resolves.toEqual(['at-one', 'at-one']);
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(secrets._store.get('mcp/srv/refresh_token')).toBe('rt-coalesce-one-2');
+    expect(secrets._store.get('mcp/srv/access_token')).toBe('at-one');
+  });
+
+  it('two resolver instances over one vault (two bots) make one refresh', async () => {
+    const vault = new Map([['mcp/srv/refresh_token', 'rt-two-bots']]);
+    const botA = secretsOver(vault);
+    const botB = secretsOver(vault);
+    const { mock, release } = gatedFetch(() =>
+      okResponse({ access_token: 'at-bots', refresh_token: 'rt-two-bots-2' }),
+    );
+
+    const a = refreshToken('srv', config, botA);
+    const b = refreshToken('srv', config, botB);
+    release();
+
+    await expect(Promise.all([a, b])).resolves.toEqual(['at-bots', 'at-bots']);
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(vault.get('mcp/srv/refresh_token')).toBe('rt-two-bots-2');
+  });
+
+  it('two personalities with different refresh tokens for one server never share a refresh', async () => {
+    const alice = createMockSecrets();
+    alice._store.set('mcp/srv/refresh_token', 'rt-alice');
+    const bob = createMockSecrets();
+    bob._store.set('mcp/srv/refresh_token', 'rt-bob');
+    const { mock, release } = gatedFetch((rt) =>
+      okResponse({ access_token: `at-for-${rt}`, refresh_token: `${rt}-2` }),
+    );
+
+    const a = refreshToken('srv', config, alice);
+    const b = refreshToken('srv', config, bob);
+    release();
+
+    await expect(Promise.all([a, b])).resolves.toEqual(['at-for-rt-alice', 'at-for-rt-bob']);
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(alice._store.get('mcp/srv/access_token')).toBe('at-for-rt-alice');
+    expect(alice._store.get('mcp/srv/refresh_token')).toBe('rt-alice-2');
+    expect(bob._store.get('mcp/srv/access_token')).toBe('at-for-rt-bob');
+    expect(bob._store.get('mcp/srv/refresh_token')).toBe('rt-bob-2');
+    expect([...alice._store.values()].some((v) => v.includes('bob'))).toBe(false);
+    expect([...bob._store.values()].some((v) => v.includes('alice'))).toBe(false);
+  });
+
+  it('a failed shared refresh rejects every caller, stores nothing, and the next call retries', async () => {
+    const secrets = createMockSecrets();
+    secrets._store.set('mcp/srv/refresh_token', 'rt-fails');
+    const { mock, release } = gatedFetch(() => ({
+      ok: false,
+      status: 400,
+      text: async () => 'invalid_grant',
+      json: async () => ({}),
+    }));
+
+    const a = refreshToken('srv', config, secrets);
+    const b = refreshToken('srv', config, secrets);
+    release();
+
+    await expect(a).rejects.toThrow('Token refresh failed (400)');
+    await expect(b).rejects.toThrow('Token refresh failed (400)');
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(secrets.set).not.toHaveBeenCalled();
+
+    await expect(refreshToken('srv', config, secrets)).rejects.toThrow(
+      'Token refresh failed (400)',
+    );
+    expect(mock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a late joiner within the reuse window gets the new token without a second fetch', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const leader = createMockSecrets();
+    leader._store.set('mcp/srv/refresh_token', 'rt-late');
+    const { mock, release } = gatedFetch(() =>
+      okResponse({ access_token: 'at-late', refresh_token: 'rt-late-2', expires_in: 60 }),
+    );
+    release();
+
+    await expect(refreshToken('srv', config, leader)).resolves.toBe('at-late');
+    expect(mock).toHaveBeenCalledTimes(1);
+
+    // A caller that read the old token just before the rotation (its vault still holds it).
+    const late = createMockSecrets();
+    late._store.set('mcp/srv/refresh_token', 'rt-late');
+    await expect(refreshToken('srv', config, late)).resolves.toBe('at-late');
+    expect(mock).toHaveBeenCalledTimes(1);
+    // Its token still matched, so it stores — it never keeps a spent refresh token.
+    expect(late._store.get('mcp/srv/refresh_token')).toBe('rt-late-2');
+    expect(late._store.get('mcp/srv/access_token')).toBe('at-late');
+    expect(late._store.get('mcp/srv/expires_at')).toBe(leader._store.get('mcp/srv/expires_at'));
+
+    // Past the window the entry is gone, so the same old token fetches again.
+    vi.advanceTimersByTime(30_001);
+    const afterWindow = createMockSecrets();
+    afterWindow._store.set('mcp/srv/refresh_token', 'rt-late');
+    await refreshToken('srv', config, afterWindow);
+    expect(mock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a joiner whose vault no longer holds the presented token stores nothing', async () => {
+    const vault = new Map([['mcp/srv/refresh_token', 'rt-moved']]);
+    const leader = secretsOver(vault);
+    const { release } = gatedFetch(() =>
+      okResponse({ access_token: 'at-moved', refresh_token: 'rt-moved-2' }),
+    );
+    release();
+    await refreshToken('srv', config, leader);
+
+    // Same vault, but this resolver started from the old token (read before the leader stored).
+    const joiner = secretsOver(vault);
+    joiner.get.mockResolvedValueOnce('rt-moved');
+    await expect(refreshToken('srv', config, joiner)).resolves.toBe('at-moved');
+    expect(joiner.set).not.toHaveBeenCalled();
+  });
+});
