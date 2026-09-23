@@ -183,6 +183,60 @@ interface McpToolDef {
   name: string;
   description?: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * Whether a call whose outcome is unknown may be re-sent: the server
+   * annotated the tool `readOnlyHint` or `idempotentHint` (plan
+   * hermes-0.21.4-fixes D18). Set by `McpClient.listTools`, read by
+   * `McpClient._callToolInner` through `adaptMcpTool`. A server that mislabels
+   * a side-effecting tool only gets its own tool re-sent to itself.
+   */
+  replaySafe: boolean;
+}
+
+/**
+ * Mirrors the SDK's `ErrorCode.ConnectionClosed` (`@modelcontextprotocol/sdk/types.js`),
+ * which `Protocol._onclose` rejects every pending request with. A local constant,
+ * not an import: several test files mock that module without `ErrorCode`, and the
+ * import would be `undefined` there (plan hermes-0.21.4-fixes D21).
+ */
+const MCP_CONNECTION_CLOSED = -32000;
+
+/**
+ * The rejection `McpClient`'s own `onclose` hands every pending call. A class so
+ * `classifyCallFailure` recognises it by type, never by its text.
+ */
+class McpDisconnectedError extends Error {}
+
+/**
+ * How a failed `callTool` relates to the server (plan hermes-0.21.4-fixes §6.3, D16/D17):
+ * - `'not-sent'`: the request provably never left, so re-sending cannot repeat an effect.
+ * - `'outcome-unknown'`: the connection dropped after the request may have been
+ *   written; the server may already have run the tool.
+ * - `null`: anything else, including a server error whose text mentions an errno.
+ *
+ * Reads structured fields only (`code`, `cause.code`, the client's own
+ * `McpDisconnectedError`). Message text is server-controlled and, on HTTP, does
+ * not carry the errno at all (`TypeError: fetch failed` puts it on `cause.code`).
+ * The one text comparison is `=== 'Not connected'`: the SDK throws exactly that
+ * from `Protocol.request`/`StdioClientTransport.send` before anything is
+ * written, and a server's JSON-RPC error never equals it because the SDK
+ * prefixes those with `MCP error <code>:`.
+ */
+function classifyCallFailure(err: unknown): 'not-sent' | 'outcome-unknown' | null {
+  if (err instanceof McpDisconnectedError) return 'outcome-unknown';
+  if (!(err instanceof Error)) return null;
+  if (err.message === 'Not connected') return 'not-sent';
+  const code: unknown = (err as { code?: unknown }).code;
+  const cause: unknown = err.cause;
+  const causeCode: unknown =
+    typeof cause === 'object' && cause !== null ? (cause as { code?: unknown }).code : undefined;
+  const codes = [code, causeCode];
+  if (codes.includes('ECONNREFUSED')) return 'not-sent';
+  if (codes.some((c) => c === 'ECONNRESET' || c === 'EPIPE' || c === 'UND_ERR_SOCKET')) {
+    return 'outcome-unknown';
+  }
+  if (code === MCP_CONNECTION_CLOSED) return 'outcome-unknown';
+  return null;
 }
 
 export class McpClient {
@@ -243,7 +297,7 @@ export class McpClient {
     this._sdk.onclose = () => {
       this._connected = false;
       this._clearKeepalive();
-      const err = new Error(`MCP server '${this._config.name}' disconnected`);
+      const err = new McpDisconnectedError(`MCP server '${this._config.name}' disconnected`);
       for (const reject of this._pending.values()) reject(err);
       this._pending.clear();
       if (!this._destroyed) this._scheduleReconnect(0);
@@ -518,17 +572,27 @@ export class McpClient {
       name: t.name,
       description: t.description,
       inputSchema: rewriteDefinitionsToRefs(t.inputSchema as Record<string, unknown>),
+      replaySafe: t.annotations?.readOnlyHint === true || t.annotations?.idempotentHint === true,
     }));
   }
 
-  async callTool(name: string, args: unknown): Promise<ToolResult> {
-    return this._callToolInner(name, args, true);
+  /**
+   * `opts.replaySafe` (default `false`) lets a call whose outcome is unknown
+   * after a dropped connection be re-sent once; see `McpToolDef.replaySafe`.
+   */
+  async callTool(
+    name: string,
+    args: unknown,
+    opts?: { replaySafe?: boolean },
+  ): Promise<ToolResult> {
+    return this._callToolInner(name, args, true, opts?.replaySafe === true);
   }
 
   private async _callToolInner(
     name: string,
     args: unknown,
     allowRetry: boolean,
+    replaySafe: boolean,
   ): Promise<ToolResult> {
     if (!this._connected) {
       return {
@@ -622,7 +686,7 @@ export class McpClient {
           }
           this._sdk = new Client({ name: 'ethos', version: '1.0.0' }, { capabilities: {} });
           await this.connect();
-          return this._callToolInner(name, args, false);
+          return this._callToolInner(name, args, false, replaySafe);
         } catch {
           // Refresh failed — fall through to error
         }
@@ -637,19 +701,38 @@ export class McpClient {
         };
       }
 
-      if (allowRetry && this._isConnectionError(msg)) {
-        this._logger.warn(`[ethos] MCP server '${this._config.name}' pipe error, retrying once`, {
-          component: 'tools-mcp',
-          server: this._config.name,
-          error: msg,
-        });
+      // Re-send only when the request provably never left, or the tool declares
+      // itself safe to replay (plan hermes-0.21.4-fixes D17–D19). The decision does
+      // not depend on whether this client's `onclose` guard or the SDK's own
+      // `ConnectionClosed` rejection settled first — both classify as
+      // 'outcome-unknown' (D20).
+      const failure = classifyCallFailure(err);
+      if (allowRetry && (failure === 'not-sent' || (failure === 'outcome-unknown' && replaySafe))) {
+        this._logger.warn(
+          `[ethos] MCP server '${this._config.name}' connection error (${failure}), retrying once`,
+          { component: 'tools-mcp', server: this._config.name, error: msg },
+        );
         this._connected = false;
         if (!this._destroyed) this._scheduleReconnect(0);
         if (this._reconnectPromise) {
           const deadline = this._config.connectTimeoutMs ?? 10_000;
           await Promise.race([this._reconnectPromise, new Promise((r) => setTimeout(r, deadline))]);
         }
-        return this._callToolInner(name, args, false);
+        return this._callToolInner(name, args, false, replaySafe);
+      }
+      if (failure === 'outcome-unknown') {
+        this._logger.warn(
+          `[ethos] MCP server '${this._config.name}' connection error (outcome unknown), not retrying`,
+          { component: 'tools-mcp', server: this._config.name, tool: name, error: msg },
+        );
+        // Reconnect so the NEXT call has a connection; this one is not re-sent.
+        this._connected = false;
+        if (!this._destroyed) this._scheduleReconnect(0);
+        return {
+          ok: false,
+          error: `MCP server '${this._config.name}' dropped the connection after the call was sent, so '${name}' may or may not have run. Check whether it took effect before calling it again.`,
+          code: 'execution_failed',
+        };
       }
       return {
         ok: false,
@@ -663,19 +746,6 @@ export class McpClient {
 
   private _is401Error(msg: string): boolean {
     return msg.includes('401') || msg.toLowerCase().includes('unauthorized');
-  }
-
-  private _isConnectionError(msg: string): boolean {
-    const patterns = [
-      'EPIPE',
-      'ECONNRESET',
-      'ECONNREFUSED',
-      'connection closed',
-      'write after end',
-      'socket hang up',
-    ];
-    const lower = msg.toLowerCase();
-    return patterns.some((p) => lower.includes(p.toLowerCase()));
   }
 
   async disconnect(): Promise<void> {
@@ -729,7 +799,7 @@ function adaptMcpTool(
     },
     isAvailable: () => client.isConnected(),
     execute(args) {
-      return client.callTool(mcpTool.name, args);
+      return client.callTool(mcpTool.name, args, { replaySafe: mcpTool.replaySafe });
     },
   };
 }
