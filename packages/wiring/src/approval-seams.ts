@@ -95,14 +95,12 @@ export interface CreateApprovalDangerPredicateOptions {
   spokenConfirmations?: SpokenConfirmationRecord;
   /**
    * Forwarded to `createDangerPredicate` — lets a personality's
-   * `approvalMode: 'off'` auto-approve flagged tools. Only the unattended
-   * gate sets it (`createUnattendedGateHandler`,
-   * apps/ethos/src/unattended-approval-gate.ts), from the operator key
-   * `allowUnattendedDangerousTools` — on the gateway systemLoop, on bot loops
-   * with no approval-capable adapter, and on no-card turns of card-capable
-   * bots (`wireApprovalFlow`, apps/ethos/src/commands/gateway.ts). Approval
-   * surfaces with a human (web modal, Slack/Telegram/Discord card, MCP export)
-   * leave it unset, so `off` stays `manual` there.
+   * `approvalMode: 'off'` auto-approve flagged tools. Only the gateway
+   * systemLoop's unattended gate sets it, from the operator key
+   * `allowUnattendedDangerousTools` (`wireUnattendedApprovalGate`,
+   * apps/ethos/src/unattended-approval-gate.ts). Approval surfaces with a human
+   * (web modal, Slack/Telegram card, MCP export) leave it unset, so `off` stays
+   * `manual` there.
    */
   allowAutoApproveDangerousTools?: boolean;
 }

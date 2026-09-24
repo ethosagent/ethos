@@ -331,10 +331,11 @@ export interface CreateSlackApprovalHookOptions {
   /**
    * The `before_tool_call` handler for a turn with no approval surface
    * (`resolveApprovalTarget` returned `undefined`). `wireApprovalFlow` passes
-   * the unattended gate (`createUnattendedGateHandler`,
-   * apps/ethos/src/unattended-approval-gate.ts), which refuses a flagged call
-   * unless the D12 opt-in pre-authorizes it. Required so no caller can
-   * silently fall back to letting such a call through. Pinned by
+   * the no-surface gate (`createNoApprovalSurfaceGate`,
+   * apps/ethos/src/unattended-approval-gate.ts), which always refuses a
+   * flagged call — a remote sender drives the turn, so no opt-in applies.
+   * Required so no caller can silently fall back to letting such a call
+   * through. Pinned by
    * apps/ethos/src/commands/__tests__/approval-flow-unattended.test.ts.
    */
   withoutSurface: (payload: BeforeToolCallPayload) => Promise<{ error?: string }>;
@@ -352,9 +353,8 @@ export interface CreateSlackApprovalHookOptions {
 export function createSlackApprovalHook(opts: CreateSlackApprovalHookOptions) {
   return async (payload: BeforeToolCallPayload): Promise<Partial<BeforeToolCallResult> | null> => {
     // No approval surface for this turn (a non-card channel sharing the loop)
-    // — nobody can be asked, so the unattended gate decides, with its own
-    // predicate (it carries the D12 opt-in; `isDangerous` does not). Resolved
-    // first so a flagged call is judged once, not twice.
+    // — nobody can be asked, so `withoutSurface` decides with its own
+    // predicate. Resolved first so a flagged call is judged once, not twice.
     const target = opts.resolveApprovalTarget(payload.sessionId);
     if (target === undefined) return opts.withoutSurface(payload);
 

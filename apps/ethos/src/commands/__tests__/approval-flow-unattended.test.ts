@@ -5,10 +5,14 @@
 // and a turn on a card-capable bot's loop that arrived through a card-less
 // adapter passed straight through — both ran approval-flagged tools unattended.
 //
+// A remote sender drives every one of these turns, so the gate ALWAYS refuses a
+// flagged call: the systemLoop's D12 opt-in (`approvalMode: off` +
+// `allowUnattendedDangerousTools`) is never honoured on a bot loop.
+//
 // Two halves, the same idiom as `gateway-unattended-gate-wiring.test.ts`:
 //  - runtime: the real `wireApprovalFlow` with stub adapters and a stub route;
-//  - source text: every host that wires bot loops goes through it with the
-//    D12 operator key. Neither host boots from a unit test.
+//  - source text: every host that wires bot loops goes through it, and the
+//    D12 operator key reaches none of it. Neither host boots from a unit test.
 
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -87,7 +91,8 @@ function wire(opts: {
   bots: GatewayBotConfig[];
   adapters: PlatformAdapter[];
   routeAdapter?: PlatformAdapter;
-  allowUnattendedDangerousTools?: boolean;
+  /** Smuggle the operator key in as an extra seam, to prove it is ignored. */
+  withOperatorKey?: boolean;
 }) {
   const gateway = {
     resolveApprovalRoute: () =>
@@ -109,7 +114,7 @@ function wire(opts: {
     model: 'test-model',
     approvalTimeoutMs: 0,
     ownerFor: () => undefined,
-    allowUnattendedDangerousTools: opts.allowUnattendedDangerousTools === true,
+    ...((opts.withOperatorKey ? { allowUnattendedDangerousTools: true } : {}) as object),
   });
 }
 
@@ -134,7 +139,10 @@ function callTool(
   } satisfies BeforeToolCallPayload);
 }
 
-const REFUSED_CALL = 'no human is present to approve call (call requires explicit approval)';
+const REFUSED_CALL =
+  'call needs approval, and this chat surface cannot show an approval prompt ' +
+  '(call requires explicit approval). Use a platform with approval cards ' +
+  '(Slack, Telegram, Discord) or the web UI.';
 
 describe('wireApprovalFlow — bot loops with no approval surface', () => {
   it('a WhatsApp-like bot refuses a flagged tool and runs an unflagged one', async () => {
@@ -158,20 +166,20 @@ describe('wireApprovalFlow — bot loops with no approval surface', () => {
     await flow.shutdown();
   });
 
-  it('D12: approvalMode off + allowUnattendedDangerousTools lets the flagged call through', async () => {
+  it('no D12 on a bot loop: approvalMode off + the operator key still refuses', async () => {
     const b = bot('wa');
     const flow = wire({
       bots: [b.config],
       adapters: [cardlessAdapter('wa')],
-      allowUnattendedDangerousTools: true,
+      withOperatorKey: true,
     });
     await startTurn(b.hooks, 'auto');
 
-    expect((await callTool(b.hooks, 'call')).error).toBeUndefined();
+    expect((await callTool(b.hooks, 'call')).error).toBe(REFUSED_CALL);
     await flow.shutdown();
   });
 
-  it('D12 needs both halves: approvalMode off alone still refuses', async () => {
+  it('approvalMode off alone also refuses', async () => {
     const b = bot('wa');
     const flow = wire({ bots: [b.config], adapters: [cardlessAdapter('wa')] });
     await startTurn(b.hooks, 'auto');
@@ -192,7 +200,7 @@ describe('wireApprovalFlow — bot loops with no approval surface', () => {
     // Shutdown force-denies the pending approval: the card flow owned it.
     await flow.shutdown();
     expect((await result).error).toMatch(/call requires explicit approval/);
-    expect((await result).error).not.toMatch(/no human is present/);
+    expect((await result).error).not.toMatch(/cannot show an approval prompt/);
   });
 
   it('mixed bot: a turn through its card-less adapter is refused, not allowed', async () => {
@@ -209,7 +217,7 @@ describe('wireApprovalFlow — bot loops with no approval surface', () => {
     await flow.shutdown();
   });
 
-  it('mixed bot: the D12 opt-in applies on the card-less turn too', async () => {
+  it('mixed bot: approvalMode off + the operator key still refuses the card-less turn', async () => {
     const b = bot('mixed');
     const { adapter } = cardAdapter('mixed');
     const email = cardlessAdapter('mixed');
@@ -217,11 +225,11 @@ describe('wireApprovalFlow — bot loops with no approval surface', () => {
       bots: [b.config],
       adapters: [adapter, email],
       routeAdapter: email,
-      allowUnattendedDangerousTools: true,
+      withOperatorKey: true,
     });
     await startTurn(b.hooks, 'auto');
 
-    expect((await callTool(b.hooks, 'call')).error).toBeUndefined();
+    expect((await callTool(b.hooks, 'call')).error).toBe(REFUSED_CALL);
     await flow.shutdown();
   });
 
@@ -243,33 +251,42 @@ describe('wireApprovalFlow — bot loops with no approval surface', () => {
   });
 });
 
-describe('every bot-loop host goes through wireApprovalFlow with the D12 key', () => {
-  it('ethos gateway start: one call over all bots, with the operator key', async () => {
+describe('every bot-loop host goes through wireApprovalFlow, without the D12 key', () => {
+  it('ethos gateway start: one call over all bots; the operator key reaches only the systemLoop', async () => {
     const src = await readFile(join(ROOT, 'apps/ethos/src/commands/gateway.ts'), 'utf8');
     const call = src.indexOf('wireApprovalFlow(gateway, bots, adapters, {');
     expect(call).toBeGreaterThan(-1);
-    expect(src.slice(call, src.indexOf('});', call))).toContain(
-      'allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true',
+    expect(src.slice(call, src.indexOf('});', call))).not.toContain(
+      'allowUnattendedDangerousTools',
     );
-    // The bot-loop unattended gate lives inside `wireApprovalFlow` only: the
-    // command's one direct registration is the systemLoop's.
-    const direct = [...src.matchAll(/wireUnattendedApprovalGate\((\w+(?:\.\w+)*)/g)].map(
-      (m) => m[1],
-    );
-    expect(direct).toEqual(['systemLoopReady.hooks', 'bot.loop.hooks']);
+    // The systemLoop's gate is the command's one `wireUnattendedApprovalGate`.
+    expect(src.split('wireUnattendedApprovalGate(').length - 1).toBe(1);
+    expect(src).toContain('wireUnattendedApprovalGate(systemLoopReady.hooks, {');
+    // Inside `wireApprovalFlow`: the no-surface gate, before the early return,
+    // and no operator key anywhere in the function.
     const fn = src.indexOf('export function wireApprovalFlow(');
-    expect(src.indexOf('wireUnattendedApprovalGate(bot.loop.hooks')).toBeGreaterThan(fn);
-    // ...and before the no-approval-adapter early return.
-    expect(src.indexOf('if (approvalAdapters.length === 0) return')).toBeGreaterThan(
-      src.indexOf('wireUnattendedApprovalGate(bot.loop.hooks'),
-    );
+    const fnBody = src.slice(fn, src.indexOf('\n}\n', fn));
+    expect(fnBody).not.toContain('allowUnattendedDangerousTools');
+    expect(fnBody).not.toContain('allowAutoApproveDangerousTools');
+    const perBot = fnBody.indexOf('createNoApprovalSurfaceGate([bot.loop.hooks]');
+    expect(perBot).toBeGreaterThan(-1);
+    expect(fnBody.indexOf('if (approvalAdapters.length === 0) return')).toBeGreaterThan(perBot);
+  });
+
+  it('the no-surface gate never forwards the auto-approve capability', async () => {
+    const src = await readFile(join(ROOT, 'apps/ethos/src/unattended-approval-gate.ts'), 'utf8');
+    const fn = src.indexOf('export function createNoApprovalSurfaceGate(');
+    expect(fn).toBeGreaterThan(-1);
+    const body = src.slice(fn, src.indexOf('\n}\n', fn));
+    expect(body).not.toContain('allowAutoApproveDangerousTools');
+    expect(body).toContain('noApprovalSurfaceRejection');
   });
 
   it('ethos boot: cold boot, hot-add, webhook bots and replacements all use registerBotLive', async () => {
     const src = await readFile(join(ROOT, 'apps/ethos/src/commands/boot.ts'), 'utf8');
     const seams = src.indexOf('const approvalSeams = {');
-    expect(src.slice(seams, src.indexOf('};', seams))).toContain(
-      'allowUnattendedDangerousTools: cfg.allowUnattendedDangerousTools === true',
+    expect(src.slice(seams, src.indexOf('};', seams))).not.toContain(
+      'allowUnattendedDangerousTools',
     );
     const registerLive = src.indexOf('const registerBotLive = async (');
     const flowCall = src.indexOf('wireApprovalFlow(gateway, [bot], adaptersSlice, approvalSeams)');
@@ -277,6 +294,7 @@ describe('every bot-loop host goes through wireApprovalFlow with the D12 key', (
     // The only call in the file: nothing wires a bot loop around it.
     expect(src.split('wireApprovalFlow(gateway').length - 1).toBe(1);
     expect(src).not.toContain('wireUnattendedApprovalGate(');
+    expect(src).not.toContain('createNoApprovalSurfaceGate(');
     // Cold boot, live channel-bot hot-add (also the replacement path), webhook route bot.
     expect(src).toContain('await registerBotLive(bot, wiring, own ? [own] : [])');
     expect(src).toContain('wire: () => registerBotLive(bot, wiring, [adapter])');

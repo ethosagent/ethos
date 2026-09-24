@@ -285,7 +285,7 @@ register_anchors:
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 55, contains: "export async function enforceBeforeToolCall" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 59, contains: "const denied = checkDenyRules(" }
     - { path: packages/core/src/hook-registry.ts, line: 94, contains: "async fireModifying" }
-    - { path: packages/wiring/src/approval-seams.ts, line: 118, contains: "export function createApprovalDangerPredicate" }
+    - { path: packages/wiring/src/approval-seams.ts, line: 116, contains: "export function createApprovalDangerPredicate" }
     - { path: packages/core/src/agent-loop/approval-posture.ts, line: 38, contains: "export function createApprovalPostureGuard" }
 
   G-EXEC:

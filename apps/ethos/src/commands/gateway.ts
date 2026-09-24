@@ -169,7 +169,7 @@ import { notifyReady, startWatchdog } from '../sd-notify';
 import { createSipInboundHandler } from '../sip-inbound-dispatch';
 import { createSipWebhookServer } from '../sip-webhook-server';
 import {
-  createUnattendedGateHandler,
+  createNoApprovalSurfaceGate,
   reportUnattendedCronExposure,
   wireUnattendedApprovalGate,
 } from '../unattended-approval-gate';
@@ -1460,8 +1460,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
 
   // Wire the tool-approval gate on every bot loop. A bot with a card-capable
   // adapter (Slack, Telegram, Discord) suspends a dangerous call until the
-  // user clicks Allow / Deny; every other bot gets the unattended gate, which
-  // refuses it (see `wireApprovalFlow`).
+  // user clicks Allow / Deny; every other bot refuses it, because its chat
+  // surface cannot show a prompt (see `wireApprovalFlow`).
   const approvalFlow = wireApprovalFlow(gateway, bots, adapters, {
     personalities: seamPersonalities,
     getProvider: createLazyProvider(() => createLLM(config)),
@@ -1470,7 +1470,6 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       ? { approvalTimeoutMs: config.approvalTimeoutMs }
       : {}),
     ownerFor: (platform) => config.channelFilter?.[platform]?.ownerUserId,
-    allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
   });
 
   // Start the cron scheduler that was hoisted above (so agent-callable
@@ -2710,16 +2709,18 @@ const APPROVAL_SHUTDOWN_DRAIN_MS = 5_000;
  *
  *   0. A bot with NO approval-capable adapter (WhatsApp, Email, a webhook
  *      route bot — anything without `postApprovalCard`; today only Slack,
- *      Telegram and Discord implement it) gets the unattended gate
- *      (`wireUnattendedApprovalGate`, apps/ethos/src/unattended-approval-gate.ts):
- *      a flagged call is refused, unless the personality declares
- *      `approvalMode: off` AND the operator set
- *      `allowUnattendedDangerousTools` (plan D12). This includes the case
- *      where no adapter at all is approval-capable, which returns right after.
+ *      Telegram and Discord implement it) gets the no-surface gate
+ *      (`createNoApprovalSurfaceGate`, apps/ethos/src/unattended-approval-gate.ts):
+ *      a flagged call is ALWAYS refused. A remote sender drives these turns,
+ *      so the systemLoop's D12 opt-in (`approvalMode: off` +
+ *      `allowUnattendedDangerousTools`) is never honoured here. This includes
+ *      the case where no adapter at all is approval-capable, which returns
+ *      right after.
  *   1. `before_tool_call` hook on every approval-capable bot loop →
  *      `ApprovalCoordinator` suspends dangerous calls. A turn on such a loop
  *      that arrived through an adapter that cannot post a card is handed to
- *      the same unattended gate (`withoutSurface`), not let through.
+ *      the same no-surface gate (`withoutSurface`) and refused, not let
+ *      through.
  *   2. `coordinator.onPending` → resolve the sessionId to its adapter/chat/
  *      thread via the gateway and post an approval card.
  *   3. each adapter's button-click event → `coordinator.approve/deny`
@@ -2755,26 +2756,24 @@ export function wireApprovalFlow(
      *  decides approvals for turns started in a group chat. Required so no
      *  caller can silently fall back to requester binding in groups. */
     ownerFor: (platform: string) => string | undefined;
-    /** `EthosConfig.allowUnattendedDangerousTools` — the operator half of the
-     *  D12 opt-in on turns with no approval surface. Required so no host can
-     *  silently drop it. */
-    allowUnattendedDangerousTools: boolean;
   },
 ): { shutdown: () => Promise<void>; pendingCount: () => number } {
   const approvalAdapters = adapters.filter(isApprovalCapable);
   const approvalBotKeys = new Set(approvalAdapters.map((a) => a.botKey));
-  const unattendedOpts = {
+  const noSurfaceOpts = {
     personalities: seams.personalities,
     getProvider: seams.getProvider,
     model: seams.model,
-    allowUnattendedDangerousTools: seams.allowUnattendedDangerousTools,
   };
   // Wire 0: a bot with no approval surface is gated here, before the
   // early return below, so a deployment with no card-capable adapter at all
   // is covered too.
   for (const bot of bots) {
-    if (!approvalBotKeys.has(bot.botKey))
-      wireUnattendedApprovalGate(bot.loop.hooks, unattendedOpts);
+    if (approvalBotKeys.has(bot.botKey)) continue;
+    bot.loop.hooks.registerModifying(
+      'before_tool_call',
+      createNoApprovalSurfaceGate([bot.loop.hooks], noSurfaceOpts),
+    );
   }
   // No approval surface — hand back a no-op handle so the caller needs no
   // null check in its shutdown closure. Nothing can ever be pending here.
@@ -2827,7 +2826,7 @@ export function wireApprovalFlow(
 
   // Resolve a `sessionId` to its approval target. Returns `undefined` for
   // any turn whose route isn't an approval-capable adapter; the hook then
-  // hands the call to `withoutSurface` (the unattended gate).
+  // hands the call to `withoutSurface` (the no-surface gate).
   //
   // `requesterUserId` is the one user the coordinator lets decide
   // (`ApprovalCoordinator.settle` drops every other click). In a DM that is
@@ -2848,7 +2847,7 @@ export function wireApprovalFlow(
   };
 
   // Register the approval hook only on loops whose bot has an
-  // approval-capable adapter (every other bot got the unattended gate above).
+  // approval-capable adapter (every other bot got the no-surface gate above).
   const approvalBots = bots.filter((bot) => approvalBotKeys.has(bot.botKey));
   // One predicate for all approval bots. It learns each turn's personality
   // from the owning loop's `session_start`, so `approvalMode` follows
@@ -2863,11 +2862,11 @@ export function wireApprovalFlow(
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
   });
   // A turn on one of these loops that arrived through an adapter with no card
-  // (an Email message that fell back to a Slack bot's loop) has nobody to ask:
-  // the unattended gate decides it, as it would on a bot with no card at all.
-  const withoutSurface = createUnattendedGateHandler(
+  // (an Email message that fell back to a Slack bot's loop) cannot be asked:
+  // the no-surface gate refuses a flagged call, as on a bot with no card.
+  const withoutSurface = createNoApprovalSurfaceGate(
     approvalBots.map((bot) => bot.loop.hooks),
-    unattendedOpts,
+    noSurfaceOpts,
   );
   for (const bot of approvalBots) {
     bot.loop.hooks.registerModifying(

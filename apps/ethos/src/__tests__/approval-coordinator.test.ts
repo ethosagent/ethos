@@ -676,7 +676,6 @@ describe('wireApprovalFlow', () => {
       model: 'test-model',
       ...(approvalTimeoutMs !== undefined ? { approvalTimeoutMs } : {}),
       ownerFor: () => undefined,
-      allowUnattendedDangerousTools: false,
     });
     return { flow, hooks, posted, calls };
   }
@@ -819,7 +818,6 @@ describe('wireApprovalFlow', () => {
       },
       model: 'test-model',
       ownerFor: () => undefined,
-      allowUnattendedDangerousTools: false,
     });
     await expect(flow.shutdown()).resolves.toBeUndefined();
   });

@@ -33,7 +33,7 @@ Ethos's safety classifier sorts every tool call into one of three buckets. `safe
 |---|---|---|
 | `manual` *(default)* | Surface an approval prompt; wait for Allow / Deny. | Personal CLI sessions. Web UI personalities. Any time you are sitting at the terminal and can answer in seconds. |
 | `smart` | An LLM reviewer judges the call first. `approve` → runs with no prompt. `deny` and `ask` → the approval prompt still fires, carrying the reviewer's reason. | Long-running agent sessions where approval fatigue is the failure mode. Trades latency and reviewer tokens for fewer interruptions. |
-| `off` | Auto-fire. `blocked` calls still refuse. | Trusted local automation only — cron, batch runs, headless test rigs. Refused at config load when combined with any channel ingress. On the gateway's cron/dream loop, and on a bot with no approval card, it takes effect only when the operator also sets `allowUnattendedDangerousTools: true` in `config.yaml`; otherwise flagged calls there are refused, because nobody is present to approve them. |
+| `off` | Auto-fire. `blocked` calls still refuse. | Trusted local automation only — cron, batch runs, headless test rigs. Refused at config load when combined with any channel ingress. On the gateway's cron/dream loop it takes effect only when the operator also sets `allowUnattendedDangerousTools: true` in `config.yaml`; otherwise flagged calls there are refused, because nobody is present to approve them. It never takes effect on a WhatsApp, email or webhook bot: flagged calls there are always refused. |
 
 The hardline `blocked` floor is **non-overridable** — `approvalMode: off` does not unlock `rm -rf /`. That is the point: a regex floor catches the literal command shape even when every other check is bypassed.
 
@@ -156,15 +156,21 @@ Hardline commands (a `terminal` or `process_start` command on the blocklist, suc
 
 ### Slack, Telegram and Discord
 
-These adapters implement `ApprovalCapableAdapter` and post an interactive approval card with Allow / Deny buttons in the originating conversation (DM or channel). The flow is wired in [apps/ethos/src/commands/gateway.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts) and binds the approval to the user whose message triggered the turn — a bystander in the channel cannot click Allow on a tool call they did not request. The card updates in place to show who decided what.
+These adapters implement `ApprovalCapableAdapter` and post an interactive approval card with Allow / Deny buttons in the originating conversation (DM or channel). The flow is wired in [apps/ethos/src/commands/gateway.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts). Only one user can decide each card, and clicks from anyone else are ignored:
+
+- In a DM, the user whose message triggered the turn decides.
+- In a group chat, the platform owner decides when `channel_filter.<platform>.ownerUserId` is set in `config.yaml`. The member who asked cannot approve their own call.
+- In a group chat on a platform with no owner configured, the user whose message triggered the turn decides.
+
+`resolveApprovalTarget` in `wireApprovalFlow` picks the decider, pinned by `apps/ethos/src/commands/__tests__/approval-target.test.ts`. The card updates in place to show who decided what.
 
 Threads work on Slack (the card posts in the same thread as the inbound message). On Telegram the card posts as a reply to the triggering message.
 
 ### WhatsApp, email and webhook bots
 
-These have no approval card to post, so nobody can be asked. A call that would need approval is refused with `no human is present to approve <tool> (<reason>)`, the same gate cron jobs meet on the gateway. The same applies to a turn that reaches a Slack, Telegram or Discord bot's agent through an adapter without cards (an email that falls back to that bot, for example). Unflagged tools run as usual. `wireApprovalFlow` in [apps/ethos/src/commands/gateway.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts) wires this for `ethos gateway start` and `ethos boot`. It is pinned by `apps/ethos/src/commands/__tests__/approval-flow-unattended.test.ts`.
+These have no approval card to post, so nobody can be asked. A call that would need approval is always refused with `<tool> needs approval, and this chat surface cannot show an approval prompt (<reason>). Use a platform with approval cards (Slack, Telegram, Discord) or the web UI.` The same applies to a turn that reaches a Slack, Telegram or Discord bot's agent through an adapter without cards (an email that falls back to that bot, for example). Unflagged tools run as usual. `wireApprovalFlow` in [apps/ethos/src/commands/gateway.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts) wires this for `ethos gateway start` and `ethos boot`. It is pinned by `apps/ethos/src/commands/__tests__/approval-flow-unattended.test.ts`.
 
-To let such a bot use a flagged tool, set `approvalMode: off` on its personality and `allowUnattendedDangerousTools: true` in `config.yaml`. A personality with a channel `platform:` cannot use `off` (see above), so this works only for a personality bound to the bot in gateway config. Use Slack, Telegram or Discord if you want to be asked instead.
+No setting lets these bots run a flagged tool. `approvalMode: off` and `allowUnattendedDangerousTools: true` apply only to the gateway's cron/dream loop, because a remote sender drives every turn on a chat bot. To use a flagged tool from chat, talk to the agent through Slack, Telegram, Discord or the web UI, where you are asked first.
 
 ## Verify
 

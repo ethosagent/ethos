@@ -1,29 +1,35 @@
-// The fail-closed approval gate for loops where no human can be asked to answer
-// an approval prompt:
-//   - the gateway's systemLoop (cron, dreams, watcher wakes, call capture,
-//     SIP-inbound) — `wireUnattendedApprovalGate`, registered by
-//     `runGatewayStart` (apps/ethos/src/commands/gateway.ts);
-//   - every bot loop with no approval-capable adapter (WhatsApp, Email, a
-//     `webhooks.<hookId>` route bot — anything without `postApprovalCard`) —
-//     `wireUnattendedApprovalGate`, registered by `wireApprovalFlow`
-//     (gateway.ts), the one call every bot-loop host makes: `ethos gateway
-//     start` for all bots at once, `ethos boot`'s `registerBotLive` per bot
-//     (cold boot, live hot-add, and a bot replaced on config reload);
-//   - a turn on a card-capable bot's loop that arrived through an adapter
-//     that cannot post a card (the mixed case) — `createUnattendedGateHandler`,
-//     handed to `createSlackApprovalHook` as `withoutSurface` by
-//     `wireApprovalFlow`;
-//   - `ethos mcp serve` (M-D10), through `createUnattendedApprovalGate` with
-//     its own rejection text.
+// The fail-closed approval gates for loops where no approval prompt can be
+// shown. Two gates, because the two cases differ in who drives the turn:
+//
+//   - `wireUnattendedApprovalGate` — nobody drives it. Registered by
+//     `runGatewayStart` (apps/ethos/src/commands/gateway.ts) on the gateway's
+//     systemLoop (cron, dreams, watcher wakes, call capture, SIP-inbound).
+//     This is the ONLY gate that honours the D12 opt-in (`approvalMode: off`
+//     + `allowUnattendedDangerousTools`): the loop runs trusted local
+//     automation. `ethos mcp serve` (M-D10) builds the same shape through
+//     `createUnattendedApprovalGate` with its own rejection text.
+//   - `createNoApprovalSurfaceGate` — a REMOTE SENDER drives it, on a chat
+//     surface that cannot show an approval card. Registered by
+//     `wireApprovalFlow` (gateway.ts), the one call every bot-loop host makes
+//     (`ethos gateway start`; `ethos boot`'s `registerBotLive` for cold boot,
+//     live hot-add, webhook-route bots and a bot replaced on config reload):
+//     on every bot loop with no approval-capable adapter (WhatsApp, Email, a
+//     `webhooks.<hookId>` route bot), and as `createSlackApprovalHook`'s
+//     `withoutSurface` for a card-less turn on a card-capable bot's loop.
+//     It never takes the D12 opt-in: auto-approving a call a remote sender
+//     asked for is what `createDangerPredicate`'s capability gate forbids,
+//     and `validateUnsafeCombinations` (extensions/personalities) cannot see a
+//     personality with no `platform:` bound to such a bot in gateway config.
+//
 // Pinned by `__tests__/unattended-approval-gate.test.ts`,
 // `commands/__tests__/approval-flow-unattended.test.ts` and
 // `commands/__tests__/gateway-unattended-gate-wiring.test.ts`.
 //
 // Every other approval surface has somebody to ask — the web modal, the Slack,
-// Telegram or Discord card. On these loops there is nobody, and both
+// Telegram or Discord card. Here there is no way to ask, and both
 // alternatives to refusing are wrong: prompting hangs the call forever, and
-// letting it through runs unattended exactly the calls the operator wanted to
-// be asked about.
+// letting it through runs exactly the calls the operator wanted to be asked
+// about.
 
 import type {
   BeforeToolCallPayload,
@@ -64,7 +70,7 @@ export function createUnattendedApprovalGate(
   };
 }
 
-/** What the agent is told when a flagged call is refused with nobody to ask. */
+/** What the agent is told when a flagged call is refused on the systemLoop. */
 export function unattendedApprovalRejection(toolName: string, reason: string): string {
   return `no human is present to approve ${toolName} (${reason})`;
 }
@@ -80,16 +86,13 @@ export interface WireUnattendedApprovalGateOptions {
   model: string;
   /** `EthosConfig.allowUnattendedDangerousTools` — the operator's opt-in that
    *  lets a personality's `approvalMode: 'off'` auto-approve flagged tools on
-   *  this loop (plan D12). Unset → `off` is treated as `manual`, so flagged
-   *  calls refuse. A personality with a channel `platform:` cannot declare
-   *  `off` at all (`validateUnsafeCombinations`, extensions/personalities). */
+   *  this loop. Unset → `off` is treated as `manual`, so flagged calls refuse. */
   allowUnattendedDangerousTools: boolean;
 }
 
 /**
- * Build the unattended gate's `before_tool_call` handler for the loops whose
- * registries are `hooks` (their `session_start` tells the predicate which
- * personality a turn runs). Uses the same predicate every approval surface uses
+ * Register the unattended gate on `hooks` — the gateway systemLoop's
+ * registry. Uses the same predicate every approval surface uses
  * (`createApprovalDangerPredicate`), so `APPROVAL_SURFACE_ALWAYS_ASK`, the
  * smart reviewer, and the spoken-confirmation wrapper (`withSpokenConfirmation`
  * refuses a `voiceOrigin: far_end` request for a consequential tool) all
@@ -97,12 +100,12 @@ export interface WireUnattendedApprovalGateOptions {
  * `enforceBeforeToolCall` and `createTerminalGuardHook` refuse those first.
  * Pinned by `__tests__/unattended-approval-gate.test.ts`.
  */
-export function createUnattendedGateHandler(
-  hooks: ReadonlyArray<HookRegistry>,
+export function wireUnattendedApprovalGate(
+  hooks: HookRegistry,
   opts: WireUnattendedApprovalGateOptions,
-): (payload: BeforeToolCallPayload) => Promise<{ error?: string }> {
+): () => void {
   const danger = createApprovalDangerPredicate({
-    hooks,
+    hooks: [hooks],
     personalities: opts.personalities,
     getProvider: opts.getProvider,
     model: opts.model,
@@ -116,19 +119,56 @@ export function createUnattendedGateHandler(
         return danger(payload);
       }
     : danger;
-  return createUnattendedApprovalGate(judged, unattendedApprovalRejection);
+  return hooks.registerModifying(
+    'before_tool_call',
+    createUnattendedApprovalGate(judged, unattendedApprovalRejection),
+  );
+}
+
+/** What the agent is told when a flagged call is refused on a bot turn whose
+ *  chat surface cannot show an approval card. A human did send the message,
+ *  so the text names the surface, not an absent human. */
+export function noApprovalSurfaceRejection(toolName: string, reason: string): string {
+  return (
+    `${toolName} needs approval, and this chat surface cannot show an approval prompt ` +
+    `(${reason}). Use a platform with approval cards (Slack, Telegram, Discord) or the web UI.`
+  );
+}
+
+export interface NoApprovalSurfaceGateOptions {
+  /** The registry the loops' personalities are resolved against. */
+  personalities: PersonalityRegistry;
+  getProvider: () => Promise<LLMProvider>;
+  model: string;
 }
 
 /**
- * Register the unattended gate on one loop's `hooks` — the gateway
- * systemLoop's, or a bot loop with no approval surface (see the file header
- * for every caller).
+ * The `before_tool_call` handler for bot-loop turns with no approval surface
+ * (see the file header for its two callers). `hooks` are the registries of
+ * the loops it guards — their `session_start` tells the predicate which
+ * personality a turn runs.
+ *
+ * Same predicate as every approval surface (`createApprovalDangerPredicate`
+ * with `APPROVAL_SURFACE_ALWAYS_ASK`; the smart reviewer and the
+ * spoken-confirmation wrapper apply), and deliberately WITHOUT
+ * `allowAutoApproveDangerousTools`: `approvalMode: off` behaves as `manual`
+ * here whatever `allowUnattendedDangerousTools` says, so a flagged call is
+ * always refused. Deny rules and hardline commands are refused earlier, by
+ * core's `enforceBeforeToolCall` and `createTerminalGuardHook`. Pinned by
+ * `commands/__tests__/approval-flow-unattended.test.ts`.
  */
-export function wireUnattendedApprovalGate(
-  hooks: HookRegistry,
-  opts: WireUnattendedApprovalGateOptions,
-): () => void {
-  return hooks.registerModifying('before_tool_call', createUnattendedGateHandler([hooks], opts));
+export function createNoApprovalSurfaceGate(
+  hooks: ReadonlyArray<HookRegistry>,
+  opts: NoApprovalSurfaceGateOptions,
+): (payload: BeforeToolCallPayload) => Promise<{ error?: string }> {
+  const danger = createApprovalDangerPredicate({
+    hooks,
+    personalities: opts.personalities,
+    getProvider: opts.getProvider,
+    model: opts.model,
+    alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+  });
+  return createUnattendedApprovalGate(danger, noApprovalSurfaceRejection);
 }
 
 /**
