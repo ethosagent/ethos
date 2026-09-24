@@ -385,7 +385,9 @@ describe('envelope reaches only a marked provider', () => {
       ...makeLLM(() => ({ chunks: [] }), markedLog),
       async *complete(messages: Message[]): AsyncIterable<CompletionChunk> {
         markedLog.push(structuredClone(messages));
-        throw Object.assign(new Error('503 overloaded'), { status: 503 });
+        // Fails before its first chunk, so the chain may move on.
+        if (markedLog.length > 0) throw Object.assign(new Error('503 overloaded'), { status: 503 });
+        yield* [];
       },
     });
     const plugin = makeLLM(() => ({ chunks: text('ok') }), pluginLog);
