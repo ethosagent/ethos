@@ -23,6 +23,13 @@ export interface WithHistoryOptions {
    * write handles.
    */
   approvedBy?: string;
+  /**
+   * Capture fact-hashes recorded on every entry this handle writes. Set when an
+   * approve replays a capture candidate queued with recurrence evidence, so
+   * `MemoryCaptureRunner.dedup` sees the promoted fact the way it sees a
+   * directly-written one and does not queue it again. Absent otherwise.
+   */
+  captureHashes?: string[];
 }
 
 /**
@@ -57,6 +64,7 @@ export class HistoryMemoryProvider implements MemoryProvider, GlobalMemoryStore 
     private readonly history: HistoryStore,
     private readonly source: HistorySource,
     private readonly approvedBy?: string,
+    private readonly captureHashes?: string[],
   ) {}
 
   prefetch(ctx: MemoryContext): Promise<MemorySnapshot | null> {
@@ -111,6 +119,7 @@ export class HistoryMemoryProvider implements MemoryProvider, GlobalMemoryStore 
         before: before.get(key) ?? '',
         after,
         ...(this.approvedBy ? { approvedBy: this.approvedBy } : {}),
+        ...(this.captureHashes ? { captureHashes: this.captureHashes } : {}),
       });
     }
   }
@@ -146,5 +155,11 @@ export function withHistory(
   history: HistoryStore,
   opts: WithHistoryOptions,
 ): MemoryProvider & GlobalMemoryStore {
-  return new HistoryMemoryProvider(inner, history, opts.source, opts.approvedBy);
+  return new HistoryMemoryProvider(
+    inner,
+    history,
+    opts.source,
+    opts.approvedBy,
+    opts.captureHashes,
+  );
 }

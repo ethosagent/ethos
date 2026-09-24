@@ -131,6 +131,27 @@ Notes:
 - Cap and TTL apply to every queue over one deployment — the runtime gate, `ethos memory pending`, and the web Pending tab.
 - A change takes effect on restart, like `memory` itself.
 
+## memoryCapture.evidenceSessions {#memory-capture-evidence-sessions}
+
+Type: integer, `0`–`16` · Default: `0` (off)
+
+How many distinct sessions must independently extract the same fact before proactive capture (`memoryCapture.enabled: true`) keeps it. At `0`, capture behaves as it did before the key existed. Above `0`, a re-extracted fact merges into its existing pending candidate and adds its session as evidence, instead of queuing a duplicate. What happens next depends on `memoryApproval.mode`:
+
+- `off`: the fact waits in the pending queue and is written to memory with `approvedBy: evidence` once it reaches N sessions. Nothing is written before then.
+- `automated` or `all`: the queue lists the most-evidenced candidates first, and each row shows its session count. A person still approves every candidate, whatever its count.
+
+```yaml
+memoryCapture.enabled: true
+memoryCapture.evidenceSessions: 3
+```
+
+Notes:
+
+- The TTL still counts from a candidate's first proposal (`memoryApproval.ttlDays`), so repeated sightings cannot keep a fact queued forever. When a candidate expires, its fact is tombstoned, like any other expired candidate.
+- A rejected or expired fact is never queued again, however many sessions extract it.
+- A negative, fractional or non-numeric value, or one above `16`, is refused at load, and the error names the key. An entry records at most 16 sessions (`MAX_EVIDENCE_SESSIONS` in [`extensions/memory-approval/src/store.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/memory-approval/src/store.ts)).
+- A change takes effect on restart.
+
 ## baseUrl {#base-url}
 
 Type: string · Default: provider default

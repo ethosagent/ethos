@@ -70,6 +70,12 @@ export interface MemoryBackendSelection {
    * prunes and caps exactly as the gate that fills it.
    */
   memoryApproval?: { mode?: 'off' | 'automated' | 'all'; cap?: number; ttlDays?: number };
+  /**
+   * `memoryCapture.evidenceSessions` — read by `createPendingMemoryStore` so the
+   * CLI and web queues order by recurrence evidence the way capture's own
+   * queue (`build-agent-loop`) does.
+   */
+  memoryCapture?: { evidenceSessions?: number };
 }
 
 /**
@@ -401,6 +407,11 @@ export function createPendingMemoryStore(opts: CreatePendingMemoryStoreOptions):
     dataDir: opts.dataDir,
     tombstones,
     ...approvalLimits(selection.memoryApproval),
+    // Ordering only: this store never auto-promotes. Capture's own queue does
+    // (`build-agent-loop`), and it is the only writer that proposes.
+    ...(selection.memoryCapture?.evidenceSessions
+      ? { evidenceSessions: selection.memoryCapture.evidenceSessions }
+      : {}),
     ...(opts.cap !== undefined ? { cap: opts.cap } : {}),
     ...(opts.ttlMs !== undefined ? { ttlMs: opts.ttlMs } : {}),
     ...(opts.observability ? { observability: opts.observability } : {}),
@@ -414,7 +425,13 @@ export function createPendingMemoryStore(opts: CreatePendingMemoryStoreOptions):
         });
       }
       const { base, history } = backend;
-      const handle = withHistory(base, history, { source: entry.source, approvedBy });
+      const handle = withHistory(base, history, {
+        source: entry.source,
+        approvedBy,
+        // Same as capture's own apply (`build-agent-loop`): an evidence entry
+        // records its hash so dedup does not queue the approved fact again.
+        ...(entry.evidenceSessions && entry.factHash ? { captureHashes: [entry.factHash] } : {}),
+      });
       const ctx: MemoryContext = {
         scopeId: entry.scopeId,
         sessionId: entry.sessionId ?? '',

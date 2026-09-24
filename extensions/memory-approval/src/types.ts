@@ -42,6 +42,18 @@ export interface PendingEntry {
   sessionKey?: string;
   /** epoch-ms the candidate was queued; drives TTL expiry. */
   proposedAt: number;
+  /**
+   * Recurrence evidence (plan openclaw-9.5-adoption item 3, D22): the distinct
+   * sessions that independently extracted this `factHash`, capped at
+   * `MAX_EVIDENCE_SESSIONS`. Present only on capture candidates queued while
+   * `memoryCapture.evidenceSessions > 0` — `PendingMemoryStore.propose` merges
+   * a re-proposal of the same hash into this entry instead of appending a
+   * duplicate. Absent on every entry written with evidence off, so an existing
+   * queue reads unchanged.
+   */
+  evidenceSessions?: string[];
+  /** epoch-ms of the most recent merge. Display only: TTL stays on `proposedAt`. */
+  lastSeenAt?: number;
 }
 
 /** What a writer submits to the queue. `id`/`proposedAt` are assigned by the store. */

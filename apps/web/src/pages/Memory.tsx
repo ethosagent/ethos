@@ -840,6 +840,19 @@ function PendingRow({
             · {entry.sessionKey}
           </Typography.Text>
         ) : null}
+        {entry.evidenceSessions ? (
+          <Typography.Text
+            type="secondary"
+            style={{
+              fontFamily: 'Geist Mono, monospace',
+              fontSize: 11,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            · seen in {entry.evidenceSessions.length}{' '}
+            {entry.evidenceSessions.length === 1 ? 'session' : 'sessions'}
+          </Typography.Text>
+        ) : null}
         <span style={{ flex: 1 }} />
         <Button size="small" onClick={onReject} loading={busy}>
           Reject

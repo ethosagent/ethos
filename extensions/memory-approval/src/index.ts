@@ -1,5 +1,7 @@
 export { isGated, PendingMemoryGate, type WithPendingGateOptions, withPendingGate } from './gate';
 export {
+  EVIDENCE_APPROVER,
+  MAX_EVIDENCE_SESSIONS,
   PendingMemoryStore,
   type PendingMemoryStoreOptions,
   scopeDir,
