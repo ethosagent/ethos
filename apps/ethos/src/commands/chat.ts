@@ -41,6 +41,7 @@ import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-
 import { formatRecap } from '../lib/recap';
 import { type ReleasableRuntime, releaseCommandRuntime } from '../lib/release-command-runtime';
 import { formatResumeHint } from '../lib/resume-hint';
+import { runBranchCommand } from '../lib/session-branches';
 import { refreshSkillIfStale, type SkillMeta, scanSkillsIntoRegistry } from '../lib/skill-slash';
 import { buildBaseRegistry, type SlashCommandRegistry } from '../lib/slash-commands';
 import { SpinnerState } from '../lib/spinner';
@@ -357,6 +358,17 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       onNotification,
       // `/memory` on the configured backend (the vault under `memory: vault`).
       readMemory: (scope) => readFileMemorySnapshot(config, scope),
+      // `/fork`, `/branches`, `/branch <n>` — the same handler the readline
+      // fallback uses (lib/session-branches.ts), over this state dir's sessions.db.
+      branches: async (command, arg, sessionKey) => {
+        const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+        const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+        try {
+          return await runBranchCommand(store, command, arg, sessionKey);
+        } finally {
+          store.close();
+        }
+      },
       ...(onSkillProposed ? { onSkillProposed } : {}),
     });
     // The TUI has exited: release whichever runtime is current (a `/model`
@@ -1187,6 +1199,9 @@ export function buildChatHelpText(
     `  /title <name>         set a name for this session\n` +
     `  /title                show current session title\n` +
     `  /new                  start a fresh session\n` +
+    `  /fork                 branch this session (same history, new session)\n` +
+    `  /branches             list this session's branches\n` +
+    `  /branch <n>           switch to branch <n>\n` +
     `  /personality          show current personality\n` +
     `  /personality list     list all personalities\n` +
     `  /personality <id>     start a new session bound to <id>\n` +
@@ -1249,6 +1264,33 @@ async function handleSlashCommand(
       state.startedAt = Date.now();
       out(`${c.dim}[new session started]${c.reset}\n`);
       break;
+
+    case 'fork':
+    case 'branches':
+    case 'branch': {
+      const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+      const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+      try {
+        const outcome = await runBranchCommand(store, name, arg, state.sessionKey);
+        if (outcome.switchTo) {
+          // Re-key the REPL onto the branch, resetting what `/new` resets.
+          loop.resetSessionCost(state.sessionKey);
+          ctx.notificationRouter.deregister(state.sessionKey);
+          state.sessionKey = outcome.switchTo.sessionKey;
+          if (outcome.switchTo.personalityId) state.personalityId = outcome.switchTo.personalityId;
+          ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
+          state.contextTokens = 0;
+          state.contextInputTokens = 0;
+          state.startedAt = Date.now();
+        }
+        out(`${c.dim}${outcome.message}${c.reset}\n`);
+      } catch (err) {
+        out(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
+      } finally {
+        store.close();
+      }
+      break;
+    }
 
     case 'personality': {
       if (!arg) {

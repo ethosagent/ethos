@@ -70,6 +70,8 @@ export class InMemorySessionStore implements SessionStore {
     if (filter?.personalityId)
       results = results.filter((s) => s.personalityId === filter.personalityId);
     if (filter?.workingDir) results = results.filter((s) => s.workingDir === filter.workingDir);
+    if (filter?.parentSessionId)
+      results = results.filter((s) => s.parentSessionId === filter.parentSessionId);
     if (filter?.since) {
       const since = filter.since;
       results = results.filter((s) => s.createdAt >= since);

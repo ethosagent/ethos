@@ -315,9 +315,25 @@ describe('AcpServer', () => {
 
   // 9
   it('fork_session creates new session with copied message history', async () => {
-    const src = await store.createSession({ ...BASE_SESSION, key: 'source' });
+    const src = await store.createSession({
+      ...BASE_SESSION,
+      key: 'source',
+      title: 'Kept title',
+      metadata: { tag: 'kept' },
+    });
     await store.appendMessage({ sessionId: src.id, role: 'user', content: 'hello' });
-    await store.appendMessage({ sessionId: src.id, role: 'assistant', content: 'world' });
+    await store.appendMessage({
+      sessionId: src.id,
+      role: 'assistant',
+      content: 'world',
+      usage: {
+        inputTokens: 7,
+        outputTokens: 3,
+        cacheReadTokens: 1,
+        cacheCreationTokens: 2,
+        estimatedCostUsd: 0.01,
+      },
+    });
 
     const { input, output } = makeServer(makeRunner(), store);
     const lines = readLines(output, 1);
@@ -339,6 +355,17 @@ describe('AcpServer', () => {
     expect(msgs).toHaveLength(2);
     expect(msgs[0].content).toBe('hello');
     expect(msgs[1].content).toBe('world');
+    // The shared forkSession fixes what the old inline ACP copy dropped.
+    expect(forked.parentSessionId).toBe(src.id);
+    expect(forked.title).toBe('Kept title');
+    expect(forked.metadata).toEqual({ tag: 'kept' });
+    expect(msgs[1].usage).toEqual({
+      inputTokens: 7,
+      outputTokens: 3,
+      cacheReadTokens: 1,
+      cacheCreationTokens: 2,
+      estimatedCostUsd: 0.01,
+    });
   });
 
   // 10
@@ -372,6 +399,23 @@ describe('AcpServer', () => {
     });
     const [resp] = await lines;
     expect(resp).toMatchObject({ id: 1, result: { exists: true, messageCount: 3 } });
+  });
+
+  it('resume_session counts the whole session, past 10k messages', async () => {
+    const s = await store.createSession({ ...BASE_SESSION, key: 'long' });
+    for (let i = 0; i < 10_005; i++) {
+      await store.appendMessage({ sessionId: s.id, role: 'user', content: `m${i}` });
+    }
+    const { input, output } = makeServer(makeRunner(), store);
+    const lines = readLines(output, 1);
+    send(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'resume_session',
+      params: { sessionKey: 'long' },
+    });
+    const [resp] = await lines;
+    expect(resp).toMatchObject({ id: 1, result: { exists: true, messageCount: 10_005 } });
   });
 
   // 12

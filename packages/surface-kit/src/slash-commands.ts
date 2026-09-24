@@ -56,6 +56,24 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     aliasOf: 'new',
   },
   {
+    name: 'fork',
+    description: 'Branch this session into a new one with the same history',
+    usage: '/fork',
+    surfaces: ['cli', 'gateway'],
+  },
+  {
+    name: 'branches',
+    description: "List this session's branches",
+    usage: '/branches',
+    surfaces: ['cli', 'gateway'],
+  },
+  {
+    name: 'branch',
+    description: 'Switch to branch <n> from /branches',
+    usage: '/branch <n>',
+    surfaces: ['cli', 'gateway'],
+  },
+  {
     name: 'personality',
     description: 'Show or switch personality',
     usage: '/personality [id|list]',

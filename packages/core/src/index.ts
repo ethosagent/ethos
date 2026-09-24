@@ -257,6 +257,12 @@ export type { SafeFetchFn, SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
 export type { ScriptExclusionCategory, ScriptSafeToolMeta } from './script-safe';
 export { scriptCallableFor, scriptExclusionError, scriptExclusionFor } from './script-safe';
+export {
+  type ForkSessionOptions,
+  type ForkSessionResult,
+  forkSession,
+  listBranches,
+} from './session-fork';
 export { SimpleCompletionImpl } from './simple-completion';
 export type { SpokenStyleInjectorOptions } from './spoken-style-injector';
 export { createSpokenStyleInjector, SPOKEN_STYLE_BLOCK } from './spoken-style-injector';

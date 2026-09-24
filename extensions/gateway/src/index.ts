@@ -5,8 +5,10 @@ import {
   type ClarifyNoticeTarget,
   DEFAULT_ESCALATION_DELAY_MS,
   deriveBotKey,
+  forkSession,
   LaneVoiceModeStore,
   laneKeyBotKey,
+  listBranches,
   resolveSttProviderForPersonality,
   resolveTtsProviderForPersonality,
   resolveVoicePreferences,
@@ -32,7 +34,12 @@ import { shortPatternCheck, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactPii } from '@ethosagent/safety-redact';
 import { SessionLane } from '@ethosagent/session-lane';
 import type Database from '@ethosagent/sqlite';
-import { createEventTranslator, shouldSurfaceProgress } from '@ethosagent/surface-kit';
+import {
+  createEventTranslator,
+  formatBranchList,
+  pickBranch,
+  shouldSurfaceProgress,
+} from '@ethosagent/surface-kit';
 import type {
   AttachmentCache,
   BackgroundJob,
@@ -47,6 +54,7 @@ import type {
   PersonalityVoiceConfig,
   PlatformAdapter,
   PlatformAdapterFactory,
+  SessionStore,
   SteerSink,
   Storage,
   SttProvider,
@@ -82,6 +90,7 @@ import {
 } from './channel-digest';
 import { MessageDedupCache } from './dedup';
 import { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
+import { type LaneSessionEntry, LaneSessionFiles } from './lane-sessions';
 import {
   attachmentsFromStructured,
   OUTBOUND_MEDIA_MAX_BYTES,
@@ -1012,6 +1021,14 @@ export interface GatewayConfig {
    * back to its fixed look-back window.
    */
   dataDir?: string;
+  /**
+   * Opens the session store `/fork`, `/branches` and `/branch <n>` read and
+   * write (the same `sessions.db` the bots' loops use). Called only when one of
+   * those commands runs, so a gateway nobody forks in never opens it; the host
+   * owns and closes what it returns. Absent → the commands answer that
+   * branches are unavailable.
+   */
+  sessionStore?: () => SessionStore;
   /** STT provider registry for resolving voice transcription providers by name. */
   sttProviderRegistry?: SttProviderRegistry;
   /** Name of the STT provider to use (from auxiliary.asr.provider in config). */
@@ -1150,9 +1167,15 @@ const PLATFORM_COMMANDS: Record<
   | 'background'
   | 'voice'
   | 'compact'
+  | 'fork'
+  | 'branches'
+  | 'branch'
 > = {
   '/new': 'new',
   '/reset': 'new',
+  '/fork': 'fork',
+  '/branches': 'branches',
+  '/branch': 'branch',
   '/stop': 'stop',
   '/usage': 'usage',
   '/help': 'help',
@@ -1228,8 +1251,16 @@ export class Gateway {
    */
   private closing: { notify?: string } | null = null;
   private readonly lanes = new Map<string, SessionLane>();
-  /** Effective session key per lane (allows /new to fork a fresh session). */
+  /**
+   * Effective session key per lane (allows /new, /fork and /branch to move a
+   * lane off its default session). Persisted per bot through `laneFiles`
+   * (D28) and restored by `restoreLaneSessions` before any turn can run.
+   */
   private readonly sessionKeys = new Map<string, string>();
+  /** The durable copy of `sessionKeys`; absent without `storage` + `dataDir`. */
+  private readonly laneFiles: LaneSessionFiles | undefined;
+  /** See `GatewayConfig.sessionStore`. */
+  private readonly sessionStoreFor: (() => SessionStore) | undefined;
   /** Per-lane active personality (overrideable via /personality). */
   private readonly personalityIds = new Map<string, string>();
   /** Per-lane usage accumulator. */
@@ -1563,6 +1594,11 @@ export class Gateway {
     this.attachmentCache = config.attachmentCache;
     this.storage = config.storage;
     this.dataDir = config.dataDir;
+    this.laneFiles =
+      config.storage && config.dataDir
+        ? new LaneSessionFiles(config.storage, config.dataDir)
+        : undefined;
+    this.sessionStoreFor = config.sessionStore;
     this.sttProviderRegistry = config.sttProviderRegistry;
     this.sttProviderName = config.sttProviderName;
     this.ttsProviderRegistry = config.ttsProviderRegistry;
@@ -2760,7 +2796,13 @@ export class Gateway {
       // a preference a /new wipes is not durable in any sense the user would
       // recognise. `lastInboundHadAudio` IS per-turn state and still clears.
       this.lastInboundHadAudio.delete(laneKey);
+      await this.persistLaneSessions(laneKey);
       await adapter.send(message.chatId, { text: '✓ New session started.' }).catch(() => {});
+      return;
+    }
+
+    if (cmdType === 'fork' || cmdType === 'branches' || cmdType === 'branch') {
+      await this.handleBranchCommand(cmdType, text, laneKey, lane, bot, message, adapter);
       return;
     }
 
@@ -2775,6 +2817,9 @@ export class Gateway {
         : [`/personality — show current binding (${current}; switching disabled)`];
       let helpText =
         `/new — start a fresh session\n` +
+        `/fork — branch this session (same history, new session)\n` +
+        `/branches — list this session's branches\n` +
+        `/branch <n> — switch to branch <n>\n` +
         `/stop — abort current response\n` +
         `${personalityLines.join('\n')}\n` +
         `/usage — token and cost stats\n` +
@@ -2918,6 +2963,7 @@ export class Gateway {
       this.personalityIds.set(laneKey, arg);
       const fresh = `${laneKey}:${Date.now()}`;
       this.sessionKeys.set(laneKey, fresh);
+      await this.persistLaneSessions(laneKey);
       await adapter
         .send(message.chatId, { text: `✓ Switched to ${arg} personality. New session started.` })
         .catch(() => {});
@@ -6438,6 +6484,149 @@ export class Gateway {
     return { imagesOut: adapter.canSendFiles, filesOut: adapter.canSendFiles };
   }
 
+  // ---------------------------------------------------------------------------
+  // Session branches + the durable lane → session map (plan openclaw-9.5-adoption
+  // item 5, D28)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Load every configured bot's lane file (`LaneSessionFiles`) into
+   * `sessionKeys` / `personalityIds`. Both adapter-owning hosts call it once,
+   * right after `buildGateway` and BEFORE `adapter.start()` and
+   * `replayInboundSpool()` (`startGatewayRuntime` in
+   * apps/ethos/src/commands/gateway.ts, `runBoot` in apps/ethos/src/commands/boot.ts),
+   * so a spool-replayed row, an interrupted `retry` and a `wake_review` turn
+   * resolve the session the lane was on when the process died, not the lane's
+   * default. A file that cannot be read or parsed is recorded as
+   * `gateway.lane_sessions_unreadable` and that bot's lanes start on their
+   * defaults. Pinned by extensions/gateway/src/__tests__/lane-sessions.test.ts.
+   */
+  async restoreLaneSessions(): Promise<void> {
+    const files = this.laneFiles;
+    if (!files) return;
+    for (const botKey of this.bots.keys()) {
+      let lanes: Map<string, LaneSessionEntry>;
+      try {
+        lanes = await files.load(botKey);
+      } catch (err) {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.lane_sessions_unreadable',
+          cause: 'lane session file unreadable — this bot’s lanes start on their default sessions',
+          details: {
+            botKey,
+            path: files.path(botKey),
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
+        continue;
+      }
+      for (const [laneKey, entry] of lanes) {
+        // A row for another bot's lane is not this file's to restore.
+        if (laneKeyBotKey(laneKey) !== botKey || this.sessionKeys.has(laneKey)) continue;
+        this.sessionKeys.set(laneKey, entry.sessionKey);
+        if (entry.personalityId) this.personalityIds.set(laneKey, entry.personalityId);
+      }
+    }
+  }
+
+  /**
+   * Write the lane's bot's whole lane map. Awaited by every lane switch
+   * BEFORE its ack, so a switch the user was told about survives a crash
+   * that follows the ack. Fail-open: a write that throws is recorded
+   * (`gateway.lane_sessions_write_failed`) and the switch still holds for
+   * this process.
+   */
+  private async persistLaneSessions(laneKey: string): Promise<void> {
+    const files = this.laneFiles;
+    const botKey = laneKeyBotKey(laneKey);
+    if (!files || !botKey) return;
+    const lanes: Record<string, LaneSessionEntry> = {};
+    for (const [key, sessionKey] of this.sessionKeys) {
+      if (laneKeyBotKey(key) !== botKey) continue;
+      const personalityId = this.personalityIds.get(key);
+      lanes[key] = { sessionKey, ...(personalityId ? { personalityId } : {}) };
+    }
+    try {
+      await files.save(botKey, lanes);
+    } catch (err) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.lane_sessions_write_failed',
+        cause:
+          'lane session map not persisted — after a restart this lane resumes its previous session',
+        details: { botKey, laneKey, error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
+  /**
+   * `/fork`, `/branches`, `/branch <n>`. Forking goes through `forkSession`
+   * and listing through `listBranches` (packages/core/src/session-fork.ts), so
+   * the numbers match the CLI's. A fork or switch reuses `/new`'s lane switch —
+   * abort the lane, clear the previous session's outbound dedup, move
+   * `sessionKeys`, persist — but keeps the previous session's cached
+   * attachments, because that session is still a branch the user can return to.
+   */
+  private async handleBranchCommand(
+    command: 'fork' | 'branches' | 'branch',
+    text: string,
+    laneKey: string,
+    lane: SessionLane,
+    bot: GatewayBotConfig,
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+  ): Promise<void> {
+    const reply = async (body: string): Promise<void> => {
+      await adapter.send(message.chatId, { text: body }).catch(() => {});
+    };
+    const store = this.sessionStoreFor?.();
+    if (!store) {
+      await reply('Session branches are not available on this gateway.');
+      return;
+    }
+    const moveTo = async (sessionKey: string, personalityId: string | undefined) => {
+      lane.abort();
+      this.outboundDedup.clearSession(this.sessionKeys.get(laneKey) ?? laneKey);
+      this.sessionKeys.set(laneKey, sessionKey);
+      if (personalityId === bot.binding.name) this.personalityIds.delete(laneKey);
+      else if (personalityId) this.personalityIds.set(laneKey, personalityId);
+      this.usageStore.delete(laneKey);
+      await this.persistLaneSessions(laneKey);
+    };
+    try {
+      const current = await store.getSessionByKey(this.sessionKeys.get(laneKey) ?? laneKey);
+      if (!current) {
+        await reply('Nothing to branch yet — send a message first.');
+        return;
+      }
+      if (command === 'fork') {
+        const { session } = await forkSession(store, current.id, {
+          key: `${laneKey}:fork:${Date.now()}`,
+        });
+        await moveTo(session.key, session.personalityId);
+        await reply('✓ Forked — now on a new branch. /branches lists them, /branch <n> switches.');
+        return;
+      }
+      const branches = await listBranches(store, current.id);
+      if (command === 'branches') {
+        await reply(formatBranchList(branches, current.id));
+        return;
+      }
+      const picked = pickBranch(text.split(/\s+/).slice(1).join(' '), branches);
+      if (!picked.ok) {
+        await reply(picked.message);
+        return;
+      }
+      if (picked.session.id === current.id) {
+        await reply(`Already on branch ${picked.n}.`);
+        return;
+      }
+      await moveTo(picked.session.key, picked.session.personalityId);
+      await reply(`✓ Switched to branch ${picked.n}.`);
+    } catch (err) {
+      await reply(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private getOrCreateLane(key: string): SessionLane {
     const existing = this.lanes.get(key);
     if (existing) {
@@ -6471,8 +6660,12 @@ export class Gateway {
       const evictedSession = this.sessionKeys.get(evictedKey) ?? evictedKey;
       void this.attachmentCache?.clear(evictedSession).catch(() => {});
       this.lanes.delete(evictedKey);
-      this.sessionKeys.delete(evictedKey);
-      this.personalityIds.delete(evictedKey);
+      // `sessionKeys` / `personalityIds` are NOT evicted: they are the lane's
+      // durable session choice (persisted per bot, D28), and dropping them here
+      // would put the lane back on its default session in this process while
+      // the lane file still names the branch — the next restart would disagree
+      // with the running gateway. Both maps hold one short string per lane a
+      // user explicitly moved.
       this.usageStore.delete(evictedKey);
       // Voice mode is NOT evicted with the lane. Eviction is a memory-pressure
       // decision about in-process state; the mode is a persisted preference,

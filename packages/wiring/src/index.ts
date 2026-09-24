@@ -1826,6 +1826,14 @@ export {
 // Danger predicate (shared between CLI guard + web approval flow)
 // ---------------------------------------------------------------------------
 
+// The one session fork (plan openclaw-9.5-adoption D27), re-exported so app
+// modules reach it through the composition layer (Law 5); it lives in core so
+// the gateway extension, below wiring, can call it too.
+export {
+  type ForkSessionResult,
+  forkSession,
+  listBranches,
+} from '@ethosagent/core';
 export {
   type CreateApprovalDangerPredicateOptions,
   createApprovalDangerPredicate,

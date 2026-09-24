@@ -964,6 +964,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     observability: gatewayObservability(),
   });
   gatewayRef = gateway;
+  // The durable lane → session map (plan openclaw-9.5-adoption D28), loaded
+  // BEFORE any adapter is wired or started and before `startInboundSpoolReplay`
+  // below (§3b): a replayed row, an interrupted `retry` and a `wake_review` turn all
+  // resolve `sessionKeys`, and an empty map would run them in the lane's
+  // default session instead of the one `/new` / `/fork` / `/branch` left it on.
+  await gateway.restoreLaneSessions();
 
   // Wire the send paths now that the Gateway exists.
   //

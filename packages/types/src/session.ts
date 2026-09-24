@@ -103,6 +103,13 @@ export interface SessionFilter {
   keyPrefix?: string;
   personalityId?: string;
   workingDir?: string;
+  /**
+   * Only the direct children forked from this session (`forkSession` in
+   * packages/core/src/session-fork.ts stamps `parentSessionId`). Indexed in
+   * session-sqlite (`idx_sessions_parent`); pinned for both shipped stores by
+   * extensions/session-sqlite/src/__tests__/parent-session-filter.test.ts.
+   */
+  parentSessionId?: string;
   since?: Date;
   limit?: number;
   offset?: number;

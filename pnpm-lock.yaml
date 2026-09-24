@@ -64,6 +64,9 @@ importers:
       '@ethosagent/agent-mesh':
         specifier: workspace:*
         version: link:../../extensions/agent-mesh
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/notify-queue':
         specifier: workspace:*
         version: link:../../extensions/notify-queue

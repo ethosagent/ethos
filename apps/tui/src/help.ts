@@ -14,6 +14,9 @@ export function buildHelpText(
 ): string {
   const lines = [
     '/new                          fresh session',
+    '/fork                         branch this session (same history, new session)',
+    "/branches                     list this session's branches",
+    '/branch <n>                   switch to branch <n>',
     '/personality [list|<id>]      start a new session bound to <id>',
     '/model                        open model picker',
     '/sessions                     open session picker',

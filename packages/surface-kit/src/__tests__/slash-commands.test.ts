@@ -35,6 +35,9 @@ describe('SLASH_COMMANDS registry', () => {
       'help',
       'new',
       'reset',
+      'fork',
+      'branches',
+      'branch',
       'personality',
       'model',
       'tier',
@@ -106,5 +109,15 @@ describe('resolveSlashCommand', () => {
 
   it('returns undefined for unknown names', () => {
     expect(resolveSlashCommand('nope')).toBeUndefined();
+  });
+});
+
+describe('branch commands', () => {
+  it('/fork, /branches, /branch are advertised on the CLI and gateway and parse their argument', () => {
+    for (const name of ['fork', 'branches', 'branch']) {
+      expect(getSlashCommand(name)?.surfaces).toEqual(['cli', 'gateway']);
+    }
+    expect(parseSlashCommand('/branch 2')).toEqual({ name: 'branch', args: ['2'], arg: '2' });
+    expect(parseSlashCommand('/FORK')).toEqual({ name: 'fork', args: [], arg: '' });
   });
 });
