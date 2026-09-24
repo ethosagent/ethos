@@ -1122,6 +1122,14 @@ export interface SessionRouting {
   /** Platform user id of whoever's message triggered the turn. Absent when
    *  the adapter didn't stamp one — the approval is then left unbound. */
   requesterUserId?: string;
+  /** Whether the triggering message was a DM. In a group the approval flow
+   *  binds the decision to the platform owner instead of the requester
+   *  (`resolveApprovalTarget` in apps/ethos/src/commands/gateway.ts). */
+  isDm: boolean;
+  /** Platform name of the triggering message (`InboundMessage.platform`) —
+   *  the `channel_filter` key the owner is looked up under. `adapter.id` is
+   *  an adapter id, not a platform name. */
+  platform: string;
 }
 
 export class Gateway {
@@ -3749,6 +3757,8 @@ export class Gateway {
       chatId: message.chatId,
       threadId: message.threadId ? message.threadId : undefined,
       requesterUserId: message.userId,
+      isDm: message.isDm,
+      platform: message.platform,
     });
 
     await adapter.sendTyping?.(message.chatId).catch(() => {});

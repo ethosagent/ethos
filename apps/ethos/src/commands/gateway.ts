@@ -1468,6 +1468,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     ...(config.approvalTimeoutMs !== undefined
       ? { approvalTimeoutMs: config.approvalTimeoutMs }
       : {}),
+    ownerFor: (platform) => config.channelFilter?.[platform]?.ownerUserId,
   });
 
   // Start the cron scheduler that was hoisted above (so agent-callable
@@ -2734,6 +2735,10 @@ export function wireApprovalFlow(
     /** Operator's approval SLA (`config.approvalTimeoutMs`). Undefined → the
      *  coordinator's own 10-minute default; `0` → no timeout. */
     approvalTimeoutMs?: number;
+    /** The platform owner (`channel_filter.<platform>.ownerUserId`), who
+     *  decides approvals for turns started in a group chat. Required so no
+     *  caller can silently fall back to requester binding in groups. */
+    ownerFor: (platform: string) => string | undefined;
   },
 ): { shutdown: () => Promise<void>; pendingCount: () => number } {
   const approvalAdapters = adapters.filter(isApprovalCapable);
@@ -2788,12 +2793,23 @@ export function wireApprovalFlow(
 
   // Resolve a `sessionId` to its approval target. Returns `undefined` for
   // any turn whose route isn't an approval-capable adapter.
+  //
+  // `requesterUserId` is the one user the coordinator lets decide
+  // (`ApprovalCoordinator.settle` drops every other click). In a DM that is
+  // the requester — the only human in the lane. In a group it is the platform
+  // owner, so a member cannot approve their own dangerous call (plan
+  // openclaw-advisory-fixes L-c, D20). A group on a platform with no owner
+  // configured keeps requester binding (D21): refusing every approval there
+  // would make the bot unusable, and the requester is still the only clicker
+  // accepted. Pinned by apps/ethos/src/commands/__tests__/approval-target.test.ts.
   const resolveApprovalTarget = (sessionId: string) => {
     const route = gateway.resolveApprovalRoute(sessionId);
     if (!route || !isApprovalCapable(route.adapter)) return undefined;
-    // Bind the approval to the user whose message triggered the turn, so a
-    // bystander in the channel can't click Allow on a tool call they don't own.
-    return { requesterUserId: route.requesterUserId };
+    return {
+      requesterUserId: route.isDm
+        ? route.requesterUserId
+        : (seams.ownerFor(route.platform) ?? route.requesterUserId),
+    };
   };
 
   // Register the approval hook only on loops whose bot has an

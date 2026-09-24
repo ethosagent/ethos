@@ -35,12 +35,13 @@ export interface PendingApproval {
   /** Human-readable cause from the danger predicate, or null. */
   reason: string | null;
   /**
-   * Platform user id of whoever's message triggered this turn. When set,
-   * only that user (or a `'system'` resolution — timeout / session cancel)
-   * may resolve the approval: a dangerous tool call must not be approvable
-   * by an arbitrary bystander who can see the card. Unset means no binding —
-   * any decider is accepted (used where the surface has only one user, e.g.
-   * a DM, or where the caller opts out).
+   * Platform user id of the one user allowed to decide. When set, only that
+   * user (or a `'system'` resolution — timeout / session cancel) may resolve
+   * the approval (`settle` drops every other click). The name is historical:
+   * the caller picks the decider, and on the gateway that is the requester in
+   * a DM but the platform owner in a group (`resolveApprovalTarget` inside
+   * `wireApprovalFlow`, apps/ethos/src/commands/gateway.ts). Unset means no
+   * binding — any decider is accepted.
    */
   requesterUserId?: string;
 }
@@ -297,11 +298,15 @@ export class ApprovalCoordinator {
 export type DangerReason = string | null;
 export type DangerPredicate = (payload: BeforeToolCallPayload) => Promise<DangerReason>;
 
-/** Where a turn's Slack approval prompt would go. `requesterUserId` binds
- *  the approval to the user who triggered the turn. */
+/** Who decides a turn's approval. Built by `resolveApprovalTarget` inside
+ *  `wireApprovalFlow` (apps/ethos/src/commands/gateway.ts). */
 export interface ApprovalTarget {
-  /** Platform user id of whoever triggered the turn — only they (or a
-   *  system resolution) may resolve the approval. */
+  /** Platform user id of the one user allowed to decide — only they (or a
+   *  system resolution) may resolve the approval (`ApprovalCoordinator.settle`).
+   *  `resolveApprovalTarget` sets it to the requester in a DM, to the platform
+   *  owner (`channel_filter.<platform>.ownerUserId`) in a group, and to the
+   *  requester in a group whose platform has no owner configured. Pinned by
+   *  apps/ethos/src/commands/__tests__/approval-target.test.ts. */
   requesterUserId?: string;
 }
 
