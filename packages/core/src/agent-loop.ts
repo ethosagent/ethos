@@ -37,7 +37,7 @@ import { streamStep } from './agent-loop/stages/stream-step';
 import { processTools } from './agent-loop/stages/tool-processing';
 import { persistAbortedToolCalls } from './agent-loop/stages/tool-rejection';
 import { createTurnUsage, finalizeTurn, flushTurnUsage } from './agent-loop/stages/turn-finalizer';
-import { setupTurn } from './agent-loop/stages/turn-setup';
+import { resolvePersonality, setupTurn } from './agent-loop/stages/turn-setup';
 import { replyAfterWatcherPause } from './agent-loop/stages/watcher-pause';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
 import type { LoopDeps } from './agent-loop/turn-context';
@@ -497,10 +497,12 @@ export class AgentLoop {
 
   /** Returns the budget cap for the given personality (undefined = no cap). */
   getPersonalityBudgetCap(personalityId?: string): number | undefined {
-    const p =
-      (personalityId ? this.personalities.get(personalityId) : null) ??
-      this.personalities.getDefault();
-    return p.budgetCapUsd;
+    return this.resolvePersonality(personalityId).budgetCapUsd;
+  }
+
+  /** The personality a turn with this id runs as (`resolvePersonality` in turn-setup). */
+  resolvePersonality(personalityId?: string): import('@ethosagent/types').PersonalityConfig {
+    return resolvePersonality(this.personalities, personalityId);
   }
 
   /** Returns accumulated session spend in USD (0 if no spend recorded yet). */

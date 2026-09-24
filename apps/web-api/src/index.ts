@@ -1373,7 +1373,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
                 hooks,
                 resultRedaction,
                 sessions: opts.sessionStore,
-                personalities: opts.personalities,
+                resolvePersonality: (personalityId) => agentLoop.resolvePersonality(personalityId),
                 defaults: opts.chatDefaults,
                 // Per-audio-minute pricing + the session cap, resolved from the
                 // same roster selection the mint makes. The browser is never

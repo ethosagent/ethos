@@ -56,7 +56,6 @@ export interface RealtimeDispatchContext {
   sessionId: string;
   /** The talk session's lane key — also the consulted turn's session key. */
   sessionKey: string;
-  personalityId?: string;
   platform: string;
   workingDir: string;
   abortSignal: AbortSignal;
@@ -86,13 +85,15 @@ export interface RealtimeToolHostOptions {
    */
   hooks?: HookRegistry;
   /**
-   * The speaking personality, or `undefined` when the session named none.
-   * Required so a caller cannot forget it: its `safety.denyRules` refuse a call
-   * before any hook runs, its `plugins` decide which plugin `before_tool_call`
-   * handlers fire (as on the batch path), and its
-   * `safety.injectionDefense.blockSecretResults` governs result redaction.
-   * `undefined` means no deny rules, no plugin handlers, and the S9 default
-   * (block) for secrets.
+   * The personality this call acts as, resolved by the loop's own rule
+   * (`AgentLoop.resolvePersonality`: the named one, else the registry default),
+   * so a session that named none runs as the default, exactly as a turn does.
+   * Its `id` is stamped on the hook payload and the tools' memory scope, its
+   * `safety.denyRules` refuse a call before any hook runs, its `plugins` decide
+   * which plugin `before_tool_call` handlers fire (as on the batch path), and
+   * its `safety.injectionDefense.blockSecretResults` governs result redaction.
+   * `undefined` — nothing resolved — refuses every dispatch rather than
+   * running with no rules.
    */
   personality: PersonalityConfig | undefined;
   /**
@@ -147,8 +148,6 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
   // Same plugin gate as the batch path (`allowedPlugins` in
   // packages/core/src/agent-loop/stages/turn-setup.ts).
   const allowedPlugins = opts.personality?.plugins ?? [];
-  // No personality → nothing opts out of S9, so secrets are blocked.
-  const redactionPersonality: PersonalityConfig = opts.personality ?? { id: '', name: '' };
 
   return {
     definitions,
@@ -167,6 +166,16 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
         };
       }
 
+      // Fail closed: with no personality there are no rules to enforce.
+      const personality = opts.personality;
+      if (!personality) {
+        return {
+          ok: false,
+          code: 'refused',
+          output: speakable('This call has no personality to act as, so it cannot run tools.'),
+        };
+      }
+
       // Core's per-call gate, the same one the batch path and the script bridge
       // cross: deny rules before any hook, `before_tool_call` with the voice
       // origin and personality, deny rules again on rewritten args.
@@ -180,10 +189,8 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
           allowedPlugins,
           traceId: undefined,
           voiceOrigin: ctx.voiceOrigin,
-          ...(ctx.personalityId !== undefined ? { personalityId: ctx.personalityId } : {}),
-          ...(opts.personality?.safety?.denyRules
-            ? { denyRules: opts.personality.safety.denyRules }
-            : {}),
+          personalityId: personality.id,
+          ...(personality.safety?.denyRules ? { denyRules: personality.safety.denyRules } : {}),
         },
       );
       if (!gate.allowed) return { ok: false, code: 'refused', output: speakable(gate.reason) };
@@ -203,11 +210,8 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
         // packages/core/src/agent-loop/stages/turn-setup.ts). No resolved user
         // id reaches this host, so `userScopeId` stays unset and USER.md reads
         // fall back to the personality scope, as a turn without a user does.
-        // Without a personality there is no scope, and the memory tools say so
-        // (`NO_MEMORY_SCOPE`, extensions/tools-memory/src/index.ts).
-        ...(ctx.personalityId
-          ? { personalityId: ctx.personalityId, memoryScopeId: `personality:${ctx.personalityId}` }
-          : {}),
+        personalityId: personality.id,
+        memoryScopeId: `personality:${personality.id}`,
         currentTurn: 1,
         messageCount: 0,
         abortSignal: ctx.abortSignal,
@@ -233,7 +237,7 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
       }
       // Secrets are redacted before the text can be spoken into the session.
       const result = redactToolResultSecrets(outcome.result, opts.resultRedaction, {
-        personality: redactionPersonality,
+        personality,
         traceId: undefined,
       });
       return result.ok

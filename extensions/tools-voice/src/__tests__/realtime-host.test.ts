@@ -41,7 +41,10 @@ const testRedaction: RedactionKit = {
   redactString: (s) => s.split(SECRET).join('[REDACTED:test]'),
   detectSecrets: (s) => (s.includes(SECRET) ? [{ label: 'test secret' }] : []),
 };
-const base = { personality: undefined, resultRedaction: { redaction: testRedaction } };
+const base = {
+  personality: { id: 'default', name: 'Default' },
+  resultRedaction: { redaction: testRedaction },
+};
 
 const dispatchCtx = {
   sessionId: 'row-1',
@@ -219,6 +222,7 @@ describe('approval surface', () => {
         toolName: AGENT_CONSULT_TOOL,
         args: {},
         voiceOrigin: { transport: 'browser-talk-mode', speaker: 'owner' },
+        personalityId: 'default',
       },
     ]);
   });
@@ -326,7 +330,7 @@ describe('core enforcement', () => {
 
     const result = await host.dispatch(
       { callId: 'c1', name: 'read_file', args: { path: '/etc/shadow' } },
-      { ...dispatchCtx, personalityId: 'researcher' },
+      dispatchCtx,
     );
 
     expect(result.ok).toBe(false);
@@ -352,7 +356,7 @@ describe('core enforcement', () => {
 
     const result = await host.dispatch(
       { callId: 'c1', name: 'read_file', args: { path: '/tmp/notes.md' } },
-      { ...dispatchCtx, personalityId: 'researcher' },
+      dispatchCtx,
     );
 
     expect(result.ok).toBe(false);
@@ -370,7 +374,7 @@ describe('core enforcement', () => {
 
     const result = await host.dispatch(
       { callId: 'c1', name: 'read_file', args: { path: '/tmp/env' } },
-      { ...dispatchCtx, personalityId: 'researcher' },
+      dispatchCtx,
     );
 
     expect(result.ok).toBe(true);
@@ -393,10 +397,7 @@ describe('core enforcement', () => {
       hooks,
     });
 
-    await host.dispatch(
-      { callId: 'c1', name: 'read_file', args: {} },
-      { ...dispatchCtx, personalityId: 'researcher' },
-    );
+    await host.dispatch({ callId: 'c1', name: 'read_file', args: {} }, dispatchCtx);
 
     expect(seen).toHaveLength(1);
     expect(seen[0]?.personalityId).toBe('researcher');
@@ -478,10 +479,11 @@ describe('memory scope', () => {
     }
   }
 
-  function memoryHost(memory: MemoryProvider) {
+  function memoryHost(memory: MemoryProvider, personality: PersonalityConfig | undefined) {
     const registry = registryWith(createMemoryWriteTool(memory), createMemoryReadTool(memory));
     return createRealtimeToolHost({
       ...base,
+      personality,
       registry,
       personalityToolset: ['memory_read', 'memory_write'],
       safeTools: new Set(['memory_read', 'memory_write']),
@@ -490,8 +492,8 @@ describe('memory scope', () => {
 
   it("writes and reads the speaking personality's memory scope", async () => {
     const memory = new ScopedMemory();
-    const host = memoryHost(memory);
-    const ctx = { ...dispatchCtx, personalityId: 'researcher' };
+    const host = memoryHost(memory, { id: 'researcher', name: 'Researcher' });
+    const ctx = dispatchCtx;
 
     const write = await host.dispatch(
       {
@@ -512,9 +514,23 @@ describe('memory scope', () => {
     expect(read.output).toContain('Prefers morning calls.');
   });
 
-  it('without a personality there is no scope, and the memory tools say so', async () => {
+  it('with no personality resolved, every dispatch is refused (fail closed)', async () => {
     const memory = new ScopedMemory();
-    const host = memoryHost(memory);
+    let hookCalls = 0;
+    const hooks = {
+      async fireModifying() {
+        hookCalls++;
+        return {};
+      },
+    } as unknown as HookRegistry;
+    const host = createRealtimeToolHost({
+      ...base,
+      personality: undefined,
+      hooks,
+      registry: registryWith(createMemoryWriteTool(memory), createMemoryReadTool(memory)),
+      personalityToolset: ['memory_read', 'memory_write'],
+      safeTools: new Set(['memory_read', 'memory_write']),
+    });
 
     const result = await host.dispatch(
       { callId: 'r1', name: 'memory_read', args: { store: 'memory' } },
@@ -522,7 +538,8 @@ describe('memory scope', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.code).toBe('not_available');
+    expect(result.code).toBe('refused');
+    expect(hookCalls).toBe(0);
     expect(memory.store.size).toBe(0);
   });
 });

@@ -19,8 +19,8 @@
 // What has NOT shipped is a consumer on the composition path. The only
 // non-test importer of `isStrictAttestation` is
 // `packages/core/src/execution/conformance.ts` — a backend-author validation
-// suite (exported from `packages/core/src/index.ts:105`), not something the
-// wiring layer runs when it builds a loop. So the classifier-skip this was
+// suite (exported from `packages/core/src/index.ts` as `runExecutionConformance`),
+// not something the wiring layer runs when it builds a loop. So the classifier-skip this was
 // designed to key on does not exist yet, and the constitution's sandbox
 // requirement is enforced by a flag check on the RESOLVED POSTURE instead:
 // `backend === 'ssh' && constitutionForbidsLocal(constitution)` at

@@ -78,9 +78,15 @@ export interface RealtimeControlDepsOptions {
   /** Fires `before_tool_call` (approval surface + spoken-confirmation gate). */
   hooks?: HookRegistry;
   sessions: SessionStore;
-  /** Personality lookup; supplies the toolset that gates direct-call tools,
-   *  and the deny rules, plugins and secret-result posture the host enforces. */
-  personalities: { get(id: string): PersonalityConfig | undefined };
+  /**
+   * The personality a talk session acts as — `AgentLoop.resolvePersonality`,
+   * the loop's own rule (the named one, else the registry default), so a
+   * session that names none runs as the default exactly as a consulted turn
+   * does. Supplies the toolset that gates direct-call tools and the deny rules,
+   * plugins and secret-result posture the host enforces. `undefined` (nothing
+   * resolved) leaves a host that refuses every dispatch.
+   */
+  resolvePersonality(personalityId?: string): PersonalityConfig | undefined;
   /** The loop's redaction seam (`AgentLoop.resultRedaction`); every realtime
    *  tool result passes through it before it is spoken. Required. */
   resultRedaction: ResultRedactionDeps;
@@ -155,9 +161,9 @@ export function createRealtimeControlDeps(
             compactionCount: 0,
           },
         }));
-      const personality = info.personalityId
-        ? opts.personalities.get(info.personalityId)
-        : undefined;
+      // A stand-in loop that throws (onboarding) resolves nothing → the host
+      // refuses every dispatch.
+      const personality = ask(() => opts.resolvePersonality(info.personalityId));
       const toolset = personality?.toolset;
       // A pricing lookup that fails leaves the call UNPRICED — it must not take
       // the agent down with it. The lane says so through its `unpriced` event
@@ -192,7 +198,6 @@ export function createRealtimeControlDeps(
           ...(toolset ? { personalityToolset: toolset } : {}),
         }),
         workingDir: row.workingDir ?? opts.defaults.workingDir ?? process.cwd(),
-        ...(info.personalityId ? { personalityId: info.personalityId } : {}),
       };
     },
 
