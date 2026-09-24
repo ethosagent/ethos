@@ -1460,6 +1460,12 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // `webhookCallback`, Bolt's `HTTPReceiver`), so the row is on disk before
   // that handler returns and the framework acknowledges the webhook — the
   // platform retries only what was never spooled (plan §2.5, D2-10).
+  // The durable lane → session map (plan openclaw-9.5-adoption D28), loaded
+  // BEFORE any adapter is wired or started and before `startInboundSpoolReplay`
+  // below: a replayed row, an interrupted `retry` and a `wake_review` turn all
+  // resolve `sessionKeys`, and an empty map would run them in the lane's
+  // default session instead of the one `/new` / `/fork` / `/branch` left it on.
+  await gateway.restoreLaneSessions();
   for (const adapter of adapters) wireAdapterInbound(gateway, adapter);
 
   // Wire the tool-approval gate on every bot loop. A bot with a card-capable
@@ -3363,11 +3369,29 @@ const SLACK_RECENT_SESSION_LIMIT = 10;
  */
 const slackSessionStores = new Set<{ close(): void }>();
 
-/** Close what `createSlackSessionReaders` opened. A no-op when no App Home
- *  read ever happened. Called by `ethos gateway`'s and `ethos boot`'s shutdown. */
+/** Close what `createSlackSessionReaders` and `openBranchSessionStore` opened.
+ *  A no-op when neither ever ran. Called by `ethos gateway`'s and `ethos boot`'s
+ *  shutdown. */
 export function closeSlackSessionStores(): void {
   for (const store of slackSessionStores) store.close();
   slackSessionStores.clear();
+  branchSessionStore = undefined;
+}
+
+let branchSessionStore: SessionStore | undefined;
+
+/**
+ * The `sessions.db` handle the gateway's `/fork`, `/branches` and `/branch <n>`
+ * use (`GatewayConfig.sessionStore`). Opened once, on the first branch command,
+ * and registered in `slackSessionStores` so the same shutdown closes it.
+ */
+function openBranchSessionStore(): SessionStore {
+  if (!branchSessionStore) {
+    const opened = createSessionStore({ dataDir: ethosDir() });
+    slackSessionStores.add(opened);
+    branchSessionStore = opened;
+  }
+  return branchSessionStore;
 }
 
 function createSlackSessionReaders(botKey: string) {
@@ -4843,8 +4867,12 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         // does not root relative paths, so this is what keeps those files in
         // `~/.ethos/` rather than in the cwd — which for a daemon is wherever
         // it happened to be started, and would put two processes' locks in two
-        // different directories.
+        // different directories. Also where the per-bot lane files live
+        // (`gateway/lanes/<botKey>.json`, D28).
         dataDir: ethosDir(),
+        // `/fork`, `/branches`, `/branch <n>` — opened on first use and closed
+        // with the Slack readers by `closeSlackSessionStores()` at shutdown.
+        sessionStore: openBranchSessionStore,
         adapters: adapterMap,
         deliveryLedger,
         inboundDedup,
