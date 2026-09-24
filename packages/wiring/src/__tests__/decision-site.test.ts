@@ -8,7 +8,7 @@ import type {
   DecisionProvider,
   DecisionRequest,
   DecisionResult,
-} from '@ethosagent/decision-typesafe';
+} from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type DecisionCallRecord,

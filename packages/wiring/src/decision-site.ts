@@ -47,15 +47,15 @@
 // budget watchers.
 
 import type { DecisionSiteId, DecisionSiteMode } from '@ethosagent/config';
+import { estimateCost } from '@ethosagent/pricing';
+import { redactJson, redactString } from '@ethosagent/safety-redact';
 import type {
   DecisionAnswer,
   DecisionErrorCode,
   DecisionProvider,
   DecisionQuestion,
   DecisionResult,
-} from '@ethosagent/decision-typesafe';
-import { estimateCost } from '@ethosagent/pricing';
-import { redactJson, redactString } from '@ethosagent/safety-redact';
+} from '@ethosagent/types';
 
 /** What leaves the machine. `text` is redacted with `redactString`, `json` with `redactJson`. */
 export type DecisionDigest =

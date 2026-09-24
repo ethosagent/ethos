@@ -34,11 +34,11 @@ implements the existing `InjectionClassifier` contract
 ### What the amendment adds
 
 The contract is `DecisionProvider` in `packages/types/src/decision.ts`,
-which lands in milestone M2 with zero imports, like every other contract
+which landed in milestone M2 with zero imports, like every other contract
 module. Its surface is one method and two read-only fields:
 
 ```ts
-// illustration — the shape M2 adds to packages/types/src/decision.ts
+// excerpt — packages/types/src/decision.ts
 export interface DecisionProvider {
   readonly name: string;
   readonly calibrated: boolean;
@@ -63,7 +63,7 @@ The amendment changes ARCHITECTURE.md in three places:
 | §IX | A `frozen_schemas.decision_provider` entry: `frozen_method_count: 1`, `frozen_methods: [decide]`. |
 
 The drift gate is `packages/types/src/__tests__/decision-provider-method-count.test.ts`.
-It lands in M2 with the type, the same way `pause-lifecycle-method-count.test.ts`
+It landed in M2 with the type, the same way `pause-lifecycle-method-count.test.ts`
 landed with `PauseLifecycle`. It counts the methods on `DecisionProvider`
 and cross-checks them against the §IX manifest. A second method then fails
 on both halves: the source and the manifest.
@@ -149,10 +149,10 @@ buys a contract whose surface cannot grow unreviewed. That matters here
 because every future provider, and the deferred sites in the plan's §16,
 will be written against it.
 
-**The gate lands after the roster row.** The §VII row and the §IX manifest
-land in M0, and the gate test lands in M2 with the type. Until M2, nothing
-fails if the manifest is wrong. That is acceptable only because there is no
-source to drift from yet. M2 must not merge without the gate.
+**The gate landed after the roster row.** The §VII row and the §IX manifest
+landed in M0, and the gate test landed in M2 with the type. Between the two,
+nothing failed if the manifest was wrong. That was acceptable only because
+there was no source to drift from yet.
 
 **One provider, one method, no shared validator.** `validateDecisionRequest`
 stays inside `extensions/decision-typesafe/` until a second provider exists.

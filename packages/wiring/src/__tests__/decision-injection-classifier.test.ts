@@ -3,14 +3,16 @@
 // mode/shadow/failure matrix is in `decision-site.test.ts`; this file pins
 // only this site's mapping, its fallback chain and its digest.
 
+import { createLLMClassifier } from '@ethosagent/safety-injection';
 import type {
+  CompletionChunk,
   DecisionErrorCode,
   DecisionProvider,
   DecisionRequest,
   DecisionResult,
-} from '@ethosagent/decision-typesafe';
-import { createLLMClassifier } from '@ethosagent/safety-injection';
-import type { CompletionChunk, InjectionVerdict, LLMProvider } from '@ethosagent/types';
+  InjectionVerdict,
+  LLMProvider,
+} from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDecisionInjectionClassifier,

@@ -1,8 +1,8 @@
 // Plan §14 "Limits": DECISION_LIMITS through validateDecisionRequest, and the
 // §5.3 size guard — all refused before any network call.
 
+import type { DecisionQuestion, DecisionRequest } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import type { DecisionQuestion, DecisionRequest } from '../contract';
 import { createTypesafeDecisionProvider } from '../provider';
 import { validateDecisionRequest } from '../validate';
 import { json, okBody, stubFetch } from './stub';

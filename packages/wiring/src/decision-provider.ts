@@ -15,8 +15,8 @@ import {
   type DecisionSiteId,
   type ResolvedDecisionsConfig,
 } from '@ethosagent/config';
-import type { DecisionBreakerEvent, DecisionProvider } from '@ethosagent/decision-typesafe';
-import type { SecretsResolver } from '@ethosagent/types';
+import type { DecisionBreakerEvent } from '@ethosagent/decision-typesafe';
+import type { DecisionProvider, SecretsResolver } from '@ethosagent/types';
 
 export interface DecisionBreakerRecorder {
   recordDecisionBreaker(event: DecisionBreakerEvent): void;

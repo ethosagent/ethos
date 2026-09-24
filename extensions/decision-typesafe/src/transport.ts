@@ -8,7 +8,7 @@
 //   is the breaker's job (./breaker). Pinned by `__tests__/transport.test.ts`.
 // - Never throws: every failure is `{ ok: false, code, message }`.
 
-import type { DecisionErrorCode } from './contract';
+import type { DecisionErrorCode } from '@ethosagent/types';
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 

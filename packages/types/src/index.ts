@@ -13,6 +13,7 @@ export * from './constitution';
 export * from './content-store';
 export * from './context-engine';
 export * from './context-log';
+export * from './decision';
 export * from './diagnostics';
 export * from './document-extractor';
 export * from './errors';

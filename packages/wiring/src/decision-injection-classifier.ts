@@ -19,8 +19,12 @@
 // else here changes.
 
 import type { DecisionSiteMode } from '@ethosagent/config';
-import type { DecisionAnswer, DecisionProvider } from '@ethosagent/decision-typesafe';
-import type { InjectionClassifier, InjectionVerdict } from '@ethosagent/types';
+import type {
+  DecisionAnswer,
+  DecisionProvider,
+  InjectionClassifier,
+  InjectionVerdict,
+} from '@ethosagent/types';
 import { type DecisionSiteRecorder, meetsThreshold, runDecisionSite } from './decision-site';
 
 /** The single question id this site asks. */

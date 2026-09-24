@@ -6,7 +6,7 @@
 // in ./provider), so a refused request never reaches the network — pinned by
 // `__tests__/limits.test.ts`.
 
-import { DECISION_LIMITS, type DecisionRequest } from './contract';
+import { DECISION_LIMITS, type DecisionRequest } from '@ethosagent/types';
 
 export type DecisionValidation = { ok: true } | { ok: false; code: 'invalid'; message: string };
 

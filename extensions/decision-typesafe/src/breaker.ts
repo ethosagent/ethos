@@ -15,7 +15,7 @@
 // `malformed`, `too_large`, `aborted`) neither count nor reset the count; a
 // success resets it. Pinned by `__tests__/breaker.test.ts`.
 
-import type { DecisionErrorCode } from './contract';
+import type { DecisionErrorCode } from '@ethosagent/types';
 
 export interface DecisionBreakerEvent {
   type: 'decision.breaker_open' | 'decision.breaker_closed';

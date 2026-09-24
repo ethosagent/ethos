@@ -2,8 +2,8 @@
 // thrown, limits enforced, signal and timeout honoured, answers of the declared
 // type, `calibrated: true`.
 
+import type { DecisionProvider } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import type { DecisionProvider } from '../contract';
 import { createTypesafeDecisionProvider } from '../provider';
 import { BOOL_Q, hang, json, okBody, stubFetch } from './stub';
 

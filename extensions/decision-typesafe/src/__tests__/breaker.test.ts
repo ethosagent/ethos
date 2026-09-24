@@ -1,8 +1,8 @@
 // Plan §14 "Breaker (R3)", with the R9 timeout-counting rule.
 
+import type { DecisionRequest } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import type { DecisionBreakerEvent } from '../breaker';
-import type { DecisionRequest } from '../contract';
 import { createTypesafeDecisionProvider } from '../provider';
 import { BOOL_Q, hang, json, noulOk, type RecordedRequest, stubFetch } from './stub';
 

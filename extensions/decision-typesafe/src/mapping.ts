@@ -6,7 +6,7 @@
 // number, a choice that was not offered — is `malformed`, never a default
 // (D10). Pinned by `__tests__/mapping.test.ts`.
 
-import type { DecisionAnswer, DecisionQuestion, DecisionResult } from './contract';
+import type { DecisionAnswer, DecisionQuestion, DecisionResult } from '@ethosagent/types';
 
 type WireQuestion =
   | { type: 'noul'; instructions: string; criteria?: { true: string; false: string } }

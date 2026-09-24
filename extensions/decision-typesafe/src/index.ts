@@ -4,17 +4,12 @@
 // UNVERIFIED against a live key: the wire shapes in ./transport and ./mapping
 // are written from the `/v1/systemone` API reference (D3), not a recorded
 // response. Every test runs against an injected stub `fetch`.
+//
+// The contract it implements, `DecisionProvider` and `DECISION_LIMITS`, is
+// owned by `@ethosagent/types` (packages/types/src/decision.ts); import it from
+// there, not from here.
 
 export type { DecisionBreakerEvent } from './breaker';
-export {
-  DECISION_LIMITS,
-  type DecisionAnswer,
-  type DecisionErrorCode,
-  type DecisionProvider,
-  type DecisionQuestion,
-  type DecisionRequest,
-  type DecisionResult,
-} from './contract';
 export {
   createTypesafeDecisionProvider,
   TYPESAFE_DEFAULT_BASE_URL,

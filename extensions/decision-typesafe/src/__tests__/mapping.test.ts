@@ -2,8 +2,8 @@
 // boolean confidence = |2p − 1|, score level = argmax, anything unexpected is
 // `malformed`, never a default.
 
+import type { DecisionQuestion } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
-import type { DecisionQuestion } from '../contract';
 import { argmax, mapResponse } from '../mapping';
 import { createTypesafeDecisionProvider } from '../provider';
 import { BOOL_Q, json, okBody, stubFetch } from './stub';

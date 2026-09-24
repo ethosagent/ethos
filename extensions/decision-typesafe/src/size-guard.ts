@@ -6,7 +6,7 @@
 // `invalid` in ./transport. Pinned by `__tests__/limits.test.ts`.
 
 import { estimateTokens } from '@ethosagent/core';
-import type { DecisionRequest } from './contract';
+import type { DecisionRequest } from '@ethosagent/types';
 
 export const MAX_TOKENS_STATE_PLUS_LONGEST_QUESTION = 32_000;
 export const MAX_TOKENS_STATE_PLUS_ALL_QUESTIONS = 64_000;

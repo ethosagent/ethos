@@ -7,8 +7,8 @@
 // body is wrapped so an unexpected throw becomes `unavailable`. Pinned by
 // `__tests__/contract.test.ts`.
 
+import type { DecisionProvider, DecisionRequest, DecisionResult } from '@ethosagent/types';
 import { DecisionBreaker, type DecisionBreakerEvent } from './breaker';
-import type { DecisionProvider, DecisionRequest, DecisionResult } from './contract';
 import { mapResponse, toWireQuestions } from './mapping';
 import { checkSize } from './size-guard';
 import { type FetchLike, postSystemOne } from './transport';
