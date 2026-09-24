@@ -159,6 +159,7 @@ import {
   createTelegramGreetingProvider,
   createTelegramPersonalityCardReader,
   type GatewayBotWiring,
+  gatewayObservability,
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
   validateBindings,
@@ -926,6 +927,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // sender resolver picked from, so "which bot may publish for this
     // personality" has one answer at propose time and at delivery time.
     publicationSpeaksFor: botSpeakers.speaksFor,
+    // Every `gateway.*` event, into this process's observability store.
+    observability: gatewayObservability(),
   });
   gatewayRef = gateway;
 

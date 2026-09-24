@@ -50,6 +50,7 @@ import {
   Gateway,
   type GatewayBotConfig,
   type GatewayConfig,
+  type GatewayObservability,
   relayToTargets,
   summarizeChannelDigest,
 } from '@ethosagent/gateway';
@@ -1340,6 +1341,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // sender resolver picked from, so "which bot may publish for this
     // personality" has one answer at propose time and at delivery time.
     publicationSpeaksFor: botSpeakers.speaksFor,
+    // Every `gateway.*` event, into this process's observability store.
+    observability: gatewayObservability(),
   });
   gatewayRef = gateway;
 
@@ -4480,6 +4483,53 @@ export interface BuildGatewayOptions {
    * approvals nobody can deliver.
    */
   publicationSpeaksFor: NonNullable<GatewayConfig['publicationSpeaksFor']>;
+  /**
+   * Where every `gateway.*` event is recorded — safety blocks, channel
+   * allow/deny, injection flags, and the inbound spool's `gateway.spool_*`
+   * events. Build it with `gatewayObservability()`.
+   *
+   * Required, not optional, for the same reason as `publicationSpeaksFor`: the
+   * Gateway records through `this.observability?.…`, so leaving it out is not
+   * an error anywhere — every event just goes nowhere, which is what both
+   * production hosts did until this field existed
+   * (`__tests__/gateway-observability-wiring.test.ts`).
+   */
+  observability: GatewayConfig['observability'];
+}
+
+/**
+ * The Gateway's observability sink for a production host: the process-wide
+ * `EthosObservability` (`getEthosObservability`, ../wiring), resolved on EVERY
+ * call rather than captured once.
+ *
+ * Lazy because `closeObservabilityStore` drops the singleton at the end of
+ * shutdown; a straggler event after that reopens a fresh handle instead of
+ * writing to a closed one — the same idiom as the
+ * `recordSafetyBlock: (opts) => getEthosObservability().recordSafetyBlock(opts)`
+ * closures elsewhere in this file. The Gateway only borrows the sink: it never
+ * closes it, and the host's shutdown still closes the store last.
+ *
+ * Fail-open: a store that cannot be opened, or a record that throws, is
+ * swallowed here, so observability can never stop the gateway handling a
+ * message. The Gateway calls these inline on its hot paths with no guard of
+ * its own. Pinned by `__tests__/gateway-observability-wiring.test.ts`.
+ */
+export function gatewayObservability(
+  get: () => GatewayObservability = getEthosObservability,
+): GatewayObservability {
+  const record = (fn: (sink: GatewayObservability) => void): void => {
+    try {
+      fn(get());
+    } catch {
+      // Fail-open — see the doc comment above.
+    }
+  };
+  return {
+    recordSafetyBlock: (opts) => record((sink) => sink.recordSafetyBlock(opts)),
+    recordInjectionFlag: (opts) => record((sink) => sink.recordInjectionFlag?.(opts)),
+    recordChannelAllow: (opts) => record((sink) => sink.recordChannelAllow(opts)),
+    recordChannelDeny: (opts) => record((sink) => sink.recordChannelDeny(opts)),
+  };
 }
 
 /**
@@ -4631,6 +4681,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     personalityCardReader: telegramCardReader,
     greetingProvider: telegramGreetingProvider,
     publicationSpeaksFor,
+    observability,
   } = opts;
   // Observe mode records nothing without `channelTranscript`. Both branches
   // below wire one, so this stays silent here — it is the light for a
@@ -4692,6 +4743,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         ...(channelDigestFeed ? { channelDigestFeed } : {}),
         observeModePlatforms: observedPlatforms,
         publicationSpeaksFor,
+        observability,
       })
     : new Gateway({
         bots,
@@ -4756,5 +4808,6 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         ...(channelDigestFeed ? { channelDigestFeed } : {}),
         observeModePlatforms: observedPlatforms,
         publicationSpeaksFor,
+        observability,
       });
 }
