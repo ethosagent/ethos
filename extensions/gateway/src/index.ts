@@ -2415,8 +2415,22 @@ export class Gateway {
     // record IS the channel transcript, and they arrive on the hot inbound path
     // that store runs at `synchronous = NORMAL` for (CLAUDE.md durability table)
     // — two FULL commits per watched message would undo that.
+    // Nor is a message no replay could ever answer: one whose bot has no
+    // adapter on its platform (`adapterForBot` — exactly what
+    // `replaySpoolRow` resolves). That is every message handed in with a
+    // per-request capturing adapter: a watcher wake (`platform: 'watcher'`) and
+    // a generic inbound webhook route (`webhook:<hookId>`, adapterless by
+    // design). Their reply goes to that one request — an HTTP response, a
+    // watcher's forward — which a restart has already lost, so a row would be
+    // owed work nobody can deliver: counted `deferred` on every sweep, never
+    // dead-lettered, never pruned. The webhook's caller retries its own POST,
+    // and a watcher re-detects on its next tick. Pinned by
+    // `__tests__/inbound-spool.test.ts` ('capturing adapters').
     const spool = this.inboundSpool;
-    const spooled = spool && !message.recordOnly ? this.spoolInbound(spool, message) : null;
+    const spooled =
+      spool && !message.recordOnly && this.replayable(message)
+        ? this.spoolInbound(spool, message)
+        : null;
     if (spooled) {
       if (!spooled.fresh) {
         // Already spooled: a platform redelivery (plan §2.5). The spool's
@@ -2457,6 +2471,11 @@ export class Gateway {
     // No spool (or not spoolable, or its write failed): dedup alone.
     if (dedupKey && this.recordSighting(message, dedupBotKey, dedupKey)) return { fresh: false };
     return { fresh: true };
+  }
+
+  /** Whether `replaySpoolRow` could resolve an adapter for this message's row. */
+  private replayable(message: InboundMessage): boolean {
+    return this.adapterForBot(this.routedBotKey(message), message.platform) !== undefined;
   }
 
   /**
@@ -4063,9 +4082,10 @@ export class Gateway {
    *    proves no live peer gateway shares the file.
    * 2. `listReplayable` — only rows whose `botKey` this process serves. Rows
    *    for an unconfigured bot stay `received` (doctor reports them orphaned).
-   * 3. The row's adapter is resolved by BOT (`adapterForBot`) BEFORE the
+   * 3. Older than `maxReplayAgeMs` → `dead` (`stale`), whatever its adapter,
+   *    and one notice per lane that has an adapter to carry it.
+   * 4. The row's adapter is resolved by BOT (`adapterForBot`) BEFORE the
    *    claim; no adapter → the row is left untouched.
-   * 4. Older than `maxReplayAgeMs` → `dead` (`stale`), and one notice per lane.
    * 5. `claim`, then the double-reply guard: a ledger obligation already
    *    carrying this row's id (`hasObligationFor`) means the reply exists, so
    *    the row closes and the ledger sweep owns delivery.
@@ -4172,24 +4192,39 @@ export class Gateway {
     // BY BOT, before the claim — the ledger sweep's rule: a row this process
     // cannot answer is left exactly as it was, never claimed and stranded.
     const adapter = this.adapterForBot(row.botKey, row.platform);
-    if (!adapter) {
-      counts.deferred++;
-      return;
-    }
-    try {
-      const stale = Date.now() - row.receivedAt > this.spoolMaxReplayAgeMs;
-      if (stale && row.kind !== 'wake_review') {
+    const stale = Date.now() - row.receivedAt > this.spoolMaxReplayAgeMs;
+    // Staleness BEFORE the adapter check: a row too old to answer is too old
+    // whatever its adapter, and deferring it instead kept a row no adapter
+    // will ever serve (one a pre-fix build spooled from a capturing adapter —
+    // see `acceptInbound`) `received` forever. The lane is told only when an
+    // adapter can tell it; with none there is nowhere to send the notice.
+    if (stale && row.kind !== 'wake_review') {
+      try {
         // Answering a day-old question as if it were fresh is worse than
         // saying so: dead-letter it and tell the lane once.
         if (spool.markDead(row.id, 'stale')) {
           counts.dead++;
           this.recordSpoolDeadLettered(row.id, 'stale');
-          const entry = staleByLane.get(row.laneKey);
-          if (entry) entry.count++;
-          else staleByLane.set(row.laneKey, { row, count: 1 });
+          if (adapter) {
+            const entry = staleByLane.get(row.laneKey);
+            if (entry) entry.count++;
+            else staleByLane.set(row.laneKey, { row, count: 1 });
+          }
         }
-        return;
+      } catch (err) {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.spool_replay_failed',
+          cause: err instanceof Error ? err.message : String(err),
+          details: { spoolId: row.id, platform: row.platform, botKey: row.botKey },
+        });
       }
+      return;
+    }
+    if (!adapter) {
+      counts.deferred++;
+      return;
+    }
+    try {
       if (!spool.claim(row.id, this.spoolOwner)) return;
       if (this.deliveryLedger && (await this.deliveryLedger.hasObligationFor(row.id))) {
         spool.markDone(row.id);

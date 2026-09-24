@@ -21,6 +21,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 import {
   ATTACHMENT_NOT_RECOVERED_NOTE,
+  createCapturingAdapter,
   Gateway,
   type GatewayConfig,
   INTERRUPTED_RETRY_NOTICE,
@@ -1004,5 +1005,64 @@ describe('inbound spool — retry in a mention-gated group', () => {
     await waitUntil(() => s.texts.length === 1);
     expect(s.texts[0]).not.toContain('pay the invoice');
     expect(spool.get(id)).toMatchObject({ status: 'done', lastError: 'discarded' });
+  });
+});
+
+// Audit S2: messages handed in with a per-request capturing adapter (watcher
+// wakes, generic webhook routes) were spooled, but replay resolves an adapter
+// by bot and platform and finds none for them — so their rows were counted
+// `deferred` on every sweep, forever: never replayed, never dead-lettered,
+// never pruned.
+describe('inbound spool — capturing adapters', () => {
+  it('a watcher wake through a capturing adapter runs its turn and writes no row', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool);
+    const { adapter, getReply } = createCapturingAdapter();
+    await gw.handleMessage(
+      msg('A watcher you own detected a change.', {
+        platform: 'watcher',
+        chatId: 'watcher:w1',
+        messageId: 'watcher-w1-1',
+      }),
+      adapter,
+    );
+    expect(s.texts).toHaveLength(1);
+    expect(getReply()).toBe('reply');
+    expect(rows(spool)).toHaveLength(0);
+  });
+
+  it('a row no adapter can serve is dead-lettered once stale, with no notice to send', async () => {
+    let t = Date.now() - 25 * 60 * 60 * 1000;
+    const spool = new SQLiteInboundSpool(':memory:', { now: () => t });
+    // What a pre-fix build left: a watcher-wake row, unclaimed.
+    const { raw: _raw, ...payload } = msg('wake', { platform: 'watcher', chatId: 'watcher:w1' });
+    const { id } = spool.accept({
+      platform: 'watcher',
+      botKey: 'bot-a',
+      chatId: 'watcher:w1',
+      messageId: 'watcher-w1-1',
+      laneKey: 'watcher:bot-a:watcher:w1',
+      payload: JSON.stringify(payload),
+      claimedBy: null,
+    });
+    t = Date.now();
+    const out = recordingAdapter();
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool);
+    expect(await gw.replayInboundSpool()).toEqual({ replayed: 0, deferred: 0, dead: 1 });
+    expect(spool.get(id)).toMatchObject({ status: 'dead', lastError: 'stale' });
+    expect(s.texts).toHaveLength(0);
+    expect(out.sends).toHaveLength(0);
+  });
+
+  it('a fresh row whose adapter is absent is still deferred, untouched', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const id = seed(spool, msg('hello', { platform: 'slack' }));
+    const out = recordingAdapter();
+    const gw = gateway(scriptedLoop().loop, out.adapter, spool);
+    expect(await gw.replayInboundSpool()).toEqual({ replayed: 0, deferred: 1, dead: 0 });
+    expect(spool.get(id)?.status).toBe('received');
   });
 });

@@ -244,8 +244,12 @@ function harness(
     clarifySweepIntervalMs: 0,
     clarifyEscalationDelayMs: 0,
     streamingEditIntervalMs: 0,
-    // A replay resolves its adapter from the registry (`adapterForBot`).
-    ...(opts.session ? { adapters: new Map([['telegram', out.adapter]]) } : {}),
+    // A replay resolves its adapter from the registry (`adapterForBot`), and
+    // `acceptInbound` spools only a message a replay could resolve one for —
+    // so a spool-wired harness registers its adapter, as production wiring does.
+    ...(opts.session || opts.gateway?.inboundSpool
+      ? { adapters: new Map([['telegram', out.adapter]]) }
+      : {}),
     ...opts.gateway,
   });
   return { gw, gate, scripted, out };
