@@ -88,6 +88,24 @@ export const TurnErrorEventSchema = z.object({
   code: z.string(),
 });
 
+// openclaw-9.5 item 1 — the turn was refused pre-turn because an enabled
+// plugin is missing a credential (the web chat sends with
+// `credentialPrompt: true`; see `ChatService.send`). The chat pane collects
+// the value masked, stores it through `plugins.setCredential` (the one writer,
+// `PluginLoader.setCredential`), then resends `pendingUserMessage`. This event
+// never carries a credential VALUE — only which one is missing. A `done` with
+// empty text follows, as for any refused turn.
+export const CredentialRequiredEventSchema = z.object({
+  type: z.literal('credential_required'),
+  pluginId: z.string(),
+  credentialKey: z.string(),
+  kind: z.enum(['oauth', 'api_key', 'text']),
+  label: z.string(),
+  description: z.string().optional(),
+  authUrl: z.string().optional(),
+  pendingUserMessage: z.string(),
+});
+
 export const MessagePersistedEventSchema = z.object({
   type: z.literal('message_persisted'),
   messageId: z.string(),
@@ -321,6 +339,7 @@ export const SseEventSchema = z.discriminatedUnion('type', [
   TurnDoneEventSchema,
   TurnErrorEventSchema,
   MessagePersistedEventSchema,
+  CredentialRequiredEventSchema,
   ToolApprovalRequiredEventSchema,
   ApprovalResolvedEventSchema,
   ClarifyRequestEventSchema,
@@ -344,6 +363,9 @@ export type SseEventType = SseEvent['type'];
 
 /** The `clarify.request` push event — surfaced as a card in the web UI. */
 export type ClarifyRequestEvent = z.infer<typeof ClarifyRequestEventSchema>;
+
+/** The `credential_required` turn event — a masked credential prompt. */
+export type CredentialRequiredEvent = z.infer<typeof CredentialRequiredEventSchema>;
 
 /** The `run.update` push event — the run card's ≤1 Hz liveness digest. */
 export type RunUpdateEvent = z.infer<typeof RunUpdateEventSchema>;
@@ -382,6 +404,8 @@ export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
  * per-connection plumbing, not discrete actions — fanning every streamed token
  * of every session out to every activity listener would also burn the replay
  * buffer down in seconds, collapsing the resume window for everything real.
+ * `credential_required` is excluded too: it is a prompt answered in the chat
+ * pane that asked, and it carries that user's pending message text.
  */
 export const ACTIVITY_EVENT_TYPES: ReadonlySet<SseEventType> = new Set<SseEventType>([
   'tool_start',

@@ -3894,6 +3894,42 @@ textarea {
   font-size: 13px;
 }
 
+/* Masked credential prompt (openclaw-9.5 item 1, `CredentialCard`). A panel
+   built from primitives, like the takeover panel — not the Card primitive. */
+.credential-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 24px 8px;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--ethos-border-strong);
+  background: var(--ethos-bg-elevated);
+}
+
+.credential-prompt-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ethos-text);
+}
+
+.credential-prompt-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ethos-text-secondary);
+}
+
+.credential-prompt-form {
+  display: flex;
+  gap: 8px;
+}
+
+.credential-prompt-error {
+  font-size: 13px;
+  color: var(--ethos-error);
+}
+
 /* Approval modal — anchored under the personality bar, NOT centered.
    DESIGN.md: "the agent itself is asking permission, so the modal slides
    down from where the agent's face lives". Slide-down 180ms, accent

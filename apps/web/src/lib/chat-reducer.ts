@@ -5,6 +5,7 @@ import {
   type CardEnvelope,
   CardEnvelopeSchema,
   type ClarifyRequestEvent,
+  type CredentialRequiredEvent,
   type SessionCard,
   type SseEvent,
   type SseEventType,
@@ -147,6 +148,15 @@ export interface ChatState {
    * `clarify.resolved` SSE event (so every tab collapses the card together).
    */
   pendingClarifies: ClarifyRequestEvent[];
+  /**
+   * openclaw-9.5 item 1 — the last turn was refused pre-turn because a plugin
+   * is missing a credential. The chat pane draws a masked prompt for it. This
+   * holds only WHICH credential is missing and the message to resend — the
+   * value the user types lives in `CredentialCard`'s local state and never
+   * enters this store. Cleared by the next submission (the resend included),
+   * by `dismiss-credential`, and by `reset`.
+   */
+  pendingCredential: CredentialRequiredEvent | null;
   isStreaming: boolean;
   error: string | null;
   /** Wall-clock ms of the most recent streaming event (text_delta, tool_start, tool_end).
@@ -223,6 +233,7 @@ export const initialChatState: ChatState = {
   currentTurn: null,
   pendingApprovals: [],
   pendingClarifies: [],
+  pendingCredential: null,
   isStreaming: false,
   error: null,
   lastStreamEventAt: null,
@@ -279,6 +290,8 @@ export type ChatAction =
    */
   | { type: 'reset' }
   | { type: 'undo-turns'; count: number }
+  /** The user closed the masked credential prompt without storing a value. */
+  | { type: 'dismiss-credential' }
   /**
    * Remember the answer this tab just sent for a run's question. `clarify.resolved`
    * carries only the source, so without this the resolved card could say a
@@ -591,6 +604,12 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       };
     }
 
+    case 'credential_required':
+      // The turn was refused before it ran; the `done` that follows closes it.
+      // Only the latest refusal matters — the resend re-checks every
+      // credential, so an older prompt is never still owed.
+      return { ...state, pendingCredential: event };
+
     case 'run_start':
       // The clock starts when the user pressed Send, not when the server got
       // round to us — `submit-user-message` already set it.
@@ -666,7 +685,13 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
         abortedTurn: false,
         // We are the client that asked for this turn, so we see all of it.
         streamAnchored: true,
+        // A new turn re-runs the credential check, so an open prompt is stale.
+        pendingCredential: null,
       };
+    }
+
+    case 'dismiss-credential': {
+      return { ...state, pendingCredential: null };
     }
 
     case 'steer-user-message': {

@@ -106,6 +106,8 @@ export interface UseChatResult {
    * only a source, never the answer.
    */
   noteClarifyAnswer: (requestId: string, answer: string) => void;
+  /** Close the masked credential prompt (`state.pendingCredential`) unanswered. */
+  dismissCredential: () => void;
   /**
    * Fetch the next-older page of history and prepend it. A no-op while a page
    * is in flight or when nothing is older; a page that lands after the session
@@ -597,6 +599,10 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     });
   }, []);
 
+  const dismissCredential = useCallback(() => {
+    dispatch({ kind: 'action', action: { type: 'dismiss-credential' } });
+  }, []);
+
   return {
     state,
     currentSessionId,
@@ -608,6 +614,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     undoTurns,
     compact,
     noteClarifyAnswer,
+    dismissCredential,
     loadOlder,
     hasOlder,
     olderStatus,

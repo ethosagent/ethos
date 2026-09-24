@@ -10,6 +10,7 @@ import { takeoverStageFits } from '../components/browser/useTakeoverSocket';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
+import { CredentialCard } from '../components/chat/CredentialCard';
 import { GoalIntakeModal } from '../components/chat/GoalIntakeModal';
 import { MessageList } from '../components/chat/MessageList';
 import {
@@ -146,6 +147,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     resetSession,
     compact,
     noteClarifyAnswer,
+    dismissCredential,
     loadOlder,
     hasOlder,
     olderStatus,
@@ -1025,6 +1027,14 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         stalled={isStalled}
       />
       <div>
+        {state.pendingCredential ? (
+          <CredentialCard
+            key={`${state.pendingCredential.pluginId}:${state.pendingCredential.credentialKey}`}
+            request={state.pendingCredential}
+            resend={(text) => sendMessage(text)}
+            onDismiss={dismissCredential}
+          />
+        ) : null}
         {state.error ? (
           <div className="chat-error" role="alert">
             {state.error}
