@@ -67,7 +67,13 @@ for (const factory of factories) {
             role: 'assistant',
             content: '',
             toolCalls: [{ id: 'c1', name: 'bash', input: { cmd: 'ls' } }],
-            usage: { inputTokens: 3, outputTokens: 4, estimatedCostUsd: 0.5 },
+            usage: {
+              inputTokens: 3,
+              outputTokens: 4,
+              cacheReadTokens: 1,
+              cacheCreationTokens: 2,
+              estimatedCostUsd: 0.5,
+            },
             traceId: 'tr-1',
           },
           {

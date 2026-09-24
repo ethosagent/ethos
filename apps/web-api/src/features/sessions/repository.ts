@@ -1,3 +1,4 @@
+import { forkSession } from '@ethosagent/core';
 import type {
   ContextEvent,
   ContextLog,
@@ -204,55 +205,22 @@ export class SessionsRepository {
   }
 
   /**
-   * Create a new session that copies the source's shape (model / provider /
-   * platform / personality) and replays its messages. The new session's
-   * `parentSessionId` points at the source so the UI can surface the lineage.
+   * Fork a session into a child via the shared `forkSession`
+   * (packages/core/src/session-fork.ts), which copies the source's shape and
+   * full history and stamps `parentSessionId` so the UI can surface the lineage.
    */
   async fork(sourceId: string, personalityOverride?: string): Promise<Session> {
     const source = await this.store.getSession(sourceId);
     if (!source) return Promise.reject(new Error(`session not found: ${sourceId}`));
 
-    const fresh = await this.store.createSession({
+    // `appendMessage` always assigns a fresh id/timestamp, so context events
+    // (keyed by the SOURCE's message ids) are remapped onto the fork below
+    // through `idMap`; without it `resolveContextAt(fork.id, <fork message id>)`
+    // could never find anything.
+    const { session: fresh, idMap } = await forkSession(this.store, source.id, {
       key: `${source.key}:fork:${Date.now()}`,
-      platform: source.platform,
-      model: source.model,
-      provider: source.provider,
-      ...(personalityOverride
-        ? { personalityId: personalityOverride }
-        : source.personalityId
-          ? { personalityId: source.personalityId }
-          : {}),
-      parentSessionId: source.id,
-      ...(source.workingDir ? { workingDir: source.workingDir } : {}),
-      ...(source.title ? { title: source.title } : {}),
-      usage: zeroUsage(),
-      ...(source.metadata ? { metadata: source.metadata } : {}),
+      ...(personalityOverride ? { personalityId: personalityOverride } : {}),
     });
-
-    // Replay the source's history into the fork. Preserves tool_use / tool_result
-    // pairing because we copy in chronological order.
-    //
-    // `appendMessage` always assigns a fresh id/timestamp — there is no way to
-    // preserve the source message's id (or its original timestamp) on the copy.
-    // Track old id -> new StoredMessage so context events (keyed by the
-    // SOURCE's message ids) can be remapped onto the fork below; without this,
-    // `resolveContextAt(fork.id, <fork message id>)` could never find
-    // anything, since the copied event's `messageId` would reference an id
-    // that doesn't exist in the fork.
-    const history = await this.store.getMessages(source.id);
-    const idMap = new Map<string, StoredMessage>();
-    for (const msg of history) {
-      const appended = await this.store.appendMessage({
-        sessionId: fresh.id,
-        role: msg.role,
-        content: msg.content,
-        ...(msg.toolCallId ? { toolCallId: msg.toolCallId } : {}),
-        ...(msg.toolName ? { toolName: msg.toolName } : {}),
-        ...(msg.toolCalls ? { toolCalls: msg.toolCalls } : {}),
-        ...(msg.usage ? { usage: msg.usage } : {}),
-      });
-      idMap.set(msg.id, appended);
-    }
 
     // Copy context events onto the child (plan/phases/model-visible-logged.md
     // D9) so `resolveContextAt` on the fork still reproduces what the parent
@@ -265,7 +233,7 @@ export class SessionsRepository {
     // brief's own reasoning had): `resolveAt` picks the newest event with
     // `timestamp <= target message's timestamp`. Every replayed message above
     // gets a FRESH, later "now" timestamp (there is no way to preserve the
-    // original one — see the loop above), so if a copied event kept its
+    // original one — see `forkSession`), so if a copied event kept its
     // original (always-earlier) timestamp, EVERY child message would query as
     // "after all copied events" and last-write-wins would collapse to the
     // single latest event for every turn — losing exactly the pre-/post-
@@ -276,10 +244,6 @@ export class SessionsRepository {
     // "in the past" relative to only the later turns, so `resolveContextAt`
     // on the fork reproduces the parent's per-turn history, not just its
     // final state.
-    //
-    // `contentBlocks`/`traceId` are deliberately NOT copied here (D9) —
-    // pre-existing gaps in this same message-copy loop, left as a named
-    // follow-up rather than silently expanded.
     if (this.contextLog) {
       const events = await this.contextLog.listForSession(source.id);
       for (const event of events) {

@@ -8,6 +8,7 @@ import type { Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import type { AgentMesh, MeshEntry } from '@ethosagent/agent-mesh';
+import { forkSession } from '@ethosagent/core';
 import type { PendingNotifyQueue } from '@ethosagent/notify-queue';
 import { SessionLane } from '@ethosagent/session-lane';
 import type { McpServerConfig, McpSessionView } from '@ethosagent/tools-mcp';
@@ -19,7 +20,8 @@ import { type WebSocket, WebSocketServer } from 'ws';
 const MAX_ACP_SESSIONS = 100;
 
 // ---------------------------------------------------------------------------
-// Local types — avoids depending on @ethosagent/core
+// Local types — the runner is structural, not core's AgentLoop (core is a
+// dependency only for the shared `forkSession`)
 // ---------------------------------------------------------------------------
 
 const noopLogger: Logger = {
@@ -955,37 +957,10 @@ export class AcpServer {
       return;
     }
 
-    const messages = await this.session.getMessages(source.id, { limit: 10_000 });
+    // The shared fork (packages/core/src/session-fork.ts): full history, every
+    // message field, title/metadata, and `parentSessionId` pointing at the source.
     const newKey = `acp:fork:${randomUUID()}`;
-
-    const forked = await this.session.createSession({
-      key: newKey,
-      platform: source.platform,
-      model: source.model,
-      provider: source.provider,
-      personalityId: source.personalityId,
-      workingDir: source.workingDir,
-      usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
-        estimatedCostUsd: 0,
-        apiCallCount: 0,
-        compactionCount: 0,
-      },
-    });
-
-    for (const msg of messages) {
-      await this.session.appendMessage({
-        sessionId: forked.id,
-        role: msg.role,
-        content: msg.content,
-        toolCallId: msg.toolCallId,
-        toolName: msg.toolName,
-        toolCalls: msg.toolCalls,
-      });
-    }
+    await forkSession(this.session, source.id, { key: newKey });
 
     sendResult({ sessionKey: newKey });
   }
@@ -1001,7 +976,8 @@ export class AcpServer {
       sendResult({ exists: false, messageCount: 0 });
       return;
     }
-    const messages = await this.session.getMessages(s.id, { limit: 10_000 });
+    // No limit: the count is of the whole session, not its newest 10k rows.
+    const messages = await this.session.getMessages(s.id);
     sendResult({ exists: true, messageCount: messages.length });
   }
 
