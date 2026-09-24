@@ -64,7 +64,15 @@ describe('apps/web/vite.config.ts proxy — same-origin Host for CSRF', () => {
 
   it('finds the API-bound proxy entries', () => {
     expect(entries.map((e) => e.path)).toEqual(
-      expect.arrayContaining(['/rpc', '/sse', '/auth', '/oauth', '/documents', '/api']),
+      expect.arrayContaining([
+        '/rpc',
+        '/sse',
+        '/auth',
+        '/oauth',
+        '/documents',
+        '/api',
+        '/setup/whatsapp/',
+      ]),
     );
   });
 
@@ -75,6 +83,17 @@ describe('apps/web/vite.config.ts proxy — same-origin Host for CSRF', () => {
         /changeOrigin:\s*false/,
       );
     }
+  });
+
+  // `/setup/whatsapp/:botId` is also a page route, so the entry must hand
+  // everything but the event stream back to the SPA. `changeOrigin: false` is
+  // covered by the loop above; this pins the split.
+  it('proxies only the WhatsApp setup event stream', () => {
+    const entry = entries.find((e) => e.path === '/setup/whatsapp/');
+    expect(entry?.value, '/setup/whatsapp/ must set a bypass').toMatch(/bypass:/);
+    expect(entry?.value, 'bypass must key on the event-stream Accept header').toMatch(
+      /text\/event-stream/,
+    );
   });
 
   // The SPA opens these at `${location.host}<path>`, so on :5173 they reach the

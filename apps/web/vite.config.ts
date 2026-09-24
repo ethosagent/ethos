@@ -6,7 +6,9 @@ import { defineConfig, type PluginOption } from 'vite';
 //
 //  • Dev   — `pnpm --filter @ethosagent/web dev` runs Vite at :5173 with the
 //            `/rpc`, `/sse`, `/auth`, `/openapi`, `/documents`, `/oauth` and
-//            `/api` paths proxied to the ethos-serve API on :3000, plus the
+//            `/api` paths proxied to the ethos-serve API on :3000, the
+//            WhatsApp setup event stream (`/setup/whatsapp/`, event-stream
+//            requests only; see the entry), plus the
 //            two WebSocket paths the SPA opens against `location.host`:
 //            `/voice/ws` and `/browser/takeover/ws` (`ws: true`). Every
 //            API-bound entry MUST set `changeOrigin: false`, so the API sees
@@ -85,6 +87,17 @@ export default defineConfig({
       // `ethos_auth` cookie as `/documents` above, for the same reason: an
       // absolute :3000 request from :5173 is cross-site and drops the cookie.
       '/api': { target: 'http://localhost:3000', changeOrigin: false },
+      // WhatsApp pairing stream. `/setup/whatsapp/:botId` is BOTH a client-side
+      // page (App.tsx) and the API's SSE endpoint (apps/web-api/src/routes/
+      // setup-whatsapp.ts). Only the `EventSource` request, which sends
+      // `Accept: text/event-stream`, goes to the API. Every other request gets
+      // its own URL back from `bypass`, and in Vite 6 that means "do not proxy,
+      // continue down the middleware chain", which serves the SPA.
+      '/setup/whatsapp/': {
+        target: 'http://localhost:3000',
+        changeOrigin: false,
+        bypass: (req) => (req.headers.accept?.includes('text/event-stream') ? undefined : req.url),
+      },
       // WebSocket lanes the SPA opens at `${location.host}<path>`
       // (VOICE_SOCKET_PATH and BROWSER_TAKEOVER_SOCKET_PATH in
       // packages/web-contracts). `/satellite/ws` is not here: only the
