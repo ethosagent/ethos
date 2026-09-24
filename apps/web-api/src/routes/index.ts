@@ -297,9 +297,16 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   //
   // Same-origin requests (the packaged web UI and the desktop app, which loads
   // the SPA from this server) send no `Origin` header, so they never hit this
-  // callback and are unaffected. The desktop's remote mode uses bearer auth
-  // (an injected `Authorization` header), not cookies, so it does not depend on
-  // credentialed CORS reflection either. Cross-origin companion origins must be
+  // callback and are unaffected. The desktop's remote mode authenticates with
+  // the same `ethos_auth` web-token cookie, not a bearer header: the window
+  // loads the SPA from the remote server's own origin
+  // (`apps/desktop/src/main/index.ts`, `win.loadURL(resolveBackendBaseUrl())`)
+  // after `applyRemoteAuthCookie` (`apps/desktop/src/main/connection.ts`) sets
+  // the cookie on that origin, so its requests are same-origin; the main
+  // process's own calls (`pluginFetch` in `apps/desktop/src/main/ipc.ts`,
+  // `testConnection` in connection.ts) send `Cookie: ethos_auth=…` from Node's
+  // `fetch`, where CORS does not apply. Neither depends on credentialed CORS
+  // reflection. Cross-origin companion origins must be
   // enumerated explicitly via `allowedOrigins`.
   //
   // `/v1/*` is skipped: its CORS belongs to `openAiCors` (the `/v1` origin
