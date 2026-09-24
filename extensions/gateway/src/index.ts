@@ -1280,6 +1280,16 @@ export class Gateway {
   private readonly sessionKeys = new Map<string, string>();
   /** The durable copy of `sessionKeys`; absent without `storage` + `dataDir`. */
   private readonly laneFiles: LaneSessionFiles | undefined;
+  /**
+   * A bot added live (`addBot`) whose lane file is still being read. Every
+   * reader and writer of that bot's `sessionKeys` awaits it first
+   * (`pendingLaneRestore`): `dispatchInbound` before the retry/slash-command
+   * paths, `runTurn` before it resolves the session, `persistLaneSessions`
+   * before it rewrites the file — so neither a turn (a spool replay or a
+   * `wake_review` included) nor a `/new` can run on, or overwrite, lanes the
+   * file already held. Entries delete themselves once settled.
+   */
+  private readonly laneRestores = new Map<string, Promise<void>>();
   /** See `GatewayConfig.sessionStore`. */
   private readonly sessionStoreFor: (() => SessionStore) | undefined;
   /** Per-lane active personality (overrideable via /personality). */
@@ -1888,6 +1898,27 @@ export class Gateway {
     this.bots.set(bot.botKey, bot);
     this.defaultBotKey = this.bots.size === 1 ? bot.botKey : null;
     this.wireBotLoop(bot);
+    // A bot added after boot missed `restoreLaneSessions`: read its lane file
+    // now, and gate its lanes on the read (`laneRestores`). Without this its
+    // lanes started on their defaults and the first `/new` or `/fork`
+    // rewrote the file from that empty map, erasing every other lane's branch.
+    // Pinned by `__tests__/lane-sessions.test.ts` ('a bot added live').
+    if (this.laneFiles) {
+      const restore = this.restoreBotLaneSessions(bot.botKey);
+      this.laneRestores.set(bot.botKey, restore);
+      void restore.then(() => {
+        if (this.laneRestores.get(bot.botKey) === restore) this.laneRestores.delete(bot.botKey);
+      });
+    }
+  }
+
+  /**
+   * The pending live-add lane restore for `botKey`, if any (see
+   * `laneRestores`). Callers `await` it only when present, so the common path
+   * — every boot-time bot — gains no microtask and no reordering.
+   */
+  private pendingLaneRestore(botKey: string | undefined): Promise<void> | undefined {
+    return botKey ? this.laneRestores.get(botKey) : undefined;
   }
 
   /**
@@ -2770,6 +2801,9 @@ export class Gateway {
     const laneKey = threadId
       ? buildLaneKey(message.platform, bot.botKey, message.chatId, threadId)
       : buildLaneKey(message.platform, bot.botKey, message.chatId);
+    // A bot added live may still be reading its lane file (`laneRestores`).
+    const restoring = this.pendingLaneRestore(bot.botKey);
+    if (restoring) await restoring;
     const lane = this.getOrCreateLane(laneKey);
     const rawText = message.text?.trim() ?? '';
     const text = bot.piiRedaction ? redactPii(rawText) : rawText;
@@ -4335,6 +4369,9 @@ export class Gateway {
     signal: AbortSignal,
     spoolTurn?: SpoolTurnState,
   ): Promise<void> {
+    // A `wake_review` turn reaches here without `dispatchInbound`.
+    const restoring = this.pendingLaneRestore(bot.botKey);
+    if (restoring) await restoring;
     const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
     // Stamped on this turn's reply obligations: the replay's double-reply
     // guard (`DeliveryLedger.hasObligationFor`) reads it back.
@@ -6653,30 +6690,38 @@ export class Gateway {
    * defaults. Pinned by extensions/gateway/src/__tests__/lane-sessions.test.ts.
    */
   async restoreLaneSessions(): Promise<void> {
+    for (const botKey of this.bots.keys()) await this.restoreBotLaneSessions(botKey);
+  }
+
+  /**
+   * Load one bot's lane file into `sessionKeys` / `personalityIds`. A lane
+   * this process already holds is left alone (it is newer than the file).
+   * Never throws. Called for every configured bot by `restoreLaneSessions`,
+   * and by `addBot` for a bot added live.
+   */
+  private async restoreBotLaneSessions(botKey: string): Promise<void> {
     const files = this.laneFiles;
     if (!files) return;
-    for (const botKey of this.bots.keys()) {
-      let lanes: Map<string, LaneSessionEntry>;
-      try {
-        lanes = await files.load(botKey);
-      } catch (err) {
-        this.observability?.recordSafetyBlock({
-          code: 'gateway.lane_sessions_unreadable',
-          cause: 'lane session file unreadable — this bot’s lanes start on their default sessions',
-          details: {
-            botKey,
-            path: files.path(botKey),
-            error: err instanceof Error ? err.message : String(err),
-          },
-        });
-        continue;
-      }
-      for (const [laneKey, entry] of lanes) {
-        // A row for another bot's lane is not this file's to restore.
-        if (laneKeyBotKey(laneKey) !== botKey || this.sessionKeys.has(laneKey)) continue;
-        this.sessionKeys.set(laneKey, entry.sessionKey);
-        if (entry.personalityId) this.personalityIds.set(laneKey, entry.personalityId);
-      }
+    let lanes: Map<string, LaneSessionEntry>;
+    try {
+      lanes = await files.load(botKey);
+    } catch (err) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.lane_sessions_unreadable',
+        cause: 'lane session file unreadable — this bot’s lanes start on their default sessions',
+        details: {
+          botKey,
+          path: files.path(botKey),
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
+      return;
+    }
+    for (const [laneKey, entry] of lanes) {
+      // A row for another bot's lane is not this file's to restore.
+      if (laneKeyBotKey(laneKey) !== botKey || this.sessionKeys.has(laneKey)) continue;
+      this.sessionKeys.set(laneKey, entry.sessionKey);
+      if (entry.personalityId) this.personalityIds.set(laneKey, entry.personalityId);
     }
   }
 
@@ -6691,6 +6736,10 @@ export class Gateway {
     const files = this.laneFiles;
     const botKey = laneKeyBotKey(laneKey);
     if (!files || !botKey) return;
+    // Rewriting the whole file from a map the file has not been read into yet
+    // would drop every lane it holds.
+    const restoring = this.pendingLaneRestore(botKey);
+    if (restoring) await restoring;
     const lanes: Record<string, LaneSessionEntry> = {};
     for (const [key, sessionKey] of this.sessionKeys) {
       if (laneKeyBotKey(key) !== botKey) continue;

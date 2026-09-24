@@ -281,3 +281,72 @@ describe('gateway /fork, /branches, /branch', () => {
     expect(out.sends.at(-1)).toMatch(/not available/);
   });
 });
+
+// Audit G4 (plan openclaw-9.5-adoption item 5): `restoreLaneSessions` runs once
+// at boot over the bots configured THEN. A bot added live by the config
+// reloader (`addAdapter` → `addBot`) never had its file read, so its lanes ran
+// on their defaults and its first `/new` rewrote the file from an empty map.
+describe('gateway lane → session map — a bot added live', () => {
+  const LANE_B1 = 'telegram:bot-b:chat-1';
+  const LANE_B2 = 'telegram:bot-b:chat-2';
+
+  function botBAdapter() {
+    const out = recordingAdapter();
+    (out.adapter as unknown as { id: string }).id = 'telegram:bot-b';
+    return out;
+  }
+
+  function msgB(text: string, chatId = 'chat-1'): InboundMessage {
+    return { ...msg(text), botKey: 'bot-b', chatId };
+  }
+
+  it('restores its lane file before its first turn, and its first /new keeps the other lanes', async () => {
+    const storage = new InMemoryStorage();
+    const files = new LaneSessionFiles(storage, DATA_DIR);
+    // Written by an earlier process that served bot-b.
+    await files.save('bot-b', {
+      [LANE_B1]: { sessionKey: `${LANE_B1}:fork:1` },
+      [LANE_B2]: { sessionKey: `${LANE_B2}:777`, personalityId: 'researcher' },
+    });
+
+    const a = recordingAdapter();
+    const gw = gateway(keyedLoop().loop, a.adapter, storage);
+    await gw.restoreLaneSessions(); // boot: bot-a only
+
+    const b = botBAdapter();
+    const loopB = keyedLoop();
+    gw.addAdapter(b.adapter, {
+      botKey: 'bot-b',
+      loop: loopB.loop as unknown as AgentLoop,
+      binding: { type: 'personality', name: 'default' },
+    });
+    // No await between the add and the first message: the gate carries it.
+    await gw.handleMessage(msgB('still on my branch?'), b.adapter);
+    expect(loopB.turns[0]?.sessionKey).toBe(`${LANE_B1}:fork:1`);
+
+    await gw.handleMessage(msgB('/new'), b.adapter);
+    const lanes = await files.load('bot-b');
+    expect(lanes.get(LANE_B1)?.sessionKey).toMatch(new RegExp(`^${LANE_B1}:\\d+$`));
+    expect(lanes.get(LANE_B2)).toEqual({
+      sessionKey: `${LANE_B2}:777`,
+      personalityId: 'researcher',
+    });
+  });
+
+  it('a /new sent before the file has been read cannot overwrite it', async () => {
+    const storage = new InMemoryStorage();
+    const files = new LaneSessionFiles(storage, DATA_DIR);
+    await files.save('bot-b', { [LANE_B2]: { sessionKey: `${LANE_B2}:777` } });
+
+    const a = recordingAdapter();
+    const gw = gateway(keyedLoop().loop, a.adapter, storage);
+    const b = botBAdapter();
+    gw.addAdapter(b.adapter, {
+      botKey: 'bot-b',
+      loop: keyedLoop().loop as unknown as AgentLoop,
+      binding: { type: 'personality', name: 'default' },
+    });
+    await gw.handleMessage(msgB('/new'), b.adapter);
+    expect((await files.load('bot-b')).get(LANE_B2)?.sessionKey).toBe(`${LANE_B2}:777`);
+  });
+});
