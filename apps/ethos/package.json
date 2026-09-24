@@ -102,6 +102,7 @@
     "@ethosagent/goal-store": "workspace:*",
     "@ethosagent/idle-watcher": "workspace:*",
     "@ethosagent/inbound-dedup": "workspace:*",
+    "@ethosagent/inbound-spool": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
     "@ethosagent/learning-inbox": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",

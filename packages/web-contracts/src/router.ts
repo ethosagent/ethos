@@ -4834,9 +4834,16 @@ const voice = {
 // abandoned, and — for a voice deployment — the same counts for voice notes,
 // whose payload is an artifact on disk.
 //
-// Read-only by construction: there is no RPC that records, claims, delivers or
-// prunes. Redelivery is the gateway's decision, made against its own botKeys;
-// a settings page must not be able to re-send someone's message.
+// The OUTBOUND half is read-only by construction: there is no RPC that
+// records, claims, delivers or prunes an obligation. Redelivery is the
+// gateway's decision, made against its own botKeys; a settings page must not be
+// able to re-send someone's message.
+//
+// The INBOUND half (plan reach-and-containment §2.6) lists dead-lettered
+// inbound messages and offers exactly two operator decisions on one: requeue
+// (the running gateway's replay tick runs the turn again) or discard. Neither
+// sends anything from here — a requeue hands the message back to the gateway,
+// which re-runs its safety filter and its own delivery path.
 // ---------------------------------------------------------------------------
 
 const DeliveryStatusCountsSchema = z.object({
@@ -4884,9 +4891,37 @@ const DeliveriesSummaryOutput = z.object({
   recent: z.array(DeliveryObligationSchema),
 });
 
+const DeadInboundSchema = z.object({
+  id: z.string(),
+  platform: z.string(),
+  chatId: z.string(),
+  /** Null for the root chat. */
+  threadId: z.string().nullable(),
+  attempts: z.number(),
+  /** Why it died: the turn's last error, `stale`, or `unreadable payload`. */
+  lastError: z.string().nullable(),
+  /** The message text, truncated to 200 characters, for the same reason
+   *  `DeliveryObligationSchema.content` is. Empty when the payload is gone. */
+  text: z.string(),
+  /** Epoch milliseconds. */
+  receivedAt: z.number(),
+  updatedAt: z.number(),
+});
+
+const ListDeadInboundInput = z.object({
+  limit: z.number().int().min(1).max(500).optional(),
+});
+const ListDeadInboundOutput = z.object({ rows: z.array(DeadInboundSchema) });
+const InboundActionInput = z.object({ id: z.string().min(1) });
+/** `false` when the row is no longer dead (already requeued or discarded). */
+const InboundActionOutput = z.object({ ok: z.boolean() });
+
 /** @experimental */
 const deliveries = {
   summary: oc.input(DeliveriesSummaryInput).output(DeliveriesSummaryOutput),
+  listDeadInbound: oc.input(ListDeadInboundInput).output(ListDeadInboundOutput),
+  requeueInbound: oc.input(InboundActionInput).output(InboundActionOutput),
+  discardInbound: oc.input(InboundActionInput).output(InboundActionOutput),
 };
 
 // ---------------------------------------------------------------------------

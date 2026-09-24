@@ -1984,4 +1984,7 @@ export * from './backup-schedule';
 // publishing tools see. `createOutboundPolicyGate` is its policy half alone —
 // what an app root hands a `WatcherManager` at construction.
 export { createOutboundPolicyGate, createOutboxGate, type OutboxWiring } from './compose-tools';
+// The gateway singleton lock (plan reach-and-containment §2.7) — taken by
+// `ethos gateway start`, read by `ethos gateway status`.
+export * from './gateway-lock';
 export * from './system-jobs';

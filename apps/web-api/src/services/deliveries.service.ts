@@ -4,6 +4,7 @@ import {
   type DeliveryStats,
   SQLiteDeliveryLedger,
 } from '@ethosagent/delivery-ledger';
+import { type InboundSpool, SQLiteInboundSpool } from '@ethosagent/inbound-spool';
 import type { Storage } from '@ethosagent/types';
 
 // Read-only window onto the durable delivery-obligation ledger.
@@ -52,6 +53,30 @@ export interface DeliveriesSummary {
   recent: DeliveriesSummaryRow[];
 }
 
+export interface DeadInboundRow {
+  id: string;
+  platform: string;
+  chatId: string;
+  threadId: string | null;
+  attempts: number;
+  lastError: string | null;
+  /** Message text, truncated to {@link CONTENT_PREVIEW_CHARS}. */
+  text: string;
+  receivedAt: number;
+  updatedAt: number;
+}
+
+/** The text of a spooled payload, or '' when it is unreadable or nulled. */
+function payloadText(payload: string): string {
+  try {
+    const parsed: unknown = JSON.parse(payload);
+    const text = (parsed as { text?: unknown } | null)?.text;
+    return typeof text === 'string' ? text.slice(0, CONTENT_PREVIEW_CHARS) : '';
+  } catch {
+    return '';
+  }
+}
+
 export interface DeliveriesServiceOptions {
   /** Ethos home directory — the ledger sits at `<dataDir>/delivery-ledger.db`. */
   dataDir: string;
@@ -62,14 +87,62 @@ export interface DeliveriesServiceOptions {
    * Called at most once per process (see {@link DeliveriesService.open}).
    */
   openLedger?: (path: string) => DeliveryLedger;
+  /** Open the inbound spool at `path`. Seam for tests. */
+  openSpool?: (path: string) => InboundSpool;
 }
 
 export class DeliveriesService {
   private readonly path: string;
   private ledger: DeliveryLedger | null = null;
+  private readonly spoolPath: string;
+  private spool: InboundSpool | null = null;
 
   constructor(private readonly opts: DeliveriesServiceOptions) {
     this.path = join(opts.dataDir, 'delivery-ledger.db');
+    this.spoolPath = join(opts.dataDir, 'inbound-spool.db');
+  }
+
+  /** Dead-lettered inbound messages, newest first. Empty — and no file
+   *  created — while no gateway has ever opened the spool. */
+  async listDeadInbound(limit = 50): Promise<{ rows: DeadInboundRow[] }> {
+    const spool = await this.openSpool();
+    if (!spool) return { rows: [] };
+    return {
+      rows: spool.listDead(limit).map((r) => ({
+        id: r.id,
+        platform: r.platform,
+        chatId: r.chatId,
+        threadId: r.threadId ?? null,
+        attempts: r.attempts,
+        lastError: r.lastError ?? null,
+        text: payloadText(r.payload),
+        receivedAt: r.receivedAt,
+        updatedAt: r.updatedAt,
+      })),
+    };
+  }
+
+  /** A dead row back to `received` (attempts reset). The running gateway's
+   *  replay tick picks it up (`Gateway.replayInboundSpool`, every 60s). */
+  async requeueInbound(id: string): Promise<{ ok: boolean }> {
+    const spool = await this.openSpool();
+    return { ok: spool ? spool.requeue(id) : false };
+  }
+
+  /** A dead row closed without a turn. */
+  async discardInbound(id: string): Promise<{ ok: boolean }> {
+    const spool = await this.openSpool();
+    return { ok: spool ? spool.discard(id) : false };
+  }
+
+  private async openSpool(): Promise<InboundSpool | null> {
+    if (this.spool) return this.spool;
+    // Same rule as the ledger: a read must not CREATE the database.
+    if (!(await this.opts.storage.exists(this.spoolPath))) return null;
+    this.spool = (this.opts.openSpool ?? ((p: string) => new SQLiteInboundSpool(p)))(
+      this.spoolPath,
+    );
+    return this.spool;
   }
 
   async summary(limit = DEFAULT_RECENT): Promise<DeliveriesSummary> {
@@ -117,6 +190,9 @@ export class DeliveriesService {
     const ledger = this.ledger as (DeliveryLedger & { close?: () => void }) | null;
     this.ledger = null;
     ledger?.close?.();
+    const spool = this.spool;
+    this.spool = null;
+    spool?.close();
   }
 
   private async open(): Promise<DeliveryLedger | null> {

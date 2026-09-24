@@ -331,6 +331,9 @@ importers:
       '@ethosagent/inbound-dedup':
         specifier: workspace:*
         version: link:../../extensions/inbound-dedup
+      '@ethosagent/inbound-spool':
+        specifier: workspace:*
+        version: link:../../extensions/inbound-spool
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store
@@ -638,6 +641,9 @@ importers:
       '@ethosagent/eval-harness':
         specifier: workspace:*
         version: link:../../extensions/eval-harness
+      '@ethosagent/inbound-spool':
+        specifier: workspace:*
+        version: link:../../extensions/inbound-spool
       '@ethosagent/kanban-store':
         specifier: workspace:*
         version: link:../../extensions/kanban-store
@@ -1192,6 +1198,9 @@ importers:
       '@ethosagent/inbound-dedup':
         specifier: workspace:*
         version: link:../inbound-dedup
+      '@ethosagent/inbound-spool':
+        specifier: workspace:*
+        version: link:../inbound-spool
       '@ethosagent/job-runner':
         specifier: workspace:*
         version: link:../job-runner
@@ -1252,6 +1261,12 @@ importers:
         version: link:../../packages/types
 
   extensions/inbound-dedup:
+    dependencies:
+      '@ethosagent/sqlite':
+        specifier: workspace:*
+        version: link:../../packages/sqlite
+
+  extensions/inbound-spool:
     dependencies:
       '@ethosagent/sqlite':
         specifier: workspace:*

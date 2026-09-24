@@ -36,6 +36,14 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 // something other than what arrived. Verification comes before trust, which
 // means before parsing (§4).
 //
+// ACK ORDERING (inbound spool, plan reach-and-containment §2.5). This server
+// never sees an `InboundMessage` — the platform framework parses the body — so
+// the "spool before 200" rule cannot be enforced here. It is enforced one frame
+// deeper: the framework acknowledges only after its handler returns, and the
+// adapter's message callback runs `Gateway.acceptInbound` synchronously inside
+// that handler (`wireAdapterInbound`, apps/ethos/src/commands/gateway.ts).
+// A handler that throws still gets the 500 below, so the platform retries.
+//
 // PORT: the caller passes one in; the convention is `ETHOS_PLATFORM_WEBHOOK_PORT`
 // with default 3006. Extending the map recorded in `commands/gateway.ts`: 3002
 // gateway health, 3003 gateway webhook, 3004 is `ethos run-all`'s health

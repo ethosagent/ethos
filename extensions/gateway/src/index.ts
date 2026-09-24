@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { AgentLoop } from '@ethosagent/core';
 import {
   buildLaneKey,
@@ -19,6 +19,7 @@ import {
 } from '@ethosagent/core';
 import type { DeliveryLedger, DeliveryObligation } from '@ethosagent/delivery-ledger';
 import type { InboundDedupStore } from '@ethosagent/inbound-dedup';
+import type { InboundSpool, SpoolRow } from '@ethosagent/inbound-spool';
 import type { ChannelFilterConfig } from '@ethosagent/safety-channel';
 import {
   checkMessage,
@@ -285,6 +286,77 @@ const ABORT_GRACE_MS = 2_000;
  * bounded rather than exact. Overridable per call (`shutdown({ drainTimeoutMs })`).
  */
 const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
+
+/** Inbound-spool defaults (plan reach-and-containment D2-7, D2-9, §2.6). */
+const SPOOL_DEFAULT_MAX_ATTEMPTS = 3;
+const SPOOL_DEFAULT_MAX_REPLAY_AGE_MS = 24 * 60 * 60 * 1000;
+const SPOOL_DEFAULT_REPLAY_INTERVAL_MS = 60_000;
+
+/**
+ * What {@link Gateway.acceptInbound} decided for one inbound message: the
+ * synchronous dedup + spool step, split out of `handleMessage` so the inbound
+ * wiring can run it before the platform's webhook is acknowledged.
+ */
+export interface InboundAcceptance {
+  /** `false` → a duplicate (dedup, or a key already spooled): drop it. */
+  fresh: boolean;
+  /** The spool row, when a spool is wired and the write succeeded. */
+  spoolId?: string;
+  /** Whether this process claimed the row at accept. `false` only mid-replay,
+   *  when the replay loop — not this call — runs it, in lane order. */
+  claimed?: boolean;
+}
+
+/** Options for {@link Gateway.handleMessage}. All optional; adapters pass none. */
+export interface HandleMessageOptions {
+  /** The inbound wiring already ran {@link Gateway.acceptInbound} for this message. */
+  accepted?: InboundAcceptance;
+  /** Replay re-entry: skip dedup and the spool write and run as this spool row. */
+  replaySpoolId?: string;
+  /** Called once the message is queued on its lane or consumed without a turn.
+   *  The replay uses it to queue one lane's rows strictly in order. */
+  onQueued?: () => void;
+}
+
+/** Per-turn spool bookkeeping, carried from `enqueueTurn` into `runTurn`. */
+interface SpoolTurnState {
+  /** The row this turn owns, or `undefined` when it runs without one. */
+  id: string | undefined;
+  /** The text final landed (see `markAnswered` in `runTurn`). */
+  answered: boolean;
+  /** Steer messages folded into this turn; closed when it completes. */
+  absorbed: string[];
+}
+
+/**
+ * The `message_id` a spool row is keyed on (plan §2.5). The platform id when
+ * there is one; an edit reuses its original id, so it gets `:edit:<ts>` to not
+ * collide with the original row; a message with no id at all gets a
+ * synthesized one, so replay still works (it never had platform-retry
+ * protection and still does not).
+ */
+function spoolMessageId(message: InboundMessage): string {
+  const at = message.sentAt ?? Date.now();
+  const base =
+    message.messageId ??
+    `synth:${createHash('sha256')
+      .update(`${message.platform}|${message.chatId}|${message.userId ?? ''}|${message.text}|${at}`)
+      .digest('hex')}`;
+  return message.isEdit ? `${base}:edit:${at}` : base;
+}
+
+/** `raw` is the platform's own object — unused past the adapter, possibly
+ *  cyclic, and not ours to keep a second copy of — so it is not spooled. */
+function serializeInbound(message: InboundMessage): string {
+  const { raw: _raw, ...rest } = message;
+  return JSON.stringify(rest);
+}
+
+function describeReplayAge(ms: number): string {
+  if (ms === 24 * 60 * 60 * 1000) return 'a day';
+  const hours = Math.max(1, Math.round(ms / 3_600_000));
+  return hours === 1 ? 'an hour' : `${hours} hours`;
+}
 
 /** `telegram:<botKey>` → `telegram`. An id with no colon IS the platform. */
 function platformOfAdapterId(id: string): string {
@@ -657,6 +729,29 @@ export interface GatewayConfig {
    * crash-time risk into a routine one.
    */
   inboundDedup?: InboundDedupStore;
+  /**
+   * Durable inbound spool (plan reach-and-containment §2.2–§2.4): a
+   * write-ahead record of every turn this gateway owes. `acceptInbound` writes
+   * a `received` row in the same synchronous span as the dedup check, the lane
+   * task marks it `processing` then `done` (drained AND answered), and
+   * {@link Gateway.replayInboundSpool} replays what a crash left behind.
+   *
+   * Absent → today's behavior: a crash between receipt and turn completion
+   * loses the message. Deliberately NOT a personality concern.
+   */
+  inboundSpool?: InboundSpool;
+  /** Operator knobs for {@link inboundSpool}. `gateway.inboundSpool.*` in config.yaml. */
+  inboundSpoolOptions?: {
+    /** Attempts before a row is dead-lettered. Default 3. */
+    maxAttempts?: number;
+    /** Rows older than this at replay are dead-lettered as `stale`. Default 24h. */
+    maxReplayAgeMs?: number;
+    /** Claim identity. Default `<pid>:<uuid>` — unique per process. */
+    owner?: string;
+    /** Periodic replay tick after the first replay, so a requeue takes effect
+     *  without a restart. Default 60s; 0 disables. */
+    replayIntervalMs?: number;
+  };
   /**
    * Maximum number of distinct chats kept in memory. The least-recently-used
    * idle chat is evicted (its lane, session key, personality override, and
@@ -1077,6 +1172,19 @@ export class Gateway {
   private readonly dedupWindow: number;
   /** Durable dedup backstop. Absent → in-memory only. */
   private readonly inboundDedup: InboundDedupStore | undefined;
+  private readonly inboundSpool: InboundSpool | undefined;
+  private readonly spoolOwner: string;
+  private readonly spoolMaxAttempts: number;
+  private readonly spoolMaxReplayAgeMs: number;
+  private readonly spoolReplayIntervalMs: number;
+  /** True while `replayInboundSpool` is queueing rows: a live message is then
+   *  spooled unclaimed and left for the replay's re-list (plan D2-5). */
+  private replaying = false;
+  private replayInFlight: Promise<{ replayed: number; deferred: number; dead: number }> | undefined;
+  private spoolReplayTimer: ReturnType<typeof setInterval> | undefined;
+  private orphansRecovered = false;
+  /** Spool bookkeeping for the turn running on each lane (steer absorption). */
+  private readonly spoolTurns = new Map<string, SpoolTurnState>();
   /** Outbound-message dedup cache. Suppresses `(sessionId, content)` within TTL. */
   private readonly outboundDedup: MessageDedupCache;
   /** Durable delivery-obligation ledger (item 9). Absent → no durability. */
@@ -1323,6 +1431,13 @@ export class Gateway {
 
     this.dedupWindow = config.dedupWindow ?? 1024;
     this.inboundDedup = config.inboundDedup;
+    this.inboundSpool = config.inboundSpool;
+    this.spoolOwner = config.inboundSpoolOptions?.owner ?? `${process.pid}:${randomUUID()}`;
+    this.spoolMaxAttempts = config.inboundSpoolOptions?.maxAttempts ?? SPOOL_DEFAULT_MAX_ATTEMPTS;
+    this.spoolMaxReplayAgeMs =
+      config.inboundSpoolOptions?.maxReplayAgeMs ?? SPOOL_DEFAULT_MAX_REPLAY_AGE_MS;
+    this.spoolReplayIntervalMs =
+      config.inboundSpoolOptions?.replayIntervalMs ?? SPOOL_DEFAULT_REPLAY_INTERVAL_MS;
     this.maxChats = config.maxChats ?? 4096;
     this.channelFilter = config.channelFilter;
     this.channelToolsets = config.channelToolsets;
@@ -2035,14 +2150,26 @@ export class Gateway {
   // Public API — adapters call this for every inbound message
   // ---------------------------------------------------------------------------
 
-  async handleMessage(message: InboundMessage, adapter: PlatformAdapter): Promise<void> {
-    // Shutting down: nothing new starts. Checked BEFORE dedup on purpose — a
-    // refused message is never recorded as seen, so a platform that redelivers
-    // it to the next process gets it processed rather than dropped as a dupe.
-    if (this.closing) {
-      await this.refuseWhileClosing(message, adapter, this.closing);
-      return;
-    }
+  /**
+   * The synchronous dedup + spool step for one inbound message, split out of
+   * `handleMessage` so the inbound wiring can run it BEFORE the platform's
+   * webhook is acknowledged (plan reach-and-containment §2.5): an adapter's
+   * `onMessage` callback runs inside the platform framework's request handler
+   * (grammy's `webhookCallback`, Bolt's `HTTPReceiver`), so whatever this
+   * does synchronously is on disk before that framework writes its 200.
+   *
+   * Never throws. A spool write that fails is recorded
+   * (`gateway.spool_write_failed`) and the message proceeds WITHOUT a row —
+   * fail-open, the posture `isDuplicate` takes. Returning a 500 instead would
+   * buy nothing: `isDuplicate` has already recorded the sighting, so the
+   * platform's retry would be dropped as a duplicate and the message lost for
+   * certain rather than merely undurable.
+   *
+   * While shutting down it records nothing (`handleMessage` then refuses the
+   * message before any sighting, as it always has).
+   */
+  acceptInbound(message: InboundMessage): InboundAcceptance {
+    if (this.closing) return { fresh: true };
     // Drop duplicates BEFORE any work — billing-relevant. See OpenClaw #71761
     // (channel messages injected twice → 2× cost). Use the resolved botKey
     // (message.botKey or the synthesized default) so multi-bot routing
@@ -2060,7 +2187,118 @@ export class Gateway {
     // on the same `dedupBotKey`, so adding it changed nothing about when dedup
     // runs relative to botKey resolution or the safety filter.
     const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
-    if (!message.isEdit && this.isDuplicate(message, dedupBotKey)) return;
+    if (!message.isEdit && this.isDuplicate(message, dedupBotKey)) return { fresh: false };
+
+    // Observe-mode records are not spooled: they owe no turn, their durable
+    // record IS the channel transcript, and they arrive on the hot inbound path
+    // that store runs at `synchronous = NORMAL` for (CLAUDE.md durability table)
+    // — two FULL commits per watched message would undo that.
+    const spool = this.inboundSpool;
+    if (!spool || message.recordOnly) return { fresh: true };
+
+    // The row is keyed and routed exactly as the turn will be: the routed
+    // botKey (`routedBotKey`, the one derivation `refuseWhileClosing` shares)
+    // and the lane key built from it.
+    const botKey = this.routedBotKey(message);
+    const threadId = message.threadId ? message.threadId : undefined;
+    const laneKey = threadId
+      ? buildLaneKey(message.platform, botKey, message.chatId, threadId)
+      : buildLaneKey(message.platform, botKey, message.chatId);
+    const claimed = !this.replaying;
+    try {
+      const { id, fresh } = spool.accept({
+        platform: message.platform,
+        botKey,
+        chatId: message.chatId,
+        ...(threadId ? { threadId } : {}),
+        messageId: spoolMessageId(message),
+        laneKey,
+        payload: serializeInbound(message),
+        claimedBy: claimed ? this.spoolOwner : null,
+      });
+      // Already spooled: a platform redelivery whose dedup sighting expired
+      // (plan §2.5). The spool's UNIQUE key is the dedup answer restated —
+      // except with dedup switched off (`dedupWindow: 0`), where it must not
+      // become dedup by the back door: the message runs, without a row.
+      if (!fresh) return { fresh: this.dedupWindow <= 0 };
+      return { fresh: true, spoolId: id, claimed };
+    } catch (err) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.spool_write_failed',
+        cause: 'inbound spool accept failed — message processed without a durable row',
+        details: {
+          platform: message.platform,
+          chatId: message.chatId,
+          botKey,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
+      return { fresh: true };
+    }
+  }
+
+  async handleMessage(
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+    opts: HandleMessageOptions = {},
+  ): Promise<void> {
+    // Shutting down: nothing new starts. Checked BEFORE dedup on purpose — a
+    // refused message is never recorded as seen, so a platform that redelivers
+    // it to the next process gets it processed rather than dropped as a dupe.
+    // A message that already HAS a spool row (replayed, or accepted before the
+    // shutdown began) stays owed: the next boot answers it, so it is refused
+    // without the "please resend" notice that would contradict that.
+    if (this.closing) {
+      const spooled = opts.replaySpoolId ?? opts.accepted?.spoolId;
+      opts.onQueued?.();
+      await this.refuseWhileClosing(message, adapter, spooled ? {} : this.closing);
+      return;
+    }
+
+    let spoolId: string | undefined;
+    if (opts.replaySpoolId) {
+      spoolId = opts.replaySpoolId;
+    } else {
+      const accepted = opts.accepted ?? this.acceptInbound(message);
+      if (!accepted.fresh) {
+        opts.onQueued?.();
+        return;
+      }
+      spoolId = accepted.spoolId;
+      // Arrived mid-replay: spooled unclaimed and NOT run here. The replay's
+      // re-list picks it up behind the older rows of its lane (plan D2-5).
+      if (spoolId && accepted.claimed === false) {
+        opts.onQueued?.();
+        return;
+      }
+    }
+
+    // Every path through `dispatchInbound` that does not hand the message to a
+    // turn (or fold it into a running one) closes its row here — so an early
+    // return added to that function later cannot leak a `received` row that
+    // replays on every boot. Pinned by `__tests__/inbound-spool.test.ts`.
+    let handedOff = false;
+    const handOff = (): void => {
+      handedOff = true;
+      opts.onQueued?.();
+    };
+    try {
+      await this.dispatchInbound(message, adapter, spoolId, handOff);
+    } finally {
+      if (spoolId && !handedOff) this.closeSpool(spoolId);
+      opts.onQueued?.();
+    }
+  }
+
+  /** `handleMessage`'s body past dedup and the spool write. */
+  private async dispatchInbound(
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+    spoolId: string | undefined,
+    handOff: () => void,
+  ): Promise<void> {
+    // Pre-resolution botKey — see the GWA-008 note in `acceptInbound`.
+    const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
 
     // --- Clarify correlator: short-circuit force-reply + `/cancel` ---
     // Runs BEFORE the safety filter's mention gate so an approved sender's
@@ -2815,7 +3053,8 @@ export class Gateway {
         return;
       }
       if (this.activeSinks.has(laneKey)) {
-        void this.enqueueTurn(laneKey, lane, bot, message, adapter, queueText, threadId);
+        void this.enqueueTurn(laneKey, lane, bot, message, adapter, queueText, threadId, spoolId);
+        handOff();
         await adapter
           .send(message.chatId, { text: `✅ queued (position ${lane.length})`, threadId })
           .catch(() => {});
@@ -2837,7 +3076,18 @@ export class Gateway {
         sessionKey: learnSessionKey,
         surface: 'gateway',
       });
-      await this.enqueueTurn(laneKey, lane, bot, message, adapter, prompt, threadId);
+      const learnTurn = this.enqueueTurn(
+        laneKey,
+        lane,
+        bot,
+        message,
+        adapter,
+        prompt,
+        threadId,
+        spoolId,
+      );
+      handOff();
+      await learnTurn;
       return;
     }
 
@@ -2953,6 +3203,12 @@ export class Gateway {
     if (activeSink) {
       const accepted = activeSink.push(text);
       if (accepted) {
+        // Folded into the running turn: its row closes when THAT turn does.
+        const absorbing = spoolId ? this.spoolTurns.get(laneKey) : undefined;
+        if (spoolId && absorbing) {
+          absorbing.absorbed.push(spoolId);
+          handOff();
+        }
         await adapter.send(message.chatId, { text: '↩ noted', threadId }).catch(() => {});
       }
       return;
@@ -2981,7 +3237,18 @@ export class Gateway {
       return;
     }
 
-    await this.enqueueTurn(laneKey, lane, bot, message, adapter, turnText, threadId);
+    const turn = this.enqueueTurn(
+      laneKey,
+      lane,
+      bot,
+      message,
+      adapter,
+      turnText,
+      threadId,
+      spoolId,
+    );
+    handOff();
+    await turn;
   }
 
   /**
@@ -2994,6 +3261,11 @@ export class Gateway {
    * Leak-free: the permit is released in `finally`; an abort before a slot
    * frees resolves `acquire` to `false` (no permit held, nothing to release,
    * `runTurn` never runs so there is no lane state to unwind).
+   *
+   * With a `spoolId` the row follows the turn (plan reach-and-containment
+   * §2.3): `processing` once the slot is held, `done` only after `runTurn`
+   * returns — the iterator drained AND the answer joined — never on the `done`
+   * event. See {@link finishSpoolTurn} for the failure and shutdown outcomes.
    */
   private enqueueTurn(
     laneKey: string,
@@ -3003,19 +3275,375 @@ export class Gateway {
     adapter: PlatformAdapter,
     text: string,
     threadId: string | undefined,
+    spoolId?: string,
   ): Promise<void> {
-    return lane.enqueue(async (signal) => {
+    let started = false;
+    const queued = lane.enqueue(async (signal) => {
+      started = true;
       const slotHeld = await this.concurrency.acquire(signal);
-      if (!slotHeld) return;
-      const turn = this.runTurn(laneKey, lane, bot, message, adapter, text, threadId, signal);
+      if (!slotHeld) {
+        if (spoolId) this.settleUnstartedSpool(spoolId);
+        return;
+      }
+      const spoolTurn = this.inboundSpool ? this.beginSpoolTurn(spoolId) : undefined;
+      if (spoolTurn) this.spoolTurns.set(laneKey, spoolTurn);
+      const turn = this.runTurn(
+        laneKey,
+        lane,
+        bot,
+        message,
+        adapter,
+        text,
+        threadId,
+        signal,
+        spoolTurn,
+      );
       this.inflightTurns.add(turn);
       try {
         await turn;
+        if (spoolTurn) this.finishSpoolTurn(spoolTurn, signal, undefined);
+      } catch (err) {
+        if (spoolTurn) this.finishSpoolTurn(spoolTurn, signal, err);
+        throw err;
       } finally {
+        if (spoolTurn && this.spoolTurns.get(laneKey) === spoolTurn)
+          this.spoolTurns.delete(laneKey);
         this.inflightTurns.delete(turn);
         this.concurrency.release();
       }
     });
+    // Dropped from the lane before it ever ran (`SessionLane.abort` rejects
+    // everything queued behind the running task).
+    if (spoolId) {
+      queued.catch(() => {
+        if (!started) this.settleUnstartedSpool(spoolId);
+      });
+    }
+    return queued;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inbound spool bookkeeping (plan reach-and-containment §2.3–§2.4)
+  // ---------------------------------------------------------------------------
+
+  /** Close a row whose message was consumed without a turn. Fail-open. */
+  private closeSpool(spoolId: string): void {
+    try {
+      this.inboundSpool?.markDone(spoolId);
+    } catch (err) {
+      this.recordSpoolUpdateFailed('markDone', err);
+    }
+  }
+
+  private recordSpoolUpdateFailed(stage: string, err: unknown): void {
+    this.observability?.recordSafetyBlock({
+      code: 'gateway.spool_update_failed',
+      cause: `inbound spool ${stage} failed`,
+      details: { stage, error: err instanceof Error ? err.message : String(err) },
+    });
+  }
+
+  /**
+   * A queued turn that never started. During shutdown it is owed — the row
+   * stays `received` (claimed by this dead-to-be process, so the next boot's
+   * `recoverOrphans` releases it). Otherwise the lane was aborted by `/stop`,
+   * `/new` or a bot removal: the user's own abort consumed it, so it closes
+   * rather than coming back as a surprise answer after the next restart.
+   */
+  private settleUnstartedSpool(spoolId: string): void {
+    if (this.closing) return;
+    this.closeSpool(spoolId);
+  }
+
+  /** `received` → `processing` (one attempt counted). Fail-open: a turn whose
+   *  row cannot be marked still runs, just without spool bookkeeping. */
+  private beginSpoolTurn(spoolId: string | undefined): SpoolTurnState {
+    const state: SpoolTurnState = { id: undefined, answered: false, absorbed: [] };
+    const spool = this.inboundSpool;
+    if (!spool || !spoolId) return state;
+    try {
+      if (spool.markProcessing(spoolId, this.spoolOwner)) state.id = spoolId;
+    } catch (err) {
+      this.recordSpoolUpdateFailed('markProcessing', err);
+    }
+    return state;
+  }
+
+  /**
+   * Settle a turn's row once `runTurn` has returned or thrown.
+   *
+   * - Shutdown abort, not answered → `releaseOnShutdown`: owed, not failed,
+   *   and the attempt is refunded. Absorbed steer rows are left `received` for
+   *   the next boot too.
+   * - Threw before answering → `markFailed`: back to `received` for the next
+   *   boot, or `dead` at the attempt cap (`gateway.spool_dead_lettered`).
+   * - Otherwise → `done`, absorbed rows included. An answered turn is `done`
+   *   even if its tail failed or shutdown cut it: the user has the reply.
+   */
+  private finishSpoolTurn(state: SpoolTurnState, signal: AbortSignal, err: unknown): void {
+    const spool = this.inboundSpool;
+    if (!spool) return;
+    const shutdown = this.closing !== null && signal.aborted && !state.answered;
+    try {
+      if (state.id) {
+        if (shutdown) {
+          spool.releaseOnShutdown(state.id);
+        } else if (err !== undefined && !state.answered) {
+          const error = err instanceof Error ? err.message : String(err);
+          if (spool.markFailed(state.id, error, this.spoolMaxAttempts) === 'dead') {
+            this.recordSpoolDeadLettered(state.id, error);
+          }
+        } else {
+          spool.markDone(state.id);
+        }
+      }
+      if (!shutdown) for (const id of state.absorbed) spool.markDone(id);
+    } catch (e) {
+      this.recordSpoolUpdateFailed('settle', e);
+    }
+  }
+
+  private recordSpoolDeadLettered(spoolId: string, reason: string): void {
+    this.observability?.recordSafetyBlock({
+      code: 'gateway.spool_dead_lettered',
+      cause: `inbound message dead-lettered: ${reason}`,
+      details: { spoolId, reason },
+    });
+  }
+
+  /**
+   * Replay every `received` spool row this process owns (plan
+   * reach-and-containment §2.4). Call AFTER `adapter.start()` — a replayed turn
+   * replies through a live adapter — beside `sweepPendingDeliveries()`. The
+   * first call also arms a periodic tick (default 60s, unref'd) so a row
+   * requeued from `ethos gateway spool replay` or the web Deliveries page is
+   * picked up without a restart.
+   *
+   * 1. First call only: `recoverOrphans` returns every `processing` row (and
+   *    every row claimed by another owner) to unclaimed `received`. Safe
+   *    because the gateway singleton lock (`acquireGatewayLock`,
+   *    packages/wiring/src/gateway-lock.ts, taken by `ethos gateway start`)
+   *    proves no live peer gateway shares the file.
+   * 2. `listReplayable` — only rows whose `botKey` this process serves. Rows
+   *    for an unconfigured bot stay `received` (doctor reports them orphaned).
+   * 3. The row's adapter is resolved by BOT (`adapterForBot`) BEFORE the
+   *    claim; no adapter → the row is left untouched.
+   * 4. Older than `maxReplayAgeMs` → `dead` (`stale`), and one notice per lane.
+   * 5. `claim`, then the double-reply guard: a ledger obligation already
+   *    carrying this row's id (`hasObligationFor`) means the reply exists, so
+   *    the row closes and the ledger sweep owns delivery.
+   * 6. Otherwise `handleMessage` is re-entered with the replay marker — the
+   *    same resolution code, the safety filter included — one lane's rows
+   *    strictly in order, lanes concurrently. While this runs a live message
+   *    is spooled unclaimed and not run; the loop re-lists until nothing
+   *    unclaimed is left, so it runs behind the older rows of its lane.
+   *
+   * Resolves once every row is QUEUED, not once the turns finish.
+   */
+  async replayInboundSpool(): Promise<{ replayed: number; deferred: number; dead: number }> {
+    const spool = this.inboundSpool;
+    if (!spool || this.closing) return { replayed: 0, deferred: 0, dead: 0 };
+    if (this.replayInFlight) return this.replayInFlight;
+    const run = this.runSpoolReplay(spool).finally(() => {
+      this.replayInFlight = undefined;
+    });
+    this.replayInFlight = run;
+    if (!this.spoolReplayTimer && this.spoolReplayIntervalMs > 0) {
+      this.spoolReplayTimer = setInterval(() => {
+        void this.replayInboundSpool().catch(() => {});
+      }, this.spoolReplayIntervalMs);
+      this.spoolReplayTimer.unref?.();
+    }
+    return run;
+  }
+
+  private async runSpoolReplay(
+    spool: InboundSpool,
+  ): Promise<{ replayed: number; deferred: number; dead: number }> {
+    const counts = { replayed: 0, deferred: 0, dead: 0 };
+    if (!this.orphansRecovered) {
+      this.orphansRecovered = true;
+      try {
+        spool.recoverOrphans(this.spoolOwner);
+      } catch (err) {
+        this.recordSpoolUpdateFailed('recoverOrphans', err);
+      }
+    }
+    // Rows this run has already dealt with (deferred, stale, lost claims) —
+    // without it a row with no adapter would be re-listed forever.
+    const seen = new Set<string>();
+    const staleByLane = new Map<string, { row: SpoolRow; count: number }>();
+    this.replaying = true;
+    try {
+      for (;;) {
+        let rows: SpoolRow[];
+        try {
+          rows = spool.listReplayable([...this.bots.keys()]).filter((r) => !seen.has(r.id));
+        } catch (err) {
+          this.observability?.recordSafetyBlock({
+            code: 'gateway.spool_replay_failed',
+            cause: err instanceof Error ? err.message : String(err),
+          });
+          break;
+        }
+        // `break` runs the `finally` synchronously, so no live message can be
+        // spooled unclaimed between this empty list and `replaying = false`.
+        if (rows.length === 0) break;
+        const byLane = new Map<string, SpoolRow[]>();
+        for (const row of rows) {
+          seen.add(row.id);
+          const laneRows = byLane.get(row.laneKey);
+          if (laneRows) laneRows.push(row);
+          else byLane.set(row.laneKey, [row]);
+        }
+        await Promise.all(
+          [...byLane.values()].map(async (laneRows) => {
+            for (const row of laneRows) await this.replaySpoolRow(spool, row, staleByLane, counts);
+          }),
+        );
+      }
+    } finally {
+      this.replaying = false;
+    }
+    for (const { row, count } of staleByLane.values()) {
+      await this.notifyTracked(
+        {
+          platform: row.platform,
+          chatId: row.chatId,
+          botKey: row.botKey,
+          sessionKey: row.laneKey,
+          ...(row.threadId ? { threadId: row.threadId } : {}),
+        },
+        `I restarted and missed ${count} message(s) older than ${describeReplayAge(
+          this.spoolMaxReplayAgeMs,
+        )}; resend if still needed.`,
+      ).catch(() => false);
+    }
+    return counts;
+  }
+
+  private async replaySpoolRow(
+    spool: InboundSpool,
+    row: SpoolRow,
+    staleByLane: Map<string, { row: SpoolRow; count: number }>,
+    counts: { replayed: number; deferred: number; dead: number },
+  ): Promise<void> {
+    // BY BOT, before the claim — the ledger sweep's rule: a row this process
+    // cannot answer is left exactly as it was, never claimed and stranded.
+    const adapter = this.adapterForBot(row.botKey, row.platform);
+    if (!adapter) {
+      counts.deferred++;
+      return;
+    }
+    try {
+      if (Date.now() - row.receivedAt > this.spoolMaxReplayAgeMs) {
+        // Answering a day-old question as if it were fresh is worse than
+        // saying so: dead-letter it and tell the lane once.
+        if (spool.markDead(row.id, 'stale')) {
+          counts.dead++;
+          this.recordSpoolDeadLettered(row.id, 'stale');
+          const entry = staleByLane.get(row.laneKey);
+          if (entry) entry.count++;
+          else staleByLane.set(row.laneKey, { row, count: 1 });
+        }
+        return;
+      }
+      if (!spool.claim(row.id, this.spoolOwner)) return;
+      if (this.deliveryLedger && (await this.deliveryLedger.hasObligationFor(row.id))) {
+        spool.markDone(row.id);
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.spool_replay_already_answered',
+          details: { spoolId: row.id, platform: row.platform, botKey: row.botKey },
+        });
+        return;
+      }
+      const message = await this.reviveSpooledMessage(row);
+      if (!message) {
+        // An unreadable payload can never become a turn; dead-letter it now
+        // rather than on the third boot.
+        spool.markProcessing(row.id, this.spoolOwner);
+        spool.markFailed(row.id, 'unreadable payload', 0);
+        counts.dead++;
+        this.recordSpoolDeadLettered(row.id, 'unreadable payload');
+        return;
+      }
+      counts.replayed++;
+      await new Promise<void>((resolve) => {
+        void this.handleMessage(message, adapter, {
+          replaySpoolId: row.id,
+          onQueued: resolve,
+        }).catch((err: unknown) => {
+          this.observability?.recordSafetyBlock({
+            code: 'gateway.inbound_error',
+            cause: 'replayed inbound message handling threw',
+            details: {
+              platform: row.platform,
+              botKey: row.botKey,
+              spoolId: row.id,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          });
+          resolve();
+        });
+      });
+    } catch (err) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.spool_replay_failed',
+        cause: err instanceof Error ? err.message : String(err),
+        details: { spoolId: row.id, platform: row.platform, botKey: row.botKey },
+      });
+    }
+  }
+
+  /**
+   * Rebuild the `InboundMessage` a row was spooled from. Attachments are
+   * stored by reference (plan D2-4): one whose cached file is gone is dropped
+   * with a `gateway.spool_attachment_missing` event, and the turn still runs —
+   * a message with its image missing beats no message.
+   */
+  private async reviveSpooledMessage(row: SpoolRow): Promise<InboundMessage | null> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.payload);
+    } catch {
+      return null;
+    }
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as { platform?: unknown }).platform !== 'string' ||
+      typeof (parsed as { chatId?: unknown }).chatId !== 'string' ||
+      typeof (parsed as { text?: unknown }).text !== 'string'
+    ) {
+      return null;
+    }
+    const message = { ...(parsed as Omit<InboundMessage, 'raw'>), raw: null } as InboundMessage;
+    const attachments = message.attachments;
+    const cache = this.attachmentCache;
+    const storage = this.storage;
+    if (attachments && attachments.length > 0 && cache && storage) {
+      const kept: NonNullable<InboundMessage['attachments']> = [];
+      for (const att of attachments) {
+        let present = true;
+        if (att.url.startsWith('file://')) {
+          try {
+            present = await storage.exists(cache.resolveLocalPath(att.url));
+          } catch {
+            present = false;
+          }
+        }
+        if (present) {
+          kept.push(att);
+        } else {
+          this.observability?.recordSafetyBlock({
+            code: 'gateway.spool_attachment_missing',
+            details: { spoolId: row.id, platform: row.platform, type: att.type },
+          });
+        }
+      }
+      message.attachments = kept;
+    }
+    return message;
   }
 
   /**
@@ -3040,8 +3668,12 @@ export class Gateway {
     text: string,
     threadId: string | undefined,
     signal: AbortSignal,
+    spoolTurn?: SpoolTurnState,
   ): Promise<void> {
     const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+    // Stamped on this turn's reply obligations: the replay's double-reply
+    // guard (`DeliveryLedger.hasObligationFor`) reads it back.
+    const inboundRef = spoolTurn?.id;
     this.lastInboundHadAudio.set(laneKey, hasAudioAttachments(message.attachments));
     // Refresh every loop registry from disk before resolving which personality
     // this turn runs as, so a hot-dropped or edited directory takes effect on
@@ -3196,7 +3828,7 @@ export class Gateway {
       // W3.1 — live draft-edit streamer, gated by chat class + adapter caps.
       // The ledger binding rides along so the streamer's TERMINAL edit gets the
       // same durable obligation the non-streaming paths get.
-      const streamDelivery = this.deliveryBinding(bot.botKey, message.platform);
+      const streamDelivery = this.deliveryBinding(bot.botKey, message.platform, inboundRef);
       const streamer = this.shouldStream(message, adapter)
         ? new DraftStreamer({
             adapter,
@@ -3232,6 +3864,7 @@ export class Gateway {
       const markAnswered = (): void => {
         const active = this.activeTurns.get(laneKey);
         if (active) active.answered = true;
+        if (spoolTurn) spoolTurn.answered = true;
       };
 
       // Deliver the reply exactly once. Called at the turn's terminal event,
@@ -3273,6 +3906,7 @@ export class Gateway {
                 platform: message.platform,
                 chatId: message.chatId,
                 sessionKey,
+                inboundRef,
               },
               { text: sanitizedNote, threadId },
             );
@@ -3303,6 +3937,7 @@ export class Gateway {
                 platform: message.platform,
                 chatId: message.chatId,
                 sessionKey,
+                inboundRef,
               },
               { text: sanitized, parseMode: 'markdown', threadId },
             );
@@ -3939,6 +4574,10 @@ export class Gateway {
       clearInterval(this.bgWakeSweepTimer);
       this.bgWakeSweepTimer = undefined;
     }
+    if (this.spoolReplayTimer) {
+      clearInterval(this.spoolReplayTimer);
+      this.spoolReplayTimer = undefined;
+    }
     for (const undos of this.botCleanups.values()) for (const undo of undos) undo();
     this.botCleanups.clear();
     this.pendingWakes.clear();
@@ -4066,13 +4705,18 @@ export class Gateway {
   }
 
   /** The ledger binding for one bot, or `undefined` when no ledger is wired. */
-  private deliveryBinding(botKey: string, platform: string): DeliveryBinding | undefined {
+  private deliveryBinding(
+    botKey: string,
+    platform: string,
+    inboundRef?: string,
+  ): DeliveryBinding | undefined {
     const ledger = this.deliveryLedger;
     if (!ledger) return undefined;
     return {
       ledger,
       botKey,
       platform,
+      ...(inboundRef ? { inboundRef } : {}),
       onLedgerError: (stage, error) => {
         this.observability?.recordSafetyBlock({
           code: 'gateway.delivery_ledger_error',
@@ -4102,6 +4746,8 @@ export class Gateway {
       platform: string;
       chatId: string;
       sessionKey: string;
+      /** Spool id of the inbound message this reply answers. */
+      inboundRef?: string;
     },
     message: OutboundMessage,
   ): Promise<boolean> {
@@ -4127,10 +4773,11 @@ export class Gateway {
       platform: string;
       chatId: string;
       sessionKey: string;
+      inboundRef?: string;
     },
     message: OutboundMessage,
   ): Promise<{ confirmed: boolean; obligationId: string | null }> {
-    const binding = this.deliveryBinding(target.botKey, target.platform);
+    const binding = this.deliveryBinding(target.botKey, target.platform, target.inboundRef);
     const obligationId = await beginDelivery(binding, {
       chatId: target.chatId,
       sessionId: target.sessionKey,

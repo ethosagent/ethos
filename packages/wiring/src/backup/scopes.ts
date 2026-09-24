@@ -232,6 +232,15 @@ export const WAL_STORES: readonly WalStoreRecord[] = [
     reason: 'A short de-duplication window over live traffic. Meaningless once moved.',
   },
   {
+    source: 'extensions/inbound-spool/src/index.ts',
+    sites: 1,
+    database: 'inbound-spool.db',
+    scope: null,
+    reason:
+      'Turns owed on THIS machine. Restoring received rows elsewhere replays old messages ' +
+      'as fresh turns and answers real people days late (same exclusion as delivery-ledger).',
+  },
+  {
     source: 'extensions/notify-queue/src/index.ts',
     sites: 1,
     database: 'notify-queue.db',

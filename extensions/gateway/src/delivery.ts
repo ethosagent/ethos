@@ -19,6 +19,12 @@ export interface DeliveryBinding {
   ledger: DeliveryLedger;
   botKey: string;
   platform: string;
+  /**
+   * The inbound-spool row whose turn this reply answers. Stamped on every
+   * obligation recorded through the binding so a replayed turn can ask the
+   * ledger whether its reply already exists (`DeliveryLedger.hasObligationFor`).
+   */
+  inboundRef?: string;
   /** Observability seam for ledger-internal failures. Never rethrown. */
   onLedgerError?: (stage: 'record' | 'confirm', error: string) => void;
 }
@@ -64,6 +70,7 @@ export async function beginDelivery(
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.artifactRef ? { artifactRef: input.artifactRef } : {}),
       ...(input.mediaFormat ? { mediaFormat: input.mediaFormat } : {}),
+      ...(binding.inboundRef ? { inboundRef: binding.inboundRef } : {}),
     });
   } catch (err) {
     binding.onLedgerError?.('record', errMsg(err));

@@ -252,9 +252,18 @@ export interface IpcContract {
   'app:relaunch': { request: undefined; response: { ok: boolean } };
   'gateway:status': {
     request: undefined;
-    response: { state: 'running' | 'stopped' | 'crashed' | 'starting'; serviceInstalled: boolean };
+    response: {
+      state: 'running' | 'stopped' | 'crashed' | 'starting';
+      serviceInstalled: boolean;
+      pid?: number | null;
+      unhealthy?: boolean;
+    };
   };
-  'gateway:start': { request: undefined; response: { ok: boolean } };
+  /** `attached`: a gateway was already running, so nothing was spawned. */
+  'gateway:start': {
+    request: undefined;
+    response: { ok: boolean; attached?: boolean; pid?: number | null };
+  };
   'gateway:stop': { request: undefined; response: { ok: boolean } };
   'gateway:logPath': { request: undefined; response: { path: string } };
   'satellite:status': { request: undefined; response: SatelliteStatus };

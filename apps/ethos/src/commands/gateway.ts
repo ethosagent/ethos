@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 // Storage-abstraction exception, same one `pairing-commands.ts` takes: the
 // presence check for a `@ethosagent/sqlite` database file, which opens raw
 // paths and manages WAL/SHM natively. See `openChannelTranscriptStore`.
@@ -55,6 +56,7 @@ import {
 import { registerGoalNotifications } from '@ethosagent/goal-runner';
 import { type BusySource, IdleWatcherManager } from '@ethosagent/idle-watcher';
 import { SQLiteInboundDedupStore } from '@ethosagent/inbound-dedup';
+import { SQLiteInboundSpool } from '@ethosagent/inbound-spool';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createMetricsTextProvider } from '@ethosagent/observability-sqlite';
@@ -111,11 +113,15 @@ import {
 } from '@ethosagent/watchers';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
+  acquireGatewayLock,
   createApprovalDangerPredicate,
   createLazyProvider,
   createOutboundPolicyGate,
   createSessionStore,
+  currentBootId,
   fileMemoryUnsupportedReason,
+  GATEWAY_LOCK_EXIT_CODE,
+  GatewayLockHeldError,
   IdentityMap,
   initPairingDb,
   type LiveKitBindings,
@@ -197,6 +203,13 @@ const DELIVERY_LEDGER_RETENTION_MS = 7 * 86_400_000;
  *  because a call row is history an operator reads (who rang, what was said),
  *  not an in-flight obligation — but still bounded: the rows hold transcripts. */
 const CALL_LOG_RETENTION_MS = 30 * 86_400_000;
+/** How long a `done` inbound-spool row is kept (plan reach-and-containment
+ *  D2-11). Its payload was already nulled at `markDone`; the row stays for the
+ *  UNIQUE key and forensics. `received`/`processing` rows are never age-pruned. */
+const INBOUND_SPOOL_RETENTION_MS = 7 * 86_400_000;
+/** How long a `dead` spool row is kept before it is pruned (with an event): a
+ *  dead letter nobody looked at for a month is not going to be looked at. */
+const INBOUND_SPOOL_DEAD_RETENTION_MS = 30 * 86_400_000;
 
 export interface GatewayHeartbeat {
   pid: number;
@@ -587,6 +600,26 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const config = loaded.config;
   // `logs.level` — the lowest severity every ConsoleLogger built here prints.
   const logLevel = config.logs?.level;
+
+  // One gateway per state dir (plan reach-and-containment §2.7). Taken right
+  // after config load and BEFORE any store is opened or adapter constructed:
+  // a second gateway would poll the same bot tokens and reset this one's
+  // in-flight inbound-spool rows. Refused → exit 3, which `ethos run-all` and
+  // the desktop app read as "already running", not as a crash.
+  let releaseGatewayLock: (() => void) | undefined;
+  try {
+    releaseGatewayLock = await acquireGatewayLock(ethosDir());
+  } catch (err) {
+    if (err instanceof GatewayLockHeldError) {
+      console.error(err.message);
+      process.exit(GATEWAY_LOCK_EXIT_CODE);
+    }
+    throw err;
+  }
+  // An uncaught crash of a live process still runs exit handlers; release
+  // there too so the next start does not have to classify a stale lock.
+  // `release` deletes only this process's own bytes, so calling it twice is safe.
+  process.on('exit', () => releaseGatewayLock?.());
 
   const identityMap = new IdentityMap({ storage, dataDir: ethosDir() });
   const resolveUserId = (platform: string, platformUserId: string, displayLabel?: string) =>
@@ -1198,6 +1231,12 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // convention and same unconditional construction as the ledger above.
   const inboundDedup = new SQLiteInboundDedupStore(join(ethosDir(), 'inbound-dedup.db'));
 
+  // Inbound spool (plan reach-and-containment §2.2): a write-ahead record of
+  // every turn this gateway owes, replayed after a crash. Opened only here —
+  // `ethos serve` never opens it (D2-15) — and only AFTER the gateway lock
+  // above, which is what makes boot-time orphan recovery safe.
+  const inboundSpool = new SQLiteInboundSpool(join(ethosDir(), 'inbound-spool.db'));
+
   // Observe-mode transcript sink (plan/phases/ambient-group-monitoring.md R1).
   // Deliberately NOT eager like the two stores above: this one is opened on
   // first write, so `channel-transcript.db` appears only once a chat is
@@ -1262,6 +1301,18 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     adapters,
     deliveryLedger,
     inboundDedup,
+    inboundSpool,
+    inboundSpoolOptions: {
+      ...(config.gateway?.inboundSpool?.maxAttempts !== undefined
+        ? { maxAttempts: config.gateway.inboundSpool.maxAttempts }
+        : {}),
+      ...(config.gateway?.inboundSpool?.maxReplayAgeMs !== undefined
+        ? { maxReplayAgeMs: config.gateway.inboundSpool.maxReplayAgeMs }
+        : {}),
+      // pid:boot, plus a per-process nonce so a container's recurring pid 1 on
+      // an unchanged kernel boot still names a distinct claimant.
+      owner: `${process.pid}:${currentBootId() ?? 'unknown-boot'}:${randomUUID().slice(0, 8)}`,
+    },
     resolveUserId,
     pluginLoader,
     trustedChannelPlugins,
@@ -1393,13 +1444,14 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // passed at construction — computed once in wiring — and every one is
   // registered as a bot in `buildGatewayBots`, so inbound routes to the
   // matching loop instead of dropping at the unknown-botKey gate.
-  for (const adapter of adapters) {
-    adapter.onMessage((message: InboundMessage) => {
-      void gateway.handleMessage(message, adapter).catch((err) => {
-        console.error(`[gateway:${adapter.id}] Error:`, err);
-      });
-    });
-  }
+  //
+  // `acceptInbound` first, synchronously: it is the dedup check plus the
+  // inbound-spool write. The adapter calls this callback from inside the
+  // platform framework's request handler in webhook mode (grammy's
+  // `webhookCallback`, Bolt's `HTTPReceiver`), so the row is on disk before
+  // that handler returns and the framework acknowledges the webhook — the
+  // platform retries only what was never spooled (plan §2.5, D2-10).
+  for (const adapter of adapters) wireAdapterInbound(gateway, adapter);
 
   // Wire the interactive tool-approval flow. Registers a `before_tool_call`
   // hook on every bot loop that suspends a dangerous tool call until the
@@ -1490,6 +1542,24 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       new ConsoleLogger({}, logLevel).warn(`delivery ledger boot sweep failed: ${String(err)}`);
     });
 
+  // Inbound spool replay (plan reach-and-containment §2.4) — beside the ledger
+  // sweep and for the same reason AFTER adapter.start(): a replayed turn
+  // replies through a live adapter. The first call also arms the gateway's 60s
+  // replay tick, so a requeue from `ethos gateway spool replay` or the web
+  // Deliveries page runs without a restart.
+  void gateway
+    .replayInboundSpool()
+    .then(({ replayed, deferred, dead }) => {
+      if (replayed > 0 || deferred > 0 || dead > 0) {
+        console.log(
+          `${c.dim}Inbound spool: replayed ${replayed}, ${deferred} deferred, ${dead} dead-lettered${c.reset}`,
+        );
+      }
+    })
+    .catch((err) => {
+      new ConsoleLogger({}, logLevel).warn(`inbound spool boot replay failed: ${String(err)}`);
+    });
+
   // Restore-and-deliver (item 10). A background job that finished while this
   // process was down was written `done`/`failed` and then sat unread — the
   // delivery ledger cannot help, because nothing was ever recorded for it.
@@ -1561,13 +1631,31 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       new ConsoleLogger({}, logLevel).warn(`call log retention prune failed: ${String(err)}`);
     });
   };
+  // Inbound spool retention (D2-11): `done` after a week, `dead` after 30 days.
+  // `received`/`processing` are owed work and are never age-pruned.
+  const pruneInboundSpool = () => {
+    try {
+      inboundSpool.pruneDone(Date.now() - INBOUND_SPOOL_RETENTION_MS);
+      const deadPruned = inboundSpool.pruneDead(Date.now() - INBOUND_SPOOL_DEAD_RETENTION_MS);
+      if (deadPruned > 0) {
+        getEthosObservability().recordSafetyBlock({
+          code: 'gateway.spool_dead_pruned',
+          details: { count: deadPruned },
+        });
+      }
+    } catch (err) {
+      new ConsoleLogger({}, logLevel).warn(`inbound spool retention prune failed: ${String(err)}`);
+    }
+  };
   pruneDeliveryLedger();
   pruneVoiceArtifacts();
   pruneCallLog();
+  pruneInboundSpool();
   const retentionPruneTimer = setInterval(() => {
     pruneDeliveryLedger();
     pruneVoiceArtifacts();
     pruneCallLog();
+    pruneInboundSpool();
   }, 3_600_000);
   retentionPruneTimer.unref?.();
 
@@ -2105,6 +2193,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       );
       deliveryLedger.close();
       inboundDedup.close();
+      inboundSpool.close();
+      // Last of the gateway-owned state: from here a new gateway may start.
+      releaseGatewayLock?.();
       // After the loops are disposed: a turn still running could propose.
       outbox.close();
       callLog?.close();
@@ -4342,6 +4433,10 @@ export interface BuildGatewayOptions {
   adapters: readonly PlatformAdapter[];
   deliveryLedger: GatewayConfig['deliveryLedger'];
   inboundDedup: GatewayConfig['inboundDedup'];
+  /** Optional: `ethos boot` does not open the spool (only `gateway start`,
+   *  which holds the gateway lock, does). */
+  inboundSpool?: GatewayConfig['inboundSpool'];
+  inboundSpoolOptions?: GatewayConfig['inboundSpoolOptions'];
   resolveUserId: GatewayConfig['resolveUserId'];
   /** `GatewayConfig['pluginLoader']` is narrower than what `createAgentLoop`
    *  returns — `pluginAdapters` is derived here via `getPlatformAdapters()`,
@@ -4479,6 +4574,28 @@ export function openChannelTranscriptStore(dbPath: string): ChannelTranscriptSto
   };
 }
 
+/**
+ * Route one adapter's inbound messages into the gateway, spool first.
+ *
+ * `acceptInbound` runs synchronously INSIDE the adapter's callback, before it
+ * returns. In webhook mode the adapter calls that callback from inside the
+ * platform framework's request handler (grammy's `webhookCallback`, Bolt's
+ * `HTTPReceiver`), which writes its 200 only after the handler returns — so the
+ * spool row is on disk before the platform is acknowledged, and the platform
+ * retries only messages that were never spooled (plan reach-and-containment
+ * §2.5, D2-10). Pinned by `__tests__/platform-webhook-ack-order.test.ts`.
+ * A media message whose download the adapter awaits before calling back is the
+ * exception: the framework has already acked it (adapter-side, unchanged).
+ */
+export function wireAdapterInbound(gateway: Gateway, adapter: PlatformAdapter): void {
+  adapter.onMessage((message: InboundMessage) => {
+    const accepted = gateway.acceptInbound(message);
+    void gateway.handleMessage(message, adapter, { accepted }).catch((err) => {
+      console.error(`[gateway:${adapter.id}] Error:`, err);
+    });
+  });
+}
+
 export function buildGateway(opts: BuildGatewayOptions): Gateway {
   const {
     config,
@@ -4487,6 +4604,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     adapters,
     deliveryLedger,
     inboundDedup,
+    inboundSpool,
+    inboundSpoolOptions,
     resolveUserId,
     pluginLoader,
     trustedChannelPlugins,
@@ -4530,6 +4649,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         botAdapters,
         deliveryLedger,
         inboundDedup,
+        ...(inboundSpool ? { inboundSpool } : {}),
+        ...(inboundSpoolOptions ? { inboundSpoolOptions } : {}),
         resolveUserId,
         pluginLoader,
         pluginAdapters: pluginLoader.getPlatformAdapters(),
@@ -4589,6 +4710,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         adapters: adapterMap,
         deliveryLedger,
         inboundDedup,
+        ...(inboundSpool ? { inboundSpool } : {}),
+        ...(inboundSpoolOptions ? { inboundSpoolOptions } : {}),
         resolveUserId,
         pluginLoader,
         pluginAdapters: pluginLoader.getPlatformAdapters(),

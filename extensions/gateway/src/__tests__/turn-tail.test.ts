@@ -21,6 +21,7 @@ import {
   InMemorySessionStore,
 } from '@ethosagent/core';
 import { SQLiteDeliveryLedger } from '@ethosagent/delivery-ledger';
+import { SQLiteInboundSpool } from '@ethosagent/inbound-spool';
 import type { BackgroundExecutor } from '@ethosagent/job-runner';
 import type {
   AgentEvent,
@@ -346,6 +347,24 @@ describe('F07 — a gateway turn drains AgentLoop past `done`', () => {
     expect(h.out.sentTo('chat-1')).toEqual(['answer 1']);
     // The aborted turn delivers nothing after the notice.
     expect(h.out.sentTo('chat-2')).toEqual(['INTERRUPTED']);
+  });
+
+  // Inbound spool (plan reach-and-containment D2-6): `done` means drained AND
+  // joined. A row marked done at the `done` event would be lost to a crash in
+  // the tail — the memory flush the tail exists to run.
+  it('the spool row stays processing through the parked tail; done only once it drains', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const h = harness({
+      gateway: { inboundSpool: spool, inboundSpoolOptions: { replayIntervalMs: 0 } },
+    });
+    const turn = h.gw.handleMessage(msg('first'), h.out.adapter);
+
+    await waitUntil(() => h.out.sends.length === 1 && h.gate.parked() === 1);
+    expect(spool.stats()).toMatchObject({ processing: 1, done: 0 });
+
+    h.gate.releaseAll();
+    await turn;
+    expect(spool.stats()).toMatchObject({ processing: 0, done: 1 });
   });
 
   it('keeps the tool-progress audience boundary: internal progress is never surfaced', async () => {
