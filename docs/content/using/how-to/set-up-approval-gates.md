@@ -33,7 +33,7 @@ Ethos's safety classifier sorts every tool call into one of three buckets. `safe
 |---|---|---|
 | `manual` *(default)* | Surface an approval prompt; wait for Allow / Deny. | Personal CLI sessions. Web UI personalities. Any time you are sitting at the terminal and can answer in seconds. |
 | `smart` | An LLM reviewer judges the call first. `approve` → runs with no prompt. `deny` and `ask` → the approval prompt still fires, carrying the reviewer's reason. | Long-running agent sessions where approval fatigue is the failure mode. Trades latency and reviewer tokens for fewer interruptions. |
-| `off` | Auto-fire. `blocked` calls still refuse. | Trusted local automation only — cron, batch runs, headless test rigs. Refused at config load when combined with any channel ingress. On the gateway's cron/dream loop it takes effect only when the operator also sets `allowUnattendedDangerousTools: true` in `config.yaml`; otherwise flagged calls there are refused, because nobody is present to approve them. |
+| `off` | Auto-fire. `blocked` calls still refuse. | Trusted local automation only — cron, batch runs, headless test rigs. Refused at config load when combined with any channel ingress. On the gateway's cron/dream loop, and on a bot with no approval card, it takes effect only when the operator also sets `allowUnattendedDangerousTools: true` in `config.yaml`; otherwise flagged calls there are refused, because nobody is present to approve them. |
 
 The hardline `blocked` floor is **non-overridable** — `approvalMode: off` does not unlock `rm -rf /`. That is the point: a regex floor catches the literal command shape even when every other check is bypassed.
 
@@ -154,15 +154,17 @@ Allow or Deny resolves the suspended `before_tool_call` hook. The card updates i
 
 Hardline commands (a `terminal` or `process_start` command on the blocklist, such as `rm -rf /`) are different on the web: the web profile asks rather than blocks, so they do reach the card — but it offers only **Just this command**. No stored grant and no one-hour lease can approve a hardline command; you approve each one yourself, every time (`ApprovalsService.requestApproval` and `ApprovalsService.approve`, pinned by `apps/web-api/src/__tests__/services/approvals-hardline.test.ts`).
 
-### Slack and Telegram
+### Slack, Telegram and Discord
 
-Both adapters implement `ApprovalCapableAdapter` and post an interactive approval card with Allow / Deny buttons in the originating conversation (DM or channel). The flow is wired in [apps/ethos/src/commands/gateway.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts) and binds the approval to the user whose message triggered the turn — a bystander in the channel cannot click Allow on a tool call they did not request. The card updates in place to show who decided what.
+These adapters implement `ApprovalCapableAdapter` and post an interactive approval card with Allow / Deny buttons in the originating conversation (DM or channel). The flow is wired in [apps/ethos/src/commands/gateway.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts) and binds the approval to the user whose message triggered the turn — a bystander in the channel cannot click Allow on a tool call they did not request. The card updates in place to show who decided what.
 
 Threads work on Slack (the card posts in the same thread as the inbound message). On Telegram the card posts as a reply to the triggering message.
 
-### Discord and email
+### WhatsApp, email and webhook bots
 
-Neither adapter implements `ApprovalCapableAdapter` yet. A `dangerous` call from a Discord or email-driven turn fails closed — the approval coordinator denies it because there is no surface to render the prompt. Use Slack or Telegram if you need channel-driven approvals.
+These have no approval card to post, so nobody can be asked. A call that would need approval is refused with `no human is present to approve <tool> (<reason>)`, the same gate cron jobs meet on the gateway. The same applies to a turn that reaches a Slack, Telegram or Discord bot's agent through an adapter without cards (an email that falls back to that bot, for example). Unflagged tools run as usual. `wireApprovalFlow` in [apps/ethos/src/commands/gateway.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/gateway.ts) wires this for `ethos gateway start` and `ethos boot`. It is pinned by `apps/ethos/src/commands/__tests__/approval-flow-unattended.test.ts`.
+
+To let such a bot use a flagged tool, set `approvalMode: off` on its personality and `allowUnattendedDangerousTools: true` in `config.yaml`. A personality with a channel `platform:` cannot use `off` (see above), so this works only for a personality bound to the bot in gateway config. Use Slack, Telegram or Discord if you want to be asked instead.
 
 ## Verify
 
@@ -179,7 +181,7 @@ Neither adapter implements `ApprovalCapableAdapter` yet. A `dangerous` call from
 | `Invalid approvalMode: "X". Expected one of: manual, smart, off` | A typo in `config.yaml` — only the three literal values are accepted. | Pick `manual`, `smart`, or `off`. |
 | `personality "X" has approvalMode: off but is bound to channel "telegram"` | `off` on a personality with `platform: telegram \| discord \| slack \| whatsapp \| email`. | Move to `smart` or `manual`, or remove the `platform` binding so the personality is CLI/cron only. |
 | `dangerous` calls in CLI fire without prompting | The CLI does not render approval modals. Only the hardline `blocked` floor blocks; the rest auto-fire. | Run via `ethos serve` for the interactive flow, or switch the surface to Slack / Telegram. |
-| Slack / Telegram card never appears for a `dangerous` call | The adapter is wired but the personality is not bound to that bot, or the `dangerous` classification did not fire. | Confirm the bot binding in `~/.ethos/config.yaml`. Under `manual` and `off` the band fires only for terminal hardlines and for tools the deployment marks `alwaysAsk`; switch to `approvalMode: smart` to add the four consequential tools. |
+| Slack / Telegram / Discord card never appears for a `dangerous` call | The adapter is wired but the personality is not bound to that bot, or the `dangerous` classification did not fire. | Confirm the bot binding in `~/.ethos/config.yaml`. Under `manual` and `off` the band fires only for terminal hardlines and for tools the deployment marks `alwaysAsk`; switch to `approvalMode: smart` to add the four consequential tools. |
 | `smart` mode prompts for everything anyway | The reviewer is failing closed — provider error, a round-trip over 15s, or a response that wasn't the expected JSON. Every one resolves to `ask`. | Check that the `model` and provider credentials in `~/.ethos/config.yaml` work; the reviewer runs on the primary model, so a broken primary breaks the reviewer. |
 
 ## Caveats

@@ -157,16 +157,16 @@ export interface CreateDangerPredicateOptions {
    * (Codex flagged the prior cross-module-only invariant as security-
    * rot shaped).
    *
-   * **Exactly one production caller passes this flag:** the gateway
-   * systemLoop's unattended gate (`wireUnattendedApprovalGate` in
-   * `apps/ethos/src/unattended-approval-gate.ts`, registered by
-   * `runGatewayStart`), and only when the operator sets
-   * `allowUnattendedDangerousTools: true` in `config.yaml`. That loop runs
-   * cron, dreams and watcher wakes — trusted local automation with nobody
-   * to ask. Every surface with a human — the web modal (`serve.ts`,
-   * `apps/desktop/src/main/serve.ts`), the Slack/Telegram card
-   * (`wireApprovalFlow` in `gateway.ts`) and the MCP export — omits it, so
-   * `off` behaves as `manual` there. CLI / TUI use the synchronous
+   * **Exactly one production caller passes this flag:** the unattended gate
+   * (`createUnattendedGateHandler` in
+   * `apps/ethos/src/unattended-approval-gate.ts`), and only when the operator
+   * sets `allowUnattendedDangerousTools: true` in `config.yaml`. It is
+   * registered on the gateway systemLoop (cron, dreams, watcher wakes —
+   * `runGatewayStart`) and on every bot loop turn with no approval card to
+   * post (`wireApprovalFlow` in `gateway.ts`). Every surface with a human —
+   * the web modal (`serve.ts`, `apps/desktop/src/main/serve.ts`), the
+   * Slack/Telegram/Discord card (`wireApprovalFlow`) and the MCP export —
+   * omits it, so `off` behaves as `manual` there. CLI / TUI use the synchronous
    * `createTerminalGuardHook` (hard-block, no approval flow).
    *
    * The capability gate stays the API contract that prevents any other

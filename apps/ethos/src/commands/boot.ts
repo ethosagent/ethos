@@ -1034,6 +1034,9 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // construction-time; see `prepareBotLive`), so the owner deciding group
     // approvals is the same owner the gateway's `/personality` check reads.
     ownerFor: (platform: string) => cfg.channelFilter?.[platform]?.ownerUserId,
+    // D12's operator half, for bot loops with no approval-capable adapter
+    // (`wireApprovalFlow` gives those the unattended gate).
+    allowUnattendedDangerousTools: cfg.allowUnattendedDangerousTools === true,
   };
   /**
    * One approval surface per bot, keyed by botKey. `wireApprovalFlow` binds its

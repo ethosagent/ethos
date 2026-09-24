@@ -314,22 +314,30 @@ export interface CreateSlackApprovalHookOptions {
   coordinator: ApprovalCoordinator;
   isDangerous: DangerPredicate;
   /**
-   * Resolves the `sessionId` to its Slack approval target, or `undefined`
-   * when the turn has no Slack approval surface at all.
+   * Resolves the `sessionId` to its approval target, or `undefined` when the
+   * turn's route adapter cannot post an approval card.
    *
-   * This is what keeps the hook from coupling Slack to other platforms: the
-   * same `AgentLoop` can be shared by a Slack adapter AND a non-Slack one
-   * (e.g. a Discord/Email message that fell back to a Slack-bound bot's
-   * loop). For those non-Slack turns this returns `undefined` and the hook
-   * passes the call straight through — it does NOT suspend or deny — so the
-   * loop's other guards (the synchronous terminal hard-block) decide.
-   * Adding Slack to a bot must not silently change tool behavior on its
-   * other channels.
+   * The same `AgentLoop` can be shared by a card-capable adapter AND one that
+   * is not (an Email or WhatsApp message that fell back to a Slack-bound
+   * bot's loop). Nobody can be asked on such a turn, so it is handed to
+   * `withoutSurface` instead — exactly the gate a bot with no card-capable
+   * adapter at all gets, so adding Slack to a bot does not change tool
+   * behaviour on its other channels.
    *
    * `before_tool_call` carries only `sessionId`; the gateway is the
    * component that knows both the originating platform and user.
    */
   resolveApprovalTarget: (sessionId: string) => ApprovalTarget | undefined;
+  /**
+   * The `before_tool_call` handler for a turn with no approval surface
+   * (`resolveApprovalTarget` returned `undefined`). `wireApprovalFlow` passes
+   * the unattended gate (`createUnattendedGateHandler`,
+   * apps/ethos/src/unattended-approval-gate.ts), which refuses a flagged call
+   * unless the D12 opt-in pre-authorizes it. Required so no caller can
+   * silently fall back to letting such a call through. Pinned by
+   * apps/ethos/src/commands/__tests__/approval-flow-unattended.test.ts.
+   */
+  withoutSurface: (payload: BeforeToolCallPayload) => Promise<{ error?: string }>;
 }
 
 /**
@@ -343,14 +351,15 @@ export interface CreateSlackApprovalHookOptions {
  */
 export function createSlackApprovalHook(opts: CreateSlackApprovalHookOptions) {
   return async (payload: BeforeToolCallPayload): Promise<Partial<BeforeToolCallResult> | null> => {
+    // No approval surface for this turn (a non-card channel sharing the loop)
+    // — nobody can be asked, so the unattended gate decides, with its own
+    // predicate (it carries the D12 opt-in; `isDangerous` does not). Resolved
+    // first so a flagged call is judged once, not twice.
+    const target = opts.resolveApprovalTarget(payload.sessionId);
+    if (target === undefined) return opts.withoutSurface(payload);
+
     const reason = await opts.isDangerous(payload);
     if (reason === null) return null;
-
-    // No Slack approval surface for this turn (a non-Slack channel sharing
-    // the loop) — pass through untouched. Suspending or denying here would
-    // be hidden cross-platform coupling.
-    const target = opts.resolveApprovalTarget(payload.sessionId);
-    if (target === undefined) return null;
 
     const decision = await opts.coordinator.requestApproval({
       sessionId: payload.sessionId,

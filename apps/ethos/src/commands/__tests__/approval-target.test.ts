@@ -75,6 +75,7 @@ function wire(route: { isDm: boolean; platform: string }, owner: string | undefi
     model: 'test-model',
     approvalTimeoutMs: 0,
     ownerFor: (platform) => (platform === 'slack' ? owner : undefined),
+    allowUnattendedDangerousTools: false,
   });
   const result: Promise<Partial<BeforeToolCallResult>> = hooks.fireModifying('before_tool_call', {
     sessionId: 'sid-1',
