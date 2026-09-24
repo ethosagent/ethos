@@ -717,6 +717,7 @@ export class AgentLoop {
       checkBudgets,
       turnAttachments: opts.attachments,
       ...(this.onToolMetric ? { onToolMetric: this.onToolMetric } : {}),
+      denyRules: personality.safety?.denyRules,
     });
 
     // get/setContext: one store per run(), seen by its batches only (context-store-per-run.test.ts)

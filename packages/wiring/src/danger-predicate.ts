@@ -74,7 +74,8 @@ export type SmartApprovalCallback = (
  *
  * Not a frozen contract: it is a default. Callers that want a different set
  * pass `alwaysAsk`, and a personality that wants a specific call refused
- * outright uses `safety.denyRules`, which is evaluated before this.
+ * outright uses `safety.denyRules`, which core enforces before any hook runs
+ * (`enforceBeforeToolCall`, `packages/core/src/agent-loop/stages/per-call-enforcement.ts`).
  */
 export const SMART_MODE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
   // Shell execution on the host or execution backend — the widest-reach tool in
@@ -155,70 +156,47 @@ export interface CreateDangerPredicateOptions {
    * (Codex flagged the prior cross-module-only invariant as security-
    * rot shaped).
    *
-   * **Today, NO production caller passes this flag.** There are three
-   * production construction sites — `apps/ethos/src/commands/serve.ts`
-   * and `apps/desktop/src/main/serve.ts` (both feeding the web-profile
-   * approval modal) and `apps/ethos/src/commands/gateway.ts` (feeding
-   * the Slack approval card) — and all three intentionally omit the flag:
-   * web and Slack both have channel ingress, so `off` mode would be
-   * rejected by the registry anyway, and the predicate refuses to honor it
-   * as a second-line check. CLI / TUI use the synchronous
-   * `createTerminalGuardHook` (hard-block, no
-   * approval flow). The cron / batch runners would be the natural
-   * future caller — when they grow an approval flow, they would
-   * construct the predicate with `allowAutoApproveDangerousTools: true`
-   * once they verify trusted-local execution conditions.
+   * **Exactly one production caller passes this flag:** the gateway
+   * systemLoop's unattended gate (`wireUnattendedApprovalGate` in
+   * `apps/ethos/src/unattended-approval-gate.ts`, registered by
+   * `runGatewayStart`), and only when the operator sets
+   * `allowUnattendedDangerousTools: true` in `config.yaml`. That loop runs
+   * cron, dreams and watcher wakes — trusted local automation with nobody
+   * to ask. Every surface with a human — the web modal (`serve.ts`,
+   * `apps/desktop/src/main/serve.ts`), the Slack/Telegram card
+   * (`wireApprovalFlow` in `gateway.ts`) and the MCP export — omits it, so
+   * `off` behaves as `manual` there. CLI / TUI use the synchronous
+   * `createTerminalGuardHook` (hard-block, no approval flow).
    *
-   * As a result, `approvalMode: 'off'` has no observable runtime
-   * effect today; it is config-only documentation until a caller
-   * opts in. That is intentional: the capability gate is the API
-   * contract that prevents any future caller from accidentally
-   * auto-approving dangerous tools.
+   * The capability gate stays the API contract that prevents any other
+   * caller from accidentally auto-approving dangerous tools.
    */
   allowAutoApproveDangerousTools?: boolean;
 }
 
 /**
- * Stable stringification of tool args — sorted keys, so `{a:1,b:2}` and
- * `{b:2,a:1}` produce the same text. Shared with `createSmartApprover`, whose
- * verdict cache keys off the same canonical form.
+ * Canonical args form, re-exported for `createSmartApprover`'s verdict cache.
+ * It lives in core (`packages/core/src/agent-loop/deny-rules.ts`) beside the
+ * deny-rule matcher that uses the same form.
  */
-export function canonicalizeArgs(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
-  if (Array.isArray(value)) return `[${value.map(canonicalizeArgs).join(',')}]`;
-  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
-    a < b ? -1 : a > b ? 1 : 0,
-  );
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalizeArgs(v)}`).join(',')}}`;
-}
-
-/** First deny rule matching this call, or null. Case-sensitive substring. */
-function matchDenyRule(
-  rules: ReadonlyArray<string> | undefined,
-  payload: BeforeToolCallPayload,
-): string | null {
-  if (!rules?.length) return null;
-  const subject = `${payload.toolName} ${canonicalizeArgs(payload.args)}`;
-  return rules.find((rule) => rule.length > 0 && subject.includes(rule)) ?? null;
-}
+export { canonicalizeArgs } from '@ethosagent/core';
 
 /**
  * Default danger predicate.
  *
- * **The law: deny rules are the floor; modes can only make things stricter,
- * never looser.** `safety.denyRules` is matched BEFORE the approval-mode
- * dispatch, so a matching rule surfaces its reason even under
- * `approvalMode: 'off'` with `allowAutoApproveDangerousTools: true`. No mode
- * can auto-approve past a deny rule. (What this seam can express is
- * "reason vs. null" — a denied call still reaches the surface's approval flow
- * rather than hard-failing, which is the same shape a hardline command gets.)
+ * **Deny rules are NOT evaluated here.** `safety.denyRules` is the hard floor
+ * and is enforced in core, by `enforceBeforeToolCall`
+ * (`packages/core/src/agent-loop/stages/per-call-enforcement.ts`), before any
+ * `before_tool_call` hook — and therefore before this predicate — runs. A
+ * matching call is refused outright on every loop, under every mode, and never
+ * reaches an approval surface. Pinned by
+ * `packages/core/src/agent-loop/__tests__/deny-rule-gate.test.ts`.
  *
  * Resolution order:
  *   1. Hardline command  → return reason (Ch.4a — non-overridable; the
  *                          terminalGuardHook hard-blocks separately so
  *                          this is belt + suspenders).
- *   2. Deny rule match   → return reason, regardless of mode.
- *   3. Flagged tool / non-hardline danger → consult approvalMode. The flag set
+ *   2. Flagged tool / non-hardline danger → consult approvalMode. The flag set
  *      is `alwaysAsk` under manual and off, and
  *      `alwaysAsk ∪ SMART_MODE_CONSEQUENTIAL_TOOLS` under smart:
  *        manual (default) → return the reason (drives the modal).
@@ -252,10 +230,6 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
     if (hardlineReason) return hardlineReason;
 
     const safety = opts.getPersonality?.(payload)?.safety;
-
-    // Deny rules — the floor, evaluated before the mode dispatch.
-    const denyRule = matchDenyRule(safety?.denyRules, payload);
-    if (denyRule) return `denied by personality deny rule: ${denyRule}`;
 
     // Non-hardline danger. The mode is resolved first because it selects the
     // flag set: `smart` adds the built-in consequential-tool list on top of

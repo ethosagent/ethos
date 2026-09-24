@@ -168,6 +168,10 @@ import {
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { createSipInboundHandler } from '../sip-inbound-dispatch';
 import { createSipWebhookServer } from '../sip-webhook-server';
+import {
+  reportUnattendedCronExposure,
+  wireUnattendedApprovalGate,
+} from '../unattended-approval-gate';
 import { createWebhookServer, type DeliveryRelay, type PrefilterRunner } from '../webhook-server';
 import {
   buildSystemTaskHandlers,
@@ -995,6 +999,35 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     outbox: outbox.wiring,
   });
   systemLoop = systemLoopReady;
+
+  // Cron, dreams, watcher wakes, call capture and SIP-inbound turns run on the
+  // systemLoop, and no human is present on it to answer an approval prompt
+  // (`wireApprovalFlow` below covers bot loops only, and only those with an
+  // approval-capable adapter). A call that would need approval is therefore
+  // REFUSED here, unless the personality declares `approvalMode: off` AND the
+  // operator set `allowUnattendedDangerousTools: true`. The same predicate's
+  // spoken-confirmation wrapper refuses a SIP far-end caller's consequential
+  // request. Pinned by `../__tests__/unattended-approval-gate.test.ts`.
+  wireUnattendedApprovalGate(systemLoopReady.hooks, {
+    personalities: seamPersonalities,
+    reload: () => seamPersonalities.loadFromDirectory(personalitiesDir),
+    getProvider: createLazyProvider(() => createLLM(config)),
+    model: config.model,
+    allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
+  });
+  // Say so at boot, once, for every personality whose cron jobs can reach a
+  // tool that gate refuses — before the first job fails.
+  const cronExposure = reportUnattendedCronExposure({
+    jobs: await scheduler.listJobs().catch(() => []),
+    getPersonality: (id) => seamPersonalities.get(id),
+    allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
+    recordSafetyBlock: (event) => getEthosObservability().recordSafetyBlock(event),
+  });
+  for (const { personalityId, tools } of cronExposure) {
+    console.log(
+      `${c.yellow}⚠ cron${c.reset} ${c.bold}${personalityId}${c.reset} ${c.yellow}can reach ${tools.join(', ')}, which cron refuses unattended (set safety.approvalMode: off on the personality and allowUnattendedDangerousTools: true in config.yaml to pre-authorize)${c.reset}`,
+    );
+  }
 
   // Personality-directory seam for hot-reload. `refresh()` reloads every loop
   // registry (system + per-bot) plus a dedicated read registry from disk, so a
@@ -2768,8 +2801,8 @@ export function wireApprovalFlow(
   const approvalBotKeys = new Set(approvalAdapters.map((a) => a.botKey));
   const approvalBots = bots.filter((bot) => approvalBotKeys.has(bot.botKey));
   // One predicate for all approval bots. It learns each turn's personality
-  // from the owning loop's `session_start`, so `denyRules` and `approvalMode`
-  // follow whatever personality the lane is actually running — including a
+  // from the owning loop's `session_start`, so `approvalMode` follows
+  // whatever personality the lane is actually running — including a
   // `/personality` switch. The reviewer and its provider stay unconstructed
   // unless a flagged call reaches `approvalMode: 'smart'`.
   const isDangerous = createApprovalDangerPredicate({

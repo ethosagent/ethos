@@ -295,7 +295,12 @@ export function createSipInboundHandler(
     // Every turn on this lane carries `speaker: 'far_end'`. That single field is
     // what stops a stranger's confident "yes" from satisfying an owner-level
     // confirmation: the spoken-confirmation gate refuses a far-end request
-    // BEFORE it consults any recorded confirmation (eng-review D13).
+    // BEFORE it consults any recorded confirmation (eng-review D13). The gate
+    // reaches this lane because `runGatewayStart` registers
+    // `wireUnattendedApprovalGate` (./unattended-approval-gate.ts) on the
+    // systemLoop this dispatcher runs on — its predicate is wrapped by
+    // `withSpokenConfirmation`. Pinned by
+    // `__tests__/unattended-approval-gate.test.ts` (far-end case).
     const runner = {
       run: (text: string, opts?: { abortSignal?: AbortSignal }): AsyncGenerator<AgentEvent> =>
         meterSpend(

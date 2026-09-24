@@ -93,6 +93,16 @@ export interface CreateApprovalDangerPredicateOptions {
    * caller's voice is refused regardless of what this contains.
    */
   spokenConfirmations?: SpokenConfirmationRecord;
+  /**
+   * Forwarded to `createDangerPredicate` — lets a personality's
+   * `approvalMode: 'off'` auto-approve flagged tools. Only the gateway
+   * systemLoop's unattended gate sets it, from the operator key
+   * `allowUnattendedDangerousTools` (`wireUnattendedApprovalGate`,
+   * apps/ethos/src/unattended-approval-gate.ts). Approval surfaces with a human
+   * (web modal, Slack/Telegram card, MCP export) leave it unset, so `off` stays
+   * `manual` there.
+   */
+  allowAutoApproveDangerousTools?: boolean;
 }
 
 /**
@@ -133,6 +143,9 @@ export function createApprovalDangerPredicate(
   return withSpokenConfirmation(
     createDangerPredicate({
       ...(opts.alwaysAsk ? { alwaysAsk: opts.alwaysAsk } : {}),
+      ...(opts.allowAutoApproveDangerousTools === true
+        ? { allowAutoApproveDangerousTools: true }
+        : {}),
       getPersonality: (payload): PersonalityConfig | undefined => {
         const id = activeBySession.get(payload.sessionId);
         // Unknown session (no `session_start` seen) → no personality, which is

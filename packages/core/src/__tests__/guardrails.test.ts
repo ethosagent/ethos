@@ -156,7 +156,11 @@ describe('Orchestrator guardrails', () => {
     // tool-processing contexts. 7 pass-through lines; the pinned/loaded
     // composition lives in agent-loop/tool-loading.ts and `tool_search` in
     // agent-loop/stages/tool-search.ts.
-    expect(lineCount).toBeLessThanOrEqual(1017);
+    // Bumped 1017 -> 1018 (openclaw-advisory-fixes Item 2): the turn
+    // personality's `safety.denyRules` handed to the ScriptToolBridge, so
+    // script calls cross the same deny-rule floor as the batch path. One
+    // pass-through line; the check lives in stages/per-call-enforcement.ts.
+    expect(lineCount).toBeLessThanOrEqual(1018);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -268,7 +272,11 @@ describe('Orchestrator guardrails', () => {
       // `recordDirectLoads` call and its comment, and seeds the tool_result
       // blocks with the search results. No logic — `tool_search` and D1-1
       // auto-loading live in agent-loop/stages/tool-search.ts.
-      if (lineCount > 860) {
+      // Bumped 860 -> 861 (openclaw-advisory-fixes Item 2): tool-processing.ts
+      // hands the turn personality's `safety.denyRules` to
+      // `enforceBeforeToolCall`. One pass-through line; the check lives in
+      // stages/per-call-enforcement.ts.
+      if (lineCount > 861) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

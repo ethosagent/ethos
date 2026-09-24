@@ -2007,6 +2007,18 @@ export interface EthosConfig {
    */
   approvalTimeoutMs?: number;
   /**
+   * Operator opt-in for unattended dangerous tools on the gateway systemLoop
+   * (cron, dreams, watcher wakes, SIP-inbound). No human is present there, so
+   * a call that would need approval is refused by the unattended gate
+   * (`wireUnattendedApprovalGate`, apps/ethos/src/unattended-approval-gate.ts).
+   * With this set to `true`, a personality that declares
+   * `safety.approvalMode: off` has its flagged calls auto-approved on that
+   * loop instead. Deny rules and hardline commands still refuse. Only the
+   * literal `true` enables it. Flat-key shape:
+   *   allowUnattendedDangerousTools: true
+   */
+  allowUnattendedDangerousTools?: boolean;
+  /**
    * Lane 4a(d) — SDK retry count for every SDK-backed provider (OpenAI-compat,
    * Azure, Anthropic; codex/gemini/bedrock/xai do not retry). Absent → the SDK
    * default (2 retries) for a single provider, and `0` for each hop of a
@@ -3633,6 +3645,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
     lines.push(`requestTimeoutMs: ${config.requestTimeoutMs}`);
   if (config.approvalTimeoutMs !== undefined)
     lines.push(`approvalTimeoutMs: ${config.approvalTimeoutMs}`);
+  if (config.allowUnattendedDangerousTools) lines.push('allowUnattendedDangerousTools: true');
   if (config.maxRetries !== undefined) lines.push(`maxRetries: ${config.maxRetries}`);
   if (config.toolPayloadLimitChars !== undefined)
     lines.push(`toolPayloadLimitChars: ${config.toolPayloadLimitChars}`);
@@ -5906,6 +5919,8 @@ export function parseConfigYaml(src: string): EthosConfig {
       const n = Number(raw);
       return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
     })(),
+    // A safety opt-in: only the literal `true` enables it, so a typo stays off.
+    allowUnattendedDangerousTools: kv.allowUnattendedDangerousTools === 'true' ? true : undefined,
     maxRetries: (() => {
       const raw = kv.maxRetries;
       // Same empty-value hazard as `approvalTimeoutMs`: `0` is meaningful
