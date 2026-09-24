@@ -456,3 +456,100 @@ describe('inbound spool — stale rows', () => {
     ]);
   });
 });
+
+// Plan openclaw-9.5-adoption item 2: the spool row is written BEFORE the
+// durable dedup sighting. The two live in different files, so a crash between
+// the commits must leave the row (replayed) rather than the sighting (the
+// message lost and its platform retry dropped as a duplicate).
+describe('inbound spool — dedup ordering', () => {
+  it('writes the spool row before the durable sighting', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const rowsAtSighting: number[] = [];
+    const inboundDedup = {
+      seen: vi.fn(() => {
+        rowsAtSighting.push(rows(spool).length);
+        return false;
+      }),
+      close: vi.fn(),
+    };
+    const gw = gateway(scriptedLoop().loop, out.adapter, spool, { inboundDedup });
+    expect(gw.acceptInbound(msg('ordered')).fresh).toBe(true);
+    expect(rowsAtSighting).toEqual([1]);
+  });
+
+  it('a crash between the row and the sighting: the retry is dropped, the row replays once', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const dedup = new SQLiteInboundDedupStore(':memory:');
+    const out = recordingAdapter();
+    const m = msg('crash window', { messageId: 'tg-7' });
+    // The first process wrote the row and died before its sighting — modelled
+    // by a process that has no dedup store at all, then hangs (kill -9).
+    const first = scriptedLoop(async function* () {
+      await new Promise(() => {});
+    });
+    void gateway(first.loop, out.adapter, spool).handleMessage(m, out.adapter);
+    await waitUntil(() => first.texts.length === 1);
+
+    // Restart. The platform retries the unacknowledged message first.
+    const second = scriptedLoop();
+    const gw2 = gateway(second.loop, out.adapter, spool, { inboundDedup: dedup });
+    await gw2.handleMessage(m, out.adapter);
+    expect(second.texts).toHaveLength(0);
+    // …and the replay answers it, exactly once.
+    await gw2.replayInboundSpool();
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    expect(second.texts).toHaveLength(1);
+    expect(rows(spool)).toHaveLength(1);
+  });
+
+  it('a sighting the spool never recorded drops the message and closes the fresh row', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const dedup = new SQLiteInboundDedupStore(':memory:');
+    // Seen by an earlier process whose spool write failed (fail-open path).
+    dedup.seen('telegram', 'bot-a', 'chat-1', 'tg-9');
+    const out = recordingAdapter();
+    const s = scriptedLoop();
+    await gateway(s.loop, out.adapter, spool, { inboundDedup: dedup }).handleMessage(
+      msg('retry of an answered message', { messageId: 'tg-9' }),
+      out.adapter,
+    );
+    expect(s.texts).toHaveLength(0);
+    expect(rows(spool)).toHaveLength(1);
+    expect(rows(spool)[0]?.status).toBe('done');
+  });
+
+  it('a failed spool write falls back to dedup alone: processed once, the retry dropped', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    spool.accept = () => {
+      throw new Error('disk full');
+    };
+    const dedup = new SQLiteInboundDedupStore(':memory:');
+    const out = recordingAdapter();
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool, { inboundDedup: dedup });
+    await gw.handleMessage(msg('undurable', { messageId: 'tg-11' }), out.adapter);
+    const restarted = gateway(s.loop, out.adapter, spool, { inboundDedup: dedup });
+    await restarted.handleMessage(msg('undurable', { messageId: 'tg-11' }), out.adapter);
+    expect(s.texts).toHaveLength(1);
+  });
+
+  it('a failed sighting after the row is written still runs the message (fail-open)', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const inboundDedup = {
+      seen: vi.fn(() => {
+        throw new Error('dedup locked');
+      }),
+      close: vi.fn(),
+    };
+    const out = recordingAdapter();
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool, { inboundDedup });
+    await gw.handleMessage(msg('keeps going', { messageId: 'tg-12' }), out.adapter);
+    expect(s.texts).toHaveLength(1);
+    expect(rows(spool)[0]?.status).toBe('done');
+    // The spool key still dedups the retry in this process.
+    await gw.handleMessage(msg('keeps going', { messageId: 'tg-12' }), out.adapter);
+    expect(s.texts).toHaveLength(1);
+  });
+});

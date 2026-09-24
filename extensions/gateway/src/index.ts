@@ -732,7 +732,7 @@ export interface GatewayConfig {
   /**
    * Durable inbound spool (plan reach-and-containment §2.2–§2.4): a
    * write-ahead record of every turn this gateway owes. `acceptInbound` writes
-   * a `received` row in the same synchronous span as the dedup check, the lane
+   * a `received` row before the durable dedup sighting (see its doc), the lane
    * task marks it `processing` then `done` (drained AND answered), and
    * {@link Gateway.replayInboundSpool} replays what a crash left behind.
    *
@@ -2102,15 +2102,26 @@ export class Gateway {
   }
 
   /**
-   * Returns true if this message is a duplicate of one seen in the dedup
-   * window (and records the key for future drops). Returns false for
-   * never-before-seen keys, or when the message has no `messageId` (we can't
-   * dedup what isn't keyed).
+   * The in-memory dedup key for a message, or `undefined` when the message is
+   * not deduped at all: dedup is off (`dedupWindow: 0` disables both layers —
+   * "no dedup", not "no in-memory dedup"), it has no `messageId` (we can't
+   * dedup what isn't keyed), or it is an edit (edits intentionally re-use the
+   * original `messageId` with different content).
    *
-   * The dedup key is platform-, bot-, chat-, and message-scoped: the same
-   * `messageId` arriving through two different bots is two distinct
-   * inbounds, not a duplicate. (Without the botKey segment, multi-bot
-   * routing would silently drop one of them.)
+   * The key is platform-, bot-, chat-, and message-scoped: the same
+   * `messageId` arriving through two different bots is two distinct inbounds,
+   * not a duplicate. (Without the botKey segment, multi-bot routing would
+   * silently drop one of them.)
+   */
+  private dedupKeyFor(message: InboundMessage, botKey: string): string | undefined {
+    if (this.dedupWindow <= 0 || !message.messageId || message.isEdit) return undefined;
+    return buildLaneKey(message.platform, botKey, message.chatId, message.messageId);
+  }
+
+  /**
+   * Record a sighting durably, then in memory, and report whether the durable
+   * layer had already seen this key — from this process or a previous one.
+   * Called only on an in-memory `Set` miss.
    *
    * TWO LAYERS, both keyed identically. The in-memory `Set` is the fast path
    * and answers alone whenever it hits. Only on a miss — and only when a
@@ -2119,39 +2130,37 @@ export class Gateway {
    * process would otherwise be fully reprocessed and re-billed. Under webhook
    * mode with scale-to-zero that restart is routine rather than rare.
    *
+   * DURABLE FIRST, THEN THE SET, AND THAT ORDER IS LOAD-BEARING. `seen()` is a
+   * synchronous SQLite write and can throw (lock contention past the busy
+   * timeout, a corrupt or unwritable file). Recording the key in memory first
+   * meant a throw left the process holding a sighting that was never durably
+   * stored: this delivery fails, and then every platform retry for the rest of
+   * the process's life short-circuits on the `Set` and is dropped as a
+   * duplicate. The retry is the platform's attempt to save the message the
+   * failure lost, and the poisoned entry is what silently discarded it.
+   * Letting the throw propagate with the Set untouched fails open instead: the
+   * retry is reprocessed.
+   *
    * Synchronous on purpose: the durable store is synchronous too
    * (`@ethosagent/sqlite` has no async API), and awaiting here would reorder
    * the inbound pipeline for every message to pay for a cold-start edge.
    */
-  private isDuplicate(message: InboundMessage, botKey: string): boolean {
-    // Both layers are disabled together — `dedupWindow: 0` means "no dedup",
-    // not "no in-memory dedup".
-    if (this.dedupWindow <= 0 || !message.messageId) return false;
-    const key = buildLaneKey(message.platform, botKey, message.chatId, message.messageId);
-    if (this.seenMessages.has(key)) return true;
-    // `Set` miss. The durable layer records the sighting and reports whether it
-    // had already seen this key — from this process or a previous one.
-    //
-    // DURABLE FIRST, THEN THE SET, AND THAT ORDER IS LOAD-BEARING. `seen()` is a
-    // synchronous SQLite write and can throw (lock contention past the busy
-    // timeout, a corrupt or unwritable file). Recording the key in memory first
-    // meant a throw left the process holding a sighting that was never durably
-    // stored: this delivery fails, and then every platform retry for the rest of
-    // the process's life short-circuits on `seenMessages.has(key)` above and is
-    // dropped as a duplicate. The retry is the platform's attempt to save the
-    // message the failure lost, and the poisoned entry is what silently
-    // discarded it. Letting the throw propagate with the Set untouched fails
-    // open instead: the retry is reprocessed.
-    const duplicate = this.inboundDedup
-      ? this.inboundDedup.seen(message.platform, botKey, message.chatId, message.messageId)
-      : false;
+  private recordSighting(message: InboundMessage, botKey: string, key: string): boolean {
+    const duplicate =
+      this.inboundDedup && message.messageId
+        ? this.inboundDedup.seen(message.platform, botKey, message.chatId, message.messageId)
+        : false;
+    this.rememberSeen(key);
+    return duplicate;
+  }
+
+  /** Add a key to the in-memory `Set`, bounded to `dedupWindow` entries. */
+  private rememberSeen(key: string): void {
     this.seenMessages.add(key);
-    // Bound the set — drop the oldest entry once we exceed the window.
     if (this.seenMessages.size > this.dedupWindow) {
       const first = this.seenMessages.values().next().value;
       if (first !== undefined) this.seenMessages.delete(first);
     }
-    return duplicate;
   }
 
   // ---------------------------------------------------------------------------
@@ -2166,12 +2175,31 @@ export class Gateway {
    * (grammy's `webhookCallback`, Bolt's `HTTPReceiver`), so whatever this
    * does synchronously is on disk before that framework writes its 200.
    *
-   * Never throws. A spool write that fails is recorded
-   * (`gateway.spool_write_failed`) and the message proceeds WITHOUT a row —
-   * fail-open, the posture `isDuplicate` takes. Returning a 500 instead would
-   * buy nothing: `isDuplicate` has already recorded the sighting, so the
-   * platform's retry would be dropped as a duplicate and the message lost for
-   * certain rather than merely undurable.
+   * ORDER (plan openclaw-9.5-adoption item 2): the in-memory `Set` first, then
+   * the spool row, and only THEN the durable dedup sighting. The two durable
+   * writes are separate files (`inbound-spool.db`, `inbound-dedup.db`) and
+   * cannot share a transaction, so the order decides what a crash between them
+   * leaves behind:
+   *
+   *  - Sighting first (the order this replaced): a crash after the sighting and
+   *    before the row lost the message — no row to replay, and the platform's
+   *    retry was dropped as a duplicate.
+   *  - Row first (this order): a crash after the row and before the sighting
+   *    leaves a row that `replayInboundSpool` answers, and the retry is dropped
+   *    by the spool's own `UNIQUE (platform, bot_key, chat_id, message_id)` key
+   *    (`accept` → `fresh: false`). Never lost, never billed twice.
+   *
+   * The sighting is still recorded after the row, and a sighting the spool did
+   * not know about (a message a spool-write failure let through undurably, or
+   * one a pre-spool build saw) closes the fresh row and drops the message: that
+   * is a platform retry of something already answered. Pinned by
+   * `__tests__/inbound-spool.test.ts` ('dedup ordering').
+   *
+   * Never throws for a spoolable message. A spool write that fails is recorded
+   * (`gateway.spool_write_failed`) and the message falls back to the dedup-only
+   * path WITHOUT a row — fail-open. Returning a 500 instead would buy nothing:
+   * the message would be refused while the gateway is up, which is worse than
+   * answering it undurably.
    *
    * While shutting down it records nothing (`handleMessage` then refuses the
    * message before any sighting, as it always has).
@@ -2191,22 +2219,71 @@ export class Gateway {
     // full resolution. Adapters stamp `botKey` consistently, so the two agree
     // in practice; single-bot has one loop, so a stale/foreign botKey here has
     // no cross-bot effect. The namespace divergence is deliberate, not a bug.
-    // The durable backstop (`inboundDedup`) sits BEHIND this same call, keyed
-    // on the same `dedupBotKey`, so adding it changed nothing about when dedup
-    // runs relative to botKey resolution or the safety filter.
+    // The durable backstop (`inboundDedup`) is keyed on the same `dedupBotKey`,
+    // so adding it changed nothing about when dedup runs relative to botKey
+    // resolution or the safety filter.
     const dedupBotKey = message.botKey ?? this.defaultBotKey ?? '';
-    if (!message.isEdit && this.isDuplicate(message, dedupBotKey)) return { fresh: false };
+    const dedupKey = this.dedupKeyFor(message, dedupBotKey);
+    if (dedupKey && this.seenMessages.has(dedupKey)) return { fresh: false };
 
     // Observe-mode records are not spooled: they owe no turn, their durable
     // record IS the channel transcript, and they arrive on the hot inbound path
     // that store runs at `synchronous = NORMAL` for (CLAUDE.md durability table)
     // — two FULL commits per watched message would undo that.
     const spool = this.inboundSpool;
-    if (!spool || message.recordOnly) return { fresh: true };
+    const spooled = spool && !message.recordOnly ? this.spoolInbound(spool, message) : null;
+    if (spooled) {
+      if (!spooled.fresh) {
+        // Already spooled: a platform redelivery (plan §2.5). The spool's
+        // UNIQUE key is the dedup answer restated — except with dedup switched
+        // off (`dedupWindow: 0`), where it must not become dedup by the back
+        // door: the message runs, without a row.
+        if (dedupKey) this.rememberSeen(dedupKey);
+        return { fresh: this.dedupWindow <= 0 };
+      }
+      if (dedupKey) {
+        let duplicate = false;
+        try {
+          duplicate = this.recordSighting(message, dedupBotKey, dedupKey);
+        } catch (err) {
+          // The row is on disk and IS this message's dedup record from here
+          // on, so a failed sighting costs nothing: record it and go on. (The
+          // `Set` poisoning `recordSighting` guards against cannot lose this
+          // message — it is spooled.)
+          this.rememberSeen(dedupKey);
+          this.observability?.recordSafetyBlock({
+            code: 'gateway.dedup_write_failed',
+            cause: 'inbound dedup sighting failed after the spool row was written',
+            details: {
+              platform: message.platform,
+              chatId: message.chatId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          });
+        }
+        if (duplicate) {
+          this.closeSpool(spooled.id);
+          return { fresh: false };
+        }
+      }
+      return { fresh: true, spoolId: spooled.id, claimed: spooled.claimed };
+    }
 
-    // The row is keyed and routed exactly as the turn will be: the routed
-    // botKey (`routedBotKey`, the one derivation `refuseWhileClosing` shares)
-    // and the lane key built from it.
+    // No spool (or not spoolable, or its write failed): dedup alone.
+    if (dedupKey && this.recordSighting(message, dedupBotKey, dedupKey)) return { fresh: false };
+    return { fresh: true };
+  }
+
+  /**
+   * Write one message's spool row, keyed and routed exactly as the turn will
+   * be: the routed botKey (`routedBotKey`, the one derivation
+   * `refuseWhileClosing` shares) and the lane key built from it. `null` when
+   * the write threw (recorded as `gateway.spool_write_failed`).
+   */
+  private spoolInbound(
+    spool: InboundSpool,
+    message: InboundMessage,
+  ): { id: string; fresh: boolean; claimed: boolean } | null {
     const botKey = this.routedBotKey(message);
     const threadId = message.threadId ? message.threadId : undefined;
     const laneKey = threadId
@@ -2224,12 +2301,7 @@ export class Gateway {
         payload: serializeInbound(message),
         claimedBy: claimed ? this.spoolOwner : null,
       });
-      // Already spooled: a platform redelivery whose dedup sighting expired
-      // (plan §2.5). The spool's UNIQUE key is the dedup answer restated —
-      // except with dedup switched off (`dedupWindow: 0`), where it must not
-      // become dedup by the back door: the message runs, without a row.
-      if (!fresh) return { fresh: this.dedupWindow <= 0 };
-      return { fresh: true, spoolId: id, claimed };
+      return { id, fresh, claimed };
     } catch (err) {
       this.observability?.recordSafetyBlock({
         code: 'gateway.spool_write_failed',
@@ -2241,7 +2313,7 @@ export class Gateway {
           error: err instanceof Error ? err.message : String(err),
         },
       });
-      return { fresh: true };
+      return null;
     }
   }
 
