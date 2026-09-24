@@ -4,7 +4,7 @@ description: Catalogue of shipped, partial, and planned security controls — ch
 kind: reference
 audience: shared
 slug: security-controls
-updated: 2026-09-05
+updated: 2026-09-24
 ---
 
 Most controls on this page are shipped — code in `packages/` and `extensions/`, tests next to it, audit trail in `observability.db`. A small number are **partial** or **planned** with a designed interface but the enforcement not yet wired; those are tagged inline so customers can plan around them.
@@ -387,13 +387,30 @@ The store uses STRICT mode SQLite, WAL, and FTS5. Retention is configurable per 
 
 `CronScheduler.readRunOutput()` enforces containment — only paths within the scheduler's `outputDir` are readable. Paths containing `..` or pointing outside the output directory throw. This prevents a caller from using the cron output reader as a general-purpose file read primitive to escape the scheduler's intended sandbox.
 
-## Admin panel token authentication {#admin-panel-token-auth}
+## Web dashboard and admin authentication {#admin-panel-token-auth}
 
 *Status: Shipped.*
 
-The admin panel (Mission Control) requires a bearer token for every API request. Generate tokens via `ethos token create`; they are stored in the OS keychain (macOS Keychain, GNOME Keyring, Windows Credential Vault) via `keytar`. Requests without a valid token receive `401 Unauthorized`.
+The web API accepts two credentials. There is no `ethos token create` command and no OS-keychain token store on the server.
 
-- Source: `apps/web-api/src/middleware/auth.ts`
+| Credential | How it is issued | Where it is accepted | Enforced by |
+|---|---|---|---|
+| `ethos_auth` cookie | `ethos serve` prints a one-time `?t=<token>` URL. `GET /auth/exchange` checks it, rotates the stored token, and sets the cookie (`HttpOnly`, `SameSite=Strict`) | `/rpc/*`, `/sse/*`, `/openapi/*`, `/setup/whatsapp/*`, and the voice, satellite and takeover WebSockets | `authRoutes` in `apps/web-api/src/routes/auth.ts`; `authMiddleware` in `apps/web-api/src/middleware/auth.ts`; `dualAuth` in `apps/web-api/src/middleware/dual-auth.ts` |
+| Bearer API key (`sk-ethos-…`) | `ethos api-key create --name <label> [--scopes <a,b>]` (default scope `chat`), or the web Settings page through the `apiKeys.create` RPC. Stored hashed in `sessions.db` by `SqliteApiKeyStore` | `/rpc/*` and `/sse/*` methods whose namespace maps to the key's scope in `SCOPE_MAP`, plus the OpenAI-compatible `/v1/*` surface (scope `chat`), `/metrics` (`metrics:read`) and `/cron/fire` (`cron`) | `dualAuth` and `resolveScope` in `apps/web-api/src/middleware/dual-auth.ts`; `bearerAuth` in `apps/web-api/src/middleware/bearer-auth.ts` |
+
+A request with neither credential receives `401 Unauthorized`. A bearer key is refused with `403 Forbidden` in these cases:
+
+- **Unmapped namespaces.** Any namespace absent from `SCOPE_MAP`, which includes `admin` and `outbox`, is cookie-only. `dualAuth` fails closed on it.
+- **Cookie-only methods.** Methods mapped to `COOKIE_ONLY`, such as `personalities.create` and `tools.test`, reject every bearer key.
+- **The `apiKeys` namespace.** A bearer key cannot mint or revoke keys. `cookieOnlyGuard` refuses it at the route, and `dualAuth` refuses it again.
+- **Missing scope.** A key without the method's required scope is refused.
+
+The `admin` namespace has a second gate. Every admin procedure calls `requireAdmin` (`apps/web-api/src/services/admin.service.ts`), which returns `403` unless `admin.enabled: true` is set in `~/.ethos/config.yaml`. The default is disabled.
+
+When `ethos serve` is not given an API-key store, `/rpc/*` and `/sse/*` fall back to `authMiddleware`, which accepts the cookie only (`apps/web-api/src/routes/index.ts`).
+
+- Pinned by: `apps/web-api/src/__tests__/routes/auth-and-rpc.test.ts` (cookie exchange, rotation, `401` without a cookie), `apps/web-api/src/__tests__/middleware/dual-auth-scope.test.ts` (fail-closed and cookie-only methods), `apps/web-api/src/__tests__/middleware/apikeys-auth-bypass.test.ts` (`apiKeys` namespace), `apps/web-api/src/__tests__/routes/admin.test.ts` (`admin.enabled` gate)
+- Limitation: no test sends a bearer key to an `admin` procedure. The refusal comes from the generic unmapped-namespace branch in `dualAuth`, which `dual-auth-scope.test.ts` exercises through `outbox`.
 - Cross-ref: [Authenticate your dashboard users](../building/how-to/authenticate-dashboard-users.md)
 
 ## Read-only plugin data source access {#read-only-sql}
