@@ -98,7 +98,7 @@ export interface ExternalSlashCommands {
   ): Promise<string | null>;
 }
 
-interface AppProps {
+export interface AppProps {
   bridge: AgentBridge;
   model: string;
   initialPersonality: string;
@@ -128,6 +128,16 @@ interface AppProps {
   onNotification?: (sessionKey: string, cb: (text: string) => void) => () => void;
   /** Subscribe to skill-evolver proposal notices. Returns an unsubscribe. */
   onSkillProposed?: (cb: (text: string) => void) => () => void;
+  /**
+   * `/fork`, `/branches`, `/branch <n>` over the host's session store. Injected
+   * so the TUI never opens `sessions.db` itself; `switchTo` asks the TUI to
+   * re-key onto that session. Absent → the commands report they are unavailable.
+   */
+  branches?: (
+    command: 'fork' | 'branches' | 'branch',
+    arg: string,
+    sessionKey: string,
+  ) => Promise<{ message: string; switchTo?: { sessionKey: string; personalityId?: string } }>;
 }
 
 /**
@@ -187,6 +197,7 @@ export function App({
   onNotification,
   onSkillProposed,
   readMemory,
+  branches,
 }: AppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -817,6 +828,41 @@ export function App({
         setFileActivity([]);
         setUsage({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
         setStatusMsg('[new session started]');
+        break;
+      }
+      case 'fork':
+      case 'branches':
+      case 'branch': {
+        if (!branches) {
+          setStatusMsg('[session branches are not available here]');
+          break;
+        }
+        try {
+          const outcome = await branches(name, args.join(' '), sessionKey);
+          const next = outcome.switchTo;
+          if (next) {
+            bridge.resetSessionCost(sessionKey);
+            setSessionKey(next.sessionKey);
+            if (next.personalityId) setPersonality(next.personalityId);
+            // A fork carries the same history, so the transcript on screen
+            // still reads true; a switch to another branch does not.
+            if (name === 'branch') {
+              setMessages([]);
+              setCompletedTools([]);
+            }
+            setUsage({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
+          }
+          if (name === 'branches') {
+            setMessages((prev) => [
+              ...prev,
+              { id: nextId(), role: 'assistant', text: outcome.message },
+            ]);
+          } else {
+            setStatusMsg(`[${outcome.message}]`);
+          }
+        } catch (err) {
+          setStatusMsg(`[${err instanceof Error ? err.message : String(err)}]`);
+        }
         break;
       }
       case 'compact': {

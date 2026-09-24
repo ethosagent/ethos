@@ -128,3 +128,23 @@ function cutHistory(all: StoredMessage[], upToMessageId: string): StoredMessage[
   }
   return kept;
 }
+
+/**
+ * The branch family `/branches` and `/branch <n>` number: the session a branch
+ * was forked from (or `sessionId` itself, when it is not a fork) followed by
+ * that session's direct forks, oldest first. Reads children through
+ * `listSessions({ parentSessionId })` — an indexed lookup in session-sqlite
+ * (`idx_sessions_parent`), never a scan of every session. Empty when
+ * `sessionId` does not exist.
+ */
+export async function listBranches(store: SessionStore, sessionId: string): Promise<Session[]> {
+  const current = await store.getSession(sessionId);
+  if (!current) return [];
+  const anchor =
+    (current.parentSessionId ? await store.getSession(current.parentSessionId) : null) ?? current;
+  const children = await store.listSessions({ parentSessionId: anchor.id });
+  children.sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.key.localeCompare(b.key),
+  );
+  return [anchor, ...children];
+}

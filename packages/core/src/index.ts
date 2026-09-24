@@ -261,6 +261,7 @@ export {
   type ForkSessionOptions,
   type ForkSessionResult,
   forkSession,
+  listBranches,
 } from './session-fork';
 export { SimpleCompletionImpl } from './simple-completion';
 export type { SpokenStyleInjectorOptions } from './spoken-style-injector';
