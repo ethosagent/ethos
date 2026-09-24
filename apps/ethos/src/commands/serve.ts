@@ -89,6 +89,7 @@ import {
   IdentityMap,
   resolveMcpExportScope,
   resolvePersonalityModelFit,
+  type SmartApproverDecisionSite,
   sanitize,
   seedAllSystemJobs,
   systemJobProblem,
@@ -275,7 +276,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
               web: created,
               tools: lazyToolRegistry,
               dangerPredicate: (loop) =>
-                buildServeDangerPredicate(loop, personalities, agentConfig),
+                buildServeDangerPredicate(
+                  loop,
+                  personalities,
+                  agentConfig,
+                  agentResult.approverDecision,
+                ),
             });
             disposeRealLoop = agentResult.dispose;
             realLoop = agentResult.loop;
@@ -464,6 +470,10 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // `toolNamesForPersonality` (a personality's full reach). Every branch below
   // assigns a `CreateAgentLoopResult.toolRegistry`, which already is one.
   let toolRegistry: DefaultToolRegistry | undefined;
+  // The smart approver's decision site from the build `loop` came from
+  // (plan decision-provider-jev §8.2). Unset on the team-coordinator branch,
+  // whose build does not expose one — that approver is today's LLM reviewer.
+  let approverDecision: SmartApproverDecisionSite | undefined;
   let mcpManager: McpManager | undefined;
   let pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
   let notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
@@ -733,6 +743,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
+    approverDecision = result.approverDecision;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -798,6 +809,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     );
     loop = result.loop;
     toolRegistry = result.toolRegistry;
+    approverDecision = result.approverDecision;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -1236,6 +1248,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     config,
     dir,
     loop,
+    ...(approverDecision ? { approverDecision } : {}),
     session,
     contextLog,
     personalities,
@@ -1642,12 +1655,15 @@ export function serveLoopOptions(opts: {
  * with the turn's personality (learned from the loop's `session_start`) so
  * `approvalMode` is enforced, plus a lazy provider handle for
  * `approvalMode: 'smart'` — nothing is constructed unless a flagged call
- * actually reaches the reviewer.
+ * actually reaches the reviewer. `decision` is the smart reviewer's decision
+ * site from the same build as `loop` (`CreateAgentLoopResult.approverDecision`,
+ * plan decision-provider-jev §8.2); absent, the reviewer is the LLM path only.
  */
 export function buildServeDangerPredicate(
   loop: AgentLoop,
   personalities: ServePersonalityRegistry,
   config: EthosConfig,
+  decision?: SmartApproverDecisionSite,
 ): ReturnType<typeof createApprovalDangerPredicate> {
   return createApprovalDangerPredicate({
     hooks: [loop.hooks],
@@ -1655,6 +1671,7 @@ export function buildServeDangerPredicate(
     getProvider: createLazyProvider(() => createLLM(config)),
     model: config.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+    ...(decision ? { decision } : {}),
   });
 }
 type AcpServerOptions = ConstructorParameters<typeof AcpServer>[0];
@@ -2071,6 +2088,8 @@ export interface BuildServeWebApiOptions {
   /** `~/.ethos` (or the `--data-dir` override). */
   dir: string;
   loop: AgentLoop;
+  /** `CreateAgentLoopResult.approverDecision` of the build `loop` came from. */
+  approverDecision?: SmartApproverDecisionSite;
   session: ReturnType<typeof createSessionStore>;
   contextLog: SQLiteContextLog;
   personalities: ServePersonalityRegistry;
@@ -2313,7 +2332,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     },
     // The approval modal's danger check — built by the same function the
     // onboarding boot uses (`buildServeDangerPredicate`).
-    dangerPredicate: buildServeDangerPredicate(loop, personalities, config),
+    dangerPredicate: buildServeDangerPredicate(loop, personalities, config, opts.approverDecision),
     // Every modal decision (and every allowlist auto-allow) lands in the
     // safety audit trail behind `ethos audit decisions`.
     approvalObservability: {

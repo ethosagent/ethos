@@ -1419,6 +1419,15 @@ export interface CreateAgentLoopResult {
    *  `ethos bench context` uses it as the schema-budget denominator so the
    *  bench table and the startup warning read the same numbers (D8). */
   contextWindow: number;
+  /**
+   * The smart approver's decision site (plan decision-provider-jev §8.2),
+   * carrying THIS build's one decision provider so the approver and the
+   * injection classifier share a breaker. Present only when `decisions.provider`
+   * is configured with a stored key and `decisions.sites.approver` is `shadow`
+   * or `on`. Hosts forward it as `decision` to `createApprovalDangerPredicate`;
+   * absent, the approver is exactly the LLM reviewer.
+   */
+  approverDecision?: import('./smart-approver').SmartApproverDecisionSite;
   /** The McpManager instance from tool composition. Pass to createWebApi so
    *  re-auth via the web UI hits the live manager and updates the tool registry. */
   mcpManager: McpManager;
@@ -1899,7 +1908,11 @@ export {
   type ProbeProviderOutcome,
   probeProvider,
 } from './probe-provider';
-export { type CreateSmartApproverOptions, createSmartApprover } from './smart-approver';
+export {
+  type CreateSmartApproverOptions,
+  createSmartApprover,
+  type SmartApproverDecisionSite,
+} from './smart-approver';
 export {
   farEndRefusalReason,
   SPOKEN_CONFIRMATION_TOOLS,

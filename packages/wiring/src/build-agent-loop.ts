@@ -567,20 +567,25 @@ export async function buildAgentLoop(
   const { createLLMClassifier } = await import('@ethosagent/safety-injection');
   const llmInjectionClassifier = createLLMClassifier({ llm });
   // plan decision-provider-jev §8.1 — with no `decisions.*` keys, or the
-  // injection site `off`, or no key in `providers/typesafe/apiKey`, no provider
-  // is built and the LLM classifier above is used exactly as before (R7,
-  // pinned by `__tests__/decision-wiring.test.ts`).
+  // injection site `off`, or no key in `providers/typesafe/apiKey`, the LLM
+  // classifier above is used exactly as before (R7, pinned by
+  // `__tests__/decision-wiring.test.ts`).
+  //
+  // ONE provider per build, shared by every decision site this build wires —
+  // the injection classifier here and the smart approver (§8.2), which the
+  // approval surfaces construct from `approverDecision` on the result — so
+  // both see the same breaker (§5.5).
   const decisions = config.decisions ? resolveDecisionsConfig(config.decisions) : undefined;
   const { buildDecisionProvider } = await import('./decision-provider');
   const { createDecisionInjectionClassifier } = await import('./decision-injection-classifier');
   const decisionProvider = await buildDecisionProvider({
     decisions,
-    sites: ['injection'],
+    sites: ['injection', 'approver'],
     secrets: config.secretsResolver,
     ...(opts.observability ? { observability: opts.observability } : {}),
   });
   const injectionClassifier =
-    decisions && decisionProvider
+    decisions && decisionProvider && decisions.sites.injection.effective !== 'off'
       ? createDecisionInjectionClassifier({
           decisions: decisionProvider,
           fallback: llmInjectionClassifier,
@@ -590,6 +595,18 @@ export async function buildAgentLoop(
           ...(opts.observability ? { observability: opts.observability } : {}),
         })
       : llmInjectionClassifier;
+  // §8.2 — absent unless a provider exists AND the approver site is `shadow`
+  // or `on`; absent means every approval surface builds today's LLM reviewer.
+  const approverDecision: import('./smart-approver').SmartApproverDecisionSite | undefined =
+    decisions && decisionProvider && decisions.sites.approver.effective !== 'off'
+      ? {
+          decisions: decisionProvider,
+          mode: decisions.sites.approver.effective,
+          thresholds: decisions.thresholds.approver ?? {},
+          timeoutMs: decisions.sites.approver.timeoutMs,
+          ...(opts.observability ? { recorder: opts.observability } : {}),
+        }
+      : undefined;
 
   // -------------------------------------------------------------------------
   // Phase 2 — Build the AgentSafety bundle for core's injected safety path.
@@ -1649,6 +1666,7 @@ export async function buildAgentLoop(
       onSkillProposedFn = fn;
     },
     ...(onMemoryCapturedFn ? { onMemoryCaptured: onMemoryCapturedFn } : {}),
+    ...(approverDecision ? { approverDecision } : {}),
     ...(runCallCaptureFn ? { runCallCapture: runCallCaptureFn } : {}),
     notificationRouter,
     pluginLoader,
