@@ -25,6 +25,20 @@ import { getSecretsResolver, getStorage } from '../wiring';
 const NO_PERSONALITY_SCOPE = RETENTION_NO_PERSONALITY_SCOPE;
 const NO_PERSONALITY_SCOPE_REMEDY = 'Set it without --personality.';
 
+/**
+ * Stores whose retention is hard-coded in `ethos gateway start`
+ * (`DELIVERY_LEDGER_RETENTION_MS`, `INBOUND_SPOOL_RETENTION_MS`,
+ * `INBOUND_SPOOL_DEAD_RETENTION_MS` in apps/ethos/src/commands/gateway.ts).
+ * Listed so an operator asking "what is kept, for how long" sees them too.
+ */
+export const FIXED_RETENTION: ReadonlyArray<{ store: string; rule: string }> = [
+  { store: 'delivery ledger', rule: 'delivered/abandoned 7d · pending never' },
+  {
+    store: 'inbound spool',
+    rule: 'done 7d (body dropped when done) · dead 30d · owed (received/processing) never',
+  },
+];
+
 const CATEGORY_LABELS: Record<string, string> = {
   messages: 'messages',
   traces: 'traces',
@@ -245,6 +259,14 @@ export async function runRetention(sub: string, argv: string[]): Promise<void> {
       console.log(`  ${label.padEnd(18)} ${displayVal.padEnd(8)} ${tag}`);
     }
     console.log();
+    if (!flags.personality) {
+      console.log('Fixed retention (gateway stores, not configurable)');
+      console.log('══════════════════════');
+      for (const row of FIXED_RETENTION) {
+        console.log(`  ${row.store.padEnd(18)} ${row.rule}`);
+      }
+      console.log();
+    }
 
     if (flags.defaults) {
       console.log('Defaults:');
