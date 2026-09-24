@@ -34,6 +34,7 @@ export interface ListInput {
   cursor?: string | null;
   personalityId?: string;
   platform?: string;
+  parentSessionId?: string;
 }
 
 export class SessionsService {
@@ -47,6 +48,7 @@ export class SessionsService {
       cursor: input.cursor ?? null,
       ...(input.personalityId ? { personalityId: input.personalityId } : {}),
       ...(input.platform ? { platform: input.platform } : {}),
+      ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
     });
     return {
       items: page.sessions.map(toWireSession),

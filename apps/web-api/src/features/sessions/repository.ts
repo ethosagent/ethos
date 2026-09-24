@@ -43,6 +43,8 @@ export interface ListOptions {
   personalityId?: string;
   /** Exact origin platform (`mcp`, `web`, …). */
   platform?: string;
+  /** Only the direct forks of this session — an indexed `listSessions` filter. */
+  parentSessionId?: string;
 }
 
 /** One page of `messagePage`: rows oldest first, and the cursor for the next-older page. */
@@ -90,7 +92,10 @@ export class SessionsRepository {
       const sessions = (await Promise.all(matchedIds.map((id) => this.store.getSession(id))))
         .filter((s): s is Session => s !== null)
         .filter((s) => !s.key.startsWith('goal:'))
-        .filter((s) => opts.platform === undefined || s.platform === opts.platform);
+        .filter((s) => opts.platform === undefined || s.platform === opts.platform)
+        .filter(
+          (s) => opts.parentSessionId === undefined || s.parentSessionId === opts.parentSessionId,
+        );
       return { sessions, nextCursor: null };
     }
 
@@ -102,6 +107,7 @@ export class SessionsRepository {
     };
     if (opts.personalityId) filter.personalityId = opts.personalityId;
     if (opts.platform) filter.platform = opts.platform;
+    if (opts.parentSessionId) filter.parentSessionId = opts.parentSessionId;
 
     const rows = await this.store.listSessions(filter);
     const more = rows.length > opts.limit;

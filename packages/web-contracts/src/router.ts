@@ -145,6 +145,8 @@ const SessionListInput = z.object({
   personalityId: z.string().optional(),
   /** Only sessions whose origin platform is exactly this (`cli`, `web`, `mcp`, …). */
   platform: z.string().optional(),
+  /** Only the direct forks of this session (`parentSessionId`) — the branch switcher. */
+  parentSessionId: z.string().optional(),
 });
 const SessionListOutput = z.object({
   items: z.array(SessionSchema),
