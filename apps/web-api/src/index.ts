@@ -77,6 +77,7 @@ import { type ApprovalObservability, ApprovalsService } from './services/approva
 import { BackupService } from './services/backup.service';
 import { CallsService } from './services/calls.service';
 import { ConfigService, readLegacyBrowserBargeInTuning } from './services/config.service';
+import { CredentialsService } from './services/credentials.service';
 import { CronService } from './services/cron.service';
 import { createLiveDeliveryTargetWorld } from './services/cron-delivery-targets';
 import { DeliveriesService } from './services/deliveries.service';
@@ -1096,6 +1097,8 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     secrets,
     ...(opts.toolRegistry ? { toolRegistry: opts.toolRegistry } : {}),
   });
+  // Settings › Security › Logins — stored logins for `browser_fill_credential`.
+  const credentialsService = new CredentialsService({ secrets });
   // Keys pane — the whole vault, masked, partitioned by the static catalog.
   const keysService = new KeysService({ secrets, namedSecrets: namedSecretsService });
   // Settings › Backup. Reads `backup.*` from config.yaml and the `backup`
@@ -1985,6 +1988,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       documents: documentsService,
       modelRegistry: modelRegistryService,
       namedSecrets: namedSecretsService,
+      credentials: credentialsService,
       keys: keysService,
       backup: backupService,
       execution: executionService,

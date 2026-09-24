@@ -5304,6 +5304,54 @@ const namedSecrets = {
 };
 
 // ---------------------------------------------------------------------------
+// Credentials — stored logins for `browser_fill_credential`
+// (plan reach-and-containment §4.2)
+//
+// A login is four vault refs under `credentials/<name>/`. Values are
+// write-only: `list` returns a masked username preview and presence flags,
+// never a value, and `set` echoes nothing back. Field validation (bare https
+// origins, personality ids, TOTP seeds) is the server's — the wire only bounds
+// sizes and shapes.
+// ---------------------------------------------------------------------------
+
+const CredentialViewSchema = z.object({
+  name: z.string(),
+  origins: z.array(z.string()),
+  personalities: z.array(z.string()),
+  unattended: z.boolean(),
+  /** Masked via `redactSecretValue` — never the raw username. */
+  usernamePreview: z.string(),
+  hasPassword: z.boolean(),
+  hasTotp: z.boolean(),
+  /** False when the stored policy is missing or unparseable; the tool refuses it. */
+  policyValid: z.boolean(),
+});
+
+/** @experimental */
+const credentials = {
+  list: oc.output(z.object({ credentials: z.array(CredentialViewSchema) })),
+  set: oc
+    .input(
+      z.object({
+        name: NamedSecretNameSchema,
+        /** Required for a new login; omitted keeps the stored value. */
+        username: z.string().min(1).max(8192).optional(),
+        /** Required for a new login; omitted keeps the stored value. */
+        password: z.string().min(1).max(8192).optional(),
+        /** Omitted keeps the stored seed; `null` removes it. */
+        totp: z.string().max(8192).nullable().optional(),
+        origins: z.array(z.string().min(1).max(2048)).min(1).max(32),
+        personalities: z.array(z.string().min(1).max(128)).max(64),
+        unattended: z.boolean(),
+      }),
+    )
+    .output(z.object({ ok: z.literal(true) })),
+  delete: oc
+    .input(z.object({ name: NamedSecretNameSchema }))
+    .output(z.object({ ok: z.literal(true) })),
+};
+
+// ---------------------------------------------------------------------------
 // Keys — masked inventory of the WHOLE secrets vault, by category
 //
 // A third read path onto the same vault `namedSecrets` and `models` already
@@ -6023,6 +6071,7 @@ export const contract = {
   channels,
   a2a,
   namedSecrets,
+  credentials,
   keys,
   toolSettings,
   documents,

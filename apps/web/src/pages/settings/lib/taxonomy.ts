@@ -157,6 +157,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
       // (reach-and-containment 3b) — listed with a Revoke button.
       section('approval-leases', 'approval leases'),
       section('named-secrets', 'named secrets'),
+      section('logins', 'logins'),
       section('web-search-defaults', 'web-search defaults'),
       // The ceiling on bytes an untrusted sender can push through a channel.
       // Not a secret, not an approval, not a search default.

@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { ethosDir } from '@ethosagent/config';
 import { writeJson } from '../json-output';
 import { getSecretsResolver } from '../wiring';
+import { runSecretsCredential } from './secrets-credential';
 
 const c = {
   reset: '\x1b[0m',
@@ -103,6 +104,11 @@ export async function runSecrets(args: string[]): Promise<void> {
       break;
     }
 
+    case 'credential': {
+      await runSecretsCredential(args.slice(1), { secrets: resolver });
+      break;
+    }
+
     case 'path': {
       console.log(join(ethosDir(), 'secrets'));
       break;
@@ -110,7 +116,7 @@ export async function runSecrets(args: string[]): Promise<void> {
 
     default:
       console.log(
-        'Usage: ethos secrets [list | set <ref> <value> | get <ref> | remove <ref> | path]',
+        'Usage: ethos secrets [list | set <ref> <value> | get <ref> | remove <ref> | credential <add|list|rm|grant|revoke> | path]',
       );
   }
 }

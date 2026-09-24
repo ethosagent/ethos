@@ -290,6 +290,7 @@ describe('contract router', () => {
       'clarify',
       'config',
       'context',
+      'credentials',
       'cron',
       'dashboards',
       'debug',

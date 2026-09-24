@@ -3,9 +3,10 @@
 // (§4.2 rows 5, 11, 19, 20, 21 and the API-keys section), off `Card` onto
 // `SettingRow` / `SectionHeading` (Phase 4).
 //
-// Four of these five sections SAVE ON THEIR OWN and not with the page Save:
-// named secrets, API keys and A2A are mutations against separate stores, and
-// web-search defaults has its own button. They render inside the outlet, and
+// Five of these six sections SAVE ON THEIR OWN and not with the page Save:
+// named secrets, logins (`LoginsSection`, stored credentials for
+// `browser_fill_credential`), API keys and A2A are mutations against separate
+// stores, and web-search defaults has its own button. They render inside the outlet, and
 // therefore inside the shell's `<Form>` — which is exactly why that form carries
 // `component={false}` (D2): with a real `<form>` node, pressing Enter in the
 // named-secret or API-key name field would submit the PAGE form and write ~107
@@ -46,6 +47,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { LoginsSection } from '../../../components/tool-settings/LoginsSection';
 import { AddSecretModal } from '../../../components/tool-settings/SecretPicker';
 import { ToolSettingsForm } from '../../../components/tool-settings/ToolSettingsForm';
 import {
@@ -123,6 +125,9 @@ export function SecurityPane() {
 
       <SectionHeading id="named-secrets">named secrets</SectionHeading>
       <NamedSecretsSection />
+
+      <SectionHeading id="logins">logins</SectionHeading>
+      <LoginsSection />
 
       <SectionHeading id="web-search-defaults">web-search defaults</SectionHeading>
       <WebSearchDefaultsSection />

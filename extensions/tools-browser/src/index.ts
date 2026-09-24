@@ -15,11 +15,16 @@ import {
   createBrowserNavigateTool,
 } from './browser-actions';
 import { createBrowserComputedStyleTool } from './browser-computed-style';
+import {
+  createBrowserFillCredentialTool,
+  type RecordCredentialFill,
+} from './browser-fill-credential';
 import { browserScreenshotTool } from './browser-screenshot';
 import { createBrowserTakeoverTool } from './browser-takeover';
 import { createBrowserVisionClickTool } from './browser-vision-click';
 import { createBrowserVisionTypeTool } from './browser-vision-type';
 import { type BrowserLaunchConfig, buildLaunchOptions } from './launch-options';
+import { withSecretMask } from './secret-mask';
 import {
   acquireAgentLease,
   closeSession,
@@ -418,6 +423,12 @@ export interface BrowserToolsOptions {
    * and a hint naming an unregistered tool is worse than one naming none.
    */
   clarifyBridge?: ClarifyBridge;
+  /**
+   * The observability sink `browser_fill_credential` audits every call to
+   * (D4-8). Absent → that tool reports itself unavailable: an unaudited
+   * deployment cannot fill a stored login.
+   */
+  recordCredentialFill?: RecordCredentialFill;
 }
 
 export function createBrowserTools(opts?: BrowserToolsOptions): Tool[] {
@@ -442,7 +453,16 @@ export function createBrowserTools(opts?: BrowserToolsOptions): Tool[] {
     ? (createBrowserTakeoverTool(opts.clarifyBridge) as Tool)
     : undefined;
   const escalationTool = takeoverTool?.name;
-  return [
+  const fillCredentialTool = createBrowserFillCredentialTool({
+    timeouts,
+    ...(opts?.recordCredentialFill ? { recordCredentialFill: opts.recordCredentialFill } : {}),
+    ...(opts?.clarifyBridge ? { clarifyBridge: opts.clarifyBridge } : {}),
+  }) as Tool;
+  // D4-6 — every browser tool's result goes through the filled-secret mask.
+  // One wrapper over the whole roster, so a tool added to this list later is
+  // covered without remembering to call anything (pinned by
+  // `__tests__/secret-mask.test.ts`, which iterates this roster).
+  const roster: Tool[] = [
     createBrowseUrlTool(timeouts, launchCfg, escalationTool),
     createBrowserClickTool(timeouts),
     createBrowserTypeTool(timeouts),
@@ -458,7 +478,9 @@ export function createBrowserTools(opts?: BrowserToolsOptions): Tool[] {
     createBrowserVisionClickTool(visionOpts, timeouts),
     createBrowserVisionTypeTool(visionOpts, timeouts),
     ...(takeoverTool ? [takeoverTool] : []),
+    fillCredentialTool,
   ];
+  return roster.map((tool) => withSecretMask(tool));
 }
 
 // ---------------------------------------------------------------------------
@@ -539,13 +561,39 @@ export {
   createBrowserComputedStyleTool,
   DEFAULT_SELECTORS,
 } from './browser-computed-style';
+export {
+  type CredentialFillAuditEvent,
+  type CredentialFillOutcome,
+  createBrowserFillCredentialTool,
+  type RecordCredentialFill,
+} from './browser-fill-credential';
 export { createBrowserTakeoverTool } from './browser-takeover';
+export {
+  assertCredentialName,
+  assertTotpSeed,
+  CREDENTIALS_PREFIX,
+  type CredentialPolicy,
+  CredentialValidationError,
+  type CredentialView,
+  credentialExists,
+  credentialRef,
+  deleteCredential,
+  isBindableOrigin,
+  listCredentials,
+  normalizeOrigin,
+  parseCredentialPolicy,
+  type SetCredentialInput,
+  setCredential,
+  updateCredentialPolicy,
+  validateCredentialPolicy,
+} from './credential-vault';
 export {
   type BrowserLaunchConfig,
   buildLaunchOptions,
   hasDisplay,
   resolveHeadless,
 } from './launch-options';
+export { isSecretMasked, maskFilledSecrets, SECRET_MASK } from './secret-mask';
 export {
   closeAllSessions,
   getOrCreateSessionWithRoute,
@@ -553,3 +601,4 @@ export {
   takeoverRefusal,
 } from './sessions';
 export { snapshotPage } from './snapshot';
+export { parseTotpSeed, TotpSeedError, totpCode } from './totp';

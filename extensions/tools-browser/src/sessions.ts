@@ -124,6 +124,13 @@ export interface BrowserSession {
   /** ms epoch of the last create/lookup. Read by the idle sweeper. */
   lastActiveAt: number;
   /**
+   * Values `browser_fill_credential` filled into this session's page (D4-6).
+   * `withSecretMask` (secret-mask.ts) replaces each one in every later browser
+   * tool result. Process memory only, never persisted; dropped by
+   * `closeSessionResources`, which every close path reaches.
+   */
+  filledSecrets?: Set<string>;
+  /**
    * @internal Releases the per-profile mutex. Set only for persistent
    * contexts; `close()` calls it.
    */
@@ -830,6 +837,7 @@ function forgetSession(session: BrowserSession): void {
 }
 
 async function closeSessionResources(session: BrowserSession): Promise<void> {
+  session.filledSecrets = undefined;
   await session.context.close().catch(() => {});
   await session.browser?.close().catch(() => {});
   session.releaseProfile?.();
