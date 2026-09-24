@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { type ApprovalLease, EthosError, isLeaseActive } from '@ethosagent/types';
 import type { ApprovalRequest, ApprovalScope } from '@ethosagent/web-contracts';
-import { APPROVAL_SURFACE_ALWAYS_ASK } from '@ethosagent/wiring';
 import type { AllowlistRepository } from '../repositories/allowlist.repository';
 import type { LeaseRepository } from '../repositories/lease.repository';
 
@@ -73,6 +72,15 @@ export interface ApprovalsServiceOptions {
    */
   leases?: LeaseRepository;
   /**
+   * Always-ask tools (D3-12): never allowlistable, and flagged `alwaysAsk` on
+   * the wire so the modal offers "Allow for 1 hour" instead. The composition
+   * root (`createWebApi`) passes `APPROVAL_SURFACE_ALWAYS_ASK` from
+   * `@ethosagent/wiring` — the same list the danger predicate prompts for;
+   * injected rather than imported so this service does not load the whole
+   * wiring graph. Absent = none.
+   */
+  alwaysAsk?: ReadonlyArray<string>;
+  /**
    * Auto-deny a pending approval after this many ms. The backstop for a
    * closed tab, a dropped SSE stream, or any integration failure that would
    * otherwise leave the agent loop's hook suspended forever. Defaults to 10
@@ -103,13 +111,6 @@ const MAX_TIMER_MS = 2_147_483_647;
 /** The one lease duration this phase ships (D3-8). The store takes `ttlMs`,
  *  so a later surface can pass another value without a schema change. */
 export const LEASE_1H_MS = 3_600_000;
-
-/** True for a tool no allowlist entry may ever auto-approve (D3-12): the
- *  always-ask list's own definition is "must never run without a prompt"
- *  (`APPROVAL_SURFACE_ALWAYS_ASK` in `packages/wiring/src/danger-predicate.ts`). */
-export function isAlwaysAskTool(toolName: string): boolean {
-  return APPROVAL_SURFACE_ALWAYS_ASK.includes(toolName);
-}
 
 const AUDIT_CODES = {
   approved: 'approval.allow',
@@ -192,7 +193,7 @@ export class ApprovalsService {
         toolName: req.toolName,
         args: req.args,
         reason: req.reason ?? null,
-        alwaysAsk: isAlwaysAskTool(req.toolName),
+        alwaysAsk: this.isAlwaysAsk(req.toolName),
       };
       this.emitter.emit('pending', req.sessionId, wireRequest);
     });
@@ -211,7 +212,7 @@ export class ApprovalsService {
   async approve(approvalId: string, scope: ApprovalScope, decidedBy: string): Promise<void> {
     const pending = this.pending.get(approvalId);
     if (pending && (scope === 'exact-args' || scope === 'any-args')) {
-      if (isAlwaysAskTool(pending.request.toolName)) {
+      if (this.isAlwaysAsk(pending.request.toolName)) {
         throw new EthosError({
           code: 'INVALID_INPUT',
           cause: `${pending.request.toolName} is an always-ask tool and cannot be allowlisted (${scope}).`,
@@ -336,6 +337,13 @@ export class ApprovalsService {
     } catch {
       // Audit is fail-open — a broken sink never breaks an approval.
     }
+  }
+
+  /** True for a tool no allowlist entry may ever auto-approve (D3-12): the
+   *  always-ask list's own definition is "must never run without a prompt"
+   *  (`APPROVAL_SURFACE_ALWAYS_ASK` in `packages/wiring/src/danger-predicate.ts`). */
+  private isAlwaysAsk(toolName: string): boolean {
+    return (this.opts.alwaysAsk ?? []).includes(toolName);
   }
 
   /** Leases that are active right now — the Settings → Approvals list. */

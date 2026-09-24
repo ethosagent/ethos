@@ -1,6 +1,5 @@
 import { dirname, join } from 'node:path';
 import type { Storage } from '@ethosagent/types';
-import { APPROVAL_SURFACE_ALWAYS_ASK } from '@ethosagent/wiring';
 import { z } from 'zod';
 import { requireStorage } from './require-storage';
 
@@ -51,16 +50,25 @@ export interface AllowlistRepositoryOptions {
   dataDir: string;
   /** Storage backend. Injected by the composition root; required. */
   storage: Storage;
+  /**
+   * Tools no stored entry may auto-approve. The composition root
+   * (`createWebApi`) passes `APPROVAL_SURFACE_ALWAYS_ASK` from
+   * `@ethosagent/wiring`; injected rather than imported so this repository
+   * does not load the whole wiring graph. Absent = none.
+   */
+  alwaysAsk?: ReadonlyArray<string>;
 }
 
 export class AllowlistRepository {
   private readonly storage: Storage;
   private readonly path: string;
+  private readonly alwaysAsk: ReadonlyArray<string>;
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(opts: AllowlistRepositoryOptions) {
     this.storage = requireStorage(opts.storage, 'AllowlistRepository');
     this.path = join(opts.dataDir, 'allowlist.json');
+    this.alwaysAsk = opts.alwaysAsk ?? [];
   }
 
   async list(): Promise<AllowlistEntry[]> {
@@ -84,14 +92,14 @@ export class AllowlistRepository {
   /**
    * True when `toolName`+`args` are covered by an existing entry.
    *
-   * Never true for an always-ask tool (`APPROVAL_SURFACE_ALWAYS_ASK`,
-   * reach-and-containment D3-12): that list means "must never run without a
+   * Never true for an always-ask tool (the injected `alwaysAsk` list —
+   * `APPROVAL_SURFACE_ALWAYS_ASK` in production — reach-and-containment D3-12): that list means "must never run without a
    * prompt", so an entry stored for one — before `ApprovalsService.approve`
    * started refusing them — is ignored, not deleted, and stays visible in the
    * file. A lease is the widest answer such a tool can get.
    */
   async matches(toolName: string, args: unknown): Promise<boolean> {
-    if (APPROVAL_SURFACE_ALWAYS_ASK.includes(toolName)) return false;
+    if (this.alwaysAsk.includes(toolName)) return false;
     const file = await this.readSafe();
     const argsKey = canonicalKey(args);
     for (const entry of file.entries) {

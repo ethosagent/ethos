@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
@@ -6,6 +6,7 @@ import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/types';
 import { isEthosError } from '@ethosagent/types';
 import type { ApprovalRequest } from '@ethosagent/web-contracts';
+import { APPROVAL_SURFACE_ALWAYS_ASK } from '@ethosagent/wiring';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWebApi } from '../../index';
 import { AllowlistRepository } from '../../repositories/allowlist.repository';
@@ -667,6 +668,47 @@ describe('createWebApi — approvalTimeoutMs threading', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('injects the always-ask list: a stored any-args entry for skills_pending_approve does not auto-allow', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ethos-approval-alwaysask-'));
+    const store = new SQLiteSessionStore(':memory:');
+    try {
+      await writeFile(
+        join(dir, 'allowlist.json'),
+        JSON.stringify({
+          entries: [
+            { toolName: 'skills_pending_approve', scope: 'any-args', args: null, createdAt: 'x' },
+          ],
+        }),
+      );
+      const loop = makeStubAgentLoop();
+      createWebApi({
+        dataDir: dir,
+        sessionStore: store,
+        memoryBundle: makeStubMemoryBundle(),
+        agentLoop: loop,
+        personalities: makeStubPersonalityRegistry(),
+        chatDefaults: { model: 'claude-test', provider: 'anthropic' },
+        approvalTimeoutMs: 30,
+        dangerPredicate: async () => 'always-ask',
+      });
+
+      const result: Partial<BeforeToolCallResult> = await loop.hooks.fireModifying(
+        'before_tool_call',
+        {
+          sessionId: 'sess_aa',
+          toolCallId: 'tc_aa',
+          toolName: 'skills_pending_approve',
+          args: {},
+        } satisfies BeforeToolCallPayload,
+      );
+
+      expect(result.error).toContain('approval timed out');
+    } finally {
+      store.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function tickUntil(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
@@ -680,6 +722,8 @@ async function tickUntil(predicate: () => boolean, timeoutMs = 1000): Promise<vo
 // Containment 3b — the one-hour lease, and the end of permanent allowlisting
 // for always-ask tools (D3-12).
 describe('ApprovalsService — leases and always-ask tools', () => {
+  // What `createWebApi` injects in production.
+  const ALWAYS_ASK = APPROVAL_SURFACE_ALWAYS_ASK;
   type AuditRow = Parameters<ApprovalObservability['recordSafetyApproval']>[0];
 
   let storage: InMemoryStorage;
@@ -691,13 +735,14 @@ describe('ApprovalsService — leases and always-ask tools', () => {
 
   beforeEach(() => {
     storage = new InMemoryStorage();
-    allowlist = new AllowlistRepository({ dataDir: DATA, storage });
+    allowlist = new AllowlistRepository({ dataDir: DATA, storage, alwaysAsk: ALWAYS_ASK });
     leases = new LeaseRepository({ dataDir: DATA, storage });
     rows = [];
     pendingEvents = [];
     approvals = new ApprovalsService({
       allowlist,
       leases,
+      alwaysAsk: ALWAYS_ASK,
       timeoutMs: 0,
       observability: { recordSafetyApproval: (o) => rows.push(o) },
     });
