@@ -457,3 +457,19 @@ describe('proactive capture under memory: vault', () => {
     expect(await storage.exists(join(META_SCOPE_DIR, 'memory-history.jsonl'))).toBe(true);
   });
 });
+
+// Containment 3a, Change 7 — the vault backend's ScopedStorage is built WITHOUT
+// the per-turn `writeDeny`. The vault's own `<agentDir>/personalities/<id>/`
+// directory is memory content, not a personality definition, so files that
+// happen to share a definition's name must stay writable through it.
+describe('buildVaultBackend — no personality writeDeny', () => {
+  it('writes definition-named files under the vault scope dir', async () => {
+    const storage = new InMemoryStorage();
+    const { storage: scoped } = buildVaultBackend({ vault: VAULT_CONFIG.memoryVault, storage });
+    await scoped.mkdir(join(SCOPE_DIR, 'skills', 'x'));
+    await expect(scoped.write(join(SCOPE_DIR, 'toolset.yaml'), 'x')).resolves.toBeUndefined();
+    await expect(scoped.write(join(SCOPE_DIR, 'skills', 'x', 'SKILL.md'), 'x')).resolves.toBe(
+      undefined,
+    );
+  });
+});

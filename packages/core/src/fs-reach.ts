@@ -132,11 +132,16 @@ function withWorkdir(paths: string[], workdir: string): string[] {
  * conditional on the workdir being declared — with no declaration the returned
  * lists are byte-for-byte what they were before `workdir` existed, so an
  * existing personality's reach is never silently widened to include the cwd.
+ *
+ * `writeDeny` is the personality's own DEFINITION — `personalityWriteDeny`
+ * below. It is returned on every branch, declared or not: a declared
+ * `fs_reach.write: ['${ETHOS_HOME}/']` covers `ownDir` and must not reopen it.
+ * There is deliberately no knob to turn it off.
  */
 export function deriveFsReachPaths(
   personality: PersonalityConfig,
   vars: FsReachVars,
-): { read: string[]; write: string[]; workdir: string } {
+): { read: string[]; write: string[]; writeDeny: string[]; workdir: string } {
   const reach = personality.fs_reach;
   const declaredWorkdir = declaredWorkdirs(personality)[0];
   const workdir = declaredWorkdir ? resolve(substitute(declaredWorkdir, vars)) : vars.cwd;
@@ -152,8 +157,69 @@ export function deriveFsReachPaths(
       ? reach.write.map((path) => substitute(path, effective))
       : [ownDir, effective.cwd];
 
-  if (!declaredWorkdir) return { read, write, workdir };
-  return { read: withWorkdir(read, workdir), write: withWorkdir(write, workdir), workdir };
+  const writeDeny = personalityWriteDeny(effective.ethosHome, effective.self);
+
+  if (!declaredWorkdir) return { read, write, writeDeny, workdir };
+  return {
+    read: withWorkdir(read, workdir),
+    write: withWorkdir(write, workdir),
+    writeDeny,
+    workdir,
+  };
+}
+
+/**
+ * The entries directly under a personality's own directory that DEFINE it:
+ * who it is (`SOUL.md`, `ETHOS.md`), what it may do (`toolset.yaml`,
+ * `mcp.yaml`, `tools.yaml`), how it is configured (`config.yaml`), and the
+ * skills it carries (`skills/`, a directory — the trailing slash makes it a
+ * prefix). An agent turn must never change these (reach-and-containment 3a):
+ * the registry hot-reloads them on mtime, so a turn that could write
+ * `toolset.yaml` could grant itself any tool on its next turn.
+ *
+ * It must cover every path `FilePersonalityRegistry.loadOne` fingerprints
+ * (`extensions/personalities/src/index.ts`) — those are the files whose change
+ * alters the loaded personality. `ETHOS.md` is on top of that list: it is not
+ * fingerprinted, but it is identity text shipped beside `SOUL.md`.
+ *
+ * Deliberately absent: `MEMORY.md` / `USER.md` (content the agent is meant to
+ * maintain; their writer is the memory provider, not the turn's scoped storage)
+ * and `files/` (`personalityAssetDir`, the documented asset drop).
+ *
+ * Enforced as a write-only list by `ScopedStorage.check`
+ * (`packages/storage-fs/src/scoped-storage.ts`) and `ScopedFsImpl.checkReach`
+ * (`packages/core/src/scoped/scoped-fs.ts`), and on the OS layer by the
+ * read-only `ownDir` mount in `DockerExecutionBackend.mountsFor`
+ * (`extensions/execution-docker/src/index.ts`).
+ *
+ * LIMITATION: on LOCAL execution a personality with `terminal` can still edit
+ * its own definition — `sh -c` runs as the Ethos user and no Storage mediates
+ * it. Use `execution: docker` if that matters. There is no command-string
+ * grep for these names in the terminal guard: it would be trivially defeated
+ * (`cd ..; sed -i`) and would read as a guarantee it is not.
+ */
+export const PERSONALITY_DEFINITION_ENTRIES: readonly string[] = [
+  'SOUL.md',
+  'config.yaml',
+  'toolset.yaml',
+  'mcp.yaml',
+  'tools.yaml',
+  'ETHOS.md',
+  'skills/',
+];
+
+/**
+ * Absolute write-deny paths for one personality: each
+ * `PERSONALITY_DEFINITION_ENTRIES` entry under
+ * `${ethosHome}/personalities/<self>/`. Depends on `ethosHome` and `self`
+ * alone — never on the declared reach — and never throws, so a resolver can
+ * call it for a personality whose declared `fs_reach` is unusable.
+ */
+export function personalityWriteDeny(ethosHome: string, self: string): string[] {
+  const ownDir = join(ethosHome, 'personalities', self);
+  return PERSONALITY_DEFINITION_ENTRIES.map((entry) =>
+    entry.endsWith('/') ? `${join(ownDir, entry.slice(0, -1))}/` : join(ownDir, entry),
+  );
 }
 
 /**

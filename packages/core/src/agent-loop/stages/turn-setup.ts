@@ -164,7 +164,7 @@ export async function* setupTurn(
   // missing credential: error event, done, `refused` — before
   // `recordTurnStart` burns a turn number.
   let workingDir: string;
-  let fsReach: { read: string[]; write: string[] };
+  let fsReach: { read: string[]; write: string[]; writeDeny: string[] };
   try {
     const derived = deriveFsReachPaths(personality, {
       ethosHome: deps.dataDir ?? join(homedir(), '.ethos'),
@@ -172,7 +172,7 @@ export async function* setupTurn(
       cwd: deps.workingDir,
     });
     workingDir = derived.workdir;
-    fsReach = { read: derived.read, write: derived.write };
+    fsReach = { read: derived.read, write: derived.write, writeDeny: derived.writeDeny };
   } catch (err) {
     if (!(err instanceof EmptySubstitutionError)) throw err;
     if (traceId) deps.observability?.endTrace(traceId, 'error');

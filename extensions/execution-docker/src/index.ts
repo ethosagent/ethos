@@ -9,7 +9,12 @@ import { join, resolve as resolvePath } from 'node:path';
 // (packages/core/src/fs-reach.ts). Two copies would drift into silent data
 // loss: a write ScopedStorage permits but no mount backs is written into the
 // container's ephemeral layer and discarded by `docker run --rm`.
-import { deriveFsReachPaths, type FsReachVars, substitute } from '@ethosagent/core';
+import {
+  deriveFsReachPaths,
+  type FsReachVars,
+  personalityWriteDeny,
+  substitute,
+} from '@ethosagent/core';
 import type {
   Constitution,
   ExecChunk,
@@ -1119,6 +1124,17 @@ export class DockerExecutionBackend implements ExecutionBackend {
    * rw, rw wins: write access subsumes read, so the path is mounted rw. (This
    * is also why the default scope — which lists ownDir/cwd in both read and
    * write — resolves cleanly to rw for those roots.)
+   *
+   * The personality's own DEFINITION is mounted read-only (reach-and-containment
+   * 3a, the OS-layer half of `writeDeny`): when any rw mount is `ownDir` or an
+   * ancestor of it, `ownDir` itself gains a `ro` mount and its asset folder
+   * `ownDir/files` a `rw` one. The nested-mount rule above makes that
+   * ro-dir-with-rw-child layout well defined, and a DIRECTORY ro mount also
+   * blocks CREATING a missing `mcp.yaml`, which per-file mounts could not. A
+   * rw mount AT or BELOW a `writeDeny` entry (a declared `ownDir/skills/`) is
+   * downgraded to `ro`. The consequence is that a direct container write to
+   * `ownDir/MEMORY.md` fails with EROFS, loudly — the memory provider writes
+   * it host-side, never through the container.
    */
   mountsFor(p: PersonalityConfig): MountSpec[] {
     const ethosHome = this.config.substitutionVars?.ethosHome ?? join(homedir(), '.ethos');
@@ -1153,6 +1169,23 @@ export class DockerExecutionBackend implements ExecutionBackend {
     // path is seen; the rw-wins guard above then keeps rw regardless of order.
     for (const path of writePaths) add(path, 'rw');
     for (const path of readPaths) add(path, 'ro');
+
+    const within = (child: string, parent: string): boolean =>
+      child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
+    const writeDeny = personalityWriteDeny(ethosHome, p.id).map((d) => resolvePath(d));
+    for (const [path, mount] of byPath) {
+      if (mount.mode === 'rw' && writeDeny.some((deny) => within(path, deny))) {
+        byPath.set(path, { ...mount, mode: 'ro' });
+      }
+    }
+    const ownDir = resolvePath(join(ethosHome, 'personalities', p.id));
+    const coversOwnDir = [...byPath.values()].some(
+      (m) => m.mode === 'rw' && within(ownDir, m.hostPath),
+    );
+    if (coversOwnDir) {
+      byPath.set(ownDir, { hostPath: ownDir, containerPath: ownDir, mode: 'ro' });
+      add(join(ownDir, 'files'), 'rw');
+    }
     return [...byPath.values()];
   }
 

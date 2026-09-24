@@ -237,3 +237,45 @@ describe('personalityAssetDir', () => {
     ).toThrow(EmptySubstitutionError);
   });
 });
+
+// Containment 3a — the personality's own definition is write-denied on EVERY
+// branch. `writeDeny` is derived from `ownDir` alone, so a declared write reach
+// that covers `ownDir` cannot reopen it.
+describe('deriveFsReachPaths — writeDeny', () => {
+  const DEFINITION = [
+    `${OWN_DIR}SOUL.md`,
+    `${OWN_DIR}config.yaml`,
+    `${OWN_DIR}toolset.yaml`,
+    `${OWN_DIR}mcp.yaml`,
+    `${OWN_DIR}tools.yaml`,
+    `${OWN_DIR}ETHOS.md`,
+    `${OWN_DIR}skills/`,
+  ];
+
+  it('lists the seven definition entries under ownDir on the default branch', () => {
+    expect(deriveFsReachPaths(personality(), VARS).writeDeny).toEqual(DEFINITION);
+  });
+
+  it("a declared write: ['${ETHOS_HOME}/'] still returns them", () => {
+    const { write, writeDeny } = deriveFsReachPaths(
+      personality({ write: ['${ETHOS_HOME}/'] }),
+      VARS,
+    );
+    expect(write).toEqual(['/home/tester/.ethos/']);
+    expect(writeDeny).toEqual(DEFINITION);
+  });
+
+  it('a declared workdir does not change them', () => {
+    expect(deriveFsReachPaths(personality({ workdir: '/srv/documents' }), VARS).writeDeny).toEqual(
+      DEFINITION,
+    );
+  });
+
+  it('leaves the asset folder and memory files writable', () => {
+    const { writeDeny } = deriveFsReachPaths(personality(), VARS);
+    expect(writeDeny).not.toContain(`${OWN_DIR}files/`);
+    expect(writeDeny.some((p) => p.startsWith(`${OWN_DIR}files`))).toBe(false);
+    expect(writeDeny).not.toContain(`${OWN_DIR}MEMORY.md`);
+    expect(writeDeny).not.toContain(`${OWN_DIR}USER.md`);
+  });
+});

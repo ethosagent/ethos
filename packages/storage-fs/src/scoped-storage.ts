@@ -30,7 +30,20 @@ export interface ScopedStorageScope {
    * but cannot remove built-in entries.
    */
   alwaysDeny?: readonly string[];
+  /**
+   * Write-only deny list: paths (or `/`-terminated directory prefixes) that
+   * may be READ but never written, even when a `write` prefix covers them.
+   * The per-turn scope passes the personality's own definition here
+   * (`personalityWriteDeny` in `packages/core/src/fs-reach.ts`), so a turn can
+   * `read_file SOUL.md` but cannot rewrite its own `toolset.yaml`. Kept apart
+   * from `alwaysDeny`, which is read+write and system-wide — folding this in
+   * would either make `SOUL.md` unreadable or give the floor two meanings.
+   */
+  writeDeny?: readonly string[];
 }
+
+/** The reason `BoundaryError` carries for a `writeDeny` refusal. */
+const WRITE_DENY_REASON = 'personality definition is operator-owned';
 
 /**
  * Decorator over Storage that enforces a per-scope read/write allowlist
@@ -39,12 +52,16 @@ export interface ScopedStorageScope {
  *
  * Order of checks (any deny wins over any allow):
  *   1. always-deny — request rejected.
+ *   1b. write-deny — WRITES only: request rejected when the path is (or is
+ *      under) a `writeDeny` entry. `remove` and `rename` additionally refuse
+ *      a path that CONTAINS a `writeDeny` entry, because deleting or moving a
+ *      directory rewrites everything below it.
  *   2. allow allowlist — request rejected if no prefix matches.
  *   3. symbolic containment — layers 1 and 2 are lexical, and `resolve()`
  *      is a string operation while a symlink is a filesystem fact. A link
  *      planted inside an allowed prefix pointing outside it passes both.
  *      Layer 3 walks the path segment by segment BELOW the matched prefix
- *      and follows any link it finds, re-judging layers 1 and 2 against
+ *      and follows any link it finds, re-judging layers 1, 1b and 2 against
  *      where the link actually lands (G11).
  *
  * This closes **misdirection**, not **TOCTOU**: an attacker who can swap a
@@ -63,6 +80,9 @@ export interface ScopedStorageScope {
  * reason: `packages/wiring` is a different layer. A FOURTH is `reachable` in
  * `apps/web-api/src/services/documents.service.ts`, guarding the
  * operator-supplied Documents root. **All four must change together.**
+ * Layer 1b (`writeDeny`) exists in exactly two of them — this file and
+ * `ScopedFsImpl.checkReach` (`writeDenyPaths`) — the two boundaries a
+ * personality's turn writes through; those two must change together too.
  *
  * The fourth is NOT equivalent today. It walks with async `lstat` from
  * `node:fs/promises` — so an `lstatSync` grep misses it — and swallows every
@@ -78,6 +98,7 @@ export class ScopedStorage implements Storage {
   private readonly readPrefixes: string[];
   private readonly writePrefixes: string[];
   private readonly denyPrefixes: string[];
+  private readonly writeDenyPrefixes: string[];
 
   constructor(
     private readonly inner: Storage,
@@ -86,6 +107,26 @@ export class ScopedStorage implements Storage {
     this.readPrefixes = scope.read.map(normalizePrefix);
     this.writePrefixes = scope.write.map(normalizePrefix);
     this.denyPrefixes = (scope.alwaysDeny ?? []).map(normalizePrefix);
+    this.writeDenyPrefixes = (scope.writeDeny ?? []).map(normalizePrefix);
+  }
+
+  /** True when `path` is a `writeDeny` entry or lies under one. */
+  private hitsWriteDeny(path: string, kind: 'read' | 'write'): boolean {
+    return kind === 'write' && isPathAllowed(path, this.writeDenyPrefixes);
+  }
+
+  /**
+   * `remove`/`rename` act on a whole subtree, so a directory that CONTAINS a
+   * `writeDeny` entry is refused too — `remove(ownDir, { recursive: true })`
+   * would otherwise delete `toolset.yaml` without ever naming it. Lexical:
+   * the containment test is on the resolved path string.
+   */
+  private checkSubtree(rawPath: string): void {
+    const path = resolve(rawPath);
+    const withSlash = path.endsWith('/') ? path : `${path}/`;
+    if (this.writeDenyPrefixes.some((entry) => resolve(entry).startsWith(withSlash))) {
+      throw new BoundaryError('write', path, this.writeDenyPrefixes, WRITE_DENY_REASON);
+    }
   }
 
   private check(rawPath: string, kind: 'read' | 'write'): void {
@@ -94,6 +135,9 @@ export class ScopedStorage implements Storage {
     const path = resolve(rawPath);
     if (isPathAllowed(path, this.denyPrefixes)) {
       throw new BoundaryError(kind, path, this.denyPrefixes, 'always-deny floor');
+    }
+    if (this.hitsWriteDeny(path, kind)) {
+      throw new BoundaryError(kind, path, this.writeDenyPrefixes, WRITE_DENY_REASON);
     }
     const allowed = kind === 'read' ? this.readPrefixes : this.writePrefixes;
     let prefix = matchAllowedPrefix(path, allowed);
@@ -125,6 +169,11 @@ export class ScopedStorage implements Storage {
           allowed,
           'resolves outside the allowlist through a symbolic link',
         );
+      }
+      // Re-judged on every hop, exactly as the floor is: a link inside the
+      // asset folder pointing at `../toolset.yaml` must not launder a write.
+      if (this.hitsWriteDeny(next, kind)) {
+        throw new BoundaryError(kind, path, this.writeDenyPrefixes, WRITE_DENY_REASON);
       }
       current = next;
       prefix = nextPrefix;
@@ -192,12 +241,15 @@ export class ScopedStorage implements Storage {
 
   async remove(path: string, opts?: StorageRemoveOptions): Promise<void> {
     this.check(path, 'write');
+    this.checkSubtree(path);
     return this.inner.remove(path, opts);
   }
 
   async rename(from: string, to: string): Promise<void> {
     this.check(from, 'write');
     this.check(to, 'write');
+    this.checkSubtree(from);
+    this.checkSubtree(to);
     return this.inner.rename(from, to);
   }
 

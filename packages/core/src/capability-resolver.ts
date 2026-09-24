@@ -31,6 +31,15 @@ export interface CapabilityBackends {
    */
   personalityFsReach?: (personalityId?: string) => { read: string[]; write: string[] };
   /**
+   * Resolves the personality's write-only deny list — its own definition files
+   * (`personalityWriteDeny` in `fs-reach.ts`). Handed to EVERY `ScopedFsImpl`
+   * this resolver builds, whether the tool's write reach is `from-personality`
+   * or declared, so a tool declaring `write: ['~/.ethos/']` still cannot
+   * rewrite the calling personality's `toolset.yaml`. Per call, same reasons
+   * as `personalityFsReach`. Absent → no write-deny list.
+   */
+  personalityFsWriteDeny?: (personalityId?: string) => string[];
+  /**
    * Resolves the full network policy of the personality running the turn. The
    * `allow` list is intersected with each tool's declared `allowedHosts`;
    * `deny` and `allow_private_urls` plus the always-on safety floor
@@ -84,6 +93,11 @@ export function resolveCapabilities(
   const personalityReach = (): { read: string[]; write: string[] } => {
     reachCache ??= backends.personalityFsReach?.(scopeIds.personalityId) ?? { read: [], write: [] };
     return reachCache;
+  };
+  let writeDenyCache: string[] | null = null;
+  const personalityWriteDeny = (): string[] => {
+    writeDenyCache ??= backends.personalityFsWriteDeny?.(scopeIds.personalityId) ?? [];
+    return writeDenyCache;
   };
 
   if (capabilities.network) {
@@ -146,6 +160,7 @@ export function resolveCapabilities(
       new Set(readPaths),
       new Set(writePaths),
       backends.alwaysDenyPaths ?? [],
+      personalityWriteDeny(),
     );
   }
 
@@ -187,6 +202,7 @@ export function resolveCapabilities(
           mergedRead,
           new Set(writePaths),
           backends.alwaysDenyPaths ?? [],
+          personalityWriteDeny(),
         );
       } else if (!result.scopedFs && backends.storage) {
         // No fs_reach declared but attachments present — create read-only ScopedFs
@@ -195,6 +211,7 @@ export function resolveCapabilities(
           attachmentDirs,
           new Set(),
           backends.alwaysDenyPaths ?? [],
+          personalityWriteDeny(),
         );
       }
     }

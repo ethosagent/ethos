@@ -2068,16 +2068,15 @@ importers:
 
   extensions/tools-file:
     dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
-    devDependencies:
-      '@ethosagent/core':
-        specifier: workspace:*
-        version: link:../../packages/core
 
   extensions/tools-goals:
     dependencies:
