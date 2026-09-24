@@ -90,9 +90,9 @@ The personality's `toolset.yaml` is a hard allowlist enforced at the framework l
 
 *Status: Shipped.*
 
-A small set of operations is always-deny, regardless of personality, regardless of approval. The danger predicate fires before any approval check.
+A small set of operations is always-deny, regardless of personality, regardless of approval, on every surface except the web. The danger predicate fires before any approval check. On the CLI, TUI, ACP and gateway loops the terminal and process guard hooks refuse the call outright. The web profile asks instead of blocking: a hardline call always reaches the approval card, never a stored grant or lease, and approving it covers that one call only.
 
-- Source: `apps/web-api/src/services/approval-hook.ts`
+- Source: `packages/wiring/src/danger-predicate.ts` (`hardlineReason`), `packages/wiring/src/compose-tools.ts` (guard hooks, non-web), `apps/web-api/src/services/approvals.service.ts` (web: `requestApproval` and `approve`), pinned by `apps/web-api/src/__tests__/services/approvals-hardline.test.ts`
 - Audit category: `audit.block`
 
 ### Risk classifier (mode-aware, per-call) {#risk-classifier}

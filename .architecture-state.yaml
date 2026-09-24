@@ -277,8 +277,8 @@ register_anchors:
     - { path: extensions/platform-discord/src/blocks/approval.ts, line: 77, contains: "function formatArgs" }
 
   G-APP:
-    - { path: packages/wiring/src/danger-predicate.ts, line: 248, contains: "mode === 'smart' && opts.smartApprove" }
-    - { path: packages/wiring/src/danger-predicate.ts, line: 219, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
+    - { path: packages/wiring/src/danger-predicate.ts, line: 282, contains: "mode === 'smart' && opts.smartApprove" }
+    - { path: packages/wiring/src/danger-predicate.ts, line: 259, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
     - { path: packages/wiring/src/smart-approver.ts, line: 144, contains: "reviewer gave no usable verdict" }
     - { path: packages/wiring/src/smart-approver.ts, line: 149, contains: "reviewer error (fail-closed)" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 55, contains: "export async function enforceBeforeToolCall" }

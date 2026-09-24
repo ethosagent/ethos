@@ -33,6 +33,14 @@ export interface ApprovalRequestInput {
    *  allowlist entry binds to it too, and a request without it never matches
    *  one (`AllowlistRepository.matches`). */
   personalityId?: string;
+  /**
+   * True for a hardline command (`hardlineReason` in
+   * `packages/wiring/src/danger-predicate.ts`), set by `createWebApprovalHook`.
+   * A hardline call is always put in front of a human: `requestApproval`
+   * skips the lease and the allowlist for it, and `approve` stores nothing
+   * for it whatever scope was chosen.
+   */
+  hardline?: boolean;
 }
 
 export type ApprovalDecision = { decision: 'allow' } | { decision: 'deny'; reason: string };
@@ -142,25 +150,31 @@ export class ApprovalsService {
    * store default; `0` disables the timer for this request.
    */
   async requestApproval(req: ApprovalRequestInput, timeoutMs?: number): Promise<ApprovalDecision> {
-    // A lease is checked on EVERY gated call, against the clock, so expiry and
-    // revocation take effect on the next call with no timer (D3-10).
-    const lease = await this.opts.leases?.findActive(
-      req.toolName,
-      req.sessionId,
-      req.personalityId ?? null,
-      Date.now(),
-    );
-    if (lease) {
-      this.audit(req, 'auto', 'lease', `matched lease ${lease.id}, expires ${lease.expiresAt}`, {
-        leaseId: lease.id,
-      });
-      return { decision: 'allow' };
-    }
-    if (await this.opts.allowlist.matches(req.personalityId, req.toolName, req.args)) {
-      // No human in the loop — an allowlist entry decided. Exactly the kind
-      // of silent auto-approval the audit trail exists to make visible.
-      this.audit(req, 'auto', 'allowlist', 'matched a stored allowlist entry');
-      return { decision: 'allow' };
+    // A hardline call skips BOTH stored answers below (openclaw-advisory-fixes
+    // Item 10): one "Allow for 1 hour" or "Any args" on `terminal` would
+    // otherwise approve every hardline command with no human. It always
+    // reaches the modal. Pinned by `approvals-hardline.test.ts`.
+    if (!req.hardline) {
+      // A lease is checked on EVERY gated call, against the clock, so expiry
+      // and revocation take effect on the next call with no timer (D3-10).
+      const lease = await this.opts.leases?.findActive(
+        req.toolName,
+        req.sessionId,
+        req.personalityId ?? null,
+        Date.now(),
+      );
+      if (lease) {
+        this.audit(req, 'auto', 'lease', `matched lease ${lease.id}, expires ${lease.expiresAt}`, {
+          leaseId: lease.id,
+        });
+        return { decision: 'allow' };
+      }
+      if (await this.opts.allowlist.matches(req.personalityId, req.toolName, req.args)) {
+        // No human in the loop — an allowlist entry decided. Exactly the kind
+        // of silent auto-approval the audit trail exists to make visible.
+        this.audit(req, 'auto', 'allowlist', 'matched a stored allowlist entry');
+        return { decision: 'allow' };
+      }
     }
     const approvalId = randomUUID();
     const effectiveTimeout = timeoutMs ?? this.timeoutMs;
@@ -196,6 +210,7 @@ export class ApprovalsService {
         args: req.args,
         reason: req.reason ?? null,
         alwaysAsk: this.isAlwaysAsk(req.toolName),
+        hardline: req.hardline === true,
       };
       this.emitter.emit('pending', req.sessionId, wireRequest);
     });
@@ -210,9 +225,19 @@ export class ApprovalsService {
    * An always-ask tool cannot be allowlisted (D3-12): `exact-args`/`any-args`
    * on one is refused BEFORE the pending approval is consumed, so the modal
    * stays open for a valid answer.
+   *
+   * A hardline call is approved for this one invocation only, whatever
+   * `scope` says: nothing is stored — no allowlist entry, no lease — and the
+   * audit row records the downgrade (`requestedScope`). Resolved rather than
+   * refused, because the human did say yes to THIS call.
    */
-  async approve(approvalId: string, scope: ApprovalScope, decidedBy: string): Promise<void> {
+  async approve(
+    approvalId: string,
+    requestedScope: ApprovalScope,
+    decidedBy: string,
+  ): Promise<void> {
     const pending = this.pending.get(approvalId);
+    const scope: ApprovalScope = pending?.request.hardline ? 'once' : requestedScope;
     if (pending && (scope === 'exact-args' || scope === 'any-args')) {
       if (this.isAlwaysAsk(pending.request.toolName)) {
         throw new EthosError({
@@ -256,6 +281,7 @@ export class ApprovalsService {
     this.audit(p.request, 'approved', decidedBy, p.request.reason ?? 'approved', {
       approvalId,
       scope,
+      ...(scope !== requestedScope ? { requestedScope, downgraded: 'hardline' } : {}),
       ...(lease ? { leaseId: lease.id, expiresAt: lease.expiresAt } : {}),
     });
     p.resolve({ decision: 'allow' });

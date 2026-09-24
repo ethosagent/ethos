@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   createDangerPredicate,
+  hardlineReason,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
 } from '../danger-predicate';
 
@@ -51,6 +52,15 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
       expect(r).toMatch(/recursive force-delete/);
     });
 
+    // openclaw-advisory-fixes Item 10: before, only `terminal` was inspected,
+    // so on web (no process guard hook) a hardline `process_start` was not
+    // flagged at all.
+    it('a hardline process_start command surfaces a reason too', async () => {
+      const pred = createDangerPredicate({ getPersonality: () => person('manual') });
+      const r = await pred(payload('process_start', { command: 'rm -rf /' }));
+      expect(r).toMatch(/recursive force-delete/);
+    });
+
     it('smart mode does NOT auto-approve hardline either', async () => {
       const pred = createDangerPredicate({
         getPersonality: () => person('smart'),
@@ -58,6 +68,26 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
       });
       const r = await pred(payload('terminal', { command: 'rm -rf /' }));
       expect(r).toMatch(/recursive force-delete/);
+    });
+  });
+
+  describe('hardlineReason', () => {
+    it('covers terminal and process_start, and nothing else', () => {
+      expect(hardlineReason(payload('terminal', { command: 'rm -rf /' }))).toMatch(
+        /recursive force-delete/,
+      );
+      expect(hardlineReason(payload('process_start', { command: 'rm -rf ~' }))).toMatch(
+        /recursive force-delete/,
+      );
+      expect(hardlineReason(payload('write_file', { command: 'rm -rf /' }))).toBeNull();
+    });
+
+    it('is null for an ordinary command or a missing / non-string command', () => {
+      expect(hardlineReason(payload('terminal', { command: 'ls -la' }))).toBeNull();
+      expect(hardlineReason(payload('process_start', { command: 'npm run dev' }))).toBeNull();
+      expect(hardlineReason(payload('terminal', {}))).toBeNull();
+      expect(hardlineReason(payload('terminal', { command: 42 }))).toBeNull();
+      expect(hardlineReason(payload('terminal', null))).toBeNull();
     });
   });
 

@@ -150,7 +150,9 @@ The web UI ships the full flow. A `dangerous` call posts an approval card anchor
 
 A stored grant belongs to the personality whose call you approved: another personality asking for the same tool still gets a card (`AllowlistRepository.matches`, pinned by `apps/web-api/src/__tests__/services/approvals-scoping.test.ts`). Grants saved before this scoping existed are kept in `allowlist.json` but match nothing, so each one asks once more.
 
-Allow or Deny resolves the suspended `before_tool_call` hook. The card updates in place to show the outcome. Hardline `blocked` calls never reach the modal — they error out before the prompt.
+Allow or Deny resolves the suspended `before_tool_call` hook. The card updates in place to show the outcome.
+
+Hardline commands (a `terminal` or `process_start` command on the blocklist, such as `rm -rf /`) are different on the web: the web profile asks rather than blocks, so they do reach the card — but it offers only **Just this command**. No stored grant and no one-hour lease can approve a hardline command; you approve each one yourself, every time (`ApprovalsService.requestApproval` and `ApprovalsService.approve`, pinned by `apps/web-api/src/__tests__/services/approvals-hardline.test.ts`).
 
 ### Slack and Telegram
 
@@ -167,7 +169,7 @@ Neither adapter implements `ApprovalCapableAdapter` yet. A `dangerous` call from
 - `ethos personality show <id> --json | jq .config.safety` — prints `{"approvalMode": "<mode>"}`.
 - Save `approvalMode: off` on a personality with `platform: telegram` — the next personality load throws the rejection above.
 - Save `approvalMode: invalid` — the next load throws `Invalid approvalMode: "invalid". Expected one of: manual, smart, off`.
-- In the web UI, ask the personality to run a hardline-matching command (e.g. `rm -rf ~/.ssh`) — the call surfaces as a tool error, not as an approval card, confirming the hardline floor is upstream of the modal.
+- In the web UI, give a personality **Any args for this tool** on `terminal`, then ask it to run a hardline-matching command (e.g. `rm -rf ~/.ssh`) — a card still appears, offering only **Just this command**, confirming no stored grant can approve a hardline command.
 - On `approvalMode: smart`, ask the personality to write a file in the web UI. Either no card appears (the reviewer approved) or the card's reason reads `denied by reviewer: <one sentence>` — both confirm the reviewer ran.
 
 ## Troubleshoot

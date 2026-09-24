@@ -106,6 +106,7 @@ describe('entity schemas', () => {
       args: { command: 'rm -rf /tmp/x' },
       reason: 'destructive',
       alwaysAsk: false,
+      hardline: false,
     };
     expect(ApprovalRequestSchema.parse(r)).toEqual(r);
   });
@@ -137,6 +138,7 @@ describe('SSE event union', () => {
         args: {},
         reason: null,
         alwaysAsk: false,
+        hardline: false,
       },
     },
     { type: 'approval.resolved', approvalId: 'ap_1', decision: 'allow', decidedBy: 'tab-A' },

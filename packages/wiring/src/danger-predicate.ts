@@ -4,7 +4,8 @@
 // the full createAgentLoop wiring (which depends on plugin-loader,
 // sandbox-docker, etc. and chokes outside the monorepo install).
 
-import { checkCommand } from '@ethosagent/tools-terminal';
+import { checkCommand as checkProcessCommand } from '@ethosagent/tools-process';
+import { checkCommand as checkTerminalCommand } from '@ethosagent/tools-terminal';
 import type { BeforeToolCallPayload, PersonalityConfig } from '@ethosagent/types';
 
 /** Result returned by a danger predicate. `null` = no approval needed. */
@@ -182,6 +183,34 @@ export interface CreateDangerPredicateOptions {
 export { canonicalizeArgs } from '@ethosagent/core';
 
 /**
+ * The hardline reason for a call, or `null` when it is not hardline.
+ *
+ * Hardline = a `terminal` or `process_start` `command` that the tool's own
+ * blocklist refuses (`checkCommand` in `@ethosagent/tools-terminal` and
+ * `@ethosagent/tools-process` respectively — the same checks
+ * `createTerminalGuardHook` / `createProcessGuardHook` hard-block with on
+ * every non-web profile, `compose-tools.ts`).
+ *
+ * Used twice: as the danger predicate's first branch, and by the web profile
+ * (injected as `isHardline` into `createWebApprovalHook` by `createWebApi`,
+ * `apps/web-api/src/index.ts`) so `ApprovalsService` can refuse to let a
+ * stored grant or a lease decide a hardline call.
+ */
+export function hardlineReason(payload: BeforeToolCallPayload): string | null {
+  const check =
+    payload.toolName === 'terminal'
+      ? checkTerminalCommand
+      : payload.toolName === 'process_start'
+        ? checkProcessCommand
+        : undefined;
+  if (!check) return null;
+  const args = payload.args as { command?: unknown } | null | undefined;
+  if (typeof args?.command !== 'string' || args.command === '') return null;
+  const result = check(args.command);
+  return result.dangerous ? result.reason : null;
+}
+
+/**
  * Default danger predicate.
  *
  * **Deny rules are NOT evaluated here.** `safety.denyRules` is the hard floor
@@ -193,9 +222,20 @@ export { canonicalizeArgs } from '@ethosagent/core';
  * `packages/core/src/agent-loop/__tests__/deny-rule-gate.test.ts`.
  *
  * Resolution order:
- *   1. Hardline command  → return reason (Ch.4a — non-overridable; the
- *                          terminalGuardHook hard-blocks separately so
- *                          this is belt + suspenders).
+ *   1. Hardline command ({@link hardlineReason}) → return the reason, in
+ *      every mode: `off` and a `smart` reviewer `approve` never skip it.
+ *      What that reason then MEANS depends on the surface:
+ *        - Every non-web profile also registers `createTerminalGuardHook` /
+ *          `createProcessGuardHook` (`compose-tools.ts`), which refuse the
+ *          call outright — no one can approve it.
+ *        - The web profile registers neither guard; its approval hook is the
+ *          only gate, and a human MAY approve one hardline call there (the
+ *          web profile's "ask, don't block" design, `approval-hook.ts`).
+ *          What is refused is anything standing in for that human:
+ *          `ApprovalsService.requestApproval` skips both the lease and the
+ *          allowlist for a hardline call, and `ApprovalsService.approve`
+ *          stores nothing for one whatever scope was chosen. Pinned by
+ *          `apps/web-api/src/__tests__/services/approvals-hardline.test.ts`.
  *   2. Flagged tool / non-hardline danger → consult approvalMode. The flag set
  *      is `alwaysAsk` under manual and off, and
  *      `alwaysAsk ∪ SMART_MODE_CONSEQUENTIAL_TOOLS` under smart:
@@ -218,16 +258,10 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
   // Built once; `smart` is the only mode that sees it (see the const's docs).
   const smartAlwaysAsk = new Set([...alwaysAsk, ...SMART_MODE_CONSEQUENTIAL_TOOLS]);
   return async (payload) => {
-    // Hardline command first — non-overridable in every mode.
-    let hardlineReason: string | null = null;
-    if (payload.toolName === 'terminal') {
-      const args = payload.args as { command?: string } | null | undefined;
-      if (args?.command) {
-        const result = checkCommand(args.command);
-        if (result.dangerous) hardlineReason = result.reason;
-      }
-    }
-    if (hardlineReason) return hardlineReason;
+    // Hardline first, in every mode — see the resolution order above for what
+    // enforces it on each surface.
+    const hardline = hardlineReason(payload);
+    if (hardline) return hardline;
 
     const safety = opts.getPersonality?.(payload)?.safety;
 
