@@ -33,7 +33,9 @@ import { join } from 'node:path';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import {
   type EthosConfig,
+  ethosCronDir,
   ethosDir,
+  ethosScriptsDir,
   loadConfigStrict,
   type WebhookHookConfig,
 } from '@ethosagent/config';
@@ -420,6 +422,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   });
   const scheduler = new CronScheduler({
     storage,
+    cronDir: ethosCronDir(),
+    scriptsDir: ethosScriptsDir(),
     logger,
     ...(cfg.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: cfg.cron.maxParallelJobs }
@@ -1457,6 +1461,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       {
         storage,
         executionBackend: webhookPrefilterBackend,
+        scriptsDir: ethosScriptsDir(),
         stdin: opts.stdin,
         label: 'prefilter',
       },

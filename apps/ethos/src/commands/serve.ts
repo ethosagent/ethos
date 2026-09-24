@@ -20,7 +20,9 @@ import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import {
   configParseNotices,
   type EthosConfig,
+  ethosCronDir,
   ethosDir,
+  ethosScriptsDir,
   readConfig,
   readRawConfig,
   resolveLearningReplay,
@@ -622,6 +624,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const outbox = outboxSide.wiring;
   cronScheduler = new CronScheduler({
     storage: getStorage(),
+    cronDir: ethosCronDir(),
+    scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, logLevel),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }

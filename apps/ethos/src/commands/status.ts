@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { type EthosConfig, ethosDir, readRawConfig } from '@ethosagent/config';
+import { type EthosConfig, ethosCronDir, ethosDir, readRawConfig } from '@ethosagent/config';
 import { backupDirectory } from '@ethosagent/wiring';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { buildVersionInfo } from '../version-info';
@@ -133,7 +133,7 @@ export async function runStatus(cmdArgs: string[] = []): Promise<void> {
     console.log(`${c.dim}- cron          no scheduled jobs yet${c.reset}`);
   } else if (cron.status === 'unreadable') {
     console.log(
-      `${W} ${c.bold}cron${c.reset}          store unreadable or malformed ${c.dim}(${join(ethosDir(), 'cron', 'jobs.json')}: ${cron.detail})${c.reset}`,
+      `${W} ${c.bold}cron${c.reset}          store unreadable or malformed ${c.dim}(${join(ethosCronDir(), 'jobs.json')}: ${cron.detail})${c.reset}`,
     );
   } else {
     console.log(
@@ -315,7 +315,7 @@ export type CronStoreState =
   | { status: 'unreadable'; detail: string };
 
 export function countCronJobs(): CronStoreState {
-  const path = join(ethosDir(), 'cron', 'jobs.json');
+  const path = join(ethosCronDir(), 'jobs.json');
   if (!existsSync(path)) return { status: 'absent' };
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'));
