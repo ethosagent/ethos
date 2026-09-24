@@ -184,14 +184,9 @@ export interface AgentLoopConfig {
     sessionId: string;
     turnId: string;
   }) => void;
-  /** v2.2 — Pre-turn credential check. Returns the first missing credential,
-   *  or null if all required credentials are present. `scope` names the turn's
-   *  personality and the plugins it may use, so a plugin the personality
-   *  cannot reach never refuses its turn. Opt-in twice: when undefined the
-   *  check is skipped, and it runs only for a run whose
-   *  `RunOptions.credentialPrompt` is true. Wiring provides it
-   *  (`buildCredentialCheck`, packages/wiring/src/credential-check.ts). The
-   *  check must not throw — `stages/turn-setup.ts` awaits it with no catch. */
+  /** v2.2 — Pre-turn credential check (first missing credential, or null). Runs only when
+   *  set AND the run passes `credentialPrompt`; `scope` = the turn's personality + allowed
+   *  plugins. Must not throw. Built by `buildCredentialCheck` (packages/wiring). */
   credentialCheck?: (
     sessionKey: string,
     pendingUserMessage: string,
@@ -283,15 +278,7 @@ export interface RunOptions extends MemoryPrefetchGate {
   jobId?: string;
   /** openclaw-9.5 D30 — a parent-review turn's job id → `ToolContext.reviewOfJobId`, verbatim. */
   reviewOfJobId?: string;
-  /**
-   * openclaw-9.5 item 1 — this run's surface consumes `credential_required`
-   * (masked input, a web link, or a printed instruction) and resubmits
-   * `pendingUserMessage` as a fresh turn. Only then does the pre-turn
-   * `AgentLoopConfig.credentialCheck` run (`stages/turn-setup.ts`); absent,
-   * the turn runs exactly as before and a plugin missing a credential fails
-   * its own call. Set by CLI chat, the TUI and web chat (via AgentBridge),
-   * ACP, `ethos -z` and gateway lanes.
-   */
+  /** openclaw-9.5 item 1 — the surface answers `credential_required`; see stages/turn-setup.ts. */
   credentialPrompt?: boolean;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
   origin?: string;

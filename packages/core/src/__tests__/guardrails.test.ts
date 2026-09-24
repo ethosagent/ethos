@@ -178,7 +178,11 @@ describe('Orchestrator guardrails', () => {
     // spread into the internal `opts` passed to `processTools`, exactly the
     // `jobId` precedent. Pass-through only; the one-hop refusal lives in
     // extensions/tools-delegation (`delegate_task`).
-    expect(lineCount).toBeLessThanOrEqual(1036);
+    // Bumped 1036 -> 1038 (openclaw-9.5-adoption item 1): the `credentialPrompt`
+    // RunOptions field (one-line doc + declaration) and the `scope` parameter
+    // on `credentialCheck`, whose doc was compressed to its old length. The
+    // gate and the call live in agent-loop/stages/turn-setup.ts.
+    expect(lineCount).toBeLessThanOrEqual(1038);
   });
 
   it('no stage file exceeds 700 lines', () => {
