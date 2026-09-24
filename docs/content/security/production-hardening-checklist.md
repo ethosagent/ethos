@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: production-hardening-checklist
 time: "30 min"
-updated: 2026-06-09
+updated: 2026-09-24
 ---
 
 ## Task
@@ -250,24 +250,36 @@ For a step-by-step rotation procedure, see [Bot token rotation playbook](./bot-t
 
 **Verify:** Perform a dry-run rotation of one non-critical token. Confirm the gateway reconnects with the new token and the old token is revoked.
 
-### 11. Enable admin panel token authentication
+### 11. Scope API keys and keep the admin panel off
 
-Generate an admin token via `ethos token create`. Configure the web API to require the token on every request. Confirm unauthenticated requests receive `401 Unauthorized`.
+The web API always requires a credential on `/rpc/*`: the `ethos_auth` cookie from the sign-in URL `ethos serve` prints, or a bearer API key. There is nothing to switch on. Harden what is already there:
+
+- If you do not use the admin panel, leave `admin.enabled` unset. Admin procedures then refuse every caller with `403`.
+- Mint each API key with the narrowest scope it needs: `ethos api-key create --name <label> --scopes sessions:read`.
+- Revoke keys nobody uses. List them with `ethos api-key list`, then run `ethos api-key revoke <prefix>`.
 
 **Verify:**
 
 ```bash
-# Request without token — should return 401
-curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/sessions
+# No credential — should return 401
+curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \
+  -d '{"json":{}}' http://localhost:3000/rpc/sessions/list
 # 401
 
-# Request with token — should return 200
-curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ETHOS_TOKEN" \
-  http://localhost:3000/api/sessions
+# API key with sessions:read — should return 200
+curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ETHOS_API_KEY" \
+  -d '{"json":{}}' http://localhost:3000/rpc/sessions/list
 # 200
+
+# The same key against the admin namespace — should return 403
+curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ETHOS_API_KEY" \
+  -d '{"json":{}}' http://localhost:3000/rpc/admin/getStatus
+# 403
 ```
 
-See [Security controls -- admin panel token authentication](./controls.md#admin-panel-token-auth).
+See [Security controls -- web dashboard and admin authentication](./controls.md#admin-panel-token-auth).
 
 ### 12. Restrict CORS for remote desktop connections
 
@@ -328,7 +340,8 @@ If every step above passes, the deployment is hardened.
 | `observability.db` is empty | Database path misconfigured or the process lacks write permission | Check `observability.db` path in config; confirm the process user can write to it |
 | Container crashes on startup with read-only FS | `~/.ethos/` not mounted as a writable volume | Mount a persistent volume at the `~/.ethos/` path |
 | `ethos config validate --strict` reports missing personality | Bot binding references a personality ID that does not exist | Create the personality directory or fix the `botKey` mapping |
-| Admin panel returns `401` for all requests | Token not generated or not passed in the `Authorization` header | Run `ethos token create` and pass the token as `Bearer <token>` |
+| Web UI returns `401` for every request | No `ethos_auth` cookie, or the cookie no longer matches the stored token | Open the sign-in URL `ethos serve` prints (`?t=<token>`) again |
+| Admin panel returns `403` | `admin.enabled: true` is not set, or the request used an API key | Set `admin.enabled: true` in `config.yaml` and use the web UI; API keys cannot reach admin procedures |
 | CORS error in Mission Control desktop app | `cors.allowedOrigins` does not include the desktop app origin | Add the exact origin to `cors.allowedOrigins` in `config.yaml` |
 | Dashboard query returns data from a write statement | Plugin bypasses `registerDataSource` with direct DB access | Audit plugin code; route all queries through `registerDataSource` |
 
