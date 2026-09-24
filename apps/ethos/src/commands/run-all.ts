@@ -30,16 +30,20 @@ const STABLE_THRESHOLD_MS = 60_000;
 const MAX_RESTARTS_IN_WINDOW = 10;
 const RESTART_WINDOW_MS = 5 * 60_000;
 /**
- * The slowest child's own bounded SIGTERM path (F06). `ethos gateway` first
- * drains its approval cards (`APPROVAL_SHUTDOWN_DRAIN_MS`, commands/gateway.ts)
- * and its in-flight turns (`SHUTDOWN_DRAIN_TIMEOUT_MS`, extensions/gateway),
- * then disposes its runtimes (`DISPOSE_BEFORE_EXIT_GRACE_MS`); `ethos serve`'s
- * chat close + listener flush + disposal is shorter. The two drains are not
- * importable here without loading the whole gateway into the supervisor, so
- * they are restated — and pinned against their definitions by
- * `__tests__/run-all.test.ts`, which fails if either grows past this.
+ * The slowest child's own bounded SIGTERM path (F06). Every await on
+ * `ethos gateway start`'s shutdown has a deadline, and this is their sum:
+ * the approval-card drain (`APPROVAL_SHUTDOWN_DRAIN_MS`, commands/gateway.ts),
+ * four `boundedShutdownStep`s — outbox drain, health-file remove, call-capture
+ * ownership stop, adapters stop — at `SHUTDOWN_STEP_TIMEOUT_MS` each
+ * (lib/bounded-shutdown-step.ts), `Gateway.shutdown` whose notices AND drain
+ * share one `SHUTDOWN_DRAIN_TIMEOUT_MS` (extensions/gateway), then runtime
+ * disposal (`DISPOSE_BEFORE_EXIT_GRACE_MS`). `ethos serve`'s path — chat close
+ * (`CLOSE_GRACE_MS`), four steps of its own, disposal — is shorter. The
+ * constants are not importable here without loading the whole gateway into the
+ * supervisor, so they are restated — and pinned against their definitions, and
+ * the step count against gateway.ts, by `__tests__/run-all.test.ts`.
  */
-const CHILD_PRE_DISPOSE_DRAIN_MS = 5_000 + 10_000;
+const CHILD_PRE_DISPOSE_DRAIN_MS = 5_000 + 4 * 3_000 + 10_000;
 const CHILD_SHUTDOWN_BUDGET_MS = CHILD_PRE_DISPOSE_DRAIN_MS + DISPOSE_BEFORE_EXIT_GRACE_MS;
 /** SIGKILL only once a child has overrun its own bounded shutdown, plus a
  *  margin for the exit itself — earlier kills it mid-disposal. */

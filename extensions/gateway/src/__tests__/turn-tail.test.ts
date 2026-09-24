@@ -877,6 +877,43 @@ describe('Gateway.shutdown waits for the turns it aborted', () => {
     l.release();
     await turn;
   });
+
+  // `drainTimeoutMs` bounds the whole call: a notice send that never settles
+  // is left behind at the bound, and the drain does not get a fresh budget on
+  // top of it.
+  it('a hung notice send: shutdown still returns within one drain bound, and records it', async () => {
+    const l = abortableLoop('ignore');
+    const blocks: Array<{ code?: string; details?: Record<string, unknown> }> = [];
+    const gw = new Gateway({
+      bots: [{ botKey: 'bot-a', loop: l.loop, binding: { type: 'personality', name: 'default' } }],
+      clarifySweepIntervalMs: 0,
+      clarifyEscalationDelayMs: 0,
+      observability: {
+        recordSafetyBlock: (o) => blocks.push(o),
+        recordChannelAllow: () => {},
+        recordChannelDeny: () => {},
+      },
+    });
+    const out = recordingAdapter();
+    out.adapter.send = vi.fn(() => new Promise<DeliveryResult>(() => {}));
+    const turn = gw.handleMessage(msg('hi'), out.adapter).catch(() => {});
+    await waitUntil(() => l.state.started === 1);
+
+    const t0 = Date.now();
+    await gw.shutdown({ notify: 'INTERRUPTED', drainTimeoutMs: 150 });
+    const elapsed = Date.now() - t0;
+
+    expect(elapsed).toBeGreaterThanOrEqual(140);
+    expect(elapsed).toBeLessThan(1_000);
+    expect(blocks.find((b) => b.code === 'gateway.shutdown_notify_timeout')?.details).toEqual({
+      stillPending: 1,
+      timeoutMs: 150,
+    });
+    // The turn ignoring the abort is recorded too — with no time left to wait.
+    expect(blocks.some((b) => b.code === 'gateway.shutdown_drain_timeout')).toBe(true);
+    l.release();
+    await turn;
+  });
 });
 
 // Ported from the final-pass verifier's adversarial scenarios.
