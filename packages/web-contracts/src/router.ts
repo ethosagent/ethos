@@ -13,6 +13,7 @@ import {
   A2aPeerRowSchema,
   ApiKeyMetadataSchema,
   ApiKeyScopeSchema,
+  ApprovalLeaseSchema,
   ApprovalScopeSchema,
   BackgroundJobDetailSchema,
   BackgroundJobSummarySchema,
@@ -943,6 +944,24 @@ const ToolDenyInput = z.object({
   reason: z.string().optional(),
 });
 const ToolDenyOutput = z.object({ ok: z.literal(true) });
+
+// ---------------------------------------------------------------------------
+// Approvals — time-limited grants (reach-and-containment 3b). Listed and
+// revoked from Settings → Approvals; granted through `tools.approve` with
+// scope `lease-1h`. Not in the API-key SCOPE_MAP, so cookie-only.
+// ---------------------------------------------------------------------------
+
+const ApprovalLeasesListOutput = z.object({ leases: z.array(ApprovalLeaseSchema) });
+const ApprovalLeasesRevokeInput = z.object({ id: z.string().min(1) });
+const ApprovalLeasesRevokeOutput = z.object({ ok: z.literal(true) });
+
+/** @stable v1 */
+const approvals = {
+  leases: {
+    list: oc.output(ApprovalLeasesListOutput),
+    revoke: oc.input(ApprovalLeasesRevokeInput).output(ApprovalLeasesRevokeOutput),
+  },
+};
 
 const ToolsCatalogInput = z.object({});
 const ToolsCatalogOutput = z.object({
@@ -5968,6 +5987,7 @@ export const contract = {
   personalities,
   chat,
   tools,
+  approvals,
   clarify,
   onboarding,
   config,

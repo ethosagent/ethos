@@ -17,6 +17,7 @@ import {
   DefaultToolResultReducerRegistry,
   deriveFsReachPaths,
   FileClarifyStore,
+  personalityWriteDeny,
 } from '@ethosagent/core';
 import { DockerExecutionBackend } from '@ethosagent/execution-docker';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
@@ -180,6 +181,22 @@ export function createPersonalityFsReachResolver(
     }
     return derivePersonalityFsReach(person, vars, log);
   };
+}
+
+/**
+ * The `personalityFsWriteDeny` resolver handed to `CapabilityBackends` — the
+ * calling personality's own definition files, which every `ScopedFsImpl`
+ * refuses to write (`personalityWriteDeny` in `@ethosagent/core`). It needs no
+ * registry lookup for a named id: the list depends only on `ethosHome` and the
+ * id itself. An absent id resolves the default personality, the same
+ * personality `createPersonalityFsReachResolver` resolves for it.
+ */
+export function createPersonalityFsWriteDenyResolver(
+  personalities: Pick<PersonalityRegistry, 'getDefault'>,
+  ethosHome: string,
+): (personalityId?: string) => string[] {
+  return (personalityId?: string) =>
+    personalityWriteDeny(ethosHome, personalityId ?? personalities.getDefault().id);
 }
 
 /**
@@ -494,6 +511,7 @@ export async function buildInfrastructure(
       { ethosHome: dataDir, cwd: wiringCtx.workingDir },
       log,
     ),
+    personalityFsWriteDeny: createPersonalityFsWriteDenyResolver(personalities, dataDir),
     personalityNetworkPolicy: createPersonalityNetworkPolicyResolver(personalities, log),
     safeFetch,
     alwaysDenyPaths: defaultAlwaysDeny(),

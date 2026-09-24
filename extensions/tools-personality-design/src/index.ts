@@ -223,7 +223,7 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
         },
       },
     },
-    async execute(raw, _ctx): Promise<ToolResult> {
+    async execute(raw, ctx): Promise<ToolResult> {
       const args = raw as ScaffoldPersonalityArgs;
       // Validation
       const kebabRe = /^[a-z][a-z0-9-]*$/;
@@ -231,6 +231,19 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
         return {
           ok: false,
           error: `Invalid personality ID "${args.id}": must be kebab-case (lowercase letters, digits, hyphens, starting with a letter).`,
+          code: 'input_invalid',
+        };
+      }
+      // Scaffold creates NEW personalities only (reach-and-containment D3-6).
+      // This tool writes through the compose-time Storage, not the turn's
+      // scoped storage, so the per-turn write-deny list never sees it: without
+      // these two refusals a personality holding `personality_design` could
+      // overwrite its own toolset.yaml by scaffolding its own id. Overwriting
+      // an existing personality is an operator edit through the registry.
+      if (args.id === ctx.personalityId) {
+        return {
+          ok: false,
+          error: `scaffold creates new personalities only: "${args.id}" is the personality running this turn, and a personality cannot rewrite its own definition.`,
           code: 'input_invalid',
         };
       }
@@ -258,6 +271,13 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
       }
 
       const base = join(homedir(), '.ethos', 'personalities', args.id);
+      if (await storage.exists(join(base, 'config.yaml'))) {
+        return {
+          ok: false,
+          error: `scaffold creates new personalities only: "${args.id}" already exists. Editing an existing personality is an operator action (web Personalities tab or an editor).`,
+          code: 'input_invalid',
+        };
+      }
 
       // Serialize config.yaml — all values go through yamlScalar to
       // prevent newline injection that could add fs_reach or other keys.

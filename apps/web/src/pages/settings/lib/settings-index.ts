@@ -908,6 +908,16 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
     { key: 'approvalMode', formName: 'approvalMode', label: 'Approval mode' },
     { key: 'admin.enabled', formName: 'adminEnabled', label: 'Enable admin panel', advanced: true },
   ]),
+  ...group('security', 'approval-leases', [
+    {
+      key: null,
+      label: 'Active approval leases',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Lease store (rpc.approvals.leases.list/revoke, <dataDir>/approval-leases.json), not a config.yaml key.',
+    },
+  ]),
   ...group('security', 'named-secrets', [
     {
       key: null,

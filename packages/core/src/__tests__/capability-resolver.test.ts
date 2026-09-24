@@ -441,3 +441,98 @@ describe('resolveCapabilities', () => {
     expect(result.scopedProcess).toBeUndefined();
   });
 });
+
+// Containment 3a — every `ScopedFsImpl` the resolver builds carries the calling
+// personality's write-deny list. The write-deny check runs before the reach
+// allowlist, so the refusal names the definition even on the attachments-only
+// branch, whose write set is empty.
+describe('resolveCapabilities — personality write-deny', () => {
+  const DENIED = '/home/u/.ethos/personalities/bob/toolset.yaml';
+  const storage = {
+    read: vi.fn().mockResolvedValue('content'),
+    readBytes: vi.fn(),
+    write: vi.fn(),
+    exists: vi.fn(),
+    list: vi.fn(),
+    mtime: vi.fn(),
+    listEntries: vi.fn(),
+    append: vi.fn(),
+    writeAtomic: vi.fn(),
+    mkdir: vi.fn(),
+    remove: vi.fn(),
+    rename: vi.fn(),
+    chmod: vi.fn(),
+  };
+  const attachmentCache = {
+    write: vi.fn(),
+    clear: vi.fn(),
+    pruneOlderThan: vi.fn(),
+    resolveLocalPath: (url: string) => url.replace('file://', ''),
+  };
+  const inboundAttachments = [
+    {
+      type: 'image' as const,
+      ref: 'att-1',
+      url: 'file:///tmp/ethos-cache/sess1/photo.jpg',
+      mimeType: 'image/jpeg',
+    },
+  ];
+  const writeDenyFor = vi.fn((id?: string) => [
+    `/home/u/.ethos/personalities/${id ?? 'default'}/toolset.yaml`,
+  ]);
+  const backends = (withAttachments: boolean): CapabilityBackends => ({
+    storage,
+    personalityFsReach: () => ({ read: ['/home/u/.ethos/'], write: ['/home/u/.ethos/'] }),
+    personalityFsWriteDeny: writeDenyFor,
+    ...(withAttachments ? { attachmentCache, inboundAttachments } : {}),
+  });
+  const refused = /^PATH_NOT_REACHABLE: .*personality definition is operator-owned/;
+
+  it('plain fs_reach branch', async () => {
+    const result = resolveCapabilities(
+      'write_file',
+      { fs_reach: { read: 'from-personality', write: 'from-personality' } },
+      { sessionId: 's', personalityId: 'bob' },
+      backends(false),
+    );
+    await expect(result.scopedFs?.write(DENIED, 'x')).rejects.toThrow(refused);
+    await expect(result.scopedFs?.read(DENIED)).resolves.toBe('content');
+    expect(writeDenyFor).toHaveBeenCalledWith('bob');
+  });
+
+  it('attachments merge branch', async () => {
+    const result = resolveCapabilities(
+      'vision_analyze',
+      {
+        attachments: { kinds: ['image'] },
+        fs_reach: { read: 'from-personality', write: 'from-personality' },
+      },
+      { sessionId: 's', personalityId: 'bob' },
+      backends(true),
+    );
+    await expect(result.scopedFs?.read('/tmp/ethos-cache/sess1/photo.jpg')).resolves.toBe(
+      'content',
+    );
+    await expect(result.scopedFs?.write(DENIED, 'x')).rejects.toThrow(refused);
+  });
+
+  it('attachments-only branch', async () => {
+    const result = resolveCapabilities(
+      'vision_analyze',
+      { attachments: { kinds: ['image'] } },
+      { sessionId: 's', personalityId: 'bob' },
+      backends(true),
+    );
+    await expect(result.scopedFs?.write(DENIED, 'x')).rejects.toThrow(refused);
+  });
+
+  it('a tool-declared write list does not escape it', async () => {
+    const result = resolveCapabilities(
+      'scaffold_like',
+      { fs_reach: { write: ['/home/u/.ethos/personalities/'] } },
+      { sessionId: 's', personalityId: 'bob' },
+      backends(false),
+    );
+    await expect(result.scopedFs?.write(DENIED, 'x')).rejects.toThrow(refused);
+  });
+});

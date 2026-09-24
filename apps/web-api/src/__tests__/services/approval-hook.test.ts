@@ -120,6 +120,21 @@ describe('createWebApprovalHook', () => {
     expect(await hook(payload())).toBeNull();
     expect(pending).toBe(false);
   });
+
+  it("forwards the payload's personalityId so a lease can bind to it (3b)", async () => {
+    const seen: Array<string | undefined> = [];
+    const spy = {
+      requestApproval: async (req: { personalityId?: string }) => {
+        seen.push(req.personalityId);
+        return { decision: 'allow' as const };
+      },
+    } as unknown as ApprovalsService;
+    const hook = createWebApprovalHook({ approvals: spy, isDangerous: async () => 'gated' });
+
+    await hook(payload({ personalityId: 'engineer' }));
+    await hook(payload());
+    expect(seen).toEqual(['engineer', undefined]);
+  });
 });
 
 async function tickUntil(predicate: () => boolean, timeoutMs = 1000): Promise<void> {

@@ -181,9 +181,10 @@ export interface TurnSetup {
    * derivation is not idempotent (a declared workdir of `${CWD}/out` would
    * compound if the resolved workdir were fed back in as `cwd`), and one
    * derivation is the only way the app-layer prefixes and the workdir can be
-   * guaranteed to describe the same filesystem.
+   * guaranteed to describe the same filesystem. `writeDeny` (the
+   * personality's own definition files) rides the same scope.
    */
-  fsReach: { read: string[]; write: string[] };
+  fsReach: { read: string[]; write: string[]; writeDeny: string[] };
   obsConfig: PersonalityObservabilityConfig | undefined;
   traceId: string | undefined;
   turnNumber: number;

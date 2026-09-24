@@ -260,6 +260,7 @@ describe('SETTINGS_INDEX self-saving sections match what this test covers', () =
       'models/per-personality-routing',
       'security/a2a',
       'security/api-keys',
+      'security/approval-leases',
       'security/named-secrets',
       'security/web-search-defaults',
       'voice/wake-routes',
@@ -279,9 +280,12 @@ describe('every self-saving section renders SelfSaveMarker', () => {
   describe('security — SecurityPane, checked per section', () => {
     const html = markup(SecurityPane);
 
-    it.each(['named-secrets', 'web-search-defaults', 'api-keys', 'a2a'])('%s', (id) => {
-      expect(sectionBlock(html, id)).toContain(MARKER_TEXT);
-    });
+    it.each(['approval-leases', 'named-secrets', 'web-search-defaults', 'api-keys', 'a2a'])(
+      '%s',
+      (id) => {
+        expect(sectionBlock(html, id)).toContain(MARKER_TEXT);
+      },
+    );
   });
 
   // The registry sections render nothing until `modelRegistry.list` resolves,

@@ -27,6 +27,7 @@ import type {
 } from '@ethosagent/types';
 import type { ActivityEvent, SseEvent } from '@ethosagent/web-contracts';
 import {
+  APPROVAL_SURFACE_ALWAYS_ASK,
   createLearningInbox,
   DisposerStack,
   type IdentityMap,
@@ -62,6 +63,7 @@ import {
   parseWakeRouting,
 } from './repositories/config.repository';
 import { EvolverRepository } from './repositories/evolver.repository';
+import { LeaseRepository } from './repositories/lease.repository';
 import { PlatformsRepository } from './repositories/platforms.repository';
 import { WebTokenRepository } from './repositories/web-token.repository';
 import { createRoutes } from './routes';
@@ -855,7 +857,13 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   const chatRepo = new ChatRepository(opts.sessionStore);
   const completionsRepo = new CompletionsRepository(opts.sessionStore);
   const configRepo = new ConfigRepository({ dataDir: opts.dataDir, storage, secrets });
-  const allowlistRepo = new AllowlistRepository({ dataDir: opts.dataDir, storage });
+  // Always-ask tools can never be allowlisted, only leased (reach-and-containment D3-12).
+  const allowlistRepo = new AllowlistRepository({
+    dataDir: opts.dataDir,
+    storage,
+    alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+  });
+  const leaseRepo = new LeaseRepository({ dataDir: opts.dataDir, storage });
   // Gap 11 — lazy getter so skills' `requires.tools` gates see the live
   // registry (including MCP/plugin tools registered after boot). Omitted
   // when no registry is wired: the tools gate is skipped, not failed.
@@ -986,6 +994,8 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   });
   const approvalsService = new ApprovalsService({
     allowlist: allowlistRepo,
+    leases: leaseRepo,
+    alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     // `!== undefined`, not truthiness — `0` ("no timeout") must be threadable.
     ...(opts.approvalTimeoutMs !== undefined ? { timeoutMs: opts.approvalTimeoutMs } : {}),
     ...(opts.approvalObservability ? { observability: opts.approvalObservability } : {}),

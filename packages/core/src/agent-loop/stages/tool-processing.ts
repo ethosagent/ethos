@@ -81,7 +81,7 @@ export interface ToolProcessingContext {
   workingDir: string;
   /** The turn's `fs_reach` allowlist, from the same derivation as
    *  `workingDir` — see `TurnSetup.fsReach`. */
-  fsReach: { read: string[]; write: string[] };
+  fsReach: { read: string[]; write: string[]; writeDeny: string[] };
   traceId: string | undefined;
   obsConfig: PersonalityObservabilityConfig | undefined;
   effectiveModel: string;

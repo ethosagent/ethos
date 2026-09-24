@@ -382,6 +382,11 @@ describe('mountsFor', () => {
       const readResolved = reach?.read?.length ? reach.read.map(sub) : READ_DEFAULT;
       const writeResolved = reach?.write?.length ? reach.write.map(sub) : WRITE_DEFAULT;
       const expected = new Set([...readResolved, ...writeResolved]);
+      // Containment 3a: a rw mount covering the personality's own dir adds
+      // the rw asset-folder child beneath the now-ro `ownDir`.
+      if (writeResolved.some((w) => OWN === w || OWN.startsWith(`${w}/`))) {
+        expected.add(`${OWN}/files`);
+      }
       const got = new Set(mounts.map((m) => m.hostPath));
       expect(got).toEqual(expected);
       // Ephemeral scratch is NOT a host mount and must never appear here.

@@ -105,6 +105,7 @@ describe('entity schemas', () => {
       toolName: 'bash',
       args: { command: 'rm -rf /tmp/x' },
       reason: 'destructive',
+      alwaysAsk: false,
     };
     expect(ApprovalRequestSchema.parse(r)).toEqual(r);
   });
@@ -135,6 +136,7 @@ describe('SSE event union', () => {
         toolName: 'bash',
         args: {},
         reason: null,
+        alwaysAsk: false,
       },
     },
     { type: 'approval.resolved', approvalId: 'ap_1', decision: 'allow', decidedBy: 'tab-A' },
@@ -280,6 +282,7 @@ describe('contract router', () => {
       'activity',
       'admin',
       'apiKeys',
+      'approvals',
       'backup',
       'batch',
       'channels',

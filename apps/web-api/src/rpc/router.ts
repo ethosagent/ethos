@@ -17,6 +17,7 @@ import { a2aRouter } from './a2a';
 import { activityRouter } from './activity';
 import { adminRouter } from './admin';
 import { apiKeysRouter } from './api-keys';
+import { approvalsRouter } from './approvals';
 import { backupRouter } from './backup';
 import { batchRouter } from './batch';
 import { channelsRouter } from './channels';
@@ -90,6 +91,7 @@ export const apiRouter = {
   config: configRouter,
   onboarding: onboardingRouter,
   tools: toolsRouter,
+  approvals: approvalsRouter,
   clarify: clarifyRouter,
   cron: cronRouter,
   skills: skillsRouter,

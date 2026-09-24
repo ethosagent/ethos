@@ -229,16 +229,16 @@ register_anchors:
 
   G-CAP:
     - { path: packages/core/src/capability-validator.ts, line: 19, contains: "export function validateRegistration" }
-    - { path: packages/core/src/capability-resolver.ts, line: 71, contains: "export function resolveCapabilities" }
+    - { path: packages/core/src/capability-resolver.ts, line: 80, contains: "export function resolveCapabilities" }
     - { path: packages/core/src/scoped/scoped-process.ts, line: 8, contains: "this.allowedBinaries.has(binary)" }
     - { path: packages/core/src/scoped/scoped-secrets.ts, line: 12, contains: "!this.isDeclared(ref)" }
     - { path: packages/core/src/scoped/scoped-attachments.ts, line: 22, contains: "a.ref === att.ref" }
 
   G-FS:
-    - { path: packages/core/src/fs-reach.ts, line: 136, contains: "export function deriveFsReachPaths" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 102, contains: "private checkReach(" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 136, contains: "through a symbolic link" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 91, contains: "private check(rawPath" }
+    - { path: packages/core/src/fs-reach.ts, line: 141, contains: "export function deriveFsReachPaths" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 113, contains: "private checkReach(" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 152, contains: "through a symbolic link" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 132, contains: "private check(rawPath" }
     - { path: packages/core/src/path-boundary.ts, line: 17, contains: "export function assertWithinBase" }
 
   G-NET:

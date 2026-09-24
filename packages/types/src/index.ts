@@ -22,6 +22,7 @@ export * from './goal';
 export * from './hooks';
 export * from './id-validation';
 export * from './injector';
+export * from './lease';
 export * from './llm';
 export * from './llm-timeouts';
 export * from './logger';

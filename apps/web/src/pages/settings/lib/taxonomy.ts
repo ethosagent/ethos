@@ -153,6 +153,9 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
       // First: the most safety-relevant control in the product, and what someone
       // hunting for "stop asking me every time" is actually looking for.
       section('approval-mode', 'approval mode'),
+      // The one-hour grants an always-ask tool can get instead of "always"
+      // (reach-and-containment 3b) — listed with a Revoke button.
+      section('approval-leases', 'approval leases'),
       section('named-secrets', 'named secrets'),
       section('web-search-defaults', 'web-search defaults'),
       // The ceiling on bytes an untrusted sender can push through a channel.

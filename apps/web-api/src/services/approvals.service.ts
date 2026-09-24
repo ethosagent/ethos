@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { EthosError } from '@ethosagent/types';
+import { type ApprovalLease, EthosError, isLeaseActive } from '@ethosagent/types';
 import type { ApprovalRequest, ApprovalScope } from '@ethosagent/web-contracts';
 import type { AllowlistRepository } from '../repositories/allowlist.repository';
+import type { LeaseRepository } from '../repositories/lease.repository';
 
 // In-process state machine for tool approvals. Bridges the agent loop's
 // synchronous `before_tool_call` hook (an awaited Promise) with the user's
@@ -27,6 +28,9 @@ export interface ApprovalRequestInput {
   args: unknown;
   /** Human-readable cause — e.g. "recursive force-delete of root directory". */
   reason?: string;
+  /** Personality running the turn (`BeforeToolCallPayload.personalityId`).
+   *  A lease binds to it; absent binds a lease to "no personality". */
+  personalityId?: string;
 }
 
 export type ApprovalDecision = { decision: 'allow' } | { decision: 'deny'; reason: string };
@@ -62,6 +66,21 @@ export interface ApprovalObservability {
 export interface ApprovalsServiceOptions {
   allowlist: AllowlistRepository;
   /**
+   * Time-limited grants (`lease-1h`). Consulted on every gated call BEFORE the
+   * allowlist. Absent (tests of the plain allowlist flow) means no lease is
+   * ever found and `approve(..., 'lease-1h')` is refused.
+   */
+  leases?: LeaseRepository;
+  /**
+   * Always-ask tools (D3-12): never allowlistable, and flagged `alwaysAsk` on
+   * the wire so the modal offers "Allow for 1 hour" instead. The composition
+   * root (`createWebApi`) passes `APPROVAL_SURFACE_ALWAYS_ASK` from
+   * `@ethosagent/wiring` — the same list the danger predicate prompts for;
+   * injected rather than imported so this service does not load the whole
+   * wiring graph. Absent = none.
+   */
+  alwaysAsk?: ReadonlyArray<string>;
+  /**
    * Auto-deny a pending approval after this many ms. The backstop for a
    * closed tab, a dropped SSE stream, or any integration failure that would
    * otherwise leave the agent loop's hook suspended forever. Defaults to 10
@@ -88,6 +107,10 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
  *  `apps/ethos/src/approval-coordinator.ts`, which declares the identical
  *  constant. Keep the two literals in sync. */
 const MAX_TIMER_MS = 2_147_483_647;
+
+/** The one lease duration this phase ships (D3-8). The store takes `ttlMs`,
+ *  so a later surface can pass another value without a schema change. */
+export const LEASE_1H_MS = 3_600_000;
 
 const AUDIT_CODES = {
   approved: 'approval.allow',
@@ -117,6 +140,20 @@ export class ApprovalsService {
    * store default; `0` disables the timer for this request.
    */
   async requestApproval(req: ApprovalRequestInput, timeoutMs?: number): Promise<ApprovalDecision> {
+    // A lease is checked on EVERY gated call, against the clock, so expiry and
+    // revocation take effect on the next call with no timer (D3-10).
+    const lease = await this.opts.leases?.findActive(
+      req.toolName,
+      req.sessionId,
+      req.personalityId ?? null,
+      Date.now(),
+    );
+    if (lease) {
+      this.audit(req, 'auto', 'lease', `matched lease ${lease.id}, expires ${lease.expiresAt}`, {
+        leaseId: lease.id,
+      });
+      return { decision: 'allow' };
+    }
     if (await this.opts.allowlist.matches(req.toolName, req.args)) {
       // No human in the loop — an allowlist entry decided. Exactly the kind
       // of silent auto-approval the audit trail exists to make visible.
@@ -156,6 +193,7 @@ export class ApprovalsService {
         toolName: req.toolName,
         args: req.args,
         reason: req.reason ?? null,
+        alwaysAsk: this.isAlwaysAsk(req.toolName),
       };
       this.emitter.emit('pending', req.sessionId, wireRequest);
     });
@@ -164,11 +202,44 @@ export class ApprovalsService {
   /**
    * Resolve a pending approval as allowed. When `scope` is `exact-args` or
    * `any-args` the decision is persisted to the allowlist so future identical
-   * calls auto-allow. `once` is in-memory only.
+   * calls auto-allow. `lease-1h` grants a one-hour lease bound to the call's
+   * tool, session and personality. `once` is in-memory only.
+   *
+   * An always-ask tool cannot be allowlisted (D3-12): `exact-args`/`any-args`
+   * on one is refused BEFORE the pending approval is consumed, so the modal
+   * stays open for a valid answer.
    */
   async approve(approvalId: string, scope: ApprovalScope, decidedBy: string): Promise<void> {
+    const pending = this.pending.get(approvalId);
+    if (pending && (scope === 'exact-args' || scope === 'any-args')) {
+      if (this.isAlwaysAsk(pending.request.toolName)) {
+        throw new EthosError({
+          code: 'INVALID_INPUT',
+          cause: `${pending.request.toolName} is an always-ask tool and cannot be allowlisted (${scope}).`,
+          action: 'Allow it once, or for 1 hour.',
+        });
+      }
+    }
+    if (pending && scope === 'lease-1h' && !this.opts.leases) {
+      throw new EthosError({
+        code: 'NOT_CONFIGURED',
+        cause: 'No lease store is wired, so a 1-hour grant cannot be recorded.',
+        action: 'Allow it once instead.',
+      });
+    }
     const p = this.take(approvalId);
-    if (scope !== 'once') {
+    let lease: ApprovalLease | undefined;
+    if (scope === 'lease-1h' && this.opts.leases) {
+      lease = await this.opts.leases.grant(
+        {
+          toolName: p.request.toolName,
+          sessionId: p.request.sessionId,
+          personalityId: p.request.personalityId ?? null,
+          grantedBy: decidedBy,
+        },
+        LEASE_1H_MS,
+      );
+    } else if (scope === 'exact-args' || scope === 'any-args') {
       await this.opts.allowlist.add({
         toolName: p.request.toolName,
         scope,
@@ -178,6 +249,7 @@ export class ApprovalsService {
     this.audit(p.request, 'approved', decidedBy, p.request.reason ?? 'approved', {
       approvalId,
       scope,
+      ...(lease ? { leaseId: lease.id, expiresAt: lease.expiresAt } : {}),
     });
     p.resolve({ decision: 'allow' });
     this.emitter.emit('resolved', p.request.sessionId, approvalId, 'allow', decidedBy);
@@ -264,6 +336,34 @@ export class ApprovalsService {
       });
     } catch {
       // Audit is fail-open — a broken sink never breaks an approval.
+    }
+  }
+
+  /** True for a tool no allowlist entry may ever auto-approve (D3-12): the
+   *  always-ask list's own definition is "must never run without a prompt"
+   *  (`APPROVAL_SURFACE_ALWAYS_ASK` in `packages/wiring/src/danger-predicate.ts`). */
+  private isAlwaysAsk(toolName: string): boolean {
+    return (this.opts.alwaysAsk ?? []).includes(toolName);
+  }
+
+  /** Leases that are active right now — the Settings → Approvals list. */
+  async listActiveLeases(): Promise<ApprovalLease[]> {
+    const nowMs = Date.now();
+    return ((await this.opts.leases?.list()) ?? []).filter((l) => isLeaseActive(l, nowMs));
+  }
+
+  /**
+   * Revoke a lease. Takes effect on the next gated call, which re-checks the
+   * store (D3-10) — nothing else needs to be told.
+   */
+  async revokeLease(leaseId: string): Promise<void> {
+    const lease = await this.opts.leases?.revoke(leaseId);
+    if (!lease) {
+      throw new EthosError({
+        code: 'NOT_FOUND',
+        cause: `No approval lease with id ${leaseId}`,
+        action: 'Reload the Approvals list to see the current leases.',
+      });
     }
   }
 
