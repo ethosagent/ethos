@@ -6,7 +6,9 @@ import { defineConfig, type PluginOption } from 'vite';
 //
 //  • Dev   — `pnpm --filter @ethosagent/web dev` runs Vite at :5173 with the
 //            `/rpc`, `/sse`, `/auth`, `/openapi`, `/documents`, `/oauth` and
-//            `/api` paths proxied to the ethos-serve API on :3000. Every
+//            `/api` paths proxied to the ethos-serve API on :3000, plus the
+//            two WebSocket paths the SPA opens against `location.host`:
+//            `/voice/ws` and `/browser/takeover/ws` (`ws: true`). Every
 //            API-bound entry MUST set `changeOrigin: false`, so the API sees
 //            `Host: localhost:5173` — the same host:port as the browser's
 //            `Origin`. That is load-bearing: the CSRF middleware accepts a
@@ -16,6 +18,11 @@ import { defineConfig, type PluginOption } from 'vite';
 //            A plain-string entry means `changeOrigin: true` in Vite, which
 //            rewrites Host to :3000 and gets every write refused;
 //            apps/web-api/src/__tests__/vite-proxy-origin.test.ts fails on it.
+//            The WebSocket entries rely on the same fact: the upgrade Origin
+//            check (`originAllowed` in apps/web-api/src/voice/voice-socket.ts)
+//            also requires the Origin host:port to equal `Host`. They are keyed
+//            on the socket path, not `/voice` or `/browser`, so no SPA route
+//            under those prefixes is sent to the API.
 //  • Build — `pnpm --filter @ethosagent/web build` writes to `apps/web/dist/`.
 //            `apps/web-api`'s static handler serves that directory in
 //            production runs of `ethos serve`.
@@ -78,6 +85,12 @@ export default defineConfig({
       // `ethos_auth` cookie as `/documents` above, for the same reason: an
       // absolute :3000 request from :5173 is cross-site and drops the cookie.
       '/api': { target: 'http://localhost:3000', changeOrigin: false },
+      // WebSocket lanes the SPA opens at `${location.host}<path>`
+      // (VOICE_SOCKET_PATH and BROWSER_TAKEOVER_SOCKET_PATH in
+      // packages/web-contracts). `/satellite/ws` is not here: only the
+      // satellite daemon opens it, never the SPA.
+      '/voice/ws': { target: 'http://localhost:3000', changeOrigin: false, ws: true },
+      '/browser/takeover/ws': { target: 'http://localhost:3000', changeOrigin: false, ws: true },
     },
   },
   build: {

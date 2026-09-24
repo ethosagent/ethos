@@ -11,6 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { BROWSER_TAKEOVER_SOCKET_PATH, VOICE_SOCKET_PATH } from '@ethosagent/web-contracts';
 import { describe, expect, it } from 'vitest';
 
 const CONFIG = join(import.meta.dirname, '..', '..', '..', 'web', 'vite.config.ts');
@@ -73,6 +74,19 @@ describe('apps/web/vite.config.ts proxy — same-origin Host for CSRF', () => {
       expect(entry.value, `${entry.path} must set changeOrigin: false`).toMatch(
         /changeOrigin:\s*false/,
       );
+    }
+  });
+
+  // The SPA opens these at `${location.host}<path>`, so on :5173 they reach the
+  // API only through the proxy. The upgrade Origin check (`originAllowed` in
+  // ../voice/voice-socket.ts) needs `Host` to stay `localhost:5173`, the same
+  // reason as the HTTP entries.
+  it('proxies the SPA WebSocket paths with ws: true and changeOrigin: false', () => {
+    for (const path of [VOICE_SOCKET_PATH, BROWSER_TAKEOVER_SOCKET_PATH]) {
+      const entry = entries.find((e) => e.path === path);
+      expect(entry, `${path} must have a proxy entry`).toBeDefined();
+      expect(entry?.value, `${path} must set ws: true`).toMatch(/ws:\s*true/);
+      expect(entry?.value, `${path} must set changeOrigin: false`).toMatch(/changeOrigin:\s*false/);
     }
   });
 });
