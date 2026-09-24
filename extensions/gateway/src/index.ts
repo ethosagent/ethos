@@ -3506,17 +3506,26 @@ export class Gateway {
         signal,
         spoolTurn,
       );
-      this.inflightTurns.add(turn);
+      // What `shutdown()` waits on is the turn AND its row's settlement: the
+      // settle can send a notice (a retry notice, a review's plain wake notice)
+      // that must land — or at least reach the ledger — before the adapters
+      // stop and the row is closed.
+      const settled = turn.then(
+        async () => {
+          if (spoolTurn) await this.finishSpoolTurn(spoolTurn, signal, undefined, target);
+        },
+        async (err: unknown) => {
+          if (spoolTurn) await this.finishSpoolTurn(spoolTurn, signal, err, target);
+          throw err;
+        },
+      );
+      this.inflightTurns.add(settled);
       try {
-        await turn;
-        if (spoolTurn) await this.finishSpoolTurn(spoolTurn, signal, undefined, target);
-      } catch (err) {
-        if (spoolTurn) await this.finishSpoolTurn(spoolTurn, signal, err, target);
-        throw err;
+        await settled;
       } finally {
         if (spoolTurn && this.spoolTurns.get(laneKey) === spoolTurn)
           this.spoolTurns.delete(laneKey);
-        this.inflightTurns.delete(turn);
+        this.inflightTurns.delete(settled);
         this.concurrency.release();
       }
     });
@@ -3734,29 +3743,43 @@ export class Gateway {
       cause: reason,
       details: { spoolId, platform: target.platform, botKey: target.botKey },
     });
-    const adapter = this.adapterForBot(target.botKey, target.platform);
-    let delivered = false;
-    if (adapter) {
-      delivered = !this.outboundDedup.shouldSend(target.laneKey, text)
-        ? true
-        : await this.sendTracked(
-            {
-              adapter,
-              botKey: target.botKey,
-              platform: target.platform,
-              chatId: target.chatId,
-              sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
-              inboundRef: spoolId,
-            },
-            { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
-          ).catch(() => false);
-    }
-    if (!spool) return;
+    const owned = await this.sendReviewFallback(target, text, spoolId);
+    if (!spool || !owned) return;
     try {
-      if (delivered || (adapter && this.deliveryLedger)) spool.markDone(spoolId);
+      spool.markDone(spoolId);
     } catch (err) {
       this.recordSpoolUpdateFailed('markDone', err);
     }
+  }
+
+  /**
+   * Send the plain wake notice for a review that could not answer, on the
+   * row's own bot. `true` once someone owns delivery: the platform confirmed,
+   * the identical text already reached the lane (outbound dedup), or the
+   * ledger holds a `pending` obligation (stamped `inboundRef`) that its sweep
+   * will retry. `false` = nobody does — no adapter here, or no ledger and an
+   * unconfirmed send — so the caller must leave the row for a later attempt.
+   */
+  private async sendReviewFallback(
+    target: SpoolTurnTarget,
+    text: string,
+    inboundRef: string | undefined,
+  ): Promise<boolean> {
+    const adapter = this.adapterForBot(target.botKey, target.platform);
+    if (!adapter) return false;
+    if (!this.outboundDedup.shouldSend(target.laneKey, text)) return true;
+    const confirmed = await this.sendTracked(
+      {
+        adapter,
+        botKey: target.botKey,
+        platform: target.platform,
+        chatId: target.chatId,
+        sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
+        ...(inboundRef ? { inboundRef } : {}),
+      },
+      { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
+    ).catch(() => false);
+    return confirmed || this.deliveryLedger !== undefined;
   }
 
   /**
@@ -3961,7 +3984,8 @@ export class Gateway {
       return;
     }
     try {
-      if (Date.now() - row.receivedAt > this.spoolMaxReplayAgeMs) {
+      const stale = Date.now() - row.receivedAt > this.spoolMaxReplayAgeMs;
+      if (stale && row.kind !== 'wake_review') {
         // Answering a day-old question as if it were fresh is worse than
         // saying so: dead-letter it and tell the lane once.
         if (spool.markDead(row.id, 'stale')) {
@@ -3980,6 +4004,14 @@ export class Gateway {
           code: 'gateway.spool_replay_already_answered',
           details: { spoolId: row.id, platform: row.platform, botKey: row.botKey },
         });
+        return;
+      }
+      // A parent-review row (plan openclaw-9.5-adoption item 6, D29) never
+      // passes through `handleMessage`: no clarify correlator, no slash
+      // parsing. It replays as the review turn it was — unless it cannot, and
+      // then the user gets the plain wake notice instead, never nothing.
+      if (row.kind === 'wake_review') {
+        await this.replayWakeReview(row, adapter, stale, counts);
         return;
       }
       // D5: the crashed turn had started a tool. Re-running it would repeat a
@@ -4034,6 +4066,56 @@ export class Gateway {
         details: { spoolId: row.id, platform: row.platform, botKey: row.botKey },
       });
     }
+  }
+
+  /**
+   * Replay one claimed `wake_review` row. A tool had started, it is stale, it
+   * hit the attempt cap, its bot is gone or its payload is unreadable → the
+   * plain wake notice (`deliverReviewFallback`). Otherwise the review turn runs
+   * again on its lane, with `reviewOfJobId` restored from the row.
+   */
+  private async replayWakeReview(
+    row: SpoolRow,
+    adapter: PlatformAdapter,
+    stale: boolean,
+    counts: { replayed: number; deferred: number; dead: number },
+  ): Promise<void> {
+    const target: SpoolTurnTarget = {
+      botKey: row.botKey,
+      platform: row.platform,
+      chatId: row.chatId,
+      threadId: row.threadId,
+      laneKey: row.laneKey,
+    };
+    const message = await this.reviveSpooledMessage(row);
+    const fallbackText = message?.text ?? '';
+    const bot = this.bots.get(row.botKey);
+    let reason: string | undefined;
+    if (row.toolStartedAt !== undefined) reason = 'review turn interrupted after a tool started';
+    else if (stale) reason = 'review turn too old to replay';
+    else if (row.attempts >= this.spoolMaxAttempts) reason = 'review turn hit the attempt cap';
+    else if (!bot || !message) reason = 'review turn cannot be rebuilt';
+    if (reason || !bot || !message) {
+      if (fallbackText) {
+        await this.deliverReviewFallback(row.id, target, fallbackText, reason ?? 'unreadable');
+      } else {
+        // Nothing to review and nothing to fall back to: a dead letter.
+        this.inboundSpool?.markProcessing(row.id, this.spoolOwner);
+        this.inboundSpool?.markFailed(row.id, 'unreadable payload', 0);
+        counts.dead++;
+        this.recordSpoolDeadLettered(row.id, 'unreadable payload');
+      }
+      return;
+    }
+    counts.replayed++;
+    this.enqueueReview(
+      bot,
+      adapter,
+      message,
+      row.id,
+      { jobId: row.reviewJobId ?? '', fallbackText },
+      row.laneKey,
+    );
   }
 
   /**
@@ -4130,7 +4212,10 @@ export class Gateway {
 
     // Activity signal, fired at turn START so a listener can cancel background
     // work before the turn runs — not at completion, which would be too late.
-    if (personalityId) this.onUserTurn?.({ personalityId });
+    // A parent-review turn (plan openclaw-9.5-adoption item 6) is the agent
+    // reacting to its own background work, not the user arriving: no signal.
+    const review = spoolTurn?.review;
+    if (personalityId && !review) this.onUserTurn?.({ personalityId });
 
     this.activeTurns.set(laneKey, { adapter, chatId: message.chatId });
 
@@ -4245,10 +4330,18 @@ export class Gateway {
           '\n\n---\n\n'
         : '';
 
-      const loopText = contextPrefix ? `${contextPrefix}${wrapped.content}` : wrapped.content;
+      // A review turn's text is `buildWakeNotice(job)`: a trusted envelope with
+      // the child's result ALREADY wrapped as untrusted (and injection-scanned
+      // there), so it goes in as-is behind a trusted instruction — re-wrapping
+      // it as a `channel_message` would mark our own envelope untrusted.
+      const loopText = review
+        ? `${REVIEW_TURN_PREAMBLE}\n\n${text}`
+        : contextPrefix
+          ? `${contextPrefix}${wrapped.content}`
+          : wrapped.content;
 
       const tier1 = shortPatternCheck(text);
-      if (tier1.containsInstructions || wrapped.strippedTokens > 0) {
+      if (!review && (tier1.containsInstructions || wrapped.strippedTokens > 0)) {
         this.observability?.recordInjectionFlag?.({
           code: 'channel.injection_detected',
           cause: tier1.containsInstructions
@@ -4272,25 +4365,28 @@ export class Gateway {
       // The ledger binding rides along so the streamer's TERMINAL edit gets the
       // same durable obligation the non-streaming paths get.
       const streamDelivery = this.deliveryBinding(bot.botKey, message.platform, inboundRef);
-      const streamer = this.shouldStream(message, adapter)
-        ? new DraftStreamer({
-            adapter,
-            chatId: message.chatId,
-            threadId,
-            sessionKey,
-            dedup: this.outboundDedup,
-            ...(streamDelivery ? { delivery: streamDelivery } : {}),
-            minEditIntervalMs: this.streamingEditIntervalMs,
-            onFloodDisable: () => {
-              this.streamingDisabledChats.add(`${message.platform}:${message.chatId}`);
-              this.observability?.recordSafetyBlock({
-                code: 'gateway.streaming_disabled',
-                cause: `streaming disabled for chat ${message.chatId} after repeated flood-waits`,
-                details: { platform: message.platform, chatId: message.chatId },
-              });
-            },
-          })
-        : undefined;
+      // Not for a review turn: whether its answer or the plain wake notice goes
+      // out is decided only at the terminal event (see `deliverAnswer`).
+      const streamer =
+        !review && this.shouldStream(message, adapter)
+          ? new DraftStreamer({
+              adapter,
+              chatId: message.chatId,
+              threadId,
+              sessionKey,
+              dedup: this.outboundDedup,
+              ...(streamDelivery ? { delivery: streamDelivery } : {}),
+              minEditIntervalMs: this.streamingEditIntervalMs,
+              onFloodDisable: () => {
+                this.streamingDisabledChats.add(`${message.platform}:${message.chatId}`);
+                this.observability?.recordSafetyBlock({
+                  code: 'gateway.streaming_disabled',
+                  cause: `streaming disabled for chat ${message.chatId} after repeated flood-waits`,
+                  details: { platform: message.platform, chatId: message.chatId },
+                });
+              },
+            })
+          : undefined;
 
       // Static per-channel toolset narrowing (context-economy Phase 1).
       // Resolved from static config only — never computed per turn — so the
@@ -4330,6 +4426,24 @@ export class Gateway {
         if (signal.aborted) {
           // /stop or shutdown — caller already notified the user. Any partial
           // draft is left as-is.
+        } else if (review && (errored || responseText.trim().length === 0)) {
+          // The review could not answer: the user gets the plain wake notice
+          // instead, so the background result is never swallowed (D29).
+          const target: SpoolTurnTarget = {
+            botKey: bot.botKey,
+            platform: message.platform,
+            chatId: message.chatId,
+            threadId,
+            laneKey,
+          };
+          this.observability?.recordSafetyBlock({
+            code: 'gateway.review_fallback',
+            cause: errored ? `review turn errored: ${errored.error}` : 'review turn gave no answer',
+            details: { jobId: review.jobId, platform: message.platform, botKey: bot.botKey },
+          });
+          if (await this.sendReviewFallback(target, review.fallbackText, inboundRef)) {
+            markAnswered();
+          }
         } else if (errored) {
           const note =
             responseText.trim().length > 0
@@ -4453,6 +4567,9 @@ export class Gateway {
           // Unconditional, not config-driven: UI-card tools have no rendering on
           // any channel adapter, so they never reach a channel turn's tool list.
           toolsetExclude: [...CHANNEL_EXCLUDED_TOOLS],
+          // One review hop (D10/D30): `delegate_task` refuses `deliver:'parent'`
+          // from inside a review turn by reading this off its ToolContext.
+          ...(review ? { reviewOfJobId: review.jobId } : {}),
         })) {
           if (event.type === 'usage') {
             const u = this.usageStore.get(laneKey) ?? {
@@ -4837,9 +4954,124 @@ export class Gateway {
       // a peer process is announcing it, so this process is done with it either
       // way.
       this.markWakeDelivered(job.id);
+      if (job.deliver === 'parent' && this.inboundSpool) {
+        await this.admitWakeReview(bot, job, adapter, laneKey);
+        continue;
+      }
       if (!(await this.claimWake(bot, job))) continue; // a peer process won it
       await this.deliverCompletion(bot, job, adapter, laneKey);
     }
+  }
+
+  /**
+   * A finished `deliver: 'parent'` job (plan openclaw-9.5-adoption item 6,
+   * D29): instead of waking the user with the raw result, run ONE review turn
+   * on the job's origin lane and let the user see its answer. Gateway only —
+   * CLI chat and web show the result inside the parent session already.
+   *
+   * Admission order spans two files, and the order is the guarantee:
+   *
+   *  1. `spool.accept` a `wake_review` row keyed `wake:<jobId>` (idempotent —
+   *     a second admission of the same job is the UNIQUE key's no-op), claimed
+   *     by this process. Its payload is `buildWakeNotice(job)`.
+   *  2. THEN the job's delivery claim (`claimWake` → `jobs.delivered_at`).
+   *     Lost → a peer is announcing it: close the row. A crash between 1 and
+   *     2 leaves an unclaimed job, which `sweepUndeliveredJobs` re-admits into
+   *     the same row; a crash after 2 leaves the row, which the replay runs.
+   *  3. Enqueue the review turn on the lane, straight into `enqueueTurn` — it
+   *     never passes the clarify correlator or slash parsing, so a pending
+   *     clarify cannot swallow it.
+   *
+   * From there the spool's terminals apply (`finishSpoolTurn`, the replay's
+   * `wake_review` branch): an answered review closes the row; an error, an
+   * empty answer, a tool-started crash, staleness or the attempt cap hand the
+   * user the plain wake notice instead (`deliverReviewFallback`). Never lost,
+   * never both. A spool write that throws fails open to the plain notice.
+   */
+  private async admitWakeReview(
+    bot: GatewayBotConfig,
+    job: BackgroundJob,
+    adapter: PlatformAdapter,
+    laneKey: string,
+  ): Promise<boolean> {
+    const spool = this.inboundSpool;
+    const platform = job.originPlatform;
+    const chatId = job.originChatId;
+    if (!spool || !platform || !chatId) return false;
+    const threadId = job.originThreadId ? job.originThreadId : undefined;
+    const fallbackText = this.buildWakeNotice(job);
+    const message: InboundMessage = {
+      platform,
+      chatId,
+      botKey: bot.botKey,
+      text: fallbackText,
+      isDm: false,
+      isGroupMention: false,
+      messageId: `wake:${job.id}`,
+      ...(threadId ? { threadId } : {}),
+      raw: null,
+    };
+    let row: { id: string; fresh: boolean };
+    try {
+      row = spool.accept({
+        platform,
+        botKey: bot.botKey,
+        chatId,
+        ...(threadId ? { threadId } : {}),
+        messageId: `wake:${job.id}`,
+        laneKey,
+        payload: serializeInbound(message),
+        claimedBy: this.spoolOwner,
+        kind: 'wake_review',
+        reviewJobId: job.id,
+      });
+    } catch (err) {
+      this.recordSpoolUpdateFailed('accept wake_review', err);
+      if (!(await this.claimWake(bot, job))) return false;
+      return this.deliverCompletion(bot, job, adapter, laneKey);
+    }
+    // Already admitted (a crash before the job claim, re-found by the restore
+    // sweep). Whoever wins the row's claim runs it; the replay may have it.
+    if (!row.fresh && !spool.claim(row.id, this.spoolOwner)) {
+      await this.claimWake(bot, job);
+      return true;
+    }
+    if (!(await this.claimWake(bot, job))) {
+      this.closeSpool(row.id);
+      return false;
+    }
+    this.enqueueReview(bot, adapter, message, row.id, { jobId: job.id, fallbackText }, laneKey);
+    return true;
+  }
+
+  /** Queue a review turn on its lane; it resolves the row itself. */
+  private enqueueReview(
+    bot: GatewayBotConfig,
+    adapter: PlatformAdapter,
+    message: InboundMessage,
+    spoolId: string,
+    review: WakeReview,
+    laneKey: string,
+  ): void {
+    const threadId = message.threadId ? message.threadId : undefined;
+    const lane = this.getOrCreateLane(laneKey);
+    void this.enqueueTurn(
+      laneKey,
+      lane,
+      bot,
+      message,
+      adapter,
+      message.text,
+      threadId,
+      spoolId,
+      review,
+    ).catch((err: unknown) => {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.review_turn_failed',
+        cause: err instanceof Error ? err.message : String(err),
+        details: { jobId: review.jobId, spoolId, platform: message.platform },
+      });
+    });
   }
 
   /**
@@ -5776,6 +6008,12 @@ export class Gateway {
           ? buildLaneKey(platform, bot.botKey, chatId, job.originThreadId)
           : buildLaneKey(platform, bot.botKey, chatId);
         try {
+          // `deliver: 'parent'`: spool first, THEN the claim — see admitWakeReview.
+          if (job.deliver === 'parent' && this.inboundSpool) {
+            this.markWakeDelivered(job.id);
+            if (await this.admitWakeReview(bot, job, adapter, laneKey)) delivered++;
+            continue;
+          }
           if (!(await store.claimDelivery(job.id))) continue; // a peer won it
           this.markWakeDelivered(job.id);
           const ok = await this.deliverCompletion(bot, job, adapter, laneKey);

@@ -586,7 +586,7 @@ describe('SQLiteJobStore', () => {
     // Bump user_version beyond the code's supported version out-of-band.
     const Database = (await import('@ethosagent/sqlite')).default;
     const raw = new Database(path);
-    raw.pragma('user_version = 7');
+    raw.pragma('user_version = 8');
     raw.close();
 
     expect(() => new SQLiteJobStore(path)).toThrow(/newer than code/);
@@ -771,7 +771,7 @@ describe('SQLiteJobStore', () => {
     procB.close();
   });
 
-  it('migrates a v1 database (remote columns + delivered_at + runner + blocked + notices) to v6, preserving rows', async () => {
+  it('migrates a v1 database (remote columns + delivered_at + runner + blocked + notices + deliver) to v7, preserving rows', async () => {
     const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
     tmpFiles.push(path);
     // Build a v1 jobs table out-of-band: the full v1 shape minus the remote
@@ -831,7 +831,7 @@ describe('SQLiteJobStore', () => {
       .run();
     rawSeed.close();
 
-    // Opening with current code migrates v1 -> v6.
+    // Opening with current code migrates v1 -> v7.
     const store = new SQLiteJobStore(path);
     const legacy = await store.get('legacy-1');
     expect(legacy?.summary).toBe('legacy summary');
@@ -841,6 +841,8 @@ describe('SQLiteJobStore', () => {
     // what the restore sweep must find.
     expect(legacy?.deliveredAt).toBeUndefined();
     expect(await store.listUndelivered(['bot-1'])).toHaveLength(1);
+    // Old rows read as `deliver: 'user'` — the only behaviour that existed.
+    expect(legacy?.deliver).toBe('user');
 
     const created = await store.create(
       baseInput({ remotePeer: 'host:9000', remoteJobId: 'peer-1' }),
@@ -858,7 +860,14 @@ describe('SQLiteJobStore', () => {
       raw2.prepare(`UPDATE jobs SET delivered_at = 'not-a-number' WHERE id = 'legacy-1'`).run(),
     ).toThrow();
     raw2.close();
-    expect(version).toBe(6);
+    expect(version).toBe(7);
+  });
+
+  it('round-trips deliver, defaulting to user (openclaw-9.5 item 6)', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    expect((await store.create(baseInput())).deliver).toBe('user');
+    expect((await store.create(baseInput({ deliver: 'parent' }))).deliver).toBe('parent');
+    store.close();
   });
 });
 

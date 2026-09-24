@@ -173,7 +173,12 @@ describe('Orchestrator guardrails', () => {
     // lines) so the realtime voice host resolves a session's personality by
     // the loop's own rule; `getPersonalityBudgetCap` now delegates to it (-3).
     // The rule lives in agent-loop/stages/turn-setup.ts.
-    expect(lineCount).toBeLessThanOrEqual(1033);
+    // Bumped 1033 -> 1036 (openclaw-9.5-adoption D30): the `reviewOfJobId`
+    // RunOptions field — a one-line doc, its declaration, and one conditional
+    // spread into the internal `opts` passed to `processTools`, exactly the
+    // `jobId` precedent. Pass-through only; the one-hop refusal lives in
+    // extensions/tools-delegation (`delegate_task`).
+    expect(lineCount).toBeLessThanOrEqual(1036);
   });
 
   it('no stage file exceeds 700 lines', () => {

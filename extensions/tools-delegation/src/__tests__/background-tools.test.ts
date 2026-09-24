@@ -67,6 +67,7 @@ class FakeJobStore implements JobStore {
       remotePeer: input.remotePeer,
       remoteJobId: input.remoteJobId,
       runner: input.runner,
+      deliver: input.deliver ?? 'user',
     };
     this.jobs.set(id, job);
     this.events.set(id, []);
@@ -402,6 +403,65 @@ describe('delegate_task background path', () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.code).toBe('input_invalid');
     expect(store.jobs.size).toBe(0);
+  });
+
+  // Plan openclaw-9.5-adoption item 6 (D10, D29, D30).
+  it("stamps deliver: 'parent' on the row; omitted reads as 'user'", async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store);
+    const tool = createDelegateTaskTool(loop, deps);
+
+    const parent = await tool.execute(
+      { prompt: 'p', background: true, deliver: 'parent' },
+      makeCtx(),
+    );
+    if (!parent.ok) throw new Error('expected ok');
+    expect(store.jobs.get(JSON.parse(parent.value).jobId)?.deliver).toBe('parent');
+    const plain = await tool.execute({ prompt: 'p', background: true }, makeCtx());
+    if (!plain.ok) throw new Error('expected ok');
+    expect(store.jobs.get(JSON.parse(plain.value).jobId)?.deliver).toBe('user');
+  });
+
+  it('refuses deliver without background, and an unknown deliver value', async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store);
+    const tool = createDelegateTaskTool(loop, deps);
+
+    const blocking = await tool.execute({ prompt: 'p', deliver: 'parent' }, makeCtx());
+    expect(blocking).toMatchObject({
+      ok: false,
+      code: 'input_invalid',
+      error: 'deliver is only valid with background: true',
+    });
+    const bogus = await tool.execute(
+      { prompt: 'p', background: true, deliver: 'everyone' },
+      makeCtx(),
+    );
+    expect(bogus).toMatchObject({ ok: false, code: 'input_invalid' });
+    expect(store.jobs.size).toBe(0);
+  });
+
+  it('a review turn cannot request another parent review (one hop)', async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store);
+    const tool = createDelegateTaskTool(loop, deps);
+
+    const res = await tool.execute(
+      { prompt: 'p', background: true, deliver: 'parent' },
+      makeCtx({ reviewOfJobId: 'job-under-review' }),
+    );
+    expect(res).toEqual({
+      ok: false,
+      code: 'input_invalid',
+      error: 'a review turn cannot request another parent review',
+    });
+    expect(store.jobs.size).toBe(0);
+    // A plain background spawn from a review turn is still allowed.
+    const plain = await tool.execute(
+      { prompt: 'p', background: true },
+      makeCtx({ reviewOfJobId: 'job-under-review' }),
+    );
+    expect(plain.ok).toBe(true);
   });
 
   it('enforces the per-root concurrency cap', async () => {

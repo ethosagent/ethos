@@ -131,6 +131,7 @@ export interface ToolProcessingContext {
     agentId?: string;
     rootSessionKey?: string;
     jobId?: string;
+    reviewOfJobId?: string;
     origin?: string;
     attachments?: Attachment[];
     dryRun?: boolean;
@@ -182,6 +183,7 @@ export async function* processTools(
     // No `?? sessionKey` fallback (unlike rootSessionKey) — jobId must stay
     // undefined for a foreground turn (D22).
     ...(ctx.opts.jobId !== undefined ? { jobId: ctx.opts.jobId } : {}),
+    ...(ctx.opts.reviewOfJobId !== undefined ? { reviewOfJobId: ctx.opts.reviewOfJobId } : {}),
     origin: ctx.opts.origin,
     ...(ctx.opts.a2aDelegation ? { a2aDelegation: ctx.opts.a2aDelegation } : {}),
     personalityId: ctx.personality.id,

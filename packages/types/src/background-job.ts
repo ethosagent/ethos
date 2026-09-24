@@ -121,6 +121,15 @@ export interface BackgroundJob {
    * handle — `owner` is process identity, not runner kind.
    */
   runner?: string;
+  /**
+   * Who sees the result first (plan openclaw-9.5-adoption item 6). `'user'`
+   * (and absent, the default for every row written before the column) wakes
+   * the origin chat with the result as-is. `'parent'` runs one review turn on
+   * the parent's origin lane first, and the user sees that turn's answer — the
+   * gateway only (`Gateway.admitWakeReview`); CLI chat and web already show the
+   * result inside the parent session and ignore it.
+   */
+  deliver?: 'user' | 'parent';
   // Remote proxy: set when this row tracks a background job running on a mesh peer
   // (created by route_to_agent background:true). A reconciler polls the peer and
   // mirrors status/spend/summary onto this row. No local executor runs a proxy.
@@ -200,6 +209,8 @@ export interface CreateBackgroundJobInput {
   maxCostUsd?: number;
   /** Runner that should execute this job. Omitted means the executor's default. */
   runner?: string;
+  /** See `BackgroundJob.deliver`. Omitted means `'user'`. */
+  deliver?: 'user' | 'parent';
   originPlatform?: string;
   originBotKey?: string;
   originChatId?: string;

@@ -17,6 +17,7 @@ import { parseSlashCommand, shouldSurfaceProgress } from '@ethosagent/surface-ki
 import type { SplashInventory } from '@ethosagent/tui';
 import {
   type Attachment,
+  type BackgroundJob,
   type JobStore,
   type NotificationAdapter,
   type SteerSink,
@@ -484,21 +485,10 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // a turn while the user is mid-thought is hostile, so we only print and re-prompt.
   // Only `done`/`failed` are surfaced; `aborted` is user-requested and stays silent.
   backgroundExecutor?.onComplete((job) => {
-    if (job.status !== 'done' && job.status !== 'failed') return;
-    const header = `bg:${job.id.slice(0, 8)}`;
-    const statusLine = job.status === 'done' ? 'done' : `error: ${job.error ?? 'unknown'}`;
-    const body = job.status === 'done' ? job.summary : undefined;
-    out(`\n${c.dim}╭─ background [${header}] ${statusLine}${c.reset}\n`);
-    if (body) {
-      const lines = body.split('\n').slice(0, 10);
-      for (const line of lines) {
-        out(`${c.dim}│ ${line}${c.reset}\n`);
-      }
-      if (body.split('\n').length > 10) {
-        out(`${c.dim}│ ... (truncated)${c.reset}\n`);
-      }
-    }
-    out(`${c.dim}╰─${c.reset}\n`);
+    const lines = backgroundCompletionLines(job);
+    if (!lines) return;
+    out('\n');
+    for (const line of lines) out(`${c.dim}${line}${c.reset}\n`);
     if (config.displayBellOnComplete) out('\x07');
     rl.prompt();
   });
@@ -1161,6 +1151,28 @@ interface SlashHandlerContext {
   pluginLoader?: import('@ethosagent/plugin-loader').PluginLoader;
   /** The chat loop's goal store + executor pair (`ActiveLoop.goals`). */
   goals: LoopGoals;
+}
+
+/**
+ * The idle-prompt completion notice for a finished background job, as plain
+ * lines (the caller dims them), or `null` for a status that stays silent —
+ * only `done`/`failed` are surfaced; `aborted` is user-requested. Deliberately
+ * blind to `job.deliver` (plan openclaw-9.5-adoption D29): here the user is
+ * already in the parent session, so a `'parent'` job shows the same notice.
+ * Pinned by `__tests__/chat-background-completion.test.ts`.
+ */
+export function backgroundCompletionLines(job: BackgroundJob): string[] | null {
+  if (job.status !== 'done' && job.status !== 'failed') return null;
+  const header = `bg:${job.id.slice(0, 8)}`;
+  const statusLine = job.status === 'done' ? 'done' : `error: ${job.error ?? 'unknown'}`;
+  const body = job.status === 'done' ? job.summary : undefined;
+  const lines = [`╭─ background [${header}] ${statusLine}`];
+  if (body) {
+    for (const line of body.split('\n').slice(0, 10)) lines.push(`│ ${line}`);
+    if (body.split('\n').length > 10) lines.push('│ ... (truncated)');
+  }
+  lines.push('╰─');
+  return lines;
 }
 
 /**
