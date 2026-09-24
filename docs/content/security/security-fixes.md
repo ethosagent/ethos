@@ -175,8 +175,9 @@ The structural lesson is why this addendum exists rather than a quiet rewrite: a
 
 **Fix.** DNS pinning specifies the transport mechanism per Node HTTP client. `undici` clients use `connect.lookup` to return the pinned IP. Native `http.request` / `https.request` clients use an agent override with a custom `lookup`. The hostname stays in the SNI; the IP is locked to the resolved value at safe-fetch time.
 
-- **Status:** Partial. The resolve-and-validate-IP-before-connect path ships in `safe-fetch` and blocks the canonical "allowlisted hostname → private IP" case at request time. The transport-level pinning that closes the rebind window between the SSRF check and the connect (the per-client `lookup` override) is the next step. Documented in the source comments.
-- Source: `packages/safety/network/src/safe-fetch.ts`
+- **Status:** Shipped for `safeFetch`'s default path. Each hop resolves once, validates every address, then connects through `pinnedFetch`: undici's own `fetch` with a per-request `Agent` whose `connect.lookup` returns only the validated addresses, so there is no second resolution to race. A host with no validated address fails to connect instead of re-resolving. Not pinned: a caller-injected `fetchImpl`, and `web_fetch` / `web_extract`, which do not route through `safeFetch` (`extensions/tools-web/src/ssrf.ts`). Both limits are stated in the module header.
+- Source: `packages/safety/network/src/safe-fetch.ts` (`pinnedFetch`)
+- Tests: `packages/safety/network/src/__tests__/safe-fetch.test.ts` ("connection pinning")
 
 ### 12. Network egress allowlisting is in scope {#12-egress-allowlisting-in-scope}
 
@@ -291,10 +292,11 @@ A follow-up security audit and gap analysis identified six additive hardening me
 
 **Why it matters.** Tool results are the primary vector for secrets entering LLM context post-construction. Without scanning at the tool-result seam, a leaked key in a tool response is invisible until it appears in an outbound message or audit log.
 
-**Fix.** `detectSecrets` runs on every successful tool result. Detections emit an `observability` event (`secret_in_tool_result`) with the secret labels. Unless `injectionDefense.blockSecretResults: false` is set, detected secrets are redacted before entering LLM context. Default: block (redacting) — operators set `blockSecretResults: false` to opt into emit-only (non-blocking) mode.
+**Fix.** `detectSecrets` runs on every executed tool result — the value of a success and the error text of a failure — immediately after the result resolves. Detections emit an `observability` event (`secret_in_tool_result`) with the secret labels. Unless `injectionDefense.blockSecretResults: false` is set, detected secrets are redacted before anything reads the result: the `tool_end` event, `after_tool_call` hooks, the span, and the LLM context. In-script tool calls (`run_code`'s tool API) take the same pass before the script sees their result. Default: block (redacting) — operators set `blockSecretResults: false` to opt into emit-only (non-blocking) mode.
 
 - **Status:** Shipped.
-- Source: `packages/core/src/agent-loop.ts`
+- Source: `redactToolResultSecrets` in `packages/core/src/agent-loop/stages/result-redaction.ts`, called from `processTools` (`tool-processing.ts`) and `ScriptToolBridge.dispatch` (`script-tool-bridge.ts`)
+- Tests: `packages/core/src/agent-loop/stages/__tests__/tool-processing-redaction.test.ts`
 - Config: `injectionDefense.blockSecretResults` in personality safety config (default `true`; set `false` for emit-only)
 
 ### 22. PII redaction before LLM context {#22-pii-redaction-personality}

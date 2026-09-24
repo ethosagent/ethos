@@ -2,6 +2,8 @@ import type {
   AgentEvent,
   Attachment,
   HookRegistry,
+  PersonalityConfig,
+  RedactionKit,
   ScriptToolCallResult,
   ScriptToolExecution,
   ScriptToolsApi,
@@ -20,6 +22,7 @@ import {
   recordToolCallForBudgets,
   type TurnBudgetCounters,
 } from './per-call-enforcement';
+import { redactToolResultSecrets } from './result-redaction';
 
 // ---------------------------------------------------------------------------
 // ScriptToolBridge — second enforcement of the same contract (tools-as-code-api
@@ -65,6 +68,14 @@ export interface ScriptToolBridgeDeps {
   /** The turn personality's `safety.denyRules`, enforced per inner call by
    *  `enforceBeforeToolCall` exactly as on the batch path. */
   denyRules?: ReadonlyArray<string>;
+  /**
+   * Item 7 — the loop's redaction seam (`AgentSafety.redaction`) and the turn's
+   * personality (for `safety.injectionDefense.blockSecretResults`). Required:
+   * every inner result passes `redactToolResultSecrets` before its `tool_end`
+   * or the script sees it, so an optional seam would be a silent bypass.
+   */
+  redaction: RedactionKit;
+  personality: PersonalityConfig;
   /** The turn's inbound attachments, forwarded so the registry's live ctx stays stable. */
   turnAttachments?: Attachment[];
   /**
@@ -310,11 +321,17 @@ export class ScriptToolBridge {
       d.filterOpts,
       d.turnAttachments,
     );
-    const result = executed?.result ?? {
-      ok: false as const,
-      error: 'Tool result missing',
-      code: 'execution_failed' as const,
-    };
+    // Item 7 — redact secrets in value OR error before the inner tool_end or
+    // the script (whose output later reaches the model) sees the result.
+    const result = redactToolResultSecrets(
+      executed?.result ?? {
+        ok: false as const,
+        error: 'Tool result missing',
+        code: 'execution_failed' as const,
+      },
+      { redaction: d.redaction, observability: d.observability },
+      { personality: d.personality, traceId: d.traceId },
+    );
     const durationMs = Date.now() - startedAt;
     emitEvent?.({
       type: 'tool_end',

@@ -160,7 +160,11 @@ describe('Orchestrator guardrails', () => {
     // personality's `safety.denyRules` handed to the ScriptToolBridge, so
     // script calls cross the same deny-rule floor as the batch path. One
     // pass-through line; the check lives in stages/per-call-enforcement.ts.
-    expect(lineCount).toBeLessThanOrEqual(1018);
+    // Bumped 1018 -> 1020 (openclaw-advisory-fixes Item 7): the ScriptToolBridge
+    // construction passes the redaction seam and the turn's personality (2
+    // pass-through lines). The redaction lives in
+    // agent-loop/stages/result-redaction.ts.
+    expect(lineCount).toBeLessThanOrEqual(1020);
   });
 
   it('no stage file exceeds 700 lines', () => {

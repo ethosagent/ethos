@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, describe, expect, it } from 'vitest';
 import { safeFetch, validateUrl } from '../safe-fetch';
 
 // ---------------------------------------------------------------------------
@@ -153,5 +155,115 @@ describe('safeFetch — manual redirect revalidation', () => {
       expect(result.finalUrl).toBe('http://c.example.com/');
       expect(result.hops).toBe(2);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// safeFetch — connection pinning (Item 9, openclaw-advisory-fixes D6/D18)
+// ---------------------------------------------------------------------------
+//
+// Real local HTTP servers, reached through hostnames under `.invalid` (RFC
+// 6761: never resolvable). The system resolver cannot answer them, so a
+// request that lands proves the connection used the address `resolveHost`
+// returned and validation accepted — never a second, system lookup. Loopback
+// servers need `allow_private_urls`; that path still resolves once and pins.
+
+describe('safeFetch — connection pinning', () => {
+  const servers: Server[] = [];
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((srv) => new Promise((r) => srv.close(r))));
+  });
+
+  async function listen(
+    handler: (host: string | undefined) => {
+      status: number;
+      headers?: Record<string, string>;
+      body?: string;
+    },
+  ): Promise<{ port: number; seen: string[] }> {
+    const seen: string[] = [];
+    const srv = createServer((req, res) => {
+      seen.push(`${req.headers.host}${req.url}`);
+      const out = handler(req.headers.host);
+      res.writeHead(out.status, out.headers);
+      res.end(out.body ?? '');
+    });
+    servers.push(srv);
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    return { port: (srv.address() as AddressInfo).port, seen };
+  }
+
+  it('(a) connects to the validated address; the hostname still drives the Host header', async () => {
+    const { port, seen } = await listen((host) => ({ status: 200, body: `hello ${host}` }));
+    const calls: string[] = [];
+    const result = await safeFetch(`http://pinned.invalid:${port}/x`, {
+      policy: { allow_private_urls: true },
+      resolveHost: async (h) => {
+        calls.push(h);
+        // A rebinding resolver: only the FIRST answer is the validated one. Any
+        // second lookup (the race pinning closes) would get the metadata IP.
+        return calls.length === 1 ? ['127.0.0.1'] : ['169.254.169.254'];
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(await result.response.text()).toBe(`hello pinned.invalid:${port}`);
+    expect(seen).toEqual([`pinned.invalid:${port}/x`]);
+    expect(calls).toEqual(['pinned.invalid']);
+  });
+
+  it('(a) fails closed when validation resolved nothing — no fallback to the system resolver', async () => {
+    const { port, seen } = await listen(() => ({ status: 200 }));
+    const result = await safeFetch(`http://pinned.invalid:${port}/`, {
+      policy: { allow_private_urls: true },
+      resolveHost: async () => {
+        throw new Error('resolver down');
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/fetch failed/);
+    expect(seen).toEqual([]);
+  });
+
+  it('(b) a redirect hop to a new host re-resolves, re-validates and re-pins', async () => {
+    const second = await listen((host) => ({ status: 200, body: `final ${host}` }));
+    const first = await listen(() => ({
+      status: 302,
+      headers: { location: `http://second.invalid:${second.port}/final` },
+    }));
+    const calls: string[] = [];
+    const result = await safeFetch(`http://first.invalid:${first.port}/r`, {
+      policy: { allow_private_urls: true },
+      resolveHost: async (h) => {
+        calls.push(h);
+        return ['127.0.0.1'];
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.hops).toBe(1);
+    expect(await result.response.text()).toBe(`final second.invalid:${second.port}`);
+    expect(calls).toEqual(['first.invalid', 'second.invalid']);
+    expect(first.seen).toEqual([`first.invalid:${first.port}/r`]);
+    expect(second.seen).toEqual([`second.invalid:${second.port}/final`]);
+  });
+
+  it("(b) hop 1's pin is not reused: a redirect target with no validated address does not connect", async () => {
+    const second = await listen(() => ({ status: 200 }));
+    const first = await listen(() => ({
+      status: 302,
+      headers: { location: `http://second.invalid:${second.port}/final` },
+    }));
+    const result = await safeFetch(`http://first.invalid:${first.port}/r`, {
+      policy: { allow_private_urls: true },
+      resolveHost: async (h) => {
+        if (h === 'second.invalid') throw new Error('NXDOMAIN');
+        return ['127.0.0.1'];
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.hop).toBe(1);
+    expect(first.seen).toHaveLength(1);
+    expect(second.seen).toEqual([]);
   });
 });
