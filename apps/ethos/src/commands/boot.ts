@@ -167,6 +167,7 @@ import {
   createGatewayMetricsAuthCheck,
   createTelegramGreetingProvider,
   createTelegramPersonalityCardReader,
+  everyStartedAdapter,
   type GatewayBotWiring,
   gatewayObservability,
   openChannelTranscriptStore,
@@ -2501,7 +2502,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
             '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
         });
       });
-      await step('adapters', () => Promise.allSettled(adapters.map((a) => a.stop())));
+      // Plugin-registered and hot-added adapters too — `everyStartedAdapter`.
+      await step('adapters', () =>
+        Promise.allSettled(everyStartedAdapter(adapters, gateway).map((a) => a.stop())),
+      );
       await guard('delivery-ledger', () => {
         deliveryLedger.close();
       });

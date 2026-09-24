@@ -2194,7 +2194,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       });
       await boundedShutdownStep(
         'adapters stop',
-        () => Promise.allSettled(adapters.map((a) => a.stop())),
+        () => Promise.allSettled(everyStartedAdapter(adapters, gateway).map((a) => a.stop())),
         stepReporting,
       );
       // F06 — every loop's runtime (background executors, reconcilers, stores,
@@ -4628,6 +4628,24 @@ export function warnEmailSenderAuthUnconfigured(
     `${c.yellow}⚠ ${cause}.${c.reset} ${c.dim}Set emailTrustedAuthservId to the first token of the Authentication-Results header on any mail this account received.${c.reset}`,
   );
   return true;
+}
+
+/**
+ * Every adapter this process started, each exactly once — what a host's
+ * shutdown `stop()`s. The host's own list (`buildGatewayAdapters`) holds only
+ * the built-in adapters; the Gateway holds the rest live: the plugin-registered
+ * ones (`GatewayConfig.pluginAdapters`, constructed AND started inside the
+ * `Gateway` constructor, so no host list ever saw them) and any a live reload
+ * added (`Gateway.addAdapter`). A bot a reload retired is gone from
+ * `listAdapters()` and was already stopped by `Gateway.removeAdapter`. An
+ * adapter in both lists appears once (identity). Used by `ethos gateway start`
+ * and `ethos boot`; pinned by apps/ethos/src/__tests__/every-started-adapter.test.ts.
+ */
+export function everyStartedAdapter(
+  builtIn: readonly PlatformAdapter[],
+  gateway: Pick<Gateway, 'listAdapters'>,
+): PlatformAdapter[] {
+  return [...new Set([...builtIn, ...gateway.listAdapters()])];
 }
 
 /**
