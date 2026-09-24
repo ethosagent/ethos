@@ -9,6 +9,7 @@ import {
   deriveFsReachPaths,
   EagerPrefetchPolicy,
   parseSmallWindowToolset,
+  resolvePinned,
   resolveSttProvider,
   SimpleCompletionImpl,
 } from '@ethosagent/core';
@@ -79,6 +80,7 @@ import {
 } from './model-catalog';
 import { registerAcpJobRunners } from './register-acp-job-runners';
 import {
+  createToolLoadingResolver,
   evaluateContextFit,
   evaluateToolPayloadGuard,
   evaluateToolSchemaBudget,
@@ -935,7 +937,25 @@ export async function buildAgentLoop(
     toolDefinitions: effectiveToolDefinitions,
     ...(typeof budgetRatio === 'number' && budgetRatio > 0 ? { ratio: budgetRatio } : {}),
   });
-  if (schemaBudget.message) log.warn(schemaBudget.message);
+  // reach-and-containment Part 1 (C5) — the per-turn on-demand tool-loading
+  // resolver. Passed to the loop only when not `off`, so an `off` loop's config
+  // is byte-identical to before. The startup warning above says when the
+  // startup personality would engage it.
+  const toolLoadingMode = config.toolLoading ?? 'auto';
+  const toolLoading =
+    toolLoadingMode === 'off'
+      ? undefined
+      : createToolLoadingResolver({ mode: toolLoadingMode, windowTokens: llm.maxContextTokens });
+  if (schemaBudget.message) {
+    let clause = '';
+    if (toolLoading?.(activePerson, effectiveToolDefinitions)) {
+      const pinned = resolvePinned(activePerson, effectiveToolDefinitions, tools);
+      clause =
+        ` — on-demand tool loading engaged (${pinned.size} pinned, ` +
+        `${effectiveToolDefinitions.length - pinned.size} searchable)`;
+    }
+    log.warn(schemaBudget.message + clause);
+  }
 
   // Lane 1(c)+(e) — scale the per-turn tool-result budget DOWN with the served
   // window; never UP (the flat 80k default is the ceiling, #111762). An
@@ -993,6 +1013,7 @@ export async function buildAgentLoop(
     memoryProviders: memoryProviderMap,
     safety,
     logger: log,
+    ...(toolLoading ? { toolLoading } : {}),
     documentExtractors,
     contextEngines,
     ...(llmHandle ? { llmHandle } : {}),
