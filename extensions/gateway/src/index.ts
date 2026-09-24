@@ -2695,6 +2695,22 @@ export class Gateway {
         return;
       }
 
+      // A switch is lane-wide: in a group it changes the agent for people who
+      // did not ask, so only the configured owner may make it (plan D20). A
+      // group on a platform with no `ownerUserId` refuses outright (D21) —
+      // there is no one to trust. DMs keep the old behavior: the requester is
+      // the only human in the lane. The read-only forms above stay open.
+      // Pinned by extensions/gateway/src/__tests__/personality-switch-owner.test.ts.
+      if (!message.isDm && !this.isOwner(message)) {
+        const text =
+          this.channelFilter?.[message.platform]?.ownerUserId === undefined
+            ? `Switching personalities in a group needs an owner. ` +
+              `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
+            : `Only the bot owner can switch personalities in a group.`;
+        await adapter.send(message.chatId, { text }).catch(() => {});
+        return;
+      }
+
       // Validate against the registry before storing the id. Unknown ids must
       // never be stored — turn-setup's `?? getDefault()` would then silently run
       // the default personality. With the seam wired, validate against the
@@ -5472,6 +5488,13 @@ export class Gateway {
   private personalitySwitchAllowed(bot: GatewayBotConfig): boolean {
     if (bot.binding.type === 'team') return false;
     return bot.binding.allowSlashSwitch === true;
+  }
+
+  /** Whether the sender is `channel_filter.<platform>.ownerUserId`. False
+   *  when the platform has no owner configured. */
+  private isOwner(message: InboundMessage): boolean {
+    const owner = this.channelFilter?.[message.platform]?.ownerUserId;
+    return owner !== undefined && message.userId === owner;
   }
 
   /** The personality identifier surfaced by `/personality` (no arg) and
