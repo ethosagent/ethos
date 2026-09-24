@@ -175,8 +175,9 @@ The structural lesson is why this addendum exists rather than a quiet rewrite: a
 
 **Fix.** DNS pinning specifies the transport mechanism per Node HTTP client. `undici` clients use `connect.lookup` to return the pinned IP. Native `http.request` / `https.request` clients use an agent override with a custom `lookup`. The hostname stays in the SNI; the IP is locked to the resolved value at safe-fetch time.
 
-- **Status:** Partial. The resolve-and-validate-IP-before-connect path ships in `safe-fetch` and blocks the canonical "allowlisted hostname → private IP" case at request time. The transport-level pinning that closes the rebind window between the SSRF check and the connect (the per-client `lookup` override) is the next step. Documented in the source comments.
-- Source: `packages/safety/network/src/safe-fetch.ts`
+- **Status:** Shipped for `safeFetch`'s default path. Each hop resolves once, validates every address, then connects through `pinnedFetch`: undici's own `fetch` with a per-request `Agent` whose `connect.lookup` returns only the validated addresses, so there is no second resolution to race. A host with no validated address fails to connect instead of re-resolving. Not pinned: a caller-injected `fetchImpl`, and `web_fetch` / `web_extract`, which do not route through `safeFetch` (`extensions/tools-web/src/ssrf.ts`). Both limits are stated in the module header.
+- Source: `packages/safety/network/src/safe-fetch.ts` (`pinnedFetch`)
+- Tests: `packages/safety/network/src/__tests__/safe-fetch.test.ts` ("connection pinning")
 
 ### 12. Network egress allowlisting is in scope {#12-egress-allowlisting-in-scope}
 

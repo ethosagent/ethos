@@ -8,23 +8,35 @@
 // and routing every Location target back through the full pipeline before
 // issuing the next request. Cap at 5 hops total.
 //
-// **v1 honesty about DNS rebinding.** This module resolves the hostname,
-// validates every returned address, then calls `fetch(url)` and lets the
-// runtime DNS-resolve a second time at connect. That closes the *naive*
-// "host A resolves to a public IP, host B resolves to a private IP"
-// shape — both lookups go through `node:dns`, share the OS resolver
-// cache, and a TTL-based attacker still flips the answer between our
-// check and the connect. Closing the racy window requires connection-
-// time enforcement via an undici Agent with a custom `lookup` (or a
-// per-request `lookup` on `http.request`) that returns ONLY the address
-// we already authorized. That work is plan-tracked for v2 alongside
-// the third-party HTTP client survey. Until then, treat DNS rebinding
-// as PARTIALLY mitigated: the always-deny floor on cloud-metadata IPs
-// catches the highest-value target literally, but a sufficiently-fast
-// rebind can still reach an arbitrary private IP between the two
-// lookups.
+// **DNS rebinding — connection pinning on the default path.** `validateUrl`
+// resolves the hostname once and validates every returned address. When the
+// caller does NOT inject `fetchImpl`, the request is issued by `pinnedFetch`:
+// undici's own `fetch` with a per-request `Agent` whose `connect.lookup`
+// answers ONLY with the addresses that validation accepted, so the socket
+// connects to an address that was checked — there is no second resolution for
+// a TTL-flipping attacker to win. The hostname still drives the Host header,
+// TLS SNI and certificate verification; only the address is fixed. Each
+// redirect hop re-runs `validateUrl` and gets its own pinned `Agent`. A host
+// whose resolution failed during validation has no validated address, so its
+// connect fails rather than falling back to the system resolver. Pinned by
+// `__tests__/safe-fetch.test.ts` ("connection pinning").
+//
+// Limits, stated rather than implied:
+//   - An injected `fetchImpl` is NOT pinned: it receives the URL and resolves
+//     however it likes. The one production caller that injects one is the
+//     vision input resolver's `ctx.fetchImpl` test seam
+//     (extensions/tools-vision/src/input-resolver.ts); every other caller
+//     takes the default and is pinned.
+//   - Only `safeFetch` pins. `web_fetch` / `web_extract` use their own SSRF
+//     check (extensions/tools-web/src/ssrf.ts) and remain exposed to the
+//     rebinding race; that is the separate third-party HTTP client survey.
+//   - One `Agent` per request forgoes keep-alive. Accepted: `safeFetch`
+//     callers (OAuth, scope probes, vision URL fetches, the model catalog)
+//     are low-volume.
 
 import { lookup as dnsLookup } from 'node:dns/promises';
+import { isIP, type LookupFunction } from 'node:net';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { isCloudMetadataHost } from './cloud-metadata';
 import { checkAllowDeny, type NetworkPolicy } from './policy';
 import { checkScheme } from './scheme';
@@ -36,7 +48,9 @@ async function defaultResolveHost(host: string): Promise<string[]> {
 
 export interface SafeFetchOptions {
   policy: NetworkPolicy;
-  /** Underlying fetch implementation; injected for testability. */
+  /** Underlying fetch implementation; injected for testability. When set,
+   *  the connection is NOT pinned to the validated addresses (see the module
+   *  header) — the default path (`pinnedFetch`) is. */
   fetchImpl?: typeof fetch;
   /** Async DNS lookup. **Defaults to node:dns/promises#lookup** so callers
    *  do NOT have to remember to plumb a resolver to get the private-network
@@ -67,7 +81,7 @@ export async function safeFetch(
   initialUrl: string,
   opts: SafeFetchOptions,
 ): Promise<SafeFetchResult> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = opts.fetchImpl;
   const resolver = opts.resolveHost ?? defaultResolveHost;
   const maxHops = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
 
@@ -82,7 +96,9 @@ export async function safeFetch(
 
     let response: Response;
     try {
-      response = await fetchImpl(url, { ...init, redirect: 'manual' });
+      response = fetchImpl
+        ? await fetchImpl(url, { ...init, redirect: 'manual' })
+        : await pinnedFetch(url, { ...init, redirect: 'manual' }, policyCheck.addresses ?? []);
     } catch (err) {
       return {
         ok: false,
@@ -120,6 +136,70 @@ export async function safeFetch(
 interface ValidateResult {
   ok: boolean;
   reason?: string;
+  /** The resolved addresses validation accepted — what `pinnedFetch` pins the
+   *  connection to. Absent for an IP-literal host (nothing to resolve) and
+   *  when resolution failed (nothing validated, so nothing to connect to). */
+  addresses?: string[];
+}
+
+/**
+ * Issue one request with its connection pinned to `addresses` — the addresses
+ * `validateUrl` resolved and accepted for this URL's host. undici's own
+ * `fetch` (not the runtime's global one, whose bundled `Agent` is not
+ * exposed) with a per-request `Agent` whose `connect.lookup` never consults
+ * DNS. An IP-literal host never reaches `lookup` (node:net connects to a
+ * literal directly), and a hostname with no validated address fails to
+ * connect instead of resolving again.
+ */
+async function pinnedFetch(
+  url: string,
+  init: RequestInit,
+  addresses: readonly string[],
+): Promise<Response> {
+  const agent = new Agent({ connect: { lookup: pinnedLookup(addresses) } });
+  let response: Awaited<ReturnType<typeof undiciFetch>>;
+  try {
+    // undici's RequestInit/Response are the same WHATWG shapes as the global
+    // ones under separate declarations; the casts bridge the two type trees.
+    response = await undiciFetch(url, {
+      ...(init as Parameters<typeof undiciFetch>[1]),
+      dispatcher: agent,
+    });
+  } catch (err) {
+    await agent.destroy();
+    throw err;
+  }
+  // Graceful close: the in-flight response body is still delivered; the agent
+  // releases its socket once the body is consumed or discarded.
+  void agent.close();
+  return response as unknown as Response;
+}
+
+/**
+ * node:net `lookup` answering only from `addresses`. Verified against Node 24
+ * + undici 7.28: undici passes `connect` options through to `net.connect` /
+ * `tls.connect`, which call `lookup(hostname, { all: true, hints })` under the
+ * default `autoSelectFamily` (callback takes an address array) and
+ * `lookup(hostname, { hints })` without it (callback takes address, family).
+ */
+function pinnedLookup(addresses: readonly string[]): LookupFunction {
+  return (hostname, options, callback) => {
+    const wanted = options.family === 4 || options.family === 6 ? options.family : 0;
+    const records = addresses
+      .map((address) => ({ address, family: isIP(address) }))
+      .filter((r) => r.family !== 0 && (wanted === 0 || r.family === wanted));
+    const first = records[0];
+    if (!first) {
+      const err: NodeJS.ErrnoException = new Error(
+        `no validated address to connect to for '${hostname}'`,
+      );
+      err.code = 'ENOTFOUND';
+      callback(err, '', 0);
+      return;
+    }
+    if (options.all) callback(null, records);
+    else callback(null, first.address, first.family);
+  };
 }
 
 /**
@@ -150,18 +230,15 @@ export async function validateUrl(
   const allowDeny = checkAllowDeny(hostname, policy);
   if (!allowDeny.allowed) return { ok: false, reason: allowDeny.reason };
 
+  // Each branch resolves once and, on success, carries the accepted
+  // `addresses` — what `pinnedFetch` pins the connection to.
   if (!policy.allow_private_urls) {
-    const privateCheck = await checkPrivate(hostname, resolveHost);
-    if (!privateCheck.ok) return privateCheck;
-  } else {
-    // Even with allow_private_urls, the cloud-metadata IP is non-overridable
-    // — the `isCloudMetadataHost` check above caught the literal '169.254.169.254',
-    // and the resolveHost path below catches DNS-rebinding to it.
-    const dnsRebindCheck = await checkResolvesToCloudMetadata(hostname, resolveHost);
-    if (!dnsRebindCheck.ok) return dnsRebindCheck;
+    return checkPrivate(hostname, resolveHost);
   }
-
-  return { ok: true };
+  // Even with allow_private_urls, the cloud-metadata IP is non-overridable
+  // — the `isCloudMetadataHost` check above caught the literal '169.254.169.254',
+  // and the resolveHost path below catches DNS-rebinding to it.
+  return checkResolvesToCloudMetadata(hostname, resolveHost);
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +333,7 @@ async function checkPrivate(
         };
       }
     }
+    return { ok: true, addresses: addrs };
   }
   return { ok: true };
 }
@@ -279,7 +357,7 @@ async function checkResolvesToCloudMetadata(
       };
     }
   }
-  return { ok: true };
+  return { ok: true, addresses: addrs };
 }
 
 function isLikelyIp(s: string): boolean {
