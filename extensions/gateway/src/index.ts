@@ -334,7 +334,14 @@ interface SpoolTurnState {
   id: string | undefined;
   /** The text final landed (see `markAnswered` in `runTurn`). */
   answered: boolean;
-  /** Steer messages folded into this turn; closed when it completes. */
+  /**
+   * Steer rows folded into this turn that could NOT be linked durably
+   * (`linkAbsorbed` failed, or this turn has no row / is a review). A linked
+   * steer row is not listed: the spool itself carries it with this turn's row
+   * (`absorbed_into`), so it shares every terminal of that row, crash
+   * included. These unlinked ones keep the pre-link handling — closed when the
+   * turn completes, left `received` on shutdown.
+   */
   absorbed: string[];
   /** The turn started a tool, so its row is never replayed (plan
    *  openclaw-9.5-adoption D5; set with `markToolStarted` in `runTurn`). */
@@ -3460,10 +3467,10 @@ export class Gateway {
     if (activeSink) {
       const accepted = activeSink.push(text);
       if (accepted) {
-        // Folded into the running turn: its row closes when THAT turn does.
+        // Folded into the running turn: its row shares THAT turn's fate.
         const absorbing = spoolId ? this.spoolTurns.get(laneKey) : undefined;
         if (spoolId && absorbing) {
-          absorbing.absorbed.push(spoolId);
+          if (!this.linkAbsorbed(spoolId, absorbing)) absorbing.absorbed.push(spoolId);
           handOff();
         }
         await adapter.send(message.chatId, { text: '↩ noted', threadId }).catch(() => {});
@@ -3673,6 +3680,58 @@ export class Gateway {
   }
 
   /**
+   * Persist that steer row `spoolId` was folded into `state`'s turn
+   * (`InboundSpool.markAbsorbed`, schema v3), so a crash, a shutdown or a
+   * failure settles it WITH that turn instead of leaving it to replay as a
+   * standalone message. A standalone replay in a lane whose primary had just
+   * been interrupted would discard the very row the user was told to `retry`
+   * (`settleInterrupted`), and on a retry or a replay the steer text would be
+   * lost. The primary's replay and `retry` fold the text back in
+   * (`foldAbsorbed`). One commit per steer message.
+   *
+   * Not for a review turn: `replayWakeReview` re-runs a review from its job,
+   * not from a message, so there is nothing to fold a steer into — its steer
+   * rows keep the unlinked handling. `false` → not linked (fail-open, recorded
+   * as `gateway.spool_update_failed` when the write threw); the caller keeps
+   * the row in `state.absorbed`. Pinned by `__tests__/inbound-spool.test.ts`
+   * ('absorbed steer rows').
+   */
+  private linkAbsorbed(spoolId: string, state: SpoolTurnState): boolean {
+    const spool = this.inboundSpool;
+    if (!spool || !state.id || state.review) return false;
+    try {
+      return spool.markAbsorbed(spoolId, state.id);
+    } catch (err) {
+      this.recordSpoolUpdateFailed('markAbsorbed', err);
+      return false;
+    }
+  }
+
+  /**
+   * `message` — revived from primary row `row` — with the text of every row
+   * still absorbed into it appended, in arrival order: the turn as the user
+   * actually shaped it, primary plus steers. Used where a primary is re-run
+   * from its row: the replay (`replaySpoolRow`) and `retry`
+   * (`settleInterrupted`). Only text is folded, which is all a live steer ever
+   * carried (`SteerSink.push(text)`). An unreadable absorbed row contributes
+   * nothing.
+   */
+  private async foldAbsorbed(
+    spool: InboundSpool,
+    row: SpoolRow,
+    message: InboundMessage,
+  ): Promise<InboundMessage> {
+    const absorbed = spool.listAbsorbed(row.id);
+    if (absorbed.length === 0) return message;
+    const texts = [message.text];
+    for (const child of absorbed) {
+      const steer = await this.reviveSpooledMessage(child);
+      if (steer?.text.trim()) texts.push(steer.text);
+    }
+    return { ...message, text: texts.filter((t) => t.trim()).join('\n\n') };
+  }
+
+  /**
    * The turn's first `tool_start` (plan openclaw-9.5-adoption D5): from here the
    * row is never replayed. One commit, only on turns that use tools. Fail-open
    * — the in-memory flag still steers this process's own shutdown, but a
@@ -3697,7 +3756,8 @@ export class Gateway {
    * - Shutdown abort, not answered, no tool started → `releaseOnShutdown`:
    *   owed, not failed, and the attempt is refunded; the next boot replays it,
    *   which is why `shutdown()` sends this lane no "please resend" (D19).
-   *   Absorbed steer rows are left `received` for the next boot too.
+   *   Its linked steer rows stay `received` and linked, so that replay runs
+   *   them folded in (`foldAbsorbed`); unlinked ones stay `received` too.
    * - Shutdown abort, not answered, a tool started → `interrupted`, and the
    *   lane gets {@link INTERRUPTED_RETRY_NOTICE} instead of "please resend"
    *   (D5/D19).
@@ -3706,6 +3766,12 @@ export class Gateway {
    *   `dead` at the attempt cap (`gateway.spool_dead_lettered`).
    * - Otherwise → `done`, absorbed rows included. An answered turn is `done`
    *   even if its tail failed or shutdown cut it: the user has the reply.
+   *
+   * Linked steer rows (`linkAbsorbed`) need nothing here: every terminal above
+   * is written to them by the spool in the same transaction
+   * (`cascadeAbsorbed` in @ethosagent/inbound-spool) — `interrupted` with an
+   * interrupted primary, so `retry` re-runs primary and steers together.
+   * Only the unlinked ones in `state.absorbed` are closed below.
    *
    * A `wake_review` row (plan item 6, D29): answered → `done`. Shutdown with no
    * tool started → `releaseOnShutdown` (the next boot re-runs the review).
@@ -3881,9 +3947,13 @@ export class Gateway {
     if (!spool) return null;
     try {
       if (retry) {
-        const message = await this.reviveSpooledMessage(row);
+        const revived = await this.reviveSpooledMessage(row);
+        // The interrupted turn's absorbed steers were interrupted with it; the
+        // retry re-runs primary and steers as ONE turn, and its row carries the
+        // folded text so a crash during the retry replays that same turn.
+        const message = revived ? await this.foldAbsorbed(spool, row, revived) : null;
         if (message) {
-          const fresh = spool.retryInterrupted(row.id, this.spoolOwner);
+          const fresh = spool.retryInterrupted(row.id, this.spoolOwner, serializeInbound(message));
           if (!fresh) return 'consumed';
           this.observability?.recordSafetyBlock({
             code: 'gateway.spool_interrupted_retried',
@@ -4087,7 +4157,9 @@ export class Gateway {
         }
         return;
       }
-      const message = await this.reviveSpooledMessage(row);
+      const revived = await this.reviveSpooledMessage(row);
+      // Its absorbed steer rows ride in it (they are never listed on their own).
+      const message = revived ? await this.foldAbsorbed(spool, row, revived) : null;
       if (!message) {
         // An unreadable payload can never become a turn; dead-letter it now
         // rather than on the third boot.

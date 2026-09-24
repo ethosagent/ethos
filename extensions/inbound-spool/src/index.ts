@@ -43,6 +43,19 @@ import Database, { migrate } from '@ethosagent/sqlite';
 //   retryInterrupted: interrupted → done, plus a NEW `received` row, same payload
 //   discard:          dead | interrupted → done
 //
+// Absorbed steer rows (schema v3): a message folded into a running turn as a
+// steer (`markAbsorbed`) stores that turn's row id in `absorbed_into`, and from
+// then on SHARES ITS TURN'S FATE — every terminal written to the primary is
+// written to its absorbed rows in the same transaction (`cascadeAbsorbed`):
+// done → done, interrupted → interrupted, dead → dead, discard → done. It is
+// never replayed on its own while its primary is owed (`listReplayable`
+// excludes it): the gateway folds its text into the primary's when the
+// primary is replayed or retried (`listAbsorbed`, `retryInterrupted`'s
+// `payload`). Before v3 the link lived only in the gateway's memory, so after
+// a crash the steer replayed as a standalone turn — and, arriving in a lane
+// whose primary had just become `interrupted`, it discarded the row the user
+// had just been told to `retry`.
+//
 // Two kinds of row share the table: `inbound` (a platform message) and
 // `wake_review` (a background job's result the parent session reviews before
 // the user sees it, plan openclaw-9.5-adoption item 6 / D29). The gateway owns
@@ -129,6 +142,9 @@ export interface SpoolRow {
   reviewJobId?: string;
   /** When the turn running this row first started a tool. Set → never replayed. */
   toolStartedAt?: number;
+  /** The row whose turn this steer message was folded into (schema v3). Set →
+   *  the row shares that row's terminals and is never replayed on its own. */
+  absorbedInto?: string;
 }
 
 export type SpoolStats = Record<SpoolStatus, number>;
@@ -143,7 +159,7 @@ const MAX_DEAD_LIST = 500;
  *  non-migrating writer (`ethos gateway spool`, apps/ethos/src/commands/gateway-status.ts)
  *  can refuse a file at any other version instead of writing into a schema it
  *  does not know. */
-export const INBOUND_SPOOL_SCHEMA_VERSION = 2;
+export const INBOUND_SPOOL_SCHEMA_VERSION = 3;
 
 /**
  * The contract the gateway codes against. Exported from this package rather
@@ -160,8 +176,20 @@ export interface InboundSpool {
   accept(row: SpoolAccept): { id: string; fresh: boolean };
   /** `received` → `processing`, counting one attempt. `false` = not `received`. */
   markProcessing(id: string, owner: string): boolean;
-  /** Any non-terminal state → `done`, with the payload nulled. */
+  /** Any non-terminal state → `done`, with the payload nulled. Its absorbed
+   *  rows follow (`cascadeAbsorbed`). */
   markDone(id: string): void;
+  /**
+   * A `received` steer row was folded into the running turn of `intoId`: link
+   * it (`absorbed_into`), and re-point any rows already absorbed into `id` at
+   * `intoId`, so the link stays one level deep. `false` — nothing linked — when
+   * `id` is not `received` or `intoId` is not an owed (`received`/`processing`)
+   * row; the caller then keeps the old, unlinked handling.
+   */
+  markAbsorbed(id: string, intoId: string): boolean;
+  /** Rows absorbed into `id` that are still owed with it (`received` or
+   *  `interrupted`), in arrival order (`received_at, rowid`). */
+  listAbsorbed(id: string): SpoolRow[];
   /**
    * A turn failed. `processing` → `dead` when `attempts >= maxAttempts`;
    * otherwise → `interrupted` when the turn had started a tool (never re-run
@@ -182,18 +210,22 @@ export interface InboundSpool {
   findInterrupted(laneKey: string, sinceMs: number): SpoolRow | null;
   /**
    * The user replied `retry`: ONE transaction closes the `interrupted` row
-   * (`done`) and inserts a fresh `received` row with the same payload, lane and
-   * kind, claimed by `owner`, keyed `retry:<old id>`. Returns the new row's id,
-   * or `null` when the row is no longer `interrupted` (already retried or
-   * discarded) — so two concurrent `retry`s run it once.
+   * (`done`) and its absorbed rows (`done`, `retried`), and inserts a fresh
+   * `received` row with the same lane and kind, claimed by `owner`, keyed
+   * `retry:<old id>`. Its payload is `payload` when given — the gateway passes
+   * the original message with its absorbed steer text folded in — else the old
+   * row's. Returns the new row's id, or `null` when the row is no longer
+   * `interrupted` (already retried or discarded) — so two concurrent `retry`s
+   * run it once.
    */
-  retryInterrupted(id: string, owner: string): string | null;
+  retryInterrupted(id: string, owner: string, payload?: string): string | null;
   /** `interrupted` rows, newest first. `limit` clamped to 1–500. */
   listInterrupted(limit?: number): SpoolRow[];
   /** `received` (unclaimed) → `dead` with `error` — the stale-replay path. */
   markDead(id: string, error: string): boolean;
   /** Unclaimed `received` rows whose `bot_key` is in `botKeys`, ordered
-   *  `lane_key, received_at, rowid`. Empty list in → empty list out. */
+   *  `lane_key, received_at, rowid`, minus rows absorbed into a primary that is
+   *  still owed (they replay folded into it). Empty list in → empty list out. */
   listReplayable(botKeys: readonly string[]): SpoolRow[];
   /** Conditional UPDATE in a transaction: unclaimed `received` → claimed by
    *  `owner`. `false` means another claimant won. */
@@ -212,9 +244,13 @@ export interface InboundSpool {
   get(id: string): SpoolRow | null;
   /** `dead` | `interrupted` → unclaimed `received`, `attempts = 0`, with
    *  `tool_started_at` cleared: an operator requeue IS the explicit decision to
-   *  re-run, so the D5 guard must not bounce it straight back. */
+   *  re-run, so the D5 guard must not bounce it straight back. A primary's
+   *  absorbed rows are requeued with it (still linked, so they replay folded
+   *  into it); an absorbed row requeued on its own is unlinked and replays as
+   *  itself. */
   requeue(id: string): boolean;
-  /** `dead` | `interrupted` → `done`, `last_error = 'discarded'`. */
+  /** `dead` | `interrupted` → `done`, `last_error = 'discarded'`, absorbed rows
+   *  included. */
   discard(id: string): boolean;
   /** Delete `done` rows last updated before `cutoffMs`. Never touches owed rows. */
   pruneDone(cutoffMs: number): number;
@@ -251,6 +287,8 @@ const SCHEMA = `
     tool_started_at INTEGER,
     kind         TEXT    NOT NULL DEFAULT 'inbound',
     review_job_id TEXT,
+    -- v3: the row whose turn this steer message was folded into.
+    absorbed_into TEXT,
     UNIQUE (platform, bot_key, chat_id, message_id)
   ) STRICT;
 
@@ -258,8 +296,14 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS inbound_spool_lane   ON inbound_spool(lane_key, received_at);
 `;
 
+/** Not in {@link SCHEMA}: `migrate()` runs the baseline BEFORE the steps, so an
+ *  index on a v3 column there would fail on a v2 table. Created after
+ *  `migrate()` for every file (and by step 3 for a migrated one). */
+const ABSORBED_INDEX =
+  'CREATE INDEX IF NOT EXISTS inbound_spool_absorbed ON inbound_spool(absorbed_into)';
+
 /**
- * Forward-only steps; the baseline above already describes v2, so a fresh
+ * Forward-only steps; the baseline above already describes v3, so a fresh
  * database never runs one. `ADD COLUMN` keeps the table STRICT and leaves every
  * v1 row as `kind = 'inbound'` with no tool start — the honest state for a row
  * written before either existed. The `table_info` guard keeps a step
@@ -279,6 +323,18 @@ const SPOOL_MIGRATIONS: Record<number, (db: Database.Database) => void> = {
     if (!cols.has('review_job_id')) {
       db.exec('ALTER TABLE inbound_spool ADD COLUMN review_job_id TEXT');
     }
+  },
+  // v3 — absorbed steer rows share their turn's fate. Every existing row is
+  // unlinked, which is what the pre-v3 gateway's in-memory link amounted to
+  // after a restart.
+  3: (db) => {
+    const cols = new Set(
+      (db.pragma('table_info(inbound_spool)') as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!cols.has('absorbed_into')) {
+      db.exec('ALTER TABLE inbound_spool ADD COLUMN absorbed_into TEXT');
+    }
+    db.exec(ABSORBED_INDEX);
   },
 };
 
@@ -300,6 +356,8 @@ interface Row {
   tool_started_at: number | null;
   kind: string;
   review_job_id: string | null;
+  /** Absent (undefined) on a pre-v3 file a raw diagnostic reader opened. */
+  absorbed_into?: string | null;
 }
 
 function toRow(r: Row): SpoolRow {
@@ -321,7 +379,31 @@ function toRow(r: Row): SpoolRow {
     kind: r.kind === 'wake_review' ? 'wake_review' : 'inbound',
     ...(r.review_job_id !== null ? { reviewJobId: r.review_job_id } : {}),
     ...(r.tool_started_at !== null ? { toolStartedAt: r.tool_started_at } : {}),
+    ...(r.absorbed_into ? { absorbedInto: r.absorbed_into } : {}),
   };
+}
+
+/**
+ * Write a primary's terminal to the rows absorbed into it — the one place the
+ * "an absorbed row shares its turn's fate" rule is written (see the header).
+ * Only rows in `from` move: a row already `done` stays done. Callers run it
+ * inside the transaction that writes the primary's own terminal.
+ */
+function cascadeAbsorbed(
+  db: Database.Database,
+  primaryId: string,
+  from: readonly SpoolStatus[],
+  to: SpoolStatus,
+  lastError: string | null,
+  now: number,
+): void {
+  const placeholders = from.map(() => '?').join(', ');
+  const nullPayload = to === 'done' ? `, payload = '{}'` : '';
+  db.prepare(
+    `UPDATE inbound_spool
+     SET status = ?, claimed_by = NULL, last_error = COALESCE(?, last_error), updated_at = ?${nullPayload}
+     WHERE absorbed_into = ? AND status IN (${placeholders})`,
+  ).run(to, lastError, now, primaryId, ...from);
 }
 
 function isStatus(v: string): v is SpoolStatus {
@@ -368,6 +450,7 @@ export class SQLiteInboundSpool implements InboundSpool {
       baseline: SCHEMA,
       migrations: SPOOL_MIGRATIONS,
     });
+    this.db.exec(ABSORBED_INDEX);
     this.now = options.now ?? Date.now;
   }
 
@@ -422,12 +505,53 @@ export class SQLiteInboundSpool implements InboundSpool {
     // sessions.db, and a second copy of every message body for the retention
     // window would double the privacy surface. The row stays for the UNIQUE
     // key (it extends dedup's window) and for forensics.
-    this.db
+    const done = this.db.transaction(() => {
+      const at = this.now();
+      this.db
+        .prepare(
+          `UPDATE inbound_spool SET status = 'done', payload = '{}', updated_at = ?
+           WHERE id = ? AND status IN ('received', 'processing')`,
+        )
+        .run(at, id);
+      cascadeAbsorbed(this.db, id, ['received', 'interrupted'], 'done', null, at);
+    });
+    done();
+  }
+
+  markAbsorbed(id: string, intoId: string): boolean {
+    if (id === intoId) return false;
+    const link = this.db.transaction((): boolean => {
+      const at = this.now();
+      const linked = this.db
+        .prepare(
+          `UPDATE inbound_spool SET absorbed_into = ?, updated_at = ?
+           WHERE id = ? AND status = 'received'
+             AND EXISTS (SELECT 1 FROM inbound_spool p
+                         WHERE p.id = ? AND p.status IN ('received', 'processing'))`,
+        )
+        .run(intoId, at, id, intoId);
+      if (linked.changes !== 1) return false;
+      // One level deep: a replayed primary that is itself absorbed hands its
+      // own absorbed rows to the new primary, whose turn now carries them.
+      this.db
+        .prepare(
+          `UPDATE inbound_spool SET absorbed_into = ?, updated_at = ? WHERE absorbed_into = ?`,
+        )
+        .run(intoId, at, id);
+      return true;
+    });
+    return link();
+  }
+
+  listAbsorbed(id: string): SpoolRow[] {
+    const rows = this.db
       .prepare(
-        `UPDATE inbound_spool SET status = 'done', payload = '{}', updated_at = ?
-         WHERE id = ? AND status IN ('received', 'processing')`,
+        `SELECT * FROM inbound_spool
+         WHERE absorbed_into = ? AND status IN ('received', 'interrupted')
+         ORDER BY received_at ASC, rowid ASC`,
       )
-      .run(this.now(), id);
+      .all(id) as Row[];
+    return rows.map(toRow);
   }
 
   markFailed(id: string, error: string, maxAttempts: number): SpoolFailOutcome {
@@ -448,6 +572,16 @@ export class SQLiteInboundSpool implements InboundSpool {
            WHERE id = ? AND status IN ('received', 'processing')`,
         )
         .run(outcome, error, this.now(), outcome, id);
+      if (outcome !== 'received') {
+        cascadeAbsorbed(
+          this.db,
+          id,
+          ['received'],
+          outcome,
+          `absorbed into ${id}: ${error}`,
+          this.now(),
+        );
+      }
       return outcome;
     });
     return decide();
@@ -464,14 +598,20 @@ export class SQLiteInboundSpool implements InboundSpool {
   }
 
   markInterrupted(id: string, reason: string): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE inbound_spool
-         SET status = 'interrupted', claimed_by = NULL, last_error = ?, updated_at = ?
-         WHERE id = ? AND status IN ('received', 'processing')`,
-      )
-      .run(reason, this.now(), id);
-    return result.changes === 1;
+    const interrupt = this.db.transaction((): boolean => {
+      const at = this.now();
+      const result = this.db
+        .prepare(
+          `UPDATE inbound_spool
+           SET status = 'interrupted', claimed_by = NULL, last_error = ?, updated_at = ?
+           WHERE id = ? AND status IN ('received', 'processing')`,
+        )
+        .run(reason, at, id);
+      if (result.changes !== 1) return false;
+      cascadeAbsorbed(this.db, id, ['received'], 'interrupted', `absorbed into ${id}`, at);
+      return true;
+    });
+    return interrupt();
   }
 
   findInterrupted(laneKey: string, sinceMs: number): SpoolRow | null {
@@ -479,13 +619,14 @@ export class SQLiteInboundSpool implements InboundSpool {
       .prepare(
         `SELECT * FROM inbound_spool
          WHERE lane_key = ? AND status = 'interrupted' AND updated_at >= ?
+           AND absorbed_into IS NULL
          ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
       )
       .get(laneKey, sinceMs) as Row | undefined;
     return row ? toRow(row) : null;
   }
 
-  retryInterrupted(id: string, owner: string): string | null {
+  retryInterrupted(id: string, owner: string, payload?: string): string | null {
     const retry = this.db.transaction((): string | null => {
       const old = this.db
         .prepare(`SELECT * FROM inbound_spool WHERE id = ? AND status = 'interrupted'`)
@@ -499,6 +640,9 @@ export class SQLiteInboundSpool implements InboundSpool {
            WHERE id = ?`,
         )
         .run(at, id);
+      // Their text rides in `payload` (the gateway folds it in), so they close
+      // with the row they were absorbed into.
+      cascadeAbsorbed(this.db, id, ['interrupted'], 'done', 'retried', at);
       const fresh = randomUUID();
       this.db
         .prepare(
@@ -515,7 +659,7 @@ export class SQLiteInboundSpool implements InboundSpool {
           old.thread_id,
           `retry:${old.id}`,
           old.lane_key,
-          old.payload,
+          payload ?? old.payload,
           at,
           at,
           owner,
@@ -532,13 +676,19 @@ export class SQLiteInboundSpool implements InboundSpool {
   }
 
   markDead(id: string, error: string): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE inbound_spool SET status = 'dead', last_error = ?, updated_at = ?
-         WHERE id = ? AND status = 'received' AND claimed_by IS NULL`,
-      )
-      .run(error, this.now(), id);
-    return result.changes === 1;
+    const dead = this.db.transaction((): boolean => {
+      const at = this.now();
+      const result = this.db
+        .prepare(
+          `UPDATE inbound_spool SET status = 'dead', last_error = ?, updated_at = ?
+           WHERE id = ? AND status = 'received' AND claimed_by IS NULL`,
+        )
+        .run(error, at, id);
+      if (result.changes !== 1) return false;
+      cascadeAbsorbed(this.db, id, ['received'], 'dead', `absorbed into ${id}: ${error}`, at);
+      return true;
+    });
+    return dead();
   }
 
   listReplayable(botKeys: readonly string[]): SpoolRow[] {
@@ -548,11 +698,18 @@ export class SQLiteInboundSpool implements InboundSpool {
     // to report as orphaned). `rowid` is selected-for explicitly by ORDER BY —
     // same-millisecond rows otherwise come back in an arbitrary order.
     const placeholders = botKeys.map(() => '?').join(', ');
+    // An absorbed row whose primary is still owed replays folded INTO it, never
+    // as a turn of its own. One whose primary is gone (pruned, or closed by a
+    // path that predates the cascade) is owed work with nobody carrying it, so
+    // it replays as itself rather than being stranded.
     const rows = this.db
       .prepare(
-        `SELECT * FROM inbound_spool
-         WHERE status = 'received' AND claimed_by IS NULL AND bot_key IN (${placeholders})
-         ORDER BY lane_key ASC, received_at ASC, rowid ASC`,
+        `SELECT s.* FROM inbound_spool s
+         WHERE s.status = 'received' AND s.claimed_by IS NULL AND s.bot_key IN (${placeholders})
+           AND (s.absorbed_into IS NULL OR NOT EXISTS (
+             SELECT 1 FROM inbound_spool p
+             WHERE p.id = s.absorbed_into AND p.status IN ('received', 'processing', 'interrupted')))
+         ORDER BY s.lane_key ASC, s.received_at ASC, s.rowid ASC`,
       )
       .all(...botKeys) as Row[];
     return rows.map(toRow);
@@ -733,25 +890,43 @@ export function readSpoolRow(db: Database.Database, id: string): SpoolRow | null
 
 /** See {@link InboundSpool.requeue}. */
 export function requeueSpoolDead(db: Database.Database, id: string, now: number): boolean {
-  const result = db
-    .prepare(
+  const requeue = db.transaction((): boolean => {
+    // An absorbed row requeued on its own is unlinked: the operator asked for
+    // THIS message, and a link to a primary that stays dead would strand it.
+    const result = db
+      .prepare(
+        `UPDATE inbound_spool
+         SET status = 'received', attempts = 0, claimed_by = NULL, tool_started_at = NULL,
+             absorbed_into = NULL, updated_at = ?
+         WHERE id = ? AND status IN ('dead', 'interrupted')`,
+      )
+      .run(now, id);
+    if (result.changes !== 1) return false;
+    // A primary's absorbed rows come back with it, still linked, so the replay
+    // folds them into it (`listReplayable` skips them while it is owed).
+    db.prepare(
       `UPDATE inbound_spool
-       SET status = 'received', attempts = 0, claimed_by = NULL, tool_started_at = NULL,
-           updated_at = ?
-       WHERE id = ? AND status IN ('dead', 'interrupted')`,
-    )
-    .run(now, id);
-  return result.changes === 1;
+       SET status = 'received', attempts = 0, claimed_by = NULL, updated_at = ?
+       WHERE absorbed_into = ? AND status IN ('dead', 'interrupted')`,
+    ).run(now, id);
+    return true;
+  });
+  return requeue();
 }
 
 /** See {@link InboundSpool.discard}. */
 export function discardSpoolDead(db: Database.Database, id: string, now: number): boolean {
-  const result = db
-    .prepare(
-      `UPDATE inbound_spool
-       SET status = 'done', last_error = 'discarded', payload = '{}', updated_at = ?
-       WHERE id = ? AND status IN ('dead', 'interrupted')`,
-    )
-    .run(now, id);
-  return result.changes === 1;
+  const discard = db.transaction((): boolean => {
+    const result = db
+      .prepare(
+        `UPDATE inbound_spool
+         SET status = 'done', last_error = 'discarded', payload = '{}', updated_at = ?
+         WHERE id = ? AND status IN ('dead', 'interrupted')`,
+      )
+      .run(now, id);
+    if (result.changes !== 1) return false;
+    cascadeAbsorbed(db, id, ['dead', 'interrupted'], 'done', 'discarded', now);
+    return true;
+  });
+  return discard();
 }

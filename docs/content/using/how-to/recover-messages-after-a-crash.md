@@ -51,6 +51,8 @@ If the crashed turn had already started a tool, it is not replayed either: re-ru
 
 If the user replies exactly `retry` within a day, the original message runs again. Any other message in that chat drops it. A graceful stop (Ctrl+C) treats a tool-started turn the same way, and sends no "please resend" to a chat the replay will answer.
 
+A message sent while a turn was still running is folded into that turn (the chat sees `↩ noted`), and after a crash or a stop it stays with that turn: it is replayed as part of it, or included when the user replies `retry`. It never runs as a turn of its own.
+
 ### 2. Check the gateway's state
 
 ```bash

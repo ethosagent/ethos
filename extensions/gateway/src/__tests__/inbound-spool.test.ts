@@ -756,3 +756,111 @@ describe('inbound spool — shutdown notices', () => {
     expect(out.sends.map((x) => x.text)).toEqual([RESEND]);
   });
 });
+
+// Audit G1 (plan openclaw-9.5-adoption D5): a steer message folded into a
+// running turn shares that turn's fate. Before the durable link (spool schema
+// v3, `absorbed_into`) it replayed after a crash as a standalone turn — and in
+// a lane whose primary had just been interrupted, that standalone turn
+// discarded the very row the user had been told to `retry`.
+describe('inbound spool — absorbed steer rows', () => {
+  function toolThenPark(): ReturnType<typeof scriptedLoop> {
+    return scriptedLoop(async function* (_text, opts) {
+      yield { type: 'tool_start', toolCallId: 'c1', toolName: 'pay_invoice', args: {} };
+      await new Promise<void>((resolve) => {
+        opts.abortSignal?.addEventListener('abort', () => resolve());
+      });
+    });
+  }
+
+  function parkWithoutTool(): ReturnType<typeof scriptedLoop> {
+    return scriptedLoop(async function* (_text, opts) {
+      await new Promise<void>((resolve) => {
+        opts.abortSignal?.addEventListener('abort', () => resolve());
+      });
+    });
+  }
+
+  /** A first process starts `primary`, folds `steer` into it, and is left mid-turn. */
+  async function primaryWithSteer(loop: ReturnType<typeof scriptedLoop>, withTool: boolean) {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const gw = gateway(loop.loop, out.adapter, spool);
+    const turn = gw.handleMessage(msg('pay the invoice'), out.adapter);
+    if (withTool) await waitUntil(() => rows(spool)[0]?.toolStartedAt !== undefined);
+    else await waitUntil(() => loop.texts.length === 1);
+    await gw.handleMessage(msg('and cc finance on it'), out.adapter);
+    expect(out.sends.map((s) => s.text)).toEqual(['↩ noted']);
+    const [primary, steer] = rows(spool);
+    expect(steer?.absorbedInto).toBe(primary?.id);
+    out.sends.length = 0;
+    return { spool, out, gw, turn };
+  }
+
+  async function assertRetryRunsBoth(spool: SQLiteInboundSpool, out: { adapter: PlatformAdapter }) {
+    const next = scriptedLoop();
+    const gw2 = gateway(next.loop, out.adapter, spool);
+    await gw2.replayInboundSpool();
+    // Neither the primary nor its steer ran on their own.
+    expect(next.texts).toHaveLength(0);
+    await gw2.handleMessage(msg('retry'), out.adapter);
+    await waitUntil(() => next.texts.length === 1);
+    expect(next.texts[0]).toContain('pay the invoice');
+    expect(next.texts[0]).toContain('and cc finance on it');
+    await waitUntil(() => rows(spool).every((r) => r.status === 'done'));
+    expect(next.texts).toHaveLength(1);
+  }
+
+  it('tool started + crash: one interrupted notice, the steer never runs alone, retry runs both', async () => {
+    const { spool, out } = await primaryWithSteer(toolThenPark(), true);
+    // kill -9: the first process never settles anything. The next boot:
+    const next = scriptedLoop();
+    const gw2 = gateway(next.loop, out.adapter, spool);
+    expect(await gw2.replayInboundSpool()).toEqual({ replayed: 0, deferred: 0, dead: 0 });
+    expect(next.texts).toHaveLength(0);
+    expect(rows(spool).map((r) => r.status)).toEqual(['interrupted', 'interrupted']);
+    expect(out.sends.map((s) => s.text)).toEqual([INTERRUPTED_RETRY_NOTICE]);
+    // The interrupted row is still there to retry (the steer did not discard it).
+    await gw2.handleMessage(msg('retry'), out.adapter);
+    await waitUntil(() => next.texts.length === 1);
+    expect(next.texts[0]).toContain('pay the invoice');
+    expect(next.texts[0]).toContain('and cc finance on it');
+    await waitUntil(() => rows(spool).every((r) => r.status === 'done'));
+  });
+
+  it('tool started + shutdown: both rows interrupted together, one notice, retry runs both', async () => {
+    const { spool, out, gw, turn } = await primaryWithSteer(toolThenPark(), true);
+    await gw.shutdown({ notify: 'please resend', drainTimeoutMs: 1000 });
+    await turn.catch(() => {});
+    expect(rows(spool).map((r) => r.status)).toEqual(['interrupted', 'interrupted']);
+    expect(out.sends.map((s) => s.text)).toEqual([INTERRUPTED_RETRY_NOTICE]);
+    out.sends.length = 0;
+    await assertRetryRunsBoth(spool, out);
+  });
+
+  it('no tool + crash: replayed once, as the primary with the steer folded in', async () => {
+    const { spool, out } = await primaryWithSteer(parkWithoutTool(), false);
+    const next = scriptedLoop();
+    const gw2 = gateway(next.loop, out.adapter, spool);
+    expect(await gw2.replayInboundSpool()).toEqual({ replayed: 1, deferred: 0, dead: 0 });
+    await waitUntil(() => rows(spool).every((r) => r.status === 'done'));
+    expect(next.texts).toHaveLength(1);
+    const primaryAt = next.texts[0]?.indexOf('pay the invoice') ?? -1;
+    const steerAt = next.texts[0]?.indexOf('and cc finance on it') ?? -1;
+    expect(primaryAt).toBeGreaterThanOrEqual(0);
+    expect(steerAt).toBeGreaterThan(primaryAt);
+    expect(out.sends.map((s) => s.text)).toEqual(['reply']);
+  });
+
+  it('no tool + shutdown: the steer stays owed with its primary and replays folded in', async () => {
+    const { spool, out, gw, turn } = await primaryWithSteer(parkWithoutTool(), false);
+    await gw.shutdown({ notify: 'please resend', drainTimeoutMs: 1000 });
+    await turn.catch(() => {});
+    expect(rows(spool).map((r) => r.status)).toEqual(['received', 'received']);
+    expect(out.sends).toHaveLength(0);
+    const next = scriptedLoop();
+    await gateway(next.loop, out.adapter, spool).replayInboundSpool();
+    await waitUntil(() => rows(spool).every((r) => r.status === 'done'));
+    expect(next.texts).toHaveLength(1);
+    expect(next.texts[0]).toContain('and cc finance on it');
+  });
+});

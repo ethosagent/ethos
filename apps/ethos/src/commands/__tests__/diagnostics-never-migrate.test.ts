@@ -108,6 +108,30 @@ function v1Spool(): string {
   return path;
 }
 
+/** A spool with the v2 table (no `absorbed_into`) at `user_version` 2, holding
+ *  one dead row: what a gateway from before schema v3 leaves behind. The v3
+ *  migration would add the column, and `requeueSpoolDead` now writes it. */
+function v2Spool(): string {
+  const path = join(dir, 'inbound-spool.db');
+  const db = new Database(path);
+  db.exec(`CREATE TABLE inbound_spool (
+    id TEXT PRIMARY KEY, platform TEXT NOT NULL, bot_key TEXT NOT NULL, chat_id TEXT NOT NULL,
+    thread_id TEXT, message_id TEXT NOT NULL, lane_key TEXT NOT NULL, payload TEXT NOT NULL,
+    status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+    received_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, claimed_by TEXT,
+    tool_started_at INTEGER, kind TEXT NOT NULL DEFAULT 'inbound', review_job_id TEXT,
+    UNIQUE (platform, bot_key, chat_id, message_id)
+  ) STRICT`);
+  db.prepare(
+    `INSERT INTO inbound_spool (id, platform, bot_key, chat_id, message_id, lane_key, payload,
+     status, attempts, last_error, received_at, updated_at)
+     VALUES ('d2', 'telegram', 'bot-a', 'c', 'm', 'l', '{}', 'dead', 3, 'boom', 1, 1)`,
+  ).run();
+  db.pragma('user_version = 2');
+  db.close();
+  return path;
+}
+
 function columns(path: string): string[] {
   const db = new Database(path, { readonly: true });
   try {
@@ -219,6 +243,16 @@ describe('ethos gateway spool', () => {
     const before = { shape: shape(path), columns: columns(path) };
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(runGatewaySpool(['replay', 'd1'], dir)).toBe(1);
+    expect({ shape: shape(path), columns: columns(path) }).toEqual(before);
+  });
+
+  it('refuses a v2 spool rather than writing v3 columns into it, and still reads it', async () => {
+    const path = v2Spool();
+    const before = { shape: shape(path), columns: columns(path) };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(runGatewaySpool(['replay', 'd2'], dir)).toBe(1);
+    expect(runGatewaySpool(['discard', 'd2'], dir)).toBe(1);
+    expect((await readGatewayStatus(dir)).spool?.dead).toBe(1);
     expect({ shape: shape(path), columns: columns(path) }).toEqual(before);
   });
 
