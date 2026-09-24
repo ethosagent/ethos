@@ -7,7 +7,13 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
-import type { Tool, ToolContext, ToolRegistry } from '@ethosagent/types';
+import type {
+  PersonalityConfig,
+  PersonalityRegistry,
+  Tool,
+  ToolContext,
+  ToolRegistry,
+} from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { createPersonalityDesignTools } from '../index';
 
@@ -49,12 +55,32 @@ function registry(names: string[]): ToolRegistry {
   };
 }
 
+// The caller holds both tools, so the D13 subset guard (no-overwrite.test.ts)
+// never fires here and these cases exercise the existence refusals alone.
+function personalities(): PersonalityRegistry {
+  const architect: PersonalityConfig = {
+    id: 'architect',
+    name: 'Architect',
+    toolset: ['read_file', 'terminal'],
+  };
+  return {
+    define: () => {},
+    get: (id) => (id === architect.id ? architect : undefined),
+    list: () => [architect],
+    getDefault: () => architect,
+    setDefault: () => {},
+    loadFromDirectory: async () => {},
+    remove: () => {},
+  };
+}
+
 function scaffoldFor(storage: InMemoryStorage): Tool {
   const tool = createPersonalityDesignTools({
     toolRegistry: registry(['read_file', 'terminal']),
     storage,
     modelCatalog: [],
     skills: [],
+    personalityRegistry: personalities(),
   }).find((t) => t.name === 'scaffold_personality');
   if (!tool) throw new Error('scaffold_personality not registered');
   return tool;
