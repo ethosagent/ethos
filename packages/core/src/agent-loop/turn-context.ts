@@ -24,6 +24,7 @@ import type {
 } from '@ethosagent/types';
 import type { ClarifyBridge } from '../clarify/clarify-bridge';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
+import type { ToolLoadingResolver, ToolLoadingState } from './tool-loading';
 
 // ---------------------------------------------------------------------------
 // LoopDeps — dependency bag injected from AgentLoop's private fields
@@ -51,6 +52,10 @@ export interface LoopDeps {
   /** Lane 3(b) — small-window mode (resolved once by wiring); gates declared
    *  `context_engine_options.small_window_toolset` narrowing in turn setup. */
   smallWindow: boolean;
+  /** reach-and-containment Part 1 — wiring-built predicate deciding, per turn,
+   *  whether on-demand tool loading engages (`agent-loop/tool-loading.ts`).
+   *  Absent → every allowed schema is sent, exactly as before. */
+  toolLoading?: ToolLoadingResolver;
   /** D7 — the registry, the role bindings, `modelRouting` and (on a team turn)
    *  the manifest's model slots: everything `resolveModel` reads besides the
    *  personality and the role. Replaces the bare `modelRouting` map. */
@@ -181,9 +186,10 @@ export interface TurnSetup {
    * derivation is not idempotent (a declared workdir of `${CWD}/out` would
    * compound if the resolved workdir were fed back in as `cwd`), and one
    * derivation is the only way the app-layer prefixes and the workdir can be
-   * guaranteed to describe the same filesystem.
+   * guaranteed to describe the same filesystem. `writeDeny` (the
+   * personality's own definition files) rides the same scope.
    */
-  fsReach: { read: string[]; write: string[] };
+  fsReach: { read: string[]; write: string[]; writeDeny: string[] };
   obsConfig: PersonalityObservabilityConfig | undefined;
   traceId: string | undefined;
   turnNumber: number;
@@ -197,6 +203,9 @@ export interface TurnSetup {
   allowedPlugins: string[];
   filterOpts: ToolFilterOpts;
   memScopeId: string;
+  /** Set only when on-demand tool loading is active for this turn
+   *  (`resolveToolLoading`); undefined → every downstream path is unchanged. */
+  toolLoading?: ToolLoadingState;
 }
 
 export type TurnSetupResult = { kind: 'refused' } | { kind: 'ready'; setup: TurnSetup };

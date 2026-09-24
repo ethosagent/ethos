@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp } from 'antd';
 import { rpc } from '../../../rpc';
 import { configKeys } from '../../config/api/keys';
-import { apiKeyKeys, namedSecretKeys, toolSettingsKeys } from './keys';
+import { apiKeyKeys, credentialKeys, namedSecretKeys, toolSettingsKeys } from './keys';
 
 export function useConfigUpdate() {
   const qc = useQueryClient();
@@ -73,6 +73,33 @@ export function useNamedSecretCreate() {
     onError: (err) =>
       notification.error({
         message: 'Failed to save secret',
+        description: (err as Error).message,
+      }),
+  });
+}
+
+/** Create or edit a stored login. Values go up; nothing comes back. */
+export function useCredentialSet() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Parameters<typeof rpc.credentials.set>[0]) => rpc.credentials.set(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: credentialKeys.all() }),
+  });
+}
+
+export function useCredentialDelete() {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+  return useMutation({
+    mutationFn: (input: Parameters<typeof rpc.credentials.delete>[0]) =>
+      rpc.credentials.delete(input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: credentialKeys.all() });
+      notification.success({ message: 'Login deleted', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Failed to delete login',
         description: (err as Error).message,
       }),
   });

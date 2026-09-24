@@ -1,3 +1,4 @@
+import { buildToolSearchDefinition, composeDefinitions, resolvePinned } from '@ethosagent/core';
 import type { PersonalityConfig, ToolRegistry } from '@ethosagent/types';
 import { evaluateToolSchemaBudget, measureStaticFloor } from '@ethosagent/wiring';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
@@ -35,6 +36,13 @@ export interface StaticMeasurement {
   toolCount: number;
   toolSchemaChars: number;
   /**
+   * reach-and-containment Part 1 (C7) — the serialized tools array the loop
+   * sends on a turn's FIRST step when on-demand tool loading is active:
+   * pinned + `tool_search`, nothing loaded yet (`composeDefinitions`, the same
+   * function `stages/stream-step.ts` calls). 0 without a registry.
+   */
+  toolLoadingChars: number;
+  /**
    * `measureStaticFloor().tokens` — the SAME chars/4 static-floor number
    * wiring's build-agent-loop computes (D8: one arithmetic, shared helper).
    * Includes the injection-defense prelude when `preludeChars` is passed;
@@ -55,12 +63,22 @@ export interface StaticMeasurement {
 export function measurePersonalityStatic(
   personality: PersonalityConfig,
   soulMd: string,
-  tools?: Pick<ToolRegistry, 'toDefinitions'>,
+  tools?: Pick<ToolRegistry, 'toDefinitions' | 'get' | 'getPluginId'>,
   preludeChars = 0,
 ): StaticMeasurement {
   const soulChars = soulMd.length;
   const defs = tools?.toDefinitions(personality.toolset);
   const toolSchemaChars = defs ? JSON.stringify(defs).length : 0;
+  let toolLoadingChars = 0;
+  if (defs && tools) {
+    const pinned = resolvePinned(personality, defs, tools);
+    const composed = composeDefinitions(
+      defs,
+      { active: true, pinned, loaded: [] },
+      buildToolSearchDefinition(defs, pinned, tools),
+    );
+    toolLoadingChars = JSON.stringify(composed).length;
+  }
   const floor = measureStaticFloor({
     soulChars,
     toolSchemaChars,
@@ -72,6 +90,7 @@ export function measurePersonalityStatic(
     soulChars,
     toolCount: floor.toolCount,
     toolSchemaChars,
+    toolLoadingChars,
     estStaticTokens: floor.tokens,
   };
 }
@@ -308,12 +327,13 @@ export async function runBench(args: string[]): Promise<void> {
     `\n${c.bold}Static context tax per personality${c.reset} ${c.dim}(chars/4 token estimate)${c.reset}`,
   );
   console.log(
-    `  ${'personality'.padEnd(24)}${'soul ch'.padStart(9)}${'tools'.padStart(7)}${'schema ch'.padStart(11)}${'~tokens'.padStart(9)}`,
+    `  ${'personality'.padEnd(24)}${'soul ch'.padStart(9)}${'tools'.padStart(7)}${'schema ch'.padStart(11)}${'tool_loading_chars'.padStart(20)}${'~tokens'.padStart(9)}`,
   );
   for (const row of staticRows) {
     console.log(
       `  ${row.id.padEnd(24)}${String(row.soulChars).padStart(9)}${String(row.toolCount).padStart(7)}` +
-        `${String(row.toolSchemaChars).padStart(11)}${String(row.estStaticTokens).padStart(9)}`,
+        `${String(row.toolSchemaChars).padStart(11)}${String(row.toolLoadingChars).padStart(20)}` +
+        `${String(row.estStaticTokens).padStart(9)}`,
     );
   }
 

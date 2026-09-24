@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { detectLocalRuntime } from '../local-models';
 import { lookupContextWindow } from '../model-catalog';
 import {
+  createToolLoadingResolver,
   evaluateContextFit,
   measureStaticFloor,
   outputReserveTokens,
@@ -193,5 +194,63 @@ describe('resolveResultBudgetGate (post-review FIX 1 — local-only engagement)'
     });
     expect(gate.resultBudgetChars).toBe(RESULT_BUDGET_CEILING_CHARS);
     expect(gate.maxSingleToolResultTokens).toBeUndefined();
+  });
+});
+
+// reach-and-containment Part 1 (C5) — the `tool_loading` resolver.
+describe('createToolLoadingResolver', () => {
+  const def = (name: string, chars: number) => ({
+    name,
+    description: 'x'.repeat(chars),
+    parameters: {},
+  });
+  const persona = { id: 'p', name: 'P' };
+  // ~40k chars ≈ 10k tokens: over 0.4 of a 16k window, far under 0.4 of 200k.
+  const big = [def('a', 20_000), def('b', 20_000)];
+
+  it('auto + under budget → false; auto + over budget → true', () => {
+    expect(createToolLoadingResolver({ mode: 'auto', windowTokens: 200_000 })(persona, big)).toBe(
+      false,
+    );
+    expect(createToolLoadingResolver({ mode: 'auto', windowTokens: 16_000 })(persona, big)).toBe(
+      true,
+    );
+  });
+
+  it('on → true and off → false regardless of size', () => {
+    const tiny = [def('a', 1)];
+    expect(createToolLoadingResolver({ mode: 'on', windowTokens: 200_000 })(persona, tiny)).toBe(
+      true,
+    );
+    expect(createToolLoadingResolver({ mode: 'off', windowTokens: 1_000 })(persona, big)).toBe(
+      false,
+    );
+  });
+
+  it('honours the personality tool_schema_budget_ratio like the startup warning', () => {
+    const resolver = createToolLoadingResolver({ mode: 'auto', windowTokens: 200_000 });
+    const strict = { ...persona, context_engine_options: { tool_schema_budget_ratio: 0.01 } };
+    expect(resolver(strict, big)).toBe(true);
+  });
+
+  it('memoizes per (personality, universe) — one evaluation per new universe', () => {
+    const resolver = createToolLoadingResolver({ mode: 'auto', windowTokens: 16_000 });
+    let reads = 0;
+    const universe = big.map((d) => ({
+      ...d,
+      get description() {
+        reads++;
+        return d.description;
+      },
+    }));
+    expect(resolver(persona, universe)).toBe(true);
+    const afterFirst = reads;
+    expect(afterFirst).toBeGreaterThan(0);
+    expect(resolver(persona, universe)).toBe(true);
+    expect(reads).toBe(afterFirst);
+    // A different universe (or personality) is evaluated afresh.
+    expect(resolver(persona, [def('small', 10)])).toBe(false);
+    expect(resolver({ id: 'q', name: 'Q' }, universe)).toBe(true);
+    expect(reads).toBeGreaterThan(afterFirst);
   });
 });

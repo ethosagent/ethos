@@ -87,6 +87,10 @@ export const ETHOS_EVENT_CATEGORIES = [
   // vendor said (bounded, key-shaped tokens redacted), what the chain did next.
   // See `recordProviderFailover` below.
   'llm.failover',
+  // plan reach-and-containment D4-8 — one row per `browser_fill_credential`
+  // call, success or refusal. METADATA ONLY: credential name, fields, origins,
+  // personality, session, job — never a value. See `recordCredentialFill`.
+  'browser.credential_fill',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
 
@@ -309,6 +313,26 @@ export class EthosObservability {
         pinned: event.pinned,
       },
     );
+  }
+
+  /**
+   * One `browser_fill_credential` call (D4-8), wired as the tool's
+   * `recordCredentialFill` sink in `compose-tools.ts`. `severity` is `info`
+   * for a fill and `warn` for every refusal — a burst of `refused_origin` is
+   * what a prompt-injection attempt looks like. The event carries names and
+   * origins only; the tool never hands this sink a value
+   * (`extensions/tools-browser/src/browser-fill-credential.ts`, pinned by its
+   * audit-scan test).
+   */
+  recordCredentialFill(event: {
+    severity: 'info' | 'warn';
+    code: string;
+    details: Record<string, unknown>;
+  }): void {
+    this.emit('browser.credential_fill', event.severity, {
+      code: event.code,
+      details: event.details,
+    });
   }
 
   recordSafetyTransition(opts: {

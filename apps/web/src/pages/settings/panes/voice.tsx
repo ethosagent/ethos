@@ -12,7 +12,7 @@
 // `voice.artifacts.*` belongs in Data & retention and deliberately stays here
 // for this change (D12) — the move is scheduled, not forgotten.
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Button,
   Form,
@@ -287,6 +287,109 @@ function VoiceDeliveryStatus() {
         />
       ) : null}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Inbound — dead (plan reach-and-containment §2.6).
+//
+// Messages the gateway received and gave up on: a turn that failed on every
+// attempt, or one too old to answer when the gateway came back. Replay hands
+// the message back to the gateway (its 60s replay tick re-runs the turn,
+// safety filter included); Discard closes it. Nothing is sent from here.
+// ---------------------------------------------------------------------------
+
+type DeadInbound = Awaited<ReturnType<typeof rpc.deliveries.listDeadInbound>>['rows'][number];
+
+function InboundDeadLetters() {
+  const queryClient = useQueryClient();
+  const deadQuery = useQuery({
+    queryKey: ['deliveries', 'deadInbound'],
+    queryFn: () => rpc.deliveries.listDeadInbound({ limit: 50 }),
+  });
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['deliveries', 'deadInbound'] });
+  const requeue = useMutation({
+    mutationFn: (id: string) => rpc.deliveries.requeueInbound({ id }),
+    onSettled: refresh,
+  });
+  const discard = useMutation({
+    mutationFn: (id: string) => rpc.deliveries.discardInbound({ id }),
+    onSettled: refresh,
+  });
+
+  if (deadQuery.isLoading) return null;
+  const rows = deadQuery.data?.rows;
+  if (!rows) {
+    return (
+      <Typography.Text type="secondary">
+        Inbound spool unreadable — {(deadQuery.error as Error | null)?.message ?? 'no data'}.
+      </Typography.Text>
+    );
+  }
+  if (rows.length === 0) {
+    return (
+      <Typography.Text type="secondary">
+        No dead inbound messages. A message lands here only after its turn failed on every attempt,
+        or it was too old to answer when the gateway restarted.
+      </Typography.Text>
+    );
+  }
+  const busy = requeue.isPending || discard.isPending;
+  const columns: ColumnsType<DeadInbound> = [
+    {
+      title: 'Platform',
+      key: 'where',
+      render: (_: unknown, row: DeadInbound) => (
+        <span className="voice-delivery-mono">
+          {row.platform}:{row.chatId}
+        </span>
+      ),
+    },
+    {
+      title: 'Attempts',
+      dataIndex: 'attempts',
+      render: (n: number) => <span className="voice-delivery-mono">{n}</span>,
+    },
+    {
+      title: 'Reason',
+      dataIndex: 'lastError',
+      ellipsis: true,
+      render: (reason: string | null) => (
+        <span className="voice-delivery-mono">{reason ?? '—'}</span>
+      ),
+    },
+    {
+      title: 'Age',
+      dataIndex: 'receivedAt',
+      render: (receivedAt: number) => (
+        <span className="voice-delivery-mono">{deliveryAge(receivedAt, Date.now())}</span>
+      ),
+    },
+    { title: 'Message', dataIndex: 'text', ellipsis: true },
+    {
+      title: '',
+      key: 'actions',
+      render: (_: unknown, row: DeadInbound) => (
+        <Space size="small">
+          <Button size="small" disabled={busy} onClick={() => requeue.mutate(row.id)}>
+            Replay
+          </Button>
+          <Button size="small" disabled={busy} onClick={() => discard.mutate(row.id)}>
+            Discard
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+  return (
+    <Table<DeadInbound>
+      size="small"
+      rowKey="id"
+      pagination={false}
+      columns={columns}
+      dataSource={rows}
+      style={{ marginTop: 12 }}
+    />
   );
 }
 
@@ -1082,6 +1185,8 @@ export function VoicePane() {
       {/* OQ7 (plan §12): folded into voice notes, per the plan's own tentative
           resolution — still an open owner question, not a settled decision. */}
       <VoiceDeliveryStatus />
+      <SectionHeading id="inbound-dead">inbound — dead</SectionHeading>
+      <InboundDeadLetters />
       {configData ? (
         <VoiceTelephonySections
           config={configData}

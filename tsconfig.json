@@ -35,6 +35,7 @@
       "@ethosagent/job-runner": ["./extensions/job-runner/src"],
       "@ethosagent/delivery-ledger": ["./extensions/delivery-ledger/src"],
       "@ethosagent/inbound-dedup": ["./extensions/inbound-dedup/src"],
+      "@ethosagent/inbound-spool": ["./extensions/inbound-spool/src"],
       "@ethosagent/channel-transcript-sqlite": ["./extensions/channel-transcript-sqlite/src"],
       "@ethosagent/session-cards": ["./extensions/session-cards/src"],
       "@ethosagent/call-log": ["./extensions/call-log/src"],

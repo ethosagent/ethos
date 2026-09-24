@@ -132,3 +132,73 @@ describe('Lane 2b — restart prefix stability (live loop vs rehydrated session)
     expect(JSON.stringify(replayed.slice(0, -1))).toBe(liveJson);
   });
 });
+
+/** The scripted LLM, additionally recording the tools array of every call. */
+function capturingTools(
+  steps: Parameters<typeof makeScriptedLLM>[0],
+  sink: unknown[][],
+): ReturnType<typeof makeScriptedLLM> {
+  const inner = makeScriptedLLM(steps);
+  return {
+    ...inner,
+    complete(messages, tools, opts) {
+      sink.push(structuredClone(tools));
+      return inner.complete(messages, tools, opts);
+    },
+  };
+}
+
+// reach-and-containment Part 1 (D1-3) — the loaded set lives in
+// `Session.metadata.loadedTools`, so a fresh AgentLoop over the same store
+// (a simulated restart) sends the tools array the live loop last sent.
+describe('Part 1 — loaded tools rehydrate across a restart', () => {
+  it('a restarted loop sends the same tools array as the live loop', async () => {
+    const session = new InMemorySessionStore();
+    const tools = new DefaultToolRegistry();
+    tools.register(makeTool('echo', 'echoed value'));
+    tools.register(makeTool('mcp__gh__list_issues', 'issues'));
+    tools.register(makeTool('mcp__gh__close_issue', 'closed'));
+    const personalities = () => {
+      const p = new DefaultPersonalityRegistry();
+      vi.spyOn(p, 'getDefault').mockReturnValue({
+        id: 'lean',
+        name: 'Lean',
+        toolset: ['echo'],
+        mcp_servers: ['gh'],
+      });
+      return p;
+    };
+
+    const liveTools: unknown[][] = [];
+    const live = new AgentLoop({
+      llm: capturingTools(
+        [
+          { toolCalls: [{ id: 's1', name: 'tool_search', input: { query: 'close issue' } }] },
+          { text: 'loaded' },
+        ],
+        liveTools,
+      ),
+      tools,
+      session,
+      personalities: personalities(),
+      safety: createTestSafety(),
+      toolLoading: () => true,
+    });
+    await drain(live.run('load it', { sessionKey: SESSION_KEY }));
+
+    const restartedTools: unknown[][] = [];
+    const restarted = new AgentLoop({
+      llm: capturingTools([{ text: 'hi again' }], restartedTools),
+      tools,
+      session,
+      personalities: personalities(),
+      safety: createTestSafety(),
+      toolLoading: () => true,
+    });
+    await drain(restarted.run('after restart', { sessionKey: SESSION_KEY }));
+
+    const lastLive = JSON.stringify(liveTools[liveTools.length - 1]);
+    expect(lastLive).toContain('mcp__gh__close_issue');
+    expect(JSON.stringify(restartedTools[0])).toBe(lastLive);
+  });
+});

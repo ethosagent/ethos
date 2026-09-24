@@ -72,6 +72,32 @@ export interface ChildSpec {
   name: string;
   /** argv tail handed to the ethos binary — e.g. `['gateway', 'start']`. */
   args: string[];
+  /**
+   * Exit codes that mean "do not restart me": the child refused to run, and
+   * running it again cannot change that. `gateway start` exits 3
+   * (`GATEWAY_LOCK_EXIT_CODE`, packages/wiring/src/gateway-lock.ts) when
+   * another gateway already holds this state dir's lock (plan
+   * reach-and-containment D2-14) — restarting it forever would spam the log
+   * and never succeed.
+   */
+  terminalExitCodes?: readonly number[];
+}
+
+/** Mirrors `GATEWAY_LOCK_EXIT_CODE` in packages/wiring/src/gateway-lock.ts —
+ *  not imported, so the supervisor does not load the wiring graph. Pinned
+ *  equal by `__tests__/run-all.test.ts`. */
+export const GATEWAY_LOCK_HELD_EXIT_CODE = 3;
+
+/** Pure: does this exit end the child for good, or enter the restart path? */
+export function childExitDecision(
+  spec: ChildSpec,
+  code: number | null,
+  signal: NodeJS.Signals | null,
+): 'terminal' | 'restart' {
+  if (signal === null && code !== null && spec.terminalExitCodes?.includes(code)) {
+    return 'terminal';
+  }
+  return 'restart';
 }
 
 export interface RunAllOptions {
@@ -94,7 +120,11 @@ export interface RunAllOptions {
 
 export function defaultChildSpecs(): ChildSpec[] {
   return [
-    { name: 'gateway', args: ['gateway', 'start'] },
+    {
+      name: 'gateway',
+      args: ['gateway', 'start'],
+      terminalExitCodes: [GATEWAY_LOCK_HELD_EXIT_CODE],
+    },
     { name: 'serve', args: ['serve'] },
   ];
 }
@@ -390,8 +420,15 @@ function startChild(
   });
 
   let stderrBuf = '';
+  // The child's last complete stderr line — for a terminal exit, its refusal.
+  let lastStderrLine = '';
+  let readySeen = false;
   child.stderr?.on('data', (chunk: Buffer) => {
     sc.logStream?.write(chunk);
+    for (const line of chunk.toString().split('\n')) {
+      if (line.trim()) lastStderrLine = line.trim();
+    }
+    if (readySeen) return;
     stderrBuf += chunk.toString();
     const lines = stderrBuf.split('\n');
     // Last element is either '' (if chunk ended with \n) or an incomplete line
@@ -400,6 +437,7 @@ function startChild(
       if (isReadyLine(line)) {
         onChildReady(sc.spec.name);
         stderrBuf = ''; // no need to buffer further
+        readySeen = true;
         break;
       }
     }
@@ -437,6 +475,17 @@ function startChild(
     const reason = signal ? `signal=${signal}` : `code=${code}`;
     log.log(`${c.yellow}✗${c.reset} ${sc.spec.name} exited (${reason})`);
 
+    // Terminal, not a crash (D2-14): log the child's refusal once, do NOT
+    // enter the restart backoff, and leave the siblings running.
+    if (childExitDecision(sc.spec, code, signal) === 'terminal') {
+      log.error(
+        `${c.yellow}run-all: ${sc.spec.name} refused to start and will not be restarted${
+          lastStderrLine ? ` — ${lastStderrLine}` : ''
+        }${c.reset}`,
+      );
+      return;
+    }
+
     const now = Date.now();
     sc.restarts = pruneRestarts(sc.restarts, now, RESTART_WINDOW_MS);
     sc.restarts.push(now);
@@ -469,6 +518,7 @@ function startChild(
 
 // Test surface: tuning constants + pure helpers + the default specs.
 export const __testing__ = {
+  startChild,
   INITIAL_BACKOFF_MS,
   MAX_BACKOFF_MS,
   STABLE_THRESHOLD_MS,

@@ -49,6 +49,7 @@ import {
   Gateway,
   type GatewayBotConfig,
   type GatewayConfig,
+  type GatewayObservability,
   relayToTargets,
   summarizeChannelDigest,
 } from '@ethosagent/gateway';
@@ -136,6 +137,12 @@ import { createHealthServer, type MetricsAuthCheck } from '../health-server';
 import { createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { openFileMemory } from '../lib/file-memory';
+import {
+  openInboundSpool,
+  pruneInboundSpool,
+  startInboundSpoolReplay,
+  takeGatewayLockOrExit,
+} from '../lib/gateway-inbound-durability';
 import {
   createOutboxApprovalSurface,
   createOutboxDispatcher,
@@ -587,6 +594,11 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const config = loaded.config;
   // `logs.level` — the lowest severity every ConsoleLogger built here prints.
   const logLevel = config.logs?.level;
+
+  // One gateway per state dir (plan reach-and-containment §2.7). Taken right
+  // after config load and BEFORE any store is opened or adapter constructed;
+  // refused → exit 3. Shared with `ethos boot` — see `takeGatewayLockOrExit`.
+  const releaseGatewayLock = await takeGatewayLockOrExit(ethosDir());
 
   const identityMap = new IdentityMap({ storage, dataDir: ethosDir() });
   const resolveUserId = (platform: string, platformUserId: string, displayLabel?: string) =>
@@ -1198,6 +1210,12 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // convention and same unconditional construction as the ledger above.
   const inboundDedup = new SQLiteInboundDedupStore(join(ethosDir(), 'inbound-dedup.db'));
 
+  // Inbound spool (plan reach-and-containment §2.2): a write-ahead record of
+  // every turn this gateway owes, replayed after a crash. Opened here and in
+  // `ethos boot` — `ethos serve` never opens it (D2-15) — and only AFTER the
+  // gateway lock above, which is what makes boot-time orphan recovery safe.
+  const { inboundSpool, inboundSpoolOptions } = openInboundSpool(config, ethosDir());
+
   // Observe-mode transcript sink (plan/phases/ambient-group-monitoring.md R1).
   // Deliberately NOT eager like the two stores above: this one is opened on
   // first write, so `channel-transcript.db` appears only once a chat is
@@ -1262,6 +1280,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     adapters,
     deliveryLedger,
     inboundDedup,
+    inboundSpool,
+    inboundSpoolOptions,
     resolveUserId,
     pluginLoader,
     trustedChannelPlugins,
@@ -1289,6 +1309,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // sender resolver picked from, so "which bot may publish for this
     // personality" has one answer at propose time and at delivery time.
     publicationSpeaksFor: botSpeakers.speaksFor,
+    // Every `gateway.*` event, into this process's observability store.
+    observability: gatewayObservability(),
   });
   gatewayRef = gateway;
 
@@ -1393,13 +1415,14 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // passed at construction — computed once in wiring — and every one is
   // registered as a bot in `buildGatewayBots`, so inbound routes to the
   // matching loop instead of dropping at the unknown-botKey gate.
-  for (const adapter of adapters) {
-    adapter.onMessage((message: InboundMessage) => {
-      void gateway.handleMessage(message, adapter).catch((err) => {
-        console.error(`[gateway:${adapter.id}] Error:`, err);
-      });
-    });
-  }
+  //
+  // `acceptInbound` first, synchronously: it is the dedup check plus the
+  // inbound-spool write. The adapter calls this callback from inside the
+  // platform framework's request handler in webhook mode (grammy's
+  // `webhookCallback`, Bolt's `HTTPReceiver`), so the row is on disk before
+  // that handler returns and the framework acknowledges the webhook — the
+  // platform retries only what was never spooled (plan §2.5, D2-10).
+  for (const adapter of adapters) wireAdapterInbound(gateway, adapter);
 
   // Wire the interactive tool-approval flow. Registers a `before_tool_call`
   // hook on every bot loop that suspends a dangerous tool call until the
@@ -1490,6 +1513,16 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       new ConsoleLogger({}, logLevel).warn(`delivery ledger boot sweep failed: ${String(err)}`);
     });
 
+  // Inbound spool replay (plan reach-and-containment §2.4) — beside the ledger
+  // sweep and for the same reason AFTER adapter.start(): a replayed turn
+  // replies through a live adapter. The first call also arms the gateway's 60s
+  // replay tick, so a requeue from `ethos gateway spool replay` or the web
+  // Deliveries page runs without a restart.
+  startInboundSpoolReplay(gateway, {
+    info: (message) => console.log(`${c.dim}${message}${c.reset}`),
+    warn: (message) => new ConsoleLogger({}, logLevel).warn(message),
+  });
+
   // Restore-and-deliver (item 10). A background job that finished while this
   // process was down was written `done`/`failed` and then sat unread — the
   // delivery ledger cannot help, because nothing was ever recorded for it.
@@ -1561,13 +1594,21 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       new ConsoleLogger({}, logLevel).warn(`call log retention prune failed: ${String(err)}`);
     });
   };
+  // Inbound spool retention (D2-11) — see `pruneInboundSpool`.
+  const pruneSpool = () =>
+    pruneInboundSpool(inboundSpool, {
+      observability: gatewayObservability(),
+      warn: (message) => new ConsoleLogger({}, logLevel).warn(message),
+    });
   pruneDeliveryLedger();
   pruneVoiceArtifacts();
   pruneCallLog();
+  pruneSpool();
   const retentionPruneTimer = setInterval(() => {
     pruneDeliveryLedger();
     pruneVoiceArtifacts();
     pruneCallLog();
+    pruneSpool();
   }, 3_600_000);
   retentionPruneTimer.unref?.();
 
@@ -2105,6 +2146,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       );
       deliveryLedger.close();
       inboundDedup.close();
+      inboundSpool.close();
+      // Last of the gateway-owned state: from here a new gateway may start.
+      releaseGatewayLock();
       // After the loops are disposed: a turn still running could propose.
       outbox.close();
       callLog?.close();
@@ -4342,6 +4386,11 @@ export interface BuildGatewayOptions {
   adapters: readonly PlatformAdapter[];
   deliveryLedger: GatewayConfig['deliveryLedger'];
   inboundDedup: GatewayConfig['inboundDedup'];
+  /** Opened by `ethos gateway start` and `ethos boot` — the two commands that
+   *  hold the gateway lock (`openInboundSpool`, ../lib/gateway-inbound-durability).
+   *  Optional for tests and hosts that own no adapters. */
+  inboundSpool?: GatewayConfig['inboundSpool'];
+  inboundSpoolOptions?: GatewayConfig['inboundSpoolOptions'];
   resolveUserId: GatewayConfig['resolveUserId'];
   /** `GatewayConfig['pluginLoader']` is narrower than what `createAgentLoop`
    *  returns — `pluginAdapters` is derived here via `getPlatformAdapters()`,
@@ -4385,6 +4434,53 @@ export interface BuildGatewayOptions {
    * approvals nobody can deliver.
    */
   publicationSpeaksFor: NonNullable<GatewayConfig['publicationSpeaksFor']>;
+  /**
+   * Where every `gateway.*` event is recorded — safety blocks, channel
+   * allow/deny, injection flags, and the inbound spool's `gateway.spool_*`
+   * events. Build it with `gatewayObservability()`.
+   *
+   * Required, not optional, for the same reason as `publicationSpeaksFor`: the
+   * Gateway records through `this.observability?.…`, so leaving it out is not
+   * an error anywhere — every event just goes nowhere, which is what both
+   * production hosts did until this field existed
+   * (`__tests__/gateway-observability-wiring.test.ts`).
+   */
+  observability: GatewayConfig['observability'];
+}
+
+/**
+ * The Gateway's observability sink for a production host: the process-wide
+ * `EthosObservability` (`getEthosObservability`, ../wiring), resolved on EVERY
+ * call rather than captured once.
+ *
+ * Lazy because `closeObservabilityStore` drops the singleton at the end of
+ * shutdown; a straggler event after that reopens a fresh handle instead of
+ * writing to a closed one — the same idiom as the
+ * `recordSafetyBlock: (opts) => getEthosObservability().recordSafetyBlock(opts)`
+ * closures elsewhere in this file. The Gateway only borrows the sink: it never
+ * closes it, and the host's shutdown still closes the store last.
+ *
+ * Fail-open: a store that cannot be opened, or a record that throws, is
+ * swallowed here, so observability can never stop the gateway handling a
+ * message. The Gateway calls these inline on its hot paths with no guard of
+ * its own. Pinned by `__tests__/gateway-observability-wiring.test.ts`.
+ */
+export function gatewayObservability(
+  get: () => GatewayObservability = getEthosObservability,
+): GatewayObservability {
+  const record = (fn: (sink: GatewayObservability) => void): void => {
+    try {
+      fn(get());
+    } catch {
+      // Fail-open — see the doc comment above.
+    }
+  };
+  return {
+    recordSafetyBlock: (opts) => record((sink) => sink.recordSafetyBlock(opts)),
+    recordInjectionFlag: (opts) => record((sink) => sink.recordInjectionFlag?.(opts)),
+    recordChannelAllow: (opts) => record((sink) => sink.recordChannelAllow(opts)),
+    recordChannelDeny: (opts) => record((sink) => sink.recordChannelDeny(opts)),
+  };
 }
 
 /**
@@ -4479,6 +4575,28 @@ export function openChannelTranscriptStore(dbPath: string): ChannelTranscriptSto
   };
 }
 
+/**
+ * Route one adapter's inbound messages into the gateway, spool first.
+ *
+ * `acceptInbound` runs synchronously INSIDE the adapter's callback, before it
+ * returns. In webhook mode the adapter calls that callback from inside the
+ * platform framework's request handler (grammy's `webhookCallback`, Bolt's
+ * `HTTPReceiver`), which writes its 200 only after the handler returns — so the
+ * spool row is on disk before the platform is acknowledged, and the platform
+ * retries only messages that were never spooled (plan reach-and-containment
+ * §2.5, D2-10). Pinned by `__tests__/platform-webhook-ack-order.test.ts`.
+ * A media message whose download the adapter awaits before calling back is the
+ * exception: the framework has already acked it (adapter-side, unchanged).
+ */
+export function wireAdapterInbound(gateway: Gateway, adapter: PlatformAdapter): void {
+  adapter.onMessage((message: InboundMessage) => {
+    const accepted = gateway.acceptInbound(message);
+    void gateway.handleMessage(message, adapter, { accepted }).catch((err) => {
+      console.error(`[gateway:${adapter.id}] Error:`, err);
+    });
+  });
+}
+
 export function buildGateway(opts: BuildGatewayOptions): Gateway {
   const {
     config,
@@ -4487,6 +4605,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     adapters,
     deliveryLedger,
     inboundDedup,
+    inboundSpool,
+    inboundSpoolOptions,
     resolveUserId,
     pluginLoader,
     trustedChannelPlugins,
@@ -4512,6 +4632,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     personalityCardReader: telegramCardReader,
     greetingProvider: telegramGreetingProvider,
     publicationSpeaksFor,
+    observability,
   } = opts;
   // Observe mode records nothing without `channelTranscript`. Both branches
   // below wire one, so this stays silent here — it is the light for a
@@ -4530,6 +4651,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         botAdapters,
         deliveryLedger,
         inboundDedup,
+        ...(inboundSpool ? { inboundSpool } : {}),
+        ...(inboundSpoolOptions ? { inboundSpoolOptions } : {}),
         resolveUserId,
         pluginLoader,
         pluginAdapters: pluginLoader.getPlatformAdapters(),
@@ -4571,6 +4694,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         ...(channelDigestFeed ? { channelDigestFeed } : {}),
         observeModePlatforms: observedPlatforms,
         publicationSpeaksFor,
+        observability,
       })
     : new Gateway({
         bots,
@@ -4589,6 +4713,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         adapters: adapterMap,
         deliveryLedger,
         inboundDedup,
+        ...(inboundSpool ? { inboundSpool } : {}),
+        ...(inboundSpoolOptions ? { inboundSpoolOptions } : {}),
         resolveUserId,
         pluginLoader,
         pluginAdapters: pluginLoader.getPlatformAdapters(),
@@ -4633,5 +4759,6 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         ...(channelDigestFeed ? { channelDigestFeed } : {}),
         observeModePlatforms: observedPlatforms,
         publicationSpeaksFor,
+        observability,
       });
 }

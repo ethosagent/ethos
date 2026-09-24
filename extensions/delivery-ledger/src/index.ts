@@ -88,6 +88,12 @@ export interface DeliveryObligation {
   /** The `VoiceAudioFormat` the artifact holds, so redelivery re-sends it
    *  without re-deriving the format from the bytes. */
   mediaFormat?: string;
+  /**
+   * The inbound-spool row whose turn produced this reply (schema v4), or
+   * `undefined` for a send no spooled message owes — a wake notice, a
+   * publication, anything written before v4. See {@link DeliveryLedger.hasObligationFor}.
+   */
+  inboundRef?: string;
 }
 
 export interface RecordDeliveryInput {
@@ -103,6 +109,9 @@ export interface RecordDeliveryInput {
   kind?: DeliveryKind;
   artifactRef?: string;
   mediaFormat?: string;
+  /** Spool id of the inbound message this reply answers. Empty string is
+   *  normalized to "none", the same way `threadId` is. */
+  inboundRef?: string;
 }
 
 /** Row counts per {@link DeliveryStatus}. */
@@ -164,6 +173,20 @@ export interface DeliveryLedger {
    * is as much evidence that the platform call happened as a `pending` one.
    */
   findBySession(sessionId: string): Promise<DeliveryObligation[]>;
+  /**
+   * Has ANY obligation — in any status — been recorded for the reply to the
+   * spooled inbound message `inboundRef`?
+   *
+   * The inbound spool's double-reply guard (plan reach-and-containment D2-6).
+   * A turn that crashed after its reply was recorded but before its spool row
+   * was marked `done` would, on replay, answer twice. The gateway asks this
+   * before replaying a row; `true` means the outbound half already owns the
+   * reply (a `pending` row the sweep will redeliver, or one already
+   * `delivered`), so the turn is skipped. Status is not filtered for the same
+   * reason `findBySession`'s is not: every status is evidence the reply was
+   * produced.
+   */
+  hasObligationFor(inboundRef: string): Promise<boolean>;
   /**
    * Give up on obligations older than `cutoffMs` that this process OWNS, and
    * return them so the caller can release whatever they hold (a voice
@@ -230,7 +253,10 @@ const SCHEMA = `
     -- read instead, which is the truth about every pre-v3 row.
     kind         TEXT,
     artifact_ref TEXT,
-    media_format TEXT
+    media_format TEXT,
+    -- v4, appended last for the same column-order reason. NULL for every
+    -- reply no spooled inbound message owes, and for every pre-v4 row.
+    inbound_ref  TEXT
   ) STRICT;
 
   CREATE INDEX IF NOT EXISTS delivery_status_bot ON delivery_obligations(status, bot_key);
@@ -268,7 +294,21 @@ const MIGRATIONS = {
     db.exec('ALTER TABLE delivery_obligations ADD COLUMN artifact_ref TEXT');
     db.exec('ALTER TABLE delivery_obligations ADD COLUMN media_format TEXT');
   },
+  // v3 → v4: tie a reply to the spooled inbound message it answers, so a
+  // replayed turn can tell that its reply already exists (hasObligationFor).
+  4: (db: Database.Database): void => {
+    db.exec('ALTER TABLE delivery_obligations ADD COLUMN inbound_ref TEXT');
+  },
 };
+
+/**
+ * `hasObligationFor`'s lookup. NOT in the baseline: `migrate()` execs the
+ * baseline on every open BEFORE the migration chain, and on a v3 file the
+ * column does not exist yet, so a baseline index on it would fail the open.
+ * Created after `migrate()` instead, where the column exists on every path.
+ */
+const POST_MIGRATION_INDEXES =
+  'CREATE INDEX IF NOT EXISTS delivery_inbound_ref ON delivery_obligations(inbound_ref)';
 
 interface ObligationRow {
   id: string;
@@ -284,6 +324,7 @@ interface ObligationRow {
   kind: string | null;
   artifact_ref: string | null;
   media_format: string | null;
+  inbound_ref: string | null;
 }
 
 function rowToObligation(r: ObligationRow): DeliveryObligation {
@@ -303,6 +344,7 @@ function rowToObligation(r: ObligationRow): DeliveryObligation {
     kind: (r.kind ?? 'text') as DeliveryKind,
     artifactRef: r.artifact_ref ?? undefined,
     mediaFormat: r.media_format ?? undefined,
+    inboundRef: r.inbound_ref ?? undefined,
   };
 }
 
@@ -348,10 +390,11 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
 
     migrate(this.db, {
       name: 'delivery-ledger',
-      targetVersion: 3,
+      targetVersion: 4,
       baseline: SCHEMA,
       migrations: MIGRATIONS,
     });
+    this.db.exec(POST_MIGRATION_INDEXES);
   }
 
   async record(input: RecordDeliveryInput): Promise<string> {
@@ -361,8 +404,8 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
       .prepare(
         `INSERT INTO delivery_obligations
          (id, bot_key, platform, chat_id, session_id, content_hash, content, created_at, status,
-          thread_id, kind, artifact_ref, media_format)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+          thread_id, kind, artifact_ref, media_format, inbound_ref)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -381,6 +424,7 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
         // is an absent one, and a sweep that tried to load it would fail late.
         input.artifactRef ? input.artifactRef : null,
         input.mediaFormat ? input.mediaFormat : null,
+        input.inboundRef ? input.inboundRef : null,
       );
     return id;
   }
@@ -454,6 +498,14 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
       )
       .all(sessionId, MAX_RECENT) as ObligationRow[];
     return rows.map(rowToObligation);
+  }
+
+  async hasObligationFor(inboundRef: string): Promise<boolean> {
+    if (!inboundRef) return false;
+    const row = this.db
+      .prepare('SELECT 1 AS hit FROM delivery_obligations WHERE inbound_ref = ? LIMIT 1')
+      .get(inboundRef) as { hit: number } | undefined;
+    return row !== undefined;
   }
 
   async abandonStale(botKeys: readonly string[], cutoffMs: number): Promise<DeliveryObligation[]> {

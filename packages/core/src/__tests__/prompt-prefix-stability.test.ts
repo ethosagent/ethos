@@ -25,6 +25,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import { DefaultPersonalityRegistry } from '../defaults/noop-personality';
+import { DefaultToolRegistry } from '../tool-registry';
 import { createTestSafety } from './helpers/test-safety';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
@@ -169,5 +170,77 @@ describe('§6 — prefix-cache-friendly prompt ordering', () => {
     // The whole prompt is digit-free here (memory content is digit-free), so a
     // stray timestamp anywhere would surface as an unexpected digit.
     expect(first).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+  });
+});
+
+// reach-and-containment Part 1 — with on-demand tool loading active, a tool
+// loaded in turn 1 stays at the tail of the tools array, and turn 2 (no search)
+// sends the array byte-identically to turn 1's final step (D1-2/D1-11: one
+// prefix miss at the load, reused thereafter).
+describe('§6 — tools array stability under on-demand tool loading', () => {
+  it('turn 2 sends the same tools array as turn 1 after a load', async () => {
+    const capturedTools: unknown[][] = [];
+    let call = 0;
+    const llm: LLMProvider = {
+      name: 'capture',
+      model: 'mock-model',
+      maxContextTokens: 200_000,
+      supportsCaching: false,
+      supportsThinking: false,
+      async *complete(_m: Message[], tools: unknown[]): AsyncIterable<CompletionChunk> {
+        capturedTools.push(structuredClone(tools));
+        call++;
+        if (call === 1) {
+          yield { type: 'tool_use_start', toolCallId: 's1', toolName: 'tool_search' };
+          yield {
+            type: 'tool_use_end',
+            toolCallId: 's1',
+            inputJson: JSON.stringify({ query: 'weather' }),
+          };
+          yield { type: 'done', finishReason: 'tool_use' };
+          return;
+        }
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', finishReason: 'end_turn' };
+      },
+      async countTokens() {
+        return 1;
+      },
+    };
+    const tools = new DefaultToolRegistry();
+    for (const [name, description] of [
+      ['read_file', 'Read a file'],
+      ['mcp__wx__forecast', 'Weather forecast'],
+      ['mcp__wx__alerts', 'Severe alerts'],
+    ]) {
+      tools.register({
+        name,
+        description,
+        schema: { type: 'object' },
+        capabilities: {},
+        execute: async () => ({ ok: true, value: 'x' }),
+      });
+    }
+    const personalities = new DefaultPersonalityRegistry();
+    vi.spyOn(personalities, 'getDefault').mockReturnValue({
+      id: 'lean',
+      name: 'Lean',
+      toolset: ['read_file'],
+      mcp_servers: ['wx'],
+    });
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      personalities,
+      safety: createTestSafety(),
+      toolLoading: () => true,
+    });
+    await collect(loop.run('weather?'));
+    await collect(loop.run('again'));
+
+    expect(capturedTools).toHaveLength(3);
+    const turn1Final = JSON.stringify(capturedTools[1]);
+    expect(turn1Final).toContain('mcp__wx__forecast');
+    expect(JSON.stringify(capturedTools[2])).toBe(turn1Final);
   });
 });

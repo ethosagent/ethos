@@ -33,9 +33,15 @@ export interface RedactionKit {
   detectSecrets(text: string): Array<{ label: string }>;
 }
 
+/**
+ * `writeDeny` — absolute paths / directory prefixes that may be READ but never
+ * written, even when `write` covers them: the personality's own definition
+ * (`personalityWriteDeny` in `packages/core/src/fs-reach.ts`). Optional and
+ * additive; enforced by `ScopedStorage.check` in `@ethosagent/storage-fs`.
+ */
 export type ScopedStorageFactory = (
   base: import('./storage').Storage,
-  scope: { read: string[]; write: string[] },
+  scope: { read: string[]; write: string[]; writeDeny?: string[] },
 ) => import('./storage').Storage;
 
 export type WatcherDecision =

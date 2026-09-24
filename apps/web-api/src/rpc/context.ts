@@ -11,6 +11,7 @@ import type { ApprovalsService } from '../services/approvals.service';
 import type { BackupService } from '../services/backup.service';
 import type { CallsService } from '../services/calls.service';
 import type { ConfigService } from '../services/config.service';
+import type { CredentialsService } from '../services/credentials.service';
 import type { CronService } from '../services/cron.service';
 import type { DeliveriesService } from '../services/deliveries.service';
 import type { DigestService } from '../services/digest.service';
@@ -87,6 +88,8 @@ export interface RpcContext {
   modelRegistry: ModelRegistryService;
   /** Global named-secrets vault manager (Phase 2). */
   namedSecrets: NamedSecretsService;
+  /** Stored logins for `browser_fill_credential` (reach-and-containment §4.2). */
+  credentials: CredentialsService;
   /** Masked inventory of the whole secrets vault, by category. */
   keys: KeysService;
   /** Generic per-personality tool settings (Phase 2). */

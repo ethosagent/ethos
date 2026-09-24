@@ -45,7 +45,22 @@ export {
   ScriptToolBridge,
   type ScriptToolBridgeDeps,
 } from './agent-loop/stages/script-tool-bridge';
+// reach-and-containment Part 1 — on-demand tool loading. Exported for wiring's
+// `tool_loading` resolver + startup diagnostic and `ethos bench context`, so
+// the bench measures the SAME composition the loop sends.
+export { persistLoaded } from './agent-loop/stages/tool-search';
 export { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
+export {
+  buildToolSearchDefinition,
+  composeDefinitions,
+  MAX_LOADED_TOOLS,
+  resolvePinned,
+  searchTools,
+  TOOL_SEARCH_DEFINITION,
+  TOOL_SEARCH_NAME,
+  type ToolLoadingPlan,
+  type ToolLoadingResolver,
+} from './agent-loop/tool-loading';
 // D7 — the turn's model resolution (the six rungs plus the D11b empty-registry
 // shim), exported so wiring's character sheet asks the enforcer the turn runs
 // rather than restating it.
@@ -124,7 +139,9 @@ export {
   deriveFsReachPaths,
   EmptySubstitutionError,
   type FsReachVars,
+  PERSONALITY_DEFINITION_ENTRIES,
   personalityAssetDir,
+  personalityWriteDeny,
   substitute,
 } from './fs-reach';
 export { DefaultHookRegistry } from './hook-registry';

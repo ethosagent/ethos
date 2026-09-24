@@ -26,6 +26,7 @@
     "@ethosagent/cron": "workspace:*",
     "@ethosagent/dashboard": "workspace:*",
     "@ethosagent/delivery-ledger": "workspace:*",
+    "@ethosagent/inbound-spool": "workspace:*",
     "@ethosagent/eval-harness": "workspace:*",
     "@ethosagent/kanban-store": "workspace:*",
     "@ethosagent/llm-codex": "workspace:*",

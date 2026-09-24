@@ -13,6 +13,7 @@ import {
   A2aPeerRowSchema,
   ApiKeyMetadataSchema,
   ApiKeyScopeSchema,
+  ApprovalLeaseSchema,
   ApprovalScopeSchema,
   BackgroundJobDetailSchema,
   BackgroundJobSummarySchema,
@@ -943,6 +944,24 @@ const ToolDenyInput = z.object({
   reason: z.string().optional(),
 });
 const ToolDenyOutput = z.object({ ok: z.literal(true) });
+
+// ---------------------------------------------------------------------------
+// Approvals — time-limited grants (reach-and-containment 3b). Listed and
+// revoked from Settings → Approvals; granted through `tools.approve` with
+// scope `lease-1h`. Not in the API-key SCOPE_MAP, so cookie-only.
+// ---------------------------------------------------------------------------
+
+const ApprovalLeasesListOutput = z.object({ leases: z.array(ApprovalLeaseSchema) });
+const ApprovalLeasesRevokeInput = z.object({ id: z.string().min(1) });
+const ApprovalLeasesRevokeOutput = z.object({ ok: z.literal(true) });
+
+/** @stable v1 */
+const approvals = {
+  leases: {
+    list: oc.output(ApprovalLeasesListOutput),
+    revoke: oc.input(ApprovalLeasesRevokeInput).output(ApprovalLeasesRevokeOutput),
+  },
+};
 
 const ToolsCatalogInput = z.object({});
 const ToolsCatalogOutput = z.object({
@@ -4815,9 +4834,16 @@ const voice = {
 // abandoned, and — for a voice deployment — the same counts for voice notes,
 // whose payload is an artifact on disk.
 //
-// Read-only by construction: there is no RPC that records, claims, delivers or
-// prunes. Redelivery is the gateway's decision, made against its own botKeys;
-// a settings page must not be able to re-send someone's message.
+// The OUTBOUND half is read-only by construction: there is no RPC that
+// records, claims, delivers or prunes an obligation. Redelivery is the
+// gateway's decision, made against its own botKeys; a settings page must not be
+// able to re-send someone's message.
+//
+// The INBOUND half (plan reach-and-containment §2.6) lists dead-lettered
+// inbound messages and offers exactly two operator decisions on one: requeue
+// (the running gateway's replay tick runs the turn again) or discard. Neither
+// sends anything from here — a requeue hands the message back to the gateway,
+// which re-runs its safety filter and its own delivery path.
 // ---------------------------------------------------------------------------
 
 const DeliveryStatusCountsSchema = z.object({
@@ -4865,9 +4891,37 @@ const DeliveriesSummaryOutput = z.object({
   recent: z.array(DeliveryObligationSchema),
 });
 
+const DeadInboundSchema = z.object({
+  id: z.string(),
+  platform: z.string(),
+  chatId: z.string(),
+  /** Null for the root chat. */
+  threadId: z.string().nullable(),
+  attempts: z.number(),
+  /** Why it died: the turn's last error, `stale`, or `unreadable payload`. */
+  lastError: z.string().nullable(),
+  /** The message text, truncated to 200 characters, for the same reason
+   *  `DeliveryObligationSchema.content` is. Empty when the payload is gone. */
+  text: z.string(),
+  /** Epoch milliseconds. */
+  receivedAt: z.number(),
+  updatedAt: z.number(),
+});
+
+const ListDeadInboundInput = z.object({
+  limit: z.number().int().min(1).max(500).optional(),
+});
+const ListDeadInboundOutput = z.object({ rows: z.array(DeadInboundSchema) });
+const InboundActionInput = z.object({ id: z.string().min(1) });
+/** `false` when the row is no longer dead (already requeued or discarded). */
+const InboundActionOutput = z.object({ ok: z.boolean() });
+
 /** @experimental */
 const deliveries = {
   summary: oc.input(DeliveriesSummaryInput).output(DeliveriesSummaryOutput),
+  listDeadInbound: oc.input(ListDeadInboundInput).output(ListDeadInboundOutput),
+  requeueInbound: oc.input(InboundActionInput).output(InboundActionOutput),
+  discardInbound: oc.input(InboundActionInput).output(InboundActionOutput),
 };
 
 // ---------------------------------------------------------------------------
@@ -5282,6 +5336,54 @@ const namedSecrets = {
         tested: z.boolean().optional(),
       }),
     ),
+};
+
+// ---------------------------------------------------------------------------
+// Credentials — stored logins for `browser_fill_credential`
+// (plan reach-and-containment §4.2)
+//
+// A login is four vault refs under `credentials/<name>/`. Values are
+// write-only: `list` returns a masked username preview and presence flags,
+// never a value, and `set` echoes nothing back. Field validation (bare https
+// origins, personality ids, TOTP seeds) is the server's — the wire only bounds
+// sizes and shapes.
+// ---------------------------------------------------------------------------
+
+const CredentialViewSchema = z.object({
+  name: z.string(),
+  origins: z.array(z.string()),
+  personalities: z.array(z.string()),
+  unattended: z.boolean(),
+  /** Masked via `redactSecretValue` — never the raw username. */
+  usernamePreview: z.string(),
+  hasPassword: z.boolean(),
+  hasTotp: z.boolean(),
+  /** False when the stored policy is missing or unparseable; the tool refuses it. */
+  policyValid: z.boolean(),
+});
+
+/** @experimental */
+const credentials = {
+  list: oc.output(z.object({ credentials: z.array(CredentialViewSchema) })),
+  set: oc
+    .input(
+      z.object({
+        name: NamedSecretNameSchema,
+        /** Required for a new login; omitted keeps the stored value. */
+        username: z.string().min(1).max(8192).optional(),
+        /** Required for a new login; omitted keeps the stored value. */
+        password: z.string().min(1).max(8192).optional(),
+        /** Omitted keeps the stored seed; `null` removes it. */
+        totp: z.string().max(8192).nullable().optional(),
+        origins: z.array(z.string().min(1).max(2048)).min(1).max(32),
+        personalities: z.array(z.string().min(1).max(128)).max(64),
+        unattended: z.boolean(),
+      }),
+    )
+    .output(z.object({ ok: z.literal(true) })),
+  delete: oc
+    .input(z.object({ name: NamedSecretNameSchema }))
+    .output(z.object({ ok: z.literal(true) })),
 };
 
 // ---------------------------------------------------------------------------
@@ -5968,6 +6070,7 @@ export const contract = {
   personalities,
   chat,
   tools,
+  approvals,
   clarify,
   onboarding,
   config,
@@ -6003,6 +6106,7 @@ export const contract = {
   channels,
   a2a,
   namedSecrets,
+  credentials,
   keys,
   toolSettings,
   documents,

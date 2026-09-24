@@ -149,7 +149,14 @@ describe('Orchestrator guardrails', () => {
     // stream call and the closing call share one object literal instead of
     // two. The closing call, its system note and the tool_result for an
     // unoffered tool call live in agent-loop/stages/watcher-pause.ts.
-    expect(lineCount).toBeLessThanOrEqual(1010);
+    // Bumped 1010 -> 1017 (reach-and-containment Part 1, on-demand tool
+    // loading): the optional `toolLoading` resolver — one config field and its
+    // comment line, its private field, one-line constructor assignment and
+    // deps-getter line — plus `setup.toolLoading` handed to the stream-step and
+    // tool-processing contexts. 7 pass-through lines; the pinned/loaded
+    // composition lives in agent-loop/tool-loading.ts and `tool_search` in
+    // agent-loop/stages/tool-search.ts.
+    expect(lineCount).toBeLessThanOrEqual(1017);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -255,7 +262,13 @@ describe('Orchestrator guardrails', () => {
       // and hands it to the tool's `SimpleCompletionImpl`, a 4th constructor
       // argument that the formatter spreads over five lines. No logic — the
       // scoping lives in providers/chained-provider.ts.
-      if (lineCount > 853) {
+      // Bumped 853 -> 860 (reach-and-containment Part 1, on-demand tool
+      // loading): tool-processing.ts gains one import, one optional context
+      // field, a three-line `answerToolSearch` split before the batch loop, the
+      // `recordDirectLoads` call and its comment, and seeds the tool_result
+      // blocks with the search results. No logic — `tool_search` and D1-1
+      // auto-loading live in agent-loop/stages/tool-search.ts.
+      if (lineCount > 860) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

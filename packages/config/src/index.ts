@@ -2024,6 +2024,16 @@ export interface EthosConfig {
    *   toolPayloadLimitChars: 131072
    */
   toolPayloadLimitChars?: number;
+  /**
+   * reach-and-containment Part 1 — on-demand tool loading (`tool_search`).
+   * `auto` (the default when absent) engages it only for a personality whose
+   * tool schemas exceed the schema-budget share of the served window — the
+   * same verdict that already warns (`evaluateToolSchemaBudget`); `on` always;
+   * `off` never. Any other value is a parse error (`parseConfigYaml` →
+   * `configParseNotices`), which the strict boot paths refuse. Flat-key shape:
+   *   tool_loading: on
+   */
+  toolLoading?: ToolLoadingMode;
   // Per-personality model overrides: maps personality ID → model ID string
   modelRouting?: Record<string, string>;
   /**
@@ -3022,10 +3032,22 @@ export interface EthosConfig {
    *
    * Config format:
    *   gateway.maxInboundMediaBytes: 52428800
+   *   gateway.inboundSpool.maxAttempts: 3
+   *   gateway.inboundSpool.maxReplayAgeMs: 86400000
    */
   gateway?: {
     /** Largest inbound attachment any adapter will download, bytes. 1024–134217728. */
     maxInboundMediaBytes?: number;
+    /**
+     * The inbound spool's operator knobs (plan reach-and-containment D2-7,
+     * D2-9). Unset keys leave the gateway on its defaults: 3 attempts, 24h.
+     */
+    inboundSpool?: {
+      /** Attempts before an owed message is dead-lettered. 1–100. */
+      maxAttempts?: number;
+      /** Rows older than this at replay are dead-lettered as stale, ms. 60000–2592000000. */
+      maxReplayAgeMs?: number;
+    };
   };
   /**
    * Team-supervisor knobs. Named `teamSupervisor` rather than `gateway`
@@ -3614,6 +3636,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
   if (config.maxRetries !== undefined) lines.push(`maxRetries: ${config.maxRetries}`);
   if (config.toolPayloadLimitChars !== undefined)
     lines.push(`toolPayloadLimitChars: ${config.toolPayloadLimitChars}`);
+  if (config.toolLoading !== undefined) lines.push(`tool_loading: ${config.toolLoading}`);
   if (config.modelRouting) {
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${id}: ${model}`);
@@ -4302,6 +4325,14 @@ function serializeConfigLines(config: EthosConfig): string[] {
   }
   if (config.gateway?.maxInboundMediaBytes !== undefined) {
     lines.push(`gateway.maxInboundMediaBytes: ${config.gateway.maxInboundMediaBytes}`);
+  }
+  if (config.gateway?.inboundSpool?.maxAttempts !== undefined) {
+    lines.push(`gateway.inboundSpool.maxAttempts: ${config.gateway.inboundSpool.maxAttempts}`);
+  }
+  if (config.gateway?.inboundSpool?.maxReplayAgeMs !== undefined) {
+    lines.push(
+      `gateway.inboundSpool.maxReplayAgeMs: ${config.gateway.inboundSpool.maxReplayAgeMs}`,
+    );
   }
   if (config.teamSupervisor?.restartLoopGuard) {
     const rg = config.teamSupervisor.restartLoopGuard;
@@ -5429,7 +5460,9 @@ export function parseConfigYaml(src: string): EthosConfig {
       continue;
     }
     // gateway.<field>: <value>  (gateway-wide, non-credential knobs).
-    const gwy = line.match(/^gateway\.(maxInboundMediaBytes):\s*(.+)$/);
+    const gwy = line.match(
+      /^gateway\.(maxInboundMediaBytes|inboundSpool\.maxAttempts|inboundSpool\.maxReplayAgeMs):\s*(.+)$/,
+    );
     if (gwy) {
       gatewayKv[gwy[1]] = parseConfigScalar(gwy[2]);
       continue;
@@ -5797,7 +5830,9 @@ export function parseConfigYaml(src: string): EthosConfig {
   const channelFilter = buildChannelFilter(channelFilterKv);
   const groundingResult = buildGrounding(groundingKv, groundingKanbanKv);
   const browserResult = buildBrowser(browserKv);
+  const toolLoadingResult = parseToolLoading(kv.tool_loading);
   const parseErrors = [
+    ...toolLoadingResult.errors,
     ...groundingResult.errors,
     ...browserResult.errors,
     ...telegramResult.errors,
@@ -5887,6 +5922,7 @@ export function parseConfigYaml(src: string): EthosConfig {
       const n = Number(kv.toolPayloadLimitChars);
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
     })(),
+    ...(toolLoadingResult.mode ? { toolLoading: toolLoadingResult.mode } : {}),
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
     toolSettings: Object.keys(toolSettings).length > 0 ? toolSettings : undefined,
     models,
@@ -6073,6 +6109,23 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...modelRegistryNotices,
   ]);
   return config;
+}
+
+/** The three `tool_loading` values (reach-and-containment Part 1, D1-5). */
+export const TOOL_LOADING_MODES = ['auto', 'on', 'off'] as const;
+export type ToolLoadingMode = (typeof TOOL_LOADING_MODES)[number];
+
+/**
+ * `tool_loading: auto|on|off`. An unknown value is an error naming the key, not
+ * a silent fallback: a typo meant as `off` must not quietly run as `auto`.
+ */
+function parseToolLoading(raw: string | undefined): { mode?: ToolLoadingMode; errors: string[] } {
+  if (raw === undefined) return { errors: [] };
+  const mode = TOOL_LOADING_MODES.find((m) => m === raw.trim());
+  if (mode) return { mode, errors: [] };
+  return {
+    errors: [`tool_loading: must be one of ${TOOL_LOADING_MODES.join(', ')} (got '${raw}').`],
+  };
 }
 
 // Side-table keyed by the EthosConfig object identity. Avoids polluting
@@ -8850,10 +8903,28 @@ function buildBrowser(kv: Record<string, string>): {
  * are dropped, leaving each adapter on its own platform default.
  */
 function buildGateway(kv: Record<string, string>): EthosConfig['gateway'] | undefined {
+  const result: NonNullable<EthosConfig['gateway']> = {};
   const raw = kv.maxInboundMediaBytes;
-  if (raw === undefined) return undefined;
-  const n = parseBoundedInt(raw, 1024, 134_217_728);
-  return n === undefined ? undefined : { maxInboundMediaBytes: n };
+  if (raw !== undefined) {
+    const n = parseBoundedInt(raw, 1024, 134_217_728);
+    if (n !== undefined) result.maxInboundMediaBytes = n;
+  }
+  // Inbound spool knobs. Out-of-range values are dropped, leaving the gateway
+  // on its default: a cap of 0 attempts would dead-letter every message before
+  // it ran, and a replay age under a minute would dead-letter a normal restart.
+  const spool: NonNullable<NonNullable<EthosConfig['gateway']>['inboundSpool']> = {};
+  const attempts = kv['inboundSpool.maxAttempts'];
+  if (attempts !== undefined) {
+    const n = parseBoundedInt(attempts, 1, 100);
+    if (n !== undefined) spool.maxAttempts = n;
+  }
+  const age = kv['inboundSpool.maxReplayAgeMs'];
+  if (age !== undefined) {
+    const n = parseBoundedInt(age, 60_000, 30 * 86_400_000);
+    if (n !== undefined) spool.maxReplayAgeMs = n;
+  }
+  if (Object.keys(spool).length > 0) result.inboundSpool = spool;
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 /**

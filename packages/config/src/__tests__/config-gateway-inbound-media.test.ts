@@ -57,3 +57,54 @@ describe('gateway inbound-media cap config parsing', () => {
     expect(roundTripped?.gateway).toEqual(original.gateway);
   });
 });
+
+describe('gateway inbound spool config parsing', () => {
+  async function load(yaml: string) {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    await storage.write(join(ethosDir(), 'config.yaml'), yaml);
+    return readRawConfig(storage);
+  }
+
+  const base = ['provider: ollama', 'model: llama3.2', 'apiKey: sk', 'personality: p'];
+
+  it('parses both knobs beside the media cap', async () => {
+    const cfg = await load(
+      [
+        ...base,
+        'gateway.maxInboundMediaBytes: 52428800',
+        'gateway.inboundSpool.maxAttempts: 5',
+        'gateway.inboundSpool.maxReplayAgeMs: 3600000',
+      ].join('\n'),
+    );
+    expect(cfg?.gateway).toEqual({
+      maxInboundMediaBytes: 52428800,
+      inboundSpool: { maxAttempts: 5, maxReplayAgeMs: 3600000 },
+    });
+  });
+
+  it('drops out-of-range values', async () => {
+    const cfg = await load(
+      [
+        ...base,
+        'gateway.inboundSpool.maxAttempts: 0',
+        'gateway.inboundSpool.maxReplayAgeMs: 1000',
+      ].join('\n'),
+    );
+    expect(cfg?.gateway).toBeUndefined();
+  });
+
+  it('round-trips through writeConfig', async () => {
+    const storage = new InMemoryStorage();
+    await storage.mkdir(ethosDir());
+    const original = {
+      provider: 'ollama',
+      model: 'llama3.2',
+      apiKey: 'sk',
+      personality: 'researcher',
+      gateway: { inboundSpool: { maxAttempts: 4, maxReplayAgeMs: 7_200_000 } },
+    };
+    await writeConfig(storage, original, new InMemorySecretsResolver());
+    expect((await readRawConfig(storage))?.gateway).toEqual(original.gateway);
+  });
+});

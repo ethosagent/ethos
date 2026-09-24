@@ -10,13 +10,16 @@ import type { AgentSafety, Storage } from '@ethosagent/types';
  * the *boot* cwd, so feeding the already-resolved workdir back in as `cwd` would
  * compound it into `.../out/out`. One derivation, one scope.
  *
+ * `writeDeny` (the personality's definition files, `personalityWriteDeny` in
+ * `fs-reach.ts`) is passed through unchanged; the factory enforces it.
+ *
  * Returns undefined when no base Storage is wired, leaving
  * `ToolContext.storage` unset (legacy behaviour — tools fall back to raw fs).
  */
 export function buildScopedStorage(
   storage: Storage | undefined,
   safety: AgentSafety,
-  scope: { read: string[]; write: string[] },
+  scope: { read: string[]; write: string[]; writeDeny?: string[] },
 ): Storage | undefined {
   if (!storage) return undefined;
   return safety.scopedStorageFactory(storage, scope);

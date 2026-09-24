@@ -11,6 +11,7 @@ import type {
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
 import { routeTurnModel } from '../model-route';
 import { parseSmallWindowToolset } from '../small-window-toolset';
+import { resolveToolLoading } from '../tool-loading';
 import type { LoopDeps, TurnSetupResult } from '../turn-context';
 import { describeResolutionFailure, resolveTurnModel } from '../turn-model';
 
@@ -164,7 +165,7 @@ export async function* setupTurn(
   // missing credential: error event, done, `refused` — before
   // `recordTurnStart` burns a turn number.
   let workingDir: string;
-  let fsReach: { read: string[]; write: string[] };
+  let fsReach: { read: string[]; write: string[]; writeDeny: string[] };
   try {
     const derived = deriveFsReachPaths(personality, {
       ethosHome: deps.dataDir ?? join(homedir(), '.ethos'),
@@ -172,7 +173,7 @@ export async function* setupTurn(
       cwd: deps.workingDir,
     });
     workingDir = derived.workdir;
-    fsReach = { read: derived.read, write: derived.write };
+    fsReach = { read: derived.read, write: derived.write, writeDeny: derived.writeDeny };
   } catch (err) {
     if (!(err instanceof EmptySubstitutionError)) throw err;
     if (traceId) deps.observability?.endTrace(traceId, 'error');
@@ -334,6 +335,19 @@ export async function* setupTurn(
     ...(opts.toolsetExclude ? { excludeTools: opts.toolsetExclude } : {}),
   };
 
+  // reach-and-containment Part 1 (C2) — on-demand tool loading runs INSIDE the
+  // allowlist computed above (D1-10: after small-window narrowing). Undefined
+  // unless the wiring resolver engages it, and then everything downstream is
+  // byte-identical to the no-loading path.
+  const toolLoading = resolveToolLoading({
+    resolver: deps.toolLoading,
+    registry: deps.tools,
+    personality,
+    allowedTools,
+    filterOpts,
+    sessionMetadata: ethosSession.metadata,
+  });
+
   // Step 2: Fire session_start hooks
   await deps.hooks.fireVoid(
     'session_start',
@@ -391,6 +405,7 @@ export async function* setupTurn(
       allowedPlugins,
       filterOpts,
       memScopeId,
+      ...(toolLoading ? { toolLoading } : {}),
     },
   };
 }

@@ -72,10 +72,23 @@ import type { WiringContext } from './types';
 // WITHOUT taking a direct `@ethosagent/tools-browser` dependency — which would
 // pull Playwright into the desktop bundle's declared graph for one lookup.
 // `packages/wiring` already depends on it to compose the browser toolset.
+// Stored logins for `browser_fill_credential` (plan reach-and-containment
+// §4.2). Re-exported for the same reason as the registry above: the CLI
+// (`ethos secrets credential`) and web-api (`CredentialsService`) validate and
+// write through the ONE implementation the tool reads back, without either app
+// importing the extension directly (ARCHITECTURE.md Law 5).
 export {
   type BrowserTakeoverRegistry,
   type BrowserTakeoverTarget,
+  CredentialValidationError,
+  type CredentialView,
   createBrowserTakeoverRegistry,
+  deleteCredential,
+  listCredentials,
+  normalizeOrigin,
+  type SetCredentialInput,
+  setCredential,
+  updateCredentialPolicy,
 } from '@ethosagent/tools-browser';
 export type { MessagingSendFn } from '@ethosagent/tools-messaging';
 
@@ -246,6 +259,12 @@ export interface WiringConfig {
    * failure prevented) and WARNS on hosted ones.
    */
   toolPayloadLimitChars?: number;
+  /**
+   * reach-and-containment Part 1 — on-demand tool loading mode. Absent →
+   * `auto`. Built into the loop's per-turn resolver by
+   * `createToolLoadingResolver` (static-floor.ts).
+   */
+  toolLoading?: 'auto' | 'on' | 'off';
   /** Maps personality ID → model ID for per-personality model overrides. */
   modelRouting?: Record<string, string>;
   /**
@@ -1965,4 +1984,7 @@ export * from './backup-schedule';
 // publishing tools see. `createOutboundPolicyGate` is its policy half alone —
 // what an app root hands a `WatcherManager` at construction.
 export { createOutboundPolicyGate, createOutboxGate, type OutboxWiring } from './compose-tools';
+// The gateway singleton lock (plan reach-and-containment §2.7) — taken by
+// `ethos gateway start`, read by `ethos gateway status`.
+export * from './gateway-lock';
 export * from './system-jobs';

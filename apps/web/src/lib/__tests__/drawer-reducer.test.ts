@@ -427,6 +427,7 @@ describe('drawer-reducer', () => {
           toolName: 'terminal',
           args: { command: 'rm -rf /' },
           reason: 'recursive force-delete',
+          alwaysAsk: false,
         },
       },
       { type: 'tool_start', toolCallId: 'c1', toolName: 'terminal', args: { command: 'ls' } },

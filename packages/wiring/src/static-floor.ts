@@ -7,6 +7,7 @@
 // arithmetic path. Everything here is pure: inputs in, token estimate +
 // per-component breakdown out, no I/O.
 
+import type { ToolLoadingResolver } from '@ethosagent/core';
 import { DEFAULT_OUTPUT_RESERVE_TOKENS } from '@ethosagent/core';
 import { SMALL_WINDOW_STATIC_RATIO } from './model-catalog';
 
@@ -320,5 +321,44 @@ export function evaluateToolSchemaBudget(opts: {
       `${pct(share)} of the ${n(opts.windowTokens)}-token served window (threshold ${pct(ratio)}). ` +
       `Largest: ${top}. Trim toolset.yaml, or declare ` +
       `context_engine_options.small_window_toolset to narrow it in small-window mode.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// reach-and-containment Part 1 (C5) — the on-demand tool-loading resolver
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the loop's per-turn `toolLoading` predicate from the operator's
+ * `tool_loading` mode. `off` → never; `on` → always; `auto` → exactly when
+ * `evaluateToolSchemaBudget` returns a `message` — the SAME verdict (and the
+ * same per-personality `context_engine_options.tool_schema_budget_ratio`) the
+ * startup warning uses, so a hosted personality under budget keeps its request
+ * bytes (D1-5). Evaluated per personality at turn setup (D1-9), memoized per
+ * (personality id, universe fingerprint) so each new universe costs one
+ * `JSON.stringify`. The fingerprint is the ordered tool NAMES: a schema edit
+ * that keeps every name re-uses the earlier verdict until the process restarts.
+ */
+export function createToolLoadingResolver(opts: {
+  mode: 'auto' | 'on' | 'off';
+  windowTokens: number;
+}): ToolLoadingResolver {
+  if (opts.mode === 'off') return () => false;
+  if (opts.mode === 'on') return () => true;
+  const memo = new Map<string, boolean>();
+  return (personality, universe) => {
+    const ratio = personality.context_engine_options?.tool_schema_budget_ratio;
+    const key = [personality.id, String(ratio), ...universe.map((d) => d.name)].join('\u0000');
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
+    const verdict = evaluateToolSchemaBudget({
+      personalityId: personality.id,
+      windowTokens: opts.windowTokens,
+      toolDefinitions: universe,
+      ...(typeof ratio === 'number' && ratio > 0 ? { ratio } : {}),
+    });
+    const engaged = verdict.message !== undefined;
+    memo.set(key, engaged);
+    return engaged;
   };
 }

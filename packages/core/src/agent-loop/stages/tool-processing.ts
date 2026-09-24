@@ -37,6 +37,7 @@ import { persistReturnDirect } from './return-direct';
 import type { ScriptToolBridge } from './script-tool-bridge';
 import type { CompletedToolCall, UsageSink } from './stream-step';
 import { emitToolRejection, rejectAbortedCall, validateRepairedArgs } from './tool-rejection';
+import { answerToolSearch, recordDirectLoads } from './tool-search';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -81,7 +82,7 @@ export interface ToolProcessingContext {
   workingDir: string;
   /** The turn's `fs_reach` allowlist, from the same derivation as
    *  `workingDir` — see `TurnSetup.fsReach`. */
-  fsReach: { read: string[]; write: string[] };
+  fsReach: { read: string[]; write: string[]; writeDeny: string[] };
   traceId: string | undefined;
   obsConfig: PersonalityObservabilityConfig | undefined;
   effectiveModel: string;
@@ -89,6 +90,7 @@ export interface ToolProcessingContext {
   allowedTools: string[] | undefined;
   allowedPlugins: string[];
   filterOpts: ToolFilterOpts;
+  toolLoading?: import('../tool-loading').ToolLoadingState; // Part 1 — see ./tool-search
   llmMessages: Message[];
   abortSignal: AbortSignal;
   turnCount: number;
@@ -241,7 +243,10 @@ export async function* processTools(
   const observe = ctx.watcherTap.observe;
   const getHalt = ctx.watcherTap.getHalt;
 
-  for (const tc of ctx.completedToolCalls) {
+  // Part 1 (C4) — the loop answers `tool_search` itself (D1-8); the rest is unchanged.
+  const { batchCalls, searchResults } = yield* answerToolSearch(deps, ctx);
+
+  for (const tc of batchCalls) {
     // /stop landed while an earlier call's hook was parked — see rejectAbortedCall.
     if (ctx.abortSignal.aborted) {
       prepped.push(yield* rejectAbortedCall(observe, tc));
@@ -481,6 +486,8 @@ export async function* processTools(
   }
   const execResults = await toolsPromise;
   const execResultMap = new Map(execResults.map((r) => [r.toolCallId, r]));
+  // Part 1, D1-1 — a directly-called allowed tool that ran is loaded for the next step.
+  await recordDirectLoads(deps, ctx, execInputs);
 
   // v2: returnDirect — skip LLM synthesis if a returnDirect tool succeeded
   const directResult = execResults.find((r) => {
@@ -555,7 +562,7 @@ export async function* processTools(
   }
 
   // Persist results + emit tool_end + build tool_result content blocks (original order)
-  const toolResultContent: MessageContent[] = [];
+  const toolResultContent: MessageContent[] = [...searchResults];
   // Ch.3d — set when any tool we ran this iteration was outputIsUntrusted.
   // Decremented at the *top* of the next iteration, so a downgraded tool in
   // the same iteration also catches against the counter we set below.

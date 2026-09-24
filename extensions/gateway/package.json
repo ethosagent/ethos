@@ -16,6 +16,7 @@
     "@ethosagent/core": "workspace:*",
     "@ethosagent/delivery-ledger": "workspace:*",
     "@ethosagent/inbound-dedup": "workspace:*",
+    "@ethosagent/inbound-spool": "workspace:*",
     "@ethosagent/job-runner": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "@ethosagent/safety-channel": "workspace:*",

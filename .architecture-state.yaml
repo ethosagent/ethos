@@ -229,16 +229,16 @@ register_anchors:
 
   G-CAP:
     - { path: packages/core/src/capability-validator.ts, line: 19, contains: "export function validateRegistration" }
-    - { path: packages/core/src/capability-resolver.ts, line: 71, contains: "export function resolveCapabilities" }
+    - { path: packages/core/src/capability-resolver.ts, line: 80, contains: "export function resolveCapabilities" }
     - { path: packages/core/src/scoped/scoped-process.ts, line: 8, contains: "this.allowedBinaries.has(binary)" }
     - { path: packages/core/src/scoped/scoped-secrets.ts, line: 12, contains: "!this.isDeclared(ref)" }
     - { path: packages/core/src/scoped/scoped-attachments.ts, line: 22, contains: "a.ref === att.ref" }
 
   G-FS:
-    - { path: packages/core/src/fs-reach.ts, line: 136, contains: "export function deriveFsReachPaths" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 102, contains: "private checkReach(" }
-    - { path: packages/core/src/scoped/scoped-fs.ts, line: 136, contains: "through a symbolic link" }
-    - { path: packages/storage-fs/src/scoped-storage.ts, line: 91, contains: "private check(rawPath" }
+    - { path: packages/core/src/fs-reach.ts, line: 141, contains: "export function deriveFsReachPaths" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 113, contains: "private checkReach(" }
+    - { path: packages/core/src/scoped/scoped-fs.ts, line: 152, contains: "through a symbolic link" }
+    - { path: packages/storage-fs/src/scoped-storage.ts, line: 132, contains: "private check(rawPath" }
     - { path: packages/core/src/path-boundary.ts, line: 17, contains: "export function assertWithinBase" }
 
   G-NET:
@@ -256,8 +256,8 @@ register_anchors:
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 23, contains: "export function resolveDowngradedTools" }
     - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 456, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 671, contains: "resolveDowngradedTools(dgConfig?.tools)" }
-    - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 756, contains: "await handleUntrustedResult(" }
+    - { path: packages/core/src/agent-loop.ts, line: 676, contains: "resolveDowngradedTools(dgConfig?.tools)" }
+    - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 763, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 26, contains: "export async function handleUntrustedResult" }
 
   G-SEC:
@@ -302,7 +302,7 @@ register_anchors:
     - { path: packages/safety/watcher/src/rules.ts, line: 110, contains: "export function compoundingErrorRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 161, contains: "export function suspiciousSequenceRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 205, contains: "export function defaultRules" }
-    - { path: packages/wiring/src/build-agent-loop.ts, line: 553, contains: "defaultRules: watcherDefaultRules" }
+    - { path: packages/wiring/src/build-agent-loop.ts, line: 555, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
     - { path: packages/safety/channel/src/channel-filter.ts, line: 111, contains: "export function checkMessage" }
@@ -315,7 +315,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 146 packages: 11 at Tier 0, 27 at Tier 1, 108 at Tier 2.
+# apps/ carries a tier. 147 packages: 11 at Tier 0, 27 at Tier 1, 109 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -788,6 +788,11 @@ tiers:
     package: "@ethosagent/inbound-dedup"
     tier: 2
     assigned: 2026-08-28
+
+  extensions/inbound-spool:
+    package: "@ethosagent/inbound-spool"
+    tier: 2
+    assigned: 2026-09-24
 
   extensions/job-runner:
     package: "@ethosagent/job-runner"
