@@ -1031,7 +1031,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
           <CredentialCard
             key={`${state.pendingCredential.pluginId}:${state.pendingCredential.credentialKey}`}
             request={state.pendingCredential}
-            resend={(text) => sendMessage(text)}
+            resend={(text) => sendMessage(text, undefined, { replacesRefused: true })}
             onDismiss={dismissCredential}
           />
         ) : null}

@@ -65,7 +65,9 @@ export interface UseChatResult {
   sendMessage: (
     text: string,
     attachments?: AttachmentPreview[],
-    opts?: { origin?: 'text' | 'voice' },
+    /** `replacesRefused` — a credential resend replaces the refused turn's
+     *  bubble (`ChatState.credentialRefusedMessageId`) instead of adding one. */
+    opts?: { origin?: 'text' | 'voice'; replacesRefused?: true },
   ) => Promise<void>;
   /** Steer the running turn. Returns true if accepted, false if the turn
    *  already ended or the RPC failed. */
@@ -414,7 +416,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     async (
       text: string,
       attachments?: AttachmentPreview[],
-      opts?: { origin?: 'text' | 'voice' },
+      opts?: { origin?: 'text' | 'voice'; replacesRefused?: true },
     ): Promise<void> => {
       const trimmed = text.trim();
       if (!trimmed && !attachments?.length) return;
@@ -432,6 +434,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
           // server is told below — the transcript is shown BESIDE the marker,
           // never instead of it.
           ...(opts?.origin === 'voice' ? { origin: 'voice' as const } : {}),
+          ...(opts?.replacesRefused ? { replacesRefused: true as const } : {}),
         },
       });
       // A question asked over a live turn ends that turn — the reducer closes
