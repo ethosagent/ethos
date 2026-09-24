@@ -47,7 +47,8 @@ const SCHEMA = `
     remote_job_id      TEXT,
     runner             TEXT,
     blocked_since      INTEGER,
-    blocked_request_id TEXT
+    blocked_request_id TEXT,
+    deliver            TEXT NOT NULL DEFAULT 'user'
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS job_events (
@@ -87,11 +88,11 @@ const SCHEMA = `
 const DELIVERY_INDEX =
   'CREATE INDEX IF NOT EXISTS jobs_undelivered ON jobs(origin_bot_key, status, delivered_at)';
 
-const JOB_STORE_SCHEMA_VERSION = 6;
+const JOB_STORE_SCHEMA_VERSION = 7;
 
 /**
  * Forward-only DDL steps. Each brings a `(N-1)` database to `N`; the baseline
- * above already describes v6, so a FRESH database never runs one. The
+ * above already describes v7, so a FRESH database never runs one. The
  * `table_info` guards keep each ALTER idempotent even if a database was
  * hand-repaired to the newer shape without its `user_version` being bumped.
  */
@@ -121,6 +122,10 @@ const JOB_STORE_MIGRATIONS: Record<number, (db: Database.Database) => void> = {
   // execs the baseline before the chain). The step exists so `user_version`
   // moves, which is what the downgrade guard reads.
   6: () => {},
+  // v6 -> v7: who sees the result first (plan openclaw-9.5-adoption item 6).
+  // The DEFAULT makes every existing row read `'user'` — the only behaviour
+  // that existed before the column.
+  7: (db) => addColumnIfMissing(db, 'deliver', `TEXT NOT NULL DEFAULT 'user'`),
 };
 
 function addColumnIfMissing(db: Database.Database, column: string, type: string): void {
@@ -164,6 +169,7 @@ interface JobRow {
   runner: string | null;
   blocked_since: number | null;
   blocked_request_id: string | null;
+  deliver: string;
 }
 
 interface JobEventRow {
@@ -210,6 +216,7 @@ function rowToJob(r: JobRow): BackgroundJob {
     runner: r.runner ?? undefined,
     blockedSince: r.blocked_since ?? undefined,
     blockedRequestId: r.blocked_request_id ?? undefined,
+    deliver: r.deliver === 'parent' ? 'parent' : 'user',
   };
 }
 
@@ -274,8 +281,8 @@ export class SQLiteJobStore implements JobStore {
           personality_id, depth, status, label, prompt, spend_usd,
           max_cost_usd, cancel_requested, created_at,
           origin_platform, origin_bot_key, origin_chat_id, origin_thread_id,
-          remote_peer, remote_job_id, runner)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          remote_peer, remote_job_id, runner, deliver)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -299,6 +306,7 @@ export class SQLiteJobStore implements JobStore {
         input.remotePeer ?? null,
         input.remoteJobId ?? null,
         input.runner ?? null,
+        input.deliver ?? 'user',
       );
 
     this.appendEventSync(id, 'queued', {});

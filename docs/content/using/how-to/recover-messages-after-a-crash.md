@@ -14,7 +14,7 @@ Find out which channel messages a crashed [gateway](../../getting-started/glossa
 
 ## Result
 
-- Every message that arrived before the crash is answered once after restart, with no action from you.
+- Every message that arrived before the crash is answered once after restart, with no action from you — unless its turn had already started a tool, in which case the chat is asked to reply `retry`.
 - Messages the gateway gave up on are listed by `ethos doctor`, and you replay or drop each one by id.
 - You know which gateway process owns your Ethos home, and why a second one refuses to start.
 
@@ -43,6 +43,14 @@ No line means nothing was owed. The replay runs right after the adapters connect
 
 A turn whose reply was already recorded before the crash is not run again: its reply is redelivered from the ledger instead, so the chat gets one answer, not two.
 
+If the crashed turn had already started a tool, it is not replayed either: re-running it could repeat a half-finished action, such as a payment or a file write. The row becomes `interrupted` and the chat gets one notice:
+
+```
+⚠ Your message was interrupted after actions had started, so it was not re-run automatically. Reply `retry` to run it again.
+```
+
+If the user replies exactly `retry` within a day, the original message runs again. Any other message in that chat drops it. A graceful stop (Ctrl+C) treats a tool-started turn the same way, and sends no "please resend" to a chat the replay will answer.
+
 ### 2. Check the gateway's state
 
 ```bash
@@ -51,7 +59,7 @@ ethos gateway status
 
 ```
 running (pid 4242, heartbeat 4s ago)
-inbound spool: 0 owed, 1 in progress, 0 dead
+inbound spool: 0 owed, 1 in progress, 0 dead, 0 interrupted
 ```
 
 Only one gateway runs per Ethos home, and `ethos boot` counts as one. A second `ethos gateway start` or `ethos boot` exits `3` and names the running pid. If `status` says `stale lock (pid N not running)`, the next start takes the lock over — there is nothing to delete.
@@ -64,7 +72,7 @@ ethos doctor
 
 ```
 Inbound spool
-  ✓  0 owed · 0 in progress · 212 done · 2 dead
+  ✓  0 owed · 0 in progress · 212 done · 2 dead · 0 interrupted
   ⚠  2 dead letter(s):
      6f1c2a3e-0b7d-4c55-9a51-1f0e8d2b7c44  telegram:81234567  attempts 3  tool exploded
      b20d9e11-5a6c-4f0e-8d3b-77aa01c2e9f5  slack:C04ABCD  attempts 0  stale
@@ -78,7 +86,9 @@ A message lands here for one of two reasons:
 | the turn's error, attempts `3` | The turn failed on three separate attempts — including a turn that crashed the process on three boots in a row. | Nothing after the first failure. |
 | `stale` | It was more than a day old when the gateway came back. | One notice per chat: "I restarted and missed N message(s) older than a day; resend if still needed." |
 
-The same list is on the web dashboard: Settings → Voice → **inbound — dead**, with Replay and Discard buttons.
+Doctor lists `interrupted` messages in a separate block below the dead letters. Those are waiting on the user's `retry`. Replaying one yourself re-runs the turn, tools included.
+
+The same list is on the web dashboard: Settings → Voice → **inbound — dead**, with Replay and Discard buttons. Its State column shows `dead` or `interrupted — awaiting retry`.
 
 ### 4. Replay or discard each one
 

@@ -19,7 +19,7 @@ import type {
   PlatformAdapter,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
-import { Gateway, type GatewayConfig } from '../index';
+import { Gateway, type GatewayConfig, INTERRUPTED_RETRY_NOTICE } from '../index';
 
 async function waitUntil(pred: () => boolean, timeoutMs = 2000): Promise<void> {
   const start = Date.now();
@@ -138,7 +138,8 @@ function seed(spool: SQLiteInboundSpool, m: InboundMessage): string {
 }
 
 describe('inbound spool — crash and replay', () => {
-  it('a turn cut by a crash before markDone is replayed exactly once by the next process', async () => {
+  // The other branch — a tool had started — is 'a turn that started a tool' below.
+  it('a turn cut by a crash before any tool started is replayed exactly once by the next process', async () => {
     const spool = new SQLiteInboundSpool(':memory:');
     const out = recordingAdapter();
     // The first process never finishes its turn — a kill -9 analogue.
@@ -454,5 +455,304 @@ describe('inbound spool — stale rows', () => {
     expect(out.sends.map((x) => x.text)).toEqual([
       'I restarted and missed 2 message(s) older than a day; resend if still needed.',
     ]);
+  });
+});
+
+// Plan openclaw-9.5-adoption item 2: the spool row is written BEFORE the
+// durable dedup sighting. The two live in different files, so a crash between
+// the commits must leave the row (replayed) rather than the sighting (the
+// message lost and its platform retry dropped as a duplicate).
+describe('inbound spool — dedup ordering', () => {
+  it('writes the spool row before the durable sighting', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const rowsAtSighting: number[] = [];
+    const inboundDedup = {
+      seen: vi.fn(() => {
+        rowsAtSighting.push(rows(spool).length);
+        return false;
+      }),
+      close: vi.fn(),
+    };
+    const gw = gateway(scriptedLoop().loop, out.adapter, spool, { inboundDedup });
+    expect(gw.acceptInbound(msg('ordered')).fresh).toBe(true);
+    expect(rowsAtSighting).toEqual([1]);
+  });
+
+  it('a crash between the row and the sighting: the retry is dropped, the row replays once', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const dedup = new SQLiteInboundDedupStore(':memory:');
+    const out = recordingAdapter();
+    const m = msg('crash window', { messageId: 'tg-7' });
+    // The first process wrote the row and died before its sighting — modelled
+    // by a process that has no dedup store at all, then hangs (kill -9).
+    const first = scriptedLoop(async function* () {
+      await new Promise(() => {});
+    });
+    void gateway(first.loop, out.adapter, spool).handleMessage(m, out.adapter);
+    await waitUntil(() => first.texts.length === 1);
+
+    // Restart. The platform retries the unacknowledged message first.
+    const second = scriptedLoop();
+    const gw2 = gateway(second.loop, out.adapter, spool, { inboundDedup: dedup });
+    await gw2.handleMessage(m, out.adapter);
+    expect(second.texts).toHaveLength(0);
+    // …and the replay answers it, exactly once.
+    await gw2.replayInboundSpool();
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    expect(second.texts).toHaveLength(1);
+    expect(rows(spool)).toHaveLength(1);
+  });
+
+  it('a sighting the spool never recorded drops the message and closes the fresh row', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const dedup = new SQLiteInboundDedupStore(':memory:');
+    // Seen by an earlier process whose spool write failed (fail-open path).
+    dedup.seen('telegram', 'bot-a', 'chat-1', 'tg-9');
+    const out = recordingAdapter();
+    const s = scriptedLoop();
+    await gateway(s.loop, out.adapter, spool, { inboundDedup: dedup }).handleMessage(
+      msg('retry of an answered message', { messageId: 'tg-9' }),
+      out.adapter,
+    );
+    expect(s.texts).toHaveLength(0);
+    expect(rows(spool)).toHaveLength(1);
+    expect(rows(spool)[0]?.status).toBe('done');
+  });
+
+  it('a failed spool write falls back to dedup alone: processed once, the retry dropped', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    spool.accept = () => {
+      throw new Error('disk full');
+    };
+    const dedup = new SQLiteInboundDedupStore(':memory:');
+    const out = recordingAdapter();
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool, { inboundDedup: dedup });
+    await gw.handleMessage(msg('undurable', { messageId: 'tg-11' }), out.adapter);
+    const restarted = gateway(s.loop, out.adapter, spool, { inboundDedup: dedup });
+    await restarted.handleMessage(msg('undurable', { messageId: 'tg-11' }), out.adapter);
+    expect(s.texts).toHaveLength(1);
+  });
+
+  it('a failed sighting after the row is written still runs the message (fail-open)', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const inboundDedup = {
+      seen: vi.fn(() => {
+        throw new Error('dedup locked');
+      }),
+      close: vi.fn(),
+    };
+    const out = recordingAdapter();
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool, { inboundDedup });
+    await gw.handleMessage(msg('keeps going', { messageId: 'tg-12' }), out.adapter);
+    expect(s.texts).toHaveLength(1);
+    expect(rows(spool)[0]?.status).toBe('done');
+    // The spool key still dedups the retry in this process.
+    await gw.handleMessage(msg('keeps going', { messageId: 'tg-12' }), out.adapter);
+    expect(s.texts).toHaveLength(1);
+  });
+});
+
+// Plan openclaw-9.5-adoption D5: a turn that had started a tool is never
+// replayed. Its row becomes `interrupted`, the lane is told, and only the
+// user's `retry` runs it again.
+describe('inbound spool — a turn that started a tool', () => {
+  /** Yields one tool call, then parks until aborted (or forever). */
+  function toolThenPark(): ReturnType<typeof scriptedLoop> {
+    return scriptedLoop(async function* (_text, opts) {
+      yield { type: 'tool_start', toolCallId: 'c1', toolName: 'pay_invoice', args: {} };
+      await new Promise<void>((resolve) => {
+        opts.abortSignal?.addEventListener('abort', () => resolve());
+      });
+    });
+  }
+
+  /** Crash a first process mid-tool, then boot a second one and replay. */
+  async function crashAfterTool(extra: Partial<GatewayConfig> = {}) {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const first = toolThenPark();
+    void gateway(first.loop, out.adapter, spool).handleMessage(msg('pay the invoice'), out.adapter);
+    await waitUntil(() => rows(spool)[0]?.toolStartedAt !== undefined);
+    const second = scriptedLoop();
+    const gw2 = gateway(second.loop, out.adapter, spool, extra);
+    const result = await gw2.replayInboundSpool();
+    return { spool, out, second, gw2, result };
+  }
+
+  it('is not replayed after a crash: interrupted, one notice, the tool never re-runs', async () => {
+    const { spool, out, second, result } = await crashAfterTool();
+    expect(result).toEqual({ replayed: 0, deferred: 0, dead: 0 });
+    expect(second.texts).toHaveLength(0);
+    expect(rows(spool)[0]).toMatchObject({ status: 'interrupted' });
+    expect(out.sends.map((s) => s.text)).toEqual([INTERRUPTED_RETRY_NOTICE]);
+  });
+
+  it('`retry` re-runs the original message as a fresh row, exactly once', async () => {
+    const { spool, out, second, gw2 } = await crashAfterTool();
+    await gw2.handleMessage(msg('  Retry '), out.adapter);
+    await waitUntil(() => second.texts.length === 1);
+    expect(second.texts[0]).toContain('pay the invoice');
+    expect(second.texts[0]).not.toContain('Retry');
+    await waitUntil(() => rows(spool).every((r) => r.status === 'done'));
+    // The interrupted row, the `retry` message's own row, and the re-run.
+    expect(rows(spool)).toHaveLength(3);
+    // A second `retry` has nothing left to run: it is an ordinary message now.
+    await gw2.handleMessage(msg('retry'), out.adapter);
+    await waitUntil(() => second.texts.length === 2);
+    expect(second.texts[1]).toContain('retry');
+    expect(second.texts[1]).not.toContain('pay the invoice');
+  });
+
+  it('any other message discards the interrupted row and runs as itself', async () => {
+    const { spool, out, second, gw2 } = await crashAfterTool();
+    const interruptedId = rows(spool)[0]?.id ?? '';
+    await gw2.handleMessage(msg('never mind, what time is it'), out.adapter);
+    expect(second.texts).toHaveLength(1);
+    expect(second.texts[0]).toContain('what time is it');
+    expect(spool.get(interruptedId)).toMatchObject({ status: 'done', lastError: 'discarded' });
+    // …so a later `retry` no longer re-runs it.
+    await gw2.handleMessage(msg('retry'), out.adapter);
+    expect(second.texts.join('\n')).not.toContain('pay the invoice');
+  });
+
+  it('`retry` is not swallowed by a pending clarify the crashed turn left behind', async () => {
+    const respond = vi.fn().mockResolvedValue(undefined);
+    const { out, second, gw2 } = await crashAfterTool({
+      // Would take `retry` as the answer to a question nobody is waiting on.
+      clarifyMessageCorrelator: async (m: InboundMessage) =>
+        m.text === 'retry' ? ({ id: 'dead-question', answer: 'retry' } as never) : null,
+    });
+    (second.loop as unknown as { clarifyBridge: unknown }).clarifyBridge = {
+      respond,
+      recordPresence: vi.fn(),
+      sweep: vi.fn(),
+    };
+    await gw2.handleMessage(msg('retry'), out.adapter);
+    await waitUntil(() => second.texts.length === 1);
+    expect(second.texts[0]).toContain('pay the invoice');
+    expect(respond).not.toHaveBeenCalled();
+  });
+
+  it('a `retry` from a sender the safety filter drops re-runs and discards nothing', async () => {
+    const { spool, out, second, gw2 } = await crashAfterTool({
+      channelFilter: { telegram: { recipientAllowlist: ['user-1'] } } as never,
+    });
+    await gw2.handleMessage(msg('retry', { userId: 'stranger' }), out.adapter);
+    await settle();
+    expect(second.texts).toHaveLength(0);
+    expect(rows(spool)[0]?.status).toBe('interrupted');
+  });
+
+  it('answers `retry` only for a day; after that it is an ordinary message', async () => {
+    let t = Date.now() - 25 * 60 * 60 * 1000;
+    const spool = new SQLiteInboundSpool(':memory:', { now: () => t });
+    const out = recordingAdapter();
+    const id = seed(spool, msg('pay the invoice'));
+    spool.markInterrupted(id, 'crash');
+    t = Date.now();
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool);
+    await gw.replayInboundSpool();
+    await gw.handleMessage(msg('retry'), out.adapter);
+    expect(s.texts).toHaveLength(1);
+    expect(s.texts[0]).not.toContain('pay the invoice');
+  });
+
+  it('a live turn that throws after a tool started is interrupted, not re-queued', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const s = scriptedLoop(async function* () {
+      yield { type: 'tool_start', toolCallId: 'c1', toolName: 'pay_invoice', args: {} };
+      throw new Error('loop crashed mid-tool');
+    });
+    await gateway(s.loop, out.adapter, spool)
+      .handleMessage(msg('pay the invoice'), out.adapter)
+      .catch(() => {});
+    expect(rows(spool)[0]).toMatchObject({ status: 'interrupted' });
+    expect(out.sends.map((x) => x.text)).toEqual([INTERRUPTED_RETRY_NOTICE]);
+    // Nothing for the next boot to replay.
+    const next = scriptedLoop();
+    await gateway(next.loop, out.adapter, spool).replayInboundSpool();
+    expect(next.texts).toHaveLength(0);
+  });
+});
+
+// Plan openclaw-9.5-adoption D19: a graceful stop must not tell a lane "please
+// resend" when the replay will answer it anyway (that is a double answer).
+describe('inbound spool — shutdown notices', () => {
+  const RESEND = 'please resend';
+
+  function parkUntilAborted(): ReturnType<typeof scriptedLoop> {
+    return scriptedLoop(async function* (_text, opts) {
+      await new Promise<void>((resolve) => {
+        opts.abortSignal?.addEventListener('abort', () => resolve());
+      });
+    });
+  }
+
+  it('a spooled turn with no tool started gets no resend notice, and is replayed', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const s = parkUntilAborted();
+    const gw = gateway(s.loop, out.adapter, spool);
+    const turn = gw.handleMessage(msg('slow question'), out.adapter);
+    await waitUntil(() => s.texts.length === 1);
+    await gw.shutdown({ notify: RESEND, drainTimeoutMs: 1000 });
+    await turn.catch(() => {});
+    expect(out.sends.map((x) => x.text)).toEqual([]);
+    expect(rows(spool)[0]?.status).toBe('received');
+
+    const next = scriptedLoop();
+    await gateway(next.loop, out.adapter, spool).replayInboundSpool();
+    await waitUntil(() => rows(spool)[0]?.status === 'done');
+    expect(out.sends.map((x) => x.text)).toEqual(['reply']);
+  });
+
+  it('a spooled turn that started a tool is interrupted and gets the retry notice instead', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const s = scriptedLoop(async function* (_text, opts) {
+      yield { type: 'tool_start', toolCallId: 'c1', toolName: 'pay_invoice', args: {} };
+      await new Promise<void>((resolve) => {
+        opts.abortSignal?.addEventListener('abort', () => resolve());
+      });
+    });
+    const gw = gateway(s.loop, out.adapter, spool);
+    const turn = gw.handleMessage(msg('pay the invoice'), out.adapter);
+    await waitUntil(() => rows(spool)[0]?.toolStartedAt !== undefined);
+    await gw.shutdown({ notify: RESEND, drainTimeoutMs: 1000 });
+    await turn.catch(() => {});
+    expect(out.sends.map((x) => x.text)).toEqual([INTERRUPTED_RETRY_NOTICE]);
+    expect(rows(spool)[0]?.status).toBe('interrupted');
+
+    // The next process neither replays it nor forgets it: `retry` runs it.
+    const next = scriptedLoop();
+    const gw2 = gateway(next.loop, out.adapter, spool);
+    await gw2.replayInboundSpool();
+    expect(next.texts).toHaveLength(0);
+    await gw2.handleMessage(msg('retry'), out.adapter);
+    await waitUntil(() => next.texts.length === 1);
+    expect(next.texts[0]).toContain('pay the invoice');
+  });
+
+  it('an unspooled turn keeps the resend notice', async () => {
+    const out = recordingAdapter();
+    const s = parkUntilAborted();
+    const gw = new Gateway({
+      bots: [
+        { botKey: 'bot-a', loop: s.loop as never, binding: { type: 'personality', name: 'p' } },
+      ],
+      adapters: new Map([['telegram', out.adapter]]),
+      clarifySweepIntervalMs: 0,
+      clarifyEscalationDelayMs: 0,
+    });
+    const turn = gw.handleMessage(msg('slow question'), out.adapter);
+    await waitUntil(() => s.texts.length === 1);
+    await gw.shutdown({ notify: RESEND, drainTimeoutMs: 1000 });
+    await turn.catch(() => {});
+    expect(out.sends.map((x) => x.text)).toEqual([RESEND]);
   });
 });

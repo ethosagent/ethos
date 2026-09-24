@@ -167,4 +167,38 @@ describe('DeliveriesService — dead inbound (plan reach-and-containment §2.6)'
     service.close();
     spool.close();
   });
+
+  it('lists interrupted rows beside dead ones, labelled, and replays them (openclaw-9.5 D5)', async () => {
+    let t = 1_000;
+    const spool = new SQLiteInboundSpool(join(dir, 'inbound-spool.db'), { now: () => t });
+    const dead = deadRow(spool, 'dead', 'poison');
+    t = 2_000;
+    const { id: cut } = spool.accept({
+      platform: 'telegram',
+      botKey: 'bot-a',
+      chatId: 'chat-1',
+      messageId: 'cut',
+      laneKey: 'telegram:bot-a:chat-1',
+      payload: JSON.stringify({ text: 'pay the invoice' }),
+    });
+    spool.markProcessing(cut, 'p');
+    spool.markToolStarted(cut);
+    spool.markInterrupted(cut, 'interrupted after a tool started');
+    const service = new DeliveriesService({ dataDir: dir, storage });
+
+    const { rows } = await service.listDeadInbound();
+    // Newest first, each with its status.
+    expect(rows.map((r) => [r.id, r.status])).toEqual([
+      [cut, 'interrupted'],
+      [dead, 'dead'],
+    ]);
+    expect(rows[0]?.text).toBe('pay the invoice');
+    expect((await service.listDeadInbound(1)).rows.map((r) => r.id)).toEqual([cut]);
+
+    expect(await service.requeueInbound(cut)).toEqual({ ok: true });
+    expect(spool.get(cut)).toMatchObject({ status: 'received', attempts: 0 });
+    expect(spool.get(cut)?.toolStartedAt).toBeUndefined();
+    service.close();
+    spool.close();
+  });
 });

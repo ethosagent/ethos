@@ -294,9 +294,12 @@ function VoiceDeliveryStatus() {
 // Inbound — dead (plan reach-and-containment §2.6).
 //
 // Messages the gateway received and gave up on: a turn that failed on every
-// attempt, or one too old to answer when the gateway came back. Replay hands
-// the message back to the gateway (its 60s replay tick re-runs the turn,
-// safety filter included); Discard closes it. Nothing is sent from here.
+// attempt, or one too old to answer when the gateway came back — plus
+// interrupted ones, cut after an action had started and so never re-run on
+// their own (plan openclaw-9.5-adoption D5; the chat was asked to reply
+// `retry`). Replay hands the message back to the gateway (its 60s replay tick
+// re-runs the turn, safety filter included); Discard closes it. Nothing is
+// sent from here.
 // ---------------------------------------------------------------------------
 
 type DeadInbound = Awaited<ReturnType<typeof rpc.deliveries.listDeadInbound>>['rows'][number];
@@ -330,7 +333,8 @@ function InboundDeadLetters() {
     return (
       <Typography.Text type="secondary">
         No dead inbound messages. A message lands here only after its turn failed on every attempt,
-        or it was too old to answer when the gateway restarted.
+        it was too old to answer when the gateway restarted, or it was interrupted after an action
+        had started.
       </Typography.Text>
     );
   }
@@ -342,6 +346,15 @@ function InboundDeadLetters() {
       render: (_: unknown, row: DeadInbound) => (
         <span className="voice-delivery-mono">
           {row.platform}:{row.chatId}
+        </span>
+      ),
+    },
+    {
+      title: 'State',
+      dataIndex: 'status',
+      render: (status: DeadInbound['status']) => (
+        <span className="voice-delivery-mono">
+          {status === 'interrupted' ? 'interrupted — awaiting retry' : 'dead'}
         </span>
       ),
     },

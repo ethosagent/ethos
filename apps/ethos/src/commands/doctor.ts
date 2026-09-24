@@ -506,7 +506,13 @@ export interface InboundSpoolReport {
   /** `absent` — no spool file yet (no gateway has run), not a failure. */
   status: 'absent' | 'ok' | 'failed';
   error?: string;
-  counts?: { received: number; processing: number; done: number; dead: number };
+  counts?: {
+    received: number;
+    processing: number;
+    done: number;
+    dead: number;
+    interrupted: number;
+  };
   /** Age of the oldest owed (`received`) row, ms. */
   oldestReceivedAgeMs?: number;
   /** `received` rows for a botKey the config no longer names. `null` when the
@@ -517,6 +523,14 @@ export interface InboundSpoolReport {
     platform: string;
     chatId: string;
     attempts: number;
+    lastError: string | null;
+  }>;
+  /** Cut after a tool had started, so never replayed (plan openclaw-9.5-adoption
+   *  D5): waiting on the user's `retry`, or an operator's replay/discard. */
+  interrupted?: Array<{
+    id: string;
+    platform: string;
+    chatId: string;
     lastError: string | null;
   }>;
 }
@@ -541,7 +555,7 @@ export async function configuredGatewayBotKeys(config: EthosConfig): Promise<str
 
 /**
  * Open the spool (only if it exists — a doctor run must not create one) and
- * report counts, the oldest owed row, orphans and dead letters.
+ * report counts, the oldest owed row, orphans, dead letters and interrupted rows.
  */
 export async function checkInboundSpool(
   dataDir: string,
@@ -575,6 +589,12 @@ export async function checkInboundSpool(
         attempts: r.attempts,
         lastError: r.lastError ?? null,
       })),
+      interrupted: spool.listInterrupted(500).map((r) => ({
+        id: r.id,
+        platform: r.platform,
+        chatId: r.chatId,
+        lastError: r.lastError ?? null,
+      })),
     };
   } catch (err) {
     return { status: 'failed', error: err instanceof Error ? err.message : String(err) };
@@ -589,9 +609,9 @@ export function describeInboundSpool(report: InboundSpoolReport): string[] {
   if (report.status === 'absent')
     return ['–  No inbound spool yet (created by ethos gateway start).'];
   if (report.status === 'failed') return [`✗  inbound-spool.db failed to open: ${report.error}`];
-  const n = report.counts ?? { received: 0, processing: 0, done: 0, dead: 0 };
+  const n = report.counts ?? { received: 0, processing: 0, done: 0, dead: 0, interrupted: 0 };
   const lines = [
-    `✓  ${n.received} owed · ${n.processing} in progress · ${n.done} done · ${n.dead} dead`,
+    `✓  ${n.received} owed · ${n.processing} in progress · ${n.done} done · ${n.dead} dead · ${n.interrupted} interrupted`,
   ];
   if (report.oldestReceivedAgeMs !== undefined) {
     lines.push(
@@ -619,6 +639,19 @@ export function describeInboundSpool(report: InboundSpoolReport): string[] {
     if (dead.length > 10) lines.push(`   … and ${dead.length - 10} more`);
     lines.push(
       '   Replay with: ethos gateway spool replay <id>   Drop with: ethos gateway spool discard <id>',
+    );
+  }
+  const interrupted = report.interrupted ?? [];
+  if (interrupted.length > 0) {
+    lines.push(
+      `⚠  ${interrupted.length} interrupted message(s) — cut after an action started, so not replayed; each chat was asked to reply \`retry\`:`,
+    );
+    for (const r of interrupted.slice(0, 10)) {
+      lines.push(`   ${r.id}  ${r.platform}:${r.chatId}  ${r.lastError ?? ''}`);
+    }
+    if (interrupted.length > 10) lines.push(`   … and ${interrupted.length - 10} more`);
+    lines.push(
+      '   Re-run anyway with: ethos gateway spool replay <id>   Drop with: ethos gateway spool discard <id>',
     );
   }
   return lines;

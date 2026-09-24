@@ -276,6 +276,8 @@ export interface RunOptions extends MemoryPrefetchGate {
    * `BackgroundExecutor.runOne`; absent for foreground turns.
    */
   jobId?: string;
+  /** openclaw-9.5 D30 — a parent-review turn's job id → `ToolContext.reviewOfJobId`, verbatim. */
+  reviewOfJobId?: string;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
   origin?: string;
   a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean }; // A2A runner sets this servicing an inbound task → `ToolContext.a2aDelegation` (plan §P8).
@@ -954,6 +956,7 @@ export class AgentLoop {
             agentId: opts.agentId,
             rootSessionKey: opts.rootSessionKey,
             jobId: opts.jobId,
+            ...(opts.reviewOfJobId !== undefined ? { reviewOfJobId: opts.reviewOfJobId } : {}),
             origin: opts.origin,
             attachments: opts.attachments,
             dryRun: opts.dryRun,

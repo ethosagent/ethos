@@ -12,14 +12,41 @@ import Database, { migrate } from '@ethosagent/sqlite';
 // duplicate. This store is the durable half of inbound, the way
 // `delivery-ledger` is the durable half of outbound:
 //
-//   1. `accept()` writes a `received` row in the same synchronous span as the
-//      dedup check, before any other work.
+//   1. `accept()` writes a `received` row before any other work — and before
+//      the durable dedup sighting, so a crash between the two leaves a row
+//      rather than a lost message (`Gateway.acceptInbound`). Its UNIQUE key is
+//      the durable dedup record for everything it holds.
 //   2. The lane task moves it to `processing` (`markProcessing`, which is where
 //      an attempt is counted) and to `done` only once the turn has drained AND
 //      its answer has joined — by then the reply is either delivered or a
 //      `pending` obligation in the delivery ledger.
 //   3. On boot the gateway replays every `received` row it owns
 //      (`Gateway.replayInboundSpool`, extensions/gateway/src/index.ts).
+//   4. A turn that had started a tool is NEVER replayed (plan
+//      openclaw-9.5-adoption D5): the first `tool_start` stamps
+//      `tool_started_at` (`markToolStarted`), and replay, a failure or a
+//      shutdown then moves the row to `interrupted` instead of `received`. The
+//      user is told, and only their explicit `retry` re-runs it
+//      (`retryInterrupted`) — re-running a half-executed payment or file write
+//      on their behalf is the one thing this store must not do.
+//
+// State machine (schema v2):
+//
+//   accept ─► received ─markProcessing─► processing ─markDone─► done
+//               ▲    ▲                      │   │   │
+//               │    └── releaseOnShutdown ─┘   │   └─ markToolStarted (tool_started_at)
+//               │        markFailed (<cap, no   │
+//               │        tool started)          ├─ markFailed at the cap ───────► dead
+//               │                               └─ markFailed / markInterrupted,
+//               │                                  a tool started ──────────────► interrupted
+//   requeue ◄───┴── dead | interrupted  (clears tool_started_at)
+//   retryInterrupted: interrupted → done, plus a NEW `received` row, same payload
+//   discard:          dead | interrupted → done
+//
+// Two kinds of row share the table: `inbound` (a platform message) and
+// `wake_review` (a background job's result the parent session reviews before
+// the user sees it, plan openclaw-9.5-adoption item 6 / D29). The gateway owns
+// the kind-specific terminals; the store only records them.
 //
 // A separate package from `inbound-dedup` on purpose (plan
 // reach-and-containment D2-1): dedup rows expire on a 60-minute TTL and hold
@@ -44,8 +71,20 @@ import Database, { migrate } from '@ethosagent/sqlite';
  *   consumed without a turn (a slash command, a clarify answer, a safety drop).
  * - `dead` — gave up: `attempts` reached the cap, the row was too old to
  *   replay, or an operator will decide. Never auto-replayed.
+ * - `interrupted` — the turn had started a tool when it was cut (crash,
+ *   failure or shutdown). Never auto-replayed (D5): it waits for the user's
+ *   `retry` (`retryInterrupted`), any other message discards it, and an
+ *   operator can requeue or discard it like a dead letter.
  */
-export type SpoolStatus = 'received' | 'processing' | 'done' | 'dead';
+export type SpoolStatus = 'received' | 'processing' | 'done' | 'dead' | 'interrupted';
+
+/**
+ * - `inbound` — a message a platform delivered.
+ * - `wake_review` — a finished `deliver: 'parent'` background job, run as a
+ *   review turn on its origin lane. Keyed `wake:<jobId>`, so a second
+ *   admission of the same job is the UNIQUE key's no-op.
+ */
+export type SpoolKind = 'inbound' | 'wake_review';
 
 export interface SpoolAccept {
   platform: string;
@@ -65,6 +104,10 @@ export interface SpoolAccept {
    * replay picks it up in lane order behind older rows.
    */
   claimedBy?: string | null;
+  /** Defaults to `inbound`. */
+  kind?: SpoolKind;
+  /** The job a `wake_review` row reviews. */
+  reviewJobId?: string;
 }
 
 export interface SpoolRow {
@@ -82,9 +125,16 @@ export interface SpoolRow {
   receivedAt: number;
   updatedAt: number;
   claimedBy?: string;
+  kind: SpoolKind;
+  reviewJobId?: string;
+  /** When the turn running this row first started a tool. Set → never replayed. */
+  toolStartedAt?: number;
 }
 
 export type SpoolStats = Record<SpoolStatus, number>;
+
+/** Where {@link InboundSpool.markFailed} left the row. */
+export type SpoolFailOutcome = 'received' | 'dead' | 'interrupted';
 
 /** Widest window {@link InboundSpool.listDead} will open. */
 const MAX_DEAD_LIST = 500;
@@ -107,13 +157,33 @@ export interface InboundSpool {
   /** Any non-terminal state → `done`, with the payload nulled. */
   markDone(id: string): void;
   /**
-   * A turn failed. `processing` → `dead` when `attempts >= maxAttempts`,
-   * otherwise → `received`. Increments nothing: the attempt was counted at
-   * `markProcessing`. The claim is KEPT on a `received` outcome, so the same
-   * process does not retry in a hot loop; the next boot's `recoverOrphans`
-   * releases it.
+   * A turn failed. `processing` → `dead` when `attempts >= maxAttempts`;
+   * otherwise → `interrupted` when the turn had started a tool (never re-run
+   * automatically, D5), else → `received`. Increments nothing: the attempt was
+   * counted at `markProcessing`. The claim is KEPT on a `received` outcome, so
+   * the same process does not retry in a hot loop; the next boot's
+   * `recoverOrphans` releases it.
    */
-  markFailed(id: string, error: string, maxAttempts: number): 'received' | 'dead';
+  markFailed(id: string, error: string, maxAttempts: number): SpoolFailOutcome;
+  /** First `tool_start` of the turn running this `processing` row. One commit,
+   *  only on turns that use tools; later calls are no-ops. */
+  markToolStarted(id: string): void;
+  /** `received` | `processing` → `interrupted`, claim released. `false` = the
+   *  row was in neither state. */
+  markInterrupted(id: string, reason: string): boolean;
+  /** The newest `interrupted` row on `laneKey` interrupted at or after
+   *  `sinceMs`, or `null`. */
+  findInterrupted(laneKey: string, sinceMs: number): SpoolRow | null;
+  /**
+   * The user replied `retry`: ONE transaction closes the `interrupted` row
+   * (`done`) and inserts a fresh `received` row with the same payload, lane and
+   * kind, claimed by `owner`, keyed `retry:<old id>`. Returns the new row's id,
+   * or `null` when the row is no longer `interrupted` (already retried or
+   * discarded) — so two concurrent `retry`s run it once.
+   */
+  retryInterrupted(id: string, owner: string): string | null;
+  /** `interrupted` rows, newest first. `limit` clamped to 1–500. */
+  listInterrupted(limit?: number): SpoolRow[];
   /** `received` (unclaimed) → `dead` with `error` — the stale-replay path. */
   markDead(id: string, error: string): boolean;
   /** Unclaimed `received` rows whose `bot_key` is in `botKeys`, ordered
@@ -134,13 +204,15 @@ export interface InboundSpool {
   /** `dead` rows, newest first. `limit` clamped to 1–500. */
   listDead(limit?: number): SpoolRow[];
   get(id: string): SpoolRow | null;
-  /** `dead` → unclaimed `received`, `attempts = 0`. */
+  /** `dead` | `interrupted` → unclaimed `received`, `attempts = 0`, with
+   *  `tool_started_at` cleared: an operator requeue IS the explicit decision to
+   *  re-run, so the D5 guard must not bounce it straight back. */
   requeue(id: string): boolean;
-  /** `dead` → `done`, `last_error = 'discarded'`. */
+  /** `dead` | `interrupted` → `done`, `last_error = 'discarded'`. */
   discard(id: string): boolean;
   /** Delete `done` rows last updated before `cutoffMs`. Never touches owed rows. */
   pruneDone(cutoffMs: number): number;
-  /** Delete `dead` rows last updated before `cutoffMs`. */
+  /** Delete `dead` and `interrupted` rows last updated before `cutoffMs`. */
   pruneDead(cutoffMs: number): number;
   /** Unclaimed-or-not `received` rows whose `bot_key` is NOT in `botKeys`. */
   listOrphaned(botKeys: readonly string[]): SpoolRow[];
@@ -169,12 +241,42 @@ const SCHEMA = `
     received_at  INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL,
     claimed_by   TEXT,
+    -- v2 (plan openclaw-9.5-adoption items 2 and 6).
+    tool_started_at INTEGER,
+    kind         TEXT    NOT NULL DEFAULT 'inbound',
+    review_job_id TEXT,
     UNIQUE (platform, bot_key, chat_id, message_id)
   ) STRICT;
 
   CREATE INDEX IF NOT EXISTS inbound_spool_status ON inbound_spool(status, received_at);
   CREATE INDEX IF NOT EXISTS inbound_spool_lane   ON inbound_spool(lane_key, received_at);
 `;
+
+const SPOOL_SCHEMA_VERSION = 2;
+
+/**
+ * Forward-only steps; the baseline above already describes v2, so a fresh
+ * database never runs one. `ADD COLUMN` keeps the table STRICT and leaves every
+ * v1 row as `kind = 'inbound'` with no tool start — the honest state for a row
+ * written before either existed. The `table_info` guard keeps a step
+ * idempotent on a hand-repaired file.
+ */
+const SPOOL_MIGRATIONS: Record<number, (db: Database.Database) => void> = {
+  2: (db) => {
+    const cols = new Set(
+      (db.pragma('table_info(inbound_spool)') as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!cols.has('tool_started_at')) {
+      db.exec('ALTER TABLE inbound_spool ADD COLUMN tool_started_at INTEGER');
+    }
+    if (!cols.has('kind')) {
+      db.exec(`ALTER TABLE inbound_spool ADD COLUMN kind TEXT NOT NULL DEFAULT 'inbound'`);
+    }
+    if (!cols.has('review_job_id')) {
+      db.exec('ALTER TABLE inbound_spool ADD COLUMN review_job_id TEXT');
+    }
+  },
+};
 
 interface Row {
   id: string;
@@ -191,6 +293,9 @@ interface Row {
   received_at: number;
   updated_at: number;
   claimed_by: string | null;
+  tool_started_at: number | null;
+  kind: string;
+  review_job_id: string | null;
 }
 
 function toRow(r: Row): SpoolRow {
@@ -209,11 +314,16 @@ function toRow(r: Row): SpoolRow {
     receivedAt: r.received_at,
     updatedAt: r.updated_at,
     ...(r.claimed_by !== null ? { claimedBy: r.claimed_by } : {}),
+    kind: r.kind === 'wake_review' ? 'wake_review' : 'inbound',
+    ...(r.review_job_id !== null ? { reviewJobId: r.review_job_id } : {}),
+    ...(r.tool_started_at !== null ? { toolStartedAt: r.tool_started_at } : {}),
   };
 }
 
 function isStatus(v: string): v is SpoolStatus {
-  return v === 'received' || v === 'processing' || v === 'done' || v === 'dead';
+  return (
+    v === 'received' || v === 'processing' || v === 'done' || v === 'dead' || v === 'interrupted'
+  );
 }
 
 export interface InboundSpoolOptions {
@@ -250,9 +360,9 @@ export class SQLiteInboundSpool implements InboundSpool {
 
     migrate(this.db, {
       name: 'inbound-spool',
-      targetVersion: 1,
+      targetVersion: SPOOL_SCHEMA_VERSION,
       baseline: SCHEMA,
-      migrations: {},
+      migrations: SPOOL_MIGRATIONS,
     });
     this.now = options.now ?? Date.now;
   }
@@ -264,8 +374,8 @@ export class SQLiteInboundSpool implements InboundSpool {
       .prepare(
         `INSERT OR IGNORE INTO inbound_spool
          (id, platform, bot_key, chat_id, thread_id, message_id, lane_key, payload, status,
-          attempts, last_error, received_at, updated_at, claimed_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'received', 0, NULL, ?, ?, ?)`,
+          attempts, last_error, received_at, updated_at, claimed_by, kind, review_job_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'received', 0, NULL, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -279,6 +389,8 @@ export class SQLiteInboundSpool implements InboundSpool {
         at,
         at,
         row.claimedBy ?? null,
+        row.kind ?? 'inbound',
+        row.reviewJobId ?? null,
       );
     if (result.changes === 1) return { id, fresh: true };
     const existing = this.db
@@ -314,21 +426,112 @@ export class SQLiteInboundSpool implements InboundSpool {
       .run(this.now(), id);
   }
 
-  markFailed(id: string, error: string, maxAttempts: number): 'received' | 'dead' {
-    const decide = this.db.transaction((): 'received' | 'dead' => {
-      const row = this.db.prepare('SELECT attempts FROM inbound_spool WHERE id = ?').get(id) as
-        | { attempts: number }
-        | undefined;
-      const outcome: 'received' | 'dead' = row && row.attempts >= maxAttempts ? 'dead' : 'received';
+  markFailed(id: string, error: string, maxAttempts: number): SpoolFailOutcome {
+    const decide = this.db.transaction((): SpoolFailOutcome => {
+      const row = this.db
+        .prepare('SELECT attempts, tool_started_at FROM inbound_spool WHERE id = ?')
+        .get(id) as { attempts: number; tool_started_at: number | null } | undefined;
+      let outcome: SpoolFailOutcome = 'received';
+      if (row && row.attempts >= maxAttempts) outcome = 'dead';
+      else if (row && row.tool_started_at !== null) outcome = 'interrupted';
+      // An interrupted row waits on the USER, not on this process, so its claim
+      // is released. A `received` one keeps its claim (no hot-loop retry).
       this.db
         .prepare(
-          `UPDATE inbound_spool SET status = ?, last_error = ?, updated_at = ?
+          `UPDATE inbound_spool
+           SET status = ?, last_error = ?, updated_at = ?,
+               claimed_by = CASE WHEN ? = 'interrupted' THEN NULL ELSE claimed_by END
            WHERE id = ? AND status IN ('received', 'processing')`,
         )
-        .run(outcome, error, this.now(), id);
+        .run(outcome, error, this.now(), outcome, id);
       return outcome;
     });
     return decide();
+  }
+
+  markToolStarted(id: string): void {
+    const at = this.now();
+    this.db
+      .prepare(
+        `UPDATE inbound_spool SET tool_started_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'processing' AND tool_started_at IS NULL`,
+      )
+      .run(at, at, id);
+  }
+
+  markInterrupted(id: string, reason: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE inbound_spool
+         SET status = 'interrupted', claimed_by = NULL, last_error = ?, updated_at = ?
+         WHERE id = ? AND status IN ('received', 'processing')`,
+      )
+      .run(reason, this.now(), id);
+    return result.changes === 1;
+  }
+
+  findInterrupted(laneKey: string, sinceMs: number): SpoolRow | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM inbound_spool
+         WHERE lane_key = ? AND status = 'interrupted' AND updated_at >= ?
+         ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(laneKey, sinceMs) as Row | undefined;
+    return row ? toRow(row) : null;
+  }
+
+  retryInterrupted(id: string, owner: string): string | null {
+    const retry = this.db.transaction((): string | null => {
+      const old = this.db
+        .prepare(`SELECT * FROM inbound_spool WHERE id = ? AND status = 'interrupted'`)
+        .get(id) as Row | undefined;
+      if (!old) return null;
+      const at = this.now();
+      this.db
+        .prepare(
+          `UPDATE inbound_spool
+           SET status = 'done', payload = '{}', last_error = 'retried', updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(at, id);
+      const fresh = randomUUID();
+      this.db
+        .prepare(
+          `INSERT INTO inbound_spool
+           (id, platform, bot_key, chat_id, thread_id, message_id, lane_key, payload, status,
+            attempts, last_error, received_at, updated_at, claimed_by, kind, review_job_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'received', 0, NULL, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          fresh,
+          old.platform,
+          old.bot_key,
+          old.chat_id,
+          old.thread_id,
+          `retry:${old.id}`,
+          old.lane_key,
+          old.payload,
+          at,
+          at,
+          owner,
+          old.kind,
+          old.review_job_id,
+        );
+      return fresh;
+    });
+    return retry();
+  }
+
+  listInterrupted(limit = 50): SpoolRow[] {
+    const n = Number.isInteger(limit) ? Math.min(MAX_DEAD_LIST, Math.max(1, limit)) : 50;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM inbound_spool WHERE status = 'interrupted'
+         ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(n) as Row[];
+    return rows.map(toRow);
   }
 
   markDead(id: string, error: string): boolean {
@@ -430,8 +633,9 @@ export class SQLiteInboundSpool implements InboundSpool {
     const result = this.db
       .prepare(
         `UPDATE inbound_spool
-         SET status = 'received', attempts = 0, claimed_by = NULL, updated_at = ?
-         WHERE id = ? AND status = 'dead'`,
+         SET status = 'received', attempts = 0, claimed_by = NULL, tool_started_at = NULL,
+             updated_at = ?
+         WHERE id = ? AND status IN ('dead', 'interrupted')`,
       )
       .run(this.now(), id);
     return result.changes === 1;
@@ -442,7 +646,7 @@ export class SQLiteInboundSpool implements InboundSpool {
       .prepare(
         `UPDATE inbound_spool
          SET status = 'done', last_error = 'discarded', payload = '{}', updated_at = ?
-         WHERE id = ? AND status = 'dead'`,
+         WHERE id = ? AND status IN ('dead', 'interrupted')`,
       )
       .run(this.now(), id);
     return result.changes === 1;
@@ -458,7 +662,9 @@ export class SQLiteInboundSpool implements InboundSpool {
 
   pruneDead(cutoffMs: number): number {
     return this.db
-      .prepare(`DELETE FROM inbound_spool WHERE status = 'dead' AND updated_at < ?`)
+      .prepare(
+        `DELETE FROM inbound_spool WHERE status IN ('dead', 'interrupted') AND updated_at < ?`,
+      )
       .run(cutoffMs).changes;
   }
 
@@ -475,7 +681,7 @@ export class SQLiteInboundSpool implements InboundSpool {
   }
 
   stats(): SpoolStats {
-    const out: SpoolStats = { received: 0, processing: 0, done: 0, dead: 0 };
+    const out: SpoolStats = { received: 0, processing: 0, done: 0, dead: 0, interrupted: 0 };
     const rows = this.db
       .prepare('SELECT status, COUNT(*) AS n FROM inbound_spool GROUP BY status')
       .all() as Array<{ status: string; n: number }>;
