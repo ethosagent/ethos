@@ -24,6 +24,11 @@ import type { AgentLoopObservability } from '../../../observability/agent-loop-o
 import { DefaultToolRegistry } from '../../../tool-registry';
 import { checkTurnBudgets } from '../../budgets';
 import { createTurnBudgetCounters } from '../per-call-enforcement';
+import {
+  MAX_STRUCTURED_DEPTH,
+  redactToolResultSecrets,
+  UNSCANNABLE_MARKER,
+} from '../result-redaction';
 import { ScriptToolBridge } from '../script-tool-bridge';
 
 // A GitHub PAT that `detectSecrets` recognises; `redactString` replaces it with
@@ -163,6 +168,103 @@ describe('Item 7 — tool-result secret redaction', () => {
     expect(ok.toolEnds[0]?.result).toContain(SECRET);
     expect(ok.persisted[0]).toContain(SECRET);
     expect(ok.safetyEvents.map((e) => e.code)).toContain('secret_in_tool_result');
+  });
+
+  it('(f) a secret nested in structured is redacted in tool_end.structured and after_tool_call', async () => {
+    const r = await runLeaky({
+      ok: true,
+      value: 'fetched 1 row',
+      structured: { rows: [{ name: 'svc', auth: { header: `Bearer ${SECRET}` } }], count: 1 },
+    });
+    const end = r.toolEnds[0];
+    expect(end?.structured).toEqual({
+      rows: [{ name: 'svc', auth: { header: `Bearer ${MARKER}` } }],
+      count: 1,
+    });
+    const after = r.afterPayloads[0]?.result;
+    expect(after?.ok ? after.structured : undefined).toEqual(end?.structured);
+    expect(JSON.stringify(r.toolEnds)).not.toContain(SECRET);
+    expect(JSON.stringify(r.afterPayloads)).not.toContain(SECRET);
+    expect(r.safetyEvents.filter((e) => e.code === 'secret_in_tool_result')).toHaveLength(1);
+  });
+
+  it('(g) blockSecretResults:false leaves structured untouched but records the event', async () => {
+    const r = await runLeaky(
+      { ok: true, value: 'ok', structured: { deep: [{ token: SECRET }] } },
+      false,
+    );
+    expect(r.toolEnds[0]?.structured).toEqual({ deep: [{ token: SECRET }] });
+    expect(r.safetyEvents.filter((e) => e.code === 'secret_in_tool_result')).toHaveLength(1);
+  });
+
+  it('(h) exactly one event when both value and structured carry the secret', async () => {
+    const r = await runLeaky({
+      ok: true,
+      value: `token: ${SECRET}`,
+      structured: { token: SECRET },
+    });
+    expect(r.toolEnds[0]?.result).toContain(MARKER);
+    expect(r.toolEnds[0]?.structured).toEqual({ token: MARKER });
+    expect(r.safetyEvents.filter((e) => e.code === 'secret_in_tool_result')).toHaveLength(1);
+  });
+
+  it('(i) the tool result object is not mutated', () => {
+    const structured = { nested: { list: [SECRET, 7, null, true] } };
+    const original: ToolResult = { ok: true, value: 'x', structured };
+    const events: string[] = [];
+    const out = redactToolResultSecrets(
+      original,
+      {
+        redaction: createTestSafety().redaction,
+        observability: {
+          startTurnTrace: () => 'tr1',
+          endTrace: () => {},
+          startSpan: () => 'sp1',
+          endSpan: () => {},
+          recordSafetyBlock: (e) => events.push(e.code ?? ''),
+          recordCompaction: () => {},
+          recordTierEscalation: () => {},
+          recordTierOverride: () => {},
+          flush: () => {},
+        },
+      },
+      { personality: { id: 'default', name: 'Default' }, traceId: undefined },
+    );
+    expect(out.ok ? out.structured : undefined).toEqual({
+      nested: { list: [MARKER, 7, null, true] },
+    });
+    expect(structured).toEqual({ nested: { list: [SECRET, 7, null, true] } });
+    expect(original.ok ? original.structured : undefined).toBe(structured);
+    expect(events).toEqual(['secret_in_tool_result']);
+  });
+
+  it('(j) a cyclic or over-deep structured subtree fails closed to the unscannable marker', () => {
+    const cyclic: Record<string, unknown> = { label: 'ok' };
+    cyclic.self = cyclic;
+    let deep: Record<string, unknown> = { leaf: 'bottom' };
+    for (let i = 0; i < MAX_STRUCTURED_DEPTH + 5; i++) deep = { next: deep };
+    const shared = { v: 'same' };
+    const deps = { redaction: createTestSafety().redaction };
+    const ctx = { personality: { id: 'default', name: 'Default' }, traceId: undefined };
+
+    const outCyclic = redactToolResultSecrets(
+      { ok: true, value: 'x', structured: cyclic },
+      deps,
+      ctx,
+    );
+    expect(outCyclic.ok ? outCyclic.structured : undefined).toEqual({
+      label: 'ok',
+      self: UNSCANNABLE_MARKER,
+    });
+    expect(cyclic.self).toBe(cyclic);
+
+    const outDeep = redactToolResultSecrets({ ok: true, value: 'x', structured: deep }, deps, ctx);
+    expect(JSON.stringify(outDeep.ok ? outDeep.structured : null)).toContain(UNSCANNABLE_MARKER);
+    expect(JSON.stringify(outDeep.ok ? outDeep.structured : null)).not.toContain('bottom');
+
+    // A shared (non-cyclic) reference is scanned, not treated as a cycle.
+    const sharedIn: ToolResult = { ok: true, value: 'x', structured: { a: shared, b: shared } };
+    expect(redactToolResultSecrets(sharedIn, deps, ctx)).toBe(sharedIn);
   });
 
   it('(e) returnDirect batch: sibling tool_end, persisted rows and done.text are redacted', async () => {
