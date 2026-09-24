@@ -1,6 +1,9 @@
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DefaultToolRegistry } from '@ethosagent/core';
 import type { PersonalityConfig, Tool } from '@ethosagent/types';
-import { evaluateToolSchemaBudget, measureStaticFloor } from '@ethosagent/wiring';
+import { createAgentLoop, evaluateToolSchemaBudget, measureStaticFloor } from '@ethosagent/wiring';
 import { describe, expect, it } from 'vitest';
 import { measurePersonalityStatic } from '../commands/bench';
 
@@ -116,4 +119,51 @@ describe('measurePersonalityStatic', () => {
     // Over the 0.4 default on an 8k window → the warning names the personality.
     expect(verdict.message).toContain('budget-xcheck');
   });
+});
+
+// reach-and-containment Part 1 — the §1.1 success metric, against the REAL
+// registered tools and the REAL built-in `engineer` (with C8's pinned_tools):
+// the first-step payload under on-demand tool loading is at most half of the
+// full schema payload. Driven through the production composition root with an
+// offline provider and a throwaway HOME / ETHOS_STATE_DIR, so it cannot drift
+// silently when a tool's schema grows.
+describe('tool_loading_chars — engineer (plan §1.1)', () => {
+  it('pinned + tool_search is at most 50% of the full tool-schema payload', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ethos-bench-tool-loading-'));
+    const dataDir = join(home, '.ethos');
+    mkdirSync(dataDir, { recursive: true });
+    const prev = { HOME: process.env.HOME, ETHOS_STATE_DIR: process.env.ETHOS_STATE_DIR };
+    process.env.HOME = home;
+    process.env.ETHOS_STATE_DIR = dataDir;
+    try {
+      const runtime = await createAgentLoop(
+        {
+          provider: 'ollama',
+          model: 'offline-test',
+          baseUrl: 'http://127.0.0.1:9',
+          apiKey: 'sk-dummy',
+          personality: 'engineer',
+        },
+        { dataDir, workingDir: home, profile: 'cli', disableDocker: true },
+      );
+      try {
+        const engineer = runtime.personalities.get('engineer');
+        expect(engineer).toBeDefined();
+        if (!engineer) return;
+        expect(engineer.context_engine_options?.pinned_tools).toBeDefined();
+        const row = measurePersonalityStatic(engineer, '', runtime.toolRegistry);
+        expect(row.toolCount).toBeGreaterThan(10);
+        expect(row.toolLoadingChars).toBeGreaterThan(0);
+        expect(row.toolLoadingChars).toBeLessThanOrEqual(0.5 * row.toolSchemaChars);
+      } finally {
+        await runtime.dispose();
+      }
+    } finally {
+      for (const [key, value] of Object.entries(prev)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

@@ -205,4 +205,56 @@ describe('Lane 3(b)/D20 — declared small-window toolset narrowing', () => {
     const toolEnd = events.find((e) => e.type === 'tool_end');
     expect(toolEnd?.type === 'tool_end' && toolEnd.ok).toBe(true);
   });
+
+  // reach-and-containment Part 1 (D1-10) — on-demand tool loading runs INSIDE
+  // the narrowed universe: a narrowed-out tool is not searchable, and calling
+  // it directly is still refused by executeParallel.
+  it('with tool loading active, a narrowed-out tool is not searchable and is still refused', async () => {
+    const captured: ToolDefinitionLite[][] = [];
+    let call = 0;
+    const llm: LLMProvider = {
+      name: 'caller',
+      model: 'mock-model',
+      maxContextTokens: 16_000,
+      supportsCaching: false,
+      supportsThinking: false,
+      async *complete(_m: Message[], tools: ToolDefinitionLite[]): AsyncIterable<CompletionChunk> {
+        captured.push(tools);
+        call++;
+        if (call === 1) {
+          yield { type: 'tool_use_start', toolCallId: 's1', toolName: 'tool_search' };
+          yield { type: 'tool_use_end', toolCallId: 's1', inputJson: '{"query":"gamma"}' };
+          yield { type: 'tool_use_start', toolCallId: 'g1', toolName: 'gamma' };
+          yield { type: 'tool_use_end', toolCallId: 'g1', inputJson: '{}' };
+          yield { type: 'done', finishReason: 'tool_use' };
+          return;
+        }
+        yield { type: 'text_delta', text: 'done' };
+        yield { type: 'done', finishReason: 'end_turn' };
+      },
+      async countTokens() {
+        return 1;
+      },
+    };
+    const loop = new AgentLoop({
+      llm,
+      tools: makeRegistry(),
+      personalities: makePersonalities({
+        ...DECLARING,
+        context_engine_options: { small_window_toolset: 'alpha, beta', pinned_tools: 'alpha' },
+      }),
+      safety: createTestSafety(),
+      toolLoading: () => true,
+      options: { smallWindow: true },
+    });
+    const events = await collect(loop.run('find gamma', {}));
+
+    expect((captured[0] ?? []).map((d) => d.name)).toEqual(['alpha', 'tool_search']);
+    const ends = events.filter((e) => e.type === 'tool_end');
+    const search = ends.find((e) => e.type === 'tool_end' && e.toolName === 'tool_search');
+    const gamma = ends.find((e) => e.type === 'tool_end' && e.toolName === 'gamma');
+    expect(search?.type === 'tool_end' && String(search.result)).toContain('No tools matched');
+    expect(gamma?.type === 'tool_end' && gamma.ok).toBe(false);
+    expect((captured[1] ?? []).map((d) => d.name)).not.toContain('gamma');
+  });
 });

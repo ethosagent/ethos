@@ -246,6 +246,12 @@ export interface WiringConfig {
    * failure prevented) and WARNS on hosted ones.
    */
   toolPayloadLimitChars?: number;
+  /**
+   * reach-and-containment Part 1 — on-demand tool loading mode. Absent →
+   * `auto`. Built into the loop's per-turn resolver by
+   * `createToolLoadingResolver` (static-floor.ts).
+   */
+  toolLoading?: 'auto' | 'on' | 'off';
   /** Maps personality ID → model ID for per-personality model overrides. */
   modelRouting?: Record<string, string>;
   /**

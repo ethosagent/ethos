@@ -18,6 +18,7 @@ import type { AgentLoopObservability } from '../../observability/agent-loop-obse
 import { handleChunk } from '../chunk-handler';
 import { routeTurnModel } from '../model-route';
 import { isContextOverflowError } from '../overflow';
+import { composeDefinitions, type ToolLoadingState } from '../tool-loading';
 import type { WatcherTap } from '../turn-context';
 import { resolveTurnModel } from '../turn-model';
 import type { TurnUsageAccumulator } from './turn-finalizer';
@@ -97,6 +98,9 @@ export interface StreamStepContext {
   allowedPlugins: string[];
   allowedTools: string[] | undefined;
   filterOpts: ToolFilterOpts;
+  /** reach-and-containment Part 1 — set only when on-demand tool loading is
+   *  active for the turn (`TurnSetup.toolLoading`). */
+  toolLoading?: ToolLoadingState;
   systemPrompt: string | undefined;
   llmMessages: Message[];
   cacheBreakpoints: number[] | undefined;
@@ -163,8 +167,16 @@ export async function* streamStep(
   ctx: StreamStepContext,
   pendingTierEscalation: { value?: string },
 ): AsyncGenerator<AgentEvent, StreamStepResult> {
-  // Compute tool definitions once for hooks, LLM call, and dump store.
-  const toolDefs = deps.tools.toDefinitions(ctx.allowedTools, ctx.filterOpts);
+  // Compute tool definitions once for hooks, LLM call, and dump store — so
+  // observability measures exactly what was sent. With on-demand loading
+  // active (C3) that is pinned + `tool_search` + loaded; otherwise unchanged.
+  const toolDefs = ctx.toolLoading
+    ? composeDefinitions(
+        ctx.toolLoading.universe,
+        ctx.toolLoading.plan,
+        ctx.toolLoading.searchDefinition,
+      )
+    : deps.tools.toDefinitions(ctx.allowedTools, ctx.filterOpts);
   const requestId = randomUUID();
   const includeContent = ctx.obsConfig?.storeLlmPayloads === 'full';
 

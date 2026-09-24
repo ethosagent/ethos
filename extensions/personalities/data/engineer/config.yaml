@@ -9,3 +9,4 @@ context_layering.mode: progressive
 skill_evolution.enabled: true
 skill_evolution.min_tool_calls: 5
 skill_evolution.cooldown_minutes: 60
+context_engine_options.pinned_tools: terminal, read_file, write_file, patch_file, search_files, run_tests, lint, todo_set, todo_update, memory_read

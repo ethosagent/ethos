@@ -210,6 +210,8 @@ export interface AgentLoopConfig {
   /** Library output sink (Law 10). Carries the once-per-loop `ungated`
    *  approval-posture notice; omitted → the framework stays silent. */
   logger?: Logger;
+  /** Part 1 on-demand tool loading; absent → unchanged (tool-loading-loop.test.ts). */
+  toolLoading?: import('./agent-loop/tool-loading').ToolLoadingResolver;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -371,6 +373,7 @@ export class AgentLoop {
   private readonly toolLoopWarn: NonNullable<AgentLoopConfig['options']>;
   private readonly streamingTimeoutMs: number;
   private readonly smallWindow: boolean;
+  private readonly toolLoading?: AgentLoopConfig['toolLoading'];
   private readonly modelResolution: ModelResolutionContext;
   private readonly deviationSeen = new Map<string, true>(); // D17 `once`, per loop
   private readonly modelSampling?: AgentLoopConfig['modelSampling'];
@@ -437,6 +440,7 @@ export class AgentLoop {
     this.toolLoopWarn = config.options ?? {};
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? DEFAULT_STREAMING_TIMEOUT_MS;
     this.smallWindow = config.options?.smallWindow ?? false;
+    this.toolLoading = config.toolLoading;
     this.modelResolution = config.modelResolution ?? emptyModelResolution();
     this.modelSampling = config.modelSampling;
     if (config.compaction) this.compaction = config.compaction;
@@ -561,6 +565,7 @@ export class AgentLoop {
       maxConsecutiveIdenticalCalls: this.maxConsecutiveIdenticalCalls,
       streamingTimeoutMs: this.streamingTimeoutMs,
       smallWindow: this.smallWindow,
+      toolLoading: this.toolLoading,
       modelResolution: this.modelResolution,
       deviationSeen: this.deviationSeen,
       compaction: this.compaction,
@@ -761,6 +766,7 @@ export class AgentLoop {
         allowedPlugins,
         allowedTools,
         filterOpts,
+        toolLoading: setup.toolLoading,
         systemPrompt,
         llmMessages,
         cacheBreakpoints,
@@ -908,6 +914,7 @@ export class AgentLoop {
           allowedTools,
           allowedPlugins,
           filterOpts,
+          toolLoading: setup.toolLoading,
           llmMessages,
           abortSignal,
           turnCount,

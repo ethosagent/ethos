@@ -2024,6 +2024,16 @@ export interface EthosConfig {
    *   toolPayloadLimitChars: 131072
    */
   toolPayloadLimitChars?: number;
+  /**
+   * reach-and-containment Part 1 — on-demand tool loading (`tool_search`).
+   * `auto` (the default when absent) engages it only for a personality whose
+   * tool schemas exceed the schema-budget share of the served window — the
+   * same verdict that already warns (`evaluateToolSchemaBudget`); `on` always;
+   * `off` never. Any other value is a parse error (`parseConfigYaml` →
+   * `configParseNotices`), which the strict boot paths refuse. Flat-key shape:
+   *   tool_loading: on
+   */
+  toolLoading?: ToolLoadingMode;
   // Per-personality model overrides: maps personality ID → model ID string
   modelRouting?: Record<string, string>;
   /**
@@ -3614,6 +3624,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
   if (config.maxRetries !== undefined) lines.push(`maxRetries: ${config.maxRetries}`);
   if (config.toolPayloadLimitChars !== undefined)
     lines.push(`toolPayloadLimitChars: ${config.toolPayloadLimitChars}`);
+  if (config.toolLoading !== undefined) lines.push(`tool_loading: ${config.toolLoading}`);
   if (config.modelRouting) {
     for (const [id, model] of Object.entries(config.modelRouting)) {
       lines.push(`modelRouting.${id}: ${model}`);
@@ -5797,7 +5808,9 @@ export function parseConfigYaml(src: string): EthosConfig {
   const channelFilter = buildChannelFilter(channelFilterKv);
   const groundingResult = buildGrounding(groundingKv, groundingKanbanKv);
   const browserResult = buildBrowser(browserKv);
+  const toolLoadingResult = parseToolLoading(kv.tool_loading);
   const parseErrors = [
+    ...toolLoadingResult.errors,
     ...groundingResult.errors,
     ...browserResult.errors,
     ...telegramResult.errors,
@@ -5887,6 +5900,7 @@ export function parseConfigYaml(src: string): EthosConfig {
       const n = Number(kv.toolPayloadLimitChars);
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
     })(),
+    ...(toolLoadingResult.mode ? { toolLoading: toolLoadingResult.mode } : {}),
     modelRouting: Object.keys(modelRouting).length > 0 ? modelRouting : undefined,
     toolSettings: Object.keys(toolSettings).length > 0 ? toolSettings : undefined,
     models,
@@ -6073,6 +6087,23 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...modelRegistryNotices,
   ]);
   return config;
+}
+
+/** The three `tool_loading` values (reach-and-containment Part 1, D1-5). */
+export const TOOL_LOADING_MODES = ['auto', 'on', 'off'] as const;
+export type ToolLoadingMode = (typeof TOOL_LOADING_MODES)[number];
+
+/**
+ * `tool_loading: auto|on|off`. An unknown value is an error naming the key, not
+ * a silent fallback: a typo meant as `off` must not quietly run as `auto`.
+ */
+function parseToolLoading(raw: string | undefined): { mode?: ToolLoadingMode; errors: string[] } {
+  if (raw === undefined) return { errors: [] };
+  const mode = TOOL_LOADING_MODES.find((m) => m === raw.trim());
+  if (mode) return { mode, errors: [] };
+  return {
+    errors: [`tool_loading: must be one of ${TOOL_LOADING_MODES.join(', ')} (got '${raw}').`],
+  };
 }
 
 // Side-table keyed by the EthosConfig object identity. Avoids polluting

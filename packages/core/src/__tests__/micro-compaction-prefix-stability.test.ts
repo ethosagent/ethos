@@ -44,10 +44,10 @@ function toolOutput(n: number): string {
   return `call ${n}\n${BLOB}`;
 }
 
-function makeBigTool(): Tool {
+function makeBigTool(name = 'big_read'): Tool {
   let calls = 0;
   return {
-    name: 'big_read',
+    name,
     description: 'Returns a large blob.',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     capabilities: {},
@@ -60,13 +60,14 @@ function makeBigTool(): Tool {
 interface Captured {
   system: string;
   messages: Message[];
+  tools: unknown[];
 }
 
 /**
  * Emits one tool call, then a text answer — so every turn adds a `tool_use` /
  * `tool_result` pair to the history and pressure climbs turn over turn.
  */
-function toolCallingLLM(captured: Captured[]): LLMProvider {
+function toolCallingLLM(captured: Captured[], toolName = 'big_read'): LLMProvider {
   let step = 0;
   return {
     name: 'mock',
@@ -77,14 +78,18 @@ function toolCallingLLM(captured: Captured[]): LLMProvider {
     supportsThinking: false,
     async *complete(
       messages: Message[],
-      _t: unknown,
+      tools: unknown[],
       opts: CompletionOptions,
     ): AsyncIterable<CompletionChunk> {
-      captured.push({ system: opts.system ?? '', messages: structuredClone(messages) });
+      captured.push({
+        system: opts.system ?? '',
+        messages: structuredClone(messages),
+        tools: structuredClone(tools),
+      });
       const wantsTool = step++ % 2 === 0;
       if (wantsTool) {
         const id = `toolu_${step}`;
-        yield { type: 'tool_use_start', toolCallId: id, toolName: 'big_read' };
+        yield { type: 'tool_use_start', toolCallId: id, toolName };
         yield { type: 'tool_use_end', toolCallId: id, inputJson: '{}' };
         yield { type: 'done', finishReason: 'tool_use' };
         return;
@@ -113,7 +118,11 @@ interface Session {
   microStatePath: () => Promise<string>;
 }
 
-async function runSession(turns: number): Promise<Session> {
+async function runSession(
+  turns: number,
+  opts: { toolName?: string; toolLoading?: boolean } = {},
+): Promise<Session & { session: InMemorySessionStore }> {
+  const toolName = opts.toolName ?? 'big_read';
   const captured: Captured[] = [];
   const storage = new InMemoryStorage();
   const session = new InMemorySessionStore();
@@ -122,12 +131,14 @@ async function runSession(turns: number): Promise<Session> {
     id: 'p',
     name: 'P',
     toolset: ['big_read'],
+    mcp_servers: ['store'],
   });
   const tools = new DefaultToolRegistry();
-  tools.register(makeBigTool());
+  tools.register(makeBigTool(toolName));
 
   const loop = new AgentLoop({
-    llm: toolCallingLLM(captured),
+    llm: toolCallingLLM(captured, toolName),
+    ...(opts.toolLoading ? { toolLoading: () => true } : {}),
     safety: createTestSafety(),
     personalities,
     tools,
@@ -144,6 +155,7 @@ async function runSession(turns: number): Promise<Session> {
   return {
     captured,
     storage,
+    session,
     next: (text: string) => drain(loop.run(text)),
     microStatePath: async () => {
       const [s] = await session.listSessions();
@@ -288,5 +300,29 @@ describe('Item 7 — micro-compaction keeps the prompt prefix stable', () => {
       if (next < prev) continue; // within-turn tool round: the view restarts
       expect(next).toBeGreaterThanOrEqual(prev);
     }
+  });
+});
+
+// reach-and-containment Part 1 — the loaded set lives in session METADATA,
+// which compaction never rewrites (D1-3). A deferred MCP tool called directly
+// on turn 0 is auto-loaded (D1-1); across the micro-compaction rewrites that
+// follow, the tools array never changes and the loaded set is still recorded.
+describe('Part 1 — on-demand tool loading survives micro-compaction', () => {
+  it('keeps the loaded set and a byte-identical tools array across compaction', async () => {
+    const { captured, storage, session } = await runSession(12, {
+      toolName: 'mcp__store__big_read',
+      toolLoading: true,
+    });
+    const state = await readMicroState(storage);
+    expect(state?.level ?? 0).toBeGreaterThan(0);
+
+    // Call 0 predates the load; every call after it carries the same array.
+    const afterLoad = JSON.stringify(captured[1]?.tools);
+    expect(afterLoad).toContain('mcp__store__big_read');
+    expect(JSON.stringify(captured[0]?.tools)).not.toContain('mcp__store__big_read');
+    for (const c of captured.slice(1)) expect(JSON.stringify(c.tools)).toBe(afterLoad);
+
+    const [s] = await session.listSessions();
+    expect(s?.metadata?.loadedTools).toEqual(['mcp__store__big_read']);
   });
 });
