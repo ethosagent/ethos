@@ -50,6 +50,7 @@ const sidebars: SidebarsConfig = {
             'using/how-to/run-multiple-bots',
             'using/how-to/run-channels-over-webhooks',
             'using/how-to/run-as-daemon',
+            'using/how-to/recover-messages-after-a-crash',
             'using/how-to/back-up-and-restore',
             'using/how-to/use-zero-mode',
             'using/how-to/run-in-docker',
