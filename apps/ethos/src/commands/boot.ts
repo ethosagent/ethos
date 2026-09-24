@@ -107,6 +107,7 @@ import {
   type WebBindTarget,
 } from '../config-reload';
 import { createHealthServer } from '../health-server';
+import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { type CronDeliverJob, createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import {
@@ -166,6 +167,7 @@ import {
   createGatewayMetricsAuthCheck,
   createTelegramGreetingProvider,
   createTelegramPersonalityCardReader,
+  everyStartedAdapter,
   type GatewayBotWiring,
   gatewayObservability,
   openChannelTranscriptStore,
@@ -2398,6 +2400,15 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         },
       );
 
+  // `step` is `guard` with a deadline (`boundedShutdownStep`,
+  // lib/bounded-shutdown-step.ts): for a step whose await has none of its own.
+  const stepReporting = {
+    sink: gatewayObservability,
+    warn: (message: string) => logger.warn(message, { component: 'boot' }),
+  };
+  const step = (label: string, fn: () => unknown): Promise<void> =>
+    boundedShutdownStep(label, fn, stepReporting);
+
   let shuttingDown: Promise<void> | undefined;
   const shutdown = async () => {
     // Reentrancy: this is registered on BOTH SIGINT and SIGTERM, and a second
@@ -2429,7 +2440,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       // Stopped BEFORE the gateway drains: a tick that started now would claim
       // a row this process is about to stop being able to deliver, and leave it
       // `sending` for the ten minutes the stale reconciler waits.
-      await guard('outbox-dispatcher', async () => {
+      await step('outbox-dispatcher', async () => {
         outboxDispatcher.stop();
         // Reviews and card round trips start from a fire-and-forget hook, so
         // they are drained BEFORE the adapters stop — otherwise the transport
@@ -2475,22 +2486,26 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         cronTriggers.local?.stop();
         pauseLifecycle.stop?.();
       });
-      await guard('call-capture-ownership', async () => {
+      await step('call-capture-ownership', async () => {
         await callCaptureOwnershipManager?.stop();
       });
-      await guard('mesh-unregister', async () => {
+      await step('mesh-unregister', async () => {
         await mesh.unregister(agentId);
       });
-      await guard('gateway-health-file', async () => {
+      await step('gateway-health-file', async () => {
         await storage.remove(gatewayHealthPath());
       });
+      // Bounded by its own `drainTimeoutMs`, notice sends included.
       await guard('gateway', async () => {
         await gateway.shutdown({
           notify:
             '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
         });
       });
-      await guard('adapters', () => Promise.allSettled(adapters.map((a) => a.stop())));
+      // Plugin-registered and hot-added adapters too — `everyStartedAdapter`.
+      await step('adapters', () =>
+        Promise.allSettled(everyStartedAdapter(adapters, gateway).map((a) => a.stop())),
+      );
       await guard('delivery-ledger', () => {
         deliveryLedger.close();
       });
@@ -2516,7 +2531,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         // The App Home / unfurl readers' lazily opened `sessions.db` handles.
         closeSlackSessionStores();
       });
-      await guard('sockets', () =>
+      await step('sockets', () =>
         Promise.allSettled([
           created.voiceSocket.close(),
           created.satelliteSocket.close(),
@@ -2536,7 +2551,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         acpHttpServer.closeAllConnections();
         acpHttpServer.close();
       });
-      await guard(
+      await step(
         'web-server',
         // `webServer`, not a captured `server`: a Phase D rebind replaces the
         // listener, and closing the one this process started on would leave

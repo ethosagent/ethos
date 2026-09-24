@@ -96,6 +96,7 @@ import {
 } from '@ethosagent/wiring';
 import { appendErrorLog } from '../error-log';
 import { createAcpMcpWiring } from '../lib/acp-mcp-wiring';
+import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { bumpKanbanHeartbeats, KanbanPollLoop, writeRunActivityComments } from '../lib/kanban-poll';
@@ -154,6 +155,12 @@ const WEB_PORT_FALLBACK_ATTEMPTS = 5;
 // Resilience guard is installed once per process — runServe can be reached
 // twice (onboarding mode then real mode), so guard against double-registration.
 let resilienceGuardInstalled = false;
+
+/** Where a timed-out or failed `boundedShutdownStep` on `cleanup` is reported. */
+const shutdownStepReporting = {
+  sink: () => getEthosObservability(),
+  warn: (message: string) => console.warn(message),
+};
 
 /** The voice slice `createAgentLoop`/`createTeamAgentLoop` hands back, as
  *  `runServe` holds it and as `buildServeWebApi` below receives it. */
@@ -390,7 +397,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         // Chat before the listener: `closeChat` writes the "not sent" notice to
         // each tab's SSE stream, which the listener close then drops.
         await created.closeChat();
-        await webShutdown();
+        await boundedShutdownStep('web listener', webShutdown, shutdownStepReporting);
         // F06 — the web API first (its stand-in forwards to the real one), then
         // the real loop if onboarding booted it. A boot still in flight is
         // awaited first, so its loop cannot come up behind the exit undisposed.
@@ -1394,8 +1401,16 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // claim, including via a later retry tick — see
       // `CallCaptureOwnershipManager`) and releases the lock so a restarted
       // process, or the other host command, can take it.
-      await callCaptureOwnershipManager?.stop();
-      await mesh.unregister(agentId);
+      await boundedShutdownStep(
+        'call-capture ownership',
+        () => callCaptureOwnershipManager?.stop(),
+        shutdownStepReporting,
+      );
+      await boundedShutdownStep(
+        'mesh unregister',
+        () => mesh.unregister(agentId),
+        shutdownStepReporting,
+      );
       idleWatcher?.stop();
       pauseLifecycle.stop?.();
       cronTriggers.local?.stop();
@@ -1404,10 +1419,12 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // "not sent" notice to each tab's SSE stream, which the listener close
       // then drops (serve-shutdown-notice.test.ts).
       await created.closeChat();
-      if (webShutdown) await webShutdown();
+      if (webShutdown) {
+        await boundedShutdownStep('web listener', webShutdown, shutdownStepReporting);
+      }
       // Outbox reviews run on the loop, so they finish before it is disposed.
       // Fail-open: a review that cannot finish costs a receipt, never shutdown.
-      await outboxSide.drain().catch(() => {});
+      await boundedShutdownStep('outbox drain', () => outboxSide.drain(), shutdownStepReporting);
       // F06 — the web API first (it borrowed the loop), then the loop's own
       // runtime: background executor, reconciler, stores, MCP, plugins.
       await disposeBeforeExit(

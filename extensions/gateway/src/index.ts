@@ -5316,10 +5316,19 @@ export class Gateway {
    * still live handed them a runtime being torn down. A turn that outlives the
    * bound is recorded (`gateway.shutdown_drain_timeout`), not waited on for
    * ever. Pinned by `__tests__/turn-tail.test.ts` ('shutdown waits').
+   *
+   * `drainTimeoutMs` bounds the WHOLE call, the notice sends included: one
+   * deadline is taken on entry, a notice send still pending at it is left
+   * behind (`gateway.shutdown_notify_timeout`), and the drain gets whatever
+   * time the sends left. `ethos run-all`'s child budget counts this call as one
+   * `SHUTDOWN_DRAIN_TIMEOUT_MS` on that basis. Pinned by
+   * `__tests__/turn-tail.test.ts` ('a hung notice send').
    */
   async shutdown(opts: { notify?: string; drainTimeoutMs?: number } = {}): Promise<void> {
     // First, before any await: inbound from here on is refused, not started.
     this.closing = opts.notify ? { notify: opts.notify } : {};
+    const drainTimeoutMs = opts.drainTimeoutMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS;
+    const deadline = Date.now() + drainTimeoutMs;
     if (opts.notify) {
       const sends: Promise<unknown>[] = [];
       for (const [laneKey, ctx] of this.activeTurns) {
@@ -5336,7 +5345,25 @@ export class Gateway {
         this.outboundDedup.record(laneKey, opts.notify);
         sends.push(ctx.adapter.send(ctx.chatId, { text: opts.notify }).catch(() => {}));
       }
-      await Promise.allSettled(sends);
+      if (sends.length > 0) {
+        let pending = sends.length;
+        for (const send of sends) void send.then(() => pending--);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = await Promise.race([
+          Promise.allSettled(sends).then(() => false),
+          new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(true), drainTimeoutMs);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (timedOut) {
+          this.observability?.recordSafetyBlock({
+            code: 'gateway.shutdown_notify_timeout',
+            cause: 'shutdown notice sends were still pending when the shutdown bound expired',
+            details: { stillPending: pending, timeoutMs: drainTimeoutMs },
+          });
+        }
+      }
     }
     if (this.clarifySweepTimer) {
       clearInterval(this.clarifySweepTimer);
@@ -5360,7 +5387,7 @@ export class Gateway {
     for (const lane of this.lanes.values()) {
       lane.abort();
     }
-    await this.awaitInflightTurns(opts.drainTimeoutMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS);
+    await this.awaitInflightTurns(Math.max(0, deadline - Date.now()));
     this.lanes.clear();
     this.sessionKeys.clear();
     this.activeTurns.clear();

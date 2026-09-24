@@ -136,6 +136,7 @@ import {
   createSlackApprovalHook,
 } from '../approval-coordinator';
 import { createHealthServer, type MetricsAuthCheck } from '../health-server';
+import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { openFileMemory } from '../lib/file-memory';
@@ -2128,7 +2129,15 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // Reentrancy: registered on BOTH SIGINT and SIGTERM, and a second signal
   // during the drain would otherwise re-run the whole teardown. One promise,
   // memoised; every caller awaits that same one (the shape `serve`/`boot` use).
+  //
+  // Bounded: every await below has a deadline — its own (`approvalFlow`,
+  // `gateway.shutdown`, `disposeBeforeExit`) or `boundedShutdownStep`'s — so the
+  // ledger/spool closes, the lock release and `process.exit` always run.
+  // `ethos run-all` sizes its SIGKILL grace from exactly these bounds
+  // (commands/run-all.ts `CHILD_PRE_DISPOSE_DRAIN_MS`, pinned by
+  // commands/__tests__/run-all.test.ts).
   let shuttingDown: Promise<void> | undefined;
+  const stepReporting = { sink: gatewayObservability, warn: (m: string) => console.warn(m) };
   const shutdown = async (): Promise<void> => {
     shuttingDown ??= (async () => {
       console.log(`\n${c.dim}Shutting down...${c.reset}`);
@@ -2162,18 +2171,32 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       // so they are drained explicitly BEFORE the adapters stop — otherwise the
       // transport is torn out from under a card mid-update and an approved
       // publication is left showing live buttons.
-      await outboxSurface.drain();
-      await storage.remove(gatewayHealthPath()).catch(() => {});
+      await boundedShutdownStep('outbox drain', () => outboxSurface.drain(), stepReporting);
+      await boundedShutdownStep(
+        'gateway health file',
+        () => storage.remove(gatewayHealthPath()),
+        stepReporting,
+      );
       // Stops the daemon + heartbeat (if this process ever won the ownership
       // claim, including via a later retry tick — see
       // `CallCaptureOwnershipManager`) and releases the lock so a restarted
       // process, or the other host command, can take it.
-      await callCaptureOwnershipManager?.stop();
+      await boundedShutdownStep(
+        'call-capture ownership',
+        () => callCaptureOwnershipManager?.stop(),
+        stepReporting,
+      );
+      // Bounded by its own `drainTimeoutMs`, notice sends included
+      // (`Gateway.shutdown`, extensions/gateway/src/index.ts).
       await gateway.shutdown({
         notify:
           '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
       });
-      await Promise.allSettled(adapters.map((a) => a.stop()));
+      await boundedShutdownStep(
+        'adapters stop',
+        () => Promise.allSettled(everyStartedAdapter(adapters, gateway).map((a) => a.stop())),
+        stepReporting,
+      );
       // F06 — every loop's runtime (background executors, reconcilers, stores,
       // MCP, plugins), once the gateway has drained and nothing routes to them.
       // Before the call log closes: a loop's `call` tool writes through it.
@@ -4605,6 +4628,24 @@ export function warnEmailSenderAuthUnconfigured(
     `${c.yellow}⚠ ${cause}.${c.reset} ${c.dim}Set emailTrustedAuthservId to the first token of the Authentication-Results header on any mail this account received.${c.reset}`,
   );
   return true;
+}
+
+/**
+ * Every adapter this process started, each exactly once — what a host's
+ * shutdown `stop()`s. The host's own list (`buildGatewayAdapters`) holds only
+ * the built-in adapters; the Gateway holds the rest live: the plugin-registered
+ * ones (`GatewayConfig.pluginAdapters`, constructed AND started inside the
+ * `Gateway` constructor, so no host list ever saw them) and any a live reload
+ * added (`Gateway.addAdapter`). A bot a reload retired is gone from
+ * `listAdapters()` and was already stopped by `Gateway.removeAdapter`. An
+ * adapter in both lists appears once (identity). Used by `ethos gateway start`
+ * and `ethos boot`; pinned by apps/ethos/src/__tests__/every-started-adapter.test.ts.
+ */
+export function everyStartedAdapter(
+  builtIn: readonly PlatformAdapter[],
+  gateway: Pick<Gateway, 'listAdapters'>,
+): PlatformAdapter[] {
+  return [...new Set([...builtIn, ...gateway.listAdapters()])];
 }
 
 /**
