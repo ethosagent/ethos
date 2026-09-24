@@ -88,6 +88,7 @@ import {
   type ChannelDigestSettings,
   runChannelDigest,
 } from './channel-digest';
+import { credentialRequiredReply } from './credential-reply';
 import { MessageDedupCache } from './dedup';
 import { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
 import { type LaneSessionEntry, LaneSessionFiles } from './lane-sessions';
@@ -871,6 +872,14 @@ export interface GatewayConfig {
    */
   observability?: GatewayObservability;
   /**
+   * The deployment's public web UI address (`EthosConfig.webBaseUrl`,
+   * `ETHOS_PUBLIC_URL` first). Read only to link a lane to the web
+   * plugin-credentials page when a turn is refused for a missing plugin
+   * credential (`credentialRequiredReply`, ./credential-reply.ts); absent, that
+   * reply names the CLI command instead.
+   */
+  webBaseUrl?: string;
+  /**
    * Where observe-mode messages are written. An adapter that stamps
    * `InboundMessage.recordOnly` has already decided this message gets no
    * reply; the gateway's only job is to record it and stop.
@@ -1222,6 +1231,7 @@ export class Gateway {
    *  `removeAdapter` can reconcile a live config change (Phase A of
    *  plan/phases/gateway-live-reload.md) without a process restart. */
   private bots: Map<string, GatewayBotConfig>;
+  private readonly webBaseUrl: string | undefined;
   /** The botKey used when `InboundMessage.botKey` is absent (single-bot
    *  deployments). When the config supplies multiple bots, this is null
    *  and a message without `botKey` is treated as an unknown route.
@@ -1551,6 +1561,7 @@ export class Gateway {
     this.channelToolsets = config.channelToolsets;
     this.pairingDb = config.pairingDb;
     this.observability = config.observability;
+    this.webBaseUrl = config.webBaseUrl;
     this.channelTranscript = config.channelTranscript;
     this.channelDigestFeed = config.channelDigestFeed;
     this.onTurnComplete = config.onTurnComplete;
@@ -4490,6 +4501,29 @@ export class Gateway {
           if (await this.sendReviewFallback(target, review.fallbackText, inboundRef)) {
             markAnswered();
           }
+        } else if (translator.credentialRequired) {
+          // Refused pre-turn: no model ran, so there is no answer text. The
+          // reply is a link (or the CLI command), sent on the same tracked
+          // reply path as an error note. The refused turn still ends at `done`
+          // and its spool row closes like any other; the user's resend is a
+          // fresh turn (plan openclaw-9.5-adoption item 1 §5).
+          const reply = credentialRequiredReply(translator.credentialRequired, this.webBaseUrl);
+          if (this.outboundDedup.shouldSend(sessionKey, reply)) {
+            const sent = await this.sendTracked(
+              {
+                adapter,
+                botKey: bot.botKey,
+                platform: message.platform,
+                chatId: message.chatId,
+                sessionKey,
+                inboundRef,
+              },
+              { text: reply, threadId },
+            );
+            if (sent) markAnswered();
+          } else {
+            markAnswered();
+          }
         } else if (errored) {
           const note =
             responseText.trim().length > 0
@@ -4616,6 +4650,11 @@ export class Gateway {
           // One review hop (D10/D30): `delegate_task` refuses `deliver:'parent'`
           // from inside a review turn by reading this off its ToolContext.
           ...(review ? { reviewOfJobId: review.jobId } : {}),
+          // openclaw-9.5 item 1 — a user turn answers `credential_required`
+          // with a link, never by taking the secret in chat (`deliverAnswer`).
+          // A review turn does not opt in: its refusal would reach the user as
+          // the plain wake-notice fallback, which is what it gets today.
+          ...(review ? {} : { credentialPrompt: true }),
         })) {
           if (event.type === 'usage') {
             const u = this.usageStore.get(laneKey) ?? {

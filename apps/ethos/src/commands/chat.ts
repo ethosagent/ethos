@@ -13,7 +13,12 @@ import {
   stripAnsiEscapes,
 } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
-import { parseSlashCommand, shouldSurfaceProgress } from '@ethosagent/surface-kit';
+import {
+  credentialInstruction,
+  type EventTranslatorCredentialRequired,
+  parseSlashCommand,
+  shouldSurfaceProgress,
+} from '@ethosagent/surface-kit';
 import type { SplashInventory } from '@ethosagent/tui';
 import {
   type Attachment,
@@ -33,6 +38,11 @@ import {
   refreshCommandIfStale,
   scanCommandsIntoRegistry,
 } from '../lib/command-loader';
+import {
+  collectPluginCredential,
+  createMutableOutput,
+  readMaskedLine,
+} from '../lib/credential-prompt';
 import { readFileMemorySnapshot } from '../lib/file-memory';
 import { type LoopGoals, runGoalSlash, runGoalsSlash } from '../lib/goal-slash';
 import { createLoopRebuilder } from '../lib/loop-rebuilder';
@@ -172,6 +182,13 @@ interface ChatState {
   awaitingConsent: boolean;
   /** True while a `clarify` tool prompt owns the readline loop. */
   awaitingClarify: boolean;
+  /** openclaw-9.5 item 1 — true while a masked plugin-credential read owns the
+   *  readline loop (`readMaskedLine`, lib/credential-prompt.ts). */
+  awaitingSecret: boolean;
+  /** Collect a missing plugin credential masked and store it; `true` → the
+   *  pending message is resubmitted. Absent → turns do not opt in to the
+   *  pre-turn check (`RunOptions.credentialPrompt`). */
+  collectCredential?: (req: EventTranslatorCredentialRequired) => Promise<boolean>;
   /** Attachments queued via /attach, drained on the next turn. */
   pendingAttachments: Attachment[];
   /** Pending tier override for the next turn (from /tier command). Consumed once. */
@@ -320,6 +337,9 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     const onSkillProposed = setOnSkillProposed
       ? makeTuiSkillProposalSubscriber(setOnSkillProposed)
       : undefined;
+    // The writer for the TUI's masked credential modal follows `/model`
+    // switches, since the replaced runtime's dispose unloads its plugins.
+    let activePluginLoader = pluginLoader;
     const rebuild = createLoopRebuilder({ drain, dispose }, (modelId: string) =>
       resolveActiveLoop({ ...config, model: modelId }),
     );
@@ -336,6 +356,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         const next = await rebuild(modelId);
         liveRuntime = next.runtime;
         slashCommands.rebind(next.runtime.pluginLoader);
+        activePluginLoader = next.runtime.pluginLoader;
         onNotification.rebind(next.runtime.notificationRouter);
         // The replaced loop may still propose while it drains; its slot lets
         // go of the TUI's callback only once that runtime is retired.
@@ -370,6 +391,9 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         }
       },
       ...(onSkillProposed ? { onSkillProposed } : {}),
+      // openclaw-9.5 item 1 (D15) — the one writer for a masked credential.
+      setPluginCredential: (pluginId, key, value) =>
+        activePluginLoader.setCredential(pluginId, key, value),
     });
     // The TUI has exited: release whichever runtime is current (a `/model`
     // switch retires the one it replaced, not this one).
@@ -378,9 +402,11 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   }
 
   const completer = makeCompleter(registry);
+  // Muted while a plugin credential is typed (lib/credential-prompt.ts).
+  const rlOutput = createMutableOutput(process.stdout);
   const rl = createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output: rlOutput.stream,
     terminal: true,
     ...(completer ? { completer } : {}),
   });
@@ -438,8 +464,22 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
     awaitingConsent: false,
     awaitingClarify: false,
+    awaitingSecret: false,
     pendingAttachments: [],
     dryRun: opts.dryRun ?? false,
+    collectCredential: async (req: EventTranslatorCredentialRequired) => {
+      state.awaitingSecret = true;
+      try {
+        return await collectPluginCredential(req, {
+          readSecret: (question) => readMaskedLine(rl, rlOutput, process.stdout, question),
+          write: (line) => out(`${c.dim}${line}${c.reset}\n`),
+          // D15 — the one writer; never SecretsResolver.set from here.
+          setCredential: (pluginId, key, value) => pluginLoader.setCredential(pluginId, key, value),
+        });
+      } finally {
+        state.awaitingSecret = false;
+      }
+    },
   };
 
   // Clarify surface — when the agent calls the `clarify` tool, pause the
@@ -622,6 +662,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     if (state.awaitingConsent) return;
     // A clarify prompt owns the loop via its own one-shot `line` listener.
     if (state.awaitingClarify) return;
+    // So does a masked credential read — and that line is a secret.
+    if (state.awaitingSecret) return;
 
     const input = raw.trim();
     if (!input) {
@@ -837,6 +879,8 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
   let hasText = false;
   // Every `text_delta` this turn — what a `returnDirect` answer is checked against.
   let streamedText = '';
+  // openclaw-9.5 item 1 — a pre-turn refusal for a missing plugin credential.
+  let credentialReq: EventTranslatorCredentialRequired | null = null;
   // B3 — the turn's single identity, learned from the first event of the turn.
   // Used to stamp any error this turn writes to `errors.jsonl`, so the log line
   // and the trace in `observability.db` name the same turn.
@@ -860,7 +904,12 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       ...(tierOverride ? { tierOverride } : {}),
       ...(toolsetNarrow ? { toolsetNarrow } : {}),
       ...(state.dryRun ? { dryRun: true } : {}),
+      ...(state.collectCredential ? { credentialPrompt: true } : {}),
     })) {
+      if (event.type === 'credential_required' && credentialReq === null) {
+        const { type: _type, ...req } = event;
+        credentialReq = req;
+      }
       // Lane E (tools-as-code-api) — in-script inner calls carry
       // `audience: 'internal'`. They must not drive turn-level UI state
       // (iteration proxy, spinner, duration stats); rendering is gated in
@@ -966,6 +1015,13 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       );
     }
     if (state.verbosity !== 'quiet') out('\n\n');
+  }
+
+  // The refused turn has drained (its `done` closed it). Ask for the value
+  // masked, then resubmit the same message as a fresh turn.
+  if (credentialReq && state.collectCredential) {
+    const resubmit = await state.collectCredential(credentialReq);
+    if (resubmit) await runTurn(credentialReq.pendingUserMessage, state, loop);
   }
 }
 
@@ -1111,7 +1167,11 @@ async function runSingleQuery(
   for await (const event of loop.run(input.query, {
     sessionKey: input.sessionKey,
     personalityId: input.personalityId,
+    // One-shot: no masked input here, so a missing plugin credential is
+    // reported as the CLI command that sets it.
+    credentialPrompt: true,
   })) {
+    if (event.type === 'credential_required') out(`${credentialInstruction(event)}\n`);
     if (event.type === 'text_delta') {
       if (firstTextDeltaAt === null) firstTextDeltaAt = Date.now();
       streamedText += event.text;

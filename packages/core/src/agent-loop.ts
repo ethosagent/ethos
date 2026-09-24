@@ -184,13 +184,13 @@ export interface AgentLoopConfig {
     sessionId: string;
     turnId: string;
   }) => void;
-  /** v2.2 — Pre-turn credential check. Returns the first missing credential,
-   *  or null if all required credentials are present. Opt-in: when undefined,
-   *  the check is skipped. Wiring provides this when plugins declare required
-   *  credentials. */
+  /** v2.2 — Pre-turn credential check (first missing credential, or null). Runs only when
+   *  set AND the run passes `credentialPrompt`; `scope` = the turn's personality + allowed
+   *  plugins. Must not throw. Built by `buildCredentialCheck` (packages/wiring). */
   credentialCheck?: (
     sessionKey: string,
     pendingUserMessage: string,
+    scope: { personalityId: string; allowedPlugins: readonly string[] },
   ) => Promise<{
     pluginId: string;
     credentialKey: string;
@@ -278,6 +278,8 @@ export interface RunOptions extends MemoryPrefetchGate {
   jobId?: string;
   /** openclaw-9.5 D30 — a parent-review turn's job id → `ToolContext.reviewOfJobId`, verbatim. */
   reviewOfJobId?: string;
+  /** openclaw-9.5 item 1 — the surface answers `credential_required`; see stages/turn-setup.ts. */
+  credentialPrompt?: boolean;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
   origin?: string;
   a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean }; // A2A runner sets this servicing an inbound task → `ToolContext.a2aDelegation` (plan §P8).

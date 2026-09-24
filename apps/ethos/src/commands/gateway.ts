@@ -4854,6 +4854,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         observeModePlatforms: observedPlatforms,
         publicationSpeaksFor,
         observability,
+        // openclaw-9.5 item 1 — the plugin-credential link a refused lane gets.
+        ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
       })
     : new Gateway({
         bots,
@@ -4923,5 +4925,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         observeModePlatforms: observedPlatforms,
         publicationSpeaksFor,
         observability,
+        // openclaw-9.5 item 1 — the plugin-credential link a refused lane gets.
+        ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
       });
 }

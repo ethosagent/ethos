@@ -113,7 +113,7 @@ export {
   clarifyUnresolvedMessage,
 } from './clarify/respond-outcome';
 export { isClarifyAnswerableOn } from './clarify/takeover-handback';
-export { clarifyPromptText } from './clarify/takeover-prompt';
+export { clarifyPromptText, webPageUrlFor } from './clarify/takeover-prompt';
 export { type ConformanceResult, validateContextEngine } from './context-engines/conformance';
 export { DropOldestEngine } from './context-engines/drop-oldest';
 export { ReferencePreservingEngine } from './context-engines/reference-preserving';

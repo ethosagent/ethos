@@ -14,8 +14,8 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   type PluginCredentialSchema,
   PluginSettingsDrawer,
@@ -26,6 +26,7 @@ import { personalityKeys } from '../features/personalities/api/keys';
 import { usePersonalityGet } from '../features/personalities/api/queries';
 import { useCreateFlag } from '../hooks/useCreateFlag';
 import { splitByAttachment, usedByPersonalityIds } from '../lib/attachmentLists';
+import { credentialToFocus, parsePluginCredentialDeepLink } from '../lib/pluginCredentialDeepLink';
 import { client, rpc } from '../rpc';
 
 // `personalityId` absent: a global install (`ethos plugin install <pkg>`), the
@@ -125,6 +126,37 @@ function LibraryPluginsPage() {
     if (shouldCreate) setInstallOpen(true);
   }, [shouldCreate]);
 
+  // openclaw-9.5 item 1 — `/plugins?pluginId=<id>&key=<KEY>` (the gateway's
+  // credential link) opens that plugin's settings once the list has loaded.
+  // Only a listed plugin id is honoured — see `parsePluginCredentialDeepLink`.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLink = useMemo(
+    () =>
+      pluginsData
+        ? parsePluginCredentialDeepLink(
+            searchParams,
+            pluginsData.plugins.map((p) => p.id),
+          )
+        : null,
+    [pluginsData, searchParams],
+  );
+  const deepLinkOpened = useRef(false);
+  useEffect(() => {
+    if (!deepLink || deepLinkOpened.current) return;
+    deepLinkOpened.current = true;
+    setSettingsPluginId(deepLink.pluginId);
+  }, [deepLink]);
+
+  const closeSettings = () => {
+    setSettingsPluginId(null);
+    if (searchParams.has('pluginId') || searchParams.has('key')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('pluginId');
+      next.delete('key');
+      setSearchParams(next, { replace: true });
+    }
+  };
+
   const settingsPlugin = settingsPluginId
     ? ((pluginsData?.plugins ?? []).find((p) => p.id === settingsPluginId) ?? null)
     : null;
@@ -163,6 +195,15 @@ function LibraryPluginsPage() {
     }));
   }, [settingsPluginId, credKeysData]);
 
+  // Focus only a credential the plugin itself lists — `credentialToFocus`.
+  const focusRef =
+    deepLink && deepLink.pluginId === settingsPluginId
+      ? credentialToFocus(
+          deepLink.key,
+          credentials.map((c) => c.ref),
+        )
+      : undefined;
+
   if (pluginsError) {
     return (
       <Typography.Text type="danger">
@@ -200,10 +241,11 @@ function LibraryPluginsPage() {
           version={settingsPlugin.version}
           description={settingsPlugin.description ?? undefined}
           credentials={credentials}
+          {...(focusRef ? { focusRef } : {})}
           tools={[]}
           theme="dark"
           client={client}
-          onClose={() => setSettingsPluginId(null)}
+          onClose={closeSettings}
         />
       )}
     </div>

@@ -15,6 +15,8 @@ interface PluginSettingsDrawerProps {
   version: string;
   description?: string;
   credentials: PluginCredentialSchema[];
+  /** A listed credential ref to open for editing and focus (deep link). */
+  focusRef?: string;
   tools: string[];
   theme: 'dark' | 'light';
   client: EthosClient;
@@ -27,6 +29,7 @@ export function PluginSettingsDrawer({
   version,
   description,
   credentials,
+  focusRef,
   tools,
   theme,
   client,
@@ -99,6 +102,7 @@ export function PluginSettingsDrawer({
             version={version}
             description={description}
             credentials={credentials}
+            {...(focusRef ? { focusRef } : {})}
             tools={tools}
             getCredential={(ref: string) =>
               client.rpc.plugins

@@ -58,6 +58,7 @@ import {
 } from '@ethosagent/worker-router';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
+import { buildCredentialCheck } from './credential-check';
 import type { DisposerStack } from './disposer-stack';
 import type {
   CreateAgentLoopOptions,
@@ -1025,6 +1026,16 @@ export async function buildAgentLoop(
     ...(toolsResult.turnAuditors.length > 0 ? { turnAuditors: toolsResult.turnAuditors } : {}),
     ...(requestDumpStore ? { requestDumpStore } : {}),
     ...(activeMcpPolicy ? { mcpPolicy: activeMcpPolicy } : {}),
+    // openclaw-9.5 item 1 — set for EVERY host (all of them assemble through
+    // here), but it only runs for a turn whose surface passes
+    // `RunOptions.credentialPrompt` (`stages/turn-setup.ts`). Plugin
+    // credentials only: browser logins (`credentials/<name>/`) stay a
+    // `browser_fill_credential` refusal — see `buildCredentialCheck`.
+    credentialCheck: buildCredentialCheck({
+      pluginLoader,
+      ...(opts.observability ? { observability: opts.observability } : {}),
+      logger: log,
+    }),
     onToolMetric: (metric) => {
       pluginDiagnostics.pushEvent({
         pluginId: metric.pluginId,

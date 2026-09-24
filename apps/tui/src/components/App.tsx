@@ -4,6 +4,11 @@ import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
 import { answerSuffix, type PendingClarify, type Session } from '@ethosagent/types';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type CredentialRequest,
+  type SetPluginCredential,
+  submitCredential,
+} from '../credential-prompt';
 import { buildHelpText, type ExternalSlashCommand } from '../help';
 import { type RebuiltLoop, switchLoop } from '../loop-switch';
 import {
@@ -21,6 +26,7 @@ import { ClarifyModal } from './ClarifyModal';
 import { CompletionPanel, getMatches } from './CompletionPanel';
 import { ConsoleHeader } from './ConsoleHeader';
 import { ContextPanel } from './ContextPanel';
+import { CredentialModal } from './CredentialModal';
 import { ExecutionTimeline, type TimelineEvent } from './ExecutionTimeline';
 import { type FileActivity, FileActivityPanel } from './FileActivityPanel';
 import { IdentityPanel } from './IdentityPanel';
@@ -138,6 +144,13 @@ export interface AppProps {
     arg: string,
     sessionKey: string,
   ) => Promise<{ message: string; switchTo?: { sessionKey: string; personalityId?: string } }>;
+  /**
+   * Stores a plugin credential collected by the masked `credential_required`
+   * modal — the host passes `PluginLoader.setCredential`, the one writer. When
+   * absent the TUI cannot answer a credential request, so its sends do not
+   * opt in to one (`credentialPrompt` stays unset).
+   */
+  setPluginCredential?: SetPluginCredential;
 }
 
 /**
@@ -198,6 +211,7 @@ export function App({
   onSkillProposed,
   readMemory,
   branches,
+  setPluginCredential,
 }: AppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -235,6 +249,7 @@ export function App({
   }, []);
   const [modal, setModal] = useState<Modal>(null);
   const [clarifyRequest, setClarifyRequest] = useState<PendingClarify | null>(null);
+  const [credentialRequest, setCredentialRequest] = useState<CredentialRequest | null>(null);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -531,7 +546,7 @@ export function App({
         setShowKeymap(true);
       }
     },
-    { isActive: modal === null && clarifyRequest === null },
+    { isActive: modal === null && clarifyRequest === null && credentialRequest === null },
   );
 
   useEffect(() => {
@@ -736,6 +751,23 @@ export function App({
     };
   }, [bridge]);
 
+  // Masked credential request — a plugin credential is missing, so the loop
+  // refused the turn pre-turn. Only reachable when a send opted in
+  // (`credentialPrompt`, which `sendUserMessage` sets only with a writer), and
+  // subscribed only with one, so the modal can always be answered.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pushTimeline closes over a stable ref
+  useEffect(() => {
+    if (!setPluginCredential) return;
+    const onCredentialRequired = (request: CredentialRequest) => {
+      setCredentialRequest(request);
+      pushTimeline('warning', `credential required: ${request.pluginId} ${request.label}`);
+    };
+    bridge.on('credential_required', onCredentialRequired);
+    return () => {
+      bridge.off('credential_required', onCredentialRequired);
+    };
+  }, [bridge, setPluginCredential]);
+
   // Clarify surface — open the modal when the agent calls the `clarify` tool,
   // and close it when the request resolves (answer / timeout / cancel).
   // Registered through the bridge so it survives `replaceLoop` (model switch).
@@ -776,13 +808,7 @@ export function App({
     setInput('');
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text: value }]);
     pushTimeline('info', `user: ${value.slice(0, 80)}`);
-    setCompletedTools([]);
-    setRunning(true);
-    turnStartRef.current = Date.now();
-    firstTextDeltaAtRef.current = null;
-    streamedTextRef.current = '';
-    turnToolDurationsRef.current = [];
-    turnUsageRef.current = null;
+    beginTurn();
     // Resolve @file/@url refs (and any other host preprocessing) before the
     // loop sees the input; the transcript keeps the raw text the user typed.
     let outgoing = value;
@@ -793,7 +819,28 @@ export function App({
         outgoing = value;
       }
     }
-    bridge.send(outgoing, { sessionKey, personalityId: personality });
+    sendUserMessage(outgoing);
+  };
+
+  const beginTurn = () => {
+    setCompletedTools([]);
+    setRunning(true);
+    turnStartRef.current = Date.now();
+    firstTextDeltaAtRef.current = null;
+    streamedTextRef.current = '';
+    turnToolDurationsRef.current = [];
+    turnUsageRef.current = null;
+  };
+
+  // The one send for a user message: a typed one, and the resend after a
+  // credential is stored. Opts in to `credential_required` only when this
+  // TUI has a writer to answer it with.
+  const sendUserMessage = (outgoing: string) => {
+    bridge.send(outgoing, {
+      sessionKey,
+      personalityId: personality,
+      ...(setPluginCredential ? { credentialPrompt: true } : {}),
+    });
   };
 
   const handleSlashCommand = async (cmd: string) => {
@@ -1181,6 +1228,37 @@ export function App({
     );
   }
 
+  if (credentialRequest && setPluginCredential) {
+    const req = credentialRequest;
+    return (
+      <SkinContext.Provider value={tokens}>
+        <CredentialModal
+          request={req}
+          onSubmit={async (value) => {
+            const result = await submitCredential({
+              request: req,
+              value,
+              setPluginCredential,
+              resend: (pending) => {
+                setCredentialRequest(null);
+                setStatusMsg(`[${req.label} saved for ${req.pluginId} — resending]`);
+                // `pendingUserMessage` is the text the loop already received
+                // (post-preprocessing), and the transcript already shows it.
+                beginTurn();
+                sendUserMessage(pending);
+              },
+            });
+            return result;
+          }}
+          onCancel={() => {
+            setCredentialRequest(null);
+            setStatusMsg(`[${req.label} not saved — message not sent]`);
+          }}
+        />
+      </SkinContext.Provider>
+    );
+  }
+
   if (modal === 'sessions') {
     return (
       <SkinContext.Provider value={tokens}>
@@ -1358,7 +1436,11 @@ export function App({
           value={input}
           disabled={running}
           isActive={
-            modal === null && clarifyRequest === null && !showKeymap && focusPane === 'input'
+            modal === null &&
+            clarifyRequest === null &&
+            credentialRequest === null &&
+            !showKeymap &&
+            focusPane === 'input'
           }
           onChange={setInput}
           onSubmit={handleSubmit}

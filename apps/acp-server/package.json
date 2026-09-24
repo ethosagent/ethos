@@ -17,6 +17,7 @@
     "@ethosagent/core": "workspace:*",
     "@ethosagent/notify-queue": "workspace:*",
     "@ethosagent/session-lane": "workspace:*",
+    "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/tools-mcp": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "ws": "^8.20.0"

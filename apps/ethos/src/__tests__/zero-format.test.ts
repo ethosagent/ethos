@@ -243,6 +243,53 @@ describe('runZero --format text', () => {
   });
 });
 
+// openclaw-9.5 item 1 — `-z` has no masked input: a turn refused for a
+// missing plugin credential ends with the one-line CLI instruction.
+describe('runZero — credential_required', () => {
+  const CMD = 'ethos plugin credentials weather --set API_KEY';
+  async function* refused() {
+    yield {
+      type: 'credential_required',
+      pluginId: 'weather',
+      credentialKey: 'API_KEY',
+      kind: 'api_key',
+      label: 'Weather API key',
+      sessionKey: 'k',
+      pendingUserMessage: 'forecast?',
+    };
+    yield { type: 'done', text: '', turnCount: 0 };
+  }
+
+  it('text: opts in, prints the instruction on stderr, exits 1', async () => {
+    const run = vi.fn(refused);
+    useLoop(run);
+    await runZero(['-z', 'forecast?']);
+    expect(run).toHaveBeenCalledWith(
+      'forecast?',
+      expect.objectContaining({ credentialPrompt: true }),
+    );
+    expect(stderr.join('')).toContain(CMD);
+    expect(process.exitCode).toBe(1);
+  });
+
+  for (const format of ['json', 'stream-json'] as const) {
+    it(`${format}: result.error carries CREDENTIAL_REQUIRED and the instruction`, async () => {
+      useLoop(refused);
+      await runZero(['-z', '--format', format, 'forecast?']);
+      const lines = stdoutLines();
+      // The event itself stays off the wire (allow-list, D27).
+      expect(lines.some((l) => l.type === 'credential_required')).toBe(false);
+      const result = lines.at(-1);
+      expect(result).toMatchObject({ type: 'result', ok: false, exitCode: 1 });
+      const error = result?.error as { code: string; message: string } | undefined;
+      expect(error?.code).toBe('CREDENTIAL_REQUIRED');
+      expect(error?.message).toContain(CMD);
+      expect(stderr.join('')).toContain(CMD);
+      expect(process.exitCode).toBe(1);
+    });
+  }
+});
+
 describe('parseZeroArgs', () => {
   it('takes the first token after -z that is not a known flag or its value', () => {
     expect(parseZeroArgs(['-z', '--format', 'stream-json', '--model', 'm', 'hi'])).toMatchObject({

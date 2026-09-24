@@ -73,6 +73,9 @@ importers:
       '@ethosagent/session-lane':
         specifier: workspace:*
         version: link:../../packages/session-lane
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/tools-mcp':
         specifier: workspace:*
         version: link:../../extensions/tools-mcp

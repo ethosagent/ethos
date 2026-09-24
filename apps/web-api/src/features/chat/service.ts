@@ -308,6 +308,12 @@ export class ChatService {
         ...(input.personalityId ? { personalityId: input.personalityId } : {}),
         ...(input.userId ? { userId: input.userId } : {}),
         ...(input.dryRun ? { dryRun: true } : {}),
+        // openclaw-9.5 item 1 — this surface can answer a missing plugin
+        // credential (the chat pane's masked prompt), so the loop refuses the
+        // turn pre-turn with `credential_required` instead of running it
+        // without the credential. `/v1/chat/completions` does not opt in: it
+        // has no UI to answer with.
+        credentialPrompt: true,
         ...(loopAttachments?.length ? { attachments: loopAttachments } : {}),
         // Talk-mode turn: the loop renders a message-level `<voice-origin>`
         // annotation on the persisted user message so the model knows it is
@@ -692,6 +698,21 @@ export class ChatService {
     );
     bridge.on('dry_run_summary', (plan, capped) =>
       this.append(sessionId, { type: 'dry_run_summary', plan, capped }),
+    );
+    // Forwarded field by field: the bridge payload also carries `sessionKey`,
+    // which the per-session stream does not need, and nothing here may ever
+    // add a credential VALUE (the event only names what is missing).
+    bridge.on('credential_required', (request) =>
+      this.append(sessionId, {
+        type: 'credential_required',
+        pluginId: request.pluginId,
+        credentialKey: request.credentialKey,
+        kind: request.kind,
+        label: request.label,
+        ...(request.description !== undefined ? { description: request.description } : {}),
+        ...(request.authUrl !== undefined ? { authUrl: request.authUrl } : {}),
+        pendingUserMessage: request.pendingUserMessage,
+      }),
     );
     // B3 — the turn's `traceId` is passed straight through onto the stream on
     // both the opening and closing event of the turn. This is the only turn

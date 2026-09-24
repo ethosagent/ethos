@@ -1,6 +1,10 @@
 import { redactArgs } from '@ethosagent/core';
 import { redactString } from '@ethosagent/safety-redact';
-import { type EventTranslator, shouldSurfaceProgress } from '@ethosagent/surface-kit';
+import {
+  credentialInstruction,
+  type EventTranslator,
+  shouldSurfaceProgress,
+} from '@ethosagent/surface-kit';
 import { type AgentEvent, answerSuffix } from '@ethosagent/types';
 
 /**
@@ -14,6 +18,9 @@ import { type AgentEvent, answerSuffix } from '@ethosagent/types';
  * carries `tool_end.result`, which this one never does (D30).
  */
 export const ZERO_STREAM_VERSION = 1;
+
+/** `result.error.code` for a turn refused for a missing plugin credential. */
+export const CREDENTIAL_REQUIRED_CODE = 'CREDENTIAL_REQUIRED';
 
 type Ev<T extends AgentEvent['type']> = Extract<AgentEvent, { type: T }>;
 
@@ -186,14 +193,24 @@ export interface ResultExtras {
  * is `streamed + answerSuffix(streamed, done.text)`, the reply `--no-stream`
  * prints. The exit code is 1 for an `error` event or a failure passed in
  * `extras.error`, otherwise 0 — a halted turn included (D32).
+ *
+ * A turn refused for a missing plugin credential (openclaw-9.5 item 1) has no
+ * event line of its own (`credential_required` stays off the allow-list), so
+ * it is reported here: `error.code` `CREDENTIAL_REQUIRED`, `error.message` the
+ * one-line instruction naming `ethos plugin credentials <id> --set <KEY>`
+ * (`credentialInstruction` in @ethosagent/surface-kit), exit 1. The event
+ * carries no value, so neither does this line.
  */
 export function buildResultLine(translator: EventTranslator, extras: ResultExtras): ZeroStreamLine {
   const streamed = translator.text;
+  const credential = translator.credentialRequired;
   const error: ZeroResultError | null = translator.error
     ? { code: translator.error.code, message: redactString(translator.error.error) }
     : extras.error
       ? { code: extras.error.code, message: redactString(extras.error.message) }
-      : null;
+      : credential
+        ? { code: CREDENTIAL_REQUIRED_CODE, message: credentialInstruction(credential) }
+        : null;
   const exitCode = error ? 1 : 0;
   const halt = translator.halt;
   return {
