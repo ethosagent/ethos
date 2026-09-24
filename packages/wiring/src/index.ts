@@ -1929,6 +1929,7 @@ export {
   type FunnelTrackerOptions,
   type FunnelWizardPath,
   mergeFunnelState,
+  readFunnelState,
 } from './observability/funnel';
 export { resolveExecutionBackendName } from './resolve-execution-backend';
 export {
