@@ -108,6 +108,12 @@ import { createHealthServer } from '../health-server';
 import { type CronDeliverJob, createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import {
+  openInboundSpool,
+  pruneInboundSpool,
+  startInboundSpoolReplay,
+  takeGatewayLockOrExit,
+} from '../lib/gateway-inbound-durability';
+import {
   createOutboxApprovalSurface,
   createOutboxDispatcher,
   createOutboxReviewer,
@@ -308,6 +314,15 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   }
   const cfg = loaded.config;
   const dir = ethosDir();
+
+  // One gateway per state dir (plan reach-and-containment §2.7): this profile
+  // owns platform adapters exactly as `ethos gateway start` does, so it takes
+  // the SAME lock, here — after config load, BEFORE any store is opened or
+  // adapter constructed. Held by a running gateway (or another boot) → the
+  // refusal is printed and this exits 3, which `ethos run-all` and the desktop
+  // app read as "already running". Released after the spool closes in
+  // `shutdown`, and on process exit (`takeGatewayLockOrExit`).
+  const releaseGatewayLock = await takeGatewayLockOrExit(dir);
 
   const bindErrors = await validateBindings(cfg);
   if (bindErrors.length > 0) {
@@ -848,6 +863,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
 
   const deliveryLedger = new SQLiteDeliveryLedger(join(dir, 'delivery-ledger.db'));
   const inboundDedup = new SQLiteInboundDedupStore(join(dir, 'inbound-dedup.db'));
+  // Inbound spool (plan reach-and-containment §2.2): the write-ahead record of
+  // every turn this process owes, replayed after a crash. Only AFTER the
+  // gateway lock above, which is what makes its boot-time orphan recovery safe.
+  const { inboundSpool, inboundSpoolOptions } = openInboundSpool(cfg, dir);
 
   // Observe-mode transcript sink (plan/phases/ambient-group-monitoring.md R1).
   // Deliberately NOT eager like the two stores above: this one is opened on
@@ -891,6 +910,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     adapters,
     deliveryLedger,
     inboundDedup,
+    inboundSpool,
+    inboundSpoolOptions,
     resolveUserId,
     pluginLoader: shared.pluginLoader,
     trustedChannelPlugins: shared.activePersonality?.plugins
@@ -1323,6 +1344,25 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       `${c.dim}Resumed from a pause of ${reconciliation.pauseOffset.pauseDurationMs}ms${c.reset}`,
     );
   }
+
+  // Inbound spool replay (plan reach-and-containment §2.4). After step 8's
+  // `adapter.start()` for the reason the ledger sweep is — a replayed turn
+  // replies through a live adapter — and after reconciliation, whose delivery
+  // sweep and clarify hydration a replayed message may depend on. The first
+  // call arms the Gateway's 60s replay tick; `gateway.shutdown` stops it.
+  startInboundSpoolReplay(gateway, {
+    info: (message) => console.log(`${c.dim}${message}${c.reset}`),
+    warn: (message) => logger.warn(message, { component: 'boot' }),
+  });
+  // Spool retention (D2-11): once now, then hourly — see `pruneInboundSpool`.
+  const pruneSpool = () =>
+    pruneInboundSpool(inboundSpool, {
+      observability: gatewayObservability(),
+      warn: (message) => logger.warn(message, { component: 'boot' }),
+    });
+  pruneSpool();
+  const spoolPruneTimer = setInterval(pruneSpool, 3_600_000);
+  spoolPruneTimer.unref?.();
   // The mid-run resume seam. `runBootReconciliation` above handles the pause a
   // COLD-BOOTED process learns about from `readPauseOffset()`; this handles the
   // one a RUNNING process lives through, which is what snapshot+restore actually
@@ -2403,6 +2443,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       await guard('timers', () => {
         clearInterval(pruneTimer);
         clearInterval(heartbeatTimer);
+        clearInterval(spoolPruneTimer);
         // `configReloadTimer` is NOT cleared here — the `config-reload` step
         // above cleared it and then awaited the reconcile in flight, before
         // any of the resources that reconcile touches were torn down.
@@ -2432,6 +2473,13 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       });
       await guard('inbound-dedup', () => {
         inboundDedup.close();
+      });
+      await guard('inbound-spool', () => {
+        inboundSpool.close();
+      });
+      // Last of the gateway-owned state: from here a new gateway may start.
+      await guard('gateway-lock', () => {
+        releaseGatewayLock();
       });
       await guard('outbox', () => {
         // After the loops are disposed: a turn still running could propose.

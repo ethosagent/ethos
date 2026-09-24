@@ -20,7 +20,7 @@ Find out which channel messages a crashed [gateway](../../getting-started/glossa
 
 ## Prereqs
 
-- A gateway configured and started at least once (`ethos gateway start`), so `~/.ethos/inbound-spool.db` exists.
+- A gateway configured and started at least once (`ethos gateway start` or `ethos boot`), so `~/.ethos/inbound-spool.db` exists.
 - Shell access to the machine running it.
 
 ## Steps
@@ -37,6 +37,8 @@ ethos gateway start
 Inbound spool: replayed 1, 0 deferred, 0 dead-lettered
 ```
 
+If you run the merged single-process profile, restart `ethos boot` instead. It opens the same spool and prints the same line once its boot reconciliation finishes.
+
 No line means nothing was owed. The replay runs right after the adapters connect, keeps the order messages arrived in within each chat, and re-applies your channel allowlist to each one.
 
 A turn whose reply was already recorded before the crash is not run again: its reply is redelivered from the ledger instead, so the chat gets one answer, not two.
@@ -52,7 +54,7 @@ running (pid 4242, heartbeat 4s ago)
 inbound spool: 0 owed, 1 in progress, 0 dead
 ```
 
-Only one gateway runs per Ethos home. A second `ethos gateway start` exits `3` and names the running pid. If `status` says `stale lock (pid N not running)`, the next start takes the lock over — there is nothing to delete.
+Only one gateway runs per Ethos home, and `ethos boot` counts as one. A second `ethos gateway start` or `ethos boot` exits `3` and names the running pid. If `status` says `stale lock (pid N not running)`, the next start takes the lock over — there is nothing to delete.
 
 ### 3. List messages the gateway gave up on
 
@@ -124,7 +126,7 @@ Stop the gateway gracefully while it is answering (Ctrl+C), then start it again.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `ethos gateway start` exits `3` | Another gateway owns this Ethos home. | Run `ethos gateway status`. Stop the running one, or leave it — `ethos run-all` and the desktop app attach to it instead of starting a second. |
+| `ethos gateway start` or `ethos boot` exits `3` | Another gateway — a `gateway start` or a `boot` — owns this Ethos home. | Run `ethos gateway status`. Stop the running one, or leave it — `ethos run-all` and the desktop app attach to it instead of starting a second. |
 | Doctor reports owed messages "for a bot no longer configured" | The bot was removed from `config.yaml` with messages still owed. | Re-add the bot and restart; the replay delivers them. They are never dead-lettered automatically. |
 | A replayed message arrived without its image | The cached attachment file was gone at replay time. | Nothing to fix; the text still ran. Ask the sender to resend the image. |
 | The same message was answered twice | Telegram's chunked send reports success for a partly delivered long reply, and delivery is at-least-once by design. | Expected for long replies after a crash mid-send. |

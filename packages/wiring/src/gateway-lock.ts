@@ -4,8 +4,10 @@
 // answers the second `getUpdates` with 409 Conflict and the two processes steal
 // updates from each other), both sweep the delivery ledger, and both would
 // reset each other's `processing` inbound-spool rows at boot. This lock makes
-// "one gateway per state dir" a guarantee: `ethos gateway start` takes it
-// before any store is opened or adapter constructed, and refuses — exit code
+// "one gateway per state dir" a guarantee: `ethos gateway start` and
+// `ethos boot` — the two commands that own platform adapters — take it
+// (`takeGatewayLockOrExit`, apps/ethos/src/lib/gateway-inbound-durability.ts)
+// before any store is opened or adapter constructed, and refuse — exit code
 // {@link GATEWAY_LOCK_EXIT_CODE} — when a live gateway holds it.
 //
 // Per STATE DIR, not per machine: `<dataDir>/gateway.lock`, so two
@@ -27,7 +29,7 @@ import {
   type SentinelLockInspection,
 } from './backup/sentinel-lock';
 
-/** The exit code `ethos gateway start` uses when the lock is held. `ethos
+/** The exit code `ethos gateway start` and `ethos boot` use when the lock is held. `ethos
  *  run-all` and the desktop app key on it: held is final, not a crash. */
 export const GATEWAY_LOCK_EXIT_CODE = 3;
 

@@ -138,7 +138,7 @@ Synopsis: `ethos gateway [setup | start | status [--json] | spool <replay|discar
 
 `setup` opens the setup wizard at the messaging step (alias for `ethos setup messaging`). `start` spins up every platform whose credentials are present in [`config.yaml`](./config-yaml.md) and is long-running; exits non-zero if `~/.ethos/config.yaml` is absent.
 
-`start` takes the gateway lock, `<ethos home>/gateway.lock`, before it opens any store: one gateway per Ethos home (`ETHOS_STATE_DIR` scopes it, so two homes on one machine run two gateways). A second `start` against a home whose gateway is alive prints the refusal and exits `3`. A lock left by a process that is gone is taken over. Source: [`packages/wiring/src/gateway-lock.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/gateway-lock.ts).
+`start` takes the gateway lock, `<ethos home>/gateway.lock`, before it opens any store: one gateway per Ethos home (`ETHOS_STATE_DIR` scopes it, so two homes on one machine run two gateways). `ethos boot` owns channel adapters too and takes the same lock, so a `start` and a `boot` exclude each other. A second `start` or `boot` against a home whose gateway is alive prints the refusal and exits `3`. A lock left by a process that is gone is taken over. Source: [`packages/wiring/src/gateway-lock.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/gateway-lock.ts).
 
 ```
 Another Ethos gateway is already running for /home/me/.ethos (pid 4242). Stop that process, or check it with 'ethos gateway status'. If no such process exists, remove /home/me/.ethos/gateway.lock.
@@ -643,7 +643,7 @@ Synopsis: `ethos upgrade`
 | `0` | Success. |
 | `1` | Generic error (missing config, command parse error, network failure, unknown subcommand). |
 | `2` | Managed-mode error: `ETHOS_MANAGED=1` is set but config is missing, or a usage error (e.g. `ethos security` with no `audit` arg). |
-| `3` | `ethos gateway start` refused: another gateway holds this Ethos home's lock. `ethos run-all` and the desktop app treat it as "already running", not as a crash. |
+| `3` | `ethos gateway start` or `ethos boot` refused: another gateway holds this Ethos home's lock. `ethos run-all` and the desktop app treat it as "already running", not as a crash. |
 | `130` | Interrupted (Ctrl+C / SIGINT). |
 
 Errors land on stderr formatted by `formatError(toEthosError(err))` and are appended to `~/.ethos/logs/errors.jsonl`. Set `ETHOS_DEBUG=1` for verbose tracing.

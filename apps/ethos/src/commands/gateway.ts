@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 // Storage-abstraction exception, same one `pairing-commands.ts` takes: the
 // presence check for a `@ethosagent/sqlite` database file, which opens raw
 // paths and manages WAL/SHM natively. See `openChannelTranscriptStore`.
@@ -57,7 +56,6 @@ import {
 import { registerGoalNotifications } from '@ethosagent/goal-runner';
 import { type BusySource, IdleWatcherManager } from '@ethosagent/idle-watcher';
 import { SQLiteInboundDedupStore } from '@ethosagent/inbound-dedup';
-import { SQLiteInboundSpool } from '@ethosagent/inbound-spool';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { ConsoleLogger } from '@ethosagent/logger';
 import { createMetricsTextProvider } from '@ethosagent/observability-sqlite';
@@ -114,15 +112,11 @@ import {
 } from '@ethosagent/watchers';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
-  acquireGatewayLock,
   createApprovalDangerPredicate,
   createLazyProvider,
   createOutboundPolicyGate,
   createSessionStore,
-  currentBootId,
   fileMemoryUnsupportedReason,
-  GATEWAY_LOCK_EXIT_CODE,
-  GatewayLockHeldError,
   IdentityMap,
   initPairingDb,
   type LiveKitBindings,
@@ -143,6 +137,12 @@ import { createHealthServer, type MetricsAuthCheck } from '../health-server';
 import { createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { openFileMemory } from '../lib/file-memory';
+import {
+  openInboundSpool,
+  pruneInboundSpool,
+  startInboundSpoolReplay,
+  takeGatewayLockOrExit,
+} from '../lib/gateway-inbound-durability';
 import {
   createOutboxApprovalSurface,
   createOutboxDispatcher,
@@ -204,13 +204,6 @@ const DELIVERY_LEDGER_RETENTION_MS = 7 * 86_400_000;
  *  because a call row is history an operator reads (who rang, what was said),
  *  not an in-flight obligation — but still bounded: the rows hold transcripts. */
 const CALL_LOG_RETENTION_MS = 30 * 86_400_000;
-/** How long a `done` inbound-spool row is kept (plan reach-and-containment
- *  D2-11). Its payload was already nulled at `markDone`; the row stays for the
- *  UNIQUE key and forensics. `received`/`processing` rows are never age-pruned. */
-const INBOUND_SPOOL_RETENTION_MS = 7 * 86_400_000;
-/** How long a `dead` spool row is kept before it is pruned (with an event): a
- *  dead letter nobody looked at for a month is not going to be looked at. */
-const INBOUND_SPOOL_DEAD_RETENTION_MS = 30 * 86_400_000;
 
 export interface GatewayHeartbeat {
   pid: number;
@@ -603,24 +596,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const logLevel = config.logs?.level;
 
   // One gateway per state dir (plan reach-and-containment §2.7). Taken right
-  // after config load and BEFORE any store is opened or adapter constructed:
-  // a second gateway would poll the same bot tokens and reset this one's
-  // in-flight inbound-spool rows. Refused → exit 3, which `ethos run-all` and
-  // the desktop app read as "already running", not as a crash.
-  let releaseGatewayLock: (() => void) | undefined;
-  try {
-    releaseGatewayLock = await acquireGatewayLock(ethosDir());
-  } catch (err) {
-    if (err instanceof GatewayLockHeldError) {
-      console.error(err.message);
-      process.exit(GATEWAY_LOCK_EXIT_CODE);
-    }
-    throw err;
-  }
-  // An uncaught crash of a live process still runs exit handlers; release
-  // there too so the next start does not have to classify a stale lock.
-  // `release` deletes only this process's own bytes, so calling it twice is safe.
-  process.on('exit', () => releaseGatewayLock?.());
+  // after config load and BEFORE any store is opened or adapter constructed;
+  // refused → exit 3. Shared with `ethos boot` — see `takeGatewayLockOrExit`.
+  const releaseGatewayLock = await takeGatewayLockOrExit(ethosDir());
 
   const identityMap = new IdentityMap({ storage, dataDir: ethosDir() });
   const resolveUserId = (platform: string, platformUserId: string, displayLabel?: string) =>
@@ -1233,10 +1211,10 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   const inboundDedup = new SQLiteInboundDedupStore(join(ethosDir(), 'inbound-dedup.db'));
 
   // Inbound spool (plan reach-and-containment §2.2): a write-ahead record of
-  // every turn this gateway owes, replayed after a crash. Opened only here —
-  // `ethos serve` never opens it (D2-15) — and only AFTER the gateway lock
-  // above, which is what makes boot-time orphan recovery safe.
-  const inboundSpool = new SQLiteInboundSpool(join(ethosDir(), 'inbound-spool.db'));
+  // every turn this gateway owes, replayed after a crash. Opened here and in
+  // `ethos boot` — `ethos serve` never opens it (D2-15) — and only AFTER the
+  // gateway lock above, which is what makes boot-time orphan recovery safe.
+  const { inboundSpool, inboundSpoolOptions } = openInboundSpool(config, ethosDir());
 
   // Observe-mode transcript sink (plan/phases/ambient-group-monitoring.md R1).
   // Deliberately NOT eager like the two stores above: this one is opened on
@@ -1303,17 +1281,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     deliveryLedger,
     inboundDedup,
     inboundSpool,
-    inboundSpoolOptions: {
-      ...(config.gateway?.inboundSpool?.maxAttempts !== undefined
-        ? { maxAttempts: config.gateway.inboundSpool.maxAttempts }
-        : {}),
-      ...(config.gateway?.inboundSpool?.maxReplayAgeMs !== undefined
-        ? { maxReplayAgeMs: config.gateway.inboundSpool.maxReplayAgeMs }
-        : {}),
-      // pid:boot, plus a per-process nonce so a container's recurring pid 1 on
-      // an unchanged kernel boot still names a distinct claimant.
-      owner: `${process.pid}:${currentBootId() ?? 'unknown-boot'}:${randomUUID().slice(0, 8)}`,
-    },
+    inboundSpoolOptions,
     resolveUserId,
     pluginLoader,
     trustedChannelPlugins,
@@ -1550,18 +1518,10 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // replies through a live adapter. The first call also arms the gateway's 60s
   // replay tick, so a requeue from `ethos gateway spool replay` or the web
   // Deliveries page runs without a restart.
-  void gateway
-    .replayInboundSpool()
-    .then(({ replayed, deferred, dead }) => {
-      if (replayed > 0 || deferred > 0 || dead > 0) {
-        console.log(
-          `${c.dim}Inbound spool: replayed ${replayed}, ${deferred} deferred, ${dead} dead-lettered${c.reset}`,
-        );
-      }
-    })
-    .catch((err) => {
-      new ConsoleLogger({}, logLevel).warn(`inbound spool boot replay failed: ${String(err)}`);
-    });
+  startInboundSpoolReplay(gateway, {
+    info: (message) => console.log(`${c.dim}${message}${c.reset}`),
+    warn: (message) => new ConsoleLogger({}, logLevel).warn(message),
+  });
 
   // Restore-and-deliver (item 10). A background job that finished while this
   // process was down was written `done`/`failed` and then sat unread — the
@@ -1634,31 +1594,21 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       new ConsoleLogger({}, logLevel).warn(`call log retention prune failed: ${String(err)}`);
     });
   };
-  // Inbound spool retention (D2-11): `done` after a week, `dead` after 30 days.
-  // `received`/`processing` are owed work and are never age-pruned.
-  const pruneInboundSpool = () => {
-    try {
-      inboundSpool.pruneDone(Date.now() - INBOUND_SPOOL_RETENTION_MS);
-      const deadPruned = inboundSpool.pruneDead(Date.now() - INBOUND_SPOOL_DEAD_RETENTION_MS);
-      if (deadPruned > 0) {
-        getEthosObservability().recordSafetyBlock({
-          code: 'gateway.spool_dead_pruned',
-          details: { count: deadPruned },
-        });
-      }
-    } catch (err) {
-      new ConsoleLogger({}, logLevel).warn(`inbound spool retention prune failed: ${String(err)}`);
-    }
-  };
+  // Inbound spool retention (D2-11) — see `pruneInboundSpool`.
+  const pruneSpool = () =>
+    pruneInboundSpool(inboundSpool, {
+      observability: gatewayObservability(),
+      warn: (message) => new ConsoleLogger({}, logLevel).warn(message),
+    });
   pruneDeliveryLedger();
   pruneVoiceArtifacts();
   pruneCallLog();
-  pruneInboundSpool();
+  pruneSpool();
   const retentionPruneTimer = setInterval(() => {
     pruneDeliveryLedger();
     pruneVoiceArtifacts();
     pruneCallLog();
-    pruneInboundSpool();
+    pruneSpool();
   }, 3_600_000);
   retentionPruneTimer.unref?.();
 
@@ -2198,7 +2148,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       inboundDedup.close();
       inboundSpool.close();
       // Last of the gateway-owned state: from here a new gateway may start.
-      releaseGatewayLock?.();
+      releaseGatewayLock();
       // After the loops are disposed: a turn still running could propose.
       outbox.close();
       callLog?.close();
@@ -4436,8 +4386,9 @@ export interface BuildGatewayOptions {
   adapters: readonly PlatformAdapter[];
   deliveryLedger: GatewayConfig['deliveryLedger'];
   inboundDedup: GatewayConfig['inboundDedup'];
-  /** Optional: `ethos boot` does not open the spool (only `gateway start`,
-   *  which holds the gateway lock, does). */
+  /** Opened by `ethos gateway start` and `ethos boot` — the two commands that
+   *  hold the gateway lock (`openInboundSpool`, ../lib/gateway-inbound-durability).
+   *  Optional for tests and hosts that own no adapters. */
   inboundSpool?: GatewayConfig['inboundSpool'];
   inboundSpoolOptions?: GatewayConfig['inboundSpoolOptions'];
   resolveUserId: GatewayConfig['resolveUserId'];
