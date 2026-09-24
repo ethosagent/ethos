@@ -19,13 +19,20 @@ export interface ResultRedactionContext {
  * `safety.injectionDefense.blockSecretResults: false` (S9, default block), the
  * detected text is replaced via `redaction.redactString`.
  *
- * Callers run this immediately after the result resolves and BEFORE anything
- * else sees it — `tool_end`, `after_tool_call`, spans, memory telemetry, the
- * LLM-bound copy — so every downstream reader gets the same, redacted result:
- * `processTools` (./tool-processing.ts) for batch calls and
- * `ScriptToolBridge.dispatch` (./script-tool-bridge.ts) for in-script calls.
- * Pinned by `__tests__/tool-processing-redaction.test.ts`. Idempotent, so the
- * outer `run_code` result being redacted again by the batch path is harmless.
+ * Callers run this immediately after a result resolves and BEFORE anything
+ * else sees it, exactly once per result, so every downstream reader gets the
+ * same redacted result:
+ *   - `processTools` (./tool-processing.ts) maps it over the batch's results
+ *     right where `execResults` resolves — ahead of the returnDirect early exit
+ *     (sibling `tool_end`s, `persistReturnDirect`, `done.text`), memory
+ *     telemetry, spans, `tool_end`, `after_tool_call` and the LLM-bound copy.
+ *     Its `Tool result missing` fallback, built later for a call the registry
+ *     lost, takes the same helper at construction.
+ *   - `ScriptToolBridge.dispatch` (./script-tool-bridge.ts) for in-script calls,
+ *     before the inner `tool_end` and the script see the result.
+ * Pinned by `__tests__/tool-processing-redaction.test.ts`. Redaction output is
+ * not re-detected, so the outer `run_code` result passing the batch site after
+ * its inner calls passed the bridge is harmless.
  */
 export function redactToolResultSecrets(
   result: ToolResult,

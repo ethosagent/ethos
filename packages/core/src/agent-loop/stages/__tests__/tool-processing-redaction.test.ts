@@ -165,6 +165,89 @@ describe('Item 7 — tool-result secret redaction', () => {
     expect(ok.safetyEvents.map((e) => e.code)).toContain('secret_in_tool_result');
   });
 
+  it('(e) returnDirect batch: sibling tool_end, persisted rows and done.text are redacted', async () => {
+    const tools = new DefaultToolRegistry();
+    tools.register({
+      name: 'answer',
+      description: 'returnDirect tool whose answer carries a secret',
+      schema: { type: 'object' },
+      capabilities: {},
+      returnDirect: true,
+      execute: async () => ({ ok: true, value: `your token is ${SECRET}` }),
+    });
+    tools.register({
+      name: 'sibling',
+      description: 'errors with a secret',
+      schema: { type: 'object' },
+      capabilities: {},
+      execute: async () => ({
+        ok: false,
+        error: `POST https://api.example/?key=${SECRET} failed`,
+        code: 'execution_failed',
+      }),
+    });
+    let calls = 0;
+    const llm: LLMProvider = {
+      name: 'scripted',
+      model: 'mock-model',
+      maxContextTokens: 200_000,
+      supportsCaching: false,
+      supportsThinking: false,
+      async *complete(): AsyncIterable<CompletionChunk> {
+        calls++;
+        if (calls > 1) {
+          yield { type: 'done', finishReason: 'end_turn' };
+          return;
+        }
+        yield { type: 'tool_use_start', toolCallId: 'a1', toolName: 'answer' };
+        yield { type: 'tool_use_end', toolCallId: 'a1', inputJson: '{}' };
+        yield { type: 'tool_use_start', toolCallId: 's1', toolName: 'sibling' };
+        yield { type: 'tool_use_end', toolCallId: 's1', inputJson: '{}' };
+        yield { type: 'done', finishReason: 'tool_use' };
+      },
+      async countTokens() {
+        return 1;
+      },
+    };
+    const session = new InMemorySessionStore();
+    const safetyEvents: string[] = [];
+    const loop = new AgentLoop({
+      llm,
+      tools,
+      session,
+      observability: {
+        startTurnTrace: () => 'tr1',
+        endTrace: () => {},
+        startSpan: () => 'sp1',
+        endSpan: () => {},
+        recordSafetyBlock: (e) => safetyEvents.push(e.code ?? ''),
+        recordCompaction: () => {},
+        recordTierEscalation: () => {},
+        recordTierOverride: () => {},
+        flush: () => {},
+      },
+      safety: createTestSafety(),
+    });
+    const events: AgentEvent[] = [];
+    for await (const e of loop.run('go', { sessionKey: 'direct' })) events.push(e);
+    const stored = await session.getSessionByKey('direct');
+    const messages = stored ? await session.getMessages(stored.id) : [];
+
+    const siblingEnd = events.find(
+      (e): e is ToolEnd => e.type === 'tool_end' && e.toolName === 'sibling',
+    );
+    expect(siblingEnd?.error).toContain(MARKER);
+    expect(String(siblingEnd?.result)).not.toContain(SECRET);
+    const siblingRow = messages.find((m) => m.role === 'tool_result' && m.toolName === 'sibling');
+    expect(siblingRow?.content).toContain(MARKER);
+    const done = events.find((e) => e.type === 'done');
+    expect(done?.type === 'done' ? done.text : '').toContain(MARKER);
+    expect(JSON.stringify(events)).not.toContain(SECRET);
+    expect(JSON.stringify(messages)).not.toContain(SECRET);
+    // One event per affected result (answer + sibling), never a second pass.
+    expect(safetyEvents.filter((c) => c === 'secret_in_tool_result')).toHaveLength(2);
+  });
+
   it('(d) script-bridge inner call: redacted tool_end.error and redacted text returned to the script', async () => {
     const tools = new DefaultToolRegistry();
     // The script surface is gated on run_code being registered.

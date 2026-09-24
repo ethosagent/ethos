@@ -485,7 +485,19 @@ export async function* processTools(
       });
     }
   }
-  const execResults = await toolsPromise;
+  // Item 7 / D17 — the ONE redaction site for executed results: secrets in
+  // `value` OR `error` are redacted here, before anything reads a result —
+  // the returnDirect early exit (its sibling tool_ends, persisted rows and
+  // `done.text`), memory telemetry, spans, `tool_end`, `after_tool_call` and
+  // the LLM-bound copy below. Once per result, so one `secret_in_tool_result`
+  // event per affected result.
+  const redact = (r: ToolResult): ToolResult =>
+    redactToolResultSecrets(
+      r,
+      { redaction: deps.safety.redaction, observability: deps.observability },
+      { personality: ctx.personality, traceId: ctx.traceId },
+    );
+  const execResults = (await toolsPromise).map((r) => ({ ...r, result: redact(r.result) }));
   const execResultMap = new Map(execResults.map((r) => [r.toolCallId, r]));
   // Part 1, D1-1 — a directly-called allowed tool that ran is loaded for the next step.
   await recordDirectLoads(deps, ctx, execInputs);
@@ -573,8 +585,8 @@ export async function* processTools(
 
   for (const p of prepped) {
     let result: ToolResult;
-    // Ch.3a — `result` carries the tool's own value (secret-redacted by
-    // `redactToolResultSecrets`, nothing else) for tool_end events and
+    // Ch.3a — `result` carries the tool's own value (secret-redacted where
+    // `execResults` resolves, nothing else) for tool_end events and
     // after_tool_call hooks (the user-visible chip and audit trail see what
     // the tool actually returned). `llmContent` is the LLM-
     // facing string — possibly wrapped in `<untrusted>…</untrusted>` —
@@ -618,19 +630,12 @@ export async function* processTools(
       // fallback we construct right here (the registry lost the call). It is
       // identified by its construction site, not by inspecting its text.
       const frameworkAuthored = execResult === undefined;
-      result = execResult?.result ?? {
-        ok: false,
-        error: 'Tool result missing',
-        code: 'execution_failed',
-      };
-      // Item 7 / D17 — redact secrets in `value` OR `error` HERE, before memory
-      // telemetry, the span, `tool_end`, `after_tool_call` and the LLM-bound
-      // copy read `result`; none of them ever sees the raw secret.
-      result = redactToolResultSecrets(
-        result,
-        { redaction: deps.safety.redaction, observability: deps.observability },
-        { personality: ctx.personality, traceId: ctx.traceId },
-      );
+      // `execResult.result` was already redacted where `execResults` resolved;
+      // only this framework-authored fallback is new here, so it takes the
+      // same pass (a different result, never a second pass over one).
+      result =
+        execResult?.result ??
+        redact({ ok: false, error: 'Tool result missing', code: 'execution_failed' });
 
       // P2-counters — a successful memory write, not a rejected/invalid call.
       // Uses `p.args` (the full, untruncated effectiveArgs), never the
