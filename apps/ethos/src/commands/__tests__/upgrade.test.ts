@@ -175,6 +175,39 @@ describe('ethos upgrade — baseline vs after', () => {
     expect(h.text()).toContain('Rolled back');
   });
 
+  // Owner decision (plan openclaw-9.5-adoption item 4b, D25): a `binary` check
+  // rolls back whatever the baseline said — a sessions.db that will not open,
+  // or a store failing its integrity check, on the NEW binary is never
+  // shrugged off as "already failing before the upgrade", because the upgrade
+  // is the moment an operator can still go back. Enforced by `evaluateUpgrade`
+  // (the `binary` branch ignores `before`).
+  it('the same db.ok=false and storeIntegrity failure in the baseline AND the new binary still rolls back', async () => {
+    const broken = {
+      db: { ok: false, error: 'database disk image is malformed' },
+      storeIntegrity: [{ database: 'sessions.db', status: 'failed', detail: 'page 7 corrupt' }],
+    };
+    const h = harness({
+      baseline: out(report('1.0.0', broken)),
+      installed: [out(report('1.1.0', broken)), out(report('1.0.0', broken))],
+    });
+    expect(await runUpgrade([], h.deps)).toBe(1);
+    expect(h.installs).toEqual(['@ethosagent/cli@1.1.0', '@ethosagent/cli@1.0.0']);
+    expect(h.text()).toContain('sessions.db failed to open: database disk image is malformed');
+    expect(h.text()).toContain('integrity:sessions.db');
+    // The rolled-back binary fails only what its own baseline failed.
+    expect(h.text()).toContain('Rolled back');
+
+    const verdict = evaluateUpgrade(
+      mustParse(report('1.0.0', broken)),
+      mustParse(report('1.1.0', broken)),
+      '1.1.0',
+    );
+    expect(verdict.triggers).toEqual([
+      'db: sessions.db failed to open: database disk image is malformed',
+      'integrity:sessions.db: integrity check failed: page 7 corrupt',
+    ]);
+  });
+
   it('a failed integrity check or unloadable core SDK rolls back', () => {
     const baseline = mustParse(report('1.0.0'));
     const corrupt = parseDoctorReport(
