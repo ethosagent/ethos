@@ -220,6 +220,9 @@ function enumerateBots(config: EthosConfig): Map<ConfigBotId, string> {
         password: config.emailPassword,
         smtpHost: config.emailSmtpHost,
         smtpPort: config.emailSmtpPort,
+        // Part of the adapter's construction (`buildAdapters`), so editing it
+        // replaces the email bot live instead of being silently ignored.
+        trustedAuthservId: config.emailTrustedAuthservId,
       }),
     );
   }

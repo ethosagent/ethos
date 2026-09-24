@@ -169,6 +169,7 @@ describe('writeConfig round-trip — previously dropped fields', () => {
       emailPassword: 'secret',
       emailSmtpHost: 'smtp.example.com',
       emailSmtpPort: 587,
+      emailTrustedAuthservId: 'mx.example.com',
       displayResumeHint: false,
       displayResumeRecapTurns: 5,
       displayBellOnComplete: true,
@@ -194,6 +195,7 @@ describe('writeConfig round-trip — previously dropped fields', () => {
     expect(roundTripped?.emailPassword).toBe('secret');
     expect(roundTripped?.emailSmtpHost).toBe('smtp.example.com');
     expect(roundTripped?.emailSmtpPort).toBe(587);
+    expect(roundTripped?.emailTrustedAuthservId).toBe('mx.example.com');
     expect(roundTripped?.displayResumeHint).toBe(false);
     expect(roundTripped?.displayResumeRecapTurns).toBe(5);
     expect(roundTripped?.displayBellOnComplete).toBe(true);

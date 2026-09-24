@@ -152,6 +152,9 @@ export async function runSetup(startAtStep?: WizardStepId): Promise<SetupResult 
         : undefined,
       emailSmtpHost: answers.emailSmtpHost,
       emailSmtpPort: answers.emailSmtpPort,
+      // Not a wizard question, but dropping it on a re-run would silently
+      // turn every email sender unverified (`resolveEmailSender`).
+      emailTrustedAuthservId: existingConfig?.emailTrustedAuthservId,
     };
 
     await writeConfig(storage, config, secrets);

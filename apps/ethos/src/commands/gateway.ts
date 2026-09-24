@@ -1159,6 +1159,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // right after Gateway construction — necessary because the surface and the
   // Gateway each need a reference to the other.
   const adapters = await buildGatewayAdapters(config, attachmentCache);
+  warnEmailSenderAuthUnconfigured(config);
 
   // O-T8 — outbox approval cards. Keyed by the botKey each adapter speaks as
   // (the SAME derivation the Gateway's own routing table uses), because a
@@ -3865,6 +3866,11 @@ export async function buildAdapters(
           smtpHost: config.emailSmtpHost,
           smtpPort: config.emailSmtpPort ?? 587,
           botKey: emailBotKey(config.emailUser, config.emailImapHost),
+          // Unset → every sender is unverified (`resolveEmailSender`); the
+          // boot-time warning is `warnEmailSenderAuthUnconfigured`.
+          ...(config.emailTrustedAuthservId
+            ? { trustedAuthservId: config.emailTrustedAuthservId }
+            : {}),
         }),
       );
     }
@@ -4479,6 +4485,42 @@ export interface BuildGatewayOptions {
    * (`__tests__/gateway-observability-wiring.test.ts`).
    */
   observability: GatewayConfig['observability'];
+}
+
+/**
+ * Boot-time notice for an email bot with no `emailTrustedAuthservId` (plan
+ * openclaw-advisory-fixes Item 6). Without it `resolveEmailSender`
+ * (extensions/platform-email/src/index.ts) treats EVERY sender as unverified,
+ * so a deployment that upgraded without setting the key has lost identity
+ * continuity for all of its correspondents — worth one warn-level event and
+ * one console line, not a refusal to start (fail closed is the safe state).
+ *
+ * The configured-email predicate is the one `buildAdapters` uses. Called by
+ * both adapter-owning hosts (`runGatewayStart`, `ethos boot`) right after
+ * adapters are built. Fail-open on the record, like `gatewayObservability`.
+ * Returns whether it warned. Pinned by
+ * `__tests__/email-sender-auth-wiring.test.ts`.
+ */
+export function warnEmailSenderAuthUnconfigured(
+  config: EthosConfig,
+  record: (opts: { code: string; cause: string; severity: 'warn' }) => void = (opts) =>
+    getEthosObservability().recordError(opts),
+  log: (line: string) => void = (line) => console.log(line),
+): boolean {
+  const emailConfigured =
+    config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost;
+  if (!emailConfigured || config.emailTrustedAuthservId?.trim()) return false;
+  const cause =
+    'email is configured without emailTrustedAuthservId — every sender is treated as unverified (no From: address is trusted as an identity)';
+  try {
+    record({ code: 'email.sender_auth_unconfigured', cause, severity: 'warn' });
+  } catch {
+    // Fail-open — observability never stops the gateway starting.
+  }
+  log(
+    `${c.yellow}⚠ ${cause}.${c.reset} ${c.dim}Set emailTrustedAuthservId to the first token of the Authentication-Results header on any mail this account received.${c.reset}`,
+  );
+  return true;
 }
 
 /**
