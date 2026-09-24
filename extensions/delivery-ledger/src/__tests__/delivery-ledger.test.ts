@@ -185,7 +185,7 @@ describe('SQLiteDeliveryLedger — schema', () => {
     expect(sql.sql).toMatch(/STRICT/);
 
     const version = db.pragma('user_version') as Array<{ user_version: number }>;
-    expect(version[0]?.user_version).toBe(3);
+    expect(version[0]?.user_version).toBe(4);
 
     // STRICT enforcement is real: a TEXT into an INTEGER column throws.
     expect(() =>
@@ -332,7 +332,7 @@ describe('SQLiteDeliveryLedger — v1 → v3 migration', () => {
     try {
       const db = (store as unknown as { db: InstanceType<typeof Database> }).db;
       const version = db.pragma('user_version') as Array<{ user_version: number }>;
-      expect(version[0]?.user_version).toBe(3);
+      expect(version[0]?.user_version).toBe(4);
 
       const survivor = await store.get('old-1');
       expect(survivor?.content).toBe('survivor');
@@ -535,7 +535,7 @@ describe('SQLiteDeliveryLedger — v2 → v3 migration', () => {
     try {
       const db = (store as unknown as { db: InstanceType<typeof Database> }).db;
       const version = db.pragma('user_version') as Array<{ user_version: number }>;
-      expect(version[0]?.user_version).toBe(3);
+      expect(version[0]?.user_version).toBe(4);
 
       const row = await store.get('v2-1');
       expect(row?.content).toBe('written before voice existed');
@@ -866,5 +866,118 @@ describe('SQLiteDeliveryLedger — findBySession', () => {
     // Same millisecond is the common case here; the rowid tie-break is what
     // makes "newest first" mean something.
     expect(rows.map((r) => r.id)).toEqual([second, first]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v3 → v4 migration — `inbound_ref`, the inbound spool's double-reply guard
+// (plan reach-and-containment D2-6).
+// ---------------------------------------------------------------------------
+
+/** The exact v3 schema, stamped at user_version = 3. */
+const V3_SCHEMA = `
+  CREATE TABLE delivery_obligations (
+    id           TEXT PRIMARY KEY,
+    bot_key      TEXT NOT NULL,
+    platform     TEXT NOT NULL,
+    chat_id      TEXT NOT NULL,
+    session_id   TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    thread_id    TEXT,
+    kind         TEXT,
+    artifact_ref TEXT,
+    media_format TEXT
+  ) STRICT;
+
+  CREATE INDEX delivery_status_bot ON delivery_obligations(status, bot_key);
+  CREATE INDEX delivery_status_created ON delivery_obligations(status, created_at);
+  CREATE INDEX delivery_session ON delivery_obligations(session_id, created_at);
+`;
+
+describe('SQLiteDeliveryLedger — v3 → v4 migration', () => {
+  let dir: string;
+  let path: string;
+  let rm: (p: string, o: { recursive: boolean; force: boolean }) => void;
+
+  beforeEach(async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    rm = rmSync;
+    dir = mkdtempSync(join(tmpdir(), 'delivery-ledger-v3-'));
+    path = join(dir, 'delivery.db');
+
+    const db = new Database(path);
+    db.exec(V3_SCHEMA);
+    db.pragma('user_version = 3');
+    db.prepare(
+      `INSERT INTO delivery_obligations
+       (id, bot_key, platform, chat_id, session_id, content_hash, content, created_at, status,
+        kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('v3-1', 'bot-a', 'telegram', 'chat-1', 'sess-1', 'h', 'pre-v4', 1, 'pending', 'text');
+    db.close();
+  });
+
+  afterEach(() => {
+    rm(dir, { recursive: true, force: true });
+  });
+
+  it('keeps the pre-v4 row, reads inboundRef as undefined, and stamps v4', async () => {
+    const store = new SQLiteDeliveryLedger(path);
+    try {
+      const row = await store.get('v3-1');
+      expect(row?.content).toBe('pre-v4');
+      expect(row?.inboundRef).toBeUndefined();
+      expect((await store.listPending(['bot-a']))[0]?.id).toBe('v3-1');
+    } finally {
+      store.close();
+    }
+    const db = new Database(path);
+    try {
+      const version = db.pragma('user_version') as Array<{ user_version: number }>;
+      expect(version[0]?.user_version).toBe(4);
+      const cols = db.prepare('PRAGMA table_info(delivery_obligations)').all() as Array<{
+        name: string;
+      }>;
+      expect(cols.map((c) => c.name)).toContain('inbound_ref');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('a migrated ledger records and finds an inboundRef', async () => {
+    const store = new SQLiteDeliveryLedger(path);
+    try {
+      expect(await store.hasObligationFor('spool-1')).toBe(false);
+      const id = await store.record(input({ inboundRef: 'spool-1' }));
+      expect((await store.get(id))?.inboundRef).toBe('spool-1');
+      expect(await store.hasObligationFor('spool-1')).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe('SQLiteDeliveryLedger — hasObligationFor', () => {
+  it('inboundRef is null by default, and every status counts as evidence', async () => {
+    const store = ledger();
+    const plain = await store.record(input());
+    expect((await store.get(plain))?.inboundRef).toBeUndefined();
+    // '' names no spool row — normalized to none, like threadId.
+    const blank = await store.record(input({ inboundRef: '' }));
+    expect((await store.get(blank))?.inboundRef).toBeUndefined();
+    expect(await store.hasObligationFor('')).toBe(false);
+
+    const id = await store.record(input({ inboundRef: 'spool-9' }));
+    expect(await store.hasObligationFor('spool-9')).toBe(true);
+    // Delivered is as much evidence the reply exists as pending.
+    await store.markDelivered(id);
+    expect(await store.hasObligationFor('spool-9')).toBe(true);
+    expect(await store.hasObligationFor('spool-other')).toBe(false);
+    store.close();
   });
 });
