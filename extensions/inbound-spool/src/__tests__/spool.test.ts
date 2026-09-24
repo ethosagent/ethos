@@ -1,0 +1,267 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { type SpoolAccept, SQLiteInboundSpool } from '../index';
+
+function row(overrides: Partial<SpoolAccept> = {}): SpoolAccept {
+  return {
+    platform: 'telegram',
+    botKey: 'bot-a',
+    chatId: 'chat-1',
+    messageId: 'm-1',
+    laneKey: 'telegram:bot-a:chat-1',
+    payload: JSON.stringify({ text: 'hello' }),
+    ...overrides,
+  };
+}
+
+describe('SQLiteInboundSpool — accept', () => {
+  it('a second accept with the same key returns fresh: false and keeps one row', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const first = spool.accept(row());
+    const second = spool.accept(row({ payload: '{"text":"retry"}' }));
+    expect(first.fresh).toBe(true);
+    expect(second).toEqual({ id: first.id, fresh: false });
+    expect(spool.stats().received).toBe(1);
+    // The original payload stands — a platform retry never rewrites a spooled row.
+    expect(spool.get(first.id)?.payload).toBe(JSON.stringify({ text: 'hello' }));
+  });
+
+  it('normalizes an empty threadId to no thread', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const { id } = spool.accept(row({ threadId: '' }));
+    expect(spool.get(id)?.threadId).toBeUndefined();
+  });
+});
+
+describe('SQLiteInboundSpool — state transitions', () => {
+  let spool: SQLiteInboundSpool;
+  beforeEach(() => {
+    spool = new SQLiteInboundSpool(':memory:');
+  });
+
+  it('received → processing → done, counting one attempt and nulling the payload', () => {
+    const { id } = spool.accept(row());
+    expect(spool.markProcessing(id, 'p1')).toBe(true);
+    expect(spool.get(id)).toMatchObject({ status: 'processing', attempts: 1, claimedBy: 'p1' });
+    // Only a `received` row can start.
+    expect(spool.markProcessing(id, 'p1')).toBe(false);
+    spool.markDone(id);
+    expect(spool.get(id)).toMatchObject({ status: 'done', payload: '{}' });
+  });
+
+  it('processing → received on a failure under the cap, and → dead on the third', () => {
+    const { id } = spool.accept(row());
+    spool.markProcessing(id, 'p1');
+    expect(spool.markFailed(id, 'boom 1', 3)).toBe('received');
+    // The claim is kept, so the same process does not re-list it this boot.
+    expect(spool.get(id)).toMatchObject({
+      status: 'received',
+      claimedBy: 'p1',
+      lastError: 'boom 1',
+    });
+    expect(spool.listReplayable(['bot-a'])).toHaveLength(0);
+
+    spool.recoverOrphans('p2');
+    spool.markProcessing(id, 'p2');
+    expect(spool.markFailed(id, 'boom 2', 3)).toBe('received');
+    spool.recoverOrphans('p3');
+    spool.markProcessing(id, 'p3');
+    expect(spool.markFailed(id, 'boom 3', 3)).toBe('dead');
+    expect(spool.get(id)).toMatchObject({ status: 'dead', attempts: 3, lastError: 'boom 3' });
+    expect(spool.listDead().map((r) => r.id)).toEqual([id]);
+  });
+
+  it('requeue resets attempts and releases the claim; discard closes the row', () => {
+    const a = spool.accept(row({ messageId: 'a' })).id;
+    const b = spool.accept(row({ messageId: 'b' })).id;
+    for (const id of [a, b]) {
+      spool.markProcessing(id, 'p1');
+      spool.markFailed(id, 'x', 1);
+    }
+    expect(spool.requeue(a)).toBe(true);
+    expect(spool.get(a)).toMatchObject({ status: 'received', attempts: 0 });
+    expect(spool.get(a)?.claimedBy).toBeUndefined();
+    expect(spool.discard(b)).toBe(true);
+    expect(spool.get(b)).toMatchObject({ status: 'done', lastError: 'discarded', payload: '{}' });
+    // Only dead rows move.
+    expect(spool.requeue(a)).toBe(false);
+    expect(spool.discard(a)).toBe(false);
+  });
+
+  it('releaseOnShutdown refunds the attempt and releases the claim', () => {
+    const { id } = spool.accept(row());
+    spool.markProcessing(id, 'p1');
+    spool.releaseOnShutdown(id);
+    expect(spool.get(id)).toMatchObject({ status: 'received', attempts: 0 });
+    expect(spool.listReplayable(['bot-a']).map((r) => r.id)).toEqual([id]);
+  });
+
+  it('markDead only takes an unclaimed received row', () => {
+    const a = spool.accept(row({ messageId: 'a' })).id;
+    const b = spool.accept(row({ messageId: 'b', claimedBy: 'p1' })).id;
+    expect(spool.markDead(a, 'stale')).toBe(true);
+    expect(spool.markDead(b, 'stale')).toBe(false);
+    expect(spool.get(a)).toMatchObject({ status: 'dead', lastError: 'stale' });
+  });
+});
+
+describe('SQLiteInboundSpool — listReplayable', () => {
+  it('filters by botKey and orders by lane, received_at, then rowid', () => {
+    // A frozen clock: every row shares one received_at, so only the rowid
+    // tie-break can keep insertion order (CLAUDE.md, same-timestamp inserts).
+    const spool = new SQLiteInboundSpool(':memory:', { now: () => 1_000 });
+    spool.accept(row({ messageId: 'b1', laneKey: 'lane-b' }));
+    spool.accept(row({ messageId: 'a1', laneKey: 'lane-a' }));
+    spool.accept(row({ messageId: 'b2', laneKey: 'lane-b' }));
+    spool.accept(row({ messageId: 'a2', laneKey: 'lane-a' }));
+    spool.accept(row({ messageId: 'c1', laneKey: 'lane-c', botKey: 'bot-c' }));
+    spool.accept(row({ messageId: 'a3', laneKey: 'lane-a' }));
+
+    expect(spool.listReplayable(['bot-a']).map((r) => r.messageId)).toEqual([
+      'a1',
+      'a2',
+      'a3',
+      'b1',
+      'b2',
+    ]);
+    expect(spool.listReplayable([])).toEqual([]);
+    expect(spool.listOrphaned(['bot-a']).map((r) => r.messageId)).toEqual(['c1']);
+  });
+
+  it('orders by received_at before rowid within a lane', () => {
+    let t = 2_000;
+    const spool = new SQLiteInboundSpool(':memory:', { now: () => t });
+    spool.accept(row({ messageId: 'late' }));
+    t = 1_000;
+    spool.accept(row({ messageId: 'early' }));
+    expect(spool.listReplayable(['bot-a']).map((r) => r.messageId)).toEqual(['early', 'late']);
+  });
+
+  it('excludes claimed rows', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    spool.accept(row({ messageId: 'mine', claimedBy: 'p1' }));
+    spool.accept(row({ messageId: 'free' }));
+    expect(spool.listReplayable(['bot-a']).map((r) => r.messageId)).toEqual(['free']);
+  });
+});
+
+describe('SQLiteInboundSpool — on disk', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'inbound-spool-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('claim is exclusive across two store instances on one file', () => {
+    const path = join(dir, 'nested', 'inbound-spool.db');
+    const one = new SQLiteInboundSpool(path);
+    const two = new SQLiteInboundSpool(path);
+    try {
+      const { id } = one.accept(row());
+      expect(one.claim(id, 'p1')).toBe(true);
+      expect(two.claim(id, 'p2')).toBe(false);
+      expect(two.get(id)?.claimedBy).toBe('p1');
+    } finally {
+      one.close();
+      two.close();
+    }
+  });
+
+  it('survives reopening (idempotent migration)', () => {
+    const path = join(dir, 'inbound-spool.db');
+    const first = new SQLiteInboundSpool(path);
+    const { id } = first.accept(row());
+    first.close();
+    const second = new SQLiteInboundSpool(path);
+    try {
+      expect(second.get(id)?.status).toBe('received');
+    } finally {
+      second.close();
+    }
+  });
+});
+
+describe('SQLiteInboundSpool — recoverOrphans', () => {
+  it('moves only processing rows (and foreign claims), never done or dead', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const processing = spool.accept(row({ messageId: 'p' })).id;
+    spool.markProcessing(processing, 'dead-process');
+    const done = spool.accept(row({ messageId: 'd' })).id;
+    spool.markDone(done);
+    const dead = spool.accept(row({ messageId: 'x' })).id;
+    spool.markProcessing(dead, 'dead-process');
+    spool.markFailed(dead, 'poison', 1);
+    const foreignClaim = spool.accept(row({ messageId: 'f', claimedBy: 'dead-process' })).id;
+    const ownLive = spool.accept(row({ messageId: 'own' })).id;
+    spool.markProcessing(ownLive, 'me');
+
+    expect(spool.recoverOrphans('me')).toBe(1);
+    expect(spool.get(processing)).toMatchObject({ status: 'received', attempts: 1 });
+    expect(spool.get(processing)?.claimedBy).toBeUndefined();
+    expect(spool.get(foreignClaim)?.claimedBy).toBeUndefined();
+    expect(spool.get(done)?.status).toBe('done');
+    expect(spool.get(dead)?.status).toBe('dead');
+    // This process's own live turn is left alone.
+    expect(spool.get(ownLive)).toMatchObject({ status: 'processing', claimedBy: 'me' });
+  });
+});
+
+describe('SQLiteInboundSpool — retention', () => {
+  it('pruneDone never touches received or processing rows', () => {
+    let t = 1_000;
+    const spool = new SQLiteInboundSpool(':memory:', { now: () => t });
+    const received = spool.accept(row({ messageId: 'r' })).id;
+    const processing = spool.accept(row({ messageId: 'p' })).id;
+    spool.markProcessing(processing, 'p1');
+    const done = spool.accept(row({ messageId: 'd' })).id;
+    spool.markDone(done);
+    t = 10_000;
+    expect(spool.pruneDone(5_000)).toBe(1);
+    expect(spool.get(done)).toBeNull();
+    expect(spool.get(received)?.status).toBe('received');
+    expect(spool.get(processing)?.status).toBe('processing');
+  });
+
+  it('pruneDead removes only dead rows past the cutoff', () => {
+    let t = 1_000;
+    const spool = new SQLiteInboundSpool(':memory:', { now: () => t });
+    const old = spool.accept(row({ messageId: 'old' })).id;
+    spool.markDead(old, 'stale');
+    t = 9_000;
+    const fresh = spool.accept(row({ messageId: 'fresh' })).id;
+    spool.markDead(fresh, 'stale');
+    expect(spool.pruneDead(5_000)).toBe(1);
+    expect(spool.get(old)).toBeNull();
+    expect(spool.get(fresh)?.status).toBe('dead');
+  });
+});
+
+/** Reads `PRAGMA synchronous` off the store's OWN handle — it is a
+ *  per-connection setting. 2 = FULL, 1 = NORMAL. */
+function syncPragma(store: unknown): number {
+  const rows = (store as { db: { pragma(s: string): unknown } }).db.pragma('synchronous');
+  return (rows as Array<{ synchronous: number }>)[0]?.synchronous ?? -1;
+}
+
+describe('SQLiteInboundSpool — durability posture', () => {
+  it('runs at synchronous = FULL', () => {
+    // NOT a candidate for NORMAL. A `received` row is a message the user sent
+    // and was never answered; a power cut rolling it back is the failure this
+    // store exists to prevent. Two commits per inbound message around an LLM
+    // turn that takes seconds — the fsync is not what anyone waits on.
+    const spool = new SQLiteInboundSpool(':memory:');
+    expect(syncPragma(spool)).toBe(2);
+  });
+
+  it('sets busy_timeout = 5000', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const rows = (spool as unknown as { db: { pragma(s: string): unknown } }).db.pragma(
+      'busy_timeout',
+    ) as Array<Record<string, number>>;
+    expect(Object.values(rows[0] ?? {})[0]).toBe(5000);
+  });
+});

@@ -32,6 +32,7 @@
 //   extensions/call-log/          delivery-ledger's atomic redelivery claim is a
 //   extensions/notify-queue/      conditional UPDATE and session-cards derives its
 //   extensions/inbound-dedup/     per-session `seq` with MAX()+1 inside the insert
+//   extensions/inbound-spool/
 //   extensions/outbox/
 //   extensions/channel-transcript-sqlite/
 //                                 — both need a real transaction, not file IO.
@@ -50,7 +51,11 @@
 //                                 the answer — "did this approval still match what
 //                                 the approver saw", "did this process win the
 //                                 claim" — which a read-then-write through Storage
-//                                 cannot express.)
+//                                 cannot express.
+//                                 inbound-spool's replay claim is the same shape
+//                                 as delivery-ledger's: a conditional UPDATE inside
+//                                 a transaction whose affected-row count decides
+//                                 which claimant runs the owed turn.)
 //
 //   packages/a2a/                Same rationale as the SQLite stores above:
 //   src/sqlite-task-store.ts     SQLiteA2aTaskStore (T1.6) opens a raw path via
@@ -301,6 +306,7 @@ const ALLOWED_PREFIXES = [
   'extensions/notify-queue/',
   'extensions/outbox/',
   'extensions/inbound-dedup/',
+  'extensions/inbound-spool/',
   'extensions/channel-transcript-sqlite/',
   'extensions/voice-providers/',
   'extensions/agent-mesh/',
