@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: back-up-and-restore
 time: "10 min"
-updated: 2026-09-12
+updated: 2026-09-24
 ---
 
 ## Task
@@ -191,7 +191,7 @@ Under [`memory: vault`](../reference/config-yaml.md#memory) the memory lives in 
     the data directory and are NOT in this archive. Back that directory up yourself.
 ```
 
-Back that directory up the way you back up the rest of that vault — Time Machine, `restic`, the sync client that already holds it. The same line appears in the scheduled run's output file (`~/.ethos/cron/output/backup/<ts>.md`) and as a skipped row in Settings › Backup.
+Back that directory up the way you back up the rest of that vault — Time Machine, `restic`, the sync client that already holds it. The same line appears in the scheduled run's output file (`<ethos home>/cron/output/backup/<ts>.md`, `~/.ethos` unless `ETHOS_STATE_DIR` is set) and as a skipped row in Settings › Backup.
 
 What a restore still carries under `memory: vault`: `config.yaml` (so the restored machine points at the same vault path), the approval queue and its tombstones, and every database in the `state` scope. Point the restored deployment at a vault directory you have restored separately, then start it.
 

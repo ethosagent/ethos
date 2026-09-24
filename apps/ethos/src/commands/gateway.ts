@@ -14,7 +14,9 @@ import {
   bindResolvesToPersonality,
   deriveBotKey,
   type EthosConfig,
+  ethosCronDir,
   ethosDir,
+  ethosScriptsDir,
   loadConfigStrict,
   observeModePlatforms,
   readRawConfig,
@@ -714,6 +716,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   });
   const scheduler = new CronScheduler({
     storage: getStorage(),
+    cronDir: ethosCronDir(),
+    scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, logLevel),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
@@ -1752,6 +1756,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       {
         storage: getStorage(),
         executionBackend: webhookPrefilterBackend,
+        scriptsDir: ethosScriptsDir(),
         stdin: opts.stdin,
         label: 'prefilter',
       },

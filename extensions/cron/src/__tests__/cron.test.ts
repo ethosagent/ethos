@@ -1197,6 +1197,7 @@ describe('CronScheduler system jobs', () => {
   function makeSystemScheduler(overrides: Partial<CronSchedulerConfig> = {}): CronScheduler {
     return new CronScheduler({
       cronDir: testDir,
+      scriptsDir,
       runJob: async (job) => ({
         jobId: job.id,
         ranAt: new Date().toISOString(),

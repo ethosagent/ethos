@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { type EthosConfig, ethosDir } from '@ethosagent/config';
+import { type EthosConfig, ethosCronDir, ethosDir, ethosScriptsDir } from '@ethosagent/config';
 import type { AgentLoop } from '@ethosagent/core';
 import {
   type CronJobUpdate,
@@ -42,6 +42,8 @@ function makeScheduler(config: EthosConfig): {
 
   const scheduler = new CronScheduler({
     storage: getStorage(),
+    cronDir: ethosCronDir(),
+    scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, config.logs?.level),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }

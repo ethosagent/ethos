@@ -4,7 +4,7 @@ description: "Action-dispatch cron tool — create, list, get, read_run, update,
 kind: reference
 audience: developer
 slug: cron-tools
-updated: 2026-05-21
+updated: 2026-09-24
 ---
 
 # Cron tool
@@ -134,7 +134,7 @@ When present, the wiring registers `createCronTool(scheduler)` on the AgentLoop'
 
 ## Capability rationale {#capabilities}
 
-`capabilities: {}` — no framework-level gate. The scheduler is operator-injected; without one, no tool registration happens. The store is per-machine (under `~/.ethos/cron/`). Jobs created by the agent are visible to the operator via `ethos cron list` immediately.
+`capabilities: {}` — no framework-level gate. The scheduler is operator-injected; without one, no tool registration happens. The store is per state dir: `<ethos home>/cron/`, which is `~/.ethos/cron/` unless `ETHOS_STATE_DIR` is set (resolved by `ethosCronDir()` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts)). Jobs created by the agent are visible to the operator via `ethos cron list` immediately.
 
 **Cron creates durable side effects** (recurring runs cost provider tokens; output may notify channels). Treat the personality opt-in as the safety boundary.
 
