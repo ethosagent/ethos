@@ -11,16 +11,29 @@
 // that is actually wired, and the mint and the control lane both build it from
 // here (voice V1b, "advertised == handled").
 //
-// EVERYTHING dispatched here goes through the same `before_tool_call` hook the
-// agent loop fires, carrying the same `voiceOrigin`. That is what keeps the
-// approval surface — including A8's spoken-confirmation gate and its rule that
-// a far-end caller's voice can never satisfy an owner confirmation — in force
-// on a tool the realtime model called directly rather than through
-// `agent_consult`.
+// EVERYTHING dispatched here goes through core's per-call gate,
+// `enforceBeforeToolCall` (packages/core/src/agent-loop/stages/per-call-enforcement.ts),
+// the same one the agent loop's batch path and the script bridge cross: the
+// personality's deny rules first, then the `before_tool_call` hook carrying the
+// same `voiceOrigin` and `personalityId`, then the deny rules again on any
+// rewritten args. That is what keeps the approval surface — including A8's
+// spoken-confirmation gate and its rule that a far-end caller's voice can
+// never satisfy an owner confirmation — in force on a tool the realtime model
+// called directly rather than through `agent_consult`. Every result then
+// passes `redactToolResultSecrets`
+// (packages/core/src/agent-loop/stages/result-redaction.ts) before it is
+// spoken. Pinned by `__tests__/realtime-host.test.ts` ("core enforcement").
 
-import { ContextStore } from '@ethosagent/core';
+import {
+  ContextStore,
+  DefaultHookRegistry,
+  enforceBeforeToolCall,
+  type ResultRedactionDeps,
+  redactToolResultSecrets,
+} from '@ethosagent/core';
 import type {
   HookRegistry,
+  PersonalityConfig,
   RealtimeToolDefinition,
   ToolContext,
   ToolProgressEvent,
@@ -66,8 +79,28 @@ export interface RealtimeToolResult {
 
 export interface RealtimeToolHostOptions {
   registry: ToolRegistry;
-  /** Fires `before_tool_call`. Absent → nothing gates; wire it in production. */
+  /**
+   * Fires `before_tool_call`. Absent → no hook runs (an empty registry stands
+   * in), but the personality's deny rules and result redaction still apply;
+   * wire it in production.
+   */
   hooks?: HookRegistry;
+  /**
+   * The speaking personality, or `undefined` when the session named none.
+   * Required so a caller cannot forget it: its `safety.denyRules` refuse a call
+   * before any hook runs, its `plugins` decide which plugin `before_tool_call`
+   * handlers fire (as on the batch path), and its
+   * `safety.injectionDefense.blockSecretResults` governs result redaction.
+   * `undefined` means no deny rules, no plugin handlers, and the S9 default
+   * (block) for secrets.
+   */
+  personality: PersonalityConfig | undefined;
+  /**
+   * The redaction seam every result passes through before it is spoken —
+   * `AgentLoop.resultRedaction`, the same kit and observability the batch path
+   * uses. Required: an omittable redaction step is not a guarantee.
+   */
+  resultRedaction: ResultRedactionDeps;
   /** The speaking personality's toolset; gates the direct-call allowlist. */
   personalityToolset?: readonly string[];
   /** Override the direct-call allowlist. Defaults to {@link REALTIME_SAFE_TOOLS}. */
@@ -109,6 +142,13 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
   const handled = definitions.map((definition) => definition.name);
   const handledSet = new Set(handled);
   const budget = opts.resultBudgetChars ?? DEFAULT_RESULT_BUDGET_CHARS;
+  const hooks = opts.hooks ?? new DefaultHookRegistry();
+  const observability = opts.resultRedaction.observability;
+  // Same plugin gate as the batch path (`allowedPlugins` in
+  // packages/core/src/agent-loop/stages/turn-setup.ts).
+  const allowedPlugins = opts.personality?.plugins ?? [];
+  // No personality → nothing opts out of S9, so secrets are blocked.
+  const redactionPersonality: PersonalityConfig = opts.personality ?? { id: '', name: '' };
 
   return {
     definitions,
@@ -127,18 +167,27 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
         };
       }
 
-      let args: unknown = call.args;
-      if (opts.hooks) {
-        const gate = await opts.hooks.fireModifying('before_tool_call', {
+      // Core's per-call gate, the same one the batch path and the script bridge
+      // cross: deny rules before any hook, `before_tool_call` with the voice
+      // origin and personality, deny rules again on rewritten args.
+      const gate = await enforceBeforeToolCall(
+        { hooks, ...(observability ? { observability } : {}) },
+        {
           sessionId: ctx.sessionId,
           toolCallId: call.callId,
           toolName: call.name,
-          args,
+          args: call.args,
+          allowedPlugins,
+          traceId: undefined,
           voiceOrigin: ctx.voiceOrigin,
-        });
-        if (gate.error) return { ok: false, code: 'refused', output: speakable(gate.error) };
-        if (gate.args !== undefined) args = gate.args;
-      }
+          ...(ctx.personalityId !== undefined ? { personalityId: ctx.personalityId } : {}),
+          ...(opts.personality?.safety?.denyRules
+            ? { denyRules: opts.personality.safety.denyRules }
+            : {}),
+        },
+      );
+      if (!gate.allowed) return { ok: false, code: 'refused', output: speakable(gate.reason) };
+      const args = gate.effectiveArgs;
 
       const toolCtx: ToolContext = {
         sessionId: ctx.sessionId,
@@ -182,9 +231,14 @@ export function createRealtimeToolHost(opts: RealtimeToolHostOptions): RealtimeT
           output: speakable(`"${call.name}" did not return anything.`),
         };
       }
-      return outcome.result.ok
-        ? { ok: true, output: speakable(outcome.result.value) }
-        : { ok: false, code: outcome.result.code, output: speakable(outcome.result.error) };
+      // Secrets are redacted before the text can be spoken into the session.
+      const result = redactToolResultSecrets(outcome.result, opts.resultRedaction, {
+        personality: redactionPersonality,
+        traceId: undefined,
+      });
+      return result.ok
+        ? { ok: true, output: speakable(result.value) }
+        : { ok: false, code: result.code, output: speakable(result.error) };
     },
   };
 }

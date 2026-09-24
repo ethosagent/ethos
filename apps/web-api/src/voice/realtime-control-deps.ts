@@ -1,6 +1,11 @@
-import { voiceLaneKey } from '@ethosagent/core';
+import { type ResultRedactionDeps, voiceLaneKey } from '@ethosagent/core';
 import { createRealtimeToolHost } from '@ethosagent/tools-voice';
-import type { HookRegistry, SessionStore, ToolRegistry } from '@ethosagent/types';
+import type {
+  HookRegistry,
+  PersonalityConfig,
+  SessionStore,
+  ToolRegistry,
+} from '@ethosagent/types';
 import type { VoiceSpanRecorder } from '@ethosagent/voice-session';
 import type { RealtimeControlLaneDeps, RealtimeSessionBinding } from './realtime-control-lane';
 
@@ -73,8 +78,12 @@ export interface RealtimeControlDepsOptions {
   /** Fires `before_tool_call` (approval surface + spoken-confirmation gate). */
   hooks?: HookRegistry;
   sessions: SessionStore;
-  /** Personality lookup; supplies the toolset that gates direct-call tools. */
-  personalities: { get(id: string): { toolset?: string[] } | undefined };
+  /** Personality lookup; supplies the toolset that gates direct-call tools,
+   *  and the deny rules, plugins and secret-result posture the host enforces. */
+  personalities: { get(id: string): PersonalityConfig | undefined };
+  /** The loop's redaction seam (`AgentLoop.resultRedaction`); every realtime
+   *  tool result passes through it before it is spoken. Required. */
+  resultRedaction: ResultRedactionDeps;
   /**
    * The per-audio-minute rate and the session cap, resolved SERVER-side for the
    * personality about to talk.
@@ -146,9 +155,10 @@ export function createRealtimeControlDeps(
             compactionCount: 0,
           },
         }));
-      const toolset = info.personalityId
-        ? opts.personalities.get(info.personalityId)?.toolset
+      const personality = info.personalityId
+        ? opts.personalities.get(info.personalityId)
         : undefined;
+      const toolset = personality?.toolset;
       // A pricing lookup that fails leaves the call UNPRICED — it must not take
       // the agent down with it. The lane says so through its `unpriced` event
       // rather than reporting the session as free.
@@ -177,6 +187,8 @@ export function createRealtimeControlDeps(
         host: createRealtimeToolHost({
           registry: opts.toolRegistry,
           ...(opts.hooks ? { hooks: opts.hooks } : {}),
+          personality,
+          resultRedaction: opts.resultRedaction,
           ...(toolset ? { personalityToolset: toolset } : {}),
         }),
         workingDir: row.workingDir ?? opts.defaults.workingDir ?? process.cwd(),

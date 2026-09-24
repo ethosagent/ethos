@@ -45,6 +45,10 @@ export const UNSCANNABLE_MARKER = '[REDACTED:unscannable]';
  *     lost, takes the same helper at construction.
  *   - `ScriptToolBridge.dispatch` (./script-tool-bridge.ts) for in-script calls,
  *     before the inner `tool_end` and the script see the result.
+ *   - `createRealtimeToolHost`'s dispatch (extensions/tools-voice/src/realtime-host.ts)
+ *     for a tool the realtime voice model called directly, before the result
+ *     is spoken into the session — with the kit `AgentLoop.resultRedaction`
+ *     hands it. Pinned by that package's `__tests__/realtime-host.test.ts`.
  * Pinned by `__tests__/tool-processing-redaction.test.ts`. Redaction output is
  * not re-detected, so the outer `run_code` result passing the batch site after
  * its inner calls passed the bridge is harmless.

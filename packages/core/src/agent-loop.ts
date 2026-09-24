@@ -30,6 +30,7 @@ import {
   createTurnBudgetCounters,
   recordToolCallForBudgets,
 } from './agent-loop/stages/per-call-enforcement';
+import type { ResultRedactionDeps } from './agent-loop/stages/result-redaction';
 import { ScriptToolBridge } from './agent-loop/stages/script-tool-bridge';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
 import { streamStep } from './agent-loop/stages/stream-step';
@@ -520,6 +521,16 @@ export class AgentLoop {
   addSessionCost(sessionKey: string, usd: number): void {
     if (!Number.isFinite(usd) || usd <= 0) return;
     this.sessionCosts.set(sessionKey, (this.sessionCosts.get(sessionKey) ?? 0) + usd);
+  }
+
+  /** Redaction kit + observability for the tool path outside `run()`: the realtime
+   *  voice host (extensions/tools-voice/src/realtime-host.ts). A getter, so the
+   *  onboarding stand-in (apps/web-api/src/lib/pending-loop.ts) reads `undefined`. */
+  get resultRedaction(): ResultRedactionDeps {
+    return {
+      redaction: this.safety.redaction,
+      ...(this.observability ? { observability: this.observability } : {}),
+    };
   }
 
   /** Manual `/compact` — force a compaction outside a turn (delegates to

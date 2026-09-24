@@ -32,7 +32,10 @@ function build(
     {
       toolRegistry: registry,
       sessions,
-      personalities: { get: () => ({ toolset: ['read_file'] }) },
+      personalities: { get: () => ({ id: 'p', name: 'P', toolset: ['read_file'] }) },
+      resultRedaction: {
+        redaction: { redactPii: (s) => s, redactString: (s) => s, detectSecrets: () => [] },
+      },
       defaults: { model: 'm', provider: 'p' },
       ...extra,
     },
