@@ -186,6 +186,8 @@ Provider fallback chain. When two or more entries are present, the runtime wraps
 | `providers.<i>.apiVersion` | string | Azure only: REST API version for entry `<i>`. |
 | `providers.<i>.region` | string | Bedrock only: AWS region for entry `<i>`. |
 | `providers.<i>.awsProfile` | string | Bedrock only: named AWS profile for entry `<i>`. |
+| `providers.<i>.serverCompaction` | boolean | Anthropic only. `true` lets the provider compact the conversation server-side instead of the local context engine. Default off. See [Server-side compaction](#server-compaction). |
+| `providers.<i>.serverCompactionTriggerTokens` | integer | Input-token count at which the server compacts. Default: the local compaction threshold for the model. A value below 50,000, the minimum in Anthropic's API documentation, is raised to 50,000 rather than rejected. |
 
 Any other `providers.<i>.<field>` line belongs to entry `<i>`: it moves with the entry when the chain is reordered and is removed with it. Its value is checked for plaintext credentials at boot like every other value. If one is found, Ethos refuses to start and names the line — run `ethos secrets set providers/<i>/<field> <value>`, then set the line to `providers.<i>.<field>: ${secrets:providers/<i>/<field>}`.
 
@@ -196,6 +198,30 @@ providers.0.model: claude-opus-4-7
 providers.1.provider: openrouter
 providers.1.apiKey: sk-or-...
 providers.1.model: anthropic/claude-opus-4-7
+```
+
+### Server-side compaction {#server-compaction}
+
+With `providers.<i>.serverCompaction: true` on an `anthropic` entry, Anthropic summarizes the older turns itself once a request's input reaches the trigger (the `compact_20260112` edit, beta `compact-2026-01-12`). The local context engine then stays out of the way for every turn that entry serves: the pre-request compaction, the overflow retry and the turn-end auto-compaction do not run, so a turn never compacts twice. The top-level spelling counts as entry `0`, so a single-provider setup turns it on with `providers.0.provider: anthropic` plus `providers.0.serverCompaction: true`.
+
+- The trigger defaults to the threshold the local gate would compact at (`compaction.pressure` of the model's window, capped by `compaction.maxContextTokens`), so turning the switch on changes who compacts, not when.
+- The summary block is saved in `sessions.db` as one extra assistant row and sent back on every later request, as the API requires. Transcripts, exports and search show it as `— context compacted by the provider —` followed by the summary; the encrypted part is stored outside the searchable text.
+- On any other provider the flag is ignored with a warning at startup.
+- If the API refuses the edit (an unsupported model, for example), the request is retried once without it, an `audit.compaction` event with code `llm.server_compaction_rejected` lands in `observability.db`, and local compaction runs for the rest of that turn.
+- After a failover to a non-Anthropic provider, the saved summary reaches it as plain assistant text; the encrypted half is Anthropic-only and is dropped.
+
+```yaml
+providers.0.provider: anthropic
+providers.0.apiKey: ${secrets:providers/0/anthropic/apiKey}
+providers.0.serverCompaction: true
+providers.0.serverCompactionTriggerTokens: 150000
+```
+
+A compaction shows up as an assistant row that starts with the marker line, and as an `llm.server_compacted` event. `ANTHROPIC_LOG=debug` prints each request body, where the next request carries the block back:
+
+```bash
+sqlite3 ~/.ethos/sessions.db "SELECT role, substr(content, 1, 80) FROM messages WHERE tool_name = '_provider_compaction';"
+sqlite3 ~/.ethos/observability.db "SELECT code, cause FROM events WHERE code LIKE 'llm.server_compact%';"
 ```
 
 ## telegram.bots.\* {#telegram-bots}

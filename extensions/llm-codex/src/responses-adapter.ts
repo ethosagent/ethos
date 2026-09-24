@@ -1,4 +1,5 @@
 import type { Message, MessageContent, ToolDefinitionLite } from '@ethosagent/types';
+import { flattenCompactionEnvelopes } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
 // Ethos Message[] → Responses API input format
@@ -72,7 +73,9 @@ function contentBlockToItems(block: MessageContent, role: 'user' | 'assistant'):
 export function toResponsesInput(messages: Message[]): unknown[] {
   const items: unknown[] = [];
 
-  for (const msg of messages) {
+  // Item 7 (D33) — a persisted server-compaction block reaches this provider
+  // as its readable summary; the Anthropic-only encrypted half is dropped.
+  for (const msg of flattenCompactionEnvelopes(messages)) {
     if (typeof msg.content === 'string') {
       items.push({ role: msg.role, content: msg.content });
       continue;

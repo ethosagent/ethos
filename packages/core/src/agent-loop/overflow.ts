@@ -5,11 +5,12 @@
 // OpenAI-compat: `context_length_exceeded` / "maximum context length"), so we
 // match on both the structured error code/type and the message text.
 
-import type {
-  ContextEngine,
-  ContextEngineLLMHandle,
-  Message,
-  PersonalityConfig,
+import {
+  type ContextEngine,
+  type ContextEngineLLMHandle,
+  flattenCompactionEnvelopes,
+  type Message,
+  type PersonalityConfig,
 } from '@ethosagent/types';
 import { estimateMessagesTokens, estimateTokens } from '../context-engines/token-estimator';
 import type { LoopDeps } from './turn-context';
@@ -124,14 +125,21 @@ export async function applyOverflowRetry(
     sessionKey: string;
     turnNumber: number;
     lastCompactionTurn: number;
+    /** Item 7 (D32) — `TurnSetup.serverCompaction`. While active the provider
+     *  is the turn's one compactor, so no local emergency compaction runs and
+     *  the overflow surfaces as an error. */
+    serverCompaction?: { active: boolean };
   },
 ): Promise<OverflowRetryResult> {
+  if (sessionMeta.serverCompaction?.active) return { retried: false };
   const engineName = personality.context_engine ?? deps.compaction?.defaultEngine ?? 'drop_oldest';
   const engine = deps.contextEngines.get(engineName) ?? deps.contextEngines.get('drop_oldest');
   if (!engine) return { retried: false };
+  // Item 7 — the engine sees server-compaction blocks as their summary text.
+  const source = flattenCompactionEnvelopes(llmMessages);
   const { messages: trimmed, summaryError } = await emergencyCompact(
     engine,
-    llmMessages,
+    source,
     systemPrompt,
     personality,
     sessionMeta,
@@ -140,7 +148,7 @@ export async function applyOverflowRetry(
       countTokens: deps.llm.countTokens.bind(deps.llm),
     },
   );
-  if (trimmed.length >= llmMessages.length) {
+  if (trimmed.length >= source.length) {
     return { retried: false, ...(summaryError !== undefined ? { summaryError } : {}) };
   }
   llmMessages.length = 0;

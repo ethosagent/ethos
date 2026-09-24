@@ -5,6 +5,7 @@ import type {
   Message,
   ToolDefinitionLite,
 } from '@ethosagent/types';
+import { flattenCompactionEnvelopes } from '@ethosagent/types';
 import { type SigV4Config, SigV4Signer } from './sigv4';
 
 export interface BedrockTransportConfig {
@@ -60,7 +61,9 @@ function buildConverseBody(
   tools: ToolDefinitionLite[],
   options: CompletionOptions,
 ): Record<string, unknown> {
-  const converseMessages = messages.map((m) => ({
+  // Item 7 (D33) — a persisted server-compaction block reaches this provider
+  // as its readable summary; the Anthropic-only encrypted half is dropped.
+  const converseMessages = flattenCompactionEnvelopes(messages).map((m) => ({
     role: m.role,
     content: typeof m.content === 'string' ? [{ text: m.content }] : m.content.map(convertContent),
   }));

@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
-import type { Message, MessageContent, StoredMessage } from '@ethosagent/types';
+import {
+  compactionFromStoredRow,
+  encodeCompactionEnvelope,
+  type Message,
+  type MessageContent,
+  type StoredMessage,
+} from '@ethosagent/types';
 import { ghostSkillMarker, skillCallsFromHistory } from './ghost-skills';
 
 /**
@@ -147,7 +153,12 @@ export function toLLMMessages(stored: StoredMessage[]): Message[] {
         messages.push({ role: 'user', content: msg.content });
       }
     } else if (msg.role === 'assistant') {
-      if (msg.toolCalls && msg.toolCalls.length > 0) {
+      // Item 7 — only a structurally-marked row replays as a compaction block;
+      // a row whose TEXT merely looks like one stays text (llm.ts envelope notes).
+      const compaction = compactionFromStoredRow(msg);
+      if (compaction) {
+        messages.push({ role: 'assistant', content: encodeCompactionEnvelope(compaction) });
+      } else if (msg.toolCalls && msg.toolCalls.length > 0) {
         const content: MessageContent[] = [];
         // Blank text is never a block (see EMPTY_ASSISTANT_TEXT); tool_use follows.
         if (msg.content.trim()) content.push({ type: 'text', text: msg.content });

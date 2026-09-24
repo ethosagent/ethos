@@ -200,6 +200,17 @@ export interface TurnSetup {
   modelOverride: string | undefined;
   /** Which provider entry `modelOverride` belongs to — `routeTurnModel` (`agent-loop/model-route.ts`). */
   providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
+  /**
+   * openclaw-9.5-adoption item 7 (D32) — exactly one compactor per turn.
+   * `active` is true when the provider this turn resolves to compacts
+   * server-side (`servesServerCompaction`, providers/chained-provider.ts); the
+   * local compactions then skip: the pre-LLM gate (`assembleContext`), the
+   * overflow retry (`applyOverflowRetry`) and the turn-end trigger
+   * (`maybeConsolidateAtTurnEnd`). Mutable on purpose: `streamStep` clears it
+   * when the provider reports the API refused the compaction edit, so the
+   * local compactions still left in THIS turn run.
+   */
+  serverCompaction: { active: boolean };
   allowedTools: string[] | undefined;
   allowedPlugins: string[];
   filterOpts: ToolFilterOpts;

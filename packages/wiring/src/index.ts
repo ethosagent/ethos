@@ -5,13 +5,15 @@ import {
   ChainedProvider,
   DefaultLLMProviderRegistry,
   type DefaultToolRegistry,
+  markServerCompaction,
+  pressureGateTokens,
   type SummarizerFn,
   tagProviderEntry,
 } from '@ethosagent/core';
 import type { CronScheduler } from '@ethosagent/cron';
 import type { GoalRunner } from '@ethosagent/goal-runner';
 import type { TrustPolicy } from '@ethosagent/kanban-store';
-import { AuthRotatingProvider } from '@ethosagent/llm-anthropic';
+import { AuthRotatingProvider, anthropicContextTokens } from '@ethosagent/llm-anthropic';
 import type { PluginLoader } from '@ethosagent/plugin-loader';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import type { TeamRole } from '@ethosagent/tools-kanban';
@@ -53,6 +55,7 @@ import {
   lookupProfile,
   mergeModelProfile,
   PROVIDER_WINDOW_DEFAULTS,
+  resolveCompactionGate,
 } from './model-catalog';
 import type { EthosObservability } from './observability/ethos-observability';
 import { registerBuiltinProviders } from './register-builtin-providers';
@@ -124,6 +127,10 @@ export interface WiringProviderConfig {
    *  otherwise. Named `awsProfile`, not `profile`, because `profile` already
    *  means a per-model `ModelProfile` (`models.*`) in this config. */
   awsProfile?: string;
+  /** Item 7 (D32) — `providers.<n>.serverCompaction`; honoured on `anthropic` only. */
+  serverCompaction?: boolean;
+  /** `providers.<n>.serverCompactionTriggerTokens`; absent → `pressureGateTokens`. */
+  serverCompactionTriggerTokens?: number;
 }
 
 export interface WiringConfig {
@@ -1069,6 +1076,47 @@ export function isProviderAllowed(providerName: string, allowedPlugins?: string[
 }
 
 /**
+ * Item 7 (D32) — the server-compaction setting for one provider entry, or
+ * `undefined` when it compacts locally. Honoured only for `anthropic`: any
+ * other provider with the flag gets a warning and local compaction. The
+ * trigger defaults to the local gate's own threshold for the model
+ * (`pressureGateTokens` over the provider's reported window, with the resolved
+ * `compaction.pressure` and `compaction.maxContextTokens`), so the switch
+ * changes WHO compacts, not WHEN.
+ */
+function serverCompactionFor(
+  cfg: {
+    provider: string;
+    model: string;
+    serverCompaction?: boolean;
+    serverCompactionTriggerTokens?: number;
+  },
+  config: WiringConfig,
+  log: Logger,
+): { triggerTokens: number } | undefined {
+  if (cfg.serverCompaction !== true) return undefined;
+  if (cfg.provider !== 'anthropic') {
+    log.warn(
+      `providers: serverCompaction is honoured only on an anthropic entry; the "${cfg.provider}" ` +
+        'entry compacts locally.',
+    );
+    return undefined;
+  }
+  const profile = mergeModelProfile(
+    lookupProfile(cfg.provider, cfg.model),
+    config.models?.[`${cfg.provider}/${cfg.model}`],
+  );
+  const triggerTokens =
+    cfg.serverCompactionTriggerTokens ??
+    pressureGateTokens(
+      anthropicContextTokens(cfg.model),
+      resolveCompactionGate(profile, config.compaction)?.pressure,
+      config.compaction?.maxContextTokens,
+    );
+  return { triggerTokens };
+}
+
+/**
  * Registry-aware LLM creation — used internally by `createAgentLoop` after
  * plugins have loaded. Falls through to the registry for each provider name,
  * so plugin-contributed providers participate in chained failover.
@@ -1097,6 +1145,8 @@ async function createLLMFromRegistry(
       apiVersion?: string;
       region?: string;
       awsProfile?: string;
+      serverCompaction?: boolean;
+      serverCompactionTriggerTokens?: number;
     },
     opts: { chainHop?: boolean } = {},
   ): Promise<LLMProvider> => {
@@ -1164,9 +1214,16 @@ async function createLLMFromRegistry(
       lookupProfile(cfg.provider, cfg.model),
       config.models?.[`${cfg.provider}/${cfg.model}`],
     );
+    const serverCompaction = serverCompactionFor(cfg, config, log);
     const provider = await factory({
       config: {
         ...(cfg as unknown as Record<string, unknown>),
+        // Item 7 — the resolved trigger, never the raw config value alone;
+        // `anthropicFactory` sends the edit only when both are present.
+        serverCompaction: serverCompaction !== undefined,
+        ...(serverCompaction
+          ? { serverCompactionTriggerTokens: serverCompaction.triggerTokens }
+          : {}),
         ...(contextWindow !== undefined ? { maxContextTokens: contextWindow } : {}),
         ...(profile?.toolCallFormat !== undefined
           ? { toolCallFormat: profile.toolCallFormat }
@@ -1240,7 +1297,9 @@ async function createLLMFromRegistry(
           `These must be declared on the provider instance.`,
       );
     }
-    return provider;
+    // The loop reads the same fact to skip its own compaction for turns this
+    // instance serves (`servesServerCompaction`, packages/core).
+    return serverCompaction ? markServerCompaction(provider) : provider;
   };
 
   if (config.providers && config.providers.length >= 2) {
@@ -1267,6 +1326,12 @@ async function createLLMFromRegistry(
             ...(hop.entry.apiVersion !== undefined ? { apiVersion: hop.entry.apiVersion } : {}),
             ...(hop.entry.region !== undefined ? { region: hop.entry.region } : {}),
             ...(hop.entry.awsProfile !== undefined ? { awsProfile: hop.entry.awsProfile } : {}),
+            ...(hop.entry.serverCompaction !== undefined
+              ? { serverCompaction: hop.entry.serverCompaction }
+              : {}),
+            ...(hop.entry.serverCompactionTriggerTokens !== undefined
+              ? { serverCompactionTriggerTokens: hop.entry.serverCompactionTriggerTokens }
+              : {}),
           },
           { chainHop },
         ).then((instance) => tagProviderEntry(instance, hop.key)),
@@ -1285,6 +1350,19 @@ async function createLLMFromRegistry(
   const [head] = config.providers ?? [];
   const topKey =
     head && head.provider === config.provider ? deriveProviderKey(head, 0) : config.provider;
+  // Item 7 — the same rule gives the top-level spelling entry 0's
+  // server-compaction switch.
+  const topCompaction =
+    head && head.provider === config.provider
+      ? {
+          ...(head.serverCompaction !== undefined
+            ? { serverCompaction: head.serverCompaction }
+            : {}),
+          ...(head.serverCompactionTriggerTokens !== undefined
+            ? { serverCompactionTriggerTokens: head.serverCompactionTriggerTokens }
+            : {}),
+        }
+      : {};
 
   // Anthropic rotation pool is provider-specific (rotates across API keys for
   // the same model). Handled inline — rotation is an Anthropic concern, not a
@@ -1292,6 +1370,11 @@ async function createLLMFromRegistry(
   if (config.provider === 'anthropic') {
     const rotation = config.rotationKeys ?? [];
     if (rotation.length > 0) {
+      const serverCompaction = serverCompactionFor(
+        { provider: config.provider, model: config.model, ...topCompaction },
+        config,
+        log,
+      );
       const pool = new AuthRotatingProvider(
         [
           { id: 'primary', apiKey: config.apiKey, priority: 100 },
@@ -1306,15 +1389,19 @@ async function createLLMFromRegistry(
         // too, and so does the per-request deadline: every pooled key builds
         // its own client, so a deadline set only on the non-rotating path
         // would silently not apply to a rotation deployment.
-        config.toolOrder !== undefined || config.requestTimeoutMs !== undefined
+        config.toolOrder !== undefined ||
+          config.requestTimeoutMs !== undefined ||
+          serverCompaction !== undefined
           ? {
               ...(config.toolOrder !== undefined ? { toolOrder: config.toolOrder } : {}),
               ...(config.requestTimeoutMs !== undefined
                 ? { requestTimeoutMs: config.requestTimeoutMs }
                 : {}),
+              ...(serverCompaction ? { serverCompaction } : {}),
             }
           : undefined,
       );
+      if (serverCompaction) markServerCompaction(pool);
       return tagProviderEntry(pool, topKey);
     }
   }
@@ -1327,6 +1414,7 @@ async function createLLMFromRegistry(
     ...(config.apiVersion !== undefined ? { apiVersion: config.apiVersion } : {}),
     ...(config.region !== undefined ? { region: config.region } : {}),
     ...(config.awsProfile !== undefined ? { awsProfile: config.awsProfile } : {}),
+    ...topCompaction,
   });
   return tagProviderEntry(primary, topKey);
 }

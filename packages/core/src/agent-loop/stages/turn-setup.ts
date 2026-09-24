@@ -10,6 +10,7 @@ import type {
   ToolFilterOpts,
 } from '@ethosagent/types';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
+import { servesServerCompaction } from '../../providers/chained-provider';
 import { routeTurnModel } from '../model-route';
 import { parseSmallWindowToolset } from '../small-window-toolset';
 import { resolveToolLoading } from '../tool-loading';
@@ -423,6 +424,7 @@ export async function* setupTurn(
       effectiveModel,
       modelOverride,
       providerEntry,
+      serverCompaction: { active: servesServerCompaction(deps.llm, providerEntry) },
       allowedTools,
       allowedPlugins,
       filterOpts,

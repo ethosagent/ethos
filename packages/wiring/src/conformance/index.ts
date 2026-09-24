@@ -157,6 +157,7 @@ async function checkChunkVariants(provider: LLMProvider): Promise<ConformanceChe
     'usage',
     'done',
     'warning',
+    'compaction',
   ]);
 
   try {

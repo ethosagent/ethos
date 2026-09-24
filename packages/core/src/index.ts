@@ -21,7 +21,7 @@ export {
 // Lane 1(b/c) — the gate's output-reserve constant, shared with wiring's
 // startup floor diagnostic and window-scaled result budget so there is ONE
 // reserve arithmetic, not a drifting copy.
-export { DEFAULT_OUTPUT_RESERVE_TOKENS } from './agent-loop/compaction';
+export { DEFAULT_OUTPUT_RESERVE_TOKENS, pressureGateTokens } from './agent-loop/compaction';
 // Personality deny rules — enforced in `enforceBeforeToolCall`; exported so the
 // smart reviewer's verdict cache keys off the same canonical args form.
 export { canonicalizeArgs, denyRuleReason, matchDenyRule } from './agent-loop/deny-rules';
@@ -193,7 +193,9 @@ export type {
 } from './providers/chained-provider';
 export {
   ChainedProvider,
+  markServerCompaction,
   providerEntriesOf,
+  servesServerCompaction,
   tagProviderEntry,
 } from './providers/chained-provider';
 export { DefaultDocumentExtractorRegistry } from './providers/document-extractor-registry';

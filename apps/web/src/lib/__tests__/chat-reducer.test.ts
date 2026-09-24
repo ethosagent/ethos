@@ -1,4 +1,8 @@
-import { RETURNED_DIRECT_TOOL_RESULT } from '@ethosagent/types';
+import {
+  COMPACTION_MARKER,
+  COMPACTION_ROW_TOOL_NAME,
+  RETURNED_DIRECT_TOOL_RESULT,
+} from '@ethosagent/types';
 import type { SseEvent, StoredMessage } from '@ethosagent/web-contracts';
 import { describe, expect, it } from 'vitest';
 import {
@@ -2011,5 +2015,28 @@ describe('phases and the trail lifecycle', () => {
     expect(turn.blocks.map((b) => b.kind)).toEqual(['text', 'card', 'text', 'card']);
     expect((turn.blocks[1] as CardBlock).card.payload).toMatchObject({ message: 'A' });
     expect((turn.blocks[3] as CardBlock).card.payload).toMatchObject({ message: 'B' });
+  });
+});
+
+// openclaw-9.5-adoption item 7 — a provider-side compaction row shows as its
+// one-line marker, never the summary or a raw payload.
+describe('history-loaded — provider compaction row', () => {
+  it('renders the marker in the reply bubble and keeps the reply', () => {
+    const stored: StoredMessage[] = [
+      storedMsg({ id: 'u1', role: 'user', content: 'hi' }),
+      storedMsg({
+        id: 'c1',
+        role: 'assistant',
+        content: `${COMPACTION_MARKER}\n\nlong summary text`,
+        toolName: COMPACTION_ROW_TOOL_NAME,
+      }),
+      storedMsg({ id: 'a1', role: 'assistant', content: 'reply' }),
+    ];
+    const s = applyAction(initialChatState, { type: 'history-loaded', messages: stored });
+    const turn = s.messages[1] as AssistantTurn;
+    expect(turn.blocks).toEqual([
+      { kind: 'text', content: COMPACTION_MARKER },
+      { kind: 'text', content: 'reply' },
+    ]);
   });
 });

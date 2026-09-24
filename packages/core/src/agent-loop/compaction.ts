@@ -1,12 +1,13 @@
-import type {
-  ContextEngineLLMHandle,
-  ContextEngineRegistry,
-  ContextEngineStore,
-  LLMProvider,
-  Message,
-  PersonalityConfig,
-  SessionStore,
-  Storage,
+import {
+  type ContextEngineLLMHandle,
+  type ContextEngineRegistry,
+  type ContextEngineStore,
+  flattenCompactionEnvelopes,
+  type LLMProvider,
+  type Message,
+  type PersonalityConfig,
+  type SessionStore,
+  type Storage,
 } from '@ethosagent/types';
 import {
   estimateMessagesChars,
@@ -139,9 +140,8 @@ export interface GateEval {
 }
 
 export function evaluateGate(
-  deps: Pick<
+  deps: { llm: Pick<LLMProvider, 'maxContextTokens'> } & Pick<
     CompactionDeps,
-    | 'llm'
     | 'reservedOutputTokens'
     | 'staticTokens'
     | 'maxSingleToolResultTokens'
@@ -198,6 +198,24 @@ export function effectiveGate(g: GateEval, fraction: number, maxContextTokens?: 
   return maxContextTokens !== undefined && maxContextTokens > 0
     ? Math.min(fractional, maxContextTokens)
     : fractional;
+}
+
+/**
+ * openclaw-9.5-adoption item 7 — the whole-context token count at which the
+ * pre-LLM gate would compact a history in a `windowTokens` window, before any
+ * request has measured a static slice: `evaluateGate` with no messages, then
+ * `effectiveGate` with the resolved pressure (0.8 when unset, as in
+ * `maybeCompact`) and the optional absolute ceiling. Wiring uses it as the
+ * default `serverCompactionTriggerTokens`, so switching a provider to
+ * server-side compaction does not move WHEN compaction happens.
+ */
+export function pressureGateTokens(
+  windowTokens: number,
+  pressure?: number,
+  maxContextTokens?: number,
+): number {
+  const g = evaluateGate({ llm: { maxContextTokens: windowTokens } }, [], '');
+  return effectiveGate(g, pressure ?? 0.8, maxContextTokens);
 }
 
 // T3 — gate-hardening constants (generic, no per-model config).
@@ -291,6 +309,9 @@ export async function maybeCompact(
   const engineName = personality.context_engine ?? deps.defaultEngine ?? 'drop_oldest';
   const engine = deps.contextEngines.get(engineName) ?? deps.contextEngines.get('drop_oldest');
   if (!engine) return { messages };
+  // Item 7 — an engine (and any summarizer it calls) sees a server-compaction
+  // block as its readable summary, never the in-memory envelope.
+  messages = flattenCompactionEnvelopes(messages);
 
   // Build a per-personality ContextEngineStore when raw storage is available.
   let store: ContextEngineStore | undefined;
