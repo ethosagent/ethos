@@ -5,7 +5,7 @@ kind: how-to
 audience: developer
 slug: write-an-llm-provider-plugin
 time: "20 min"
-updated: 2026-05-14
+updated: 2026-09-24
 ---
 
 ## Task
@@ -20,7 +20,7 @@ The agent resolves your provider from the registry at startup. Chained failover,
 
 - TypeScript familiarity, Node 24+, pnpm on `PATH`.
 - A working inference endpoint (self-hosted vLLM, Bedrock proxy, Cohere API, etc.).
-- Understanding of the `CompletionChunk` streaming union (7 variants in `packages/types/src/llm.ts`).
+- Understanding of the `CompletionChunk` streaming union (9 variants in `packages/types/src/llm.ts`).
 
 ## Steps
 
@@ -46,7 +46,7 @@ Create a standard Ethos plugin package with `ethos.type: "plugin"` and `ethos.pl
 
 ### 2. Implement LLMProvider
 
-Your provider must implement `LLMProvider` from `@ethosagent/types`. The `complete()` method returns `AsyncIterable<CompletionChunk>`. Map your SDK's streaming events to the 7-variant union.
+Your provider must implement `LLMProvider` from `@ethosagent/types`. The `complete()` method returns `AsyncIterable<CompletionChunk>`. Map your SDK's streaming events to the 9-variant union. A provider emits only the variants its API has a source for; `compaction` belongs to Anthropic's server-side compaction and most providers never emit it.
 
 ```ts title="src/cohere-provider.ts"
 import type { CompletionChunk, CompletionOptions, LLMProvider, Message, Tool } from '@ethosagent/types';

@@ -1,14 +1,14 @@
 ---
 title: "Add an LLM provider"
-description: "Build an echo provider implementing LLMProvider — map a streaming source to the seven-variant CompletionChunk union, ship as extensions/llm-echo."
+description: "Build an echo provider implementing LLMProvider — map a streaming source to the CompletionChunk union, ship as extensions/llm-echo."
 kind: tutorial
 audience: developer
 slug: add-an-llm-provider
 time: "30 min"
-updated: 2026-05-12
+updated: 2026-09-24
 ---
 
-`LLMProvider` is the seam between Ethos and any model API. The [AgentLoop](../../getting-started/glossary.md#agent-loop) does not know what provider it is talking to — it consumes `AsyncIterable<CompletionChunk>` from `provider.complete()` and yields `AgentEvent` to whatever surface is listening. Your job, as a provider author, is to map your upstream API's streaming events to seven `CompletionChunk` variants.
+`LLMProvider` is the seam between Ethos and any model API. The [AgentLoop](../../getting-started/glossary.md#agent-loop) does not know what provider it is talking to — it consumes `AsyncIterable<CompletionChunk>` from `provider.complete()` and yields `AgentEvent` to whatever surface is listening. Your job, as a provider author, is to map your upstream API's streaming events to the `CompletionChunk` variants it has a source for. The union has nine; the echo provider below uses a subset.
 
 This tutorial builds an "echo" provider as the smallest possible exercise of every variant. The provider does not talk to a remote API; it echoes the last user message back, character by character, while emitting realistic `text_delta`, `tool_use_*`, `usage`, and `done` chunks. Once it works, swap the echo body for a real client and the rest of the file stays.
 
@@ -19,7 +19,7 @@ You ship it as `extensions/llm-echo/` inside the monorepo, wired via `config.pro
 By the end, you have:
 
 - `extensions/llm-echo/` — a workspace package implementing `LLMProvider` from `@ethosagent/types`.
-- An async generator that maps a local stream to the seven `CompletionChunk` variants, including a tool-call delta.
+- An async generator that maps a local stream to `CompletionChunk` variants, including a tool-call delta.
 - A path alias and a wiring branch so `config.provider: echo` selects your provider.
 - Unit tests that consume the async iterable and assert on the chunks emitted.
 - `pnpm dev` running with the echo provider — the agent "responds" by echoing the user message back, every event arrives through the same `AgentLoop` pipeline as a real model.
@@ -45,7 +45,9 @@ export type CompletionChunk =
   | { type: 'tool_use_delta'; toolCallId: string; partialJson: string }
   | { type: 'tool_use_end';   toolCallId: string; inputJson: string }
   | { type: 'usage';          usage: TokenUsage }
-  | { type: 'done';           finishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' };
+  | { type: 'done';           finishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' }
+  | { type: 'warning';        message: string }
+  | { type: 'compaction';     content: string | null; encryptedContent: string | null };
 
 export interface LLMProvider {
   readonly name: string;
@@ -512,7 +514,7 @@ The five questions are the work. Once you can answer them for your upstream, the
 
 ## What you learned
 
-- `LLMProvider` is implemented as an `async function*` that yields one of seven `CompletionChunk` variants until the turn is done.
+- `LLMProvider` is implemented as an `async function*` that yields `CompletionChunk` variants until the turn is done.
 - Order matters: `text_delta` / `thinking_delta` / `tool_use_*` chunks first, then exactly one `usage`, then exactly one `done` with a `finishReason`. The AgentLoop branches on `done.finishReason` to decide whether to run tools or end the turn.
 - `tool_use_delta` is presentation only — the AgentLoop parses `inputJson` from the `tool_use_end` event.
 - `options.abortSignal` must propagate to every `await` in `complete()`; surfaces close cleanly only when the provider honours cancellation.

@@ -258,7 +258,7 @@ Create extensions/llm-<name>/src/index.ts — implement LLMProvider from @ethosa
 Create extensions/llm-<name>/package.json — depend on @ethosagent/types: workspace:*
 Add path alias to root tsconfig.json → "@ethosagent/llm-<name>": ["./extensions/llm-<name>/src"]
 Wire it in apps/ethos/src/wiring.ts under a new config.provider value
-LLMProvider.complete() must return AsyncIterable<CompletionChunk>. Map provider-specific streaming events to the CompletionChunk discriminated union (7 variants in packages/types/src/llm.ts).
+LLMProvider.complete() must return AsyncIterable<CompletionChunk>. Map provider-specific streaming events to the CompletionChunk discriminated union (9 variants in packages/types/src/llm.ts; the frozen list is pinned by packages/types/src/__tests__/llm-provider-drift.test.ts).
 
 Adding a new tool
 Tools live in extensions/tools-* packages and register with DefaultToolRegistry at wiring time. To add one:

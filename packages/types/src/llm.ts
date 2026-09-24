@@ -37,7 +37,19 @@ export type CompletionChunk =
       costBasis?: 'priced' | 'local' | 'unknown';
     }
   | { type: 'done'; finishReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' }
-  | { type: 'warning'; message: string };
+  | { type: 'warning'; message: string }
+  /**
+   * §VI Substantive amendment (openclaw-9.5-adoption item 7, D31) — a
+   * provider-side compaction block. The provider summarized the conversation
+   * server-side (Anthropic's `compact_20260112` context-management edit) and
+   * the block REPLACES everything before it on later requests, so it must be
+   * round-tripped: `encryptedContent` is opaque provider metadata carried back
+   * byte-for-byte, `content` the readable summary. `content: null` is a failed
+   * compaction the provider treats as a no-op. Emitted only by
+   * `@ethosagent/llm-anthropic`; every other provider never emits it.
+   * Governance: docs/content/building/explanation/llm-provider-governance.md.
+   */
+  | { type: 'compaction'; content: string | null; encryptedContent: string | null };
 
 export interface Message {
   role: 'user' | 'assistant';
