@@ -24,6 +24,17 @@ const DEFAULT_CAP = 200;
 const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
+ * Most distinct sessions one entry records as evidence (plan openclaw-9.5-adoption
+ * item 3, D22). `buildMemoryCaptureConfig` in `packages/config` refuses a
+ * `memoryCapture.evidenceSessions` above this, since a threshold the list can
+ * never reach would park every fact until it expires.
+ */
+export const MAX_EVIDENCE_SESSIONS = 16;
+
+/** `approvedBy` recorded when a capture-only queue promotes on evidence. */
+export const EVIDENCE_APPROVER = 'evidence';
+
+/**
  * Resolve the scope dir the same way `HistoryStore.scopeDir` does, so the queue
  * and tombstone files land next to `memory-history.jsonl` and the memory files
  * they gate. Replicated (not imported) to keep this a small leaf module.
@@ -112,6 +123,22 @@ export interface PendingMemoryStoreOptions {
   /** Candidate TTL in ms. Default 30 days. Expired entries auto-reject on read. */
   ttlMs?: number;
   observability?: PendingGateObservability;
+  /**
+   * `memoryCapture.evidenceSessions` (plan openclaw-9.5-adoption item 3, D22).
+   * When > 0, `propose` merges a candidate into the live entry with the same
+   * `factHash` (recording its session as evidence) instead of appending, and
+   * `list` orders by evidence. 0 or absent: `propose` appends exactly as it
+   * always has, and the queue file is byte-identical to a store without it
+   * (pinned by `__tests__/evidence.test.ts`).
+   */
+  evidenceSessions?: number;
+  /**
+   * Capture-only queue (approval mode `off`): once an entry has
+   * `evidenceSessions` distinct sessions, approve it through `approve` with
+   * `approvedBy: EVIDENCE_APPROVER`. Never set when approval is `automated` or
+   * `all` — there a human decides, and evidence only orders the queue.
+   */
+  autoPromote?: boolean;
   /** Test seam. */
   now?: () => number;
 }
@@ -129,6 +156,8 @@ export class PendingMemoryStore {
   private readonly cap: number;
   private readonly ttlMs: number;
   private readonly observability?: PendingGateObservability;
+  private readonly evidenceSessions: number;
+  private readonly autoPromote: boolean;
   private readonly now: () => number;
   /** Accumulated host-pause duration discounted from the TTL clock. */
   private pauseOffsetMs = 0;
@@ -144,6 +173,8 @@ export class PendingMemoryStore {
     this.cap = opts.cap ?? DEFAULT_CAP;
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
     this.observability = opts.observability;
+    this.evidenceSessions = opts.evidenceSessions ?? 0;
+    this.autoPromote = opts.autoPromote === true;
     this.now = opts.now ?? (() => Date.now());
   }
 
@@ -207,19 +238,57 @@ export class PendingMemoryStore {
     await this.storage.writeAtomic(this.path(scopeId), body.length > 0 ? `${body}\n` : '');
   }
 
-  /** Enqueue a candidate. Prunes expired entries and enforces the cap first. */
+  /**
+   * Enqueue a candidate. Prunes expired entries and enforces the cap first.
+   *
+   * With `evidenceSessions > 0`, a candidate carrying a `factHash` that a live
+   * entry already has is MERGED into that entry rather than appended: its
+   * session joins `evidenceSessions` (distinct, capped at
+   * `MAX_EVIDENCE_SESSIONS`) and `lastSeenAt` moves, while `proposedAt` — the
+   * TTL anchor — does not, so recurrence can never keep a fact alive past its
+   * first proposal's expiry. A candidate without a `factHash` (a freeform
+   * decorator write) never merges. Under `autoPromote`, an entry that reaches
+   * the threshold is approved before this returns.
+   */
   async propose(input: ProposeInput): Promise<PendingEntry> {
     const entries = await this.prune(input.scopeId, await this.readAll(input.scopeId));
 
+    const evidence = this.evidenceSessions > 0 && input.factHash !== undefined;
+    if (evidence) {
+      const existing = entries.find(
+        (e) => e.scopeId === input.scopeId && e.factHash === input.factHash,
+      );
+      if (existing) {
+        // An entry queued before evidence was on carries only its own session.
+        const sessions =
+          existing.evidenceSessions ?? (existing.sessionId ? [existing.sessionId] : []);
+        if (
+          input.sessionId &&
+          !sessions.includes(input.sessionId) &&
+          sessions.length < MAX_EVIDENCE_SESSIONS
+        ) {
+          sessions.push(input.sessionId);
+        }
+        existing.evidenceSessions = sessions;
+        existing.lastSeenAt = this.now();
+        await this.writeAll(input.scopeId, entries);
+        return this.maybePromote(existing);
+      }
+    }
+
+    const proposedAt = this.now();
     const entry: PendingEntry = {
       id: randomUUID(),
       scopeId: input.scopeId,
       update: input.update,
       source: input.source,
-      proposedAt: this.now(),
+      proposedAt,
       ...(input.factHash ? { factHash: input.factHash } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(input.sessionKey ? { sessionKey: input.sessionKey } : {}),
+      ...(evidence
+        ? { evidenceSessions: input.sessionId ? [input.sessionId] : [], lastSeenAt: proposedAt }
+        : {}),
     };
     entries.push(entry);
 
@@ -235,13 +304,33 @@ export class PendingMemoryStore {
     }
 
     await this.writeAll(input.scopeId, entries);
+    return evidence ? this.maybePromote(entry) : entry;
+  }
+
+  /**
+   * Approve `entry` on evidence when this is a capture-only queue and it has
+   * reached the threshold. Goes through `approve`, so the replay, the history
+   * record and the removal are the same path a human approval takes.
+   */
+  private async maybePromote(entry: PendingEntry): Promise<PendingEntry> {
+    if (!this.autoPromote) return entry;
+    if ((entry.evidenceSessions?.length ?? 0) < this.evidenceSessions) return entry;
+    await this.approve(entry.scopeId, entry.id, EVIDENCE_APPROVER);
     return entry;
   }
 
-  /** Live (non-expired) candidates for a scope, oldest first. */
+  /**
+   * Live (non-expired) candidates for a scope, oldest first. With
+   * `evidenceSessions > 0`, the most-evidenced first, then oldest first.
+   */
   async list(scopeId: string): Promise<PendingEntry[]> {
     const entries = await this.prune(scopeId, await this.readAll(scopeId));
-    return entries;
+    if (this.evidenceSessions <= 0) return entries;
+    return [...entries].sort(
+      (a, b) =>
+        (b.evidenceSessions?.length ?? 0) - (a.evidenceSessions?.length ?? 0) ||
+        a.proposedAt - b.proposedAt,
+    );
   }
 
   async approve(

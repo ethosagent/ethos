@@ -1404,6 +1404,7 @@ export interface AuxiliaryCompressionConfig {
  *   memoryCapture.model: claude-haiku-4-5-20251001
  *   memoryCapture.maxPerHour: 6
  *   memoryCapture.maxPerDay: 30
+ *   memoryCapture.evidenceSessions: 3
  */
 export interface MemoryCaptureConfig {
   enabled?: boolean;
@@ -1413,6 +1414,17 @@ export interface MemoryCaptureConfig {
   baseUrl?: string;
   maxPerHour?: number;
   maxPerDay?: number;
+  /**
+   * Recurrence-evidence threshold (plan openclaw-9.5-adoption item 3, D22):
+   * the number of distinct sessions that must extract the same fact before it
+   * is promoted. `0` or absent = off (capture behaves as before). With
+   * `memoryApproval.mode: off` a fact is held in the pending queue until it
+   * reaches N and is then approved as `evidence`; with `automated`/`all` the
+   * count only orders the queue for a human. An integer in 0..16 —
+   * `buildMemoryCaptureConfig` refuses anything else (16 is
+   * `MAX_EVIDENCE_SESSIONS` in `@ethosagent/memory-approval`).
+   */
+  evidenceSessions?: number;
 }
 
 /**
@@ -4238,6 +4250,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (mc.baseUrl) lines.push(`memoryCapture.baseUrl: ${mc.baseUrl}`);
     if (mc.maxPerHour !== undefined) lines.push(`memoryCapture.maxPerHour: ${mc.maxPerHour}`);
     if (mc.maxPerDay !== undefined) lines.push(`memoryCapture.maxPerDay: ${mc.maxPerDay}`);
+    if (mc.evidenceSessions !== undefined)
+      lines.push(`memoryCapture.evidenceSessions: ${mc.evidenceSessions}`);
   }
   if (config.memoryVault) {
     const mv = config.memoryVault;
@@ -7398,6 +7412,15 @@ function buildMemoryCaptureConfig(kv: Record<string, string>): MemoryCaptureConf
   if (!present) return undefined;
   const maxPerHour = Number.parseInt(kv['memoryCapture.maxPerHour'] ?? '', 10);
   const maxPerDay = Number.parseInt(kv['memoryCapture.maxPerDay'] ?? '', 10);
+  const evidenceRaw = kv['memoryCapture.evidenceSessions'];
+  // Whole-string match, not parseInt: `3.5` or `3x` must be refused, not
+  // silently read as 3. The ceiling is memory-approval's MAX_EVIDENCE_SESSIONS
+  // (an entry records at most 16 sessions, so a higher threshold never fires).
+  if (evidenceRaw !== undefined && (!/^\d+$/.test(evidenceRaw) || Number(evidenceRaw) > 16)) {
+    throw new Error(
+      `Invalid memoryCapture.evidenceSessions "${evidenceRaw}". Expected an integer from 0 to 16.`,
+    );
+  }
   return {
     ...(kv['memoryCapture.enabled'] !== undefined
       ? { enabled: kv['memoryCapture.enabled'] === 'true' }
@@ -7408,6 +7431,7 @@ function buildMemoryCaptureConfig(kv: Record<string, string>): MemoryCaptureConf
     ...(kv['memoryCapture.baseUrl'] ? { baseUrl: kv['memoryCapture.baseUrl'] } : {}),
     ...(Number.isFinite(maxPerHour) ? { maxPerHour } : {}),
     ...(Number.isFinite(maxPerDay) ? { maxPerDay } : {}),
+    ...(evidenceRaw !== undefined ? { evidenceSessions: Number(evidenceRaw) } : {}),
   };
 }
 

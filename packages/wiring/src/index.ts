@@ -451,6 +451,13 @@ export interface WiringConfig {
     baseUrl?: string;
     maxPerHour?: number;
     maxPerDay?: number;
+    /**
+     * Recurrence-evidence threshold (plan openclaw-9.5-adoption item 3). 0 or
+     * absent: off. N > 0: a captured fact is queued until N distinct sessions
+     * have extracted it — auto-promoted when approval is `off`, ordered for a
+     * human otherwise (`build-agent-loop.ts`).
+     */
+    evidenceSessions?: number;
   };
   /**
    * Approve-before-store gate (memory-lifecycle L2). Default-off. When
