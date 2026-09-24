@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { FsContentStore } from '@ethosagent/cas-fs';
-import { backgroundDefaults } from '@ethosagent/config';
+import { backgroundDefaults, resolveDecisionsConfig } from '@ethosagent/config';
 import {
   AgentLoop,
   type ClarifyOriginLane,
@@ -565,7 +565,31 @@ export async function buildAgentLoop(
   // -------------------------------------------------------------------------
 
   const { createLLMClassifier } = await import('@ethosagent/safety-injection');
-  const injectionClassifier = createLLMClassifier({ llm });
+  const llmInjectionClassifier = createLLMClassifier({ llm });
+  // plan decision-provider-jev §8.1 — with no `decisions.*` keys, or the
+  // injection site `off`, or no key in `providers/typesafe/apiKey`, no provider
+  // is built and the LLM classifier above is used exactly as before (R7,
+  // pinned by `__tests__/decision-wiring.test.ts`).
+  const decisions = config.decisions ? resolveDecisionsConfig(config.decisions) : undefined;
+  const { buildDecisionProvider } = await import('./decision-provider');
+  const { createDecisionInjectionClassifier } = await import('./decision-injection-classifier');
+  const decisionProvider = await buildDecisionProvider({
+    decisions,
+    sites: ['injection'],
+    secrets: config.secretsResolver,
+    ...(opts.observability ? { observability: opts.observability } : {}),
+  });
+  const injectionClassifier =
+    decisions && decisionProvider
+      ? createDecisionInjectionClassifier({
+          decisions: decisionProvider,
+          fallback: llmInjectionClassifier,
+          mode: decisions.sites.injection.effective,
+          threshold: decisions.thresholds.injection,
+          timeoutMs: decisions.sites.injection.timeoutMs,
+          ...(opts.observability ? { observability: opts.observability } : {}),
+        })
+      : llmInjectionClassifier;
 
   // -------------------------------------------------------------------------
   // Phase 2 — Build the AgentSafety bundle for core's injected safety path.

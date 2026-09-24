@@ -472,6 +472,13 @@ export interface WiringConfig {
   nightlyPass?: { enabled?: boolean; cron?: string };
   /** Per-surface capture-notice opt-in (§3.3), mapped from display.memory_notices. */
   displayMemoryNotices?: boolean;
+  /**
+   * The operator's `decisions.*` keys (mapped from `EthosConfig.decisions`,
+   * carried by the `...config` spread in apps/ethos/src/wiring.ts). Absent →
+   * no decision layer: every decision site runs today's path and no provider
+   * is constructed (`buildDecisionProvider`, ./decision-provider).
+   */
+  decisions?: import('@ethosagent/config').DecisionsConfig;
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;
