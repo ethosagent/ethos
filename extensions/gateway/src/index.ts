@@ -393,9 +393,36 @@ export const INTERRUPTED_RETRY_NOTICE =
 /** How long an interrupted row answers to `retry` (plan D5). */
 const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** The whole of a `retry` reply: trimmed, lowercased, nothing else. */
-function isRetryText(text: string | undefined): boolean {
-  return (text ?? '').trim().toLowerCase() === 'retry';
+/**
+ * The whole of a `retry` reply: trimmed, lowercased, nothing else — except
+ * THIS bot's own `@handle` at the start or the end (`botHandle`, see
+ * `adapterHandle`). In a mention-gated group the user has to address the bot
+ * to be heard at all, and the Telegram adapter passes the mention through in
+ * `text`, so an exact match turned `@bot retry` into "some other message" —
+ * which DISCARDS the interrupted row it was meant to re-run. Only the bot's own
+ * handle is tolerated: `@someone retry` is still some other message. An
+ * adapter that cannot name its handle gets the exact match. Pinned by
+ * `__tests__/inbound-spool.test.ts` ('retry in a mention-gated group').
+ */
+function isRetryText(text: string | undefined, botHandle?: string): boolean {
+  let t = (text ?? '').trim().toLowerCase();
+  const handle = botHandle?.trim().toLowerCase();
+  if (handle?.startsWith('@') && handle.length > 1) {
+    if (t.startsWith(`${handle} `)) t = t.slice(handle.length).trim();
+    else if (t.endsWith(` ${handle}`)) t = t.slice(0, -handle.length).trim();
+  }
+  return t === 'retry';
+}
+
+/**
+ * The account an adapter speaks as (`@handle`), when it can say: the optional
+ * `senderHandle` the Telegram adapter resolves at start — the same structural
+ * read `apps/ethos/src/lib/outbox-wiring.ts` makes for its cards. Not on the
+ * frozen `PlatformAdapter` contract.
+ */
+function adapterHandle(adapter: PlatformAdapter): string | undefined {
+  const handle = (adapter as { senderHandle?: unknown }).senderHandle;
+  return typeof handle === 'string' ? handle : undefined;
 }
 
 /**
@@ -2547,7 +2574,8 @@ export class Gateway {
     // slash command (`/new`, `/stop`) counts as "any other message". Observe-
     // mode records never touch it: they are not addressed to the agent.
     const interrupted = message.recordOnly ? null : this.pendingInterrupted(message);
-    const retryRequested = interrupted !== null && isRetryText(message.text);
+    const retryRequested =
+      interrupted !== null && isRetryText(message.text, adapterHandle(adapter));
 
     // --- Clarify correlator: short-circuit force-reply + `/cancel` ---
     // Runs BEFORE the safety filter's mention gate so an approved sender's
@@ -2812,7 +2840,7 @@ export class Gateway {
     if (interrupted) {
       const settled = await this.settleInterrupted(
         interrupted,
-        retryRequested && isRetryText(rawText),
+        retryRequested && isRetryText(rawText, adapterHandle(adapter)),
       );
       if (settled === 'consumed') return;
       if (settled) {

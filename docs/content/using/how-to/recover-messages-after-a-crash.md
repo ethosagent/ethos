@@ -49,7 +49,7 @@ If the crashed turn had already started a tool, it is not replayed either: re-ru
 ⚠ Your message was interrupted after actions had started, so it was not re-run automatically. Reply `retry` to run it again.
 ```
 
-If the user replies exactly `retry` within a day, the original message runs again. Any other message in that chat drops it. A graceful stop (Ctrl+C) treats a tool-started turn the same way, and sends no "please resend" to a chat the replay will answer.
+If the user replies exactly `retry` within a day, the original message runs again. In a group where the bot only answers when mentioned, `@yourbot retry` counts too. Any other message in that chat drops it. A graceful stop (Ctrl+C) treats a tool-started turn the same way, and sends no "please resend" to a chat the replay will answer.
 
 A message sent while a turn was still running is folded into that turn (the chat sees `↩ noted`), and after a crash or a stop it stays with that turn: it is replayed as part of it, or included when the user replies `retry`. It never runs as a turn of its own.
 

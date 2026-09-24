@@ -971,3 +971,38 @@ describe('inbound spool — message keys', () => {
     );
   });
 });
+
+// Audit S1: in a mention-gated Telegram group the user must address the bot,
+// and the adapter keeps `@bot` in `text`. An exact `retry` match made
+// `@bot retry` an ordinary message — which discards the interrupted row.
+describe('inbound spool — retry in a mention-gated group', () => {
+  async function interruptedInGroup() {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    (out.adapter as unknown as { senderHandle: string }).senderHandle = '@EthosBot';
+    const id = seed(spool, msg('pay the invoice'));
+    spool.markInterrupted(id, 'crash');
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool);
+    await gw.replayInboundSpool(); // learns the interrupted lane
+    const group = (text: string) => msg(text, { isDm: false, isGroupMention: true });
+    return { spool, out, s, gw, id, group };
+  }
+
+  it('`@bot retry` and `retry @bot` re-run the interrupted message', async () => {
+    for (const text of ['@EthosBot retry', 'retry @ethosbot']) {
+      const { out, s, gw, group } = await interruptedInGroup();
+      await gw.handleMessage(group(text), out.adapter);
+      await waitUntil(() => s.texts.length === 1);
+      expect(s.texts[0]).toContain('pay the invoice');
+    }
+  });
+
+  it("another account's handle is not the bot's: `@someone retry` discards as before", async () => {
+    const { spool, out, s, gw, id, group } = await interruptedInGroup();
+    await gw.handleMessage(group('@someone retry'), out.adapter);
+    await waitUntil(() => s.texts.length === 1);
+    expect(s.texts[0]).not.toContain('pay the invoice');
+    expect(spool.get(id)).toMatchObject({ status: 'done', lastError: 'discarded' });
+  });
+});
