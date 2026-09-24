@@ -281,20 +281,47 @@ curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/jso
 
 See [Security controls -- web dashboard and admin authentication](./controls.md#admin-panel-token-auth).
 
-### 12. Restrict CORS for remote desktop connections
+### 12. Enumerate the browser origins allowed to call the web API
 
-If Mission Control connects to a remote Ethos instance, set `cors.allowedOrigins` in `~/.ethos/config.yaml` to the exact origin of the desktop app. Do not use `*`.
+There is no `cors` block in `config.yaml`. Two separate lists control which browser origins may reach the web API.
 
-```yaml
-# ~/.ethos/config.yaml
-cors:
-  allowedOrigins:
-    - "https://mission-control.example.com"
+| Setting | Format | Governs | Enforced by |
+|---|---|---|---|
+| `ETHOS_ALLOWED_ORIGINS` (env var only) | Comma-separated. Exact origins, or `*.domain` wildcards that also match the bare domain. A wildcard on a shared hosting domain such as `*.fly.dev` stops `ethos serve` at startup | Credentialed CORS on every web API route, which reflects exact entries only. The CSRF check on `/rpc/*` and `/openapi/*`, which accepts wildcards and, once set, refuses every origin not listed. The WebSocket origin check, which accepts exact entries only | `resolveAllowedOrigins` in `apps/ethos/src/commands/serve-helpers.ts`; `resolveCorsOrigin` in `apps/web-api/src/routes/index.ts`; `csrfMiddleware` in `apps/web-api/src/middleware/csrf.ts`; `originAllowed` in `apps/web-api/src/voice/voice-socket.ts` |
+| `ETHOS_API_CORS_ORIGINS` env var, else `web.corsOrigins` in `config.yaml` | Comma-separated exact origins, or `*`. Not credentialed | CORS headers on `/v1/*` responses | `resolveCorsOrigins` in `apps/ethos/src/commands/serve-helpers.ts`; `openAiCors` in `apps/web-api/src/middleware/openai-cors.ts` |
+
+Neither list is needed for the Mission Control desktop app in remote mode: it loads the remote server's own SPA same-origin (see [desktop remote connection security](./controls.md#desktop-remote-connection)). A browser dashboard served from another origin, such as the one in [Deploy Mission Control with a remote Ethos](../building/how-to/deploy-mission-control-remote.md), needs its exact origin in `ETHOS_ALLOWED_ORIGINS`.
+
+- Do not list `*` in `ETHOS_ALLOWED_ORIGINS`. It is not a wildcard there, so it matches nothing.
+- If you also use the server's own web UI, list the server's own origin too. Once the variable is set, the CSRF check refuses cookie requests from any origin not listed, the server's own included.
+- If a browser app calls `/v1/*` with an API key, list its origin in `ETHOS_ALLOWED_ORIGINS` as well. The key forces a CORS preflight, and the app-wide CORS layer answers that preflight from `ETHOS_ALLOWED_ORIGINS` alone. An origin listed only in `ETHOS_API_CORS_ORIGINS` gets headers on the actual response but fails the preflight.
+
+```bash
+# ethos serve environment
+export ETHOS_ALLOWED_ORIGINS="https://dashboard.example.com,https://ethos.example.com"
 ```
 
-**Verify:** Open the browser console on the desktop app and confirm no CORS errors. Attempt a request from a different origin and confirm it is rejected.
+**Verify:**
 
-See [Security controls -- desktop remote connection security](./controls.md#desktop-remote-connection) and [Deploy Mission Control with a remote Ethos](../building/how-to/deploy-mission-control-remote.md).
+```bash
+# Listed origin — the preflight reflects it
+curl -s -o /dev/null -D - -X OPTIONS \
+  -H 'Origin: https://dashboard.example.com' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: authorization,content-type' \
+  http://localhost:3000/rpc/sessions/list | grep -i access-control-allow-origin
+# access-control-allow-origin: https://dashboard.example.com
+
+# Any other origin — no access-control-allow-origin header
+curl -s -o /dev/null -D - -X OPTIONS \
+  -H 'Origin: https://other.example.net' \
+  -H 'Access-Control-Request-Method: POST' \
+  http://localhost:3000/rpc/sessions/list | grep -i access-control-allow-origin
+# (no output)
+```
+
+- Pinned by: `apps/ethos/src/commands/__tests__/serve-helpers.test.ts` (both resolvers, including the shared-domain refusal), `apps/web-api/src/__tests__/routes/cors-origin.test.ts` (`resolveCorsOrigin`), `apps/web-api/src/__tests__/middleware/csrf.test.ts`, `apps/web-api/src/__tests__/middleware/openai-cors.test.ts`
+- Limitation: `openai-cors.test.ts` tests `openAiCors` on its own, so no test covers the preflight behaviour described above.
 
 ### 13. Review plugin data source permissions
 
@@ -342,7 +369,7 @@ If every step above passes, the deployment is hardened.
 | `ethos config validate --strict` reports missing personality | Bot binding references a personality ID that does not exist | Create the personality directory or fix the `botKey` mapping |
 | Web UI returns `401` for every request | No `ethos_auth` cookie, or the cookie no longer matches the stored token | Open the sign-in URL `ethos serve` prints (`?t=<token>`) again |
 | Admin panel returns `403` | `admin.enabled: true` is not set, or the request used an API key | Set `admin.enabled: true` in `config.yaml` and use the web UI; API keys cannot reach admin procedures |
-| CORS error in Mission Control desktop app | `cors.allowedOrigins` does not include the desktop app origin | Add the exact origin to `cors.allowedOrigins` in `config.yaml` |
+| CORS error in a browser dashboard served from another origin | Its origin is not in `ETHOS_ALLOWED_ORIGINS` (a `*.domain` wildcard does not count for CORS) | Add the exact origin to `ETHOS_ALLOWED_ORIGINS` in the `ethos serve` environment and restart |
 | Dashboard query returns data from a write statement | Plugin bypasses `registerDataSource` with direct DB access | Audit plugin code; route all queries through `registerDataSource` |
 
 ## See also
