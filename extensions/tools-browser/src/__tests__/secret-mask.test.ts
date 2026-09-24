@@ -162,83 +162,88 @@ describe('withSecretMask — roster and lifetime', () => {
   });
 });
 
-describe.skipIf(!HAS_CHROMIUM)('withSecretMask — real Chromium, after a fill', () => {
-  let fx: Fixture;
-  beforeAll(async () => {
-    fx = await startFixture();
-  });
-  afterAll(async () => {
-    await fx.close();
-  });
-  afterEach(async () => {
-    await closeSession('mask');
-  });
+// Real Chromium under a loaded full-suite run needs more than the 15s default.
+describe.skipIf(!HAS_CHROMIUM)(
+  'withSecretMask — real Chromium, after a fill',
+  { timeout: 60_000 },
+  () => {
+    let fx: Fixture;
+    beforeAll(async () => {
+      fx = await startFixture();
+    }, 60_000);
+    afterAll(async () => {
+      await fx.close();
+    });
+    afterEach(async () => {
+      await closeSession('mask');
+    }, 60_000);
 
-  async function filledSession(): Promise<BrowserSession> {
-    const session = await getOrCreateSessionWithRoute('mask', POLICY);
-    await session.page.goto(`${fx.originA}/persist`);
-    session.refs = (await snapshotPage(session.page)).refs;
-    const vault = memoryVault();
-    await storeCredential(vault, [fx.originA]);
-    const { ctx } = makeCtx('mask', scopedCredentials(vault));
-    const result = await tool('browser_fill_credential').execute(
-      {
-        credential: 'test-login',
-        username_ref: refFor(session, 'Username'),
-        password_ref: refFor(session, 'Password'),
-        submit: true,
-      },
-      ctx,
-    );
-    expect(result.ok).toBe(true);
-    // The page really holds the values — the mask is what hides them.
-    const raw = await session.page.locator('body').ariaSnapshot();
-    expect(raw).toContain(PASSWORD);
-    return session;
-  }
+    async function filledSession(): Promise<BrowserSession> {
+      const session = await getOrCreateSessionWithRoute('mask', POLICY);
+      await session.page.goto(`${fx.originA}/persist`);
+      session.refs = (await snapshotPage(session.page)).refs;
+      const vault = memoryVault();
+      await storeCredential(vault, [fx.originA]);
+      const { ctx } = makeCtx('mask', scopedCredentials(vault));
+      const result = await tool('browser_fill_credential').execute(
+        {
+          credential: 'test-login',
+          username_ref: refFor(session, 'Username'),
+          password_ref: refFor(session, 'Password'),
+          submit: true,
+        },
+        ctx,
+      );
+      expect(result.ok).toBe(true);
+      // The page really holds the values — the mask is what hides them.
+      const raw = await session.page.locator('body').ariaSnapshot();
+      expect(raw).toContain(PASSWORD);
+      return session;
+    }
 
-  function expectMasked(result: Awaited<ReturnType<Tool['execute']>>) {
-    const text = JSON.stringify(result);
-    expect(text).not.toContain(PASSWORD);
-    expect(text).not.toContain(USERNAME);
-  }
+    function expectMasked(result: Awaited<ReturnType<Tool['execute']>>) {
+      const text = JSON.stringify(result);
+      expect(text).not.toContain(PASSWORD);
+      expect(text).not.toContain(USERNAME);
+    }
 
-  it('browser_click and browser_type results are masked', async () => {
-    const session = await filledSession();
-    const click = await tool('browser_click').execute(
-      { element_ref: refFor(session, 'Other') },
-      ctxFor('mask'),
-    );
-    expect(click.ok).toBe(true);
-    expect(click.ok && click.value).toContain(SECRET_MASK);
-    expectMasked(click);
+    it('browser_click and browser_type results are masked', async () => {
+      const session = await filledSession();
+      const click = await tool('browser_click').execute(
+        { element_ref: refFor(session, 'Other') },
+        ctxFor('mask'),
+      );
+      expect(click.ok).toBe(true);
+      expect(click.ok && click.value).toContain(SECRET_MASK);
+      expectMasked(click);
 
-    const type = await tool('browser_type').execute(
-      { element_ref: refFor(session, 'Code'), text: '12' },
-      ctxFor('mask'),
-    );
-    expect(type.ok).toBe(true);
-    expectMasked(type);
-  });
+      const type = await tool('browser_type').execute(
+        { element_ref: refFor(session, 'Code'), text: '12' },
+        ctxFor('mask'),
+      );
+      expect(type.ok).toBe(true);
+      expectMasked(type);
+    });
 
-  it('browser_console and browser_dialog (real page events) are masked', async () => {
-    await filledSession();
-    const consoleResult = await tool('browser_console').execute({ clear: false }, ctxFor('mask'));
-    expect(consoleResult.ok && consoleResult.value).toContain(`pw is ${SECRET_MASK}`);
-    expectMasked(consoleResult);
-    const dialog = await tool('browser_dialog').execute({}, ctxFor('mask'));
-    expect(dialog.ok && dialog.value).toContain(`submitted ${SECRET_MASK}`);
-    expectMasked(dialog);
-  });
+    it('browser_console and browser_dialog (real page events) are masked', async () => {
+      await filledSession();
+      const consoleResult = await tool('browser_console').execute({ clear: false }, ctxFor('mask'));
+      expect(consoleResult.ok && consoleResult.value).toContain(`pw is ${SECRET_MASK}`);
+      expectMasked(consoleResult);
+      const dialog = await tool('browser_dialog').execute({}, ctxFor('mask'));
+      expect(dialog.ok && dialog.value).toContain(`submitted ${SECRET_MASK}`);
+      expectMasked(dialog);
+    });
 
-  it('browse_url on a page that re-renders the value is masked', async () => {
-    await filledSession();
-    const result = await tool('browse_url').execute(
-      { url: `${fx.originA}/persist` },
-      ctxFor('mask'),
-    );
-    expect(result.ok).toBe(true);
-    expect(result.ok && result.value).toContain(`Saved: ${SECRET_MASK}`);
-    expectMasked(result);
-  });
-});
+    it('browse_url on a page that re-renders the value is masked', async () => {
+      await filledSession();
+      const result = await tool('browse_url').execute(
+        { url: `${fx.originA}/persist` },
+        ctxFor('mask'),
+      );
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toContain(`Saved: ${SECRET_MASK}`);
+      expectMasked(result);
+    });
+  },
+);

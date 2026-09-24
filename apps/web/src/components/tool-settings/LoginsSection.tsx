@@ -152,7 +152,7 @@ export function LoginsSection() {
   ];
 
   return (
-    <div style={{ maxWidth: 800, marginBottom: 16 }}>
+    <div style={{ maxWidth: 'var(--layout-chat-max-width)', marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
         <Typography.Paragraph type="secondary" style={{ margin: 0, flex: 1 }}>
           Logins <Typography.Text code>browser_fill_credential</Typography.Text> can fill without

@@ -373,155 +373,160 @@ describe('browser_fill_credential — gates (fake page)', () => {
 // Real Chromium against a loopback fixture
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!HAS_CHROMIUM)('browser_fill_credential — real Chromium', () => {
-  let fx: Fixture;
-  beforeAll(async () => {
-    fx = await startFixture();
-  });
-  afterAll(async () => {
-    await fx.close();
-  });
-  afterEach(async () => {
-    await closeSession('real');
-  });
-
-  async function open(path: string, origin?: string) {
-    const session = await getOrCreateSessionWithRoute('real', POLICY);
-    await session.page.goto(`${origin ?? fx.originA}${path}`);
-    const snap = await snapshotPage(session.page);
-    session.refs = snap.refs;
-    return session;
-  }
-
-  async function fill(
-    session: BrowserSession,
-    fields: Array<'Username' | 'Password' | 'Code'>,
-    opts: {
-      origins?: string[];
-      unattended?: boolean;
-      bridge?: ClarifyBridge;
-      ctx?: Parameters<typeof makeCtx>[2];
-    } = {},
-  ) {
-    const vault = memoryVault();
-    await storeCredential(vault, opts.origins ?? [fx.originA], {
-      totp: true,
-      ...(opts.unattended !== undefined ? { unattended: opts.unattended } : {}),
+// Real Chromium under a loaded full-suite run needs more than the 15s default.
+describe.skipIf(!HAS_CHROMIUM)(
+  'browser_fill_credential — real Chromium',
+  { timeout: 60_000 },
+  () => {
+    let fx: Fixture;
+    beforeAll(async () => {
+      fx = await startFixture();
+    }, 60_000);
+    afterAll(async () => {
+      await fx.close();
     });
-    const audit: CredentialFillAuditEvent[] = [];
-    const { ctx, events } = makeCtx('real', scopedCredentials(vault), opts.ctx);
-    const args: Record<string, unknown> = { credential: 'test-login' };
-    if (fields.includes('Username')) args.username_ref = refFor(session, 'Username');
-    if (fields.includes('Password')) args.password_ref = refFor(session, 'Password');
-    if (fields.includes('Code')) args.totp_ref = refFor(session, 'Code');
-    const result = await fillTool({
-      audit,
-      ...(opts.bridge ? { bridge: opts.bridge } : {}),
-    }).execute(args, ctx);
-    expectNoLeak(result, events, audit);
-    return { result, audit, events };
-  }
+    afterEach(async () => {
+      await closeSession('real');
+    }, 60_000);
 
-  const inputValue = (session: BrowserSession, id: string) =>
-    session.page.evaluate((i) => (document.getElementById(i) as HTMLInputElement).value, id);
+    async function open(path: string, origin?: string) {
+      const session = await getOrCreateSessionWithRoute('real', POLICY);
+      await session.page.goto(`${origin ?? fx.originA}${path}`);
+      const snap = await snapshotPage(session.page);
+      session.refs = snap.refs;
+      return session;
+    }
 
-  it('fills username + password + TOTP on the bound origin; result holds none of them', async () => {
-    const session = await open('/login');
-    const { result, audit } = await fill(session, ['Username', 'Password', 'Code']);
-    expect(result.ok).toBe(true);
-    expect(await inputValue(session, 'u')).toBe(USERNAME);
-    expect(await inputValue(session, 'p')).toBe(PASSWORD);
-    expect(codesAroundNow()).toContain(await inputValue(session, 'c'));
-    if (result.ok) expect(result.value).toContain('••••••');
-    expect(audit).toHaveLength(1);
-    expect(audit[0]).toMatchObject({ code: 'filled', details: { origin: fx.originA } });
-  });
+    async function fill(
+      session: BrowserSession,
+      fields: Array<'Username' | 'Password' | 'Code'>,
+      opts: {
+        origins?: string[];
+        unattended?: boolean;
+        bridge?: ClarifyBridge;
+        ctx?: Parameters<typeof makeCtx>[2];
+      } = {},
+    ) {
+      const vault = memoryVault();
+      await storeCredential(vault, opts.origins ?? [fx.originA], {
+        totp: true,
+        ...(opts.unattended !== undefined ? { unattended: opts.unattended } : {}),
+      });
+      const audit: CredentialFillAuditEvent[] = [];
+      const { ctx, events } = makeCtx('real', scopedCredentials(vault), opts.ctx);
+      const args: Record<string, unknown> = { credential: 'test-login' };
+      if (fields.includes('Username')) args.username_ref = refFor(session, 'Username');
+      if (fields.includes('Password')) args.password_ref = refFor(session, 'Password');
+      if (fields.includes('Code')) args.totp_ref = refFor(session, 'Code');
+      const result = await fillTool({
+        audit,
+        ...(opts.bridge ? { bridge: opts.bridge } : {}),
+      }).execute(args, ctx);
+      expectNoLeak(result, events, audit);
+      return { result, audit, events };
+    }
 
-  it('injected page on a foreign origin: refused no matter what the page says', async () => {
-    const session = await open('/evil', fx.originB);
-    const { result, audit } = await fill(session, ['Username', 'Password']);
-    expect(result.ok).toBe(false);
-    expect(await inputValue(session, 'u')).toBe('');
-    expect(await inputValue(session, 'p')).toBe('');
-    expect(audit.map((a) => a.code)).toEqual(['refused_origin']);
-    expect(audit[0]?.details.origin).toBe(fx.originB);
-  });
+    const inputValue = (session: BrowserSession, id: string) =>
+      session.page.evaluate((i) => (document.getElementById(i) as HTMLInputElement).value, id);
 
-  it('a listed-origin iframe inside an unlisted top page is refused', async () => {
-    const session = await open('/embeds-bound', fx.originB);
-    const { audit } = await fill(session, ['Password']);
-    expect(await inputValue(session, 'p')).toBe('');
-    expect(audit.map((a) => a.code)).toEqual(['refused_origin']);
-  });
+    it('fills username + password + TOTP on the bound origin; result holds none of them', async () => {
+      const session = await open('/login');
+      const { result, audit } = await fill(session, ['Username', 'Password', 'Code']);
+      expect(result.ok).toBe(true);
+      expect(await inputValue(session, 'u')).toBe(USERNAME);
+      expect(await inputValue(session, 'p')).toBe(PASSWORD);
+      expect(codesAroundNow()).toContain(await inputValue(session, 'c'));
+      if (result.ok) expect(result.value).toContain('••••••');
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({ code: 'filled', details: { origin: fx.originA } });
+    });
 
-  it('a field inside an unlisted-origin iframe cannot be targeted at all', async () => {
-    // The snapshot does not descend into iframes and `page.getByRole` does not
-    // pierce them, so a ref naming the framed field resolves to nothing.
-    const session = await open('/framed-foreign');
-    session.refs.set('@e90', { ref: '@e90', role: 'textbox', name: 'Password' });
-    const vault = memoryVault();
-    await storeCredential(vault, [fx.originA]);
-    const audit: CredentialFillAuditEvent[] = [];
-    const { ctx } = makeCtx('real', scopedCredentials(vault));
-    const result = await fillTool({ audit }).execute(
-      { credential: 'test-login', password_ref: '@e90' },
-      ctx,
-    );
-    expect(result.ok).toBe(false);
-    expect(audit.map((a) => a.code)).toEqual(['not_found']);
-    const frame = session.page.frames().find((f) => f !== session.page.mainFrame());
-    expect(
-      await frame?.evaluate(() => (document.getElementById('p') as HTMLInputElement).value),
-    ).toBe('');
-  });
+    it('injected page on a foreign origin: refused no matter what the page says', async () => {
+      const session = await open('/evil', fx.originB);
+      const { result, audit } = await fill(session, ['Username', 'Password']);
+      expect(result.ok).toBe(false);
+      expect(await inputValue(session, 'u')).toBe('');
+      expect(await inputValue(session, 'p')).toBe('');
+      expect(audit.map((a) => a.code)).toEqual(['refused_origin']);
+      expect(audit[0]?.details.origin).toBe(fx.originB);
+    });
 
-  it('origin match is exact: 127.0.0.1:P listed, localhost:P refused', async () => {
-    const session = await open('/login', fx.localhostA);
-    const { audit } = await fill(session, ['Password']);
-    expect(await inputValue(session, 'p')).toBe('');
-    expect(audit.map((a) => a.code)).toEqual(['refused_origin']);
-  });
+    it('a listed-origin iframe inside an unlisted top page is refused', async () => {
+      const session = await open('/embeds-bound', fx.originB);
+      const { audit } = await fill(session, ['Password']);
+      expect(await inputValue(session, 'p')).toBe('');
+      expect(audit.map((a) => a.code)).toEqual(['refused_origin']);
+    });
 
-  it('refuses password_ref pointing at type=text', async () => {
-    const session = await open('/text-password');
-    const { audit } = await fill(session, ['Password']);
-    expect(audit.map((a) => a.code)).toEqual(['refused_field_type']);
-    const value = await session.page.getByRole('textbox', { name: 'Password' }).inputValue();
-    expect(value).toBe('');
-  });
+    it('a field inside an unlisted-origin iframe cannot be targeted at all', async () => {
+      // The snapshot does not descend into iframes and `page.getByRole` does not
+      // pierce them, so a ref naming the framed field resolves to nothing.
+      const session = await open('/framed-foreign');
+      session.refs.set('@e90', { ref: '@e90', role: 'textbox', name: 'Password' });
+      const vault = memoryVault();
+      await storeCredential(vault, [fx.originA]);
+      const audit: CredentialFillAuditEvent[] = [];
+      const { ctx } = makeCtx('real', scopedCredentials(vault));
+      const result = await fillTool({ audit }).execute(
+        { credential: 'test-login', password_ref: '@e90' },
+        ctx,
+      );
+      expect(result.ok).toBe(false);
+      expect(audit.map((a) => a.code)).toEqual(['not_found']);
+      const frame = session.page.frames().find((f) => f !== session.page.mainFrame());
+      expect(
+        await frame?.evaluate(() => (document.getElementById('p') as HTMLInputElement).value),
+      ).toBe('');
+    });
 
-  it('origin_changed: the page navigates on focus; call fails and the field is empty', async () => {
-    const session = await open('/nav-on-focus');
-    const { result, audit } = await fill(session, ['Password']);
-    expect(result.ok).toBe(false);
-    expect(audit.map((a) => a.code)).toEqual(['origin_changed']);
-    expect(new URL(session.page.url()).origin).toBe(fx.localhostA);
-    expect(await inputValue(session, 'p')).toBe('');
-  });
+    it('origin match is exact: 127.0.0.1:P listed, localhost:P refused', async () => {
+      const session = await open('/login', fx.localhostA);
+      const { audit } = await fill(session, ['Password']);
+      expect(await inputValue(session, 'p')).toBe('');
+      expect(audit.map((a) => a.code)).toEqual(['refused_origin']);
+    });
 
-  it('unattended: canPresent false refused, unattended:true fills', async () => {
-    const session = await open('/login');
-    const refused = await fill(session, ['Password'], { bridge: silentBridge });
-    expect(refused.audit.map((a) => a.code)).toEqual(['refused_unattended']);
-    expect(await inputValue(session, 'p')).toBe('');
-    const allowed = await fill(session, ['Password'], { bridge: silentBridge, unattended: true });
-    expect(allowed.audit.map((a) => a.code)).toEqual(['filled']);
-    expect(await inputValue(session, 'p')).toBe(PASSWORD);
-  });
+    it('refuses password_ref pointing at type=text', async () => {
+      const session = await open('/text-password');
+      const { audit } = await fill(session, ['Password']);
+      expect(audit.map((a) => a.code)).toEqual(['refused_field_type']);
+      const value = await session.page.getByRole('textbox', { name: 'Password' }).inputValue();
+      expect(value).toBe('');
+    });
 
-  it('grant/revoke through updateCredentialPolicy takes effect on the next fill', async () => {
-    const session = await open('/login');
-    const vault = memoryVault();
-    await storeCredential(vault, [fx.originA], { personalities: [] });
-    const audit: CredentialFillAuditEvent[] = [];
-    const { ctx } = makeCtx('real', scopedCredentials(vault));
-    const args = { credential: 'test-login', password_ref: refFor(session, 'Password') };
-    await fillTool({ audit }).execute(args, ctx);
-    await updateCredentialPolicy(vault, 'test-login', (p) => ({
-      ...p,
-      personalities: ['researcher'],
-    }));
-    await fillTool({ audit }).execute(args, ctx);
-    expect(audit.map((a) => a.code)).toEqual(['refused_personality', 'filled']);
-  });
-});
+    it('origin_changed: the page navigates on focus; call fails and the field is empty', async () => {
+      const session = await open('/nav-on-focus');
+      const { result, audit } = await fill(session, ['Password']);
+      expect(result.ok).toBe(false);
+      expect(audit.map((a) => a.code)).toEqual(['origin_changed']);
+      expect(new URL(session.page.url()).origin).toBe(fx.localhostA);
+      expect(await inputValue(session, 'p')).toBe('');
+    });
+
+    it('unattended: canPresent false refused, unattended:true fills', async () => {
+      const session = await open('/login');
+      const refused = await fill(session, ['Password'], { bridge: silentBridge });
+      expect(refused.audit.map((a) => a.code)).toEqual(['refused_unattended']);
+      expect(await inputValue(session, 'p')).toBe('');
+      const allowed = await fill(session, ['Password'], { bridge: silentBridge, unattended: true });
+      expect(allowed.audit.map((a) => a.code)).toEqual(['filled']);
+      expect(await inputValue(session, 'p')).toBe(PASSWORD);
+    });
+
+    it('grant/revoke through updateCredentialPolicy takes effect on the next fill', async () => {
+      const session = await open('/login');
+      const vault = memoryVault();
+      await storeCredential(vault, [fx.originA], { personalities: [] });
+      const audit: CredentialFillAuditEvent[] = [];
+      const { ctx } = makeCtx('real', scopedCredentials(vault));
+      const args = { credential: 'test-login', password_ref: refFor(session, 'Password') };
+      await fillTool({ audit }).execute(args, ctx);
+      await updateCredentialPolicy(vault, 'test-login', (p) => ({
+        ...p,
+        personalities: ['researcher'],
+      }));
+      await fillTool({ audit }).execute(args, ctx);
+      expect(audit.map((a) => a.code)).toEqual(['refused_personality', 'filled']);
+    });
+  },
+);
