@@ -38,10 +38,18 @@ export { buildScopedStorage } from './agent-loop/scoped-storage';
 // startup narrowing diagnostic so both read the declaration identically.
 export { parseSmallWindowToolset } from './agent-loop/small-window-toolset';
 export {
+  type BeforeToolCallDecision,
   createTurnBudgetCounters,
+  enforceBeforeToolCall,
   recordToolCallForBudgets,
   type TurnBudgetCounters,
 } from './agent-loop/stages/per-call-enforcement';
+// Exported with `enforceBeforeToolCall` for the one tool path that runs outside
+// `AgentLoop.run()`: the realtime voice host (extensions/tools-voice/src/realtime-host.ts).
+export {
+  type ResultRedactionDeps,
+  redactToolResultSecrets,
+} from './agent-loop/stages/result-redaction';
 export {
   SCRIPT_CALLS_PER_EXECUTION,
   SCRIPT_RESULT_BUDGET_CHARS,

@@ -164,7 +164,16 @@ describe('Orchestrator guardrails', () => {
     // construction passes the redaction seam and the turn's personality (2
     // pass-through lines). The redaction lives in
     // agent-loop/stages/result-redaction.ts.
-    expect(lineCount).toBeLessThanOrEqual(1020);
+    // Bumped 1020 -> 1031 (openclaw-advisory-fixes F-A2): the public
+    // `resultRedaction` getter hands the realtime voice host the loop's
+    // redaction kit and observability (type import, a 3-line doc, a 6-line
+    // getter, one blank). Pass-through only; the redaction lives in
+    // agent-loop/stages/result-redaction.ts.
+    // Bumped 1031 -> 1033: the public `resolvePersonality` method (doc + 3
+    // lines) so the realtime voice host resolves a session's personality by
+    // the loop's own rule; `getPersonalityBudgetCap` now delegates to it (-3).
+    // The rule lives in agent-loop/stages/turn-setup.ts.
+    expect(lineCount).toBeLessThanOrEqual(1033);
   });
 
   it('no stage file exceeds 700 lines', () => {

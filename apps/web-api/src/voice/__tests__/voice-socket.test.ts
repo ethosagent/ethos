@@ -439,7 +439,10 @@ describe('voice socket — the realtime control channel', () => {
           {
             toolRegistry: registry,
             sessions,
-            personalities: { get: () => undefined },
+            resolvePersonality: () => ({ id: 'default', name: 'Default' }),
+            resultRedaction: {
+              redaction: { redactPii: (s) => s, redactString: (s) => s, detectSecrets: () => [] },
+            },
             defaults: { model: 'm', provider: 'p', workingDir: '/tmp' },
           },
           laneId,

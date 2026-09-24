@@ -35,7 +35,6 @@ export interface RealtimeSessionBinding {
   host: RealtimeToolHost;
   /** Working directory a dispatched tool runs against. */
   workingDir: string;
-  personalityId?: string;
   /**
    * USD per minute of audio for the roster entry serving this call
    * (`RealtimeProviderEntry.costPerMinuteUsd`).
@@ -460,7 +459,6 @@ export class RealtimeControlLane {
           result = await binding.host.dispatch(call, {
             sessionId: binding.storeSessionId,
             sessionKey: binding.laneKey,
-            ...(binding.personalityId ? { personalityId: binding.personalityId } : {}),
             platform: 'web',
             workingDir: binding.workingDir,
             abortSignal: signal,

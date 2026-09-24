@@ -7,9 +7,14 @@ import type { HaltDecision, WatcherTap } from '../turn-context';
 // ---------------------------------------------------------------------------
 // Per-call enforcement — the segment of the tool pipeline that must run for
 // EVERY tool call regardless of who issued it (the LLM via the tool-processing
-// stage today; a script via the ScriptToolBridge later). Extracted so both
-// callers share one `before_tool_call` fire site, one watcher-halt consult,
-// and one set of turn budget counters.
+// stage; a script via the ScriptToolBridge). Extracted so both callers share
+// one `before_tool_call` fire site, one watcher-halt consult, and one set of
+// turn budget counters. `enforceBeforeToolCall` has a third caller outside
+// `AgentLoop.run()`: the realtime voice host's direct tool dispatch
+// (`createRealtimeToolHost`, extensions/tools-voice/src/realtime-host.ts),
+// pinned by that package's `__tests__/realtime-host.test.ts` ("core
+// enforcement"). It takes the deny-rule and hook gate only — no watcher tap or
+// turn budget exists there.
 // ---------------------------------------------------------------------------
 
 export interface BeforeToolCallDeps {

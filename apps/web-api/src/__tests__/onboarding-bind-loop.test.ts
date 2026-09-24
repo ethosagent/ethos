@@ -458,8 +458,13 @@ describe('bindAgentLoop — the rest of the loop-derived surfaces', () => {
 describe('the realtime control lane without a hook gate', () => {
   it('is refused rather than opened ungated', async () => {
     const src = await readFile(join(import.meta.dirname, '..', 'index.ts'), 'utf8');
-    expect(src).toMatch(/const hooks = agentLoop\.hooks;\s*\n\s*if \(!hooks\) return null;/);
+    // The redaction seam (`AgentLoop.resultRedaction`) is a getter the stand-in
+    // also reads as undefined, so it is refused the same way.
+    expect(src).toMatch(
+      /const hooks = agentLoop\.hooks;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const resultRedaction = agentLoop\.resultRedaction;\s*\n\s*if \(!hooks \|\| !resultRedaction\) return null;/,
+    );
     // The gate is passed, never spread-if-present, so it cannot be absent here.
     expect(src).not.toContain('hooks: agentLoop.hooks,');
+    expect(src).not.toContain('resultRedaction: agentLoop.resultRedaction,');
   });
 });

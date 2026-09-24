@@ -51,8 +51,10 @@ export interface PersonalitySafetyConfig {
    * stricter, never looser — a deny rule binds even under `approvalMode: 'off'`
    * with the auto-approve capability flag set. Enforced by
    * `enforceBeforeToolCall` (`packages/core/src/agent-loop/stages/per-call-enforcement.ts`),
-   * the one per-call site both the LLM batch path and the script bridge cross;
-   * pinned by `packages/core/src/agent-loop/__tests__/deny-rule-gate.test.ts`.
+   * the one per-call site the LLM batch path, the script bridge and the
+   * realtime voice host (`extensions/tools-voice/src/realtime-host.ts`) cross;
+   * pinned by `packages/core/src/agent-loop/__tests__/deny-rule-gate.test.ts`
+   * and, for the realtime host, `extensions/tools-voice/src/__tests__/realtime-host.test.ts`.
    */
   denyRules?: string[];
   /**

@@ -30,13 +30,14 @@ import {
   createTurnBudgetCounters,
   recordToolCallForBudgets,
 } from './agent-loop/stages/per-call-enforcement';
+import type { ResultRedactionDeps } from './agent-loop/stages/result-redaction';
 import { ScriptToolBridge } from './agent-loop/stages/script-tool-bridge';
 import type { StreamStepDeps } from './agent-loop/stages/stream-step';
 import { streamStep } from './agent-loop/stages/stream-step';
 import { processTools } from './agent-loop/stages/tool-processing';
 import { persistAbortedToolCalls } from './agent-loop/stages/tool-rejection';
 import { createTurnUsage, finalizeTurn, flushTurnUsage } from './agent-loop/stages/turn-finalizer';
-import { setupTurn } from './agent-loop/stages/turn-setup';
+import { resolvePersonality, setupTurn } from './agent-loop/stages/turn-setup';
 import { replyAfterWatcherPause } from './agent-loop/stages/watcher-pause';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
 import type { LoopDeps } from './agent-loop/turn-context';
@@ -496,10 +497,12 @@ export class AgentLoop {
 
   /** Returns the budget cap for the given personality (undefined = no cap). */
   getPersonalityBudgetCap(personalityId?: string): number | undefined {
-    const p =
-      (personalityId ? this.personalities.get(personalityId) : null) ??
-      this.personalities.getDefault();
-    return p.budgetCapUsd;
+    return this.resolvePersonality(personalityId).budgetCapUsd;
+  }
+
+  /** The personality a turn with this id runs as (`resolvePersonality` in turn-setup). */
+  resolvePersonality(personalityId?: string): import('@ethosagent/types').PersonalityConfig {
+    return resolvePersonality(this.personalities, personalityId);
   }
 
   /** Returns accumulated session spend in USD (0 if no spend recorded yet). */
@@ -520,6 +523,16 @@ export class AgentLoop {
   addSessionCost(sessionKey: string, usd: number): void {
     if (!Number.isFinite(usd) || usd <= 0) return;
     this.sessionCosts.set(sessionKey, (this.sessionCosts.get(sessionKey) ?? 0) + usd);
+  }
+
+  /** Redaction kit + observability for the tool path outside `run()`: the realtime
+   *  voice host (extensions/tools-voice/src/realtime-host.ts). A getter, so the
+   *  onboarding stand-in (apps/web-api/src/lib/pending-loop.ts) reads `undefined`. */
+  get resultRedaction(): ResultRedactionDeps {
+    return {
+      redaction: this.safety.redaction,
+      ...(this.observability ? { observability: this.observability } : {}),
+    };
   }
 
   /** Manual `/compact` — force a compaction outside a turn (delegates to
