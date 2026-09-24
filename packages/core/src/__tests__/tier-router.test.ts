@@ -150,6 +150,12 @@ describe('tier router — routing', () => {
     expect(router.mock.calls[0]?.[0].signal).toBe(controller.signal);
   });
 
+  it("the router receives the turn's traceId, so its record joins the turn", async () => {
+    const router = vi.fn<TierRouter>(async () => null);
+    await turn({ router });
+    expect(router.mock.calls[0]?.[0].traceId).toBe('trace-1');
+  });
+
   it('null → default', async () => {
     const { served, recordTierOverride } = await turn({ router: async () => null });
     expect(served).toBe('claude-sonnet-5');

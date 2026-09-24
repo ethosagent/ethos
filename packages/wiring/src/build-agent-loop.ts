@@ -584,6 +584,24 @@ export async function buildAgentLoop(
     secrets: config.secretsResolver,
     ...(opts.observability ? { observability: opts.observability } : {}),
   });
+  // R8 — a `shadow` site never waits for the provider, so its recording can
+  // still be in flight when a one-shot command (`ethos -z`) finishes its turn
+  // and exits. Every site of this build registers it here, and `dispose()`
+  // waits for them — at most the longest site budget, which the provider
+  // already enforces per call. No provider → no tracker, nothing to wait for.
+  const decisionRecords =
+    decisions && decisionProvider
+      ? new (await import('./decision-site')).DecisionRecordTracker(
+          Math.max(
+            decisions.sites.injection.timeoutMs,
+            decisions.sites.approver.timeoutMs,
+            decisions.sites.router.timeoutMs,
+          ),
+        )
+      : undefined;
+  if (decisionRecords) {
+    disposers.push('decision shadow records', () => decisionRecords.drain());
+  }
   const injectionClassifier =
     decisions && decisionProvider && decisions.sites.injection.effective !== 'off'
       ? createDecisionInjectionClassifier({
@@ -593,6 +611,7 @@ export async function buildAgentLoop(
           threshold: decisions.thresholds.injection,
           timeoutMs: decisions.sites.injection.timeoutMs,
           ...(opts.observability ? { observability: opts.observability } : {}),
+          ...(decisionRecords ? { tracker: decisionRecords } : {}),
         })
       : llmInjectionClassifier;
   // §8.2 — absent unless a provider exists AND the approver site is `shadow`
@@ -605,6 +624,7 @@ export async function buildAgentLoop(
           thresholds: decisions.thresholds.approver ?? {},
           timeoutMs: decisions.sites.approver.timeoutMs,
           ...(opts.observability ? { recorder: opts.observability } : {}),
+          ...(decisionRecords ? { tracker: decisionRecords } : {}),
         }
       : undefined;
   // §8.3 — the tier router, injected into the loop below. Absent unless a
@@ -618,6 +638,7 @@ export async function buildAgentLoop(
           threshold: decisions.thresholds.router,
           timeoutMs: decisions.sites.router.timeoutMs,
           ...(opts.observability ? { recorder: opts.observability } : {}),
+          ...(decisionRecords ? { tracker: decisionRecords } : {}),
         })
       : undefined;
 

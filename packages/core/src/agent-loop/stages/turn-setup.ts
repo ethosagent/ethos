@@ -232,6 +232,7 @@ export async function* setupTurn(
         router: deps.tierRouter,
         message: text,
         ...(opts.abortSignal ? { signal: opts.abortSignal } : {}),
+        ...(traceId ? { traceId } : {}),
         resolve: (role) => {
           const resolved = resolveTurnModel({
             personality,

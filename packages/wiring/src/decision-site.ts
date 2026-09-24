@@ -30,7 +30,12 @@
 //   else takes `today()` (D11).
 // - `shadow` never awaits the provider (R8): today's verdict returns the moment
 //   `today()` settles; the provider's reading and the disagreement are recorded
-//   whenever `decide()` settles, however late.
+//   whenever `decide()` settles, however late. With a `tracker`, that
+//   late recording is registered on it so a process teardown can wait for it
+//   (`DecisionRecordTracker.drain`, bounded) — the site call itself still
+//   never waits (R8). The composition root owns one tracker per build and
+//   drains it from `dispose()` (packages/wiring/src/build-agent-loop.ts), so
+//   `ethos -z` records a shadow answer that lands after the turn finished.
 // - The provider can never make a site throw. A throwing `today()` propagates
 //   exactly as it would without this helper.
 //
@@ -82,6 +87,8 @@ export interface DecisionCallRecord {
   todayVerdict?: unknown;
   /** `shadow` only: set when both a reading and today's verdict exist. */
   disagreed?: boolean;
+  /** The turn's trace, when the site's caller knows it (today: the router). */
+  traceId?: string;
 }
 
 export interface DecisionSiteRecorder {
@@ -113,7 +120,52 @@ export interface RunDecisionSiteOptions<V, J> {
   disagrees: (jev: J, today: V) => boolean;
   today: () => Promise<V>;
   recorder?: DecisionSiteRecorder;
+  /** `shadow`: where the not-awaited recording is registered for a teardown drain. */
+  tracker?: DecisionRecordTracker;
+  /** The turn's trace id, copied onto the record so it joins the turn. */
+  traceId?: string;
   now?: () => number;
+}
+
+/**
+ * The in-flight `shadow` recordings of one composition root. `runDecisionSite`
+ * never awaits them (R8); a teardown does, through `drain`, so a one-shot
+ * process that exits right after its turn still records an answer that landed
+ * late. Each recording is already bounded by its site's own budget (the
+ * provider enforces `timeoutMs`), and `drain` adds a hard cap on top.
+ * Pinned by `__tests__/decision-site.test.ts` ("records tracker").
+ */
+export class DecisionRecordTracker {
+  private readonly inFlight = new Set<Promise<void>>();
+
+  /** @param defaultMaxMs `drain`'s cap when none is given: the longest site budget. */
+  constructor(private readonly defaultMaxMs: number) {}
+
+  track(recording: Promise<void>): void {
+    const settled = recording.catch(() => {});
+    this.inFlight.add(settled);
+    void settled.then(() => this.inFlight.delete(settled));
+  }
+
+  get pending(): number {
+    return this.inFlight.size;
+  }
+
+  /** Wait for every in-flight recording, at most `maxMs`. Never throws. */
+  async drain(maxMs: number = this.defaultMaxMs): Promise<void> {
+    if (this.inFlight.size === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.all([...this.inFlight]),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, maxMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
 }
 
 /**
@@ -184,6 +236,7 @@ export async function runDecisionSite<V, J>(opts: RunDecisionSiteOptions<V, J>):
         questionCount,
         outcome: r.ok ? 'ok' : r.code,
         estimatedCostUsd: r.ok ? estimateCost(r.model, { inputTokens, outputTokens }).costUsd : 0,
+        ...(opts.traceId !== undefined ? { traceId: opts.traceId } : {}),
         ...extra,
       });
     } catch {
@@ -214,21 +267,28 @@ export async function runDecisionSite<V, J>(opts: RunDecisionSiteOptions<V, J>):
   try {
     todayVerdict = await opts.today();
   } catch (err) {
-    void pending.then((c) => record('shadow', c, readingOf(c)));
+    track(pending.then((c) => record('shadow', c, readingOf(c))));
     throw err;
   }
-  void pending.then((c) => {
-    const reading = readingOf(c);
-    const jev = reading.jevVerdict;
-    const disagreed =
-      jev === undefined ? undefined : safely(() => opts.disagrees(jev, todayVerdict));
-    record('shadow', c, {
-      ...reading,
-      todayVerdict,
-      ...(typeof disagreed === 'boolean' ? { disagreed } : {}),
-    });
-  });
+  track(
+    pending.then((c) => {
+      const reading = readingOf(c);
+      const jev = reading.jevVerdict;
+      const disagreed =
+        jev === undefined ? undefined : safely(() => opts.disagrees(jev, todayVerdict));
+      record('shadow', c, {
+        ...reading,
+        todayVerdict,
+        ...(typeof disagreed === 'boolean' ? { disagreed } : {}),
+      });
+    }),
+  );
   return todayVerdict;
+
+  // Not awaited here (R8): only a teardown drain waits for it.
+  function track(recording: Promise<void>): void {
+    opts.tracker?.track(recording);
+  }
 
   function readingOf(c: Consultation): { jevVerdict?: J } {
     if (!c.result.ok) return {};

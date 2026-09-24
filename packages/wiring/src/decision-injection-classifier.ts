@@ -27,7 +27,12 @@ import type {
   InjectionVerdict,
 } from '@ethosagent/types';
 import { DECISION_QUESTION_IDS, INJECTION_QUESTIONS } from './decision-questions';
-import { type DecisionSiteRecorder, meetsThreshold, runDecisionSite } from './decision-site';
+import {
+  type DecisionRecordTracker,
+  type DecisionSiteRecorder,
+  meetsThreshold,
+  runDecisionSite,
+} from './decision-site';
 
 /** The single question id this site asks. */
 export const INJECTION_QUESTION_ID = DECISION_QUESTION_IDS.injection;
@@ -43,6 +48,8 @@ export interface CreateDecisionInjectionClassifierOptions {
   /** `decisions.timeouts.injection` resolved (R9). */
   timeoutMs: number;
   observability?: DecisionSiteRecorder;
+  /** The build's shadow-record tracker, drained at dispose (R8). */
+  tracker?: DecisionRecordTracker;
 }
 
 function booleanAnswer(answers: Record<string, DecisionAnswer>) {
@@ -90,5 +97,6 @@ export function createDecisionInjectionClassifier(
       disagrees: (jev, today) => jev !== today.containsInstructions,
       today: () => opts.fallback({ content }),
       ...(opts.observability ? { recorder: opts.observability } : {}),
+      ...(opts.tracker ? { tracker: opts.tracker } : {}),
     });
 }

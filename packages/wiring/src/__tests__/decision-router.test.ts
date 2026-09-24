@@ -195,6 +195,21 @@ describe('createDecisionTierRouter — off and shadow', () => {
       disagreed: true,
     });
   });
+
+  it("shadow carries the turn's traceId onto the record", async () => {
+    const { provider: p } = provider(() => ok('trivial', 0.97));
+    const { recorder: r, records } = recorder();
+    const router = createDecisionTierRouter({
+      decisions: p,
+      mode: 'shadow',
+      threshold: T,
+      timeoutMs: 500,
+      recorder: r,
+    });
+    await router({ message: 'thanks!', traceId: 'trace-9' });
+    await vi.waitFor(() => expect(records).toHaveLength(1));
+    expect(records[0]?.traceId).toBe('trace-9');
+  });
 });
 
 describe('the router budget (R9)', () => {
@@ -365,6 +380,35 @@ describe('createAgentLoop — the tier router', () => {
     } finally {
       await result.dispose();
     }
+  }, 60_000);
+
+  it('R8 teardown: dispose() waits for a shadow answer still in flight', async () => {
+    let settle: (r: DecisionResult) => void = () => {};
+    const decide = vi.fn(
+      () =>
+        new Promise<DecisionResult>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    factory.mockImplementationOnce(() => ({ name: 'typesafe', calibrated: true, decide }));
+    const result = await build(
+      config({ decisions: { provider: 'typesafe', sites: { router: 'shadow' } } }),
+    );
+    const router = tierRouterOf(result.loop) as (input: {
+      message: string;
+    }) => Promise<'trivial' | null>;
+    expect(await router({ message: 'thanks!' })).toBeNull();
+    expect(decide).toHaveBeenCalledTimes(1);
+
+    let disposed = false;
+    const disposal = result.dispose().then(() => {
+      disposed = true;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(disposed).toBe(false);
+    settle(ok('trivial', 0.97));
+    await disposal;
+    expect(disposed).toBe(true);
   }, 60_000);
 
   it('router shadow alone → ONE provider and a tierRouter on the loop', async () => {

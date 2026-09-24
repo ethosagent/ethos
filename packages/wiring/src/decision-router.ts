@@ -36,7 +36,12 @@ import {
   ROUTER_QUESTIONS,
   type RouterChoice,
 } from './decision-questions';
-import { type DecisionSiteRecorder, meetsThreshold, runDecisionSite } from './decision-site';
+import {
+  type DecisionRecordTracker,
+  type DecisionSiteRecorder,
+  meetsThreshold,
+  runDecisionSite,
+} from './decision-site';
 
 /** The single question id this site asks. */
 export const ROUTER_QUESTION_ID = DECISION_QUESTION_IDS.router;
@@ -51,6 +56,8 @@ export interface CreateDecisionTierRouterOptions {
   /** `decisions.timeouts.router` resolved (R9, default 500). */
   timeoutMs: number;
   recorder?: DecisionSiteRecorder;
+  /** The build's shadow-record tracker, drained at dispose (R8). */
+  tracker?: DecisionRecordTracker;
 }
 
 function isRouterChoice(choice: string): choice is RouterChoice {
@@ -83,7 +90,7 @@ export function routerVerdictFrom(
 export function createDecisionTierRouter(opts: CreateDecisionTierRouterOptions): TierRouter {
   // Today's path is `null`, so every outcome but an acted-on `trivial` is
   // "no routing".
-  return ({ message, signal }) =>
+  return ({ message, signal, traceId }) =>
     runDecisionSite<'trivial' | null, RouterChoice>({
       site: 'router',
       mode: opts.mode,
@@ -92,11 +99,13 @@ export function createDecisionTierRouter(opts: CreateDecisionTierRouterOptions):
       questions: ROUTER_QUESTIONS,
       timeoutMs: opts.timeoutMs,
       ...(signal ? { signal } : {}),
+      ...(traceId !== undefined ? { traceId } : {}),
       gate: (answers) => routerVerdictFrom(answers, opts.threshold),
       // Shadow reading (plan §8): the argmax choice, before any threshold.
       interpret: (answers) => routerChoice(answers)?.choice ?? null,
       disagrees: (jev, today) => jev !== (today ?? 'default'),
       today: async () => null,
       ...(opts.recorder ? { recorder: opts.recorder } : {}),
+      ...(opts.tracker ? { tracker: opts.tracker } : {}),
     });
 }

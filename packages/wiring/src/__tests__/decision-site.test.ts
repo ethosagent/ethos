@@ -12,6 +12,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 import {
   type DecisionCallRecord,
+  DecisionRecordTracker,
   meetsThreshold,
   type RunDecisionSiteOptions,
   runDecisionSite,
@@ -353,5 +354,96 @@ describe('runDecisionSite — redaction before decide() (R2)', () => {
     const sent = JSON.stringify(requests[0]);
     expect(sent).not.toContain(KEY);
     expect(sent).toContain('[REDACTED:openai-key]');
+  });
+});
+
+// R8 teardown: `ethos -z` exits right after its turn, so a shadow answer that
+// lands late must be drainable — while the site call itself still never waits.
+describe('runDecisionSite — shadow records tracker (R8 teardown)', () => {
+  it('site returns at once; drain resolves once the provider settles and the record exists', async () => {
+    const jev = deferred<DecisionResult>();
+    const { provider } = stubProvider(() => jev.promise);
+    const tracker = new DecisionRecordTracker(2000);
+    const opts = site({ mode: 'shadow', provider, today: async () => true, tracker });
+
+    expect(await runDecisionSite(opts)).toBe(true);
+    expect(tracker.pending).toBe(1);
+    expect(opts.records).toHaveLength(0);
+
+    let drained = false;
+    const drain = tracker.drain().then(() => {
+      drained = true;
+    });
+    await flush();
+    expect(drained).toBe(false);
+
+    jev.resolve(okResult(0.9));
+    await drain;
+    expect(opts.records).toHaveLength(1);
+    expect(opts.records[0]).toMatchObject({ mode: 'shadow', outcome: 'ok', disagreed: false });
+    expect(tracker.pending).toBe(0);
+  });
+
+  it('a throwing today still tracks the recording', async () => {
+    const jev = deferred<DecisionResult>();
+    const { provider } = stubProvider(() => jev.promise);
+    const tracker = new DecisionRecordTracker(2000);
+    const opts = site({
+      mode: 'shadow',
+      provider,
+      today: async () => {
+        throw new Error('today broke');
+      },
+      tracker,
+    });
+    await expect(runDecisionSite(opts)).rejects.toThrow('today broke');
+    expect(tracker.pending).toBe(1);
+    jev.resolve(okResult(0.9));
+    await tracker.drain();
+    expect(opts.records).toHaveLength(1);
+  });
+
+  it('drain(maxMs) returns at the cap without throwing when the provider is slower', async () => {
+    const jev = deferred<DecisionResult>();
+    const { provider } = stubProvider(() => jev.promise);
+    const tracker = new DecisionRecordTracker(2000);
+    const opts = site({ mode: 'shadow', provider, today: async () => true, tracker });
+    await runDecisionSite(opts);
+
+    const started = Date.now();
+    await expect(tracker.drain(30)).resolves.toBeUndefined();
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(25);
+    expect(elapsed).toBeLessThan(1000);
+    expect(opts.records).toHaveLength(0);
+    expect(tracker.pending).toBe(1);
+
+    jev.resolve(okResult(0.9));
+    await tracker.drain();
+    expect(opts.records).toHaveLength(1);
+  });
+
+  it('drain with nothing tracked is an immediate no-op', async () => {
+    const tracker = new DecisionRecordTracker(60_000);
+    const started = Date.now();
+    await tracker.drain();
+    expect(Date.now() - started).toBeLessThan(50);
+  });
+
+  it('`on` and `off` register nothing', async () => {
+    const { provider } = stubProvider(() => okResult(0.99));
+    const tracker = new DecisionRecordTracker(2000);
+    await runDecisionSite(site({ mode: 'on', provider, tracker }));
+    await runDecisionSite(site({ mode: 'off', provider, tracker }));
+    expect(tracker.pending).toBe(0);
+  });
+
+  it('copies the caller traceId onto the record', async () => {
+    const { provider } = stubProvider(() => okResult(0.99));
+    const tracker = new DecisionRecordTracker(2000);
+    const opts = site({ mode: 'shadow', provider, tracker, traceId: 'trace-1' });
+    await runDecisionSite(opts);
+    await tracker.drain();
+    expect(opts.records[0]?.traceId).toBe('trace-1');
   });
 });

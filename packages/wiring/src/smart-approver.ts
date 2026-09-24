@@ -40,7 +40,12 @@ import {
   approverDigest,
   DECISION_QUESTION_IDS,
 } from './decision-questions';
-import { type DecisionSiteRecorder, meetsThreshold, runDecisionSite } from './decision-site';
+import {
+  type DecisionRecordTracker,
+  type DecisionSiteRecorder,
+  meetsThreshold,
+  runDecisionSite,
+} from './decision-site';
 
 /** Wall-clock bound on the reviewer round-trip. Exceeding it yields `ask`. */
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -84,6 +89,8 @@ export interface SmartApproverDecisionSite {
   /** `decisions.timeouts.approver` resolved (R9, default 2000). */
   timeoutMs: number;
   recorder?: DecisionSiteRecorder;
+  /** The build's shadow-record tracker, drained at dispose (R8). */
+  tracker?: DecisionRecordTracker;
 }
 
 /** The single question id this site asks. */
@@ -332,6 +339,7 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
           today: () =>
             reviewByLlm(payload, dangerReason, Math.max(0, timeoutMs - (Date.now() - started))),
           ...(site.recorder ? { recorder: bareVerdictRecorder(site.recorder) } : {}),
+          ...(site.tracker ? { tracker: site.tracker } : {}),
         }),
         outer,
       ]);

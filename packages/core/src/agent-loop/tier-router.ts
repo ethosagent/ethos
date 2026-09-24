@@ -27,6 +27,8 @@ export type TierRouter = (input: {
   message: string;
   /** The turn's abort signal; a router must stop when it fires. */
   signal?: AbortSignal;
+  /** The turn's observability trace, so what the router records joins the turn. */
+  traceId?: string;
 }) => Promise<'trivial' | null>;
 
 /** What a role resolves to for the R1 comparison: the provider entry and the model id. */
@@ -53,6 +55,7 @@ export async function routeTurnTier(input: {
   router: TierRouter | undefined;
   message: string;
   signal?: AbortSignal;
+  traceId?: string;
   resolve: (role: 'trivial' | 'default') => ResolvedRoleModel | null;
 }): Promise<'trivial' | undefined> {
   const { router } = input;
@@ -65,6 +68,7 @@ export async function routeTurnTier(input: {
     const answer: unknown = await router({
       message: input.message,
       ...(input.signal ? { signal: input.signal } : {}),
+      ...(input.traceId !== undefined ? { traceId: input.traceId } : {}),
     });
     return answer === 'trivial' ? 'trivial' : undefined;
   } catch {

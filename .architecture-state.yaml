@@ -262,9 +262,9 @@ register_anchors:
     - { path: packages/core/src/agent-loop.ts, line: 695, contains: "resolveDowngradedTools(dgConfig?.tools)" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 761, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 26, contains: "export async function handleUntrustedResult" }
-    - { path: packages/wiring/src/decision-injection-classifier.ts, line: 73, contains: "export function createDecisionInjectionClassifier" }
-    - { path: packages/wiring/src/decision-site.ts, line: 124, contains: "export function meetsThreshold" }
-    - { path: packages/wiring/src/decision-site.ts, line: 133, contains: "export async function runDecisionSite" }
+    - { path: packages/wiring/src/decision-injection-classifier.ts, line: 80, contains: "export function createDecisionInjectionClassifier" }
+    - { path: packages/wiring/src/decision-site.ts, line: 176, contains: "export function meetsThreshold" }
+    - { path: packages/wiring/src/decision-site.ts, line: 185, contains: "export async function runDecisionSite" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 74, contains: "const containsInstructions = tier1Hit ||" }
 
   G-SEC:
@@ -286,9 +286,9 @@ register_anchors:
   G-APP:
     - { path: packages/wiring/src/danger-predicate.ts, line: 282, contains: "mode === 'smart' && opts.smartApprove" }
     - { path: packages/wiring/src/danger-predicate.ts, line: 259, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
-    - { path: packages/wiring/src/smart-approver.ts, line: 275, contains: "reviewer gave no usable verdict" }
-    - { path: packages/wiring/src/smart-approver.ts, line: 283, contains: "reviewer error (fail-closed)" }
-    - { path: packages/wiring/src/smart-approver.ts, line: 113, contains: "export function approverVerdictFrom" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 282, contains: "reviewer gave no usable verdict" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 290, contains: "reviewer error (fail-closed)" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 120, contains: "export function approverVerdictFrom" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 60, contains: "export async function enforceBeforeToolCall" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 64, contains: "const denied = checkDenyRules(" }
     - { path: packages/core/src/hook-registry.ts, line: 94, contains: "async fireModifying" }
