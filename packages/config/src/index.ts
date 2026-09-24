@@ -3022,10 +3022,22 @@ export interface EthosConfig {
    *
    * Config format:
    *   gateway.maxInboundMediaBytes: 52428800
+   *   gateway.inboundSpool.maxAttempts: 3
+   *   gateway.inboundSpool.maxReplayAgeMs: 86400000
    */
   gateway?: {
     /** Largest inbound attachment any adapter will download, bytes. 1024–134217728. */
     maxInboundMediaBytes?: number;
+    /**
+     * The inbound spool's operator knobs (plan reach-and-containment D2-7,
+     * D2-9). Unset keys leave the gateway on its defaults: 3 attempts, 24h.
+     */
+    inboundSpool?: {
+      /** Attempts before an owed message is dead-lettered. 1–100. */
+      maxAttempts?: number;
+      /** Rows older than this at replay are dead-lettered as stale, ms. 60000–2592000000. */
+      maxReplayAgeMs?: number;
+    };
   };
   /**
    * Team-supervisor knobs. Named `teamSupervisor` rather than `gateway`
@@ -4303,6 +4315,14 @@ function serializeConfigLines(config: EthosConfig): string[] {
   if (config.gateway?.maxInboundMediaBytes !== undefined) {
     lines.push(`gateway.maxInboundMediaBytes: ${config.gateway.maxInboundMediaBytes}`);
   }
+  if (config.gateway?.inboundSpool?.maxAttempts !== undefined) {
+    lines.push(`gateway.inboundSpool.maxAttempts: ${config.gateway.inboundSpool.maxAttempts}`);
+  }
+  if (config.gateway?.inboundSpool?.maxReplayAgeMs !== undefined) {
+    lines.push(
+      `gateway.inboundSpool.maxReplayAgeMs: ${config.gateway.inboundSpool.maxReplayAgeMs}`,
+    );
+  }
   if (config.teamSupervisor?.restartLoopGuard) {
     const rg = config.teamSupervisor.restartLoopGuard;
     if (rg.maxRestarts !== undefined)
@@ -5429,7 +5449,9 @@ export function parseConfigYaml(src: string): EthosConfig {
       continue;
     }
     // gateway.<field>: <value>  (gateway-wide, non-credential knobs).
-    const gwy = line.match(/^gateway\.(maxInboundMediaBytes):\s*(.+)$/);
+    const gwy = line.match(
+      /^gateway\.(maxInboundMediaBytes|inboundSpool\.maxAttempts|inboundSpool\.maxReplayAgeMs):\s*(.+)$/,
+    );
     if (gwy) {
       gatewayKv[gwy[1]] = parseConfigScalar(gwy[2]);
       continue;
@@ -8850,10 +8872,28 @@ function buildBrowser(kv: Record<string, string>): {
  * are dropped, leaving each adapter on its own platform default.
  */
 function buildGateway(kv: Record<string, string>): EthosConfig['gateway'] | undefined {
+  const result: NonNullable<EthosConfig['gateway']> = {};
   const raw = kv.maxInboundMediaBytes;
-  if (raw === undefined) return undefined;
-  const n = parseBoundedInt(raw, 1024, 134_217_728);
-  return n === undefined ? undefined : { maxInboundMediaBytes: n };
+  if (raw !== undefined) {
+    const n = parseBoundedInt(raw, 1024, 134_217_728);
+    if (n !== undefined) result.maxInboundMediaBytes = n;
+  }
+  // Inbound spool knobs. Out-of-range values are dropped, leaving the gateway
+  // on its default: a cap of 0 attempts would dead-letter every message before
+  // it ran, and a replay age under a minute would dead-letter a normal restart.
+  const spool: NonNullable<NonNullable<EthosConfig['gateway']>['inboundSpool']> = {};
+  const attempts = kv['inboundSpool.maxAttempts'];
+  if (attempts !== undefined) {
+    const n = parseBoundedInt(attempts, 1, 100);
+    if (n !== undefined) spool.maxAttempts = n;
+  }
+  const age = kv['inboundSpool.maxReplayAgeMs'];
+  if (age !== undefined) {
+    const n = parseBoundedInt(age, 60_000, 30 * 86_400_000);
+    if (n !== undefined) spool.maxReplayAgeMs = n;
+  }
+  if (Object.keys(spool).length > 0) result.inboundSpool = spool;
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 /**
