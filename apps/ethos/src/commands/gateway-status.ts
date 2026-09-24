@@ -9,12 +9,26 @@
 // Raw `node:fs` here is the app-layer composition-root allowance (apps/ is not
 // in the no-raw-fs scan): an existence probe so a status read never CREATES an
 // empty database, and a read of the heartbeat file.
+//
+// Neither store is opened through its class: both constructors run `migrate()`,
+// and a newer binary migrating a store ahead of its gateway is what makes
+// `ethos upgrade`'s rollback unsafe (plan openclaw-9.5-adoption D24). Each file
+// is opened raw and read (or, for `spool`, written) through the package's
+// handle-taking helpers. Pinned by __tests__/diagnostics-never-migrate.test.ts.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ethosDir } from '@ethosagent/config';
-import { type DeliveryStats, SQLiteDeliveryLedger } from '@ethosagent/delivery-ledger';
-import { type SpoolStats, SQLiteInboundSpool } from '@ethosagent/inbound-spool';
+import { type DeliveryStats, readDeliveryStats } from '@ethosagent/delivery-ledger';
+import {
+  discardSpoolDead,
+  INBOUND_SPOOL_SCHEMA_VERSION,
+  readSpoolRow,
+  readSpoolStats,
+  requeueSpoolDead,
+  type SpoolStats,
+} from '@ethosagent/inbound-spool';
+import Database from '@ethosagent/sqlite';
 import {
   gatewayLockPath,
   inspectGatewayLock,
@@ -90,36 +104,27 @@ function readHeartbeat(dir: string): { updatedAt?: string } | null {
   }
 }
 
+/** Open `path` raw (no migration), run `read`, close. `null` when the file is
+ *  absent or the read throws — an unreadable store is reported as no counts. */
+function readRaw<T>(path: string, read: (db: Database.Database) => T): T | null {
+  if (!existsSync(path)) return null;
+  let db: Database.Database | undefined;
+  try {
+    db = new Database(path);
+    return read(db);
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
 async function readStoreStats(dir: string): Promise<Pick<GatewayStatus, 'spool' | 'ledger'>> {
-  let spool: SpoolStats | null = null;
-  let ledger: GatewayStatus['ledger'] = null;
-  const spoolPath = join(dir, 'inbound-spool.db');
-  if (existsSync(spoolPath)) {
-    try {
-      const s = new SQLiteInboundSpool(spoolPath);
-      try {
-        spool = s.stats();
-      } finally {
-        s.close();
-      }
-    } catch {
-      spool = null;
-    }
-  }
-  const ledgerPath = join(dir, 'delivery-ledger.db');
-  if (existsSync(ledgerPath)) {
-    try {
-      const l = new SQLiteDeliveryLedger(ledgerPath);
-      try {
-        const { voice: _voice, ...counts } = await l.stats();
-        ledger = counts;
-      } finally {
-        l.close();
-      }
-    } catch {
-      ledger = null;
-    }
-  }
+  const spool = readRaw(join(dir, 'inbound-spool.db'), readSpoolStats);
+  const ledger = readRaw(join(dir, 'delivery-ledger.db'), (db) => {
+    const { voice: _voice, ...counts } = readDeliveryStats(db);
+    return counts;
+  });
   return { spool, ledger };
 }
 
@@ -170,9 +175,23 @@ export function runGatewaySpool(args: readonly string[], dir = ethosDir()): numb
     console.error(`No inbound spool at ${path}.`);
     return 1;
   }
-  const spool = new SQLiteInboundSpool(path);
+  // Raw open: this writes, but must not migrate either — an operator running a
+  // newer binary's `spool replay` before restarting the gateway would otherwise
+  // bump the file past the version the running gateway (and a rollback) can
+  // open. Instead, a file at any version other than the one these queries were
+  // written for is refused rather than written into.
+  const spool = new Database(path);
   try {
-    const row = spool.get(id);
+    spool.pragma('busy_timeout = 5000');
+    const rows = spool.pragma('user_version') as Array<{ user_version: number }>;
+    const version = rows[0]?.user_version ?? 0;
+    if (version !== INBOUND_SPOOL_SCHEMA_VERSION) {
+      console.error(
+        `inbound-spool.db is at schema version ${version}; this ethos writes version ${INBOUND_SPOOL_SCHEMA_VERSION}. Run the ethos version that matches your gateway.`,
+      );
+      return 1;
+    }
+    const row = readSpoolRow(spool, id);
     if (!row) {
       console.error(`No spooled message ${id}.`);
       return 1;
@@ -184,12 +203,12 @@ export function runGatewaySpool(args: readonly string[], dir = ethosDir()): numb
       return 1;
     }
     if (action === 'replay') {
-      spool.requeue(id);
+      requeueSpoolDead(spool, id, Date.now());
       console.log(
         `Requeued ${id}. A running gateway replays it within a minute; otherwise on its next start.`,
       );
     } else {
-      spool.discard(id);
+      discardSpoolDead(spool, id, Date.now());
       console.log(`Discarded ${id}.`);
     }
     return 0;

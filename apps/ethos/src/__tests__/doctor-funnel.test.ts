@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const readState = vi.fn();
 vi.mock('../wiring', () => ({
-  getFunnelTracker: () => ({ readState }),
+  getStorage: () => ({}),
+}));
+// The report reads the stamp file through `readFunnelState`, never a
+// FunnelTracker, whose host wiring opens (and migrates) observability.db.
+vi.mock('@ethosagent/wiring', () => ({
+  readFunnelState: () => readState(),
 }));
 
 // Keep the static import of doctor.ts light — the funnel report path never

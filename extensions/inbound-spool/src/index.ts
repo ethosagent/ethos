@@ -139,6 +139,12 @@ export type SpoolFailOutcome = 'received' | 'dead' | 'interrupted';
 /** Widest window {@link InboundSpool.listDead} will open. */
 const MAX_DEAD_LIST = 500;
 
+/** The `user_version` this code migrates `inbound-spool.db` to. Exported so a
+ *  non-migrating writer (`ethos gateway spool`, apps/ethos/src/commands/gateway-status.ts)
+ *  can refuse a file at any other version instead of writing into a schema it
+ *  does not know. */
+export const INBOUND_SPOOL_SCHEMA_VERSION = 2;
+
 /**
  * The contract the gateway codes against. Exported from this package rather
  * than `@ethosagent/types`: the gateway takes it as an optional
@@ -252,8 +258,6 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS inbound_spool_lane   ON inbound_spool(lane_key, received_at);
 `;
 
-const SPOOL_SCHEMA_VERSION = 2;
-
 /**
  * Forward-only steps; the baseline above already describes v2, so a fresh
  * database never runs one. `ADD COLUMN` keeps the table STRICT and leaves every
@@ -360,7 +364,7 @@ export class SQLiteInboundSpool implements InboundSpool {
 
     migrate(this.db, {
       name: 'inbound-spool',
-      targetVersion: SPOOL_SCHEMA_VERSION,
+      targetVersion: INBOUND_SPOOL_SCHEMA_VERSION,
       baseline: SCHEMA,
       migrations: SPOOL_MIGRATIONS,
     });
@@ -524,14 +528,7 @@ export class SQLiteInboundSpool implements InboundSpool {
   }
 
   listInterrupted(limit = 50): SpoolRow[] {
-    const n = Number.isInteger(limit) ? Math.min(MAX_DEAD_LIST, Math.max(1, limit)) : 50;
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM inbound_spool WHERE status = 'interrupted'
-         ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
-      )
-      .all(n) as Row[];
-    return rows.map(toRow);
+    return readSpoolInterrupted(this.db, limit);
   }
 
   markDead(id: string, error: string): boolean {
@@ -612,44 +609,19 @@ export class SQLiteInboundSpool implements InboundSpool {
   }
 
   listDead(limit = 50): SpoolRow[] {
-    const n = Number.isInteger(limit) ? Math.min(MAX_DEAD_LIST, Math.max(1, limit)) : 50;
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM inbound_spool WHERE status = 'dead'
-         ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
-      )
-      .all(n) as Row[];
-    return rows.map(toRow);
+    return readSpoolDead(this.db, limit);
   }
 
   get(id: string): SpoolRow | null {
-    const row = this.db.prepare('SELECT * FROM inbound_spool WHERE id = ?').get(id) as
-      | Row
-      | undefined;
-    return row ? toRow(row) : null;
+    return readSpoolRow(this.db, id);
   }
 
   requeue(id: string): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE inbound_spool
-         SET status = 'received', attempts = 0, claimed_by = NULL, tool_started_at = NULL,
-             updated_at = ?
-         WHERE id = ? AND status IN ('dead', 'interrupted')`,
-      )
-      .run(this.now(), id);
-    return result.changes === 1;
+    return requeueSpoolDead(this.db, id, this.now());
   }
 
   discard(id: string): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE inbound_spool
-         SET status = 'done', last_error = 'discarded', payload = '{}', updated_at = ?
-         WHERE id = ? AND status IN ('dead', 'interrupted')`,
-      )
-      .run(this.now(), id);
-    return result.changes === 1;
+    return discardSpoolDead(this.db, id, this.now());
   }
 
   pruneDone(cutoffMs: number): number {
@@ -669,35 +641,117 @@ export class SQLiteInboundSpool implements InboundSpool {
   }
 
   listOrphaned(botKeys: readonly string[]): SpoolRow[] {
-    const filter =
-      botKeys.length > 0 ? `AND bot_key NOT IN (${botKeys.map(() => '?').join(', ')})` : '';
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM inbound_spool WHERE status = 'received' ${filter}
-         ORDER BY received_at ASC, rowid ASC LIMIT ?`,
-      )
-      .all(...botKeys, MAX_DEAD_LIST) as Row[];
-    return rows.map(toRow);
+    return readSpoolOrphaned(this.db, botKeys);
   }
 
   stats(): SpoolStats {
-    const out: SpoolStats = { received: 0, processing: 0, done: 0, dead: 0, interrupted: 0 };
-    const rows = this.db
-      .prepare('SELECT status, COUNT(*) AS n FROM inbound_spool GROUP BY status')
-      .all() as Array<{ status: string; n: number }>;
-    for (const r of rows) if (isStatus(r.status)) out[r.status] = r.n;
-    return out;
+    return readSpoolStats(this.db);
   }
 
   /** Oldest `received_at` among `received` rows, or `null` when none. */
   oldestReceivedAt(): number | null {
-    const row = this.db
-      .prepare(`SELECT MIN(received_at) AS t FROM inbound_spool WHERE status = 'received'`)
-      .get() as { t: number | null } | undefined;
-    return row?.t ?? null;
+    return readSpoolOldestReceivedAt(this.db);
   }
 
   close(): void {
     this.db.close();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Queries over an already-open handle
+//
+// The class above opens AND migrates. Diagnostic surfaces (`ethos doctor`,
+// `ethos gateway status`) and the operator's `ethos gateway spool` must not
+// migrate — a newer binary migrating the file ahead of its gateway is what makes
+// `ethos upgrade`'s rollback unsafe (plan openclaw-9.5-adoption D24) — so they
+// open the file raw with `@ethosagent/sqlite` and call these. The class
+// delegates to the same functions, so there is one copy of each query.
+// Pinned by apps/ethos/src/commands/__tests__/diagnostics-never-migrate.test.ts.
+// ---------------------------------------------------------------------------
+
+/** Row counts per status. */
+export function readSpoolStats(db: Database.Database): SpoolStats {
+  const out: SpoolStats = { received: 0, processing: 0, done: 0, dead: 0, interrupted: 0 };
+  const rows = db
+    .prepare('SELECT status, COUNT(*) AS n FROM inbound_spool GROUP BY status')
+    .all() as Array<{ status: string; n: number }>;
+  for (const r of rows) if (isStatus(r.status)) out[r.status] = r.n;
+  return out;
+}
+
+/** Oldest `received_at` among `received` rows, or `null` when none. */
+export function readSpoolOldestReceivedAt(db: Database.Database): number | null {
+  const row = db
+    .prepare(`SELECT MIN(received_at) AS t FROM inbound_spool WHERE status = 'received'`)
+    .get() as { t: number | null } | undefined;
+  return row?.t ?? null;
+}
+
+/** See {@link InboundSpool.listOrphaned}. */
+export function readSpoolOrphaned(db: Database.Database, botKeys: readonly string[]): SpoolRow[] {
+  const filter =
+    botKeys.length > 0 ? `AND bot_key NOT IN (${botKeys.map(() => '?').join(', ')})` : '';
+  const rows = db
+    .prepare(
+      `SELECT * FROM inbound_spool WHERE status = 'received' ${filter}
+       ORDER BY received_at ASC, rowid ASC LIMIT ?`,
+    )
+    .all(...botKeys, MAX_DEAD_LIST) as Row[];
+  return rows.map(toRow);
+}
+
+/** See {@link InboundSpool.listDead}. */
+export function readSpoolDead(db: Database.Database, limit = 50): SpoolRow[] {
+  const n = Number.isInteger(limit) ? Math.min(MAX_DEAD_LIST, Math.max(1, limit)) : 50;
+  const rows = db
+    .prepare(
+      `SELECT * FROM inbound_spool WHERE status = 'dead'
+       ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
+    )
+    .all(n) as Row[];
+  return rows.map(toRow);
+}
+
+/** See {@link InboundSpool.listInterrupted}. */
+export function readSpoolInterrupted(db: Database.Database, limit = 50): SpoolRow[] {
+  const n = Number.isInteger(limit) ? Math.min(MAX_DEAD_LIST, Math.max(1, limit)) : 50;
+  const rows = db
+    .prepare(
+      `SELECT * FROM inbound_spool WHERE status = 'interrupted'
+       ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
+    )
+    .all(n) as Row[];
+  return rows.map(toRow);
+}
+
+/** See {@link InboundSpool.get}. */
+export function readSpoolRow(db: Database.Database, id: string): SpoolRow | null {
+  const row = db.prepare('SELECT * FROM inbound_spool WHERE id = ?').get(id) as Row | undefined;
+  return row ? toRow(row) : null;
+}
+
+/** See {@link InboundSpool.requeue}. */
+export function requeueSpoolDead(db: Database.Database, id: string, now: number): boolean {
+  const result = db
+    .prepare(
+      `UPDATE inbound_spool
+       SET status = 'received', attempts = 0, claimed_by = NULL, tool_started_at = NULL,
+           updated_at = ?
+       WHERE id = ? AND status IN ('dead', 'interrupted')`,
+    )
+    .run(now, id);
+  return result.changes === 1;
+}
+
+/** See {@link InboundSpool.discard}. */
+export function discardSpoolDead(db: Database.Database, id: string, now: number): boolean {
+  const result = db
+    .prepare(
+      `UPDATE inbound_spool
+       SET status = 'done', last_error = 'discarded', payload = '{}', updated_at = ?
+       WHERE id = ? AND status IN ('dead', 'interrupted')`,
+    )
+    .run(now, id);
+  return result.changes === 1;
 }

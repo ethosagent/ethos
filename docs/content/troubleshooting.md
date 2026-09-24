@@ -4,7 +4,7 @@ description: "Error catalogue for Ethos — common failure modes by symptom, wit
 kind: reference
 audience: shared
 slug: troubleshooting
-updated: 2026-09-13
+updated: 2026-09-24
 ---
 
 When something goes wrong, the CLI prints a three-line block: a code, a one-line cause, and a one-line action. Search this page for the code or the symptom you saw. Each entry follows the same shape: **Cause**, **Fix**, **Prevent** (when applicable).
@@ -332,7 +332,7 @@ The full list of registered codes. Every code shipped in `@ethosagent/types` `Et
 | `MCP_TRANSPORT_INVALID` | An MCP server entry is missing `command` (stdio) or `url` (sse). | Edit the MCP server entry in `~/.ethos/config.yaml`. |
 | `MCP_SERVER_NOT_FOUND` | The named MCP server is not attached to that personality. | Attach the server first, then set its token. |
 | `SECRETS_UNAVAILABLE` | The server has no secrets resolver wired. | Start the server with secrets configured. |
-| `REGISTRY_FETCH_FAILED` | `ethos upgrade` could not reach `registry.npmjs.org`. | Check network. Install manually: `npm i -g @ethosagent/cli@latest`. |
+| `REGISTRY_FETCH_FAILED` | `ethos upgrade` could not reach the npm registry (`npm_config_registry`, default `registry.npmjs.org`). | Check network. Install manually: `npm i -g @ethosagent/cli@latest`. |
 | `NETWORK_ERROR` | A non-registry network call failed. | Re-run. Check your connection. |
 | `SKILL_INSTALL_FAILED` | `ethos skills install` did not complete. | Re-run; verify the source slug. |
 | `SKILL_NOT_FOUND` | Skill id is not under `~/.ethos/skills/`. | Refresh the Skills tab; the file may have been deleted. |
