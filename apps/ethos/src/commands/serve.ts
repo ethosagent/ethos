@@ -1636,7 +1636,7 @@ export function serveLoopOptions(opts: {
  * and the loop onboarding binds after boot. Same `checkCommand` rules the CLI
  * guard uses, surfaced through the modal instead of a hard block; threaded
  * with the turn's personality (learned from the loop's `session_start`) so
- * `denyRules` and `approvalMode` are enforced, plus a lazy provider handle for
+ * `approvalMode` is enforced, plus a lazy provider handle for
  * `approvalMode: 'smart'` — nothing is constructed unless a flagged call
  * actually reaches the reviewer.
  */

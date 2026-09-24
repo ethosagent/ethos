@@ -22,6 +22,9 @@ export {
 // startup floor diagnostic and window-scaled result budget so there is ONE
 // reserve arithmetic, not a drifting copy.
 export { DEFAULT_OUTPUT_RESERVE_TOKENS } from './agent-loop/compaction';
+// Personality deny rules — enforced in `enforceBeforeToolCall`; exported so the
+// smart reviewer's verdict cache keys off the same canonical args form.
+export { canonicalizeArgs, denyRuleReason, matchDenyRule } from './agent-loop/deny-rules';
 // Lane 2b — the production session-replay serialization path, exported so
 // restart-prefix tests (and any surface that rehydrates a session) render
 // stored history through EXACTLY the code the live loop uses. A test-local

@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: set-up-approval-gates
 time: 10 min
-updated: 2026-08-05
+updated: 2026-09-24
 ---
 
 Some tool calls write files, run shell commands, or hit the network. You do not want them firing unsupervised. Approval gates make the agent pause and ask before the dangerous call runs — or refuse it outright.
@@ -72,7 +72,7 @@ Four things worth knowing before you rely on it:
 
 ### Deny rules
 
-`safety.denyRules` is a list of case-sensitive substrings matched against `<tool-name> <canonical-json-args>`, so the rule `git push --force` matches a `terminal` call whose `command` contains that text. A match surfaces the reason `denied by personality deny rule: git push --force`.
+`safety.denyRules` is a list of case-sensitive substrings matched against `<tool-name> <canonical-json-args>`, so the rule `git push --force` matches a `terminal` call whose `command` contains that text. A match refuses the call outright with the reason `denied by personality deny rule: git push --force`.
 
 Write the list under the same `safety` block:
 
@@ -93,7 +93,7 @@ Invalid denyRules entry: empty rule. Every entry must be non-empty
 
 Empty and whitespace-only entries are refused for the same reason from opposite ends: `""` can never match, and `" "` matches every call, because the match subject always contains a space between the tool name and its arguments.
 
-Deny rules are the floor. They are matched **before** the approval-mode dispatch, so a rule binds in every mode — including `approvalMode: off` with auto-approve enabled. This inverts the usual precedence intuition: modes can only make a call stricter, never looser. A matched call still reaches the approval prompt on surfaces that have one — a rule refuses the *machine*, not the human at the modal — and when the human denies, the agent receives both halves: `denied by user — denied by personality deny rule: git push --force`.
+Deny rules are the floor. They are matched **before** any approval check runs, so a rule binds in every mode — including `approvalMode: off` with auto-approve enabled — and on every surface, including `ethos chat` and cron. This inverts the usual precedence intuition: modes can only make a call stricter, never looser. A matched call never reaches an approval prompt: no card or modal is posted, no stored allowlist grant applies, and nobody can Allow it. To let a call through, remove the rule.
 
 ## 3. Reload the personality
 

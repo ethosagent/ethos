@@ -62,6 +62,9 @@ export interface ScriptToolBridgeDeps {
    * exactly the message the loop halts with.
    */
   checkBudgets: () => ReturnType<typeof checkTurnBudgets>;
+  /** The turn personality's `safety.denyRules`, enforced per inner call by
+   *  `enforceBeforeToolCall` exactly as on the batch path. */
+  denyRules?: ReadonlyArray<string>;
   /** The turn's inbound attachments, forwarded so the registry's live ctx stays stable. */
   turnAttachments?: Attachment[];
   /**
@@ -238,6 +241,7 @@ export class ScriptToolBridge {
         allowedPlugins: d.allowedPlugins,
         traceId: d.traceId,
         ...(callerPersonality !== undefined ? { personalityId: callerPersonality } : {}),
+        denyRules: d.denyRules,
       },
     );
     if (!decision.allowed) {

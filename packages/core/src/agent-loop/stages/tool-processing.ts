@@ -323,6 +323,7 @@ export async function* processTools(
         traceId: ctx.traceId,
         ...(ctx.voiceOrigin ? { voiceOrigin: ctx.voiceOrigin } : {}),
         personalityId: ctx.personality.id,
+        denyRules: ctx.personality.safety?.denyRules,
       },
     );
     // ...or while THIS call's hook was parked: no tool_start for a call that cannot run.

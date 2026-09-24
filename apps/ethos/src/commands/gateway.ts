@@ -2768,8 +2768,8 @@ export function wireApprovalFlow(
   const approvalBotKeys = new Set(approvalAdapters.map((a) => a.botKey));
   const approvalBots = bots.filter((bot) => approvalBotKeys.has(bot.botKey));
   // One predicate for all approval bots. It learns each turn's personality
-  // from the owning loop's `session_start`, so `denyRules` and `approvalMode`
-  // follow whatever personality the lane is actually running — including a
+  // from the owning loop's `session_start`, so `approvalMode` follows
+  // whatever personality the lane is actually running — including a
   // `/personality` switch. The reviewer and its provider stay unconstructed
   // unless a flagged call reaches `approvalMode: 'smart'`.
   const isDangerous = createApprovalDangerPredicate({

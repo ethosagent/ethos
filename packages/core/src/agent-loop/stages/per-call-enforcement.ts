@@ -1,6 +1,7 @@
 import type { HookRegistry, VoiceTurnOrigin } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { type IdenticalStreak, updateIdenticalStreak } from '../budgets';
+import { denyRuleReason, matchDenyRule } from '../deny-rules';
 import type { HaltDecision, WatcherTap } from '../turn-context';
 
 // ---------------------------------------------------------------------------
@@ -29,6 +30,9 @@ export interface BeforeToolCallInput {
   /** The turn's personality — forwarded onto the hook payload so a gate on a
    *  loop shared across personalities can authorise the actual caller. */
   personalityId?: string;
+  /** The turn personality's `safety.denyRules`. A match refuses the call
+   *  before any `before_tool_call` hook runs (see `enforceBeforeToolCall`). */
+  denyRules?: ReadonlyArray<string>;
 }
 
 export type BeforeToolCallDecision =
@@ -39,11 +43,22 @@ export type BeforeToolCallDecision =
  * Fire the `before_tool_call` modifying hook for one tool call. A hook error
  * blocks the call (the caller decides how to surface the rejection); a hook
  * `args` override becomes the effective args for execution.
+ *
+ * Personality deny rules are the hard floor and are checked HERE, not in a
+ * hook: a deny-rule match refuses the call before `fireModifying` is called,
+ * so no approval hook posts a card and no allowlist is consulted. A hook could
+ * not do this — `fireModifying` runs every handler even after one sets
+ * `error`, and swallows a throwing handler. When a hook rewrites the args the
+ * rules are checked again on the rewritten args. Pinned by
+ * `../__tests__/deny-rule-gate.test.ts`.
  */
 export async function enforceBeforeToolCall(
   deps: BeforeToolCallDeps,
   input: BeforeToolCallInput,
 ): Promise<BeforeToolCallDecision> {
+  const denied = checkDenyRules(deps, input, input.args);
+  if (denied) return denied;
+
   const beforeResult = await deps.hooks.fireModifying(
     'before_tool_call',
     {
@@ -66,7 +81,29 @@ export async function enforceBeforeToolCall(
     return { allowed: false, reason: beforeResult.error };
   }
 
-  return { allowed: true, effectiveArgs: beforeResult.args ?? input.args };
+  const effectiveArgs = beforeResult.args ?? input.args;
+  if (effectiveArgs !== input.args) {
+    const deniedAfterRewrite = checkDenyRules(deps, input, effectiveArgs);
+    if (deniedAfterRewrite) return deniedAfterRewrite;
+  }
+
+  return { allowed: true, effectiveArgs };
+}
+
+function checkDenyRules(
+  deps: BeforeToolCallDeps,
+  input: BeforeToolCallInput,
+  args: unknown,
+): BeforeToolCallDecision | null {
+  const rule = matchDenyRule(input.denyRules, input.toolName, args);
+  if (rule === null) return null;
+  const reason = denyRuleReason(rule);
+  deps.observability?.recordSafetyBlock({
+    traceId: input.traceId,
+    code: 'deny_rule',
+    cause: reason,
+  });
+  return { allowed: false, reason };
 }
 
 /**
