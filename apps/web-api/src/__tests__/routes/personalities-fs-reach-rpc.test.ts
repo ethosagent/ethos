@@ -46,7 +46,7 @@ describe('personalities RPC — fs_reach.workdir', () => {
     const tokens = new WebTokenRepository({ dataDir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
   });
@@ -63,6 +63,7 @@ describe('personalities RPC — fs_reach.workdir', () => {
         'content-type': 'application/json',
         cookie,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({ json: input }),
     });

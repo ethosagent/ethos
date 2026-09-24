@@ -53,7 +53,7 @@ describe('GET /backup/download', () => {
     const tokens = new WebTokenRepository({ dataDir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
     expect(cookie).toBeTruthy();

@@ -5,9 +5,17 @@ import { defineConfig, type PluginOption } from 'vite';
 // Vite config for the web client. Two run modes:
 //
 //  • Dev   — `pnpm --filter @ethosagent/web dev` runs Vite at :5173 with the
-//            `/rpc`, `/sse`, `/auth`, `/openapi`, `/documents` paths proxied
-//            to the ethos-serve API on :3000. Cookies sent by the API stay
-//            scoped to localhost so the proxy is transparent.
+//            `/rpc`, `/sse`, `/auth`, `/openapi`, `/documents`, `/oauth` and
+//            `/api` paths proxied to the ethos-serve API on :3000. Every
+//            API-bound entry MUST set `changeOrigin: false`, so the API sees
+//            `Host: localhost:5173` — the same host:port as the browser's
+//            `Origin`. That is load-bearing: the CSRF middleware accepts a
+//            localhost Origin only when it equals the request `Host`
+//            (`isSameOriginLocalhost` in apps/web-api/src/middleware/csrf.ts,
+//            pinned by apps/web-api/src/__tests__/middleware/csrf.test.ts).
+//            A plain-string entry means `changeOrigin: true` in Vite, which
+//            rewrites Host to :3000 and gets every write refused;
+//            apps/web-api/src/__tests__/vite-proxy-origin.test.ts fails on it.
 //  • Build — `pnpm --filter @ethosagent/web build` writes to `apps/web/dist/`.
 //            `apps/web-api`'s static handler serves that directory in
 //            production runs of `ethos serve`.
@@ -49,27 +57,27 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/rpc': 'http://localhost:3000',
+      '/rpc': { target: 'http://localhost:3000', changeOrigin: false },
       '/sse': {
         target: 'http://localhost:3000',
         changeOrigin: false,
         // SSE keeps the connection open; turn off buffering so events flush.
         ws: false,
       },
-      '/auth': 'http://localhost:3000',
-      '/openapi': 'http://localhost:3000',
+      '/auth': { target: 'http://localhost:3000', changeOrigin: false },
+      '/openapi': { target: 'http://localhost:3000', changeOrigin: false },
       // OAuth callback — proxy to the API server so the server-side handler
       // runs regardless of whether the DCR redirect_uri points to :5173 or :3000.
-      '/oauth': 'http://localhost:3000',
+      '/oauth': { target: 'http://localhost:3000', changeOrigin: false },
       // Documents download streams bytes over a plain <a download> navigation
       // authenticated by the `SameSite=Strict` `ethos_auth` cookie. It MUST be
       // proxied: an absolute :3000 href from :5173 is cross-site and the
       // browser silently drops the cookie, so the download 401s.
-      '/documents': 'http://localhost:3000',
+      '/documents': { target: 'http://localhost:3000', changeOrigin: false },
       // Avatar upload/view/delete rides the same `SameSite=Strict`
       // `ethos_auth` cookie as `/documents` above, for the same reason: an
       // absolute :3000 request from :5173 is cross-site and drops the cookie.
-      '/api': 'http://localhost:3000',
+      '/api': { target: 'http://localhost:3000', changeOrigin: false },
     },
   },
   build: {

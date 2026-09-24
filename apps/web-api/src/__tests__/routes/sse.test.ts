@@ -45,7 +45,7 @@ describe('SSE — chat.send → /sse/sessions/:id', () => {
     const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
   });
@@ -62,6 +62,7 @@ describe('SSE — chat.send → /sse/sessions/:id', () => {
         'content-type': 'application/json',
         cookie,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({ json: { clientId: 'tab-1', text } }),
     });
@@ -229,7 +230,7 @@ describe('SSE — /sse/activity', () => {
     const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
   });
@@ -246,6 +247,7 @@ describe('SSE — /sse/activity', () => {
         'content-type': 'application/json',
         cookie,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({ json: { clientId: 'tab-1', text: 'hi', personalityId } }),
     });
