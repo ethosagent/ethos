@@ -36,6 +36,7 @@ import { compose as composeSkills } from '@ethosagent/skills/compose';
 import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createEngineAskTool } from '@ethosagent/tools-answer-engines';
+import type { CredentialFillAuditEvent } from '@ethosagent/tools-browser';
 import { compose as composeBrowser } from '@ethosagent/tools-browser/compose';
 import { compose as composeCode } from '@ethosagent/tools-code/compose';
 import { compose as composeCron } from '@ethosagent/tools-cron/compose';
@@ -1540,6 +1541,14 @@ export async function composeAllTools(
       // B1 — the bridge is what makes `browser_request_takeover` registrable,
       // and registering it is what lets the bot-wall hint name it.
       clarifyBridge,
+      // D4-8 — `browser_fill_credential` audits every call here, and reports
+      // itself unavailable when this is absent: no sink, no fill.
+      ...(opts.observability
+        ? {
+            recordCredentialFill: (event: CredentialFillAuditEvent) =>
+              opts.observability?.recordCredentialFill(event),
+          }
+        : {}),
     }).tools)
       tools.register(tool);
   }

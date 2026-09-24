@@ -258,6 +258,20 @@ export class ClarifyBridge {
   }
 
   /**
+   * True when a presenter is registered for `surfaceType` — the same predicate
+   * `request()` throws {@link ClarifyNoSurfaceError} on, exposed without
+   * issuing a request. `browser_fill_credential` reads it to refuse a fill
+   * nobody could see or rescue (plan reach-and-containment D4-5). It answers
+   * for the surface as given: a background job's request may be re-routed by
+   * `resolveRouting`, so a job caller must not treat `false` here as "the job
+   * cannot ask" — that tool refuses jobs on `ctx.jobId` before it asks this.
+   * Pinned by `packages/core/src/__tests__/clarify-can-present.test.ts`.
+   */
+  canPresent(surfaceType: ClarifySurfaceType | string): boolean {
+    return this.presenters.has(surfaceType as ClarifySurfaceType);
+  }
+
+  /**
    * D7/G2/G3 — resolves which surface a background job's clarify should route
    * to when no surface is currently foreground for it. See `ClarifyOriginResolver`.
    */
