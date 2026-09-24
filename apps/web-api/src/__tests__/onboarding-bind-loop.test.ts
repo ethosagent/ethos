@@ -135,13 +135,18 @@ async function rpcCaller(app: ReturnType<typeof createWebApi>['app']) {
     storage: new FsStorage(),
   }).getOrCreate();
   const exchange = await app.request(`/auth/exchange?t=${token}`, {
-    headers: { origin: 'http://localhost:3000' },
+    headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
   });
   const cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
   return (path: string, input: unknown) =>
     app.request(`/rpc/${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost:3000' },
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({ json: input }),
     });
 }

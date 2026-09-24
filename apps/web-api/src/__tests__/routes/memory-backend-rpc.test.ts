@@ -64,7 +64,7 @@ describe('memory RPC follows the configured backend (F04)', () => {
     }).app;
     const token = await new WebTokenRepository({ dataDir, storage }).getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
     expect(cookie).toBeTruthy();
@@ -74,7 +74,12 @@ describe('memory RPC follows the configured backend (F04)', () => {
   async function call<T>(method: string, input: unknown): Promise<{ status: number; body: T }> {
     const res = await app.request(`/rpc/memory/${method}`, {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json', origin: 'http://localhost:3000' },
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({ json: input }),
     });
     return { status: res.status, body: ((await res.json()) as { json: T }).json };

@@ -663,6 +663,7 @@ describe('wireApprovalFlow', () => {
       },
       model: 'test-model',
       ...(approvalTimeoutMs !== undefined ? { approvalTimeoutMs } : {}),
+      ownerFor: () => undefined,
     });
     return { flow, hooks, posted, calls };
   }
@@ -804,6 +805,7 @@ describe('wireApprovalFlow', () => {
         throw new Error('no provider in this test');
       },
       model: 'test-model',
+      ownerFor: () => undefined,
     });
     await expect(flow.shutdown()).resolves.toBeUndefined();
   });

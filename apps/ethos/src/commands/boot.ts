@@ -1030,6 +1030,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     getProvider: createLazyProvider(() => createLLM(cfg)),
     model: cfg.model,
     ...(cfg.approvalTimeoutMs !== undefined ? { approvalTimeoutMs: cfg.approvalTimeoutMs } : {}),
+    // The boot config's filter is the one installed in the Gateway (it is
+    // construction-time; see `prepareBotLive`), so the owner deciding group
+    // approvals is the same owner the gateway's `/personality` check reads.
+    ownerFor: (platform: string) => cfg.channelFilter?.[platform]?.ownerUserId,
   };
   /**
    * One approval surface per bot, keyed by botKey. `wireApprovalFlow` binds its

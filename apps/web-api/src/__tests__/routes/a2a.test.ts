@@ -363,7 +363,7 @@ describe('a2a RPC — auth enforced over HTTP', () => {
     const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     return (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
   }
@@ -371,7 +371,11 @@ describe('a2a RPC — auth enforced over HTTP', () => {
   it('POST /rpc/a2a/settings/get without cookie → 401', async () => {
     const res = await app.request('/rpc/a2a/settings/get', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost:3000',
+        host: 'localhost:3000',
+      },
       body: JSON.stringify({ json: {} }),
     });
     expect(res.status).toBe(401);
@@ -386,6 +390,7 @@ describe('a2a RPC — auth enforced over HTTP', () => {
         'content-type': 'application/json',
         cookie: await cookie(),
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({ json: {} }),
     });

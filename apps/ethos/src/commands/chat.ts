@@ -46,6 +46,7 @@ import { SpinnerState } from '../lib/spinner';
 import { renderStatusBar, type Threshold } from '../lib/status-bar';
 import { formatToolFeedLine } from '../lib/tool-feed';
 import {
+  CLI_SLASH_SENDER,
   formatSkillProposedNotice,
   makeTuiNotificationSubscriber,
   makeTuiSkillProposalSubscriber,
@@ -1645,6 +1646,7 @@ async function handleSlashCommand(
             sessionId: state.sessionKey,
             personalityId: state.personalityId,
             platform: 'cli',
+            sender: CLI_SLASH_SENDER,
             send: async (text) => {
               out(text);
             },
