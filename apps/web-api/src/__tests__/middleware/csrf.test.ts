@@ -12,10 +12,10 @@ function makeApp(opts: CsrfMiddlewareOptions = {}): Hono {
   return app;
 }
 
-function post(app: Hono, origin: string | undefined) {
+function post(app: Hono, origin: string | undefined, host = 'localhost:3000') {
   return app.request('/ping', {
     method: 'POST',
-    headers: origin ? { origin } : {},
+    headers: { host, ...(origin ? { origin } : {}) },
   });
 }
 
@@ -60,6 +60,43 @@ describe('csrfMiddleware isAllowed', () => {
     const app = makeApp({ allowedOrigins: ['*.ethos.example.com'] });
     const res = await post(app, 'https://evil.com');
     expect(res.status).toBe(401);
+  });
+
+  // openclaw-advisory-fixes L-d: a localhost Origin passes only when its
+  // host:port equals the request Host — true same-origin.
+  it('localhost origin on the same port as Host is allowed', async () => {
+    const res = await post(makeApp(), 'http://localhost:5173', 'localhost:5173');
+    expect(res.status).toBe(200);
+  });
+
+  it('localhost origin on a different port from Host is blocked', async () => {
+    const res = await post(makeApp(), 'http://localhost:8080', 'localhost:3000');
+    expect(res.status).toBe(401);
+  });
+
+  it('127.0.0.1 origin against a localhost Host on the same port is blocked', async () => {
+    const res = await post(makeApp(), 'http://127.0.0.1:3000', 'localhost:3000');
+    expect(res.status).toBe(401);
+  });
+
+  it('[::1] origin on the same port as Host is allowed', async () => {
+    const res = await post(makeApp(), 'http://[::1]:3000', '[::1]:3000');
+    expect(res.status).toBe(200);
+  });
+
+  it('a Referer from another localhost port is blocked when Origin is absent', async () => {
+    const res = await makeApp().request('/ping', {
+      method: 'POST',
+      headers: { host: 'localhost:3000', referer: 'http://localhost:8080/page' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('explicit allowedOrigins wins over the Host comparison', async () => {
+    const app = makeApp({ allowedOrigins: ['http://localhost:8080'] });
+    expect((await post(app, 'http://localhost:8080', 'localhost:3000')).status).toBe(200);
+    // …and replaces the localhost rule: a same-origin localhost not listed fails.
+    expect((await post(app, 'http://localhost:3000', 'localhost:3000')).status).toBe(401);
   });
 
   it('GET requests bypass the check regardless of origin (regression)', async () => {

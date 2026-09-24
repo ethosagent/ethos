@@ -43,7 +43,7 @@ describe('createWebApi — OpenAPI surface', () => {
     const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     expect(exchange.status).toBe(302);
     const setCookie = exchange.headers.get('set-cookie') ?? '';
@@ -58,7 +58,7 @@ describe('createWebApi — OpenAPI surface', () => {
 
   it('/openapi/spec.json returns a valid OpenAPI 3.x doc covering every contract namespace', async () => {
     const res = await app.request('/openapi/spec.json', {
-      headers: { cookie, origin: 'http://localhost:3000' },
+      headers: { cookie, origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     expect(res.status).toBe(200);
 
@@ -85,7 +85,7 @@ describe('createWebApi — OpenAPI surface', () => {
 
   it('/openapi/ serves the Scalar reference UI as HTML', async () => {
     const res = await app.request('/openapi/', {
-      headers: { cookie, origin: 'http://localhost:3000' },
+      headers: { cookie, origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/i);
@@ -98,7 +98,7 @@ describe('createWebApi — OpenAPI surface', () => {
 
   it('/openapi/spec.json is rejected without auth cookie', async () => {
     const res = await app.request('/openapi/spec.json', {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     expect(res.status).toBe(401);
   });
@@ -110,6 +110,7 @@ describe('createWebApi — OpenAPI surface', () => {
         'content-type': 'application/json',
         cookie,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({}),
     });

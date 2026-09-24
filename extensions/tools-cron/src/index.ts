@@ -123,10 +123,6 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
             type: 'string',
             description: 'ISO-8601 timestamp of the run to read (read_run).',
           },
-          personalityId: {
-            type: 'string',
-            description: 'Filter jobs by personality (list).',
-          },
         },
         required: ['action'],
       },
@@ -145,7 +141,6 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
           repeat,
           id,
           at,
-          personalityId,
         } = args as {
           action: CronAction;
           name?: string;
@@ -160,8 +155,14 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
           repeat?: RepeatPolicy;
           id?: string;
           at?: string;
-          personalityId?: string;
         };
+
+        // Every action is scoped to the calling personality, so a call with no
+        // personality context has nothing to scope to and is refused outright
+        // rather than read as "no restriction". handleCreate keeps its own copy
+        // of this check (it narrows the type there).
+        if (!ctx.personalityId) return PERSONALITY_REQUIRED;
+        const caller = ctx.personalityId;
 
         switch (action) {
           case 'create':
@@ -178,13 +179,13 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
               repeat,
             });
           case 'list':
-            return handleList(scheduler, { personalityId });
+            return handleList(scheduler, caller);
           case 'get':
-            return handleGet(scheduler, { id });
+            return handleGet(scheduler, caller, { id });
           case 'read_run':
-            return handleReadRun(scheduler, { id, at });
+            return handleReadRun(scheduler, caller, { id, at });
           case 'update':
-            return handleUpdate(scheduler, {
+            return handleUpdate(scheduler, caller, {
               id,
               name,
               schedule,
@@ -195,13 +196,13 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
               precheck_timeout_seconds,
             });
           case 'pause':
-            return handlePause(scheduler, { id });
+            return handlePause(scheduler, caller, { id });
           case 'resume':
-            return handleResume(scheduler, { id });
+            return handleResume(scheduler, caller, { id });
           case 'run':
-            return handleRun(scheduler, { id });
+            return handleRun(scheduler, caller, { id });
           case 'remove':
-            return handleRemove(scheduler, { id });
+            return handleRemove(scheduler, caller, { id });
           default:
             return { ok: false, error: `Unknown action: ${action}`, code: 'input_invalid' };
         }
@@ -212,6 +213,55 @@ export function createCronTool(scheduler: CronScheduler): Tool[] {
 
 /** Backward-compat alias so existing `import { createCronTools }` keeps working. */
 export const createCronTools = createCronTool;
+
+// ---------------------------------------------------------------------------
+// Ownership — every non-create action goes through loadOwnedJob
+// ---------------------------------------------------------------------------
+
+const PERSONALITY_REQUIRED: ToolResult = {
+  ok: false,
+  error: 'cron jobs require a personality context',
+  code: 'input_invalid',
+};
+
+/**
+ * The single ownership gate for `get`, `read_run`, `update`, `pause`,
+ * `resume`, `run` and `remove`: load the job and refuse unless it belongs to
+ * the calling personality. A job owned by another personality returns the SAME
+ * not-found result as an id that does not exist, so the tool is not an
+ * existence oracle across personalities. Pinned by
+ * `extensions/tools-cron/src/__tests__/ownership.test.ts`.
+ *
+ * Operator management (`ethos cron`, web-api cron routes) calls the scheduler
+ * directly and is not scoped by this.
+ */
+async function loadOwnedJob(
+  scheduler: CronScheduler,
+  id: string,
+  caller: string,
+): Promise<{ ok: true; job: CronJob } | { ok: false; result: ToolResult }> {
+  const job = await scheduler.getJob(id);
+  if (!job || job.personalityId !== caller) {
+    return {
+      ok: false,
+      result: { ok: false, error: `Job not found: ${id}`, code: 'input_invalid' },
+    };
+  }
+  return { ok: true, job };
+}
+
+/**
+ * A source:'system' job is operator config: no agent action may change or run
+ * it (plan D8). Applied by update/pause/resume/run/remove after loadOwnedJob.
+ */
+function systemJobRefusal(job: CronJob, verb: string): ToolResult | null {
+  if (job.source !== 'system') return null;
+  return {
+    ok: false,
+    error: `Cannot ${verb} system job — managed by operator config`,
+    code: 'input_invalid',
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Action handlers
@@ -285,13 +335,7 @@ async function handleCreate(
   }
 
   const callerPersonality = ctx.personalityId;
-  if (!callerPersonality) {
-    return {
-      ok: false,
-      error: 'cron jobs require a personality context',
-      code: 'input_invalid',
-    };
-  }
+  if (!callerPersonality) return PERSONALITY_REQUIRED;
 
   if (!isValidSchedule(schedule)) {
     return {
@@ -348,15 +392,9 @@ async function handleCreate(
   }
 }
 
-async function handleList(
-  scheduler: CronScheduler,
-  args: { personalityId?: string },
-): Promise<ToolResult> {
-  let jobs = await scheduler.listJobs();
-
-  if (args.personalityId) {
-    jobs = jobs.filter((j) => j.personalityId === args.personalityId);
-  }
+async function handleList(scheduler: CronScheduler, caller: string): Promise<ToolResult> {
+  // Always the caller's own jobs — there is no filter argument to widen it.
+  const jobs = (await scheduler.listJobs()).filter((j) => j.personalityId === caller);
 
   if (jobs.length === 0) {
     return {
@@ -372,11 +410,16 @@ async function handleList(
   };
 }
 
-async function handleGet(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+async function handleGet(
+  scheduler: CronScheduler,
+  caller: string,
+  args: { id?: string },
+): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
 
-  const job = await scheduler.getJob(args.id);
-  if (!job) return { ok: false, error: `Job not found: ${args.id}`, code: 'input_invalid' };
+  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  if (!owned.ok) return owned.result;
+  const job = owned.job;
 
   let runs: CronRunInfo[] = [];
   try {
@@ -394,10 +437,14 @@ async function handleGet(scheduler: CronScheduler, args: { id?: string }): Promi
 
 async function handleReadRun(
   scheduler: CronScheduler,
+  caller: string,
   args: { id?: string; at?: string },
 ): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
   if (!args.at) return { ok: false, error: 'at is required', code: 'input_invalid' };
+
+  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  if (!owned.ok) return owned.result;
 
   let runs: CronRunInfo[] = [];
   try {
@@ -440,6 +487,7 @@ async function handleReadRun(
 
 async function handleUpdate(
   scheduler: CronScheduler,
+  caller: string,
   args: {
     id?: string;
     name?: string;
@@ -459,6 +507,11 @@ async function handleUpdate(
       code: 'input_invalid',
     };
   }
+
+  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  if (!owned.ok) return owned.result;
+  const refusal = systemJobRefusal(owned.job, 'update');
+  if (refusal) return refusal;
 
   // Safety scan: reject updated prompts that look like injection attempts
   if (args.prompt) {
@@ -497,16 +550,16 @@ async function handleUpdate(
   }
 }
 
-async function handlePause(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+async function handlePause(
+  scheduler: CronScheduler,
+  caller: string,
+  args: { id?: string },
+): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
-  const job = await scheduler.getJob(args.id);
-  if (job?.source === 'system') {
-    return {
-      ok: false,
-      error: 'Cannot pause system job — managed by operator config',
-      code: 'input_invalid',
-    };
-  }
+  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  if (!owned.ok) return owned.result;
+  const refusal = systemJobRefusal(owned.job, 'pause');
+  if (refusal) return refusal;
   try {
     await scheduler.pauseJob(args.id);
     return { ok: true, value: `✓ Paused job "${args.id}"` };
@@ -515,8 +568,16 @@ async function handlePause(scheduler: CronScheduler, args: { id?: string }): Pro
   }
 }
 
-async function handleResume(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+async function handleResume(
+  scheduler: CronScheduler,
+  caller: string,
+  args: { id?: string },
+): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  if (!owned.ok) return owned.result;
+  const refusal = systemJobRefusal(owned.job, 'resume');
+  if (refusal) return refusal;
   try {
     await scheduler.resumeJob(args.id);
     return { ok: true, value: `✓ Resumed job "${args.id}"` };
@@ -525,8 +586,16 @@ async function handleResume(scheduler: CronScheduler, args: { id?: string }): Pr
   }
 }
 
-async function handleRun(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+async function handleRun(
+  scheduler: CronScheduler,
+  caller: string,
+  args: { id?: string },
+): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
+  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  if (!owned.ok) return owned.result;
+  const refusal = systemJobRefusal(owned.job, 'run');
+  if (refusal) return refusal;
   try {
     const result = await scheduler.runJobNow(args.id);
     return {
@@ -538,16 +607,16 @@ async function handleRun(scheduler: CronScheduler, args: { id?: string }): Promi
   }
 }
 
-async function handleRemove(scheduler: CronScheduler, args: { id?: string }): Promise<ToolResult> {
+async function handleRemove(
+  scheduler: CronScheduler,
+  caller: string,
+  args: { id?: string },
+): Promise<ToolResult> {
   if (!args.id) return { ok: false, error: 'id is required', code: 'input_invalid' };
-  const job = await scheduler.getJob(args.id);
-  if (job?.source === 'system') {
-    return {
-      ok: false,
-      error: 'Cannot delete system job — managed by operator config',
-      code: 'input_invalid',
-    };
-  }
+  const owned = await loadOwnedJob(scheduler, args.id, caller);
+  if (!owned.ok) return owned.result;
+  const refusal = systemJobRefusal(owned.job, 'delete');
+  if (refusal) return refusal;
   try {
     await scheduler.deleteJob(args.id);
     return { ok: true, value: `✓ Deleted job "${args.id}"` };

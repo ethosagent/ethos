@@ -123,7 +123,7 @@ describe('D21 — x-request-id -> traceId -> observability.db -> providerRequest
     const tokens = new WebTokenRepository({ dataDir: dir, storage: new FsStorage() });
     const token = await tokens.getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     cookie = (exchange.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
   });
@@ -141,6 +141,7 @@ describe('D21 — x-request-id -> traceId -> observability.db -> providerRequest
         'content-type': 'application/json',
         cookie,
         origin: 'http://localhost:3000',
+        host: 'localhost:3000',
       },
       body: JSON.stringify({ json: { clientId: 'tab-1', text: 'trigger a provider error' } }),
     });

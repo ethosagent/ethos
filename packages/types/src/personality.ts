@@ -43,11 +43,18 @@ export interface PersonalitySafetyConfig {
    * Each entry is a case-sensitive substring matched against
    * `` `${toolName} ${canonical-json-args}` ``, so a rule like
    * `git push --force` matches a `terminal` call whose `command` argument
-   * contains that text. A match denies the call outright.
+   * contains that text. A match denies the call outright: no approval card,
+   * no allowlist, no human override.
    *
-   * **The law:** deny rules are evaluated BEFORE the approval-mode dispatch.
-   * Modes can only make things stricter, never looser — a deny rule binds even
-   * under `approvalMode: 'off'` with the auto-approve capability flag set.
+   * **The law:** deny rules are evaluated BEFORE every `before_tool_call` hook,
+   * and therefore before the approval-mode dispatch. Modes can only make things
+   * stricter, never looser — a deny rule binds even under `approvalMode: 'off'`
+   * with the auto-approve capability flag set. Enforced by
+   * `enforceBeforeToolCall` (`packages/core/src/agent-loop/stages/per-call-enforcement.ts`),
+   * the one per-call site the LLM batch path, the script bridge and the
+   * realtime voice host (`extensions/tools-voice/src/realtime-host.ts`) cross;
+   * pinned by `packages/core/src/agent-loop/__tests__/deny-rule-gate.test.ts`
+   * and, for the realtime host, `extensions/tools-voice/src/__tests__/realtime-host.test.ts`.
    */
   denyRules?: string[];
   /**

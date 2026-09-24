@@ -58,6 +58,7 @@ function approvalReq(over: Record<string, unknown> = {}) {
     args: { command: 'rm -rf /' },
     reason: 'recursive force-delete',
     alwaysAsk: false,
+    hardline: false,
     ...over,
   };
 }
@@ -639,6 +640,7 @@ describe('applyEvent — approval flow', () => {
           args: { command: 'rm -rf /' },
           reason: 'recursive force-delete',
           alwaysAsk: false,
+          hardline: false,
         },
       },
       NOW,
@@ -666,6 +668,7 @@ describe('applyEvent — approval flow', () => {
           args: { cmd: 'x' },
           reason: null,
           alwaysAsk: false,
+          hardline: false,
         },
       },
       NOW,
@@ -693,6 +696,7 @@ describe('applyEvent — approval flow', () => {
           args: {},
           reason: null,
           alwaysAsk: false,
+          hardline: false,
         },
       },
       NOW,
@@ -719,6 +723,7 @@ describe('applyEvent — approval flow', () => {
           args: { command: 'rm -rf /' },
           reason: 'force-delete',
           alwaysAsk: false,
+          hardline: false,
         },
       },
       NOW,
@@ -807,6 +812,7 @@ describe('applyEvent — approval flow', () => {
       args: {},
       reason: null,
       alwaysAsk: false,
+      hardline: false,
     };
     s = applyEvent(s, { type: 'tool.approval_required', request: req }, NOW);
     s = applyEvent(s, { type: 'tool.approval_required', request: req }, NOW);

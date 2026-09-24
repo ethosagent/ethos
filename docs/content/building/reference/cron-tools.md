@@ -4,7 +4,7 @@ description: "Action-dispatch cron tool — create, list, get, read_run, update,
 kind: reference
 audience: developer
 slug: cron-tools
-updated: 2026-05-21
+updated: 2026-09-24
 ---
 
 # Cron tool
@@ -51,11 +51,11 @@ Always pins the job to the caller's personality (`ctx.personalityId`). Returns a
 
 ### `list` {#list}
 
-| Field | Type | Required |
-|---|---|---|
-| `personality` | string | no |
+No fields. Returns the calling personality's own jobs with id, name, schedule, status, next-run timestamp, and prompt summary. There is no filter argument: another personality's jobs are never listed.
 
-Returns every job in the store (optionally filtered by personality) with id, name, schedule, status, next-run timestamp, and prompt summary.
+### Ownership {#ownership}
+
+Every action other than `create` acts only on a job owned by the calling personality (`ctx.personalityId`). A job owned by another personality is reported exactly as a nonexistent id would be (`Job not found: <id>`), so the tool cannot be used to discover which job ids exist. `update`, `pause`, `resume`, `run`, and `remove` also refuse `source: 'system'` jobs, which belong to operator config. Enforced by `loadOwnedJob` in `extensions/tools-cron/src/index.ts`; pinned by `extensions/tools-cron/src/__tests__/ownership.test.ts`. The operator's `ethos cron` CLI and the web cron routes call the scheduler directly and are not scoped.
 
 ### `get` {#get}
 
@@ -134,7 +134,7 @@ When present, the wiring registers `createCronTool(scheduler)` on the AgentLoop'
 
 ## Capability rationale {#capabilities}
 
-`capabilities: {}` — no framework-level gate. The scheduler is operator-injected; without one, no tool registration happens. The store is per-machine (under `~/.ethos/cron/`). Jobs created by the agent are visible to the operator via `ethos cron list` immediately.
+`capabilities: {}` — no framework-level gate. The scheduler is operator-injected; without one, no tool registration happens. The store is per state dir: `<ethos home>/cron/`, which is `~/.ethos/cron/` unless `ETHOS_STATE_DIR` is set (resolved by `ethosCronDir()` in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts)). Jobs created by the agent are visible to the operator via `ethos cron list` immediately.
 
 **Cron creates durable side effects** (recurring runs cost provider tokens; output may notify channels). Treat the personality opt-in as the safety boundary.
 
@@ -146,7 +146,9 @@ When present, the wiring registers `createCronTool(scheduler)` on the AgentLoop'
 | `not_available` | `update` action called (not yet implemented) | Wait for Phase C |
 | `input_invalid` | Cron expression failed `isValidCronExpression` | Fix the 5-field syntax |
 | `input_invalid` | Missing required field for the action | Provide it |
-| `input_invalid` | `create` called without personality context | Ensure a personality is active |
+| `input_invalid` | Any action called without personality context | Ensure a personality is active |
+| `input_invalid` | `Job not found: <id>` — the id does not exist or belongs to another personality | Use an id from `list` |
+| `input_invalid` | `update`/`pause`/`resume`/`run`/`remove` on a `source: 'system'` job | Manage it in `~/.ethos/config.yaml` |
 | `execution_failed` | `run` and the agent's run produces an error | Investigate the prompt or model |
 
 ## Examples {#examples}

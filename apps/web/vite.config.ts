@@ -5,9 +5,26 @@ import { defineConfig, type PluginOption } from 'vite';
 // Vite config for the web client. Two run modes:
 //
 //  • Dev   — `pnpm --filter @ethosagent/web dev` runs Vite at :5173 with the
-//            `/rpc`, `/sse`, `/auth`, `/openapi`, `/documents` paths proxied
-//            to the ethos-serve API on :3000. Cookies sent by the API stay
-//            scoped to localhost so the proxy is transparent.
+//            `/rpc`, `/sse`, `/auth`, `/openapi`, `/documents`, `/oauth` and
+//            `/api` paths proxied to the ethos-serve API on :3000, the
+//            WhatsApp setup event stream (`/setup/whatsapp/`, event-stream
+//            requests only; see the entry), plus the
+//            two WebSocket paths the SPA opens against `location.host`:
+//            `/voice/ws` and `/browser/takeover/ws` (`ws: true`). Every
+//            API-bound entry MUST set `changeOrigin: false`, so the API sees
+//            `Host: localhost:5173` — the same host:port as the browser's
+//            `Origin`. That is load-bearing: the CSRF middleware accepts a
+//            localhost Origin only when it equals the request `Host`
+//            (`isSameOriginLocalhost` in apps/web-api/src/middleware/csrf.ts,
+//            pinned by apps/web-api/src/__tests__/middleware/csrf.test.ts).
+//            A plain-string entry means `changeOrigin: true` in Vite, which
+//            rewrites Host to :3000 and gets every write refused;
+//            apps/web-api/src/__tests__/vite-proxy-origin.test.ts fails on it.
+//            The WebSocket entries rely on the same fact: the upgrade Origin
+//            check (`originAllowed` in apps/web-api/src/voice/voice-socket.ts)
+//            also requires the Origin host:port to equal `Host`. They are keyed
+//            on the socket path, not `/voice` or `/browser`, so no SPA route
+//            under those prefixes is sent to the API.
 //  • Build — `pnpm --filter @ethosagent/web build` writes to `apps/web/dist/`.
 //            `apps/web-api`'s static handler serves that directory in
 //            production runs of `ethos serve`.
@@ -49,27 +66,44 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/rpc': 'http://localhost:3000',
+      '/rpc': { target: 'http://localhost:3000', changeOrigin: false },
       '/sse': {
         target: 'http://localhost:3000',
         changeOrigin: false,
         // SSE keeps the connection open; turn off buffering so events flush.
         ws: false,
       },
-      '/auth': 'http://localhost:3000',
-      '/openapi': 'http://localhost:3000',
+      '/auth': { target: 'http://localhost:3000', changeOrigin: false },
+      '/openapi': { target: 'http://localhost:3000', changeOrigin: false },
       // OAuth callback — proxy to the API server so the server-side handler
       // runs regardless of whether the DCR redirect_uri points to :5173 or :3000.
-      '/oauth': 'http://localhost:3000',
+      '/oauth': { target: 'http://localhost:3000', changeOrigin: false },
       // Documents download streams bytes over a plain <a download> navigation
       // authenticated by the `SameSite=Strict` `ethos_auth` cookie. It MUST be
       // proxied: an absolute :3000 href from :5173 is cross-site and the
       // browser silently drops the cookie, so the download 401s.
-      '/documents': 'http://localhost:3000',
+      '/documents': { target: 'http://localhost:3000', changeOrigin: false },
       // Avatar upload/view/delete rides the same `SameSite=Strict`
       // `ethos_auth` cookie as `/documents` above, for the same reason: an
       // absolute :3000 request from :5173 is cross-site and drops the cookie.
-      '/api': 'http://localhost:3000',
+      '/api': { target: 'http://localhost:3000', changeOrigin: false },
+      // WhatsApp pairing stream. `/setup/whatsapp/:botId` is BOTH a client-side
+      // page (App.tsx) and the API's SSE endpoint (apps/web-api/src/routes/
+      // setup-whatsapp.ts). Only the `EventSource` request, which sends
+      // `Accept: text/event-stream`, goes to the API. Every other request gets
+      // its own URL back from `bypass`, and in Vite 6 that means "do not proxy,
+      // continue down the middleware chain", which serves the SPA.
+      '/setup/whatsapp/': {
+        target: 'http://localhost:3000',
+        changeOrigin: false,
+        bypass: (req) => (req.headers.accept?.includes('text/event-stream') ? undefined : req.url),
+      },
+      // WebSocket lanes the SPA opens at `${location.host}<path>`
+      // (VOICE_SOCKET_PATH and BROWSER_TAKEOVER_SOCKET_PATH in
+      // packages/web-contracts). `/satellite/ws` is not here: only the
+      // satellite daemon opens it, never the SPA.
+      '/voice/ws': { target: 'http://localhost:3000', changeOrigin: false, ws: true },
+      '/browser/takeover/ws': { target: 'http://localhost:3000', changeOrigin: false, ws: true },
     },
   },
   build: {

@@ -1,5 +1,4 @@
 import { open, unlink } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { noopLogger } from '@ethosagent/logger';
@@ -49,7 +48,7 @@ export interface JobOrigin {
 
 /**
  * Reference to an operator-authored script under the scripts directory
- * (default ~/.ethos/scripts/). `file` is relative to that directory —
+ * (`<state dir>/scripts/`, `~/.ethos/scripts/` by default). `file` is relative to that directory —
  * absolute paths and `..` traversal are rejected at create AND run time.
  * The interpreter is fixed by extension (`.sh` → bash, `.py` → python3);
  * shebangs are deliberately not honored. The file must already exist at
@@ -185,8 +184,12 @@ export interface CronArmingBackend {
 export interface CronSchedulerConfig {
   /** Called when a job fires. Returns the text output and session key. */
   runJob: (job: CronJob) => Promise<CronRunResult>;
-  /** Directory for jobs.json and output files. Defaults to ~/.ethos/cron/ */
-  cronDir?: string;
+  /** Directory for jobs.json, its lock and the output/ run history. Required,
+   *  with no default: every host passes `ethosCronDir()` from
+   *  `@ethosagent/config`, which honours `ETHOS_STATE_DIR`. A `homedir()`
+   *  default here once made an isolated state dir write the real
+   *  `~/.ethos/cron/jobs.json`. */
+  cronDir: string;
   /** Tick interval in ms. Default 60_000 (1 min). */
   tickIntervalMs?: number;
   /**
@@ -206,8 +209,9 @@ export interface CronSchedulerConfig {
   /** source:'system' jobs dispatch here by systemTask name instead of runJob. */
   systemTasks?: Record<string, (job: CronJob) => Promise<{ output: string }>>;
   /** Directory holding operator-authored scripts referenced by `script`/
-   *  `precheck` blocks. Defaults to ~/.ethos/scripts/. */
-  scriptsDir?: string;
+   *  `precheck` blocks. Required, for the same reason as `cronDir`: hosts
+   *  pass `ethosScriptsDir()` from `@ethosagent/config`. */
+  scriptsDir: string;
   /** Execution backend for `script`/`precheck` runs. Injected at wiring
    *  time so the operator's execution posture applies to cron scripts;
    *  falls back to a lazily-constructed local backend when absent. */
@@ -342,8 +346,9 @@ function resolveScriptFile(
 export interface RunScriptFileOpts {
   storage: Storage;
   executionBackend: ExecutionBackend;
-  /** Directory the script ref resolves against. Defaults to ~/.ethos/scripts/. */
-  scriptsDir?: string;
+  /** Directory the script ref resolves against. Required — hosts pass
+   *  `ethosScriptsDir()` from `@ethosagent/config`. */
+  scriptsDir: string;
   /** Raw text piped to the script's stdin (e.g. a webhook request body). */
   stdin?: string;
   /** Label used in error messages: 'script' | 'precheck' | 'prefilter'. */
@@ -361,7 +366,7 @@ export async function runScriptFile(
   ref: ScriptRef,
   opts: RunScriptFileOpts,
 ): Promise<ScriptRunOutcome> {
-  const scriptsDir = opts.scriptsDir ?? join(homedir(), '.ethos', 'scripts');
+  const scriptsDir = opts.scriptsDir;
   const label = opts.label ?? 'script';
   let absPath: string;
   let interpreter: string;
@@ -478,7 +483,7 @@ export class CronScheduler {
   private armingBackend?: CronArmingBackend;
 
   constructor(config: CronSchedulerConfig) {
-    this.cronDir = config.cronDir ?? join(homedir(), '.ethos', 'cron');
+    this.cronDir = config.cronDir;
     this.jobsPath = join(this.cronDir, 'jobs.json');
     this.lockPath = join(this.cronDir, 'jobs.json.lock');
     this.outputDir = join(this.cronDir, 'output');
@@ -489,7 +494,7 @@ export class CronScheduler {
     this.logger = config.logger ?? noopLogger;
     this.deliver = config.deliver;
     this.systemTasks = config.systemTasks ?? {};
-    this.scriptsDir = config.scriptsDir ?? join(homedir(), '.ethos', 'scripts');
+    this.scriptsDir = config.scriptsDir;
     this.executionBackend = config.executionBackend ?? null;
     this.onDecision = config.onDecision;
     this.armingBackend = config.armingBackend;
@@ -1315,7 +1320,7 @@ export class CronScheduler {
   }
 
   /** Shared post-run path: persist run output to
-   *  ~/.ethos/cron/output/<id>/<timestamp>.md, deliver to the originating
+   *  <cronDir>/output/<id>/<timestamp>.md, deliver to the originating
    *  channel per the escalation decision (silent outputs are audited and
    *  persisted but never delivered), and fire the heartbeat audit. */
   private async persistAndDeliver(

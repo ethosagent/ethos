@@ -1838,6 +1838,7 @@ export {
   createDangerPredicate,
   type DangerPredicate,
   type DangerReason,
+  hardlineReason,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
   type SmartApprovalCallback,
   type SmartVerdict,

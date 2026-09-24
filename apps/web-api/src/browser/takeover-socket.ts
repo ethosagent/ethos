@@ -611,7 +611,7 @@ export function createTakeoverSocket(opts: TakeoverSocketOptions): TakeoverSocke
   wss.on('connection', onConnection);
 
   const handleUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    if (!originAllowed(req.headers.origin, opts.allowedOrigins)) {
+    if (!originAllowed(req.headers.origin, req.headers.host, opts.allowedOrigins)) {
       refuseUpgrade(socket, 403, 'Forbidden');
       return;
     }

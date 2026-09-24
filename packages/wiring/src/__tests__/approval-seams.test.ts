@@ -124,74 +124,77 @@ describe('createLazyProvider', () => {
   });
 });
 
+// Resolution is observed through `approvalMode: 'smart'`: a resolved session
+// reaches the reviewer (which approves → null), an unresolved one falls back to
+// the `manual` default (the flagged reason). Deny rules are no longer this
+// predicate's concern — core refuses them before any hook runs
+// (packages/core/src/agent-loop/__tests__/deny-rule-gate.test.ts).
 describe('createApprovalDangerPredicate — personality resolution', () => {
-  it('resolves the turn personality from session_start and enforces denyRules', async () => {
+  it('resolves the turn personality from session_start', async () => {
     const hooks = new DefaultHookRegistry();
     const { provider, calls } = verdictProvider('{"decision":"approve","reason":"fine"}');
     const isDangerous = createApprovalDangerPredicate({
       hooks: [hooks],
-      personalities: registryWith(
-        person('locked', { approvalMode: 'off', denyRules: ['git push --force'] }),
-      ),
+      personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
       getProvider: async () => provider,
       model: 'reviewer-model',
+      alwaysAsk: ['shell'],
     });
 
     await hooks.fireVoid('session_start', {
       sessionId: 'sess-1',
       sessionKey: 'k',
       platform: 'web',
-      personalityId: 'locked',
+      personalityId: 'reviewed',
     });
 
-    // The floor binds even under `approvalMode: 'off'`, and no reviewer runs.
-    expect(await isDangerous(payload('shell', { command: 'git push --force origin main' }))).toBe(
-      'denied by personality deny rule: git push --force',
-    );
-    expect(await isDangerous(payload('shell', { command: 'git status' }))).toBeNull();
-    expect(calls()).toBe(0);
-    expect(vi.mocked(createSmartApprover)).not.toHaveBeenCalled();
+    expect(await isDangerous(payload('shell', { command: 'ls' }))).toBeNull();
+    expect(calls()).toBe(1);
   });
 
   it('falls back to manual for a session it never saw', async () => {
     const hooks = new DefaultHookRegistry();
     const isDangerous = createApprovalDangerPredicate({
       hooks: [hooks],
-      personalities: registryWith(person('locked', { denyRules: ['git push --force'] })),
+      personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
       getProvider: async () => {
         throw new Error('provider must not be constructed');
       },
       model: 'reviewer-model',
+      alwaysAsk: ['shell'],
     });
 
     // No `session_start` fired — an unresolved session must never pick up
     // another personality's policy.
-    expect(
-      await isDangerous(payload('shell', { command: 'git push --force' }, 'unknown')),
-    ).toBeNull();
+    expect(await isDangerous(payload('shell', { command: 'ls' }, 'unknown'))).toBe(
+      'shell requires explicit approval',
+    );
+    expect(vi.mocked(createSmartApprover)).not.toHaveBeenCalled();
   });
 
   it('forgets the session personality once the turn ends', async () => {
     const hooks = new DefaultHookRegistry();
+    const { provider } = verdictProvider('{"decision":"approve","reason":"fine"}');
     const isDangerous = createApprovalDangerPredicate({
       hooks: [hooks],
-      personalities: registryWith(person('locked', { denyRules: ['rm -rf ./build'] })),
-      getProvider: async () => {
-        throw new Error('provider must not be constructed');
-      },
+      personalities: registryWith(person('reviewed', { approvalMode: 'smart' })),
+      getProvider: async () => provider,
       model: 'reviewer-model',
+      alwaysAsk: ['shell'],
     });
 
     await hooks.fireVoid('session_start', {
       sessionId: 'sess-1',
       sessionKey: 'k',
       platform: 'web',
-      personalityId: 'locked',
+      personalityId: 'reviewed',
     });
-    expect(await isDangerous(payload('shell', { command: 'rm -rf ./build' }))).toMatch(/deny rule/);
+    expect(await isDangerous(payload('shell', { command: 'ls' }))).toBeNull();
 
     await hooks.fireVoid('agent_done', { sessionId: 'sess-1', text: '', turnCount: 1 });
-    expect(await isDangerous(payload('shell', { command: 'rm -rf ./build' }))).toBeNull();
+    expect(await isDangerous(payload('shell', { command: 'ls' }))).toBe(
+      'shell requires explicit approval',
+    );
   });
 });
 
@@ -382,65 +385,6 @@ describe('smart mode through a real agent turn', () => {
     );
     expect(executed).toBe(0);
     expect(calls()).toBe(1);
-  });
-});
-
-describe('deny rules through a real agent turn', () => {
-  it('blocks the tool call and relays the rule to the model', async () => {
-    const hooks = new DefaultHookRegistry();
-    const personalities = registryWith(
-      person('locked', { approvalMode: 'off', denyRules: ['git push --force'] }),
-    );
-    const isDangerous = createApprovalDangerPredicate({
-      hooks: [hooks],
-      personalities,
-      getProvider: async () => {
-        throw new Error('provider must not be constructed');
-      },
-      model: 'reviewer-model',
-    });
-    // The same hook shape both approval surfaces use (web modal, Slack card):
-    // a reason becomes the tool error the model sees.
-    hooks.registerModifying('before_tool_call', async (p) => {
-      const reason = await isDangerous(p);
-      return reason === null ? null : { error: reason };
-    });
-
-    let executed = 0;
-    const tools = new DefaultToolRegistry();
-    tools.register({
-      name: 'shell',
-      description: 'run a command',
-      schema: { type: 'object' },
-      capabilities: {},
-      execute: async () => {
-        executed++;
-        return { ok: true, value: 'ran' };
-      },
-    });
-
-    const loop = new AgentLoop({
-      llm: toolCallingLLM('shell', { command: 'git push --force origin main' }),
-      tools,
-      hooks,
-      personalities,
-      safety: createTestSafety(),
-    });
-
-    const events: AgentEvent[] = [];
-    for await (const event of loop.run('ship it', {
-      sessionKey: 'deny-rule',
-      personalityId: 'locked',
-    })) {
-      events.push(event);
-    }
-
-    const toolEnd = events.find((e) => e.type === 'tool_end');
-    expect(toolEnd).toMatchObject({ ok: false });
-    expect(toolEnd && 'error' in toolEnd ? toolEnd.error : '').toContain(
-      'denied by personality deny rule: git push --force',
-    );
-    expect(executed).toBe(0);
   });
 });
 

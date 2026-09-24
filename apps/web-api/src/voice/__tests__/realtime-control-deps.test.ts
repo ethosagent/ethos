@@ -1,6 +1,11 @@
-import { DefaultToolRegistry, InMemorySessionStore } from '@ethosagent/core';
+import {
+  AgentLoop,
+  DefaultPersonalityRegistry,
+  DefaultToolRegistry,
+  InMemorySessionStore,
+} from '@ethosagent/core';
 import { AGENT_CONSULT_TOOL } from '@ethosagent/tools-voice';
-import type { SessionStore, Tool } from '@ethosagent/types';
+import type { AgentSafety, LLMProvider, SessionStore, Tool } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
   createRealtimeControlDeps,
@@ -32,7 +37,10 @@ function build(
     {
       toolRegistry: registry,
       sessions,
-      personalities: { get: () => ({ toolset: ['read_file'] }) },
+      resolvePersonality: () => ({ id: 'p', name: 'P', toolset: ['read_file'] }),
+      resultRedaction: {
+        redaction: { redactPii: (s) => s, redactString: (s) => s, detectSecrets: () => [] },
+      },
       defaults: { model: 'm', provider: 'p' },
       ...extra,
     },
@@ -271,5 +279,95 @@ describe('createRealtimeControlDeps — a budget authority that throws', () => {
     await Promise.resolve();
     const row = await sessions.getSession(binding.storeSessionId);
     expect(row?.usage.estimatedCostUsd).toBeCloseTo(0.03, 10);
+  });
+});
+
+// A talk session that names no personality acts as the loop's default — the
+// rule `AgentLoop.resolvePersonality` shares with turn-setup — so the default's
+// deny rules bind a direct realtime dispatch exactly as they bind a turn.
+describe('createRealtimeControlDeps — personality resolution parity with AgentLoop', () => {
+  const passthrough = { redactPii: (s: string) => s, redactString: (s: string) => s };
+  const dispatchCtx = {
+    sessionId: 'row-1',
+    sessionKey: 'voice:web:browser:chat-9',
+    platform: 'web',
+    workingDir: '/tmp',
+    abortSignal: new AbortController().signal,
+    voiceOrigin: { transport: 'browser-talk-mode', speaker: 'owner' as const },
+  };
+
+  function consultRegistry(ran: { count: number }): DefaultToolRegistry {
+    const registry = new DefaultToolRegistry();
+    registry.register({
+      ...consultTool(),
+      async execute() {
+        ran.count++;
+        return { ok: true, value: 'answered' };
+      },
+    });
+    return registry;
+  }
+
+  it("a session with no personalityId is refused by the default personality's deny rule", async () => {
+    const personalities = new DefaultPersonalityRegistry();
+    personalities.define({
+      id: 'guarded',
+      name: 'Guarded',
+      safety: { denyRules: [AGENT_CONSULT_TOOL] },
+    });
+    personalities.setDefault('guarded');
+    const loop = new AgentLoop({
+      llm: {} as LLMProvider,
+      personalities,
+      safety: { redaction: { ...passthrough, detectSecrets: () => [] } } as unknown as AgentSafety,
+    });
+    const ran = { count: 0 };
+    const deps = createRealtimeControlDeps(
+      {
+        toolRegistry: consultRegistry(ran),
+        sessions: new InMemorySessionStore(),
+        resolvePersonality: (id) => loop.resolvePersonality(id),
+        resultRedaction: loop.resultRedaction,
+        defaults: { model: 'm', provider: 'p' },
+      },
+      'lane-1',
+    );
+
+    const binding = await deps.open({ sessionId: 'chat-9' });
+    const result = await binding.host.dispatch(
+      { callId: 'c1', name: AGENT_CONSULT_TOOL, args: {} },
+      dispatchCtx,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('refused');
+    expect(result.output).toContain('deny rule');
+    expect(ran.count).toBe(0);
+  });
+
+  it('a resolver that throws (onboarding stand-in) leaves a host that refuses', async () => {
+    const ran = { count: 0 };
+    const deps = createRealtimeControlDeps(
+      {
+        toolRegistry: consultRegistry(ran),
+        sessions: new InMemorySessionStore(),
+        resolvePersonality: () => {
+          throw new Error('NOT_CONFIGURED');
+        },
+        resultRedaction: { redaction: { ...passthrough, detectSecrets: () => [] } },
+        defaults: { model: 'm', provider: 'p' },
+      },
+      'lane-1',
+    );
+
+    const binding = await deps.open({ sessionId: 'chat-9' });
+    const result = await binding.host.dispatch(
+      { callId: 'c1', name: AGENT_CONSULT_TOOL, args: {} },
+      dispatchCtx,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('refused');
+    expect(ran.count).toBe(0);
   });
 });

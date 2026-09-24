@@ -30,6 +30,7 @@ import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   createLearningInbox,
   DisposerStack,
+  hardlineReason,
   type IdentityMap,
   type MemoryBundle,
   type ReplayAndResolveResult,
@@ -1363,13 +1364,16 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
             // opened then would run tools unchecked. Refuse it; the audio lane
             // is unaffected. Pinned by __tests__/onboarding-bind-loop.test.ts.
             const hooks = agentLoop.hooks;
-            if (!hooks) return null;
+            // Same for the redaction seam: the stand-in reads it as undefined.
+            const resultRedaction = agentLoop.resultRedaction;
+            if (!hooks || !resultRedaction) return null;
             return createRealtimeControlDeps(
               {
                 toolRegistry: realtimeControlRegistry,
                 hooks,
+                resultRedaction,
                 sessions: opts.sessionStore,
-                personalities: opts.personalities,
+                resolvePersonality: (personalityId) => agentLoop.resolvePersonality(personalityId),
                 defaults: opts.chatDefaults,
                 // Per-audio-minute pricing + the session cap, resolved from the
                 // same roster selection the mint makes. The browser is never
@@ -1770,6 +1774,10 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       createWebApprovalHook({
         approvals: approvalsService,
         isDangerous: dangerPredicate,
+        // The web profile registers no terminal/process guard hook, so this is
+        // what keeps a stored grant or lease from approving a hardline
+        // command (openclaw-advisory-fixes Item 10).
+        isHardline: (payload) => hardlineReason(payload) !== null,
       }),
     );
     loopReleases.push('web approval hook', off);

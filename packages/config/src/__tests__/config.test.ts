@@ -2,7 +2,14 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type EthosConfig, ethosDir, readRawConfig, writeConfig } from '../index';
+import {
+  type EthosConfig,
+  ethosCronDir,
+  ethosDir,
+  ethosScriptsDir,
+  readRawConfig,
+  writeConfig,
+} from '../index';
 
 describe('ethosDir', () => {
   afterEach(() => {
@@ -17,6 +24,36 @@ describe('ethosDir', () => {
   it('returns ETHOS_STATE_DIR when set', () => {
     process.env.ETHOS_STATE_DIR = '/tmp/custom-ethos';
     expect(ethosDir()).toBe('/tmp/custom-ethos');
+  });
+});
+
+// The cron store once defaulted to `homedir()/.ethos/cron` inside the
+// scheduler and ignored ETHOS_STATE_DIR, so an isolated state dir still wrote
+// the real `~/.ethos/cron/jobs.json`. These resolvers are what every host now
+// hands to `CronScheduler`'s required `cronDir` / `scriptsDir`.
+describe('ethosCronDir / ethosScriptsDir', () => {
+  afterEach(() => {
+    delete process.env.ETHOS_STATE_DIR;
+  });
+
+  it('are unchanged from every earlier release when ETHOS_STATE_DIR is not set', () => {
+    delete process.env.ETHOS_STATE_DIR;
+    expect(ethosCronDir()).toBe(join(homedir(), '.ethos', 'cron'));
+    expect(ethosScriptsDir()).toBe(join(homedir(), '.ethos', 'scripts'));
+  });
+
+  it('resolve under ETHOS_STATE_DIR when set, never under the home directory', () => {
+    process.env.ETHOS_STATE_DIR = '/tmp/custom-ethos';
+    expect(ethosCronDir()).toBe(join('/tmp/custom-ethos', 'cron'));
+    expect(ethosScriptsDir()).toBe(join('/tmp/custom-ethos', 'scripts'));
+    expect(ethosCronDir().startsWith(join(homedir(), '.ethos'))).toBe(false);
+  });
+
+  it('are read per call, so a later override is honoured', () => {
+    process.env.ETHOS_STATE_DIR = '/tmp/a';
+    expect(ethosCronDir()).toBe(join('/tmp/a', 'cron'));
+    process.env.ETHOS_STATE_DIR = '/tmp/b';
+    expect(ethosCronDir()).toBe(join('/tmp/b', 'cron'));
   });
 });
 

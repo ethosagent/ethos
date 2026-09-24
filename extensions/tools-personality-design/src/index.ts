@@ -34,6 +34,8 @@ export interface PersonalityDesignDeps {
   storage: Storage;
   modelCatalog: ModelCatalogEntry[];
   skills: Skill[];
+  /** Consulted by scaffold_personality: existing ids (built-ins included) and the caller's toolset. */
+  personalityRegistry: PersonalityRegistry;
 }
 
 export interface TeamDesignDeps {
@@ -52,7 +54,7 @@ export function createPersonalityDesignTools(deps: PersonalityDesignDeps): Tool[
     listAvailableToolsTool(deps.toolRegistry),
     listAvailableModelsTool(deps.modelCatalog),
     listAvailableSkillsTool(deps.skills),
-    scaffoldPersonalityTool(deps.storage, deps.toolRegistry),
+    scaffoldPersonalityTool(deps.storage, deps.toolRegistry, deps.personalityRegistry),
   ];
 }
 
@@ -190,7 +192,11 @@ interface ScaffoldPersonalityArgs {
   toolset: string[];
 }
 
-function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): Tool {
+function scaffoldPersonalityTool(
+  storage: Storage,
+  toolRegistry: ToolRegistry,
+  personalityRegistry: PersonalityRegistry,
+): Tool {
   return {
     name: 'scaffold_personality',
     description:
@@ -270,8 +276,46 @@ function scaffoldPersonalityTool(storage: Storage, toolRegistry: ToolRegistry): 
         };
       }
 
+      // A created personality can never hold a tool its creator lacks
+      // (openclaw-advisory-fixes D13). The caller's grant must be an explicit
+      // list: a caller that cannot be resolved, or whose toolset is undefined
+      // (the registry reads that as "every built-in tool"), has no list to
+      // bound the new one by, so it is refused rather than trusted. MCP and
+      // plugin tools are not granted by toolset.yaml at all (they are gated by
+      // mcp_servers / plugins, which this tool never writes), so an exact-name
+      // subset over toolset entries is the whole check.
+      const caller = ctx.personalityId ? personalityRegistry.get(ctx.personalityId) : undefined;
+      if (!caller?.toolset) {
+        return {
+          ok: false,
+          error:
+            'scaffold needs the calling personality and its explicit toolset to bound the new personality by; neither could be resolved, so nothing was written.',
+          code: 'input_invalid',
+        };
+      }
+      const callerTools = caller.toolset;
+      const notHeld = args.toolset.filter((t) => !callerTools.includes(t));
+      if (notHeld.length > 0) {
+        return {
+          ok: false,
+          error: `A new personality cannot hold tools its creator lacks: "${caller.id}" does not have ${notHeld.join(', ')}.`,
+          code: 'input_invalid',
+        };
+      }
+
+      // Existing ids are refused two ways: the registry covers built-ins (they
+      // live in the personalities package's data/ dir, not under
+      // ~/.ethos/personalities/, so a user dir with a built-in's id would
+      // shadow it) and the on-disk check covers a user personality the
+      // registry has not refreshed yet. Every refusal above and here runs
+      // before the first storage.mkdir. Pinned by
+      // src/__tests__/no-overwrite.test.ts. Known residual: two concurrent
+      // scaffolds of the same NEW id can both pass (check-then-write).
       const base = join(homedir(), '.ethos', 'personalities', args.id);
-      if (await storage.exists(join(base, 'config.yaml'))) {
+      if (
+        personalityRegistry.get(args.id) !== undefined ||
+        (await storage.exists(join(base, 'config.yaml')))
+      ) {
         return {
           ok: false,
           error: `scaffold creates new personalities only: "${args.id}" already exists. Editing an existing personality is an operator action (web Personalities tab or an editor).`,

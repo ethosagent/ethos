@@ -5,6 +5,8 @@ import type {
   MemoryContext,
   MemoryProvider,
   MemoryUpdate,
+  PersonalityConfig,
+  RedactionKit,
   Tool,
 } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
@@ -32,6 +34,18 @@ function registryWith(...tools: Tool[]): DefaultToolRegistry {
   return registry;
 }
 
+// A stand-in for the loop's redaction kit: one known string is "a secret".
+const SECRET = 'sk-test-SECRET-value';
+const testRedaction: RedactionKit = {
+  redactPii: (s) => s,
+  redactString: (s) => s.split(SECRET).join('[REDACTED:test]'),
+  detectSecrets: (s) => (s.includes(SECRET) ? [{ label: 'test secret' }] : []),
+};
+const base = {
+  personality: { id: 'default', name: 'Default' },
+  resultRedaction: { redaction: testRedaction },
+};
+
 const dispatchCtx = {
   sessionId: 'row-1',
   sessionKey: 'voice:web:browser:chat-9',
@@ -53,6 +67,7 @@ describe('advertised == handled', () => {
       echoTool('send_email', 'sent', 'email'),
     );
     const host = createRealtimeToolHost({
+      ...base,
       registry,
       personalityToolset: ['read_file', 'send_email'],
       safeTools: new Set(['read_file']),
@@ -73,6 +88,7 @@ describe('advertised == handled', () => {
 
   it('refuses a name it never advertised instead of leaving the call hanging', async () => {
     const host = createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool(AGENT_CONSULT_TOOL, 'x')),
     });
 
@@ -84,6 +100,7 @@ describe('advertised == handled', () => {
 
   it('offers agent_consult regardless of the personality toolset', () => {
     const host = createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool(AGENT_CONSULT_TOOL, 'x')),
       personalityToolset: ['read_file'],
     });
@@ -92,6 +109,7 @@ describe('advertised == handled', () => {
 
   it('drops a safe tool the personality does not have', () => {
     const host = createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool(AGENT_CONSULT_TOOL, 'x'), echoTool('read_file', 'y', 'file')),
       personalityToolset: ['web_search'],
       safeTools: new Set(['read_file']),
@@ -101,6 +119,7 @@ describe('advertised == handled', () => {
 
   it('advertises nothing it does not hold — an unregistered consult is not claimed', () => {
     const host = createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool('read_file', 'y', 'file')),
     });
     expect(host.handled).toEqual([]);
@@ -113,6 +132,7 @@ describe('advertised == handled', () => {
     const always: Tool = { ...echoTool('todo_write', 'y', 'todo'), alwaysInclude: true };
     const mcp = echoTool('mcp__github__create_issue', 'y', 'mcp');
     const host = createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool(AGENT_CONSULT_TOOL, 'x'), always, mcp),
     });
     expect(host.handled).toEqual([AGENT_CONSULT_TOOL]);
@@ -129,7 +149,7 @@ describe('advertised == handled', () => {
     const safeTools = new Set(['read_file']);
 
     const advertised = deriveRealtimeToolset({ registry, personalityToolset, safeTools });
-    const host = createRealtimeToolHost({ registry, personalityToolset, safeTools });
+    const host = createRealtimeToolHost({ ...base, registry, personalityToolset, safeTools });
 
     expect(advertised.map((d) => d.name)).toEqual(host.handled);
   });
@@ -147,6 +167,7 @@ describe('spoken output', () => {
       'More at https://example.com/a/b?c=d',
     ].join('\n');
     const host = createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool(AGENT_CONSULT_TOOL, raw)),
     });
 
@@ -166,6 +187,7 @@ describe('spoken output', () => {
 
   it('never answers with an empty string', async () => {
     const host = createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool(AGENT_CONSULT_TOOL, '   ')),
     });
     const { output } = await host.dispatch(
@@ -186,6 +208,7 @@ describe('approval surface', () => {
       },
     } as unknown as HookRegistry;
     const host = createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool(AGENT_CONSULT_TOOL, 'ok')),
       hooks,
     });
@@ -199,6 +222,7 @@ describe('approval surface', () => {
         toolName: AGENT_CONSULT_TOOL,
         args: {},
         voiceOrigin: { transport: 'browser-talk-mode', speaker: 'owner' },
+        personalityId: 'default',
       },
     ]);
   });
@@ -218,6 +242,7 @@ describe('approval surface', () => {
       },
     } as unknown as HookRegistry;
     const host = createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool(AGENT_CONSULT_TOOL, 'x'), blocked),
       hooks,
       personalityToolset: ['send_email'],
@@ -229,6 +254,154 @@ describe('approval surface', () => {
     expect(ran).toBe(false);
     expect(result.ok).toBe(false);
     expect(result.output).toContain('confirm it verbally');
+  });
+});
+
+// F-A2 — the realtime host crosses core's per-call gate (`enforceBeforeToolCall`)
+// and result redaction (`redactToolResultSecrets`), not a hand-rolled copy.
+// REALTIME_SAFE_TOOLS is empty in production, so these inject a safe-tool set.
+describe('core enforcement', () => {
+  function gatedHost(opts: {
+    personality: PersonalityConfig | undefined;
+    tool: Tool;
+    hooks?: HookRegistry;
+    safetyEvents?: string[];
+  }) {
+    const events = opts.safetyEvents;
+    return createRealtimeToolHost({
+      registry: registryWith(echoTool(AGENT_CONSULT_TOOL, 'x'), opts.tool),
+      personality: opts.personality,
+      resultRedaction: {
+        redaction: testRedaction,
+        ...(events
+          ? {
+              observability: {
+                startTurnTrace: () => 'tr',
+                endTrace: () => {},
+                startSpan: () => 'sp',
+                endSpan: () => {},
+                recordSafetyBlock: (e: { code?: string }) => events.push(e.code ?? ''),
+                recordCompaction: () => {},
+                recordTierEscalation: () => {},
+                recordTierOverride: () => {},
+                flush: () => {},
+              },
+            }
+          : {}),
+      },
+      ...(opts.hooks ? { hooks: opts.hooks } : {}),
+      personalityToolset: [opts.tool.name],
+      safeTools: new Set([opts.tool.name]),
+    });
+  }
+
+  function trackingTool(name: string, value: string, ran: { count: number }): Tool {
+    return {
+      ...echoTool(name, value, 'file'),
+      async execute() {
+        ran.count++;
+        return { ok: true, value };
+      },
+    };
+  }
+
+  const guarded: PersonalityConfig = {
+    id: 'researcher',
+    name: 'Researcher',
+    safety: { denyRules: ['/etc/shadow'] },
+  };
+
+  it('a deny-rule match is refused before any hook runs', async () => {
+    const ran = { count: 0 };
+    let hookCalls = 0;
+    const hooks = {
+      async fireModifying() {
+        hookCalls++;
+        return {};
+      },
+    } as unknown as HookRegistry;
+    const events: string[] = [];
+    const host = gatedHost({
+      personality: guarded,
+      tool: trackingTool('read_file', 'root:x', ran),
+      hooks,
+      safetyEvents: events,
+    });
+
+    const result = await host.dispatch(
+      { callId: 'c1', name: 'read_file', args: { path: '/etc/shadow' } },
+      dispatchCtx,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('refused');
+    expect(result.output).toContain('deny rule');
+    expect(hookCalls).toBe(0);
+    expect(ran.count).toBe(0);
+    expect(events).toEqual(['deny_rule']);
+  });
+
+  it('a hook that rewrites args into a denied value is refused', async () => {
+    const ran = { count: 0 };
+    const hooks = {
+      async fireModifying() {
+        return { args: { path: '/etc/shadow' } };
+      },
+    } as unknown as HookRegistry;
+    const host = gatedHost({
+      personality: guarded,
+      tool: trackingTool('read_file', 'root:x', ran),
+      hooks,
+    });
+
+    const result = await host.dispatch(
+      { callId: 'c1', name: 'read_file', args: { path: '/tmp/notes.md' } },
+      dispatchCtx,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('deny rule');
+    expect(ran.count).toBe(0);
+  });
+
+  it('a secret in the result is redacted before it reaches the session', async () => {
+    const events: string[] = [];
+    const host = gatedHost({
+      personality: guarded,
+      tool: echoTool('read_file', `the key is ${SECRET}`, 'file'),
+      safetyEvents: events,
+    });
+
+    const result = await host.dispatch(
+      { callId: 'c1', name: 'read_file', args: { path: '/tmp/env' } },
+      dispatchCtx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.output).not.toContain(SECRET);
+    expect(result.output).toContain('REDACTED');
+    expect(events).toEqual(['secret_in_tool_result']);
+  });
+
+  it('the before_tool_call payload carries personalityId', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const hooks = {
+      async fireModifying(name: string, payload: Record<string, unknown>) {
+        if (name === 'before_tool_call') seen.push(payload);
+        return {};
+      },
+    } as unknown as HookRegistry;
+    const host = gatedHost({
+      personality: guarded,
+      tool: echoTool('read_file', 'ok', 'file'),
+      hooks,
+    });
+
+    await host.dispatch({ callId: 'c1', name: 'read_file', args: {} }, dispatchCtx);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.personalityId).toBe('researcher');
+    expect(seen[0]?.voiceOrigin).toEqual(dispatchCtx.voiceOrigin);
   });
 });
 
@@ -249,6 +422,7 @@ describe('ToolContext parity — the realtime host', () => {
 
   function hostWith(seen: Array<Parameters<Tool['execute']>[1]>) {
     return createRealtimeToolHost({
+      ...base,
       registry: registryWith(echoTool(AGENT_CONSULT_TOOL, 'x'), recorder(seen)),
       personalityToolset: ['read_file'],
       safeTools: new Set(['read_file']),
@@ -305,9 +479,11 @@ describe('memory scope', () => {
     }
   }
 
-  function memoryHost(memory: MemoryProvider) {
+  function memoryHost(memory: MemoryProvider, personality: PersonalityConfig | undefined) {
     const registry = registryWith(createMemoryWriteTool(memory), createMemoryReadTool(memory));
     return createRealtimeToolHost({
+      ...base,
+      personality,
       registry,
       personalityToolset: ['memory_read', 'memory_write'],
       safeTools: new Set(['memory_read', 'memory_write']),
@@ -316,8 +492,8 @@ describe('memory scope', () => {
 
   it("writes and reads the speaking personality's memory scope", async () => {
     const memory = new ScopedMemory();
-    const host = memoryHost(memory);
-    const ctx = { ...dispatchCtx, personalityId: 'researcher' };
+    const host = memoryHost(memory, { id: 'researcher', name: 'Researcher' });
+    const ctx = dispatchCtx;
 
     const write = await host.dispatch(
       {
@@ -338,9 +514,23 @@ describe('memory scope', () => {
     expect(read.output).toContain('Prefers morning calls.');
   });
 
-  it('without a personality there is no scope, and the memory tools say so', async () => {
+  it('with no personality resolved, every dispatch is refused (fail closed)', async () => {
     const memory = new ScopedMemory();
-    const host = memoryHost(memory);
+    let hookCalls = 0;
+    const hooks = {
+      async fireModifying() {
+        hookCalls++;
+        return {};
+      },
+    } as unknown as HookRegistry;
+    const host = createRealtimeToolHost({
+      ...base,
+      personality: undefined,
+      hooks,
+      registry: registryWith(createMemoryWriteTool(memory), createMemoryReadTool(memory)),
+      personalityToolset: ['memory_read', 'memory_write'],
+      safeTools: new Set(['memory_read', 'memory_write']),
+    });
 
     const result = await host.dispatch(
       { callId: 'r1', name: 'memory_read', args: { store: 'memory' } },
@@ -348,7 +538,8 @@ describe('memory scope', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.code).toBe('not_available');
+    expect(result.code).toBe('refused');
+    expect(hookCalls).toBe(0);
     expect(memory.store.size).toBe(0);
   });
 });

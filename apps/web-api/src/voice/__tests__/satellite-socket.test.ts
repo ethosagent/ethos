@@ -303,6 +303,24 @@ describe('satellite socket', () => {
     });
   });
 
+  it('accepts a satellite that sends no Origin, refuses a page on another localhost port', async () => {
+    // A satellite is a daemon, not a browser: no Origin, the cookie gates it.
+    const node = open();
+    await new Promise<void>((resolve) => node.ws.on('open', () => resolve()));
+    node.ws.close();
+
+    const port = Number(new URL(url).port);
+    const { ws } = open({
+      cookie: COOKIE,
+      origin: `http://127.0.0.1:${port === 1 ? 2 : port - 1}`,
+    });
+    const status = await new Promise<number>((resolve) => {
+      ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));
+      ws.on('error', () => resolve(0));
+    });
+    expect(status).toBe(403);
+  });
+
   it('answers register with ready + the current routing table', async () => {
     const client = await connect();
     expect(client.frames[0]).toMatchObject({ t: 'ready', nodeId: 'kitchen', protocolVersion: 1 });

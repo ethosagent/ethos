@@ -4,7 +4,7 @@ description: "All API key scopes and what each one gates."
 kind: reference
 audience: developer
 slug: api-key-scopes
-updated: 2026-09-13
+updated: 2026-09-24
 ---
 
 A scope is one permission on one API key. Each key carries a set of them, and the set decides which surfaces the bearer reaches: the contract namespaces on `/rpc/*`, the SSE endpoint, and the OpenAI-compatible `/v1/*` endpoints. Two mint paths issue keys from this same vocabulary — the `apiKeys.create` RPC (cookie-auth only, used by the web Settings tab) and `ethos api-key create` on the CLI.
@@ -46,7 +46,7 @@ When you create or list keys, each key returns an `ApiKeyMetadata` object:
 | `prefix` | `string` | First characters of the key (e.g. `esk_abc...`) for identification without exposing the secret. |
 | `name` | `string` | Human-readable label set at creation. |
 | `scopes` | `ApiKeyScope[]` | Scopes granted to this key. |
-| `allowedOrigins` | `string[]` | Origins permitted to use this key (CORS enforcement). |
+| `allowedOrigins` | `string[]` | Origins permitted to use this key. A request with a different `Origin` gets `403 Forbidden`. Not CORS: the CORS headers come from `ETHOS_ALLOWED_ORIGINS`. Empty means unrestricted. |
 | `createdAt` | `string` | ISO-8601 creation timestamp. |
 | `lastUsed` | `string \| null` | ISO-8601 timestamp of last use, or `null` if never used. |
 | `revokedAt` | `string \| null` | ISO-8601 timestamp of revocation, or `null` if active. |

@@ -44,13 +44,18 @@ describe('goals RPC', () => {
     });
     const token = await new WebTokenRepository({ dataDir, storage: new FsStorage() }).getOrCreate();
     const exchange = await app.request(`/auth/exchange?t=${token}`, {
-      headers: { origin: 'http://localhost:3000' },
+      headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
     });
     const cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
     return (method: string, input: unknown) =>
       app.request(`/rpc/goals/${method}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost:3000' },
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          origin: 'http://localhost:3000',
+          host: 'localhost:3000',
+        },
         body: JSON.stringify({ json: input }),
       });
   }

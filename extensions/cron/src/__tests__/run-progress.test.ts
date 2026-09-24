@@ -41,6 +41,7 @@ function progressEvent(message: string, audience: 'user' | 'internal' = 'user'):
 function makeScheduler(opts: Partial<CronSchedulerConfig>): CronScheduler {
   return new CronScheduler({
     cronDir: testDir,
+    scriptsDir: join(testDir, 'scripts'),
     tickIntervalMs: 999_999,
     storage,
     runJob: async (job): Promise<CronRunResult> => ({

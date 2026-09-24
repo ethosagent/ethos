@@ -6,6 +6,7 @@ import type {
   ModelResolutionFailure,
   ModelTierName,
   PersonalityConfig,
+  PersonalityRegistry,
   ToolFilterOpts,
 } from '@ethosagent/types';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
@@ -43,6 +44,19 @@ function declarationFix(
     `the personality's own declaration), or change the \`model\` lines in ${file} to a configured ` +
     `model or a role.`
   );
+}
+
+/**
+ * THE rule for which personality a turn runs as: the named one if it resolves,
+ * otherwise the registry's default. Shared by `setupTurn` below, by
+ * `AgentLoop.resolvePersonality` (which the realtime voice host borrows), and by
+ * `AgentLoop.getPersonalityBudgetCap`, so no surface keeps a second copy.
+ */
+export function resolvePersonality(
+  registry: PersonalityRegistry,
+  personalityId: string | undefined,
+): PersonalityConfig {
+  return (personalityId ? registry.get(personalityId) : null) ?? registry.getDefault();
 }
 
 /**
@@ -120,9 +134,7 @@ export async function* setupTurn(
     effectivePersonalityId = opts.personalityId;
   }
 
-  const personality =
-    (effectivePersonalityId ? deps.personalities.get(effectivePersonalityId) : null) ??
-    deps.personalities.getDefault();
+  const personality = resolvePersonality(deps.personalities, effectivePersonalityId);
 
   const obsConfig = personality?.safety?.observability;
 

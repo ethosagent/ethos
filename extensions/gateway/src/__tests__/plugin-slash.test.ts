@@ -102,6 +102,47 @@ describe('Gateway — plugin slash commands', () => {
     expect(loop.run).not.toHaveBeenCalled();
   });
 
+  // Plan openclaw-advisory-fixes L-b: the handler learns who ran it.
+  it.each([
+    { who: 'owner in a group', userId: 'boss', isDm: false, isOwner: true },
+    { who: 'non-owner in a group', userId: '200', isDm: false, isOwner: false },
+    { who: 'non-owner in a DM', userId: '200', isDm: true, isOwner: false },
+  ])('passes sender to the plugin handler ($who)', async ({ userId, isDm, isOwner }) => {
+    handlerSpy.mockClear();
+    const gw = new Gateway({
+      bots: makeBots(stubLoop()),
+      pluginLoader: PLUGIN_LOADER,
+      channelFilter: { telegram: { ownerUserId: 'boss', recipientAllowlist: ['200'] } },
+      clarifySweepIntervalMs: 0,
+    });
+
+    await gw.handleMessage(
+      makeMessage({ text: '/mycmd', userId, isDm, isGroupMention: !isDm }),
+      stubAdapter(),
+    );
+
+    expect(handlerSpy).toHaveBeenCalledWith(
+      '',
+      expect.objectContaining({ sender: { userId, isOwner, isDm } }),
+    );
+  });
+
+  it('reports isOwner false when the platform has no owner configured', async () => {
+    handlerSpy.mockClear();
+    const gw = new Gateway({
+      bots: makeBots(stubLoop()),
+      pluginLoader: PLUGIN_LOADER,
+      clarifySweepIntervalMs: 0,
+    });
+
+    await gw.handleMessage(makeMessage({ text: '/mycmd' }), stubAdapter());
+
+    expect(handlerSpy).toHaveBeenCalledWith(
+      '',
+      expect.objectContaining({ sender: { userId: '200', isOwner: false, isDm: true } }),
+    );
+  });
+
   it('falls through to the agent turn for unknown slash commands', async () => {
     const loop = stubLoop();
     const gw = new Gateway({

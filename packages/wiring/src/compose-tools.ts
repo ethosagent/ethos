@@ -1805,6 +1805,7 @@ export async function composeAllTools(
     storage: designStorage,
     modelCatalog: resolvedModelCatalog,
     skills: [...skillPool.values()],
+    personalityRegistry: personalities,
   }).tools) {
     tools.register(tool);
   }

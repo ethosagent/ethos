@@ -2588,7 +2588,7 @@ function buildSafetyConfig(raw: Record<string, unknown>): PersonalitySafetyConfi
   // silently accepts garbage reads as protection while gating nothing.
   //
   // Empty and whitespace-only entries are rejected because of how
-  // `matchDenyRule` (packages/wiring/src/danger-predicate.ts) matches: a rule is
+  // `matchDenyRule` (packages/core/src/agent-loop/deny-rules.ts) matches: a rule is
   // a substring of `${toolName} ${canonical-json-args}`, guarded by
   // `rule.length > 0`. So `""` can never match (a silent no-op rule) and `" "`
   // matches every call (the subject always contains a space). Both are config

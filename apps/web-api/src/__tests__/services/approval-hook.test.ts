@@ -35,7 +35,7 @@ describe('createWebApprovalHook', () => {
 
   it('passes safe calls through with no approvals work', async () => {
     const isDangerous: DangerPredicate = async () => null;
-    const hook = createWebApprovalHook({ approvals, isDangerous });
+    const hook = createWebApprovalHook({ approvals, isDangerous, isHardline: () => false });
 
     const result = await hook(payload());
     expect(result).toBeNull();
@@ -44,7 +44,7 @@ describe('createWebApprovalHook', () => {
 
   it('dangerous + approve resolves the hook with null (= allow)', async () => {
     const isDangerous: DangerPredicate = async () => 'destructive command';
-    const hook = createWebApprovalHook({ approvals, isDangerous });
+    const hook = createWebApprovalHook({ approvals, isDangerous, isHardline: () => false });
 
     let approvalId = '';
     approvals.onPending((_, req) => {
@@ -62,7 +62,7 @@ describe('createWebApprovalHook', () => {
 
   it('dangerous + deny resolves the hook with { error } carrying both reasons', async () => {
     const isDangerous: DangerPredicate = async () => 'destructive command';
-    const hook = createWebApprovalHook({ approvals, isDangerous });
+    const hook = createWebApprovalHook({ approvals, isDangerous, isHardline: () => false });
 
     let approvalId = '';
     approvals.onPending((_, req) => {
@@ -82,7 +82,7 @@ describe('createWebApprovalHook', () => {
   it('passes the danger reason through to the SSE pending payload', async () => {
     const isDangerous: DangerPredicate = async (p) =>
       p.toolName === 'terminal' ? 'recursive force-delete of root' : null;
-    const hook = createWebApprovalHook({ approvals, isDangerous });
+    const hook = createWebApprovalHook({ approvals, isDangerous, isHardline: () => false });
 
     let pendingReason: string | null | undefined;
     approvals.onPending((_, req) => {
@@ -103,6 +103,7 @@ describe('createWebApprovalHook', () => {
     const storage = new InMemoryStorage();
     const allowlist = new AllowlistRepository({ dataDir: DATA, storage });
     await allowlist.add({
+      personalityId: 'p1',
       toolName: 'terminal',
       scope: 'exact-args',
       args: { command: 'rm -rf /' },
@@ -110,14 +111,14 @@ describe('createWebApprovalHook', () => {
     approvals = new ApprovalsService({ allowlist });
 
     const isDangerous: DangerPredicate = async () => 'force-delete';
-    const hook = createWebApprovalHook({ approvals, isDangerous });
+    const hook = createWebApprovalHook({ approvals, isDangerous, isHardline: () => false });
 
     let pending = false;
     approvals.onPending(() => {
       pending = true;
     });
 
-    expect(await hook(payload())).toBeNull();
+    expect(await hook(payload({ personalityId: 'p1' }))).toBeNull();
     expect(pending).toBe(false);
   });
 
@@ -129,7 +130,11 @@ describe('createWebApprovalHook', () => {
         return { decision: 'allow' as const };
       },
     } as unknown as ApprovalsService;
-    const hook = createWebApprovalHook({ approvals: spy, isDangerous: async () => 'gated' });
+    const hook = createWebApprovalHook({
+      approvals: spy,
+      isDangerous: async () => 'gated',
+      isHardline: () => false,
+    });
 
     await hook(payload({ personalityId: 'engineer' }));
     await hook(payload());

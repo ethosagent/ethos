@@ -354,6 +354,10 @@ describe('ApprovalCoordinator — safety audit trail', () => {
 });
 
 describe('createSlackApprovalHook', () => {
+  const noSurface = async () => {
+    throw new Error('withoutSurface must not run for a turn with an approval surface');
+  };
+
   it('passes through non-dangerous tool calls without prompting', async () => {
     const coordinator = new ApprovalCoordinator();
     const requestSpy = vi.spyOn(coordinator, 'requestApproval');
@@ -361,6 +365,7 @@ describe('createSlackApprovalHook', () => {
       coordinator,
       isDangerous: async () => null,
       resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
+      withoutSurface: noSurface,
     });
 
     const result = await hook(toolCall());
@@ -368,22 +373,27 @@ describe('createSlackApprovalHook', () => {
     expect(requestSpy).not.toHaveBeenCalled();
   });
 
-  it('passes a dangerous call through untouched when the turn has no Slack surface', async () => {
-    // A Discord/Email turn sharing a Slack-bound loop: `resolveApprovalTarget`
-    // returns undefined (no approval-capable route). The hook must NOT
-    // suspend or deny — it passes through so the loop's other guards (the
-    // synchronous terminal hard-block) decide. Registering the hook on a
-    // shared loop must not change behavior for non-Slack channels.
+  it('hands a turn with no approval surface to withoutSurface, never prompting', async () => {
+    // An Email/WhatsApp turn sharing a Slack-bound loop: `resolveApprovalTarget`
+    // returns undefined (no approval-capable route). Nobody can be asked, so
+    // the unattended gate decides — the call is neither suspended nor let
+    // through by this hook.
     const coordinator = new ApprovalCoordinator();
     const requestSpy = vi.spyOn(coordinator, 'requestApproval');
+    const isDangerous = vi.fn(async () => 'recursive force-delete');
+    const withoutSurface = vi.fn(async () => ({ error: 'no human is present' }));
     const hook = createSlackApprovalHook({
       coordinator,
-      isDangerous: async () => 'recursive force-delete',
+      isDangerous,
       resolveApprovalTarget: () => undefined,
+      withoutSurface,
     });
 
     const result = await hook(toolCall());
-    expect(result).toBeNull();
+    expect(result).toEqual({ error: 'no human is present' });
+    expect(withoutSurface).toHaveBeenCalledTimes(1);
+    // Judged once, by the unattended gate's own predicate.
+    expect(isDangerous).not.toHaveBeenCalled();
     expect(requestSpy).not.toHaveBeenCalled();
   });
 
@@ -395,6 +405,7 @@ describe('createSlackApprovalHook', () => {
       coordinator,
       isDangerous: async () => 'recursive force-delete',
       resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
+      withoutSurface: noSurface,
     });
 
     const hookPromise = hook(toolCall());
@@ -413,6 +424,7 @@ describe('createSlackApprovalHook', () => {
       coordinator,
       isDangerous: async () => 'recursive force-delete',
       resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
+      withoutSurface: noSurface,
     });
 
     const hookPromise = hook(toolCall());
@@ -663,6 +675,7 @@ describe('wireApprovalFlow', () => {
       },
       model: 'test-model',
       ...(approvalTimeoutMs !== undefined ? { approvalTimeoutMs } : {}),
+      ownerFor: () => undefined,
     });
     return { flow, hooks, posted, calls };
   }
@@ -804,6 +817,7 @@ describe('wireApprovalFlow', () => {
         throw new Error('no provider in this test');
       },
       model: 'test-model',
+      ownerFor: () => undefined,
     });
     await expect(flow.shutdown()).resolves.toBeUndefined();
   });

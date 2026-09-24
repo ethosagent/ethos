@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { denyRuleReason, matchDenyRule } from '@ethosagent/core';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { BeforeToolCallPayload, PersonalityConfig } from '@ethosagent/types';
@@ -8,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   createDangerPredicate,
+  hardlineReason,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
 } from '../danger-predicate';
 
@@ -50,6 +52,15 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
       expect(r).toMatch(/recursive force-delete/);
     });
 
+    // openclaw-advisory-fixes Item 10: before, only `terminal` was inspected,
+    // so on web (no process guard hook) a hardline `process_start` was not
+    // flagged at all.
+    it('a hardline process_start command surfaces a reason too', async () => {
+      const pred = createDangerPredicate({ getPersonality: () => person('manual') });
+      const r = await pred(payload('process_start', { command: 'rm -rf /' }));
+      expect(r).toMatch(/recursive force-delete/);
+    });
+
     it('smart mode does NOT auto-approve hardline either', async () => {
       const pred = createDangerPredicate({
         getPersonality: () => person('smart'),
@@ -57,6 +68,26 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
       });
       const r = await pred(payload('terminal', { command: 'rm -rf /' }));
       expect(r).toMatch(/recursive force-delete/);
+    });
+  });
+
+  describe('hardlineReason', () => {
+    it('covers terminal and process_start, and nothing else', () => {
+      expect(hardlineReason(payload('terminal', { command: 'rm -rf /' }))).toMatch(
+        /recursive force-delete/,
+      );
+      expect(hardlineReason(payload('process_start', { command: 'rm -rf ~' }))).toMatch(
+        /recursive force-delete/,
+      );
+      expect(hardlineReason(payload('write_file', { command: 'rm -rf /' }))).toBeNull();
+    });
+
+    it('is null for an ordinary command or a missing / non-string command', () => {
+      expect(hardlineReason(payload('terminal', { command: 'ls -la' }))).toBeNull();
+      expect(hardlineReason(payload('process_start', { command: 'npm run dev' }))).toBeNull();
+      expect(hardlineReason(payload('terminal', {}))).toBeNull();
+      expect(hardlineReason(payload('terminal', { command: 42 }))).toBeNull();
+      expect(hardlineReason(payload('terminal', null))).toBeNull();
     });
   });
 
@@ -123,51 +154,14 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
     });
   });
 
-  // The law: deny rules are the floor. Modes can only make things stricter,
-  // never looser — so a rule binds even under the loosest possible config.
-  describe('deny rules (safety.denyRules)', () => {
-    it('denies under approvalMode off WITH allowAutoApproveDangerousTools', async () => {
-      const pred = createDangerPredicate({
-        getPersonality: () => person('off', ['git push --force']),
-        allowAutoApproveDangerousTools: true,
-      });
-      const r = await pred(payload('terminal', { command: 'git push --force origin main' }));
-      expect(r).toMatch(/denied by personality deny rule: git push --force/);
+  // Deny rules left this predicate: core enforces them before any hook runs
+  // (packages/core/src/agent-loop/__tests__/deny-rule-gate.test.ts). The
+  // predicate must not surface them as an approvable reason any more.
+  it('does not evaluate deny rules (core owns them)', async () => {
+    const pred = createDangerPredicate({
+      getPersonality: () => person('manual', ['push --force']),
     });
-
-    it('denies even when smart mode would auto-approve (rule beats reviewer)', async () => {
-      let reviewed = false;
-      const pred = createDangerPredicate({
-        alwaysAsk: ['terminal'],
-        getPersonality: () => person('smart', ['git push --force']),
-        smartApprove: async () => {
-          reviewed = true;
-          return { decision: 'approve', reason: 'looks fine' };
-        },
-      });
-      expect(await pred(payload('terminal', { command: 'git push --force' }))).toMatch(/deny rule/);
-      expect(reviewed).toBe(false);
-    });
-
-    it('matches on the tool name too, not only on args', async () => {
-      const pred = createDangerPredicate({
-        getPersonality: () => person('off', ['email_send']),
-        allowAutoApproveDangerousTools: true,
-      });
-      expect(await pred(payload('email_send', { to: 'a@b' }))).toMatch(/deny rule/);
-    });
-
-    it('leaves unmatched calls alone', async () => {
-      const pred = createDangerPredicate({
-        getPersonality: () => person('manual', ['git push --force']),
-      });
-      expect(await pred(payload('terminal', { command: 'git push' }))).toBeNull();
-    });
-
-    it('ignores an empty rule list and empty rule strings', async () => {
-      const pred = createDangerPredicate({ getPersonality: () => person('manual', ['']) });
-      expect(await pred(payload('terminal', { command: 'echo hi' }))).toBeNull();
-    });
+    expect(await pred(payload('terminal', { command: 'echo push --force' }))).toBeNull();
   });
 
   // The built-in flag list is what makes `smart` reachable at all: when it was
@@ -429,8 +423,9 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
 // loader can actually read `safety.denyRules` out of config.yaml. It could
 // not — the field was parsed nowhere and dropped silently, making the whole
 // feature unreachable from user config. This test drives the real path:
-// config.yaml on disk → FilePersonalityRegistry → predicate.
-describe('deny rules declared in config.yaml (disk → registry → predicate)', () => {
+// config.yaml on disk → FilePersonalityRegistry → core's deny-rule matcher
+// (`enforceBeforeToolCall` is the enforcer; the matcher is what it calls).
+describe('deny rules declared in config.yaml (disk → registry → core matcher)', () => {
   let dir: string;
 
   beforeEach(async () => {
@@ -454,20 +449,17 @@ describe('deny rules declared in config.yaml (disk → registry → predicate)',
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('denies a matching call under the loosest possible mode', async () => {
+  it('the loaded rules deny a matching call through core, under the loosest mode', async () => {
     const registry = new FilePersonalityRegistry(new FsStorage());
     await registry.loadFromDirectory(dir);
     const config = registry.get('guarded');
     expect(config?.safety?.approvalMode).toBe('off');
 
-    const pred = createDangerPredicate({
-      getPersonality: () => config,
-      allowAutoApproveDangerousTools: true,
-    });
-
-    expect(await pred(payload('terminal', { command: 'git push --force origin main' }))).toBe(
+    const rules = config?.safety?.denyRules;
+    const hit = matchDenyRule(rules, 'terminal', { command: 'git push --force origin main' });
+    expect(hit === null ? null : denyRuleReason(hit)).toBe(
       'denied by personality deny rule: git push --force',
     );
-    expect(await pred(payload('terminal', { command: 'git push origin main' }))).toBeNull();
+    expect(matchDenyRule(rules, 'terminal', { command: 'git push origin main' })).toBeNull();
   });
 });

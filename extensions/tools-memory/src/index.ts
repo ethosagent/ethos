@@ -279,12 +279,24 @@ export function createSessionListByDateTool(session: SessionStore): Tool {
         },
       },
     },
-    async execute(args): Promise<ToolResult> {
+    async execute(args, ctx): Promise<ToolResult> {
       const { since, until, limit } = args as {
         since?: string;
         until?: string;
         limit?: number;
       };
+
+      // Scoped to the calling personality: without it the store returns every
+      // personality's sessions. No personality → refuse, never list unfiltered.
+      // Pinned by __tests__/session-list-scoping.test.ts.
+      const personalityId = ctx.personalityId;
+      if (!personalityId) {
+        return {
+          ok: false,
+          error: 'session_list_by_date requires a personality context',
+          code: 'input_invalid',
+        };
+      }
 
       const sinceBound = since ? parseTemporalBound(since) : undefined;
       const untilBound = until ? parseTemporalBound(until) : undefined;
@@ -292,6 +304,7 @@ export function createSessionListByDateTool(session: SessionStore): Tool {
       const sessions = await session.listSessions({
         since: sinceBound,
         limit: Math.min(limit ?? 20, 50),
+        personalityId,
       });
 
       // Client-side filter for until (SessionFilter doesn't have until)

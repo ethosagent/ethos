@@ -1122,6 +1122,14 @@ export interface SessionRouting {
   /** Platform user id of whoever's message triggered the turn. Absent when
    *  the adapter didn't stamp one — the approval is then left unbound. */
   requesterUserId?: string;
+  /** Whether the triggering message was a DM. In a group the approval flow
+   *  binds the decision to the platform owner instead of the requester
+   *  (`resolveApprovalTarget` in apps/ethos/src/commands/gateway.ts). */
+  isDm: boolean;
+  /** Platform name of the triggering message (`InboundMessage.platform`) —
+   *  the `channel_filter` key the owner is looked up under. `adapter.id` is
+   *  an adapter id, not a platform name. */
+  platform: string;
 }
 
 export class Gateway {
@@ -2395,7 +2403,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
           },
         });
       } catch (err: unknown) {
@@ -2428,7 +2436,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
             isDm: message.isDm,
             isGroupMention: message.isGroupMention,
           },
@@ -2448,7 +2456,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
             replyToId: message.replyToId,
           },
         });
@@ -2464,7 +2472,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
             dropped: filterResult.strippedPriorContext === '',
           },
         });
@@ -2692,6 +2700,22 @@ export class Gateway {
               .join('\n')}\n\nUse /personality <id> to switch.`
           : 'Built-in personalities: researcher · engineer · reviewer · coach · operator\n\nUse /personality <id> to switch.';
         await adapter.send(message.chatId, { text: listText }).catch(() => {});
+        return;
+      }
+
+      // A switch is lane-wide: in a group it changes the agent for people who
+      // did not ask, so only the configured owner may make it (plan D20). A
+      // group on a platform with no `ownerUserId` refuses outright (D21) —
+      // there is no one to trust. DMs keep the old behavior: the requester is
+      // the only human in the lane. The read-only forms above stay open.
+      // Pinned by extensions/gateway/src/__tests__/personality-switch-owner.test.ts.
+      if (!message.isDm && !this.isOwner(message)) {
+        const text =
+          this.channelFilter?.[message.platform]?.ownerUserId === undefined
+            ? `Switching personalities in a group needs an owner. ` +
+              `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
+            : `Only the bot owner can switch personalities in a group.`;
+        await adapter.send(message.chatId, { text }).catch(() => {});
         return;
       }
 
@@ -3103,6 +3127,11 @@ export class Gateway {
           sessionId,
           personalityId,
           platform: message.platform,
+          sender: {
+            userId: message.userId ?? '',
+            isOwner: this.isOwner(message),
+            isDm: message.isDm,
+          },
           send: async (t: string) => {
             await adapter.send(message.chatId, { text: t, threadId }).catch(() => {});
           },
@@ -3728,6 +3757,8 @@ export class Gateway {
       chatId: message.chatId,
       threadId: message.threadId ? message.threadId : undefined,
       requesterUserId: message.userId,
+      isDm: message.isDm,
+      platform: message.platform,
     });
 
     await adapter.sendTyping?.(message.chatId).catch(() => {});
@@ -3814,7 +3845,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
             ...(tier1.containsInstructions ? { hits: tier1.hits } : {}),
           },
         });
@@ -5472,6 +5503,13 @@ export class Gateway {
   private personalitySwitchAllowed(bot: GatewayBotConfig): boolean {
     if (bot.binding.type === 'team') return false;
     return bot.binding.allowSlashSwitch === true;
+  }
+
+  /** Whether the sender is `channel_filter.<platform>.ownerUserId`. False
+   *  when the platform has no owner configured. */
+  private isOwner(message: InboundMessage): boolean {
+    const owner = this.channelFilter?.[message.platform]?.ownerUserId;
+    return owner !== undefined && message.userId === owner;
   }
 
   /** The personality identifier surfaced by `/personality` (no arg) and

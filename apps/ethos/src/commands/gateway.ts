@@ -14,7 +14,9 @@ import {
   bindResolvesToPersonality,
   deriveBotKey,
   type EthosConfig,
+  ethosCronDir,
   ethosDir,
+  ethosScriptsDir,
   loadConfigStrict,
   observeModePlatforms,
   readRawConfig,
@@ -168,6 +170,11 @@ import {
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { createSipInboundHandler } from '../sip-inbound-dispatch';
 import { createSipWebhookServer } from '../sip-webhook-server';
+import {
+  createNoApprovalSurfaceGate,
+  reportUnattendedCronExposure,
+  wireUnattendedApprovalGate,
+} from '../unattended-approval-gate';
 import { createWebhookServer, type DeliveryRelay, type PrefilterRunner } from '../webhook-server';
 import {
   buildSystemTaskHandlers,
@@ -709,6 +716,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   });
   const scheduler = new CronScheduler({
     storage: getStorage(),
+    cronDir: ethosCronDir(),
+    scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, logLevel),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
@@ -996,6 +1005,34 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   });
   systemLoop = systemLoopReady;
 
+  // Cron, dreams, watcher wakes, call capture and SIP-inbound turns run on the
+  // systemLoop, and no human is present on it to answer an approval prompt
+  // (`wireApprovalFlow` below covers bot loops only). A call that would need approval is therefore
+  // REFUSED here, unless the personality declares `approvalMode: off` AND the
+  // operator set `allowUnattendedDangerousTools: true`. The same predicate's
+  // spoken-confirmation wrapper refuses a SIP far-end caller's consequential
+  // request. Pinned by `../__tests__/unattended-approval-gate.test.ts`.
+  wireUnattendedApprovalGate(systemLoopReady.hooks, {
+    personalities: seamPersonalities,
+    reload: () => seamPersonalities.loadFromDirectory(personalitiesDir),
+    getProvider: createLazyProvider(() => createLLM(config)),
+    model: config.model,
+    allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
+  });
+  // Say so at boot, once, for every personality whose cron jobs can reach a
+  // tool that gate refuses — before the first job fails.
+  const cronExposure = reportUnattendedCronExposure({
+    jobs: await scheduler.listJobs().catch(() => []),
+    getPersonality: (id) => seamPersonalities.get(id),
+    allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
+    recordSafetyBlock: (event) => getEthosObservability().recordSafetyBlock(event),
+  });
+  for (const { personalityId, tools } of cronExposure) {
+    console.log(
+      `${c.yellow}⚠ cron${c.reset} ${c.bold}${personalityId}${c.reset} ${c.yellow}can reach ${tools.join(', ')}, which cron refuses unattended (set safety.approvalMode: off on the personality and allowUnattendedDangerousTools: true in config.yaml to pre-authorize)${c.reset}`,
+    );
+  }
+
   // Personality-directory seam for hot-reload. `refresh()` reloads every loop
   // registry (system + per-bot) plus a dedicated read registry from disk, so a
   // personality dropped into or edited under `~/.ethos/personalities/` is
@@ -1126,6 +1163,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // right after Gateway construction — necessary because the surface and the
   // Gateway each need a reference to the other.
   const adapters = await buildGatewayAdapters(config, attachmentCache);
+  warnEmailSenderAuthUnconfigured(config);
 
   // O-T8 — outbox approval cards. Keyed by the botKey each adapter speaks as
   // (the SAME derivation the Gateway's own routing table uses), because a
@@ -1424,10 +1462,10 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // platform retries only what was never spooled (plan §2.5, D2-10).
   for (const adapter of adapters) wireAdapterInbound(gateway, adapter);
 
-  // Wire the interactive tool-approval flow. Registers a `before_tool_call`
-  // hook on every bot loop that suspends a dangerous tool call until the
-  // user clicks Allow / Deny on an approval card (Slack or Telegram).
-  // No-op for deployments without an approval-capable adapter.
+  // Wire the tool-approval gate on every bot loop. A bot with a card-capable
+  // adapter (Slack, Telegram, Discord) suspends a dangerous call until the
+  // user clicks Allow / Deny; every other bot refuses it, because its chat
+  // surface cannot show a prompt (see `wireApprovalFlow`).
   const approvalFlow = wireApprovalFlow(gateway, bots, adapters, {
     personalities: seamPersonalities,
     getProvider: createLazyProvider(() => createLLM(config)),
@@ -1435,6 +1473,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     ...(config.approvalTimeoutMs !== undefined
       ? { approvalTimeoutMs: config.approvalTimeoutMs }
       : {}),
+    ownerFor: (platform) => config.channelFilter?.[platform]?.ownerUserId,
   });
 
   // Start the cron scheduler that was hoisted above (so agent-callable
@@ -1717,6 +1756,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       {
         storage: getStorage(),
         executionBackend: webhookPrefilterBackend,
+        scriptsDir: ethosScriptsDir(),
         stdin: opts.stdin,
         label: 'prefilter',
       },
@@ -2665,17 +2705,33 @@ function isApprovalCapable(
 const APPROVAL_SHUTDOWN_DRAIN_MS = 5_000;
 
 /**
- * Connect the agent loop's `before_tool_call` hook to approval cards.
+ * Give every bot loop in `bots` exactly one approval gate on
+ * `before_tool_call`, and connect the card-capable ones to approval cards.
+ * This is the ONE call every bot-loop host makes — `ethos gateway start`
+ * (`runGatewayStart`, all bots at once) and `ethos boot` (`registerBotLive`,
+ * per bot: cold boot, live hot-add, webhook-route bots, and a bot replaced on
+ * config reload) — so no host can leave a bot loop ungated.
  *
- * Three wires:
+ *   0. A bot with NO approval-capable adapter (WhatsApp, Email, a webhook
+ *      route bot — anything without `postApprovalCard`; today only Slack,
+ *      Telegram and Discord implement it) gets the no-surface gate
+ *      (`createNoApprovalSurfaceGate`, apps/ethos/src/unattended-approval-gate.ts):
+ *      a flagged call is ALWAYS refused. A remote sender drives these turns,
+ *      so the systemLoop's D12 opt-in (`approvalMode: off` +
+ *      `allowUnattendedDangerousTools`) is never honoured here. This includes
+ *      the case where no adapter at all is approval-capable, which returns
+ *      right after.
  *   1. `before_tool_call` hook on every approval-capable bot loop →
- *      `ApprovalCoordinator` suspends dangerous calls.
+ *      `ApprovalCoordinator` suspends dangerous calls. A turn on such a loop
+ *      that arrived through an adapter that cannot post a card is handed to
+ *      the same no-surface gate (`withoutSurface`) and refused, not let
+ *      through.
  *   2. `coordinator.onPending` → resolve the sessionId to its adapter/chat/
  *      thread via the gateway and post an approval card.
  *   3. each adapter's button-click event → `coordinator.approve/deny`
  *      and an in-place update of the card.
  *
- * Skipped entirely when no approval-capable adapter is configured.
+ * Pinned by `__tests__/approval-flow-unattended.test.ts`.
  *
  * Returns a `{ shutdown, pendingCount }` handle: the caller's SIGINT/SIGTERM
  * closure calls `shutdown` so pending approvals are force-settled (deny +
@@ -2701,9 +2757,29 @@ export function wireApprovalFlow(
     /** Operator's approval SLA (`config.approvalTimeoutMs`). Undefined → the
      *  coordinator's own 10-minute default; `0` → no timeout. */
     approvalTimeoutMs?: number;
+    /** The platform owner (`channel_filter.<platform>.ownerUserId`), who
+     *  decides approvals for turns started in a group chat. Required so no
+     *  caller can silently fall back to requester binding in groups. */
+    ownerFor: (platform: string) => string | undefined;
   },
 ): { shutdown: () => Promise<void>; pendingCount: () => number } {
   const approvalAdapters = adapters.filter(isApprovalCapable);
+  const approvalBotKeys = new Set(approvalAdapters.map((a) => a.botKey));
+  const noSurfaceOpts = {
+    personalities: seams.personalities,
+    getProvider: seams.getProvider,
+    model: seams.model,
+  };
+  // Wire 0: a bot with no approval surface is gated here, before the
+  // early return below, so a deployment with no card-capable adapter at all
+  // is covered too.
+  for (const bot of bots) {
+    if (approvalBotKeys.has(bot.botKey)) continue;
+    bot.loop.hooks.registerModifying(
+      'before_tool_call',
+      createNoApprovalSurfaceGate([bot.loop.hooks], noSurfaceOpts),
+    );
+  }
   // No approval surface — hand back a no-op handle so the caller needs no
   // null check in its shutdown closure. Nothing can ever be pending here.
   if (approvalAdapters.length === 0) return { shutdown: async () => {}, pendingCount: () => 0 };
@@ -2754,22 +2830,33 @@ export function wireApprovalFlow(
   const inFlightCardUpdates = new Set<Promise<unknown>>();
 
   // Resolve a `sessionId` to its approval target. Returns `undefined` for
-  // any turn whose route isn't an approval-capable adapter.
+  // any turn whose route isn't an approval-capable adapter; the hook then
+  // hands the call to `withoutSurface` (the no-surface gate).
+  //
+  // `requesterUserId` is the one user the coordinator lets decide
+  // (`ApprovalCoordinator.settle` drops every other click). In a DM that is
+  // the requester — the only human in the lane. In a group it is the platform
+  // owner, so a member cannot approve their own dangerous call (plan
+  // openclaw-advisory-fixes L-c, D20). A group on a platform with no owner
+  // configured keeps requester binding (D21): refusing every approval there
+  // would make the bot unusable, and the requester is still the only clicker
+  // accepted. Pinned by apps/ethos/src/commands/__tests__/approval-target.test.ts.
   const resolveApprovalTarget = (sessionId: string) => {
     const route = gateway.resolveApprovalRoute(sessionId);
     if (!route || !isApprovalCapable(route.adapter)) return undefined;
-    // Bind the approval to the user whose message triggered the turn, so a
-    // bystander in the channel can't click Allow on a tool call they don't own.
-    return { requesterUserId: route.requesterUserId };
+    return {
+      requesterUserId: route.isDm
+        ? route.requesterUserId
+        : (seams.ownerFor(route.platform) ?? route.requesterUserId),
+    };
   };
 
   // Register the approval hook only on loops whose bot has an
-  // approval-capable adapter.
-  const approvalBotKeys = new Set(approvalAdapters.map((a) => a.botKey));
+  // approval-capable adapter (every other bot got the no-surface gate above).
   const approvalBots = bots.filter((bot) => approvalBotKeys.has(bot.botKey));
   // One predicate for all approval bots. It learns each turn's personality
-  // from the owning loop's `session_start`, so `denyRules` and `approvalMode`
-  // follow whatever personality the lane is actually running — including a
+  // from the owning loop's `session_start`, so `approvalMode` follows
+  // whatever personality the lane is actually running — including a
   // `/personality` switch. The reviewer and its provider stay unconstructed
   // unless a flagged call reaches `approvalMode: 'smart'`.
   const isDangerous = createApprovalDangerPredicate({
@@ -2779,10 +2866,17 @@ export function wireApprovalFlow(
     model: seams.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
   });
+  // A turn on one of these loops that arrived through an adapter with no card
+  // (an Email message that fell back to a Slack bot's loop) cannot be asked:
+  // the no-surface gate refuses a flagged call, as on a bot with no card.
+  const withoutSurface = createNoApprovalSurfaceGate(
+    approvalBots.map((bot) => bot.loop.hooks),
+    noSurfaceOpts,
+  );
   for (const bot of approvalBots) {
     bot.loop.hooks.registerModifying(
       'before_tool_call',
-      createSlackApprovalHook({ coordinator, isDangerous, resolveApprovalTarget }),
+      createSlackApprovalHook({ coordinator, isDangerous, resolveApprovalTarget, withoutSurface }),
     );
   }
 
@@ -3832,6 +3926,11 @@ export async function buildAdapters(
           smtpHost: config.emailSmtpHost,
           smtpPort: config.emailSmtpPort ?? 587,
           botKey: emailBotKey(config.emailUser, config.emailImapHost),
+          // Unset → every sender is unverified (`resolveEmailSender`); the
+          // boot-time warning is `warnEmailSenderAuthUnconfigured`.
+          ...(config.emailTrustedAuthservId
+            ? { trustedAuthservId: config.emailTrustedAuthservId }
+            : {}),
         }),
       );
     }
@@ -4446,6 +4545,42 @@ export interface BuildGatewayOptions {
    * (`__tests__/gateway-observability-wiring.test.ts`).
    */
   observability: GatewayConfig['observability'];
+}
+
+/**
+ * Boot-time notice for an email bot with no `emailTrustedAuthservId` (plan
+ * openclaw-advisory-fixes Item 6). Without it `resolveEmailSender`
+ * (extensions/platform-email/src/index.ts) treats EVERY sender as unverified,
+ * so a deployment that upgraded without setting the key has lost identity
+ * continuity for all of its correspondents — worth one warn-level event and
+ * one console line, not a refusal to start (fail closed is the safe state).
+ *
+ * The configured-email predicate is the one `buildAdapters` uses. Called by
+ * both adapter-owning hosts (`runGatewayStart`, `ethos boot`) right after
+ * adapters are built. Fail-open on the record, like `gatewayObservability`.
+ * Returns whether it warned. Pinned by
+ * `__tests__/email-sender-auth-wiring.test.ts`.
+ */
+export function warnEmailSenderAuthUnconfigured(
+  config: EthosConfig,
+  record: (opts: { code: string; cause: string; severity: 'warn' }) => void = (opts) =>
+    getEthosObservability().recordError(opts),
+  log: (line: string) => void = (line) => console.log(line),
+): boolean {
+  const emailConfigured =
+    config.emailImapHost && config.emailUser && config.emailPassword && config.emailSmtpHost;
+  if (!emailConfigured || config.emailTrustedAuthservId?.trim()) return false;
+  const cause =
+    'email is configured without emailTrustedAuthservId — every sender is treated as unverified (no From: address is trusted as an identity)';
+  try {
+    record({ code: 'email.sender_auth_unconfigured', cause, severity: 'warn' });
+  } catch {
+    // Fail-open — observability never stops the gateway starting.
+  }
+  log(
+    `${c.yellow}⚠ ${cause}.${c.reset} ${c.dim}Set emailTrustedAuthservId to the first token of the Authentication-Results header on any mail this account received.${c.reset}`,
+  );
+  return true;
 }
 
 /**

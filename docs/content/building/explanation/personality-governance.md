@@ -106,7 +106,7 @@ The turn can still *read* these files, which is why this is a write-only list an
 | File-tool capability (`ctx.scopedFs`) | `ScopedFsImpl.checkReach` in `packages/core/src/scoped/scoped-fs.ts` (`writeDenyPaths`) |
 | Docker sandbox | `DockerExecutionBackend.mountsFor` in `extensions/execution-docker/src/index.ts` mounts the personality directory read-only, with `files/` writable |
 
-`scaffold_personality` writes through its own Storage rather than the turn's, so it refuses separately: it will not scaffold the calling personality's id, or any id that already has a `config.yaml` (`scaffoldPersonalityTool` in `extensions/tools-personality-design/src/index.ts`).
+`scaffold_personality` writes through its own Storage rather than the turn's, so it refuses separately: it will not scaffold the calling personality's id, an id already in the personality registry (which covers built-ins), or any id that already has a `config.yaml`. It also refuses a toolset that lists a tool the calling personality does not hold, and refuses outright when the caller cannot be resolved or has no explicit toolset, so creating a personality can never mint a tool its creator lacks. Every refusal runs before anything is written (`scaffoldPersonalityTool` in `extensions/tools-personality-design/src/index.ts`, pinned by `src/__tests__/no-overwrite.test.ts` in that package).
 
 Two things stay writable on purpose. `MEMORY.md` and `USER.md` are content the agent maintains, and the memory provider writes them through its own Storage. `files/` is the personality's asset folder.
 

@@ -35,12 +35,13 @@ export interface PendingApproval {
   /** Human-readable cause from the danger predicate, or null. */
   reason: string | null;
   /**
-   * Platform user id of whoever's message triggered this turn. When set,
-   * only that user (or a `'system'` resolution — timeout / session cancel)
-   * may resolve the approval: a dangerous tool call must not be approvable
-   * by an arbitrary bystander who can see the card. Unset means no binding —
-   * any decider is accepted (used where the surface has only one user, e.g.
-   * a DM, or where the caller opts out).
+   * Platform user id of the one user allowed to decide. When set, only that
+   * user (or a `'system'` resolution — timeout / session cancel) may resolve
+   * the approval (`settle` drops every other click). The name is historical:
+   * the caller picks the decider, and on the gateway that is the requester in
+   * a DM but the platform owner in a group (`resolveApprovalTarget` inside
+   * `wireApprovalFlow`, apps/ethos/src/commands/gateway.ts). Unset means no
+   * binding — any decider is accepted.
    */
   requesterUserId?: string;
 }
@@ -297,11 +298,15 @@ export class ApprovalCoordinator {
 export type DangerReason = string | null;
 export type DangerPredicate = (payload: BeforeToolCallPayload) => Promise<DangerReason>;
 
-/** Where a turn's Slack approval prompt would go. `requesterUserId` binds
- *  the approval to the user who triggered the turn. */
+/** Who decides a turn's approval. Built by `resolveApprovalTarget` inside
+ *  `wireApprovalFlow` (apps/ethos/src/commands/gateway.ts). */
 export interface ApprovalTarget {
-  /** Platform user id of whoever triggered the turn — only they (or a
-   *  system resolution) may resolve the approval. */
+  /** Platform user id of the one user allowed to decide — only they (or a
+   *  system resolution) may resolve the approval (`ApprovalCoordinator.settle`).
+   *  `resolveApprovalTarget` sets it to the requester in a DM, to the platform
+   *  owner (`channel_filter.<platform>.ownerUserId`) in a group, and to the
+   *  requester in a group whose platform has no owner configured. Pinned by
+   *  apps/ethos/src/commands/__tests__/approval-target.test.ts. */
   requesterUserId?: string;
 }
 
@@ -309,22 +314,31 @@ export interface CreateSlackApprovalHookOptions {
   coordinator: ApprovalCoordinator;
   isDangerous: DangerPredicate;
   /**
-   * Resolves the `sessionId` to its Slack approval target, or `undefined`
-   * when the turn has no Slack approval surface at all.
+   * Resolves the `sessionId` to its approval target, or `undefined` when the
+   * turn's route adapter cannot post an approval card.
    *
-   * This is what keeps the hook from coupling Slack to other platforms: the
-   * same `AgentLoop` can be shared by a Slack adapter AND a non-Slack one
-   * (e.g. a Discord/Email message that fell back to a Slack-bound bot's
-   * loop). For those non-Slack turns this returns `undefined` and the hook
-   * passes the call straight through — it does NOT suspend or deny — so the
-   * loop's other guards (the synchronous terminal hard-block) decide.
-   * Adding Slack to a bot must not silently change tool behavior on its
-   * other channels.
+   * The same `AgentLoop` can be shared by a card-capable adapter AND one that
+   * is not (an Email or WhatsApp message that fell back to a Slack-bound
+   * bot's loop). Nobody can be asked on such a turn, so it is handed to
+   * `withoutSurface` instead — exactly the gate a bot with no card-capable
+   * adapter at all gets, so adding Slack to a bot does not change tool
+   * behaviour on its other channels.
    *
    * `before_tool_call` carries only `sessionId`; the gateway is the
    * component that knows both the originating platform and user.
    */
   resolveApprovalTarget: (sessionId: string) => ApprovalTarget | undefined;
+  /**
+   * The `before_tool_call` handler for a turn with no approval surface
+   * (`resolveApprovalTarget` returned `undefined`). `wireApprovalFlow` passes
+   * the no-surface gate (`createNoApprovalSurfaceGate`,
+   * apps/ethos/src/unattended-approval-gate.ts), which always refuses a
+   * flagged call — a remote sender drives the turn, so no opt-in applies.
+   * Required so no caller can silently fall back to letting such a call
+   * through. Pinned by
+   * apps/ethos/src/commands/__tests__/approval-flow-unattended.test.ts.
+   */
+  withoutSurface: (payload: BeforeToolCallPayload) => Promise<{ error?: string }>;
 }
 
 /**
@@ -338,14 +352,14 @@ export interface CreateSlackApprovalHookOptions {
  */
 export function createSlackApprovalHook(opts: CreateSlackApprovalHookOptions) {
   return async (payload: BeforeToolCallPayload): Promise<Partial<BeforeToolCallResult> | null> => {
+    // No approval surface for this turn (a non-card channel sharing the loop)
+    // — nobody can be asked, so `withoutSurface` decides with its own
+    // predicate. Resolved first so a flagged call is judged once, not twice.
+    const target = opts.resolveApprovalTarget(payload.sessionId);
+    if (target === undefined) return opts.withoutSurface(payload);
+
     const reason = await opts.isDangerous(payload);
     if (reason === null) return null;
-
-    // No Slack approval surface for this turn (a non-Slack channel sharing
-    // the loop) — pass through untouched. Suspending or denying here would
-    // be hidden cross-platform coupling.
-    const target = opts.resolveApprovalTarget(payload.sessionId);
-    if (target === undefined) return null;
 
     const decision = await opts.coordinator.requestApproval({
       sessionId: payload.sessionId,

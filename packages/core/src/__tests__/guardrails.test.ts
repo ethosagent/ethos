@@ -156,7 +156,24 @@ describe('Orchestrator guardrails', () => {
     // tool-processing contexts. 7 pass-through lines; the pinned/loaded
     // composition lives in agent-loop/tool-loading.ts and `tool_search` in
     // agent-loop/stages/tool-search.ts.
-    expect(lineCount).toBeLessThanOrEqual(1017);
+    // Bumped 1017 -> 1018 (openclaw-advisory-fixes Item 2): the turn
+    // personality's `safety.denyRules` handed to the ScriptToolBridge, so
+    // script calls cross the same deny-rule floor as the batch path. One
+    // pass-through line; the check lives in stages/per-call-enforcement.ts.
+    // Bumped 1018 -> 1020 (openclaw-advisory-fixes Item 7): the ScriptToolBridge
+    // construction passes the redaction seam and the turn's personality (2
+    // pass-through lines). The redaction lives in
+    // agent-loop/stages/result-redaction.ts.
+    // Bumped 1020 -> 1031 (openclaw-advisory-fixes F-A2): the public
+    // `resultRedaction` getter hands the realtime voice host the loop's
+    // redaction kit and observability (type import, a 3-line doc, a 6-line
+    // getter, one blank). Pass-through only; the redaction lives in
+    // agent-loop/stages/result-redaction.ts.
+    // Bumped 1031 -> 1033: the public `resolvePersonality` method (doc + 3
+    // lines) so the realtime voice host resolves a session's personality by
+    // the loop's own rule; `getPersonalityBudgetCap` now delegates to it (-3).
+    // The rule lives in agent-loop/stages/turn-setup.ts.
+    expect(lineCount).toBeLessThanOrEqual(1033);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -268,7 +285,11 @@ describe('Orchestrator guardrails', () => {
       // `recordDirectLoads` call and its comment, and seeds the tool_result
       // blocks with the search results. No logic — `tool_search` and D1-1
       // auto-loading live in agent-loop/stages/tool-search.ts.
-      if (lineCount > 860) {
+      // Bumped 860 -> 861 (openclaw-advisory-fixes Item 2): tool-processing.ts
+      // hands the turn personality's `safety.denyRules` to
+      // `enforceBeforeToolCall`. One pass-through line; the check lives in
+      // stages/per-call-enforcement.ts.
+      if (lineCount > 861) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

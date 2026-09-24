@@ -20,7 +20,9 @@ import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import {
   configParseNotices,
   type EthosConfig,
+  ethosCronDir,
   ethosDir,
+  ethosScriptsDir,
   readConfig,
   readRawConfig,
   resolveLearningReplay,
@@ -622,6 +624,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   const outbox = outboxSide.wiring;
   cronScheduler = new CronScheduler({
     storage: getStorage(),
+    cronDir: ethosCronDir(),
+    scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, logLevel),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
@@ -1636,7 +1640,7 @@ export function serveLoopOptions(opts: {
  * and the loop onboarding binds after boot. Same `checkCommand` rules the CLI
  * guard uses, surfaced through the modal instead of a hard block; threaded
  * with the turn's personality (learned from the loop's `session_start`) so
- * `denyRules` and `approvalMode` are enforced, plus a lazy provider handle for
+ * `approvalMode` is enforced, plus a lazy provider handle for
  * `approvalMode: 'smart'` — nothing is constructed unless a flagged call
  * actually reaches the reviewer.
  */

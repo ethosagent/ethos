@@ -33,7 +33,9 @@ import { join } from 'node:path';
 import { AgentMesh, meshRegistryPath } from '@ethosagent/agent-mesh';
 import {
   type EthosConfig,
+  ethosCronDir,
   ethosDir,
+  ethosScriptsDir,
   loadConfigStrict,
   type WebhookHookConfig,
 } from '@ethosagent/config';
@@ -169,6 +171,7 @@ import {
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
   validateBindings,
+  warnEmailSenderAuthUnconfigured,
   wireApprovalFlow,
 } from './gateway';
 import {
@@ -419,6 +422,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   });
   const scheduler = new CronScheduler({
     storage,
+    cronDir: ethosCronDir(),
+    scriptsDir: ethosScriptsDir(),
     logger,
     ...(cfg.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: cfg.cron.maxParallelJobs }
@@ -593,6 +598,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     outbox: outbox.wiring,
   });
   sharedLoop = shared.loop;
+  // Deliberately NOT given `wireUnattendedApprovalGate` (which `runGatewayStart`
+  // registers on its systemLoop): here cron and watcher wakes share the web
+  // loop, and `buildServeWebApi` registers the web approval hook on it, so a
+  // flagged call posts a modal card a human can answer (denied at the approval
+  // timeout) — the same shape as `ethos serve`. The unattended gate would
+  // refuse every flagged web-chat call too. Boot runs no dreams and no SIP.
   const systemLoop = shared.loop;
 
   // Per-bot routing table. Each personality-bound bot gets its own loop, the
@@ -789,6 +800,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // -------------------------------------------------------------------------
   const { attachmentCache, pruneTimer } = await createGatewayAttachmentCache(storage);
   const adapters = await buildGatewayAdapters(cfg, attachmentCache);
+  warnEmailSenderAuthUnconfigured(cfg);
 
   let gatewayRef: ReturnType<typeof buildGateway> | null = null;
   // Clarify correlators, LIVE and KEYED BY BOT. `registerGatewayClarifySurfaces`
@@ -1022,6 +1034,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     getProvider: createLazyProvider(() => createLLM(cfg)),
     model: cfg.model,
     ...(cfg.approvalTimeoutMs !== undefined ? { approvalTimeoutMs: cfg.approvalTimeoutMs } : {}),
+    // The boot config's filter is the one installed in the Gateway (it is
+    // construction-time; see `prepareBotLive`), so the owner deciding group
+    // approvals is the same owner the gateway's `/personality` check reads.
+    ownerFor: (platform: string) => cfg.channelFilter?.[platform]?.ownerUserId,
   };
   /**
    * One approval surface per bot, keyed by botKey. `wireApprovalFlow` binds its
@@ -1445,6 +1461,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       {
         storage,
         executionBackend: webhookPrefilterBackend,
+        scriptsDir: ethosScriptsDir(),
         stdin: opts.stdin,
         label: 'prefilter',
       },

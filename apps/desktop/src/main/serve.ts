@@ -391,7 +391,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     executionBackends,
     chatDefaults: { model, provider },
     // Threaded with the turn's personality (learned from the loop's
-    // `session_start`) so `denyRules` and `approvalMode` are enforced, plus a
+    // `session_start`) so `approvalMode` is enforced, plus a
     // lazy provider handle for `approvalMode: 'smart'` — nothing is
     // constructed unless a flagged call actually reaches the reviewer.
     dangerPredicate: createApprovalDangerPredicate({

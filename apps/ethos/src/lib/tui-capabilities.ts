@@ -28,6 +28,16 @@ export interface TuiSlashCommands {
   ): Promise<string | null>;
 }
 
+/** The sender every local CLI slash surface hands a plugin handler (the
+ *  `chat.ts` readline path and `makeTuiSlashCommands` below): the person at
+ *  the terminal owns the process, and there is no one else in the lane.
+ *  Pinned by __tests__/tui-capabilities.test.ts. */
+export const CLI_SLASH_SENDER: NonNullable<SlashCommandContext['sender']> = {
+  userId: 'cli',
+  isOwner: true,
+  isDm: true,
+};
+
 /** No ANSI in the TUI: it renders the returned text itself. */
 const PLAIN_PALETTE = { reset: '', dim: '', green: '', red: '', yellow: '' };
 
@@ -77,6 +87,7 @@ export function makeTuiSlashCommands(
         sessionId: ctx.sessionKey,
         personalityId: ctx.personalityId,
         platform: 'cli',
+        sender: CLI_SLASH_SENDER,
         send: async (text) => {
           chunks.push(text);
         },

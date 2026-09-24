@@ -238,6 +238,10 @@ export const ApprovalRequestSchema = z.object({
    *  (`exact-args`/`any-args` are refused server-side by
    *  `ApprovalsService.approve`); the modal offers `lease-1h` instead. */
   alwaysAsk: z.boolean(),
+  /** True for a hardline command: `ApprovalsService.approve` stores nothing
+   *  for it whatever the scope (no allowlist entry, no lease), so the modal
+   *  offers only "just this command". */
+  hardline: z.boolean(),
 });
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
 

@@ -76,6 +76,7 @@ const HANDLED: Array<[string, SseEvent]> = [
         args: { cmd: 'rm' },
         reason: 'destructive',
         alwaysAsk: false,
+        hardline: false,
       },
     },
   ],
