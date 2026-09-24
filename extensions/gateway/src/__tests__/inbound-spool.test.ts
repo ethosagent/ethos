@@ -920,3 +920,54 @@ describe('inbound spool — missing attachment', () => {
     expect(s.texts[0]).not.toContain(ATTACHMENT_NOT_RECOVERED_NOTE);
   });
 });
+
+// `spoolMessageId` — the key a row is stored under (plan §2.5), observed
+// through `acceptInbound`, the only caller.
+describe('inbound spool — message keys', () => {
+  function keyed() {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const gw = gateway(scriptedLoop().loop, out.adapter, spool);
+    const keyOf = (m: InboundMessage): string | undefined => {
+      const accepted = gw.acceptInbound(m);
+      return accepted.spoolId ? spool.get(accepted.spoolId)?.messageId : undefined;
+    };
+    return { spool, keyOf };
+  }
+
+  it('a platform id is the key as-is', () => {
+    const { keyOf } = keyed();
+    expect(keyOf(msg('hi', { messageId: 'm-1' }))).toBe('m-1');
+  });
+
+  it('an edit is keyed `<id>:edit:<sentAt>` and does not collide with its original row', () => {
+    const { spool, keyOf } = keyed();
+    expect(keyOf(msg('first draft', { messageId: 'm-1', sentAt: 1000 }))).toBe('m-1');
+    expect(keyOf(msg('second draft', { messageId: 'm-1', sentAt: 2000, isEdit: true }))).toBe(
+      'm-1:edit:2000',
+    );
+    // A second edit of the same message is a row of its own too.
+    expect(keyOf(msg('third draft', { messageId: 'm-1', sentAt: 3000, isEdit: true }))).toBe(
+      'm-1:edit:3000',
+    );
+    expect(rows(spool).map((r) => r.messageId)).toEqual(['m-1', 'm-1:edit:2000', 'm-1:edit:3000']);
+  });
+
+  it('a message with no id gets a stable `synth:<sha256>` key from its content and time', () => {
+    const { keyOf } = keyed();
+    const a = keyOf(msg('hello', { messageId: undefined, sentAt: 1000 }));
+    expect(a).toMatch(/^synth:[0-9a-f]{64}$/);
+    // Different text, or a different time, is a different message.
+    const b = keyOf(msg('hello again', { messageId: undefined, sentAt: 1000 }));
+    const c = keyOf(msg('hello', { messageId: undefined, sentAt: 2000 }));
+    expect(b).toMatch(/^synth:[0-9a-f]{64}$/);
+    expect(new Set([a, b, c]).size).toBe(3);
+  });
+
+  it('an edit with no id is `synth:<sha256>:edit:<sentAt>`', () => {
+    const { keyOf } = keyed();
+    expect(keyOf(msg('fixed', { messageId: undefined, sentAt: 5000, isEdit: true }))).toMatch(
+      /^synth:[0-9a-f]{64}:edit:5000$/,
+    );
+  });
+});
