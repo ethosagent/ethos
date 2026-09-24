@@ -62,6 +62,7 @@ import {
   parseWakeRouting,
 } from './repositories/config.repository';
 import { EvolverRepository } from './repositories/evolver.repository';
+import { LeaseRepository } from './repositories/lease.repository';
 import { PlatformsRepository } from './repositories/platforms.repository';
 import { WebTokenRepository } from './repositories/web-token.repository';
 import { createRoutes } from './routes';
@@ -856,6 +857,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   const completionsRepo = new CompletionsRepository(opts.sessionStore);
   const configRepo = new ConfigRepository({ dataDir: opts.dataDir, storage, secrets });
   const allowlistRepo = new AllowlistRepository({ dataDir: opts.dataDir, storage });
+  const leaseRepo = new LeaseRepository({ dataDir: opts.dataDir, storage });
   // Gap 11 — lazy getter so skills' `requires.tools` gates see the live
   // registry (including MCP/plugin tools registered after boot). Omitted
   // when no registry is wired: the tools gate is skipped, not failed.
@@ -986,6 +988,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
   });
   const approvalsService = new ApprovalsService({
     allowlist: allowlistRepo,
+    leases: leaseRepo,
     // `!== undefined`, not truthiness — `0` ("no timeout") must be threadable.
     ...(opts.approvalTimeoutMs !== undefined ? { timeoutMs: opts.approvalTimeoutMs } : {}),
     ...(opts.approvalObservability ? { observability: opts.approvalObservability } : {}),

@@ -1,4 +1,4 @@
-// Security & access — approval mode (with the admin gate), named secrets,
+// Security & access — approval mode (with the admin gate), approval leases, named secrets,
 // web-search defaults, API keys, A2A. Moved verbatim from `Settings.tsx`
 // (§4.2 rows 5, 11, 19, 20, 21 and the API-keys section), off `Card` onto
 // `SettingRow` / `SectionHeading` (Phase 4).
@@ -24,7 +24,7 @@
 // browser's form store, so a live-value button would 403), but the LIVE value
 // is acknowledged immediately with an honest note instead of staying silent.
 
-import type { ApiKeyMetadata, ApiKeyScope } from '@ethosagent/web-contracts';
+import type { ApiKeyMetadata, ApiKeyScope, ApprovalLeaseWire } from '@ethosagent/web-contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   App as AntApp,
@@ -117,6 +117,9 @@ export function SecurityPane() {
         </SettingRow>
         <AdminPanelGate savedEnabled={configData?.adminEnabled} />
       </AdvancedBlock>
+
+      <SectionHeading id="approval-leases">approval leases</SectionHeading>
+      <ApprovalLeasesSection />
 
       <SectionHeading id="named-secrets">named secrets</SectionHeading>
       <NamedSecretsSection />
@@ -516,6 +519,114 @@ const SCOPE_HINTS: Partial<Record<ApiKeyScope, string>> = {
   chat: 'OpenAI-compatible API (/v1/models, /v1/chat/completions) — for Cursor, Aider, the OpenAI SDKs',
   'chat:send': 'chat.send and chat.abort RPC — for a Mission Control built on @ethosagent/sdk',
 };
+
+// ---------------------------------------------------------------------------
+// Approval leases (reach-and-containment 3b). An always-ask tool cannot be
+// allowlisted; the widest answer the approval modal offers for one is "Allow
+// for 1 hour", a lease bound to that tool, session and personality. This lists
+// the ACTIVE ones (`rpc.approvals.leases.list`) and revokes early
+// (`rpc.approvals.leases.revoke`). Revocation takes effect on the tool's next
+// call — `ApprovalsService.requestApproval` re-reads the store every time.
+// ---------------------------------------------------------------------------
+
+function ApprovalLeasesSection() {
+  const qc = useQueryClient();
+  const { notification } = AntApp.useApp();
+
+  const leasesQuery = useQuery({
+    queryKey: ['approvalLeases'],
+    queryFn: () => rpc.approvals.leases.list(),
+  });
+
+  const revokeMut = useMutation({
+    mutationFn: (id: string) => rpc.approvals.leases.revoke({ id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['approvalLeases'] });
+      notification.success({ message: 'Lease revoked', placement: 'topRight' });
+    },
+    onError: (err) =>
+      notification.error({
+        message: 'Failed to revoke lease',
+        description: (err as Error).message,
+      }),
+  });
+
+  const columns: ColumnsType<ApprovalLeaseWire> = [
+    {
+      title: 'Tool',
+      dataIndex: 'toolName',
+      key: 'toolName',
+      render: (v: string) => (
+        <Typography.Text code style={{ fontSize: 12 }}>
+          {v}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Personality',
+      dataIndex: 'personalityId',
+      key: 'personalityId',
+      render: (v: string | null) => (
+        <Typography.Text style={{ fontSize: 12 }}>{v ?? '(none)'}</Typography.Text>
+      ),
+    },
+    {
+      title: 'Session',
+      dataIndex: 'sessionId',
+      key: 'sessionId',
+      ellipsis: true,
+      render: (v: string) => (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {v}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Expires',
+      dataIndex: 'expiresAt',
+      key: 'expiresAt',
+      render: (v: string) => (
+        <Typography.Text style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+          {new Date(v).toLocaleTimeString()}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: unknown, record: ApprovalLeaseWire) => (
+        <Button
+          size="small"
+          danger
+          onClick={() => revokeMut.mutate(record.id)}
+          loading={revokeMut.isPending}
+        >
+          Revoke
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <Typography.Paragraph type="secondary" style={{ margin: '0 0 8px' }}>
+        One-hour grants for tools that always ask. Each covers one tool in one chat for one
+        personality, and ends on its own after an hour.
+      </Typography.Paragraph>
+      <SelfSaveMarker />
+      <Table<ApprovalLeaseWire>
+        columns={columns}
+        dataSource={leasesQuery.data?.leases ?? []}
+        rowKey="id"
+        size="small"
+        loading={leasesQuery.isLoading}
+        pagination={false}
+        locale={{ emptyText: 'No active leases.' }}
+        scroll={{ x: true }}
+      />
+    </div>
+  );
+}
 
 interface CreateKeyForm {
   name: string;

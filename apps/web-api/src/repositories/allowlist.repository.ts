@@ -1,5 +1,6 @@
 import { dirname, join } from 'node:path';
 import type { Storage } from '@ethosagent/types';
+import { APPROVAL_SURFACE_ALWAYS_ASK } from '@ethosagent/wiring';
 import { z } from 'zod';
 import { requireStorage } from './require-storage';
 
@@ -80,8 +81,17 @@ export class AllowlistRepository {
     await this.writeChain;
   }
 
-  /** True when `toolName`+`args` are covered by an existing entry. */
+  /**
+   * True when `toolName`+`args` are covered by an existing entry.
+   *
+   * Never true for an always-ask tool (`APPROVAL_SURFACE_ALWAYS_ASK`,
+   * reach-and-containment D3-12): that list means "must never run without a
+   * prompt", so an entry stored for one — before `ApprovalsService.approve`
+   * started refusing them — is ignored, not deleted, and stays visible in the
+   * file. A lease is the widest answer such a tool can get.
+   */
   async matches(toolName: string, args: unknown): Promise<boolean> {
+    if (APPROVAL_SURFACE_ALWAYS_ASK.includes(toolName)) return false;
     const file = await this.readSafe();
     const argsKey = canonicalKey(args);
     for (const entry of file.entries) {

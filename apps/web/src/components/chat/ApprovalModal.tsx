@@ -12,18 +12,25 @@ import { rpc } from '../../rpc';
 // The modal owns three pieces of UX:
 //   1. Render the pending tool: name + reason + args preview.
 //   2. Scope choice (stacked radios — DESIGN.md anti-slop rule, no card
-//      grids inside the modal either): once / exact-args / any-args.
+//      grids inside the modal either): once / exact-args / any-args. An
+//      always-ask tool (`request.alwaysAsk`) cannot be allowlisted — the
+//      server refuses both "forever" scopes for it — so it gets once /
+//      lease-1h instead: the widest answer it can have is one hour.
 //   3. Allow / Deny buttons that fire the matching RPC. The reducer
 //      drops the request from `pendingApprovals` on the SSE
 //      `approval.resolved` event so the modal closes naturally; we
 //      don't manage open/closed state locally.
 
-const SCOPE_OPTIONS: Array<{ value: ApprovalScope; label: string; hint: string }> = [
-  {
-    value: 'once',
-    label: 'Just this command',
-    hint: 'Allow this single invocation, ask again next time.',
-  },
+type ScopeOption = { value: ApprovalScope; label: string; hint: string };
+
+const ONCE_OPTION: ScopeOption = {
+  value: 'once',
+  label: 'Just this command',
+  hint: 'Allow this single invocation, ask again next time.',
+};
+
+const SCOPE_OPTIONS: ScopeOption[] = [
+  ONCE_OPTION,
   {
     value: 'exact-args',
     label: 'This exact command',
@@ -33,6 +40,15 @@ const SCOPE_OPTIONS: Array<{ value: ApprovalScope; label: string; hint: string }
     value: 'any-args',
     label: 'Any args for this tool',
     hint: 'Allow every future invocation of this tool, regardless of args.',
+  },
+];
+
+const ALWAYS_ASK_SCOPE_OPTIONS: ScopeOption[] = [
+  ONCE_OPTION,
+  {
+    value: 'lease-1h',
+    label: 'Allow for 1 hour',
+    hint: 'Allow this tool in this chat, with any arguments, for the next hour. Revoke it in Settings → Security & access.',
   },
 ];
 
@@ -93,7 +109,7 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
 
       <fieldset className="approval-modal-scope">
         <legend className="approval-modal-scope-legend">Scope</legend>
-        {SCOPE_OPTIONS.map((opt) => (
+        {(request.alwaysAsk ? ALWAYS_ASK_SCOPE_OPTIONS : SCOPE_OPTIONS).map((opt) => (
           <label key={opt.value} className="approval-modal-scope-option">
             <input
               type="radio"

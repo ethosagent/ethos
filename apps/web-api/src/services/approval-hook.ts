@@ -30,6 +30,8 @@ export function createWebApprovalHook(opts: CreateApprovalHookOptions) {
       toolName: payload.toolName,
       args: payload.args,
       reason,
+      // A lease binds to the personality running the turn (3b, D3-7).
+      ...(payload.personalityId !== undefined ? { personalityId: payload.personalityId } : {}),
     });
 
     if (decision.decision === 'allow') return null;

@@ -9,6 +9,7 @@ import type { ApprovalRequest } from '@ethosagent/web-contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWebApi } from '../../index';
 import { AllowlistRepository } from '../../repositories/allowlist.repository';
+import { LeaseRepository } from '../../repositories/lease.repository';
 import {
   type ApprovalDecision,
   type ApprovalObservability,
@@ -675,3 +676,175 @@ async function tickUntil(predicate: () => boolean, timeoutMs = 1000): Promise<vo
     await new Promise((r) => setImmediate(r));
   }
 }
+
+// Containment 3b — the one-hour lease, and the end of permanent allowlisting
+// for always-ask tools (D3-12).
+describe('ApprovalsService — leases and always-ask tools', () => {
+  type AuditRow = Parameters<ApprovalObservability['recordSafetyApproval']>[0];
+
+  let storage: InMemoryStorage;
+  let allowlist: AllowlistRepository;
+  let leases: LeaseRepository;
+  let approvals: ApprovalsService;
+  let rows: AuditRow[];
+  let pendingEvents: ApprovalRequest[];
+
+  beforeEach(() => {
+    storage = new InMemoryStorage();
+    allowlist = new AllowlistRepository({ dataDir: DATA, storage });
+    leases = new LeaseRepository({ dataDir: DATA, storage });
+    rows = [];
+    pendingEvents = [];
+    approvals = new ApprovalsService({
+      allowlist,
+      leases,
+      timeoutMs: 0,
+      observability: { recordSafetyApproval: (o) => rows.push(o) },
+    });
+    approvals.onPending((_, req) => pendingEvents.push(req));
+  });
+
+  function nextPending(): Promise<ApprovalRequest> {
+    return new Promise<ApprovalRequest>((resolve) => {
+      const off = approvals.onPending((_, req) => {
+        off();
+        resolve(req);
+      });
+    });
+  }
+
+  const inboxCall = (toolCallId: string, over: Record<string, unknown> = {}) => ({
+    sessionId: 'sess_1',
+    toolCallId,
+    toolName: 'skills_pending_approve',
+    args: { id: toolCallId },
+    reason: 'promotes a skill',
+    personalityId: 'engineer',
+    ...over,
+  });
+
+  it('the wire request says alwaysAsk for an always-ask tool, and not for others', async () => {
+    let pending = nextPending();
+    void approvals.requestApproval(inboxCall('tc_1'));
+    expect((await pending).alwaysAsk).toBe(true);
+
+    pending = nextPending();
+    void approvals.requestApproval({
+      sessionId: 's',
+      toolCallId: 'tc_2',
+      toolName: 'terminal',
+      args: {},
+    });
+    expect((await pending).alwaysAsk).toBe(false);
+  });
+
+  it("approve(..., 'lease-1h') then a second call allows with no pending event and one lease audit row", async () => {
+    const pending = nextPending();
+    const first = approvals.requestApproval(inboxCall('tc_1'));
+    const { approvalId } = await pending;
+    await approvals.approve(approvalId, 'lease-1h', 'tab-A');
+    expect(await first).toEqual({ decision: 'allow' });
+
+    const eventsBefore = pendingEvents.length;
+    const second = await approvals.requestApproval(inboxCall('tc_2', { args: { id: 'other' } }));
+    expect(second).toEqual({ decision: 'allow' });
+    expect(pendingEvents.length).toBe(eventsBefore);
+
+    const leaseRows = rows.filter((r) => r.decision === 'auto');
+    expect(leaseRows).toHaveLength(1);
+    expect(leaseRows[0]?.details).toMatchObject({ decidedBy: 'lease', toolCallId: 'tc_2' });
+    expect(leaseRows[0]?.cause).toMatch(/matched lease .+, expires /);
+
+    const [lease] = await leases.list();
+    expect(lease).toMatchObject({
+      toolName: 'skills_pending_approve',
+      sessionId: 'sess_1',
+      personalityId: 'engineer',
+      grantedBy: 'tab-A',
+    });
+    expect(Date.parse(lease?.expiresAt ?? '') - Date.parse(lease?.grantedAt ?? '')).toBe(3_600_000);
+  });
+
+  it('a lease does not carry over to another personality in the same session', async () => {
+    const pending = nextPending();
+    const first = approvals.requestApproval(inboxCall('tc_1'));
+    await approvals.approve((await pending).approvalId, 'lease-1h', 'tab-A');
+    await first;
+
+    const again = nextPending();
+    void approvals.requestApproval(inboxCall('tc_2', { personalityId: 'coach' }));
+    expect((await again).toolCallId).toBe('tc_2');
+  });
+
+  it('revoking the lease brings the modal back on the next call', async () => {
+    const pending = nextPending();
+    const first = approvals.requestApproval(inboxCall('tc_1'));
+    await approvals.approve((await pending).approvalId, 'lease-1h', 'tab-A');
+    await first;
+
+    const [active] = await approvals.listActiveLeases();
+    expect(active).toBeDefined();
+    await approvals.revokeLease(active?.id ?? '');
+    expect(await approvals.listActiveLeases()).toEqual([]);
+
+    const again = nextPending();
+    void approvals.requestApproval(inboxCall('tc_2'));
+    expect((await again).toolCallId).toBe('tc_2');
+  });
+
+  it('revoking an unknown lease is NOT_FOUND', async () => {
+    const err = await approvals.revokeLease('nope').catch((e: unknown) => e);
+    expect(isEthosError(err) && err.code).toBe('NOT_FOUND');
+  });
+
+  it("approve(..., 'any-args') on skills_pending_approve rejects and leaves the approval pending", async () => {
+    const pending = nextPending();
+    const decision = approvals.requestApproval(inboxCall('tc_1'));
+    const { approvalId } = await pending;
+
+    for (const scope of ['any-args', 'exact-args'] as const) {
+      const err = await approvals.approve(approvalId, scope, 'tab-A').catch((e: unknown) => e);
+      expect(isEthosError(err) && err.code).toBe('INVALID_INPUT');
+    }
+    expect(approvals.pendingCount()).toBe(1);
+    expect(await allowlist.list()).toEqual([]);
+
+    await approvals.approve(approvalId, 'once', 'tab-A');
+    expect(await decision).toEqual({ decision: 'allow' });
+  });
+
+  it('a pre-seeded any-args allowlist entry for skills_pending_approve no longer matches', async () => {
+    await allowlist.add({ toolName: 'skills_pending_approve', scope: 'any-args', args: null });
+    expect(await allowlist.matches('skills_pending_approve', {})).toBe(false);
+    // Ignored, not deleted — the operator can still see what they had.
+    expect(await allowlist.list()).toHaveLength(1);
+
+    const pending = nextPending();
+    void approvals.requestApproval(inboxCall('tc_1'));
+    expect((await pending).toolName).toBe('skills_pending_approve');
+  });
+
+  it("an ordinary tool's allowlist behaviour is unchanged", async () => {
+    const pending = nextPending();
+    const first = approvals.requestApproval({
+      sessionId: 'sess_1',
+      toolCallId: 'tc_1',
+      toolName: 'terminal',
+      args: { command: 'ls' },
+    });
+    await approvals.approve((await pending).approvalId, 'any-args', 'tab-A');
+    await first;
+
+    const eventsBefore = pendingEvents.length;
+    expect(
+      await approvals.requestApproval({
+        sessionId: 'sess_9',
+        toolCallId: 'tc_2',
+        toolName: 'terminal',
+        args: { command: 'pwd' },
+      }),
+    ).toEqual({ decision: 'allow' });
+    expect(pendingEvents.length).toBe(eventsBefore);
+    expect(rows.at(-1)?.details).toMatchObject({ decidedBy: 'allowlist' });
+  });
+});
