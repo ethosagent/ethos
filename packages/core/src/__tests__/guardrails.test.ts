@@ -173,7 +173,12 @@ describe('Orchestrator guardrails', () => {
     // lines) so the realtime voice host resolves a session's personality by
     // the loop's own rule; `getPersonalityBudgetCap` now delegates to it (-3).
     // The rule lives in agent-loop/stages/turn-setup.ts.
-    expect(lineCount).toBeLessThanOrEqual(1033);
+    // Bumped 1033 -> 1039 (decision-provider-jev §8.3, tier router): the
+    // optional `tierRouter` config field and its 2-line doc, its private field,
+    // the one-line constructor assignment and deps-getter line. 6 pass-through
+    // lines; the call condition and the downgrade-only rule live in
+    // agent-loop/tier-router.ts, called from agent-loop/stages/turn-setup.ts.
+    expect(lineCount).toBeLessThanOrEqual(1039);
   });
 
   it('no stage file exceeds 700 lines', () => {

@@ -24,6 +24,7 @@ import type {
 } from '@ethosagent/types';
 import type { ClarifyBridge } from '../clarify/clarify-bridge';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
+import type { TierRouter } from './tier-router';
 import type { ToolLoadingResolver, ToolLoadingState } from './tool-loading';
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,10 @@ export interface LoopDeps {
    *  whether on-demand tool loading engages (`agent-loop/tool-loading.ts`).
    *  Absent → every allowed schema is sent, exactly as before. */
   toolLoading?: ToolLoadingResolver;
+  /** plan decision-provider-jev §8.3 — wiring-built downgrade-only tier router
+   *  (`agent-loop/tier-router.ts`). Absent → every turn without a user override
+   *  runs `default`, exactly as before. */
+  tierRouter?: TierRouter;
   /** D7 — the registry, the role bindings, `modelRouting` and (on a team turn)
    *  the manifest's model slots: everything `resolveModel` reads besides the
    *  personality and the role. Replaces the bare `modelRouting` map. */

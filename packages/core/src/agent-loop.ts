@@ -213,6 +213,9 @@ export interface AgentLoopConfig {
   logger?: Logger;
   /** Part 1 on-demand tool loading; absent → unchanged (tool-loading-loop.test.ts). */
   toolLoading?: import('./agent-loop/tool-loading').ToolLoadingResolver;
+  /** plan decision-provider-jev §8.3 — downgrade-only tier router, built in wiring;
+   *  absent → no routing (`agent-loop/tier-router.ts`, pinned by tier-router.test.ts). */
+  tierRouter?: import('./agent-loop/tier-router').TierRouter;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -375,6 +378,7 @@ export class AgentLoop {
   private readonly streamingTimeoutMs: number;
   private readonly smallWindow: boolean;
   private readonly toolLoading?: AgentLoopConfig['toolLoading'];
+  private readonly tierRouter?: AgentLoopConfig['tierRouter'];
   private readonly modelResolution: ModelResolutionContext;
   private readonly deviationSeen = new Map<string, true>(); // D17 `once`, per loop
   private readonly modelSampling?: AgentLoopConfig['modelSampling'];
@@ -442,6 +446,7 @@ export class AgentLoop {
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? DEFAULT_STREAMING_TIMEOUT_MS;
     this.smallWindow = config.options?.smallWindow ?? false;
     this.toolLoading = config.toolLoading;
+    this.tierRouter = config.tierRouter;
     this.modelResolution = config.modelResolution ?? emptyModelResolution();
     this.modelSampling = config.modelSampling;
     if (config.compaction) this.compaction = config.compaction;
@@ -579,6 +584,7 @@ export class AgentLoop {
       streamingTimeoutMs: this.streamingTimeoutMs,
       smallWindow: this.smallWindow,
       toolLoading: this.toolLoading,
+      tierRouter: this.tierRouter,
       modelResolution: this.modelResolution,
       deviationSeen: this.deviationSeen,
       compaction: this.compaction,

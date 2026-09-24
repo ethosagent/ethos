@@ -61,6 +61,8 @@ export {
 // the bench measures the SAME composition the loop sends.
 export { persistLoaded } from './agent-loop/stages/tool-search';
 export { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
+// plan decision-provider-jev §8.3 — the tier router seam wiring builds against.
+export type { TierRouter } from './agent-loop/tier-router';
 export {
   buildToolSearchDefinition,
   composeDefinitions,

@@ -572,15 +572,15 @@ export async function buildAgentLoop(
   // `__tests__/decision-wiring.test.ts`).
   //
   // ONE provider per build, shared by every decision site this build wires —
-  // the injection classifier here and the smart approver (§8.2), which the
-  // approval surfaces construct from `approverDecision` on the result — so
-  // both see the same breaker (§5.5).
+  // the injection classifier here, the smart approver (§8.2), which the
+  // approval surfaces construct from `approverDecision` on the result, and the
+  // tier router (§8.3) — so all three see the same breaker (§5.5).
   const decisions = config.decisions ? resolveDecisionsConfig(config.decisions) : undefined;
   const { buildDecisionProvider } = await import('./decision-provider');
   const { createDecisionInjectionClassifier } = await import('./decision-injection-classifier');
   const decisionProvider = await buildDecisionProvider({
     decisions,
-    sites: ['injection', 'approver'],
+    sites: ['injection', 'approver', 'router'],
     secrets: config.secretsResolver,
     ...(opts.observability ? { observability: opts.observability } : {}),
   });
@@ -606,6 +606,19 @@ export async function buildAgentLoop(
           timeoutMs: decisions.sites.approver.timeoutMs,
           ...(opts.observability ? { recorder: opts.observability } : {}),
         }
+      : undefined;
+  // §8.3 — the tier router, injected into the loop below. Absent unless a
+  // provider exists AND the router site is `shadow` or `on`; absent means no
+  // routing, `turnTierOverride ?? 'default'` exactly (R7(c)).
+  const tierRouter =
+    decisions && decisionProvider && decisions.sites.router.effective !== 'off'
+      ? (await import('./decision-router')).createDecisionTierRouter({
+          decisions: decisionProvider,
+          mode: decisions.sites.router.effective,
+          threshold: decisions.thresholds.router,
+          timeoutMs: decisions.sites.router.timeoutMs,
+          ...(opts.observability ? { recorder: opts.observability } : {}),
+        })
       : undefined;
 
   // -------------------------------------------------------------------------
@@ -1055,6 +1068,7 @@ export async function buildAgentLoop(
     safety,
     logger: log,
     ...(toolLoading ? { toolLoading } : {}),
+    ...(tierRouter ? { tierRouter } : {}),
     documentExtractors,
     contextEngines,
     ...(llmHandle ? { llmHandle } : {}),
