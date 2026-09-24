@@ -1451,14 +1451,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // `webhookCallback`, Bolt's `HTTPReceiver`), so the row is on disk before
   // that handler returns and the framework acknowledges the webhook — the
   // platform retries only what was never spooled (plan §2.5, D2-10).
-  for (const adapter of adapters) {
-    adapter.onMessage((message: InboundMessage) => {
-      const accepted = gateway.acceptInbound(message);
-      void gateway.handleMessage(message, adapter, { accepted }).catch((err) => {
-        console.error(`[gateway:${adapter.id}] Error:`, err);
-      });
-    });
-  }
+  for (const adapter of adapters) wireAdapterInbound(gateway, adapter);
 
   // Wire the interactive tool-approval flow. Registers a `before_tool_call`
   // hook on every bot loop that suspends a dangerous tool call until the
@@ -4579,6 +4572,28 @@ export function openChannelTranscriptStore(dbPath: string): ChannelTranscriptSto
     listLanes: async (options) => (await opened()?.listLanes(options)) ?? [],
     close: () => store?.close(),
   };
+}
+
+/**
+ * Route one adapter's inbound messages into the gateway, spool first.
+ *
+ * `acceptInbound` runs synchronously INSIDE the adapter's callback, before it
+ * returns. In webhook mode the adapter calls that callback from inside the
+ * platform framework's request handler (grammy's `webhookCallback`, Bolt's
+ * `HTTPReceiver`), which writes its 200 only after the handler returns — so the
+ * spool row is on disk before the platform is acknowledged, and the platform
+ * retries only messages that were never spooled (plan reach-and-containment
+ * §2.5, D2-10). Pinned by `__tests__/platform-webhook-ack-order.test.ts`.
+ * A media message whose download the adapter awaits before calling back is the
+ * exception: the framework has already acked it (adapter-side, unchanged).
+ */
+export function wireAdapterInbound(gateway: Gateway, adapter: PlatformAdapter): void {
+  adapter.onMessage((message: InboundMessage) => {
+    const accepted = gateway.acceptInbound(message);
+    void gateway.handleMessage(message, adapter, { accepted }).catch((err) => {
+      console.error(`[gateway:${adapter.id}] Error:`, err);
+    });
+  });
 }
 
 export function buildGateway(opts: BuildGatewayOptions): Gateway {
