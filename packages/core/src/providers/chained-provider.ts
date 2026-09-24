@@ -1,11 +1,12 @@
-import type {
-  CompletionChunk,
-  CompletionOptions,
-  FailoverReason,
-  LLMProvider,
-  Message,
-  ProviderCapabilities,
-  ToolDefinitionLite,
+import {
+  type CompletionChunk,
+  type CompletionOptions,
+  type FailoverReason,
+  flattenCompactionEnvelopes,
+  type LLMProvider,
+  type Message,
+  type ProviderCapabilities,
+  type ToolDefinitionLite,
 } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -505,9 +506,19 @@ export class ChainedProvider implements LLMProvider {
     options: CompletionOptions,
   ): AsyncGenerator<CompletionChunk, AttemptFailure | null> {
     const entryOptions = this.optionsFor(entry, options);
+    // Item 7 (D33) — the loop emits the compaction envelope only when the entry
+    // it resolved compacts server-side (`toLLMMessages`, agent-loop/history.ts),
+    // but a failover mid-call reaches an entry it did not resolve. An entry
+    // not marked by `markServerCompaction` — a plugin provider above all, which
+    // does not know the envelope — gets the readable summary instead, never
+    // the per-process nonce or `encrypted_content`. Pinned by
+    // `__tests__/server-compaction.test.ts` ('envelope reaches only a marked provider').
+    const sent = SERVER_COMPACTION.has(entry.provider)
+      ? messages
+      : flattenCompactionEnvelopes(messages);
     let yieldedAny = false;
     try {
-      for await (const chunk of entry.provider.complete(messages, tools, entryOptions)) {
+      for await (const chunk of entry.provider.complete(sent, tools, entryOptions)) {
         yieldedAny = true;
         yield chunk;
       }

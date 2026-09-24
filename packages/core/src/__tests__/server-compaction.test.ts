@@ -13,7 +13,9 @@ import {
   type CompletionChunk,
   type ContextEngine,
   compactionFromStoredRow,
+  compactionStoredRow,
   decodeCompactionEnvelope,
+  encodeCompactionEnvelope,
   flattenCompactionEnvelopes,
   type LLMProvider,
   type Message,
@@ -324,5 +326,81 @@ describe('forged envelope — model output can never become a compaction block',
       replayed.some((m) => typeof m.content === 'string' && decodeCompactionEnvelope(m.content)),
     ).toBe(false);
     expect(flattenCompactionEnvelopes(replayed)).toBe(replayed);
+  });
+});
+
+// Audit G6 (item 7, D33): only built-in providers flattened the envelope, so a
+// plugin provider received the per-process nonce and `encrypted_content` as
+// assistant text. Core now emits the envelope only for a provider marked as
+// compacting server-side, and flattens it for everything else — including an
+// unmarked hop a chain fails over to mid-call.
+describe('envelope reaches only a marked provider', () => {
+  const ENCRYPTED = 'opaque-encrypted-bytes';
+  const block = { content: 'the summary', encryptedContent: ENCRYPTED };
+
+  async function sessionWithCompactionRow(key: string): Promise<InMemorySessionStore> {
+    const session = new InMemorySessionStore();
+    const s = await seedSession(session, key, 1);
+    await session.appendMessage({
+      sessionId: s.id,
+      role: 'assistant',
+      ...compactionStoredRow(block),
+    });
+    await session.appendMessage({
+      sessionId: s.id,
+      role: 'assistant',
+      content: 'after compaction',
+    });
+    return session;
+  }
+
+  const leaks = (messages: Message[]): boolean =>
+    JSON.stringify(messages).includes(ENCRYPTED) ||
+    JSON.stringify(messages).includes('ethos:compaction');
+
+  it('an unmarked custom provider gets the readable summary as plain text, no nonce', async () => {
+    const session = await sessionWithCompactionRow('cli:plugin');
+    const log: Message[][] = [];
+    const llm = makeLLM(() => ({ chunks: text('ok') }), log);
+    const loop = new AgentLoop({ llm, session, safety: createTestSafety() });
+    await collect(loop.run('next', { sessionKey: 'cli:plugin' }));
+    const sent = log[0] ?? [];
+    expect(leaks(sent)).toBe(false);
+    expect(sent).toContainEqual({ role: 'assistant', content: 'the summary\n\nafter compaction' });
+  });
+
+  it('the marked provider still gets the block byte-exact', async () => {
+    const session = await sessionWithCompactionRow('cli:marked');
+    const log: Message[][] = [];
+    const llm = markServerCompaction(makeLLM(() => ({ chunks: text('ok') }), log));
+    const loop = new AgentLoop({ llm, session, safety: createTestSafety() });
+    await collect(loop.run('next', { sessionKey: 'cli:marked' }));
+    expect(log[0]).toContainEqual({ role: 'assistant', content: encodeCompactionEnvelope(block) });
+  });
+
+  it('a chain that fails over from the marked entry hands the next entry the flattened form', async () => {
+    const markedLog: Message[][] = [];
+    const pluginLog: Message[][] = [];
+    const marked = markServerCompaction({
+      ...makeLLM(() => ({ chunks: [] }), markedLog),
+      async *complete(messages: Message[]): AsyncIterable<CompletionChunk> {
+        markedLog.push(structuredClone(messages));
+        throw Object.assign(new Error('503 overloaded'), { status: 503 });
+      },
+    });
+    const plugin = makeLLM(() => ({ chunks: text('ok') }), pluginLog);
+    const chain = new ChainedProvider([marked, plugin]);
+    const messages: Message[] = [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: encodeCompactionEnvelope(block) },
+      { role: 'assistant', content: 'after' },
+      { role: 'user', content: 'next' },
+    ];
+    for await (const _ of chain.complete(messages, [], {})) {
+      // drain
+    }
+    expect(markedLog[0]).toEqual(messages);
+    expect(leaks(pluginLog[0] ?? [])).toBe(false);
+    expect(pluginLog[0]).toContainEqual({ role: 'assistant', content: 'the summary\n\nafter' });
   });
 });

@@ -634,7 +634,11 @@ export async function* assembleContext(
   // Q1 — collapse exact-duplicate tool results before building the
   // LLM-facing history, so re-reads of the same file don't burn tokens.
   // `replayHistory` carries any active compaction watermark (summary + tail).
-  let llmMessages = toLLMMessages(dedupHistory(replayHistory, ghostOpts));
+  // Item 7 — the compaction envelope only for a provider that compacts
+  // server-side; every other provider gets the readable summary (history.ts).
+  let llmMessages = toLLMMessages(dedupHistory(replayHistory, ghostOpts), {
+    serverCompaction: setup.serverCompaction.active,
+  });
   // C3 — age out image/document blocks past the recency window. Runs on the
   // unconditional path, ahead of the pressure-gated aging below, because this
   // one is about RECENCY: a session that never nears its context window would

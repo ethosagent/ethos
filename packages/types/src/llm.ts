@@ -165,8 +165,11 @@ function parseEnvelopeJson(json: string): CompactionEnvelope | null {
  * into the assistant message that follows it (so roles still alternate for
  * providers that require it), and `encryptedContent` is dropped. A null or
  * empty summary sends nothing. Returns `messages` itself when there is no
- * envelope. Called by every built-in provider except Anthropic with server
- * compaction on (`toAnthropicMessages`, extensions/llm-anthropic).
+ * envelope. Core applies it for every provider not marked as compacting
+ * server-side — `toLLMMessages` (packages/core/src/agent-loop/history.ts) by
+ * default, and `ChainedProvider` per hop for a mid-call failover — so a plugin
+ * provider never sees an envelope; the built-in providers except Anthropic
+ * with server compaction on also call it themselves, which is then a no-op.
  */
 export function flattenCompactionEnvelopes(messages: Message[]): Message[] {
   if (!messages.some(isCompactionEnvelopeMessage)) return messages;
