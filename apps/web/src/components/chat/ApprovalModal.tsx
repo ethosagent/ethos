@@ -15,7 +15,9 @@ import { rpc } from '../../rpc';
 //      grids inside the modal either): once / exact-args / any-args. An
 //      always-ask tool (`request.alwaysAsk`) cannot be allowlisted — the
 //      server refuses both "forever" scopes for it — so it gets once /
-//      lease-1h instead: the widest answer it can have is one hour.
+//      lease-1h instead: the widest answer it can have is one hour. A
+//      hardline command (`request.hardline`) gets once only: the server
+//      stores nothing for one whatever scope is sent (`ApprovalsService.approve`).
 //   3. Allow / Deny buttons that fire the matching RPC. The reducer
 //      drops the request from `pendingApprovals` on the SSE
 //      `approval.resolved` event so the modal closes naturally; we
@@ -51,6 +53,11 @@ const ALWAYS_ASK_SCOPE_OPTIONS: ScopeOption[] = [
     hint: 'Allow this tool in this chat, with any arguments, for the next hour. Revoke it in Settings → Security & access.',
   },
 ];
+
+function scopeOptions(request: ApprovalRequest): ScopeOption[] {
+  if (request.hardline) return [ONCE_OPTION];
+  return request.alwaysAsk ? ALWAYS_ASK_SCOPE_OPTIONS : SCOPE_OPTIONS;
+}
 
 export interface ApprovalModalProps {
   request: ApprovalRequest;
@@ -109,7 +116,7 @@ export function ApprovalModal({ request }: ApprovalModalProps) {
 
       <fieldset className="approval-modal-scope">
         <legend className="approval-modal-scope-legend">Scope</legend>
-        {(request.alwaysAsk ? ALWAYS_ASK_SCOPE_OPTIONS : SCOPE_OPTIONS).map((opt) => (
+        {scopeOptions(request).map((opt) => (
           <label key={opt.value} className="approval-modal-scope-option">
             <input
               type="radio"

@@ -30,6 +30,7 @@ import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   createLearningInbox,
   DisposerStack,
+  hardlineReason,
   type IdentityMap,
   type MemoryBundle,
   type ReplayAndResolveResult,
@@ -1770,6 +1771,10 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       createWebApprovalHook({
         approvals: approvalsService,
         isDangerous: dangerPredicate,
+        // The web profile registers no terminal/process guard hook, so this is
+        // what keeps a stored grant or lease from approving a hardline
+        // command (openclaw-advisory-fixes Item 10).
+        isHardline: (payload) => hardlineReason(payload) !== null,
       }),
     );
     loopReleases.push('web approval hook', off);

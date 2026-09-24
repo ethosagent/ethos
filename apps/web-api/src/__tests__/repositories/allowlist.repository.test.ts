@@ -28,30 +28,32 @@ describe('AllowlistRepository', () => {
   });
 
   it('matches() returns true for any-args entries regardless of payload', async () => {
-    await repo.add({ toolName: 'terminal', scope: 'any-args', args: null });
-    expect(await repo.matches('terminal', { command: 'rm -rf /tmp/x' })).toBe(true);
-    expect(await repo.matches('terminal', { command: 'ls' })).toBe(true);
-    expect(await repo.matches('web_fetch', {})).toBe(false);
+    await repo.add({ personalityId: 'p1', toolName: 'terminal', scope: 'any-args', args: null });
+    expect(await repo.matches('p1', 'terminal', { command: 'rm -rf /tmp/x' })).toBe(true);
+    expect(await repo.matches('p1', 'terminal', { command: 'ls' })).toBe(true);
+    expect(await repo.matches('p1', 'web_fetch', {})).toBe(false);
   });
 
   it('matches() exact-args ignores key ordering', async () => {
     await repo.add({
+      personalityId: 'p1',
       toolName: 'terminal',
       scope: 'exact-args',
       args: { a: 1, b: 2 },
     });
-    expect(await repo.matches('terminal', { b: 2, a: 1 })).toBe(true);
-    expect(await repo.matches('terminal', { a: 1 })).toBe(false);
+    expect(await repo.matches('p1', 'terminal', { b: 2, a: 1 })).toBe(true);
+    expect(await repo.matches('p1', 'terminal', { a: 1 })).toBe(false);
   });
 
   it('matches() exact-args handles nested objects + arrays', async () => {
     await repo.add({
+      personalityId: 'p1',
       toolName: 'edit',
       scope: 'exact-args',
       args: { path: '/x', edits: [{ kind: 'insert', text: 'hi' }] },
     });
     expect(
-      await repo.matches('edit', {
+      await repo.matches('p1', 'edit', {
         edits: [{ text: 'hi', kind: 'insert' }],
         path: '/x',
       }),

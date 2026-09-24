@@ -32,8 +32,19 @@ describe('ApprovalRequestSchema', () => {
   };
 
   it('requires alwaysAsk', () => {
-    expect(ApprovalRequestSchema.safeParse(base).success).toBe(false);
-    expect(ApprovalRequestSchema.parse({ ...base, alwaysAsk: true }).alwaysAsk).toBe(true);
+    expect(ApprovalRequestSchema.safeParse({ ...base, hardline: false }).success).toBe(false);
+    expect(
+      ApprovalRequestSchema.parse({ ...base, alwaysAsk: true, hardline: false }).alwaysAsk,
+    ).toBe(true);
+  });
+
+  // openclaw-advisory-fixes Item 10 — the modal hides every storing scope for
+  // a hardline call, as the server stores nothing for one.
+  it('requires hardline', () => {
+    expect(ApprovalRequestSchema.safeParse({ ...base, alwaysAsk: false }).success).toBe(false);
+    expect(
+      ApprovalRequestSchema.parse({ ...base, alwaysAsk: false, hardline: true }).hardline,
+    ).toBe(true);
   });
 });
 
