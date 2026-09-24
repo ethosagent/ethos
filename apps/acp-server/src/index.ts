@@ -10,6 +10,7 @@ import type { Readable, Writable } from 'node:stream';
 import type { AgentMesh, MeshEntry } from '@ethosagent/agent-mesh';
 import type { PendingNotifyQueue } from '@ethosagent/notify-queue';
 import { SessionLane } from '@ethosagent/session-lane';
+import { credentialInstruction } from '@ethosagent/surface-kit';
 import type { McpServerConfig, McpSessionView } from '@ethosagent/tools-mcp';
 import type { JobStore, Logger, SessionStore } from '@ethosagent/types';
 import { answerSuffix } from '@ethosagent/types';
@@ -34,10 +35,32 @@ const noopLogger: Logger = {
 
 type AgentEvent = { type: string } & Record<string, unknown>;
 
+/**
+ * openclaw-9.5 item 1 — ACP has no masked input, so a turn refused pre-turn
+ * for a missing plugin credential answers with the one-line instruction that
+ * names `ethos plugin credentials <id> --set <KEY>` (`credentialInstruction`
+ * in @ethosagent/surface-kit), and the turn ends there; the editor resends
+ * once the operator has set it. The event carries no value, so neither does
+ * the answer. `null` for every other event. Pinned by
+ * `__tests__/credential-required.test.ts`.
+ */
+function credentialRefusalText(event: AgentEvent): string | null {
+  if (event.type !== 'credential_required') return null;
+  const { pluginId, credentialKey, label } = event;
+  if (typeof pluginId !== 'string' || typeof credentialKey !== 'string') return null;
+  return credentialInstruction({
+    pluginId,
+    credentialKey,
+    label: typeof label === 'string' ? label : credentialKey,
+  });
+}
+
 interface RunOptions {
   sessionKey?: string;
   personalityId?: string;
   abortSignal?: AbortSignal;
+  /** openclaw-9.5 item 1 — always true here: see `credentialRefusalText`. */
+  credentialPrompt?: boolean;
 }
 
 export interface AgentRunner {
@@ -686,8 +709,11 @@ export class AcpServer {
               sessionKey: p.sessionKey,
               personalityId: p.personalityId,
               abortSignal: ac.signal,
+              credentialPrompt: true,
             })) {
               if (answered) continue;
+              const refusal = credentialRefusalText(event);
+              if (refusal !== null) fullText = refusal;
               if (event.type === 'done') {
                 turnCount = event.turnCount as number;
                 // A `returnDirect` tool result arrives only as `done.text`,
@@ -1017,7 +1043,13 @@ export class AcpServer {
     let fullText = '';
     let turnCount = 0;
     let failure: string | undefined;
-    for await (const event of this.runner.run(text, { sessionKey, personalityId })) {
+    for await (const event of this.runner.run(text, {
+      sessionKey,
+      personalityId,
+      credentialPrompt: true,
+    })) {
+      const refusal = credentialRefusalText(event);
+      if (refusal !== null) fullText = refusal;
       if (event.type === 'text_delta') fullText += event.text as string;
       if (event.type === 'done') {
         turnCount = event.turnCount as number;
