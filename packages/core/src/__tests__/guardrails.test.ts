@@ -156,7 +156,11 @@ describe('Orchestrator guardrails', () => {
     // tool-processing contexts. 7 pass-through lines; the pinned/loaded
     // composition lives in agent-loop/tool-loading.ts and `tool_search` in
     // agent-loop/stages/tool-search.ts.
-    expect(lineCount).toBeLessThanOrEqual(1017);
+    // Bumped 1017 -> 1019 (openclaw-advisory-fixes Item 7): the ScriptToolBridge
+    // construction passes the redaction seam and the turn's personality (2
+    // pass-through lines). The redaction lives in
+    // agent-loop/stages/result-redaction.ts.
+    expect(lineCount).toBeLessThanOrEqual(1019);
   });
 
   it('no stage file exceeds 700 lines', () => {

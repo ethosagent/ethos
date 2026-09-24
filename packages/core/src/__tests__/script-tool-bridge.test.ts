@@ -81,6 +81,8 @@ function makeBridge(opts: {
     allowedTools: opts.allowedTools,
     allowedPlugins: [],
     filterOpts: {},
+    redaction: createTestSafety().redaction,
+    personality: { id: 'default', name: 'Default' },
     watcherTap: opts.watcherTap ?? NO_HALT_TAP,
     counters,
     checkBudgets: () =>
@@ -541,6 +543,8 @@ describe('ScriptToolBridge — Lane E inner-call events', () => {
       allowedTools: ['run_code', 'worker'],
       allowedPlugins: [],
       filterOpts: {},
+      redaction: createTestSafety().redaction,
+      personality: { id: 'default', name: 'Default' },
       watcherTap: NO_HALT_TAP,
       counters,
       checkBudgets: () =>

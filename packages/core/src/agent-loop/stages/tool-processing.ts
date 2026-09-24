@@ -33,6 +33,7 @@ import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
 import type { WatcherTap } from '../turn-context';
 import { consultWatcherHalt, enforceBeforeToolCall } from './per-call-enforcement';
+import { redactToolResultSecrets } from './result-redaction';
 import { persistReturnDirect } from './return-direct';
 import type { ScriptToolBridge } from './script-tool-bridge';
 import type { CompletedToolCall, UsageSink } from './stream-step';
@@ -572,9 +573,10 @@ export async function* processTools(
 
   for (const p of prepped) {
     let result: ToolResult;
-    // Ch.3a — `result` carries the original raw value for tool_end events
-    // and after_tool_call hooks (the user-visible chip and audit trail
-    // see what the tool actually returned). `llmContent` is the LLM-
+    // Ch.3a — `result` carries the tool's own value (secret-redacted by
+    // `redactToolResultSecrets`, nothing else) for tool_end events and
+    // after_tool_call hooks (the user-visible chip and audit trail see what
+    // the tool actually returned). `llmContent` is the LLM-
     // facing string — possibly wrapped in `<untrusted>…</untrusted>` —
     // and is what gets persisted to history so toLLMMessages() replays
     // the exact bytes the model saw on the prior turn.
@@ -621,6 +623,14 @@ export async function* processTools(
         error: 'Tool result missing',
         code: 'execution_failed',
       };
+      // Item 7 / D17 — redact secrets in `value` OR `error` HERE, before memory
+      // telemetry, the span, `tool_end`, `after_tool_call` and the LLM-bound
+      // copy read `result`; none of them ever sees the raw secret.
+      result = redactToolResultSecrets(
+        result,
+        { redaction: deps.safety.redaction, observability: deps.observability },
+        { personality: ctx.personality, traceId: ctx.traceId },
+      );
 
       // P2-counters — a successful memory write, not a rejected/invalid call.
       // Uses `p.args` (the full, untruncated effectiveArgs), never the
@@ -713,24 +723,6 @@ export async function* processTools(
       }
 
       llmContent = result.ok ? result.value : result.error;
-
-      if (result.ok && result.value) {
-        const detections = deps.safety.redaction.detectSecrets(result.value);
-        if (detections.length > 0) {
-          deps.observability?.recordSafetyBlock?.({
-            traceId: ctx.traceId,
-            code: 'secret_in_tool_result',
-            cause: detections.map((d) => d.label).join(', '),
-          });
-          // S9 — secret-result blocking is ON by default. Unset (undefined)
-          // blocks; an explicit `false` opts out.
-          if (ctx.personality.safety?.injectionDefense?.blockSecretResults ?? true) {
-            const redactStr = deps.safety.redaction.redactString;
-            result = { ...result, value: redactStr(result.value) };
-            llmContent = result.value;
-          }
-        }
-      }
 
       // Lane 1(c) — ingestion cap, applied BEFORE the untrusted wrap
       // (post-review FIX 7: capping the wrapped content could sever the

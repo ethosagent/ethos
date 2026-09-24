@@ -715,6 +715,8 @@ export class AgentLoop {
       watcherTap,
       counters: budgetCounters,
       checkBudgets,
+      redaction: this.safety.redaction,
+      personality,
       turnAttachments: opts.attachments,
       ...(this.onToolMetric ? { onToolMetric: this.onToolMetric } : {}),
     });
