@@ -1,12 +1,13 @@
-import type {
-  ContextEngineLLMHandle,
-  ContextEngineRegistry,
-  ContextEngineStore,
-  LLMProvider,
-  Message,
-  PersonalityConfig,
-  SessionStore,
-  Storage,
+import {
+  type ContextEngineLLMHandle,
+  type ContextEngineRegistry,
+  type ContextEngineStore,
+  flattenCompactionEnvelopes,
+  type LLMProvider,
+  type Message,
+  type PersonalityConfig,
+  type SessionStore,
+  type Storage,
 } from '@ethosagent/types';
 import {
   estimateMessagesChars,
@@ -308,6 +309,9 @@ export async function maybeCompact(
   const engineName = personality.context_engine ?? deps.defaultEngine ?? 'drop_oldest';
   const engine = deps.contextEngines.get(engineName) ?? deps.contextEngines.get('drop_oldest');
   if (!engine) return { messages };
+  // Item 7 — an engine (and any summarizer it calls) sees a server-compaction
+  // block as its readable summary, never the in-memory envelope.
+  messages = flattenCompactionEnvelopes(messages);
 
   // Build a per-personality ContextEngineStore when raw storage is available.
   let store: ContextEngineStore | undefined;

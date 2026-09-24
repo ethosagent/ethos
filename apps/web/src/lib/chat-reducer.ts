@@ -1,4 +1,9 @@
-import { unstreamedAnswer, VOICE_ORIGIN_TAG } from '@ethosagent/types';
+import {
+  COMPACTION_MARKER,
+  COMPACTION_ROW_TOOL_NAME,
+  unstreamedAnswer,
+  VOICE_ORIGIN_TAG,
+} from '@ethosagent/types';
 import {
   type ApprovalRequest,
   type BackgroundJobStatusWire,
@@ -1274,6 +1279,12 @@ function parseHistory(
         };
       }
       const turn = current;
+      // Item 7 — a provider-side compaction row renders as its one-line
+      // marker; the summary under it is context for the model, not the chat.
+      if (m.toolName === COMPACTION_ROW_TOOL_NAME) {
+        turn.blocks.push({ kind: 'text', content: COMPACTION_MARKER });
+        continue;
+      }
       const text = m.content.trim();
       if (text !== '') {
         turn.blocks.push({ kind: 'text', content: m.content });

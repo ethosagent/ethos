@@ -1099,8 +1099,9 @@ export interface ProviderChainEntry {
    * The input-token count at which the server compacts. Absent → the local
    * compaction gate's own threshold for this model (`pressureGateTokens` in
    * packages/core), so turning the switch on does not move WHEN compaction
-   * happens. A positive integer; the API refuses less than 50,000 and the
-   * provider raises it to that floor (`SERVER_COMPACTION_MIN_TRIGGER_TOKENS`).
+   * happens. A positive integer. Anthropic's API documentation puts the
+   * minimum at 50,000; a lower value is raised to it, not rejected
+   * (`SERVER_COMPACTION_MIN_TRIGGER_TOKENS`, extensions/llm-anthropic).
    */
   serverCompactionTriggerTokens?: number;
   /**

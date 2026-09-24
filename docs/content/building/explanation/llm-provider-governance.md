@@ -66,9 +66,14 @@ replay stays faithful. Only `@ethosagent/llm-anthropic` emits the variant.
 
 The agent loop's stream stage (`streamStep` in
 `packages/core/src/agent-loop/stages/stream-step.ts`) persists each
-`compaction` chunk as its own assistant row, ahead of the reply. The row's
-`content` is a tagged envelope (`encodeCompactionEnvelope` in
-`packages/types/src/llm.ts`), so the `SessionStore` schema does not change.
+`compaction` chunk as its own assistant row, ahead of the reply, through
+`compactionStoredRow` in `packages/types/src/llm.ts`. The row is marked
+structurally, not by its text: `toolName` is `_provider_compaction`, the
+payload sits in `contentBlocks` (outside the full-text index), and `content`
+is the readable marker `— context compacted by the provider —` followed by the
+summary. The `SessionStore` schema does not change. On replay the loop turns a
+marked row into an in-memory envelope whose prefix carries a per-process
+nonce, so a model reply that only looks like an envelope stays text.
 `toAnthropicMessages` in `extensions/llm-anthropic/src/index.ts` turns the
 envelope back into a `compaction` block on the next request. Every other
 provider's message mapper calls `flattenCompactionEnvelopes`, which sends the
@@ -84,7 +89,7 @@ cost of the compaction iteration arrives on the existing `usage` chunk.
 | Choice | Bought | Paid |
 |---|---|---|
 | A new chunk variant | The block reaches the one component that can persist it, with a type that says so | A §VI Substantive amendment. Any consumer that validates chunk types against a fixed set must learn the new name (`checkChunkVariants` in `packages/wiring/src/conformance/index.ts` did, in the same commit) |
-| Envelope in `StoredMessage.content` | No `SessionStore` change, no migration | The transcript shows one extra assistant row per compaction, and full-text search indexes the envelope |
+| Structural row (`toolName` marker, payload in `contentBlocks`) | No `SessionStore` change, no migration; model output cannot forge it; search sees only the readable summary | The transcript shows one extra assistant row per compaction, carrying the marker line and the summary |
 | Text fallback for other providers | A failover mid-session keeps the summary instead of losing it | The encrypted half is dropped, so a later switch back to Anthropic restarts from the summary text, not the server's own state |
 
 ## Amendment record

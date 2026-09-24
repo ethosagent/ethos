@@ -57,8 +57,15 @@ export interface AnthropicProviderConfig {
   serverCompaction?: { triggerTokens: number };
 }
 
-/** The `compact_20260112` edit's smallest accepted trigger (API docs,
- *  "Compaction at a token threshold": minimum 50,000 input tokens). */
+/**
+ * The smallest trigger the provider sends. The figure comes from Anthropic's
+ * API documentation ("Compaction at a token threshold",
+ * platform.claude.com/docs/en/build-with-claude/compaction-threshold: minimum
+ * 50,000 input tokens), NOT from SDK 0.120.0, whose `BetaCompact20260112Edit`
+ * documents only the 150,000 default. A lower configured value is RAISED to
+ * this floor, never rejected (`buildParams` in `AnthropicProvider.complete`;
+ * pinned by __tests__/server-compaction.test.ts, "raises a trigger below").
+ */
 export const SERVER_COMPACTION_MIN_TRIGGER_TOKENS = 50_000;
 /** Beta header for the `compact_20260112` edit — NOT `context-management-2025-06-27`,
  *  which gates only the clear_* context-editing strategies. */

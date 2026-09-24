@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   type AgentEvent,
   type CompactionEnvelope,
+  compactionStoredRow,
   encodeCompactionEnvelope,
   type HookRegistry,
   type LLMProvider,
@@ -487,18 +488,19 @@ export async function* streamStep(
 
   // Item 7 (D31) — a server compaction block precedes the reply it came with,
   // and the API drops everything before it on the next request. Persisted as
-  // its own assistant row (an envelope in `content`, no SessionStore change)
-  // and replayed in this turn's later iterations; `toAnthropicMessages`
-  // (extensions/llm-anthropic) turns it back into a block.
+  // its own structurally-marked assistant row (no SessionStore change) and
+  // replayed in this turn's later iterations as an in-memory envelope, which
+  // `toAnthropicMessages` (extensions/llm-anthropic) turns back into a block.
   for (const c of compactions) {
-    const envelope = encodeCompactionEnvelope(c);
+    // The ONE writer of a compaction row: structural marker + payload out of
+    // `content` (`compactionStoredRow`, packages/types/src/llm.ts).
     await deps.session.appendMessage({
       sessionId: ctx.sessionId,
       role: 'assistant',
-      content: envelope,
+      ...compactionStoredRow(c),
       traceId: ctx.traceId,
     });
-    ctx.llmMessages.push({ role: 'assistant', content: envelope });
+    ctx.llmMessages.push({ role: 'assistant', content: encodeCompactionEnvelope(c) });
     deps.observability?.recordCompaction({
       ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
       code: 'llm.server_compacted',

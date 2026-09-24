@@ -59,36 +59,96 @@ export interface Message {
 // ---------------------------------------------------------------------------
 // Compaction envelope — how a `compaction` chunk lives in history
 // ---------------------------------------------------------------------------
+//
+// Item 7 (D31) — a compaction block must never be forgeable by model output
+// (or by anything prompt injection can steer into it). Two forms:
+//
+// - STORED (sessions.db): an assistant row marked STRUCTURALLY. `toolName` is
+//   `COMPACTION_ROW_TOOL_NAME` (a field no model-written assistant row ever
+//   carries: `streamStep` sets it only on the compaction path), the payload is
+//   in `contentBlocks` (kept out of the FTS index, like image payloads), and
+//   `content` is a readable marker (`renderCompactionMarker`) — which is what
+//   every transcript, history view and search result shows. Written only by
+//   `compactionStoredRow`; read only by `compactionFromStoredRow`.
+// - IN MEMORY (`Message` handed to a provider): a string whose prefix carries
+//   a random per-process nonce. Built only by `encodeCompactionEnvelope`
+//   (from a structural row or a live chunk) and recognised only by
+//   `decodeCompactionEnvelope`, which requires that nonce — a model reply that
+//   happens to start with the same-looking text is ordinary text. The nonce
+//   never reaches a model: providers either turn the envelope into a block
+//   (Anthropic) or flatten it to its summary (`flattenCompactionEnvelopes`),
+//   and local compaction flattens before summarizing (packages/core
+//   `maybeCompact`, `applyOverflowRetry`). Pinned by
+//   packages/types/src/__tests__/compaction-envelope.test.ts and
+//   packages/core/src/__tests__/server-compaction.test.ts ("forged envelope").
 
-/**
- * Item 7 (D31) — a persisted `compaction` chunk is an assistant message whose
- * string content is this prefix followed by a JSON object. The two ASCII
- * record-separator characters keep an ordinary model reply from being read as
- * an envelope; the JSON keeps `encrypted_content` byte-exact through
- * `SessionStore` (its `content` column is a string, so no schema change).
- */
-export const COMPACTION_ENVELOPE_PREFIX = '\u001eethos:compaction\u001e';
+/** The `toolName` that marks a stored assistant row as a compaction block. */
+export const COMPACTION_ROW_TOOL_NAME = '_provider_compaction';
 
-/** The two fields of a `compaction` chunk, as persisted. */
+/** The readable marker a compaction row shows in transcripts and history. */
+export const COMPACTION_MARKER = '— context compacted by the provider —';
+
+/** The two fields of a `compaction` chunk. */
 export interface CompactionEnvelope {
   content: string | null;
   encryptedContent: string | null;
 }
 
-/** Encode a `compaction` chunk as the string content of an assistant message. */
-export function encodeCompactionEnvelope(c: CompactionEnvelope): string {
-  return `${COMPACTION_ENVELOPE_PREFIX}${JSON.stringify({
-    content: c.content,
-    encrypted_content: c.encryptedContent,
-  })}`;
+/** The marker line, followed by the readable summary when there is one. */
+export function renderCompactionMarker(summary: string | null): string {
+  return summary ? `${COMPACTION_MARKER}\n\n${summary}` : COMPACTION_MARKER;
 }
 
-/** The envelope `text` carries, or `null` when it is not one (or is malformed). */
+/** The fields of an assistant `StoredMessage` that persist a compaction block. */
+export function compactionStoredRow(c: CompactionEnvelope): {
+  content: string;
+  toolName: string;
+  contentBlocks: MessageContent[];
+} {
+  return {
+    content: renderCompactionMarker(c.content),
+    toolName: COMPACTION_ROW_TOOL_NAME,
+    contentBlocks: [{ type: 'text', text: envelopeJson(c) }],
+  };
+}
+
+/** The block a stored row persists, or `null` when the row is not one. */
+export function compactionFromStoredRow(row: {
+  role: string;
+  toolName?: string;
+  contentBlocks?: MessageContent[];
+}): CompactionEnvelope | null {
+  if (row.role !== 'assistant' || row.toolName !== COMPACTION_ROW_TOOL_NAME) return null;
+  const block = row.contentBlocks?.[0];
+  return block?.type === 'text' ? parseEnvelopeJson(block.text) : null;
+}
+
+let envelopePrefix: string | undefined;
+/** Lazily minted, so importing this module never touches `crypto`. */
+function inMemoryPrefix(): string {
+  envelopePrefix ??= `\u001eethos:compaction:${globalThis.crypto.randomUUID()}\u001e`;
+  return envelopePrefix;
+}
+
+/** Encode a compaction block as the in-memory string content of an assistant `Message`. */
+export function encodeCompactionEnvelope(c: CompactionEnvelope): string {
+  return `${inMemoryPrefix()}${envelopeJson(c)}`;
+}
+
+/** The block `text` carries, or `null` unless it is THIS process's envelope. */
 export function decodeCompactionEnvelope(text: string): CompactionEnvelope | null {
-  if (!text.startsWith(COMPACTION_ENVELOPE_PREFIX)) return null;
+  const prefix = inMemoryPrefix();
+  return text.startsWith(prefix) ? parseEnvelopeJson(text.slice(prefix.length)) : null;
+}
+
+function envelopeJson(c: CompactionEnvelope): string {
+  return JSON.stringify({ content: c.content, encrypted_content: c.encryptedContent });
+}
+
+function parseEnvelopeJson(json: string): CompactionEnvelope | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text.slice(COMPACTION_ENVELOPE_PREFIX.length));
+    parsed = JSON.parse(json);
   } catch {
     return null;
   }
