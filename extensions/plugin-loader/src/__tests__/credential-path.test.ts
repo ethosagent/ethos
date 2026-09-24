@@ -255,6 +255,22 @@ describe('setCredential — arbitrary write', () => {
     );
     expect(await storage.read(SECRET_PATH)).toBe(SECRET_CONTENT);
   });
+
+  // openclaw-9.5 item 1 — the gateway links `/plugins?pluginId=&key=`, so a
+  // key can arrive from a URL someone else wrote. The web page only focuses a
+  // listed key (apps/web/src/lib/pluginCredentialDeepLink.ts), and the write
+  // it can reach (`plugins.setCredential`) refuses a hostile one here with no
+  // storage or vault access at all.
+  it.each(['../../secrets/keys.json', 'a/b', '..', 'API_KEY/../../x'])(
+    'a hostile deep-link key %j is refused before any I/O',
+    async (key) => {
+      storage.touched.length = 0;
+      secrets.touched.length = 0;
+      await expect(loader.setCredential(PLUGIN_ID, key, 'x')).rejects.toThrow(CredentialPathError);
+      expect(storage.touched).toEqual([]);
+      expect(secrets.touched).toEqual([]);
+    },
+  );
 });
 
 describe('listCredentialKeys', () => {
