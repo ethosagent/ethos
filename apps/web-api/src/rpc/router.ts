@@ -23,6 +23,7 @@ import { channelsRouter } from './channels';
 import { clarifyRouter } from './clarify';
 import { configRouter } from './config';
 import { contextRouter, filesRouter } from './context-resolve';
+import { credentialsRouter } from './credentials';
 import { cronRouter } from './cron';
 import { dashboardsRouter } from './dashboards';
 import { deliveriesRouter } from './deliveries';
@@ -122,6 +123,7 @@ export const apiRouter = {
   channels: channelsRouter,
   a2a: a2aRouter,
   namedSecrets: namedSecretsRouter,
+  credentials: credentialsRouter,
   keys: keysRouter,
   toolSettings: toolSettingsRouter,
   documents: documentsRouter,
