@@ -156,25 +156,20 @@ export interface CreateDangerPredicateOptions {
    * (Codex flagged the prior cross-module-only invariant as security-
    * rot shaped).
    *
-   * **Today, NO production caller passes this flag.** There are three
-   * production construction sites — `apps/ethos/src/commands/serve.ts`
-   * and `apps/desktop/src/main/serve.ts` (both feeding the web-profile
-   * approval modal) and `apps/ethos/src/commands/gateway.ts` (feeding
-   * the Slack approval card) — and all three intentionally omit the flag:
-   * web and Slack both have channel ingress, so `off` mode would be
-   * rejected by the registry anyway, and the predicate refuses to honor it
-   * as a second-line check. CLI / TUI use the synchronous
-   * `createTerminalGuardHook` (hard-block, no
-   * approval flow). The cron / batch runners would be the natural
-   * future caller — when they grow an approval flow, they would
-   * construct the predicate with `allowAutoApproveDangerousTools: true`
-   * once they verify trusted-local execution conditions.
+   * **Exactly one production caller passes this flag:** the gateway
+   * systemLoop's unattended gate (`wireUnattendedApprovalGate` in
+   * `apps/ethos/src/unattended-approval-gate.ts`, registered by
+   * `runGatewayStart`), and only when the operator sets
+   * `allowUnattendedDangerousTools: true` in `config.yaml`. That loop runs
+   * cron, dreams and watcher wakes — trusted local automation with nobody
+   * to ask. Every surface with a human — the web modal (`serve.ts`,
+   * `apps/desktop/src/main/serve.ts`), the Slack/Telegram card
+   * (`wireApprovalFlow` in `gateway.ts`) and the MCP export — omits it, so
+   * `off` behaves as `manual` there. CLI / TUI use the synchronous
+   * `createTerminalGuardHook` (hard-block, no approval flow).
    *
-   * As a result, `approvalMode: 'off'` has no observable runtime
-   * effect today; it is config-only documentation until a caller
-   * opts in. That is intentional: the capability gate is the API
-   * contract that prevents any future caller from accidentally
-   * auto-approving dangerous tools.
+   * The capability gate stays the API contract that prevents any other
+   * caller from accidentally auto-approving dangerous tools.
    */
   allowAutoApproveDangerousTools?: boolean;
 }

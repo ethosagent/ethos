@@ -593,6 +593,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     outbox: outbox.wiring,
   });
   sharedLoop = shared.loop;
+  // Deliberately NOT given `wireUnattendedApprovalGate` (which `runGatewayStart`
+  // registers on its systemLoop): here cron and watcher wakes share the web
+  // loop, and `buildServeWebApi` registers the web approval hook on it, so a
+  // flagged call posts a modal card a human can answer (denied at the approval
+  // timeout) — the same shape as `ethos serve`. The unattended gate would
+  // refuse every flagged web-chat call too. Boot runs no dreams and no SIP.
   const systemLoop = shared.loop;
 
   // Per-bot routing table. Each personality-bound bot gets its own loop, the

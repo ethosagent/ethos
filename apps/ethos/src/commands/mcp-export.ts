@@ -25,6 +25,7 @@ import {
 } from '@ethosagent/mcp-server';
 import type { PersonalityConfig } from '@ethosagent/types';
 import type { DangerPredicate, EthosEventCategory, McpExportScope } from '@ethosagent/wiring';
+import { createUnattendedApprovalGate } from '../unattended-approval-gate';
 
 // ---------------------------------------------------------------------------
 // Admission (M-D4)
@@ -156,28 +157,15 @@ export function exportApprovalRejection(toolName: string, reason: string): strin
  * Every other surface that gates dangerous calls has somebody to ask: the web
  * modal, the Slack card, the terminal prompt. An MCP transport has nobody —
  * the caller is another program, and the operator may not even be at the
- * machine. The two failure modes either side of this are both wrong: prompting
- * hangs the call forever, and letting it through hands an external client the
- * tools the operator wanted to be asked about. So it is refused, and the
- * refusal text says why, so the agent can tell its caller instead of retrying.
- *
- * Under `approvalMode: 'smart'` the reviewer still runs inside the predicate:
- * a call it approves returns no reason and never reaches the rejection.
- *
- * Registering this also satisfies core's `createApprovalPostureGuard`
- * (`packages/core/src/agent-loop/approval-posture.ts`), which throws
- * `ApprovalPostureError` at the first tool dispatch when a loop declares
- * `approvalPosture: 'gated'` — as every wiring-built loop does — and nothing is
- * registered behind the `before_tool_call` fire site.
+ * machine. So it is refused, and the refusal text says why. The fail-closed
+ * shape is `createUnattendedApprovalGate` (`../unattended-approval-gate.ts`),
+ * shared with the gateway systemLoop; this surface supplies only its own
+ * rejection text.
  */
 export function createExportApprovalGate(
   danger: DangerPredicate,
 ): (payload: import('@ethosagent/types').BeforeToolCallPayload) => Promise<{ error?: string }> {
-  return async (payload) => {
-    const reason = await danger(payload);
-    if (!reason) return {};
-    return { error: exportApprovalRejection(payload.toolName, reason) };
-  };
+  return createUnattendedApprovalGate(danger, exportApprovalRejection);
 }
 
 // ---------------------------------------------------------------------------

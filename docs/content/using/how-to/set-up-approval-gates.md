@@ -33,7 +33,7 @@ Ethos's safety classifier sorts every tool call into one of three buckets. `safe
 |---|---|---|
 | `manual` *(default)* | Surface an approval prompt; wait for Allow / Deny. | Personal CLI sessions. Web UI personalities. Any time you are sitting at the terminal and can answer in seconds. |
 | `smart` | An LLM reviewer judges the call first. `approve` → runs with no prompt. `deny` and `ask` → the approval prompt still fires, carrying the reviewer's reason. | Long-running agent sessions where approval fatigue is the failure mode. Trades latency and reviewer tokens for fewer interruptions. |
-| `off` | Auto-fire. `blocked` calls still refuse. | Trusted local automation only — cron, batch runs, headless test rigs. Refused at config load when combined with any channel ingress. |
+| `off` | Auto-fire. `blocked` calls still refuse. | Trusted local automation only — cron, batch runs, headless test rigs. Refused at config load when combined with any channel ingress. On the gateway's cron/dream loop it takes effect only when the operator also sets `allowUnattendedDangerousTools: true` in `config.yaml`; otherwise flagged calls there are refused, because nobody is present to approve them. |
 
 The hardline `blocked` floor is **non-overridable** — `approvalMode: off` does not unlock `rm -rf /`. That is the point: a regex floor catches the literal command shape even when every other check is bypassed.
 
