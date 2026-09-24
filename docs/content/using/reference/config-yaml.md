@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-13
+updated: 2026-09-24
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -405,6 +405,23 @@ SMTP server hostname for outbound mail.
 Type: integer · Default: unset
 
 SMTP server port. Conventional values: `587` (STARTTLS), `465` (TLS).
+
+## emailTrustedAuthservId {#email-trusted-authserv-id}
+
+Type: string · Default: unset
+
+The authserv-id your mailbox's own receiving mail server stamps on incoming mail: the first token of its `Authentication-Results` header (RFC 8601). The email gateway treats a sender's `From:` address as their identity only when the topmost `Authentication-Results` header carrying this id reports `dmarc=pass` with `header.from` equal to the `From:` domain, or `dkim=pass` with `header.d` equal to, or a parent of, that domain. Every other header is ignored. Enforced by `resolveEmailSender` in [`extensions/platform-email/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/platform-email/src/index.ts).
+
+```yaml
+emailTrustedAuthservId: mx.google.com
+```
+
+Notes:
+
+- **Unset means every sender is unverified.** An unverified sender gets the user id `email-unverified:<sha256 of the lowercased address>` instead of their address. That id is stable per address and cannot equal a verified user's id, so it never inherits that user's memory, `channel_filter` owner status or approvals. The message reaches the personality with a one-line `[unverified sender]` notice in front of it, and runs in its own session rather than the verified sender's. Replies still go to the `From:` address.
+- To find the value, open the raw source of any mail this account received and read the first word after `Authentication-Results:`. On Gmail that is `mx.google.com`. The comparison ignores case.
+- `ethos gateway start` and `ethos boot` record one warn-level observability event (`email.sender_auth_unconfigured`) and print one console line at startup when email is configured without this key.
+- A header the parser cannot read, found above the trusted one, makes the sender unverified. So do more than one `From:` header, and an explicit non-pass `dmarc` result, even when `dkim` passed.
 
 ## web.host, web.port, web.corsOrigins {#web-server}
 

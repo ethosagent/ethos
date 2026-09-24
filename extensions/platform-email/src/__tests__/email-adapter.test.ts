@@ -13,6 +13,10 @@ const BASE_CONFIG: EmailAdapterConfig = {
   // botKey is a required constructor param (computed once in wiring); tests
   // supply a fixed value.
   botKey: 'email-test-bot',
+  // Every fixture below carries a passing Authentication-Results header from
+  // this authserv-id (see buildRawEmail), so these tests exercise the
+  // verified-sender path. The unverified path is sender-auth.test.ts.
+  trustedAuthservId: 'mx.example.com',
 };
 
 // ---------------------------------------------------------------------------
@@ -46,7 +50,9 @@ function buildRawEmail(opts: {
   text: string;
   messageId?: string;
 }): Buffer {
+  const domain = opts.from.slice(opts.from.lastIndexOf('@') + 1);
   const lines = [
+    `Authentication-Results: mx.example.com; dmarc=pass header.from=${domain}`,
     `From: ${opts.fromName ? `"${opts.fromName}" <${opts.from}>` : opts.from}`,
     `To: agent@example.com`,
     `Subject: ${opts.subject}`,

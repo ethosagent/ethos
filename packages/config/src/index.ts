@@ -2373,6 +2373,14 @@ export interface EthosConfig {
   emailPassword?: string;
   emailSmtpHost?: string;
   emailSmtpPort?: number;
+  /**
+   * The authserv-id (first token of `Authentication-Results`) the mailbox's own
+   * receiving server stamps. The email adapter trusts a `From:` address as an
+   * identity only on a passing verdict in the topmost header carrying this id;
+   * unset → every sender is unverified. Enforced by `resolveEmailSender`
+   * (extensions/platform-email/src/index.ts).
+   */
+  emailTrustedAuthservId?: string;
   /** Show per-turn timing summary after every response. */
   verbose?: boolean;
   /**
@@ -3737,6 +3745,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
   if (config.emailPassword) lines.push(`emailPassword: ${config.emailPassword}`);
   if (config.emailSmtpHost) lines.push(`emailSmtpHost: ${config.emailSmtpHost}`);
   if (config.emailSmtpPort) lines.push(`emailSmtpPort: ${config.emailSmtpPort}`);
+  if (config.emailTrustedAuthservId)
+    lines.push(`emailTrustedAuthservId: ${config.emailTrustedAuthservId}`);
   if (config.verbose) lines.push('verbose: true');
   if (config.displayVerbosity) lines.push(`display.verbosity: ${config.displayVerbosity}`);
   if (config.displayBusyInputMode)
@@ -5943,6 +5953,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     emailPassword: kv.emailPassword,
     emailSmtpHost: kv.emailSmtpHost,
     emailSmtpPort: kv.emailSmtpPort ? Number(kv.emailSmtpPort) : undefined,
+    emailTrustedAuthservId: kv.emailTrustedAuthservId,
     verbose: kv.verbose === 'true' ? true : undefined,
     displayVerbosity: parseVerbosity(displayKv.verbosity),
     displayBusyInputMode: parseBusyMode(displayKv.busy_input_mode),

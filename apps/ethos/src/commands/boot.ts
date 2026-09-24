@@ -169,6 +169,7 @@ import {
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
   validateBindings,
+  warnEmailSenderAuthUnconfigured,
   wireApprovalFlow,
 } from './gateway';
 import {
@@ -789,6 +790,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // -------------------------------------------------------------------------
   const { attachmentCache, pruneTimer } = await createGatewayAttachmentCache(storage);
   const adapters = await buildGatewayAdapters(cfg, attachmentCache);
+  warnEmailSenderAuthUnconfigured(cfg);
 
   let gatewayRef: ReturnType<typeof buildGateway> | null = null;
   // Clarify correlators, LIVE and KEYED BY BOT. `registerGatewayClarifySurfaces`
