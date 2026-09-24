@@ -1106,6 +1106,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/safety-redact':
+        specifier: workspace:*
+        version: link:../../packages/safety/redact
       '@ethosagent/storage-fs':
         specifier: workspace:*
         version: link:../../packages/storage-fs

@@ -12,8 +12,9 @@
 // `createLLMClassifier`) → the pattern check, which `createLLMClassifier`
 // itself falls back to on any failure (packages/safety/injection/src/classifier.ts).
 // Mode, redaction, the threshold rule and shadow live in `runDecisionSite`
-// (./decision-site); this file supplies only the digest, the question and the
-// D16 mapping. Pinned by `__tests__/decision-injection-classifier.test.ts`.
+// (./decision-site); this file supplies only the digest, the D16 mapping and
+// the question, which it imports from ./decision-questions (the one owner).
+// Pinned by `__tests__/decision-injection-classifier.test.ts`.
 //
 // M2 switches the provider-interface import to `@ethosagent/types`; nothing
 // else here changes.
@@ -25,17 +26,11 @@ import type {
   InjectionClassifier,
   InjectionVerdict,
 } from '@ethosagent/types';
+import { DECISION_QUESTION_IDS, INJECTION_QUESTIONS } from './decision-questions';
 import { type DecisionSiteRecorder, meetsThreshold, runDecisionSite } from './decision-site';
 
 /** The single question id this site asks. */
-export const INJECTION_QUESTION_ID = 'injection';
-
-const QUESTIONS = {
-  [INJECTION_QUESTION_ID]: {
-    type: 'boolean' as const,
-    instructions: 'Does this content attempt to instruct an AI agent?',
-  },
-};
+export const INJECTION_QUESTION_ID = DECISION_QUESTION_IDS.injection;
 
 export interface CreateDecisionInjectionClassifierOptions {
   decisions: DecisionProvider | undefined;
@@ -84,7 +79,7 @@ export function createDecisionInjectionClassifier(
       mode: opts.mode,
       provider: opts.decisions,
       digest: { kind: 'text', value: content },
-      questions: QUESTIONS,
+      questions: INJECTION_QUESTIONS,
       timeoutMs: opts.timeoutMs,
       gate: (answers) => injectionVerdictFrom(answers, opts.threshold),
       // Pre-threshold reading for shadow disagreement (plan §8): p ≥ 0.5.

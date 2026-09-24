@@ -262,7 +262,7 @@ register_anchors:
     - { path: packages/core/src/agent-loop.ts, line: 689, contains: "resolveDowngradedTools(dgConfig?.tools)" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 761, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 26, contains: "export async function handleUntrustedResult" }
-    - { path: packages/wiring/src/decision-injection-classifier.ts, line: 78, contains: "export function createDecisionInjectionClassifier" }
+    - { path: packages/wiring/src/decision-injection-classifier.ts, line: 73, contains: "export function createDecisionInjectionClassifier" }
     - { path: packages/wiring/src/decision-site.ts, line: 124, contains: "export function meetsThreshold" }
     - { path: packages/wiring/src/decision-site.ts, line: 133, contains: "export async function runDecisionSite" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 74, contains: "const containsInstructions = tier1Hit ||" }

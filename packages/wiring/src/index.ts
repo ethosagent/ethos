@@ -1850,6 +1850,21 @@ export {
   type SmartApprovalCallback,
   type SmartVerdict,
 } from './danger-predicate';
+// The questions and digest each decision site sends — exported so a
+// calibration run (`runDecisionCalibration`, @ethosagent/eval-harness) measures
+// against exactly what the live sites ask.
+export {
+  APPROVER_CHOICES,
+  APPROVER_QUESTIONS,
+  type ApproverChoice,
+  type ApproverDigestInput,
+  approverDigest,
+  DECISION_QUESTION_IDS,
+  INJECTION_QUESTIONS,
+  ROUTER_CHOICES,
+  ROUTER_QUESTIONS,
+  type RouterChoice,
+} from './decision-questions';
 export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolver';
 // Re-export the resolver so callers don't need a separate import.
 export { resolveModelTarget } from './model-resolver';
