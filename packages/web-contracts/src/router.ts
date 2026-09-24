@@ -4893,12 +4893,16 @@ const DeliveriesSummaryOutput = z.object({
 
 const DeadInboundSchema = z.object({
   id: z.string(),
+  /** `dead` — given up on. `interrupted` — cut after a tool had started, so
+   *  never replayed; the chat was asked to reply `retry`. Replay re-runs it. */
+  status: z.enum(['dead', 'interrupted']),
   platform: z.string(),
   chatId: z.string(),
   /** Null for the root chat. */
   threadId: z.string().nullable(),
   attempts: z.number(),
-  /** Why it died: the turn's last error, `stale`, or `unreadable payload`. */
+  /** Why it died: the turn's last error, `stale`, or `unreadable payload`;
+   *  for an interrupted row, why it was cut. */
   lastError: z.string().nullable(),
   /** The message text, truncated to 200 characters, for the same reason
    *  `DeliveryObligationSchema.content` is. Empty when the payload is gone. */
@@ -4913,7 +4917,8 @@ const ListDeadInboundInput = z.object({
 });
 const ListDeadInboundOutput = z.object({ rows: z.array(DeadInboundSchema) });
 const InboundActionInput = z.object({ id: z.string().min(1) });
-/** `false` when the row is no longer dead (already requeued or discarded). */
+/** `false` when the row is no longer dead or interrupted (already requeued,
+ *  retried or discarded). */
 const InboundActionOutput = z.object({ ok: z.boolean() });
 
 /** @experimental */

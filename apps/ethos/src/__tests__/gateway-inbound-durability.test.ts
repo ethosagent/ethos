@@ -87,7 +87,13 @@ describe('openInboundSpool', () => {
       expect(inboundSpoolOptions.maxAttempts).toBe(5);
       expect(inboundSpoolOptions.maxReplayAgeMs).toBe(60_000);
       expect(inboundSpoolOptions.owner).toMatch(new RegExp(`^${process.pid}:`));
-      expect(inboundSpool.stats()).toEqual({ received: 0, processing: 0, done: 0, dead: 0 });
+      expect(inboundSpool.stats()).toEqual({
+        received: 0,
+        processing: 0,
+        done: 0,
+        dead: 0,
+        interrupted: 0,
+      });
     } finally {
       inboundSpool.close();
     }

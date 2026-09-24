@@ -138,9 +138,10 @@ export async function runGatewayStatus(args: readonly string[], dir = ethosDir()
     console.log(JSON.stringify(status));
   } else {
     console.log(formatGatewayStatus(status));
-    if (status.spool && (status.spool.received > 0 || status.spool.dead > 0)) {
+    const spool = status.spool;
+    if (spool && (spool.received > 0 || spool.dead > 0 || spool.interrupted > 0)) {
       console.log(
-        `inbound spool: ${status.spool.received} owed, ${status.spool.processing} in progress, ${status.spool.dead} dead`,
+        `inbound spool: ${spool.received} owed, ${spool.processing} in progress, ${spool.dead} dead, ${spool.interrupted} interrupted`,
       );
     }
   }
@@ -150,10 +151,13 @@ export async function runGatewayStatus(args: readonly string[], dir = ethosDir()
 const SPOOL_USAGE = 'Usage: ethos gateway spool <replay|discard> <id>';
 
 /**
- * `ethos gateway spool replay <id>` — a dead row back to `received` with its
- * attempts reset; the running gateway's replay tick (or the next boot) runs it.
- * `ethos gateway spool discard <id>` — a dead row closed without a turn.
- * Returns the exit code.
+ * `ethos gateway spool replay <id>` — a dead or interrupted row back to
+ * `received` with its attempts reset; the running gateway's replay tick (or the
+ * next boot) runs it. For an interrupted row — cut after a tool had started
+ * (plan openclaw-9.5-adoption D5) — that re-runs the turn, tools included: the
+ * operator's explicit decision, the same one the user's `retry` makes.
+ * `ethos gateway spool discard <id>` — a dead or interrupted row closed without
+ * a turn. Returns the exit code.
  */
 export function runGatewaySpool(args: readonly string[], dir = ethosDir()): number {
   const [action, id] = args;
@@ -173,9 +177,9 @@ export function runGatewaySpool(args: readonly string[], dir = ethosDir()): numb
       console.error(`No spooled message ${id}.`);
       return 1;
     }
-    if (row.status !== 'dead') {
+    if (row.status !== 'dead' && row.status !== 'interrupted') {
       console.error(
-        `Message ${id} is ${row.status}, not dead — only dead letters can be ${action}ed.`,
+        `Message ${id} is ${row.status} — only dead or interrupted messages can be ${action}ed.`,
       );
       return 1;
     }
