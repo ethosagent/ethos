@@ -18,7 +18,7 @@ import type { ClarifySurfaceType, PendingClarify } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import { ClarifyBridge } from '../clarify/clarify-bridge';
 import { FileClarifyStore } from '../clarify/file-clarify-store';
-import { clarifyPromptText, handbackUrlFor } from '../clarify/takeover-prompt';
+import { clarifyPromptText, handbackUrlFor, webPageUrlFor } from '../clarify/takeover-prompt';
 
 /** The text a deployment with no configured web address has always rendered. */
 const DEGRADED =
@@ -156,5 +156,17 @@ describe('a deployment with no reachable web address degrades, and does not gues
     const row = await takeover('ethos.example.com');
     expect(row.meta && 'handbackUrl' in row.meta).toBe(false);
     expect(clarifyPromptText(row)).toBe(DEGRADED);
+  });
+});
+
+// openclaw-9.5 item 1 — the gateway's plugin-credential link shares the rule.
+describe('webPageUrlFor', () => {
+  it('keeps a path prefix and refuses anything that is not absolute http(s)', () => {
+    expect(webPageUrlFor('https://ethos.example.com/app/', '/plugins')).toBe(
+      'https://ethos.example.com/app/plugins',
+    );
+    expect(webPageUrlFor(undefined, '/plugins')).toBeUndefined();
+    expect(webPageUrlFor('ethos.example.com', '/plugins')).toBeUndefined();
+    expect(webPageUrlFor('ftp://ethos.example.com', '/plugins')).toBeUndefined();
   });
 });
