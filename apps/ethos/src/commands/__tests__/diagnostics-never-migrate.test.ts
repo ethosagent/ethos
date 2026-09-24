@@ -85,6 +85,38 @@ function oldSpool(): string {
   return path;
 }
 
+/** A spool with the v1 table (no `tool_started_at` / `kind` / `review_job_id`)
+ *  at `user_version` 1, holding one dead row: what a gateway from before
+ *  schema v2 leaves behind. The v2 migration would add the three columns. */
+function v1Spool(): string {
+  const path = join(dir, 'inbound-spool.db');
+  const db = new Database(path);
+  db.exec(`CREATE TABLE inbound_spool (
+    id TEXT PRIMARY KEY, platform TEXT NOT NULL, bot_key TEXT NOT NULL, chat_id TEXT NOT NULL,
+    thread_id TEXT, message_id TEXT NOT NULL, lane_key TEXT NOT NULL, payload TEXT NOT NULL,
+    status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+    received_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, claimed_by TEXT,
+    UNIQUE (platform, bot_key, chat_id, message_id)
+  ) STRICT`);
+  db.prepare(
+    `INSERT INTO inbound_spool (id, platform, bot_key, chat_id, message_id, lane_key, payload,
+     status, attempts, last_error, received_at, updated_at)
+     VALUES ('d1', 'telegram', 'bot-a', 'c', 'm', 'l', '{}', 'dead', 3, 'boom', 1, 1)`,
+  ).run();
+  db.pragma('user_version = 1');
+  db.close();
+  return path;
+}
+
+function columns(path: string): string[] {
+  const db = new Database(path, { readonly: true });
+  try {
+    return (db.pragma('table_info(inbound_spool)') as Array<{ name: string }>).map((c) => c.name);
+  } finally {
+    db.close();
+  }
+}
+
 /** A real ledger file walked back to `user_version` 0: `migrate()` would re-stamp it. */
 function oldLedger(): string {
   const path = join(dir, 'delivery-ledger.db');
@@ -119,6 +151,17 @@ describe('ethos doctor — inbound spool', () => {
     expect(shape(path)).toEqual(before);
   });
 
+  it('reads a v1 spool (before interrupted/kind columns) without adding them', async () => {
+    const path = v1Spool();
+    const before = { shape: shape(path), columns: columns(path) };
+    const report = await checkInboundSpool(dir, ['bot-a']);
+    expect(report.status).toBe('ok');
+    expect(report.counts).toMatchObject({ dead: 1, interrupted: 0 });
+    expect(report.dead?.map((r) => r.id)).toEqual(['d1']);
+    expect(report.interrupted).toEqual([]);
+    expect({ shape: shape(path), columns: columns(path) }).toEqual(before);
+  });
+
   it('reads a newer-schema file instead of refusing it', async () => {
     const path = oldSpool();
     setVersion(path, 99);
@@ -147,7 +190,7 @@ describe('ethos gateway status', () => {
     const beforeSpool = shape(spool);
     const beforeLedger = shape(ledger);
     const status = await readGatewayStatus(dir);
-    expect(status.spool).toEqual({ received: 0, processing: 0, done: 0, dead: 0 });
+    expect(status.spool).toEqual({ received: 0, processing: 0, done: 0, dead: 0, interrupted: 0 });
     expect(status.ledger).toEqual({ pending: 0, redelivering: 0, delivered: 0, abandoned: 0 });
     expect(shape(spool)).toEqual(beforeSpool);
     expect(shape(ledger)).toEqual(beforeLedger);
@@ -169,6 +212,14 @@ describe('ethos gateway spool', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(runGatewaySpool(['replay', 'some-id'], dir)).toBe(1);
     expect(shape(path)).toEqual(before);
+  });
+
+  it('refuses a v1 spool rather than writing v2 columns into it', () => {
+    const path = v1Spool();
+    const before = { shape: shape(path), columns: columns(path) };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(runGatewaySpool(['replay', 'd1'], dir)).toBe(1);
+    expect({ shape: shape(path), columns: columns(path) }).toEqual(before);
   });
 
   it('writes a spool at its own schema version without migrating it', () => {
