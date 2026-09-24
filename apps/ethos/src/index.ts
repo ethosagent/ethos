@@ -630,8 +630,16 @@ try {
         await launchAfterSetup(gwResult);
       } else if (sub === 'start') {
         await runGatewayStart();
+      } else if (sub === 'status') {
+        const { runGatewayStatus } = await import('./commands/gateway-status');
+        process.exitCode = await runGatewayStatus(args.slice(2));
+      } else if (sub === 'spool') {
+        const { runGatewaySpool } = await import('./commands/gateway-status');
+        process.exitCode = runGatewaySpool(args.slice(2));
       } else {
-        console.log('Usage: ethos gateway [setup | start]');
+        console.log(
+          'Usage: ethos gateway [setup | start | status [--json] | spool <replay|discard> <id>]',
+        );
       }
       break;
     }
