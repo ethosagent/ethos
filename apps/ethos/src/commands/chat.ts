@@ -336,6 +336,9 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     const onSkillProposed = setOnSkillProposed
       ? makeTuiSkillProposalSubscriber(setOnSkillProposed)
       : undefined;
+    // The writer for the TUI's masked credential modal follows `/model`
+    // switches, since the replaced runtime's dispose unloads its plugins.
+    let activePluginLoader = pluginLoader;
     const rebuild = createLoopRebuilder({ drain, dispose }, (modelId: string) =>
       resolveActiveLoop({ ...config, model: modelId }),
     );
@@ -352,6 +355,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         const next = await rebuild(modelId);
         liveRuntime = next.runtime;
         slashCommands.rebind(next.runtime.pluginLoader);
+        activePluginLoader = next.runtime.pluginLoader;
         onNotification.rebind(next.runtime.notificationRouter);
         // The replaced loop may still propose while it drains; its slot lets
         // go of the TUI's callback only once that runtime is retired.
@@ -375,6 +379,9 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       // `/memory` on the configured backend (the vault under `memory: vault`).
       readMemory: (scope) => readFileMemorySnapshot(config, scope),
       ...(onSkillProposed ? { onSkillProposed } : {}),
+      // openclaw-9.5 item 1 (D15) — the one writer for a masked credential.
+      setPluginCredential: (pluginId, key, value) =>
+        activePluginLoader.setCredential(pluginId, key, value),
     });
     // The TUI has exited: release whichever runtime is current (a `/model`
     // switch retires the one it replaced, not this one).
