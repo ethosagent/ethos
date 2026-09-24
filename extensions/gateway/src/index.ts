@@ -2395,7 +2395,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
           },
         });
       } catch (err: unknown) {
@@ -2428,7 +2428,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
             isDm: message.isDm,
             isGroupMention: message.isGroupMention,
           },
@@ -2448,7 +2448,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
             replyToId: message.replyToId,
           },
         });
@@ -2464,7 +2464,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
             dropped: filterResult.strippedPriorContext === '',
           },
         });
@@ -3119,6 +3119,11 @@ export class Gateway {
           sessionId,
           personalityId,
           platform: message.platform,
+          sender: {
+            userId: message.userId ?? '',
+            isOwner: this.isOwner(message),
+            isDm: message.isDm,
+          },
           send: async (t: string) => {
             await adapter.send(message.chatId, { text: t, threadId }).catch(() => {});
           },
@@ -3830,7 +3835,7 @@ export class Gateway {
           details: {
             platform: message.platform,
             chatId: message.chatId,
-            userId: message.userId,
+            userId: message.userId ?? '',
             ...(tier1.containsInstructions ? { hits: tier1.hits } : {}),
           },
         });
