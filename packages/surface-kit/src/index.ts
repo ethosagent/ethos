@@ -10,7 +10,10 @@
 
 export {
   createEventTranslator,
+  credentialInstruction,
+  credentialSetCommand,
   type EventTranslator,
+  type EventTranslatorCredentialRequired,
   type EventTranslatorDone,
   type EventTranslatorError,
   type EventTranslatorHalt,

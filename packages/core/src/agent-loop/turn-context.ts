@@ -144,6 +144,7 @@ export interface LoopDeps {
   credentialCheck?: (
     sessionKey: string,
     pendingUserMessage: string,
+    scope: { personalityId: string; allowedPlugins: readonly string[] },
   ) => Promise<{
     pluginId: string;
     credentialKey: string;
