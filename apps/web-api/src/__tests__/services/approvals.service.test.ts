@@ -114,6 +114,7 @@ describe('ApprovalsService', () => {
     const pending = nextPending();
     const first = approvals.requestApproval({
       sessionId: 'sess_1',
+      personalityId: 'p1',
       toolCallId: 'tc_1',
       toolName: 'terminal',
       args,
@@ -125,6 +126,7 @@ describe('ApprovalsService', () => {
     // Second call with the same args bypasses the modal entirely.
     const second = await approvals.requestApproval({
       sessionId: 'sess_1',
+      personalityId: 'p1',
       toolCallId: 'tc_2',
       toolName: 'terminal',
       args,
@@ -136,6 +138,7 @@ describe('ApprovalsService', () => {
     const nextReq = nextPending();
     const third = approvals.requestApproval({
       sessionId: 'sess_1',
+      personalityId: 'p1',
       toolCallId: 'tc_3',
       toolName: 'terminal',
       args: { command: 'echo hi' },
@@ -149,6 +152,7 @@ describe('ApprovalsService', () => {
     const pending = nextPending();
     const first = approvals.requestApproval({
       sessionId: 'sess_1',
+      personalityId: 'p1',
       toolCallId: 'tc_1',
       toolName: 'web_fetch',
       args: { url: 'https://a' },
@@ -159,6 +163,7 @@ describe('ApprovalsService', () => {
 
     const second = await approvals.requestApproval({
       sessionId: 'sess_1',
+      personalityId: 'p1',
       toolCallId: 'tc_2',
       toolName: 'web_fetch',
       args: { url: 'https://different' },
@@ -335,6 +340,7 @@ describe('ApprovalsService — safety audit trail', () => {
     const pending = nextPending();
     const first = approvals.requestApproval({
       sessionId: 'sess_1',
+      personalityId: 'p1',
       toolCallId: 'tc_1',
       toolName: 'terminal',
       args,
@@ -345,6 +351,7 @@ describe('ApprovalsService — safety audit trail', () => {
 
     await approvals.requestApproval({
       sessionId: 'sess_1',
+      personalityId: 'p1',
       toolCallId: 'tc_2',
       toolName: 'terminal',
       args,
@@ -677,7 +684,13 @@ describe('createWebApi — approvalTimeoutMs threading', () => {
         join(dir, 'allowlist.json'),
         JSON.stringify({
           entries: [
-            { toolName: 'skills_pending_approve', scope: 'any-args', args: null, createdAt: 'x' },
+            {
+              personalityId: 'p1',
+              toolName: 'skills_pending_approve',
+              scope: 'any-args',
+              args: null,
+              createdAt: 'x',
+            },
           ],
         }),
       );
@@ -697,6 +710,7 @@ describe('createWebApi — approvalTimeoutMs threading', () => {
         'before_tool_call',
         {
           sessionId: 'sess_aa',
+          personalityId: 'p1',
           toolCallId: 'tc_aa',
           toolName: 'skills_pending_approve',
           args: {},
@@ -859,8 +873,13 @@ describe('ApprovalsService — leases and always-ask tools', () => {
   });
 
   it('a pre-seeded any-args allowlist entry for skills_pending_approve no longer matches', async () => {
-    await allowlist.add({ toolName: 'skills_pending_approve', scope: 'any-args', args: null });
-    expect(await allowlist.matches('skills_pending_approve', {})).toBe(false);
+    await allowlist.add({
+      personalityId: 'p1',
+      toolName: 'skills_pending_approve',
+      scope: 'any-args',
+      args: null,
+    });
+    expect(await allowlist.matches('p1', 'skills_pending_approve', {})).toBe(false);
     // Ignored, not deleted — the operator can still see what they had.
     expect(await allowlist.list()).toHaveLength(1);
 
@@ -873,6 +892,7 @@ describe('ApprovalsService — leases and always-ask tools', () => {
     const pending = nextPending();
     const first = approvals.requestApproval({
       sessionId: 'sess_1',
+      personalityId: 'p1',
       toolCallId: 'tc_1',
       toolName: 'terminal',
       args: { command: 'ls' },
@@ -884,6 +904,7 @@ describe('ApprovalsService — leases and always-ask tools', () => {
     expect(
       await approvals.requestApproval({
         sessionId: 'sess_9',
+        personalityId: 'p1',
         toolCallId: 'tc_2',
         toolName: 'terminal',
         args: { command: 'pwd' },

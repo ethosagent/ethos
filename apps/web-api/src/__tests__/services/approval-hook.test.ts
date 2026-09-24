@@ -103,6 +103,7 @@ describe('createWebApprovalHook', () => {
     const storage = new InMemoryStorage();
     const allowlist = new AllowlistRepository({ dataDir: DATA, storage });
     await allowlist.add({
+      personalityId: 'p1',
       toolName: 'terminal',
       scope: 'exact-args',
       args: { command: 'rm -rf /' },
@@ -117,7 +118,7 @@ describe('createWebApprovalHook', () => {
       pending = true;
     });
 
-    expect(await hook(payload())).toBeNull();
+    expect(await hook(payload({ personalityId: 'p1' }))).toBeNull();
     expect(pending).toBe(false);
   });
 

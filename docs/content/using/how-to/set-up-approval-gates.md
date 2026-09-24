@@ -145,8 +145,10 @@ The agent gets the error back as a tool result and continues the turn — usuall
 The web UI ships the full flow. A `dangerous` call posts an approval card anchored to the personality bar (`apps/web/src/components/chat/ApprovalModal.tsx`) with the tool name, reason, and a JSON-formatted args preview. You pick one of three scopes:
 
 - **Just this command** — allow this single invocation, ask again next time.
-- **This exact command** — allow this tool with these exact arguments forever.
-- **Any args for this tool** — allow every future invocation of this tool.
+- **This exact command** — allow this tool with these exact arguments forever, for this personality.
+- **Any args for this tool** — allow every future invocation of this tool by this personality.
+
+A stored grant belongs to the personality whose call you approved: another personality asking for the same tool still gets a card (`AllowlistRepository.matches`, pinned by `apps/web-api/src/__tests__/services/approvals-scoping.test.ts`). Grants saved before this scoping existed are kept in `allowlist.json` but match nothing, so each one asks once more.
 
 Allow or Deny resolves the suspended `before_tool_call` hook. The card updates in place to show the outcome. Hardline `blocked` calls never reach the modal — they error out before the prompt.
 

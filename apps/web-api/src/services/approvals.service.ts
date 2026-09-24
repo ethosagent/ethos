@@ -29,7 +29,9 @@ export interface ApprovalRequestInput {
   /** Human-readable cause — e.g. "recursive force-delete of root directory". */
   reason?: string;
   /** Personality running the turn (`BeforeToolCallPayload.personalityId`).
-   *  A lease binds to it; absent binds a lease to "no personality". */
+   *  A lease binds to it; absent binds a lease to "no personality". An
+   *  allowlist entry binds to it too, and a request without it never matches
+   *  one (`AllowlistRepository.matches`). */
   personalityId?: string;
 }
 
@@ -154,7 +156,7 @@ export class ApprovalsService {
       });
       return { decision: 'allow' };
     }
-    if (await this.opts.allowlist.matches(req.toolName, req.args)) {
+    if (await this.opts.allowlist.matches(req.personalityId, req.toolName, req.args)) {
       // No human in the loop — an allowlist entry decided. Exactly the kind
       // of silent auto-approval the audit trail exists to make visible.
       this.audit(req, 'auto', 'allowlist', 'matched a stored allowlist entry');
@@ -241,6 +243,11 @@ export class ApprovalsService {
       );
     } else if (scope === 'exact-args' || scope === 'any-args') {
       await this.opts.allowlist.add({
+        // Binds the grant to the personality whose call it approved; a
+        // request with no personality stores an entry that matches nothing.
+        ...(p.request.personalityId !== undefined
+          ? { personalityId: p.request.personalityId }
+          : {}),
         toolName: p.request.toolName,
         scope,
         args: scope === 'exact-args' ? p.request.args : null,
