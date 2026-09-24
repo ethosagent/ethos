@@ -1,17 +1,21 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type {
-  AuthProfile,
-  CompletionChunk,
-  CompletionOptions,
-  FailoverReason,
-  LLMProvider,
-  Message,
-  MessageContent,
-  ProviderCapabilities,
-  ToolDefinitionLite,
-  ToolOrder,
+import {
+  type AuthProfile,
+  type CompletionChunk,
+  type CompletionOptions,
+  DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+  decodeCompactionEnvelope,
+  type FailoverReason,
+  flattenCompactionEnvelopes,
+  type LLMProvider,
+  type Message,
+  type MessageContent,
+  orderToolDefinitions,
+  type ProviderCapabilities,
+  SERVER_COMPACTION_REJECTED_WARNING,
+  type ToolDefinitionLite,
+  type ToolOrder,
 } from '@ethosagent/types';
-import { DEFAULT_LLM_REQUEST_TIMEOUT_MS, orderToolDefinitions } from '@ethosagent/types';
 import { modelRejectionMessage } from './model-rejection';
 import { reduceToolSchemas } from './tool-schema';
 import { type AnthropicStreamParams, streamAnthropicMessages } from './transport';
@@ -47,13 +51,27 @@ export interface AnthropicProviderConfig {
    *  honours. Wiring sets `0` on a hop in a provider chain so failover is not
    *  delayed by `retry-after`-honouring retries. Absent → the SDK's own default. */
   maxRetries?: number;
+  /** Item 7 (D32) — server-side compaction, from `providers.<n>.serverCompaction`
+   *  (wiring computes `triggerTokens`: `serverCompactionTriggerTokens`, else
+   *  the local compaction gate's own threshold). Absent → never sent. */
+  serverCompaction?: { triggerTokens: number };
 }
+
+/** The `compact_20260112` edit's smallest accepted trigger (API docs,
+ *  "Compaction at a token threshold": minimum 50,000 input tokens). */
+export const SERVER_COMPACTION_MIN_TRIGGER_TOKENS = 50_000;
+/** Beta header for the `compact_20260112` edit — NOT `context-management-2025-06-27`,
+ *  which gates only the clear_* context-editing strategies. */
+export const SERVER_COMPACTION_BETA = 'compact-2026-01-12';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function modelContextTokens(_model: string): number {
+/** The window `AnthropicProvider.maxContextTokens` reports for `model` — the
+ *  one the local compaction gate measures against. Exported so wiring derives
+ *  the default server-compaction trigger from the same number. */
+export function anthropicContextTokens(_model: string): number {
   return 200_000; // all current Claude models
 }
 
@@ -78,10 +96,46 @@ function classifyError(err: unknown): FailoverReason {
   return 'unknown';
 }
 
-// Convert our Message[] into Anthropic's MessageParam[]
-export function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
+/**
+ * A 400 that a request WITHOUT the compaction edit could get past: the beta or
+ * the edit was refused (unsupported model, beta not enabled, bad trigger).
+ * A prompt-too-long 400 is excluded — it is a context overflow, and a retry
+ * without compaction would only overflow again.
+ */
+function isCompactionRejection(err: unknown): boolean {
+  return (
+    err instanceof Anthropic.APIError &&
+    err.status === 400 &&
+    !/prompt is too long/i.test(err.message)
+  );
+}
+
+// Convert our Message[] into Anthropic's MessageParam[].
+//
+// Item 7 — with `compactionBlocks` (server compaction on for this request) a
+// persisted compaction envelope becomes a `compaction` block param, one
+// message per envelope so `cacheBreakpoints` indices still line up;
+// `encrypted_content` goes back byte for byte. Without it the caller flattens
+// envelopes to text first (`flattenCompactionEnvelopes`), as every other
+// provider does.
+export function toAnthropicMessages(
+  messages: Message[],
+  opts?: { compactionBlocks?: boolean },
+): Anthropic.MessageParam[] {
   return messages.map((msg) => {
     if (typeof msg.content === 'string') {
+      const envelope = opts?.compactionBlocks ? decodeCompactionEnvelope(msg.content) : null;
+      if (envelope && msg.role === 'assistant') {
+        // `compaction` is a beta block type the non-beta `ContentBlockParam`
+        // union does not list; the request carrying it goes to the beta
+        // endpoint (`streamAnthropicMessages`).
+        const block = {
+          type: 'compaction',
+          content: envelope.content,
+          encrypted_content: envelope.encryptedContent,
+        } as unknown as Anthropic.ContentBlockParam;
+        return { role: 'assistant', content: [block] };
+      }
       return { role: msg.role, content: msg.content };
     }
     const blocks = msg.content.map(toAnthropicBlock);
@@ -198,6 +252,7 @@ export class AnthropicProvider implements LLMProvider {
 
   private readonly client: Anthropic;
   private readonly toolOrder: ToolOrder;
+  private readonly serverCompaction: { triggerTokens: number } | undefined;
 
   constructor(config: AnthropicProviderConfig) {
     this.model = config.model;
@@ -224,9 +279,10 @@ export class AnthropicProvider implements LLMProvider {
       ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
       ...(config.fetchImpl ? { fetch: config.fetchImpl } : {}),
     });
-    this.maxContextTokens = modelContextTokens(config.model);
+    this.maxContextTokens = anthropicContextTokens(config.model);
     this.supportsThinking = isThinkingModel(config.model);
     this.toolOrder = config.toolOrder ?? 'stable';
+    this.serverCompaction = config.serverCompaction;
   }
 
   async *complete(
@@ -234,8 +290,6 @@ export class AnthropicProvider implements LLMProvider {
     tools: ToolDefinitionLite[],
     options: CompletionOptions,
   ): AsyncIterable<CompletionChunk> {
-    const anthropicMessages = toAnthropicMessages(messages);
-
     const systemBlocks: Anthropic.TextBlockParam[] | undefined = options.system
       ? [
           {
@@ -246,17 +300,22 @@ export class AnthropicProvider implements LLMProvider {
         ]
       : undefined;
 
-    // F2 — message-history cache breakpoints. The system prompt, when cached,
-    // consumes one of Anthropic's 4 `cache_control` slots; the rest are
-    // available for message-level breakpoints.
-    if (options.cacheBreakpoints && options.cacheBreakpoints.length > 0) {
-      const systemCached = systemBlocks !== undefined && options.cacheSystemPrompt === true;
-      applyMessageCacheBreakpoints(
-        anthropicMessages,
-        options.cacheBreakpoints,
-        4 - (systemCached ? 1 : 0),
-      );
-    }
+    // Item 7 — the history as one attempt sends it. With server compaction a
+    // persisted envelope is a `compaction` block; without it (off, or the
+    // retry after a rejected edit) envelopes flatten to text, and message
+    // breakpoints are dropped when that moved indices.
+    const buildMessages = (compactionBlocks: boolean): Anthropic.MessageParam[] => {
+      const source = compactionBlocks ? messages : flattenCompactionEnvelopes(messages);
+      const out = toAnthropicMessages(source, { compactionBlocks });
+      // F2 — message-history cache breakpoints. The system prompt, when cached,
+      // consumes one of Anthropic's 4 `cache_control` slots; the rest are
+      // available for message-level breakpoints.
+      if (options.cacheBreakpoints && options.cacheBreakpoints.length > 0 && source === messages) {
+        const systemCached = systemBlocks !== undefined && options.cacheSystemPrompt === true;
+        applyMessageCacheBreakpoints(out, options.cacheBreakpoints, 4 - (systemCached ? 1 : 0));
+      }
+      return out;
+    };
 
     // Lane 2a — deterministic ASCII-stable tool ordering at the serialization
     // boundary. Tool definitions ship ahead of the messages and are part of
@@ -290,10 +349,10 @@ export class AnthropicProvider implements LLMProvider {
 
     const effectiveModel = options.modelOverride ?? this.model;
 
-    const streamParams: AnthropicStreamParams = {
+    const buildParams = (serverCompaction: boolean): AnthropicStreamParams => ({
       model: effectiveModel,
       max_tokens: options.maxTokens ?? 8096,
-      messages: anthropicMessages,
+      messages: buildMessages(serverCompaction),
       ...(systemBlocks ? { system: systemBlocks } : {}),
       ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
       ...(options.stopSequences ? { stop_sequences: options.stopSequences } : {}),
@@ -301,11 +360,64 @@ export class AnthropicProvider implements LLMProvider {
       ...(isThinkingModel(effectiveModel) && options.thinkingBudget && options.thinkingBudget > 0
         ? { thinking: { type: 'enabled' as const, budget_tokens: options.thinkingBudget } }
         : {}),
+      ...(serverCompaction && this.serverCompaction
+        ? {
+            betas: [SERVER_COMPACTION_BETA],
+            context_management: {
+              edits: [
+                {
+                  type: 'compact_20260112' as const,
+                  trigger: {
+                    type: 'input_tokens' as const,
+                    value: Math.max(
+                      SERVER_COMPACTION_MIN_TRIGGER_TOKENS,
+                      this.serverCompaction.triggerTokens,
+                    ),
+                  },
+                },
+              ],
+            },
+          }
+        : {}),
       requestTokens,
-    };
+    });
 
     try {
-      yield* streamAnthropicMessages(this.client, streamParams, options.abortSignal);
+      if (!this.serverCompaction) {
+        yield* streamAnthropicMessages(this.client, buildParams(false), options.abortSignal);
+        return;
+      }
+      let yielded = false;
+      try {
+        for await (const chunk of streamAnthropicMessages(
+          this.client,
+          buildParams(true),
+          options.abortSignal,
+        )) {
+          yielded = true;
+          yield chunk;
+        }
+      } catch (err) {
+        // D32 failure mode — the API refused the beta or the edit. Retry the
+        // same request ONCE without it. The warning goes out only once the
+        // retry streams, so a chain can still fail over if the retry fails
+        // before its first chunk; core reads it to record
+        // `llm.server_compaction_rejected` and to let local compaction run for
+        // the rest of the turn. Pinned by __tests__/server-compaction.test.ts.
+        if (yielded || options.abortSignal?.aborted || !isCompactionRejection(err)) throw err;
+        let warned = false;
+        for await (const chunk of streamAnthropicMessages(
+          this.client,
+          buildParams(false),
+          options.abortSignal,
+        )) {
+          if (!warned) {
+            warned = true;
+            yield { type: 'warning', message: SERVER_COMPACTION_REJECTED_WARNING };
+          }
+          yield chunk;
+        }
+      }
     } catch (err) {
       // V8 — a model rejection reads as a bare vendor error and nothing else.
       // Keep the vendor's body verbatim, add the model id and the fix. Every
@@ -330,7 +442,7 @@ export class AnthropicProvider implements LLMProvider {
   async countTokens(messages: Message[]): Promise<number> {
     const result = await this.client.messages.countTokens({
       model: this.model,
-      messages: toAnthropicMessages(messages),
+      messages: toAnthropicMessages(flattenCompactionEnvelopes(messages)),
     });
     return result.input_tokens;
   }
@@ -350,7 +462,11 @@ export class AuthRotatingProvider implements LLMProvider {
   constructor(
     profiles: AuthProfile[],
     model: string,
-    opts?: { toolOrder?: ToolOrder; requestTimeoutMs?: number },
+    opts?: {
+      toolOrder?: ToolOrder;
+      requestTimeoutMs?: number;
+      serverCompaction?: { triggerTokens: number };
+    },
   ) {
     const sorted = [...profiles].sort((a, b) => b.priority - a.priority);
     this.providers = sorted.map(
@@ -365,6 +481,7 @@ export class AuthRotatingProvider implements LLMProvider {
           ...(opts?.requestTimeoutMs !== undefined
             ? { requestTimeoutMs: opts.requestTimeoutMs }
             : {}),
+          ...(opts?.serverCompaction ? { serverCompaction: opts.serverCompaction } : {}),
         }),
     );
     if (this.providers.length === 0) throw new Error('AuthRotatingProvider: no profiles provided');
@@ -459,6 +576,11 @@ export const anthropicFactory: LLMProviderFactory = async ({ config: cfg, secret
     // values fall through to the 'stable' default.
     ...(cfg.toolOrder === 'insertion' || cfg.toolOrder === 'stable'
       ? { toolOrder: cfg.toolOrder }
+      : {}),
+    // Item 7 — `providers.<n>.serverCompaction`; wiring always resolves the
+    // trigger (`createLLMFromRegistry`), so a flag without one is not sent.
+    ...(cfg.serverCompaction === true && typeof cfg.serverCompactionTriggerTokens === 'number'
+      ? { serverCompaction: { triggerTokens: cfg.serverCompactionTriggerTokens } }
       : {}),
   });
 };

@@ -1,18 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  AgentEvent,
-  HookRegistry,
-  LLMProvider,
-  Message,
-  MessageContent,
-  ModelResolutionContext,
-  ModelTierName,
-  PersonalityConfig,
-  PersonalityObservabilityConfig,
-  RequestDumpStore,
-  SessionStore,
-  ToolFilterOpts,
-  ToolRegistry,
+import {
+  type AgentEvent,
+  type CompactionEnvelope,
+  encodeCompactionEnvelope,
+  type HookRegistry,
+  type LLMProvider,
+  type Message,
+  type MessageContent,
+  type ModelResolutionContext,
+  type ModelTierName,
+  type PersonalityConfig,
+  type PersonalityObservabilityConfig,
+  type RequestDumpStore,
+  SERVER_COMPACTION_REJECTED_WARNING,
+  type SessionStore,
+  type ToolFilterOpts,
+  type ToolRegistry,
 } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { handleChunk } from '../chunk-handler';
@@ -95,6 +98,9 @@ export interface StreamStepContext {
   effectiveModel: string;
   modelOverride: string | undefined;
   providerEntry: import('@ethosagent/types').CompletionOptions['providerEntry'];
+  /** Item 7 — `TurnSetup.serverCompaction`; cleared here when the provider
+   *  reports `SERVER_COMPACTION_REJECTED_WARNING`. */
+  serverCompaction?: { active: boolean };
   allowedPlugins: string[];
   allowedTools: string[] | undefined;
   filterOpts: ToolFilterOpts;
@@ -206,6 +212,8 @@ export async function* streamStep(
   }> = [];
   let chunkText = '';
   let fullTextDelta = '';
+  // Item 7 — server-side compaction blocks, persisted ahead of the reply.
+  const compactions: CompactionEnvelope[] = [];
 
   // Streaming watchdog: cancel the stream if no chunk arrives within the
   // per-personality window. Reset every chunk so slow-but-progressing
@@ -311,6 +319,18 @@ export async function* streamStep(
       if (watchdogController.signal.aborted) break;
       armWatchdog();
       if (chunk.type === 'done') llmFinishReason = chunk.finishReason;
+      if (chunk.type === 'compaction') compactions.push(chunk);
+      if (chunk.type === 'warning' && chunk.message === SERVER_COMPACTION_REJECTED_WARNING) {
+        // D32 failure mode — the API refused the edit and the provider retried
+        // without it, so the local compactions left in this turn run.
+        if (ctx.serverCompaction) ctx.serverCompaction.active = false;
+        deps.observability?.recordCompaction({
+          ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+          severity: 'warn',
+          code: 'llm.server_compaction_rejected',
+          cause: chunk.message,
+        });
+      }
       if (chunk.type === 'usage') {
         if (chunk.providerRequestId) providerRequestId = chunk.providerRequestId;
         if (chunk.costBasis) llmCostBasis = chunk.costBasis;
@@ -464,6 +484,27 @@ export async function* streamStep(
     (tc): tc is typeof tc & { args: unknown } =>
       tc.args !== undefined || tc.parseError !== undefined,
   );
+
+  // Item 7 (D31) — a server compaction block precedes the reply it came with,
+  // and the API drops everything before it on the next request. Persisted as
+  // its own assistant row (an envelope in `content`, no SessionStore change)
+  // and replayed in this turn's later iterations; `toAnthropicMessages`
+  // (extensions/llm-anthropic) turns it back into a block.
+  for (const c of compactions) {
+    const envelope = encodeCompactionEnvelope(c);
+    await deps.session.appendMessage({
+      sessionId: ctx.sessionId,
+      role: 'assistant',
+      content: envelope,
+      traceId: ctx.traceId,
+    });
+    ctx.llmMessages.push({ role: 'assistant', content: envelope });
+    deps.observability?.recordCompaction({
+      ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+      code: 'llm.server_compacted',
+      cause: c.content === null ? 'no summary (no-op block)' : `${c.content.length}-char summary`,
+    });
+  }
 
   // Persist assistant message — include tool_use references so history is LLM-replayable
   // Note: turnCount + 1 matches the original code where turnCount was already incremented

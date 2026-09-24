@@ -1089,6 +1089,21 @@ export interface ProviderChainEntry {
    */
   failover?: boolean;
   /**
+   * openclaw-9.5-adoption item 7 (D32) — let the provider compact the
+   * conversation server-side instead of the local context engine. Absent
+   * means off. Honoured only on a `provider: anthropic` entry (wiring,
+   * `createLLMFromRegistry`, warns and ignores it anywhere else).
+   */
+  serverCompaction?: boolean;
+  /**
+   * The input-token count at which the server compacts. Absent → the local
+   * compaction gate's own threshold for this model (`pressureGateTokens` in
+   * packages/core), so turning the switch on does not move WHEN compaction
+   * happens. A positive integer; the API refuses less than 50,000 and the
+   * provider raises it to that floor (`SERVER_COMPACTION_MIN_TRIGGER_TOKENS`).
+   */
+  serverCompactionTriggerTokens?: number;
+  /**
    * Every other `providers.<n>.<field>` line, keyed by `<field>`. It belongs to
    * THIS entry: `renderProviderChain` re-emits it under whatever index the
    * entry has at write time, so it moves with the entry on reorder and is gone
@@ -1124,14 +1139,28 @@ const PROVIDER_CHAIN_FIELDS = [
   'region',
   'awsProfile',
   'failover',
+  'serverCompaction',
+  'serverCompactionTriggerTokens',
 ] as const;
 type ProviderChainField = (typeof PROVIDER_CHAIN_FIELDS)[number];
-/** The modelled fields whose value is a string — every one but `failover`, the
- *  namespace's only boolean, which parse and render handle by hand. */
-type ProviderChainStringField = Exclude<ProviderChainField, 'failover'>;
+/** The modelled fields whose value is NOT a string — the booleans `failover`
+ *  and `serverCompaction` and the integer `serverCompactionTriggerTokens`,
+ *  which parse and render handle by hand. */
+const PROVIDER_CHAIN_TYPED_FIELDS = [
+  'failover',
+  'serverCompaction',
+  'serverCompactionTriggerTokens',
+] as const;
+type ProviderChainStringField = Exclude<
+  ProviderChainField,
+  (typeof PROVIDER_CHAIN_TYPED_FIELDS)[number]
+>;
 
 const PROVIDER_CHAIN_STRING_FIELDS: readonly ProviderChainStringField[] =
-  PROVIDER_CHAIN_FIELDS.filter((f): f is ProviderChainStringField => f !== 'failover');
+  PROVIDER_CHAIN_FIELDS.filter(
+    (f): f is ProviderChainStringField =>
+      !(PROVIDER_CHAIN_TYPED_FIELDS as readonly string[]).includes(f),
+  );
 
 function isProviderChainField(field: string): field is ProviderChainField {
   return (PROVIDER_CHAIN_FIELDS as readonly string[]).includes(field);
@@ -1242,6 +1271,31 @@ export function parseProviderChain(
         }
         continue;
       }
+      if (field === 'serverCompaction') {
+        // Absent means off, so an unreadable value is refused out loud rather
+        // than read as either answer — the same trade `failover` makes.
+        if (value === 'true' || value === 'false') entry.serverCompaction = value === 'true';
+        else {
+          notices?.push(
+            `config.yaml: 'providers.${idx}.serverCompaction' must be true or false, so ` +
+              `'${value}' was ignored — this entry compacts locally.`,
+          );
+        }
+        continue;
+      }
+      if (field === 'serverCompactionTriggerTokens') {
+        const n = Number(value);
+        if (/^\d+$/.test(value) && Number.isSafeInteger(n) && n > 0) {
+          entry.serverCompactionTriggerTokens = n;
+        } else {
+          notices?.push(
+            `config.yaml: 'providers.${idx}.serverCompactionTriggerTokens' must be a positive ` +
+              `whole number of tokens, so '${value}' was ignored — the trigger defaults to the ` +
+              'local compaction threshold.',
+          );
+        }
+        continue;
+      }
       if (isProviderChainStringField(field)) entry[field] = value;
       else passthrough[field] = value;
     }
@@ -1269,10 +1323,14 @@ export function renderProviderChain(
   const out: Array<[string, string]> = [];
   for (const [i, entry] of entries.entries()) {
     for (const field of PROVIDER_CHAIN_FIELDS) {
-      if (field === 'failover') {
-        if (entry.failover !== undefined) {
-          out.push([`providers.${i}.failover`, String(entry.failover)]);
-        }
+      if (field === 'failover' || field === 'serverCompaction') {
+        const flag = entry[field];
+        if (flag !== undefined) out.push([`providers.${i}.${field}`, String(flag)]);
+        continue;
+      }
+      if (field === 'serverCompactionTriggerTokens') {
+        const n = entry.serverCompactionTriggerTokens;
+        if (n !== undefined) out.push([`providers.${i}.${field}`, String(n)]);
         continue;
       }
       const value = entry[field];

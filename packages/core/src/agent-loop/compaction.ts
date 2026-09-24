@@ -139,9 +139,8 @@ export interface GateEval {
 }
 
 export function evaluateGate(
-  deps: Pick<
+  deps: { llm: Pick<LLMProvider, 'maxContextTokens'> } & Pick<
     CompactionDeps,
-    | 'llm'
     | 'reservedOutputTokens'
     | 'staticTokens'
     | 'maxSingleToolResultTokens'
@@ -198,6 +197,24 @@ export function effectiveGate(g: GateEval, fraction: number, maxContextTokens?: 
   return maxContextTokens !== undefined && maxContextTokens > 0
     ? Math.min(fractional, maxContextTokens)
     : fractional;
+}
+
+/**
+ * openclaw-9.5-adoption item 7 — the whole-context token count at which the
+ * pre-LLM gate would compact a history in a `windowTokens` window, before any
+ * request has measured a static slice: `evaluateGate` with no messages, then
+ * `effectiveGate` with the resolved pressure (0.8 when unset, as in
+ * `maybeCompact`) and the optional absolute ceiling. Wiring uses it as the
+ * default `serverCompactionTriggerTokens`, so switching a provider to
+ * server-side compaction does not move WHEN compaction happens.
+ */
+export function pressureGateTokens(
+  windowTokens: number,
+  pressure?: number,
+  maxContextTokens?: number,
+): number {
+  const g = evaluateGate({ llm: { maxContextTokens: windowTokens } }, [], '');
+  return effectiveGate(g, pressure ?? 0.8, maxContextTokens);
 }
 
 // T3 — gate-hardening constants (generic, no per-model config).

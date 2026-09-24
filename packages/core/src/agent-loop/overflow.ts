@@ -124,8 +124,13 @@ export async function applyOverflowRetry(
     sessionKey: string;
     turnNumber: number;
     lastCompactionTurn: number;
+    /** Item 7 (D32) — `TurnSetup.serverCompaction`. While active the provider
+     *  is the turn's one compactor, so no local emergency compaction runs and
+     *  the overflow surfaces as an error. */
+    serverCompaction?: { active: boolean };
   },
 ): Promise<OverflowRetryResult> {
+  if (sessionMeta.serverCompaction?.active) return { retried: false };
   const engineName = personality.context_engine ?? deps.compaction?.defaultEngine ?? 'drop_oldest';
   const engine = deps.contextEngines.get(engineName) ?? deps.contextEngines.get('drop_oldest');
   if (!engine) return { retried: false };

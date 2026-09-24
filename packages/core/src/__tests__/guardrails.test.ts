@@ -173,7 +173,13 @@ describe('Orchestrator guardrails', () => {
     // lines) so the realtime voice host resolves a session's personality by
     // the loop's own rule; `getPersonalityBudgetCap` now delegates to it (-3).
     // The rule lives in agent-loop/stages/turn-setup.ts.
-    expect(lineCount).toBeLessThanOrEqual(1033);
+    // Bumped 1033 -> 1035 (openclaw-9.5-adoption item 7, D32): the turn's
+    // `serverCompaction` flag read off `setup` (one line) and handed to the
+    // stream-step context (one line); the overflow `meta` carries it on an
+    // existing line. The skips
+    // live in stages/context-assembly.ts, overflow.ts and turn-end.ts; the
+    // chunk handling in stages/stream-step.ts.
+    expect(lineCount).toBeLessThanOrEqual(1035);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -313,7 +319,10 @@ describe('Orchestrator guardrails', () => {
       // three in the ToolContext, one import. No logic: the store is created in
       // agent-loop.ts and the parity is pinned by
       // __tests__/tool-context-parity.test.ts.
-      if (lineCount > 517) {
+      // Bumped 517 -> 520 (openclaw-9.5-adoption item 7, D32): the turn's
+      // `serverCompaction` flag on TurnEndCtx (field + one-line doc), copied in
+      // buildTurnEndCtx, and read on the existing auto-compaction condition.
+      if (lineCount > 520) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

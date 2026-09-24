@@ -56,6 +56,107 @@ export interface Message {
   content: string | MessageContent[];
 }
 
+// ---------------------------------------------------------------------------
+// Compaction envelope — how a `compaction` chunk lives in history
+// ---------------------------------------------------------------------------
+
+/**
+ * Item 7 (D31) — a persisted `compaction` chunk is an assistant message whose
+ * string content is this prefix followed by a JSON object. The two ASCII
+ * record-separator characters keep an ordinary model reply from being read as
+ * an envelope; the JSON keeps `encrypted_content` byte-exact through
+ * `SessionStore` (its `content` column is a string, so no schema change).
+ */
+export const COMPACTION_ENVELOPE_PREFIX = '\u001eethos:compaction\u001e';
+
+/** The two fields of a `compaction` chunk, as persisted. */
+export interface CompactionEnvelope {
+  content: string | null;
+  encryptedContent: string | null;
+}
+
+/** Encode a `compaction` chunk as the string content of an assistant message. */
+export function encodeCompactionEnvelope(c: CompactionEnvelope): string {
+  return `${COMPACTION_ENVELOPE_PREFIX}${JSON.stringify({
+    content: c.content,
+    encrypted_content: c.encryptedContent,
+  })}`;
+}
+
+/** The envelope `text` carries, or `null` when it is not one (or is malformed). */
+export function decodeCompactionEnvelope(text: string): CompactionEnvelope | null {
+  if (!text.startsWith(COMPACTION_ENVELOPE_PREFIX)) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.slice(COMPACTION_ENVELOPE_PREFIX.length));
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const { content, encrypted_content } = parsed as Record<string, unknown>;
+  const ok = (v: unknown): v is string | null => v === null || typeof v === 'string';
+  if (!ok(content) || !ok(encrypted_content)) return null;
+  return { content, encryptedContent: encrypted_content };
+}
+
+/**
+ * D33 — `messages` as a provider that cannot take a compaction block must see
+ * them: each envelope becomes its readable summary as assistant text, merged
+ * into the assistant message that follows it (so roles still alternate for
+ * providers that require it), and `encryptedContent` is dropped. A null or
+ * empty summary sends nothing. Returns `messages` itself when there is no
+ * envelope. Called by every built-in provider except Anthropic with server
+ * compaction on (`toAnthropicMessages`, extensions/llm-anthropic).
+ */
+export function flattenCompactionEnvelopes(messages: Message[]): Message[] {
+  if (!messages.some(isCompactionEnvelopeMessage)) return messages;
+  const out: Message[] = [];
+  let pending = '';
+  for (const msg of messages) {
+    if (isCompactionEnvelopeMessage(msg)) {
+      const summary = decodeCompactionEnvelope(msg.content as string)?.content ?? '';
+      if (summary) pending = pending ? `${pending}\n\n${summary}` : summary;
+      continue;
+    }
+    if (pending && msg.role === 'assistant') {
+      out.push({
+        role: 'assistant',
+        content:
+          typeof msg.content === 'string'
+            ? `${pending}\n\n${msg.content}`
+            : [{ type: 'text', text: pending }, ...msg.content],
+      });
+      pending = '';
+      continue;
+    }
+    if (pending) {
+      out.push({ role: 'assistant', content: pending });
+      pending = '';
+    }
+    out.push(msg);
+  }
+  if (pending) out.push({ role: 'assistant', content: pending });
+  return out;
+}
+
+function isCompactionEnvelopeMessage(msg: Message): boolean {
+  return (
+    msg.role === 'assistant' &&
+    typeof msg.content === 'string' &&
+    decodeCompactionEnvelope(msg.content) !== null
+  );
+}
+
+/**
+ * Item 7 — the `warning` chunk message a provider emits when the API refused
+ * its server-side compaction edit and it retried the request without one
+ * (`AnthropicProvider.complete`). `streamStep` (packages/core) matches on it to
+ * record `llm.server_compaction_rejected` and let local compaction run for the
+ * rest of the turn.
+ */
+export const SERVER_COMPACTION_REJECTED_WARNING =
+  'server_compaction_rejected: the API refused the compaction edit; the request was retried without it';
+
 export type MessageContent =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }

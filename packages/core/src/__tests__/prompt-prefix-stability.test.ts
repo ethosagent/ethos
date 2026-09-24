@@ -25,6 +25,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import { DefaultPersonalityRegistry } from '../defaults/noop-personality';
+import { markServerCompaction } from '../providers/chained-provider';
 import { DefaultToolRegistry } from '../tool-registry';
 import { createTestSafety } from './helpers/test-safety';
 
@@ -242,5 +243,47 @@ describe('§6 — tools array stability under on-demand tool loading', () => {
     const turn1Final = JSON.stringify(capturedTools[1]);
     expect(turn1Final).toContain('mcp__wx__forecast');
     expect(JSON.stringify(capturedTools[2])).toBe(turn1Final);
+  });
+});
+
+// openclaw-9.5-adoption item 7 — server-side compaction rewrites the MESSAGE
+// history (a compaction block the API replays in place of what came before it),
+// never the system prompt. With the provider flagged and a compaction block in
+// turn 1, turn 2's system prompt is still byte-identical.
+describe('§6 — prefix stability with server-side compaction on', () => {
+  it('a compaction block in turn 1 leaves turn 2 system prompt byte-identical', async () => {
+    const captured: CompletionOptions[] = [];
+    const replayed: Message[][] = [];
+    let call = 0;
+    const llm = markServerCompaction({
+      ...capturingLLM(captured),
+      async *complete(
+        m: Message[],
+        _t: unknown,
+        opts: CompletionOptions,
+      ): AsyncIterable<CompletionChunk> {
+        captured.push(opts);
+        replayed.push(m.slice());
+        if (call++ === 0) {
+          yield { type: 'compaction', content: 'summary', encryptedContent: 'opaque' };
+        }
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', finishReason: 'end_turn' };
+      },
+    } satisfies LLMProvider);
+    const loop = new AgentLoop({
+      llm,
+      personalities: makePersonalities(),
+      safety: createTestSafety(),
+      injectors: [staticInjector],
+      memory: constantMemory(MEMORY_CONTENT),
+    });
+    await collect(loop.run('hello'));
+    await collect(loop.run('hello'));
+    expect(captured).toHaveLength(2);
+    expect(captured[1]?.system).toBe(captured[0]?.system);
+    expect(staticPrefix(captured[1]?.system ?? '').length).toBeGreaterThan(0);
+    // The block did reach turn 2 — in the messages, not the prompt.
+    expect(replayed[1]?.length).toBeGreaterThan(replayed[0]?.length ?? 0);
   });
 });

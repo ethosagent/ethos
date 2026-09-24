@@ -690,6 +690,7 @@ export class AgentLoop {
     const dgRemainingRef = { value: 0 };
 
     const tierEscalationRef: { value?: string } = {};
+    const { serverCompaction } = setup; // item 7 (D32) — one compactor per turn
 
     // Watcher tap. Dangerous mode neutralizes halts for this run (consumer-side).
     const watcherTap = createWatcherTap(this.safety);
@@ -779,6 +780,7 @@ export class AgentLoop {
         effectiveModel,
         modelOverride,
         providerEntry,
+        serverCompaction,
         allowedPlugins,
         allowedTools,
         filterOpts,
@@ -842,7 +844,7 @@ export class AgentLoop {
       if (stepResult.outcome === 'overflow') {
         const canRetry = !overflowRetried && this.compaction?.retryOnOverflow !== false;
         overflowRetried = true;
-        const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn };
+        const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn, serverCompaction };
         const retry = canRetry
           ? await applyOverflowRetry(this.deps, llmMessages, systemPrompt ?? '', personality, meta)
           : { retried: false };

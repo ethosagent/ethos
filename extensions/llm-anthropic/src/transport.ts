@@ -14,6 +14,12 @@ export interface AnthropicStreamParams {
   tools?: Anthropic.Tool[];
   thinking?: { type: 'enabled'; budget_tokens: number };
   betas?: string[];
+  /** Item 7 — server-side compaction (`compact_20260112`). Sent only with the
+   *  `compact-2026-01-12` beta; its presence routes the call to the beta
+   *  endpoint, whose stream carries `compaction` content blocks. */
+  context_management?: {
+    edits: Array<{ type: 'compact_20260112'; trigger: { type: 'input_tokens'; value: number } }>;
+  };
   stop_sequences?: string[];
   temperature?: number;
   top_p?: number;
@@ -31,6 +37,27 @@ export function toFinishReason(
   if (reason === 'max_tokens') return 'max_tokens';
   if (reason === 'stop_sequence') return 'stop_sequence';
   return 'end_turn';
+}
+
+/** The `type: 'compaction'` entries of a beta `message_delta` usage's
+ *  `iterations`, as `estimateCost` input. Absent on the non-beta stream. */
+function compactionIterations(usage: unknown): Array<{
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}> {
+  const iterations = (usage as { iterations?: unknown } | undefined)?.iterations;
+  if (!Array.isArray(iterations)) return [];
+  const num = (v: unknown): number => (typeof v === 'number' ? v : 0);
+  return iterations
+    .filter((it): it is Record<string, unknown> => it?.type === 'compaction')
+    .map((it) => ({
+      inputTokens: num(it.input_tokens),
+      outputTokens: num(it.output_tokens),
+      cacheReadTokens: num(it.cache_read_input_tokens),
+      cacheCreationTokens: num(it.cache_creation_input_tokens),
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +78,7 @@ export async function* streamAnthropicMessages(
   if (!streamParams.tools || streamParams.tools.length === 0) delete streamParams.tools;
   if (!streamParams.thinking) delete streamParams.thinking;
   if (!streamParams.betas) delete streamParams.betas;
+  if (!streamParams.context_management) delete streamParams.context_management;
   if (!streamParams.stop_sequences) delete streamParams.stop_sequences;
   if (streamParams.temperature === undefined) delete streamParams.temperature;
   if (streamParams.top_p === undefined) delete streamParams.top_p;
@@ -60,8 +88,16 @@ export async function* streamAnthropicMessages(
   let cacheCreationTokens = 0;
   let currentToolId: string | null = null;
   let currentBlockType: string | null = null;
+  // Item 7 — the compaction block being streamed. The SDK's own accumulator
+  // (`BetaMessageStream`, `compaction_delta`) appends `content` and REPLACES
+  // `encrypted_content`; this mirrors it.
+  let compaction: { content: string | null; encryptedContent: string | null } | null = null;
 
-  const stream = client.messages.stream(streamParams, { signal: abortSignal });
+  // A beta request (server compaction) goes to the beta endpoint: only its
+  // stream types carry `compaction` blocks and `compaction_delta` deltas.
+  const stream = streamParams.betas
+    ? client.beta.messages.stream(streamParams, { signal: abortSignal })
+    : client.messages.stream(streamParams, { signal: abortSignal });
 
   try {
     for await (const event of stream) {
@@ -88,6 +124,11 @@ export async function* streamAnthropicMessages(
               toolCallId: content_block.id,
               toolName: content_block.name,
             };
+          } else if (content_block.type === 'compaction') {
+            compaction = {
+              content: content_block.content,
+              encryptedContent: content_block.encrypted_content,
+            };
           }
           break;
         }
@@ -102,6 +143,11 @@ export async function* streamAnthropicMessages(
               toolCallId: currentToolId,
               partialJson: delta.partial_json,
             };
+          } else if (delta.type === 'compaction_delta' && compaction) {
+            if (delta.content !== null) {
+              compaction.content = (compaction.content ?? '') + delta.content;
+            }
+            compaction.encryptedContent = delta.encrypted_content;
           } else if ((delta as { type: string; thinking?: string }).type === 'thinking_delta') {
             const thinking = (delta as { type: string; thinking: string }).thinking;
             yield { type: 'thinking_delta', thinking };
@@ -113,6 +159,9 @@ export async function* streamAnthropicMessages(
           if (currentBlockType === 'tool_use' && currentToolId) {
             yield { type: 'tool_use_end', toolCallId: currentToolId, inputJson: '' };
             currentToolId = null;
+          } else if (currentBlockType === 'compaction' && compaction) {
+            yield { type: 'compaction', ...compaction };
+            compaction = null;
           }
           currentBlockType = null;
           break;
@@ -134,6 +183,12 @@ export async function* streamAnthropicMessages(
             cacheReadTokens,
             cacheCreationTokens,
           });
+          // Item 7 — the top-level usage counts only the MESSAGE iteration; a
+          // server compaction is its own sampling iteration, billed too and
+          // reported only in `usage.iterations` on the beta stream.
+          for (const it of compactionIterations(event.usage)) {
+            costEstimate.costUsd += estimateCost(params.model, it).costUsd;
+          }
           yield {
             type: 'usage',
             usage: {
