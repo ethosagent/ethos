@@ -424,6 +424,10 @@ function spoolMessageId(message: InboundMessage): string {
   return message.isEdit ? `${base}:edit:${at}` : base;
 }
 
+/** The one line a replayed message's text gets when an attachment it carried
+ *  could not be recovered (its cached file was gone). See `reviveSpooledMessage`. */
+export const ATTACHMENT_NOT_RECOVERED_NOTE = '[attachment could not be recovered]';
+
 /** `raw` is the platform's own object — unused past the adapter, possibly
  *  cyclic, and not ours to keep a second copy of — so it is not spooled. */
 function serializeInbound(message: InboundMessage): string {
@@ -4251,7 +4255,11 @@ export class Gateway {
    * Rebuild the `InboundMessage` a row was spooled from. Attachments are
    * stored by reference (plan D2-4): one whose cached file is gone is dropped
    * with a `gateway.spool_attachment_missing` event, and the turn still runs —
-   * a message with its image missing beats no message.
+   * a message with its image missing beats no message. The text then ends
+   * with {@link ATTACHMENT_NOT_RECOVERED_NOTE} (plan openclaw-9.5-adoption
+   * item 2), so the model answers knowing something is missing rather than
+   * as if the user had sent text alone. Pinned by
+   * `__tests__/inbound-spool.test.ts` ('missing attachment').
    */
   private async reviveSpooledMessage(row: SpoolRow): Promise<InboundMessage | null> {
     let parsed: unknown;
@@ -4292,6 +4300,11 @@ export class Gateway {
             details: { spoolId: row.id, platform: row.platform, type: att.type },
           });
         }
+      }
+      if (kept.length < attachments.length) {
+        message.text = message.text.trim()
+          ? `${message.text}\n\n${ATTACHMENT_NOT_RECOVERED_NOTE}`
+          : ATTACHMENT_NOT_RECOVERED_NOTE;
       }
       message.attachments = kept;
     }

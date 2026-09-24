@@ -19,7 +19,12 @@ import type {
   PlatformAdapter,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
-import { Gateway, type GatewayConfig, INTERRUPTED_RETRY_NOTICE } from '../index';
+import {
+  ATTACHMENT_NOT_RECOVERED_NOTE,
+  Gateway,
+  type GatewayConfig,
+  INTERRUPTED_RETRY_NOTICE,
+} from '../index';
 
 async function waitUntil(pred: () => boolean, timeoutMs = 2000): Promise<void> {
   const start = Date.now();
@@ -862,5 +867,56 @@ describe('inbound spool — absorbed steer rows', () => {
     await waitUntil(() => rows(spool).every((r) => r.status === 'done'));
     expect(next.texts).toHaveLength(1);
     expect(next.texts[0]).toContain('and cc finance on it');
+  });
+});
+
+// Plan openclaw-9.5-adoption item 2: a replayed message whose cached
+// attachment file is gone still runs, and says so in one line.
+describe('inbound spool — missing attachment', () => {
+  it('drops the attachment, keeps the event, and notes it in the replayed text', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    const events: Array<{ code: string }> = [];
+    seed(
+      spool,
+      msg('what is in this picture?', {
+        attachments: [
+          { type: 'image', url: 'file://gone.png', mimeType: 'image/png' },
+          { type: 'image', url: 'file://kept.png', mimeType: 'image/png' },
+        ] as never,
+      }),
+    );
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool, {
+      attachmentCache: { resolveLocalPath: (u: string) => u.slice('file://'.length) } as never,
+      storage: { exists: async (p: string) => p === 'kept.png' } as never,
+      observability: {
+        recordSafetyBlock: (e: { code: string }) => events.push(e),
+      } as never,
+    });
+    await gw.replayInboundSpool();
+    await waitUntil(() => s.texts.length === 1);
+    expect(s.texts[0]).toContain('what is in this picture?');
+    expect(s.texts[0]).toContain(ATTACHMENT_NOT_RECOVERED_NOTE);
+    expect(events.filter((e) => e.code === 'gateway.spool_attachment_missing')).toHaveLength(1);
+  });
+
+  it('adds no note when every attachment is still there', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const out = recordingAdapter();
+    seed(
+      spool,
+      msg('look', {
+        attachments: [{ type: 'image', url: 'file://kept.png', mimeType: 'image/png' }] as never,
+      }),
+    );
+    const s = scriptedLoop();
+    const gw = gateway(s.loop, out.adapter, spool, {
+      attachmentCache: { resolveLocalPath: (u: string) => u.slice('file://'.length) } as never,
+      storage: { exists: async () => true } as never,
+    });
+    await gw.replayInboundSpool();
+    await waitUntil(() => s.texts.length === 1);
+    expect(s.texts[0]).not.toContain(ATTACHMENT_NOT_RECOVERED_NOTE);
   });
 });

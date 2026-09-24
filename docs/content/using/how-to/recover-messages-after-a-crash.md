@@ -140,7 +140,7 @@ Stop the gateway gracefully while it is answering (Ctrl+C), then start it again.
 |---|---|---|
 | `ethos gateway start` or `ethos boot` exits `3` | Another gateway — a `gateway start` or a `boot` — owns this Ethos home. | Run `ethos gateway status`. Stop the running one, or leave it — `ethos run-all` and the desktop app attach to it instead of starting a second. |
 | Doctor reports owed messages "for a bot no longer configured" | The bot was removed from `config.yaml` with messages still owed. | Re-add the bot and restart; the replay delivers them. They are never dead-lettered automatically. |
-| A replayed message arrived without its image | The cached attachment file was gone at replay time. | Nothing to fix; the text still ran. Ask the sender to resend the image. |
+| A replayed message arrived without its image | The cached attachment file was gone at replay time. | Nothing to fix; the text still ran, ending with `[attachment could not be recovered]` so the agent knows. Ask the sender to resend the image. |
 | The same message was answered twice | Telegram's chunked send reports success for a partly delivered long reply, and delivery is at-least-once by design. | Expected for long replies after a crash mid-send. |
 
 Retention: `done` rows are kept 7 days with the message body removed at completion, dead rows 30 days, owed rows until answered. `ethos retention show` lists this. The spool is excluded from `ethos backup` — replaying it on another machine would answer old messages there.
