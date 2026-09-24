@@ -1,5 +1,6 @@
 import { EthosError } from '@ethosagent/types';
 import type { MiddlewareHandler } from 'hono';
+import { isSameOriginLocalhost } from '../lib/same-origin';
 
 // CSRF protection (CEO finding 3.2). With `SameSite=Strict` cookies, the
 // browser will refuse to attach our auth cookie to most cross-origin
@@ -8,7 +9,8 @@ import type { MiddlewareHandler } from 'hono';
 //
 // Localhost rule: a localhost / 127.0.0.1 / [::1] Origin passes only when its
 // host (hostname AND port) equals the request's `Host` header — true
-// same-origin (`isSameOriginLocalhost` below). A page served from any other
+// same-origin (`isSameOriginLocalhost`, ../lib/same-origin.ts — shared with
+// the WebSocket upgrade check, `originAllowed` in ../voice/voice-socket.ts). A page served from any other
 // localhost port (a dev server, a local tool) no longer passes, and
 // `localhost` vs `127.0.0.1` on the same port are different origins. Every
 // first-party client is same-origin by construction: `ethos serve` and the
@@ -107,20 +109,6 @@ function matchesWildcard(origin: string, pattern: string): boolean {
   try {
     const hostname = new URL(origin).hostname;
     return hostname === suffix || hostname.endsWith(`.${suffix}`);
-  } catch {
-    return false;
-  }
-}
-
-function isSameOriginLocalhost(origin: string, requestHost: string): boolean {
-  try {
-    const url = new URL(origin);
-    const host = url.hostname;
-    const loopback =
-      host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
-    // `url.host` drops a default port (`http://localhost:80` → `localhost`),
-    // matching how a browser omits it from `Host`.
-    return loopback && url.host === requestHost.toLowerCase();
   } catch {
     return false;
   }

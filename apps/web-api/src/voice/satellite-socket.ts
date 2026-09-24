@@ -108,11 +108,12 @@ export function createSatelliteSocket(opts: SatelliteSocketOptions): SatelliteSo
   // what a satellite sends: it is a daemon on a Pi, not a browser, so there is
   // no page origin to attest. The credential is what gates it — the same
   // `ethos_auth` cookie the browser lane presents, sent as a plain header by a
-  // non-browser client. The loopback/allowlist rule still applies to anything
-  // that DOES declare an Origin, so a hostile web page cannot open a satellite
-  // lane against a local Ethos either.
+  // non-browser client. The same-origin-localhost/allowlist rule still applies
+  // to anything that DOES declare an Origin, so a hostile web page — including
+  // one on another localhost port — cannot open a satellite lane against a
+  // local Ethos either.
   const handleUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    if (!originAllowed(req.headers.origin, opts.allowedOrigins)) {
+    if (!originAllowed(req.headers.origin, req.headers.host, opts.allowedOrigins)) {
       refuseUpgrade(socket, 403, 'Forbidden');
       return;
     }

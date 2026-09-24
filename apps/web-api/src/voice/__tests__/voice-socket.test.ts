@@ -141,6 +141,37 @@ describe('voice socket', () => {
     expect(status).toBe(403);
   });
 
+  it('refuses a loopback Origin on another localhost port', async () => {
+    const port = new URL(url).port;
+    const other = Number(port) === 1 ? 2 : Number(port) - 1;
+    const { ws } = open({ cookie: COOKIE, origin: `http://127.0.0.1:${other}` });
+    const status = await new Promise<number>((resolve) => {
+      ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));
+      ws.on('error', () => resolve(0));
+    });
+    expect(status).toBe(403);
+  });
+
+  it('refuses localhost when the upgrade was addressed to 127.0.0.1 on the same port', async () => {
+    const { ws } = open({ cookie: COOKIE, origin: `http://localhost:${new URL(url).port}` });
+    const status = await new Promise<number>((resolve) => {
+      ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));
+      ws.on('error', () => resolve(0));
+    });
+    expect(status).toBe(403);
+  });
+
+  it('accepts a same-origin loopback Origin', async () => {
+    const client = open({ cookie: COOKIE, origin: url.replace('ws:', 'http:') });
+    await new Promise<void>((resolve, reject) => {
+      client.ws.on('open', () => resolve());
+      client.ws.on('unexpected-response', (_req, res) =>
+        reject(new Error(`upgrade refused: ${res.statusCode}`)),
+      );
+    });
+    client.ws.close();
+  });
+
   it('opens a session on hello and carries its events down as binary frames', async () => {
     const client = open();
     await new Promise<void>((resolve) => client.ws.on('open', () => resolve()));
@@ -557,13 +588,33 @@ describe('voice socket — the realtime control channel', () => {
 });
 
 describe('voice socket upgrade helpers', () => {
-  it('allows loopback and configured origins, refuses everything else', () => {
-    expect(originAllowed(undefined)).toBe(true);
-    expect(originAllowed('http://localhost:5173')).toBe(true);
-    expect(originAllowed('http://127.0.0.1:3000')).toBe(true);
-    expect(originAllowed('https://evil.example')).toBe(false);
-    expect(originAllowed('https://ethos.example', ['https://ethos.example'])).toBe(true);
-    expect(originAllowed('not a url')).toBe(false);
+  it('allows a same-origin loopback, configured origins and no Origin; refuses everything else', () => {
+    // No Origin (a non-browser client) — the credential gates it.
+    expect(originAllowed(undefined, 'localhost:3000')).toBe(true);
+    expect(originAllowed(undefined, undefined)).toBe(true);
+    // Same host AND port as the upgrade's Host.
+    expect(originAllowed('http://localhost:3000', 'localhost:3000')).toBe(true);
+    expect(originAllowed('http://127.0.0.1:3000', '127.0.0.1:3000')).toBe(true);
+    expect(originAllowed('http://[::1]:3000', '[::1]:3000')).toBe(true);
+    expect(originAllowed('http://localhost', 'localhost')).toBe(true);
+    // Another localhost port: a different origin, refused.
+    expect(originAllowed('http://localhost:5173', 'localhost:3000')).toBe(false);
+    expect(originAllowed('http://127.0.0.1:8080', '127.0.0.1:3000')).toBe(false);
+    // localhost vs 127.0.0.1 on the same port are different origins.
+    expect(originAllowed('http://127.0.0.1:3000', 'localhost:3000')).toBe(false);
+    expect(originAllowed('http://localhost:3000', '127.0.0.1:3000')).toBe(false);
+    // A loopback Origin with no Host to compare against is refused.
+    expect(originAllowed('http://localhost:3000', undefined)).toBe(false);
+    // Non-loopback, malformed.
+    expect(originAllowed('https://evil.example', 'evil.example')).toBe(false);
+    expect(originAllowed('not a url', 'localhost:3000')).toBe(false);
+    // The allowlist still passes whatever the Host.
+    expect(
+      originAllowed('https://ethos.example', 'localhost:3000', ['https://ethos.example']),
+    ).toBe(true);
+    expect(
+      originAllowed('http://localhost:5173', 'localhost:3000', ['http://localhost:5173']),
+    ).toBe(true);
   });
 
   it('reads one cookie out of a header without matching a prefix', () => {
