@@ -1,4 +1,3 @@
-import { forkSession } from '@ethosagent/core';
 import type {
   ContextEvent,
   ContextLog,
@@ -9,6 +8,7 @@ import type {
   StoredMessage,
 } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
+import { forkSession } from '@ethosagent/wiring';
 
 // Thin wrapper over the `SessionStore` contract for the sessions feature.
 // Hides the store's exact method names and Date/string conversions from

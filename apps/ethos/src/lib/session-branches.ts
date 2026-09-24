@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
-import { forkSession, listBranches } from '@ethosagent/core';
 import { formatBranchList, pickBranch } from '@ethosagent/surface-kit';
 import type { SessionStore } from '@ethosagent/types';
+import { forkSession, listBranches } from '@ethosagent/wiring';
 
 export type BranchCommand = 'fork' | 'branches' | 'branch';
 
