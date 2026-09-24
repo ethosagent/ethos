@@ -287,14 +287,14 @@ There is no `cors` block in `config.yaml`. Two separate lists control which brow
 
 | Setting | Format | Governs | Enforced by |
 |---|---|---|---|
-| `ETHOS_ALLOWED_ORIGINS` (env var only) | Comma-separated. Exact origins, or `*.domain` wildcards that also match the bare domain. A wildcard on a shared hosting domain such as `*.fly.dev` stops `ethos serve` at startup | Credentialed CORS on every web API route, which reflects exact entries only. The CSRF check on `/rpc/*` and `/openapi/*`, which accepts wildcards and, once set, refuses every origin not listed. The WebSocket origin check, which accepts exact entries only | `resolveAllowedOrigins` in `apps/ethos/src/commands/serve-helpers.ts`; `resolveCorsOrigin` in `apps/web-api/src/routes/index.ts`; `csrfMiddleware` in `apps/web-api/src/middleware/csrf.ts`; `originAllowed` in `apps/web-api/src/voice/voice-socket.ts` |
-| `ETHOS_API_CORS_ORIGINS` env var, else `web.corsOrigins` in `config.yaml` | Comma-separated exact origins, or `*`. Not credentialed | CORS headers on `/v1/*` responses | `resolveCorsOrigins` in `apps/ethos/src/commands/serve-helpers.ts`; `openAiCors` in `apps/web-api/src/middleware/openai-cors.ts` |
+| `ETHOS_ALLOWED_ORIGINS` (env var only) | Comma-separated. Exact origins, or `*.domain` wildcards that also match the bare domain. A wildcard on a shared hosting domain such as `*.fly.dev` stops `ethos serve` at startup | Credentialed CORS on every web API route except `/v1/*`, which reflects exact entries only. The CSRF check on `/rpc/*` and `/openapi/*`, which accepts wildcards and, once set, refuses every origin not listed. The WebSocket origin check, which accepts exact entries only | `resolveAllowedOrigins` in `apps/ethos/src/commands/serve-helpers.ts`; `resolveCorsOrigin` in `apps/web-api/src/routes/index.ts`; `csrfMiddleware` in `apps/web-api/src/middleware/csrf.ts`; `originAllowed` in `apps/web-api/src/voice/voice-socket.ts` |
+| `ETHOS_API_CORS_ORIGINS` env var, else `web.corsOrigins` in `config.yaml` | Comma-separated exact origins, or `*`. Not credentialed | CORS on `/v1/*`, preflights included. `ETHOS_ALLOWED_ORIGINS` does not apply there | `resolveCorsOrigins` in `apps/ethos/src/commands/serve-helpers.ts`; `openAiCors` in `apps/web-api/src/middleware/openai-cors.ts` |
 
 Neither list is needed for the Mission Control desktop app in remote mode: it loads the remote server's own SPA same-origin (see [desktop remote connection security](./controls.md#desktop-remote-connection)). A browser dashboard served from another origin, such as the one in [Deploy Mission Control with a remote Ethos](../building/how-to/deploy-mission-control-remote.md), needs its exact origin in `ETHOS_ALLOWED_ORIGINS`.
 
 - Do not list `*` in `ETHOS_ALLOWED_ORIGINS`. It is not a wildcard there, so it matches nothing.
 - If you also use the server's own web UI, list the server's own origin too. Once the variable is set, the CSRF check refuses cookie requests from any origin not listed, the server's own included.
-- If a browser app calls `/v1/*` with an API key, list its origin in `ETHOS_ALLOWED_ORIGINS` as well. The key forces a CORS preflight, and the app-wide CORS layer answers that preflight from `ETHOS_ALLOWED_ORIGINS` alone. An origin listed only in `ETHOS_API_CORS_ORIGINS` gets headers on the actual response but fails the preflight.
+- If a browser app calls `/v1/*` directly, list its origin in `ETHOS_API_CORS_ORIGINS` (or `web.corsOrigins`). Listing it in `ETHOS_ALLOWED_ORIGINS` does nothing for `/v1/*`.
 
 ```bash
 # ethos serve environment
@@ -320,8 +320,7 @@ curl -s -o /dev/null -D - -X OPTIONS \
 # (no output)
 ```
 
-- Pinned by: `apps/ethos/src/commands/__tests__/serve-helpers.test.ts` (both resolvers, including the shared-domain refusal), `apps/web-api/src/__tests__/routes/cors-origin.test.ts` (`resolveCorsOrigin`), `apps/web-api/src/__tests__/middleware/csrf.test.ts`, `apps/web-api/src/__tests__/middleware/openai-cors.test.ts`
-- Limitation: `openai-cors.test.ts` tests `openAiCors` on its own, so no test covers the preflight behaviour described above.
+- Pinned by: `apps/ethos/src/commands/__tests__/serve-helpers.test.ts` (both resolvers, including the shared-domain refusal), `apps/web-api/src/__tests__/routes/cors-origin.test.ts` (`resolveCorsOrigin`), `apps/web-api/src/__tests__/middleware/csrf.test.ts`, `apps/web-api/src/__tests__/middleware/openai-cors.test.ts`, `apps/web-api/src/__tests__/routes/v1-cors-preflight.test.ts` (the full app: `/v1/*` preflights answer from the `/v1` list only, and `/rpc/*` preflights are unchanged)
 
 ### 13. Review plugin data source permissions
 

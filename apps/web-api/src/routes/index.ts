@@ -301,16 +301,23 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   // (an injected `Authorization` header), not cookies, so it does not depend on
   // credentialed CORS reflection either. Cross-origin companion origins must be
   // enumerated explicitly via `allowedOrigins`.
+  //
+  // `/v1/*` is skipped: its CORS belongs to `openAiCors` (the `/v1` origin
+  // list, not credentialed), mounted inside `openAiRoutes`. This policy used to
+  // answer every `/v1` preflight first, from the wrong list, so `openAiCors`
+  // never saw one. Pinned by ../__tests__/routes/v1-cors-preflight.test.ts.
   const corsAllowlist = opts.allowedOrigins ?? [];
-  app.use(
-    '*',
-    cors({
-      origin: (origin) => resolveCorsOrigin(origin, corsAllowlist),
-      credentials: true,
-      allowMethods: ['GET', 'POST', 'OPTIONS', 'DELETE', 'PATCH'],
-      allowHeaders: ['Authorization', 'Content-Type'],
-    }),
-  );
+  const appCors = cors({
+    origin: (origin) => resolveCorsOrigin(origin, corsAllowlist),
+    credentials: true,
+    allowMethods: ['GET', 'POST', 'OPTIONS', 'DELETE', 'PATCH'],
+    allowHeaders: ['Authorization', 'Content-Type'],
+  });
+  app.use('*', (c, next) => {
+    const path = c.req.path;
+    if (path === '/v1' || path.startsWith('/v1/')) return next();
+    return appCors(c, next);
+  });
 
   // Auth exchange is unauthenticated by definition — it's how cookies get set.
   // Mounted BEFORE the auth middleware below.
