@@ -1054,6 +1054,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/core
 
+  extensions/decision-typesafe:
+    dependencies:
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+
   extensions/delivery-ledger:
     dependencies:
       '@ethosagent/sqlite':

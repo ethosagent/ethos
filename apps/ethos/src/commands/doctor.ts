@@ -23,11 +23,15 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   configParseNotices,
+  DECISIONS_API_KEY_REF,
+  type DecisionSiteMode,
   deriveBotKey,
+  describeDecisionSiteDowngrade,
   type EthosConfig,
   ethosDir,
   readConfig,
   readRawConfig,
+  resolveDecisionsConfig,
 } from '@ethosagent/config';
 import { resolveSttProvider, resolveTtsProvider } from '@ethosagent/core';
 import {
@@ -891,6 +895,79 @@ export function providerChainLines(config: EthosConfig): string[] {
   return lines;
 }
 
+/**
+ * The decision layer as `ethos doctor` reports it (plan decision-provider-jev
+ * §7 / D7 / C4): which provider, which HOST data is sent to, and which sites
+ * send it. `configured: false` when there is no `decisions.provider`, and the
+ * text form then prints nothing. Only `shadow`/`on` sites are listed — an `off`
+ * site sends nothing — and an R6-downgraded site carries the threshold keys
+ * whose absence downgraded it (`resolveDecisionSiteMode` in packages/config).
+ */
+export interface DecisionLayerReport {
+  configured: boolean;
+  provider?: string;
+  /** `new URL(decisions.baseUrl).host` — where request bodies go. */
+  host?: string;
+  model?: string;
+  sites?: Array<{
+    site: string;
+    requested: DecisionSiteMode;
+    effective: DecisionSiteMode;
+    missingThresholds?: string[];
+  }>;
+  /** The vault ref the API key is read from, and whether a value is stored there. */
+  apiKeyRef?: string;
+  apiKeyPresent?: boolean;
+}
+
+export async function checkDecisionLayer(
+  config: EthosConfig | null,
+  secrets: Pick<SecretsResolver, 'get'>,
+): Promise<DecisionLayerReport> {
+  if (!config?.decisions) return { configured: false };
+  const r = resolveDecisionsConfig(config.decisions);
+  const key = await secrets.get(DECISIONS_API_KEY_REF).catch(() => null);
+  return {
+    configured: true,
+    provider: r.provider,
+    // `buildDecisionsConfig` only keeps a baseUrl `new URL` accepts.
+    host: new URL(r.baseUrl).host,
+    model: r.model,
+    sites: Object.entries(r.sites)
+      .filter(([, s]) => s.effective !== 'off')
+      .map(([site, s]) => ({
+        site,
+        requested: s.requested,
+        effective: s.effective,
+        ...(s.missingThresholds.length > 0 ? { missingThresholds: s.missingThresholds } : {}),
+      })),
+    apiKeyRef: DECISIONS_API_KEY_REF,
+    apiKeyPresent: key !== null && key.trim().length > 0,
+  };
+}
+
+/** The Config-section lines for {@link checkDecisionLayer}; empty when not configured. */
+export function decisionLayerLines(report: DecisionLayerReport): string[] {
+  if (!report.configured) return [];
+  const sites = (report.sites ?? []).map((s) =>
+    s.missingThresholds
+      ? `${s.site} ${c.yellow}${describeDecisionSiteDowngrade(s.missingThresholds)}${c.reset}`
+      : `${s.site} ${s.effective}`,
+  );
+  const lines = [
+    `     decisions:   ${report.provider} → ${report.host}` +
+      ` · ${sites.length > 0 ? sites.join(' · ') : 'every site off'}`,
+  ];
+  // plan §7: with no key stored every site runs today's path — say which ref.
+  if (!report.apiKeyPresent) {
+    lines.push(
+      `  ${c.yellow}⚠${c.reset}  decisions: no key at vault ref ${report.apiKeyRef} — every site runs today's path. ` +
+        `${c.dim}ethos secrets set ${report.apiKeyRef} <value>${c.reset}`,
+    );
+  }
+  return lines;
+}
+
 export async function runDoctor(args: string[] = [], options?: DoctorOptions): Promise<void> {
   if (args.includes('--recent-errors')) {
     runRecentErrorsReport();
@@ -1019,6 +1096,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
         ...(c.reason ? { reason: c.reason } : {}),
         ...(c.label ? { label: c.label } : {}),
       })),
+      decisions: await checkDecisionLayer(config, await getSecretsResolver()),
       callCapture: {
         configured: callCapture.configured,
         ok: callCapture.ok,
@@ -1072,6 +1150,10 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     // running `ethos serve` and driving the web UI would otherwise never see
     // them, and this is the command whose job is "what is wrong with my config".
     for (const line of providerChainLines(config)) console.log(line);
+    for (const line of decisionLayerLines(
+      await checkDecisionLayer(config, await getSecretsResolver()),
+    ))
+      console.log(line);
     const notices = configParseNotices(config);
     for (const err of notices.errors) console.log(`  ${c.red}✗${c.reset}  ${err}`);
     for (const warn of notices.warnings) console.log(`  ${c.yellow}⚠${c.reset}  ${warn}`);
