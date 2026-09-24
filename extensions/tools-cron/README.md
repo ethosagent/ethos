@@ -29,6 +29,7 @@ A backward-compat alias `createCronTools` is also exported.
 - The tool assumes the caller's `CronScheduler` is already started; this package never calls `scheduler.start()`.
 - Job ids are derived from `name` via `slugify` inside `@ethosagent/cron` — two jobs with names that slugify to the same id will conflict on create.
 - `create` always pins to `ctx.personalityId` — no cross-personality scheduling.
+- Every other action goes through `loadOwnedJob`: another personality's job reads as `Job not found`, `list` shows only the caller's jobs, and a missing `ctx.personalityId` is refused. `update`/`pause`/`resume`/`run`/`remove` refuse `source: 'system'` jobs (`src/__tests__/ownership.test.ts`).
 - All schedules are interpreted in the host's local time — there is no `timezone` option.
 
 ## Files
