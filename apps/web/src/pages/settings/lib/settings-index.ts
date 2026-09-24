@@ -917,6 +917,16 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       keyUnresolved: 'Vault-backed store (rpc.namedSecrets.*), not a ~/.ethos/config.yaml key.',
     },
   ]),
+  ...group('security', 'logins', [
+    {
+      key: null,
+      label: 'Logins table',
+      saves: 'self',
+      stateBacked: true,
+      keyUnresolved:
+        'Vault-backed store (rpc.credentials.*) — logins for browser_fill_credential, not a ~/.ethos/config.yaml key.',
+    },
+  ]),
   ...group('security', 'web-search-defaults', [
     {
       key: 'toolSettings._default.web_search.provider | .secret',

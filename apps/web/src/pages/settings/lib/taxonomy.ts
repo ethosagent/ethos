@@ -154,6 +154,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
       // hunting for "stop asking me every time" is actually looking for.
       section('approval-mode', 'approval mode'),
       section('named-secrets', 'named secrets'),
+      section('logins', 'logins'),
       section('web-search-defaults', 'web-search defaults'),
       // The ceiling on bytes an untrusted sender can push through a channel.
       // Not a secret, not an approval, not a search default.
