@@ -239,8 +239,11 @@ describe('C5 — the verdict cache sits in front of the decision provider', () =
       site: 'approver',
       mode: 'shadow',
       jevVerdict: 'deny',
+      // The bare verdict today's path returned, not the cache-tagged wrapper.
+      todayVerdict: { decision: 'approve', reason: 'llm says fine' },
       disagreed: true,
     });
+    expect(records[0]?.todayVerdict).not.toHaveProperty('cacheable');
     // The cached verdict is today's: the second call makes no call at all.
     expect(await approve(payload(), REASON)).toEqual(first);
     expect(j.decide).toHaveBeenCalledTimes(1);

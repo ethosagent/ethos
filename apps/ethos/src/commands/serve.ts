@@ -471,8 +471,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // assigns a `CreateAgentLoopResult.toolRegistry`, which already is one.
   let toolRegistry: DefaultToolRegistry | undefined;
   // The smart approver's decision site from the build `loop` came from
-  // (plan decision-provider-jev §8.2). Unset on the team-coordinator branch,
-  // whose build does not expose one — that approver is today's LLM reviewer.
+  // (plan decision-provider-jev §8.2), on every branch below.
   let approverDecision: SmartApproverDecisionSite | undefined;
   let mcpManager: McpManager | undefined;
   let pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
@@ -778,12 +777,14 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       goals: teamGoals,
       memoryBundle: teamMemoryBundle,
       dispose: teamDispose,
+      approverDecision: teamApproverDecision,
     } = await createTeamAgentLoop(config, teamFlag, {
       profile: loopProfile,
       ...(roleFlag ? { role: roleFlag } : {}),
     });
     loop = teamLoop;
     toolRegistry = teamToolRegistry;
+    approverDecision = teamApproverDecision;
     activeMeshName = teamMesh;
     activePersonality = coordinatorPersonality;
     setOnSkillProposed = teamSetOnSkillProposed;

@@ -141,6 +141,26 @@ interface Reviewed {
   cacheable: boolean;
 }
 
+function isReviewed(value: unknown): value is Reviewed {
+  return typeof value === 'object' && value !== null && 'verdict' in value && 'cacheable' in value;
+}
+
+/**
+ * Shadow records carry today's bare `SmartVerdict`: `cacheable` is this file's
+ * cache bookkeeping (C5), not a verdict. Pinned by
+ * `__tests__/smart-approver-decision.test.ts` ("shadow caches only today's verdict").
+ */
+function bareVerdictRecorder(recorder: DecisionSiteRecorder): DecisionSiteRecorder {
+  return {
+    recordDecisionCall: (record) =>
+      recorder.recordDecisionCall(
+        isReviewed(record.todayVerdict)
+          ? { ...record, todayVerdict: record.todayVerdict.verdict }
+          : record,
+      ),
+  };
+}
+
 /**
  * Cache key. Scoped to the exact call, NOT the tool name: an approval for
  * `rm -rf ./build` must never short-circuit `rm -rf ./src`.
@@ -311,7 +331,7 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
           // Today's path gets what is left of the outer bound.
           today: () =>
             reviewByLlm(payload, dangerReason, Math.max(0, timeoutMs - (Date.now() - started))),
-          ...(site.recorder ? { recorder: site.recorder } : {}),
+          ...(site.recorder ? { recorder: bareVerdictRecorder(site.recorder) } : {}),
         }),
         outer,
       ]);

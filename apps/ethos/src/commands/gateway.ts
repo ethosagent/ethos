@@ -125,6 +125,7 @@ import {
   type MessagingSendFn,
   type OutboxWiring,
   resolveKanbanDbPath,
+  type SmartApproverDecisionSite,
   sanitize,
   seedAllSystemJobs,
   systemJobProblem,
@@ -993,6 +994,14 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // construction below), so any loop's `createAgentLoop()` call produces
     // an equivalent closure. Absent on every other deployment.
     runCallCapture: runCallCaptureFromLoop,
+    // The smart approver's decision site (plan decision-provider-jev §8.2).
+    // `decisions.*` is operator-level — identical for every loop this process
+    // builds — so the process's shared approval predicates (the unattended
+    // gate below and `wireApprovalFlow`'s) take THIS build's, the one built
+    // from the default config, exactly as they already take the operator's
+    // `createLLM(config)` / `config.model` for the LLM reviewer. Absent → the
+    // LLM reviewer only (no `decisions.*`, or the approver site `off`).
+    approverDecision,
     dispose: disposeSystemLoop,
   } = await createAgentLoop(config, {
     cronScheduler: scheduler,
@@ -1018,6 +1027,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     getProvider: createLazyProvider(() => createLLM(config)),
     model: config.model,
     allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
+    ...(approverDecision ? { decision: approverDecision } : {}),
   });
   // Say so at boot, once, for every personality whose cron jobs can reach a
   // tool that gate refuses — before the first job fails.
@@ -1474,6 +1484,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       ? { approvalTimeoutMs: config.approvalTimeoutMs }
       : {}),
     ownerFor: (platform) => config.channelFilter?.[platform]?.ownerUserId,
+    ...(approverDecision ? { decision: approverDecision } : {}),
   });
 
   // Start the cron scheduler that was hoisted above (so agent-callable
@@ -2761,6 +2772,10 @@ export function wireApprovalFlow(
      *  decides approvals for turns started in a group chat. Required so no
      *  caller can silently fall back to requester binding in groups. */
     ownerFor: (platform: string) => string | undefined;
+    /** The smart reviewer's decision site (plan decision-provider-jev §8.2),
+     *  forwarded to every predicate built here. Operator-level config, so one
+     *  site serves every bot; absent → the LLM reviewer only. */
+    decision?: SmartApproverDecisionSite;
   },
 ): { shutdown: () => Promise<void>; pendingCount: () => number } {
   const approvalAdapters = adapters.filter(isApprovalCapable);
@@ -2769,6 +2784,7 @@ export function wireApprovalFlow(
     personalities: seams.personalities,
     getProvider: seams.getProvider,
     model: seams.model,
+    ...(seams.decision ? { decision: seams.decision } : {}),
   };
   // Wire 0: a bot with no approval surface is gated here, before the
   // early return below, so a deployment with no card-capable adapter at all
@@ -2865,6 +2881,7 @@ export function wireApprovalFlow(
     getProvider: seams.getProvider,
     model: seams.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
+    ...(seams.decision ? { decision: seams.decision } : {}),
   });
   // A turn on one of these loops that arrived through an adapter with no card
   // (an Email message that fell back to a Slack bot's loop) cannot be asked:

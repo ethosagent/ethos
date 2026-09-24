@@ -286,8 +286,8 @@ register_anchors:
   G-APP:
     - { path: packages/wiring/src/danger-predicate.ts, line: 282, contains: "mode === 'smart' && opts.smartApprove" }
     - { path: packages/wiring/src/danger-predicate.ts, line: 259, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
-    - { path: packages/wiring/src/smart-approver.ts, line: 255, contains: "reviewer gave no usable verdict" }
-    - { path: packages/wiring/src/smart-approver.ts, line: 263, contains: "reviewer error (fail-closed)" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 275, contains: "reviewer gave no usable verdict" }
+    - { path: packages/wiring/src/smart-approver.ts, line: 283, contains: "reviewer error (fail-closed)" }
     - { path: packages/wiring/src/smart-approver.ts, line: 113, contains: "export function approverVerdictFrom" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 60, contains: "export async function enforceBeforeToolCall" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 64, contains: "const denied = checkDenyRules(" }
