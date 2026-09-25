@@ -74,10 +74,11 @@ export interface CreateApprovalDangerPredicateOptions {
   /** Model the smart reviewer runs on (the primary model today). */
   model: string;
   /**
-   * Extra tools that always require approval, in every mode. All three
-   * production callers — `apps/ethos/src/commands/serve.ts` and
-   * `apps/desktop/src/main/serve.ts` (web modal) and
-   * `apps/ethos/src/commands/gateway.ts` (Slack card) — pass
+   * Extra tools that always require approval, in every mode. Every
+   * production caller — `apps/ethos/src/commands/serve.ts` and
+   * `apps/desktop/src/main/serve.ts` (web modal),
+   * `apps/ethos/src/commands/gateway.ts` (Slack card) and
+   * `apps/ethos/src/terminal-approval.ts` (CLI / TUI / ACP) — passes
    * `APPROVAL_SURFACE_ALWAYS_ASK`, the set of tools that must never run
    * unprompted on a surface that can prompt. A caller with additional
    * deployment-specific tools to gate unions them in here. Under
@@ -97,12 +98,13 @@ export interface CreateApprovalDangerPredicateOptions {
   spokenConfirmations?: SpokenConfirmationRecord;
   /**
    * Forwarded to `createDangerPredicate` — lets a personality's
-   * `approvalMode: 'off'` auto-approve flagged tools. Only the gateway
-   * systemLoop's unattended gate sets it, from the operator key
+   * `approvalMode: 'off'` auto-approve flagged tools. Set by the gateway
+   * systemLoop's unattended gate, from the operator key
    * `allowUnattendedDangerousTools` (`wireUnattendedApprovalGate`,
-   * apps/ethos/src/unattended-approval-gate.ts). Approval surfaces with a human
-   * (web modal, Slack/Telegram card, MCP export) leave it unset, so `off` stays
-   * `manual` there.
+   * apps/ethos/src/unattended-approval-gate.ts), and by the operator's own
+   * terminal (`wireTerminalApprovalGate`, apps/ethos/src/terminal-approval.ts).
+   * Surfaces a remote sender or a browser reaches (web modal, Slack/Telegram
+   * card, MCP export) leave it unset, so `off` stays `manual` there.
    */
   allowAutoApproveDangerousTools?: boolean;
   /**

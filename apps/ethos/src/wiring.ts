@@ -783,6 +783,9 @@ export interface TeamLoopInfo {
   approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
   /** `CreateAgentLoopResult.executionPostureFor` of the coordinator's build (S6 / D1(a)). */
   executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
+  /** `CreateAgentLoopResult.personalities` of the coordinator's build — what the
+   *  terminal approval gate reads `approvalMode` from (`wireTerminalApprovalGate`). */
+  personalities: import('@ethosagent/wiring').CreateAgentLoopResult['personalities'];
 }
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
@@ -851,6 +854,7 @@ export async function createTeamAgentLoop(
     drain,
     approverDecision,
     executionPostureFor,
+    personalities,
   } = await createAgentLoop(
     {
       ...coordinatorConfig,
@@ -893,6 +897,7 @@ export async function createTeamAgentLoop(
     drain,
     ...(approverDecision ? { approverDecision } : {}),
     executionPostureFor,
+    personalities,
   };
 }
 
@@ -940,6 +945,11 @@ export interface ActiveLoop {
   /** Wait out its background jobs and goal runs — `CreateAgentLoopResult.drain`;
    *  the `/model` switch drains the replaced runtime before disposing it. */
   drain: import('@ethosagent/wiring').CreateAgentLoopResult['drain'];
+  /** The approval seams of this loop's build — what `wireTerminalApprovalGate`
+   *  (./terminal-approval.ts) gates the chat loop with. */
+  personalities: import('@ethosagent/wiring').CreateAgentLoopResult['personalities'];
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
+  approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
 }
 
 export async function resolveActiveLoop(
@@ -968,6 +978,9 @@ export async function resolveActiveLoop(
       goals: teamResult.goals,
       dispose: teamResult.dispose,
       drain: teamResult.drain,
+      personalities: teamResult.personalities,
+      executionPostureFor: teamResult.executionPostureFor,
+      ...(teamResult.approverDecision ? { approverDecision: teamResult.approverDecision } : {}),
     };
   }
   const personalityId = config.activeContext?.name ?? config.personality;
@@ -986,6 +999,9 @@ export async function resolveActiveLoop(
     goals: result.goals,
     dispose: result.dispose,
     drain: result.drain,
+    personalities: result.personalities,
+    executionPostureFor: result.executionPostureFor,
+    ...(result.approverDecision ? { approverDecision: result.approverDecision } : {}),
   };
 }
 

@@ -134,9 +134,9 @@ export const SMART_MODE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
  * operator opt-in is exactly "run these without asking".
  *
  * The posture comes from {@link CreateDangerPredicateOptions.getExecutionPosture};
- * without it (CLI/TUI, which have no approval flow, and bare tests) nothing is
- * added. The approval surfaces all supply it (`createApprovalDangerPredicate`
- * requires it, packages/wiring/src/approval-seams.ts).
+ * without it (bare tests) nothing is added. The approval surfaces all supply
+ * it (`createApprovalDangerPredicate` requires it,
+ * packages/wiring/src/approval-seams.ts).
  */
 export const LOCAL_POSTURE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
   'terminal',
@@ -157,13 +157,11 @@ export const LOCAL_POSTURE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
  * `tool-processing.ts`, which emits `tool_approval_required` and then runs the
  * tool regardless). `alwaysAsk` is the mechanism that actually prompts.
  *
- * Passed by the three approval-surface entry points: `apps/ethos/src/commands/
- * serve.ts` and `apps/desktop/src/main/serve.ts` (web modal) and
- * `apps/ethos/src/commands/gateway.ts` (Slack card). CLI and TUI deliberately do
- * NOT pass it: they have no approval flow at all — only the synchronous,
- * hard-blocking `createTerminalGuardHook` — so flagging a tool there would
- * change nothing. Both tools' `description` strings say so, so the model is not
- * told a prompt exists where none does.
+ * Passed by every approval-surface entry point: `apps/ethos/src/commands/
+ * serve.ts` and `apps/desktop/src/main/serve.ts` (web modal),
+ * `apps/ethos/src/commands/gateway.ts` (Slack card), and
+ * `wireTerminalApprovalGate` (apps/ethos/src/terminal-approval.ts — the CLI
+ * prompt, the TUI modal, and the fail-closed `ethos chat -q` / ACP gate).
  *
  * `call` (outbound telephony) is listed for a different reason: the gate
  * PREDATES the capability, deliberately. The tool self-reports unavailable
@@ -220,17 +218,21 @@ export interface CreateDangerPredicateOptions {
    * (Codex flagged the prior cross-module-only invariant as security-
    * rot shaped).
    *
-   * **Exactly one production caller passes this flag:** the gateway
-   * systemLoop's unattended gate (`wireUnattendedApprovalGate` in
+   * **Two production callers pass this flag.** The gateway systemLoop's
+   * unattended gate (`wireUnattendedApprovalGate` in
    * `apps/ethos/src/unattended-approval-gate.ts`, registered by
    * `runGatewayStart`), and only when the operator sets
    * `allowUnattendedDangerousTools: true` in `config.yaml`. That loop runs
    * cron, dreams and watcher wakes — trusted local automation with nobody
-   * to ask. Every surface with a human — the web modal (`serve.ts`,
-   * `apps/desktop/src/main/serve.ts`), the Slack/Telegram card
-   * (`wireApprovalFlow` in `gateway.ts`) and the MCP export — omits it, so
-   * `off` behaves as `manual` there. CLI / TUI use the synchronous
-   * `createTerminalGuardHook` (hard-block, no approval flow).
+   * to ask. And the operator's own terminal (`wireTerminalApprovalGate` in
+   * `apps/ethos/src/terminal-approval.ts`: `ethos chat`, `ethos chat -q`,
+   * `ethos acp`), always: `off` there keeps meaning what it meant before
+   * those loops had a gate — flagged calls run unasked — except that a
+   * command-substitution call is still asked (or refused where nobody can
+   * be asked). Every surface a remote sender or a browser can reach — the
+   * web modal (`serve.ts`, `apps/desktop/src/main/serve.ts`), the
+   * Slack/Telegram card (`wireApprovalFlow` in `gateway.ts`) and the MCP
+   * export — omits it, so `off` behaves as `manual` there.
    *
    * The capability gate stays the API contract that prevents any other
    * caller from accidentally auto-approving dangerous tools.
@@ -310,12 +312,14 @@ function shellCommand(payload: BeforeToolCallPayload): string | null {
  * this module's predicate that, for every call the predicate flags, either
  * asks a human or refuses. Marked by the code that registers the gate —
  * `wireApprovalFlow` (apps/ethos/src/commands/gateway.ts: the card hook or the
- * no-surface gate, for every bot) and `wireUnattendedApprovalGate`
- * (apps/ethos/src/unattended-approval-gate.ts, the systemLoop). Read per call
- * by the terminal and process guards `composeAllTools` registers
- * (`approvalGated`), which leave an approval-required command to the gate on a
- * marked loop and refuse it on any other — CLI, TUI and ACP have no gate, so
- * nobody could approve it there. An unmarked loop is the fail-closed default.
+ * no-surface gate, for every bot), `wireUnattendedApprovalGate`
+ * (apps/ethos/src/unattended-approval-gate.ts, the systemLoop) and
+ * `wireTerminalApprovalGate` (apps/ethos/src/terminal-approval.ts: `ethos
+ * chat`, `ethos chat -q`, `ethos acp`). Read per call by the terminal and
+ * process guards `composeAllTools` registers (`approvalGated`), which leave an
+ * approval-required command to the gate on a marked loop and refuse it on any
+ * other, since nobody could approve it there. An unmarked loop is the
+ * fail-closed default.
  * A mark on a registry that is garbage-collected goes with it (WeakSet).
  */
 const hostApprovalGated = new WeakSet<HookRegistry>();
