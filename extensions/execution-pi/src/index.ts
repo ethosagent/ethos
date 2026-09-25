@@ -13,7 +13,9 @@ export {
 export { PI_RUNNER_CAPABILITIES, PI_RUNNER_NAME } from './capabilities';
 export {
   createAutoApproveGate,
+  createPersonalityGate,
   type PiGateAnswer,
+  type PiGatePersonality,
   type PiGatePolicy,
   type PiGateRequest,
   parseGateTitle,
