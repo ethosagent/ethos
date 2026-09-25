@@ -1,8 +1,8 @@
-import { safeFetch } from '@ethosagent/safety-network';
+import { type NetworkPolicy, safeFetch } from '@ethosagent/safety-network';
 import { describe, expect, it, vi } from 'vitest';
 import type { CapabilityBackends } from '../capability-resolver';
 import { resolveCapabilities } from '../capability-resolver';
-import { ScopedFetchImpl } from '../scoped/scoped-fetch';
+import { type SafeFetchFn, ScopedFetchImpl } from '../scoped/scoped-fetch';
 import { ScopedFsImpl } from '../scoped/scoped-fs';
 import { ScopedProcessImpl } from '../scoped/scoped-process';
 import { ScopedSecretsImpl } from '../scoped/scoped-secrets';
@@ -60,7 +60,7 @@ describe('resolveCapabilities', () => {
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);
   });
 
-  it('network * sentinel without personality policy yields empty set', () => {
+  it('network * sentinel without personality policy still builds a ScopedFetchImpl', () => {
     const result = resolveCapabilities(
       'tool-a',
       { network: { allowedHosts: ['*'] } },
@@ -68,6 +68,90 @@ describe('resolveCapabilities', () => {
       { safeFetch },
     );
     expect(result.scopedFetch).toBeInstanceOf(ScopedFetchImpl);
+  });
+
+  // `PersonalitySafetyConfig.network` (packages/types/src/personality.ts)
+  // documents "Empty/absent = open public internet (subject to floor)". A
+  // `['*']` tool (web_extract, browse_url, a2a_send, the delegation tools) on
+  // a personality with no `allow` list used to resolve to an EMPTY host set,
+  // so every URL answered HOST_NOT_ALLOWED before safeFetch ever ran. These
+  // cases drive the REAL `safeFetch` — only DNS and the socket are injected —
+  // so the floor that makes "open" safe is exercised, not stubbed.
+  describe("'*' tool on a personality with no allow list — real safeFetch", () => {
+    const fetched: string[] = [];
+    const fetchImpl = (async (input: string | URL | Request) => {
+      fetched.push(String(input));
+      return new Response('ok');
+    }) as typeof fetch;
+    const hosts: Record<string, string> = {
+      'example.com': '93.184.216.34',
+      'intranet.corp': '10.0.0.5',
+      'evil.example.org': '93.184.216.35',
+    };
+    const resolveHost = async (hostname: string) => [hosts[hostname] ?? '93.184.216.99'];
+    const realSafeFetch: SafeFetchFn = (url, opts) =>
+      safeFetch(url, { ...opts, fetchImpl, resolveHost });
+    const webExtractShape = { network: { allowedHosts: ['*'] } };
+
+    const scopedFetchFor = (policy?: NetworkPolicy) =>
+      resolveCapabilities(
+        'web_extract',
+        webExtractShape,
+        { sessionId: 's', personalityId: 'engineer' },
+        {
+          safeFetch: realSafeFetch,
+          ...(policy ? { personalityNetworkPolicy: () => policy } : {}),
+        },
+      ).scopedFetch;
+
+    it('reaches a public host when the personality declares no safety.network', async () => {
+      fetched.length = 0;
+      const res = await scopedFetchFor()?.fetch('https://example.com/article');
+      expect(res?.status).toBe(200);
+      expect(fetched).toEqual(['https://example.com/article']);
+      // Same answer when a resolver exists but returns the empty policy.
+      await expect(scopedFetchFor({})?.fetch('https://example.com/a')).resolves.toBeInstanceOf(
+        Response,
+      );
+    });
+
+    it('treats an explicit empty allow list as open, per the type doc', async () => {
+      await expect(
+        scopedFetchFor({ allow: [] })?.fetch('https://example.com/a'),
+      ).resolves.toBeInstanceOf(Response);
+    });
+
+    it('still refuses a private-range host through the safeFetch floor', async () => {
+      fetched.length = 0;
+      await expect(scopedFetchFor()?.fetch('http://intranet.corp/admin')).rejects.toThrow(
+        /HOST_NOT_ALLOWED: .*private/i,
+      );
+      await expect(
+        scopedFetchFor()?.fetch('http://169.254.169.254/latest/meta-data'),
+      ).rejects.toThrow(/HOST_NOT_ALLOWED/);
+      expect(fetched).toEqual([]);
+    });
+
+    it('still refuses a deny-listed host', async () => {
+      fetched.length = 0;
+      await expect(
+        scopedFetchFor({ deny: ['evil.example.org'] })?.fetch('https://evil.example.org/x'),
+      ).rejects.toThrow(/deny list/);
+      expect(fetched).toEqual([]);
+    });
+
+    it('a declared-host tool on an empty allow list keeps its own hosts', async () => {
+      const resolved = resolveCapabilities(
+        'web_search',
+        { network: { allowedHosts: ['example.com'] } },
+        { sessionId: 's' },
+        { safeFetch: realSafeFetch, personalityNetworkPolicy: () => ({ allow: [] }) },
+      ).scopedFetch;
+      await expect(resolved?.fetch('https://example.com/q')).resolves.toBeInstanceOf(Response);
+      await expect(resolved?.fetch('https://evil.example.org/q')).rejects.toThrow(
+        /HOST_NOT_ALLOWED/,
+      );
+    });
   });
 
   it('secrets capability creates ScopedSecretsImpl on secretsResolver', () => {

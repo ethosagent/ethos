@@ -775,7 +775,7 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
       approvalMode: 'off',
       network: { allow_private_urls: true },
       injectionDefense: { postReadDowngrade: { enabled: false } },
-      observability: { storeToolBodies: 'full' },
+      observability: { storeToolArgs: 'full' },
     },
   };
 
@@ -829,7 +829,23 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
     expect(status(sheet, 'G-APP')).toBe('relaxed');
     expect(row(sheet, 'G-APP')).toContain('approvalMode off');
     expect(status(sheet, 'G-RED')).toBe('relaxed');
-    expect(row(sheet, 'G-RED')).toContain('tool bodies full');
+    expect(row(sheet, 'G-RED')).toContain('tool args full');
+  });
+
+  // Nothing stores a tool's result body: the tool_call span is closed with
+  // `result_size_bytes` only (`processTools`,
+  // packages/core/src/agent-loop/stages/tool-processing.ts). So
+  // `storeToolBodies` changes nothing written to observability.db, and the
+  // sheet must not report it as a relaxation.
+  it('reports storeToolBodies as reserved, not as a change to what is written', () => {
+    const bodiesOnly: PersonalityConfig = {
+      id: 'bodies',
+      name: 'Bodies',
+      safety: { observability: { storeToolBodies: 'full' } },
+    };
+    const sheet = renderCharacterSheet(bodiesOnly, soulMd);
+    expect(status(sheet, 'G-RED')).toBe('enforced');
+    expect(row(sheet, 'G-RED')).toContain('storeToolBodies full is reserved');
   });
 
   it('reports a narrowed injection pipeline as relaxed-but-never-off (no opt-out)', () => {
@@ -858,6 +874,21 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
     expect(row(sheet, 'G-RED')).toContain('+1 pattern');
     expect(status(sheet, 'G-APP')).toBe('enforced');
     expect(row(sheet, 'G-APP')).toContain('2 deny rules bind first');
+  });
+
+  // A bare `*` matches every host (`hostnameMatches`,
+  // packages/safety/network/src/policy.ts), so `allow: ['*']` — what every
+  // recipe-installed personality is written with (`defaultRecipeSafety`) — is
+  // the open policy, not a one-host allowlist.
+  it("does not report allow: ['*'] as a host allowlist", () => {
+    const open: PersonalityConfig = {
+      ...tight,
+      safety: { network: { allow: ['*'] } },
+    };
+    const sheet = renderCharacterSheet(open, soulMd);
+    expect(status(sheet, 'G-NET')).toBe('enforced');
+    expect(row(sheet, 'G-NET')).not.toContain('host allowlist');
+    expect(row(sheet, 'G-CAP')).not.toContain('network allowlist');
   });
 
   it('states both the allowlist and the private-network opt-in when a personality does both', () => {

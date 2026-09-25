@@ -505,7 +505,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       },
     });
     tools.register({
-      name: 'web_post',
+      name: 'web_extract',
       description: 'p',
       schema: { type: 'object' },
       capabilities: {},
@@ -519,14 +519,14 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
         finishReason: 'tool_use',
       },
       {
-        toolCalls: [{ id: 't2', name: 'web_post', input: { url: 'http://x' } }],
+        toolCalls: [{ id: 't2', name: 'web_extract', input: { url: 'http://x' } }],
         finishReason: 'tool_use',
       },
       { text: 'ok', finishReason: 'end_turn' },
     ]);
 
     // Disable the post-read downgrade so we exercise the watcher path,
-    // not the Ch.3d block (which would also reject the web_post here).
+    // not the Ch.3d block (which would also reject the web_extract here).
     const personalities = new DefaultPersonalityRegistry();
     personalities.define({
       id: 'default',
@@ -558,7 +558,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
   // the next iteration, so the dangerous tool ran anyway.
   it('does not call execute() when watcher terminates on tool_start in the same batch', async () => {
     const { Watcher, suspiciousSequenceRule } = await import('@ethosagent/safety-watcher');
-    let webPostCalls = 0;
+    let webExtractCalls = 0;
     const tools = new DefaultToolRegistry();
     tools.register({
       name: 'read_file',
@@ -571,12 +571,12 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       },
     });
     tools.register({
-      name: 'web_post',
+      name: 'web_extract',
       description: 'p',
       schema: { type: 'object' },
       capabilities: {},
       async execute(): Promise<ToolResult> {
-        webPostCalls++;
+        webExtractCalls++;
         return { ok: true, value: 'posted' };
       },
     });
@@ -586,7 +586,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
         finishReason: 'tool_use',
       },
       {
-        toolCalls: [{ id: 't2', name: 'web_post', input: { url: 'http://x' } }],
+        toolCalls: [{ id: 't2', name: 'web_extract', input: { url: 'http://x' } }],
         finishReason: 'tool_use',
       },
       { text: 'ok', finishReason: 'end_turn' },
@@ -608,7 +608,7 @@ describe('AgentLoop — Ch.3d post-untrusted-read downgrade', () => {
       safety: createTestSafety({ watcher }),
     });
     await collect(loop.run('go'));
-    expect(webPostCalls).toBe(0);
+    expect(webExtractCalls).toBe(0);
   });
 });
 

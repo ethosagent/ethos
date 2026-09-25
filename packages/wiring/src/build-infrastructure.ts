@@ -212,8 +212,10 @@ export function createPersonalityFsWriteDenyResolver(
  * nothing until the process was rebuilt.
  *
  * An id the registry does not know degrades to the empty policy — the same
- * value an absent `safety.network` block yields, and the narrower of the two
- * directions under the resolver's current semantics.
+ * value an absent `safety.network` block yields: open public internet under
+ * the `safeFetch` floor (`resolveCapabilities`, packages/core/src/
+ * capability-resolver.ts). The unknown id gets no allow list and no deny list
+ * of its own, which is why the fallback is logged.
  */
 export function createPersonalityNetworkPolicyResolver(
   personalities: Pick<PersonalityRegistry, 'get' | 'getDefault'>,

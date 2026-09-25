@@ -59,7 +59,7 @@ export interface ToolCapabilities {
 ### Notes {#tool-capabilities-notes}
 
 - A tool that touches no external surface declares `capabilities: {}`. The `capabilities` field is required on `Tool<TArgs>`.
-- `network.allowedHosts: ['*']` means "whatever the personality allows." The wildcard is not "all hosts" -- it defers to the personality's `safety.network.allow` list. If the personality has no allow list, the resolved host set is empty.
+- `network.allowedHosts: ['*']` means "whatever the personality allows." The wildcard defers to the personality's `safety.network.allow` list. If the personality has no allow list (absent or `[]`), the tool can reach any public host; `safeFetch` still refuses private ranges, cloud-metadata hosts, non-http(s) schemes and the `deny` list (`resolveCapabilities` in `packages/core/src/capability-resolver.ts`).
 - `fs_reach.read: 'from-personality'` and `fs_reach.write: 'from-personality'` are the conventional choice for generic file tools (`read_file`, `write_file`). Tool-specific paths are for tools that know their exact filesystem footprint (e.g. a config reader that only touches `~/.ethos/config.yaml`).
 
 ## StorageScope {#storage-scope}

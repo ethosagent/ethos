@@ -88,7 +88,7 @@ ethos personality show <id>
 
 ### 4. Declare network policy per personality
 
-Personalities with web tools (`web_extract`, the browser tools) should declare `safety.network.allow` in their `config.yaml`. Without it, a tool that declares `allowedHosts: ['*']` — `web_extract` among them — reaches no host at all, and a tool that names its own hosts reaches exactly those. The list takes hosts only: an exact host or a leading `*.` pattern, no ports. A bare `*` does not mean "any host"; `safeFetch` refuses every host under it. The global SSRF, scheme-allowlist, and cloud-metadata controls apply to all personalities either way. See [Security controls -- network](./controls.md#per-personality-network-policy).
+Personalities with web tools (`web_extract`, `browse_url`, `browser_navigate`) should declare `safety.network.allow` in their config. A personality without an allow list (absent, `[]`, or `['*']`) can reach any public host -- the global SSRF, scheme-allowlist, and cloud-metadata controls still apply to all personalities. See [Security controls -- network](./controls.md#per-personality-network-policy).
 
 ```yaml
 # In the personality's config.yaml
