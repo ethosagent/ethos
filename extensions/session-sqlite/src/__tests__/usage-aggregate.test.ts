@@ -102,6 +102,37 @@ describe('usageAggregate', () => {
     expect(await store.usageAggregate({ ...past, dimension: 'day' })).toEqual([]);
   });
 
+  // Plan openclaw-2026.9.6-gaps D5 — one bot's spend is the sessions whose key
+  // starts with its lane prefix (`buildLaneKey(platform, botKey)` + ':').
+  it('keyPrefix narrows to sessions whose key starts with it, literally', async () => {
+    for (const [key, cost] of [
+      ['telegram:bot_1:c1', 1],
+      ['telegram:bot_1:c2:1700000000000', 2],
+      ['telegram:botX1:c1', 4], // `_` must not match any character
+      ['slack:bot_1:c1', 8],
+    ] as const) {
+      const s = await store.createSession({ ...base, key } as never);
+      await store.appendMessage({
+        sessionId: s.id,
+        role: 'assistant',
+        content: 'x',
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          estimatedCostUsd: cost,
+        },
+      });
+    }
+    const rows = await store.usageAggregate({
+      ...window,
+      dimension: 'day',
+      keyPrefix: 'telegram:bot_1:',
+    });
+    expect(rows.reduce((sum, r) => sum + r.estimatedCostUsd, 0)).toBe(3);
+  });
+
   it('ignores rows with no token counts', async () => {
     const s = await store.createSession({ ...base, key: 'k3' } as never);
     // A user message has no usage — it is not a billable row.

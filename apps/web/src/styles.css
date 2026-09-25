@@ -2013,6 +2013,16 @@ body,
   min-width: 0;
 }
 
+/* The session's spend (U3) — a usage counter, so Geist Mono tabular in
+   `--text-tertiary` (DESIGN.md "Typography"), read-only beside the title. */
+.personality-bar-session-cost {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--ethos-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
 .personality-bar-rename {
   display: inline-flex;
   align-items: center;
@@ -2621,28 +2631,29 @@ textarea {
    control strip, and the speaking indicator. Reuses existing tokens and the
    composer's AudioBars meter; the accent agent-speaking pulse is the one new
    pattern (see DESIGN.md "In-call speaking indicator"). */
-/* Settings → Voice → Delivery status. Rows of mono counts, not tiles: the
-   ledger is data, and "cards earn existence" means four boxes do not. */
-.voice-delivery-stats {
+/* Activity → Usage and Deliveries tabs (U3, U5). Rows of mono counts, not
+   tiles: a ledger and a spend total are data, and "cards earn existence" means
+   four boxes do not. */
+.activity-stats {
   display: flex;
   flex-wrap: wrap;
   gap: 24px;
 }
 
-.voice-delivery-stat {
+.activity-stat {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.voice-delivery-mono {
+.activity-mono {
   font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   color: var(--ethos-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
-.voice-delivery-count {
+.activity-count {
   font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 20px;
   line-height: 1.3;
@@ -2650,7 +2661,7 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-.voice-delivery-split {
+.activity-split {
   opacity: 0.75;
 }
 

@@ -649,6 +649,8 @@ ethos usage --since 7d
 ethos usage --since 24h --json
 ```
 
+The web dashboard shows the same totals under Activity → **Usage**. Both fold the rows with `summarizeUsageRows` in `extensions/session-sqlite/src/index.ts`. Turn outcomes and `--by tool|skill` are CLI-only.
+
 ## ethos claw {#ethos-claw}
 
 Migrate an OpenClaw install (`~/.claw/`) into Ethos (`~/.ethos/`). Idempotent.

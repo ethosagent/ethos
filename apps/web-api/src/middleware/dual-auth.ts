@@ -53,6 +53,9 @@ export const SCOPE_MAP: Record<string, Record<string, string>> = {
     contextAnatomy: 'sessions:read',
     compact: 'sessions:write',
   },
+  // U3 — spend and tokens aggregated from session message rows: a read of
+  // sessions, so it takes the same scope as `sessions.get`.
+  usage: { summary: 'sessions:read' },
   chat: { send: 'chat:send', abort: 'chat:send', steer: 'chat:send' },
   personalities: {
     list: 'personalities:read',

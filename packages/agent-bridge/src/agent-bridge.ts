@@ -84,6 +84,9 @@ interface BridgeEventMap {
     audience: 'internal' | 'user' | 'dashboard' | undefined,
   ];
   usage: [inputTokens: number, outputTokens: number, estimatedCostUsd: number];
+  /** S4/U1 — an early safety stop (budget or watcher). Forwarded whole; a
+   *  surface renders it with `haltNotice` (@ethosagent/core). A `done` follows. */
+  halt: [halt: Omit<Extract<AgentEvent, { type: 'halt' }>, 'type'>];
   error: [error: string, code: string];
   // B3 — the trailing `traceId` mirrors the optional AgentEvent field: the
   // turn's observability trace id, or undefined when no adapter is wired.
@@ -378,6 +381,11 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
           case 'usage':
             this.emit('usage', event.inputTokens, event.outputTokens, event.estimatedCostUsd);
             break;
+          case 'halt': {
+            const { type: _type, ...halt } = event;
+            this.emit('halt', halt);
+            break;
+          }
           case 'error':
             clearTimeout(timeoutHandle);
             this.flushText();

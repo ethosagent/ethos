@@ -39,7 +39,7 @@ Platform adapters (Slack, Telegram, Discord, etc.) all emit the same `InboundMes
 - `/new` and `/personality <id>` both fork a session by writing `${laneKey}:${Date.now()}`. If two `/new` commands arrive in the same millisecond, they will collide. In practice impossible, but worth knowing.
 - The reply is always sent as a single `parseMode: 'markdown'` message. Adapters that can't render markdown should normalise on the way out.
 - Send failures inside the turn loop are silently swallowed. There is intentionally no retry — the adapter owns retry semantics for its platform.
-- The slash command list is hard-coded (`PLATFORM_COMMANDS`, `src/index.ts:86`). Adding a command means editing this file, not registering elsewhere.
+- The slash command list is hard-coded (`PLATFORM_COMMANDS` in `src/index.ts`). Adding a command means three edits: the entry in `SLASH_COMMANDS` (`packages/surface-kit/src/slash-commands.ts`) with `'gateway'` in its `surfaces`, the `PLATFORM_COMMANDS` key, and its branch in `Gateway.handleMessage`. `src/__tests__/slash-registry-drift.test.ts` fails when the first two disagree.
 - `sessionLane.length` includes the in-flight task. The "currently processing" task counts as 1.
 - Lanes are never garbage collected — once a chat has produced a message, its `SessionLane` and entries in `sessionKeys` / `personalityIds` / `usageStore` live for the process lifetime. Fine for typical bot deployments; a concern for very long-running multi-tenant gateways.
 

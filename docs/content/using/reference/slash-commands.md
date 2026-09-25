@@ -4,7 +4,7 @@ description: "Every /command available inside ethos chat — session, personalit
 kind: reference
 audience: user
 slug: slash-commands
-updated: 2026-05-12
+updated: 2026-09-25
 ---
 
 Slash commands run synchronously inside `ethos chat` and do not count as a turn. They start with `/` as the first character; anything else is sent to the agent.
@@ -74,6 +74,10 @@ Cost    : $0.04826
 ## /budget {#slash-budget}
 
 Show running spend against [`budgetCapUsd`](./personality-yaml.md#budget-cap-usd). `reset` clears the counter so the next turn can proceed past the cap.
+
+Also available on channel bots (Telegram, Slack, Discord, WhatsApp, Email), where it reads and resets the chat's current session. In a group chat only the owner set in `channel_filter.<platform>.ownerUserId` can run `/budget reset`; a group on a platform with no owner refuses it (`Gateway.handleBudgetCommand` in `extensions/gateway/src/index.ts`).
+
+When the cap stops a turn part-way, every surface shows the cap and the reset command in one notice (`haltNotice` in `packages/core/src/agent-loop/budgets.ts`).
 
 Synopsis: `/budget [reset]`
 

@@ -113,7 +113,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'budget',
     description: 'Show session spend against cap',
     usage: '/budget [reset]',
-    surfaces: ['cli'],
+    surfaces: ['cli', 'gateway'],
   },
   {
     name: 'verbose',
@@ -206,6 +206,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'voice',
     description: 'Set voice reply mode (off|mirror_inbound|all)',
     usage: '/voice [off|mirror_inbound|all]',
+    surfaces: ['gateway'],
+  },
+  {
+    name: 'mute',
+    description: 'Hold background notices in this chat for a while',
+    usage: '/mute <30m|2h|1d|off>',
     surfaces: ['gateway'],
   },
 ];
