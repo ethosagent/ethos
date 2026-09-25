@@ -14,6 +14,7 @@ import {
   DECISION_SITES,
   DECISIONS_API_KEY_REF,
   type DecisionsConfig,
+  decisionToolEnabled,
   resolveDecisionsConfig,
   resolvePersonalityDecisionSite,
 } from '@ethosagent/config';
@@ -43,7 +44,9 @@ export async function resolveCharacterSheetDecisions(
   if (!declared) return undefined;
   const global = config?.decisions ? resolveDecisionsConfig(config.decisions) : undefined;
   const provider = declared.provider?.trim() || undefined;
-  const configured = provider !== undefined && global?.provider === provider;
+  // The `decide` tool's own gate (plan decision-tool D6/D15), so the sheet's
+  // `tool: decide` line cannot claim a tool the loop hides.
+  const configured = decisionToolEnabled(declared, global);
   const approvalMode = personality.safety?.approvalMode ?? 'manual';
 
   const sites = DECISION_SITES.map((site) => {
