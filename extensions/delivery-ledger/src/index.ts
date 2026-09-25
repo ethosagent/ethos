@@ -15,7 +15,8 @@ import Database, { migrate } from '@ethosagent/sqlite';
 //   1. `record()` writes a `pending` row BEFORE the platform call.
 //   2. `markDelivered()` flips it to `delivered` only once the adapter
 //      CONFIRMED (`DeliveryResult.ok === true`).
-//   3. On boot the gateway sweeps `pending` rows it owns and redelivers them.
+//   3. On boot, and then on a timer (`Gateway.startDeliverySweep`), the gateway
+//      sweeps `pending` rows it owns and redelivers them.
 //
 // "Confirmed" deliberately does NOT mean "the promise resolved". Every real
 // adapter catches platform failures and returns `{ ok: false }` rather than
@@ -204,6 +205,23 @@ export interface DeliveryLedger {
    */
   abandonStale(botKeys: readonly string[], cutoffMs: number): Promise<DeliveryObligation[]>;
   /**
+   * Return every `redelivering` row claimed before `cutoffMs` to `pending`.
+   * Returns rows reclaimed.
+   *
+   * A claim is held only for the length of one adapter call, so a claim older
+   * than a minutes-scale cutoff belongs to a process that died mid-redelivery.
+   * Without this the row sat claimed until {@link abandonStale}'s days-long
+   * cutoff and was then abandoned — a reply lost instead of retried (plan
+   * openclaw-2026.9.6-gaps R11). The gateway calls it at the top of every
+   * sweep (`Gateway.sweepPendingDeliveries`).
+   *
+   * Not ownership-filtered: a reclaimed row goes back to `pending`, where only
+   * a process that owns its `botKey` will list and claim it again. Keyed on
+   * `claimed_at` (schema v5), never `created_at` — an old obligation claimed a
+   * second ago is a live send.
+   */
+  reclaimStaleClaims(cutoffMs: number): Promise<number>;
+  /**
    * Delete terminal rows — `delivered` and `abandoned` — created before
    * `cutoffMs`. Returns rows removed.
    *
@@ -256,7 +274,12 @@ const SCHEMA = `
     media_format TEXT,
     -- v4, appended last for the same column-order reason. NULL for every
     -- reply no spooled inbound message owes, and for every pre-v4 row.
-    inbound_ref  TEXT
+    inbound_ref  TEXT,
+    -- v5, appended last for the same reason. When the row was claimed (moved
+    -- to 'redelivering'); set by claim(), cleared by release() and
+    -- reclaimStaleClaims(), which reads it on 'redelivering' rows only to tell
+    -- a stranded claim from a live one.
+    claimed_at   INTEGER
   ) STRICT;
 
   CREATE INDEX IF NOT EXISTS delivery_status_bot ON delivery_obligations(status, bot_key);
@@ -298,6 +321,17 @@ const MIGRATIONS = {
   // replayed turn can tell that its reply already exists (hasObligationFor).
   4: (db: Database.Database): void => {
     db.exec('ALTER TABLE delivery_obligations ADD COLUMN inbound_ref TEXT');
+  },
+  // v4 → v5: record when a row was claimed, so a claim stranded by a dead
+  // process can be returned to `pending` (reclaimStaleClaims). A claim that
+  // already exists has no known time; it is stamped NOW rather than left NULL
+  // or treated as ancient, so it is reclaimed only after a full cutoff — an
+  // older process that took it may still be mid-send.
+  5: (db: Database.Database): void => {
+    db.exec('ALTER TABLE delivery_obligations ADD COLUMN claimed_at INTEGER');
+    db.prepare(`UPDATE delivery_obligations SET claimed_at = ? WHERE status = 'redelivering'`).run(
+      Date.now(),
+    );
   },
 };
 
@@ -390,7 +424,7 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
 
     migrate(this.db, {
       name: 'delivery-ledger',
-      targetVersion: 4,
+      targetVersion: 5,
       baseline: SCHEMA,
       migrations: MIGRATIONS,
     });
@@ -454,10 +488,10 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
     const claim = this.db.transaction((): boolean => {
       const result = this.db
         .prepare(
-          `UPDATE delivery_obligations SET status = 'redelivering'
+          `UPDATE delivery_obligations SET status = 'redelivering', claimed_at = ?
            WHERE id = ? AND status = 'pending'`,
         )
-        .run(id);
+        .run(Date.now(), id);
       return result.changes === 1;
     });
     return claim();
@@ -472,10 +506,23 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
     // guard keeps a release from resurrecting an already-delivered row.
     this.db
       .prepare(
-        `UPDATE delivery_obligations SET status = 'pending'
+        `UPDATE delivery_obligations SET status = 'pending', claimed_at = NULL
          WHERE id = ? AND status = 'redelivering'`,
       )
       .run(id);
+  }
+
+  async reclaimStaleClaims(cutoffMs: number): Promise<number> {
+    // `claimed_at IS NOT NULL` is deliberate: a NULL on a claimed row can only
+    // come from a pre-v5 process still running on a migrated file (the v5 step
+    // stamps every claim it finds), and that process may be mid-send. Its row
+    // keeps the `abandonStale` backstop it always had.
+    return this.db
+      .prepare(
+        `UPDATE delivery_obligations SET status = 'pending', claimed_at = NULL
+         WHERE status = 'redelivering' AND claimed_at IS NOT NULL AND claimed_at < ?`,
+      )
+      .run(cutoffMs).changes;
   }
 
   async get(id: string): Promise<DeliveryObligation | null> {

@@ -2,12 +2,13 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GATEWAY_LOCK_EXIT_CODE } from '@ethosagent/wiring';
+import { CONFIG_INVALID_EXIT_CODE, GATEWAY_LOCK_EXIT_CODE } from '@ethosagent/wiring';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   __testing__,
   buildChildLaunchArgs,
   type ChildSpec,
+  CONFIG_INVALID_EXIT_CODE as CONFIG_INVALID_EXIT_CODE_MIRROR,
   childExitDecision,
   defaultChildSpecs,
   GATEWAY_LOCK_HELD_EXIT_CODE,
@@ -222,6 +223,16 @@ describe('run-all — gateway exit 3 is terminal', () => {
     expect(childExitDecision(gateway, 1, null)).toBe('restart');
     expect(childExitDecision(gateway, null, 'SIGKILL')).toBe('restart');
     expect(childExitDecision(serve, 3, null)).toBe('restart');
+  });
+
+  // Plan openclaw-2026.9.6-gaps R3: a gateway that exits 78 has a config it
+  // cannot start from; restarting it cannot change that.
+  it('mirrors the config-invalid exit code and never restarts a gateway that exits 78', () => {
+    expect(CONFIG_INVALID_EXIT_CODE_MIRROR).toBe(CONFIG_INVALID_EXIT_CODE);
+    const [gateway, serve] = defaultChildSpecs();
+    if (!gateway || !serve) throw new Error('specs');
+    expect(childExitDecision(gateway, CONFIG_INVALID_EXIT_CODE, null)).toBe('terminal');
+    expect(childExitDecision(serve, CONFIG_INVALID_EXIT_CODE, null)).toBe('restart');
   });
 
   function fakeSpawn() {

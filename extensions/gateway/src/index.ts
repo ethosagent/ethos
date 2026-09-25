@@ -302,6 +302,22 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
 const SPOOL_DEFAULT_MAX_ATTEMPTS = 3;
 const SPOOL_DEFAULT_MAX_REPLAY_AGE_MS = 24 * 60 * 60 * 1000;
 const SPOOL_DEFAULT_REPLAY_INTERVAL_MS = 60_000;
+/** Default period of {@link Gateway.startDeliverySweep}'s timer. */
+const DELIVERY_SWEEP_DEFAULT_INTERVAL_MS = 60_000;
+/**
+ * A timer tick skips `pending` rows younger than this. Every reply path writes
+ * its obligation BEFORE the platform call (`beginDelivery`), so a young
+ * `pending` row may be a send still in flight — here or in a peer sharing the
+ * ledger — and redelivering it would double-send. The boot sweep has no live
+ * sends to collide with and takes every row.
+ */
+const DELIVERY_SWEEP_MIN_AGE_MS = 60_000;
+/**
+ * A `redelivering` claim older than this is stranded (its claimant died
+ * mid-send) and goes back to `pending` at the top of each sweep
+ * (`DeliveryLedger.reclaimStaleClaims`). A claim spans one adapter call.
+ */
+const DELIVERY_CLAIM_STALE_MS = 5 * 60_000;
 
 /**
  * What {@link Gateway.acceptInbound} decided for one inbound message: the
@@ -390,6 +406,20 @@ function laneKeyOf(
  */
 export const INTERRUPTED_RETRY_NOTICE =
   '⚠ Your message was interrupted after actions had started, so it was not re-run automatically. Reply `retry` to run it again.';
+
+/**
+ * Sent once when a message's turn fails for the last allowed time and its spool
+ * row is dead-lettered (plan openclaw-2026.9.6-gaps R7) — the user otherwise
+ * sees only the per-attempt error replies and never learns nothing will retry.
+ * Names the row so an operator can re-run it; the body is kept 30 days
+ * (`INBOUND_SPOOL_DEAD_RETENTION_MS`, apps/ethos/src/lib/gateway-inbound-durability.ts).
+ */
+export function deadLetteredNotice(spoolId: string): string {
+  return (
+    '⚠ Your message failed repeatedly and will not be retried automatically. ' +
+    `An operator can re-run it with \`ethos gateway spool replay ${spoolId}\`.`
+  );
+}
 
 /** How long an interrupted row answers to `retry` (plan D5). */
 const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -837,6 +867,13 @@ export interface GatewayConfig {
    * having its replies delivered.
    */
   deliveryLedger?: DeliveryLedger;
+  /**
+   * Period of the delivery-ledger sweep {@link Gateway.startDeliverySweep}
+   * arms, so an obligation left `pending` by a transient platform failure is
+   * retried on a long-running gateway rather than at the next restart.
+   * Default 60s; 0 disables the timer (the boot sweep still runs).
+   */
+  deliverySweepIntervalMs?: number;
   /**
    * "Does bot `botKey` still speak for `personalityId`?" — the binding re-check
    * {@link Gateway.deliverPublication} runs before it publishes an approved
@@ -1369,6 +1406,10 @@ export class Gateway {
   private replayInFlight: Promise<{ replayed: number; deferred: number; dead: number }> | undefined;
   private spoolReplayTimer: ReturnType<typeof setInterval> | undefined;
   private orphansRecovered = false;
+  private readonly deliverySweepIntervalMs: number;
+  private deliverySweepTimer: ReturnType<typeof setInterval> | undefined;
+  /** The sweep running now, shared by every caller so two never overlap. */
+  private deliverySweepInFlight: Promise<{ redelivered: number; failed: number }> | undefined;
   /** Spool bookkeeping for the turn running on each lane (steer absorption). */
   private readonly spoolTurns = new Map<string, SpoolTurnState>();
   /**
@@ -1633,6 +1674,8 @@ export class Gateway {
       config.inboundSpoolOptions?.maxReplayAgeMs ?? SPOOL_DEFAULT_MAX_REPLAY_AGE_MS;
     this.spoolReplayIntervalMs =
       config.inboundSpoolOptions?.replayIntervalMs ?? SPOOL_DEFAULT_REPLAY_INTERVAL_MS;
+    this.deliverySweepIntervalMs =
+      config.deliverySweepIntervalMs ?? DELIVERY_SWEEP_DEFAULT_INTERVAL_MS;
     this.maxChats = config.maxChats ?? 4096;
     this.channelFilter = config.channelFilter;
     this.channelToolsets = config.channelToolsets;
@@ -3905,7 +3948,8 @@ export class Gateway {
    *   (D5/D19).
    * - Threw before answering → `markFailed`: back to `received` for the next
    *   boot, `interrupted` (+ the retry notice) if a tool had started, or
-   *   `dead` at the attempt cap (`gateway.spool_dead_lettered`).
+   *   `dead` at the attempt cap (`gateway.spool_dead_lettered`, plus one
+   *   tracked notice naming the row — {@link notifyDeadLettered}).
    * - Otherwise → `done`, absorbed rows included. An answered turn is `done`
    *   even if its tail failed or shutdown cut it: the user has the reply.
    *
@@ -3951,7 +3995,7 @@ export class Gateway {
         } else if (err !== undefined && !state.answered) {
           const error = err instanceof Error ? err.message : String(err);
           const outcome = spool.markFailed(state.id, error, this.spoolMaxAttempts);
-          if (outcome === 'dead') this.recordSpoolDeadLettered(state.id, error);
+          if (outcome === 'dead') await this.notifyDeadLettered(state.id, error, target);
           else if (outcome === 'interrupted') await this.notifyInterrupted(state.id, target);
         } else {
           spool.markDone(state.id);
@@ -3984,6 +4028,31 @@ export class Gateway {
         ...(target.threadId ? { threadId: target.threadId } : {}),
       },
       INTERRUPTED_RETRY_NOTICE,
+    ).catch(() => false);
+  }
+
+  /**
+   * An `inbound` row's turn just failed at the attempt cap and the row is
+   * `dead`: record it and tell the lane ONCE, through the ledger-backed path on
+   * the row's own bot ({@link deadLetteredNotice}, `notifyTracked` →
+   * `adapterForBot`). Called only from the attempt-cap branch of
+   * `finishSpoolTurn`; the stale path sends its own per-lane notice. Never throws.
+   */
+  private async notifyDeadLettered(
+    spoolId: string,
+    reason: string,
+    target: SpoolTurnTarget,
+  ): Promise<void> {
+    this.recordSpoolDeadLettered(spoolId, reason);
+    await this.notifyTracked(
+      {
+        platform: target.platform,
+        chatId: target.chatId,
+        botKey: target.botKey,
+        sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
+        ...(target.threadId ? { threadId: target.threadId } : {}),
+      },
+      deadLetteredNotice(spoolId),
     ).catch(() => false);
   }
 
@@ -5628,6 +5697,10 @@ export class Gateway {
       clearInterval(this.spoolReplayTimer);
       this.spoolReplayTimer = undefined;
     }
+    if (this.deliverySweepTimer) {
+      clearInterval(this.deliverySweepTimer);
+      this.deliverySweepTimer = undefined;
+    }
     for (const undos of this.botCleanups.values()) for (const undo of undos) undo();
     this.botCleanups.clear();
     this.pendingWakes.clear();
@@ -5635,6 +5708,19 @@ export class Gateway {
       lane.abort();
     }
     await this.awaitInflightTurns(Math.max(0, deadline - Date.now()));
+    // A redelivery mid-send when the caller closes the ledger would leave its
+    // row claimed until `reclaimStaleClaims`; give it what is left of the bound.
+    const sweep = this.deliverySweepInFlight;
+    if (sweep) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        sweep.catch(() => {}),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+        }),
+      ]);
+      clearTimeout(timer);
+    }
     this.lanes.clear();
     this.sessionKeys.clear();
     this.activeTurns.clear();
@@ -6055,14 +6141,75 @@ export class Gateway {
    *
    * Must run AFTER `adapter.start()`: a sweep against a cold adapter is a
    * silent no-op that also burns the obligation.
+   *
+   * Never overlaps itself: a call made while a sweep runs (the boot call, a
+   * {@link startDeliverySweep} tick) joins that sweep instead of starting a
+   * second (`deliverySweepInFlight`). Each sweep first returns stranded
+   * `redelivering` claims to `pending` (`DeliveryLedger.reclaimStaleClaims`,
+   * older than `DELIVERY_CLAIM_STALE_MS`).
    */
   async sweepPendingDeliveries(): Promise<{ redelivered: number; failed: number }> {
+    return this.runDeliverySweep(0);
+  }
+
+  /**
+   * Arm the periodic delivery sweep (plan openclaw-2026.9.6-gaps R1): every
+   * `deliverySweepIntervalMs` (default 60s, 0 = never), unref'd. Call AFTER
+   * `adapter.start()`, beside the boot {@link sweepPendingDeliveries} — the
+   * first tick lands one interval later, and a tick that fires while the boot
+   * sweep is still running joins it. Idempotent; {@link shutdown} stops it.
+   *
+   * A tick skips `pending` rows younger than `DELIVERY_SWEEP_MIN_AGE_MS`: they
+   * may be replies still in flight, which the ledger does not claim.
+   */
+  startDeliverySweep(): void {
+    if (this.deliverySweepTimer || this.deliverySweepIntervalMs <= 0 || this.closing) return;
+    if (!this.deliveryLedger) return;
+    this.deliverySweepTimer = setInterval(() => {
+      if (this.closing) return;
+      void this.runDeliverySweep(DELIVERY_SWEEP_MIN_AGE_MS).catch(() => {});
+    }, this.deliverySweepIntervalMs);
+    this.deliverySweepTimer.unref?.();
+  }
+
+  private runDeliverySweep(minAgeMs: number): Promise<{ redelivered: number; failed: number }> {
+    if (this.deliverySweepInFlight) return this.deliverySweepInFlight;
+    const run = this.sweepDeliveriesOnce(minAgeMs).finally(() => {
+      this.deliverySweepInFlight = undefined;
+    });
+    this.deliverySweepInFlight = run;
+    return run;
+  }
+
+  private async sweepDeliveriesOnce(
+    minAgeMs: number,
+  ): Promise<{ redelivered: number; failed: number }> {
     const ledger = this.deliveryLedger;
     if (!ledger) return { redelivered: 0, failed: 0 };
 
+    try {
+      const reclaimed = await ledger.reclaimStaleClaims(Date.now() - DELIVERY_CLAIM_STALE_MS);
+      if (reclaimed > 0) {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.delivery_claims_reclaimed',
+          details: { count: reclaimed },
+        });
+      }
+    } catch (err) {
+      // A failed reclaim costs only the stranded rows; the sweep still runs.
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.delivery_sweep_failed',
+        cause: err instanceof Error ? err.message : String(err),
+        details: { stage: 'reclaimStaleClaims' },
+      });
+    }
+
     let pending: Awaited<ReturnType<DeliveryLedger['listPending']>>;
     try {
-      pending = await ledger.listPending([...this.bots.keys()]);
+      const newest = Date.now() - minAgeMs;
+      pending = (await ledger.listPending([...this.bots.keys()])).filter(
+        (row) => minAgeMs <= 0 || row.createdAt <= newest,
+      );
     } catch (err) {
       this.observability?.recordSafetyBlock({
         code: 'gateway.delivery_sweep_failed',

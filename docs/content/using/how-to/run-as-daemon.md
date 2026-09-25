@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-as-daemon
 time: "10 min"
-updated: 2026-05-21
+updated: 2026-09-25
 ---
 
 > **Looking for the full production setup?** If you want **both** the gateway (Telegram + Slack + Discord + Email) **and** the web dashboard up under one supervisor, with reboot survival on a mini-PC / VPS / home server, jump to [Deploy in production](deploy-in-production.md) — it uses `ethos run-all` and PM2 and is the shorter path. This page is the building-block reference for daemonising a **single** `ethos` command (the gateway by itself, or cron, or serve).
@@ -131,12 +131,15 @@ User units live in `~/.config/systemd/user/` and run as your login user. Write `
 Description=Ethos gateway
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/ethos gateway start
 Restart=on-failure
 RestartSec=5
+RestartPreventExitStatus=3 78
 StandardOutput=append:%h/.ethos/logs/gateway.out.log
 StandardError=append:%h/.ethos/logs/gateway.err.log
 Environment=NODE_ENV=production
@@ -298,6 +301,8 @@ lsof +D ~/.ethos/ 2>/dev/null | grep -v ethos
 **`ethos: command not found` in the service log.** — Service managers do not source your shell rc. If you installed via `nvm`, the binary lives at `~/.nvm/versions/node/v24.x.x/bin/ethos`. Paste that absolute path into the unit file.
 
 **`Run ethos setup first` on boot.** — `HOME` does not point at your user account. systemd user units inherit it correctly; launchd sometimes does not. Set `HOME` in the plist `EnvironmentVariables` block as shown above.
+
+**The unit is `failed` and systemd stopped restarting it.** — The gateway exits `78` when `~/.ethos/config.yaml` cannot be parsed or a bot binding points at nothing, and `3` when another gateway already holds this state directory. Both are refusals, not crashes, so `RestartPreventExitStatus=3 78` stops systemd retrying them. Run `ethos doctor` for a config error, or `ethos gateway status` for a held lock. Fix the cause, then run `systemctl --user restart ethos-gateway`. `StartLimitBurst=5` in `StartLimitIntervalSec=300` likewise gives up after five crashes in five minutes; `systemctl --user reset-failed ethos-gateway` clears it. A unit generated before these directives existed does not have them — regenerate it with `ethos systemd-unit ethos-gateway`.
 
 **Telegram returns HTTP 429.** — Two gateway processes are polling the same bot token. Check for a duplicate launchd plist, a stale pm2 entry, or a forgotten `tmux` session. One process per bot token.
 

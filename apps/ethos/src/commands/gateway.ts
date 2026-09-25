@@ -139,6 +139,7 @@ import {
 } from '../approval-coordinator';
 import { createHealthServer, type MetricsAuthCheck } from '../health-server';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
+import { exitIfConfigInvalid } from '../lib/config-exit';
 import { createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { openFileMemory } from '../lib/file-memory';
@@ -170,6 +171,7 @@ import {
   createPlatformWebhookServer,
   type PlatformWebhookHandler,
 } from '../platform-webhook-server';
+import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { createSipInboundHandler } from '../sip-inbound-dispatch';
 import { createSipWebhookServer } from '../sip-webhook-server';
@@ -593,11 +595,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     console.error('Run ethos setup first.');
     process.exit(1);
   }
-  if (loaded.parseErrors.length > 0) {
-    console.log(`${c.red}Config parse errors:${c.reset}`);
-    for (const err of loaded.parseErrors) console.log(`  • ${err}`);
-    process.exit(1);
-  }
+  exitIfConfigInvalid('Config parse errors', loaded.parseErrors);
   for (const note of loaded.deprecations) {
     console.log(`${c.yellow}⚠ deprecation${c.reset} ${c.dim}${note}${c.reset}`);
   }
@@ -636,11 +634,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // team manifests. Fail loudly here rather than letting messages route
   // to a non-existent destination at first request.
   const bindErrors = await validateBindings(config);
-  if (bindErrors.length > 0) {
-    console.log(`${c.red}Bot binding errors:${c.reset}`);
-    for (const err of bindErrors) console.log(`  • ${err}`);
-    process.exit(1);
-  }
+  exitIfConfigInvalid('Bot binding errors', bindErrors);
 
   // Migrate persisted session keys to the new `${platform}:${botKey}:
   // ${chatId}` shape if we haven't already. Idempotent — subsequent
@@ -1590,6 +1584,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     .catch((err) => {
       new ConsoleLogger({}, logLevel).warn(`delivery ledger boot sweep failed: ${String(err)}`);
     });
+  // Then every 60s, so a reply refused by a transient platform error is retried
+  // without a restart (plan openclaw-2026.9.6-gaps R1); `gateway.shutdown` stops it.
+  gateway.startDeliverySweep();
 
   // Inbound spool replay (plan reach-and-containment §2.4) — beside the ledger
   // sweep and for the same reason AFTER adapter.start(): a replayed turn
@@ -2170,7 +2167,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // commands/__tests__/run-all.test.ts).
   let shuttingDown: Promise<void> | undefined;
   const stepReporting = { sink: gatewayObservability, warn: (m: string) => console.warn(m) };
-  const shutdown = async (): Promise<void> => {
+  const shutdown = async (exitCode = 0): Promise<void> => {
     shuttingDown ??= (async () => {
       console.log(`\n${c.dim}Shutting down...${c.reset}`);
       if (stopWatchdog) stopWatchdog();
@@ -2264,13 +2261,20 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       // The process-wide observability store — last, after everything above,
       // which records into it while it winds down.
       closeObservabilityStore();
-      process.exit(0);
+      process.exit(exitCode);
     })();
     await shuttingDown;
   };
 
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
+  // A stray rejection is logged and survived; an uncaught exception runs this
+  // same bounded shutdown and exits 1 (plan openclaw-2026.9.6-gaps R2).
+  installProcessGuards({
+    command: 'gateway',
+    observability: getEthosObservability,
+    shutdown: (exitCode) => shutdown(exitCode),
+  });
 
   // Idle watcher (plan/phases/idle-watcher.md §5) — CONSTRUCTED LAST, after
   // every subsystem its sources read, and only when the operator opted in.

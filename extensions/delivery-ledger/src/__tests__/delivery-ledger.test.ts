@@ -185,7 +185,7 @@ describe('SQLiteDeliveryLedger — schema', () => {
     expect(sql.sql).toMatch(/STRICT/);
 
     const version = db.pragma('user_version') as Array<{ user_version: number }>;
-    expect(version[0]?.user_version).toBe(4);
+    expect(version[0]?.user_version).toBe(5);
 
     // STRICT enforcement is real: a TEXT into an INTEGER column throws.
     expect(() =>
@@ -332,7 +332,7 @@ describe('SQLiteDeliveryLedger — v1 → v3 migration', () => {
     try {
       const db = (store as unknown as { db: InstanceType<typeof Database> }).db;
       const version = db.pragma('user_version') as Array<{ user_version: number }>;
-      expect(version[0]?.user_version).toBe(4);
+      expect(version[0]?.user_version).toBe(5);
 
       const survivor = await store.get('old-1');
       expect(survivor?.content).toBe('survivor');
@@ -535,7 +535,7 @@ describe('SQLiteDeliveryLedger — v2 → v3 migration', () => {
     try {
       const db = (store as unknown as { db: InstanceType<typeof Database> }).db;
       const version = db.pragma('user_version') as Array<{ user_version: number }>;
-      expect(version[0]?.user_version).toBe(4);
+      expect(version[0]?.user_version).toBe(5);
 
       const row = await store.get('v2-1');
       expect(row?.content).toBe('written before voice existed');
@@ -939,7 +939,7 @@ describe('SQLiteDeliveryLedger — v3 → v4 migration', () => {
     const db = new Database(path);
     try {
       const version = db.pragma('user_version') as Array<{ user_version: number }>;
-      expect(version[0]?.user_version).toBe(4);
+      expect(version[0]?.user_version).toBe(5);
       const cols = db.prepare('PRAGMA table_info(delivery_obligations)').all() as Array<{
         name: string;
       }>;
@@ -979,5 +979,136 @@ describe('SQLiteDeliveryLedger — hasObligationFor', () => {
     expect(await store.hasObligationFor('spool-9')).toBe(true);
     expect(await store.hasObligationFor('spool-other')).toBe(false);
     store.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reclaimStaleClaims (plan openclaw-2026.9.6-gaps R11) — a process that claimed
+// a row and died leaves it `redelivering`; before this the only way out was
+// `abandonStale` after days, which loses the reply instead of retrying it.
+// ---------------------------------------------------------------------------
+
+describe('SQLiteDeliveryLedger — reclaimStaleClaims', () => {
+  it('returns a redelivering row claimed before the cutoff to pending', async () => {
+    const store = ledger();
+    const id = await store.record(input());
+    expect(await store.claim(id)).toBe(true);
+
+    // A claim younger than the cutoff is a live send — left alone.
+    expect(await store.reclaimStaleClaims(Date.now() - 60_000)).toBe(0);
+    expect((await store.get(id))?.status).toBe('redelivering');
+
+    // Older than the cutoff: the claimant is presumed dead, the reply is owed.
+    expect(await store.reclaimStaleClaims(Date.now() + 1)).toBe(1);
+    expect((await store.get(id))?.status).toBe('pending');
+    expect((await store.listPending(['bot-a'])).map((r) => r.id)).toEqual([id]);
+    store.close();
+  });
+
+  it('never touches a pending, delivered or abandoned row', async () => {
+    const store = ledger();
+    const pending = await store.record(input({ content: 'p' }));
+    const delivered = await store.record(input({ content: 'd' }));
+    await store.markDelivered(delivered);
+    const abandoned = await store.record(input({ content: 'a' }));
+    await store.claim(abandoned);
+    await store.abandonStale(['bot-a'], Date.now() + 1);
+
+    expect(await store.reclaimStaleClaims(Date.now() + 1)).toBe(0);
+    // abandonStale took the pending row too; only the statuses matter here.
+    expect((await store.get(pending))?.status).toBe('abandoned');
+    expect((await store.get(delivered))?.status).toBe('delivered');
+    expect((await store.get(abandoned))?.status).toBe('abandoned');
+    store.close();
+  });
+
+  it('a reclaimed row can be claimed again, exactly once', async () => {
+    const store = ledger();
+    const id = await store.record(input());
+    expect(await store.claim(id)).toBe(true);
+    expect(await store.reclaimStaleClaims(Date.now() + 1)).toBe(1);
+    const [a, b] = await Promise.all([store.claim(id), store.claim(id)]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    store.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v4 → v5 migration — `claimed_at`, so a stranded claim can be told from a
+// live one (R11).
+// ---------------------------------------------------------------------------
+
+/** The exact v4 schema, stamped at user_version = 4. */
+const V4_SCHEMA = `${V3_SCHEMA}
+  ALTER TABLE delivery_obligations ADD COLUMN inbound_ref TEXT;
+  CREATE INDEX delivery_inbound_ref ON delivery_obligations(inbound_ref);
+`;
+
+describe('SQLiteDeliveryLedger — v4 → v5 migration', () => {
+  let dir: string;
+  let path: string;
+  let rm: (p: string, o: { recursive: boolean; force: boolean }) => void;
+  let migratedAfter: number;
+
+  beforeEach(async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    rm = rmSync;
+    dir = mkdtempSync(join(tmpdir(), 'delivery-ledger-v4-'));
+    path = join(dir, 'delivery.db');
+
+    const db = new Database(path);
+    db.exec(V4_SCHEMA);
+    db.pragma('user_version = 4');
+    const insert = db.prepare(
+      `INSERT INTO delivery_obligations
+       (id, bot_key, platform, chat_id, session_id, content_hash, content, created_at, status,
+        kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insert.run('v4-pending', 'bot-a', 'telegram', 'c', 's', 'h', 'owed', 1, 'pending', 'text');
+    insert.run('v4-claimed', 'bot-a', 'telegram', 'c', 's', 'h', 'held', 1, 'redelivering', 'text');
+    db.close();
+    migratedAfter = Date.now();
+  });
+
+  afterEach(() => {
+    rm(dir, { recursive: true, force: true });
+  });
+
+  it('adds claimed_at, keeps every row, and stamps v5', async () => {
+    const store = new SQLiteDeliveryLedger(path);
+    try {
+      expect((await store.get('v4-pending'))?.status).toBe('pending');
+      expect((await store.get('v4-claimed'))?.status).toBe('redelivering');
+    } finally {
+      store.close();
+    }
+    const db = new Database(path);
+    try {
+      const version = db.pragma('user_version') as Array<{ user_version: number }>;
+      expect(version[0]?.user_version).toBe(5);
+      const cols = db.prepare('PRAGMA table_info(delivery_obligations)').all() as Array<{
+        name: string;
+      }>;
+      expect(cols.map((c) => c.name)).toContain('claimed_at');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('a claim inherited from v4 starts its clock at migration, not at zero', async () => {
+    const store = new SQLiteDeliveryLedger(path);
+    try {
+      // The migration cannot know when the v4 claim was taken, so it stamps
+      // the migration time rather than treating the claim as infinitely old —
+      // an older binary still running could be mid-send on it.
+      expect(await store.reclaimStaleClaims(migratedAfter - 1)).toBe(0);
+      expect(await store.reclaimStaleClaims(Date.now() + 1)).toBe(1);
+      expect((await store.get('v4-claimed'))?.status).toBe('pending');
+    } finally {
+      store.close();
+    }
   });
 });
