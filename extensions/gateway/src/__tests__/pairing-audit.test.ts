@@ -196,4 +196,28 @@ describe('channel.pairing audit rows', () => {
     );
     expect(obs.recordChannelPairing).not.toHaveBeenCalled();
   });
+
+  it('/communications approve-all writes one channel.allow row per approved sender, like /allow', async () => {
+    await issueCode('stranger-a');
+    await issueCode('stranger-b');
+
+    await gateway.handleMessage(dm(OWNER, '/communications approve-all'), adapter);
+
+    const approved = obs.recordChannelAllow.mock.calls
+      .map(([row]) => row)
+      .filter((row) => row.code === 'channel.pairing.approved');
+    expect(approved).toHaveLength(2);
+    expect(approved).toEqual(
+      expect.arrayContaining([
+        {
+          code: 'channel.pairing.approved',
+          details: { approvedUserId: 'stranger-a', approvedPlatform: 'telegram', byUserId: OWNER },
+        },
+        {
+          code: 'channel.pairing.approved',
+          details: { approvedUserId: 'stranger-b', approvedPlatform: 'telegram', byUserId: OWNER },
+        },
+      ]),
+    );
+  });
 });

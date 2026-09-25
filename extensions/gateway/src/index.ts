@@ -3522,6 +3522,15 @@ export class Gateway {
                 cfg.recipientAllowlist.push(result.senderId);
               }
             }
+            // Same row as a single `/allow` approval, one per approved sender.
+            this.observability?.recordChannelAllow({
+              code: 'channel.pairing.approved',
+              details: {
+                approvedUserId: result.senderId,
+                approvedPlatform: result.platform,
+                byUserId: message.userId,
+              },
+            });
             await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
           }
         }
