@@ -122,7 +122,74 @@ describe('judge — substring checks (no command)', () => {
     expect(result?.pass).toBe(false);
     expect(result?.evidence).toBe('check failed: deploy complete');
     expect(result?.gap).toBe('deploy complete');
+    expect(result?.method).toBe('substring');
     expect(verdict.score).toBe(0);
+  });
+});
+
+describe('judge — injected judgeCheck for command-less checks', () => {
+  const csvCheck = { id: 'c1', description: 'All CSV symbols are in the database' };
+  const spec = specWith({
+    checks: [csvCheck, { id: 'cmd', description: 'tests pass', command: 'run-tests' }],
+    threshold: 0,
+  });
+
+  it('asks the judge (not a substring match) and records method llm', async () => {
+    const judgeCheck = vi.fn().mockResolvedValue({ pass: true, evidence: '3169/3169 rows' });
+    const execCommand = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+
+    const verdict = await judge(
+      { output: 'inserted 3169 symbols', spec, goalText: 'Load the CSV' },
+      { judgeCheck, execCommand },
+    );
+
+    expect(judgeCheck).toHaveBeenCalledTimes(1);
+    expect(judgeCheck).toHaveBeenCalledWith({
+      check: { id: 'c1', description: 'All CSV symbols are in the database' },
+      goalText: 'Load the CSV',
+      output: 'inserted 3169 symbols',
+    });
+    // Command checks stay commands — the judge never sees them.
+    expect(execCommand).toHaveBeenCalledWith('run-tests');
+    const c1 = verdict.perCriterion.find((c) => c.id === 'c1');
+    expect(c1).toEqual({ id: 'c1', pass: true, evidence: '3169/3169 rows', method: 'llm' });
+    expect(verdict.perCriterion.find((c) => c.id === 'cmd')?.method).toBe('command');
+    expect(isConverged(verdict, spec.threshold)).toBe(true);
+  });
+
+  it('records a not-met verdict with the description as the gap', async () => {
+    const judgeCheck = vi.fn().mockResolvedValue({ pass: false, evidence: 'only a plan' });
+    const verdict = await judge(
+      {
+        output: 'I will load them',
+        spec: specWith({ checks: [csvCheck] }),
+      },
+      { judgeCheck },
+    );
+    expect(verdict.perCriterion[0]).toEqual({
+      id: 'c1',
+      pass: false,
+      evidence: 'only a plan',
+      gap: 'All CSV symbols are in the database',
+      method: 'llm',
+    });
+    expect(verdict.score).toBe(0);
+  });
+
+  it('fails closed when the judge throws', async () => {
+    const judgeCheck = vi.fn().mockRejectedValue(new Error('provider down'));
+    const verdict = await judge(
+      {
+        output: 'All CSV symbols are in the database',
+        spec: specWith({ checks: [csvCheck] }),
+      },
+      { judgeCheck },
+    );
+    const result = verdict.perCriterion[0];
+    expect(result?.pass).toBe(false);
+    expect(result?.evidence).toBe('judge unavailable: provider down');
+    expect(result?.gap).toBe('All CSV symbols are in the database');
+    expect(result?.method).toBe('llm');
   });
 });
 

@@ -260,6 +260,29 @@ describe('GoalRunner phase b — convergence/retry loop', () => {
     expect(new Set(ns).size).toBe(ns.length);
   });
 
+  it('judges a command-less check through the injected judgeCheck, with the goal text', async () => {
+    const goal = makeGoalWithSpec(store, checkOnlySpec);
+    const judgeCheck = vi.fn().mockResolvedValue({ pass: true, evidence: 'marker file exists' });
+    const runner = new GoalRunner({
+      store,
+      judgeCheck,
+      // The output never contains the description verbatim — the substring
+      // fallback would fail this; the judge decides instead.
+      runAttempt: scriptedRunAttempt([[{ type: 'done', text: 'wrote marker.txt', turnCount: 1 }]]),
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'completed');
+
+    expect(judgeCheck).toHaveBeenCalledWith({
+      check: { id: 'c1', description: 'DONE-MARKER' },
+      goalText: 'Do the thing',
+      output: 'wrote marker.txt',
+    });
+    const verdict = store.getAttempts(goal.id)[0]?.verdict;
+    expect(verdict?.perCriterion[0]).toMatchObject({ pass: true, method: 'llm' });
+  });
+
   it('completes a no-criteria goal immediately with exactly one attempt row', async () => {
     const goal = makeGoal(store);
     const runner = new GoalRunner({

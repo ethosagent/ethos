@@ -1,10 +1,31 @@
 import { execFile } from 'node:child_process';
-import type { AcceptanceSpec, CriterionResult, Verdict } from '@ethosagent/types';
+import type { AcceptanceCheck, AcceptanceSpec, CriterionResult, Verdict } from '@ethosagent/types';
 
 export interface JudgeInput {
   output: string;
   spec: AcceptanceSpec;
+  /** The goal text, handed to `judgeCheck` so it can read a check in context. */
+  goalText?: string;
 }
+
+export interface CheckJudgeInput {
+  check: AcceptanceCheck;
+  goalText: string;
+  output: string;
+}
+
+export interface CheckJudgeResult {
+  pass: boolean;
+  evidence: string;
+}
+
+/**
+ * Decides whether an attempt's output demonstrates a command-less check is MET.
+ * Injected at construction (`GoalRunnerConfig.judgeCheck`); production wiring
+ * binds `createLLMCheckJudge` (./llm-check-judge). A throw is a fail-closed
+ * `pass: false` in `judge()` below, never an exception out of it.
+ */
+export type CheckJudge = (input: CheckJudgeInput) => Promise<CheckJudgeResult>;
 
 export interface CommandResult {
   code: number;
@@ -15,6 +36,12 @@ export interface CommandResult {
 export interface JudgeOptions {
   /** Override command execution (tests). Defaults to running via `sh -c`. */
   execCommand?: (command: string) => Promise<CommandResult>;
+  /**
+   * Judge for checks with no `command`. Absent (tests, standalone), such a
+   * check falls back to a verbatim substring match of its description against
+   * the output, marked `method: 'substring'`.
+   */
+  judgeCheck?: CheckJudge;
 }
 
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -60,6 +87,7 @@ async function runCommandCheck(
         id: check.id,
         pass: true,
         evidence: out ? `command exited 0: ${out}` : 'command exited 0',
+        method: 'command',
       };
     }
     const detail = snippet(stderr) || snippet(stdout);
@@ -68,6 +96,7 @@ async function runCommandCheck(
       pass: false,
       evidence: detail ? `command exited ${code}: ${detail}` : `command exited ${code}`,
       gap: check.description,
+      method: 'command',
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -76,15 +105,44 @@ async function runCommandCheck(
       pass: false,
       evidence: `command failed: ${snippet(message)}`,
       gap: check.description,
+      method: 'command',
     };
   }
+}
+
+/** Settle a command-less check through the injected judge. Fails CLOSED: a
+ *  judge that throws (provider error, timeout) is a failed check, not a pass. */
+async function runJudgedCheck(
+  check: AcceptanceCheck,
+  goalText: string,
+  output: string,
+  judgeCheck: CheckJudge,
+): Promise<CriterionResult> {
+  let pass: boolean;
+  let evidence: string;
+  try {
+    ({ pass, evidence } = await judgeCheck({ check, goalText, output }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    pass = false;
+    evidence = `judge unavailable: ${snippet(message)}`;
+  }
+  return {
+    id: check.id,
+    pass,
+    evidence,
+    ...(pass ? {} : { gap: check.description }),
+    method: 'llm',
+  };
 }
 
 /**
  * Run mechanical checks and score rubric items.
  * Checks with a `command` execute it via `sh -c` (30s timeout) and pass iff it
  * exits 0; commands run sequentially since they may touch shared state. Checks
- * without a command fall back to a substring match against the attempt output.
+ * without a command go to the injected `judgeCheck` (fail-closed); without one
+ * they fall back to a substring match against the attempt output, marked
+ * `method: 'substring'`.
  * Rubric items still get placeholder scores — the eval-harness integration
  * (plan phase 2) replaces the rubric scoring.
  */
@@ -98,12 +156,19 @@ export async function judge(input: JudgeInput, opts?: JudgeOptions): Promise<Ver
       results.push(await runCommandCheck({ ...check, command }, execCommand));
       continue;
     }
+    if (opts?.judgeCheck) {
+      results.push(
+        await runJudgedCheck(check, input.goalText ?? '', input.output, opts.judgeCheck),
+      );
+      continue;
+    }
     const pass = input.output.toLowerCase().includes(check.description.toLowerCase());
     results.push({
       id: check.id,
       pass,
       evidence: pass ? `check passed: ${check.description}` : `check failed: ${check.description}`,
       gap: pass ? undefined : check.description,
+      method: 'substring',
     });
   }
 

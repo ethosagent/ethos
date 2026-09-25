@@ -13,10 +13,17 @@ import type {
   Verdict,
 } from '@ethosagent/types';
 import { answerSuffix } from '@ethosagent/types';
-import { isConverged, judge } from './judge';
+import { type CheckJudge, isConverged, judge } from './judge';
 import { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
-export { isConverged, judge } from './judge';
+export {
+  type CheckJudge,
+  type CheckJudgeInput,
+  type CheckJudgeResult,
+  isConverged,
+  judge,
+} from './judge';
+export { createLLMCheckJudge, type LLMCheckJudgeOptions } from './llm-check-judge';
 export { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
 /** Consecutive same-tool failures before the run is treated as a compounding
@@ -174,6 +181,11 @@ export interface GoalRunnerConfig {
       userId?: string;
     },
   ) => AsyncGenerator<AgentEvent>;
+  /** Judge for acceptance checks that carry no `command`. Production wiring
+   *  binds `createLLMCheckJudge` to the deployment's LLM. When ABSENT (tests,
+   *  standalone) such a check falls back to a verbatim substring match of its
+   *  description — which almost never passes — marked `method: 'substring'`. */
+  judgeCheck?: CheckJudge;
   /** Injectable sleep for transient-error retry backoff. Defaults to a real
    *  setTimeout delay; tests inject a recorder to skip waiting. */
   sleepFn?: (ms: number) => Promise<void>;
@@ -217,6 +229,7 @@ export class GoalRunner {
   private hooks: HookRegistry | undefined;
   private runAttempt: GoalRunnerConfig['runAttempt'];
   private runPlan: GoalRunnerConfig['runPlan'];
+  private judgeCheck: CheckJudge | undefined;
   private sleep: (ms: number) => Promise<void>;
 
   constructor(config: GoalRunnerConfig) {
@@ -228,6 +241,7 @@ export class GoalRunner {
     this.hooks = config.hooks;
     this.runAttempt = config.runAttempt;
     this.runPlan = config.runPlan;
+    this.judgeCheck = config.judgeCheck;
     this.sleep = config.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
@@ -1254,7 +1268,10 @@ export class GoalRunner {
     }
 
     this.setStatus(run, goalId, 'judging');
-    const verdict = await judge({ output, spec });
+    const verdict = await judge(
+      { output, spec, goalText: goal.goalText },
+      this.judgeCheck ? { judgeCheck: this.judgeCheck } : undefined,
+    );
 
     this.store.updateAttempt(goalId, attemptN, {
       verdict,
