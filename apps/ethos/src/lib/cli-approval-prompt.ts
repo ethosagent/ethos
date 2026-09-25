@@ -26,6 +26,13 @@ export interface CliApprovalPromptDeps {
   onOpen: () => void;
   /** After the last queued prompt closes: hand input back. */
   onClose: () => void;
+  /**
+   * Draw the `Allow? [y/N]` question as the readline prompt (default). Pass
+   * `false` when readline's output is not where the user looks — `ethos chat`
+   * with stdout piped: the question is then written through `write` (stderr
+   * there) with everything else, and readline only reads the answer.
+   */
+  questionOnReadline?: boolean;
 }
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -78,9 +85,14 @@ export function attachCliApprovalPrompt(deps: CliApprovalPromptDeps): {
     };
     current = { request: next, onLine };
     deps.write(formatCliApprovalRequest(next));
-    deps.rl.setPrompt(`${yellow('Allow?')} [y/N] `);
+    const question = `${yellow('Allow?')} [y/N] `;
     deps.rl.once('line', onLine);
-    deps.rl.prompt();
+    if (deps.questionOnReadline === false) {
+      deps.write(question);
+    } else {
+      deps.rl.setPrompt(question);
+      deps.rl.prompt();
+    }
   };
 
   const offRequest = deps.source.onRequest((request) => {

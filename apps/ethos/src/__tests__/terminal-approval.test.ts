@@ -101,6 +101,7 @@ function wire(opts: {
   timeoutMs?: number;
   personality?: PersonalityConfig;
   posture?: ExecutionPosture;
+  questionOnReadline?: boolean;
 }) {
   const hooks = loopHooks();
   const coordinator = opts.interactive
@@ -126,6 +127,9 @@ function wire(opts: {
         write: (text) => written.push(text),
         onOpen: () => events.push('open'),
         onClose: () => events.push('close'),
+        ...(opts.questionOnReadline !== undefined
+          ? { questionOnReadline: opts.questionOnReadline }
+          : {}),
       })
     : undefined;
   return { hooks, coordinator, rl, written, events, prompt, unwire };
@@ -170,6 +174,18 @@ describe('terminal approval gate — CLI prompt', () => {
     expect(result.error).toMatch(/approval timed out/);
     expect(events).toEqual(['open', 'close']);
     expect(written.join('')).toMatch(/denied/);
+  });
+
+  // stdout piped, stdin a terminal: readline would draw its prompt into the
+  // pipe, so the whole question goes to the visible sink instead.
+  it('with questionOnReadline false, the Allow? question goes to the write sink, not readline', async () => {
+    const { hooks, rl, written } = wire({ interactive: true, questionOnReadline: false });
+    const result = fire(hooks, 'ls -la');
+    await tick();
+    expect(rl.prompts).toEqual([]);
+    expect(written.join('')).toMatch(/Allow\?.*\[y\/N\]/);
+    rl.answer('y');
+    expect((await result).error).toBeUndefined();
   });
 
   it('a hardline command is refused without a prompt', async () => {
@@ -270,6 +286,11 @@ describe('terminal approval gate — wiring', () => {
     expect(src).toMatch(/gateLoop\(runtime, approvalInteractive, /);
     expect(src).toMatch(/approvals: createTerminalApprovalSource\(approvalCoordinator, 'tui'\)/);
     expect(src).toMatch(/const approvalInteractive = process\.stdin\.isTTY === true;/);
+    // stdout not a TTY → the prompt goes to stderr, where the user can see it.
+    expect(src).toMatch(/questionOnReadline: process\.stdout\.isTTY === true/);
+    expect(src).toMatch(
+      /process\.stdout\.isTTY \? out : \(s: string\) => process\.stderr\.write\(s\)/,
+    );
   });
 
   it('acp gates its loop with no one to ask', async () => {

@@ -151,6 +151,7 @@ Type `y` or `yes` to run the call. Anything else — `n`, an empty Enter, any ot
 The gate is `wireTerminalApprovalGate` in that file. It uses the same danger check as the web UI and the chat cards (`createApprovalDangerPredicate`), so the same calls are flagged, and it reuses the chat cards' coordinator for the timeout and the audit trail. It is pinned by `apps/ethos/src/__tests__/terminal-approval.test.ts` and `apps/tui/src/__tests__/approval-modal.test.ts`.
 
 - **Parallel calls queue.** When a turn flags two calls, you answer them one at a time, oldest first. The TUI shows how many more are waiting.
+- **Piped output still shows the prompt.** When stdout is not a terminal (`ethos chat | tee chat.log`) but stdin is, the question and its preview are written to stderr, so you see what you are answering.
 - **Ctrl-C refuses.** In the readline REPL, Ctrl-C refuses every waiting call and aborts the turn.
 - **A hardline command is never asked about.** It is refused at once with its hardline reason: no answer could let it run.
 - **Command substitution can be approved.** `kill $(lsof -t -i:3000)` asks instead of being refused: the gate marks the loop (`markHostApprovalGate`), and the terminal guard then leaves such a command to the gate.

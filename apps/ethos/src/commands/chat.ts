@@ -608,7 +608,11 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     attachCliApprovalPrompt({
       source: createTerminalApprovalSource(approvalCoordinator, 'cli'),
       rl,
-      write: out,
+      // stdout piped (`ethos chat | tee log`) while stdin is a keyboard: the
+      // question and its preview go to stderr so the user sees what they are
+      // answering; readline still reads the answer.
+      write: process.stdout.isTTY ? out : (s: string) => process.stderr.write(s),
+      questionOnReadline: process.stdout.isTTY === true,
       onOpen: () => {
         state.clearSpinner?.();
         state.awaitingApproval = true;
