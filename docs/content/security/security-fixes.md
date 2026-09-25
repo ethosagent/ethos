@@ -63,7 +63,7 @@ The numbering below is the original review order, preserved for traceability wit
 
 **Fix.** Configuration validation rejects the combination at config-load time. The personality fails to start until either approvals are turned on or the channel ingress is removed.
 
-- **Status:** Partial — the channel-ingress check ships in `packages/safety/channel`; the cross-personality config-load validator that links it to `approvalMode` is in flight in the wiring layer.
+- **Status:** Partial. The load-time refusal ships in the personality loader, not in `packages/safety/channel`: `validateUnsafeCombinations` (`extensions/personalities/src/index.ts`) throws when `safety.approvalMode: off` is set and the personality's `platform` field is `telegram`, `discord`, `slack`, `whatsapp` or `email` (`CHANNEL_INGRESS_PLATFORMS`). Pinned by the `rejects approvalMode: off + <platform>` cases in `extensions/personalities/src/__tests__/personalities.test.ts`. Limitation: it matches only that `platform` string, so a personality bound to a channel solely through gateway configuration, or a platform missing from the set, is not caught; no wiring-layer validator exists. On the gateway, `off` behaves as `manual` anyway — it auto-approves only on the unattended systemLoop with `allowUnattendedDangerousTools: true` (see [Approval modal](./controls.md#approval-modal)).
 
 ### 3. Sandbox-relaxes-classifier keyed on capability attestation {#3-sandbox-attestation-not-backend-name}
 

@@ -97,7 +97,7 @@ The same assumption rules out "agent acts on behalf of arbitrary internet users"
 | Network exfiltration / SSRF | Network policy, scheme allowlist, cloud-metadata blocklist, redirect revalidation |
 | Credential leakage | Pattern-based redaction at the observability store layer; per-personality redaction modes |
 | Plugin data source injection | Read-only SQLite connections, SELECT-only panel-SQL guard, param allowlist on interpolated values |
-| Admin panel unauthorized access | Admin panel token authentication, CORS restriction |
+| Admin panel unauthorized access | Admin panel token authentication (`dualAuth`, `requireAdmin`); credentialed CORS only for origins listed in `allowedOrigins`, default none (`resolveCorsOrigin` in `apps/web-api/src/routes/index.ts`, pinned by `apps/web-api/src/__tests__/routes/cors-origin.test.ts`) — a browser-side control, not a check on non-browser clients |
 
 Each control is documented in [Security controls](./controls.md) with the file path where it lives in the codebase. The cross-reference is intentional: customers evaluating Ethos can read the source, not just the marketing.
 
