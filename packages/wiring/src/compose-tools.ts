@@ -630,6 +630,12 @@ export interface ComposeToolsResult {
   mcpManager: McpManager;
   /** Ground-truth turn auditors (T4). Empty when `grounding.enabled: false`. */
   turnAuditors: TurnAuditor[];
+  /**
+   * `ExecutionRouting.resolveDockerBackend` of this loop's routing — how the
+   * Pi and ACP job runners (build-agent-loop.ts) reach the docker backend, so
+   * they get the configured image instead of registering their own config.
+   */
+  resolveDockerBackend: () => Promise<ExecutionBackend>;
   /** Ground-truth consult for `MemoryCaptureRunner` (R8). Absent when
    *  `grounding.enabled: false`, so capture behaves exactly as before. */
   memoryConsult?: GroundingMemoryConsult;
@@ -829,6 +835,20 @@ export interface ExecutionRouting {
   /** The full resolution, for the injector that tells the model where its shell is. */
   resolveTurn(personalityId: string | undefined): Promise<TurnExecution | undefined>;
   /**
+   * The docker backend INSTANCE from the registry (no `SessionManager` wrap),
+   * resolved with this deployment's one docker config: `execution.docker.*`
+   * (image, cpu, disk), the constitution and the substitution vars. The single
+   * owner of that config — every other docker consumer (the Pi and ACP job
+   * runners in build-agent-loop.ts) resolves through here, never through the
+   * registry directly. The registry memoises by NAME and keeps whichever ctx
+   * resolved first, so a second call site with its own ctx decides the config
+   * for every exec tool when it happens to run first: a Pi runner resolving
+   * docker without `images` left every docker-posture `terminal` call refusing
+   * with `MissingDockerImageError` under `ethos serve`. Pinned by
+   * packages/wiring/src/__tests__/execution-docker-image.test.ts.
+   */
+  resolveDockerBackend(): Promise<ExecutionBackend>;
+  /**
    * Release every execution backend instance — the ONE owner of them (F06 /
    * G6). That is the wrappers this routing built (a docker `SessionManager`,
    * whose per-session containers only it tracks) AND whatever else the
@@ -891,32 +911,38 @@ export async function createExecutionRouting(
   /** Set by the first `dispose()` — see the `ExecutionRouting.dispose` doc. */
   let disposal: Promise<void> | undefined;
 
+  // See `ExecutionRouting.resolveDockerBackend` — the one place the docker
+  // backend's config is assembled.
+  function resolveDockerBackend(): Promise<ExecutionBackend> {
+    const backendConfig: ExecutionBackendConfig = {
+      substitutionVars: input.substitutionVars,
+      // Absent leaves the backend on its `--cpus 2` default with no disk quota.
+      ...(input.docker?.cpu !== undefined ? { cpu: input.docker.cpu } : {}),
+      ...(input.docker?.diskMb !== undefined ? { diskMb: input.docker.diskMb } : {}),
+      // `execution.docker.image` is the runtime every docker exec runs in.
+      // Absent → the backend refuses each exec with `MissingDockerImageError`
+      // (extensions/execution-docker), which names the key to set.
+      ...(input.docker?.image ? { images: { default: input.docker.image } } : {}),
+      // F2 — pass the resolved constitution so the docker backend enforces
+      // allowedMountRoots / deniedPathPrefixes against the ACTUAL mount set
+      // (including the ownDir/skills/cwd defaults), not just declared fs_reach.
+      ...(constitution ? { constitution } : {}),
+    };
+    return input.registry.resolve('docker', {
+      config: backendConfig,
+      secrets: input.secrets,
+      logger: log,
+    });
+  }
+
   async function buildBackendFor(p: ExecutionPosture): Promise<ExecutionBackend | undefined> {
     if (p.backend === 'docker') {
       if (input.disableDocker || p.dockerAbsent) return undefined;
       const cached = backendCache.get('docker');
       if (cached) return cached;
-      const backendConfig: ExecutionBackendConfig = {
-        substitutionVars: input.substitutionVars,
-        // Absent leaves the backend on its `--cpus 2` default with no disk quota.
-        ...(input.docker?.cpu !== undefined ? { cpu: input.docker.cpu } : {}),
-        ...(input.docker?.diskMb !== undefined ? { diskMb: input.docker.diskMb } : {}),
-        // `execution.docker.image` is the runtime every docker exec runs in.
-        // Absent → the backend refuses each exec with `MissingDockerImageError`
-        // (extensions/execution-docker), which names the key to set.
-        ...(input.docker?.image ? { images: { default: input.docker.image } } : {}),
-        // F2 — pass the resolved constitution so the docker backend enforces
-        // allowedMountRoots / deniedPathPrefixes against the ACTUAL mount set
-        // (including the ownDir/skills/cwd defaults), not just declared fs_reach.
-        ...(constitution ? { constitution } : {}),
-      };
       let resolved: ExecutionBackend;
       try {
-        resolved = await input.registry.resolve('docker', {
-          config: backendConfig,
-          secrets: input.secrets,
-          logger: log,
-        });
+        resolved = await resolveDockerBackend();
       } catch (err) {
         // Lane B: fail loud. No silent docker -> local fallback. The A1
         // docker-absent guided-install/consent flow is Lane E.
@@ -1030,6 +1056,7 @@ export async function createExecutionRouting(
     exec: routerFor('exec'),
     process: routerFor('process'),
     resolveTurn,
+    resolveDockerBackend,
     dispose: () => {
       // Memoised: a host that calls it twice disposes nothing twice.
       disposal ??= (async () => {
@@ -2004,6 +2031,7 @@ export async function composeAllTools(
     skillsInjector,
     mcpManager,
     turnAuditors: grounding.turnAuditors,
+    resolveDockerBackend: routing.resolveDockerBackend,
     ...(grounding.memoryConsult ? { memoryConsult: grounding.memoryConsult } : {}),
   };
 }

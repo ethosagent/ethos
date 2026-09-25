@@ -1383,6 +1383,10 @@ export async function buildAgentLoop(
       // rather than failing at spawn time. The docker backend comes from the
       // SAME registry (and, by its cache, is the SAME instance) exec tools
       // use: D4's containment claim rests on one mount derivation, not two.
+      // It is resolved through the execution routing, never the registry
+      // directly: the registry keeps whichever config resolved first, so a
+      // config assembled here would decide the image for every exec tool
+      // (`ExecutionRouting.resolveDockerBackend`, compose-tools.ts).
       //
       // ALWAYS docker, never the personality's posture: a Pi run is a container
       // by construction — a digest-pinned image, a mount set derived from
@@ -1391,14 +1395,7 @@ export async function buildAgentLoop(
       // something a remote shell could host. A personality with `execution:
       // ssh` still gets its Pi jobs in a local container.
       if (piConfig?.image) {
-        const piBackend = await infra.executionBackends.resolve('docker', {
-          config: {
-            substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
-            constitution: infra.constitution,
-          },
-          secrets: config.secretsResolver ?? NOOP_SECRETS,
-          logger: log,
-        });
+        const piBackend = await toolsResult.resolveDockerBackend();
         jobRunners.register(
           PI_RUNNER_NAME,
           () =>
@@ -1427,14 +1424,7 @@ export async function buildAgentLoop(
       // container-specific, so an `ssh` posture on the personality does not
       // move it to the remote host.
       if (acpAgentNames.length > 0) {
-        const acpBackend = await infra.executionBackends.resolve('docker', {
-          config: {
-            substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
-            constitution: infra.constitution,
-          },
-          secrets: config.secretsResolver ?? NOOP_SECRETS,
-          logger: log,
-        });
+        const acpBackend = await toolsResult.resolveDockerBackend();
         await registerAcpJobRunners({
           jobRunners,
           acpAgents: acpAgentsConfig,
