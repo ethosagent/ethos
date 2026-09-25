@@ -29,6 +29,23 @@ export interface DeliveryBinding {
   onLedgerError?: (stage: 'record' | 'confirm', error: string) => void;
 }
 
+/**
+ * Obligations whose live platform send is still running in THIS process, per
+ * ledger instance. `beginDelivery` adds the id, `endDelivery` removes it, and
+ * the gateway's sweep skips every id listed here (`isDeliveryInFlight`), so a
+ * send that outlasts the sweep's age grace — a flood-wait backoff, a large
+ * voice upload — is not redelivered while the original is still going out.
+ * Keyed by ledger rather than held on the Gateway so every writer sharing the
+ * gateway's ledger — the webhook relay included — is covered without plumbing.
+ * In-process only: a PEER process sharing the ledger file cannot see it.
+ */
+const inFlight = new WeakMap<DeliveryLedger, Set<string>>();
+
+/** Whether `obligationId`'s live send is still in progress in this process. */
+export function isDeliveryInFlight(ledger: DeliveryLedger, obligationId: string): boolean {
+  return inFlight.get(ledger)?.has(obligationId) ?? false;
+}
+
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -53,8 +70,9 @@ export async function beginDelivery(
   },
 ): Promise<string | null> {
   if (!binding || !input.content) return null;
+  let id: string;
   try {
-    return await binding.ledger.record({
+    id = await binding.ledger.record({
       botKey: binding.botKey,
       platform: binding.platform,
       chatId: input.chatId,
@@ -76,12 +94,33 @@ export async function beginDelivery(
     binding.onLedgerError?.('record', errMsg(err));
     return null;
   }
+  let ids = inFlight.get(binding.ledger);
+  if (!ids) {
+    ids = new Set();
+    inFlight.set(binding.ledger, ids);
+  }
+  ids.add(id);
+  return id;
+}
+
+/**
+ * The live send for `obligationId` is over, confirmed or not. Every caller of
+ * {@link beginDelivery} calls this in a `finally` around its platform call —
+ * an id left registered is one the sweep would never retry in this process.
+ */
+export function endDelivery(
+  binding: DeliveryBinding | undefined,
+  obligationId: string | null,
+): void {
+  if (!binding || obligationId === null) return;
+  inFlight.get(binding.ledger)?.delete(obligationId);
 }
 
 /**
  * Mark the obligation delivered. Call ONLY when the platform confirmed
  * (`DeliveryResult.ok === true` / the terminal edit landed) — an unconfirmed
- * send must stay `pending` so the boot sweep redelivers it.
+ * send must stay `pending` so the sweep redelivers it. Does not end the
+ * in-flight registration; {@link endDelivery} does, on every outcome.
  */
 export async function confirmDelivery(
   binding: DeliveryBinding | undefined,

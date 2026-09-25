@@ -75,8 +75,11 @@ export interface SipInboundDispatchDeps {
    * ate is redelivered by the boot sweep rather than silently lost (OpenClaw
    * #77957 — "owner never told about inbound calls"). Returns false when the
    * delivery could not be confirmed; that is a log line, never a throw.
+   * `'held'` means the gateway stored it for quiet hours or a `/mute` and will
+   * deliver it when the hold ends (`Gateway.releaseHeldNotices`) — owed, not
+   * failed, so it is not logged.
    */
-  notifyOwner: (text: string) => Promise<boolean>;
+  notifyOwner: (text: string) => Promise<boolean | 'held'>;
   /** Deduped artifact sink for in-call artifacts. */
   sendArtifact?: (artifact: VoiceArtifact) => void | Promise<void>;
   now?: () => number;
@@ -188,8 +191,8 @@ export function createSipInboundHandler(
 
   const notify = async (text: string): Promise<void> => {
     try {
-      const ok = await deps.notifyOwner(text);
-      if (!ok) report(`owner notification not confirmed: ${text}`);
+      const outcome = await deps.notifyOwner(text);
+      if (outcome === false) report(`owner notification not confirmed: ${text}`);
     } catch (err) {
       report(`owner notification failed: ${String(err)}`);
     }

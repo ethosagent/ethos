@@ -92,7 +92,13 @@ import {
 } from './channel-digest';
 import { credentialRequiredReply } from './credential-reply';
 import { MessageDedupCache } from './dedup';
-import { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
+import {
+  beginDelivery,
+  confirmDelivery,
+  type DeliveryBinding,
+  endDelivery,
+  isDeliveryInFlight,
+} from './delivery';
 import { type LaneSessionEntry, LaneSessionFiles } from './lane-sessions';
 import {
   attachmentsFromStructured,
@@ -126,7 +132,7 @@ export {
   summarizeChannelDigest,
 } from './channel-digest';
 export { MessageDedupCache } from './dedup';
-export { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
+export { beginDelivery, confirmDelivery, type DeliveryBinding, endDelivery } from './delivery';
 export { DreamExecutor } from './dream-executor';
 export {
   attachmentsFromStructured,
@@ -352,6 +358,14 @@ const DELIVERY_SWEEP_DEFAULT_INTERVAL_MS = 60_000;
  * `pending` row may be a send still in flight — here or in a peer sharing the
  * ledger — and redelivering it would double-send. The boot sweep has no live
  * sends to collide with and takes every row.
+ *
+ * Age is only the PEER guard. A send in THIS process is skipped for as long as
+ * it runs, however long that is (`isDeliveryInFlight` in `./delivery`, checked
+ * in `sweepDeliveriesOnce`). Limitation: a peer process sharing the ledger file
+ * whose send outlasts this grace can still be redelivered here — live sends do
+ * not claim their row, so nothing in the ledger says "in flight". One gateway
+ * per state dir (`acquireGatewayLock`, packages/wiring/src/gateway-lock.ts)
+ * makes such a peer an unusual deployment, not the default one.
  */
 const DELIVERY_SWEEP_MIN_AGE_MS = 60_000;
 /**
@@ -3108,7 +3122,7 @@ export class Gateway {
 
     if (cmdType === 'stop') {
       lane.abort();
-      await adapter.send(message.chatId, { text: '✓ Stopped.' }).catch(() => {});
+      await adapter.send(message.chatId, { text: '✓ Stopped.', threadId }).catch(() => {});
       return;
     }
 
@@ -3127,12 +3141,14 @@ export class Gateway {
       // recognise. `lastInboundHadAudio` IS per-turn state and still clears.
       this.lastInboundHadAudio.delete(laneKey);
       await this.persistLaneSessions(laneKey);
-      await adapter.send(message.chatId, { text: '✓ New session started.' }).catch(() => {});
+      await adapter
+        .send(message.chatId, { text: '✓ New session started.', threadId })
+        .catch(() => {});
       return;
     }
 
     if (cmdType === 'fork' || cmdType === 'branches' || cmdType === 'branch') {
-      await this.handleBranchCommand(cmdType, text, laneKey, lane, bot, message, adapter);
+      await this.handleBranchCommand(cmdType, text, laneKey, lane, bot, message, adapter, threadId);
       return;
     }
 
@@ -3168,6 +3184,7 @@ export class Gateway {
       await adapter
         .send(message.chatId, {
           text: helpText,
+          threadId,
         })
         .catch(() => {});
       return;
@@ -3178,13 +3195,14 @@ export class Gateway {
       if (this.greetingProvider) {
         const greeting = await this.greetingProvider.greet(personalityId).catch(() => null);
         if (greeting) {
-          await adapter.send(message.chatId, { text: greeting }).catch(() => {});
+          await adapter.send(message.chatId, { text: greeting, threadId }).catch(() => {});
           return;
         }
       }
       await adapter
         .send(message.chatId, {
           text: `Hello! I'm running as *${personalityId}*. Send a message to get started, or try /help for available commands.`,
+          threadId,
         })
         .catch(() => {});
       return;
@@ -3202,7 +3220,7 @@ export class Gateway {
 
       if (!arg) {
         await adapter
-          .send(message.chatId, { text: `Current personality: ${current}` })
+          .send(message.chatId, { text: `Current personality: ${current}`, threadId })
           .catch(() => {});
         return;
       }
@@ -3217,7 +3235,7 @@ export class Gateway {
       ) {
         const card = await this.personalityCardReader.read(current).catch(() => null);
         if (card) {
-          await adapter.send(message.chatId, { text: card.text }).catch(() => {});
+          await adapter.send(message.chatId, { text: card.text, threadId }).catch(() => {});
           return;
         }
       }
@@ -3234,6 +3252,7 @@ export class Gateway {
               `This bot is bound to ${bot.binding.type} '${bot.binding.name}'. ` +
               `Switching personalities is disabled for identity-bound bots. ` +
               `To talk to a different agent, message that agent's bot.`,
+            threadId,
           })
           .catch(() => {});
         return;
@@ -3247,7 +3266,7 @@ export class Gateway {
               .map((p) => `${p.id} — ${p.name}${p.isDefault ? ' (default)' : ''}`)
               .join('\n')}\n\nUse /personality <id> to switch.`
           : 'Built-in personalities: researcher · engineer · reviewer · coach · operator\n\nUse /personality <id> to switch.';
-        await adapter.send(message.chatId, { text: listText }).catch(() => {});
+        await adapter.send(message.chatId, { text: listText, threadId }).catch(() => {});
         return;
       }
 
@@ -3263,7 +3282,7 @@ export class Gateway {
             ? `Switching personalities in a group needs an owner. ` +
               `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
             : `Only the bot owner can switch personalities in a group.`;
-        await adapter.send(message.chatId, { text }).catch(() => {});
+        await adapter.send(message.chatId, { text, threadId }).catch(() => {});
         return;
       }
 
@@ -3283,6 +3302,7 @@ export class Gateway {
         await adapter
           .send(message.chatId, {
             text: `Personality '${arg}' not found — /personality list to see what's available.`,
+            threadId,
           })
           .catch(() => {});
         return;
@@ -3297,7 +3317,10 @@ export class Gateway {
       this.sessionKeys.set(laneKey, fresh);
       await this.persistLaneSessions(laneKey);
       await adapter
-        .send(message.chatId, { text: `✓ Switched to ${arg} personality. New session started.` })
+        .send(message.chatId, {
+          text: `✓ Switched to ${arg} personality. New session started.`,
+          threadId,
+        })
         .catch(() => {});
       return;
     }
@@ -3307,13 +3330,14 @@ export class Gateway {
       await adapter
         .send(message.chatId, {
           text: `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\nCost: $${u.costUsd.toFixed(5)}`,
+          threadId,
         })
         .catch(() => {});
       return;
     }
 
     if (cmdType === 'budget') {
-      await this.handleBudgetCommand(text, laneKey, bot, message, adapter);
+      await this.handleBudgetCommand(text, laneKey, bot, message, adapter, threadId);
       return;
     }
 
@@ -3321,7 +3345,7 @@ export class Gateway {
       const code = text.split(/\s+/)[1]?.toUpperCase() ?? '';
       if (!code || !this.pairingDb || !this.channelFilter) {
         await adapter
-          .send(message.chatId, { text: '✗ Pairing not configured or no code given.' })
+          .send(message.chatId, { text: '✗ Pairing not configured or no code given.', threadId })
           .catch(() => {});
         return;
       }
@@ -3338,7 +3362,7 @@ export class Gateway {
           codePlatformCfg?.ownerUserId && message.userId === codePlatformCfg.ownerUserId;
         if (!isOwner) {
           await adapter
-            .send(message.chatId, { text: '✗ Only the owner may approve pairings.' })
+            .send(message.chatId, { text: '✗ Only the owner may approve pairings.', threadId })
             .catch(() => {});
           return;
         }
@@ -3364,14 +3388,19 @@ export class Gateway {
         });
         await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
         await adapter
-          .send(message.chatId, { text: `✓ ${result.senderId} approved.` })
+          .send(message.chatId, { text: `✓ ${result.senderId} approved.`, threadId })
           .catch(() => {});
       } else if (result.reason === 'owner_paused') {
         await adapter
-          .send(message.chatId, { text: '✗ Too many invalid attempts. Pairing paused for 24h.' })
+          .send(message.chatId, {
+            text: '✗ Too many invalid attempts. Pairing paused for 24h.',
+            threadId,
+          })
           .catch(() => {});
       } else {
-        await adapter.send(message.chatId, { text: '✗ Invalid or expired code.' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: '✗ Invalid or expired code.', threadId })
+          .catch(() => {});
       }
       return;
     }
@@ -3380,7 +3409,9 @@ export class Gateway {
       const targetUserId = text.split(/\s+/)[1] ?? '';
       const cleanTarget = targetUserId.replace(/^@/, '');
       if (!cleanTarget || !this.channelFilter) {
-        await adapter.send(message.chatId, { text: '✗ Usage: /deny <userId>' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: '✗ Usage: /deny <userId>', threadId })
+          .catch(() => {});
         return;
       }
 
@@ -3418,10 +3449,12 @@ export class Gateway {
       }
 
       if (removed) {
-        await adapter.send(message.chatId, { text: `✓ ${cleanTarget} removed.` }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: `✓ ${cleanTarget} removed.`, threadId })
+          .catch(() => {});
       } else {
         await adapter
-          .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.` })
+          .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.`, threadId })
           .catch(() => {});
       }
       return;
@@ -3429,7 +3462,9 @@ export class Gateway {
 
     if (cmdType === 'communications') {
       if (!this.pairingDb || !this.channelFilter) {
-        await adapter.send(message.chatId, { text: 'Pairing not configured.' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: 'Pairing not configured.', threadId })
+          .catch(() => {});
         return;
       }
 
@@ -3437,7 +3472,7 @@ export class Gateway {
       const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
       if (!isOwner) {
         await adapter
-          .send(message.chatId, { text: '✗ Only the owner may use /communications.' })
+          .send(message.chatId, { text: '✗ Only the owner may use /communications.', threadId })
           .catch(() => {});
         return;
       }
@@ -3474,7 +3509,7 @@ export class Gateway {
         }
 
         await adapter
-          .send(message.chatId, { text: `✓ Approved ${approvedCount} sender(s).` })
+          .send(message.chatId, { text: `✓ Approved ${approvedCount} sender(s).`, threadId })
           .catch(() => {});
         return;
       }
@@ -3486,14 +3521,14 @@ export class Gateway {
 
       if (pending.length === 0) {
         await adapter
-          .send(message.chatId, { text: 'No pending pairing requests.' })
+          .send(message.chatId, { text: 'No pending pairing requests.', threadId })
           .catch(() => {});
         return;
       }
 
       const lines = pending.map((r) => `${r.sender_id} (${r.platform}) — /allow ${r.code}`);
       const reply = `${pending.length} pending pairing request(s):\n${lines.join('\n')}`;
-      await adapter.send(message.chatId, { text: reply }).catch(() => {});
+      await adapter.send(message.chatId, { text: reply, threadId }).catch(() => {});
       return;
     }
 
@@ -3502,7 +3537,7 @@ export class Gateway {
       const bgText = text.slice('/background '.length).trim();
       if (!bgText) {
         await adapter
-          .send(message.chatId, { text: '✗ Usage: /background <prompt>' })
+          .send(message.chatId, { text: '✗ Usage: /background <prompt>', threadId })
           .catch(() => {});
         return;
       }
@@ -3633,7 +3668,9 @@ export class Gateway {
     if (cmdType === 'queue') {
       const queueText = text.slice('/queue '.length).trim();
       if (!queueText) {
-        await adapter.send(message.chatId, { text: '✗ Usage: /queue <message>' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: '✗ Usage: /queue <message>', threadId })
+          .catch(() => {});
         return;
       }
       if (this.activeSinks.has(laneKey)) {
@@ -5430,27 +5467,34 @@ export class Gateway {
     });
 
     // 11. Send. A throw folds into `{ ok: false }` exactly as in `sendTracked`.
-    const result = await sink
-      .sendVoiceNote(input.chatId, bytes, {
-        format: finalFormat,
-        mimeType: voiceAudioMimeType(finalFormat),
-        filename: `reply.${voiceAudioExtension(finalFormat)}`,
-        ...(input.threadId ? { threadId: input.threadId } : {}),
-      })
-      .catch(
-        (err: unknown): DeliveryResult => ({
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      );
+    //     A large upload can outlast the sweep's age grace; the obligation stays
+    //     registered in flight (`endDelivery`) until the send settles.
+    let result: DeliveryResult;
+    try {
+      result = await sink
+        .sendVoiceNote(input.chatId, bytes, {
+          format: finalFormat,
+          mimeType: voiceAudioMimeType(finalFormat),
+          filename: `reply.${voiceAudioExtension(finalFormat)}`,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+        })
+        .catch(
+          (err: unknown): DeliveryResult => ({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
 
-    // 12. Confirmed → the obligation is discharged and its artifact is released
-    //     (retention D9: delivering deletes). Otherwise the row stays `pending`
-    //     and the artifact stays on disk for the sweep to re-send.
-    if (result?.ok === true) {
-      await confirmDelivery(binding, obligationId);
-      if (ref) await this.voiceArtifacts?.remove(ref);
-      return;
+      // 12. Confirmed → the obligation is discharged and its artifact is released
+      //     (retention D9: delivering deletes). Otherwise the row stays `pending`
+      //     and the artifact stays on disk for the sweep to re-send.
+      if (result?.ok === true) {
+        await confirmDelivery(binding, obligationId);
+        if (ref) await this.voiceArtifacts?.remove(ref);
+        return;
+      }
+    } finally {
+      endDelivery(binding, obligationId);
     }
     event(
       'gateway.delivery_unconfirmed',
@@ -6122,15 +6166,22 @@ export class Gateway {
       threadId: message.threadId,
       content: message.text,
     });
-    const result = await target.adapter.send(target.chatId, message).catch(
-      (err: unknown): DeliveryResult => ({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-    if (result?.ok === true) {
-      await confirmDelivery(binding, obligationId);
-      return { confirmed: true, obligationId };
+    // Registered in flight by `beginDelivery` until the send settles, so the
+    // sweep does not redeliver a send that outlasts its age grace.
+    let result: DeliveryResult;
+    try {
+      result = await target.adapter.send(target.chatId, message).catch(
+        (err: unknown): DeliveryResult => ({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      if (result?.ok === true) {
+        await confirmDelivery(binding, obligationId);
+        return { confirmed: true, obligationId };
+      }
+    } finally {
+      endDelivery(binding, obligationId);
     }
     // Leave the row `pending` — the next boot sweep redelivers it. Surface the
     // failure too: before this, a failed send was completely invisible.
@@ -6163,7 +6214,12 @@ export class Gateway {
    *
    * Returns whether the platform CONFIRMED. `false` with a ledger wired means
    * the obligation is still `pending` and will be retried by
-   * {@link sweepPendingDeliveries}.
+   * {@link sweepPendingDeliveries}. `'held'` means the notice was stored for
+   * quiet hours or a lane `/mute` ({@link holdNotice}) and is owed, not failed:
+   * {@link releaseHeldNotices} sends it through the ledger once the hold ends
+   * (pinned by the U11 cases in `__tests__/notify-tracked.test.ts`). It is
+   * truthy on purpose, so a caller that only asks "did this fail?" (`!ok`)
+   * does not report a held notice as a failure.
    *
    * Refuses (returning false, and recording the same unconfirmed event) when
    * the bot cannot be named, or when that bot has no adapter on the platform
@@ -6189,7 +6245,7 @@ export class Gateway {
       answersInbound?: boolean;
     },
     text: string,
-  ): Promise<boolean> {
+  ): Promise<boolean | 'held'> {
     const refuse = (cause: string): false => {
       this.observability?.recordSafetyBlock({
         code: 'gateway.delivery_unconfirmed',
@@ -6215,8 +6271,8 @@ export class Gateway {
     }
 
     const sessionKey = target.sessionKey ?? `${target.platform}:${target.chatId}`;
-    // U11 — quiet hours / a lane mute hold an unprompted notice. `false`:
-    // nothing was confirmed yet; the release goes through `sendTracked`.
+    // U11 — quiet hours / a lane mute hold an unprompted notice. `'held'`:
+    // nothing was sent yet, but it is owed; the release goes through `sendTracked`.
     if (!target.answersInbound) {
       const laneKey = laneKeyOf(target.platform, botKey, target.chatId, target.threadId);
       const held = await this.holdNotice({
@@ -6228,7 +6284,7 @@ export class Gateway {
         sessionKey,
         text,
       });
-      if (held) return false;
+      if (held) return 'held';
     }
 
     return this.sendTracked(
@@ -6332,7 +6388,15 @@ export class Gateway {
     return released;
   }
 
-  /** `/mute <30m|2h|1d>` holds this lane's unprompted notices; `/mute off` ends it. */
+  /**
+   * `/mute <30m|2h|1d>` holds this lane's unprompted notices; `/mute off` ends it.
+   *
+   * Both change the lane for everyone in it, so they take `/personality`'s
+   * group rule (plan openclaw-advisory-fixes D20/D21), as `/budget reset` does:
+   * in a group only `channel_filter.<platform>.ownerUserId` may change the
+   * mute, and a group on a platform with no owner refuses outright. DMs and the
+   * read-only `/mute` stay open. Pinned by `__tests__/mute-owner.test.ts`.
+   */
   private async handleMuteCommand(
     text: string,
     laneKey: string,
@@ -6343,7 +6407,13 @@ export class Gateway {
     const arg = text.split(/\s+/).slice(1).join(' ');
     const parsed = parseMuteDuration(arg);
     let reply: string;
-    if (parsed === null) {
+    if (parsed !== null && !message.isDm && !this.isOwner(message)) {
+      reply =
+        this.channelFilter?.[message.platform]?.ownerUserId === undefined
+          ? `Muting notices in a group needs an owner. ` +
+            `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
+          : 'Only the bot owner can mute notices in a group.';
+    } else if (parsed === null) {
       const until = this.laneMutes.get(laneKey);
       reply =
         until !== undefined && until > Date.now()
@@ -6501,7 +6571,9 @@ export class Gateway {
    * sweep is still running joins it. Idempotent; {@link shutdown} stops it.
    *
    * A tick skips `pending` rows younger than `DELIVERY_SWEEP_MIN_AGE_MS`: they
-   * may be replies still in flight, which the ledger does not claim.
+   * may be replies still in flight, which the ledger does not claim. Every
+   * sweep also skips a row whose live send is still running in this process
+   * (`isDeliveryInFlight`), whatever its age.
    */
   startDeliverySweep(): void {
     if (this.deliverySweepTimer || this.deliverySweepIntervalMs <= 0 || this.closing) return;
@@ -6570,6 +6642,11 @@ export class Gateway {
       // Resolved BEFORE the claim, so a row this process cannot deliver is left
       // exactly as it was — still `pending`, never burned, never held in
       // `redelivering` where a peer that does own the adapter would skip it.
+      // A live reply path in THIS process is still sending it (registered by
+      // `beginDelivery` until `endDelivery`): redelivering now would send it
+      // twice. It is neither a redelivery nor a failure; a later sweep takes it
+      // if that send ends unconfirmed.
+      if (isDeliveryInFlight(ledger, row.id)) continue;
       const adapter = this.adapterForBot(row.botKey, row.platform);
       if (!adapter) {
         failed++;
@@ -7469,8 +7546,10 @@ export class Gateway {
     bot: GatewayBotConfig,
     message: InboundMessage,
     adapter: PlatformAdapter,
+    threadId: string | undefined,
   ): Promise<void> {
-    const reply = (body: string) => adapter.send(message.chatId, { text: body }).catch(() => {});
+    const reply = (body: string) =>
+      adapter.send(message.chatId, { text: body, threadId }).catch(() => {});
     const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
     const arg = text.split(/\s+/)[1]?.toLowerCase() ?? '';
 
@@ -7522,9 +7601,10 @@ export class Gateway {
     bot: GatewayBotConfig,
     message: InboundMessage,
     adapter: PlatformAdapter,
+    threadId: string | undefined,
   ): Promise<void> {
     const reply = async (body: string): Promise<void> => {
-      await adapter.send(message.chatId, { text: body }).catch(() => {});
+      await adapter.send(message.chatId, { text: body, threadId }).catch(() => {});
     };
     const store = this.sessionStoreFor?.();
     if (!store) {

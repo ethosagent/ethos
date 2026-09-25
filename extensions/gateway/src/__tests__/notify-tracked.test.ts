@@ -231,7 +231,7 @@ describe('Gateway.notifyTracked — quiet hours (U11)', () => {
       extra: { quietHours: QUIET, heldNotices: held },
     });
 
-    await expect(gw.notifyTracked(TARGET, 'call summary')).resolves.toBe(false);
+    await expect(gw.notifyTracked(TARGET, 'call summary')).resolves.toBe('held');
     expect(adapter.sent).toHaveLength(0);
     expect(held.rows.map((r) => r.text)).toEqual(['call summary']);
     expect(await ledger.listPending(['bot-a'])).toHaveLength(0);
@@ -317,7 +317,7 @@ describe('Gateway.notifyTracked — quiet hours (U11)', () => {
     expect(adapter.sent.at(-1)?.message.text).toMatch(/muted/i);
     const acks = adapter.sent.length;
 
-    await expect(gw.notifyTracked(TARGET, 'job finished')).resolves.toBe(false);
+    await expect(gw.notifyTracked(TARGET, 'job finished')).resolves.toBe('held');
     expect(held.rows.map((r) => r.text)).toEqual(['job finished']);
 
     await gw.handleMessage(inbound('/mute off', 'm2'), adapter);
