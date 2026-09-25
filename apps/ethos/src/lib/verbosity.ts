@@ -122,6 +122,10 @@ export function projectEvent(
       // Phase 30.2 — `default` honours the audience gate; `verbose`+ lifts it.
       const isUserOptIn = event.audience === 'user';
       if (verbosity === 'default' && !isUserOptIn) break;
+      // A budget stop arrives as this user-audience `_budget` chip AND the
+      // `halt` right behind it (`budgetGuardEvents`, @ethosagent/core); the
+      // halt line above carries the message, so the chip is not repeated.
+      if (event.toolName === '_budget' && isUserOptIn) break;
       out.push({
         text: `· ${event.toolName}: ${event.message}`,
         kind: 'tool_progress',
