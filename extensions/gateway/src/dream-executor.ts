@@ -14,6 +14,12 @@ interface DreamState {
 
 // ---------------------------------------------------------------------------
 // Default dream prompt
+//
+// The dream writes memory only through the model's `memory_write` calls. Under
+// `memoryApproval.mode` 'automated' or 'all' those are parked as pending
+// `dream` entries, not written: `PendingMemoryGate.sync` relabels the `dream:`
+// sessionKey minted in `executeDream` (extensions/memory-approval/src/gate.ts).
+// Pinned by 'DreamExecutor under memoryApproval (U6)' in the test file.
 // ---------------------------------------------------------------------------
 
 const DEFAULT_DREAM_PROMPT =
