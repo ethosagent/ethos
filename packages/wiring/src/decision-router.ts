@@ -95,7 +95,7 @@ export function createDecisionTierRouter(opts: CreateDecisionTierRouterOptions):
   // Today's path is `null`, so every outcome but an acted-on `trivial` is
   // "no routing".
   const threshold = opts.global.thresholds.router;
-  return async ({ message, personality, signal, traceId }) => {
+  return async ({ message, personality, signal, traceId, decisionSink }) => {
     const site = resolvePersonalityDecisionSite(personality.decisions, 'router', opts.global);
     if (site.effective === 'off') return null;
     return runDecisionSite<'trivial' | null, RouterChoice>({
@@ -108,6 +108,9 @@ export function createDecisionTierRouter(opts: CreateDecisionTierRouterOptions):
       personalityId: personality.id,
       ...(signal ? { signal } : {}),
       ...(traceId !== undefined ? { traceId } : {}),
+      ...(decisionSink ? { sink: decisionSink } : {}),
+      // §15.2 vocabulary: today's "no routing" is `default`.
+      summarize: { verdict: (v) => v ?? 'default', reading: (choice) => choice },
       gate: (answers) => routerVerdictFrom(answers, threshold),
       // Shadow reading (plan §8): the argmax choice, before any threshold.
       interpret: (answers) => routerChoice(answers)?.choice ?? null,

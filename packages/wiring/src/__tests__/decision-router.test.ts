@@ -21,6 +21,7 @@ import type {
   DecisionProvider,
   DecisionRequest,
   DecisionResult,
+  DecisionSink,
   PersonalityConfig,
   SecretsResolver,
 } from '@ethosagent/types';
@@ -474,3 +475,48 @@ function hang(_url: string, init: RequestInit): Promise<Response> {
     signal?.addEventListener('abort', fail, { once: true });
   });
 }
+
+// plan decision-provider-personality §15.3 / §15.8 (N7b): the router input's
+// `decisionSink` reaches the site; the event uses the router vocabulary and,
+// in shadow, never a today-vs comparison (today's router path does no work).
+describe('decision sink (N7b)', () => {
+  function sink() {
+    const events: Array<Parameters<DecisionSink['emit']>[0]> = [];
+    const decisionSink: DecisionSink = { traceId: 'trace-r', emit: (e) => events.push(e) };
+    return { decisionSink, events };
+  }
+
+  it('on, acted: started + settled with verdict trivial', async () => {
+    const { decisionSink, events } = sink();
+    const route = createDecisionTierRouter({
+      provider: fixed(provider(() => ok('trivial', 0.95)).provider),
+      global: G,
+    });
+    expect(await route({ message: 'thanks', personality: persona('on'), decisionSink })).toBe(
+      'trivial',
+    );
+    expect(events.map((e) => e.phase)).toEqual(['started', 'settled']);
+    expect(events[1]).toMatchObject({ site: 'router', acted: true, verdict: 'trivial' });
+  });
+
+  it("shadow: reading and today's 'default', no todayLatencyMs", async () => {
+    const { decisionSink, events } = sink();
+    const { recorder: rec, records } = recorder();
+    const route = createDecisionTierRouter({
+      provider: fixed(provider(() => ok('trivial', 0.95)).provider),
+      global: G,
+      recorder: rec,
+    });
+    expect(
+      await route({ message: 'thanks', personality: persona('shadow'), decisionSink }),
+    ).toBeNull();
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    expect(events[0]).toMatchObject({
+      verdict: 'trivial',
+      todayVerdict: 'default',
+      disagreed: true,
+    });
+    expect(events[0]?.todayLatencyMs).toBeUndefined();
+    expect(records[0]?.traceId).toBe('trace-r');
+  });
+});

@@ -15,6 +15,7 @@ import type {
   DecisionProvider,
   DecisionRequest,
   DecisionResult,
+  DecisionSink,
   InjectionClassifier,
   InjectionVerdict,
   LLMProvider,
@@ -366,5 +367,49 @@ describe('per personality (plan decision-provider-personality §7.2)', () => {
     });
     expect(await classify({ content: 'x', personalityId: 'x' })).toBe(LLM_VERDICT);
     expect(decide).not.toHaveBeenCalled();
+  });
+});
+
+// plan decision-provider-personality §15.3 / §15.8 (N7b): core passes a
+// `decisionSink` on the classifier input; the site emits through it, and the
+// record takes the turn's traceId from it — the NULL trace_id fix.
+describe('decision sink (N7b)', () => {
+  function sinkWith(traceId: string) {
+    const events: Array<Parameters<DecisionSink['emit']>[0]> = [];
+    const sink: DecisionSink = { traceId, emit: (e) => events.push(e) };
+    return { sink, events };
+  }
+
+  it("on: the record carries the sink's traceId and the event the injection vocabulary", async () => {
+    const { provider: p } = provider(() => ok(0.97));
+    const records: unknown[] = [];
+    const classify = createDecisionInjectionClassifier({
+      provider: fixed(p),
+      fallback: vi.fn(async () => LLM_VERDICT),
+      global: resolveDecisionsConfig({ provider: 'typesafe', thresholds: { injection: T } }),
+      personalities: registry([
+        { id: 'p', name: 'p', decisions: { provider: 'typesafe', sites: { injection: 'on' } } },
+      ]),
+      observability: { recordDecisionCall: (r) => records.push(r) },
+    });
+    const { sink, events } = sinkWith('trace-7');
+    await classify({ content: 'text', personalityId: 'p', decisionSink: sink });
+    expect(records).toEqual([expect.objectContaining({ traceId: 'trace-7', personalityId: 'p' })]);
+    expect(events.map((e) => e.phase)).toEqual(['started', 'settled']);
+    expect(events[1]).toMatchObject({ site: 'injection', acted: true, verdict: 'flagged' });
+  });
+
+  it('off: the fallback gets exactly { content } and nothing is emitted', async () => {
+    const fallback = vi.fn(async () => LLM_VERDICT);
+    const classify = createDecisionInjectionClassifier({
+      provider: fixed(provider(() => ok(0.97)).provider),
+      fallback,
+      global: resolveDecisionsConfig({ provider: 'typesafe' }),
+      personalities: registry([{ id: 'plain', name: 'plain' }]),
+    });
+    const { sink, events } = sinkWith('trace-7');
+    await classify({ content: 'c', personalityId: 'plain', decisionSink: sink });
+    expect(fallback.mock.calls).toEqual([[{ content: 'c' }]]);
+    expect(events).toEqual([]);
   });
 });

@@ -41,6 +41,7 @@ import { resolvePersonality, setupTurn } from './agent-loop/stages/turn-setup';
 import { replyAfterWatcherPause } from './agent-loop/stages/watcher-pause';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
 import type { LoopDeps } from './agent-loop/turn-context';
+import { TurnDecisions, withDecisionEvents } from './agent-loop/turn-decisions';
 import { buildTurnEndCtx, maybeConsolidateAtTurnEnd } from './agent-loop/turn-end';
 import { emptyModelResolution } from './agent-loop/turn-model';
 import { createWatcherTap } from './agent-loop/watcher-tap';
@@ -619,8 +620,18 @@ export class AgentLoop {
    *  turn-end maintenance — silent memory flush + auto-compaction — runs AFTER
    *  `done` while the lane is held, so breaking on `done` skips it. */
   async *run(text: string, opts: RunOptions = {}): AsyncGenerator<AgentEvent> {
+    // decision-provider-personality §15.3 — site events merge in (agent-loop/turn-decisions.ts).
+    const decisions = new TurnDecisions();
+    yield* withDecisionEvents(decisions, this.runTurn(text, opts, decisions));
+  }
+
+  private async *runTurn(
+    text: string,
+    opts: RunOptions,
+    decisions: TurnDecisions,
+  ): AsyncGenerator<AgentEvent> {
     // Stage 1: Turn setup (session, personality, tier, tools, hooks, credential gate)
-    const setupResult = yield* setupTurn(this.deps, text, opts);
+    const setupResult = yield* setupTurn(this.deps, text, opts, decisions);
     if (setupResult.kind === 'refused') return;
     const { setup } = setupResult;
 
@@ -744,6 +755,7 @@ export class AgentLoop {
       turnAttachments: opts.attachments,
       ...(this.onToolMetric ? { onToolMetric: this.onToolMetric } : {}),
       denyRules: personality.safety?.denyRules,
+      decisions,
     });
 
     // get/setContext: one store per run(), seen by its batches only (context-store-per-run.test.ts)
@@ -953,6 +965,7 @@ export class AgentLoop {
           usageSink,
           scriptToolBridge,
           contextStore,
+          decisions,
           dgEnabled,
           dgRemaining: dgRemainingRef,
           dgTools,

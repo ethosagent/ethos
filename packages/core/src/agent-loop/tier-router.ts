@@ -23,7 +23,7 @@
 //
 // Pinned by `__tests__/tier-router.test.ts`.
 
-import type { PersonalityConfig } from '@ethosagent/types';
+import type { DecisionSink, PersonalityConfig } from '@ethosagent/types';
 
 /**
  * `'trivial'` routes this turn down; `null` leaves it on `default`. The type
@@ -39,6 +39,12 @@ export type TierRouter = (input: {
   signal?: AbortSignal;
   /** The turn's observability trace, so what the router records joins the turn. */
   traceId?: string;
+  /**
+   * Where the router's decision site reports that it ran (plan
+   * decision-provider-personality §15.3). Absent unless the personality
+   * declares decision sites.
+   */
+  decisionSink?: DecisionSink;
 }) => Promise<'trivial' | null>;
 
 /** What a role resolves to for the R1 comparison: the provider entry and the model id. */
@@ -67,6 +73,7 @@ export async function routeTurnTier(input: {
   personality: PersonalityConfig;
   signal?: AbortSignal;
   traceId?: string;
+  decisionSink?: DecisionSink;
   resolve: (role: 'trivial' | 'default') => ResolvedRoleModel | null;
 }): Promise<'trivial' | undefined> {
   const { router } = input;
@@ -81,6 +88,7 @@ export async function routeTurnTier(input: {
       personality: input.personality,
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.traceId !== undefined ? { traceId: input.traceId } : {}),
+      ...(input.decisionSink ? { decisionSink: input.decisionSink } : {}),
     });
     return answer === 'trivial' ? 'trivial' : undefined;
   } catch {

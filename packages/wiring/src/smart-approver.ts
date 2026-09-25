@@ -354,6 +354,13 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
           questions: APPROVER_QUESTIONS,
           timeoutMs: siteTimeoutMs,
           personalityId,
+          // plan decision-provider-personality §15.3 — core put the sink on the
+          // hook payload; it carries the turn's traceId and this toolCallId.
+          ...(payload.decisionSink ? { sink: payload.decisionSink } : {}),
+          summarize: {
+            verdict: (reviewed) => reviewed.verdict.decision,
+            reading: (choice) => choice,
+          },
           gate: (answers) => {
             const verdict = approverVerdictFrom(
               answers,

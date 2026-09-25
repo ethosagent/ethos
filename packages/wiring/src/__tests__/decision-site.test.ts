@@ -3,11 +3,13 @@
 // tested once here. Each site tests only its own mapping.
 
 import type {
+  AgentEvent,
   DecisionAnswer,
   DecisionErrorCode,
   DecisionProvider,
   DecisionRequest,
   DecisionResult,
+  DecisionSink,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -28,6 +30,7 @@ const ERROR_CODES: DecisionErrorCode[] = [
   'malformed',
   'too_large',
   'unavailable',
+  'breaker_open',
 ];
 
 function okResult(p: number, model = 'jev-1.13.0'): DecisionResult {
@@ -445,5 +448,225 @@ describe('runDecisionSite — shadow records tracker (R8 teardown)', () => {
     await runDecisionSite(opts);
     await tracker.drain();
     expect(opts.records[0]?.traceId).toBe('trace-1');
+  });
+});
+
+// plan decision-provider-personality §15.3 / §15.8 "Wiring" — N7b.
+describe('runDecisionSite — decision events through the sink', () => {
+  type Body = Parameters<DecisionSink['emit']>[0];
+
+  function sink(traceId?: string) {
+    const events: Body[] = [];
+    const value: DecisionSink = {
+      ...(traceId !== undefined ? { traceId } : {}),
+      emit: (e) => events.push(e),
+    };
+    return { sink: value, events };
+  }
+
+  const summarize = {
+    verdict: (v: boolean) => (v ? 'flagged' : 'clean'),
+    reading: (j: boolean) => (j ? 'flagged' : 'clean'),
+  };
+
+  /** A clock that moves only when a path runs: decide() +30, today() +1200. */
+  function clocked(result: DecisionResult, today: () => Promise<boolean> = async () => false) {
+    let t = 0;
+    const { provider } = stubProvider(() => {
+      t += 30;
+      return result;
+    });
+    return {
+      provider,
+      now: () => t,
+      today: async () => {
+        t += 1200;
+        return today();
+      },
+    };
+  }
+
+  it('on, acted: started then ONE settled, sharing an id, with the acted verdict', async () => {
+    const { sink: s, events } = sink();
+    const c = clocked(okResult(0.95)); // confidence 0.9 ≥ 0.8
+    expect(await runDecisionSite(site({ ...c, sink: s, summarize }))).toBe(true);
+    expect(events).toEqual([
+      { id: expect.any(String), site: 'injection', provider: 'stub', phase: 'started', mode: 'on' },
+      {
+        id: events[0]?.id,
+        site: 'injection',
+        provider: 'stub',
+        phase: 'settled',
+        mode: 'on',
+        model: 'jev-1.13.0',
+        outcome: 'ok',
+        confidence: expect.closeTo(0.9, 10),
+        latencyMs: 30,
+        acted: true,
+        verdict: 'flagged',
+      },
+    ]);
+  });
+
+  it('on, below threshold: acted false, no verdict, the confidence still shown', async () => {
+    const { sink: s, events } = sink();
+    const c = clocked(okResult(0.85)); // confidence 0.7 < 0.8
+    expect(await runDecisionSite(site({ ...c, sink: s, summarize }))).toBe(false);
+    const settled = events.at(-1);
+    expect(settled).toMatchObject({ phase: 'settled', acted: false, outcome: 'ok' });
+    expect(settled?.verdict).toBeUndefined();
+    expect(settled?.confidence).toBeCloseTo(0.7, 10);
+    expect(settled?.todayLatencyMs).toBeUndefined();
+  });
+
+  it('shadow, agreed: no started; reading, today and both latencies', async () => {
+    const { sink: s, events } = sink();
+    const tracker = new DecisionRecordTracker(2000);
+    const c = clocked(okResult(0.1), async () => false); // reads clean, today clean
+    const opts = site({ ...c, mode: 'shadow', sink: s, summarize, tracker });
+    expect(await runDecisionSite(opts)).toBe(false);
+    await tracker.drain();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      phase: 'settled',
+      mode: 'shadow',
+      outcome: 'ok',
+      verdict: 'clean',
+      todayVerdict: 'clean',
+      disagreed: false,
+      // The two paths overlap on one fake clock, so only today's span is exact here.
+      latencyMs: expect.any(Number),
+      todayLatencyMs: 1200,
+    });
+    expect(events[0]?.acted).toBeUndefined();
+    // The record carries the same measurement (§15.1).
+    expect(opts.records[0]?.todayLatencyMs).toBe(1200);
+  });
+
+  it('shadow, disagreed: disagreed true, the two verdicts differ', async () => {
+    const { sink: s, events } = sink();
+    const tracker = new DecisionRecordTracker(2000);
+    const c = clocked(okResult(0.99), async () => false);
+    await runDecisionSite(site({ ...c, mode: 'shadow', sink: s, summarize, tracker }));
+    await tracker.drain();
+    expect(events[0]).toMatchObject({ verdict: 'flagged', todayVerdict: 'clean', disagreed: true });
+  });
+
+  it('failure: the error outcome, no model, no confidence; in shadow no todayLatencyMs', async () => {
+    for (const mode of ['on', 'shadow'] as const) {
+      const { sink: s, events } = sink();
+      const tracker = new DecisionRecordTracker(2000);
+      const c = clocked({ ok: false, code: 'timeout', message: 't' });
+      await runDecisionSite(site({ ...c, mode, sink: s, summarize, tracker }));
+      await tracker.drain();
+      const settled = events.at(-1);
+      expect(settled).toMatchObject({ phase: 'settled', mode, outcome: 'timeout' });
+      expect(settled?.model).toBeUndefined();
+      expect(settled?.confidence).toBeUndefined();
+      expect(settled?.todayLatencyMs).toBeUndefined();
+      if (mode === 'on') expect(settled?.acted).toBe(false);
+    }
+  });
+
+  it('breaker_open (PD19) settles as its own outcome and takes today', async () => {
+    const { sink: s, events } = sink();
+    const today = vi.fn(async () => false);
+    const { provider } = stubProvider(() => ({
+      ok: false,
+      code: 'breaker_open',
+      message: 'breaker open',
+    }));
+    expect(await runDecisionSite(site({ provider, today, sink: s, summarize }))).toBe(false);
+    expect(today).toHaveBeenCalledTimes(1);
+    expect(events.at(-1)).toMatchObject({ outcome: 'breaker_open', acted: false });
+  });
+
+  it('never a todayLatencyMs for the router (today does no work)', async () => {
+    const { sink: s, events } = sink();
+    const tracker = new DecisionRecordTracker(2000);
+    const c = clocked(okResult(0.99));
+    const opts = site({ ...c, site: 'router', mode: 'shadow', sink: s, summarize, tracker });
+    await runDecisionSite(opts);
+    await tracker.drain();
+    expect(events[0]?.site).toBe('router');
+    expect(events[0]?.todayLatencyMs).toBeUndefined();
+    expect(opts.records[0]?.todayLatencyMs).toBeUndefined();
+  });
+
+  it('a throwing today() in shadow: the reading is emitted, with no today verdict or latency', async () => {
+    const { sink: s, events } = sink();
+    const tracker = new DecisionRecordTracker(2000);
+    const c = clocked(okResult(0.99), async () => {
+      throw new Error('today failed');
+    });
+    await expect(
+      runDecisionSite(site({ ...c, mode: 'shadow', sink: s, summarize, tracker })),
+    ).rejects.toThrow('today failed');
+    await tracker.drain();
+    expect(events[0]).toMatchObject({ phase: 'settled', verdict: 'flagged' });
+    expect(events[0]?.todayVerdict).toBeUndefined();
+    expect(events[0]?.todayLatencyMs).toBeUndefined();
+  });
+
+  it('a shadow result that settles late is still emitted once it settles (PD17)', async () => {
+    const { sink: s, events } = sink();
+    const gate = deferred<DecisionResult>();
+    const { provider } = stubProvider(() => gate.promise);
+    const tracker = new DecisionRecordTracker(2000);
+    await runDecisionSite(site({ mode: 'shadow', provider, sink: s, tracker }));
+    expect(events).toHaveLength(0);
+    gate.resolve(okResult(0.99));
+    await tracker.drain();
+    expect(events).toHaveLength(1);
+  });
+
+  it("the record's traceId falls back to the sink's; the caller's wins when both exist", async () => {
+    const { provider } = stubProvider(() => okResult(0.99));
+    const a = site({ provider, sink: sink('trace-sink').sink });
+    await runDecisionSite(a);
+    expect(a.records[0]?.traceId).toBe('trace-sink');
+    const b = site({ provider, sink: sink('trace-sink').sink, traceId: 'trace-caller' });
+    await runDecisionSite(b);
+    expect(b.records[0]?.traceId).toBe('trace-caller');
+  });
+
+  it('a throwing sink never changes the verdict; off and no-provider emit nothing', async () => {
+    const { provider } = stubProvider(() => okResult(0.99));
+    const throwing: DecisionSink = {
+      emit: () => {
+        throw new Error('sink down');
+      },
+    };
+    expect(await runDecisionSite(site({ provider, sink: throwing }))).toBe(true);
+    for (const opts of [site({ mode: 'off', provider }), site({ provider: undefined })]) {
+      const { sink: s, events } = sink();
+      await runDecisionSite({ ...opts, sink: s });
+      expect(events).toEqual([]);
+    }
+  });
+
+  it('carries summaries only (K13): no digest, question or raw answer', async () => {
+    const { sink: s, events } = sink();
+    const tracker = new DecisionRecordTracker(2000);
+    const { provider } = stubProvider(() => okResult(0.99));
+    await runDecisionSite(
+      site({
+        mode: 'shadow',
+        provider,
+        sink: s,
+        summarize,
+        tracker,
+        digest: { kind: 'text', value: 'SECRET-DIGEST' },
+      }),
+    );
+    await tracker.drain();
+    const text = JSON.stringify(events);
+    expect(text).not.toContain('SECRET-DIGEST');
+    expect(text).not.toContain('Is it?');
+    expect(text).not.toContain('probabilities');
+    // Every emitted body fits the AgentEvent variant core completes it into.
+    const _typed: Array<Omit<Extract<AgentEvent, { type: 'decision' }>, 'type' | 'personalityId'>> =
+      events;
+    expect(_typed).toHaveLength(1);
   });
 });

@@ -14,6 +14,7 @@ import type {
   DecisionProvider,
   DecisionRequest,
   DecisionResult,
+  DecisionSink,
   LLMProvider,
   PersonalityConfig,
 } from '@ethosagent/types';
@@ -435,5 +436,47 @@ describe('per personality (plan decision-provider-personality §7.3)', () => {
     });
     expect(j.decide).not.toHaveBeenCalled();
     expect(l.complete).toHaveBeenCalledTimes(1);
+  });
+});
+
+// plan decision-provider-personality §15.3 / §15.8 (N7b): core puts a
+// `decisionSink` on the `before_tool_call` payload; the approver passes it to
+// its decision site — the event is emitted, and the record takes the turn's
+// traceId from it (the NULL trace_id fix).
+describe('decision sink on the payload (N7b)', () => {
+  function withSink(traceId: string) {
+    const events: Array<Parameters<DecisionSink['emit']>[0]> = [];
+    const decisionSink: DecisionSink = { traceId, emit: (e) => events.push(e) };
+    return { p: { ...payload(), decisionSink }, events };
+  }
+
+  it("on: the record carries the sink's traceId; the event names the verdict", async () => {
+    const records: DecisionCallRecord[] = [];
+    const j = jev(ok(choice('approve', 0.95)));
+    const { p, events } = withSink('trace-9');
+    await approver(j.provider, llm().provider, {
+      recorder: { recordDecisionCall: (r) => records.push(r) },
+    })(p, REASON);
+    expect(records).toEqual([expect.objectContaining({ traceId: 'trace-9', personalityId: 'p' })]);
+    expect(events.map((e) => e.phase)).toEqual(['started', 'settled']);
+    expect(events[1]).toMatchObject({ site: 'approver', acted: true, verdict: 'approve' });
+  });
+
+  it("shadow: today's LLM verdict and the reading, in the approver vocabulary", async () => {
+    const records: DecisionCallRecord[] = [];
+    const j = jev(ok(choice('deny', 0.95)));
+    const { p, events } = withSink('trace-9');
+    await approver(j.provider, llm().provider, {
+      mode: 'shadow',
+      recorder: { recordDecisionCall: (r) => records.push(r) },
+    })(p, REASON);
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    expect(events[0]).toMatchObject({
+      mode: 'shadow',
+      verdict: 'deny',
+      todayVerdict: 'approve',
+      disagreed: true,
+    });
+    expect(records[0]?.traceId).toBe('trace-9');
   });
 });

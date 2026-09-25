@@ -32,6 +32,7 @@ import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
 import type { WatcherTap } from '../turn-context';
+import { decisionSinkOf, type TurnDecisions } from '../turn-decisions';
 import { consultWatcherHalt, enforceBeforeToolCall } from './per-call-enforcement';
 import { redactToolResultSecrets } from './result-redaction';
 import { persistReturnDirect } from './return-direct';
@@ -104,6 +105,7 @@ export interface ToolProcessingContext {
   scriptToolBridge?: ScriptToolBridge;
   /** This run's get/setContext store — one per `AgentLoop.run()` (agent-loop.ts). */
   contextStore: ContextStore;
+  decisions?: TurnDecisions; // decision-provider-personality §15.3 — ../turn-decisions
 
   // Downgrade state — mutable refs
   dgEnabled: boolean;
@@ -327,6 +329,7 @@ export async function* processTools(
         ...(ctx.voiceOrigin ? { voiceOrigin: ctx.voiceOrigin } : {}),
         personalityId: ctx.personality.id,
         denyRules: ctx.personality.safety?.denyRules,
+        ...decisionSinkOf(ctx.decisions, tc.toolCallId),
       },
     );
     // ...or while THIS call's hook was parked: no tool_start for a call that cannot run.
@@ -768,6 +771,7 @@ export async function* processTools(
             ctx.traceId,
             deps.safety,
             deps.observability,
+            ctx.decisions?.sinkFor(p.toolCallId),
           );
           llmContent = verdict.wrappedContent;
           passedInjectionPipeline = true;

@@ -1,7 +1,7 @@
 // Circuit breaker for the Jev provider (plan §5.5, R3, R9).
 //
 //  CLOSED ──(3 consecutive health failures*)──► OPEN ──(60 s)──► HALF-OPEN (one probe)
-//    ▲                                     decide() → `unavailable`,      │        │
+//    ▲                                     decide() → `breaker_open`,     │        │
 //    │                                     no network call                │ fails  │ succeeds
 //    │                                           ▲                        │        │
 //    │                                           └────────────────────────┘        │

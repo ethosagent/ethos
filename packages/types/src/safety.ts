@@ -1,3 +1,5 @@
+import type { DecisionSink } from './decision';
+
 export interface InjectionVerdict {
   containsInstructions: boolean;
   confidence: number;
@@ -16,6 +18,14 @@ export type InjectionClassifier = (input: {
    * or unknown id as "this personality enabled nothing".
    */
   personalityId?: string;
+  /**
+   * Where a decision site reports that it ran, for the turn's event stream
+   * (plan decision-provider-personality §15.3, PD16). Core passes one only for
+   * a personality that declares decision sites; it already carries the turn's
+   * `traceId` and the judged `toolCallId`. Additive optional, the PD6 class: a
+   * classifier that runs no decision site ignores it.
+   */
+  decisionSink?: DecisionSink;
 }) => Promise<InjectionVerdict>;
 
 export interface InjectionDefenseKit {

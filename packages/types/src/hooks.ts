@@ -1,4 +1,5 @@
 import type { BackgroundJob } from './background-job';
+import type { DecisionSink } from './decision';
 import type {
   BeforeGoalCompletePayload,
   BeforeGoalCompleteResult,
@@ -97,6 +98,15 @@ export interface BeforeToolCallPayload {
    * personality the loop was constructed with.
    */
   personalityId?: string;
+  /**
+   * Where the approver's decision site reports that it ran (plan
+   * decision-provider-personality §15.3, PD16): the danger predicate hands the
+   * payload to the smart approver, which passes this to `runDecisionSite`.
+   * Set by the loop only for a personality that declares decision sites; it
+   * carries the turn's `traceId` and this call's `toolCallId`. Any other
+   * handler ignores it.
+   */
+  decisionSink?: DecisionSink;
 }
 
 export interface BeforeToolCallResult {

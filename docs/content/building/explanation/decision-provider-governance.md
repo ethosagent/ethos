@@ -117,7 +117,7 @@ provider:
 | An answer is acted on only at or above the site's confidence threshold; shadow mode records without acting; a failure takes today's path. | `runDecisionSite` in `packages/wiring/src/decision-site.ts` (Tier 0 wiring). Lands in M1. |
 | State is redacted before it leaves the machine. | `runDecisionSite`, using `@ethosagent/safety-redact`. Lands in M1. |
 | An approver timeout or error yields `ask`. | `packages/wiring/src/smart-approver.ts` (Tier 0 wiring). Exists today; M4 adds the decision path inside it. |
-| A failing provider only loses influence. | The breaker in `extensions/decision-typesafe/`: while open, `decide` returns `unavailable` without a network call. Lands in M1. |
+| A failing provider only loses influence. | The breaker in `extensions/decision-typesafe/`: while open, `decide` returns `breaker_open` (it returned `unavailable` until decision-provider-personality N7b) without a network call. Lands in M1. |
 
 `extensions/decision-typesafe/` is Tier 2, like every other extension that
 calls a third party. M1 adds its tier entry to `.architecture-state.yaml`

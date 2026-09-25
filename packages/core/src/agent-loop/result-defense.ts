@@ -1,4 +1,9 @@
-import type { AgentSafety, InjectionVerdict, PersonalityConfig } from '@ethosagent/types';
+import type {
+  AgentSafety,
+  DecisionSink,
+  InjectionVerdict,
+  PersonalityConfig,
+} from '@ethosagent/types';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
 
 // Best-effort origin label for `<untrusted source="…">`. Picks from common
@@ -31,6 +36,8 @@ export async function handleUntrustedResult(
   traceId: string | undefined,
   safety: AgentSafety,
   observability?: AgentLoopObservability,
+  /** Present only for a personality that declares decision sites (../turn-decisions). */
+  decisionSink?: DecisionSink,
 ): Promise<{
   wrappedContent: string;
   containsInstructions: boolean;
@@ -60,7 +67,13 @@ export async function handleUntrustedResult(
       // (the decision classifier, plan decision-provider-personality §7.2)
       // resolve this turn's mode. It never changes WHEN the classifier runs,
       // and the verdict is still OR-composed with Tier-1 below (Law 11).
-      verdict = await activeClassifier({ content: rawValue, personalityId: personality.id });
+      // `decisionSink` (plan §15.3) carries the turn's `traceId` and this
+      // call's `toolCallId`, so the classifier's decision row joins the turn.
+      verdict = await activeClassifier({
+        content: rawValue,
+        personalityId: personality.id,
+        ...(decisionSink ? { decisionSink } : {}),
+      });
     } catch (err) {
       // Tier-2 failure must not silently disappear — record it so an
       // operator can see when a configured safety control is offline.

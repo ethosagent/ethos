@@ -16,6 +16,7 @@ import { parseSmallWindowToolset } from '../small-window-toolset';
 import { routeTurnTier } from '../tier-router';
 import { resolveToolLoading } from '../tool-loading';
 import type { LoopDeps, TurnSetupResult } from '../turn-context';
+import type { TurnDecisions } from '../turn-decisions';
 import { describeResolutionFailure, resolveTurnModel } from '../turn-model';
 
 /**
@@ -82,6 +83,8 @@ export async function* setupTurn(
     toolsetExclude?: string[];
     credentialPrompt?: boolean;
   },
+  /** This turn's decision-event queue (../turn-decisions); absent in stage-level tests. */
+  decisions?: TurnDecisions,
 ): AsyncGenerator<AgentEvent, TurnSetupResult> {
   const sessionKey = opts.sessionKey ?? `${deps.platform}:default`;
 
@@ -149,6 +152,9 @@ export async function* setupTurn(
     // this back off the trace at close; previously never recorded.
     attrs: { platform: deps.platform },
   });
+  // plan decision-provider-personality §15.3 — arms only for a personality
+  // that declares decision sites; otherwise no seam gets a sink.
+  decisions?.arm(personality, traceId);
 
   // Budget cap check — refuse before any LLM work when the session has already
   // exceeded the personality's per-session spending limit.
@@ -228,6 +234,11 @@ export async function* setupTurn(
   // (`routeTurnTier`, ../tier-router). No router configured → `undefined`, so
   // this line is exactly `turnTierOverride ?? 'default'`. Routing adds nothing
   // to the prompt: it changes the model, never the text sent.
+  //
+  // The router's decision rows are held until `run_start` has been yielded
+  // (§15.3: the router row follows `run_start`), see ../turn-decisions.
+  const routerSink = turnTierOverride ? undefined : decisions?.sinkFor();
+  if (routerSink) decisions?.hold();
   const routedTier = turnTierOverride
     ? undefined
     : await routeTurnTier({
@@ -236,6 +247,7 @@ export async function* setupTurn(
         personality,
         ...(opts.abortSignal ? { signal: opts.abortSignal } : {}),
         ...(traceId ? { traceId } : {}),
+        ...(routerSink ? { decisionSink: routerSink } : {}),
         resolve: (role) => {
           const resolved = resolveTurnModel({
             personality,
@@ -338,6 +350,7 @@ export async function* setupTurn(
     ...(deviation ? { deviation } : {}),
     ...(traceId ? { traceId } : {}),
   };
+  decisions?.release();
 
   // Allowed tool names for this personality (undefined = no restriction)
   const baseToolset = opts.toolsetOverride ?? personality.toolset ?? undefined;

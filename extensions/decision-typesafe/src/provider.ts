@@ -47,9 +47,12 @@ export function createTypesafeDecisionProvider(
 
       const admission = breaker.admit();
       if (admission === 'reject') {
+        // PD19 (plan decision-provider-personality §15.1): its own code, so a
+        // surface can say "skipped" rather than "failed". Returned before
+        // `breaker.record`, so the breaker never counts its own refusal.
         return {
           ok: false,
-          code: 'unavailable',
+          code: 'breaker_open',
           message: 'typesafe: breaker open after repeated failures; no request sent',
         };
       }

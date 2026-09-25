@@ -34,14 +34,14 @@ const HEALTH: Array<[string, (req: RecordedRequest) => Response | Promise<Respon
 
 describe('opening', () => {
   it.each(HEALTH)(
-    '3 consecutive %s → the 4th call makes no request and is unavailable',
+    '3 consecutive %s → the 4th call makes no request and is breaker_open (PD19)',
     async (code, responder) => {
       const { stub, provider, events } = setup(responder);
       for (let i = 0; i < 3; i++) expect(await provider.decide(REQ)).toMatchObject({ code });
       expect(events).toEqual([{ type: 'decision.breaker_open', code }]);
 
       const fourth = await provider.decide(REQ);
-      expect(fourth).toMatchObject({ ok: false, code: 'unavailable' });
+      expect(fourth).toMatchObject({ ok: false, code: 'breaker_open' });
       expect(stub.requests).toHaveLength(3);
     },
   );
@@ -110,7 +110,7 @@ describe('half-open probe', () => {
     const s = setup(() => json({}, 503));
     await open(s);
     s.clock.t += 59_999;
-    expect(await s.provider.decide(REQ)).toMatchObject({ code: 'unavailable' });
+    expect(await s.provider.decide(REQ)).toMatchObject({ code: 'breaker_open' });
     expect(s.stub.requests).toHaveLength(3);
   });
 
@@ -141,7 +141,7 @@ describe('half-open probe', () => {
     ]);
 
     s.clock.t += 30_000;
-    expect(await s.provider.decide(REQ)).toMatchObject({ code: 'unavailable' });
+    expect(await s.provider.decide(REQ)).toMatchObject({ code: 'breaker_open' });
     expect(s.stub.requests).toHaveLength(4);
 
     s.clock.t += 30_000;
@@ -150,7 +150,20 @@ describe('half-open probe', () => {
     expect(s.stub.requests).toHaveLength(5);
   });
 
-  it('concurrent calls during the probe get unavailable without a request', async () => {
+  it('its own breaker_open refusals never count toward reopening (PD19)', async () => {
+    const s = setup(() => json({}, 503));
+    await open(s);
+    for (let i = 0; i < 10; i++) {
+      expect(await s.provider.decide(REQ)).toMatchObject({ code: 'breaker_open' });
+    }
+    expect(s.events).toEqual([{ type: 'decision.breaker_open', code: 'unavailable' }]);
+    s.clock.t += 60_000;
+    s.mode.current = () => noulOk();
+    expect(await s.provider.decide(REQ)).toMatchObject({ ok: true });
+    expect(s.stub.requests).toHaveLength(4);
+  });
+
+  it('concurrent calls during the probe get breaker_open without a request', async () => {
     const s = setup(() => json({}, 503));
     await open(s);
     s.clock.t += 60_000;
@@ -161,7 +174,7 @@ describe('half-open probe', () => {
       });
     const probe = s.provider.decide(REQ);
     const concurrent = await s.provider.decide(REQ);
-    expect(concurrent).toMatchObject({ ok: false, code: 'unavailable' });
+    expect(concurrent).toMatchObject({ ok: false, code: 'breaker_open' });
     expect(s.stub.requests).toHaveLength(4);
     release(noulOk());
     expect(await probe).toMatchObject({ ok: true });

@@ -1,4 +1,4 @@
-import type { HookRegistry, VoiceTurnOrigin } from '@ethosagent/types';
+import type { DecisionSink, HookRegistry, VoiceTurnOrigin } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { type IdenticalStreak, updateIdenticalStreak } from '../budgets';
 import { denyRuleReason, matchDenyRule } from '../deny-rules';
@@ -38,6 +38,10 @@ export interface BeforeToolCallInput {
   /** The turn personality's `safety.denyRules`. A match refuses the call
    *  before any `before_tool_call` hook runs (see `enforceBeforeToolCall`). */
   denyRules?: ReadonlyArray<string>;
+  /** The approver's decision sink for this call (plan decision-provider-personality
+   *  §15.3) — forwarded onto the hook payload; absent unless the personality
+   *  declares decision sites. */
+  decisionSink?: DecisionSink;
 }
 
 export type BeforeToolCallDecision =
@@ -73,6 +77,7 @@ export async function enforceBeforeToolCall(
       args: input.args,
       ...(input.voiceOrigin ? { voiceOrigin: input.voiceOrigin } : {}),
       ...(input.personalityId !== undefined ? { personalityId: input.personalityId } : {}),
+      ...(input.decisionSink ? { decisionSink: input.decisionSink } : {}),
     },
     input.allowedPlugins,
   );

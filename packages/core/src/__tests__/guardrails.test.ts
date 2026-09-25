@@ -199,7 +199,13 @@ describe('Orchestrator guardrails', () => {
     // Merged 1040 + 6 -> 1046 (decision-provider-jev integration): the
     // openclaw-9.5-adoption cap (1040) plus the tier router's 6 pass-through
     // lines, each ratcheted independently; the cap is their sum.
-    expect(lineCount).toBeLessThanOrEqual(1046);
+    // Bumped 1046 -> 1059 (decision-provider-personality N7b, §15.3): `run()`
+    // becomes a three-line shell that builds the turn's `TurnDecisions` and
+    // wraps the (renamed, private) `runTurn` generator in `withDecisionEvents`,
+    // plus the import and two pass-through lines handing the queue to
+    // `setupTurn` and to the tool stage / ScriptToolBridge. The merge logic
+    // lives in agent-loop/turn-decisions.ts.
+    expect(lineCount).toBeLessThanOrEqual(1059);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -315,7 +321,12 @@ describe('Orchestrator guardrails', () => {
       // hands the turn personality's `safety.denyRules` to
       // `enforceBeforeToolCall`. One pass-through line; the check lives in
       // stages/per-call-enforcement.ts.
-      if (lineCount > 861) {
+      // Bumped 861 -> 864 (decision-provider-personality N7b, §15.3): the
+      // turn's decision queue on the stage context (one line), its import, and
+      // its per-call sink handed to `enforceBeforeToolCall` and
+      // `handleUntrustedResult` (one line each). Measured at 864. The sink
+      // logic lives in agent-loop/turn-decisions.ts.
+      if (lineCount > 864) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

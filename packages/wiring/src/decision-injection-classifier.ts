@@ -90,7 +90,7 @@ export function createDecisionInjectionClassifier(
   opts: CreateDecisionInjectionClassifierOptions,
 ): InjectionClassifier {
   const threshold = opts.global.thresholds.injection;
-  return async ({ content, personalityId }) => {
+  return async ({ content, personalityId, decisionSink }) => {
     const personality =
       personalityId !== undefined ? opts.personalities.get(personalityId) : undefined;
     const site = resolvePersonalityDecisionSite(personality?.decisions, 'injection', opts.global);
@@ -103,6 +103,13 @@ export function createDecisionInjectionClassifier(
       questions: INJECTION_QUESTIONS,
       timeoutMs: site.timeoutMs,
       personalityId: personality.id,
+      // plan decision-provider-personality §15.3 — the sink carries the turn's
+      // traceId (the NULL trace_id fix) and the judged toolCallId.
+      ...(decisionSink ? { sink: decisionSink } : {}),
+      summarize: {
+        verdict: (v) => (v.containsInstructions ? 'flagged' : 'clean'),
+        reading: (flagged) => (flagged ? 'flagged' : 'clean'),
+      },
       gate: (answers) => injectionVerdictFrom(answers, threshold),
       // Pre-threshold reading for shadow disagreement (plan §8): p ≥ 0.5.
       interpret: (answers) => {

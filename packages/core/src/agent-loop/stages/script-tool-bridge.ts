@@ -16,6 +16,7 @@ import { scriptCallableFor, scriptExclusionError, scriptExclusionFor } from '../
 import { ABORTED_TOOL_RESULT } from '../../tool-registry';
 import type { checkTurnBudgets } from '../budgets';
 import type { WatcherTap } from '../turn-context';
+import { decisionSinkOf, type TurnDecisions } from '../turn-decisions';
 import {
   consultWatcherHalt,
   enforceBeforeToolCall,
@@ -68,6 +69,9 @@ export interface ScriptToolBridgeDeps {
   /** The turn personality's `safety.denyRules`, enforced per inner call by
    *  `enforceBeforeToolCall` exactly as on the batch path. */
   denyRules?: ReadonlyArray<string>;
+  /** The turn's decision-event queue (../turn-decisions): an inner call's
+   *  approver decision row carries the inner `toolCallId`. */
+  decisions?: TurnDecisions;
   /**
    * Item 7 — the loop's redaction seam (`AgentSafety.redaction`) and the turn's
    * personality (for `safety.injectionDefense.blockSecretResults`). Required:
@@ -253,6 +257,7 @@ export class ScriptToolBridge {
         traceId: d.traceId,
         ...(callerPersonality !== undefined ? { personalityId: callerPersonality } : {}),
         denyRules: d.denyRules,
+        ...decisionSinkOf(d.decisions, toolCallId),
       },
     );
     if (!decision.allowed) {
