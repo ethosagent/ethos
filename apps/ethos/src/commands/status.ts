@@ -68,6 +68,12 @@ export async function runStatus(cmdArgs: string[] = []): Promise<void> {
     hardErrors++;
   }
 
+  // ---- Gateway memory (U9) ---------------------------------------------
+  const memory = gatewayMemoryFacet(
+    await storage.read(join(ethosDir(), 'gateway-health.json')).catch(() => null),
+    Date.now(),
+  );
+
   // ---- JSON path -------------------------------------------------------
   if (jsonMode) {
     const result = {
@@ -82,6 +88,7 @@ export async function runStatus(cmdArgs: string[] = []): Promise<void> {
       personalities: { count: personalityCount, dir: pdir },
       cron: countCronJobs(),
       backups: buildBackupJson(config),
+      memory,
       errorLog: { exists: errorLogExists(), recentCount: readRecentErrors(10).length },
       exit: hardErrors > 0 ? 1 : 0,
     };
@@ -190,6 +197,16 @@ export async function runStatus(cmdArgs: string[] = []): Promise<void> {
     );
   }
 
+  // ---- Gateway memory (U9) ---------------------------------------------
+  if (memory.gatewayRssBytes !== null) {
+    console.log(
+      `${G} ${c.bold}memory${c.reset}        gateway rss ${(memory.gatewayRssBytes / 1024 / 1024).toFixed(0)} MB` +
+        ` ${c.dim}(heartbeat ${memory.heartbeatAgeSec}s ago)${c.reset}`,
+    );
+  } else {
+    console.log(`${c.dim}- memory        no fresh gateway heartbeat${c.reset}`);
+  }
+
   // ---- Recent errors --------------------------------------------------
   if (errorLogExists()) {
     const recent = readRecentErrors(10);
@@ -226,6 +243,38 @@ export async function runStatus(cmdArgs: string[] = []): Promise<void> {
 // ---------------------------------------------------------------------------
 // Per-facet helpers
 // ---------------------------------------------------------------------------
+
+/** A heartbeat older than this is a gateway that is not running — the same
+ *  30s window `/healthz` in web-api and the desktop's gateway control use. */
+const HEARTBEAT_FRESH_SEC = 30;
+
+/**
+ * U9 — the running gateway's resident set size, from the `rssBytes` its
+ * heartbeat writer records every 10s (`buildGatewayHeartbeat`,
+ * apps/ethos/src/commands/gateway.ts). Not this command's own
+ * `process.memoryUsage()`: that would measure a CLI that exits in a second.
+ * Null when the heartbeat is absent, unparseable, stale, or from a build that
+ * predates the field. Pinned by `__tests__/status-memory.test.ts`.
+ */
+export function gatewayMemoryFacet(
+  raw: string | null,
+  now: number,
+): { gatewayRssBytes: number | null; heartbeatAgeSec: number | null } {
+  const none = { gatewayRssBytes: null, heartbeatAgeSec: null };
+  if (raw === null) return none;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return none;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return none;
+  const { updatedAt, rssBytes } = parsed as { updatedAt?: unknown; rssBytes?: unknown };
+  if (typeof updatedAt !== 'string' || typeof rssBytes !== 'number') return none;
+  const ageSec = Math.round((now - Date.parse(updatedAt)) / 1000);
+  if (!Number.isFinite(ageSec) || ageSec > HEARTBEAT_FRESH_SEC) return none;
+  return { gatewayRssBytes: rssBytes, heartbeatAgeSec: Math.max(ageSec, 0) };
+}
 
 function adapterStatus(config: EthosConfig): string[] {
   const lines: string[] = [];

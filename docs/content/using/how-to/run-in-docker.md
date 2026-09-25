@@ -102,6 +102,8 @@ A hardcoded `:3000` check could never pass in `gateway` mode — nothing listens
 
 Liveness is deliberate: only a definitive local failure flips a container unhealthy. A running process with an upstream outage (a Telegram blip, an adapter reporting not-ok) reports `degraded` over HTTP 503 but stays **healthy** — an upstream hiccup must not fail a fresh `compose up`. In `all` mode the check also fails if the supervised gateway's heartbeat goes stale or missing, which catches the gateway child dying while the web process stays up. This chains the existing gateway heartbeat — it is not a second health mechanism.
 
+For readiness rather than liveness — a Kubernetes `readinessProbe`, or a load balancer deciding whether to route to a replica — `gateway` and `boot` also serve `:3002/readyz`. It returns 503 when any adapter reports not-ok, when any of `sessions.db`, `delivery-ledger.db`, `inbound-dedup.db` or `inbound-spool.db` will not open read-only, or when the event loop's p99 delay is over one second, and lists each check in the JSON body (`createReadinessCheck` in [health-server.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/health-server.ts)). Adapter health is cached for 60 seconds, so a probe never costs an adapter round trip such as an IMAP login. The baked healthcheck stays on `/healthz`: a 503 from `/readyz` means "do not route to me", not "restart me".
+
 ## Gateway opt-in
 
 The channel gateway (Telegram, Slack, Discord, Email) is off by default. Activate it with the `gateway` profile:

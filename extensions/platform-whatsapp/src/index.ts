@@ -18,9 +18,24 @@ import {
   hasMedia,
   isBotMentioned,
   parseInboundMessage,
+  preferPhoneJid,
   type RawWhatsAppMessage,
+  resolveSentAt,
 } from './message-parser';
 import { resolveSessionDir } from './session-store';
+
+/** How long `start()` waits for the socket to report `connection: 'open'`
+ *  before it resolves anyway with `health()` reporting not ok (R5). Bounded so
+ *  an unlinked device or a dead network cannot hold the gateway's boot. */
+const START_OPEN_TIMEOUT_MS = 30_000;
+/** How long after a reconnect's `open` an `append` upsert is still admitted.
+ *  Baileys hands over the messages that arrived while the socket was down as
+ *  `append`, not `notify`, and it does so shortly after the reopen. */
+const RECONNECT_APPEND_WINDOW_MS = 2 * 60_000;
+/** Clock skew allowed between WhatsApp's `messageTimestamp` and our own record
+ *  of the close: an `append` message sent earlier than this before the close is
+ *  history, not something the outage swallowed. */
+const RECONNECT_APPEND_SKEW_MS = 60_000;
 
 export interface WhatsAppAdapterConfig {
   id?: string;
@@ -93,6 +108,14 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
   private stopped = false;
   private reconnectAttempts = 0;
   private pairingCodeRequested = false;
+  /** Resolvers of every `start()` still waiting for `connection: 'open'`. */
+  private readonly openWaiters = new Set<() => void>();
+  /** When the socket last closed in this process; undefined = never. Keys the
+   *  `append` admission window (see `admitsAppend`). */
+  private lastCloseAt: number | undefined;
+  /** Deadline for `append` admission after a reconnect's reopen. While the
+   *  socket is down (closed, not reopened) the window is open-ended. */
+  private appendWindowUntil: number | undefined;
 
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private messageHandler?: (message: InboundMessage) => void;
@@ -140,6 +163,39 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
    * refuses that combination with `denyUnknown` on, so the case only arises
    * where the operator turned the check off.
    */
+  /**
+   * Whether an `append` upsert is admitted. Only messages that arrived while
+   * the socket was reconnecting: after a close in this process, until
+   * `RECONNECT_APPEND_WINDOW_MS` past the reopen, and — when WhatsApp stamped a
+   * send time — sent no earlier than `RECONNECT_APPEND_SKEW_MS` before that
+   * close. Everything else `append` carries (history sync on link, another
+   * device's backlog) stays dropped, as it always was.
+   */
+  private admitsAppend(msg: RawWhatsAppMessage): boolean {
+    if (this.lastCloseAt === undefined) return false;
+    const now = Date.now();
+    if (this.appendWindowUntil !== undefined && now > this.appendWindowUntil) return false;
+    const sentAt = resolveSentAt(msg.messageTimestamp);
+    return sentAt === undefined || sentAt >= this.lastCloseAt - RECONNECT_APPEND_SKEW_MS;
+  }
+
+  /** Resolves `true` on the next `connection: 'open'`, `false` at the bound
+   *  or when the adapter is stopped first. The timer is unref'd so a pending
+   *  wait never holds the process open. */
+  private waitForOpen(timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const settle = (opened: boolean) => {
+        clearTimeout(timer);
+        this.openWaiters.delete(onOpen);
+        resolve(opened);
+      };
+      const onOpen = () => settle(!this.stopped);
+      const timer = setTimeout(() => settle(false), timeoutMs);
+      timer.unref?.();
+      this.openWaiters.add(onOpen);
+    });
+  }
+
   private isSenderAllowed(senderJid: string): boolean {
     if (!(this.config.denyUnknown ?? true)) return true;
     if (!this.config.allowedJids) return true;
@@ -208,6 +264,8 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
       }
 
       if (update.connection === 'close') {
+        this.lastCloseAt = Date.now();
+        this.appendWindowUntil = undefined;
         const code = update.lastDisconnect?.error?.output?.statusCode;
         const registered = sock.authState.creds.registered;
         if (code !== DisconnectReason.loggedOut && !this.stopped) {
@@ -236,6 +294,10 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
       if (update.connection === 'open') {
         this.reconnectAttempts = 0;
         this.botJid = sock.user?.id ?? '';
+        if (this.lastCloseAt !== undefined) {
+          this.appendWindowUntil = Date.now() + RECONNECT_APPEND_WINDOW_MS;
+        }
+        for (const waiter of [...this.openWaiters]) waiter();
         if (this.config.onQr) this.config.onQr(null);
         this.config.onPairingCode?.(null);
       }
@@ -243,12 +305,16 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
 
     // biome-ignore lint/suspicious/noExplicitAny: Baileys WAMessage type varies across versions
     sock.ev.on('messages.upsert', async (upsert: any) => {
-      if (upsert.type !== 'notify') return;
+      // `notify` is live traffic. `append` is admitted only inside the
+      // reconnect window (`admitsAppend`) — that is how Baileys delivers what
+      // arrived while the socket was down, and dropping it lost those messages.
+      if (upsert.type !== 'notify' && upsert.type !== 'append') return;
       const messages = upsert.messages as RawWhatsAppMessage[];
 
       for (const msg of messages) {
         if (!this.messageHandler) continue;
         if (msg.key.fromMe) continue;
+        if (upsert.type === 'append' && !this.admitsAppend(msg)) continue;
 
         const jid = msg.key.remoteJid ?? '';
         const isDm = !jid.endsWith('@g.us');
@@ -280,7 +346,12 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
         // would make observe — and the digest that reads it — inert in exactly
         // the rooms it exists for. Nothing is sent either way; a refusal only
         // makes sense where there was something to refuse.
-        if (!recordOnly && !this.isSenderAllowed(isDm ? jid : (msg.key.participant ?? ''))) {
+        // A LID-addressed sender is checked by its phone jid when Baileys
+        // supplied one (`preferPhoneJid`), so it can match a phone allowlist.
+        const sender = isDm
+          ? preferPhoneJid(jid, msg.key.remoteJidAlt)
+          : preferPhoneJid(msg.key.participant ?? '', msg.key.participantAlt);
+        if (!recordOnly && !this.isSenderAllowed(sender)) {
           if (this.config.denyMessage && this.sock) {
             const s = this.sock as {
               sendMessage: (jid: string, content: unknown) => Promise<unknown>;
@@ -345,10 +416,20 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
     });
 
     this.sock = sock;
+
+    // R5 — resolve only once the socket is open, so the gateway's boot sweep
+    // and spool replay (which run right after `adapter.start()`) do not send
+    // into a socket that cannot deliver. Bounded: past START_OPEN_TIMEOUT_MS
+    // start() resolves anyway, `health()` stays not ok (no `botJid`), and the
+    // gateway's startup health line reports the adapter as failed. A
+    // reconnect's own start() waits too, harmlessly — nothing awaits it.
+    // Pinned by `extensions/platform-whatsapp/src/__tests__/readiness.test.ts`.
+    await this.waitForOpen(START_OPEN_TIMEOUT_MS);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    for (const waiter of [...this.openWaiters]) waiter();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

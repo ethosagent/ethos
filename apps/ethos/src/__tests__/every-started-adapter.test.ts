@@ -167,7 +167,8 @@ describe('everyStartedAdapter — what a host shutdown stops', () => {
   it('boot reports health from the live adapter list, not the boot-time snapshot', async () => {
     const boot = await read('apps/ethos/src/commands/boot.ts');
     expect(boot).not.toContain('buildGatewayHeartbeat(adapters,');
-    expect(boot.match(/buildGatewayHeartbeat\(gateway\.listAdapters\(\),/g)).toHaveLength(2);
+    // The heartbeat writer, `/healthz`, and `/readyz`'s adapter check (R6).
+    expect(boot.match(/buildGatewayHeartbeat\(gateway\.listAdapters\(\),/g)).toHaveLength(3);
   });
 
   it('both hosts stop everyStartedAdapter(adapters, gateway) in their bounded adapters step', async () => {
