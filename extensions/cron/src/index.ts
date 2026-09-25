@@ -1114,8 +1114,17 @@ export class CronScheduler {
       if (!latestRun) continue;
       try {
         const output = await this.readRunOutput(latestRun.outputPath);
+        // A prior run's output is whatever that turn read (web pages, mail):
+        // fenced as untrusted, like the precheck stdout below (plan
+        // openclaw-2026.9.6-gaps S13; pinned by "fences each referenced output
+        // as untrusted" in __tests__/cron.test.ts).
+        const fenced = wrapUntrusted({
+          content: output,
+          toolName: 'cron_context',
+          source: `cron-run:${refJob.id}`,
+        }).content;
         blocks.push(
-          `--- Context from "${refJob.name}" (${refJob.id}) ---\n${output}\n--- End context ---`,
+          `--- Context from "${refJob.name}" (${refJob.id}) ---\n${fenced}\n--- End context ---`,
         );
       } catch {
         // non-fatal — skip this reference
