@@ -149,15 +149,27 @@ Sandbox attestation relaxes nothing today. Execution backends implement `attest(
 
 *Status: Shipped.*
 
-When any of the previous checks flag a call, the request waits for a human on the two surfaces that can ask: the web UI modal (`apps/web-api/src/services/approval-hook.ts`) and the Slack, Telegram and Discord approval cards (`createSlackApprovalHook` in `apps/ethos/src/approval-coordinator.ts`, registered by `wireApprovalFlow` in `apps/ethos/src/commands/gateway.ts`). The approval is binary, sender-attributable, and persisted as an audit event.
+When any of the previous checks flag a call, the request waits for a human on three surfaces: the web UI modal (`apps/web-api/src/services/approval-hook.ts`), the Slack, Telegram and Discord approval cards (`createSlackApprovalHook` in `apps/ethos/src/approval-coordinator.ts`, registered by `wireApprovalFlow` in `apps/ethos/src/commands/gateway.ts`), and the operator's terminal in `ethos chat`. The approval is binary, sender-attributable, and persisted as an audit event.
 
-The CLI, TUI and ACP have no approval prompt. `composeAllTools` (`packages/wiring/src/compose-tools.ts`) registers only the terminal and process guards on their loops (`createTerminalGuardHook`, `createProcessGuardHook`), and those refuse hardline and approval-required commands in every mode. No danger predicate runs there, so every other flagged call runs without asking.
+`ethos chat` asks before a flagged call. The readline REPL prints the tool, the reason and a redacted, 300-character preview of the args, then reads `y/N`; anything but `y` or `yes` refuses. The TUI shows the same in a modal. The gate is `wireTerminalApprovalGate` with `createTerminalApprovalSource` (`apps/ethos/src/terminal-approval.ts`); the surfaces are `attachCliApprovalPrompt` (`apps/ethos/src/lib/cli-approval-prompt.ts`) and `ApprovalModal` (`apps/tui/src/components/ApprovalModal.tsx`). It flags the same calls as the web modal and the cards (`createApprovalDangerPredicate` in `packages/wiring/src/approval-seams.ts`), refuses a hardline call before asking, denies an unanswered prompt after `approvalTimeoutMs` (default 10 minutes, `ApprovalCoordinator.requestApproval`), and audits each decision. Pinned by `apps/ethos/src/__tests__/terminal-approval.test.ts` and `apps/tui/src/__tests__/approval-modal.test.ts`.
 
-- Source: `apps/web-api/src/services/approval-hook.ts`
+Where nobody can answer, a flagged call is refused rather than run:
+
+| Run | Gate |
+|---|---|
+| `ethos chat -q`, `ethos chat` on piped stdin, `ethos acp` | `wireTerminalApprovalGate` with `coordinator: null` (`apps/ethos/src/terminal-approval.ts`) |
+| `ethos -z`, `ethos batch`, `ethos eval`, `ethos personality judge` and the nightly scoring pass, `ethos bench`, the `ethos mcp serve` operator console | `gateNonInteractiveLoop` (`apps/ethos/src/lib/non-interactive-approval.ts`), pinned by `apps/ethos/src/__tests__/non-interactive-approval.test.ts` |
+| `ethos cron run`, `ethos cron daemon` | `gateCronLoop` (same file), which reuses the gateway's `wireUnattendedApprovalGate`; pinned by `apps/ethos/src/__tests__/cron-approval-parity.test.ts` |
+
+Limitation: `ethos acp` does not forward an approval to its client through `session/request_permission`, so an ACP client cannot approve a flagged call; it is refused.
+
+No surface asks about a call that will be refused anyway. A tool outside the personality's toolset is refused without a card, prompt or modal (`notPermittedRefusal` in `packages/wiring/src/approval-seams.ts`, passed as `refusedAnyway` to `createSlackApprovalHook` and to `createWebApprovalHook`).
+
+- Source: `apps/web-api/src/services/approval-hook.ts`, `apps/ethos/src/approval-coordinator.ts`, `apps/ethos/src/terminal-approval.ts`
 - Audit category: `audit.approval`
-- Per-personality knob: `safety.approvalMode` — `manual` | `smart` | `off` (`packages/types/src/personality.ts`). Default is `manual`. `off` auto-approves only on the unattended systemLoop when the operator sets `allowUnattendedDangerousTools: true`; everywhere else it behaves as `manual`.
+- Per-personality knob: `safety.approvalMode` — `manual` | `smart` | `off` (`packages/types/src/personality.ts`). Default is `manual`. `off` auto-approves a flagged call through the `allowAutoApproveDangerousTools` capability of `createDangerPredicate`, which two callers pass. `wireTerminalApprovalGate` always passes it, so `off` runs flagged calls unasked in `ethos chat`, `ethos acp` and the non-interactive commands above. `wireUnattendedApprovalGate` passes it only when the operator sets `allowUnattendedDangerousTools: true`; that covers the gateway's cron/dream loop and `ethos cron`. Everywhere else `off` behaves as `manual`. A hardline call is refused in every mode.
 - What is flagged: `createDangerPredicate` in `packages/wiring/src/danger-predicate.ts`. Every mode flags `APPROVAL_SURFACE_ALWAYS_ASK`; `smart` adds `SMART_MODE_CONSEQUENTIAL_TOOLS`; and when the personality runs on a host-local, non-containerized execution posture, every mode adds `LOCAL_POSTURE_CONSEQUENTIAL_TOOLS` (`terminal`, `process_start`, `run_tests`, `lint`).
-- Command substitution: a `terminal`, `run_tests`, `lint` or `process_start` command containing `$(…)` or backticks is flagged in every mode, on any execution posture (`approvalRequiredReason` in `packages/wiring/src/danger-predicate.ts`). The web modal and the chat approval cards ask. A surface with nobody to ask refuses it: the unattended systemLoop gate, a chat surface with no cards, the MCP export, and the CLI, TUI and ACP, whose terminal and process guards refuse it because no approval gate is registered on their loops (`hasHostApprovalGate`, pinned by `packages/wiring/src/__tests__/command-substitution-guard.test.ts` and `apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts`). `approvalMode: off` runs it without asking only where `off` already auto-approves, which is the unattended systemLoop with `allowUnattendedDangerousTools: true`.
+- Command substitution: a `terminal`, `run_tests`, `lint` or `process_start` command containing `$(…)` or backticks is flagged in every mode, on any execution posture (`approvalRequiredReason` in `packages/wiring/src/danger-predicate.ts`). The web modal, the chat approval cards and the `ethos chat` prompt ask; the terminal and process guards leave it to the gate because the gate marks itself with `markHostApprovalGate`. Under `approvalMode: off`, `ethos chat` still asks about it rather than running it (`offModeCommandReason` in `apps/ethos/src/terminal-approval.ts`). A surface with nobody to ask refuses it: the unattended gate, a chat surface with no cards, the MCP export, and the runs in the table above. Pinned by `packages/wiring/src/__tests__/command-substitution-guard.test.ts` and `apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts`.
 
 ## Filesystem controls {#filesystem-controls}
 
@@ -249,8 +261,8 @@ safety:
 
 | Field | Meaning |
 |---|---|
-| `allow` | Host patterns: an exact host, or a leading `*.` that matches the domain and its subdomains (`hostnameMatches` in `packages/safety/network/src/policy.ts`). |
-| `deny` | Same pattern grammar. Checked before `allow` (`checkAllowDeny`). |
+| `allow` | Host patterns: an exact host, a leading `*.` that matches the domain and its subdomains, or a bare `*` that matches every host (`hostnameMatches` in `packages/safety/network/src/policy.ts`). Absent, `[]` and `['*']` all mean no allow list. |
+| `deny` | Same pattern grammar. Checked before `allow`, so deny wins (`checkAllowDeny`). A bare `*` denies every host. |
 | `allow_private_urls` | Opts into RFC1918, loopback and link-local destinations. Default `false`. Cloud-metadata hosts stay blocked regardless. |
 
 The set of hosts a tool can reach is the intersection of what the tool declares (`capabilities.network.allowedHosts`) and the personality's `allow` (`resolveCapabilities` in `packages/core/src/capability-resolver.ts`; refusals are `HOST_NOT_ALLOWED` from `ScopedFetchImpl`):
@@ -258,12 +270,12 @@ The set of hosts a tool can reach is the intersection of what the tool declares 
 | Tool declares | No `safety.network.allow` | With `safety.network.allow` |
 |---|---|---|
 | Specific hosts (e.g. a search API) | The tool's declared hosts | Declared hosts that a personality pattern covers |
-| `['*']` (e.g. `web_extract`) | **No host**: every URL is refused | The personality's `allow` list |
+| `['*']` (e.g. `web_extract`) | Any public host | The personality's `allow` list |
 
-Limitation: `allow: ['*']` does not mean "any host". `ScopedFetchImpl` accepts it, but `hostnameMatches` treats a bare `*` as a literal hostname, so `safeFetch` refuses every host. List the hosts or `*.domain` patterns you need.
+With no allow list, a `['*']` tool reaches any public host, but only over `http(s)`: private, loopback, link-local and cloud-metadata destinations stay refused by `safeFetch` (`validateUrl` in `packages/safety/network/src/safe-fetch.ts`; see [SSRF protection](#ssrf-protection)). Declare an `allow` list on any personality whose web tools should reach only named hosts.
 
 - Source: `PersonalitySafetyConfig.network` in `packages/types/src/personality.ts`; parsed in `extensions/personalities/src/index.ts`
-- Tests: `packages/wiring/src/__tests__/personality-network-policy.test.ts`
+- Tests: `packages/wiring/src/__tests__/personality-network-policy.test.ts`; `packages/core/src/__tests__/capability-resolver.test.ts` (`'*' tool on a personality with no allow list — real safeFetch`); `packages/safety/network/src/__tests__/policy.test.ts` and `safe-fetch.test.ts`
 
 ### SSRF protection {#ssrf-protection}
 
@@ -409,11 +421,11 @@ The watcher is a separate observer in the same process. `createWatcherTap` (`pac
 | `rate-limit` | More than 60 `tool_end` events in 60 seconds, counted across turns | `pause` |
 | `token-budget` | More than 50,000 **output** tokens in one turn | `pause` |
 | `compounding-error` | 5 consecutive failures of the same tool | `pause` |
-| `suspicious-sequence` | A `read_file`, `search_files` or `terminal` call on a credential-shaped path (`.ssh`, `.aws/credentials`, `.gnupg`, `.netrc`, `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`, `authorized_keys`), followed within the last 4 calls by `web_post`, `web_put`, `web_delete`, `email_send` or `browser_type` | `terminate` |
+| `suspicious-sequence` | A `read_file`, `search_files` or `terminal` call on a credential-shaped path (`.ssh`, `.aws/credentials`, `.gnupg`, `.netrc`, `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`, `authorized_keys`), followed within the last 4 calls by an exfiltration-shaped tool: one in `EXFIL_TOOL_NAMES` (`web_extract`, `browse_url`, `browser_navigate`, `browser_computed_style`, `video_analyze`, `meet_join`, `browser_type`, `browser_vision_type`, `send_message`, `call`, `a2a_send`, `route_to_agent`, `broadcast_to_agents`, `dispatch_team`) or any `mcp__*` tool (`isExfilShapedTool`) | `terminate` |
 
 A `pause` emits a `halt` event, rejects the pending calls, and ends the turn with one closing model call that has no tools (`replyAfterWatcherPause`). No human review queue holds the call. A `terminate` ends the turn with an `error` event whose code is `watcher_<rule>`.
 
-Limitation: of the five exfiltration names in `suspicious-sequence`, only `browser_type` is a registered tool today, so the rule can fire only on a credential-shaped read followed by `browser_type`.
+The list is drawn by destination: it names tools that can carry agent-chosen content to a destination the agent chooses, so a tool that only talks to a fixed provider (`web_search`) is not on it, and `terminal` counts only as a credential read. The list is pinned against the registered tools by `packages/wiring/src/__tests__/watcher-exfil-tool-names.test.ts`: every name must be a real tool, and every tool that declares `allowedHosts: ['*']` must be listed or exempted there with a reason.
 
 - Source: `packages/safety/watcher/src/watcher.ts`, `packages/safety/watcher/src/rules.ts` (`defaultRules`)
 - Audit category: `audit.watcher`
@@ -434,7 +446,7 @@ Redaction runs in two places.
 | `storeToolArgs` | `none` \| `redacted` (default) \| `full` | `none` drops tool-call args from spans. `full` skips the personality's `redactPatterns`; the built-in patterns still apply. |
 | `storeLlmPayloads` | `none` \| `metadata` \| `full` | `full` stores message content on the LLM span; it is redacted like every other attribute. |
 | `redactPatterns` | regex strings | Extra patterns, replaced with `[REDACTED:custom]`. |
-| `storeToolBodies` | `none` \| `redacted` \| `full` | Parsed and shown on the character sheet, but nothing reads it when writing. Limitation: setting it has no effect. |
+| `storeToolBodies` | `none` \| `redacted` \| `full` | Reserved. Accepted and shown on the character sheet, but tool result bodies are never stored in `observability.db` at any setting; only the result size is recorded (pinned by `packages/core/src/__tests__/tool-body-not-stored.test.ts`). |
 
 `ethos support bundle` reads events that were already redacted in the store and strips secret-shaped fields from the config it includes (`stripSecrets` in `apps/ethos/src/commands/support.ts`). `--anonymize` only replaces the home directory, working directory, hostname and username.
 
