@@ -346,7 +346,11 @@ describe('Orchestrator guardrails', () => {
       // its per-call sink handed to `enforceBeforeToolCall` and
       // `handleUntrustedResult` (one line each). Measured at 864. The sink
       // logic lives in agent-loop/turn-decisions.ts.
-      if (lineCount > 864) {
+      // Bumped 864 -> 866 (openclaw-2026.9.6-gaps S12): tool-processing.ts
+      // spreads the turn's `toolsetNarrowing` into the ToolContext (one line)
+      // and imports its builder (one line). No logic — the builder lives in
+      // agent-loop/toolset-narrowing.ts.
+      if (lineCount > 866) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }
