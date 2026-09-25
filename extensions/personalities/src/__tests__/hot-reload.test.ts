@@ -170,4 +170,24 @@ describe('personality hot-reload — refresh-on-resolve', () => {
     expect(readSpy).not.toHaveBeenCalled();
     expect(mtimeSpy).toHaveBeenCalled();
   });
+
+  // plan decision-provider-personality §11 — config.yaml is one of the
+  // fingerprinted paths, so an edited `decisions.*` line is seen on refresh.
+  it('an edited decisions.sites line is seen by the next loadFromDirectory', async () => {
+    const storage = new InMemoryStorage();
+    const registry = new FilePersonalityRegistry(storage);
+    await writePersonality(storage, 'judge', { name: 'Judge' });
+    await registry.loadFromDirectory(DIR);
+    expect(registry.get('judge')?.decisions).toBeUndefined();
+
+    await storage.write(
+      join(DIR, 'judge', 'config.yaml'),
+      'name: Judge\ndecisions.provider: typesafe\ndecisions.sites.injection: shadow\n',
+    );
+    await registry.loadFromDirectory(DIR);
+    expect(registry.get('judge')?.decisions).toEqual({
+      provider: 'typesafe',
+      sites: { injection: 'shadow' },
+    });
+  });
 });

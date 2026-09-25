@@ -901,6 +901,18 @@ export interface UpdatePersonalityPatch {
    *  `auth` for when it is turned back on. `enabled` falls back to the stored
    *  value, then to `false` — a patch never turns export ON by omission. */
   mcp_export?: Partial<import('@ethosagent/types').PersonalityMcpExportConfig>;
+  /** `decisions.*` sub-keys, merged by `mergeDecisionsConfig`: `sites` is
+   *  shallow-merged per site, so a patch naming one site leaves the others;
+   *  `provider: ''` clears the reference (the `voice.*` convention). */
+  decisions?: {
+    provider?: string;
+    sites?: Partial<
+      Record<
+        import('@ethosagent/types').PersonalityDecisionSiteId,
+        import('@ethosagent/types').PersonalityDecisionSiteMode
+      >
+    >;
+  };
 }
 
 /**
@@ -918,6 +930,29 @@ function mergeDisplayConfig(
   if (patch === undefined || patch.avatar_url === undefined) return existing;
   if (patch.avatar_url === '') return undefined;
   return { avatar_url: patch.avatar_url };
+}
+
+/**
+ * Apply a `decisions` patch to the stored block. `provider: ''` clears the
+ * reference, `undefined` leaves it, anything else sets it; `sites` is merged
+ * per site so a patch carrying one site keeps the rest. A block left empty is
+ * dropped rather than written empty (the `mergeVoiceConfig` rule).
+ */
+function mergeDecisionsConfig(
+  existing: PersonalityConfig['decisions'],
+  patch: UpdatePersonalityPatch['decisions'],
+): PersonalityConfig['decisions'] {
+  if (patch === undefined) return existing;
+  const next: import('@ethosagent/types').PersonalityDecisionsConfig = { ...existing };
+  if (patch.provider !== undefined) {
+    if (patch.provider === '') delete next.provider;
+    else next.provider = patch.provider;
+  }
+  if (patch.sites !== undefined) {
+    const sites = { ...existing?.sites, ...patch.sites };
+    if (Object.keys(sites).length > 0) next.sites = sites;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 /**
@@ -1239,7 +1274,8 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       patch.nightly !== undefined ||
       patch.voice !== undefined ||
       patch.display !== undefined ||
-      patch.mcp_export !== undefined
+      patch.mcp_export !== undefined ||
+      patch.decisions !== undefined
     ) {
       const config = existing.config;
       if (patch.provider !== undefined && patch.provider !== '') {
@@ -1399,6 +1435,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
                 ...patch.mcp_export,
                 enabled: patch.mcp_export.enabled ?? config.mcp_export?.enabled ?? false,
               },
+        decisions: mergeDecisionsConfig(config.decisions, patch.decisions),
       };
       // renderConfigYaml's safety emission is suppressed here (render with
       // `safety: undefined`) so we append exactly one safety block — never a
@@ -1925,6 +1962,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
     const outboundPolicy = buildOutboundPolicy(cfg);
     const voice = buildVoiceConfig(cfg);
     const display = buildDisplayConfig(cfg);
+    const decisions = buildDecisionsConfig(cfg);
     const execution = parseExecutionPosture(cfg.execution);
 
     const model = buildModelConfig(cfg);
@@ -1964,6 +2002,7 @@ export class FilePersonalityRegistry implements PersonalityRegistry {
       ...(voice !== undefined ? { voice } : {}),
       ...(display !== undefined ? { display } : {}),
       ...(execution !== undefined ? { execution } : {}),
+      ...(decisions !== undefined ? { decisions } : {}),
     };
 
     validateUnsafeCombinations(id, config);
@@ -2298,6 +2337,46 @@ function buildDisplayConfig(
 ): import('@ethosagent/types').PersonalityConfig['display'] | undefined {
   const avatarUrl = cfg['display.avatar_url'];
   return avatarUrl ? { avatar_url: avatarUrl } : undefined;
+}
+
+const PERSONALITY_DECISION_SITES = [
+  'injection',
+  'approver',
+  'router',
+] as const satisfies readonly import('@ethosagent/types').PersonalityDecisionSiteId[];
+
+/**
+ * Parse the dotted `decisions.*` keys into `PersonalityConfig.decisions`
+ * (plan decision-provider-personality §4.2). Same dotted-key convention as
+ * `voice` (see `buildVoiceConfig` above):
+ *
+ *   decisions.provider: typesafe
+ *   decisions.sites.injection: shadow
+ *   decisions.sites.approver: on
+ *   decisions.sites.router: off
+ *
+ * `decisions.provider` names the operator's `decisions.provider` in
+ * `~/.ethos/config.yaml` and is kept verbatim — whether this machine configured
+ * it is a resolution-time question, not a load failure (the
+ * `voice.tts_provider` rule). A site mode outside `off | shadow | on` is
+ * dropped rather than thrown on, exactly like an unknown `voice.tier` (PD12):
+ * the site is then undeclared, i.e. `off`. Unknown `decisions.sites.<x>` keys
+ * are ignored.
+ */
+function buildDecisionsConfig(
+  cfg: Record<string, string>,
+): PersonalityConfig['decisions'] | undefined {
+  const provider = cfg['decisions.provider'];
+  const sites: NonNullable<import('@ethosagent/types').PersonalityDecisionsConfig['sites']> = {};
+  for (const site of PERSONALITY_DECISION_SITES) {
+    const mode = cfg[`decisions.sites.${site}`];
+    if (mode === 'off' || mode === 'shadow' || mode === 'on') sites[site] = mode;
+  }
+  const out: import('@ethosagent/types').PersonalityDecisionsConfig = {
+    ...(provider ? { provider } : {}),
+    ...(Object.keys(sites).length > 0 ? { sites } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 const EXECUTION_REQUIREMENTS = ['remote', 'none'] as const;
@@ -2762,6 +2841,7 @@ type RenderConfigInput = Omit<CreatePersonalityInput, 'id' | 'soulMd' | 'safety'
     | 'voice'
     | 'display'
     | 'execution'
+    | 'decisions'
   >;
 
 function renderConfigYaml(input: RenderConfigInput): string {
@@ -2927,6 +3007,14 @@ function renderConfigYaml(input: RenderConfigInput): string {
   }
   if (input.display?.avatar_url !== undefined) {
     lines.push(`display.avatar_url: ${yamlScalar(input.display.avatar_url)}`);
+  }
+  if (input.decisions !== undefined) {
+    const d = input.decisions;
+    if (d.provider !== undefined) lines.push(`decisions.provider: ${yamlScalar(d.provider)}`);
+    for (const site of PERSONALITY_DECISION_SITES) {
+      const mode = d.sites?.[site];
+      if (mode !== undefined) lines.push(`decisions.sites.${site}: ${mode}`);
+    }
   }
   if (input.safety !== undefined && Object.keys(input.safety).length > 0) {
     lines.push('safety:');

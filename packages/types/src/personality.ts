@@ -426,6 +426,42 @@ export interface LivingSoul {
   learningLog: LearningLogEntry[];
 }
 
+/**
+ * Decision site ids a personality can enable (plan decision-provider-personality
+ * §4.1). Literal unions, not imports: `@ethosagent/types` has zero deps.
+ * Pinned equal to `DECISION_SITES` / `DECISION_SITE_MODES` in
+ * `packages/config/src/decisions.ts` by
+ * `packages/config/src/__tests__/personality-decision-sites-lockstep.test.ts`.
+ */
+export type PersonalityDecisionSiteId = 'injection' | 'approver' | 'router';
+/** `off` = today's path; `shadow` = both run, today's verdict used; `on` = the provider's verdict used. */
+export type PersonalityDecisionSiteMode = 'off' | 'shadow' | 'on';
+
+/**
+ * Which decision model a personality uses, and at which sites. ENABLEMENT
+ * only — the provider itself (credentials, endpoint, model pin, per-site
+ * budgets, measured thresholds) is the operator's, in `decisions.*` in
+ * `~/.ethos/config.yaml` (`packages/config/src/decisions.ts`).
+ *
+ * Parsed from the dotted `decisions.provider` / `decisions.sites.<site>` keys
+ * of the personality's `config.yaml` by `buildDecisionsConfig`
+ * (`extensions/personalities/src/index.ts`), which drops a mode outside
+ * `off | shadow | on` and keeps `provider` verbatim (a name this machine has
+ * not configured is not a load failure).
+ *
+ * Limitation (N1): nothing reads this block yet. Until plan
+ * decision-provider-personality N2/N3 land, the site modes that run are still
+ * the operator's global `decisions.sites.*`.
+ */
+export interface PersonalityDecisionsConfig {
+  /** A decision provider the OPERATOR configured (`decisions.provider` in
+   *  `~/.ethos/config.yaml`, today only `typesafe`). Kept verbatim; never
+   *  validated at load. Absent → no site runs, whatever `sites` says. */
+  provider?: string;
+  /** Per-site mode. An unset site is `off`. */
+  sites?: Partial<Record<PersonalityDecisionSiteId, PersonalityDecisionSiteMode>>;
+}
+
 // Phase 30.8 — this schema is FROZEN.
 //
 // Adding a top-level field to `PersonalityConfig` requires:
@@ -443,6 +479,15 @@ export interface LivingSoul {
 // how it looks — is identity, and lives as sub-keys of an identity block
 // below (`voice`, `display`; the personality-presentation amendment). It is
 // not a new top-level field, and it is not a licence for one.
+//
+// Decision-layer enablement is identity (decision-provider-personality
+// amendment): which decision model a personality uses (`decisions.provider`)
+// and whether each decision site runs for it (`decisions.sites.<site>`) belong
+// to the personality — the same agent with and without a calibrated judgement
+// layer on its approvals is a different agent. The decision provider itself —
+// credentials, endpoint, model pin, per-site budgets, measured thresholds —
+// stays a setting in `decisions.*` in `~/.ethos/config.yaml`: a machine with no
+// key can always veto, and a threshold is a measurement, not a preference.
 //
 // Common rejections — these belong in skills, in `~/.ethos/config.yaml`, or in
 // per-channel adapter config, NOT here:
@@ -863,6 +908,19 @@ export interface PersonalityConfig {
    * Counts as ONE field for the schema-freeze gate.
    */
   execution?: 'remote' | 'none';
+  /**
+   * Which decision model this personality uses and where (plan
+   * decision-provider-personality). Enablement only: provider, key, endpoint,
+   * budgets and thresholds are the operator's (`decisions.*`,
+   * `packages/config/src/decisions.ts`). The intended rule — a site runs only
+   * when the personality enables it AND the operator configured the named
+   * provider with a key — is not enforced yet: nothing reads this field until
+   * the plan's N2/N3 land (see {@link PersonalityDecisionsConfig}).
+   * Absent = nothing declared (every site `off` for this personality once N3 lands).
+   * Counts as ONE field for the schema-freeze gate (the nested shape is a
+   * leaf type — same precedent as `voice`).
+   */
+  decisions?: PersonalityDecisionsConfig;
 }
 
 /**

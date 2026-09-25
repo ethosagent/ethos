@@ -4,7 +4,7 @@ description: "RFC for the Structural amendment adding DecisionProvider: a typed-
 kind: explanation
 audience: developer
 slug: decision-provider-governance
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 ## Context
@@ -130,11 +130,20 @@ The contract sits in `packages/types`, the provider in `extensions`, and all
 call-site composition in `packages/wiring`. Apps never import the provider
 (Law 5).
 
-`PersonalityConfig` does not change. Whether data goes to a third-party
-decision service is a setting two deployments of the same
+*Amended (decision-provider-personality).* Enablement moved onto
+`PersonalityConfig.decisions`: which decision model a
 [personality](../../getting-started/glossary.md#personality) (a directory
-of files that decides an agent's tools, memory and model) can disagree
-about, so it lives in `~/.ethos/config.yaml` under `decisions.*`.
+of files that decides an agent's tools, memory and model) uses
+(`decisions.provider`) and whether each site runs for it
+(`decisions.sites.injection|approver|router: off|shadow|on`). The provider,
+key, endpoint, model, budgets and thresholds stayed in
+`~/.ethos/config.yaml` under `decisions.*`. Whether data CAN go to a third
+party is still the operator's: with no `decisions.provider` or no key,
+nothing is sent. Which personality uses it, and at which sites, is the
+personality's. The field is parsed and round-tripped by
+`buildDecisionsConfig` in `extensions/personalities/src/index.ts`; until the
+per-personality resolution lands, nothing reads it, and the site modes that
+run are still the global `decisions.sites.*` lines.
 
 **Migration: none required.** No existing module becomes non-compliant.
 With no `decisions.*` keys, or with a site set to `off`, every site behaves
