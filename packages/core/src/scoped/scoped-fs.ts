@@ -215,14 +215,14 @@ function matchAllowedPrefix(canonical: string, allowed: Iterable<string>): strin
 // The reciprocal notes live in `scoped-storage.ts`'s class doc and in
 // `restore.ts`'s `followFirstSymlink` doc.
 //
-// The fourth copy is NOT equivalent today, and that is why it is named here.
-// It walks with async `lstat` from `node:fs/promises`, so an `lstatSync` grep
-// does not find it, and it swallows every stat error with `.catch(() => null)`
-// and CONTINUES the walk — reading "I could not look" as "nothing to see".
-// The other three abort: `lstatSync(..., { throwIfNoEntry: false })` returns
-// `undefined` for ENOENT alone and throws on EACCES and the rest. That is the
-// same fail-open commit 69e7b26d removed from `restore.ts`. Bringing it into
-// line is a pending fix, not a discrepancy to preserve.
+// The fourth copy walks with async `lstat` from `node:fs/promises`, so an
+// `lstatSync` grep does not find it. Its errno rule is the same as the other
+// three: ENOENT alone ends the walk (here `lstatSync(..., { throwIfNoEntry:
+// false })` returning `undefined`), and every other error — EACCES, ENOTDIR,
+// the rest — refuses. Pinned for that copy by
+// `apps/web-api/src/__tests__/services/documents.service.fail-closed.test.ts`.
+// It differs in one deliberate way: it refuses ANY symlink rather than
+// following it and re-judging the target.
 
 /**
  * Walk `target` one segment at a time below `prefixRoot`, `lstat`ing each.

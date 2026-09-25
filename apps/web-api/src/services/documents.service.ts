@@ -45,7 +45,8 @@ import { assertSafeTeamName } from './kanban.service';
 // the same carve-out as `extensions/gateway/src/media.ts` (W3.2 exfiltration
 // guard). Walking every segment (not just the leaf, as media.ts does) matters
 // here because the caller supplies multi-segment paths: `link/secret` has a
-// non-symlink leaf but escapes through a symlinked parent.
+// non-symlink leaf but escapes through a symlinked parent. The walk fails
+// closed: an `lstat` error other than ENOENT refuses (`reachable` below).
 
 /** One row in the Documents listing. `path` is relative to the selected root. */
 export interface DocumentEntry {
@@ -433,13 +434,31 @@ export class DocumentsService {
     // ahead of the symlink walk.
     await guardBoundary(() => scoped.exists(target));
 
+    // ENOENT — and only ENOENT — ends the walk: nothing can live below a
+    // missing segment, and a not-yet-written leaf is the normal case for
+    // `write`/`createFolder`. Every other errno (EACCES, ENOTDIR, ELOOP, …) is
+    // "I could not look", and a boundary that reads that as "nothing to see"
+    // fails open, so it refuses. Same rule as `followFirstSymlink` in
+    // packages/core/src/scoped/scoped-fs.ts, packages/storage-fs/src/scoped-storage.ts
+    // and packages/wiring/src/backup/restore.ts; pinned by
+    // apps/web-api/src/__tests__/services/documents.service.fail-closed.test.ts.
     const rel = relative(workdir, target);
     if (rel !== '') {
       let cursor = resolve(workdir);
       for (const segment of rel.split(sep)) {
         cursor = join(cursor, segment);
-        const st = await lstat(cursor).catch(() => null);
-        if (st?.isSymbolicLink()) {
+        let st: Awaited<ReturnType<typeof lstat>>;
+        try {
+          st = await lstat(cursor);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') break;
+          throw new EthosError({
+            code: 'FORBIDDEN',
+            cause: 'That path could not be checked for symbolic links.',
+            action: 'Check the folder permissions under this Documents root, then retry.',
+          });
+        }
+        if (st.isSymbolicLink()) {
           throw new EthosError({
             code: 'FORBIDDEN',
             cause: 'That path passes through a symbolic link.',
