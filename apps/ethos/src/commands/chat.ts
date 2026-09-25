@@ -30,7 +30,8 @@ import {
   toEthosError,
 } from '@ethosagent/types';
 import { createLazyProvider } from '@ethosagent/wiring';
-import { ApprovalCoordinator } from '../approval-coordinator';
+import { ApprovalCoordinator, firstRefusal, notPermittedRefusal } from '../approval-coordinator';
+import { cliToolsetsRefusal } from '../cli-overrides';
 import { appendErrorLog } from '../error-log';
 import { resolveAtRefs } from '../lib/at-refs';
 import { makeCompleter } from '../lib/autocomplete';
@@ -296,6 +297,12 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       executionPostureFor: target.executionPostureFor,
       coordinator: interactive ? approvalCoordinator : null,
       nonInteractive,
+      // Never ask about a call the personality toolset or `--toolsets` will
+      // refuse anyway.
+      refusedAnyway: firstRefusal(
+        notPermittedRefusal(target.loop),
+        cliToolsetsRefusal(target.loop, config.cliToolsets),
+      ),
     });
   };
   const {

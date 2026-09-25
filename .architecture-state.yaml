@@ -259,7 +259,7 @@ register_anchors:
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 23, contains: "export function resolveDowngradedTools" }
     - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 457, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 727, contains: "resolveDowngradedTools(dgConfig?.tools)" }
+    - { path: packages/core/src/agent-loop.ts, line: 733, contains: "resolveDowngradedTools(dgConfig?.tools)" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 771, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }
     - { path: packages/wiring/src/decision-injection-classifier.ts, line: 89, contains: "export function createDecisionInjectionClassifier" }

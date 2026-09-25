@@ -34,6 +34,7 @@ import {
   type WiringConfig,
   type WiringProfile,
 } from '@ethosagent/wiring';
+import { cliToolsetsRefusal } from './cli-overrides';
 import { setObservabilityService } from './error-log';
 import { logger } from './logger';
 
@@ -1017,15 +1018,10 @@ export async function resolveActiveLoop(
 function applyCliOverrideHooks(loop: AgentLoop, config: EthosConfig): void {
   // --toolsets: reject before_tool_call for tools not in the allowed set
   if (config.cliToolsets && config.cliToolsets.length > 0) {
-    const allowed = new Set(config.cliToolsets);
+    const refusal = cliToolsetsRefusal(loop, config.cliToolsets);
     loop.hooks.registerModifying('before_tool_call', async (payload) => {
-      const tool = loop.getAvailableTools().find((t) => t.name === payload.toolName);
-      if (tool?.toolset && !allowed.has(tool.toolset)) {
-        return {
-          error: `Tool '${payload.toolName}' (toolset: ${tool.toolset}) is disabled by --toolsets CLI override`,
-        };
-      }
-      return null;
+      const error = refusal(payload);
+      return error ? { error } : null;
     });
   }
 

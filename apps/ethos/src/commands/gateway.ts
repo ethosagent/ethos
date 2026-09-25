@@ -143,6 +143,7 @@ import {
   ApprovalCoordinator,
   type ApprovalObservability,
   createSlackApprovalHook,
+  notPermittedRefusal,
   SYSTEM_DECIDER,
 } from '../approval-coordinator';
 import {
@@ -3060,6 +3061,8 @@ export function wireApprovalFlow(
         resolveApprovalTarget,
         withoutSurface,
         hardlineReason,
+        // No card for a call this bot's personality allowlist refuses anyway.
+        refusedAnyway: notPermittedRefusal(bot.loop),
       }),
     );
     // Approval-required commands (command substitution) now reach the card

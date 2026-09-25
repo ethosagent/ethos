@@ -74,6 +74,9 @@ export interface TerminalApprovalGateOptions {
   coordinator: ApprovalCoordinator | null;
   /** Why nobody can be asked, for the refusal when `coordinator` is null. */
   nonInteractive: string;
+  /** Why a flagged call will be refused anyway, so it is refused without a
+   *  prompt — `CreateSlackApprovalHookOptions.refusedAnyway`. */
+  refusedAnyway?: (payload: BeforeToolCallPayload) => string | null;
 }
 
 /** What the agent is told when a flagged call is refused on a run with no prompt. */
@@ -135,6 +138,7 @@ export function wireTerminalApprovalGate(
           resolveApprovalTarget: () => ({}),
           withoutSurface: async (payload) => (await refuse(payload)) ?? {},
           hardlineReason,
+          ...(opts.refusedAnyway ? { refusedAnyway: opts.refusedAnyway } : {}),
         });
 
   const unregister = hooks.registerModifying('before_tool_call', async (payload) => {

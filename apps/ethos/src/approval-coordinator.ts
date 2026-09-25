@@ -355,6 +355,50 @@ export interface CreateSlackApprovalHookOptions {
    * apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts.
    */
   hardlineReason: (payload: BeforeToolCallPayload) => string | null;
+  /**
+   * Why a flagged call will be refused whatever the human says, or `null`.
+   * Consulted only for a call `isDangerous` flagged, before any card: a call
+   * outside the personality's allowlist (`notPermittedRefusal` below) is
+   * refused later by `DefaultToolRegistry.executeParallel`, so asking a human
+   * to Allow it would ask for something that cannot run. Its reason is returned
+   * as the refusal. Absent → every flagged call is asked about. Pinned by
+   * apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts and
+   * apps/ethos/src/__tests__/terminal-approval.test.ts.
+   */
+  refusedAnyway?: (payload: BeforeToolCallPayload) => string | null;
+}
+
+/**
+ * The refusal for a call outside the personality's allowlist — the same text
+ * `DefaultToolRegistry.executeParallel` refuses it with — or `null`, from
+ * `AgentLoop.isToolPermitted` (packages/core/src/agent-loop.ts). A loop without
+ * that method, or one that throws, answers `null`: the call is then asked
+ * about as before, which is the safe direction.
+ */
+export function notPermittedRefusal(loop: {
+  isToolPermitted?: (toolName: string, personalityId?: string) => boolean;
+}): (payload: BeforeToolCallPayload) => string | null {
+  return (payload) => {
+    try {
+      if (loop.isToolPermitted?.(payload.toolName, payload.personalityId) !== false) return null;
+    } catch {
+      return null;
+    }
+    return `Tool ${payload.toolName} is not permitted for this personality`;
+  };
+}
+
+/** Combine refusal checks: the first non-null reason wins. */
+export function firstRefusal(
+  ...checks: ReadonlyArray<(payload: BeforeToolCallPayload) => string | null>
+): (payload: BeforeToolCallPayload) => string | null {
+  return (payload) => {
+    for (const check of checks) {
+      const reason = check(payload);
+      if (reason !== null) return reason;
+    }
+    return null;
+  };
 }
 
 /**
@@ -380,6 +424,11 @@ export function createSlackApprovalHook(opts: CreateSlackApprovalHookOptions) {
 
     const reason = await opts.isDangerous(payload);
     if (reason === null) return null;
+
+    // Refused without a card: another check refuses this call whatever the
+    // human decides (see `refusedAnyway`).
+    const refused = opts.refusedAnyway?.(payload);
+    if (refused) return { error: refused };
 
     const decision = await opts.coordinator.requestApproval({
       sessionId: payload.sessionId,

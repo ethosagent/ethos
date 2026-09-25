@@ -102,6 +102,7 @@ function wire(opts: {
   personality?: PersonalityConfig;
   posture?: ExecutionPosture;
   questionOnReadline?: boolean;
+  refusedAnyway?: (payload: { toolName: string }) => string | null;
 }) {
   const hooks = loopHooks();
   const coordinator = opts.interactive
@@ -116,6 +117,7 @@ function wire(opts: {
     executionPostureFor: () => opts.posture ?? LOCAL,
     coordinator,
     nonInteractive: 'this run has no terminal to ask in',
+    ...(opts.refusedAnyway ? { refusedAnyway: opts.refusedAnyway } : {}),
   });
   const rl = new FakeReadline();
   const written: string[] = [];
@@ -184,6 +186,30 @@ describe('terminal approval gate — CLI prompt', () => {
     await tick();
     expect(rl.prompts).toEqual([]);
     expect(written.join('')).toMatch(/Allow\?.*\[y\/N\]/);
+    rl.answer('y');
+    expect((await result).error).toBeUndefined();
+  });
+
+  // A call another check will refuse anyway (a tool outside the personality
+  // toolset, a `--toolsets` override) is refused up front: asking a human to
+  // Allow a call that can never run would be asking for the impossible.
+  it('a call that would be refused anyway is refused without a prompt', async () => {
+    const { hooks, events, coordinator } = wire({
+      interactive: true,
+      timeoutMs: 50,
+      refusedAnyway: (p) => `Tool ${p.toolName} is not permitted for this personality`,
+    });
+    const result = await fire(hooks, 'ls -la');
+    expect(events).toEqual([]);
+    expect(coordinator?.pendingCount()).toBe(0);
+    expect(result.error).toBe('Tool terminal is not permitted for this personality');
+  });
+
+  it('a call refusedAnyway lets through still prompts', async () => {
+    const { hooks, rl, events } = wire({ interactive: true, refusedAnyway: () => null });
+    const result = fire(hooks, 'ls -la');
+    await tick();
+    expect(events).toEqual(['open']);
     rl.answer('y');
     expect((await result).error).toBeUndefined();
   });
@@ -286,6 +312,10 @@ describe('terminal approval gate — wiring', () => {
     expect(src).toMatch(/gateLoop\(runtime, approvalInteractive, /);
     expect(src).toMatch(/approvals: createTerminalApprovalSource\(approvalCoordinator, 'tui'\)/);
     expect(src).toMatch(/const approvalInteractive = process\.stdin\.isTTY === true;/);
+    // No prompt for a call the toolset or `--toolsets` would refuse anyway.
+    expect(src).toMatch(
+      /refusedAnyway: firstRefusal\(\s*notPermittedRefusal\(target\.loop\),\s*cliToolsetsRefusal\(target\.loop, config\.cliToolsets\),?\s*\)/,
+    );
     // stdout not a TTY → the prompt goes to stderr, where the user can see it.
     expect(src).toMatch(/questionOnReadline: process\.stdout\.isTTY === true/);
     expect(src).toMatch(

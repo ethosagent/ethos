@@ -219,3 +219,26 @@ export async function applyCliOverrides(
 
   return result;
 }
+
+/**
+ * The `--toolsets` refusal for one call, or `null`: a tool whose toolset is
+ * outside `cliToolsets` is disabled. The one predicate behind both the
+ * `before_tool_call` hook that enforces the flag (`applyCliOverrideHooks`,
+ * apps/ethos/src/wiring.ts) and the approval gate, which must not ask about a
+ * call this refuses (`refusedAnyway` in `wireTerminalApprovalGate`,
+ * apps/ethos/src/terminal-approval.ts). No `--toolsets` → refuses nothing.
+ */
+export function cliToolsetsRefusal(
+  loop: { getAvailableTools(): ReadonlyArray<{ name: string; toolset?: string }> },
+  cliToolsets: ReadonlyArray<string> | undefined,
+): (payload: { toolName: string }) => string | null {
+  if (!cliToolsets || cliToolsets.length === 0) return () => null;
+  const allowed = new Set(cliToolsets);
+  return (payload) => {
+    const tool = loop.getAvailableTools().find((t) => t.name === payload.toolName);
+    if (tool?.toolset && !allowed.has(tool.toolset)) {
+      return `Tool '${payload.toolName}' (toolset: ${tool.toolset}) is disabled by --toolsets CLI override`;
+    }
+    return null;
+  };
+}
