@@ -403,11 +403,19 @@ export async function* setupTurn(
   // outrank `alwaysInclude` and reach MCP/plugin tools too, which only the
   // filterOpts path does. Static per surface, so tool definitions stay
   // byte-identical across turns (see tool-definition-stability.test.ts).
+  // The wiring's per-personality exclusion (plan decision-tool D13) is UNIONED
+  // with it, never replaces it; it depends only on the personality, so the
+  // same stability holds.
+  const personalityExclude = deps.personalityToolExclude?.(personality) ?? [];
+  const excludeTools =
+    personalityExclude.length > 0
+      ? [...new Set([...(opts.toolsetExclude ?? []), ...personalityExclude])]
+      : opts.toolsetExclude;
   const filterOpts: ToolFilterOpts = {
     allowedMcpServers: personality.mcp_servers ?? [],
     allowedPlugins,
     ...(allowedMcpTools && Object.keys(allowedMcpTools).length > 0 ? { allowedMcpTools } : {}),
-    ...(opts.toolsetExclude ? { excludeTools: opts.toolsetExclude } : {}),
+    ...(excludeTools ? { excludeTools } : {}),
   };
 
   // reach-and-containment Part 1 (C2) — on-demand tool loading runs INSIDE the

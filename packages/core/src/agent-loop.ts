@@ -12,6 +12,7 @@ import type {
   Logger,
   MemoryProvider,
   ModelResolutionContext,
+  PersonalityConfig,
   PersonalityRegistry,
   RequestDumpStore,
   SessionStore,
@@ -216,6 +217,8 @@ export interface AgentLoopConfig {
   /** Part 1 on-demand tool loading; absent → unchanged (tool-loading-loop.test.ts). */
   toolLoading?: import('./agent-loop/tool-loading').ToolLoadingResolver;
   smallWindowResolver?: import('./agent-loop/small-window').SmallWindowResolver; // per-personality small-window mode; absent → options.smallWindow
+  /** Per-personality tool exclusion, unioned with `RunOptions.toolsetExclude` (turn-setup.ts); must depend only on the personality. */
+  personalityToolExclude?: (personality: PersonalityConfig) => string[];
   /** plan decision-provider-jev §8.3 — downgrade-only tier router, built in wiring;
    *  absent → no routing (`agent-loop/tier-router.ts`, pinned by tier-router.test.ts). */
   tierRouter?: import('./agent-loop/tier-router').TierRouter;
@@ -388,6 +391,7 @@ export class AgentLoop {
   private readonly smallWindow: boolean;
   private readonly toolLoading?: AgentLoopConfig['toolLoading'];
   private readonly smallWindowResolver?: AgentLoopConfig['smallWindowResolver'];
+  private readonly personalityToolExclude?: AgentLoopConfig['personalityToolExclude'];
   private readonly tierRouter?: AgentLoopConfig['tierRouter'];
   private readonly approverDecisionSinks?: AgentLoopConfig['approverDecisionSinks'];
   private readonly modelResolution: ModelResolutionContext;
@@ -458,6 +462,7 @@ export class AgentLoop {
     this.smallWindow = config.options?.smallWindow ?? false;
     this.toolLoading = config.toolLoading;
     this.smallWindowResolver = config.smallWindowResolver;
+    this.personalityToolExclude = config.personalityToolExclude;
     this.tierRouter = config.tierRouter;
     this.approverDecisionSinks = config.approverDecisionSinks;
     this.modelResolution = config.modelResolution ?? emptyModelResolution();
@@ -599,6 +604,7 @@ export class AgentLoop {
       smallWindow: this.smallWindow,
       toolLoading: this.toolLoading,
       smallWindowResolver: this.smallWindowResolver,
+      personalityToolExclude: this.personalityToolExclude,
       tierRouter: this.tierRouter,
       modelResolution: this.modelResolution,
       deviationSeen: this.deviationSeen,

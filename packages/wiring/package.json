@@ -107,6 +107,7 @@
     "@ethosagent/tools-code": "workspace:*",
     "@ethosagent/tools-cron": "workspace:*",
     "@ethosagent/tools-debug": "workspace:*",
+    "@ethosagent/tools-decision": "workspace:*",
     "@ethosagent/tools-delegation": "workspace:*",
     "@ethosagent/tools-file": "workspace:*",
     "@ethosagent/tools-goals": "workspace:*",

@@ -225,7 +225,12 @@ describe('Orchestrator guardrails', () => {
     // main's small-window/compact increases (+7 over 1046) plus this branch's
     // decision-event increases (+17 over 1046), each ratcheted independently;
     // the cap is their sum.
-    expect(lineCount).toBeLessThanOrEqual(1070);
+    // Bumped 1070 -> 1076 (decision-tool D13): the optional
+    // `personalityToolExclude` config field with its one-line doc, the
+    // `PersonalityConfig` type import, its private field, constructor
+    // assignment and deps-getter line. Pass-through only; the union with the
+    // surface's `toolsetExclude` lives in agent-loop/stages/turn-setup.ts.
+    expect(lineCount).toBeLessThanOrEqual(1076);
   });
 
   it('no stage file exceeds 700 lines', () => {

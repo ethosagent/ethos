@@ -58,6 +58,12 @@ export interface LoopDeps {
    *  asked once per turn by `setupTurn`. Present → it replaces `smallWindow`
    *  for the turn; absent → `smallWindow` above applies, as before. */
   smallWindowResolver?: SmallWindowResolver;
+  /** Per-personality tool exclusion (plan decision-tool D13), unioned by
+   *  `setupTurn` with the surface's `toolsetExclude` into `excludeTools`, so it
+   *  outranks `alwaysInclude` in `toDefinitions` and `executeParallel`. Must
+   *  depend only on the personality, keeping tool definitions byte-stable
+   *  across turns. Absent → no personality exclusion, exactly as before. */
+  personalityToolExclude?: (personality: PersonalityConfig) => string[];
   /** reach-and-containment Part 1 — wiring-built predicate deciding, per turn,
    *  whether on-demand tool loading engages (`agent-loop/tool-loading.ts`).
    *  Absent → every allowed schema is sent, exactly as before. */

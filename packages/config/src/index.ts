@@ -48,6 +48,7 @@ export {
   type DecisionSiteId,
   type DecisionSiteMode,
   type DecisionsConfig,
+  decisionToolEnabled,
   describeDecisionSiteDowngrade,
   describeLegacyDecisionSite,
   missingThresholdKeys,

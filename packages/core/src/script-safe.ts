@@ -21,7 +21,8 @@ export type ScriptExclusionCategory =
   | 'mcp'
   | 'plugin'
   | 'clarify'
-  | 'credentials';
+  | 'credentials'
+  | 'decision';
 
 const EXCLUSION_REASONS: Record<ScriptExclusionCategory, string> = {
   code: 'code-execution tools are not script-callable — recursion guard (a script cannot start a script)',
@@ -34,6 +35,10 @@ const EXCLUSION_REASONS: Record<ScriptExclusionCategory, string> = {
     'credential-returning tools are not script-callable — their results can carry secret ' +
     'material (host environment via terminal, raw session transcripts via debug tools), ' +
     'which must not reach untrusted sandboxed code',
+  decision:
+    'decision tools are not script-callable — their visibility is decided per personality, ' +
+    'which this advertised list does not read, and a script looping over the decision model ' +
+    'is batch work the plugin helper owns',
 };
 
 /** Tool metadata the policy inspects — all of it available at the core layer. */
@@ -70,6 +75,10 @@ export function scriptExclusionFor(
   // transcript content from ANY stored session. Both would hand credential
   // material to an untrusted script — excluded as a category.
   if (meta.toolset === 'terminal' || meta.toolset === 'debug') return 'credentials';
+  // plan decision-tool D14 — `decide` is `alwaysInclude`, so the allowlist
+  // above would advertise it even to a personality whose per-personality
+  // exclusion hides it (this derivation does not read `excludeTools`).
+  if (meta.toolset === 'decision') return 'decision';
   // Blocks the turn on an interactive surface mid-script.
   if (toolName === 'clarify') return 'clarify';
   return null;

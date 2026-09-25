@@ -1,7 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { FsContentStore } from '@ethosagent/cas-fs';
-import { backgroundDefaults, resolveDecisionsConfig } from '@ethosagent/config';
+import {
+  backgroundDefaults,
+  decisionToolEnabled,
+  resolveDecisionsConfig,
+} from '@ethosagent/config';
 import {
   AgentLoop,
   ApproverDecisionSinks,
@@ -628,6 +632,25 @@ export async function buildAgentLoop(
         );
         disposers.push('decision shadow records', () => tracker.drain());
         const recorder = opts.observability ? { recorder: opts.observability } : {};
+        // plan decision-tool D4/D5 — the `decide` tool, on this SAME handle so
+        // it shares the sites' breaker. Registered here, beside the handle,
+        // because `composeAllTools` ran before it existed. `alwaysInclude`
+        // skips the toolset allowlist; which personalities see it is decided
+        // per turn by `personalityToolExclude` below (D6/D13). No key → the
+        // call answers `not_available` (`handle.get()` resolves undefined).
+        const { createDecideTool } = await import('@ethosagent/tools-decision');
+        const { createDecisionToolDecide } = await import('./decision-tool');
+        tools.register({
+          ...createDecideTool({
+            decide: createDecisionToolDecide({
+              provider,
+              providerName: decisions.provider,
+              timeoutMs: decisions.timeoutMs,
+              ...recorder,
+            }),
+          }),
+          alwaysInclude: true,
+        });
         return {
           injectionClassifier: createDecisionInjectionClassifier({
             provider,
@@ -657,6 +680,15 @@ export async function buildAgentLoop(
           }),
         };
       })()
+    : undefined;
+  // plan decision-tool D6/D13 — `decide` is visible only to a personality that
+  // picked the operator's decision model (`decisionToolEnabled`,
+  // @ethosagent/config). Depends only on the personality, so tool definitions
+  // stay byte-stable per personality. With no `decisions.*` there is no
+  // `decide` to hide and no hook.
+  const personalityToolExclude = decisions
+    ? (person: PersonalityConfig): string[] =>
+        decisionToolEnabled(person.decisions, decisions) ? [] : ['decide']
     : undefined;
   const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
   const approverDecision = decisionSites?.approverDecision;
@@ -927,6 +959,12 @@ export async function buildAgentLoop(
   // goal, MCP) are not counted in the static estimate — the estimate is
   // best-effort and biases slightly low; the window trigger is exact.
   const preludeChars = (profilePromptBudget?.compactPrelude ? preludeCompact : prelude).length;
+  // The per-personality exclusion the loop applies (decision-tool D13), so a
+  // measurement counts only the schemas that personality's turns send.
+  const excludeFor = (person: PersonalityConfig) => {
+    const excludeTools = personalityToolExclude?.(person) ?? [];
+    return excludeTools.length > 0 ? { excludeTools } : undefined;
+  };
   // D8 — the ONE static-floor arithmetic, shared with `ethos bench context`,
   // the Lane 1(b) startup diagnostic below and the per-personality resolver.
   const measureFloor = async (person: PersonalityConfig, projectContextChars: number) => {
@@ -938,7 +976,7 @@ export async function buildAgentLoop(
         soulChars = 0;
       }
     }
-    const definitions = tools.toDefinitions(person.toolset);
+    const definitions = tools.toDefinitions(person.toolset, excludeFor(person));
     return measureStaticFloor({
       soulChars,
       toolSchemaChars: JSON.stringify(definitions).length,
@@ -947,7 +985,7 @@ export async function buildAgentLoop(
       projectContextChars,
     });
   };
-  const toolDefinitions = tools.toDefinitions(activePerson.toolset);
+  const toolDefinitions = tools.toDefinitions(activePerson.toolset, excludeFor(activePerson));
   // The AGENTS.md/CLAUDE.md "Project Context" block the first turn will send,
   // asked of the loop's own file-context injector for the directory the turn
   // resolves — the same text, not a second discovery (project-context-floor.ts).
@@ -1077,7 +1115,7 @@ export async function buildAgentLoop(
     );
   }
   const effectiveToolDefinitions = narrowedToolset
-    ? tools.toDefinitions(narrowedToolset)
+    ? tools.toDefinitions(narrowedToolset, excludeFor(activePerson))
     : toolDefinitions;
 
   // Lane 3(a) — total serialized tool-payload guard. On a local dialect an
@@ -1175,6 +1213,7 @@ export async function buildAgentLoop(
     logger: log,
     ...(toolLoading ? { toolLoading } : {}),
     smallWindowResolver,
+    ...(personalityToolExclude ? { personalityToolExclude } : {}),
     ...(tierRouter ? { tierRouter } : {}),
     // §15.3 — the approver's private sink channel; the same object is on
     // `approverDecision.sinks` above. Absent with no `decisions.*`.
