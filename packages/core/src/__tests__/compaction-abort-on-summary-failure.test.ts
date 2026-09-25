@@ -91,7 +91,11 @@ describe('applyOverflowRetry — summary-failure reporting', () => {
       meta,
     );
     expect(result).toEqual({ retried: true });
-    expect(messages).toHaveLength(1);
+    // The engine only sees the older history; the current turn ('c') is kept.
+    expect(messages).toEqual([
+      { role: 'user', content: 'a' },
+      { role: 'user', content: 'c' },
+    ]);
   });
 });
 
@@ -116,6 +120,14 @@ describe('AgentLoop — compaction.abortOnSummaryFailure', () => {
     return out;
   }
 
+  /** The events of a SECOND turn: the engine only ever sees history older than
+   *  the current turn (`currentTurnStart`), so a first turn has nothing for it
+   *  to compact and never reaches it. */
+  async function secondTurn(loop: AgentLoop, sessionKey: string): Promise<AgentEvent[]> {
+    await collect(loop.run('first', { sessionKey }));
+    return collect(loop.run('go', { sessionKey }));
+  }
+
   function loopWith(
     compaction: { abortOnSummaryFailure?: boolean } | undefined,
     compact: ContextEngine['compact'],
@@ -131,7 +143,7 @@ describe('AgentLoop — compaction.abortOnSummaryFailure', () => {
 
   it('emits compaction_summary_failed when the flag is on and the summary threw', async () => {
     const loop = loopWith({ abortOnSummaryFailure: true }, throwingEngine);
-    const events = await collect(loop.run('go', { sessionKey: 'cli:abort' }));
+    const events = await secondTurn(loop, 'cli:abort');
     const errors = events.filter((e) => e.type === 'error');
     expect(errors).toHaveLength(1);
     expect(errors[0]?.type === 'error' && errors[0].code).toBe('compaction_summary_failed');
@@ -140,21 +152,21 @@ describe('AgentLoop — compaction.abortOnSummaryFailure', () => {
 
   it('still emits context_overflow when the flag is on but the summary merely could not shrink', async () => {
     const loop = loopWith({ abortOnSummaryFailure: true }, noShrinkEngine);
-    const events = await collect(loop.run('go', { sessionKey: 'cli:noshrink' }));
+    const events = await secondTurn(loop, 'cli:noshrink');
     const err = events.find((e) => e.type === 'error');
     expect(err?.type === 'error' && err.code).toBe('context_overflow');
   });
 
   it('masks the summary failure as context_overflow by default (flag unset)', async () => {
     const loop = loopWith(undefined, throwingEngine);
-    const events = await collect(loop.run('go', { sessionKey: 'cli:default' }));
+    const events = await secondTurn(loop, 'cli:default');
     const err = events.find((e) => e.type === 'error');
     expect(err?.type === 'error' && err.code).toBe('context_overflow');
   });
 
   it('masks the summary failure when the flag is explicitly false', async () => {
     const loop = loopWith({ abortOnSummaryFailure: false }, throwingEngine);
-    const events = await collect(loop.run('go', { sessionKey: 'cli:off' }));
+    const events = await secondTurn(loop, 'cli:off');
     const err = events.find((e) => e.type === 'error');
     expect(err?.type === 'error' && err.code).toBe('context_overflow');
   });

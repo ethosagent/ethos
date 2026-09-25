@@ -189,8 +189,10 @@ describe('exactly one compactor per turn (D32)', () => {
   it('overflow retry: no local emergency compaction while the provider compacts', async () => {
     for (const marked of [false, true]) {
       const { registry, compact } = spyEngines();
+      // The first turn succeeds so the overflowing second one has older
+      // history — the only thing an emergency compaction may hand an engine.
       const base = makeLLM((i) =>
-        i === 0 ? { chunks: [], throwOverflow: true } : { chunks: text('ok') },
+        i === 1 ? { chunks: [], throwOverflow: true } : { chunks: text('ok') },
       );
       const loop = new AgentLoop({
         llm: marked ? markServerCompaction(base) : base,
@@ -199,6 +201,7 @@ describe('exactly one compactor per turn (D32)', () => {
         contextEngines: registry,
         compaction: { autoCompact: false },
       });
+      await collect(loop.run('first', { sessionKey: 'cli:overflow' }));
       const events = await collect(loop.run('go', { sessionKey: 'cli:overflow' }));
       const error = events.find((e) => e.type === 'error');
       if (marked) {

@@ -20,6 +20,7 @@ import {
 } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { handleChunk } from '../chunk-handler';
+import { currentTurnFitError, currentTurnStart } from '../compaction';
 import { routeTurnModel } from '../model-route';
 import { isContextOverflowError } from '../overflow';
 import { composeDefinitions, type ToolLoadingState } from '../tool-loading';
@@ -184,6 +185,38 @@ export async function* streamStep(
         ctx.toolLoading.searchDefinition,
       )
     : deps.tools.toDefinitions(ctx.allowedTools, ctx.filterOpts);
+
+  // Context-fit preflight, before the turn's first LLM call: when the static
+  // prefix plus the user's message cannot fit the usable window, fail the turn
+  // loudly instead of sending a request (`currentTurnFitError`). Later calls
+  // carry this turn's tool results, which the overflow path owns.
+  if (ctx.turnCount === 0) {
+    const fitError = currentTurnFitError(
+      {
+        llm: deps.llm,
+        ...(ctx.opts.maxCompletionTokens !== undefined
+          ? { reservedOutputTokens: ctx.opts.maxCompletionTokens }
+          : {}),
+      },
+      {
+        systemPrompt: ctx.systemPrompt ?? '',
+        toolSchemas: JSON.stringify(toolDefs),
+        currentTurn: ctx.llmMessages.slice(currentTurnStart(ctx.llmMessages)),
+      },
+    );
+    if (fitError) {
+      deps.observability?.recordCompaction({
+        ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+        severity: 'error',
+        code: 'context_window_too_small',
+        cause: fitError,
+      });
+      deps.observability?.endTrace(ctx.traceId ?? '', 'error');
+      deps.observability?.flush();
+      yield { type: 'error', error: fitError, code: 'context_window_too_small' };
+      return { outcome: 'fatal' };
+    }
+  }
   const requestId = randomUUID();
   const includeContent = ctx.obsConfig?.storeLlmPayloads === 'full';
 
