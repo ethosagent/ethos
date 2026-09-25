@@ -42,7 +42,7 @@ import {
   scanPluginCode,
 } from '@ethosagent/wiring/security-kernel';
 import { writeJson } from '../json-output';
-import { getStorage } from '../wiring';
+import { getStorage, recordInstallScan } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -250,6 +250,7 @@ async function installPlugin(pkg: string, personalityId?: string, yesFlag = fals
 
     // Step 7: red findings are a hard stop; everything else goes to consent.
     const decision = canInstall(scanResult, tier);
+    recordInstallScan({ kind: 'plugin', source: pkg, tier, scan: scanResult, decision });
     if (!decision.allowed && hasRed) {
       blockedBy = decision.blockedBy ?? 'red safety finding';
     } else {

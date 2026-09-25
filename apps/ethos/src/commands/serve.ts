@@ -344,6 +344,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       // Config-independent, so available before boot — same trail as normal mode.
       approvalObservability: {
         recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+        recordSkillScan: (o) => getEthosObservability().recordSkillScan(o),
       },
       goals: lateGoals.goals,
       personalities,
@@ -2355,6 +2356,7 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     // safety audit trail behind `ethos audit decisions`.
     approvalObservability: {
       recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+      recordSkillScan: (o) => getEthosObservability().recordSkillScan(o),
     },
     // On-demand replay for the `learning.replay` RPC (L-D9): two real dry-run
     // loops built from this config, so the baseline arm measures the agent this

@@ -1,8 +1,15 @@
 // EVO-001 — the gate a learning candidate crosses before it becomes a live
 // skill file. Injected into `promote()` (`extensions/learning-inbox/src/promote.ts`)
-// as `PromoteDeps.vetSkill` by `learningPromoteDeps` (packages/wiring/src/learning-pipeline.ts).
+// as `PromoteDeps.vetSkill` by `learningPromoteDeps` (packages/wiring/src/learning-pipeline.ts),
+// which calls `vetPromotedSkillWithScan` so it can also record the `install.scan` row.
 
-import { canInstall, scanSkillMd } from '@ethosagent/safety-scanner';
+import {
+  canInstall,
+  type InstallDecision,
+  type ScanResult,
+  scanSkillMd,
+  type TrustTier,
+} from '@ethosagent/safety-scanner';
 import matter from 'gray-matter';
 
 /**
@@ -44,12 +51,28 @@ export function stripModelOwnedSkillKeys(md: string): string {
 export function vetPromotedSkill(
   md: string,
 ): { ok: true; content: string } | { ok: false; error: string } {
+  return vetPromotedSkillWithScan(md).result;
+}
+
+/**
+ * `vetPromotedSkill`, plus the scan and decision it was based on — for the
+ * `install.scan` audit row `learningPromoteDeps`
+ * (packages/wiring/src/learning-pipeline.ts) records per promotion.
+ */
+export function vetPromotedSkillWithScan(md: string): {
+  result: { ok: true; content: string } | { ok: false; error: string };
+  scan: ScanResult;
+  decision: InstallDecision;
+  tier: TrustTier;
+} {
   const content = stripModelOwnedSkillKeys(md);
-  const decision = canInstall(scanSkillMd(content), 'community');
-  if (!decision.allowed) {
-    return { ok: false, error: `safety scan: ${decision.blockedBy ?? 'refused'}` };
-  }
-  return { ok: true, content };
+  const tier: TrustTier = 'community';
+  const scan = scanSkillMd(content);
+  const decision = canInstall(scan, tier);
+  const result = decision.allowed
+    ? { ok: true as const, content }
+    : { ok: false as const, error: `safety scan: ${decision.blockedBy ?? 'refused'}` };
+  return { result, scan, decision, tier };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
