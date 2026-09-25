@@ -1,6 +1,11 @@
 import { buildToolSearchDefinition, composeDefinitions, resolvePinned } from '@ethosagent/core';
 import type { PersonalityConfig, ToolRegistry } from '@ethosagent/types';
-import { evaluateToolSchemaBudget, measureStaticFloor } from '@ethosagent/wiring';
+import {
+  createProjectContextInjector,
+  evaluateToolSchemaBudget,
+  measureStaticFloor,
+  projectContextAtStartup,
+} from '@ethosagent/wiring';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 
 // `ethos bench context` — context-economy Phase 0 (plan/phases/gap-context-economy.md §4).
@@ -16,14 +21,16 @@ const c = {
 };
 
 const USAGE = [
-  'Usage: ethos bench context [--live] [--scenario <id>] [--turns <n>] [--write-baseline]',
+  'Usage: ethos bench context [--live] [--scenario <id>] [--turns <n>] [--write-baseline] [--cwd <dir>]',
   '',
-  '  Static measurement (always): per-personality SOUL.md + tool-schema size.',
+  '  Static measurement (always): per-personality SOUL.md + tool-schema size, plus the',
+  '  AGENTS.md/CLAUDE.md project context a turn launched in the working directory sends.',
   '  --live             Run live scenarios against the configured provider.',
   '  --scenario <id>    Run only one scenario (hi | one-tool | multi-tool | long-session).',
   '  --turns <n>        Turns for the long-session scenario (default: 10;',
   '                     --turns 50 reproduces the plan/phases/gap-context-economy.md scenario).',
   '  --write-baseline   Write results to evals/local/context-baseline.json.',
+  '  --cwd <dir>        Working directory to measure project context in (default: cwd).',
 ].join('\n');
 
 // ---------------------------------------------------------------------------
@@ -43,10 +50,18 @@ export interface StaticMeasurement {
    */
   toolLoadingChars: number;
   /**
+   * The project-context block (`## Project Context` — AGENTS.md / CLAUDE.md /
+   * SOUL.md) a turn for this personality sends from the measured working
+   * directory, or from its own `fs_reach` workdir when it declares one. 0 when
+   * there is none.
+   */
+  projectContextChars: number;
+  /**
    * `measureStaticFloor().tokens` — the SAME chars/4 static-floor number
    * wiring's build-agent-loop computes (D8: one arithmetic, shared helper).
-   * Includes the injection-defense prelude when `preludeChars` is passed;
-   * before Lane 1 this table silently omitted it and disagreed with wiring.
+   * Includes the injection-defense prelude when `preludeChars` is passed, and
+   * the project context when `projectContextChars` is; before Lane 1 this
+   * table silently omitted the prelude and disagreed with wiring.
    */
   estStaticTokens: number;
 }
@@ -65,6 +80,7 @@ export function measurePersonalityStatic(
   soulMd: string,
   tools?: Pick<ToolRegistry, 'toDefinitions' | 'get' | 'getPluginId'>,
   preludeChars = 0,
+  projectContextChars = 0,
 ): StaticMeasurement {
   const soulChars = soulMd.length;
   const defs = tools?.toDefinitions(personality.toolset);
@@ -84,6 +100,7 @@ export function measurePersonalityStatic(
     toolSchemaChars,
     toolCount: defs?.length ?? personality.toolset?.length ?? 0,
     preludeChars,
+    projectContextChars,
   });
   return {
     id: personality.id,
@@ -91,6 +108,7 @@ export function measurePersonalityStatic(
     toolCount: floor.toolCount,
     toolSchemaChars,
     toolLoadingChars,
+    projectContextChars,
     estStaticTokens: floor.tokens,
   };
 }
@@ -155,6 +173,7 @@ interface BenchFlags {
   writeBaseline: boolean;
   scenario?: string;
   turns: number;
+  cwd?: string;
 }
 
 function parseFlags(args: string[]): BenchFlags | null {
@@ -172,6 +191,9 @@ function parseFlags(args: string[]): BenchFlags | null {
       const n = Number(args[++i]);
       if (!Number.isInteger(n) || n < 1) return null;
       flags.turns = n;
+    } else if (arg === '--cwd') {
+      flags.cwd = args[++i];
+      if (!flags.cwd) return null;
     } else {
       return null;
     }
@@ -272,7 +294,7 @@ export async function runBench(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const { join } = await import('node:path');
+  const { join, resolve } = await import('node:path');
   const { ethosDir, readConfig } = await import('@ethosagent/config');
   const { createPersonalityRegistry } = await import('@ethosagent/personalities');
   const { getSecretsResolver, getStorage } = await import('../wiring');
@@ -314,11 +336,30 @@ export async function runBench(args: string[]): Promise<void> {
   // number wiring computes; the full prelude is the default posture — a
   // per-model compact-prelude profile would shave a few hundred chars).
   const { INJECTION_DEFENSE_PRELUDE } = await import('@ethosagent/wiring/security-kernel');
+  // The project context is measured the way a turn resolves it: the working
+  // directory (or the personality's own `fs_reach` workdir), asked of the same
+  // file-context injector class the loop composes (project-context-floor.ts).
+  const cwd = resolve(flags.cwd ?? process.cwd());
+  const injectors = [createProjectContextInjector({ storage, personalities: reg })];
   const staticRows: StaticMeasurement[] = [];
   for (const personality of reg.list()) {
     const soulMd = await reg.readSoulMd(personality.id);
+    const projectContext = await projectContextAtStartup({
+      injectors,
+      personality,
+      workingDir: cwd,
+      dataDir: ethosDir(),
+      platform: 'cli',
+      model: config?.model ?? '',
+    });
     staticRows.push(
-      measurePersonalityStatic(personality, soulMd, toolRegistry, INJECTION_DEFENSE_PRELUDE.length),
+      measurePersonalityStatic(
+        personality,
+        soulMd,
+        toolRegistry,
+        INJECTION_DEFENSE_PRELUDE.length,
+        projectContext.length,
+      ),
     );
   }
   staticRows.sort((a, b) => b.estStaticTokens - a.estStaticTokens);
@@ -326,14 +367,15 @@ export async function runBench(args: string[]): Promise<void> {
   console.log(
     `\n${c.bold}Static context tax per personality${c.reset} ${c.dim}(chars/4 token estimate)${c.reset}`,
   );
+  console.log(`  ${c.dim}project context measured in ${cwd}${c.reset}`);
   console.log(
-    `  ${'personality'.padEnd(24)}${'soul ch'.padStart(9)}${'tools'.padStart(7)}${'schema ch'.padStart(11)}${'tool_loading_chars'.padStart(20)}${'~tokens'.padStart(9)}`,
+    `  ${'personality'.padEnd(24)}${'soul ch'.padStart(9)}${'tools'.padStart(7)}${'schema ch'.padStart(11)}${'tool_loading_chars'.padStart(20)}${'project ch'.padStart(12)}${'~tokens'.padStart(9)}`,
   );
   for (const row of staticRows) {
     console.log(
       `  ${row.id.padEnd(24)}${String(row.soulChars).padStart(9)}${String(row.toolCount).padStart(7)}` +
         `${String(row.toolSchemaChars).padStart(11)}${String(row.toolLoadingChars).padStart(20)}` +
-        `${String(row.estStaticTokens).padStart(9)}`,
+        `${String(row.projectContextChars).padStart(12)}${String(row.estStaticTokens).padStart(9)}`,
     );
   }
 

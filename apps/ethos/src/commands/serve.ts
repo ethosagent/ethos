@@ -85,7 +85,9 @@ import {
   createLazyProvider,
   createMemoryBundle,
   createOutboundPolicyGate,
+  createProjectContextInjector,
   createSessionStore,
+  declaredWorkdirProjectContext,
   IdentityMap,
   resolveMcpExportScope,
   resolvePersonalityModelFit,
@@ -2292,6 +2294,14 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
                 : {}),
               storage: getStorage(),
               dataDir: dir,
+              // Same file-context injector class the loop uses, in the
+              // personality's declared workdir (project-context-floor.ts).
+              projectContext: await declaredWorkdirProjectContext({
+                injectors: [createProjectContextInjector({ storage: getStorage(), personalities })],
+                personality: described.config,
+                dataDir: dir,
+                cwd: process.cwd(),
+              }),
             });
           },
           // tools-as-code-api Lane G — the script-callable surface for the

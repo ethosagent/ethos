@@ -1279,6 +1279,8 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
   // (backend / network / memory / mounts / macOS caveat) is what `show` audits.
   const {
     buildExecutionPosture,
+    createProjectContextInjector,
+    declaredWorkdirProjectContext,
     formatSshTarget,
     resolveActiveLlmName,
     resolveCharacterSheetRouting,
@@ -1368,6 +1370,16 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
         storage,
         dataDir: ethosDir(),
         forceProbeRefresh: true,
+        // The AGENTS.md/CLAUDE.md block its declared workdir would put in the
+        // prompt, through the same file-context injector class the loop uses.
+        projectContext: await declaredWorkdirProjectContext({
+          injectors: [
+            createProjectContextInjector({ storage, personalities: result.personalities }),
+          ],
+          personality: described.config,
+          dataDir: ethosDir(),
+          cwd: process.cwd(),
+        }),
       });
       // skill-declared-renderers Lane E — the same `resolveRenderers` derivation
       // the `personalities.renderers` RPC gates the web renderer on, so the

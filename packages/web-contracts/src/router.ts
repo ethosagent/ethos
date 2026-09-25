@@ -420,6 +420,21 @@ const PersonalityCharacterSheetOutput = z.object({
   /** Resolved execution posture (Phase 2a, lane E1). Null when the server has
    *  no data directory wired and therefore cannot resolve the posture. */
   posture: ExecutionPostureSchema.nullable(),
+  /** The sheet's `## Prompt size` numbers, structured for the Personalities
+   *  tab: the measured static prompt prefix (chars/4, serialized tool schemas
+   *  and project context included) and the AGENTS.md/CLAUDE.md project-context
+   *  term measured in the personality's declared `fs_reach` workdir —
+   *  `workdir: null` when it declares none, so the term depends on the
+   *  directory the agent runs in. Null when the server could not measure (no
+   *  tool registry wired); `projectContext` null when it was not measured.
+   *  Optional so a server predating the field still parses. */
+  promptSize: z
+    .object({
+      staticPrefixTokens: z.number(),
+      projectContext: z.object({ workdir: z.string().nullable(), tokens: z.number() }).nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 
 const PersonalityIdRegex = /^[a-z0-9_-]+$/;

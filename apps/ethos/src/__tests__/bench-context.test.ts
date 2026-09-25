@@ -1,9 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DefaultToolRegistry } from '@ethosagent/core';
+import { DefaultPersonalityRegistry, DefaultToolRegistry } from '@ethosagent/core';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { PersonalityConfig, Tool } from '@ethosagent/types';
-import { createAgentLoop, evaluateToolSchemaBudget, measureStaticFloor } from '@ethosagent/wiring';
+import {
+  createAgentLoop,
+  createProjectContextInjector,
+  evaluateToolSchemaBudget,
+  measureStaticFloor,
+  projectContextAtStartup,
+} from '@ethosagent/wiring';
 import { describe, expect, it } from 'vitest';
 import { measurePersonalityStatic } from '../commands/bench';
 
@@ -94,6 +101,52 @@ describe('measurePersonalityStatic', () => {
     });
     expect(row.estStaticTokens).toBe(floor.tokens);
     expect(row.toolCount).toBe(floor.toolCount);
+  });
+
+  it('adds the project-context column to the total static prefix, same arithmetic as wiring', () => {
+    const registry = new DefaultToolRegistry();
+    registry.register(makeTool('read_file'));
+    const personality = makePersonality('ctx', ['read_file']);
+    const without = measurePersonalityStatic(personality, 'soul', registry, 1_000);
+    const withContext = measurePersonalityStatic(personality, 'soul', registry, 1_000, 40_000);
+    expect(without.projectContextChars).toBe(0);
+    expect(withContext.projectContextChars).toBe(40_000);
+    expect(withContext.estStaticTokens).toBe(
+      measureStaticFloor({
+        soulChars: 4,
+        toolSchemaChars: withContext.toolSchemaChars,
+        toolCount: 1,
+        preludeChars: 1_000,
+        projectContextChars: 40_000,
+      }).tokens,
+    );
+    expect(withContext.estStaticTokens - without.estStaticTokens).toBe(10_000);
+  });
+
+  // The column's number is the block the loop's file-context injector sends
+  // for that directory: measured through the same class, the same resolution.
+  it('measures the AGENTS.md block a turn launched in the cwd would send', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-bench-project-context-'));
+    try {
+      writeFileSync(join(dir, 'AGENTS.md'), `# Rules\n\n${'rule. '.repeat(5_000)}`);
+      const personalities = new DefaultPersonalityRegistry();
+      const injectors = [createProjectContextInjector({ storage: new FsStorage(), personalities })];
+      const block = await projectContextAtStartup({
+        injectors,
+        personality: makePersonality('p'),
+        workingDir: dir,
+        dataDir: join(dir, '.ethos'),
+        platform: 'cli',
+        model: 'm',
+      });
+      expect(block.startsWith('## Project Context')).toBe(true);
+      expect(block.length).toBeGreaterThan(30_000);
+      const row = measurePersonalityStatic(makePersonality('p'), '', undefined, 0, block.length);
+      expect(row.projectContextChars).toBe(block.length);
+      expect(row.estStaticTokens).toBe(Math.ceil(block.length / 4));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   // Lane 3(b) cross-check — the schema-budget warning threshold and the bench
