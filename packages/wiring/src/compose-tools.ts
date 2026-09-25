@@ -128,6 +128,7 @@ import {
   constitutionForbidsLocal,
   formatSshTarget,
   hasExecTool,
+  LOCAL_FALLBACK_REFUSAL,
   resolveExecutionPosture,
 } from './resolve-execution-posture';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
@@ -751,7 +752,12 @@ export function resolveExecRefusal(
 ): { forbidden: boolean; message?: string } {
   if (posture.backend === 'none') return { forbidden: true, message: POSTURE_NONE_REFUSAL };
   const forbidden = (posture.backend === 'docker' || posture.backend === 'ssh') && !backendWired;
-  const message = posture.sshRefused?.message;
+  // D3 — a refused docker→local downgrade names the key that would allow it.
+  const message =
+    posture.sshRefused?.message ??
+    (posture.dockerAbsent?.consentForbiddenReason === LOCAL_FALLBACK_REFUSAL
+      ? LOCAL_FALLBACK_REFUSAL
+      : undefined);
   return message !== undefined ? { forbidden, message } : { forbidden };
 }
 
@@ -797,6 +803,11 @@ export interface ExecutionRoutingInput {
   substitutionVars: { ethosHome: string; cwd: string };
   /** Docker execution disabled in this process (desktop in-process backend). */
   disableDocker: boolean;
+  /**
+   * `execution.allowLocalFallback` — with `disableDocker`, run exec
+   * personalities on the host instead of refusing them (S6 / D3).
+   */
+  allowLocalFallback?: boolean;
   /** `execution.docker.*` — container resource caps. */
   docker?: { cpu?: number; diskMb?: number };
   /** `execution.ssh.*` — the one remote target this deployment knows. */
@@ -884,6 +895,7 @@ export async function createExecutionRouting(
       ...(constitution ? { constitution } : {}),
       containerized: input.containerized ?? { env: process.env },
       dockerBuildable: !input.disableDocker,
+      ...(input.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
       // `execution.ssh.host`'s presence is the switch for the whole remote
       // posture. This is the call that decides what ACTUALLY executes, so it
       // must answer truthfully: claiming "not configured" here resolves an ssh
@@ -1250,6 +1262,7 @@ export async function composeAllTools(
     logger: log,
     substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
     disableDocker: opts.disableDocker === true,
+    ...(config.execution?.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
     ...(config.execution?.docker ? { docker: config.execution.docker } : {}),
     ...(config.execution?.ssh ? { ssh: config.execution.ssh } : {}),
   });

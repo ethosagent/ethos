@@ -296,14 +296,14 @@ register_anchors:
     - { path: packages/core/src/agent-loop/approval-posture.ts, line: 38, contains: "export function createApprovalPostureGuard" }
 
   G-EXEC:
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 249, contains: "export function resolveExecutionPosture" }
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 306, contains: "const dockerUnbuildable" }
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 345, contains: "posture.hostFallback = { reason: 'docker-disabled' }" }
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 411, contains: "dockerAvailable === false && !posture.dockerAbsent" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 266, contains: "export function resolveExecutionPosture" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 323, contains: "const dockerUnbuildable" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 364, contains: "posture.hostFallback = { reason: 'docker-disabled' }" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 444, contains: "dockerAvailable === false && !posture.dockerAbsent" }
     # The `execution: remote` requirement this deployment cannot meet. Refused
     # without consulting the constitution — a permitting one is permission to
     # run on THIS host, which is the one place the personality ruled out.
-    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 388, contains: "if (sshUnconfigured) {" }
+    - { path: packages/wiring/src/resolve-execution-posture.ts, line: 421, contains: "if (sshUnconfigured) {" }
 
   G-WATCH:
     - { path: packages/safety/watcher/src/rules.ts, line: 20, contains: "export function rateLimitRule" }

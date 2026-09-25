@@ -2000,8 +2000,17 @@ export interface EthosConfig {
    *   execution.ssh.knownHostsFile: ~/.ssh/known_hosts_ethos
    *   execution.ssh.strictHostKeys: accept-new
    *   execution.ssh.remoteWorkdir: /srv/work
+   *
+   * `allowLocalFallback` — the operator's opt-in to run exec-bearing
+   * personalities UN-SANDBOXED on the host when this process cannot build a
+   * Docker backend at all (the desktop in-process backend). Unset, that
+   * docker→local downgrade is refused and exec tools answer `not_available`
+   * (`resolveExecutionPosture`, packages/wiring/src/resolve-execution-posture.ts;
+   * S6 / D3, plan openclaw-2026.9.6-gaps). Only the literal `true` opts in:
+   *   execution.allowLocalFallback: true
    */
   execution?: {
+    allowLocalFallback?: boolean;
     docker?: { cpu?: number; diskMb?: number };
     ssh?: {
       /** Hostname or IP of the remote target. Non-empty; its presence is the switch. */
@@ -3765,6 +3774,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
       lines.push(`memory.charLimits.user: ${config.memoryCharLimits.user}`);
     }
   }
+  if (config.execution?.allowLocalFallback === true) {
+    lines.push('execution.allowLocalFallback: true');
+  }
   if (config.execution?.docker) {
     if (config.execution.docker.cpu !== undefined) {
       lines.push(`execution.docker.cpu: ${config.execution.docker.cpu}`);
@@ -4817,6 +4829,8 @@ export function parseConfigYaml(src: string): EthosConfig {
   const executionDockerKv: Record<string, string> = {};
   // execution.ssh.<field>: <value> — the deployment's single remote target.
   const executionSshKv: Record<string, string> = {};
+  // execution.allowLocalFallback: <bool> — S6 / D3 opt-in to host fallback.
+  let executionAllowLocalFallback: string | undefined;
   // kanban.<maxInProgress|maxInProgressPerProfile>: <n> — board WIP caps.
   const kanbanKv: Record<string, string> = {};
   // grounding.<field>: <value> — ground-truth verification policy. The nested
@@ -5606,6 +5620,12 @@ export function parseConfigYaml(src: string): EthosConfig {
       executionDockerKv[exd[1]] = parseConfigScalar(exd[2]);
       continue;
     }
+    // execution.allowLocalFallback: <bool>  (S6 / D3 host-fallback opt-in).
+    const exl = line.match(/^execution\.allowLocalFallback:\s*(.+)$/);
+    if (exl) {
+      executionAllowLocalFallback = parseConfigScalar(exl[1]);
+      continue;
+    }
     // execution.ssh.<field>: <value>  (the single remote execution target).
     // The field list is an alternation, so an unrecognised `execution.ssh.*`
     // key falls through to the generic `key: value` catch-all below and is
@@ -5805,7 +5825,11 @@ export function parseConfigYaml(src: string): EthosConfig {
   const models = buildModelProfiles(modelsKv);
   const compaction = buildCompaction(compactionKv);
   const memoryCharLimits = buildMemoryCharLimits(memoryCharLimitsKv);
-  const executionResult = buildExecutionConfig(executionDockerKv, executionSshKv);
+  const executionResult = buildExecutionConfig(
+    executionDockerKv,
+    executionSshKv,
+    executionAllowLocalFallback,
+  );
   const execution = executionResult.execution;
   const restartLoopGuard = buildRestartLoopGuard(restartLoopGuardKv);
   const discordBackfill = buildDiscordBackfill(discordBackfillKv);
@@ -7040,6 +7064,7 @@ function sshDestinationError(host: string, user: string | undefined): string | n
 function buildExecutionConfig(
   dockerKv: Record<string, string>,
   sshKv: Record<string, string>,
+  rawAllowLocalFallback?: string,
 ): { execution: EthosConfig['execution'] | undefined; errors: string[] } {
   const docker: NonNullable<NonNullable<EthosConfig['execution']>['docker']> = {};
   const cpu = Number(dockerKv.cpu);
@@ -7107,6 +7132,8 @@ function buildExecutionConfig(
   }
 
   const execution: NonNullable<EthosConfig['execution']> = {};
+  // Only the literal `true` opts in: anything else keeps the refusal.
+  if (rawAllowLocalFallback === 'true') execution.allowLocalFallback = true;
   if (Object.keys(docker).length > 0) execution.docker = docker;
   if (ssh) execution.ssh = ssh;
   return { execution: Object.keys(execution).length > 0 ? execution : undefined, errors };

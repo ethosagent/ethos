@@ -169,6 +169,8 @@ export interface WiringConfig {
    * saw — a configured `remoteWorkdir` or `identityFile` silently ignored.
    */
   execution?: {
+    /** `execution.allowLocalFallback` — see `ResolveExecutionPostureInput` (S6 / D3). */
+    allowLocalFallback?: boolean;
     docker?: { cpu?: number; diskMb?: number };
     ssh?: NonNullable<ExecutionBackendConfig['ssh']>;
   };
