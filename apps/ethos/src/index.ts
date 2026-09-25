@@ -1281,6 +1281,7 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
     buildExecutionPosture,
     formatSshTarget,
     resolveActiveLlmName,
+    resolveCharacterSheetDecisions,
     resolveCharacterSheetRouting,
     resolveMcpExportScope,
     resolvePersonalityModelFit,
@@ -1309,6 +1310,18 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
         cfg.modelRegistry,
       )
     : undefined;
+
+  // `## Decisions` — which decision sites run for this personality on THIS
+  // machine, from `resolvePersonalityDecisionSite` (the resolver the live sites
+  // call). Pure config arithmetic plus one vault read, so like routing it sits
+  // outside the loop-construction block. `undefined` when the personality
+  // declares no `decisions` block; with no config it resolves against no
+  // operator provider, i.e. every site `off` and said so.
+  const decisions = await resolveCharacterSheetDecisions(
+    described.config,
+    cfg,
+    await getSecretsResolver(),
+  ).catch(() => undefined);
 
   // Lane 6 — the arithmetic model-fit verdict, rendered as the sheet's
   // `## Model fit` section. The window resolution probes LIVE and rewrites the
@@ -1390,6 +1403,7 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
       boundary,
       routing,
       mcpExport,
+      decisions,
     )}`,
   );
 

@@ -41,6 +41,8 @@ export {
 } from './a2a-identity';
 export {
   type CharacterSheetBoundary,
+  type CharacterSheetDecisionSite,
+  type CharacterSheetDecisions,
   type CharacterSheetExecution,
   type CharacterSheetModelFit,
   type CharacterSheetRouting,

@@ -4,6 +4,7 @@
 import { type ExecutionPosture, GUARANTEE_IDS, type PersonalityConfig } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
+  type CharacterSheetDecisions,
   type CharacterSheetModelFit,
   type CharacterSheetRouting,
   type CharacterSheetScriptSurface,
@@ -1464,5 +1465,140 @@ describe('renderCharacterSheet — ## MCP export block (M-T8)', () => {
       expect(sheet).toContain('- No rate limit:');
       expect(sheet).toContain('- Loopback only, no TLS:');
     }
+  });
+});
+
+// plan decision-provider-personality §4.5 / §11 — `## Decisions` renders only
+// for a personality that declares `decisions`, and each resolution reason is
+// visible. The resolved context comes from `resolveCharacterSheetDecisions`
+// (@ethosagent/wiring, pinned in its own test); here it is hand-built.
+describe('renderCharacterSheet — ## Decisions', () => {
+  const base: PersonalityConfig = { id: 'researcher', name: 'Researcher' };
+  const declared: PersonalityConfig = {
+    ...base,
+    decisions: { provider: 'typesafe', sites: { injection: 'shadow', approver: 'on' } },
+  };
+  const site = (
+    s: Partial<CharacterSheetDecisions['sites'][number]> &
+      Pick<CharacterSheetDecisions['sites'][number], 'site'>,
+  ): CharacterSheetDecisions['sites'][number] => ({
+    requested: 'off',
+    effective: 'off',
+    missingThresholds: [],
+    ...s,
+  });
+  const section = (sheet: string): string => {
+    const start = sheet.indexOf('## Decisions');
+    const end = sheet.indexOf('\n\n', start);
+    return sheet.slice(start, end);
+  };
+
+  it('no section when the personality declares no decisions block', () => {
+    expect(renderCharacterSheet(base, '')).not.toContain('## Decisions');
+  });
+
+  it('declared values only when no resolved context is passed', () => {
+    expect(section(renderCharacterSheet(declared, ''))).toBe(
+      [
+        '## Decisions',
+        '- Decision model: typesafe',
+        '- injection: shadow',
+        '- approver: on',
+        '- router: off',
+      ].join('\n'),
+    );
+  });
+
+  it('configured: host and model, R6 downgrade, inert approver, undeclared site', () => {
+    const ctx: CharacterSheetDecisions = {
+      provider: 'typesafe',
+      configured: true,
+      host: 'api.typesafe.ai',
+      model: 'jev-latest',
+      apiKeyRef: 'providers/typesafe/apiKey',
+      apiKeyPresent: true,
+      sites: [
+        site({ site: 'injection', requested: 'shadow', effective: 'shadow' }),
+        site({
+          site: 'approver',
+          requested: 'on',
+          effective: 'shadow',
+          reason: 'threshold-missing',
+          missingThresholds: ['decisions.thresholds.approver.deny'],
+          inertApprovalMode: 'manual',
+        }),
+        site({ site: 'router', reason: 'undeclared' }),
+      ],
+    };
+    const sheet = renderCharacterSheet(
+      declared,
+      '',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(section(sheet)).toBe(
+      [
+        '## Decisions',
+        '- Decision model: typesafe → api.typesafe.ai · model jev-latest',
+        '- injection: shadow',
+        '- approver: on → running shadow: `decisions.thresholds.approver.deny` missing — inert: approvalMode is manual; the approver runs only under smart',
+        '- router: off',
+      ].join('\n'),
+    );
+  });
+
+  it('not-configured, no-provider and no-key each say what runs', () => {
+    const render = (ctx: CharacterSheetDecisions) =>
+      section(
+        renderCharacterSheet(
+          declared,
+          '',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          ctx,
+        ),
+      );
+    const offSites = (reason: 'not-configured' | 'no-provider') => [
+      site({ site: 'injection', requested: 'shadow', reason }),
+      site({ site: 'approver', reason: 'undeclared' }),
+      site({ site: 'router', reason: 'undeclared' }),
+    ];
+    const notConfigured = render({
+      provider: 'typesafe',
+      configured: false,
+      sites: offSites('not-configured'),
+    });
+    expect(notConfigured).toContain(
+      '- Decision model: typesafe — not configured on this machine; every site runs off',
+    );
+    expect(notConfigured).toContain('- injection: shadow → off');
+
+    const noProvider = render({ configured: false, sites: offSites('no-provider') });
+    expect(noProvider).toContain('- Decision model: (none) — sites need `decisions.provider`');
+    expect(noProvider).toContain('- injection: shadow → off');
+
+    const noKey = render({
+      provider: 'typesafe',
+      configured: true,
+      host: 'api.typesafe.ai',
+      model: 'jev-latest',
+      apiKeyRef: 'providers/typesafe/apiKey',
+      apiKeyPresent: false,
+      sites: [site({ site: 'injection', requested: 'shadow', effective: 'shadow' })],
+    });
+    expect(noKey).toContain(
+      "no key at vault ref providers/typesafe/apiKey; every site runs today's path",
+    );
   });
 });

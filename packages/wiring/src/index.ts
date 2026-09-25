@@ -2065,6 +2065,9 @@ export {
 // Ethos observability adapter
 // ---------------------------------------------------------------------------
 
+// `## Decisions` on the character sheet and the per-personality lines of
+// `ethos doctor` (plan decision-provider-personality §4.5, §8).
+export { resolveCharacterSheetDecisions } from './decision-diagnostics';
 export { IdentityMap, type IdentityMapEntry, type IdentityMapOptions } from './identity-map';
 export {
   ETHOS_EVENT_CATEGORIES,
