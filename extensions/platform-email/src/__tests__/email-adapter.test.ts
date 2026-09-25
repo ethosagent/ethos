@@ -1,7 +1,13 @@
 import type { InboundMessage } from '@ethosagent/types';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EmailAdapterConfig } from '../index';
 import { EmailAdapter } from '../index';
+import { loadEmailSdk } from '../sdk';
+
+// The adapter reads imapflow/mailparser/nodemailer through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadEmailSdk();
+});
 
 const BASE_CONFIG: EmailAdapterConfig = {
   imapHost: 'imap.example.com',

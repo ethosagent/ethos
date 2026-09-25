@@ -1,6 +1,6 @@
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import { slashCommandsForSurface } from '@ethosagent/surface-kit';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Mock grammy — we need to intercept all Bot API calls without making
@@ -48,6 +48,12 @@ vi.mock('grammy', () => {
 });
 
 import { TelegramAdapter, type TelegramAdapterConfig } from '../index';
+import { loadTelegramSdk } from '../sdk';
+
+// The adapter reads grammy through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadTelegramSdk();
+});
 
 // botKey is a required constructor param (computed once in wiring); these
 // cases don't exercise routing, so `mk` supplies a fixed default.

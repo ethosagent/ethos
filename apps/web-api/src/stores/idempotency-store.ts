@@ -15,7 +15,15 @@ export class IdempotencyStore {
 
   constructor(dbPathOrDb: string | Database.Database) {
     this.db = typeof dbPathOrDb === 'string' ? new Database(dbPathOrDb) : dbPathOrDb;
-    if (typeof dbPathOrDb === 'string') this.db.pragma('journal_mode = WAL');
+    if (typeof dbPathOrDb === 'string') {
+      // Its own connection on sessions.db, which gateway + serve + CLI all hold
+      // open. An explicit busy timeout makes concurrent opens/writes wait instead
+      // of throwing SQLITE_BUSY (same value as SQLiteSessionStore). A borrowed
+      // handle keeps its owner's settings. Pinned by
+      // src/__tests__/stores/idempotency-store.test.ts.
+      this.db.pragma('busy_timeout = 5000');
+      this.db.pragma('journal_mode = WAL');
+    }
     this.migrate();
   }
 

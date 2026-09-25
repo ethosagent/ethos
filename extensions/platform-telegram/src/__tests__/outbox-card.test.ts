@@ -1,6 +1,6 @@
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import type { ApprovalDecisionEvent } from '@ethosagent/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // O-T8 — Telegram outbox card + `obx:` callback route.
@@ -56,6 +56,12 @@ import {
   TelegramAdapter,
   type TelegramAdapterConfig,
 } from '../index';
+import { loadTelegramSdk } from '../sdk';
+
+// The adapter reads grammy through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadTelegramSdk();
+});
 
 const mk = (cfg: Omit<TelegramAdapterConfig, 'botKey'> & { botKey?: string }): TelegramAdapter =>
   new TelegramAdapter({ ...cfg, botKey: cfg.botKey ?? 'test-bot' });

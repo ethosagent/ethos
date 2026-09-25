@@ -277,6 +277,18 @@ export class SQLiteSessionStore implements SessionStore {
       migrations: {},
     });
 
+    // Everything below checks a column and then adds it. sessions.db is opened
+    // by gateway and serve at once on first boot (`ethos run-all`), so run the
+    // whole block under one write lock: the second process waits (busy_timeout)
+    // for the first to commit, then sees the columns and adds nothing. Without
+    // it both read "no column" and the loser died on "duplicate column name:
+    // kept_from_message_id". Pinned by __tests__/sqlite-session.test.ts
+    // ("additive migrations under a peer").
+    this.db.transaction(() => this.addColumns()).immediate();
+  }
+
+  /** Additive, check-then-ALTER migrations; run only inside `migrate`'s write lock. */
+  private addColumns(): void {
     // Additive migration: soft-reference trace_id column on messages.
     // Idempotent — only adds the column when it does not already exist.
     const cols = this.db.pragma('table_info(messages)') as Array<{ name: string }>;

@@ -7,10 +7,10 @@ import type {
   OutboundMessage,
   PlatformAdapter,
 } from '@ethosagent/types';
-import { ImapFlow } from 'imapflow';
-import { simpleParser } from 'mailparser';
-import * as nodemailer from 'nodemailer';
+import type { ImapFlow } from 'imapflow';
+import type * as nodemailer from 'nodemailer';
 import { toNativeMarkdown } from './format';
+import { emailSdk } from './sdk';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -503,7 +503,7 @@ export class EmailAdapter implements PlatformAdapter {
   }
 
   private async processMessage(source: Buffer, uid: number, client: ImapFlow): Promise<void> {
-    const parsed = await simpleParser(source);
+    const parsed = await emailSdk().mailparser.simpleParser(source);
 
     const from = parsed.from?.value?.[0]?.address ?? '';
     const subject = parsed.subject ?? '(no subject)';
@@ -558,6 +558,7 @@ export class EmailAdapter implements PlatformAdapter {
 // ---------------------------------------------------------------------------
 
 function defaultImapClient(cfg: EmailAdapterConfig): ImapFlow {
+  const { ImapFlow } = emailSdk().imapflow;
   return new ImapFlow({
     host: cfg.imapHost,
     port: cfg.imapPort,
@@ -568,10 +569,12 @@ function defaultImapClient(cfg: EmailAdapterConfig): ImapFlow {
 }
 
 function defaultTransporter(cfg: EmailAdapterConfig): nodemailer.Transporter {
-  return nodemailer.createTransport({
+  return emailSdk().nodemailer.createTransport({
     host: cfg.smtpHost,
     port: cfg.smtpPort,
     secure: cfg.smtpSecure ?? cfg.smtpPort === 465,
     auth: { user: cfg.user, pass: cfg.password },
   });
 }
+
+export { loadEmailSdk } from './sdk';

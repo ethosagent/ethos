@@ -1,6 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
+import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SQLiteSessionStore } from '../index';
 import { holdWriteLock } from './hold-write-lock';
@@ -824,6 +826,46 @@ describe('SQLiteSessionStore — busy posture', () => {
       expect((await store.getMessages(session.id)).map((m) => m.content)).toEqual(['hello']);
       store.close();
       await holder.terminate();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
+// First boot under `ethos run-all`: gateway and serve both run the additive
+// column migrations on one fresh sessions.db. A worker stands in for the peer
+// that has already ALTERed and not yet committed when this store checks.
+describe('SQLiteSessionStore — additive migrations under a peer', () => {
+  it('waits for the peer’s ALTER to commit instead of adding the column twice', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sessions-alter-race-'));
+    try {
+      const dbPath = join(dir, 'sessions.db');
+      new SQLiteSessionStore(dbPath).close();
+      const raw = new Database(dbPath);
+      raw.exec('ALTER TABLE compressions DROP COLUMN kept_from_message_id');
+      raw.close();
+
+      const peer = new Worker(
+        `const { DatabaseSync } = require('node:sqlite');
+         const { workerData, parentPort } = require('node:worker_threads');
+         const db = new DatabaseSync(workerData.dbPath);
+         db.exec('PRAGMA busy_timeout = 5000');
+         db.exec('BEGIN IMMEDIATE');
+         db.exec('ALTER TABLE compressions ADD COLUMN kept_from_message_id TEXT');
+         parentPort.postMessage('held');
+         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+         db.exec('COMMIT');
+         db.close();`,
+        { eval: true, workerData: { dbPath } },
+      );
+      await new Promise<void>((resolve, reject) => {
+        peer.once('message', () => resolve());
+        peer.once('error', reject);
+      });
+      // Pre-fix: "duplicate column name: kept_from_message_id".
+      const store = new SQLiteSessionStore(dbPath);
+      store.close();
+      await peer.terminate();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

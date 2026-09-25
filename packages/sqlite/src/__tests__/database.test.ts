@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import Database, { backup } from '@ethosagent/sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -107,6 +108,38 @@ describe('pragma', () => {
     const result = db.pragma('journal_mode = WAL');
     expect(result).toBeUndefined();
     db.close();
+  });
+
+  // A contended journal-mode switch gets SQLITE_BUSY immediately — SQLite never
+  // consults the busy handler for it, so `busy_timeout` alone does not help.
+  // Two processes opening one fresh file (gateway + serve on first boot) hit
+  // exactly this. A worker stands in for the peer: a second handle on this
+  // thread could never release while the synchronous retry blocks.
+  it('journal-mode switch waits out a peer holding the lock instead of throwing', async () => {
+    dir = makeTmpDir();
+    const path = join(dir, 'test.db');
+    const peer = new Worker(
+      `const { DatabaseSync } = require('node:sqlite');
+       const { workerData, parentPort } = require('node:worker_threads');
+       const db = new DatabaseSync(workerData.path);
+       db.exec('BEGIN IMMEDIATE');
+       parentPort.postMessage('held');
+       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+       db.exec('COMMIT');
+       db.close();`,
+      { eval: true, workerData: { path } },
+    );
+    await new Promise<void>((resolve, reject) => {
+      peer.once('message', () => resolve());
+      peer.once('error', reject);
+    });
+    const db = new Database(path);
+    db.pragma('busy_timeout = 5000');
+    // Pre-fix this threw "database is locked" in ~0ms despite the busy timeout.
+    db.pragma('journal_mode = WAL');
+    expect(db.pragma('journal_mode')).toEqual([{ journal_mode: 'wal' }]);
+    db.close();
+    await peer.terminate();
   });
 
   it('READ pragma user_version returns rows', () => {

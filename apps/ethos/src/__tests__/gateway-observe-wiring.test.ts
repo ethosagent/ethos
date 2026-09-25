@@ -108,10 +108,15 @@ const { buildAdapters } = await import('../commands/gateway');
  */
 const realLoader = async <T>(modulePath: string): Promise<T | null> => {
   if (modulePath === '@ethosagent/platform-telegram') {
-    return (await import('../../../../extensions/platform-telegram/src/index')) as T;
+    // Same order as production `loadAdapterModule`: the module, then its SDK.
+    const mod = await import('../../../../extensions/platform-telegram/src/index');
+    await mod.loadTelegramSdk();
+    return mod as T;
   }
   if (modulePath === '@ethosagent/platform-slack') {
-    return (await import('../../../../extensions/platform-slack/src/index')) as T;
+    const mod = await import('../../../../extensions/platform-slack/src/index');
+    await mod.loadSlackSdk();
+    return mod as T;
   }
   return null;
 };

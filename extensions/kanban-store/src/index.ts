@@ -391,6 +391,14 @@ export class KanbanStore {
       mkdirSync(dirname(dbPath), { recursive: true });
     }
     this.db = new Database(dbPath);
+    // board.db is shared cross-process: `ethos run-all` starts gateway and serve
+    // at once and both open it in composeAllTools on first boot. Without an
+    // explicit busy timeout the wrapper's default of 0 makes the loser's schema
+    // create throw "database is locked". (The `journal_mode` switch below is a
+    // different case — SQLite never consults the busy handler for it — and is
+    // retried by @ethosagent/sqlite's `pragma`.) Pinned by
+    // __tests__/kanban-store.test.ts ("a peer process holding the write lock").
+    this.db.pragma('busy_timeout = 5000');
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     // Version check FIRST — refuse to touch a DB whose schema is newer than this code.

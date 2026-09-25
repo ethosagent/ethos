@@ -337,22 +337,42 @@ export function createGatewayMetricsAuthCheck(apiKeys: SqliteApiKeyStore): Metri
 // package '@ethosagent/platform-telegram' imported from
 // node_modules/@ethosagent/cli/dist/index.js"). Keep additions here in
 // lockstep with new platform modules.
+//
+// The adapter SDKs (grammy, @slack/bolt, discord.js, imapflow/mailparser/
+// nodemailer) are optionalDependencies, absent under `npm install
+// --omit=optional`. No platform module imports its SDK at top level — each
+// loads it in its own `sdk.ts` — so the SDK is loaded HERE, right after the
+// module, and a missing one lands in the catch below as "<Label> adapter
+// unavailable (<Label> adapter needs <pkg>; install it with …)" instead of
+// crashing the CLI at startup.
 async function loadAdapterModule<T>(modulePath: string, label: string): Promise<T | null> {
   try {
     let mod: unknown;
     switch (modulePath) {
-      case '@ethosagent/platform-telegram':
-        mod = await import('@ethosagent/platform-telegram');
+      case '@ethosagent/platform-telegram': {
+        const telegram = await import('@ethosagent/platform-telegram');
+        await telegram.loadTelegramSdk();
+        mod = telegram;
         break;
-      case '@ethosagent/platform-slack':
-        mod = await import('@ethosagent/platform-slack');
+      }
+      case '@ethosagent/platform-slack': {
+        const slack = await import('@ethosagent/platform-slack');
+        await slack.loadSlackSdk();
+        mod = slack;
         break;
-      case '@ethosagent/platform-discord':
-        mod = await import('@ethosagent/platform-discord');
+      }
+      case '@ethosagent/platform-discord': {
+        const discordMod = await import('@ethosagent/platform-discord');
+        await discordMod.loadDiscordSdk();
+        mod = discordMod;
         break;
-      case '@ethosagent/platform-email':
-        mod = await import('@ethosagent/platform-email');
+      }
+      case '@ethosagent/platform-email': {
+        const email = await import('@ethosagent/platform-email');
+        await email.loadEmailSdk();
+        mod = email;
         break;
+      }
       case '@ethosagent/platform-telegram/clarify-surface':
         mod = await import('@ethosagent/platform-telegram/clarify-surface');
         break;

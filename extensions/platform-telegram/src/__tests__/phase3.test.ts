@@ -1,6 +1,6 @@
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import type { InboundMessage } from '@ethosagent/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Mock grammy — mirrors the phase1 mock setup but adds getFile for downloads
@@ -59,6 +59,12 @@ vi.mock('grammy', () => {
 });
 
 import { TelegramAdapter, type TelegramAdapterConfig } from '../index';
+import { loadTelegramSdk } from '../sdk';
+
+// The adapter reads grammy through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadTelegramSdk();
+});
 
 // botKey is a required constructor param (computed once in wiring); these
 // cases don't exercise routing, so `mk` supplies a fixed default.
