@@ -380,7 +380,7 @@ Decides what happens when a tool call is classified `dangerous`.
 |---|---|
 | `manual` | Every `dangerous` classification surfaces the approval prompt (the web UI modal, or a Slack / Telegram / Discord card); `safe` auto-fires; `blocked` errors out. `ethos chat` asks in the terminal (a `y/N` line in the readline REPL, a modal in the TUI). Where nobody can answer — `ethos chat -q`, piped stdin, `ethos -z`, `batch`, `eval`, `cron`, `bench`, `ethos mcp serve`, `ethos acp` — the call is refused (`wireTerminalApprovalGate`, `apps/ethos/src/terminal-approval.ts`). See [Set up approval gates](../how-to/set-up-approval-gates.md). |
 | `smart` | An auxiliary fast-model call reviews each `dangerous` classification and either auto-approves, auto-denies, or escalates to `manual`. Trades latency and dollars for reduced approval fatigue. |
-| `off` | `dangerous` classifications auto-fire without prompting; the hardline `blocked` floor still applies. Honoured only on the gateway's cron/dream loop (with `allowUnattendedDangerousTools: true`) and in `ethos chat` and the other CLI commands, where a command using `$(…)` or backticks is still asked about; everywhere else `off` behaves like `manual`. |
+| `off` | `dangerous` classifications auto-fire without prompting; the hardline `blocked` floor still applies. Honoured only on unattended cron — the gateway's cron/dream loop and `ethos cron run` / `ethos cron daemon` — with `allowUnattendedDangerousTools: true`, and in `ethos chat` and the other operator-invoked CLI commands, where a command using `$(…)` or backticks is still asked about; everywhere else `off` behaves like `manual`. |
 
 Notes:
 

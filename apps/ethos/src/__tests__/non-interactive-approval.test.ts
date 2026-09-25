@@ -35,11 +35,17 @@ describe('non-interactive CLI loops refuse flagged calls', () => {
     ['zero.ts', 'ethos -z'],
     ['batch.ts', 'ethos batch'],
     ['eval.ts', 'ethos eval / ethos eval local'],
-    ['cron.ts', 'ethos cron run / daemon'],
     ['personality-evolve.ts', 'buildJudgeRunner (ethos personality judge, nightly scoring)'],
     ['bench.ts', 'ethos bench'],
   ])('%s (%s) gates every loop it builds', async (file) => {
     expect(everyLoopGated(await source(file))).toBe(true);
+  });
+
+  it('cron.ts gates its loop with the unattended rule (gateCronLoop)', async () => {
+    const src = await source('cron.ts');
+    expect(src).toMatch(
+      /runtime = await createAgentLoop\(config\);\s*gateCronLoop\(runtime, config\);/,
+    );
   });
 
   it('mcp.ts gates the operator-console loop (`ethos mcp serve` with no --personality)', async () => {

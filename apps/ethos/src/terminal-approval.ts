@@ -1,8 +1,8 @@
 // The approval gate for the operator's own terminal: `ethos chat` (readline and
 // TUI), `ethos chat -q`, and every other CLI command that runs turns with
 // nobody at a prompt (`gateNonInteractiveLoop`, ./lib/non-interactive-approval.ts:
-// `ethos -z`, `batch`, `eval`, `cron`, the judge, `bench`, the MCP console,
-// `acp`). Before this, these loops carried only
+// `ethos -z`, `batch`, `eval`, the judge, `bench`, the MCP console, `acp`;
+// `ethos cron` takes the gateway's unattended gate instead, `gateCronLoop`). Before this, these loops carried only
 // the terminal/process guards `composeAllTools` registers on a non-web profile,
 // so a call the danger predicate flags either ran unasked (a host-local shell
 // tool, `APPROVAL_SURFACE_ALWAYS_ASK`) or was refused with no way to approve it

@@ -223,13 +223,15 @@ export interface CreateDangerPredicateOptions {
    * **Two production callers pass this flag.** The gateway systemLoop's
    * unattended gate (`wireUnattendedApprovalGate` in
    * `apps/ethos/src/unattended-approval-gate.ts`, registered by
-   * `runGatewayStart`), and only when the operator sets
-   * `allowUnattendedDangerousTools: true` in `config.yaml`. That loop runs
+   * `runGatewayStart`, and by `gateCronLoop` in
+   * `apps/ethos/src/lib/non-interactive-approval.ts` for `ethos cron
+   * run`/`daemon`), and only when the operator sets
+   * `allowUnattendedDangerousTools: true` in `config.yaml`. Those loops run
    * cron, dreams and watcher wakes — trusted local automation with nobody
    * to ask. And the operator's own terminal (`wireTerminalApprovalGate` in
    * `apps/ethos/src/terminal-approval.ts`: `ethos chat`, and every CLI
    * command `gateNonInteractiveLoop` gates — `-q`, `-z`, `batch`, `eval`,
-   * `cron`, the judge, `bench`, the MCP console, `acp`), always: `off` there keeps meaning what it meant before
+   * the judge, `bench`, the MCP console, `acp`), always: `off` there keeps meaning what it meant before
    * those loops had a gate — flagged calls run unasked — except that a
    * command-substitution call is still asked (or refused where nobody can
    * be asked). Every surface a remote sender or a browser can reach — the
