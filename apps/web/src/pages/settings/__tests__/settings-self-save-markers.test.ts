@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { backupKeys } from '../../../features/settings/api/backup';
 import { vaultKeyKeys } from '../../../features/settings/api/keys';
 import { WakePanel } from '../../../features/voice/WakePanel';
+import { decisionKeys } from '../lib/decision-models';
 import { modelRegistryKeys } from '../lib/model-registry';
 import { SETTINGS_INDEX } from '../lib/settings-index';
 import type { SettingsPaneContext } from '../pane-context';
@@ -256,6 +257,7 @@ describe('SETTINGS_INDEX self-saving sections match what this test covers', () =
       // Derived, not listed: the Keys pane has one self-saving section per
       // canonical category.
       ...[...KEY_CATEGORY_IDS].map((id) => `keys/${id}`).sort(),
+      'models/decision-models',
       'models/models',
       'models/per-personality-routing',
       'security/a2a',
@@ -296,11 +298,12 @@ describe('every self-saving section renders SelfSaveMarker', () => {
   // The registry sections render nothing until `modelRegistry.list` resolves,
   // so the list is seeded — the same way the Keys pane's categories are.
   describe('models — ModelsPane, checked per section', () => {
-    const html = markup(ModelsPane, (queryClient) =>
-      queryClient.setQueryData(modelRegistryKeys.list(), registryList()),
-    );
+    const html = markup(ModelsPane, (queryClient) => {
+      queryClient.setQueryData(modelRegistryKeys.list(), registryList());
+      queryClient.setQueryData(decisionKeys.list(), { providers: [] });
+    });
 
-    it.each(['models', 'per-personality-routing'])('%s', (id) => {
+    it.each(['models', 'decision-models', 'per-personality-routing'])('%s', (id) => {
       expect(sectionBlock(html, id)).toContain(MARKER_TEXT);
     });
 

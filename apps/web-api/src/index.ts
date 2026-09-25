@@ -81,6 +81,7 @@ import { ConfigService, readLegacyBrowserBargeInTuning } from './services/config
 import { CredentialsService } from './services/credentials.service';
 import { CronService } from './services/cron.service';
 import { createLiveDeliveryTargetWorld } from './services/cron-delivery-targets';
+import { DecisionsService } from './services/decisions.service';
 import { DeliveriesService } from './services/deliveries.service';
 import { DigestService } from './services/digest.service';
 import { createDiscoveredChatStore } from './services/discovered-chats';
@@ -1153,6 +1154,18 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     },
     secrets,
   });
+  // Settings → Models › decision models (plan decision-provider-jev §7, §12).
+  // Where Settings sets `providers/typesafe/apiKey`; it reads config.yaml with
+  // the same `parseConfigYaml` reader the registry uses above, and writes
+  // `decisions.provider` through `configRepo.transform`.
+  const decisionsService = new DecisionsService({
+    readConfig: async () => {
+      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
+      return src === null ? null : parseConfigYaml(src);
+    },
+    config: configRepo,
+    secrets,
+  });
   const executionService = new ExecutionService({
     config: configRepo,
     personalities: opts.personalities,
@@ -1995,6 +2008,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       digest: digestService,
       documents: documentsService,
       modelRegistry: modelRegistryService,
+      decisions: decisionsService,
       namedSecrets: namedSecretsService,
       credentials: credentialsService,
       keys: keysService,

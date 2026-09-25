@@ -1874,6 +1874,14 @@ export {
   ROUTER_QUESTIONS,
   type RouterChoice,
 } from './decision-questions';
+// The Settings Test button's one decision call — a fresh provider, the
+// injection question, redacted state (./decision-test). Apps reach the provider
+// extension only through here (Law 5).
+export {
+  type DecisionTestOutcome,
+  type TestDecisionProviderOptions,
+  testDecisionProvider,
+} from './decision-test';
 export type { ModelSource, ModelTarget, ResolveModelInput } from './model-resolver';
 // Re-export the resolver so callers don't need a separate import.
 export { resolveModelTarget } from './model-resolver';

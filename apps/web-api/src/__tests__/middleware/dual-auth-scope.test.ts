@@ -50,6 +50,8 @@ describe('dualAuth scope enforcement (WEB-001)', () => {
     app.post('/rpc/personalities/create', (c) => c.json({ ok: true }));
     app.get('/sse/sessions/abc123', (c) => c.json({ ok: true }));
     app.post('/rpc/outbox/approve', (c) => c.json({ ok: true }));
+    app.post('/rpc/decisions/setKey', (c) => c.json({ ok: true }));
+    app.post('/rpc/decisions/test', (c) => c.json({ ok: true }));
   });
 
   afterEach(() => {
@@ -96,6 +98,16 @@ describe('dualAuth scope enforcement (WEB-001)', () => {
     const body = (await res.json()) as { code: string; error: string };
     expect(body.code).toBe('FORBIDDEN');
     expect(body.error).toMatch(/experimental/);
+  });
+
+  // Settings › Models › decision models. Unmapped like `modelRegistry` and
+  // `namedSecrets`: `setKey` writes a vault credential and `test` spends the
+  // operator's provider credit, so no API key reaches either.
+  it.each(['setKey', 'test'])('decisions.%s is not reachable with any bearer key', async (m) => {
+    const res = await call(`/rpc/decisions/${m}`, await key(['sessions:read', 'tools:approve']));
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe('FORBIDDEN');
   });
 
   it('personalities.create is cookie-only — rejected for any bearer key', async () => {

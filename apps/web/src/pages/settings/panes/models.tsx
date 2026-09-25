@@ -1,7 +1,10 @@
 // Models & providers — providers & models (one list, each provider with its
-// models beneath it), catalog & backends, auxiliary models, per-personality
-// routing. Off `Card`, onto `SettingRow` (§4.2 rows 1, 10, 16; plan Phase 3).
+// models beneath it), decision models, catalog & backends, auxiliary models,
+// per-personality routing. Off `Card`, onto `SettingRow` (§4.2 rows 1, 10, 16;
+// plan Phase 3).
 //
+// Decision models saves ON ITS OWN through `decisions.*` (the provider key; a
+// site's mode is config.yaml-only and shown read-only).
 // Providers & models and per-personality routing save ON THEIR OWN through
 // `modelRegistry.*` (plan/phases/model-registry.md T2.3, T2.7, and the approved
 // "Providers & models" mockup). Nothing in them is on the page Save:
@@ -10,6 +13,7 @@
 
 import { Form, Input, InputNumber, Select, Switch, Typography } from 'antd';
 import { AdvancedBlock } from '../components/advanced';
+import { DecisionModelsSection } from '../components/decision-models-section';
 import { ModelRegistrySection } from '../components/model-registry-section';
 import { ModelRoutingSection } from '../components/model-routing-section';
 import { ROW_BOX_STYLE } from '../components/primitives';
@@ -24,6 +28,9 @@ export function ModelsPane() {
     <>
       <SectionHeading id="models">providers & models</SectionHeading>
       <ModelRegistrySection />
+
+      <SectionHeading id="decision-models">decision models</SectionHeading>
+      <DecisionModelsSection />
 
       <AdvancedBlock>
         <SectionHeading id="catalog-and-backends">catalog & backends</SectionHeading>

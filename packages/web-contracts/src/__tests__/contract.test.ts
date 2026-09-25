@@ -296,6 +296,7 @@ describe('contract router', () => {
       'cron',
       'dashboards',
       'debug',
+      'decisions',
       'deliveries',
       'digest',
       'documents',

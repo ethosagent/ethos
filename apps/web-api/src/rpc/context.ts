@@ -13,6 +13,7 @@ import type { CallsService } from '../services/calls.service';
 import type { ConfigService } from '../services/config.service';
 import type { CredentialsService } from '../services/credentials.service';
 import type { CronService } from '../services/cron.service';
+import type { DecisionsService } from '../services/decisions.service';
 import type { DeliveriesService } from '../services/deliveries.service';
 import type { DigestService } from '../services/digest.service';
 import type { DocumentsService } from '../services/documents.service';
@@ -86,6 +87,11 @@ export interface RpcContext {
    *  registry it lists nothing and a test answers `unconfigured`, which is a
    *  state, not an absence. */
   modelRegistry: ModelRegistryService;
+  /** Settings → Models › decision models: the decision provider's key, its
+   *  read-only site modes and the on-demand test. Not optional: with no
+   *  `decisions.*` keys it lists the provider unconfigured, which is a state,
+   *  not an absence. */
+  decisions: DecisionsService;
   /** Global named-secrets vault manager (Phase 2). */
   namedSecrets: NamedSecretsService;
   /** Stored logins for `browser_fill_credential` (reach-and-containment §4.2). */
