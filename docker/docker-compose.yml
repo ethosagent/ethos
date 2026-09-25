@@ -52,7 +52,11 @@ services:
       - TELEGRAM_BOT_TOKEN
       - TELEGRAM_OWNER_ID
     volumes:
-      - ${ETHOS_DATA_DIR:-../ethos-data}:${ETHOS_STATE_DIR:-/home/ethos/.ethos}
+      # State lives in the named volume `ethos-data` by default. To use a host
+      # directory instead, set ETHOS_DATA_DIR to its path (e.g. ../ethos-data).
+      # Not on Docker Desktop: its bind mounts are virtiofs/gRPC-FUSE (macOS)
+      # or 9p (Windows), where SQLite locking is unsafe — `ethos doctor` warns.
+      - ${ETHOS_DATA_DIR:-ethos-data}:${ETHOS_STATE_DIR:-/home/ethos/.ethos}
     restart: "no"
 
   ethos-web:
@@ -87,7 +91,7 @@ services:
     # it does from a local terminal: writable and persistent across restarts.
     working_dir: /home/ethos/workspace
     volumes:
-      - ${ETHOS_DATA_DIR:-../ethos-data}:${ETHOS_STATE_DIR:-/home/ethos/.ethos}
+      - ${ETHOS_DATA_DIR:-ethos-data}:${ETHOS_STATE_DIR:-/home/ethos/.ethos}
       - ${ETHOS_WORKSPACE_DIR:-../ethos-workspace}:/home/ethos/workspace
     read_only: true
     tmpfs:
@@ -120,9 +124,15 @@ services:
     # Same workspace mount as ethos-web — see the note there.
     working_dir: /home/ethos/workspace
     volumes:
-      - ${ETHOS_DATA_DIR:-../ethos-data}:${ETHOS_STATE_DIR:-/home/ethos/.ethos}
+      - ${ETHOS_DATA_DIR:-ethos-data}:${ETHOS_STATE_DIR:-/home/ethos/.ethos}
       - ${ETHOS_WORKSPACE_DIR:-../ethos-workspace}:/home/ethos/workspace
     read_only: true
     tmpfs:
       - /tmp
     restart: unless-stopped
+
+volumes:
+  # Explicit name so the backup/restore commands in run-in-docker.md address it
+  # as `ethos-data`, not `<project>_ethos-data`.
+  ethos-data:
+    name: ethos-data

@@ -442,6 +442,15 @@ export class PersonalitiesService {
       personality: described.config,
       substitutionVars: { ethosHome: dataDir, cwd: process.cwd() },
       ...(this.opts.dockerBuildable === false ? { dockerBuildable: false } : {}),
+      // S6 / D3 — the same opt-in the compose path reads, so a desktop sheet
+      // says "refused" or "local" exactly as execution will behave.
+      ...(passthrough['execution.allowLocalFallback'] === 'true'
+        ? { allowLocalFallback: true }
+        : {}),
+      // `execution.containerized` — the compose path's explicit detection signal.
+      ...(passthrough['execution.containerized'] === 'true'
+        ? { containerized: { containerizedConfig: true } }
+        : {}),
       sshConfigured: sshHost !== undefined && sshHost.length > 0,
       ...(sshHost
         ? {

@@ -17,8 +17,9 @@
 import { spawnSync } from 'node:child_process';
 // Raw `node:fs` for the same reasons `runDoctorFix` already reaches for
 // `chmod`: Storage has no permissions API, and the integrity check hands a raw
-// path to SQLite (the documented store carve-out in AGENTS.md).
-import { existsSync, readdirSync, statSync } from 'node:fs';
+// path to SQLite (the documented store carve-out in AGENTS.md). `statfsSync`
+// likewise: Storage has no filesystem-type API (`checkStateDirFilesystem`).
+import { existsSync, readdirSync, type StatsFs, statfsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -734,6 +735,69 @@ export function checkSecretsDirMode(dataDir: string): VaultModeResult {
   };
 }
 
+/**
+ * Linux `statfs(2)` `f_type` magic numbers (linux/magic.h, fs/smb/client) for
+ * the filesystems SQLite's WAL locking is not safe on. virtiofs and Docker
+ * Desktop's gRPC-FUSE both mount through the FUSE superblock and so report
+ * FUSE_SUPER_MAGIC; Docker Desktop on Windows and WSL2's `/mnt/c` are 9p.
+ */
+const UNSAFE_STATE_FS: ReadonlyMap<number, string> = new Map([
+  [0x65735546, 'fuse'],
+  [0x01021997, '9p'],
+  [0x6969, 'nfs'],
+  [0x517b, 'smb'],
+  [0xff534d42, 'cifs'],
+  [0xfe534d42, 'smb2'],
+]);
+
+export interface StateDirFilesystemResult {
+  path: string;
+  /** `unknown` = this platform's statfs gives no filesystem identity to test. */
+  status: 'ok' | 'warn' | 'unknown' | 'absent';
+  /** Name of the unsafe filesystem, set only on `warn`. */
+  fsType?: string;
+  message: string;
+}
+
+/**
+ * Warns when the state directory sits on a FUSE or network filesystem, where
+ * SQLite's locking can corrupt the databases (R4). Only Linux is classified:
+ * Node's `statfs` exposes `f_type` and no filesystem name, and on macOS that
+ * field is `vfc_typenum`, a registration-order number with no stable meaning
+ * (APFS reads 0x1a on one machine and could read otherwise on another). The
+ * case this exists for — a container on Docker Desktop — is Linux inside.
+ */
+export function checkStateDirFilesystem(
+  dataDir: string,
+  deps: { statfs?: (path: string) => StatsFs; platform?: NodeJS.Platform } = {},
+): StateDirFilesystemResult {
+  const statfs = deps.statfs ?? statfsSync;
+  const platform = deps.platform ?? process.platform;
+  let type: number;
+  try {
+    type = statfs(dataDir).type >>> 0;
+  } catch {
+    return { path: dataDir, status: 'absent', message: 'state directory not created yet.' };
+  }
+  if (platform !== 'linux') {
+    return {
+      path: dataDir,
+      status: 'unknown',
+      message: `filesystem type not checked on ${platform} (statfs reports no filesystem name).`,
+    };
+  }
+  const fsType = UNSAFE_STATE_FS.get(type);
+  if (!fsType) {
+    return { path: dataDir, status: 'ok', message: 'state directory is on a local filesystem.' };
+  }
+  return {
+    path: dataDir,
+    status: 'warn',
+    fsType,
+    message: `state directory is on ${fsType} — SQLite locking is unsafe there and the databases can corrupt. Use a Docker named volume or a local disk.`,
+  };
+}
+
 export interface DirSanityIssue {
   /** `dataDir`-relative path the issue is about. */
   path: string;
@@ -1185,6 +1249,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     const db = await checkSessionsDb(storage);
     const integrity = await checkDatabaseIntegrity(ethosDir());
     const secretsDir = checkSecretsDirMode(ethosDir());
+    const stateDirFilesystem = checkStateDirFilesystem(ethosDir());
     const skillIssues = checkSkillsDir(ethosDir());
     const teamIssues = checkTeamsDir(ethosDir());
     const gateway = await checkGatewayHealth(storage);
@@ -1236,6 +1301,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
       storeIntegrity: integrity,
       inboundSpool: await inboundSpoolReportFor(resolvedConfig ?? config),
       secretsDir,
+      stateDirFilesystem,
       skillIssues,
       teamIssues,
       gateway,
@@ -1578,6 +1644,14 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     );
   } else {
     console.log(`  ${c.green}✓${c.reset}  ${describeSecretsDirMode(secretsDir)}`);
+  }
+  const stateFs = checkStateDirFilesystem(ethosDir());
+  if (stateFs.status === 'warn') {
+    console.log(`  ${c.yellow}⚠${c.reset}  ${stateFs.message}`);
+  } else if (stateFs.status === 'ok') {
+    console.log(`  ${c.green}✓${c.reset}  ${stateFs.message}`);
+  } else {
+    console.log(`  ${c.dim}–  ${stateFs.message}${c.reset}`);
   }
   const dirIssues = [...checkSkillsDir(ethosDir()), ...checkTeamsDir(ethosDir())];
   if (dirIssues.length === 0) {

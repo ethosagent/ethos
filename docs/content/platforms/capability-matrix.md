@@ -4,7 +4,7 @@ description: "What each Ethos channel adapter supports: typing, streaming edits,
 kind: reference
 audience: shared
 slug: channel-capability-matrix
-updated: 2026-08-14
+updated: 2026-09-25
 ---
 
 Not every channel supports every feature. Telegram edits messages in place; email cannot. Slack uploads files; WhatsApp does not. The gateway reads each adapter's declared capabilities and degrades gracefully — a streamed reply falls back to a single message where edits are unavailable, and outbound media falls back to text where uploads are unsupported. This page is the authoritative lookup for what each adapter supports today.
@@ -24,7 +24,7 @@ Each capability is declared on the adapter itself (the `canSendTyping` / `canEdi
 | Threads / topics | ✓ (forum topics) | ✓ (`thread_ts`) | ✓ | ✗ | ✗ |
 | Reply-to a message | ✓ | ✗ | ✗ | ✓ | ✗ |
 | Approval buttons | ✓ | ✓ | ✓ | ✗ | ✗ |
-| Slash commands | ✓ | ✓ | ✓ | ✗ | ✗ |
+| Slash commands | ✓ (menu) | ✓ | ✓ | ✓ (typed) | ✓ (first line of body) |
 | Voice in (transcribed) | ✓ | ✓ | ✓ | ✓ | ✗ |
 | Voice out (TTS) | ✓ | ✓ | ✓ | ✓ | ✗ |
 | Voice-out rendering | voice bubble | file + inline player | file + inline player | voice bubble (`ptt`) | — |
@@ -32,6 +32,8 @@ Each capability is declared on the adapter itself (the `canSendTyping` / `canEdi
 | Max message length | 4096 | 3000 | 2000 | 65536 | 100000 |
 
 `✓ (probed)` — Slack's typing indicator uses an unofficial API; the adapter probes it once at runtime and reports the real result thereafter, so `canSendTyping` reflects what actually works on the workspace.
+
+**Slash commands.** The gateway commands — `/stop`, `/new`, `/usage`, `/budget`, `/personality`, `/mute` and the rest of the `gateway` surface in `SLASH_COMMANDS` ([packages/surface-kit/src/slash-commands.ts](../../../packages/surface-kit/src/slash-commands.ts)) — are parsed by `Gateway.handleMessage` with no platform gate, so they work on every channel. WhatsApp has no command menu: type the command as a message. On Email, put the command on the first line of the body and reply in the same thread (the subject picks the conversation); the adapter drops the quoted reply and signature below a command line (`commandOrBody` in `extensions/platform-email/src/index.ts`). A message from an unverified email sender is never read as a command: the adapter prefixes its body with a sender warning, so the first word is not a command (pinned by `extensions/platform-email/src/__tests__/email-adapter.test.ts`, 'EmailAdapter slash commands'). Telegram's `/` menu is built from the same registry at startup.
 
 **Voice in** requires the adapter to classify an inbound upload as `type: 'audio'` — the gateway's transcription gate keys on nothing else. All four chat adapters do: Telegram from `voice` and `audio` messages, Slack and Discord from the upload's extension or content type, WhatsApp from `audioMessage`. A `.webm` upload on Slack or Discord stays a video and is not transcribed.
 

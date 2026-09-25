@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { deriveFsReachPaths } from '@ethosagent/core';
 import { resolveNetworkMode } from '@ethosagent/execution-docker';
-import { SUMMARY_INSTRUCTION } from '@ethosagent/job-runner';
+import { narrowedToolset, SUMMARY_INSTRUCTION } from '@ethosagent/job-runner';
 import type {
   AgentEvent,
   BackgroundJob,
@@ -14,7 +14,7 @@ import type {
 } from '@ethosagent/types';
 import { defaultPiConfigDir, piBinaryAvailable, piCredentialsPresent } from './availability';
 import { PI_RUNNER_CAPABILITIES, PI_RUNNER_NAME } from './capabilities';
-import { createAutoApproveGate, type PiGatePolicy } from './gate';
+import { createAutoApproveGate, createPersonalityGate, type PiGatePolicy } from './gate';
 import { runPiHost } from './host';
 import { assertWorkspaceInReach, piWorkspacePaths, prepareWorkspace } from './worktree';
 
@@ -46,7 +46,8 @@ export interface PiJobRunnerDeps {
   /**
    * The tool-call decision. Production wires `createRouterGate` (the worker
    * router); absent, it defaults to auto-approve so a standalone construction
-   * still runs.
+   * still runs. Either way `run` wraps it in `createPersonalityGate`, so the
+   * job personality's deny rules and toolset refuse first (S12).
    */
   gate?: PiGatePolicy;
   logger?: Logger;
@@ -166,7 +167,13 @@ export class PiJobRunner implements JobRunner {
         signal: ctx.signal,
         steerSink: ctx.steerSink,
         appendLog: ctx.appendLog,
-        gate: this.gate,
+        // The personality's deny rules and toolset first, then the gate (S12);
+        // the toolset narrowed as the spawning turn was (`narrowedToolset`).
+        gate: createPersonalityGate(
+          this.gate,
+          { ...personality, toolset: narrowedToolset(personality.toolset, job.toolsetNarrowing) },
+          this.deps.logger,
+        ),
         ...(this.deps.logger ? { logger: this.deps.logger } : {}),
         onStarted: (info) => this.live.set(job.id, info),
       });

@@ -15,6 +15,7 @@ import {
   estimateTokens,
 } from '../context-engines/token-estimator';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
+import { compactionFailureCode, withCompactionDeadline } from './compaction-timeout';
 
 // Phase 2 watermark helpers (selectActiveWatermark, reconstructFromWatermark,
 // computeKeptTailBoundary, runManualCompaction, compactSession) live in
@@ -122,6 +123,8 @@ export interface CompactionDeps {
    * gating on an estimate is moot. Absent/false → the normal gated path.
    */
   force?: boolean;
+  /** R10 — engine + summarizer deadline (`withCompactionDeadline`); fails open. */
+  summarizerTimeoutMs?: number;
 }
 
 /**
@@ -431,7 +434,8 @@ export async function maybeCompact(
 
   try {
     const startedAt = Date.now();
-    const result = await engine.compact({
+    const timed = withCompactionDeadline(engine, deps.summarizerTimeoutMs);
+    const result = await timed.compact({
       messages: history,
       currentSystem: systemPrompt,
       targetTokens: historyTarget,
@@ -506,7 +510,7 @@ export async function maybeCompact(
     // provider error than to silently drop messages on engine failure.
     deps.observability?.recordCompaction({
       severity: 'warn',
-      code: 'context_engine_failed',
+      code: compactionFailureCode(err),
       cause: err instanceof Error ? err.message : String(err),
     });
     return { messages: flattened };

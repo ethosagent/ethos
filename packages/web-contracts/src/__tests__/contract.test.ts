@@ -328,6 +328,7 @@ describe('contract router', () => {
       'teams',
       'toolSettings',
       'tools',
+      'usage',
       'voice',
     ]);
   });

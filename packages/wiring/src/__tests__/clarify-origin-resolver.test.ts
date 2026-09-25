@@ -16,7 +16,10 @@ import { resolveJobClarifyOrigin } from '../build-agent-loop';
 
 function job(
   overrides: Partial<BackgroundJob> = {},
-): Pick<BackgroundJob, 'originPlatform' | 'originBotKey' | 'originChatId' | 'originThreadId'> {
+): Pick<
+  BackgroundJob,
+  'originPlatform' | 'originBotKey' | 'originChatId' | 'originThreadId' | 'originUserId'
+> {
   return {
     originPlatform: 'telegram',
     originBotKey: 'bot1',
@@ -39,6 +42,14 @@ describe('resolveJobClarifyOrigin', () => {
     expect(lane).toEqual({
       surfaceType: 'telegram',
       surfaceContext: { chatId: 'chat1', botKey: 'bot1', threadId: 'thread1' },
+    });
+  });
+
+  it('stamps the job originator as surfaceContext.originatorUserId (S11 follow-up)', () => {
+    const lane = resolveJobClarifyOrigin(job({ originUserId: 'u42' }));
+    expect(lane).toEqual({
+      surfaceType: 'telegram',
+      surfaceContext: { chatId: 'chat1', botKey: 'bot1', originatorUserId: 'u42' },
     });
   });
 

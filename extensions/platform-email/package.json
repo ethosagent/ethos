@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@ethosagent/core": "workspace:*",
+    "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/types": "workspace:*",
     "imapflow": "^1.6.5",
     "mailparser": "^3.7.2",

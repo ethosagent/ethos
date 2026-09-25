@@ -177,11 +177,17 @@ gh issue list --search "is:open websocket in:title" --json number -q '.[].number
 
 ### Close stale issues
 
+List the issues with no activity in 90 days (`<cutoff-date>` is today minus 90 days, `YYYY-MM-DD`):
+
 ```bash
-# Close issues with no activity in 90 days
-gh issue list --search "is:open updated:<$(date -d '90 days ago' +%Y-%m-%d)" \
-  --json number -q '.[].number' | \
-  xargs -I{} sh -c 'gh issue comment {} --body "Closing due to inactivity. Reopen if still relevant." && gh issue close {}'
+gh issue list --search "is:open updated:<<cutoff-date>" --json number -q '.[].number'
+```
+
+Then, for each number it prints:
+
+```bash
+gh issue comment <number> --body "Closing due to inactivity. Reopen if still relevant."
+gh issue close <number>
 ```
 
 ### Transfer issues

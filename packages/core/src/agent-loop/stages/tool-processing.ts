@@ -31,6 +31,8 @@ import { recordMemoryWriteIfApplicable } from '../memory-telemetry';
 import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
+import { toolCostFields } from '../tool-cost';
+import { toolsetNarrowingOf } from '../toolset-narrowing';
 import type { WatcherTap } from '../turn-context';
 import { approverSinkOf, type TurnDecisions } from '../turn-decisions';
 import { consultWatcherHalt, enforceBeforeToolCall } from './per-call-enforcement';
@@ -40,6 +42,7 @@ import type { ScriptToolBridge } from './script-tool-bridge';
 import type { CompletedToolCall, UsageSink } from './stream-step';
 import { emitToolRejection, rejectAbortedCall, validateRepairedArgs } from './tool-rejection';
 import { answerToolSearch, recordDirectLoads } from './tool-search';
+import type { TurnUsageAccumulator } from './turn-finalizer';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,6 +68,7 @@ export interface ToolProcessingDeps {
     turnId: string;
   }) => void;
   sessionCosts: Map<string, number>;
+  turnUsage?: TurnUsageAccumulator; // for a tool-reported cost_usd — ../tool-cost
   storage?: Storage;
   dataDir?: string;
   platform: string;
@@ -186,6 +190,7 @@ export async function* processTools(
     // undefined for a foreground turn (D22).
     ...(ctx.opts.jobId !== undefined ? { jobId: ctx.opts.jobId } : {}),
     ...(ctx.opts.reviewOfJobId !== undefined ? { reviewOfJobId: ctx.opts.reviewOfJobId } : {}),
+    ...toolsetNarrowingOf(ctx.allowedTools, ctx.filterOpts.excludeTools),
     origin: ctx.opts.origin,
     ...(ctx.opts.a2aDelegation ? { a2aDelegation: ctx.opts.a2aDelegation } : {}),
     personalityId: ctx.personality.id,
@@ -820,6 +825,7 @@ export async function* processTools(
       // `result` is ok:false for a hook-rejected/blocked call too, so a
       // rejection persists as the failure it is.
       isError: !result.ok,
+      ...toolCostFields(result, deps.turnUsage), // tool cost_usd — ../tool-cost
     });
 
     toolResultContent.push({

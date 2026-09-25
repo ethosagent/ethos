@@ -1246,6 +1246,13 @@ importers:
       '@ethosagent/voice-text':
         specifier: workspace:*
         version: link:../../packages/voice-text
+    devDependencies:
+      '@ethosagent/memory-approval':
+        specifier: workspace:*
+        version: link:../memory-approval
+      '@ethosagent/tools-memory':
+        specifier: workspace:*
+        version: link:../tools-memory
 
   extensions/goal-runner:
     dependencies:
@@ -1699,6 +1706,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1751,6 +1761,9 @@ importers:
       '@ethosagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2350,6 +2363,9 @@ importers:
       '@ethosagent/platform-voice':
         specifier: workspace:*
         version: link:../platform-voice
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../../packages/safety/injection
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2363,6 +2379,9 @@ importers:
 
   extensions/tools-watchers:
     dependencies:
+      '@ethosagent/tools-messaging':
+        specifier: workspace:*
+        version: link:../tools-messaging
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2442,6 +2461,12 @@ importers:
 
   packages/a2a:
     dependencies:
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../safety/injection
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../safety/network
       '@ethosagent/sqlite':
         specifier: workspace:*
         version: link:../sqlite

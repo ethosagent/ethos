@@ -5,7 +5,7 @@
 // `audience: 'user'` to opt-in. `verbose` lifts the gate so internal
 // `audience: 'internal'` events surface too. `debug` adds raw JSON.
 
-import { type AgentEvent, describeDeviation } from '@ethosagent/core';
+import { type AgentEvent, describeDeviation, haltNotice } from '@ethosagent/core';
 import { answerSuffix } from '@ethosagent/types';
 import { decisionLine, decisionLineText } from './decision-line';
 
@@ -42,7 +42,8 @@ export interface RenderedLine {
     | 'error'
     | 'debug'
     | 'run_start'
-    | 'decision';
+    | 'decision'
+    | 'halt';
 }
 
 /**
@@ -77,6 +78,18 @@ export function projectEvent(
   turn?: { streamedText: string },
 ): RenderedLine[] {
   const doneAnswer = turn ? unstreamedDoneText(event, turn.streamedText) : undefined;
+  // S4/U1 — a budget halt renders at EVERY verbosity, `quiet` included, for
+  // the D17 reason: the turn stopped short, and the person reading the reply
+  // needs the cap and the reset command in front of them. The wording is
+  // `haltNotice`'s (@ethosagent/core), never restated here.
+  if (event.type === 'halt') {
+    const notice = haltNotice(event);
+    const lines: RenderedLine[] = notice ? [{ text: notice, kind: 'halt' }] : [];
+    if (verbosity === 'debug') {
+      lines.push({ text: `[debug] ${JSON.stringify(event)}`, kind: 'debug' });
+    }
+    return lines;
+  }
   if (verbosity === 'quiet') {
     // Only final assistant text surfaces — plus, per D17, a `run_start`
     // carrying a deviation. This is the one line of that contract: the moment a
@@ -109,6 +122,10 @@ export function projectEvent(
       // Phase 30.2 — `default` honours the audience gate; `verbose`+ lifts it.
       const isUserOptIn = event.audience === 'user';
       if (verbosity === 'default' && !isUserOptIn) break;
+      // A budget stop arrives as this user-audience `_budget` chip AND the
+      // `halt` right behind it (`budgetGuardEvents`, @ethosagent/core); the
+      // halt line above carries the message, so the chip is not repeated.
+      if (event.toolName === '_budget' && isUserOptIn) break;
       out.push({
         text: `· ${event.toolName}: ${event.message}`,
         kind: 'tool_progress',

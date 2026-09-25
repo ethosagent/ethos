@@ -943,6 +943,7 @@ export class AgentLoop {
           mcpPolicy: this.mcpPolicy,
           onToolMetric: this.onToolMetric,
           sessionCosts: this.sessionCosts,
+          turnUsage,
           storage: this.storage,
           dataDir: this.dataDir,
           platform: this.platform,

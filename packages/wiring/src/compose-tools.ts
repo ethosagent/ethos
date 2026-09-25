@@ -33,7 +33,6 @@ import {
 import { createSkillProposeTool } from '@ethosagent/skill-evolver';
 import type { SkillsInjector, UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
-import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createEngineAskTool } from '@ethosagent/tools-answer-engines';
 import type { CredentialFillAuditEvent } from '@ethosagent/tools-browser';
@@ -104,6 +103,7 @@ import type {
   TurnAuditor,
 } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
+import { TERMINAL_CHECKED_TOOLS } from './danger-predicate';
 import type { DisposerStack } from './disposer-stack';
 import { ensureFsReachDirs } from './fs-reach-dirs';
 import {
@@ -127,6 +127,7 @@ import {
   constitutionForbidsLocal,
   formatSshTarget,
   hasExecTool,
+  LOCAL_FALLBACK_REFUSAL,
   resolveExecutionPosture,
 } from './resolve-execution-posture';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
@@ -633,6 +634,10 @@ export interface ComposeToolsResult {
   /** Ground-truth consult for `MemoryCaptureRunner` (R8). Absent when
    *  `grounding.enabled: false`, so capture behaves exactly as before. */
   memoryConsult?: GroundingMemoryConsult;
+  /** `ExecutionRouting.resolvePosture` — surfaced as `CreateAgentLoopResult.executionPostureFor`. */
+  executionPostureFor: ExecutionRouting['resolvePosture'];
+  /** `ExecutionRouting.exec` — the route a goal's command acceptance checks run on (S1). */
+  executionRouteFor: ExecutionRouting['exec'];
 }
 
 /**
@@ -748,7 +753,12 @@ export function resolveExecRefusal(
 ): { forbidden: boolean; message?: string } {
   if (posture.backend === 'none') return { forbidden: true, message: POSTURE_NONE_REFUSAL };
   const forbidden = (posture.backend === 'docker' || posture.backend === 'ssh') && !backendWired;
-  const message = posture.sshRefused?.message;
+  // D3 — a refused docker→local downgrade names the key that would allow it.
+  const message =
+    posture.sshRefused?.message ??
+    (posture.dockerAbsent?.consentForbiddenReason === LOCAL_FALLBACK_REFUSAL
+      ? LOCAL_FALLBACK_REFUSAL
+      : undefined);
   return message !== undefined ? { forbidden, message } : { forbidden };
 }
 
@@ -794,6 +804,11 @@ export interface ExecutionRoutingInput {
   substitutionVars: { ethosHome: string; cwd: string };
   /** Docker execution disabled in this process (desktop in-process backend). */
   disableDocker: boolean;
+  /**
+   * `execution.allowLocalFallback` — with `disableDocker`, run exec
+   * personalities on the host instead of refusing them (S6 / D3).
+   */
+  allowLocalFallback?: boolean;
   /** `execution.docker.*` — container resource caps. */
   docker?: { cpu?: number; diskMb?: number };
   /** `execution.ssh.*` — the one remote target this deployment knows. */
@@ -806,6 +821,12 @@ export interface ExecutionRoutingInput {
    * whether the machine running it happens to be a container.
    */
   containerized?: ContainerizedDetectionInput;
+  /**
+   * `execution.containerized: true` from `~/.ethos/config.yaml` — merged into
+   * the detection input as `detectContainerized`'s explicit config signal, so
+   * the operator can declare a container auto-detection cannot see.
+   */
+  containerizedConfig?: boolean;
 }
 
 /** What a turn's personality resolved to: its posture, and the backend (if any) that will run it. */
@@ -828,6 +849,14 @@ export interface ExecutionRouting {
   process: ExecutionRouter;
   /** The full resolution, for the injector that tells the model where its shell is. */
   resolveTurn(personalityId: string | undefined): Promise<TurnExecution | undefined>;
+  /**
+   * The posture alone — the same `postureFor` `resolveTurn` uses, without
+   * building a backend. `undefined` for an id the registry does not know. Read
+   * by the approval surfaces' danger predicate (`LOCAL_POSTURE_CONSEQUENTIAL_TOOLS`,
+   * packages/wiring/src/danger-predicate.ts) so the approval decision and the
+   * tool's execution agree on where a shell runs.
+   */
+  resolvePosture(personalityId: string | undefined): ExecutionPosture | undefined;
   /**
    * Release every execution backend instance — the ONE owner of them (F06 /
    * G6). That is the wrappers this routing built (a docker `SessionManager`,
@@ -871,8 +900,12 @@ export async function createExecutionRouting(
     resolveExecutionPosture({
       personality: person,
       ...(constitution ? { constitution } : {}),
-      containerized: input.containerized ?? { env: process.env },
+      containerized: {
+        ...(input.containerized ?? { env: process.env }),
+        ...(input.containerizedConfig === true ? { containerizedConfig: true } : {}),
+      },
       dockerBuildable: !input.disableDocker,
+      ...(input.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
       // `execution.ssh.host`'s presence is the switch for the whole remote
       // posture. This is the call that decides what ACTUALLY executes, so it
       // must answer truthfully: claiming "not configured" here resolves an ssh
@@ -1026,6 +1059,12 @@ export async function createExecutionRouting(
     exec: routerFor('exec'),
     process: routerFor('process'),
     resolveTurn,
+    resolvePosture: (personalityId) => {
+      if (personalityId === undefined) return posture;
+      const person = personalities.get(personalityId);
+      if (!person) return undefined;
+      return person.id === activePerson.id ? posture : postureFor(person);
+    },
     dispose: () => {
       // Memoised: a host that calls it twice disposes nothing twice.
       disposal ??= (async () => {
@@ -1233,6 +1272,8 @@ export async function composeAllTools(
     logger: log,
     substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
     disableDocker: opts.disableDocker === true,
+    ...(config.execution?.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
+    ...(config.execution?.containerized === true ? { containerizedConfig: true } : {}),
     ...(config.execution?.docker ? { docker: config.execution.docker } : {}),
     ...(config.execution?.ssh ? { ssh: config.execution.ssh } : {}),
   });
@@ -1573,13 +1614,17 @@ export async function composeAllTools(
       })
     : undefined;
 
+  // One allowlist for both tools that can send to a channel: `send_message`
+  // and `watcher_create`'s `deliver` (S5).
+  const getAllowedTargets = (personalityId?: string): string[] => {
+    if (!personalityId) return [];
+    return messagingAllowlist.get(personalityId) ?? [];
+  };
+
   for (const tool of composeMessaging(wiringCtx, {
     send: async (platform, target, body, botKey) =>
       gatewaySendRef.fn(platform, target, body, botKey),
-    getAllowedTargets: (personalityId) => {
-      if (!personalityId) return [];
-      return messagingAllowlist.get(personalityId) ?? [];
-    },
+    getAllowedTargets,
     outbox: outboxGate,
   }).tools)
     tools.register(tool);
@@ -1595,6 +1640,7 @@ export async function composeAllTools(
     for (const tool of composeWatchers(wiringCtx, {
       manager: opts.watcherManager,
       outbox: outboxGate,
+      getAllowedTargets,
     }).tools)
       tools.register(tool);
   }
@@ -1758,11 +1804,7 @@ export async function composeAllTools(
   // Design storage + model catalog + personality design tools
   // -------------------------------------------------------------------------
 
-  let designStorage: Storage = capabilityBackends.storage ?? new FsStorage();
-  if (config.storage?.encryption) {
-    const passphrase = process.env.ETHOS_STORAGE_KEY ?? '';
-    designStorage = createCryptoStorage(designStorage, passphrase);
-  }
+  const designStorage: Storage = capabilityBackends.storage ?? new FsStorage();
 
   let resolvedModelCatalog = MODEL_CATALOG;
   if (config.modelCatalogConfig && config.modelCatalogConfig.enabled !== false) {
@@ -1822,7 +1864,7 @@ export async function composeAllTools(
 
   // CLI/TUI/ACP get the synchronous block-and-explain guard.
   if (profile !== 'web') {
-    hooks.registerModifying('before_tool_call', createTerminalGuardHook());
+    hooks.registerModifying('before_tool_call', createTerminalGuardHook(TERMINAL_CHECKED_TOOLS));
     hooks.registerModifying('before_tool_call', createProcessGuardHook());
   }
 
@@ -2001,5 +2043,7 @@ export async function composeAllTools(
     mcpManager,
     turnAuditors: grounding.turnAuditors,
     ...(grounding.memoryConsult ? { memoryConsult: grounding.memoryConsult } : {}),
+    executionPostureFor: routing.resolvePosture,
+    executionRouteFor: routing.exec,
   };
 }

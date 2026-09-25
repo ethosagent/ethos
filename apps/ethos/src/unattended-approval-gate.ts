@@ -47,6 +47,7 @@
 
 import type {
   BeforeToolCallPayload,
+  ExecutionPosture,
   HookRegistry,
   LLMProvider,
   PersonalityConfig,
@@ -56,6 +57,7 @@ import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   createApprovalDangerPredicate,
   type DangerPredicate,
+  LOCAL_POSTURE_CONSEQUENTIAL_TOOLS,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
   type SmartApproverDecisionSite,
 } from '@ethosagent/wiring';
@@ -116,6 +118,11 @@ export interface WireUnattendedApprovalGateOptions {
   /** The smart reviewer's decision site (plan decision-provider-jev §8.2),
    *  forwarded to `createApprovalDangerPredicate`. Absent → the LLM reviewer only. */
   decision?: SmartApproverDecisionSite;
+  /** `CreateAgentLoopResult.executionPostureFor` of the build these loops come
+   *  from, forwarded to `createApprovalDangerPredicate` (required there): under a
+   *  host-local posture the shell tools are flagged, so with nobody to ask they
+   *  are refused (S6 / D1(a), plan openclaw-2026.9.6-gaps). */
+  executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
 }
 
 /**
@@ -144,6 +151,7 @@ export function wireUnattendedApprovalGate(
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     allowAutoApproveDangerousTools: opts.allowUnattendedDangerousTools,
     ...(opts.decision ? { decision: opts.decision } : {}),
+    executionPostureFor: opts.executionPostureFor,
   });
   const unattended = createUnattendedApprovalGate(danger, unattendedApprovalRejection);
   const remote = createNoApprovalSurfaceGate([hooks], opts);
@@ -179,6 +187,8 @@ export interface NoApprovalSurfaceGateOptions {
   model: string;
   /** Same as `WireUnattendedApprovalGateOptions.decision`. */
   decision?: SmartApproverDecisionSite;
+  /** Same as `WireUnattendedApprovalGateOptions.executionPostureFor`. */
+  executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
 }
 
 /**
@@ -207,6 +217,7 @@ export function createNoApprovalSurfaceGate(
     model: opts.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     ...(opts.decision ? { decision: opts.decision } : {}),
+    executionPostureFor: opts.executionPostureFor,
   });
   return createUnattendedApprovalGate(danger, noApprovalSurfaceRejection);
 }
@@ -220,12 +231,16 @@ export function createNoApprovalSurfaceGate(
  * reviewer may approve some of those; it may also refuse). A personality on
  * `approvalMode: 'off'` is pre-authorized, and not listed, only when the
  * operator set `allowUnattendedDangerousTools`. No toolset means every tool.
- * `cron` is excluded, matching the cron runner's recursion guard.
+ * `cron` is excluded, matching the cron runner's recursion guard. When
+ * `executionPostureFor` is supplied, a personality on a host-local,
+ * non-containerized posture also lists `LOCAL_POSTURE_CONSEQUENTIAL_TOOLS`
+ * (S6 / D1(a)) — the same set the gate's predicate flags for it.
  */
 export function unattendedCronExposure(opts: {
   jobs: ReadonlyArray<{ personalityId: string; prompt?: string; source?: 'system' | 'user' }>;
   getPersonality: (id: string) => PersonalityConfig | undefined;
   allowUnattendedDangerousTools: boolean;
+  executionPostureFor?: (personalityId: string | undefined) => ExecutionPosture | undefined;
 }): Array<{ personalityId: string; tools: string[] }> {
   const owners = new Set(
     opts.jobs.filter((j) => j.prompt && j.source !== 'system').map((j) => j.personalityId),
@@ -235,10 +250,15 @@ export function unattendedCronExposure(opts: {
     const personality = opts.getPersonality(personalityId);
     const mode = personality?.safety?.approvalMode ?? 'manual';
     if (mode === 'off' && opts.allowUnattendedDangerousTools) continue;
-    const flagged =
-      mode === 'smart'
-        ? [...new Set([...APPROVAL_SURFACE_ALWAYS_ASK, ...SMART_MODE_CONSEQUENTIAL_TOOLS])]
-        : [...APPROVAL_SURFACE_ALWAYS_ASK];
+    const posture = opts.executionPostureFor?.(personalityId);
+    const hostLocal = posture?.backend === 'local' && posture.containerized !== true;
+    const flagged = [
+      ...new Set([
+        ...APPROVAL_SURFACE_ALWAYS_ASK,
+        ...(mode === 'smart' ? SMART_MODE_CONSEQUENTIAL_TOOLS : []),
+        ...(hostLocal ? LOCAL_POSTURE_CONSEQUENTIAL_TOOLS : []),
+      ]),
+    ];
     const toolset = personality?.toolset?.filter((t) => t !== 'cron');
     const tools = toolset ? flagged.filter((t) => toolset.includes(t)) : flagged;
     if (tools.length > 0) exposure.push({ personalityId, tools: tools.sort() });
@@ -260,6 +280,7 @@ export function reportUnattendedCronExposure(opts: {
   jobs: ReadonlyArray<{ personalityId: string; prompt?: string; source?: 'system' | 'user' }>;
   getPersonality: (id: string) => PersonalityConfig | undefined;
   allowUnattendedDangerousTools: boolean;
+  executionPostureFor?: (personalityId: string | undefined) => ExecutionPosture | undefined;
   recordSafetyBlock: (event: {
     code: string;
     cause: string;

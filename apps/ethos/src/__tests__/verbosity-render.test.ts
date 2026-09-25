@@ -174,6 +174,46 @@ describe('FW-10 verbosity projection', () => {
     });
   });
 
+  describe('budget halt (S4/U1)', () => {
+    const halt: AgentEvent = {
+      type: 'halt',
+      kind: 'budget',
+      rule: 'cost-cap',
+      toolName: '_budget',
+      message: 'Stopped: hit $1.00 budget cap for this session ($1.0100 spent)',
+    };
+
+    it('renders the cap and the reset command at every verbosity, quiet included', () => {
+      for (const level of ['quiet', 'default', 'verbose'] as const) {
+        const lines = projectEvent(halt, level).filter((l) => l.kind === 'halt');
+        expect(lines).toHaveLength(1);
+        expect(lines[0]?.text).toContain('$1.00 budget cap');
+        expect(lines[0]?.text).toContain('/budget reset');
+      }
+    });
+
+    // The loop yields the stop twice — a user-audience `_budget` chip, then the
+    // `halt` (`budgetGuardEvents`, packages/core/src/agent-loop/budgets.ts).
+    // The halt line already carries the message, so the chip must not repeat it.
+    it('the budget stop renders once, not as a progress chip and a halt line', () => {
+      const chip: AgentEvent = {
+        type: 'tool_progress',
+        toolName: '_budget',
+        message: halt.type === 'halt' ? halt.message : '',
+        audience: 'user',
+      };
+      for (const level of ['quiet', 'default', 'verbose'] as const) {
+        const lines = [...projectEvent(chip, level), ...projectEvent(halt, level)];
+        expect(lines.filter((l) => l.text.includes('$1.00 budget cap'))).toHaveLength(1);
+      }
+    });
+
+    it('a watcher halt renders no halt line — its pause ends with a reply', () => {
+      const watcher: AgentEvent = { type: 'halt', kind: 'watcher', rule: 'r', message: 'm' };
+      expect(projectEvent(watcher, 'default').filter((l) => l.kind === 'halt')).toEqual([]);
+    });
+  });
+
   describe('/verbose cycle order', () => {
     it('cycles default → verbose → debug → quiet → default', () => {
       expect(nextVerbosity('default')).toBe('verbose');

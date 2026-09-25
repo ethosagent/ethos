@@ -18,7 +18,7 @@ ethos:
     - tool: process
       role: tail logs while iterating without blocking the chat
     - tool: write_file
-      role: persist the investigation log under ~/.ethos/investigations/<personality>/
+      role: persist the investigation log under the workspace's .ethos-work/investigations/
   surface_metadata:
     invocation_trigger: "user reports a bug, regression, or unexpected behaviour; agent self-invokes when a terminal command unexpectedly fails"
     estimated_turns: "5-20 (investigations vary widely in length)"
@@ -48,7 +48,7 @@ Collect, do not theorize:
 - Environment: relevant env vars, library versions, OS specifics.
 - Reproduction: what minimal input triggers it? Capture the smallest repro.
 
-Write all of this down — into the conversation or, for longer investigations, into `~/.ethos/investigations/<personality>/<slug>.md`.
+Write all of this down — into the conversation or, for longer investigations, into `.ethos-work/investigations/<slug>.md` in the workspace (see "Persisting investigations").
 
 ### 2. Analyze — group the evidence
 
@@ -94,7 +94,9 @@ Remove the boundary logging when the bug is confirmed and a regression test is i
 
 ## Persisting investigations
 
-For non-trivial investigations, write the log to `~/.ethos/investigations/<personality>/<slug>.md`. Include: the symptoms, the evidence collected, the hypothesis tested, the root cause, and the fix. Future investigations of similar bugs benefit from being able to grep this directory.
+For non-trivial investigations, write the log to `.ethos-work/investigations/<slug>.md` in the workspace. Include: the symptoms, the evidence collected, the hypothesis tested, the root cause, and the fix. Future investigations of similar bugs benefit from being able to grep this directory.
+
+`.ethos-work/` is the workspace's scratch directory, kept out of git by adding `.ethos-work/` to `.git/info/exclude`. Do not write under `~/.ethos`: a personality's default `fs_reach` lets `write_file` write only its own personality directory and its working directory (`deriveFsReachPaths` in `packages/core/src/fs-reach.ts`), so a write there is refused.
 
 ## The iron rule
 

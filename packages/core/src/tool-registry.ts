@@ -489,6 +489,7 @@ export class DefaultToolRegistry implements ToolRegistry {
           rootSessionKey: ctx.rootSessionKey,
           jobId: ctx.jobId,
           ...(ctx.reviewOfJobId !== undefined ? { reviewOfJobId: ctx.reviewOfJobId } : {}),
+          ...(ctx.toolsetNarrowing ? { toolsetNarrowing: ctx.toolsetNarrowing } : {}),
           origin: ctx.origin,
           memoryScopeId: ctx.memoryScopeId,
           userScopeId: ctx.userScopeId,

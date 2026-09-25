@@ -26,5 +26,9 @@
     "@ethosagent/sqlite": "workspace:*",
     "@ethosagent/surface-kit": "workspace:*",
     "@ethosagent/voice-text": "workspace:*"
+  },
+  "devDependencies": {
+    "@ethosagent/memory-approval": "workspace:*",
+    "@ethosagent/tools-memory": "workspace:*"
   }
 }

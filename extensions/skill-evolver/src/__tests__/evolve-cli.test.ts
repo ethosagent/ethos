@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkSkillFrontmatter } from '@ethosagent/skills';
+import { checkSkillFrontmatter, vetPromotedSkill } from '@ethosagent/skills';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Relative on purpose: this package takes the inbox STRUCTURALLY
@@ -53,6 +53,7 @@ function realInbox(
       liveSkillDir,
       skillScope: () => undefined,
       checkSkillFrontmatter: () => ({ ok: true }),
+      vetSkill: (md) => ({ ok: true, content: md }),
       expressions: {
         evolveExpression: async () => {
           throw new Error('no Expression candidates in this test');
@@ -201,6 +202,7 @@ describe('ethos evolve apply — over the learning inbox', () => {
           const check = checkSkillFrontmatter(md);
           return check.ok ? { ok: true } : { ok: false, error: check.error };
         },
+        vetSkill: vetPromotedSkill,
         expressions: {
           evolveExpression: async () => {
             throw new Error('no Expression candidates in this test');

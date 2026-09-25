@@ -529,6 +529,27 @@ describe('Gateway — /background acknowledgement', () => {
     expect(ack).toBeDefined();
     // The bare "started" string left the user with nothing to poll.
     expect(ack).toContain(jobId);
+    // Who asked — so the job's clarify can default to that user
+    // (`resolveJobClarifyOrigin`, packages/wiring/src/build-agent-loop.ts).
+    expect(created[0]?.originUserId).toBe('user-1');
+  });
+
+  it('answers originUserIdFor a live turn with its sender, and nothing once it ends', async () => {
+    const g = gatedLoop();
+    const adapter = stubAdapter();
+    const gw = new Gateway({
+      bots: [{ botKey: 'b1', loop: g.loop, binding: { type: 'personality', name: 'default' } }],
+      adapters: new Map([['test', adapter]]),
+      clarifySweepIntervalMs: 0,
+    });
+    const turn = gw.handleMessage(makeMessage({ text: 'hi', userId: 'u-9' }), adapter);
+    await vi.waitFor(() => expect(g.state.started).toBe(1));
+    const runMock = vi.mocked(g.loop.run);
+    const sessionKey = runMock.mock.calls[0]?.[1]?.sessionKey;
+    expect(gw.originUserIdFor(sessionKey ?? '')).toBe('u-9');
+    g.releaseAll();
+    await turn;
+    expect(gw.originUserIdFor(sessionKey ?? '')).toBeUndefined();
   });
 });
 

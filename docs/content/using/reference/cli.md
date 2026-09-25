@@ -136,7 +136,7 @@ Configure and run the multi-platform message [gateway](../../getting-started/glo
 
 Synopsis: `ethos gateway [setup | start | status [--json] | spool <replay|discard> <id>]`
 
-`setup` opens the setup wizard at the messaging step (alias for `ethos setup messaging`). `start` spins up every platform whose credentials are present in [`config.yaml`](./config-yaml.md) and is long-running; exits non-zero if `~/.ethos/config.yaml` is absent.
+`setup` opens the setup wizard at the messaging step (alias for `ethos setup messaging`). `start` spins up every platform whose credentials are present in [`config.yaml`](./config-yaml.md) and is long-running; exits non-zero if `~/.ethos/config.yaml` is absent. If the config has parse errors or a bot binding that resolves to no personality or team, `start` (and `ethos boot`) prints them, suggests `ethos doctor`, and exits `78` (`CONFIG_INVALID_EXIT_CODE`), which the generated systemd unit does not restart. Source: [`apps/ethos/src/lib/config-exit.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/lib/config-exit.ts).
 
 `start` takes the gateway lock, `<ethos home>/gateway.lock`, before it opens any store: one gateway per Ethos home (`ETHOS_STATE_DIR` scopes it, so two homes on one machine run two gateways). `ethos boot` owns channel adapters too and takes the same lock, so a `start` and a `boot` exclude each other. A second `start` or `boot` against a home whose gateway is alive prints the refusal and exits `3`. A lock left by a process that is gone is taken over. Source: [`packages/wiring/src/gateway-lock.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/gateway-lock.ts).
 
@@ -633,21 +633,34 @@ systemctl --user enable --now ethos-gateway
 
 ## ethos usage {#ethos-usage}
 
-Aggregate token usage and estimated cost over a time window. Reads from `~/.ethos/sessions.db`.
+Aggregate token usage and estimated cost over a time window. Tokens and cost come from `~/.ethos/sessions.db`; turn outcomes and the `tool`/`skill` breakdowns come from `~/.ethos/observability.db` (zeros when it is absent).
 
-Synopsis: `ethos usage --since <duration> [--json]`
+Synopsis: `ethos usage --since <duration> [--by <dimension>] [--json]`
 
 | Flag | Required | Description |
 |---|---|---|
-| `--since <duration>` | yes | Time window. Format: `Nh` (hours), `Nd` (days), `Nm` (minutes). Example: `24h`, `7d`, `30m`. |
-| `--json` | no | Emit machine-readable JSON instead of a human-readable summary. |
+| `--since <duration>` | yes | Time window ending now. Format: `Nh` (hours), `Nd` (days), `Nm` (minutes). Example: `24h`, `7d`, `30m`. A missing or malformed value exits `2`. |
+| `--by <dimension>` | no | Add a breakdown: `day`, `model`, `personality`, `channel`, `session`, `tool`, or `skill`. An unknown dimension exits `2`. |
+| `--json` | no | Emit one JSON object instead of a human-readable summary. |
 
-The JSON output includes `totals`, `byProvider`, `byPersonality`, and a `truncated` flag (true when results exceed the 10,000-session cap — narrow the `--since` window for complete data).
+Cost is the sum of the stored message rows in the window: LLM usage on assistant rows plus any cost a tool reported (`cost_usd`) on its tool-result row. A forked session's copied history carries no usage, so a fork does not count its source's spend twice.
+
+`--json` fields (`UsageResult` in [`apps/ethos/src/commands/usage.ts`](../../../../apps/ethos/src/commands/usage.ts)):
+
+| Field | Type | Description |
+|---|---|---|
+| `since`, `until` | ISO-8601 string | The window, half-open `[since, until)`. |
+| `totals` | object | `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheCreationTokens`, `estimatedCostUsd`, `messages` (rows carrying usage), and `cacheHitRate` (0–1: cache reads over input + cache reads + cache writes). |
+| `daily` | array | One row per UTC day: `key` (`YYYY-MM-DD`) plus the same token, cost and `messages` fields as `totals`, without `cacheHitRate`. |
+| `outcomes` | object | Turn counts from observability: `completed`, `errored`, `halted`, `running`. |
+| `by` | object, only with `--by` | `{ dimension, rows }`. For `day`/`model`/`personality`/`channel`/`session`, rows have the `daily` row shape keyed by that dimension. For `tool`: `{ tool, calls, errors }`. For `skill`: `{ skill, invoked, exposed }`. |
 
 ```bash
 ethos usage --since 7d
-ethos usage --since 24h --json
+ethos usage --since 24h --by model --json
 ```
+
+The web dashboard shows the same totals under Activity → **Usage**. Both fold the rows with `summarizeUsageRows` in `extensions/session-sqlite/src/index.ts`. Turn outcomes and `--by tool|skill` are CLI-only.
 
 ## ethos claw {#ethos-claw}
 
@@ -665,12 +678,13 @@ Synopsis: `ethos doctor [--json]`
 
 ## ethos upgrade {#ethos-upgrade}
 
-Install the newest published `@ethosagent/cli` and keep it only if it passes `ethos doctor`. A source clone gets the `git pull` / `pnpm install` / `pnpm build` steps instead, and nothing is installed.
+Install the newest published `@ethosagent/cli` (or the version `--version` names) and keep it only if it passes `ethos doctor`. A source clone gets the `git pull` / `pnpm install` / `pnpm build` steps instead, and nothing is installed.
 
-Synopsis: `ethos upgrade [--no-rollback]`
+Synopsis: `ethos upgrade [--version <version-or-tag>] [--no-rollback]`
 
 | Flag | Required | Description |
 |---|---|---|
+| `--version <version-or-tag>` | no | Install this exact version (`0.7.3`) or dist-tag (`next`) instead of `latest`. The registry resolves it to one exact version, which the health gate checks for. A range (`^0.7`) is refused before the registry is contacted. |
 | `--no-rollback` | no | Keep the new version even if its health check fails. The failed checks and the way back are still printed. |
 
 The registry is `npm_config_registry` when set, otherwise `https://registry.npmjs.org`. An npm-global upgrade runs these steps in order. Source: [`apps/ethos/src/commands/upgrade.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/upgrade.ts).
@@ -679,8 +693,8 @@ The registry is `npm_config_registry` when set, otherwise `https://registry.npmj
 |---|---|---|
 | Baseline | The running binary's `ethos doctor --json`. | Stops. Nothing is installed. |
 | Backup | `ethos backup` into the backup directory. The archive path is printed. | Stops. Nothing is installed. |
-| Install | `npm install -g @ethosagent/cli@<latest>`. | Exits with npm's exit code. |
-| Health gate | The new binary's `ethos doctor --json`, run from `$(npm root -g)/@ethosagent/cli` with the current Node, never from `PATH`. | Rolls back, unless `--no-rollback`. |
+| Install | `npm install -g @ethosagent/cli@<resolved-version>`. | Exits with npm's exit code. |
+| Health gate | The new binary's `ethos doctor --json`, run from `$(npm root -g)/@ethosagent/cli` with the current Node, never from `PATH`. On success, prints `What changed:` with the [changelog](../../changelog.md) entry for the new version. | Rolls back, unless `--no-rollback`. |
 | Rollback | `npm install -g @ethosagent/cli@<previous>`, then the old binary's doctor, which must match the baseline. | Prints the archive path and the `ethos import <archive>` command. |
 
 The health gate rolls back on any of these:
@@ -700,13 +714,14 @@ These are printed and never roll back: a check that already failed in the baseli
 
 | Exit code | Meaning |
 |---|---|
-| `0` | Upgraded, already on the latest version, or a source clone. |
-| `1` | Registry unreachable, baseline or backup failed, the new version failed its health gate (rolled back, or kept with `--no-rollback`), or the rollback failed. |
+| `0` | Upgraded, already on the target version, or a source clone. |
+| `1` | `--version` missing its value or not a version or dist-tag, registry unreachable or the version unpublished, baseline or backup failed, the new version failed its health gate (rolled back, or kept with `--no-rollback`), or the rollback failed. |
 | npm's exit code | `npm install -g` of the new version failed. Nothing was changed. |
 
 ```bash
 ethos upgrade
 ethos upgrade --no-rollback
+ethos upgrade --version 0.7.3
 npm_config_registry=http://localhost:4873 ethos upgrade
 ```
 

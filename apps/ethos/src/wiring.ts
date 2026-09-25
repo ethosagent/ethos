@@ -661,6 +661,8 @@ export async function createAgentLoop(
      * Gateway only — it is the one component that knows the mapping.
      */
     resolveOriginThreadId?: (sessionKey: string) => string | undefined;
+    /** Resolve who started a live turn, for the same reason. Gateway only. */
+    resolveOriginUserId?: (sessionKey: string) => string | undefined;
     /**
      * Lane 0 (D16) — force a LIVE served-window probe (bypassing the disk
      * cache) and rewrite the cache. Set by `ethos bench context`; chat and
@@ -722,6 +724,7 @@ export async function createAgentLoop(
     ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
     ...(opts.originBotKey ? { originBotKey: opts.originBotKey } : {}),
     ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
+    ...(opts.resolveOriginUserId ? { resolveOriginUserId: opts.resolveOriginUserId } : {}),
     ...(opts.probeWindowRefresh === true ? { probeWindowRefresh: true } : {}),
     ...(opts.livekit ? { livekit: opts.livekit } : {}),
     ...(opts.outbox ? { outbox: opts.outbox } : {}),
@@ -778,6 +781,8 @@ export interface TeamLoopInfo {
   /** `CreateAgentLoopResult.approverDecision` of the coordinator's build (plan
    *  decision-provider-jev §8.2) — absent unless the approver site is on. */
   approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
+  /** `CreateAgentLoopResult.executionPostureFor` of the coordinator's build (S6 / D1(a)). */
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
 }
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
@@ -845,6 +850,7 @@ export async function createTeamAgentLoop(
     dispose,
     drain,
     approverDecision,
+    executionPostureFor,
   } = await createAgentLoop(
     {
       ...coordinatorConfig,
@@ -886,6 +892,7 @@ export async function createTeamAgentLoop(
     dispose,
     drain,
     ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor,
   };
 }
 

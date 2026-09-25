@@ -68,8 +68,8 @@ To stop: `docker compose down`
 
 | Variable | Default | Description |
 |---|---|---|
-| `ETHOS_DATA_DIR` | `../ethos-data` | Where on **your machine** Ethos stores its state (config, secrets, sessions). Can be an absolute path or relative to the `docker/` folder. |
-| `ETHOS_WORKSPACE_DIR` | `../ethos-workspace` | Where on **your machine** the agent's working directory lives — files it creates in `cwd` land here and survive restarts. Same path rules as `ETHOS_DATA_DIR`. |
+| `ETHOS_DATA_DIR` | unset (named volume `ethos-data`) | Where Ethos stores its state (config, secrets, sessions). Unset, it is the Docker named volume `ethos-data`. Set a host path (absolute, or relative to the `docker/` folder) to bind-mount a directory instead — only on native Linux Docker: Docker Desktop bind mounts are virtiofs/gRPC-FUSE or 9p, where SQLite locking is unsafe (`ethos doctor` warns). |
+| `ETHOS_WORKSPACE_DIR` | `../ethos-workspace` | Where on **your machine** the agent's working directory lives — files it creates in `cwd` land here and survive restarts. An absolute path or relative to the `docker/` folder. |
 
 ### Agent
 
@@ -85,8 +85,8 @@ If something is broken or you want to start completely clean, delete the state d
 
 ```bash
 # From the docker/ folder
-rm -rf ../ethos-data          # or wherever ETHOS_DATA_DIR points
 docker compose down
+docker volume rm ethos-data   # or rm -rf the directory ETHOS_DATA_DIR points at
 docker compose up
 ```
 
@@ -100,6 +100,6 @@ Three containers start in order:
 
 | Service | Role |
 |---|---|
-| `init` | One-shot bootstrap — reads your credentials from env, writes `config.yaml` and secrets to `ETHOS_DATA_DIR`. Exits immediately if config already exists. |
+| `init` | One-shot bootstrap — reads your credentials from env, writes `config.yaml` and secrets to the state volume. Exits immediately if config already exists. |
 | `ethos-web` | Web UI on port 3000. Starts after `init` completes. |
 | `ethos-gateway` | Channel gateway (Telegram, Slack, Discord). Starts after `init` completes. |

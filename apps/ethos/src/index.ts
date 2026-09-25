@@ -1291,6 +1291,11 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
   const posture = await buildExecutionPosture({
     personality: described.config,
     substitutionVars: { ethosHome: ethosDir(), cwd: process.cwd() },
+    // The same explicit signal the compose path forwards, so the sheet's
+    // "containerized (local)" matches where execution actually runs.
+    ...(cfg?.execution?.containerized === true
+      ? { containerized: { containerizedConfig: true } }
+      : {}),
     sshConfigured: sshCfg?.host !== undefined,
     ...(sshCfg ? { sshTarget: formatSshTarget(sshCfg) } : {}),
   });

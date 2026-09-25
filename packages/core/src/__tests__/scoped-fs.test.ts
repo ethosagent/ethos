@@ -6,8 +6,8 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FsStorage } from '@ethosagent/storage-fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { defaultAlwaysDeny, FsStorage } from '@ethosagent/storage-fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { personalityWriteDeny } from '../fs-reach';
 import { ScopedFsImpl } from '../scoped/scoped-fs';
 
@@ -63,5 +63,39 @@ describe('ScopedFsImpl — writeDenyPaths (personality definition)', () => {
       /^PATH_NOT_REACHABLE: .*personality definition is operator-owned/,
     );
     expect(await readFile(join(own, 'toolset.yaml'), 'utf8')).toBe('- read_file\n');
+  });
+});
+
+// PST-001 — the always-deny floor wiring hands `ScopedFsImpl`
+// (`alwaysDenyPaths: defaultAlwaysDeny()`, packages/wiring/src/build-infrastructure.ts)
+// covers the state dir's shared stores, so a reach that spans the state dir
+// (the default reach when the process cwd IS the state dir) still stops at them.
+describe('ScopedFsImpl — always-deny floor over the Ethos state dir', () => {
+  let state: string;
+  let fs: ScopedFsImpl;
+
+  beforeEach(async () => {
+    state = await realpath(await mkdtemp(join(tmpdir(), 'ethos-scopedfs-state-')));
+    vi.stubEnv('ETHOS_STATE_DIR', state);
+    await mkdir(join(state, 'personalities', 'bob'), { recursive: true });
+    await writeFile(join(state, 'sessions.db'), 'transcripts');
+    await writeFile(join(state, 'personalities', 'bob', 'MEMORY.md'), 'mine');
+    fs = new ScopedFsImpl(
+      new FsStorage(),
+      new Set([`${state}/`]),
+      new Set([`${state}/`]),
+      defaultAlwaysDeny(),
+    );
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await rm(state, { recursive: true, force: true });
+  });
+
+  it('refuses sessions.db and mcp.json but still reads the personality MEMORY.md', async () => {
+    await expect(fs.read(join(state, 'sessions.db'))).rejects.toThrow(/PATH_NOT_REACHABLE/);
+    await expect(fs.write(join(state, 'mcp.json'), '[]')).rejects.toThrow(/PATH_NOT_REACHABLE/);
+    expect(await fs.read(join(state, 'personalities', 'bob', 'MEMORY.md'))).toBe('mine');
   });
 });

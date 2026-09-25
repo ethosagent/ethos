@@ -203,7 +203,7 @@ pm2 restart ethos    # pick up the new binary
 
 Ethos's footprint is light — typical single-operator deployment on a 4 GB Pi:
 
-- Idle: ~150 MB RAM (supervisor + 2 children).
+- Idle: ~150 MB RAM (supervisor + 2 children). Measure your own: `ethos status` prints the running gateway's resident set size from its heartbeat, and the gateway's `:3002/metrics` exports `ethos_process_rss_bytes` and `ethos_process_heap_used_bytes`.
 - Active turn: spikes by ~200–400 MB depending on the model and context size.
 - Disk: SQLite under `~/.ethos/` grows ~1 MB per hundred messages. Run `ethos retention` to set caps.
 - Network: outbound only by default. Telegram long-polling and Slack Socket Mode dial out; you don't need an inbound port unless you publish the web dashboard.

@@ -216,6 +216,7 @@ export async function* runAcpHost(
         ...(label ? { toolName: label } : {}),
         ...(p.toolCall.kind ? { kind: p.toolCall.kind } : {}),
         digest: digestOf(p.toolCall.rawInput),
+        ...(p.toolCall.rawInput !== undefined ? { rawInput: p.toolCall.rawInput } : {}),
         options: p.options,
       };
       try {

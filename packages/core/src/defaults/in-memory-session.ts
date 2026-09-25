@@ -284,7 +284,10 @@ export class InMemorySessionStore implements SessionStore {
   async pruneOldSessions(olderThan: Date): Promise<number> {
     let count = 0;
     for (const [id, session] of this.sessions.entries()) {
-      if (session.updatedAt < olderThan) {
+      // Same rule as SQLiteSessionStore.pruneOldSessions: a session holding a
+      // message at or after the cutoff is kept, whatever its `updatedAt`.
+      const recent = (this.messages.get(id) ?? []).some((m) => m.timestamp >= olderThan);
+      if (session.updatedAt < olderThan && !recent) {
         this.sessions.delete(id);
         this.messages.delete(id);
         this.decisions.delete(id);

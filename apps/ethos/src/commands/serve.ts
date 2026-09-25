@@ -97,7 +97,6 @@ import {
   systemJobProblem,
   wrapUntrusted,
 } from '@ethosagent/wiring';
-import { appendErrorLog } from '../error-log';
 import { createAcpMcpWiring } from '../lib/acp-mcp-wiring';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
@@ -110,6 +109,7 @@ import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
+import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import {
   buildServeBusySources,
@@ -155,10 +155,6 @@ import {
 const ACP_PORT_DEFAULT = 3001;
 const WEB_PORT_FALLBACK_ATTEMPTS = 5;
 
-// Resilience guard is installed once per process — runServe can be reached
-// twice (onboarding mode then real mode), so guard against double-registration.
-let resilienceGuardInstalled = false;
-
 /** Where a timed-out or failed `boundedShutdownStep` on `cleanup` is reported. */
 const shutdownStepReporting = {
   sink: () => getEthosObservability(),
@@ -182,7 +178,11 @@ type ServeVoiceConfig = {
 };
 
 export async function runServe(args: string[], config: EthosConfig | null): Promise<void> {
-  installServeResilienceGuard();
+  // A stray rejected SSE write (e.g. to a stream the browser aborted on
+  // tab-switch) must not take down the server and every other live stream:
+  // both handlers log and keep running here — no `shutdown` is passed.
+  // Idempotent, so reaching runServe twice (onboarding, then real) is safe.
+  installProcessGuards({ command: 'serve', observability: getEthosObservability });
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webPort = resolveWebPort(args, process.env, config);
   const webHost = resolveWebHost(args, process.env, config);
@@ -289,6 +289,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
                   loop,
                   personalities,
                   agentConfig,
+                  agentResult.executionPostureFor,
                   agentResult.approverDecision,
                 ),
             });
@@ -482,6 +483,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // The smart approver's decision site from the build `loop` came from
   // (plan decision-provider-jev §8.2), on every branch below.
   let approverDecision: SmartApproverDecisionSite | undefined;
+  // Where each personality's shell tools run in the build `loop` came from —
+  // the web approval predicate flags them under a host-local posture (S6 / D1(a)).
+  let executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
   let mcpManager: McpManager | undefined;
   let pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
   let notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
@@ -645,6 +649,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, logLevel),
+    ...(config.cron?.defaultMaxRunMs !== undefined
+      ? { defaultMaxRunMs: config.cron.defaultMaxRunMs }
+      : {}),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
       : {}),
@@ -668,7 +675,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         // observability unavailable — audit is fail-open
       }
     },
-    runJob: async (job) => {
+    runJob: async (job, runOpts) => {
       if (!loop) {
         throw new EthosError({
           code: 'INTERNAL',
@@ -700,6 +707,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         personalityId: pid,
         webOrigin,
         ...(toolsetOverride ? { toolsetOverride } : {}),
+        // R10 — the scheduler aborts this at the job's `maxRunMs`.
+        ...(runOpts ? { abortSignal: runOpts.abortSignal } : {}),
       });
       if (chatService) {
         chatService.broadcastAll({
@@ -752,6 +761,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     loop = result.loop;
     toolRegistry = result.toolRegistry;
     approverDecision = result.approverDecision;
+    executionPostureFor = result.executionPostureFor;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -786,6 +796,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       goals: teamGoals,
       memoryBundle: teamMemoryBundle,
       dispose: teamDispose,
+      executionPostureFor: teamExecutionPostureFor,
       approverDecision: teamApproverDecision,
     } = await createTeamAgentLoop(config, teamFlag, {
       profile: loopProfile,
@@ -794,6 +805,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     loop = teamLoop;
     toolRegistry = teamToolRegistry;
     approverDecision = teamApproverDecision;
+    executionPostureFor = teamExecutionPostureFor;
     activeMeshName = teamMesh;
     activePersonality = coordinatorPersonality;
     setOnSkillProposed = teamSetOnSkillProposed;
@@ -820,6 +832,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     loop = result.loop;
     toolRegistry = result.toolRegistry;
     approverDecision = result.approverDecision;
+    executionPostureFor = result.executionPostureFor;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -1187,7 +1200,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     routeModules: a2aRouteModules,
     peering: a2aPeering,
     setA2aEnabled,
-  } = buildServeA2aSurface({ config, core: a2a, toolRegistry });
+  } = buildServeA2aSurface({ config, core: a2a, toolRegistry, trustProxy });
 
   // P2-counters (D2/D16) — `ethos_gateway_adapter_up{adapter}` reads the same
   // heartbeat file `/healthz` does, through the same 30s staleness gate
@@ -1259,6 +1272,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     dir,
     loop,
     ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor,
     session,
     contextLog,
     personalities,
@@ -1533,44 +1547,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
 }
 
 /**
- * Install process-level resilience handlers for the long-running web/ACP
- * server. A stray rejected SSE write (e.g. writing to a stream the browser
- * aborted on tab-switch) must NOT take down the server and drop every other
- * live stream. We log-and-continue here rather than exit — this is scoped to
- * the serve path only; one-shot CLI commands still fail loudly via the
- * top-level handler. Idempotent via `resilienceGuardInstalled`.
- */
-function installServeResilienceGuard(): void {
-  if (resilienceGuardInstalled) return;
-  resilienceGuardInstalled = true;
-  process.on('unhandledRejection', (reason) => {
-    const cause = reason instanceof Error ? reason.message : String(reason);
-    appendErrorLog(
-      new EthosError({
-        code: 'INTERNAL',
-        cause: `Unhandled promise rejection: ${cause}`,
-        action: 'A background promise rejected and was not awaited. The server kept running.',
-      }),
-      { command: 'serve' },
-    );
-    console.error(`[serve] unhandled rejection (kept alive): ${cause}`);
-  });
-  process.on('uncaughtException', (err) => {
-    const cause = err instanceof Error ? err.message : String(err);
-    appendErrorLog(
-      new EthosError({
-        code: 'INTERNAL',
-        cause: `Uncaught exception: ${cause}`,
-        action:
-          'An uncaught exception was trapped by the serve resilience guard. The server kept running.',
-      }),
-      { command: 'serve' },
-    );
-    console.error(`[serve] uncaught exception (kept alive): ${cause}`);
-  });
-}
-
-/**
  * Resolve the absolute path to the built SPA. Search order:
  *   1. `--web-dist <path>` flag (explicit, wins).
  *   2. Sibling to the bundled CLI: `<cliDist>/web/index.html` (the
@@ -1683,6 +1659,7 @@ export function buildServeDangerPredicate(
   loop: AgentLoop,
   personalities: ServePersonalityRegistry,
   config: EthosConfig,
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'],
   decision?: SmartApproverDecisionSite,
 ): ReturnType<typeof createApprovalDangerPredicate> {
   return createApprovalDangerPredicate({
@@ -1692,6 +1669,7 @@ export function buildServeDangerPredicate(
     model: config.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     ...(decision ? { decision } : {}),
+    executionPostureFor,
   });
 }
 type AcpServerOptions = ConstructorParameters<typeof AcpServer>[0];
@@ -1936,6 +1914,9 @@ export function buildServeA2aSurface(opts: {
   /** Absent on deployments with no tool registry — `a2a_send` is then not
    *  registered, exactly as before. */
   toolRegistry: ToolRegistry | undefined;
+  /** `ETHOS_TRUST_PROXY` (WEB-006): whether the `/a2a` pre-auth limiter may
+   *  key on `X-Forwarded-For` (`remoteKeyOf`, packages/a2a/src/rpc.ts). */
+  trustProxy: boolean;
 }): {
   routeModules: RouteModule[];
   peering: ReturnType<typeof buildA2aPeeringService>;
@@ -2039,6 +2020,7 @@ export function buildServeA2aSurface(opts: {
         taskStore: a2aTaskStore,
         limiter: a2aLimiter,
         preAuthLimiter: a2aPreAuthLimiter,
+        trustProxy: opts.trustProxy,
         delegationGuard: a2aDelegationGuard,
         auditSink: a2aAuditSink,
       }),
@@ -2110,6 +2092,8 @@ export interface BuildServeWebApiOptions {
   loop: AgentLoop;
   /** `CreateAgentLoopResult.approverDecision` of the build `loop` came from. */
   approverDecision?: SmartApproverDecisionSite;
+  /** `CreateAgentLoopResult.executionPostureFor` of the build `loop` came from. */
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
   session: ReturnType<typeof createSessionStore>;
   contextLog: SQLiteContextLog;
   personalities: ServePersonalityRegistry;
@@ -2360,7 +2344,13 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     },
     // The approval modal's danger check — built by the same function the
     // onboarding boot uses (`buildServeDangerPredicate`).
-    dangerPredicate: buildServeDangerPredicate(loop, personalities, config, opts.approverDecision),
+    dangerPredicate: buildServeDangerPredicate(
+      loop,
+      personalities,
+      config,
+      opts.executionPostureFor,
+      opts.approverDecision,
+    ),
     // Every modal decision (and every allowlist auto-allow) lands in the
     // safety audit trail behind `ethos audit decisions`.
     approvalObservability: {

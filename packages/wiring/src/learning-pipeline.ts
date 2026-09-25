@@ -67,7 +67,7 @@ import {
 import { parseLivingSoul } from '@ethosagent/personalities';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { type LearningSubmitPort, liveSkillDir, loadEvolveConfig } from '@ethosagent/skill-evolver';
-import { checkSkillFrontmatter, parseSkillFrontmatter } from '@ethosagent/skills';
+import { checkSkillFrontmatter, parseSkillFrontmatter, vetPromotedSkill } from '@ethosagent/skills';
 import type { PendingSkillSummary, PendingSkillsPort } from '@ethosagent/tools-skills';
 import type {
   LLMProvider,
@@ -200,6 +200,7 @@ export function learningPromoteDeps(
       const check = checkSkillFrontmatter(md);
       return check.ok ? { ok: true } : { ok: false, error: check.error };
     },
+    vetSkill: vetPromotedSkill,
     expressions: ctx.expressions,
   };
 }

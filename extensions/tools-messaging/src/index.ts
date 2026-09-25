@@ -154,6 +154,28 @@ export function laneSenderBotKey(
   return laneKeyBotKey(ctx.sessionKey);
 }
 
+/**
+ * The operator messaging allowlist check, or `undefined` when `platform:target`
+ * may be sent to. `getAllowedTargets` absent, or answering `null`, means no
+ * allowlist applies. The one owner of this rule: `send_message` below and
+ * `watcher_create`'s `deliver` (`createWatcherTools` in
+ * `@ethosagent/tools-watchers`, S5) both call it, so a watcher cannot deliver
+ * where the personality could not `send_message`.
+ */
+export function messagingTargetRefusal(
+  getAllowedTargets: MessagingToolsOptions['getAllowedTargets'],
+  personalityId: string | undefined,
+  platform: string,
+  target: string,
+): string | undefined {
+  if (!getAllowedTargets) return undefined;
+  const allowed = getAllowedTargets(personalityId);
+  if (allowed === null) return undefined;
+  const targetKey = `${platform}:${target}`;
+  if (allowed.includes(targetKey) || allowed.includes('*')) return undefined;
+  return `Target "${targetKey}" is not in the personality's allowed messaging targets. Allowed: ${allowed.join(', ') || 'none'}`;
+}
+
 // ---------------------------------------------------------------------------
 // Tool factory
 // ---------------------------------------------------------------------------
@@ -237,19 +259,13 @@ async function executeSendMessage(
   }
 
   // Check allowed targets.
-  if (opts.getAllowedTargets) {
-    const allowed = opts.getAllowedTargets(ctx.personalityId);
-    if (allowed !== null) {
-      const targetKey = `${platform}:${target}`;
-      if (!allowed.includes(targetKey) && !allowed.includes('*')) {
-        return {
-          ok: false,
-          error: `Target "${targetKey}" is not in the personality's allowed messaging targets. Allowed: ${allowed.join(', ') || 'none'}`,
-          code: 'input_invalid',
-        };
-      }
-    }
-  }
+  const notAllowed = messagingTargetRefusal(
+    opts.getAllowedTargets,
+    ctx.personalityId,
+    platform,
+    target,
+  );
+  if (notAllowed) return { ok: false, error: notAllowed, code: 'input_invalid' };
 
   // The approval gate, AFTER the allowlist on purpose (O-D3): approval must
   // never widen the destinations the operator allowed, so a target outside the

@@ -28,6 +28,7 @@ import {
   type Agent,
   countingRunner,
   HELLO_SCRIPT,
+  LOOPBACK_PEER_POLICY,
   makeAgent,
   newPeerStore,
   type SheetHolder,
@@ -109,6 +110,7 @@ describe('A2aOutboundClient — sync retry does not double-execute the agent tur
     };
 
     const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
       fetchImpl,
       now: () => clock.t,
       sleepFn: async () => {},
@@ -162,6 +164,7 @@ describe('A2aOutboundClient — async retry does not double-execute the agent tu
     };
 
     const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
       fetchImpl,
       now: () => clock.t,
       sleepFn: async () => {},

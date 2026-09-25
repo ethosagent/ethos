@@ -79,6 +79,7 @@ async function smartPredicate(
   });
   const getProvider = async () => reviewer();
   const isDangerous = createApprovalDangerPredicate({
+    executionPostureFor: () => undefined,
     hooks: [hooks],
     personalities,
     getProvider,

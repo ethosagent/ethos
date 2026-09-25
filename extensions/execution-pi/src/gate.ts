@@ -1,4 +1,5 @@
-import type { Logger } from '@ethosagent/types';
+import { denyRuleReason, matchDenyRule } from '@ethosagent/core';
+import type { Logger, PersonalityConfig } from '@ethosagent/types';
 
 /**
  * One interception of a Pi tool call, as it reaches the host.
@@ -25,6 +26,12 @@ export interface PiGateRequest {
   toolName: string;
   /** Compact, truncated digest of the tool input — legible, never authoritative. */
   digest: string;
+  /**
+   * The tool input itself, untruncated, as the gate extension sent it — what
+   * `createPersonalityGate` matches deny rules against. Absent when the title
+   * carried no input line (`parseGateTitle`).
+   */
+  input?: unknown;
 }
 
 export interface PiGateAnswer {
@@ -52,19 +59,106 @@ const TITLE_PREFIX = 'ethos:tool_call:';
  *
  * The title is the ONLY channel Pi's dialog methods give us for payload
  * (`select` carries a title and options, nothing else), so the extension
- * encodes `ethos:tool_call:<toolName>\n<digest>` and this reads it back. A
- * title that is not ours returns null — another extension's dialog is not the
- * gate's to answer.
+ * encodes `ethos:tool_call:<toolName>\n<digest>\n<input JSON>` and this reads
+ * it back. Neither the digest (whitespace-collapsed) nor `JSON.stringify`
+ * output contains a raw newline, so the split is unambiguous. A title that is
+ * not ours returns null — another extension's dialog is not the gate's to
+ * answer.
  */
 export function parseGateTitle(
   title: string | undefined,
-): { toolName: string; digest: string } | null {
+): { toolName: string; digest: string; input?: unknown } | null {
   if (!title?.startsWith(TITLE_PREFIX)) return null;
-  const body = title.slice(TITLE_PREFIX.length);
-  const nl = body.indexOf('\n');
-  return nl === -1
-    ? { toolName: body, digest: '' }
-    : { toolName: body.slice(0, nl), digest: body.slice(nl + 1) };
+  const [toolName = '', digest = '', inputLine] = title.slice(TITLE_PREFIX.length).split('\n');
+  if (inputLine === undefined) return { toolName, digest };
+  try {
+    return { toolName, digest, input: JSON.parse(inputLine) };
+  } catch {
+    return { toolName, digest };
+  }
+}
+
+/**
+ * Pi tool name → the Ethos tools that do the same thing (S12, plan
+ * openclaw-2026.9.6-gaps). Pi's built-ins are the runner's `--tools` list
+ * (`DEFAULT_PI_TOOLS` in `src/runner.ts`, operator-overridable):
+ *
+ * | Pi tool | Ethos tools                  |
+ * |---------|------------------------------|
+ * | `read`  | `read_file`                  |
+ * | `bash`  | `terminal`                   |
+ * | `write` | `write_file`                 |
+ * | `edit`  | `patch_file`, `write_file`   |
+ * | `grep`  | `search_files`               |
+ * | `find`  | `search_files`               |
+ * | `ls`    | `read_file`, `search_files`  |
+ * | other   | none                         |
+ *
+ * Several-tool rows fail CLOSED for deny rules (a rule matching ANY of them
+ * refuses) and open for the toolset (ANY of them in the toolset permits).
+ * Enforced by `personalityRefusal` below; pinned by the `createPersonalityGate`
+ * cases in `src/__tests__/runner.test.ts`.
+ */
+const PI_TOOL_TO_ETHOS_TOOLS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['read', ['read_file']],
+  ['bash', ['terminal']],
+  ['write', ['write_file']],
+  ['edit', ['patch_file', 'write_file']],
+  ['grep', ['search_files']],
+  ['find', ['search_files']],
+  ['ls', ['read_file', 'search_files']],
+]);
+
+export type PiGatePersonality = Pick<PersonalityConfig, 'id' | 'toolset' | 'safety'>;
+
+/** Why this personality refuses the call, or `undefined` if it does not. */
+function personalityRefusal(
+  personality: PiGatePersonality,
+  req: PiGateRequest,
+): string | undefined {
+  const mapped = PI_TOOL_TO_ETHOS_TOOLS.get(req.toolName) ?? [];
+  // Deny rules: every Ethos name the tool maps to, plus Pi's own name, against
+  // the full input — the digest only when an older extension sent no input.
+  const args = req.input ?? req.digest;
+  for (const name of [...mapped, req.toolName]) {
+    const rule = matchDenyRule(personality.safety?.denyRules, name, args);
+    if (rule) return denyRuleReason(rule);
+  }
+  // Toolset: only a tool with an Ethos analogue can be checked; any other goes
+  // to the inner gate (the router, or a human) as before.
+  const toolset = personality.toolset;
+  if (toolset && mapped.length > 0 && !mapped.some((t) => toolset.includes(t))) {
+    return `Pi tool "${req.toolName}" maps to ${mapped.join(', ')}, none of which is in personality "${personality.id}"'s toolset`;
+  }
+  return undefined;
+}
+
+/**
+ * Bind a delegated Pi run to the delegating personality's deny rules and
+ * toolset — the floor the in-process loop applies in `enforceBeforeToolCall`
+ * (`packages/core`) and the tool registry, which Pi's own process never
+ * crosses. Checked BEFORE `inner` (auto-approve or the router), so no cached
+ * answer or human can approve past it. `PiJobRunner` wraps its gate in this
+ * per run (`src/runner.ts`). The reason is logged; Pi's model sees only the
+ * extension's fixed "Blocked by Ethos policy", because `runPiHost` answers the
+ * dialog with `allow`/`deny` alone.
+ */
+export function createPersonalityGate(
+  inner: PiGatePolicy,
+  personality: PiGatePersonality,
+  logger?: Logger,
+): PiGatePolicy {
+  return async (req) => {
+    const reason = personalityRefusal(personality, req);
+    if (!reason) return inner(req);
+    logger?.info('pi gate: refused by personality policy', {
+      jobId: req.jobId,
+      requestId: req.requestId,
+      personalityId: personality.id,
+      reason,
+    });
+    return { allow: false, reason };
+  };
 }
 
 /**

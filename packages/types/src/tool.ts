@@ -121,6 +121,18 @@ export interface ToolContext {
    */
   reviewOfJobId?: string;
   /**
+   * The running turn's tool narrowing (S12, plan openclaw-2026.9.6-gaps):
+   * `narrow` is its effective allowlist (the personality toolset after
+   * `toolsetOverride`/`toolsetNarrow`/small-window narrowing), `exclude` its
+   * surface exclusion (`RunOptions.toolsetExclude`). Set by `processTools`
+   * (`packages/core/src/agent-loop/stages/tool-processing.ts`); absent when the
+   * turn has neither. A tool that starts a sub-agent turn passes these on as
+   * that turn's `toolsetNarrow`/`toolsetExclude` (`runSubAgent` in
+   * `@ethosagent/tools-delegation`), so a child never regains what the parent
+   * turn was narrowed out of.
+   */
+  toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
+  /**
    * Where this turn originated, as `platform:chatId` for channel turns (else unset).
    * Generic per-run context; goal_create reads it to stamp Goal.origin.
    */
@@ -404,6 +416,8 @@ export interface ToolExecuteRequest {
   jobId?: string;
   /** Mirrors `ToolContext.reviewOfJobId`; see its doc there. */
   reviewOfJobId?: string;
+  /** Mirrors `ToolContext.toolsetNarrowing`; see its doc there. */
+  toolsetNarrowing?: { narrow?: string[]; exclude?: string[] };
   origin?: string;
   memoryScopeId?: string;
   userScopeId?: string;

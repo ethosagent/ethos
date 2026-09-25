@@ -1,5 +1,6 @@
 import { basename } from 'node:path';
 import type { AgentBridge } from '@ethosagent/agent-bridge';
+import { haltNotice } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
 import { answerSuffix, type PendingClarify, type Session } from '@ethosagent/types';
 import { Box, Static, Text, useApp, useInput } from 'ink';
@@ -280,6 +281,8 @@ export function App({
   const streamedTextRef = useRef('');
   const turnToolDurationsRef = useRef<number[]>([]);
   const turnUsageRef = useRef<TurnTiming['turnUsage']>(null);
+  /** S4/U1 — the turn's budget-halt notice, committed after its reply on `done`. */
+  const haltNoticeRef = useRef<string | null>(null);
   const [turnElapsed, setTurnElapsed] = useState(0);
   const fileByToolCallRef = useRef(
     new Map<string, { action: FileActivity['action']; path: string }>(),
@@ -603,6 +606,10 @@ export function App({
       const full = streamed + answerSuffix(streamed, text);
       const reply = full.trim() ? full : text;
       if (reply.trim()) newMessages.push({ id: nextId(), role: 'assistant', text: reply });
+      if (haltNoticeRef.current) {
+        newMessages.push({ id: nextId(), role: 'system', text: haltNoticeRef.current });
+        haltNoticeRef.current = null;
+      }
       if (verboseRef.current && turnStartRef.current !== null) {
         const summary = formatVerboseSummary({
           turnStart: turnStartRef.current,
@@ -708,6 +715,14 @@ export function App({
       pushTimeline('error', `[${code}] ${error}`);
     };
 
+    // S4/U1 — held until `done` so the notice lands after the reply it cut short.
+    const onHalt = (halt: Parameters<typeof haltNotice>[0]) => {
+      const notice = haltNotice(halt);
+      if (!notice) return;
+      haltNoticeRef.current = notice;
+      pushTimeline('warning', notice);
+    };
+
     const onQueued = (_input: string, queueDepth: number) => {
       pushTimeline('warning', `input queued (depth=${queueDepth})`);
     };
@@ -731,6 +746,7 @@ export function App({
     bridge.on('tool_progress', onToolProgress);
     bridge.on('tool_end', onToolEnd);
     bridge.on('usage', onUsage);
+    bridge.on('halt', onHalt);
     bridge.on('error', onError);
     bridge.on('queued', onQueued);
     bridge.on('idle', onIdle);
@@ -744,6 +760,7 @@ export function App({
       bridge.off('tool_progress', onToolProgress);
       bridge.off('tool_end', onToolEnd);
       bridge.off('usage', onUsage);
+      bridge.off('halt', onHalt);
       bridge.off('error', onError);
       bridge.off('queued', onQueued);
       bridge.off('idle', onIdle);

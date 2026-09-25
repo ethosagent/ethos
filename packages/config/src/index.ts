@@ -757,6 +757,8 @@ export interface TelegramBotConfig {
    * paused (§6).
    */
   dropPendingUpdates?: boolean;
+  /** See {@link BotBudgetConfig}. `telegram.bots.<n>.budget.dailyUsd`. */
+  budget?: BotBudgetConfig;
 }
 
 export interface SlackAppConfig {
@@ -814,6 +816,8 @@ export interface SlackAppConfig {
    *  plus the full answer as `answer.md` instead of a chunk wall. Absent = the
    *  adapter's default (9000); `0` disables the fallback. */
   longReplyThresholdChars?: number;
+  /** See {@link BotBudgetConfig}. `slack.apps.<n>.budget.dailyUsd`. */
+  budget?: BotBudgetConfig;
 }
 
 /**
@@ -839,6 +843,25 @@ export interface WhatsAppConfig {
    *  default personality in the gateway. */
   bind?: BotBinding;
   piiRedaction?: boolean;
+  /** See {@link BotBudgetConfig}. `whatsapp.<n>.budget.dailyUsd`. */
+  budget?: BotBudgetConfig;
+}
+
+/**
+ * Operator spending limit for ONE channel bot (plan openclaw-2026.9.6-gaps D5),
+ * written under the bot's own entry: `telegram.bots.<n>.budget.dailyUsd`,
+ * `slack.apps.<n>.budget.dailyUsd`, `whatsapp.<n>.budget.dailyUsd`.
+ *
+ * A setting, not identity — two deployments of the same personality can
+ * disagree about it — so it lives here, never on `PersonalityConfig`. Enforced
+ * per turn by `Gateway.enqueueTurn` (extensions/gateway) against the bot's
+ * spend since 00:00 UTC; absent = no daily cap. The legacy scalar bots
+ * (`telegramToken`, `discordToken`, email) have no entry to hang it on and so
+ * cannot be capped this way.
+ */
+export interface BotBudgetConfig {
+  /** USD a bot may spend per UTC day before its turns are refused. > 0. */
+  dailyUsd: number;
 }
 
 /**
@@ -939,8 +962,10 @@ export interface VoiceTrunkConfig {
  */
 export interface VoiceInboundConfig {
   /**
-   * Caller numbers that reach the owner's own personality with pre-warm on
-   * ring. E.164 patterns using the same `*` wildcard grammar as
+   * Caller numbers treated as known for `prewarm: 'allowlisted'`. Caller ID is
+   * set by the calling party, so a match is a hint and never reaches the
+   * owner's own personality (INB-001b, `decideInboundCall` in
+   * `@ethosagent/platform-voice`). E.164 patterns using the same `*` wildcard grammar as
    * `voice.bots[].match` (`matchesVoicePattern`), so one grammar governs every
    * number match in the system.
    *
@@ -1279,11 +1304,16 @@ export function parseProviderChain(
     const provider = slot?.get('provider');
     if (!slot || !provider) {
       // A typo'd `providers.1.provder:` loses the WHOLE entry, on every
-      // surface, and this codec is the only reader — so it says which lines.
+      // surface, and this codec is the only reader — so it says which lines,
+      // and which of them was probably meant as the `provider` line (U4).
+      const fields = [...(slot?.keys() ?? [])];
+      const typo = fields.find((f) => nearestConfigKey(f, ['provider']) === 'provider');
       notices?.push(
         `config.yaml: no 'providers.${idx}.provider' line, so entry ${idx} is ignored — ` +
-          `${[...(slot?.keys() ?? [])].map((f) => `'providers.${idx}.${f}'`).join(', ')} ` +
-          'had no effect.',
+          `${fields.map((f) => `'providers.${idx}.${f}'`).join(', ')} had no effect` +
+          (typo
+            ? `; did you mean 'providers.${idx}.provider' for 'providers.${idx}.${typo}'?`
+            : '.'),
       );
       continue;
     }
@@ -1331,7 +1361,16 @@ export function parseProviderChain(
         continue;
       }
       if (isProviderChainStringField(field)) entry[field] = value;
-      else passthrough[field] = value;
+      else {
+        // Kept so a writer cannot delete it, but read by nothing at runtime
+        // (see `ProviderChainEntry.passthrough`) — so it is said out loud (U4).
+        passthrough[field] = value;
+        const near = nearestConfigKey(field, PROVIDER_CHAIN_FIELDS);
+        notices?.push(
+          `config.yaml: 'providers.${idx}.${field}' is not a provider-chain field, so it has ` +
+            `no effect${near ? `; did you mean 'providers.${idx}.${near}'?` : '.'}`,
+        );
+      }
     }
     if (Object.keys(passthrough).length > 0) entry.passthrough = passthrough;
     entries.push(entry);
@@ -1733,8 +1772,11 @@ export interface WebhookHookConfig {
 
 /**
  * One `webhooks.<id>.rateLimit` block. The limiter it configures is
- * in-process and keyed by hookId — the gateway is a single-process model, so
- * there is no shared bucket to coordinate.
+ * in-process — the gateway is a single-process model, so there is no shared
+ * bucket to coordinate. The same knobs size two buckets: one per hookId, spent
+ * only by callers that passed the bearer check, and one per (hookId, caller
+ * address), spent only by bearer failures (`createWebhookServer`,
+ * apps/ethos/src/webhook-server.ts).
  */
 export interface WebhookRateLimitConfig {
   /** Requests allowed per minute. Also the bucket size. */
@@ -1952,6 +1994,92 @@ export interface CronTopLevelConfig {
    *   cron.maxParallelJobs: 2
    */
   maxParallelJobs?: number;
+  /**
+   * Wall-clock cap, in ms, on a cron prompt job's agent turn when the job sets
+   * no `maxRunMs` of its own. Positive integer; absent = the scheduler's
+   * `DEFAULT_CRON_MAX_RUN_MS` (30 min). Enforced by `CronScheduler.runTurnCapped`
+   * in `@ethosagent/cron`. Config key:
+   *   cron.defaultMaxRunMs: 600000
+   */
+  defaultMaxRunMs?: number;
+}
+
+/** `notifications.*` (U11). Raw strings, validated at parse. */
+export interface NotificationsConfig {
+  /** `HH:MM-HH:MM` in `timezone`. */
+  quietHours?: string;
+  /** IANA zone name. Absent = the host's zone (`hostTimeZone`). */
+  timezone?: string;
+  /** Per-botKey override: a window, or `off`. */
+  bots?: Record<string, { quietHours: string }>;
+}
+
+/**
+ * `HH:MM-HH:MM` → minutes after local midnight, or null when malformed. A start
+ * later than the end crosses midnight (`22:00-07:00`). The ONE parser for the
+ * `notifications.quietHours` grammar: the config parser validates with it and
+ * the gateway wiring resolves with it.
+ */
+export function parseQuietHoursSpec(
+  spec: string,
+): { startMinute: number; endMinute: number } | null {
+  const m = spec.trim().match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const [h1, m1, h2, m2] = [m[1], m[2], m[3], m[4]].map(Number);
+  if (h1 === undefined || m1 === undefined || h2 === undefined || m2 === undefined) return null;
+  if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) return null;
+  return { startMinute: h1 * 60 + m1, endMinute: h2 * 60 + m2 };
+}
+
+/** Whether `timeZone` is an IANA zone this runtime knows. */
+export function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The host's IANA zone — the `notifications.timezone` default. */
+export function hostTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+function buildNotificationsConfig(
+  kv: Record<string, string>,
+  botsKv: Record<string, Record<string, string>>,
+  warnings: string[],
+): NotificationsConfig | undefined {
+  const out: NotificationsConfig = {};
+  const quiet = kv.quietHours;
+  if (quiet !== undefined) {
+    if (parseQuietHoursSpec(quiet)) out.quietHours = quiet;
+    else
+      warnings.push(
+        `config.yaml: notifications.quietHours '${quiet}' is not HH:MM-HH:MM — quiet hours are off.`,
+      );
+  }
+  const tz = kv.timezone;
+  if (tz !== undefined) {
+    if (isValidTimeZone(tz)) out.timezone = tz;
+    else
+      warnings.push(
+        `config.yaml: notifications.timezone '${tz}' is not a known IANA time zone — using the host's zone.`,
+      );
+  }
+  const bots: Record<string, { quietHours: string }> = {};
+  for (const [botKey, entry] of Object.entries(botsKv)) {
+    const spec = entry.quietHours;
+    if (spec === undefined) continue;
+    if (spec === 'off' || parseQuietHoursSpec(spec)) bots[botKey] = { quietHours: spec };
+    else
+      warnings.push(
+        `config.yaml: notifications.bots.${botKey}.quietHours '${spec}' is not HH:MM-HH:MM or off — ignored.`,
+      );
+  }
+  if (Object.keys(bots).length > 0) out.bots = bots;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export interface EthosConfig {
@@ -2000,8 +2128,28 @@ export interface EthosConfig {
    *   execution.ssh.knownHostsFile: ~/.ssh/known_hosts_ethos
    *   execution.ssh.strictHostKeys: accept-new
    *   execution.ssh.remoteWorkdir: /srv/work
+   *
+   * `allowLocalFallback` — the operator's opt-in to run exec-bearing
+   * personalities UN-SANDBOXED on the host when this process cannot build a
+   * Docker backend at all (the desktop in-process backend). Unset, that
+   * docker→local downgrade is refused and exec tools answer `not_available`
+   * (`resolveExecutionPosture`, packages/wiring/src/resolve-execution-posture.ts;
+   * S6 / D3, plan openclaw-2026.9.6-gaps). Only the literal `true` opts in:
+   *   execution.allowLocalFallback: true
+   *
+   * `containerized` — the operator's statement that Ethos itself runs inside a
+   * container that auto-detection (`/.dockerenv`, `/proc/1/cgroup`,
+   * `KUBERNETES_SERVICE_HOST`) cannot see, so that container is already the
+   * isolation boundary and exec personalities run `local` in it. It is
+   * `detectContainerized`'s explicit config signal
+   * (packages/wiring/src/resolve-execution-posture.ts), forwarded by the
+   * compose path (`createExecutionRouting`'s `containerizedConfig`). Only the
+   * literal `true` sets it; the env equivalent is `ETHOS_EXECUTION_BACKEND=local`:
+   *   execution.containerized: true
    */
   execution?: {
+    allowLocalFallback?: boolean;
+    containerized?: boolean;
     docker?: { cpu?: number; diskMb?: number };
     ssh?: {
       /** Hostname or IP of the remote target. Non-empty; its presence is the switch. */
@@ -2295,6 +2443,16 @@ export interface EthosConfig {
      * `regex_match`. Absent leaves the adapter on its own `mention_only`.
      */
     defaultChannelMode?: 'mention_only' | 'thread_follow' | 'all' | 'observe';
+    /**
+     * Role ids allowed to click Approve / Deny on an approval card
+     * (`discord.approvalRoleIds: 111,222`). Passed to
+     * `DiscordAdapterConfig.approvalRoleIds` by `buildAdapters`
+     * (apps/ethos/src/commands/gateway.ts). Absent leaves the adapter's
+     * default `role_gate` with no roles, which refuses every click
+     * (`DiscordAdapter.handleApprovalDecision`), so every Discord approval
+     * waits out its timeout. Pinned by `__tests__/discord-approval-roles.test.ts`.
+     */
+    approvalRoleIds?: string[];
     missedMessageBackfill?: {
       /** Read history at all. Default `true` — today's behaviour. */
       enabled?: boolean;
@@ -2616,6 +2774,17 @@ export interface EthosConfig {
    * no `cron:` section at all runs only the local interval trigger, unchanged.
    */
   cron?: CronTopLevelConfig;
+  /**
+   * U11 — operator quiet hours for unprompted channel notices (`notifications.*`).
+   * A setting, not identity: it never lives on a personality. The gateway holds
+   * a background-job wake or an owner notice inside the window and delivers it
+   * when the window ends (`Gateway.noticeHoldReason`); a reply to the user's
+   * own message is never held. Config keys:
+   *   notifications.quietHours: 22:00-07:00      (HH:MM-HH:MM, may cross midnight)
+   *   notifications.timezone: Europe/London      (IANA; absent = the host's zone)
+   *   notifications.bots.<botKey>.quietHours: off  (per-bot window, or off)
+   */
+  notifications?: NotificationsConfig;
   displayBellOnComplete?: boolean;
   displayDebugPanel?: boolean;
   displayDebugPanelModel?: string;
@@ -2783,12 +2952,11 @@ export interface EthosConfig {
   /** Public-facing URL of the web UI. Used as the OAuth redirect base.
    *  Resolution: ETHOS_PUBLIC_URL env > config.yaml webBaseUrl > localhost default. */
   webBaseUrl?: string;
-  /** Storage-layer settings. Supports at-rest encryption via
-   *  `storage.encryption: true` in config.yaml (requires ETHOS_STORAGE_KEY), and
-   *  a pluggable backend via `storage.backend` (default `fs`). Set `s3` to
-   *  target AWS S3 (or an S3-compatible endpoint) when `backend: s3`. */
+  /** Storage-layer settings: a pluggable backend via `storage.backend`
+   *  (default `fs`). Set `s3` to target AWS S3 (or an S3-compatible endpoint)
+   *  when `backend: s3`. (`storage.encryption` was removed — see
+   *  `storageEncryptionRemovedNotice`.) */
   storage?: {
-    encryption?: boolean;
     backend?: 'fs' | 's3';
     s3?: {
       bucket?: string;
@@ -3765,6 +3933,12 @@ function serializeConfigLines(config: EthosConfig): string[] {
       lines.push(`memory.charLimits.user: ${config.memoryCharLimits.user}`);
     }
   }
+  if (config.execution?.allowLocalFallback === true) {
+    lines.push('execution.allowLocalFallback: true');
+  }
+  if (config.execution?.containerized === true) {
+    lines.push('execution.containerized: true');
+  }
   if (config.execution?.docker) {
     if (config.execution.docker.cpu !== undefined) {
       lines.push(`execution.docker.cpu: ${config.execution.docker.cpu}`);
@@ -3965,6 +4139,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
       if (bot.defaultChannelMode) {
         lines.push(`telegram.bots.${i}.defaultChannelMode: ${bot.defaultChannelMode}`);
       }
+      if (bot.budget) lines.push(`telegram.bots.${i}.budget.dailyUsd: ${bot.budget.dailyUsd}`);
     }
   }
   if (config.slack?.apps.length) {
@@ -4000,6 +4175,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
         lines.push(`slack.apps.${i}.mode.http: ${app.mode.http}`);
       }
       if (app.webhookPath) lines.push(`slack.apps.${i}.webhookPath: ${app.webhookPath}`);
+      if (app.budget) lines.push(`slack.apps.${i}.budget.dailyUsd: ${app.budget.dailyUsd}`);
     }
   }
   if (config.whatsapp?.length) {
@@ -4018,6 +4194,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
           lines.push(`whatsapp.${i}.bind.allowSlashSwitch: true`);
         }
       }
+      if (wa.budget) lines.push(`whatsapp.${i}.budget.dailyUsd: ${wa.budget.dailyUsd}`);
     }
   }
   if (config.voice) {
@@ -4443,6 +4620,17 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (config.cron.maxParallelJobs !== undefined) {
       lines.push(`cron.maxParallelJobs: ${config.cron.maxParallelJobs}`);
     }
+    if (config.cron.defaultMaxRunMs !== undefined) {
+      lines.push(`cron.defaultMaxRunMs: ${config.cron.defaultMaxRunMs}`);
+    }
+  }
+  if (config.notifications) {
+    const n = config.notifications;
+    if (n.quietHours !== undefined) lines.push(`notifications.quietHours: ${n.quietHours}`);
+    if (n.timezone !== undefined) lines.push(`notifications.timezone: ${n.timezone}`);
+    for (const [botKey, entry] of Object.entries(n.bots ?? {})) {
+      lines.push(`notifications.bots.${botKey}.quietHours: ${entry.quietHours}`);
+    }
   }
   if (config.kanban) {
     if (config.kanban.maxInProgress !== undefined)
@@ -4509,6 +4697,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
   }
   if (config.discord?.defaultChannelMode) {
     lines.push(`discord.defaultChannelMode: ${config.discord.defaultChannelMode}`);
+  }
+  if (config.discord?.approvalRoleIds && config.discord.approvalRoleIds.length > 0) {
+    lines.push(`discord.approvalRoleIds: ${config.discord.approvalRoleIds.join(',')}`);
   }
   if (config.discord?.missedMessageBackfill) {
     const bf = config.discord.missedMessageBackfill;
@@ -4765,6 +4956,157 @@ export async function resolveConfigSecrets(
   return r;
 }
 
+/**
+ * Keys another reader of `~/.ethos/config.yaml` consumes that `parseConfigYaml`
+ * never reads, so {@link ConfigKeyUse} must not report them. `<n>` is an index.
+ * A key belongs here only when its reader is named beside it; the web-api
+ * writer's keys are pinned against this list by
+ * `apps/web-api/src/__tests__/repositories/config-unknown-keys.test.ts`.
+ */
+export const EXTERNALLY_READ_CONFIG_KEYS: readonly string[] = [
+  // apps/web-api `ConfigRepository.read`'s `known` set (written by `ConfigRepository.write`).
+  'approvalMode',
+  'verbosity',
+  'debugMode',
+  'contextLayering',
+  // apps/web-api `ConfigService.get` / `readVoiceTuning` — browser voice tuning.
+  'display.voice_chime',
+  'display.voice_endpoint_silence_ms',
+  'display.voice_barge_threshold',
+  'display.voice_barge_sustain_ms',
+  'display.voice_speech_threshold',
+  'display.voice_speech_min_ms',
+  // apps/web-api `PlatformsRepository.listTelegramBots`.
+  'telegram.bots.<n>.username',
+];
+
+const EXTERNALLY_READ_CONFIG_KEY_RES = EXTERNALLY_READ_CONFIG_KEYS.map(
+  (k) => new RegExp(`^${k.replace(/\./g, '\\.').replace(/<n>/g, '\\d+')}$`),
+);
+
+/** Optimal-string-alignment distance: Levenshtein plus adjacent transposition,
+ *  so `modle` is one edit from `model`. */
+function editDistance(a: string, b: string): number {
+  const rows: number[][] = [];
+  for (let i = 0; i <= a.length; i++) {
+    const row: number[] = [];
+    for (let j = 0; j <= b.length; j++) {
+      if (i === 0 || j === 0) {
+        row.push(i + j);
+        continue;
+      }
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const prev = rows[i - 1] ?? [];
+      let d = Math.min((prev[j] ?? 0) + 1, (row[j - 1] ?? 0) + 1, (prev[j - 1] ?? 0) + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d = Math.min(d, (rows[i - 2]?.[j - 2] ?? 0) + 1);
+      }
+      row.push(d);
+    }
+    rows.push(row);
+  }
+  return rows[a.length]?.[b.length] ?? 0;
+}
+
+/** The candidate closest to `key`, when it is close enough to be a typo of it:
+ *  at most 1 edit for a key under 5 characters, 2 up to 11, 3 beyond. */
+function nearestConfigKey(key: string, candidates: Iterable<string>): string | undefined {
+  const limit = key.length < 5 ? 1 : key.length < 12 ? 2 : 3;
+  let best: string | undefined;
+  let bestDistance = limit + 1;
+  for (const candidate of candidates) {
+    if (candidate === key) continue;
+    const d = editDistance(key, candidate);
+    if (d < bestDistance) {
+      best = candidate;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * Which `config.yaml` keys `parseConfigYaml` actually reads (plan
+ * openclaw-2026.9.6-gaps U4). The parser's own maps are wrapped by
+ * {@link ConfigKeyUse.track}, so a key counts as read only when the builder
+ * really looked its value up — there is no second list of known keys to drift
+ * from the parser. A key the file sets that nothing looked up, or a line no
+ * branch of the parser claims, becomes a notice naming the nearest key that WAS
+ * looked up. Enumerating a map (`Object.keys(m).length`) does not count as
+ * reading its keys; `Object.entries` and spreads do, so a builder that copies a
+ * whole map never has its keys reported.
+ *
+ * Notices only, never errors (plan D2): a stale key must not stop boot.
+ * Coverage limits, both silent rather than wrong: a map the parser keeps
+ * untracked (the named rosters, `teams.*`, `webhooks.*`, `quick_commands.*`,
+ * `channel_filter.*`, `models.*`) and a branch that drops an unknown field
+ * inline (`voice.filler.*`, `voice.wake.*`, `voice.realtime.*`) report nothing.
+ * `providers.<n>.*` is reported by `parseProviderChain` against
+ * `PROVIDER_CHAIN_FIELDS`. Pinned by `__tests__/unknown-keys.test.ts`.
+ */
+class ConfigKeyUse {
+  private readonly present = new Set<string>();
+  private readonly read = new Set<string>();
+
+  /** Wrap one of the parser's `field → raw value` maps whose keys, behind
+   *  `prefix`, are the config.yaml keys themselves. */
+  track<T extends object>(prefix: string, target: T): T {
+    return new Proxy(target, {
+      get: (t, prop, receiver) => {
+        if (typeof prop === 'string') this.read.add(prefix + prop);
+        return Reflect.get(t, prop, receiver);
+      },
+      has: (t, prop) => {
+        if (typeof prop === 'string') this.read.add(prefix + prop);
+        return Reflect.has(t, prop);
+      },
+      set: (t, prop, value, receiver) => {
+        if (typeof prop === 'string') this.present.add(prefix + prop);
+        return Reflect.set(t, prop, value, receiver);
+      },
+    });
+  }
+
+  /** Wrap an `index → (field → raw value)` map (`telegram.bots.<n>.<field>`):
+   *  each entry is tracked under `prefix<n>.`; the index itself is not a key. */
+  trackIndexed<T extends Record<number, Record<string, string>>>(prefix: string, target: T): T {
+    return new Proxy(target, {
+      set: (t, prop, value, receiver) => {
+        const entry =
+          typeof prop === 'string' && typeof value === 'object' && value !== null
+            ? this.track(`${prefix}${prop}.`, value)
+            : value;
+        return Reflect.set(t, prop, entry, receiver);
+      },
+    });
+  }
+
+  /** A line no branch of the parser claimed. Blank values are skipped: an
+   *  empty line loses nothing, and several keys give empty a meaning. */
+  unclaimed(line: string): void {
+    const key = configLineKey(line);
+    if (key === null) return;
+    if (parseConfigScalar(line.slice(key.length + 1)).trim() === '') return;
+    this.present.add(key);
+  }
+
+  notices(): string[] {
+    const out: string[] = [];
+    for (const key of this.present) {
+      if (this.read.has(key)) continue;
+      if (EXTERNALLY_READ_CONFIG_KEY_RES.some((re) => re.test(key))) continue;
+      const near = nearestConfigKey(key, this.read);
+      out.push(
+        `config.yaml: '${key}' has no effect — the config parser did not read it` +
+          (near
+            ? `; did you mean '${near}'?`
+            : ' (a misspelled key, or one that applies only alongside another key).'),
+      );
+    }
+    return out;
+  }
+}
+
 /** Accepted `logs.level` values, ordered by severity. Mirrors `LogLevel`. */
 const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
@@ -4777,28 +5119,37 @@ const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
  * parser for the keys it happens to care about.
  */
 export function parseConfigYaml(src: string): EthosConfig {
-  const kv: Record<string, string> = {};
+  // U4 — every map below whose keys are config.yaml keys is tracked, so the
+  // unknown-key notice is derived from what this function actually reads.
+  const keyUse = new ConfigKeyUse();
+  const kv: Record<string, string> = keyUse.track('', {});
   const modelRouting: Record<string, string> = {};
   const toolSettings: ToolSettingsMap = {};
-  const activeContextKv: Record<string, string> = {};
-  const retentionKv: Record<string, string> = {};
+  const activeContextKv: Record<string, string> = keyUse.track('activeContext.', {});
+  const retentionKv: Record<string, string> = keyUse.track('retention.', {});
   const personalitiesRetKv: Record<string, Record<string, string>> = {};
-  const displayKv: Record<string, string> = {};
-  const evolverKv: Record<string, string> = {};
-  const backgroundKv: Record<string, string> = {};
+  const displayKv: Record<string, string> = keyUse.track('display.', {});
+  const evolverKv: Record<string, string> = keyUse.track('evolver.', {});
+  const backgroundKv: Record<string, string> = keyUse.track('background.', {});
   /** `background.acp.agents.<name>.<field>` — the named ACP-agent roster (T4/I3). */
   const backgroundAcpAgentsKv: Record<string, Record<string, string>> = {};
   // The `cron:` section: `fireUrl` / `maxParallelJobs`, plus the deprecated
   // `trigger.<field>` / `arming.<field>` keys, which are stored under their
   // combined `subsection.field` name.
-  const cronKv: Record<string, string> = {};
-  const auxiliaryCompressionKv: Record<string, string> = {};
-  const auxiliaryVisionKv: Record<string, string> = {};
-  const auxiliaryWebKv: Record<string, string> = {};
-  const auxiliaryAsrKv: Record<string, string> = {};
-  const auxiliaryTtsKv: Record<string, string> = {};
-  const webKv: Record<string, string> = {};
-  const modelCatalogKv: Record<string, string> = {};
+  const cronKv: Record<string, string> = keyUse.track('cron.', {});
+  // U11 — `notifications.quietHours` / `.timezone`, and the per-bot overrides.
+  const notificationsKv: Record<string, string> = keyUse.track('notifications.', {});
+  const notificationBotsKv: Record<string, Record<string, string>> = keyUse.trackIndexed(
+    'notifications.bots.',
+    {},
+  );
+  const auxiliaryCompressionKv: Record<string, string> = keyUse.track('auxiliary.compression.', {});
+  const auxiliaryVisionKv: Record<string, string> = keyUse.track('auxiliary.vision.', {});
+  const auxiliaryWebKv: Record<string, string> = keyUse.track('auxiliary.web.', {});
+  const auxiliaryAsrKv: Record<string, string> = keyUse.track('auxiliary.asr.', {});
+  const auxiliaryTtsKv: Record<string, string> = keyUse.track('auxiliary.tts.', {});
+  const webKv: Record<string, string> = keyUse.track('web.', {});
+  const modelCatalogKv: Record<string, string> = keyUse.track('modelCatalog.', {});
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
   // What the registry codec dropped and why — filed under `parseWarningsByConfig`
   // beside `providerNotices`, the same channel `parseProviderChain` uses.
@@ -4810,64 +5161,85 @@ export function parseConfigYaml(src: string): EthosConfig {
   // `<providerId>/<modelId>` string; field path → raw value.
   const modelsKv: Record<string, Record<string, string>> = {};
   // §5 — global compaction.<field>: <value> (pressure | target | ...flags).
-  const compactionKv: Record<string, string> = {};
+  const compactionKv: Record<string, string> = keyUse.track('compaction.', {});
   // memory.charLimits.<memory|user>: <chars> — markdown-backend per-key ceilings.
-  const memoryCharLimitsKv: Record<string, string> = {};
+  const memoryCharLimitsKv: Record<string, string> = keyUse.track('memory.charLimits.', {});
   // execution.docker.<cpu|diskMb>: <value> — container resource caps.
-  const executionDockerKv: Record<string, string> = {};
+  const executionDockerKv: Record<string, string> = keyUse.track('execution.docker.', {});
   // execution.ssh.<field>: <value> — the deployment's single remote target.
-  const executionSshKv: Record<string, string> = {};
+  const executionSshKv: Record<string, string> = keyUse.track('execution.ssh.', {});
+  // execution.allowLocalFallback: <bool> — S6 / D3 opt-in to host fallback.
+  // Tracked so a typo of it gets this key as its suggestion (U4).
+  const executionFlagsKv: Record<string, string> = keyUse.track('execution.', {});
   // kanban.<maxInProgress|maxInProgressPerProfile>: <n> — board WIP caps.
-  const kanbanKv: Record<string, string> = {};
+  const kanbanKv: Record<string, string> = keyUse.track('kanban.', {});
   // grounding.<field>: <value> — ground-truth verification policy. The nested
   // `grounding.kanban.*` keys get their own map so the two levels cannot
   // collide on a shared field name.
-  const groundingKv: Record<string, string> = {};
-  const groundingKanbanKv: Record<string, string> = {};
+  const groundingKv: Record<string, string> = keyUse.track('grounding.', {});
+  const groundingKanbanKv: Record<string, string> = keyUse.track('grounding.kanban.', {});
   // toolLoop.<field>: <n> — the loop's hard tool caps and their soft-warn tiers.
-  const toolLoopKv: Record<string, string> = {};
+  const toolLoopKv: Record<string, string> = keyUse.track('toolLoop.', {});
   // browser.<field>: <value> — Playwright budgets plus launch posture. The
   // nested keys are stored under their DOTTED sub-path (`proxy.server`,
   // `stealth.enabled`) rather than in per-level maps: no flat key contains a
   // dot, so the two levels cannot collide on one map.
-  const browserKv: Record<string, string> = {};
+  const browserKv: Record<string, string> = keyUse.track('browser.', {});
   // gateway.<field>: <value> — gateway-wide, non-credential knobs.
-  const gatewayKv: Record<string, string> = {};
+  const gatewayKv: Record<string, string> = keyUse.track('gateway.', {});
   // decisions.<field>: <value> — the decision provider, stored under the
   // dotted sub-path (`sites.injection`, `thresholds.approver.deny`).
-  const decisionsKv: Record<string, string> = {};
+  const decisionsKv: Record<string, string> = keyUse.track('decisions.', {});
   // teamSupervisor.restartLoopGuard.<field>: <n> — member auto-restart brake.
   // Unset = 5 respawns in 60s (one more than the old hardcoded four).
-  const restartLoopGuardKv: Record<string, string> = {};
+  const restartLoopGuardKv: Record<string, string> = keyUse.track(
+    'teamSupervisor.restartLoopGuard.',
+    {},
+  );
   // discord.missedMessageBackfill.<field>: <value> — channel-history backfill.
-  const discordBackfillKv: Record<string, string> = {};
+  const discordBackfillKv: Record<string, string> = keyUse.track(
+    'discord.missedMessageBackfill.',
+    {},
+  );
   // discord.<field>: <value> — non-backfill Discord knobs (defaultChannelMode).
-  const discordKv: Record<string, string> = {};
+  const discordKv: Record<string, string> = keyUse.track('discord.', {});
   // Call-capture personality binding (decision 3) — callCapture.personalityId: <id>.
-  const callCaptureKv: Record<string, string> = {};
+  const callCaptureKv: Record<string, string> = keyUse.track('callCapture.', {});
   // Phase 3 — memoryConsolidation.<field>: <value> (silent flush config).
-  const memoryConsolidationKv: Record<string, string> = {};
+  const memoryConsolidationKv: Record<string, string> = keyUse.track('memoryConsolidation.', {});
   // Scale-to-zero idle watcher — idleWatcher.<field>: <value>.
-  const idleWatcherKv: Record<string, string> = {};
+  const idleWatcherKv: Record<string, string> = keyUse.track('idleWatcher.', {});
   // Resume-side clock correction — pauseClockCorrection.<field>: <value>.
-  const pauseClockCorrectionKv: Record<string, string> = {};
+  const pauseClockCorrectionKv: Record<string, string> = keyUse.track('pauseClockCorrection.', {});
   // Pause/resume lifecycle notifications — pauseLifecycle.http.<field>: <value>.
-  const pauseLifecycleHttpKv: Record<string, string> = {};
-  const logsRotationKv: Record<string, string> = {};
-  const awsSecretsKv: Record<string, string> = {};
-  const telemetryLangfuseKv: Record<string, string> = {};
+  const pauseLifecycleHttpKv: Record<string, string> = keyUse.track('pauseLifecycle.http.', {});
+  const logsRotationKv: Record<string, string> = keyUse.track('logs.rotation.', {});
+  const awsSecretsKv: Record<string, string> = keyUse.track('aws.secrets.', {});
+  const telemetryLangfuseKv: Record<string, string> = keyUse.track(
+    'telemetry.export.langfuse.',
+    {},
+  );
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
-  const telegramBotsKv: Record<number, Record<string, string>> = {};
-  const slackAppsKv: Record<number, Record<string, string>> = {};
-  const whatsappKv: Record<number, Record<string, string>> = {};
-  const voiceBotsKv: Record<number, Record<string, string>> = {};
-  const voiceLiveKitKv: Record<string, string> = {};
-  const voiceTrunkKv: Record<string, string> = {};
+  const telegramBotsKv: Record<number, Record<string, string>> = keyUse.trackIndexed(
+    'telegram.bots.',
+    {},
+  );
+  const slackAppsKv: Record<number, Record<string, string>> = keyUse.trackIndexed(
+    'slack.apps.',
+    {},
+  );
+  const whatsappKv: Record<number, Record<string, string>> = keyUse.trackIndexed('whatsapp.', {});
+  const voiceBotsKv: Record<number, Record<string, string>> = keyUse.trackIndexed(
+    'voice.bots.',
+    {},
+  );
+  const voiceLiveKitKv: Record<string, string> = keyUse.track('voice.livekit.', {});
+  const voiceTrunkKv: Record<string, string> = keyUse.track('voice.trunk.', {});
   /** `voice.inbound.<field>` — the scalar inbound-call policy knobs. */
-  const voiceInboundKv: Record<string, string> = {};
+  const voiceInboundKv: Record<string, string> = keyUse.track('voice.inbound.', {});
   /** `voice.inbound.owner.<field>` — the notification destination, one level down. */
-  const voiceInboundOwnerKv: Record<string, string> = {};
+  const voiceInboundOwnerKv: Record<string, string> = keyUse.track('voice.inbound.owner.', {});
   /** `voice.bargeIn.<surface>.<field>` — VAD thresholds, keyed by surface. */
   const voiceBargeInKv: Record<string, Record<string, string>> = {};
   /** `voice.filler.<field>` — the tool-call filler/tick knobs, range-checked on the way in. */
@@ -5281,6 +5653,26 @@ export function parseConfigYaml(src: string): EthosConfig {
       cronKv.maxParallelJobs = parseConfigScalar(cronMax[1]);
       continue;
     }
+    // notifications.bots.<botKey>.<field>: <value>  (U11 — per-bot override)
+    const notifBot = line.match(/^notifications\.bots\.([A-Za-z0-9_-]+)\.(\w+):\s*(.+)$/);
+    if (notifBot) {
+      notificationBotsKv[notifBot[1]] ??= {};
+      const entry = notificationBotsKv[notifBot[1]];
+      if (entry) entry[notifBot[2]] = parseConfigScalar(notifBot[3]);
+      continue;
+    }
+    // notifications.<field>: <value>  (U11 — quietHours, timezone)
+    const notif = line.match(/^notifications\.(\w+):\s*(.+)$/);
+    if (notif) {
+      notificationsKv[notif[1]] = parseConfigScalar(notif[2]);
+      continue;
+    }
+    // cron.defaultMaxRunMs: <ms>  (R10 — per-run wall-clock default)
+    const cronMaxRun = line.match(/^cron\.defaultMaxRunMs:\s*(.+)$/);
+    if (cronMaxRun) {
+      cronKv.defaultMaxRunMs = parseConfigScalar(cronMaxRun[1]);
+      continue;
+    }
     // auxiliary.compression.<field>: <value>
     const auxc = line.match(/^auxiliary\.compression\.(\w+):\s*(.+)$/);
     if (auxc) {
@@ -5606,10 +5998,23 @@ export function parseConfigYaml(src: string): EthosConfig {
       executionDockerKv[exd[1]] = parseConfigScalar(exd[2]);
       continue;
     }
+    // execution.allowLocalFallback: <bool>  (S6 / D3 host-fallback opt-in).
+    const exl = line.match(/^execution\.allowLocalFallback:\s*(.+)$/);
+    if (exl) {
+      executionFlagsKv.allowLocalFallback = parseConfigScalar(exl[1]);
+      continue;
+    }
+    // execution.containerized: <bool>  (this deployment is itself the boundary).
+    const exc = line.match(/^execution\.containerized:\s*(.+)$/);
+    if (exc) {
+      executionFlagsKv.containerized = parseConfigScalar(exc[1]);
+      continue;
+    }
     // execution.ssh.<field>: <value>  (the single remote execution target).
     // The field list is an alternation, so an unrecognised `execution.ssh.*`
     // key falls through to the generic `key: value` catch-all below and is
-    // then never read — dropped, not rejected, like every other stray key.
+    // then never read — dropped with a notice, not rejected, like every other
+    // stray key (`ConfigKeyUse.unclaimed`).
     const exs = line.match(
       /^execution\.ssh\.(host|user|port|identityFile|knownHostsFile|strictHostKeys|remoteWorkdir):\s*(.+)$/,
     );
@@ -5620,7 +6025,8 @@ export function parseConfigYaml(src: string): EthosConfig {
     // browser.<field>: <value>  (Playwright budgets + launch posture). The
     // alternation is an ALLOWLIST: an unlisted `browser.*` key matches nothing
     // here, and the generic `key: value` catch-all at the end of this loop is
-    // `\w+` only — so it is dropped, like every other stray dotted key.
+    // `\w+` only — so it is dropped with a notice, like every other stray
+    // dotted key (`ConfigKeyUse.unclaimed`).
     const brw = line.match(
       /^browser\.(navigationTimeoutMs|commandTimeoutMs|headed|idleTimeoutMs|stealth\.enabled|profiles\.enabled|proxy\.(?:server|username|password)):\s*(.+)$/,
     );
@@ -5637,8 +6043,9 @@ export function parseConfigYaml(src: string): EthosConfig {
       continue;
     }
     // decisions.<field>: <value>  (decision provider). An ALLOWLIST like
-    // `browser.*`: an unlisted `decisions.*` key is dropped here and kept
-    // verbatim by `writeConfig`'s `unexpressibleLines`.
+    // `browser.*`: an unlisted `decisions.*` key is dropped here with a notice
+    // (`ConfigKeyUse.unclaimed`) and kept verbatim by `writeConfig`'s
+    // `unexpressibleLines`.
     const dcs = line.match(DECISIONS_LINE_RE);
     if (dcs) {
       decisionsKv[dcs[1]] = parseConfigScalar(dcs[2]);
@@ -5693,6 +6100,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = parseConfigScalar(m[2]);
+    else keyUse.unclaimed(line);
   }
 
   const activeContextType = activeContextKv.type;
@@ -5805,11 +6213,21 @@ export function parseConfigYaml(src: string): EthosConfig {
   const models = buildModelProfiles(modelsKv);
   const compaction = buildCompaction(compactionKv);
   const memoryCharLimits = buildMemoryCharLimits(memoryCharLimitsKv);
-  const executionResult = buildExecutionConfig(executionDockerKv, executionSshKv);
+  const executionResult = buildExecutionConfig(
+    executionDockerKv,
+    executionSshKv,
+    executionFlagsKv.allowLocalFallback,
+    executionFlagsKv.containerized,
+  );
   const execution = executionResult.execution;
   const restartLoopGuard = buildRestartLoopGuard(restartLoopGuardKv);
   const discordBackfill = buildDiscordBackfill(discordBackfillKv);
   const discordModeResult = buildDiscordDefaultMode(discordKv);
+  const discordRoleList = (discordKv.approvalRoleIds ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const discordApprovalRoleIds = discordRoleList.length > 0 ? discordRoleList : undefined;
   const callCapture = callCaptureKv.personalityId
     ? { personalityId: callCaptureKv.personalityId }
     : undefined;
@@ -5838,6 +6256,12 @@ export function parseConfigYaml(src: string): EthosConfig {
   // process's address", this answers "should this process stop running its own
   // clock", and plenty of deployments want the first without the second.
   const cronDeprecations: string[] = [];
+  const notificationWarnings: string[] = [];
+  const notifications = buildNotificationsConfig(
+    notificationsKv,
+    notificationBotsKv,
+    notificationWarnings,
+  );
   const cronBuilt = buildCronConfig(cronKv, cronDeprecations);
   const cronFireUrl = process.env.ETHOS_CRON_FIRE_URL ?? cronBuilt?.fireUrl;
   const cron =
@@ -6151,6 +6575,7 @@ export function parseConfigYaml(src: string): EthosConfig {
       : undefined,
     background: buildBackgroundConfig(backgroundKv, backgroundAcpAgentsKv),
     cron,
+    ...(notifications ? { notifications } : {}),
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
     displayMemoryNotices:
       displayKv.memory_notices === 'true'
@@ -6255,9 +6680,10 @@ export function parseConfigYaml(src: string): EthosConfig {
     decisions,
     teamSupervisor: restartLoopGuard ? { restartLoopGuard } : undefined,
     discord:
-      discordBackfill || discordModeResult.mode
+      discordBackfill || discordModeResult.mode || discordApprovalRoleIds
         ? {
             ...(discordModeResult.mode ? { defaultChannelMode: discordModeResult.mode } : {}),
+            ...(discordApprovalRoleIds ? { approvalRoleIds: discordApprovalRoleIds } : {}),
             ...(discordBackfill ? { missedMessageBackfill: discordBackfill } : {}),
           }
         : undefined,
@@ -6292,6 +6718,9 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...providerNotices,
     ...modelRegistryNotices,
     ...decisionsWarnings,
+    ...storageEncryptionRemovedNotice(kv),
+    ...notificationWarnings,
+    ...keyUse.notices(),
   ]);
   return config;
 }
@@ -7040,6 +7469,8 @@ function sshDestinationError(host: string, user: string | undefined): string | n
 function buildExecutionConfig(
   dockerKv: Record<string, string>,
   sshKv: Record<string, string>,
+  rawAllowLocalFallback?: string,
+  rawContainerized?: string,
 ): { execution: EthosConfig['execution'] | undefined; errors: string[] } {
   const docker: NonNullable<NonNullable<EthosConfig['execution']>['docker']> = {};
   const cpu = Number(dockerKv.cpu);
@@ -7107,6 +7538,9 @@ function buildExecutionConfig(
   }
 
   const execution: NonNullable<EthosConfig['execution']> = {};
+  // Only the literal `true` opts in: anything else keeps the refusal.
+  if (rawAllowLocalFallback === 'true') execution.allowLocalFallback = true;
+  if (rawContainerized === 'true') execution.containerized = true;
   if (Object.keys(docker).length > 0) execution.docker = docker;
   if (ssh) execution.ssh = ssh;
   return { execution: Object.keys(execution).length > 0 ? execution : undefined, errors };
@@ -7326,8 +7760,30 @@ function buildCronConfig(
   if (kv.maxParallelJobs !== undefined && Number.isFinite(maxParallel) && maxParallel > 0) {
     cfg.maxParallelJobs = Math.floor(maxParallel);
   }
+  const maxRunMs = Number(kv.defaultMaxRunMs);
+  if (kv.defaultMaxRunMs !== undefined && Number.isFinite(maxRunMs) && maxRunMs >= 1) {
+    cfg.defaultMaxRunMs = Math.floor(maxRunMs);
+  }
   if (Object.keys(cfg).length === 0) return undefined;
   return cfg;
+}
+
+/**
+ * SEC-001 — `storage.encryption` was removed: it validated ETHOS_STORAGE_KEY and
+ * then wrapped only the personality-design tool's storage, so `MEMORY.md`,
+ * `USER.md`, personality configs and team memory — what its how-to promised —
+ * stayed plaintext. A config that still sets it gets this notice instead of
+ * the generic unknown-key one. Pinned by `__tests__/config.test.ts`
+ * ('drops storage.encryption and says it was removed').
+ */
+function storageEncryptionRemovedNotice(kv: Record<string, string>): string[] {
+  if (kv['storage.encryption'] === undefined) return [];
+  return [
+    "config.yaml: 'storage.encryption' was removed and has no effect — files under " +
+      '~/.ethos/ are not encrypted by Ethos. Use full-disk or volume encryption for data ' +
+      'at rest. Files the personality-design tool wrote while the flag was on are ' +
+      'ciphertext and must be recreated.',
+  ];
 }
 
 function buildStorageConfig(kv: Record<string, string>): EthosConfig['storage'] {
@@ -7340,11 +7796,9 @@ function buildStorageConfig(kv: Record<string, string>): EthosConfig['storage'] 
   const rawBackend = kv['storage.backend'];
   const backend: 'fs' | 's3' | undefined =
     rawBackend === 'fs' || rawBackend === 's3' ? rawBackend : undefined;
-  const encryption = kv['storage.encryption'] === 'true';
   const hasS3 = s3.bucket !== undefined;
-  if (!encryption && backend === undefined && !hasS3) return undefined;
+  if (backend === undefined && !hasS3) return undefined;
   return {
-    ...(encryption ? { encryption: true } : {}),
     ...(backend ? { backend } : {}),
     ...(hasS3 ? { s3 } : {}),
   };
@@ -7646,6 +8100,29 @@ function buildBotBinding(
   return { bind: binding, errors };
 }
 
+/**
+ * `<entry>.budget.dailyUsd` → {@link BotBudgetConfig}, shared by the three bot
+ * rosters that carry one. Reading the key through the tracked entry is what
+ * marks it read for the U4 unknown-key notice (`ConfigKeyUse.trackIndexed`).
+ * A value that is not a positive finite number is an error, like an invalid
+ * `defaultChannelMode`: a cap the operator wrote and the gateway silently
+ * ignored would be worse than no cap.
+ */
+function buildBotBudget(
+  entry: Record<string, string>,
+  label: string,
+): { budget?: BotBudgetConfig; error?: string } {
+  const raw = entry['budget.dailyUsd'];
+  if (raw === undefined) return {};
+  const dailyUsd = Number(raw);
+  if (raw.trim() === '' || !Number.isFinite(dailyUsd) || dailyUsd <= 0) {
+    return {
+      error: `${label}: invalid budget.dailyUsd '${raw}' (expected a positive number of USD).`,
+    };
+  }
+  return { budget: { dailyUsd } };
+}
+
 function sortedIndexes(kv: Record<number, Record<string, string>>): number[] {
   // Numeric sort — `Object.keys(...)` returns strings even on numeric-keyed
   // records, and the default lexicographic order would put index 10 before 2.
@@ -7734,6 +8211,12 @@ function buildTelegramBots(kv: Record<number, Record<string, string>>): {
       }
       bot.defaultChannelMode = mode;
     }
+    const budget = buildBotBudget(entry, label);
+    if (budget.error) {
+      errors.push(budget.error);
+      continue;
+    }
+    if (budget.budget) bot.budget = budget.budget;
     bots.push(bot);
   }
   return { bots, errors };
@@ -7812,6 +8295,12 @@ function buildSlackApps(kv: Record<number, Record<string, string>>): {
     if (entry['mode.http'] !== undefined) transport.http = entry['mode.http'] === 'true';
     if (Object.keys(transport).length > 0) app.mode = transport;
     if (entry.webhookPath) app.webhookPath = entry.webhookPath;
+    const budget = buildBotBudget(entry, label);
+    if (budget.error) {
+      errors.push(budget.error);
+      continue;
+    }
+    if (budget.budget) app.budget = budget.budget;
     apps.push(app);
   }
   return { apps, errors };
@@ -7863,6 +8352,12 @@ function buildWhatsApps(kv: Record<number, Record<string, string>>): {
       }
       if (result.bind) app.bind = result.bind;
     }
+    const budget = buildBotBudget(entry, label);
+    if (budget.error) {
+      errors.push(budget.error);
+      continue;
+    }
+    if (budget.budget) app.budget = budget.budget;
     apps.push(app);
   }
   return { apps, errors };
