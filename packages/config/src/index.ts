@@ -757,6 +757,8 @@ export interface TelegramBotConfig {
    * paused (§6).
    */
   dropPendingUpdates?: boolean;
+  /** See {@link BotBudgetConfig}. `telegram.bots.<n>.budget.dailyUsd`. */
+  budget?: BotBudgetConfig;
 }
 
 export interface SlackAppConfig {
@@ -814,6 +816,8 @@ export interface SlackAppConfig {
    *  plus the full answer as `answer.md` instead of a chunk wall. Absent = the
    *  adapter's default (9000); `0` disables the fallback. */
   longReplyThresholdChars?: number;
+  /** See {@link BotBudgetConfig}. `slack.apps.<n>.budget.dailyUsd`. */
+  budget?: BotBudgetConfig;
 }
 
 /**
@@ -839,6 +843,25 @@ export interface WhatsAppConfig {
    *  default personality in the gateway. */
   bind?: BotBinding;
   piiRedaction?: boolean;
+  /** See {@link BotBudgetConfig}. `whatsapp.<n>.budget.dailyUsd`. */
+  budget?: BotBudgetConfig;
+}
+
+/**
+ * Operator spending limit for ONE channel bot (plan openclaw-2026.9.6-gaps D5),
+ * written under the bot's own entry: `telegram.bots.<n>.budget.dailyUsd`,
+ * `slack.apps.<n>.budget.dailyUsd`, `whatsapp.<n>.budget.dailyUsd`.
+ *
+ * A setting, not identity — two deployments of the same personality can
+ * disagree about it — so it lives here, never on `PersonalityConfig`. Enforced
+ * per turn by `Gateway.enqueueTurn` (extensions/gateway) against the bot's
+ * spend since 00:00 UTC; absent = no daily cap. The legacy scalar bots
+ * (`telegramToken`, `discordToken`, email) have no entry to hang it on and so
+ * cannot be capped this way.
+ */
+export interface BotBudgetConfig {
+  /** USD a bot may spend per UTC day before its turns are refused. > 0. */
+  dailyUsd: number;
 }
 
 /**
@@ -3992,6 +4015,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
       if (bot.defaultChannelMode) {
         lines.push(`telegram.bots.${i}.defaultChannelMode: ${bot.defaultChannelMode}`);
       }
+      if (bot.budget) lines.push(`telegram.bots.${i}.budget.dailyUsd: ${bot.budget.dailyUsd}`);
     }
   }
   if (config.slack?.apps.length) {
@@ -4027,6 +4051,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
         lines.push(`slack.apps.${i}.mode.http: ${app.mode.http}`);
       }
       if (app.webhookPath) lines.push(`slack.apps.${i}.webhookPath: ${app.webhookPath}`);
+      if (app.budget) lines.push(`slack.apps.${i}.budget.dailyUsd: ${app.budget.dailyUsd}`);
     }
   }
   if (config.whatsapp?.length) {
@@ -4045,6 +4070,7 @@ function serializeConfigLines(config: EthosConfig): string[] {
           lines.push(`whatsapp.${i}.bind.allowSlashSwitch: true`);
         }
       }
+      if (wa.budget) lines.push(`whatsapp.${i}.budget.dailyUsd: ${wa.budget.dailyUsd}`);
     }
   }
   if (config.voice) {
@@ -7859,6 +7885,29 @@ function buildBotBinding(
   return { bind: binding, errors };
 }
 
+/**
+ * `<entry>.budget.dailyUsd` → {@link BotBudgetConfig}, shared by the three bot
+ * rosters that carry one. Reading the key through the tracked entry is what
+ * marks it read for the U4 unknown-key notice (`ConfigKeyUse.trackIndexed`).
+ * A value that is not a positive finite number is an error, like an invalid
+ * `defaultChannelMode`: a cap the operator wrote and the gateway silently
+ * ignored would be worse than no cap.
+ */
+function buildBotBudget(
+  entry: Record<string, string>,
+  label: string,
+): { budget?: BotBudgetConfig; error?: string } {
+  const raw = entry['budget.dailyUsd'];
+  if (raw === undefined) return {};
+  const dailyUsd = Number(raw);
+  if (raw.trim() === '' || !Number.isFinite(dailyUsd) || dailyUsd <= 0) {
+    return {
+      error: `${label}: invalid budget.dailyUsd '${raw}' (expected a positive number of USD).`,
+    };
+  }
+  return { budget: { dailyUsd } };
+}
+
 function sortedIndexes(kv: Record<number, Record<string, string>>): number[] {
   // Numeric sort — `Object.keys(...)` returns strings even on numeric-keyed
   // records, and the default lexicographic order would put index 10 before 2.
@@ -7947,6 +7996,12 @@ function buildTelegramBots(kv: Record<number, Record<string, string>>): {
       }
       bot.defaultChannelMode = mode;
     }
+    const budget = buildBotBudget(entry, label);
+    if (budget.error) {
+      errors.push(budget.error);
+      continue;
+    }
+    if (budget.budget) bot.budget = budget.budget;
     bots.push(bot);
   }
   return { bots, errors };
@@ -8025,6 +8080,12 @@ function buildSlackApps(kv: Record<number, Record<string, string>>): {
     if (entry['mode.http'] !== undefined) transport.http = entry['mode.http'] === 'true';
     if (Object.keys(transport).length > 0) app.mode = transport;
     if (entry.webhookPath) app.webhookPath = entry.webhookPath;
+    const budget = buildBotBudget(entry, label);
+    if (budget.error) {
+      errors.push(budget.error);
+      continue;
+    }
+    if (budget.budget) app.budget = budget.budget;
     apps.push(app);
   }
   return { apps, errors };
@@ -8076,6 +8137,12 @@ function buildWhatsApps(kv: Record<number, Record<string, string>>): {
       }
       if (result.bind) app.bind = result.bind;
     }
+    const budget = buildBotBudget(entry, label);
+    if (budget.error) {
+      errors.push(budget.error);
+      continue;
+    }
+    if (budget.budget) app.budget = budget.budget;
     apps.push(app);
   }
   return { apps, errors };

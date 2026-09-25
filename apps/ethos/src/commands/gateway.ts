@@ -76,7 +76,7 @@ import {
   MicActivityDetector,
   NotificationGate,
 } from '@ethosagent/platform-callcapture';
-import { hashApiKey, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
+import { hashApiKey, SQLiteSessionStore, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
 import { bundledSkillsSource, createInjectors } from '@ethosagent/skills';
 import Database from '@ethosagent/sqlite';
 import {
@@ -2533,6 +2533,8 @@ async function assembleGatewayBots(
       piiRedaction: bot.piiRedaction,
       ...(jobStore ? { jobStore } : {}),
       ...(backgroundExecutor ? { backgroundExecutor } : {}),
+      // D5 — `<bot entry>.budget.dailyUsd`, enforced by `Gateway.enqueueTurn`.
+      ...(bot.budget ? { dailyBudgetUsd: bot.budget.dailyUsd } : {}),
     };
   };
   for (const bot of config.telegram?.bots ?? []) {
@@ -2588,6 +2590,7 @@ async function assembleGatewayBots(
         piiRedaction: waCfg.piiRedaction,
         ...(jobStore ? { jobStore } : {}),
         ...(backgroundExecutor ? { backgroundExecutor } : {}),
+        ...(waCfg.budget ? { dailyBudgetUsd: waCfg.budget.dailyUsd } : {}),
       },
       at,
     );
@@ -3446,6 +3449,7 @@ export function closeSlackSessionStores(): void {
   for (const store of slackSessionStores) store.close();
   slackSessionStores.clear();
   branchSessionStore = undefined;
+  spendSessionStore = undefined;
 }
 
 let branchSessionStore: SessionStore | undefined;
@@ -3462,6 +3466,41 @@ function openBranchSessionStore(): SessionStore {
     branchSessionStore = opened;
   }
   return branchSessionStore;
+}
+
+let spendSessionStore: SQLiteSessionStore | undefined;
+
+/**
+ * `GatewayConfig.botSpendSince` for a production host (plan
+ * openclaw-2026.9.6-gaps D5): one bot's USD spend since `since`, summed from
+ * `SQLiteSessionStore.usageAggregate` — the aggregation `ethos usage` reads
+ * (commands/usage.ts) — narrowed to the bot's session keys. The concrete store
+ * rather than `createSessionStore`'s `SessionStore`, because `usageAggregate`
+ * is not on the interface. Opened on the first capped turn and closed by
+ * `closeSlackSessionStores()` with the others. Pinned by
+ * `__tests__/gateway-daily-budget-wiring.test.ts`.
+ */
+export async function botSpendSince(
+  sessionKeyPrefix: string,
+  since: Date,
+  open: () => SQLiteSessionStore = () => {
+    if (!spendSessionStore) {
+      const opened = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+      slackSessionStores.add(opened);
+      spendSessionStore = opened;
+    }
+    return spendSessionStore;
+  },
+): Promise<number> {
+  const rows = await open().usageAggregate({
+    since,
+    // Open-ended: a row stamped in this very millisecond counts too. A 4-digit
+    // year, because the query compares ISO strings.
+    until: new Date('9999-12-31T23:59:59.999Z'),
+    dimension: 'day',
+    keyPrefix: sessionKeyPrefix,
+  });
+  return rows.reduce((sum, r) => sum + r.estimatedCostUsd, 0);
 }
 
 function createSlackSessionReaders(botKey: string) {
@@ -5023,6 +5062,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         // `/fork`, `/branches`, `/branch <n>` — opened on first use and closed
         // with the Slack readers by `closeSlackSessionStores()` at shutdown.
         sessionStore: openBranchSessionStore,
+        // D5 — each bot's `budget.dailyUsd` is enforced against this.
+        botSpendSince: (prefix, since) => botSpendSince(prefix, since),
         adapters: adapterMap,
         deliveryLedger,
         inboundDedup,

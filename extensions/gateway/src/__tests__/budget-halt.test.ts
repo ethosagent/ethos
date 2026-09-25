@@ -206,3 +206,99 @@ describe('gateway /budget (S4/U1)', () => {
     expect(adapter.sent.at(-1)).toContain('channel_filter.telegram.ownerUserId');
   });
 });
+
+describe('gateway per-bot daily cap (D5)', () => {
+  function cappedGateway(
+    loop: AgentLoop,
+    spend: () => Promise<number>,
+    dailyBudgetUsd: number | null = 1,
+  ): { gateway: Gateway; queries: Array<{ prefix: string; since: Date }> } {
+    const queries: Array<{ prefix: string; since: Date }> = [];
+    const gateway = new Gateway({
+      bots: [
+        {
+          botKey: 'bot-1',
+          loop,
+          binding: { type: 'personality', name: 'researcher' },
+          ...(dailyBudgetUsd !== null ? { dailyBudgetUsd } : {}),
+        },
+      ],
+      clarifySweepIntervalMs: 0,
+      botSpendSince: async (prefix, since) => {
+        queries.push({ prefix, since });
+        return spend();
+      },
+    });
+    return { gateway, queries };
+  }
+
+  it('refuses the turn with one lane message once today’s spend meets the cap', async () => {
+    const loop = makeLoop([{ type: 'done', text: 'answer', turnCount: 1 }]);
+    const adapter = makeAdapter();
+    const { gateway, queries } = cappedGateway(loop, async () => 1);
+    await gateway.handleMessage(inbound('hi'), adapter);
+
+    expect(loop.runs).toBe(0);
+    expect(adapter.sent).toHaveLength(1);
+    expect(adapter.sent[0]).toContain('daily budget');
+    expect(adapter.sent[0]).toContain('$1.00');
+    // One bot's sessions, since 00:00 UTC today.
+    expect(queries[0]?.prefix).toBe('telegram:bot-1:');
+    expect(queries[0]?.since.toISOString()).toBe(
+      `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`,
+    );
+  });
+
+  it('runs the turn under the cap', async () => {
+    const loop = makeLoop([{ type: 'done', text: 'answer', turnCount: 1 }]);
+    const adapter = makeAdapter();
+    const { gateway } = cappedGateway(loop, async () => 0.5);
+    await gateway.handleMessage(inbound('hi'), adapter);
+    expect(loop.runs).toBe(1);
+    expect(adapter.sent).toEqual(['answer']);
+  });
+
+  it('reads the store once per window and adds live usage in between', async () => {
+    const loop = makeLoop([
+      { type: 'usage', inputTokens: 1, outputTokens: 1, estimatedCostUsd: 0.2 },
+      { type: 'done', text: 'answer', turnCount: 1 },
+    ]);
+    const adapter = makeAdapter();
+    const { gateway, queries } = cappedGateway(loop, async () => 0.9);
+    await gateway.handleMessage(inbound('first'), adapter);
+    await gateway.handleMessage(inbound('second'), adapter);
+
+    // 0.9 read + 0.2 from the first turn's usage event ≥ 1.00: refused, with
+    // no second query against the store.
+    expect(queries).toHaveLength(1);
+    expect(loop.runs).toBe(1);
+    expect(adapter.sent.at(-1)).toContain('daily budget');
+  });
+
+  it('is off without a configured cap — the store is never read', async () => {
+    const loop = makeLoop([{ type: 'done', text: 'answer', turnCount: 1 }]);
+    const adapter = makeAdapter();
+    const { gateway, queries } = cappedGateway(loop, async () => 100, null);
+    await gateway.handleMessage(inbound('hi'), adapter);
+    expect(queries).toHaveLength(0);
+    expect(loop.runs).toBe(1);
+  });
+
+  it('fails open when the spend cannot be read', async () => {
+    const loop = makeLoop([{ type: 'done', text: 'answer', turnCount: 1 }]);
+    const adapter = makeAdapter();
+    const { gateway } = cappedGateway(loop, async () => {
+      throw new Error('sessions.db locked');
+    });
+    await gateway.handleMessage(inbound('hi'), adapter);
+    expect(loop.runs).toBe(1);
+  });
+
+  it('/budget shows today’s spend against the daily cap', async () => {
+    const loop = makeCostLoop(undefined);
+    const adapter = makeAdapter();
+    const { gateway } = cappedGateway(loop, async () => 0.25);
+    await gateway.handleMessage(inbound('/budget'), adapter);
+    expect(adapter.sent[0]).toContain('$0.2500 of a $1.00 daily cap');
+  });
+});

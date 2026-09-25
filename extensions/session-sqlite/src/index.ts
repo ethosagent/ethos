@@ -998,6 +998,10 @@ export class SQLiteSessionStore implements SessionStore {
     since: Date;
     until: Date;
     dimension: 'day' | 'model' | 'personality' | 'channel' | 'session';
+    /** Only sessions whose key starts with this, literally (`%`/`_` escaped).
+     *  How one channel bot's spend is read: its sessions are keyed under
+     *  `buildLaneKey(platform, botKey)` + `:` (plan openclaw-2026.9.6-gaps D5). */
+    keyPrefix?: string;
   }): Promise<UsageAggregateRow[]> {
     const keyExpr = {
       // `substr(timestamp, 1, 10)` over an ISO-8601 string is the UTC date, and
@@ -1022,13 +1026,18 @@ export class SQLiteSessionStore implements SessionStore {
            JOIN sessions s ON s.id = m.session_id
           WHERE m.timestamp >= ? AND m.timestamp < ?
             AND m.input_tokens IS NOT NULL
+            ${opts.keyPrefix !== undefined ? "AND s.key LIKE ? ESCAPE '\\'" : ''}
           -- Group by the EXPRESSION, never the \`key\` alias: \`sessions.key\` is a
           -- real column, so \`GROUP BY key\` silently resolves to it and every
           -- dimension collapses to per-session grouping.
           GROUP BY ${keyExpr}
           ORDER BY estimatedCostUsd DESC`,
       )
-      .all(opts.since.toISOString(), opts.until.toISOString()) as UsageAggregateRow[];
+      .all(
+        opts.since.toISOString(),
+        opts.until.toISOString(),
+        ...(opts.keyPrefix !== undefined ? [`${opts.keyPrefix.replace(/[%_\\]/g, '\\$&')}%`] : []),
+      ) as UsageAggregateRow[];
   }
 
   /** Close the database connection (useful in tests). */

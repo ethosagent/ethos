@@ -270,6 +270,32 @@ export const CHANNEL_EXCLUDED_TOOLS: readonly string[] = ['emit_card', 'render_u
 const CLARIFY_ESCALATION_POLL_MS = 5_000;
 
 /**
+ * How long a bot's spend-today read (`GatewayConfig.botSpendSince`) is trusted
+ * before the next turn re-reads it (plan openclaw-2026.9.6-gaps D5). The read
+ * is a SUM over today's message rows, so it is not run per message; between
+ * reads the cached figure is advanced by this process's own `usage` events,
+ * so a burst of turns inside the window still counts. What the window leaves
+ * out is spend by OTHER processes on the same bot (none, under the gateway
+ * singleton lock) and a turn's usage that a re-read replaces before its
+ * message rows land — at most one window's worth of drift.
+ */
+const DAILY_SPEND_REFRESH_MS = 60_000;
+
+/** The one lane message a turn refused by the daily cap gets (D5). */
+function dailyCapNotice(over: { spentUsd: number; capUsd: number }): string {
+  return (
+    `⚠ This bot has reached its daily budget of $${over.capUsd.toFixed(2)} ` +
+    `($${over.spentUsd.toFixed(2)} spent today, UTC). It will answer again after 00:00 UTC.`
+  );
+}
+
+/** 00:00 UTC of the day `now` falls on — the start of a daily-cap window. */
+function utcDayStart(now: number): Date {
+  const d = new Date(now);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+/**
  * How long `removeAdapter` waits for one adapter's in-flight work before it
  * stops the adapter anyway. Generous, because the alternative to waiting used
  * to be a process restart, which dropped the turn outright.
@@ -720,6 +746,10 @@ export interface GatewayBotConfig {
   backgroundExecutor?: import('@ethosagent/job-runner').BackgroundExecutor;
   /** This bot's job store — present when background is enabled. */
   jobStore?: import('@ethosagent/types').JobStore;
+  /** Operator cap on this bot's spend per UTC day, USD (`<bot entry>.budget.dailyUsd`,
+   *  plan openclaw-2026.9.6-gaps D5). Enforced by `Gateway.enqueueTurn` when
+   *  `GatewayConfig.botSpendSince` is wired; absent = no daily cap. */
+  dailyBudgetUsd?: number;
 }
 
 /**
@@ -1141,6 +1171,15 @@ export interface GatewayConfig {
    * branches are unavailable.
    */
   sessionStore?: () => SessionStore;
+  /**
+   * USD spent since `since` by every session whose key starts with
+   * `sessionKeyPrefix` — how `Gateway.enqueueTurn` reads one bot's spend today
+   * for its `GatewayBotConfig.dailyBudgetUsd` (plan openclaw-2026.9.6-gaps D5).
+   * The host backs it with the aggregation `ethos usage` reads
+   * (`SQLiteSessionStore.usageAggregate` with `keyPrefix`). Absent → no daily
+   * cap is enforced, whatever the bots say.
+   */
+  botSpendSince?: (sessionKeyPrefix: string, since: Date) => Promise<number>;
   /** STT provider registry for resolving voice transcription providers by name. */
   sttProviderRegistry?: SttProviderRegistry;
   /** Name of the STT provider to use (from auxiliary.asr.provider in config). */
@@ -1396,6 +1435,12 @@ export class Gateway {
   private readonly laneRestores = new Map<string, Promise<void>>();
   /** See `GatewayConfig.sessionStore`. */
   private readonly sessionStoreFor: (() => SessionStore) | undefined;
+  /** See `GatewayConfig.botSpendSince`. */
+  private readonly botSpendSince: GatewayConfig['botSpendSince'];
+  /** Today's spend per bot (`dailySpendKey`), read through `botSpendSince` at
+   *  most once per `DAILY_SPEND_REFRESH_MS` and advanced in between by the
+   *  `usage` events this process's own turns yield (`addDailySpend`). */
+  private readonly dailySpend = new Map<string, { day: string; usd: number; readAt: number }>();
   /** Per-lane active personality (overrideable via /personality). */
   private readonly personalityIds = new Map<string, string>();
   /** Per-lane usage accumulator. */
@@ -1743,6 +1788,7 @@ export class Gateway {
         ? new LaneSessionFiles(config.storage, config.dataDir)
         : undefined;
     this.sessionStoreFor = config.sessionStore;
+    this.botSpendSince = config.botSpendSince;
     this.sttProviderRegistry = config.sttProviderRegistry;
     this.sttProviderName = config.sttProviderName;
     this.ttsProviderRegistry = config.ttsProviderRegistry;
@@ -3749,6 +3795,34 @@ export class Gateway {
     let started = false;
     const queued = lane.enqueue(async (signal) => {
       started = true;
+      // D5 — the bot's daily cap, checked when the turn reaches the front of
+      // its lane (so the turns queued ahead of it have already counted) and
+      // before it takes a global slot. A refused turn never runs the loop: its
+      // row closes like any consumed message, and a review turn hands the user
+      // the plain wake notice instead (`settleUnstartedSpool`), so a completion
+      // is never swallowed. Pinned by `__tests__/budget-halt.test.ts`.
+      const overCap = await this.dailyCapReached(bot, message.platform);
+      if (overCap) {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.daily_budget_refused',
+          details: {
+            platform: message.platform,
+            botKey: bot.botKey,
+            chatId: message.chatId,
+            spentUsd: overCap.spentUsd,
+            capUsd: overCap.capUsd,
+          },
+        });
+        if (review) {
+          if (spoolId) await this.settleUnstartedSpool(spoolId, review, bot, message, threadId);
+          return;
+        }
+        if (spoolId) this.closeSpool(spoolId);
+        await adapter
+          .send(message.chatId, { text: dailyCapNotice(overCap), threadId })
+          .catch(() => {});
+        return;
+      }
       const slotHeld = await this.concurrency.acquire(signal);
       if (!slotHeld) {
         if (spoolId) await this.settleUnstartedSpool(spoolId, review, bot, message, threadId);
@@ -5007,6 +5081,7 @@ export class Gateway {
             u.outputTokens += event.outputTokens;
             u.costUsd += event.estimatedCostUsd;
             this.usageStore.set(laneKey, u);
+            this.addDailySpend(bot, message.platform, event.estimatedCostUsd);
           }
           // From the first tool call on, this turn is never auto-replayed
           // (plan openclaw-9.5-adoption D5). `internal` tool_starts count too:
@@ -7060,6 +7135,65 @@ export class Gateway {
     }
   }
 
+  /** Cache key and session-key prefix for one bot's daily spend: its lanes are
+   *  all `buildLaneKey(platform, botKey, …)`, and so are their sessions. */
+  private dailySpendKey(bot: GatewayBotConfig, platform: string): string {
+    return `${buildLaneKey(platform, bot.botKey)}:`;
+  }
+
+  /**
+   * The bot's spend since 00:00 UTC, or `null` when no daily cap applies (no
+   * `dailyBudgetUsd`, no `botSpendSince`) or the read failed. See
+   * `DAILY_SPEND_REFRESH_MS` for when the store is read. Fail-open on a read
+   * that throws — recorded as `gateway.daily_budget_unreadable` — because a
+   * cap that cannot be read refusing every turn would take the bot down over a
+   * locked database; the next turn tries the read again.
+   */
+  private async spentToday(bot: GatewayBotConfig, platform: string): Promise<number | null> {
+    const read = this.botSpendSince;
+    if (bot.dailyBudgetUsd === undefined || !read) return null;
+    const now = Date.now();
+    const start = utcDayStart(now);
+    const day = start.toISOString().slice(0, 10);
+    const key = this.dailySpendKey(bot, platform);
+    const cached = this.dailySpend.get(key);
+    if (cached && cached.day === day && now - cached.readAt < DAILY_SPEND_REFRESH_MS) {
+      return cached.usd;
+    }
+    try {
+      const usd = await read(key, start);
+      this.dailySpend.set(key, { day, usd, readAt: now });
+      return usd;
+    } catch (err) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.daily_budget_unreadable',
+        cause: err instanceof Error ? err.message : String(err),
+        details: { platform, botKey: bot.botKey },
+      });
+      return null;
+    }
+  }
+
+  /** Fold a `usage` event from this process's own turn into the cached figure. */
+  private addDailySpend(bot: GatewayBotConfig, platform: string, usd: number): void {
+    if (bot.dailyBudgetUsd === undefined || !Number.isFinite(usd) || usd <= 0) return;
+    const cached = this.dailySpend.get(this.dailySpendKey(bot, platform));
+    if (cached && cached.day === utcDayStart(Date.now()).toISOString().slice(0, 10)) {
+      cached.usd += usd;
+    }
+  }
+
+  /** `{ spentUsd, capUsd }` when today's spend meets the bot's daily cap, else null. */
+  private async dailyCapReached(
+    bot: GatewayBotConfig,
+    platform: string,
+  ): Promise<{ spentUsd: number; capUsd: number } | null> {
+    const capUsd = bot.dailyBudgetUsd;
+    if (capUsd === undefined) return null;
+    const spentUsd = await this.spentToday(bot, platform);
+    return spentUsd !== null && spentUsd >= capUsd ? { spentUsd, capUsd } : null;
+  }
+
   /**
    * `/budget` and `/budget reset` (plan openclaw-2026.9.6-gaps S4/U1) — the
    * channel half of the CLI command, over the same `AgentLoop` session-cost
@@ -7104,9 +7238,13 @@ export class Gateway {
         : (this.personalityIds.get(laneKey) ?? bot.binding.name);
     const spent = bot.loop.getSessionCost(sessionKey);
     const cap = bot.loop.getPersonalityBudgetCap(personalityId);
+    const today = await this.spentToday(bot, message.platform);
     await reply(
       `Session spend: $${spent.toFixed(4)}` +
         (cap != null ? ` of a $${cap.toFixed(2)} cap` : ' (no session cap set)') +
+        (today !== null && bot.dailyBudgetUsd !== undefined
+          ? `\nBot spend today (UTC): $${today.toFixed(4)} of a $${bot.dailyBudgetUsd.toFixed(2)} daily cap`
+          : '') +
         `\nUse /budget reset to start a new budget window.`,
     );
   }

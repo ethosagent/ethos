@@ -425,6 +425,25 @@ Notes:
 - **The adapter's own fallback is `all`, not `mention_only`.** `DEFAULT_CHANNEL_MODE` in [`extensions/platform-whatsapp/src/config.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/platform-whatsapp/src/config.ts) is `all`, because an unset mode has always meant "answer every group message" for code that constructs `WhatsAppAdapter` directly and flipping it would silence a working embedder on upgrade. The gateway never leaves it unset — it passes `default_mode ?? 'mention_only'` — so an `ethos gateway` deployment gets `mention_only` like every other platform. The `all` fallback is reachable only by embedding the adapter yourself.
 - **Per-chat overrides cannot be set on WhatsApp.** The adapter reads a per-chat override store (`ChannelOverrideStore`, JSONL under `~/.ethos/whatsapp/<botKey>/`) and a stored entry wins over this key, but no command or API writes one — Slack's `/ethos channel-mode` has no WhatsApp equivalent. This key is the only way to put a WhatsApp group into `observe` today, and it applies to every group that account is in.
 
+## \<bot\>.budget.dailyUsd {#bot-daily-budget}
+
+Type: positive number (USD) · Default: unset (no daily cap)
+
+Caps what one channel bot may spend per UTC day. Set it on the bot's own entry: `telegram.bots.<i>.budget.dailyUsd`, `slack.apps.<i>.budget.dailyUsd` or `whatsapp.<i>.budget.dailyUsd`.
+
+```yaml
+telegram.bots.0.budget.dailyUsd: 5
+```
+
+Notes:
+
+- Once the bot's spend since 00:00 UTC meets the cap, each new message gets one reply saying so, and no agent turn runs until the next UTC day. `Gateway.enqueueTurn` in [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts) enforces it.
+- Spend is the same figure `ethos usage` reports, narrowed to that bot's sessions. The gateway reads it at most once a minute and adds its own turns' costs in between. Tool-reported costs are not in that figure, so they do not count toward this cap.
+- `/budget` in a chat shows the bot's spend today against this cap, next to the session cap. `/budget reset` clears only the session cap, never this one.
+- A value that is not a positive number is a parse error, and the bot entry is dropped. The legacy scalar bots (`telegramToken`, `discordToken`, email) have no entry to hold it, so they cannot be capped this way.
+- If the spend cannot be read, the turn runs, and the gateway records a `gateway.daily_budget_unreadable` event.
+- This is an operator setting, not part of a personality: two deployments of the same personality can set different caps. The per-session cap is [`budgetCapUsd`](./personality-yaml.md#budget-cap-usd).
+
 ## emailImapHost {#email-imap-host}
 
 Type: string · Default: unset
