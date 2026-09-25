@@ -1101,6 +1101,71 @@ describe('applyAction — UI/lifecycle transitions', () => {
     expect(action?.durationMs).toBeUndefined();
   });
 
+  // A steer is folded into the RUNNING turn, so live keeps one turn and one
+  // trail across it (`steer-user-message` only appends the steer row). Reload
+  // used to close the turn at the steer, stranding the first five actions in a
+  // tool-only turn above it and leaving the answer's trail at "1 action".
+  it('history-loaded keeps a steered turn whole, with the steer before it', () => {
+    let t = 0;
+    const at = () => new Date(++t).toISOString();
+    const call = (id: string, name: string) => ({ id, name, input: {} });
+    const result = (id: string, name: string) =>
+      storedMsg({
+        id: `tr-${id}`,
+        role: 'tool_result',
+        content: 'ok',
+        toolCallId: id,
+        toolName: name,
+        timestamp: at(),
+      });
+    const stored: StoredMessage[] = [
+      storedMsg({ id: 'u1', role: 'user', content: 'scan the market', timestamp: at() }),
+      storedMsg({
+        id: 'a1',
+        role: 'assistant',
+        toolCalls: [call('c1', 'clarify')],
+        timestamp: at(),
+      }),
+      result('c1', 'clarify'),
+      storedMsg({
+        id: 'a2',
+        role: 'assistant',
+        toolCalls: [
+          call('c2', 'nse_run_scan'),
+          call('c3', 'nse_run_scan'),
+          call('c4', 'nse_run_scan'),
+          call('c5', 'nse_market_brief'),
+        ],
+        timestamp: at(),
+      }),
+      result('c2', 'nse_run_scan'),
+      result('c3', 'nse_run_scan'),
+      result('c4', 'nse_run_scan'),
+      result('c5', 'nse_market_brief'),
+      storedMsg({ id: 'st1', role: 'user_steer', content: 'focus on banks', timestamp: at() }),
+      storedMsg({
+        id: 'a3',
+        role: 'assistant',
+        toolCalls: [call('c6', 'nse_run_scan')],
+        timestamp: at(),
+      }),
+      result('c6', 'nse_run_scan'),
+      storedMsg({ id: 'a4', role: 'assistant', content: 'Banks look strong.', timestamp: at() }),
+    ];
+    const s = applyAction(initialChatState, { type: 'history-loaded', messages: stored });
+    expect(s.messages.map((m) => m.id)).toEqual(['u1', 'st1', 'a1']);
+    const turn = s.messages[2] as AssistantTurn;
+    expect((turn.blocks[0] as TextBlock).content).toBe('Banks look strong.');
+    expect(actions(trailOf(s, turn.id)).map((a) => a.toolName)).toEqual([
+      'clarify',
+      'nse_run_scan',
+      'nse_run_scan',
+      'nse_run_scan',
+      'nse_market_brief',
+      'nse_run_scan',
+    ]);
+  });
+
   it('history-loaded skips tool_result that has no matching tool block', () => {
     const stored: StoredMessage[] = [
       storedMsg({

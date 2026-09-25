@@ -800,9 +800,9 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
 
     case 'history-older-loaded': {
       // A page is whole turns starting at a user row (web-contracts
-      // `sessions.messages`), and `parseHistory` flushes at every user and steer
-      // row — so the page parses on its own, cards included, with no state from
-      // the page after it.
+      // `sessions.messages`), and `parseHistory` flushes at every user row (a
+      // steer stays inside its turn) — so the page parses on its own, cards
+      // included, with no state from the page after it.
       const parsed = parseHistory(action.messages, action.cards ?? [], action.decisions ?? []);
       const known = new Set(state.messages.map((m) => m.id));
       const older = parsed.messages.filter((m) => !known.has(m.id));
@@ -1386,7 +1386,11 @@ function parseHistory(
     }
 
     if (m.role === 'user_steer') {
-      flush();
+      // A steer does NOT close the turn: it was folded into the running turn,
+      // so the rows after it belong to the same turn and the same trail. The
+      // turn is pushed at the next flush, which puts it after the steer — the
+      // order live renders it in (`steer-user-message` appends the steer while
+      // the in-flight turn stays at the bottom). One trail, two renderers.
       // No parseUserContent here: a steer is persisted as the raw steer text
       // (`stages/tool-processing.ts`) and never carries an annotation.
       ui.push({
