@@ -1,6 +1,6 @@
 import { SQLiteCardStore } from '@ethosagent/session-cards';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
-import type { MessageRole, StoredMessage } from '@ethosagent/types';
+import type { AgentEvent, MessageRole, StoredMessage } from '@ethosagent/types';
 import type { CardEnvelope } from '@ethosagent/web-contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionsRepository } from '../../features/sessions/repository';
@@ -150,13 +150,16 @@ describe('SessionsService — paged history', () => {
     await toolTurn(id, 0);
     const readMessages = vi.spyOn(repo, 'messages');
     const readCards = vi.spyOn(cards, 'list');
+    const readDecisions = vi.spyOn(repo, 'decisions');
 
     const light = await service.get(id, { withMessages: false });
     expect(light.session.id).toBe(id);
     expect(light.messages).toEqual([]);
     expect(light.cards).toEqual([]);
+    expect(light.decisions).toEqual([]);
     expect(readMessages).not.toHaveBeenCalled();
     expect(readCards).not.toHaveBeenCalled();
+    expect(readDecisions).not.toHaveBeenCalled();
   });
 
   it('get still returns every message and card by default', async () => {
@@ -165,5 +168,76 @@ describe('SessionsService — paged history', () => {
     const full = await service.get(id);
     expect(full.messages).toHaveLength(4);
     expect(full.cards.map((c) => c.toolCallId)).toEqual(['call-0']);
+  });
+
+  // plan decision-provider-personality §15.5 — persisted decision rows ride the
+  // history responses so a reloaded chat rebuilds its trail rows.
+  describe('decision rows', () => {
+    type DecisionEvent = Extract<AgentEvent, { type: 'decision' }>;
+    const decision = (id: string, extra: Partial<DecisionEvent>): DecisionEvent => ({
+      type: 'decision',
+      id,
+      phase: 'settled',
+      site: 'approver',
+      provider: 'typesafe',
+      mode: 'on',
+      outcome: 'ok',
+      acted: true,
+      verdict: 'approve',
+      latencyMs: 5,
+      personalityId: 'p',
+      ...extra,
+    });
+
+    /** A traced tool turn with a router row (by trace) and an approver row (by call). */
+    async function tracedTurn(sessionId: string, i: number): Promise<void> {
+      const traceId = `trace-${i}`;
+      await add(sessionId, 'user', `u${i}`, { traceId });
+      await add(sessionId, 'assistant', '', {
+        traceId,
+        toolCalls: [{ id: `call-${i}`, name: 'terminal', input: {} }],
+      });
+      await add(sessionId, 'tool_result', 'ok', { toolCallId: `call-${i}`, traceId });
+      await add(sessionId, 'assistant', `a${i}`, { traceId });
+      await store.appendDecision(sessionId, decision(`r${i}`, { site: 'router', traceId }));
+      await store.appendDecision(
+        sessionId,
+        decision(`a${i}`, { toolCallId: `call-${i}`, traceId }),
+      );
+    }
+
+    it('get returns every row, oldest first, with the event verbatim; messages carry traceId', async () => {
+      const id = await newSession('web:decisions');
+      await tracedTurn(id, 0);
+      await tracedTurn(id, 1);
+      const full = await service.get(id);
+      expect(full.decisions.map((d) => [d.seq, d.event.id])).toEqual([
+        [1, 'r0'],
+        [2, 'a0'],
+        [3, 'r1'],
+        [4, 'a1'],
+      ]);
+      expect(full.decisions[1]?.event).toEqual(
+        decision('a0', { toolCallId: 'call-0', traceId: 'trace-0' }),
+      );
+      expect(typeof full.decisions[0]?.createdAt).toBe('string');
+      expect(full.messages[0]?.traceId).toBe('trace-0');
+    });
+
+    it('a page returns only the rows it anchors, by tool call or by trace', async () => {
+      const id = await newSession('web:decision-page');
+      for (let i = 0; i < 3; i++) await tracedTurn(id, i);
+      const newest = await service.messages({ id, turns: 1 });
+      expect(newest.decisions.map((d) => d.event.id)).toEqual(['r2', 'a2']);
+      const older = await service.messages({ id, turns: 2, before: newest.nextCursor ?? '' });
+      expect(older.decisions.map((d) => d.event.id)).toEqual(['r0', 'a0', 'r1', 'a1']);
+    });
+
+    it('deleting the session deletes its rows', async () => {
+      const id = await newSession('web:decision-delete');
+      await tracedTurn(id, 0);
+      await service.delete(id);
+      expect(await store.getDecisions(id)).toEqual([]);
+    });
   });
 });

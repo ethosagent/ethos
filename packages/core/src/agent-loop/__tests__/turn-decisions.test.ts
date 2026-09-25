@@ -164,3 +164,43 @@ describe('withDecisionEvents', () => {
     expect(finalized).toBe(true);
   });
 });
+
+describe('persistence (§15.5)', () => {
+  it('persists settled events only, and a failing store never throws into the site', async () => {
+    const written: string[] = [];
+    const ok = { appendDecision: async (_s: string, e: { id: string }) => written.push(e.id) };
+    const d = new TurnDecisions(undefined, ok as never);
+    d.arm(PERSONALITY, 'trace', 'session-1');
+    const sink = d.sinkFor('t1');
+    sink?.emit({ ...body('s1'), phase: 'started' });
+    sink?.emit(body('s1'));
+    expect(written).toEqual(['s1']);
+
+    for (const store of [
+      {
+        appendDecision: () => {
+          throw new Error('sync');
+        },
+      },
+      { appendDecision: async () => Promise.reject(new Error('async')) },
+    ]) {
+      const failing = new TurnDecisions(undefined, store as never);
+      failing.arm(PERSONALITY, 'trace', 'session-1');
+      expect(() => failing.sinkFor('t1')?.emit(body('x'))).not.toThrow();
+      // The live stream is unaffected by the store.
+      expect(failing.take().map((e) => e.id)).toEqual(['x']);
+    }
+  });
+
+  it('writes nothing without a session id or without appendDecision', () => {
+    const written: string[] = [];
+    const store = { appendDecision: async (_s: string, e: { id: string }) => written.push(e.id) };
+    const noSession = new TurnDecisions(undefined, store as never);
+    noSession.arm(PERSONALITY, 'trace');
+    noSession.sinkFor()?.emit(body('a'));
+    const noMethod = new TurnDecisions(undefined, {} as never);
+    noMethod.arm(PERSONALITY, 'trace', 's');
+    expect(() => noMethod.sinkFor()?.emit(body('b'))).not.toThrow();
+    expect(written).toEqual([]);
+  });
+});

@@ -154,7 +154,7 @@ export async function* setupTurn(
   });
   // plan decision-provider-personality §15.3 — arms only for a personality
   // that declares decision sites; otherwise no seam gets a sink.
-  decisions?.arm(personality, traceId);
+  decisions?.arm(personality, traceId, sessionId);
 
   // Budget cap check — refuse before any LLM work when the session has already
   // exceeded the personality's per-session spending limit.

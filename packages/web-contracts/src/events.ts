@@ -351,6 +351,21 @@ export const DecisionEventSchema = z.object({
 });
 export type DecisionEvent = z.infer<typeof DecisionEventSchema>;
 
+/**
+ * plan decision-provider-personality §15.5 (PD18) — one persisted `settled`
+ * decision row, as `sessions.get` / `sessions.messages` return it for replay.
+ * `seq` is the session-wide write order (oldest first). The row's anchors are
+ * on the event: `toolCallId` (approver / injection) and `traceId` (router →
+ * the turn's messages, `StoredMessage.traceId`). Written by core's sink
+ * (`TurnDecisions`, packages/core/src/agent-loop/turn-decisions.ts).
+ */
+export const SessionDecisionSchema = z.object({
+  seq: z.number().int().positive(),
+  createdAt: z.string(), // ISO-8601
+  event: DecisionEventSchema,
+});
+export type SessionDecision = z.infer<typeof SessionDecisionSchema>;
+
 // B1 — the FIRST frame of every `/sse/sessions/:id` stream. Carries the
 // `x-request-id` of the SSE request itself. The same id is on the response's
 // `x-request-id` header, but `EventSource` gives browser clients no way to

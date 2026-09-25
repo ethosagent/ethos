@@ -419,8 +419,43 @@ describe('sessions.messages / sessions.get inputs', () => {
 
   it('sessions.messages output requires a nullable nextCursor', () => {
     const output = sessionsSchemaOf(contract.sessions.messages, 'outputSchema');
-    expect(output.safeParse({ messages: [], cards: [], nextCursor: null }).success).toBe(true);
-    expect(output.safeParse({ messages: [], cards: [] }).success).toBe(false);
+    expect(
+      output.safeParse({ messages: [], cards: [], decisions: [], nextCursor: null }).success,
+    ).toBe(true);
+    expect(output.safeParse({ messages: [], cards: [], decisions: [] }).success).toBe(false);
+  });
+
+  // plan decision-provider-personality §15.5 — persisted decision rows ride
+  // both history responses, always as an array.
+  it('sessions.messages and sessions.get outputs require decisions', () => {
+    const page = sessionsSchemaOf(contract.sessions.messages, 'outputSchema');
+    expect(page.safeParse({ messages: [], cards: [], nextCursor: null }).success).toBe(false);
+    const row = {
+      seq: 1,
+      createdAt: '2026-09-25T00:00:00.000Z',
+      event: {
+        type: 'decision',
+        id: 'd1',
+        phase: 'settled',
+        site: 'router',
+        provider: 'typesafe',
+        mode: 'shadow',
+        outcome: 'ok',
+        personalityId: 'p',
+        traceId: 'tr',
+      },
+    };
+    expect(
+      page.safeParse({ messages: [], cards: [], decisions: [row], nextCursor: null }).success,
+    ).toBe(true);
+    expect(
+      page.safeParse({
+        messages: [],
+        cards: [],
+        decisions: [{ ...row, seq: 0 }],
+        nextCursor: null,
+      }).success,
+    ).toBe(false);
   });
 
   it('sessions.get defaults withMessages to true', () => {

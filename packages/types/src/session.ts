@@ -1,3 +1,4 @@
+import type { AgentEvent } from './agent-event';
 import type { MessageContent, TokenUsage } from './llm';
 
 export interface Session {
@@ -198,6 +199,21 @@ export interface MessagePage {
   hasMore: boolean;
 }
 
+/**
+ * One persisted decision row (plan decision-provider-personality §15.5, PD18):
+ * a `settled` `decision` event, stored with its session so a reloaded chat
+ * rebuilds the same trail rows. Written by core's per-turn sink
+ * (`TurnDecisions`, packages/core/src/agent-loop/turn-decisions.ts), including
+ * a shadow result that settles after the turn's iterator ended.
+ */
+export interface StoredDecision {
+  sessionId: string;
+  /** 1-based, per session, in write order — the read order. */
+  seq: number;
+  event: Extract<AgentEvent, { type: 'decision' }>;
+  createdAt: Date;
+}
+
 export interface SessionStore {
   createSession(session: Omit<Session, 'id' | 'createdAt' | 'updatedAt'>): Promise<Session>;
   getSession(id: string): Promise<Session | null>;
@@ -219,6 +235,25 @@ export interface SessionStore {
    */
   getMessagePage?(sessionId: string, options: MessagePageOptions): Promise<MessagePage | null>;
   updateUsage(sessionId: string, delta: Partial<SessionUsage>): Promise<void>;
+  /**
+   * Persist one `settled` decision event for the session (§15.5). Optional: a
+   * store that omits it keeps no decision rows, and core then writes none.
+   * Rows go with their session on `deleteSession` / `pruneOldSessions`.
+   */
+  appendDecision?(
+    sessionId: string,
+    event: Extract<AgentEvent, { type: 'decision' }>,
+  ): Promise<StoredDecision>;
+  /**
+   * A session's decision rows, oldest first (by `seq`). With `filter`, only
+   * rows whose `toolCallId` or `traceId` is listed — the rows a page of
+   * messages anchors. Pinned for both shipped stores by
+   * extensions/session-sqlite/src/__tests__/session-decisions.test.ts.
+   */
+  getDecisions?(
+    sessionId: string,
+    filter?: { toolCallIds?: readonly string[]; traceIds?: readonly string[] },
+  ): Promise<StoredDecision[]>;
   /**
    * Search for messages by query text. Bounds are inclusive on `StoredMessage.timestamp`.
    * Both `since` and `until` are optional; provider behavior is open-ended when only one is supplied.

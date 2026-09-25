@@ -73,6 +73,13 @@ export const StoredMessageSchema = z.object({
    * absent as success.
    */
   isError: z.boolean().optional(),
+  /**
+   * The turn's observability trace id, when the turn was traced. Optional:
+   * absent on untraced turns and on rows written before `trace_id` existed.
+   * It is the anchor a persisted router decision row (`SessionDecision`,
+   * events.ts) is placed by on reload (plan decision-provider-personality §15.5).
+   */
+  traceId: z.string().optional(),
   timestamp: z.string(), // ISO-8601
 });
 export type StoredMessage = z.infer<typeof StoredMessageSchema>;

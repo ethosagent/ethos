@@ -22,6 +22,7 @@ import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
 import { ApproverDecisionSinks } from '../agent-loop/approver-decision-sinks';
 import type { TierRouter } from '../agent-loop/tier-router';
+import { InMemorySessionStore } from '../defaults/in-memory-session';
 import { DefaultHookRegistry } from '../hook-registry';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
 import { DefaultToolRegistry } from '../tool-registry';
@@ -117,6 +118,7 @@ async function runTurn(
   // The composition root's channel: the loop is constructed with it, and the
   // "approver" handler below reads it by the payload's call key.
   const approverSinks = new ApproverDecisionSinks();
+  const session = new InMemorySessionStore();
   let approverSettled = false;
   let startedSeenBeforeSettle: boolean | undefined;
 
@@ -171,6 +173,7 @@ async function runTurn(
     modelResolution: { registry, routing: {} },
     tierRouter: router,
     approverDecisionSinks: approverSinks,
+    session,
     safety: createTestSafety({
       injection: {
         classifier: async (input) => {
@@ -199,7 +202,9 @@ async function runTurn(
   }
   // After the iterator ended: dropped from the stream, and never a throw.
   injectionSink?.emit(settled('injection', { id: 'after-end', mode: 'shadow' }));
-  return { events, seams, startedSeenBeforeSettle };
+  const sessionId = (await session.listSessions())[0]?.id ?? '';
+  const persisted = (await session.getDecisions(sessionId)).map((r) => r.event);
+  return { events, seams, startedSeenBeforeSettle, persisted };
 }
 
 const label = (e: AgentEvent): string =>
@@ -308,5 +313,28 @@ describe('decision events in the turn stream (§15.3)', () => {
       expect(events.some((e) => e.type === 'decision')).toBe(false);
       expect(seams.router[0]).not.toHaveProperty('decisionSink');
     }
+  });
+
+  it('§15.5 — every settled event is persisted with the session, including one after the iterator ended', async () => {
+    const { events, persisted } = await runTurn(DECLARED);
+    expect(persisted.map((e) => `${e.site}:${e.id}`)).toEqual([
+      'router:router-1',
+      'approver:approver-1',
+      'injection:injection-1',
+      'injection:late',
+      // Dropped from the stream (K10), but on reload it is there.
+      'injection:after-end',
+    ]);
+    expect(persisted.every((e) => e.phase === 'settled')).toBe(true);
+    // Rows carry core's stamps, exactly as the live events do.
+    const live = events.filter((e) => e.type === 'decision' && e.phase === 'settled');
+    expect(persisted.slice(0, live.length)).toEqual(live);
+    for (const e of persisted) expect(e).toMatchObject({ personalityId: 'p', traceId: 'trace-1' });
+    expect(persisted.find((e) => e.site === 'approver')?.toolCallId).toBe('t1');
+  });
+
+  it('§15.5 — a personality that declares no decision sites writes no rows', async () => {
+    const { persisted } = await runTurn({});
+    expect(persisted).toEqual([]);
   });
 });

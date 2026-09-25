@@ -27,6 +27,13 @@
 //   from the stream (the site still records it to observability). Nothing ever
 //   waits for a shadow result (R8).
 //
+// Persistence (§15.5, PD18): every `settled` event is also written to the
+// session store (`SessionStore.appendDecision`, the store that holds the turn's
+// messages) at the moment the site emits it — in-turn, in the post-`done` tail,
+// AND after the iterator closed, so a row that never reached the live stream
+// still appears on reload (K10). A write failure is swallowed: persistence
+// never throws into a decision site or the turn.
+//
 // Zero cost for everyone else: the queue is ARMED only for a personality that
 // names a decision provider and sets at least one site to something other than
 // `off` (`declaresDecisionSites`). Unarmed, no sink is handed to any seam —
@@ -34,7 +41,7 @@
 // That check is a cheap superset; `resolvePersonalityDecisionSite`
 // (@ethosagent/config) stays the authority on whether a site runs.
 
-import type { AgentEvent, DecisionSink, PersonalityConfig } from '@ethosagent/types';
+import type { AgentEvent, DecisionSink, PersonalityConfig, SessionStore } from '@ethosagent/types';
 import type { ApproverDecisionSinks } from './approver-decision-sinks';
 
 type DecisionEvent = Extract<AgentEvent, { type: 'decision' }>;
@@ -47,21 +54,27 @@ export function declaresDecisionSites(personality: PersonalityConfig): boolean {
 }
 
 export class TurnDecisions {
-  private stamp: { personalityId: string; traceId?: string } | undefined;
+  private stamp: { personalityId: string; traceId?: string; sessionId?: string } | undefined;
   private readonly queue: DecisionEvent[] = [];
   private held = false;
   private closed = false;
   private wake: (() => void) | undefined;
   private signalPromise: Promise<null> | undefined;
 
-  constructor(private readonly approverSinks?: ApproverDecisionSinks) {}
+  constructor(
+    private readonly approverSinks?: ApproverDecisionSinks,
+    /** Where `settled` rows are persisted (§15.5); absent or without
+     *  `appendDecision` → nothing is written. */
+    private readonly store?: SessionStore,
+  ) {}
 
   /** Arms the queue for this turn when the personality declares decision sites. */
-  arm(personality: PersonalityConfig, traceId: string | undefined): void {
+  arm(personality: PersonalityConfig, traceId: string | undefined, sessionId?: string): void {
     if (!declaresDecisionSites(personality)) return;
     this.stamp = {
       personalityId: personality.id,
       ...(traceId !== undefined ? { traceId } : {}),
+      ...(sessionId !== undefined ? { sessionId } : {}),
     };
   }
 
@@ -82,7 +95,6 @@ export class TurnDecisions {
       ...(stamp.traceId !== undefined ? { traceId: stamp.traceId } : {}),
       emit: (event) => {
         try {
-          if (this.closed) return;
           // Core's stamps replace whatever a site passed for them at runtime.
           const {
             personalityId: _p,
@@ -90,19 +102,32 @@ export class TurnDecisions {
             traceId: _t,
             ...body
           } = event as DecisionEvent;
-          this.queue.push({
+          const stamped: DecisionEvent = {
             ...body,
             type: 'decision',
             personalityId: stamp.personalityId,
             ...(toolCallId !== undefined ? { toolCallId } : {}),
             ...(stamp.traceId !== undefined ? { traceId: stamp.traceId } : {}),
-          });
+          };
+          // Persisted whether or not the stream is still open (file header).
+          if (stamped.phase === 'settled') this.persist(stamp.sessionId, stamped);
+          if (this.closed) return;
+          this.queue.push(stamped);
           this.notify();
         } catch {
           // A sink never throws into a decision site.
         }
       },
     };
+  }
+
+  private persist(sessionId: string | undefined, event: DecisionEvent): void {
+    if (sessionId === undefined || !this.store?.appendDecision) return;
+    try {
+      void this.store.appendDecision(sessionId, event).catch(() => {});
+    } catch {
+      // A store that throws synchronously is swallowed the same way.
+    }
   }
 
   /** Keep queued events back until `release` (the router, before `run_start`). */

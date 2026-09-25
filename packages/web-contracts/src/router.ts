@@ -8,6 +8,7 @@ import { VOICE_MODES } from '@ethosagent/types';
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import { SessionCardSchema } from './cards';
+import { SessionDecisionSchema } from './events';
 import {
   A2aIdentityViewSchema,
   A2aPeerRowSchema,
@@ -171,6 +172,8 @@ const SessionGetOutput = z.object({
   messages: z.array(StoredMessageSchema),
   /** Card envelopes emitted during this session, for replay. Empty when none, or when not requested. */
   cards: z.array(SessionCardSchema),
+  /** Settled decision rows, oldest first, for replay (plan decision-provider-personality §15.5). Empty when none, or when not requested. */
+  decisions: z.array(SessionDecisionSchema),
 });
 
 // Turn-based, cursor-paged history, newest page first. A turn starts at a
@@ -190,6 +193,9 @@ const SessionMessagesOutput = z.object({
   messages: z.array(StoredMessageSchema),
   /** Only the cards whose tool call belongs to a message in this page. */
   cards: z.array(SessionCardSchema),
+  /** Only the decision rows this page anchors: their `toolCallId` belongs to a
+   *  message in this page, or their `traceId` is a page message's `traceId`. */
+  decisions: z.array(SessionDecisionSchema),
   /** Pass as `before` for the next-older page. `null` once the page reaches the start of the session. */
   nextCursor: z.string().nullable(),
 });

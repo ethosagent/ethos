@@ -625,7 +625,7 @@ export class AgentLoop {
    *  `done` while the lane is held, so breaking on `done` skips it. */
   async *run(text: string, opts: RunOptions = {}): AsyncGenerator<AgentEvent> {
     // decision-provider-personality §15.3 — site events merge in (agent-loop/turn-decisions.ts).
-    const decisions = new TurnDecisions(this.approverDecisionSinks);
+    const decisions = new TurnDecisions(this.approverDecisionSinks, this.session);
     yield* withDecisionEvents(decisions, this.runTurn(text, opts, decisions));
   }
 

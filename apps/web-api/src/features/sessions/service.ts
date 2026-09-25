@@ -3,6 +3,7 @@ import { EthosError } from '@ethosagent/types';
 import type {
   ContextAnatomyWire,
   SessionCard,
+  SessionDecision,
   Session as WireSession,
   StoredMessage as WireStoredMessage,
 } from '@ethosagent/web-contracts';
@@ -57,17 +58,23 @@ export class SessionsService {
   }
 
   /**
-   * `withMessages: false` skips reading messages and cards; both come back as
-   * `[]` meaning "not requested". Absent means `true`, the original contract.
+   * `withMessages: false` skips reading messages, cards and decisions; all
+   * come back as `[]` meaning "not requested". Absent means `true`, the
+   * original contract.
    */
   async get(
     id: string,
     options: { withMessages?: boolean } = {},
-  ): Promise<{ session: WireSession; messages: WireStoredMessage[]; cards: SessionCard[] }> {
+  ): Promise<{
+    session: WireSession;
+    messages: WireStoredMessage[];
+    cards: SessionCard[];
+    decisions: SessionDecision[];
+  }> {
     const session = await this.opts.sessions.get(id);
     if (!session) throw notFound(id);
     if (options.withMessages === false) {
-      return { session: toWireSession(session), messages: [], cards: [] };
+      return { session: toWireSession(session), messages: [], cards: [], decisions: [] };
     }
     const messages = await this.opts.sessions.messages(id);
     return {
@@ -76,15 +83,19 @@ export class SessionsService {
       // The contract always carries the array so the client never branches on
       // undefined; a session with no store wired simply replays none.
       cards: this.opts.cards?.list(id) ?? [],
+      // plan decision-provider-personality §15.5 — rows persisted by core's
+      // sink (`SessionStore.appendDecision`), for the trail on reload.
+      decisions: (await this.opts.sessions.decisions(id)).map(toWireDecision),
     };
   }
 
   /** One turn-based page of history, newest first — see `sessions.messages` in web-contracts. */
-  async messages(input: {
-    id: string;
-    turns: number;
-    before?: string;
-  }): Promise<{ messages: WireStoredMessage[]; cards: SessionCard[]; nextCursor: string | null }> {
+  async messages(input: { id: string; turns: number; before?: string }): Promise<{
+    messages: WireStoredMessage[];
+    cards: SessionCard[];
+    decisions: SessionDecision[];
+    nextCursor: string | null;
+  }> {
     const session = await this.opts.sessions.get(input.id);
     if (!session) throw notFound(input.id);
     const page = await this.opts.sessions.messagePage(input.id, {
@@ -102,6 +113,14 @@ export class SessionsService {
     return {
       messages: page.messages.map(toWireMessage),
       cards: this.opts.cards?.listForToolCalls(input.id, toolCallIdsOf(page.messages)) ?? [],
+      // Only the rows this page anchors: approver / injection rows by tool
+      // call, router rows by the turn's traceId (§15.5).
+      decisions: (
+        await this.opts.sessions.decisions(input.id, {
+          toolCallIds: toolCallIdsOf(page.messages),
+          traceIds: traceIdsOf(page.messages),
+        })
+      ).map(toWireDecision),
       nextCursor: page.nextCursor,
     };
   }
@@ -204,6 +223,17 @@ function toolCallIdsOf(messages: import('@ethosagent/types').StoredMessage[]): s
   return [...ids];
 }
 
+/** Trace ids a page's rows carry — the anchors of its router decision rows. */
+function traceIdsOf(messages: import('@ethosagent/types').StoredMessage[]): string[] {
+  const ids = new Set<string>();
+  for (const m of messages) if (m.traceId) ids.add(m.traceId);
+  return [...ids];
+}
+
+function toWireDecision(d: import('@ethosagent/types').StoredDecision): SessionDecision {
+  return { seq: d.seq, createdAt: d.createdAt.toISOString(), event: d.event };
+}
+
 function toWireSession(s: import('@ethosagent/types').Session): WireSession {
   return {
     id: s.id,
@@ -234,6 +264,8 @@ function toWireMessage(m: import('@ethosagent/types').StoredMessage): WireStored
     toolCalls: m.toolCalls ?? null,
     // Omitted, never coerced to false — absent means "outcome not recorded".
     ...(m.isError === undefined ? {} : { isError: m.isError }),
+    // The anchor a persisted router decision row is placed by (§15.5).
+    ...(m.traceId ? { traceId: m.traceId } : {}),
     timestamp: m.timestamp.toISOString(),
   };
 }

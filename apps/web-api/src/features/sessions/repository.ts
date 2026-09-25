@@ -5,6 +5,7 @@ import type {
   Session,
   SessionFilter,
   SessionStore,
+  StoredDecision,
   StoredMessage,
 } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
@@ -187,6 +188,18 @@ export class SessionsRepository {
       messages: page.messages,
       nextCursor: page.hasMore && oldest ? encodeMessageCursor(oldest.id) : null,
     };
+  }
+
+  /**
+   * Persisted decision rows (`SessionStore.getDecisions`, plan
+   * decision-provider-personality §15.5), oldest first. `[]` when the store
+   * keeps none. `filter` narrows to the rows a page of messages anchors.
+   */
+  async decisions(
+    sessionId: string,
+    filter?: { toolCallIds: readonly string[]; traceIds: readonly string[] },
+  ): Promise<StoredDecision[]> {
+    return (await this.store.getDecisions?.(sessionId, filter)) ?? [];
   }
 
   async delete(id: string): Promise<void> {
