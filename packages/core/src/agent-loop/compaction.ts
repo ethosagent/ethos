@@ -152,6 +152,7 @@ export function evaluateGate(
     | 'charsPerToken'
     | 'lastActualInputTokens'
     | 'gateDelta'
+    | 'toolSchemas'
   >,
   messages: Message[],
   systemPrompt: string,
@@ -161,7 +162,20 @@ export function evaluateGate(
   const outputReserve = Math.min(Math.max(0, requestedOutput), Math.floor(rawWindow / 2));
   const window = rawWindow - outputReserve;
 
-  const staticTokens = Math.max(0, Math.min(deps.staticTokens ?? 0, window));
+  // Whole-request units on both sides: the usage estimate counts the tool
+  // schemas with the system prompt, and so does an unmeasured static slice.
+  // One place, so the pre-LLM gate (`maybeCompact`) and the turn-end trigger
+  // (`maybeConsolidateAtTurnEnd`) cannot drift apart again. Pinned by
+  // `__tests__/turn-end-gate-units.test.ts`.
+  const prefix = `${systemPrompt}${deps.toolSchemas ?? ''}`;
+  const charsPerToken = deps.charsPerToken;
+  const safetyFactor = rawWindow <= SMALL_WINDOW_THRESHOLD ? SMALL_WINDOW_SAFETY_FACTOR : 1;
+  const estimateWith = (msgs: Message[]): number =>
+    charsPerToken !== undefined
+      ? Math.ceil((prefix.length + estimateMessagesChars(msgs)) / charsPerToken)
+      : Math.ceil((estimateTokens(prefix) + estimateMessagesTokens(msgs)) * safetyFactor);
+  const measured = deps.staticTokens ?? (deps.toolSchemas === undefined ? 0 : estimateWith([]));
+  const staticTokens = Math.max(0, Math.min(measured, window));
   // Lane 1(a) — the fourth term. One arithmetic for both gates: the reserve
   // narrows `messagesWindow`, so `gateThreshold` (pre-LLM gate + turn-end
   // trigger) and `maybeCompact`'s shrink target all honour it without a second
@@ -169,16 +183,7 @@ export function evaluateGate(
   const maxSingleToolResult = Math.max(0, deps.maxSingleToolResultTokens ?? 0);
   const messagesWindow = Math.max(0, window - staticTokens - maxSingleToolResult);
 
-  const charsPerToken = deps.charsPerToken;
-  let estimate: number;
-  if (charsPerToken !== undefined) {
-    estimate = Math.ceil((systemPrompt.length + estimateMessagesChars(messages)) / charsPerToken);
-  } else {
-    const safetyFactor = rawWindow <= SMALL_WINDOW_THRESHOLD ? SMALL_WINDOW_SAFETY_FACTOR : 1;
-    estimate = Math.ceil(
-      (estimateTokens(systemPrompt) + estimateMessagesTokens(messages)) * safetyFactor,
-    );
-  }
+  const estimate = estimateWith(messages);
   const current =
     deps.lastActualInputTokens !== undefined
       ? Math.max(estimate, deps.lastActualInputTokens + Math.max(0, deps.gateDelta ?? 0))
@@ -361,17 +366,8 @@ export async function maybeCompact(
 
   // Phase 3 — the gate arithmetic is shared with the turn-end trigger via
   // `evaluateGate` (output reserve, static-slice subtraction, small-window
-  // factor, charsPerToken, actuals-first floor all live there).
-  const staticPrefix = `${systemPrompt}${deps.toolSchemas ?? ''}`;
-  const { lastActualInputTokens: _actual, staticTokens: _measured, ...estimator } = deps;
-  const estimated = evaluateGate(estimator, [], staticPrefix).current;
-  const staticTokens =
-    deps.staticTokens ?? (deps.toolSchemas === undefined ? undefined : estimated);
-  const g = evaluateGate(
-    { ...deps, ...(staticTokens !== undefined ? { staticTokens } : {}) },
-    messages,
-    staticPrefix,
-  );
+  // factor, charsPerToken, actuals-first floor, tool schemas all live there).
+  const g = evaluateGate(deps, messages, systemPrompt);
   const { current, window } = g;
   // Item 7 — the absolute ceiling lowers both the gate and the shrink budget.
   const ceiling =
