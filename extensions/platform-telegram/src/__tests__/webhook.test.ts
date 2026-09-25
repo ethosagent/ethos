@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { InMemoryAttachmentCache } from '@ethosagent/storage-fs';
 import type { InboundMessage } from '@ethosagent/types';
 import type { PollingOptions, Transformer } from 'grammy';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Real grammy, stubbed network.
@@ -61,6 +61,12 @@ vi.mock('grammy', async (importOriginal) => {
 
 import { Bot, webhookCallback } from 'grammy';
 import { TelegramAdapter, type TelegramAdapterConfig } from '../index';
+import { loadTelegramSdk } from '../sdk';
+
+// The adapter reads grammy through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadTelegramSdk();
+});
 
 const SECRET = 'super-secret-token';
 const SECRET_HEADER = 'X-Telegram-Bot-Api-Secret-Token';

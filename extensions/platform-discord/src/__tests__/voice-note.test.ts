@@ -1,7 +1,13 @@
 import { isVoiceOutboundAdapter, voiceAudioMimeType } from '@ethosagent/types';
 import { AttachmentBuilder } from 'discord.js';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { DiscordAdapter } from '../index';
+import { loadDiscordSdk } from '../sdk';
+
+// The adapter reads discord.js through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadDiscordSdk();
+});
 
 /** Captured `channel.send({...})` payload. */
 interface SendPayload {

@@ -1,6 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { chunkText, reflowChunks, SlackAdapter } from '../index';
+import { loadSlackSdk } from '../sdk';
 import { stubSlackWebApi } from './stub-slack-web-api';
+
+// The adapter reads @slack/bolt through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadSlackSdk();
+});
 
 stubSlackWebApi();
 

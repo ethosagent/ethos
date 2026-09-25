@@ -7,7 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import type { InboundMessage } from '@ethosagent/types';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   EmailAdapter,
   type EmailAdapterConfig,
@@ -16,6 +16,12 @@ import {
   UNVERIFIED_SENDER_NOTICE,
   unverifiedEmailUserId,
 } from '../index';
+import { loadEmailSdk } from '../sdk';
+
+// The adapter reads imapflow/mailparser/nodemailer through sdk.ts (loaded lazily in production).
+beforeAll(async () => {
+  await loadEmailSdk();
+});
 
 const TRUSTED = 'mx.trusted.example';
 const KNOWN_USER = 'alice@bank.example';

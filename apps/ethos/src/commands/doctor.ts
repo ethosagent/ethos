@@ -31,6 +31,7 @@ import {
   readConfig,
   readRawConfig,
   resolveDecisionsConfig,
+  secretRefForConfigKey,
 } from '@ethosagent/config';
 import { resolveSttProvider, resolveTtsProvider } from '@ethosagent/core';
 import {
@@ -45,6 +46,7 @@ import {
   callCaptureHealthPath,
 } from '@ethosagent/platform-callcapture';
 import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
+import { REF_TO_ENV } from '@ethosagent/storage-fs';
 import type { PersonalityConfig, SecretsResolver, Skill } from '@ethosagent/types';
 import { resolveCharacterSheetDecisions } from '@ethosagent/wiring';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
@@ -119,53 +121,58 @@ const CHANNEL_SDKS: SdkRow[] = [
   },
 ];
 
+/**
+ * A credential the config names. Checked WHERE THE CONFIG POINTS: the
+ * `${secrets:<ref>}` reference(s) in the raw config value, which is what
+ * `resolveConfigSecrets` (packages/config) resolves at runtime. With no value
+ * at all, the ref `secretRefForConfigKey` assigns — the single owner of ref
+ * naming, the same one setup/setup-from-env write through
+ * (`providers/<provider>/apiKey` for the provider key).
+ *
+ * The rows used to carry hard-coded refs (`anthropic-api-key`,
+ * `telegram-bot-token`, …) that nothing writes, so a correctly set up install
+ * was reported "missing".
+ */
 interface SecretCheckRow {
-  key: string;
-  secretRef: string;
-  required: boolean;
-  fillWith: string;
-  configuredWhen?: (cfg: EthosConfig) => boolean;
+  configKey: 'apiKey' | 'telegramToken' | 'slackBotToken' | 'discordToken';
+  /** Display/JSON name when the ref has no env-var alias. */
+  label: (cfg: EthosConfig) => string;
+  configuredWhen: (cfg: EthosConfig) => boolean;
 }
 
 const SECRET_CHECKS: SecretCheckRow[] = [
   {
-    key: 'ANTHROPIC_API_KEY',
-    secretRef: 'anthropic-api-key',
-    required: false,
-    fillWith: 'ethos keys set anthropic-api-key <value>',
-    configuredWhen: (cfg) => cfg.provider === 'anthropic',
+    configKey: 'apiKey',
+    label: (cfg) => `${cfg.provider ?? 'provider'} API key`,
+    // Applies when the config names a key, or when the provider is one that
+    // has a known API-key env var (ENV_TO_REF in packages/storage-fs) — i.e.
+    // cannot run keyless. Keyless providers (ollama, a local openai-compat
+    // server) and codex (OAuth — see checkCodexModel) are not flagged.
+    configuredWhen: (cfg) => {
+      if (!cfg.provider) return false;
+      if ((cfg.apiKey ?? '').trim().length > 0) return true;
+      const ref = secretRefForConfigKey('apiKey', { provider: cfg.provider });
+      return ref !== null && REF_TO_ENV.has(ref);
+    },
   },
   {
-    key: 'OPENAI_API_KEY',
-    secretRef: 'openai-api-key',
-    required: false,
-    fillWith: 'ethos keys set openai-api-key <value>',
-    configuredWhen: (cfg) => cfg.provider === 'openai-compat',
-  },
-  {
-    key: 'TELEGRAM_BOT_TOKEN',
-    secretRef: 'telegram-bot-token',
-    required: false,
-    fillWith: 'ethos keys set telegram-bot-token <value>',
+    configKey: 'telegramToken',
+    label: () => 'TELEGRAM_BOT_TOKEN',
     configuredWhen: (cfg) => Boolean(cfg.telegramToken),
   },
   {
-    key: 'SLACK_BOT_TOKEN',
-    secretRef: 'slack-bot-token',
-    required: false,
-    fillWith: 'ethos keys set slack-bot-token <value>',
+    configKey: 'slackBotToken',
+    label: () => 'SLACK_BOT_TOKEN',
     configuredWhen: (cfg) => Boolean(cfg.slackBotToken),
   },
   {
-    key: 'DISCORD_BOT_TOKEN',
-    secretRef: 'discord-bot-token',
-    required: false,
-    fillWith: 'ethos keys set discord-bot-token <value>',
+    configKey: 'discordToken',
+    label: () => 'DISCORD_BOT_TOKEN',
     configuredWhen: (cfg) => Boolean(cfg.discordToken),
   },
 ];
 
-interface SecretCheckResult {
+export interface SecretCheckResult {
   key: string;
   present: boolean;
   required: boolean;
@@ -173,22 +180,46 @@ interface SecretCheckResult {
   fillWith: string;
 }
 
-async function checkSecrets(config: EthosConfig | null): Promise<SecretCheckResult[]> {
-  const secrets = await getSecretsResolver();
+const SECRET_REF_RE = /\$\{secrets:([^}]+)\}/g;
+
+async function isSet(secrets: SecretsResolver, ref: string): Promise<boolean> {
+  const val = await secrets.get(ref);
+  return val !== null && val.trim().length > 0;
+}
+
+/** Exported for tests; `secrets` is injectable so they never touch a real vault. */
+export async function checkSecrets(
+  config: EthosConfig | null,
+  secrets?: SecretsResolver,
+): Promise<SecretCheckResult[]> {
+  if (!config) return [];
+  const resolver = secrets ?? (await getSecretsResolver());
   const results: SecretCheckResult[] = [];
   for (const row of SECRET_CHECKS) {
-    const hasCondition = Boolean(row.configuredWhen);
-    const conditionMet = hasCondition && config ? row.configuredWhen?.(config) : false;
-    const applicable = row.required || Boolean(conditionMet);
-    if (!applicable) continue;
-    const val = await secrets.get(row.secretRef);
-    const present = val !== null && val.trim().length > 0;
+    if (!row.configuredWhen(config)) continue;
+    const raw = (config[row.configKey] ?? '').trim();
+    const named = [...raw.matchAll(SECRET_REF_RE)].flatMap((m) => (m[1] ? [m[1]] : []));
+    // No reference in the config: the ref this key would be written to.
+    const defaultRef = secretRefForConfigKey(row.configKey, { provider: config.provider });
+    const refs = named.length > 0 ? named : defaultRef ? [defaultRef] : [];
+    // A plaintext value still in config.yaml (pre-externalization install) is present.
+    let missingRef: string | null = null;
+    if (named.length > 0 || raw.length === 0) {
+      for (const ref of refs) {
+        if (!(await isSet(resolver, ref))) {
+          missingRef = ref;
+          break;
+        }
+      }
+    }
+    const present = refs.length > 0 || raw.length > 0 ? missingRef === null : false;
+    const nameRef = missingRef ?? refs[0];
     results.push({
-      key: row.key,
+      key: (nameRef && REF_TO_ENV.get(nameRef)) || row.label(config),
       present,
-      required: row.required,
+      required: false,
       applicable: true,
-      fillWith: row.fillWith,
+      fillWith: nameRef ? `ethos secrets set ${nameRef} <value>` : '',
     });
   }
   return results;

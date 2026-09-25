@@ -14,15 +14,7 @@ import type {
   Storage,
   VoiceOutboundAdapter,
 } from '@ethosagent/types';
-import {
-  AttachmentBuilder,
-  Client,
-  GatewayIntentBits,
-  type Interaction,
-  Partials,
-  REST,
-  Routes,
-} from 'discord.js';
+import type { Client, Interaction } from 'discord.js';
 import { chunkText, reflowChunks } from './chunking';
 import type { clarifyModalPayload } from './clarify-blocks';
 import type { CommandContext, CommandPayload } from './commands';
@@ -32,6 +24,7 @@ import { ChannelModeSchema, DEFAULT_CHANNEL_MODE } from './config';
 import { buildModal, registerInteractionHandler, toActionRowBuilder } from './events/interactions';
 import { registerEditHandler, registerMessageHandler } from './events/messages';
 import { toNativeMarkdown } from './format';
+import { discord } from './sdk';
 import { BackfillStateStore } from './store/backfill-state';
 import { ThreadStateStore } from './store/thread-state';
 import type { DiscordClarifyInteraction } from './types';
@@ -238,6 +231,7 @@ export class DiscordAdapter
       this.backfillState = new BackfillStateStore(config.storage, dir, this.botKey);
     }
 
+    const { Client, GatewayIntentBits, Partials } = discord();
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -360,6 +354,7 @@ export class DiscordAdapter
         return { ok: false, error: 'Channel not found or not sendable' };
       }
 
+      const { AttachmentBuilder } = discord();
       // biome-ignore lint/suspicious/noExplicitAny: discord.js channel union
       const sent = await (channel as any).send({
         files: [new AttachmentBuilder(Buffer.from(audio), { name: opts.filename })],
@@ -699,6 +694,7 @@ export class DiscordAdapter
 
   private async registerSlashCommands(): Promise<void> {
     try {
+      const { REST, Routes } = discord();
       const rest = new REST({ version: '10' }).setToken(this.token);
       const appId = this.applicationId;
       const target = this.registerCommandsTo;
@@ -794,3 +790,5 @@ export const capabilities: AdapterCapabilities = {
   outboundFiles: false,
   webhookMode: false,
 };
+
+export { loadDiscordSdk } from './sdk';

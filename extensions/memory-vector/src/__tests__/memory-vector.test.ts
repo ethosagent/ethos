@@ -437,3 +437,15 @@ describe('VectorMemoryProvider — durability posture', () => {
     expect(syncPragma(provider)).toBe(2);
   });
 });
+
+describe('VectorMemoryProvider — busy_timeout', () => {
+  it('waits 5000ms for a peer connection instead of throwing SQLITE_BUSY', () => {
+    // memory.db is opened by every process that builds an agent loop under
+    // `memory: vector`; `ethos run-all` starts gateway and serve together.
+    // The @ethosagent/sqlite default is 0, which throws "database is locked".
+    const rows = (provider as unknown as { db: { pragma(s: string): unknown } }).db.pragma(
+      'busy_timeout',
+    );
+    expect((rows as Array<{ timeout: number }>)[0]?.timeout).toBe(5000);
+  });
+});

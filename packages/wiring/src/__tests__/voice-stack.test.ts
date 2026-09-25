@@ -1179,10 +1179,33 @@ describe('buildVoiceStack', () => {
   // `bargeIn` is per-surface: it applies uniformly (unlike `bargeIn`, there is
   // no per-surface block). Absent `enabled`, the DEFAULT is surface-scoped —
   // browser only — see the `default enable is surface-scoped` describe below.
-  // Real timers, bounded to well under a second: `VoiceSession` itself takes
-  // no injectable clock/timer from this layer, and the interval under test is
-  // short enough that a real wait is fast and not flaky.
+  // Real timers: `VoiceSession` itself takes no injectable clock/timer from
+  // this layer. A test that expects the filler/tick holds the tool call open
+  // UNTIL it has seen them (`waitForEvents`), never for a fixed sleep: the
+  // first tick is chained behind the filler (voice-session.ts `restartTick`,
+  // so ~afterMs + tickIntervalMs after `tool_start`), and `tool_start` itself
+  // lands only after the async VAD → STT → runner hops that follow
+  // `speakOneUtterance`. A fixed 150ms sleep left ~40ms for all of that, and
+  // under a loaded full `pnpm test` run it was sometimes not enough —
+  // `release()` ended the tool call (onToolEnd stops the tick) first. Tests
+  // that expect NO filler/tick still use a fixed window: absence cannot be
+  // awaited, and lateness there can only make them pass, not fail.
   describe('voice.filler wiring', () => {
+    /**
+     * Resolve once every type in `types` is in `events`, or at the deadline —
+     * the assertions after it then report whatever is missing.
+     */
+    async function waitForEvents(
+      events: readonly string[],
+      types: readonly string[],
+      deadlineMs = 2_000,
+    ): Promise<void> {
+      const until = Date.now() + deadlineMs;
+      while (!types.every((t) => events.includes(t)) && Date.now() < until) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+
     /** A runner that holds a tool call open until `release()` is called. */
     function toolRunner(): { runner: AgentTurnRunner; release: () => void } {
       let release = () => {};
@@ -1245,9 +1268,9 @@ describe('buildVoiceStack', () => {
       });
       await speakOneUtterance(session);
 
-      // Long enough for both the 50ms filler debounce and at least one 60ms
-      // tick to fire, short enough to keep the test fast.
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Hold the tool call open until the 50ms filler and the first 60ms tick
+      // after it have both fired.
+      await waitForEvents(events, ['filler', 'tick']);
       release();
       await session.idle();
       await stack.close();
@@ -1306,7 +1329,7 @@ describe('buildVoiceStack', () => {
       session.on((e) => events.push(e.type));
       await speakOneUtterance(session);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitForEvents(events, ['filler', 'tick']);
       release();
       await session.idle();
       await stack.close();
@@ -1323,9 +1346,12 @@ describe('buildVoiceStack', () => {
     // feature was never scoped to touch. The default must be browser-only;
     // an explicit `voice.filler.enabled` always overrides it, everywhere.
     describe('voice.filler — default enable is surface-scoped', () => {
+      /** `expectOn`: hold the tool call open until the filler and a tick are
+       *  seen; otherwise hold it for a fixed 80ms window and report. */
       async function fillerEventsFor(opts: {
         surface?: 'call' | 'satellite' | 'browser';
         enabled?: boolean;
+        expectOn: boolean;
       }): Promise<string[]> {
         const stack = await buildVoiceStack(
           deps(
@@ -1352,7 +1378,8 @@ describe('buildVoiceStack', () => {
         const events: string[] = [];
         session.on((e) => events.push(e.type));
         await speakOneUtterance(session);
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        if (opts.expectOn) await waitForEvents(events, ['filler', 'tick']);
+        else await new Promise((resolve) => setTimeout(resolve, 80));
         release();
         await session.idle();
         await stack.close();
@@ -1360,41 +1387,49 @@ describe('buildVoiceStack', () => {
       }
 
       it('defaults ON for the browser surface', async () => {
-        const events = await fillerEventsFor({ surface: 'browser' });
+        const events = await fillerEventsFor({ surface: 'browser', expectOn: true });
         expect(events).toContain('filler');
         expect(events).toContain('tick');
       });
 
       it('defaults OFF for the call surface', async () => {
-        const events = await fillerEventsFor({ surface: 'call' });
+        const events = await fillerEventsFor({ surface: 'call', expectOn: false });
         expect(events).not.toContain('filler');
         expect(events).not.toContain('tick');
       });
 
       it('defaults OFF for the satellite surface', async () => {
-        const events = await fillerEventsFor({ surface: 'satellite' });
+        const events = await fillerEventsFor({ surface: 'satellite', expectOn: false });
         expect(events).not.toContain('filler');
         expect(events).not.toContain('tick');
       });
 
       it('defaults OFF for a lane with no surface of its own', async () => {
-        const events = await fillerEventsFor({});
+        const events = await fillerEventsFor({ expectOn: false });
         expect(events).not.toContain('filler');
         expect(events).not.toContain('tick');
       });
 
       it('an explicit voice.filler.enabled: true turns it on for call and satellite too', async () => {
-        const call = await fillerEventsFor({ surface: 'call', enabled: true });
+        const call = await fillerEventsFor({ surface: 'call', enabled: true, expectOn: true });
         expect(call).toContain('filler');
         expect(call).toContain('tick');
 
-        const satellite = await fillerEventsFor({ surface: 'satellite', enabled: true });
+        const satellite = await fillerEventsFor({
+          surface: 'satellite',
+          enabled: true,
+          expectOn: true,
+        });
         expect(satellite).toContain('filler');
         expect(satellite).toContain('tick');
       });
 
       it('an explicit voice.filler.enabled: false turns it off for the browser surface too', async () => {
-        const events = await fillerEventsFor({ surface: 'browser', enabled: false });
+        const events = await fillerEventsFor({
+          surface: 'browser',
+          enabled: false,
+          expectOn: false,
+        });
         expect(events).not.toContain('filler');
         expect(events).not.toContain('tick');
       });
