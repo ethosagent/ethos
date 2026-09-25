@@ -18,7 +18,7 @@ import {
   hasMedia,
   isBotMentioned,
   parseInboundMessage,
-  preferPhoneJid,
+  phoneAlternate,
   type RawWhatsAppMessage,
   resolveSentAt,
 } from './message-parser';
@@ -155,15 +155,6 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
   }
 
   /**
-   * `denyUnknown` + `allowedJids`, applied to one sender jid — the DM's own
-   * jid, or a group message's participant. Digits-only comparison, so a stored
-   * `+1 (234) 567-8900` matches the `12345678900@s.whatsapp.net` that arrives.
-   *
-   * Absent `allowedJids` allows everyone, unchanged: the constructor already
-   * refuses that combination with `denyUnknown` on, so the case only arises
-   * where the operator turned the check off.
-   */
-  /**
    * Whether an `append` upsert is admitted. Only messages that arrived while
    * the socket was reconnecting: after a close in this process, until
    * `RECONNECT_APPEND_WINDOW_MS` past the reopen, and — when WhatsApp stamped a
@@ -196,6 +187,15 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
     });
   }
 
+  /**
+   * `denyUnknown` + `allowedJids`, applied to one sender jid — the DM's own
+   * jid, or a group message's participant. Digits-only comparison, so a stored
+   * `+1 (234) 567-8900` matches the `12345678900@s.whatsapp.net` that arrives.
+   *
+   * Absent `allowedJids` allows everyone, unchanged: the constructor already
+   * refuses that combination with `denyUnknown` on, so the case only arises
+   * where the operator turned the check off.
+   */
   private isSenderAllowed(senderJid: string): boolean {
     if (!(this.config.denyUnknown ?? true)) return true;
     if (!this.config.allowedJids) return true;
@@ -346,12 +346,15 @@ export class WhatsAppAdapter implements PlatformAdapter, VoiceOutboundAdapter {
         // would make observe — and the digest that reads it — inert in exactly
         // the rooms it exists for. Nothing is sent either way; a refusal only
         // makes sense where there was something to refuse.
-        // A LID-addressed sender is checked by its phone jid when Baileys
-        // supplied one (`preferPhoneJid`), so it can match a phone allowlist.
-        const sender = isDm
-          ? preferPhoneJid(jid, msg.key.remoteJidAlt)
-          : preferPhoneJid(msg.key.participant ?? '', msg.key.participantAlt);
-        if (!recordOnly && !this.isSenderAllowed(sender)) {
+        // A LID-addressed sender matches by its LID OR by the phone jid
+        // Baileys supplied beside it (`phoneAlternate`), so a phone allowlist
+        // admits it and a LID allowlist still does.
+        const sender = isDm ? jid : (msg.key.participant ?? '');
+        const alternate = isDm
+          ? phoneAlternate(jid, msg.key.remoteJidAlt)
+          : phoneAlternate(sender, msg.key.participantAlt);
+        const senders = alternate ? [sender, alternate] : [sender];
+        if (!recordOnly && !senders.some((id) => this.isSenderAllowed(id))) {
           if (this.config.denyMessage && this.sock) {
             const s = this.sock as {
               sendMessage: (jid: string, content: unknown) => Promise<unknown>;

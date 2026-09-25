@@ -31,6 +31,7 @@ import {
   getApprovedSenders,
   isSenderAllowed,
   revokeApproval,
+  senderIds,
 } from '@ethosagent/safety-channel';
 import { shortPatternCheck, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactPii } from '@ethosagent/safety-redact';
@@ -567,6 +568,18 @@ function spoolMessageId(message: InboundMessage): string {
 /** The one line a replayed message's text gets when an attachment it carried
  *  could not be recovered (its cached file was gone). See `reviveSpooledMessage`. */
 export const ATTACHMENT_NOT_RECOVERED_NOTE = '[attachment could not be recovered]';
+
+/**
+ * Whether `owner` (a `channel_filter.<platform>.ownerUserId`) names this
+ * message's sender: its `userId` or any platform-supplied `alternateUserIds`
+ * (`senderIds` in @ethosagent/safety-channel). A WhatsApp owner configured as
+ * the LID or as the phone JID both match a LID sender that carries its phone
+ * alternate. False when no owner is configured. Every owner check in this
+ * file goes through here; pinned by `__tests__/whatsapp-lid-owner.test.ts`.
+ */
+function senderIsOwner(message: InboundMessage, owner: string | undefined): boolean {
+  return owner !== undefined && owner !== '' && senderIds(message).includes(owner);
+}
 
 /** `raw` is the platform's own object — unused past the adapter, possibly
  *  cyclic, and not ours to keep a second copy of — so it is not spooled. */
@@ -3358,9 +3371,7 @@ export class Gateway {
 
       if (codeRow) {
         const codePlatformCfg = this.channelFilter[codeRow.platform];
-        const isOwner =
-          codePlatformCfg?.ownerUserId && message.userId === codePlatformCfg.ownerUserId;
-        if (!isOwner) {
+        if (!senderIsOwner(message, codePlatformCfg?.ownerUserId)) {
           await adapter
             .send(message.chatId, { text: '✗ Only the owner may approve pairings.', threadId })
             .catch(() => {});
@@ -3418,8 +3429,7 @@ export class Gateway {
       let removed = false;
       for (const [platform, cfg] of Object.entries(this.channelFilter)) {
         // Only the owner can remove senders.
-        const isOwner = cfg.ownerUserId && message.userId === cfg.ownerUserId;
-        if (!isOwner) continue;
+        if (!senderIsOwner(message, cfg.ownerUserId)) continue;
 
         let removedOnPlatform = false;
 
@@ -3469,8 +3479,7 @@ export class Gateway {
       }
 
       const platformCfg = this.channelFilter[message.platform];
-      const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
-      if (!isOwner) {
+      if (!senderIsOwner(message, platformCfg?.ownerUserId)) {
         await adapter
           .send(message.chatId, { text: '✗ Only the owner may use /communications.', threadId })
           .catch(() => {});
@@ -3483,7 +3492,7 @@ export class Gateway {
         // Scope to platforms where the caller is the configured owner.
         const ownedPlatforms = new Set(
           Object.entries(this.channelFilter)
-            .filter(([, cfg]) => cfg.ownerUserId && message.userId === cfg.ownerUserId)
+            .filter(([, cfg]) => senderIsOwner(message, cfg.ownerUserId))
             .map(([p]) => p),
         );
 
@@ -7109,10 +7118,9 @@ export class Gateway {
   }
 
   /** Whether the sender is `channel_filter.<platform>.ownerUserId`. False
-   *  when the platform has no owner configured. */
+   *  when the platform has no owner configured. See `senderIsOwner`. */
   private isOwner(message: InboundMessage): boolean {
-    const owner = this.channelFilter?.[message.platform]?.ownerUserId;
-    return owner !== undefined && message.userId === owner;
+    return senderIsOwner(message, this.channelFilter?.[message.platform]?.ownerUserId);
   }
 
   /** The personality identifier surfaced by `/personality` (no arg) and
