@@ -13,6 +13,20 @@ export interface InboundMessage {
   platform: string;
   chatId: string;
   userId?: string;
+  /**
+   * Other ids the PLATFORM itself gives for this same sender, in the same id
+   * space as `userId`. MATCH-ONLY: an owner or allowlist check accepts the
+   * sender when any of `userId` / these matches (`senderIds` in
+   * packages/safety/channel/src/channel-filter.ts, used by `checkMessage`,
+   * `isSenderAllowed` and `Gateway.isOwner`). Nothing keys identity on them —
+   * sessions, the identity map and pairing rows use `userId`, so adding an
+   * alternate never changes who the sender is.
+   *
+   * Today only WhatsApp sets it: a LID-addressed sender (`<id>@lid`) carries
+   * the phone JID Baileys supplied beside it (`phoneAlternate` in
+   * extensions/platform-whatsapp/src/message-parser.ts).
+   */
+  alternateUserIds?: string[];
   username?: string;
   text: string;
   attachments?: Attachment[];

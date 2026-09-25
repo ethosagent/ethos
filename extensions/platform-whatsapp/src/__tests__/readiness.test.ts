@@ -207,7 +207,11 @@ describe('WhatsAppAdapter LID senders', () => {
     await startOpen(adapter);
     await upsert('notify', dm(LID_JID, 'hello', { remoteJidAlt: PHONE_JID }));
     expect(received).toHaveLength(1);
-    expect(received[0]?.userId).toBe(PHONE_JID);
+    // Identity stays the jid as received (what it was before R5): the phone
+    // form is an additional MATCH key only, so the identity map, owner config
+    // and pairing rows keyed on the LID keep working.
+    expect(received[0]?.userId).toBe(LID_JID);
+    expect(received[0]?.alternateUserIds).toEqual([PHONE_JID]);
     // Replies still go to the chat the message arrived in.
     expect(received[0]?.chatId).toBe(LID_JID);
   });
@@ -227,7 +231,43 @@ describe('WhatsAppAdapter LID senders', () => {
       messageTimestamp: Math.floor(Date.now() / 1000),
     });
     expect(received).toHaveLength(1);
+    expect(received[0]?.userId).toBe(LID_JID);
+    expect(received[0]?.alternateUserIds).toEqual([PHONE_JID]);
+  });
+
+  it('still admits a LID sender against a LID allowlist when Baileys supplies a phone alt', async () => {
+    const { adapter, received } = makeAdapter({ allowedJids: [LID_JID] });
+    await startOpen(adapter);
+    await upsert('notify', dm(LID_JID, 'hello', { remoteJidAlt: PHONE_JID }));
+    expect(received).toHaveLength(1);
+    expect(received[0]?.userId).toBe(LID_JID);
+  });
+
+  it('still admits a LID group participant against a LID allowlist with a phone alt', async () => {
+    const { adapter, received } = makeAdapter({ allowedJids: [LID_JID] });
+    await startOpen(adapter);
+    await upsert('notify', {
+      key: {
+        remoteJid: GROUP,
+        fromMe: false,
+        id: 'wa-group-lid',
+        participant: LID_JID,
+        participantAlt: PHONE_JID,
+      },
+      message: { conversation: 'hi all' },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+    });
+    expect(received).toHaveLength(1);
+    expect(received[0]?.userId).toBe(LID_JID);
+  });
+
+  it('carries no alternate for a phone-addressed sender', async () => {
+    const { adapter, received } = makeAdapter({ allowedJids: [PHONE] });
+    await startOpen(adapter);
+    await upsert('notify', dm(PHONE_JID, 'plain'));
+    expect(received).toHaveLength(1);
     expect(received[0]?.userId).toBe(PHONE_JID);
+    expect(received[0]?.alternateUserIds).toBeUndefined();
   });
 
   it('still refuses a LID sender with no phone alternate', async () => {

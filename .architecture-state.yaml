@@ -314,8 +314,8 @@ register_anchors:
     - { path: packages/wiring/src/build-agent-loop.ts, line: 582, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
-    - { path: packages/safety/channel/src/channel-filter.ts, line: 111, contains: "export function checkMessage" }
-    - { path: packages/safety/channel/src/channel-filter.ts, line: 79, contains: "export function isSenderAllowed" }
+    - { path: packages/safety/channel/src/channel-filter.ts, line: 124, contains: "export function checkMessage" }
+    - { path: packages/safety/channel/src/channel-filter.ts, line: 93, contains: "export function isSenderAllowed" }
     - { path: packages/safety/channel/src/channel-filter.ts, line: 24, contains: "dmPolicy?:" }
     - { path: packages/safety/channel/src/channel-filter.ts, line: 33, contains: "contextVisibility?:" }
 

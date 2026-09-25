@@ -78,20 +78,26 @@ export function isBotMentioned(msg: RawWhatsAppMessage, botJid: string): boolean
 }
 
 /**
- * A sender jid, swapped for its PHONE form (`<number>@s.whatsapp.net`) when
- * it is a LID and Baileys supplied the phone alternate.
+ * The PHONE form (`<number>@s.whatsapp.net`) of a LID sender, when Baileys
+ * supplied it; `undefined` otherwise.
  *
  * WhatsApp increasingly addresses senders by an opaque LID (`<id>@lid`) that
  * shares no digits with their phone number, so a LID sender never matched a
  * phone-number `allowedJids` entry. Baileys 7 carries the phone form beside it
  * as `key.remoteJidAlt` (DM) or `key.participantAlt` (group) when the stanza
  * has one (`extractAddressingContext` in Baileys' `decode-wa-message.js`).
- * With no phone alternate the jid is returned unchanged — a bare LID stays a
- * LID and is refused by a phone allowlist, as before.
+ *
+ * An ADDITIONAL match key, never a replacement: the sender's identity stays
+ * the jid as received (`userId` in `parseInboundMessage`), because the owner
+ * config, the identity map and pairing rows are keyed on it — swapping it
+ * silently re-keyed a LID owner and split their USER.md. The adapter's
+ * allowlist accepts either (`WhatsAppAdapter.isSenderAllowed`), and the phone
+ * form rides on `InboundMessage.alternateUserIds` for the gateway's owner and
+ * channel-filter checks. Pinned by `__tests__/readiness.test.ts`.
  */
-export function preferPhoneJid(jid: string, alt: string | undefined): string {
+export function phoneAlternate(jid: string, alt: string | undefined): string | undefined {
   if (jid.endsWith('@lid') && alt?.endsWith('@s.whatsapp.net')) return alt;
-  return jid;
+  return undefined;
 }
 
 /**
@@ -122,13 +128,16 @@ export function parseInboundMessage(
   const isGroupMention = !isDm && isBotMentioned(msg, botJid);
 
   const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+  const sender = msg.key.participant ?? jid;
+  const alternate = msg.key.participant
+    ? phoneAlternate(msg.key.participant, msg.key.participantAlt)
+    : phoneAlternate(jid, msg.key.remoteJidAlt);
 
   return {
     platform: 'whatsapp',
     chatId: jid,
-    userId: msg.key.participant
-      ? preferPhoneJid(msg.key.participant, msg.key.participantAlt)
-      : preferPhoneJid(jid, msg.key.remoteJidAlt),
+    userId: sender,
+    ...(alternate ? { alternateUserIds: [alternate] } : {}),
     username: msg.pushName ?? undefined,
     text,
     attachments,
