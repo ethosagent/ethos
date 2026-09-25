@@ -807,10 +807,11 @@ export interface CreatePersonalityInput {
    *
    * `PersonalityConfig.safety` carries more (approvalMode, denyRules,
    * injectionDefense, …); those are edited afterwards through `update`, which
-   * merges onto whatever is already on disk. Network reach is different: it has
-   * to be right in the FIRST write, because a personality with no
-   * `safety.network` resolves every `allowedHosts: ['*']` tool to an EMPTY host
-   * set (`packages/core/src/capability-resolver.ts`) and denies every fetch.
+   * merges onto whatever is already on disk. Network reach is different: it is
+   * set in the FIRST write so a narrowed personality is never briefly open — a
+   * personality with no `safety.network` gets the open public internet under
+   * the `safeFetch` floor (`resolveCapabilities`,
+   * `packages/core/src/capability-resolver.ts`).
    *
    * Narrowing only, per ARCHITECTURE.md §V S6 — the non-overridable floor
    * (cloud-metadata + private ranges blocked, http/https only) is applied

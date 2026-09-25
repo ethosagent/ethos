@@ -140,9 +140,9 @@ function renderCreateFields<T extends CreateFields>(p: T, values: Record<string,
   return {
     ...p,
     // D15 — a bundle that declares no network policy installs with
-    // `allow: ['*']` rather than with nothing. Nothing is not neutral: it
-    // resolves every `allowedHosts: ['*']` tool to an empty host set and
-    // denies every fetch. A bundle that declares its own wins.
+    // `allow: ['*']` rather than with nothing, so the written config states the
+    // open policy it runs under (see `defaultRecipeSafety`). A bundle that
+    // declares its own wins.
     safety: p.safety ?? defaultRecipeSafety(),
     soulMd: renderTemplate(p.soulMd, values, 'personality.soulMd'),
     ...(fsReach

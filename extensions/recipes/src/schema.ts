@@ -41,13 +41,15 @@ const RecipeNetworkPolicySchema = z.object({
  * What a bundle installs with when it declares no `safety.network` of its own
  * (D15, user-directed).
  *
- * Absent is NOT "no policy". `web_extract` declares
- * `capabilities.network.allowedHosts: ['*']`, which hands the decision to the
- * PERSONALITY's policy, and an absent one resolves to an EMPTY host set
- * (`packages/core/src/capability-resolver.ts`) — so every fetch is denied with
- * `HOST_NOT_ALLOWED`. A recipe-installed agent therefore gets the open public
- * internet by default; the non-overridable floor (cloud-metadata + private
- * ranges blocked, `allow_private_urls` false, http/https only) still holds.
+ * `web_extract` declares `capabilities.network.allowedHosts: ['*']`, which
+ * hands the decision to the PERSONALITY's policy. An absent policy now resolves
+ * to the open public internet too (`resolveCapabilities`,
+ * `packages/core/src/capability-resolver.ts`); it used to resolve to an EMPTY
+ * host set that denied every fetch with `HOST_NOT_ALLOWED`, which is why this
+ * default exists. It is kept so the installed config states the policy it runs
+ * under. A recipe-installed agent gets the open public internet by default; the
+ * non-overridable floor (cloud-metadata + private ranges blocked,
+ * `allow_private_urls` false, http/https only) still holds.
  *
  * A function, not a shared const, so no two personalities alias one array.
  */

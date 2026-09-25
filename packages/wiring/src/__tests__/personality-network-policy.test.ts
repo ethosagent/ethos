@@ -122,9 +122,20 @@ describe('personality network policy at the tool boundary', () => {
       "briefer declares allow: ['*'] — its own policy must reach the resolver even though the default personality declares none",
     ).resolves.toBe(response);
 
-    // The other half of the same rule: the default's (absent) policy still
-    // applies to the default's own turns.
-    await expect(forEngineer.scopedFetch?.fetch('https://example.com/article')).rejects.toThrow(
+    // The default's (absent) policy applies to the default's own turns, and
+    // absent means open (subject to the safeFetch floor) — `resolveCapabilities`
+    // in packages/core/src/capability-resolver.ts. The narrow personality below
+    // is what proves each turn reads its OWN policy.
+    await expect(forEngineer.scopedFetch?.fetch('https://example.com/article')).resolves.toBe(
+      response,
+    );
+    const forNarrow = resolveCapabilities(
+      'web_extract',
+      wildcardTool,
+      { sessionId: 's', personalityId: 'narrow' },
+      backends,
+    );
+    await expect(forNarrow.scopedFetch?.fetch('https://example.com/article')).rejects.toThrow(
       /HOST_NOT_ALLOWED/,
     );
   });
