@@ -27,12 +27,24 @@ export interface CreateApprovalHookOptions {
    * flags every hardline call first.
    */
   isHardline: (payload: BeforeToolCallPayload) => boolean;
+  /**
+   * Why a flagged call will be refused whatever the human says, or `null` —
+   * `createWebApi` passes `notPermittedRefusal(loop)` from `@ethosagent/wiring`
+   * (a call outside the personality's allowlist, which
+   * `DefaultToolRegistry.executeParallel` refuses). Such a call is refused
+   * with that reason and no modal is raised. Absent → every flagged call is
+   * asked about. Pinned by `__tests__/services/approval-hook.test.ts`.
+   */
+  refusedAnyway?: (payload: BeforeToolCallPayload) => string | null;
 }
 
 export function createWebApprovalHook(opts: CreateApprovalHookOptions) {
   return async (payload: BeforeToolCallPayload): Promise<Partial<BeforeToolCallResult> | null> => {
     const reason = await opts.isDangerous(payload);
     if (reason === null) return null;
+
+    const refused = opts.refusedAnyway?.(payload);
+    if (refused) return { error: refused };
 
     const decision = await opts.approvals.requestApproval({
       sessionId: payload.sessionId,

@@ -259,7 +259,7 @@ register_anchors:
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 23, contains: "export function resolveDowngradedTools" }
     - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 457, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 727, contains: "resolveDowngradedTools(dgConfig?.tools)" }
+    - { path: packages/core/src/agent-loop.ts, line: 733, contains: "resolveDowngradedTools(dgConfig?.tools)" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 771, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }
     - { path: packages/wiring/src/decision-injection-classifier.ts, line: 89, contains: "export function createDecisionInjectionClassifier" }
@@ -284,15 +284,15 @@ register_anchors:
     - { path: extensions/platform-discord/src/blocks/approval.ts, line: 77, contains: "function formatArgs" }
 
   G-APP:
-    - { path: packages/wiring/src/danger-predicate.ts, line: 426, contains: "mode === 'smart' && opts.smartApprove" }
-    - { path: packages/wiring/src/danger-predicate.ts, line: 385, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
+    - { path: packages/wiring/src/danger-predicate.ts, line: 436, contains: "mode === 'smart' && opts.smartApprove" }
+    - { path: packages/wiring/src/danger-predicate.ts, line: 395, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
     - { path: packages/wiring/src/smart-approver.ts, line: 315, contains: "reviewer gave no usable verdict" }
     - { path: packages/wiring/src/smart-approver.ts, line: 323, contains: "reviewer error (fail-closed)" }
     - { path: packages/wiring/src/smart-approver.ts, line: 150, contains: "export function approverVerdictFrom" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 79, contains: "export async function enforceBeforeToolCall" }
     - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 83, contains: "const denied = checkDenyRules(" }
     - { path: packages/core/src/hook-registry.ts, line: 94, contains: "async fireModifying" }
-    - { path: packages/wiring/src/approval-seams.ts, line: 139, contains: "export function createApprovalDangerPredicate" }
+    - { path: packages/wiring/src/approval-seams.ts, line: 142, contains: "export function createApprovalDangerPredicate" }
     - { path: packages/core/src/agent-loop/approval-posture.ts, line: 38, contains: "export function createApprovalPostureGuard" }
 
   G-EXEC:

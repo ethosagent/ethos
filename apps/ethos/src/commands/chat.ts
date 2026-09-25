@@ -29,10 +29,14 @@ import {
   type Storage,
   toEthosError,
 } from '@ethosagent/types';
+import { createLazyProvider, firstRefusal, notPermittedRefusal } from '@ethosagent/wiring';
+import { ApprovalCoordinator } from '../approval-coordinator';
+import { cliToolsetsRefusal } from '../cli-overrides';
 import { appendErrorLog } from '../error-log';
 import { resolveAtRefs } from '../lib/at-refs';
 import { makeCompleter } from '../lib/autocomplete';
 import { formatClarifyPrompt, parseClarifyAnswer } from '../lib/clarify-prompt';
+import { attachCliApprovalPrompt } from '../lib/cli-approval-prompt';
 import {
   type CommandMeta,
   refreshCommandIfStale,
@@ -72,7 +76,14 @@ import {
   unstreamedDoneText,
   type Verbosity,
 } from '../lib/verbosity';
-import { getFunnelTracker, resolveActiveLoop } from '../wiring';
+import { createTerminalApprovalSource, wireTerminalApprovalGate } from '../terminal-approval';
+import {
+  type ActiveLoop,
+  createLLM,
+  getEthosObservability,
+  getFunnelTracker,
+  resolveActiveLoop,
+} from '../wiring';
 import { runPairingCommand } from './pairing-commands';
 import { formatVerboseSummary, type TurnTiming } from './verbose-timing';
 
@@ -183,6 +194,12 @@ interface ChatState {
   awaitingConsent: boolean;
   /** True while a `clarify` tool prompt owns the readline loop. */
   awaitingClarify: boolean;
+  /** True while a tool-approval prompt owns the readline loop
+   *  (`attachCliApprovalPrompt`, lib/cli-approval-prompt.ts). */
+  awaitingApproval: boolean;
+  /** Wipe the running turn's spinner — set by `runTurn` for its duration so an
+   *  approval prompt can take the line. */
+  clearSpinner?: () => void;
   /** openclaw-9.5 item 1 — true while a masked plugin-credential read owns the
    *  readline loop (`readMaskedLine`, lib/credential-prompt.ts). */
   awaitingSecret: boolean;
@@ -259,6 +276,35 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   const registry = buildBaseRegistry();
 
   const runtime = await resolveActiveLoop(config, { slashRegistry: registry });
+
+  // Tool approval (terminal-approval.ts). One coordinator per process: it
+  // times out an unanswered prompt (`approvalTimeoutMs`, default 10 min) and
+  // writes each decision to the safety audit trail. Every loop this command
+  // builds — the first and each `/model` rebuild — is gated through it.
+  const approvalCoordinator = new ApprovalCoordinator({
+    observability: {
+      recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+    },
+    ...(config.approvalTimeoutMs !== undefined ? { timeoutMs: config.approvalTimeoutMs } : {}),
+  });
+  const getProvider = createLazyProvider(() => createLLM(config));
+  const gateLoop = (target: ActiveLoop, interactive: boolean, nonInteractive: string): void => {
+    wireTerminalApprovalGate(target.loop.hooks, {
+      personalities: target.personalities,
+      getProvider,
+      model: config.model,
+      ...(target.approverDecision ? { decision: target.approverDecision } : {}),
+      executionPostureFor: target.executionPostureFor,
+      coordinator: interactive ? approvalCoordinator : null,
+      nonInteractive,
+      // Never ask about a call the personality toolset or `--toolsets` will
+      // refuse anyway.
+      refusedAnyway: firstRefusal(
+        notPermittedRefusal(target.loop),
+        cliToolsetsRefusal(target.loop, config.cliToolsets),
+      ),
+    });
+  };
   const {
     loop,
     personalityId,
@@ -313,6 +359,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   let quickConsentGiven = await hasQuickCommandConsent(ethosDir());
 
   if (opts.singleQuery) {
+    // One-shot: nobody is at a prompt to answer, so a flagged call is refused.
+    gateLoop(runtime, false, '`ethos chat -q` has no prompt to answer it');
     try {
       await runSingleQuery(loop, config, {
         query: opts.singleQuery,
@@ -327,6 +375,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
   if (process.stdout.isTTY && process.stdin.isTTY) {
     const { runTUI } = await import('@ethosagent/tui');
+    gateLoop(runtime, true, '');
     const inventory = await buildInventory(loop, config);
     // Bound to the CURRENT runtime; a `/model` switch rebinds both below,
     // since the replaced runtime's dispose unloads its plugins and drops its
@@ -341,9 +390,11 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     // The writer for the TUI's masked credential modal follows `/model`
     // switches, since the replaced runtime's dispose unloads its plugins.
     let activePluginLoader = pluginLoader;
-    const rebuild = createLoopRebuilder({ drain, dispose }, (modelId: string) =>
-      resolveActiveLoop({ ...config, model: modelId }),
-    );
+    const rebuild = createLoopRebuilder({ drain, dispose }, async (modelId: string) => {
+      const next = await resolveActiveLoop({ ...config, model: modelId });
+      gateLoop(next, true, '');
+      return next;
+    });
     await runTUI(loop, {
       model: config.model,
       personality: displayName,
@@ -395,12 +446,20 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       // openclaw-9.5 item 1 (D15) — the one writer for a masked credential.
       setPluginCredential: (pluginId, key, value) =>
         activePluginLoader.setCredential(pluginId, key, value),
+      // Tool approval prompts render as the TUI's modal.
+      approvals: createTerminalApprovalSource(approvalCoordinator, 'tui'),
     });
+    approvalCoordinator.forceSettleAll('chat closed');
     // The TUI has exited: release whichever runtime is current (a `/model`
     // switch retires the one it replaced, not this one).
     await releaseCommandRuntime(liveRuntime, { label: 'chat agent loop' });
     return;
   }
+
+  // Readline: a prompt needs a keyboard. Piped stdin cannot answer one, so a
+  // flagged call is refused there instead of waiting on input that never comes.
+  const approvalInteractive = process.stdin.isTTY === true;
+  gateLoop(runtime, approvalInteractive, 'stdin is not a terminal, so nobody can answer a prompt');
 
   const completer = makeCompleter(registry);
   // Muted while a plugin credential is typed (lib/credential-prompt.ts).
@@ -479,6 +538,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
     awaitingConsent: false,
     awaitingClarify: false,
+    awaitingApproval: false,
     awaitingSecret: false,
     pendingAttachments: [],
     dryRun: opts.dryRun ?? false,
@@ -548,6 +608,30 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     rl.once('line', onLine);
   });
 
+  // Tool approval — the gate suspends a flagged call and this prompt takes the
+  // input line: the running turn's spinner is wiped first, `line` events go to
+  // the prompt alone (`awaitingApproval`), and parallel calls queue.
+  if (approvalInteractive) {
+    attachCliApprovalPrompt({
+      source: createTerminalApprovalSource(approvalCoordinator, 'cli'),
+      rl,
+      // stdout piped (`ethos chat | tee log`) while stdin is a keyboard: the
+      // question and its preview go to stderr so the user sees what they are
+      // answering; readline still reads the answer.
+      write: process.stdout.isTTY ? out : (s: string) => process.stderr.write(s),
+      questionOnReadline: process.stdout.isTTY === true,
+      onOpen: () => {
+        state.clearSpinner?.();
+        state.awaitingApproval = true;
+      },
+      onClose: () => {
+        state.awaitingApproval = false;
+        rl.setPrompt(promptString(state));
+        if (!state.abort) reprompt();
+      },
+    });
+  }
+
   // Completion notice rendered at the idle prompt — no auto-turn. Auto-triggering
   // a turn while the user is mid-thought is hostile, so we only print and re-prompt.
   // Only `done`/`failed` are surfaced; `aborted` is user-requested and stays silent.
@@ -561,6 +645,9 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   });
 
   rl.on('SIGINT', () => {
+    // A suspended approval does not see the abort signal — deny it, or the
+    // aborted turn would wait on it until the timeout.
+    approvalCoordinator.forceSettleAll('approval cancelled (Ctrl-C)');
     if (state.abort) {
       state.abort.abort();
       out(`\n${c.dim}[aborted — press Ctrl+C again to exit]${c.reset}\n`);
@@ -571,6 +658,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   });
 
   rl.on('close', async () => {
+    approvalCoordinator.forceSettleAll('chat closed');
     notificationRouter.deregister(state.sessionKey);
     // Phase B (T9) — warn if durable background jobs are still active for this
     // session's root. They'll be orphaned when the process exits and reappear as
@@ -677,6 +765,8 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     if (state.awaitingConsent) return;
     // A clarify prompt owns the loop via its own one-shot `line` listener.
     if (state.awaitingClarify) return;
+    // So does a tool-approval prompt (`attachCliApprovalPrompt`).
+    if (state.awaitingApproval) return;
     // So does a masked credential read — and that line is a secret.
     if (state.awaitingSecret) return;
 
@@ -884,6 +974,8 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     }
   }
 
+  state.clearSpinner = clearSpinner;
+
   const turnStart = Date.now();
   let firstTextDeltaAt: number | null = null;
   const toolDurations: number[] = [];
@@ -1023,6 +1115,7 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
     }
   } finally {
     clearInterval(spinnerInterval);
+    state.clearSpinner = undefined;
     state.abort = null;
     // Codex P2 #2 — steers attach to an iteration seam (tool_results). A
     // text-only turn (no tools) has no seam, so a steer typed during it

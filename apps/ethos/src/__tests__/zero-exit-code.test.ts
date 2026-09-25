@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // final `process.exit(process.exitCode ?? 0)` propagates a non-zero status
 // to shell pipelines. These tests drive runZero with a mocked wiring layer.
 
+// The approval gate is pinned elsewhere (terminal-approval.test.ts); these
+// fake loops carry no hook registry to wire it on.
+vi.mock('../lib/non-interactive-approval', () => ({ gateNonInteractiveLoop: vi.fn() }));
+
 vi.mock('../wiring', () => ({
   getStorage: vi.fn(() => ({})),
   getSecretsResolver: vi.fn(async () => ({})),

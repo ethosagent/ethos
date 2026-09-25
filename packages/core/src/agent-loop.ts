@@ -42,6 +42,7 @@ import { createTurnUsage, finalizeTurn, flushTurnUsage } from './agent-loop/stag
 import { resolvePersonality, setupTurn } from './agent-loop/stages/turn-setup';
 import { replyAfterWatcherPause } from './agent-loop/stages/watcher-pause';
 import { DEFAULT_STREAMING_TIMEOUT_MS } from './agent-loop/streaming-timeout';
+import { isToolPermitted } from './agent-loop/tool-permitted';
 import type { LoopDeps } from './agent-loop/turn-context';
 import { TurnDecisions, withDecisionEvents } from './agent-loop/turn-decisions';
 import { buildTurnEndCtx, maybeConsolidateAtTurnEnd } from './agent-loop/turn-end';
@@ -511,6 +512,11 @@ export class AgentLoop {
   /** Returns all available tools for inventory display (e.g. TUI splash screen). */
   getAvailableTools(): import('@ethosagent/types').Tool[] {
     return this.tools.getAvailable();
+  }
+
+  /** Whether `toolName` passes the personality's base allowlist (agent-loop/tool-permitted.ts). */
+  isToolPermitted(toolName: string, personalityId?: string): boolean {
+    return isToolPermitted(this.tools, this.resolvePersonality(personalityId), toolName);
   }
 
   /** Returns all registered personalities for inventory display. */

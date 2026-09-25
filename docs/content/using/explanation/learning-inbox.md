@@ -4,7 +4,7 @@ description: "How Ethos measures a drafted skill or Expression change against fr
 kind: explanation
 audience: user
 slug: learning-inbox
-updated: 2026-09-13
+updated: 2026-09-25
 ---
 
 ## Context
@@ -126,7 +126,7 @@ Two rules cannot drift between these surfaces:
 - **Approving anything that is not a `pass` needs a reason.** That includes a candidate that was never replayed. `LearningInbox.approve` refuses with `override_required` when the reason is blank, and writes the reason to `audit.jsonl` on the promotion line. In the terminal, pass `ethos learning approve <id> --override "<reason>"`. On the web, the Learning page shows **Approve anyway…** in place of **Approve** on any verdict other than `pass`, and its confirm button stays disabled until a reason is typed. Apply in the Living Soul section requires a reason too. At `ethos personality evolve`, answering `y` prompts for a reason, and an empty reason cancels the approval: nothing is promoted and the candidate keeps waiting.
 - **Every decision that lands writes one audit row.** `learning.approve`, `learning.override`, `learning.reject` or `learning.rollback` appears in `ethos audit decisions` next to outbox decisions. A refusal writes none.
 
-**Approval is human-only.** The agent's `skills_pending_approve` tool promotes nothing: it returns a refusal that sends the user to the web Learning page or `ethos learning approve <id>` (`SKILL_APPROVAL_IS_HUMAN_ONLY`, `extensions/tools-skills/src/index.ts`). A model approving its own proposal would be a second non-human path, and on the CLI, where no approval prompt appears, it would promote with no human at all. `skills_pending_reject` still works, because rejecting only narrows what the agent does.
+**Approval is human-only.** The agent's `skills_pending_approve` tool promotes nothing: it returns a refusal that sends the user to the web Learning page or `ethos learning approve <id>` (`SKILL_APPROVAL_IS_HUMAN_ONLY`, `extensions/tools-skills/src/index.ts`). A model approving its own proposal would be a second non-human path, and in `ethos chat` under `approvalMode: off`, where no prompt appears, it would promote with no human at all. `skills_pending_reject` still works, because rejecting only narrows what the agent does.
 
 The `learning.*` RPCs behind the Learning page (`apps/web-api/src/rpc/learning.ts`) accept the dashboard's session cookie only. `learning` is absent from `SCOPE_MAP` in `apps/web-api/src/middleware/dual-auth.ts`, so a bearer API key is refused.
 

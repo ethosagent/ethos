@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import { AgentBridge } from '@ethosagent/agent-bridge';
+import { AgentBridge, type BridgeApprovalSource } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
 import { render } from 'ink';
 import { createElement } from 'react';
@@ -49,10 +49,18 @@ export interface TUIOptions {
    * TUI does not opt its sends in to credential requests.
    */
   setPluginCredential?: (pluginId: string, key: string, value: string) => Promise<void>;
+  /**
+   * Where tool-approval prompts come from — the host's approval gate
+   * (`createTerminalApprovalSource`, apps/ethos/src/terminal-approval.ts).
+   * Relayed through the bridge (`AgentBridge.setApprovalSource`) and rendered
+   * as `ApprovalModal`. Absent → the TUI shows no approval prompt.
+   */
+  approvals?: BridgeApprovalSource;
 }
 
 export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
   const bridge = new AgentBridge(loop);
+  if (opts.approvals) bridge.setApprovalSource(opts.approvals);
   const sessionKey = `cli:${basename(process.cwd())}`;
 
   const { waitUntilExit } = render(

@@ -14,6 +14,7 @@
 // constructed only when a flagged call actually reaches `approvalMode: smart`.
 
 import type {
+  BeforeToolCallPayload,
   ExecutionPosture,
   HookRegistry,
   LLMProvider,
@@ -74,10 +75,11 @@ export interface CreateApprovalDangerPredicateOptions {
   /** Model the smart reviewer runs on (the primary model today). */
   model: string;
   /**
-   * Extra tools that always require approval, in every mode. All three
-   * production callers — `apps/ethos/src/commands/serve.ts` and
-   * `apps/desktop/src/main/serve.ts` (web modal) and
-   * `apps/ethos/src/commands/gateway.ts` (Slack card) — pass
+   * Extra tools that always require approval, in every mode. Every
+   * production caller — `apps/ethos/src/commands/serve.ts` and
+   * `apps/desktop/src/main/serve.ts` (web modal),
+   * `apps/ethos/src/commands/gateway.ts` (Slack card) and
+   * `apps/ethos/src/terminal-approval.ts` (CLI / TUI / ACP) — passes
    * `APPROVAL_SURFACE_ALWAYS_ASK`, the set of tools that must never run
    * unprompted on a surface that can prompt. A caller with additional
    * deployment-specific tools to gate unions them in here. Under
@@ -97,12 +99,13 @@ export interface CreateApprovalDangerPredicateOptions {
   spokenConfirmations?: SpokenConfirmationRecord;
   /**
    * Forwarded to `createDangerPredicate` — lets a personality's
-   * `approvalMode: 'off'` auto-approve flagged tools. Only the gateway
-   * systemLoop's unattended gate sets it, from the operator key
+   * `approvalMode: 'off'` auto-approve flagged tools. Set by the gateway
+   * systemLoop's unattended gate, from the operator key
    * `allowUnattendedDangerousTools` (`wireUnattendedApprovalGate`,
-   * apps/ethos/src/unattended-approval-gate.ts). Approval surfaces with a human
-   * (web modal, Slack/Telegram card, MCP export) leave it unset, so `off` stays
-   * `manual` there.
+   * apps/ethos/src/unattended-approval-gate.ts), and by the operator's own
+   * terminal (`wireTerminalApprovalGate`, apps/ethos/src/terminal-approval.ts).
+   * Surfaces a remote sender or a browser reaches (web modal, Slack/Telegram
+   * card, MCP export) leave it unset, so `off` stays `manual` there.
    */
   allowAutoApproveDangerousTools?: boolean;
   /**
@@ -211,3 +214,41 @@ export function createApprovalDangerPredicate(
  */
 export const REWRITTEN_ARGS_NOTE =
   ' — asked again: a before_tool_call hook rewrote the arguments, and this approval is for the rewritten arguments shown';
+
+/**
+ * The refusal for a call outside the personality's allowlist — the same text
+ * `DefaultToolRegistry.executeParallel` refuses it with — or `null`, from
+ * `AgentLoop.isToolPermitted` (packages/core/src/agent-loop/tool-permitted.ts).
+ * Every approval surface passes it as `refusedAnyway` so no human is asked
+ * about a call that will be refused anyway: the chat cards and the terminal
+ * prompt (`createSlackApprovalHook`, apps/ethos/src/approval-coordinator.ts)
+ * and the web modal (`createWebApprovalHook`,
+ * apps/web-api/src/services/approval-hook.ts). A loop without
+ * that method, or one that throws, answers `null`: the call is then asked
+ * about as before, which is the safe direction.
+ */
+export function notPermittedRefusal(loop: {
+  isToolPermitted?: (toolName: string, personalityId?: string) => boolean;
+}): (payload: BeforeToolCallPayload) => string | null {
+  return (payload) => {
+    try {
+      if (loop.isToolPermitted?.(payload.toolName, payload.personalityId) !== false) return null;
+    } catch {
+      return null;
+    }
+    return `Tool ${payload.toolName} is not permitted for this personality`;
+  };
+}
+
+/** Combine refusal checks: the first non-null reason wins. */
+export function firstRefusal(
+  ...checks: ReadonlyArray<(payload: BeforeToolCallPayload) => string | null>
+): (payload: BeforeToolCallPayload) => string | null {
+  return (payload) => {
+    for (const check of checks) {
+      const reason = check(payload);
+      if (reason !== null) return reason;
+    }
+    return null;
+  };
+}

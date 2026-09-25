@@ -355,6 +355,18 @@ export interface CreateSlackApprovalHookOptions {
    * apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts.
    */
   hardlineReason: (payload: BeforeToolCallPayload) => string | null;
+  /**
+   * Why a flagged call will be refused whatever the human says, or `null`.
+   * Consulted only for a call `isDangerous` flagged, before any card: a call
+   * outside the personality's allowlist (`notPermittedRefusal`,
+   * packages/wiring/src/approval-seams.ts) is
+   * refused later by `DefaultToolRegistry.executeParallel`, so asking a human
+   * to Allow it would ask for something that cannot run. Its reason is returned
+   * as the refusal. Absent → every flagged call is asked about. Pinned by
+   * apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts and
+   * apps/ethos/src/__tests__/terminal-approval.test.ts.
+   */
+  refusedAnyway?: (payload: BeforeToolCallPayload) => string | null;
 }
 
 /**
@@ -380,6 +392,11 @@ export function createSlackApprovalHook(opts: CreateSlackApprovalHookOptions) {
 
     const reason = await opts.isDangerous(payload);
     if (reason === null) return null;
+
+    // Refused without a card: another check refuses this call whatever the
+    // human decides (see `refusedAnyway`).
+    const refused = opts.refusedAnyway?.(payload);
+    if (refused) return { error: refused };
 
     const decision = await opts.coordinator.requestApproval({
       sessionId: payload.sessionId,

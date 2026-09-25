@@ -131,6 +131,7 @@ import {
   type LiveKitBindings,
   type MessagingSendFn,
   markHostApprovalGate,
+  notPermittedRefusal,
   type OutboxWiring,
   resolveKanbanDbPath,
   type SmartApproverDecisionSite,
@@ -3060,6 +3061,8 @@ export function wireApprovalFlow(
         resolveApprovalTarget,
         withoutSurface,
         hardlineReason,
+        // No card for a call this bot's personality allowlist refuses anyway.
+        refusedAnyway: notPermittedRefusal(bot.loop),
       }),
     );
     // Approval-required commands (command substitution) now reach the card

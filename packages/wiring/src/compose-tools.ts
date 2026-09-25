@@ -1865,8 +1865,10 @@ export async function composeAllTools(
   // CLI/TUI/ACP get the synchronous block-and-explain guard. An
   // approval-required command (command substitution) is refused here too,
   // unless the host later registers an approval gate on this loop and marks it
-  // (`markHostApprovalGate` — the gateway's bot loops and systemLoop), in which
-  // case the gate asks a human or refuses.
+  // (`markHostApprovalGate` — the gateway's bot loops and systemLoop, and the
+  // CLI/TUI/ACP loops via `wireTerminalApprovalGate` in
+  // apps/ethos/src/terminal-approval.ts), in which case the gate asks a human
+  // or refuses.
   if (profile !== 'web') {
     const guardOpts = { approvalGated: () => hasHostApprovalGate(hooks) };
     hooks.registerModifying(

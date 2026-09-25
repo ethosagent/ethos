@@ -17,6 +17,7 @@ import {
 } from '@ethosagent/skill-evolver';
 import { EthosError } from '@ethosagent/types';
 import { learningSubmitPort } from '@ethosagent/wiring';
+import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, createLLM, getStorage } from '../wiring';
 import { replayEvolvedCandidates } from './evolve';
@@ -192,6 +193,7 @@ export async function runEval(subArgs: string[], config: EthosConfig): Promise<v
   console.log(`${c.dim}  output     → ${outputPath}${c.reset}\n`);
 
   const runtime = await createAgentLoop(config);
+  gateNonInteractiveLoop(runtime, config, '`ethos eval` has no prompt to answer it');
   const runner = new EvalRunner(runtime.loop, {
     concurrency,
     outputPath,
@@ -389,6 +391,11 @@ export async function runEvalLocal(args: string[], config: EthosConfig): Promise
   console.log(`${c.dim}  dataset → ${opts.dataset}${c.reset}\n`);
 
   const localRuntime = await createAgentLoop(effectiveConfig);
+  gateNonInteractiveLoop(
+    localRuntime,
+    effectiveConfig,
+    '`ethos eval local` has no prompt to answer it',
+  );
   const runner = new EvalRunner(localRuntime.loop, {
     concurrency: opts.concurrency,
     outputPath,

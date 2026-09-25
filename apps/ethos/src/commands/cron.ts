@@ -13,6 +13,7 @@ import { ConsoleLogger } from '@ethosagent/logger';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { answerSuffix, EthosError } from '@ethosagent/types';
 import { writeJson } from '../json-output';
+import { gateCronLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import { createAgentLoop, getEthosObservability, getStorage } from '../wiring';
 
@@ -77,6 +78,7 @@ function makeScheduler(config: EthosConfig): {
       }
       if (!loop) {
         runtime = await createAgentLoop(config);
+        gateCronLoop(runtime, config);
         loop = runtime.loop;
       }
       const sessionKey = `cron:${job.id}:${new Date().toISOString()}`;

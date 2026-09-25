@@ -187,6 +187,41 @@ describe('gateway — command substitution asks on a card surface', () => {
     await flow.shutdown();
   });
 
+  // The loop's personality toolset refuses the call anyway
+  // (`DefaultToolRegistry.executeParallel`), so no card is posted for it.
+  it('a call outside the personality toolset is refused without a card', async () => {
+    const hooks = botLoopHooks();
+    const cards: unknown[] = [];
+    const adapter = {
+      id: 'slack:test',
+      botKey: 'bot-1',
+      postApprovalCard: async (card: unknown) => {
+        cards.push(card);
+        return { messageTs: 'ts-1' };
+      },
+      updateApprovalCard: async () => ({ ok: true }),
+      onApprovalDecision: () => {},
+    } as unknown as PlatformAdapter;
+    const loop = { hooks, isToolPermitted: () => false };
+    const bots = [
+      { botKey: 'bot-1', loop, binding: { type: 'personality', name: 'default' } },
+    ] as unknown as GatewayBotConfig[];
+    const gateway = {
+      resolveApprovalRoute: () => ({
+        adapter,
+        chatId: 'C1',
+        requesterUserId: 'requester',
+        isDm: true,
+        platform: 'slack',
+      }),
+    } as unknown as Gateway;
+    const flow = wireApprovalFlow(gateway, bots, [adapter], { ...seams, approvalTimeoutMs: 200 });
+    const result = await fire(hooks, 'kill $(lsof -t -i:3000)');
+    expect(cards).toEqual([]);
+    expect(result.error).toBe('Tool terminal is not permitted for this personality');
+    await flow.shutdown();
+  });
+
   it('a bot with no card surface refuses it with the no-surface text', async () => {
     const hooks = botLoopHooks();
     const bots = [

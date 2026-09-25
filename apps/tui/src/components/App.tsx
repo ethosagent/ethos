@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import type { AgentBridge } from '@ethosagent/agent-bridge';
+import type { AgentBridge, BridgeApprovalRequest } from '@ethosagent/agent-bridge';
 import { haltNotice } from '@ethosagent/core';
 import { DEFAULT_TOKENS } from '@ethosagent/design-tokens';
 import { answerSuffix, type PendingClarify, type Session } from '@ethosagent/types';
@@ -22,6 +22,7 @@ import {
 } from '../skin';
 import { getUpdateStatus, type UpdateStatus } from '../update-check';
 import { AccordionSection, type DetailsMode } from './AccordionSection';
+import { ApprovalModal } from './ApprovalModal';
 import { type ChatMessage, ChatRow, StreamingRow } from './ChatPane';
 import { ClarifyModal } from './ClarifyModal';
 import { CompletionPanel, getMatches } from './CompletionPanel';
@@ -251,6 +252,8 @@ export function App({
   const [modal, setModal] = useState<Modal>(null);
   const [clarifyRequest, setClarifyRequest] = useState<PendingClarify | null>(null);
   const [credentialRequest, setCredentialRequest] = useState<CredentialRequest | null>(null);
+  // Tool calls waiting for Allow / Deny, oldest first; only the head is shown.
+  const [approvalQueue, setApprovalQueue] = useState<BridgeApprovalRequest[]>([]);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -549,7 +552,13 @@ export function App({
         setShowKeymap(true);
       }
     },
-    { isActive: modal === null && clarifyRequest === null && credentialRequest === null },
+    {
+      isActive:
+        modal === null &&
+        clarifyRequest === null &&
+        credentialRequest === null &&
+        approvalQueue.length === 0,
+    },
   );
 
   useEffect(() => {
@@ -791,6 +800,27 @@ export function App({
   useEffect(() => {
     bridge.setClarifyPresenter('tui', (req) => setClarifyRequest(req));
     return bridge.onClarifyResolved(() => setClarifyRequest(null));
+  }, [bridge]);
+
+  // Tool approval — relayed by the bridge from the host's approval gate
+  // (`AgentBridge.setApprovalSource`). Requests queue; a settle from anywhere
+  // (this modal, a timeout, a cancel) drops that request from the queue.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pushTimeline closes over a stable ref
+  useEffect(() => {
+    const onRequest = (request: BridgeApprovalRequest) => {
+      setApprovalQueue((q) => [...q, request]);
+      pushTimeline('warning', `approval needed: ${request.toolName}`);
+    };
+    const onSettled = (approvalId: string, decision: 'allow' | 'deny') => {
+      setApprovalQueue((q) => q.filter((r) => r.approvalId !== approvalId));
+      pushTimeline(decision === 'allow' ? 'success' : 'error', `approval ${decision}`);
+    };
+    bridge.on('approval_request', onRequest);
+    bridge.on('approval_settled', onSettled);
+    return () => {
+      bridge.off('approval_request', onRequest);
+      bridge.off('approval_settled', onSettled);
+    };
   }, [bridge]);
 
   const applyCompletion = () => {
@@ -1214,6 +1244,22 @@ export function App({
     setStatusMsg('Usage: /details [<section>] [<mode>]');
   };
 
+  const approvalHead = approvalQueue[0];
+  if (approvalHead) {
+    return (
+      <SkinContext.Provider value={tokens}>
+        <ApprovalModal
+          request={approvalHead}
+          queued={approvalQueue.length - 1}
+          onDecide={(decision) => {
+            setApprovalQueue((q) => q.filter((r) => r.approvalId !== approvalHead.approvalId));
+            bridge.respondToApproval(approvalHead.approvalId, decision);
+          }}
+        />
+      </SkinContext.Provider>
+    );
+  }
+
   if (clarifyRequest) {
     const req = clarifyRequest;
     return (
@@ -1456,6 +1502,7 @@ export function App({
             modal === null &&
             clarifyRequest === null &&
             credentialRequest === null &&
+            approvalQueue.length === 0 &&
             !showKeymap &&
             focusPane === 'input'
           }

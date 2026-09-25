@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // driven through runZero with the same mocked wiring as zero-exit-code.test.ts.
 // Every stdout line is JSON.parse'd: stdout is the protocol (D31, D32).
 
+// The approval gate is pinned elsewhere (terminal-approval.test.ts); these
+// fake loops carry no hook registry to wire it on.
+vi.mock('../lib/non-interactive-approval', () => ({ gateNonInteractiveLoop: vi.fn() }));
+
 vi.mock('../wiring', () => ({
   getStorage: vi.fn(() => ({})),
   getSecretsResolver: vi.fn(async () => ({})),

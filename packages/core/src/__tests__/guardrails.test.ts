@@ -233,7 +233,11 @@ describe('Orchestrator guardrails', () => {
     // `PersonalityConfig` type import, its private field, constructor
     // assignment and deps-getter line. Pass-through only; the union with the
     // surface's `toolsetExclude` lives in agent-loop/stages/turn-setup.ts.
-    expect(lineCount).toBeLessThanOrEqual(1077);
+    // Bumped 1077 -> 1083 (terminal approval prompt): the public
+    // `isToolPermitted` delegator (doc line, signature, body, close, blank) and its
+    // import, so an approval surface can skip asking about a call the
+    // allowlist refuses anyway. The logic lives in agent-loop/tool-permitted.ts.
+    expect(lineCount).toBeLessThanOrEqual(1083);
   });
 
   it('no stage file exceeds 700 lines', () => {

@@ -1,8 +1,9 @@
 // Command substitution (`$(…)`, backticks) requires approval; it is not
 // hardline. On a non-web loop the terminal/process guards `composeAllTools`
 // registers refuse it unless the host has marked the loop as carrying an
-// approval gate (`markHostApprovalGate`) — CLI, TUI and ACP have no gate, so
-// they stay fail-closed. Drives the REAL composition root against a throwaway
+// approval gate (`markHostApprovalGate`) — an unmarked loop stays
+// fail-closed. (`ethos chat` and `ethos acp` mark theirs through
+// `wireTerminalApprovalGate`, apps/ethos/src/terminal-approval.ts.) Drives the REAL composition root against a throwaway
 // `~/.ethos`, so the assertion is on the guards actually registered, not on a
 // hand-built copy of them.
 
