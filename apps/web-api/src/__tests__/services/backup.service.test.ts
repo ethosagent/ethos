@@ -17,7 +17,7 @@ const spy = vi.hoisted(() => ({
     snapshot?: string;
     dataDir: string;
     outPath: string;
-    memory?: { memory?: string; memoryVault?: { path: string; agentDir?: string } };
+    memory?: unknown;
   }>,
   lockDirs: [] as string[],
   releases: 0,
