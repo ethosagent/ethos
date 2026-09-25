@@ -2205,3 +2205,77 @@ describe('CronScheduler mid-execution signal', () => {
     expect((await scheduler.getJob('legacy-job'))?.runCount).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R10 (openclaw-9.6-gaps) — per-run wall-clock on a prompt job's turn
+// ---------------------------------------------------------------------------
+
+describe('cron maxRunMs', () => {
+  it('aborts a turn that exceeds maxRunMs and records the run as timed out', async () => {
+    let seenSignal: AbortSignal | undefined;
+    const scheduler = new CronScheduler({
+      cronDir: testDir,
+      scriptsDir,
+      tickIntervalMs: 999_999,
+      storage: new FsStorage(),
+      // A turn that never finishes on its own.
+      runJob: (_job, opts) => {
+        seenSignal = opts?.abortSignal;
+        return new Promise<CronRunResult>(() => {});
+      },
+    });
+    const job = await scheduler.createJob({
+      name: 'Stalls',
+      schedule: '0 8 * * *',
+      prompt: 'go',
+      personalityId: 'test',
+      missedRunPolicy: 'run-once',
+      maxRunMs: 30,
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).patchJob(job.id, {
+      nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: test access to private method
+    await (scheduler as any).tick();
+
+    expect(seenSignal?.aborted).toBe(true);
+    const updated = await scheduler.getJob(job.id);
+    expect(updated?.lastError).toMatch(/timed out after 30ms/);
+    expect(updated?.runCount).toBe(0);
+    expect(updated?.runningSince ?? null).toBeNull();
+  });
+
+  it('falls back to the scheduler defaultMaxRunMs when the job sets none', async () => {
+    const scheduler = new CronScheduler({
+      cronDir: testDir,
+      scriptsDir,
+      tickIntervalMs: 999_999,
+      storage: new FsStorage(),
+      defaultMaxRunMs: 20,
+      runJob: () => new Promise<CronRunResult>(() => {}),
+    });
+    await scheduler.createJob({
+      name: 'Default Cap',
+      schedule: '0 8 * * *',
+      prompt: 'go',
+      personalityId: 'test',
+      missedRunPolicy: 'skip',
+    });
+    await expect(scheduler.runJobNow('default-cap')).rejects.toThrow(/timed out after 20ms/);
+  });
+
+  it('rejects a non-positive maxRunMs at create time', async () => {
+    const scheduler = makeScheduler();
+    await expect(
+      scheduler.createJob({
+        name: 'Bad Cap',
+        schedule: '0 8 * * *',
+        prompt: 'go',
+        personalityId: 'test',
+        missedRunPolicy: 'skip',
+        maxRunMs: 0,
+      }),
+    ).rejects.toThrow(/maxRunMs/);
+  });
+});

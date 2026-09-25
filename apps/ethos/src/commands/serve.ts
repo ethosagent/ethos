@@ -645,6 +645,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, logLevel),
+    ...(config.cron?.defaultMaxRunMs !== undefined
+      ? { defaultMaxRunMs: config.cron.defaultMaxRunMs }
+      : {}),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
       : {}),
@@ -668,7 +671,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         // observability unavailable — audit is fail-open
       }
     },
-    runJob: async (job) => {
+    runJob: async (job, runOpts) => {
       if (!loop) {
         throw new EthosError({
           code: 'INTERNAL',
@@ -700,6 +703,8 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
         personalityId: pid,
         webOrigin,
         ...(toolsetOverride ? { toolsetOverride } : {}),
+        // R10 — the scheduler aborts this at the job's `maxRunMs`.
+        ...(runOpts ? { abortSignal: runOpts.abortSignal } : {}),
       });
       if (chatService) {
         chatService.broadcastAll({

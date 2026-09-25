@@ -13,7 +13,7 @@ import {
   type PersonalityConfig,
 } from '@ethosagent/types';
 import { estimateMessagesTokens, estimateTokens } from '../context-engines/token-estimator';
-import { currentTurnStart } from './compaction';
+import { compactWithTimeout, currentTurnStart } from './compaction';
 import type { LoopDeps } from './turn-context';
 
 // The bare phrases `too many tokens` / `too long for` are context-anchored: a
@@ -93,7 +93,9 @@ export async function emergencyCompact(
     Math.floor(currentEstimate / 2) - estimateMessagesTokens(currentTurn),
   );
   try {
-    const result = await engine.compact({
+    // R10 — same deadline as `maybeCompact`; a timeout lands in the catch
+    // below as `summaryError`, and the original messages are kept.
+    const result = await compactWithTimeout(engine, {
       messages: history,
       currentSystem: systemPrompt,
       targetTokens,

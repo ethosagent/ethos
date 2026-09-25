@@ -716,6 +716,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, logLevel),
+    ...(config.cron?.defaultMaxRunMs !== undefined
+      ? { defaultMaxRunMs: config.cron.defaultMaxRunMs }
+      : {}),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
       : {}),
@@ -752,7 +755,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     deliver: async (job, output) => {
       if (cronDeliverFn) await cronDeliverFn(job, output);
     },
-    runJob: async (job) => {
+    runJob: async (job, runOpts) => {
       if (!systemLoop) {
         throw new EthosError({
           code: 'INTERNAL',
@@ -784,6 +787,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
         sessionKey,
         personalityId: pid,
         toolsetOverride,
+        // R10 — the scheduler aborts this at the job's `maxRunMs`.
+        abortSignal: runOpts?.abortSignal,
       })) {
         if (event.type === 'text_delta') output += event.text;
         // A `returnDirect` tool's answer arrives only as `done.text`, after

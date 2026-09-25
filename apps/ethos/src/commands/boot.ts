@@ -422,6 +422,9 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
     logger,
+    ...(cfg.cron?.defaultMaxRunMs !== undefined
+      ? { defaultMaxRunMs: cfg.cron.defaultMaxRunMs }
+      : {}),
     ...(cfg.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: cfg.cron.maxParallelJobs }
       : {}),
@@ -455,7 +458,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     },
     // Serve-role turn shape (`runCronTurn`): reuses a web-origin session when
     // the personality matches, which the gateway's simpler runJob does not.
-    runJob: async (job) => {
+    runJob: async (job, runOpts) => {
       const loop = sharedLoop;
       if (!loop) {
         throw new EthosError({
@@ -480,6 +483,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         personalityId: job.personalityId,
         webOrigin,
         ...(toolsetOverride ? { toolsetOverride } : {}),
+        // R10 — the scheduler aborts this at the job's `maxRunMs`.
+        ...(runOpts ? { abortSignal: runOpts.abortSignal } : {}),
       });
       chatServiceRef?.broadcastAll({
         type: 'cron.fired',

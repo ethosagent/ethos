@@ -1969,6 +1969,14 @@ export interface CronTopLevelConfig {
    *   cron.maxParallelJobs: 2
    */
   maxParallelJobs?: number;
+  /**
+   * Wall-clock cap, in ms, on a cron prompt job's agent turn when the job sets
+   * no `maxRunMs` of its own. Positive integer; absent = the scheduler's
+   * `DEFAULT_CRON_MAX_RUN_MS` (30 min). Enforced by `CronScheduler.runTurnCapped`
+   * in `@ethosagent/cron`. Config key:
+   *   cron.defaultMaxRunMs: 600000
+   */
+  defaultMaxRunMs?: number;
 }
 
 export interface EthosConfig {
@@ -4470,6 +4478,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (config.cron.maxParallelJobs !== undefined) {
       lines.push(`cron.maxParallelJobs: ${config.cron.maxParallelJobs}`);
     }
+    if (config.cron.defaultMaxRunMs !== undefined) {
+      lines.push(`cron.defaultMaxRunMs: ${config.cron.defaultMaxRunMs}`);
+    }
   }
   if (config.kanban) {
     if (config.kanban.maxInProgress !== undefined)
@@ -5481,6 +5492,12 @@ export function parseConfigYaml(src: string): EthosConfig {
     const cronMax = line.match(/^cron\.maxParallelJobs:\s*(.+)$/);
     if (cronMax) {
       cronKv.maxParallelJobs = parseConfigScalar(cronMax[1]);
+      continue;
+    }
+    // cron.defaultMaxRunMs: <ms>  (R10 — per-run wall-clock default)
+    const cronMaxRun = line.match(/^cron\.defaultMaxRunMs:\s*(.+)$/);
+    if (cronMaxRun) {
+      cronKv.defaultMaxRunMs = parseConfigScalar(cronMaxRun[1]);
       continue;
     }
     // auxiliary.compression.<field>: <value>
@@ -7538,6 +7555,10 @@ function buildCronConfig(
   const maxParallel = Number(kv.maxParallelJobs);
   if (kv.maxParallelJobs !== undefined && Number.isFinite(maxParallel) && maxParallel > 0) {
     cfg.maxParallelJobs = Math.floor(maxParallel);
+  }
+  const maxRunMs = Number(kv.defaultMaxRunMs);
+  if (kv.defaultMaxRunMs !== undefined && Number.isFinite(maxRunMs) && maxRunMs >= 1) {
+    cfg.defaultMaxRunMs = Math.floor(maxRunMs);
   }
   if (Object.keys(cfg).length === 0) return undefined;
   return cfg;
