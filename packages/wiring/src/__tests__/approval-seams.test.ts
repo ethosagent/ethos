@@ -17,7 +17,11 @@ import type {
 } from '@ethosagent/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestSafety } from '../../../core/src/__tests__/helpers/test-safety';
-import { createApprovalDangerPredicate, createLazyProvider } from '../approval-seams';
+import {
+  createApprovalDangerPredicate,
+  createLazyProvider,
+  REWRITTEN_ARGS_NOTE,
+} from '../approval-seams';
 import { createSmartApprover } from '../smart-approver';
 
 // The reviewer must not even be CONSTRUCTED on the default path — a
@@ -168,6 +172,46 @@ describe('createApprovalDangerPredicate — execution posture', () => {
     );
     expect(await isDangerous(payload('terminal', { command: 'ls' }, 's-boxed'))).toBeNull();
     expect(asked).toEqual(['local-one', 'boxed']);
+  });
+});
+
+// S10 follow-up: when a `before_tool_call` handler rewrites the args, core
+// fires the hook again on the rewritten args (`enforceBeforeToolCall`) with
+// `rewrittenFrom` set, and an approval surface is asked a second time. That
+// second prompt must say why it is being asked again.
+describe('createApprovalDangerPredicate — re-judge of rewritten args', () => {
+  function manual() {
+    return createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
+      hooks: [new DefaultHookRegistry()],
+      personalities: registryWith(),
+      getProvider: async () => {
+        throw new Error('provider must not be constructed');
+      },
+      model: 'm',
+      alwaysAsk: ['shell'],
+    });
+  }
+
+  it('says the arguments were rewritten on the re-judge fire', async () => {
+    const reason = await manual()({
+      ...payload('shell', { command: 'cd /repo && ls' }),
+      rewrittenFrom: { command: 'ls' },
+    });
+    expect(reason).toBe(`shell requires explicit approval${REWRITTEN_ARGS_NOTE}`);
+    expect(reason).toContain('rewrote the arguments');
+  });
+
+  it('leaves the first fire’s reason unchanged', async () => {
+    expect(await manual()(payload('shell', { command: 'ls' }))).toBe(
+      'shell requires explicit approval',
+    );
+  });
+
+  it('stays null for a rewritten call nothing flags', async () => {
+    expect(
+      await manual()({ ...payload('read_file', { path: 'b' }), rewrittenFrom: { path: 'a' } }),
+    ).toBeNull();
   });
 });
 

@@ -67,10 +67,14 @@ export type BeforeToolCallDecision =
  * and the terminal guard are `before_tool_call` handlers, and `fireModifying`
  * hands every handler the ORIGINAL payload, so in one pass they judge args a
  * sibling's override then replaces. When the merged `args` differ from the
- * input (canonically), the hook is fired once more on the rewritten args; that
- * pass may block, and if it rewrites to anything else again the call is
- * refused rather than running args no guard saw. Pinned by the 'guards re-judge
- * hook-rewritten args (S10)' cases in the same test file.
+ * input (canonically), the hook is fired once more on the rewritten args, with
+ * `rewrittenFrom` set to the originals. That fire is JUDGE-ONLY: an `error`
+ * refuses the call, any `args` it returns are discarded, and what runs is
+ * exactly the args it judged — so a handler that rewrites again (a prefixer
+ * that always prepends) neither stacks nor refuses. The cost: an approval hook
+ * that asked on the first fire asks again on the second, the second prompt
+ * being the one that governs what runs (see `BeforeToolCallPayload.rewrittenFrom`).
+ * Pinned by the 'guards re-judge hook-rewritten args (S10)' cases in the same test file.
  */
 export async function enforceBeforeToolCall(
   deps: BeforeToolCallDeps,
@@ -90,27 +94,23 @@ export async function enforceBeforeToolCall(
   const deniedAfterRewrite = checkDenyRules(deps, input, effectiveArgs);
   if (deniedAfterRewrite) return deniedAfterRewrite;
 
-  const second = await fireBeforeToolCall(deps, input, effectiveArgs);
+  // Judge-only: the verdict counts, a rewrite returned here is discarded, and
+  // the args that run are exactly the `effectiveArgs` this fire judged.
+  const second = await fireBeforeToolCall(deps, input, effectiveArgs, input.args);
   if (!second.allowed) return second;
-  if (canonicalizeArgs(second.effectiveArgs) !== canonicalizeArgs(effectiveArgs)) {
-    const reason =
-      'tool call refused: a before_tool_call hook rewrote the arguments again after they were re-checked';
-    deps.observability?.recordSafetyBlock({
-      traceId: input.traceId,
-      code: 'tool_blocked',
-      cause: reason,
-    });
-    return { allowed: false, reason };
-  }
 
   return { allowed: true, effectiveArgs };
 }
 
-/** One `before_tool_call` fire on `args`, with the approver sink bound for its span. */
+/**
+ * One `before_tool_call` fire on `args`, with the approver sink bound for its
+ * span. `rewrittenFrom` is set on the re-judge fire only.
+ */
 async function fireBeforeToolCall(
   deps: BeforeToolCallDeps,
   input: BeforeToolCallInput,
   args: unknown,
+  rewrittenFrom?: unknown,
 ): Promise<BeforeToolCallDecision> {
   const releaseApproverSink = input.bindApproverSink?.();
   let beforeResult: BeforeToolCallResult;
@@ -124,6 +124,7 @@ async function fireBeforeToolCall(
         args,
         ...(input.voiceOrigin ? { voiceOrigin: input.voiceOrigin } : {}),
         ...(input.personalityId !== undefined ? { personalityId: input.personalityId } : {}),
+        ...(rewrittenFrom !== undefined ? { rewrittenFrom } : {}),
       },
       input.allowedPlugins,
     );
