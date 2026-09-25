@@ -131,3 +131,78 @@ describe('gateway budget halt render (S4/U1)', () => {
     expect(adapter.sent).toEqual(['I paused because…']);
   });
 });
+
+/** A loop with the session-cost surface `/budget` reads and resets. */
+function makeCostLoop(cap: number | undefined): AgentLoop & {
+  runs: number;
+  costs: Map<string, number>;
+} {
+  const costs = new Map<string, number>();
+  return Object.assign(makeLoop([{ type: 'done', text: 'ok', turnCount: 1 }]), {
+    costs,
+    getSessionCost: (key: string) => costs.get(key) ?? 0,
+    resetSessionCost: (key: string) => {
+      costs.delete(key);
+    },
+    getPersonalityBudgetCap: () => cap,
+  }) as unknown as AgentLoop & { runs: number; costs: Map<string, number> };
+}
+
+describe('gateway /budget (S4/U1)', () => {
+  // The lane's session key before any /new: `buildLaneKey(platform, botKey, chatId)`.
+  const DM_LANE = 'telegram:bot-1:C1';
+
+  it('/budget shows the session spend against the cap', async () => {
+    const loop = makeCostLoop(1);
+    loop.costs.set(DM_LANE, 0.25);
+    const adapter = makeAdapter();
+    await gatewayFor(loop).handleMessage(inbound('/budget'), adapter);
+    expect(adapter.sent).toHaveLength(1);
+    expect(adapter.sent[0]).toContain('$0.2500');
+    expect(adapter.sent[0]).toContain('$1.00');
+    expect(adapter.sent[0]).toContain('/budget reset');
+    expect(loop.runs).toBe(0);
+  });
+
+  it('/budget reset on a DM lane clears the session cap', async () => {
+    const loop = makeCostLoop(1);
+    loop.costs.set(DM_LANE, 1.5);
+    const adapter = makeAdapter();
+    await gatewayFor(loop).handleMessage(inbound('/budget reset'), adapter);
+    expect(loop.costs.has(DM_LANE)).toBe(false);
+    expect(adapter.sent[0]).toMatch(/reset/i);
+    expect(loop.runs).toBe(0);
+  });
+
+  it('a non-owner cannot reset a group budget; the owner can', async () => {
+    const loop = makeCostLoop(1);
+    const groupLane = 'telegram:bot-1:G1';
+    loop.costs.set(groupLane, 1.5);
+    const adapter = makeAdapter();
+    const gateway = new Gateway({
+      bots: [{ botKey: 'bot-1', loop, binding: { type: 'personality', name: 'researcher' } }],
+      clarifySweepIntervalMs: 0,
+      channelFilter: { telegram: { ownerUserId: 'owner', recipientAllowlist: ['member'] } },
+    });
+    const group = { chatId: 'G1', isDm: false, isGroupMention: true };
+
+    await gateway.handleMessage(inbound('/budget reset', { ...group, userId: 'member' }), adapter);
+    expect(loop.costs.get(groupLane)).toBe(1.5);
+    expect(adapter.sent.at(-1)).toBe('Only the bot owner can reset the budget in a group.');
+
+    await gateway.handleMessage(inbound('/budget reset', { ...group, userId: 'owner' }), adapter);
+    expect(loop.costs.has(groupLane)).toBe(false);
+  });
+
+  it('a group with no owner configured refuses the reset and names the key', async () => {
+    const loop = makeCostLoop(1);
+    loop.costs.set('telegram:bot-1:G1', 1.5);
+    const adapter = makeAdapter();
+    await gatewayFor(loop).handleMessage(
+      inbound('/budget reset', { chatId: 'G1', isDm: false, isGroupMention: true }),
+      adapter,
+    );
+    expect(loop.costs.get('telegram:bot-1:G1')).toBe(1.5);
+    expect(adapter.sent.at(-1)).toContain('channel_filter.telegram.ownerUserId');
+  });
+});

@@ -113,7 +113,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'budget',
     description: 'Show session spend against cap',
     usage: '/budget [reset]',
-    surfaces: ['cli'],
+    surfaces: ['cli', 'gateway'],
   },
   {
     name: 'verbose',

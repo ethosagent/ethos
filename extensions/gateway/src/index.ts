@@ -1264,24 +1264,35 @@ export interface GatewayConfig {
 // Built-in gateway slash commands (handled before the AgentLoop sees the text)
 // ---------------------------------------------------------------------------
 
-const PLATFORM_COMMANDS: Record<
-  string,
-  | 'new'
-  | 'usage'
-  | 'stop'
-  | 'help'
-  | 'personality'
-  | 'allow'
-  | 'deny'
-  | 'communications'
-  | 'start'
-  | 'queue'
-  | 'background'
-  | 'voice'
-  | 'compact'
-  | 'fork'
-  | 'branches'
-  | 'branch'
+/**
+ * The gateway's executor table: slash token → the branch of
+ * `Gateway.handleMessage` that runs it. Must name exactly the commands the
+ * shared registry advertises for the `gateway` surface (`SLASH_COMMANDS` in
+ * @ethosagent/surface-kit) — pinned by `__tests__/slash-registry-drift.test.ts`,
+ * so registering a channel command is the registry entry, this key, and its
+ * branch in `handleMessage`.
+ */
+export const PLATFORM_COMMANDS: Readonly<
+  Record<
+    string,
+    | 'new'
+    | 'usage'
+    | 'budget'
+    | 'stop'
+    | 'help'
+    | 'personality'
+    | 'allow'
+    | 'deny'
+    | 'communications'
+    | 'start'
+    | 'queue'
+    | 'background'
+    | 'voice'
+    | 'compact'
+    | 'fork'
+    | 'branches'
+    | 'branch'
+  >
 > = {
   '/new': 'new',
   '/reset': 'new',
@@ -1290,6 +1301,7 @@ const PLATFORM_COMMANDS: Record<
   '/branch': 'branch',
   '/stop': 'stop',
   '/usage': 'usage',
+  '/budget': 'budget',
   '/help': 'help',
   '/personality': 'personality',
   '/compact': 'compact',
@@ -3027,6 +3039,7 @@ export class Gateway {
         `/stop — abort current response\n` +
         `${personalityLines.join('\n')}\n` +
         `/usage — token and cost stats\n` +
+        `/budget [reset] — session spend against its cap\n` +
         `/compact [focus] — compress older context now\n` +
         `/voice — set voice reply mode (off|mirror_inbound|all)\n` +
         `/help — this message`;
@@ -3181,6 +3194,11 @@ export class Gateway {
           text: `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\nCost: $${u.costUsd.toFixed(5)}`,
         })
         .catch(() => {});
+      return;
+    }
+
+    if (cmdType === 'budget') {
+      await this.handleBudgetCommand(text, laneKey, bot, message, adapter);
       return;
     }
 
@@ -7040,6 +7058,57 @@ export class Gateway {
         details: { botKey, laneKey, error: err instanceof Error ? err.message : String(err) },
       });
     }
+  }
+
+  /**
+   * `/budget` and `/budget reset` (plan openclaw-2026.9.6-gaps S4/U1) — the
+   * channel half of the CLI command, over the same `AgentLoop` session-cost
+   * counter `budgetCapUsd` is checked against (`getSessionCost` /
+   * `resetSessionCost`), keyed by the lane's CURRENT session key.
+   *
+   * The reset is lane-wide state, so it takes `/personality`'s group rule
+   * (plan openclaw-advisory-fixes D20/D21): in a group only the configured
+   * `channel_filter.<platform>.ownerUserId` may reset, and a group on a
+   * platform with no owner refuses outright. The read-only form stays open.
+   * Pinned by `__tests__/budget-halt.test.ts`.
+   */
+  private async handleBudgetCommand(
+    text: string,
+    laneKey: string,
+    bot: GatewayBotConfig,
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+  ): Promise<void> {
+    const reply = (body: string) => adapter.send(message.chatId, { text: body }).catch(() => {});
+    const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+    const arg = text.split(/\s+/)[1]?.toLowerCase() ?? '';
+
+    if (arg === 'reset') {
+      if (!message.isDm && !this.isOwner(message)) {
+        await reply(
+          this.channelFilter?.[message.platform]?.ownerUserId === undefined
+            ? `Resetting the budget in a group needs an owner. ` +
+                `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
+            : 'Only the bot owner can reset the budget in a group.',
+        );
+        return;
+      }
+      bot.loop.resetSessionCost(sessionKey);
+      await reply('✓ Budget counter reset for this session.');
+      return;
+    }
+
+    const personalityId =
+      bot.binding.type === 'team'
+        ? undefined
+        : (this.personalityIds.get(laneKey) ?? bot.binding.name);
+    const spent = bot.loop.getSessionCost(sessionKey);
+    const cap = bot.loop.getPersonalityBudgetCap(personalityId);
+    await reply(
+      `Session spend: $${spent.toFixed(4)}` +
+        (cap != null ? ` of a $${cap.toFixed(2)} cap` : ' (no session cap set)') +
+        `\nUse /budget reset to start a new budget window.`,
+    );
   }
 
   /**
