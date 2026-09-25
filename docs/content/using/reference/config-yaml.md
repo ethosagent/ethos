@@ -131,6 +131,7 @@ memoryApproval.ttlDays: 30
 Notes:
 
 - Cap and TTL apply to every queue over one deployment — the runtime gate, `ethos memory pending`, and the web Pending tab.
+- Every backend is gated, `memory: vector` included. Under vector an approved candidate is written into `memory.db` and records no history entry, because vector keeps no history. (`composeGatedVectorMemory` and `createPendingMemoryStore` in [packages/wiring/src/memory-backend.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/memory-backend.ts).)
 - A change takes effect on restart, like `memory` itself.
 
 ## memoryCapture.evidenceSessions {#memory-capture-evidence-sessions}

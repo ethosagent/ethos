@@ -6,17 +6,20 @@
 // (pending queue + tombstones) stays rooted at `~/.ethos` so the CLI/web
 // pending surfaces keep working unchanged.
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DefaultHookRegistry } from '@ethosagent/core';
 import { MemoryCaptureRunner } from '@ethosagent/memory-capture';
 import { HistoryStore } from '@ethosagent/memory-history';
+import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import {
   emptyMeta,
   planConsolidation,
   resolveDecayParams,
   restoreArchivedSlug,
 } from '@ethosagent/nightly-loop';
-import { InMemoryStorage } from '@ethosagent/storage-fs';
+import { FsStorage, InMemoryStorage } from '@ethosagent/storage-fs';
 import type {
   AgentDonePayload,
   LLMProvider,
@@ -25,7 +28,7 @@ import type {
   Session,
   SessionStore,
 } from '@ethosagent/types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createPendingMemoryStore } from '../index';
 import {
   buildVaultBackend,
@@ -374,27 +377,41 @@ describe('createMemoryBundle — host surfaces follow the loop backend (F04)', (
     expect(await tuned.pending.list(scope)).toHaveLength(0);
   });
 
-  it('under memory: vector, approve refuses (the runtime never gates vector) and the candidate stays', async () => {
-    const storage = new InMemoryStorage();
-    const bundle = createMemoryBundle({ config: { memory: 'vector' }, dataDir: DATA, storage });
-    const scope = 'personality:muse';
-    const entry = await bundle.pending.propose({
-      scopeId: scope,
-      source: 'capture',
-      factHash: 'h-leftover',
-      update: { action: 'add', key: 'MEMORY.md', content: 'parked under markdown' },
-    });
+  it('under memory: vector, approve replays into memory.db, not dataDir markdown', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ethos-vector-approve-'));
+    const embed = vi
+      .spyOn(
+        VectorMemoryProvider.prototype as unknown as {
+          embed: (t: string) => Promise<Float32Array>;
+        },
+        'embed',
+      )
+      .mockResolvedValue(new Float32Array([1, 0, 0]));
+    try {
+      const storage = new FsStorage();
+      const bundle = createMemoryBundle({ config: { memory: 'vector' }, dataDir: dir, storage });
+      const scope = 'personality:muse';
+      const entry = await bundle.pending.propose({
+        scopeId: scope,
+        source: 'dream',
+        update: { action: 'add', key: 'MEMORY.md', content: 'parked by the vector gate' },
+      });
 
-    await expect(bundle.pending.approve(scope, entry.id, 'web')).rejects.toMatchObject({
-      code: 'NOT_CONFIGURED',
-      message: expect.stringContaining('Cannot approve into the "vector" memory backend'),
-    });
-    expect(await storage.read(join(DATA, 'personalities', 'muse', 'MEMORY.md'))).toBeNull();
-    expect(await bundle.pending.list(scope)).toHaveLength(1);
-
-    // Reject still clears it (and tombstones the fact).
-    expect((await bundle.pending.reject(scope, entry.id)).ok).toBe(true);
-    expect(await bundle.pending.list(scope)).toHaveLength(0);
+      await bundle.pending.approve(scope, entry.id, 'web');
+      expect(await bundle.pending.list(scope)).toHaveLength(0);
+      const reader = new VectorMemoryProvider({ dir, storage });
+      try {
+        expect((await reader.read('MEMORY.md', ctx({ scopeId: scope })))?.content).toBe(
+          'parked by the vector gate',
+        );
+      } finally {
+        reader.close();
+      }
+      expect(await storage.read(join(dir, 'personalities', 'muse', 'MEMORY.md'))).toBeNull();
+    } finally {
+      embed.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
