@@ -1927,6 +1927,7 @@ export {
 export {
   type ForkSessionResult,
   forkSession,
+  forkSessionKey,
   listBranches,
 } from '@ethosagent/core';
 export {

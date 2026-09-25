@@ -8,7 +8,7 @@ import type {
   StoredMessage,
 } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
-import { forkSession } from '@ethosagent/wiring';
+import { forkSession, forkSessionKey } from '@ethosagent/wiring';
 
 // Thin wrapper over the `SessionStore` contract for the sessions feature.
 // Hides the store's exact method names and Date/string conversions from
@@ -224,7 +224,7 @@ export class SessionsRepository {
     // through `idMap`; without it `resolveContextAt(fork.id, <fork message id>)`
     // could never find anything.
     const { session: fresh, idMap } = await forkSession(this.store, source.id, {
-      key: `${source.key}:fork:${Date.now()}`,
+      key: forkSessionKey(source.key),
       ...(personalityOverride ? { personalityId: personalityOverride } : {}),
     });
 

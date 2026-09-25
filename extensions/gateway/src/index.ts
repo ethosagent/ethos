@@ -6,6 +6,7 @@ import {
   DEFAULT_ESCALATION_DELAY_MS,
   deriveBotKey,
   forkSession,
+  forkSessionKey,
   LaneVoiceModeStore,
   laneKeyBotKey,
   listBranches,
@@ -6863,7 +6864,7 @@ export class Gateway {
       }
       if (command === 'fork') {
         const { session } = await forkSession(store, current.id, {
-          key: `${laneKey}:fork:${Date.now()}`,
+          key: forkSessionKey(laneKey),
         });
         await moveTo(session.key, session.personalityId);
         await reply('✓ Forked — now on a new branch. /branches lists them, /branch <n> switches.');

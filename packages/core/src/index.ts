@@ -263,6 +263,7 @@ export {
   type ForkSessionOptions,
   type ForkSessionResult,
   forkSession,
+  forkSessionKey,
   listBranches,
 } from './session-fork';
 export { SimpleCompletionImpl } from './simple-completion';

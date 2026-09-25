@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { Session, SessionStore, StoredMessage } from '@ethosagent/types';
 import { EthosError } from '@ethosagent/types';
 
@@ -12,6 +13,25 @@ export interface ForkSessionOptions {
    * `tool_result` sits after the cut.
    */
   upToMessageId?: string;
+}
+
+/**
+ * A new fork's session key: `<prefix>:fork:<ms>-<8 hex>`. Every surface builds
+ * its fork key here (web-api, the CLI/TUI `/fork`, the gateway `/fork`).
+ *
+ * The millisecond keeps the readable `…:fork:<ts>` convention; the random
+ * suffix is what makes the key unique. `Date.now()` alone gave two forks of one
+ * session in the same millisecond the same key, and the second hit the
+ * sessions UNIQUE(key) constraint. A suffix rather than retry-on-conflict: the
+ * stores report a duplicate key differently (session-sqlite throws a
+ * constraint error, the in-memory store does not check at all), and a
+ * look-then-create retry would still race a second process. Nothing parses a
+ * fork key — `listBranches` finds forks through `parentSessionId` — so the
+ * suffix changes no reader. Pinned by
+ * extensions/session-sqlite/src/__tests__/fork-key.test.ts.
+ */
+export function forkSessionKey(prefix: string, now: number = Date.now()): string {
+  return `${prefix}:fork:${now}-${randomBytes(4).toString('hex')}`;
 }
 
 export interface ForkSessionResult {
