@@ -339,6 +339,33 @@ describe('mixture_of_agents', () => {
     }
   });
 
+  // The synthesis pass is a sub-agent turn like the others: it must run as the
+  // caller's personality, or it escapes that personality's toolset, deny rules
+  // and memory scope (the loop falls back to its default personality).
+  it("runs the synthesis pass as the caller's personality", async () => {
+    const seen: Array<{ sessionKey?: string; personalityId?: string }> = [];
+    const loop = {
+      run: async function* (
+        _prompt: string,
+        opts: { sessionKey?: string; personalityId?: string },
+      ): AsyncGenerator<AgentEvent> {
+        seen.push({ sessionKey: opts.sessionKey, personalityId: opts.personalityId });
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+      },
+    } as unknown as import('@ethosagent/core').AgentLoop;
+
+    const result = await createMixtureOfAgentsTool(loop).execute(
+      { agents: [{ prompt: 'a' }], synthesis_prompt: 'combine' },
+      makeCtx({ personalityId: 'researcher' }),
+    );
+
+    expect(result.ok).toBe(true);
+    const synthesis = seen.find((s) => s.sessionKey?.includes(':moa:synthesis:'));
+    expect(synthesis).toBeDefined();
+    expect(synthesis?.personalityId).toBe('researcher');
+  });
+
   it('returns input_invalid when agents array is empty', async () => {
     const tool = createMixtureOfAgentsTool(makeLoop());
     const result = await tool.execute({ agents: [] }, makeCtx());

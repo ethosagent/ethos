@@ -801,6 +801,10 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
 
         try {
           const synthesis = await runSubAgent(loop, synthesisInput, {
+            // The caller's personality, so its toolset, deny rules and memory
+            // scope bound the synthesis turn too. Pinned by "runs the synthesis
+            // pass as the caller's personality" in __tests__/delegation.test.ts.
+            personalityId: ctx.personalityId,
             sessionKey,
             depth: depth + 1,
             abortSignal: ctx.abortSignal,
