@@ -111,7 +111,9 @@ Every tool call is scored against a pattern-based classifier (regex floor) and a
 
 *Status: Shipped.*
 
-When any of the previous checks flag a call, the request is held in front of the approval surface (Web UI modal or CLI prompt). The approval is binary, sender-attributable, and persisted as an audit event.
+When any of the previous checks flag a call, the request waits for a human on the two surfaces that can ask: the web UI modal (`apps/web-api/src/services/approval-hook.ts`) and the Slack, Telegram and Discord approval cards (`createSlackApprovalHook` in `apps/ethos/src/approval-coordinator.ts`, registered by `wireApprovalFlow` in `apps/ethos/src/commands/gateway.ts`). The approval is binary, sender-attributable, and persisted as an audit event.
+
+The CLI, TUI and ACP have no approval prompt. `composeAllTools` (`packages/wiring/src/compose-tools.ts`) registers only the terminal and process guards on their loops (`createTerminalGuardHook`, `createProcessGuardHook`), and those refuse hardline and approval-required commands in every mode. No danger predicate runs there, so every other flagged call runs without asking.
 
 - Source: `apps/web-api/src/services/approval-hook.ts`
 - Audit category: `audit.approval`

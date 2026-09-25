@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: set-up-approval-gates
 time: 10 min
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 Some tool calls write files, run shell commands, or hit the network. You do not want them firing unsupervised. Approval gates make the agent pause and ask before the dangerous call runs — or refuse it outright.
@@ -31,7 +31,7 @@ Ethos's safety classifier sorts every tool call into one of three buckets. `safe
 
 | Mode | What happens on `dangerous` | When to pick it |
 |---|---|---|
-| `manual` *(default)* | Surface an approval prompt; wait for Allow / Deny. | Personal CLI sessions. Web UI personalities. Any time you are sitting at the terminal and can answer in seconds. |
+| `manual` *(default)* | Surface an approval prompt; wait for Allow / Deny. | Web UI personalities and Slack / Telegram / Discord bots. Any time you can answer a prompt in seconds. The CLI and TUI have no approval prompt, so the mode changes nothing there (see step 5). |
 | `smart` | An LLM reviewer judges the call first. `approve` → runs with no prompt. `deny` and `ask` → the approval prompt still fires, carrying the reviewer's reason. | Long-running agent sessions where approval fatigue is the failure mode. Trades latency and reviewer tokens for fewer interruptions. |
 | `off` | Auto-fire. `blocked` calls still refuse. | Trusted local automation only — cron, batch runs, headless test rigs. Refused at config load when combined with any channel ingress. On the gateway's cron/dream loop it takes effect only when the operator also sets `allowUnattendedDangerousTools: true` in `config.yaml`; otherwise flagged calls there are refused, because nobody is present to approve them. It never takes effect on a WhatsApp, email or webhook bot: flagged calls there are always refused. |
 
@@ -131,14 +131,14 @@ The mode is the same across surfaces. The *prompt* differs by what the surface c
 
 ### CLI (`ethos chat`)
 
-The CLI does not have an interactive approval flow. `dangerous` terminal commands that hit the hardline blocklist surface as a tool error in the transcript:
+The CLI has no approval prompt, and neither do the TUI and the ACP server. Their only gate is the pair of guards that `composeAllTools` ([packages/wiring/src/compose-tools.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/compose-tools.ts)) registers on every non-web profile: `createTerminalGuardHook` and `createProcessGuardHook`. They refuse a hardline command, and a command that requires approval (command substitution: `$(…)` or backticks), because nobody on these surfaces can approve it. The refusal surfaces as a tool error in the transcript:
 
 ```
 Command blocked: recursive force-delete of root or home directory.
 This operation requires explicit human approval before proceeding.
 ```
 
-The agent gets the error back as a tool result and continues the turn — usually by trying a less destructive approach or asking you what to do. `manual` mode on the CLI today only affects the hardline floor; non-hardline `dangerous` calls auto-fire because the CLI has no modal to surface. If you need interactive approval, run `ethos serve` and use the web UI.
+The agent gets the error back as a tool result and continues the turn — usually by trying a less destructive approach or asking you what to do. `approvalMode` changes nothing on these surfaces. The guards refuse the same commands in every mode. Every other `dangerous` call runs without asking, because no approval gate is registered on these loops (`hasHostApprovalGate` in [packages/wiring/src/danger-predicate.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/danger-predicate.ts) is false for them). If you need interactive approval, run `ethos serve` and use the web UI.
 
 ### Web UI (`ethos serve`)
 
@@ -188,7 +188,7 @@ This also holds with no bot configured. `ethos gateway start` then runs channel-
 |---|---|---|
 | `Invalid approvalMode: "X". Expected one of: manual, smart, off` | A typo in `config.yaml` — only the three literal values are accepted. | Pick `manual`, `smart`, or `off`. |
 | `personality "X" has approvalMode: off but is bound to channel "telegram"` | `off` on a personality with `platform: telegram \| discord \| slack \| whatsapp \| email`. | Move to `smart` or `manual`, or remove the `platform` binding so the personality is CLI/cron only. |
-| `dangerous` calls in CLI fire without prompting | The CLI does not render approval modals. Only the hardline `blocked` floor blocks; the rest auto-fire. | Run via `ethos serve` for the interactive flow, or switch the surface to Slack / Telegram. |
+| `dangerous` calls in CLI fire without prompting | The CLI, TUI and ACP have no approval prompt. The terminal and process guards refuse hardline commands and command substitution; every other flagged call runs. | Run via `ethos serve` for the interactive flow, or switch the surface to Slack / Telegram. |
 | Slack / Telegram / Discord card never appears for a `dangerous` call | The adapter is wired but the personality is not bound to that bot, or the `dangerous` classification did not fire. | Confirm the bot binding in `~/.ethos/config.yaml`. Under `manual` and `off` the band fires only for terminal hardlines and for tools the deployment marks `alwaysAsk`; switch to `approvalMode: smart` to add the four consequential tools. |
 | `smart` mode prompts for everything anyway | The reviewer is failing closed — provider error, a round-trip over 15s, or a response that wasn't the expected JSON. Every one resolves to `ask`. | Check that the `model` and provider credentials in `~/.ethos/config.yaml` work; the reviewer runs on the primary model, so a broken primary breaks the reviewer. |
 
