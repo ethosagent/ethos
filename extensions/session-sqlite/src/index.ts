@@ -920,9 +920,18 @@ export class SQLiteSessionStore implements SessionStore {
   }
 
   async pruneOldSessions(olderThan: Date): Promise<number> {
+    // `updated_at` alone is not "no recent traffic": `appendMessage` does not
+    // bump it, so a session holding a message at or after the cutoff is kept.
+    // Pinned by `__tests__/prune-live-session.test.ts`.
+    const iso = olderThan.toISOString();
     const result = this.db
-      .prepare('DELETE FROM sessions WHERE updated_at < ?')
-      .run(olderThan.toISOString());
+      .prepare(
+        `DELETE FROM sessions WHERE updated_at < ?
+           AND NOT EXISTS (
+             SELECT 1 FROM messages WHERE messages.session_id = sessions.id AND timestamp >= ?
+           )`,
+      )
+      .run(iso, iso);
     // `retention.vacuumAfterPrune` — reclaim the freed pages. Only when the
     // prune actually deleted something: VACUUM rewrites the whole file behind a
     // write lock, so a no-op prune must not pay for it. `minVacuumIntervalDays`

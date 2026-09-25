@@ -129,6 +129,7 @@ import {
   wireOutboxCardAdapters,
 } from '../lib/outbox-wiring';
 import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
+import { pruneExpiredSessions } from '../lib/session-retention';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
@@ -1404,11 +1405,16 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // reconciliation's boot sweep; `gateway.shutdown` stops it.
   gateway.startDeliverySweep();
   // Spool retention (D2-11): once now, then hourly — see `pruneInboundSpool`.
-  const pruneSpool = () =>
+  // Session retention (R9) rides the same tick — see `pruneExpiredSessions`.
+  const pruneSpool = () => {
     pruneInboundSpool(inboundSpool, {
       observability: gatewayObservability(),
       warn: (message) => logger.warn(message, { component: 'boot' }),
     });
+    void pruneExpiredSessions(session, config.retention).catch((err) => {
+      logger.warn(`session retention prune failed: ${String(err)}`, { component: 'boot' });
+    });
+  };
   pruneSpool();
   const spoolPruneTimer = setInterval(pruneSpool, 3_600_000);
   spoolPruneTimer.unref?.();

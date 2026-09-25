@@ -162,6 +162,7 @@ import {
   wireOutboxCardAdapters,
 } from '../lib/outbox-wiring';
 import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-runner';
+import { pruneExpiredSessions } from '../lib/session-retention';
 import { resolveLiveKitMedia } from '../livekit-media';
 import { emitReady } from '../logger';
 import { migrateSessionKeysIfNeeded } from '../migrations/session-keys-multi-bot';
@@ -233,18 +234,40 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
+/** How long one adapter `health()` result is reused (R9). The heartbeat writer
+ *  ticks every HEARTBEAT_INTERVAL_MS and `/healthz`, `/readyz` and `/metrics`
+ *  each build a heartbeat per request; without this, an adapter whose probe is
+ *  a network round trip — the email adapter's is a full IMAP connect + logout
+ *  (`EmailAdapter.health`) — logged in every 10 seconds and on every scrape. */
+const HEALTH_CACHE_TTL_MS = 60_000;
+const healthCache = new WeakMap<PlatformAdapter, { at: number; ok: Promise<boolean> }>();
+
+/**
+ * One adapter's health, probed at most once per HEALTH_CACHE_TTL_MS. The
+ * in-flight probe is cached too, so concurrent callers share it; a rejection
+ * or a HEALTH_TIMEOUT_MS timeout is cached as `false` for the same window.
+ * Keyed by adapter object, so a bot a live reload adds starts uncached.
+ * Pinned by the 'health cache' cases in
+ * `apps/ethos/src/commands/__tests__/gateway-health.test.ts`.
+ */
+function cachedHealth(adapter: PlatformAdapter): Promise<boolean> {
+  const now = Date.now();
+  const hit = healthCache.get(adapter);
+  if (hit && now - hit.at < HEALTH_CACHE_TTL_MS) return hit.ok;
+  const ok = withTimeout(adapter.health(), HEALTH_TIMEOUT_MS).then(
+    (r) => r.ok,
+    () => false,
+  );
+  healthCache.set(adapter, { at: now, ok });
+  return ok;
+}
+
 export async function buildGatewayHeartbeat(
   adapters: PlatformAdapter[],
   startedAt: string,
 ): Promise<GatewayHeartbeat> {
-  const results = await Promise.allSettled(
-    adapters.map((a) => withTimeout(a.health(), HEALTH_TIMEOUT_MS)),
-  );
-  const adapterStatuses = adapters.map((a, i) => {
-    const result = results[i];
-    const ok = result?.status === 'fulfilled' ? result.value.ok : false;
-    return { name: a.id, ok };
-  });
+  const results = await Promise.all(adapters.map((a) => cachedHealth(a)));
+  const adapterStatuses = adapters.map((a, i) => ({ name: a.id, ok: results[i] ?? false }));
   return {
     pid: process.pid,
     startedAt,
@@ -1677,13 +1700,30 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     });
   pruneDeliveryLedger();
   pruneVoiceArtifacts();
+  // Session retention (R9) — see `pruneExpiredSessions`. This process holds no
+  // session-store handle of its own (each loop's is inside `createAgentLoop`),
+  // so one is opened for the prune and closed after it. `retention` carries
+  // the vacuum knobs, which `pruneOldSessions` honours.
+  const pruneSessions = () => {
+    const store = createSessionStore({
+      dataDir: ethosDir(),
+      ...(config.retention ? { retention: config.retention } : {}),
+    });
+    void pruneExpiredSessions(store, config.retention)
+      .catch((err) => {
+        new ConsoleLogger({}, logLevel).warn(`session retention prune failed: ${String(err)}`);
+      })
+      .finally(() => store.close());
+  };
   pruneCallLog();
   pruneSpool();
+  pruneSessions();
   const retentionPruneTimer = setInterval(() => {
     pruneDeliveryLedger();
     pruneVoiceArtifacts();
     pruneCallLog();
     pruneSpool();
+    pruneSessions();
   }, 3_600_000);
   retentionPruneTimer.unref?.();
 
