@@ -1,7 +1,7 @@
 import type { BeforeToolCallResult, HookRegistry, VoiceTurnOrigin } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { type IdenticalStreak, updateIdenticalStreak } from '../budgets';
-import { denyRuleReason, matchDenyRule } from '../deny-rules';
+import { canonicalizeArgs, denyRuleReason, matchDenyRule } from '../deny-rules';
 import type { HaltDecision, WatcherTap } from '../turn-context';
 
 // ---------------------------------------------------------------------------
@@ -62,6 +62,15 @@ export type BeforeToolCallDecision =
  * `error`, and swallows a throwing handler. When a hook rewrites the args the
  * rules are checked again on the rewritten args. Pinned by
  * `../__tests__/deny-rule-gate.test.ts`.
+ *
+ * A rewrite is also re-judged by the hooks themselves. The approval predicate
+ * and the terminal guard are `before_tool_call` handlers, and `fireModifying`
+ * hands every handler the ORIGINAL payload, so in one pass they judge args a
+ * sibling's override then replaces. When the merged `args` differ from the
+ * input (canonically), the hook is fired once more on the rewritten args; that
+ * pass may block, and if it rewrites to anything else again the call is
+ * refused rather than running args no guard saw. Pinned by the 'guards re-judge
+ * hook-rewritten args (S10)' cases in the same test file.
  */
 export async function enforceBeforeToolCall(
   deps: BeforeToolCallDeps,
@@ -70,6 +79,39 @@ export async function enforceBeforeToolCall(
   const denied = checkDenyRules(deps, input, input.args);
   if (denied) return denied;
 
+  const first = await fireBeforeToolCall(deps, input, input.args);
+  if (!first.allowed) return first;
+
+  const effectiveArgs = first.effectiveArgs;
+  if (canonicalizeArgs(effectiveArgs) === canonicalizeArgs(input.args)) {
+    return { allowed: true, effectiveArgs };
+  }
+
+  const deniedAfterRewrite = checkDenyRules(deps, input, effectiveArgs);
+  if (deniedAfterRewrite) return deniedAfterRewrite;
+
+  const second = await fireBeforeToolCall(deps, input, effectiveArgs);
+  if (!second.allowed) return second;
+  if (canonicalizeArgs(second.effectiveArgs) !== canonicalizeArgs(effectiveArgs)) {
+    const reason =
+      'tool call refused: a before_tool_call hook rewrote the arguments again after they were re-checked';
+    deps.observability?.recordSafetyBlock({
+      traceId: input.traceId,
+      code: 'tool_blocked',
+      cause: reason,
+    });
+    return { allowed: false, reason };
+  }
+
+  return { allowed: true, effectiveArgs };
+}
+
+/** One `before_tool_call` fire on `args`, with the approver sink bound for its span. */
+async function fireBeforeToolCall(
+  deps: BeforeToolCallDeps,
+  input: BeforeToolCallInput,
+  args: unknown,
+): Promise<BeforeToolCallDecision> {
   const releaseApproverSink = input.bindApproverSink?.();
   let beforeResult: BeforeToolCallResult;
   try {
@@ -79,7 +121,7 @@ export async function enforceBeforeToolCall(
         sessionId: input.sessionId,
         toolCallId: input.toolCallId,
         toolName: input.toolName,
-        args: input.args,
+        args,
         ...(input.voiceOrigin ? { voiceOrigin: input.voiceOrigin } : {}),
         ...(input.personalityId !== undefined ? { personalityId: input.personalityId } : {}),
       },
@@ -98,13 +140,7 @@ export async function enforceBeforeToolCall(
     return { allowed: false, reason: beforeResult.error };
   }
 
-  const effectiveArgs = beforeResult.args ?? input.args;
-  if (effectiveArgs !== input.args) {
-    const deniedAfterRewrite = checkDenyRules(deps, input, effectiveArgs);
-    if (deniedAfterRewrite) return deniedAfterRewrite;
-  }
-
-  return { allowed: true, effectiveArgs };
+  return { allowed: true, effectiveArgs: beforeResult.args ?? args };
 }
 
 function checkDenyRules(
