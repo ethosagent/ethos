@@ -9,6 +9,7 @@ import type { ChatService } from '../features/chat/service';
 import type { SessionsService } from '../features/sessions/service';
 import { authMiddleware } from '../middleware/auth';
 import { type ApiKeyAuthStore, bearerAuth } from '../middleware/bearer-auth';
+import { cspMiddleware } from '../middleware/csp';
 import { csrfMiddleware } from '../middleware/csrf';
 import { cookieOnlyGuard, dualAuth, resolveScope } from '../middleware/dual-auth';
 import { errorHandler } from '../middleware/error-envelope';
@@ -202,6 +203,20 @@ export function resolveCorsOrigin(
   return allowedOrigins.includes(origin) ? origin : null;
 }
 
+/**
+ * `JSON.stringify` for a value embedded in an inline `<script>`. Escapes the
+ * characters that can end the block or change how the HTML parser reads it
+ * (`<`, `>`, `&`) and the two line terminators JSON allows but pre-ES2019
+ * JavaScript does not (U+2028, U+2029) as `\uXXXX`, which `JSON.parse` and a
+ * JS engine both read back as the same character.
+ */
+function jsonForInlineScript(value: unknown): string {
+  return JSON.stringify(value).replace(
+    /[<>&\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
 export function createRoutes(opts: CreateRoutesOptions): Hono {
   const app = new Hono();
 
@@ -218,6 +233,12 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   // envelope, so an unvalidated inbound value would be a header-injection
   // vector. Downstream code reads it with `c.get('requestId')`.
   app.use('*', requestId({ headerName: 'x-request-id' }));
+
+  // S2 — Content-Security-Policy on every response, registered this early for
+  // the same reason as `requestId` above. Strict (nonce-only scripts, no
+  // framing) everywhere except the static SPA files, which carry a
+  // framing-only policy; see `cspMiddleware` (../middleware/csp.ts) for why.
+  app.use('*', cspMiddleware());
 
   // Unauthenticated health-check for container probes (liveness / readiness).
   // Registered before any auth / CORS middleware so it never requires either.
@@ -493,10 +514,17 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
       }
     }
 
-    const msgJson = JSON.stringify(msg);
+    // S2 — `state`, `error` and `error_description` come straight from the
+    // query, so the literal must not be able to close the script block:
+    // `jsonForInlineScript` escapes `<`, `>`, `&`, U+2028 and U+2029. The
+    // script runs only because it carries this response's CSP nonce
+    // (`cspMiddleware`, ../middleware/csp.ts). Pinned by
+    // ../__tests__/routes/oauth-callback-xss.test.ts.
+    const msgJson = jsonForInlineScript(msg);
+    const nonce = c.get('cspNonce');
     const html = `<!DOCTYPE html>
 <html><head><title>Ethos Auth</title></head><body>
-<script>
+<script nonce="${nonce}">
 (function(){
   var msg = ${msgJson};
   // BroadcastChannel — works even when window.opener is null (cross-origin popup)
