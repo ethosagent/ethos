@@ -1,6 +1,7 @@
 import type {
   CompressionEvent,
   Message,
+  PersonalityConfig,
   PersonalityRegistry,
   SessionStore,
   StoredMessage,
@@ -305,6 +306,9 @@ export interface CompactSessionDeps {
   session: SessionStore;
   personalities: PersonalityRegistry;
   historyLimit: number;
+  /** The history limit this session's personality runs its turns with
+   *  (`historyLimitFor`, small-window.ts). Absent → `historyLimit`. */
+  historyLimitFor?: ((personality: PersonalityConfig) => Promise<number>) | undefined;
   summarizer?: SummarizerFn;
   observability?: AgentLoopObservability;
   /** Item 7 — `compaction.minTailUserMessages`. Absent → default 3. */
@@ -357,16 +361,21 @@ export async function compactSession(
     };
   }
 
-  const raw = (await deps.session.getMessages(session.id, { limit: deps.historyLimit })).filter(
-    (m) => m.role !== 'system',
-  );
-  const active = selectActiveWatermark(await deps.session.listCompressions(session.id));
-  const replay = active ? reconstructFromWatermark(raw, active).history : raw;
-
   const effectivePersonalityId = session.personalityId ?? opts.personalityId;
   const personality =
     (effectivePersonalityId ? deps.personalities.get(effectivePersonalityId) : null) ??
     deps.personalities.getDefault();
+
+  // The history a turn of this personality sees — a small-window
+  // personality's is scaled down — so `/compact` summarizes that same window.
+  const historyLimit = deps.historyLimitFor
+    ? await deps.historyLimitFor(personality)
+    : deps.historyLimit;
+  const raw = (await deps.session.getMessages(session.id, { limit: historyLimit })).filter(
+    (m) => m.role !== 'system',
+  );
+  const active = selectActiveWatermark(await deps.session.listCompressions(session.id));
+  const replay = active ? reconstructFromWatermark(raw, active).history : raw;
   const engineName = deps.summarizer
     ? (personality.context_engine ?? 'semantic_summary')
     : 'drop_oldest';

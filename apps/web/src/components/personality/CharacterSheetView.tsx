@@ -70,6 +70,7 @@ export function CharacterSheetView({ personality }: { personality: Personality }
   const workdir = personality.fs_reach?.workdir ?? [];
 
   const posture = sheet?.posture ?? null;
+  const promptSize = sheet?.promptSize ?? null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -236,6 +237,40 @@ export function CharacterSheetView({ personality }: { personality: Personality }
           </div>
         ) : null}
       </section>
+
+      {promptSize ? (
+        <section style={{ marginBottom: 20 }}>
+          <SectionLabel>Prompt size</SectionLabel>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr',
+              gap: '4px 16px',
+              marginTop: 6,
+              fontSize: 13,
+            }}
+          >
+            <Typography.Text type="secondary">Static prefix</Typography.Text>
+            <span style={{ fontFamily: MONO, fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}>
+              {`~${promptSize.staticPrefixTokens.toLocaleString('en-US')} tokens`}
+            </span>
+            {promptSize.projectContext ? (
+              <>
+                <Typography.Text type="secondary">Project context</Typography.Text>
+                {promptSize.projectContext.workdir === null ? (
+                  dim('Depends on the working directory — no workdir declared')
+                ) : (
+                  <span
+                    style={{ fontFamily: MONO, fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
+                  >
+                    {`~${promptSize.projectContext.tokens.toLocaleString('en-US')} tokens · ${promptSize.projectContext.workdir}`}
+                  </span>
+                )}
+              </>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section style={{ marginBottom: 20 }}>
         <SectionLabel>Sandbox</SectionLabel>

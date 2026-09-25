@@ -90,6 +90,11 @@ export interface CharacterSheetModelFit {
     tokens: number;
     toolCount: number;
     components: Array<{ name: string; tokens: number }>;
+    /** The AGENTS.md/CLAUDE.md project-context block counted in `tokens`,
+     *  measured in the personality's declared `fs_reach` workdir. `workdir`
+     *  absent → the personality has none, its project context depends on the
+     *  directory it runs in, and `tokens` is 0. Absent → not measured. */
+    projectContext?: { workdir?: string; tokens: number };
   };
   outputReserveTokens?: number;
   /** `window − output reserve − static floor`; ≤ 0 → `refuses`. */
@@ -945,6 +950,16 @@ export function renderCharacterSheet(
     lines.push(
       `- System-prompt tokens: ~${modelFit.floor.tokens} (measured static floor — serialized tool schemas included)`,
     );
+    const projectContext = modelFit.floor.projectContext;
+    if (projectContext?.workdir !== undefined) {
+      lines.push(
+        `- Project context (AGENTS.md/CLAUDE.md in ${projectContext.workdir}): ~${projectContext.tokens} tokens, included above`,
+      );
+    } else if (projectContext) {
+      lines.push(
+        '- Project context (AGENTS.md/CLAUDE.md): depends on the working directory — no fs_reach workdir declared, not included above',
+      );
+    }
   } else {
     lines.push(`- Estimated system-prompt tokens: ~${estimateSystemPromptTokens(soulMd, toolset)}`);
   }

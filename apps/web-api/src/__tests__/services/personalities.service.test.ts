@@ -224,6 +224,56 @@ describe('PersonalitiesService', () => {
     expect(markdown).toContain('Largest contributor: tool schemas (4,800 tokens, 12 tools).');
   });
 
+  it('characterSheet carries the prompt-size numbers, project context included, structured for the tab', async () => {
+    const storage = new InMemoryStorage();
+    const soulPath = join(DATA, 'personalities', 'researcher', 'SOUL.md');
+    await storage.mkdir(join(DATA, 'personalities', 'researcher'));
+    await storage.write(soulPath, '# Researcher\n\nI am a careful researcher.\n');
+    const registry = new FilePersonalityRegistry(storage, DATA);
+    const config = { id: 'researcher', name: 'Researcher', soulFile: soulPath };
+    registry.define(config);
+    registry.setDefault('researcher');
+    const library = new SkillsLibrary({ dataDir: DATA, storage });
+    const fitWith = (projectContext?: {
+      workdir?: string;
+      tokens: number;
+    }): CharacterSheetModelFit => ({
+      verdict: 'fits',
+      model: 'm',
+      windowTokens: 200_000,
+      windowSource: 'catalog',
+      floor: {
+        tokens: 9_000,
+        toolCount: 3,
+        components: [{ name: 'tool schemas', tokens: 6_000 }],
+        ...(projectContext ? { projectContext } : {}),
+      },
+      degradations: [],
+      exclusions: [],
+    });
+    const sheet = async (fit: CharacterSheetModelFit) =>
+      new PersonalitiesService({
+        personalities: registry,
+        library,
+        modelFit: async () => fit,
+      }).characterSheet('researcher');
+
+    const declared = await sheet(fitWith({ workdir: '/srv/repo', tokens: 3_000 }));
+    expect(declared.promptSize).toEqual({
+      staticPrefixTokens: 9_000,
+      projectContext: { workdir: '/srv/repo', tokens: 3_000 },
+    });
+    expect(declared.markdown).toContain(
+      '- Project context (AGENTS.md/CLAUDE.md in /srv/repo): ~3000 tokens, included above',
+    );
+
+    const undeclared = await sheet(fitWith({ tokens: 0 }));
+    expect(undeclared.promptSize?.projectContext).toEqual({ workdir: null, tokens: 0 });
+
+    const unmeasured = await sheet(fitWith());
+    expect(unmeasured.promptSize).toEqual({ staticPrefixTokens: 9_000, projectContext: null });
+  });
+
   it('characterSheet renders without the verdict when the modelFit seam is absent or fails', async () => {
     const storage = new InMemoryStorage();
     const soulPath = join(DATA, 'personalities', 'researcher', 'SOUL.md');
@@ -245,6 +295,8 @@ describe('PersonalitiesService', () => {
     const a = await absent.characterSheet('researcher');
     const b = await failing.characterSheet('researcher');
     expect(a.markdown).not.toContain('## Model fit');
+    expect(a.promptSize).toBeNull();
+    expect(b.promptSize).toBeNull();
     // Fail-soft: a throwing seam degrades to the same verdict-less sheet.
     expect(b.markdown).toBe(a.markdown);
   });

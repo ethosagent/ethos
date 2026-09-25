@@ -526,6 +526,44 @@ describe('renderCharacterSheet — ## Model fit section (Lane 6)', () => {
     expect(stripped.replace(measuredLine, estimateLine)).toBe(plain);
   });
 
+  it('names the project-context contribution for a declared workdir, counted in the static prefix', () => {
+    const withContext: CharacterSheetModelFit = {
+      ...fit,
+      floor: {
+        ...fit.floor,
+        tokens: 5_113,
+        components: [
+          ...fit.floor.components,
+          { name: 'project context (AGENTS.md/CLAUDE.md)', tokens: 3_000 },
+        ],
+        projectContext: { workdir: '/srv/repo', tokens: 3_000 },
+      },
+    };
+    const sheet = renderCharacterSheet(fullConfig, soulMd, undefined, withContext);
+    expect(sheet).toContain(
+      '- System-prompt tokens: ~5113 (measured static floor — serialized tool schemas included)',
+    );
+    expect(sheet).toContain(
+      '- Project context (AGENTS.md/CLAUDE.md in /srv/repo): ~3000 tokens, included above',
+    );
+    expect(sheet).toContain('    - project context (AGENTS.md/CLAUDE.md): 3,000 tokens');
+  });
+
+  it('says the project context depends on the working directory when no workdir is declared', () => {
+    const noWorkdir: CharacterSheetModelFit = {
+      ...fit,
+      floor: { ...fit.floor, projectContext: { tokens: 0 } },
+    };
+    const sheet = renderCharacterSheet(fullConfig, soulMd, undefined, noWorkdir);
+    expect(sheet).toContain(
+      '- Project context (AGENTS.md/CLAUDE.md): depends on the working directory — no fs_reach workdir declared, not included above',
+    );
+    // Not measured at all → no line.
+    expect(renderCharacterSheet(fullConfig, soulMd, undefined, fit)).not.toContain(
+      'Project context',
+    );
+  });
+
   it('renders an unknown verdict with no numbers — never the 128k default', () => {
     const unknown: CharacterSheetModelFit = {
       verdict: 'unknown',

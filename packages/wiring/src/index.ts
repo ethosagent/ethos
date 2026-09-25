@@ -845,6 +845,13 @@ export {
   type ResolvePersonalityModelFitOptions,
   resolvePersonalityModelFit,
 } from './personality-fit';
+// The project-context term of the static floor, for surfaces with no turn in
+// hand (`ethos bench context`, the character sheet).
+export {
+  createProjectContextInjector,
+  declaredWorkdirProjectContext,
+  projectContextAtStartup,
+} from './project-context-floor';
 // Lane 1(b/c/e) + D8 — the shared static-floor measurement and window-scaled
 // result-budget arithmetic (consumed by build-agent-loop, `ethos bench
 // context`, and — later — Lane 6's fit verdict).

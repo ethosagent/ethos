@@ -62,6 +62,24 @@ interface NightlyWire {
   completed: string[];
 }
 
+/** The sheet's `## Prompt size` numbers, structured (the contract's
+ *  `PersonalityCharacterSheetOutput.promptSize`). */
+interface CharacterSheetPromptSize {
+  staticPrefixTokens: number;
+  projectContext: { workdir: string | null; tokens: number } | null;
+}
+
+/** Lift the prompt-size numbers off the computed model fit — the same verdict
+ *  the Markdown sheet renders, so the tab and the sheet cannot disagree. */
+function promptSizeOf(fit: CharacterSheetModelFit | undefined): CharacterSheetPromptSize | null {
+  if (!fit) return null;
+  const pc = fit.floor.projectContext;
+  return {
+    staticPrefixTokens: fit.floor.tokens,
+    projectContext: pc ? { workdir: pc.workdir ?? null, tokens: pc.tokens } : null,
+  };
+}
+
 // Personalities service. Calls into FilePersonalityRegistry for the
 // directory-level CRUD (create/update/delete/duplicate) and into
 // SkillsLibrary for the per-personality skills/ subdir. Both extensions
@@ -280,9 +298,11 @@ export class PersonalitiesService {
    *  show` prints, rendered for the Web Personalities tab. Also returns the
    *  structured `ExecutionPosture` (Phase 2a, lane E1) so the web Execution UI
    *  renders the posture the resolver produced rather than recomputing it. */
-  async characterSheet(
-    id: string,
-  ): Promise<{ markdown: string; posture: ExecutionPosture | null }> {
+  async characterSheet(id: string): Promise<{
+    markdown: string;
+    posture: ExecutionPosture | null;
+    promptSize: CharacterSheetPromptSize | null;
+  }> {
     await this.opts.refresh?.();
     const described = this.opts.personalities.describe(id);
     if (!described) throw notFound(id);
@@ -356,6 +376,7 @@ export class PersonalitiesService {
         raw.modelRegistry,
       );
     }
+    const promptSize = promptSizeOf(modelFit);
     const dataDir = this.opts.dataDir;
     if (!dataDir) {
       return {
@@ -371,6 +392,7 @@ export class PersonalitiesService {
           mcpExport,
         ),
         posture: null,
+        promptSize,
       };
     }
     // `execution.ssh.*` — the deployment's single remote execution target. Read
@@ -414,6 +436,7 @@ export class PersonalitiesService {
         mcpExport,
       ),
       posture,
+      promptSize,
     };
   }
 

@@ -24,6 +24,7 @@ import type {
 } from '@ethosagent/types';
 import type { ClarifyBridge } from '../clarify/clarify-bridge';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
+import type { SmallWindowOverlay, SmallWindowResolver } from './small-window';
 import type { TierRouter } from './tier-router';
 import type { ToolLoadingResolver, ToolLoadingState } from './tool-loading';
 
@@ -53,6 +54,10 @@ export interface LoopDeps {
   /** Lane 3(b) — small-window mode (resolved once by wiring); gates declared
    *  `context_engine_options.small_window_toolset` narrowing in turn setup. */
   smallWindow: boolean;
+  /** Per-personality small-window decision (`agent-loop/small-window.ts`),
+   *  asked once per turn by `setupTurn`. Present → it replaces `smallWindow`
+   *  for the turn; absent → `smallWindow` above applies, as before. */
+  smallWindowResolver?: SmallWindowResolver;
   /** reach-and-containment Part 1 — wiring-built predicate deciding, per turn,
    *  whether on-demand tool loading engages (`agent-loop/tool-loading.ts`).
    *  Absent → every allowed schema is sent, exactly as before. */
@@ -223,6 +228,10 @@ export interface TurnSetup {
   /** Set only when on-demand tool loading is active for this turn
    *  (`resolveToolLoading`); undefined → every downstream path is unchanged. */
   toolLoading?: ToolLoadingState;
+  /** Set when `LoopDeps.smallWindowResolver` answered for this turn's
+   *  personality (small-window flag, budgets, history limit); `AgentLoop.run`
+   *  applies it (`withSmallWindow`). */
+  smallWindowOverlay?: SmallWindowOverlay;
 }
 
 export type TurnSetupResult = { kind: 'refused' } | { kind: 'ready'; setup: TurnSetup };

@@ -8,9 +8,9 @@
 // a ~20k-token static prefix the target sat below the prefix, and drop_oldest
 // dropped all older history even when most of it would fit.
 //
-// The unmeasured case is not only turn 1: `SQLiteSessionStore` does not persist
-// `usage.requestTokens`, so a CLI or gateway session never has a measured
-// static slice. There the target counted the whole prefix as compactible and
+// The unmeasured case is not only turn 1: `SQLiteSessionStore` did not persist
+// `usage.requestTokens` (it does now — `extensions/session-sqlite/src/__tests__/
+// request-tokens.test.ts`), and a provider may report no split. There the target counted the whole prefix as compactible and
 // dropped all older history the same way. Context assembly now passes the tool
 // schemas (`CompactionDeps.toolSchemas`), and an unmeasured static slice is
 // estimated from system prompt + tool schemas, so both cases get one target.
@@ -257,7 +257,7 @@ interface Captured {
 }
 
 /** Reports what a local server would: real input tokens and, when `split`,
- *  the static split — which `SQLiteSessionStore` would not persist anyway. */
+ *  the static split. */
 function measuringLLM(calls: Captured[], split: boolean): LLMProvider {
   return {
     name: 'ollama',
@@ -315,7 +315,7 @@ const schemaTool: Tool = {
 describe('AgentLoop — older history survives compaction beside a large static prefix', () => {
   it.each([
     { name: 'measured static slice, no tools', split: true, withTool: false },
-    { name: 'unmeasured static slice (as with SQLite), with tools', split: false, withTool: true },
+    { name: 'unmeasured static slice (no split), with tools', split: false, withTool: true },
   ])(
     'turn 3 keeps the newest older turn that fits, and the question — $name',
     async ({ split, withTool }) => {
