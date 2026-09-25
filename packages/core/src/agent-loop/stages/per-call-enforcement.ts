@@ -67,10 +67,14 @@ export type BeforeToolCallDecision =
  * and the terminal guard are `before_tool_call` handlers, and `fireModifying`
  * hands every handler the ORIGINAL payload, so in one pass they judge args a
  * sibling's override then replaces. When the merged `args` differ from the
- * input (canonically), the hook is fired once more on the rewritten args; that
- * pass may block, and if it rewrites to anything else again the call is
- * refused rather than running args no guard saw. Pinned by the 'guards re-judge
- * hook-rewritten args (S10)' cases in the same test file.
+ * input (canonically), the hook is fired once more on the rewritten args, with
+ * `rewrittenFrom` set to the originals. That fire is JUDGE-ONLY: an `error`
+ * refuses the call, any `args` it returns are discarded, and what runs is
+ * exactly the args it judged — so a handler that rewrites again (a prefixer
+ * that always prepends) neither stacks nor refuses. The cost: an approval hook
+ * that asked on the first fire asks again on the second, the second prompt
+ * being the one that governs what runs (see `BeforeToolCallPayload.rewrittenFrom`).
+ * Pinned by the 'guards re-judge hook-rewritten args (S10)' cases in the same test file.
  */
 export async function enforceBeforeToolCall(
   deps: BeforeToolCallDeps,
@@ -79,52 +83,72 @@ export async function enforceBeforeToolCall(
   const denied = checkDenyRules(deps, input, input.args);
   if (denied) return denied;
 
-  const first = await fireBeforeToolCall(deps, input, input.args);
+  // Core's private copy; handlers only ever see frozen copies (`fireBeforeToolCall`).
+  const proposed = isolateArgs(input.args);
+  if (!proposed.ok) return refuse(deps, input, UNCLONEABLE_ARGS_REASON);
+
+  const first = await fireBeforeToolCall(deps, input, proposed.value);
   if (!first.allowed) return first;
 
   const effectiveArgs = first.effectiveArgs;
-  if (canonicalizeArgs(effectiveArgs) === canonicalizeArgs(input.args)) {
+  if (canonicalizeArgs(effectiveArgs) === canonicalizeArgs(proposed.value)) {
     return { allowed: true, effectiveArgs };
   }
 
   const deniedAfterRewrite = checkDenyRules(deps, input, effectiveArgs);
   if (deniedAfterRewrite) return deniedAfterRewrite;
 
-  const second = await fireBeforeToolCall(deps, input, effectiveArgs);
+  // Judge-only: the verdict counts, a rewrite returned here is discarded, and
+  // the args that run are exactly the `effectiveArgs` this fire judged.
+  const second = await fireBeforeToolCall(deps, input, effectiveArgs, proposed.value);
   if (!second.allowed) return second;
-  if (canonicalizeArgs(second.effectiveArgs) !== canonicalizeArgs(effectiveArgs)) {
-    const reason =
-      'tool call refused: a before_tool_call hook rewrote the arguments again after they were re-checked';
-    deps.observability?.recordSafetyBlock({
-      traceId: input.traceId,
-      code: 'tool_blocked',
-      cause: reason,
-    });
-    return { allowed: false, reason };
-  }
 
   return { allowed: true, effectiveArgs };
 }
 
-/** One `before_tool_call` fire on `args`, with the approver sink bound for its span. */
+const UNCLONEABLE_ARGS_REASON =
+  'tool call refused: its arguments could not be copied for the before_tool_call guards';
+
+/**
+ * One `before_tool_call` fire on `args`, with the approver sink bound for its
+ * span. `rewrittenFrom` is set on the re-judge fire only.
+ *
+ * Isolation: `args` is core's private copy and is never handed to a handler.
+ * Handlers receive a deep-frozen clone inside a frozen payload, so a handler
+ * that edits `payload.args` in place (instead of returning `args`) can neither
+ * change what later handlers judge nor what executes — in strict-mode code the
+ * write throws, which `fireModifying` swallows, dropping that handler's result.
+ * A returned `args` is cloned the moment the fire ends, so a handler that keeps
+ * a reference to the object it returned cannot edit it after the guards judged
+ * it. Args that cannot be cloned are refused, never passed through. Pinned by
+ * cases (l) and (m) in `../__tests__/deny-rule-gate.test.ts`.
+ */
 async function fireBeforeToolCall(
   deps: BeforeToolCallDeps,
   input: BeforeToolCallInput,
   args: unknown,
+  rewrittenFrom?: unknown,
 ): Promise<BeforeToolCallDecision> {
+  const view = isolateArgs(args, true);
+  const originalView = rewrittenFrom === undefined ? undefined : isolateArgs(rewrittenFrom, true);
+  if (!view.ok || originalView?.ok === false) {
+    return refuse(deps, input, UNCLONEABLE_ARGS_REASON);
+  }
+
   const releaseApproverSink = input.bindApproverSink?.();
   let beforeResult: BeforeToolCallResult;
   try {
     beforeResult = await deps.hooks.fireModifying(
       'before_tool_call',
-      {
+      Object.freeze({
         sessionId: input.sessionId,
         toolCallId: input.toolCallId,
         toolName: input.toolName,
-        args,
+        args: view.value,
         ...(input.voiceOrigin ? { voiceOrigin: input.voiceOrigin } : {}),
         ...(input.personalityId !== undefined ? { personalityId: input.personalityId } : {}),
-      },
+        ...(originalView?.ok ? { rewrittenFrom: originalView.value } : {}),
+      }),
       input.allowedPlugins,
     );
   } finally {
@@ -132,15 +156,50 @@ async function fireBeforeToolCall(
   }
 
   if (beforeResult.error) {
-    deps.observability?.recordSafetyBlock({
-      traceId: input.traceId,
-      code: 'tool_blocked',
-      cause: beforeResult.error,
-    });
-    return { allowed: false, reason: beforeResult.error };
+    return refuse(deps, input, beforeResult.error);
   }
 
-  return { allowed: true, effectiveArgs: beforeResult.args ?? args };
+  if (beforeResult.args === undefined) return { allowed: true, effectiveArgs: args };
+  const rewritten = isolateArgs(beforeResult.args);
+  if (!rewritten.ok) return refuse(deps, input, UNCLONEABLE_ARGS_REASON);
+  return { allowed: true, effectiveArgs: rewritten.value };
+}
+
+/** Record a `tool_blocked` safety block and refuse the call with `reason`. */
+function refuse(
+  deps: BeforeToolCallDeps,
+  input: BeforeToolCallInput,
+  reason: string,
+): BeforeToolCallDecision {
+  deps.observability?.recordSafetyBlock({
+    traceId: input.traceId,
+    code: 'tool_blocked',
+    cause: reason,
+  });
+  return { allowed: false, reason };
+}
+
+/**
+ * A structured clone of `value`, deep-frozen when `freeze` is set. Tool args
+ * are JSON from the model, so the clone always succeeds in practice; a value
+ * that cannot be cloned (a function, a class instance with private state) is
+ * reported as `ok: false` for the caller to refuse.
+ */
+function isolateArgs(value: unknown, freeze = false): { ok: true; value: unknown } | { ok: false } {
+  let copy: unknown;
+  try {
+    copy = structuredClone(value);
+  } catch {
+    return { ok: false };
+  }
+  if (freeze) deepFreeze(copy);
+  return { ok: true, value: copy };
+}
+
+function deepFreeze(value: unknown): void {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return;
+  Object.freeze(value);
+  for (const child of Object.values(value)) deepFreeze(child);
 }
 
 function checkDenyRules(

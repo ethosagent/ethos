@@ -163,7 +163,7 @@ export function createApprovalDangerPredicate(
   // Inert for typed turns (no `voiceOrigin` on the payload), so this costs
   // nothing until a surface actually speaks — and it is in place BEFORE
   // telephony can produce a far-end caller (voice V1a, eng-review D13).
-  return withSpokenConfirmation(
+  const predicate = withSpokenConfirmation(
     createDangerPredicate({
       ...(opts.alwaysAsk ? { alwaysAsk: opts.alwaysAsk } : {}),
       ...(opts.allowAutoApproveDangerousTools === true
@@ -191,4 +191,23 @@ export function createApprovalDangerPredicate(
     }),
     opts.spokenConfirmations ? { confirmations: opts.spokenConfirmations } : {},
   );
+
+  // Core re-fires `before_tool_call` on hook-rewritten args with
+  // `rewrittenFrom` set (`enforceBeforeToolCall`, @ethosagent/core), so a
+  // surface that already asked about the proposed args asks again about the
+  // ones that will run. Say so in the reason every surface renders.
+  return async (payload) => {
+    const reason = await predicate(payload);
+    return reason !== null && payload.rewrittenFrom !== undefined
+      ? `${reason}${REWRITTEN_ARGS_NOTE}`
+      : reason;
+  };
 }
+
+/**
+ * Appended to the danger reason on the re-judge fire (see above). A prompt
+ * shown twice for one call otherwise reads as a glitch, and an Allow on the
+ * first one does not cover what a hook rewrote the call into.
+ */
+export const REWRITTEN_ARGS_NOTE =
+  ' — asked again: a before_tool_call hook rewrote the arguments, and this approval is for the rewritten arguments shown';
