@@ -41,7 +41,7 @@ Ethos ships an MCP client built into the runtime. This skill is the operator's g
 
 MCP has two layers in Ethos:
 
-1. **Configuration** — what servers Ethos *can* reach. Lives in `~/.ethos/mcp.yaml`. Configured per machine, shared across personalities.
+1. **Configuration** — what servers Ethos *can* reach. Lives in `~/.ethos/mcp.json`, written by `ethos mcp add <name>`. Configured per machine, shared across personalities.
 2. **Attachment** — which servers a *given personality* is allowed to use. Lives in the personality's `config.yaml` under `mcp_servers:`. Per personality, per repo.
 
 A server has to be both configured *and* attached to the active personality before its tools show up in the agent loop. The boot-time log `MCP: 0 of N server(s) attached to "<personality>"` means the operator has configured servers but the personality has no `mcp_servers` allowlist — fix at the attachment layer.
@@ -49,10 +49,12 @@ A server has to be both configured *and* attached to the active personality befo
 ## Step 1 — see what's configured
 
 ```bash
-ethos mcp list
+ethos personality mcp <personality-id>
 ```
 
-Each entry has at minimum a `name`, a `transport` (`stdio` | `streamable-http`), and the transport-specific config (`command` + `args` for stdio; `url` + optional `headers` for streamable-http).
+This lists every server in `~/.ethos/mcp.json` and marks the ones attached to that personality with `[✓]`. There is no `ethos mcp list` command.
+
+Each entry in `mcp.json` has at minimum a `name`, a `transport` (`stdio` | `streamable-http`), and the transport-specific config (`command` + `args` for stdio; `url` + optional `headers` for streamable-http).
 
 ## Step 2 — attach a server to a personality
 
@@ -62,7 +64,7 @@ ethos personality mcp <personality-id> --attach <server-name>
 
 This appends `<server-name>` to `mcp_servers` in `~/.ethos/personalities/<id>/config.yaml`. The personality reloads on its next mtime check — no daemon restart needed.
 
-Detach with `--detach <server-name>`. List the current attachment set with `ethos personality mcp <personality-id>`.
+Detach with `--detach <server-name>`. Check the current attachment set with `ethos personality mcp <personality-id>` again.
 
 ## Step 3 — verify the tools are reachable
 
@@ -72,7 +74,7 @@ After attach + a fresh turn:
 ethos personality show <personality-id> | grep -A 5 'MCP'
 ```
 
-The character sheet lists every MCP server the personality has access to and the tools each one exposes. If a server is attached but tools are missing, the server itself isn't returning a tool list — see Step 5.
+The character sheet's `## MCP servers` section lists the servers attached to the personality by name. It does not list the tools each server exposes; those appear only once the server connects in a running turn. If a server is attached but its tools are missing, the server itself isn't returning a tool list — see Step 5.
 
 ## Step 4 — call an MCP tool
 
@@ -93,29 +95,27 @@ A short checklist when an `mcp__<server>__<tool>` is unreachable:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Server in `mcp.yaml` but not in `ethos mcp list` | YAML parse error | `ethos mcp list --verbose` shows the parse error |
+| `ethos personality mcp <id>` says no servers are configured, but `mcp.json` has entries | `mcp.json` is not valid JSON — the loader reads an unparseable file as empty, with no error message | Fix the JSON syntax |
 | Server listed but `0 of N attached` warning | Personality has no `mcp_servers` allowlist | `ethos personality mcp <id> --attach <name>` |
-| Server attached but no tools surface | Server failed to start | Check `~/.ethos/logs/mcp/<server>.log` |
-| Tool name resolves but the call hangs | Server is alive but the tool itself is slow | Run `ethos personality show <id>` and check the tool's declared `slow: true` flag |
-| 401 from a streamable-http server | Bearer token expired | Re-issue and update `headers:` in `mcp.yaml` |
+| Server attached but no tools surface | Server failed to start | Read the connection error in the output of the process running the agent. Ethos writes no per-server MCP log file |
+| 401 from a streamable-http server | Bearer token expired | Store a new one with `ethos personality mcp <id> --token-stdin <server>`, or update `headers` in `mcp.json` |
 | `Cannot find package '@modelcontextprotocol/sdk'` | A workspace dep is missing | `pnpm install` from repo root |
 
 ## Anti-patterns
 
 - **Configuring a server globally that one personality cares about.** Personalities have `mcp_servers:` for a reason — attach precisely.
-- **Pasting tokens into `mcp.yaml` in plaintext.** Use `${secrets:<ref>}` indirection — Ethos's secret resolver substitutes at boot. The plaintext lives at `~/.ethos/secrets/<ref>` (mode 0600), not in the YAML.
+- **Pasting tokens into `mcp.json` in plaintext.** Pass env values with `ethos mcp add <name> --env KEY=val`. The command stores each value in the secrets store and writes a `${secrets:<ref>}` reference into `mcp.json` (`storeEnvSecrets` in `extensions/tools-mcp/src/index.ts`). The reference is resolved when the server is spawned (`resolveEnvSecretRefs`, same file). This covers stdio `env` values only. For a bearer token, use `ethos personality mcp <id> --token-stdin <server>`.
 - **Calling an MCP tool from a personality whose `toolset.yaml` doesn't allow it.** The tool registry filters by name; an unlisted tool returns "not available" at execute time.
-- **Skipping the OSV check on community servers.** `ethos mcp` flags advisories from osv.dev for the server's package version. Don't ignore them.
+- **Assuming community servers are vetted.** No Ethos command checks an MCP server's package against osv.dev. `checkOsvVulnerabilities` exists in `extensions/tools-mcp/src/osv-check.ts`, but nothing calls it. Check the package's advisories yourself before you add it.
 
 ## Hard rules
 
 - **Server config is per-machine; attachment is per-personality.** Don't conflate them.
-- **Secrets go through the resolver.** `${secrets:<ref>}` — never raw tokens in `mcp.yaml`.
+- **Secrets go through the resolver.** `${secrets:<ref>}` — never raw tokens in `mcp.json`.
 - **Tool name format is `mcp__<server>__<tool>`.** Never edit that prefix; the runtime depends on it.
-- **OSV findings are not advisory.** A `high` or `critical` advisory on a community server blocks the connection until rotated.
 
 ## Setup the user needs to do once
 
-1. Write `~/.ethos/mcp.yaml` with the servers they want available.
+1. Add the servers they want available with `ethos mcp add <name>` (see `ethos mcp presets`), which writes `~/.ethos/mcp.json`.
 2. Per personality, attach the relevant servers via `ethos personality mcp <id> --attach <name>`.
-3. Verify with `ethos personality show <id>` — the character sheet lists the reachable MCP tools.
+3. Verify with `ethos personality show <id>` — the character sheet lists the attached MCP servers.
