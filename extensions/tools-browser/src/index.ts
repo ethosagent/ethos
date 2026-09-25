@@ -220,6 +220,9 @@ function createBrowserClickTool(timeouts: BrowserTimeouts): Tool {
     description:
       'Click an element in the browser identified by its @e{n} reference from browse_url. Returns the updated page accessibility tree.',
     toolset: 'browser',
+    // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
+    // __tests__/untrusted-roster.test.ts).
+    outputIsUntrusted: true,
     maxResultChars: 20_000,
     capabilities: {
       network: { allowedHosts: ['*'] }, // browser navigates agent-supplied URLs
@@ -301,6 +304,9 @@ function createBrowserTypeTool(timeouts: BrowserTimeouts): Tool {
     description:
       'Type text into an input element identified by its @e{n} reference. Use browse_url first to get element refs.',
     toolset: 'browser',
+    // Page-authored text (plan openclaw-2026.9.6-gaps S13; pinned by
+    // __tests__/untrusted-roster.test.ts).
+    outputIsUntrusted: true,
     maxResultChars: 20_000,
     capabilities: {
       network: { allowedHosts: ['*'] }, // browser navigates agent-supplied URLs
