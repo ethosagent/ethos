@@ -6186,7 +6186,12 @@ export class Gateway {
    *
    * Returns whether the platform CONFIRMED. `false` with a ledger wired means
    * the obligation is still `pending` and will be retried by
-   * {@link sweepPendingDeliveries}.
+   * {@link sweepPendingDeliveries}. `'held'` means the notice was stored for
+   * quiet hours or a lane `/mute` ({@link holdNotice}) and is owed, not failed:
+   * {@link releaseHeldNotices} sends it through the ledger once the hold ends
+   * (pinned by the U11 cases in `__tests__/notify-tracked.test.ts`). It is
+   * truthy on purpose, so a caller that only asks "did this fail?" (`!ok`)
+   * does not report a held notice as a failure.
    *
    * Refuses (returning false, and recording the same unconfirmed event) when
    * the bot cannot be named, or when that bot has no adapter on the platform
@@ -6212,7 +6217,7 @@ export class Gateway {
       answersInbound?: boolean;
     },
     text: string,
-  ): Promise<boolean> {
+  ): Promise<boolean | 'held'> {
     const refuse = (cause: string): false => {
       this.observability?.recordSafetyBlock({
         code: 'gateway.delivery_unconfirmed',
@@ -6238,8 +6243,8 @@ export class Gateway {
     }
 
     const sessionKey = target.sessionKey ?? `${target.platform}:${target.chatId}`;
-    // U11 — quiet hours / a lane mute hold an unprompted notice. `false`:
-    // nothing was confirmed yet; the release goes through `sendTracked`.
+    // U11 — quiet hours / a lane mute hold an unprompted notice. `'held'`:
+    // nothing was sent yet, but it is owed; the release goes through `sendTracked`.
     if (!target.answersInbound) {
       const laneKey = laneKeyOf(target.platform, botKey, target.chatId, target.threadId);
       const held = await this.holdNotice({
@@ -6251,7 +6256,7 @@ export class Gateway {
         sessionKey,
         text,
       });
-      if (held) return false;
+      if (held) return 'held';
     }
 
     return this.sendTracked(

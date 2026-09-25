@@ -223,7 +223,7 @@ describe('gateway lane → session map survives a restart (D28)', () => {
     await gw2.restoreLaneSessions();
     await expect(
       gw2.notifyTracked({ platform: 'telegram', chatId: 'chat-1' }, 'job finished'),
-    ).resolves.toBe(false);
+    ).resolves.toBe('held');
     expect(held).toEqual(['job finished']);
     await gw2.handleMessage(msg('hi'), out.adapter);
     expect(second.turns[0]?.sessionKey).toBe(LANE);

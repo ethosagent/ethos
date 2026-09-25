@@ -81,7 +81,8 @@ function harness(
   opts: {
     inbound?: VoiceInboundGates;
     createSipAdapter?: SipInboundVoiceStack['createSipAdapter'];
-    notifyOwner?: (text: string) => Promise<boolean>;
+    notifyOwner?: SipInboundDispatchDeps['notifyOwner'];
+    onError?: (message: string) => void;
     bots?: SipInboundVoiceStack['bots'];
     /** Cost the fake loop reports on every turn, via a `usage` event. */
     turnCostUsd?: number;
@@ -140,7 +141,7 @@ function harness(
         notices.push(text);
         return true;
       }),
-    onError: () => {},
+    onError: opts.onError ?? (() => {}),
   };
 
   return {
@@ -424,5 +425,30 @@ describe('createSipInboundHandler — post-call summary', () => {
     expect(row).toMatchObject({ status: 'completed', transcript: 'Nothing important.' });
     expect(row?.summary).toContain('Nothing important.');
     expect(h.inbound.concurrency.active()).toBe(0);
+  });
+
+  // A summary held for quiet hours / `/mute` is owed, not lost: the gateway
+  // releases it through the ledger later (`Gateway.releaseHeldNotices`), so it
+  // must not be logged as an unconfirmed delivery.
+  it.each([
+    ['held', false],
+    [false, true],
+  ] as const)('notifyOwner → %s reports "not confirmed": %s', async (outcome, reported) => {
+    const errors: string[] = [];
+    let hangUp: () => Promise<void> = async () => {};
+    const h = harness({
+      notifyOwner: async () => outcome,
+      onError: (message) => errors.push(message),
+      createSipAdapter: async (opts) => {
+        const adapter = fakeAdapter('Nothing important.');
+        adapter.setOnEnded(opts.onEnded);
+        hangUp = adapter.hangUp;
+        return adapter as unknown as VoiceChannelAdapter;
+      },
+    });
+
+    await h.handle(call, {});
+    await hangUp();
+    expect(errors.some((e) => e.includes('not confirmed'))).toBe(reported);
   });
 });
