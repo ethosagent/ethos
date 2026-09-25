@@ -17,6 +17,7 @@ import {
   runManualCompaction,
   selectActiveWatermark,
 } from './manual-compact';
+import { turnToolDefinitions } from './stages/stream-step';
 import { runTurnComplete } from './turn-complete';
 import type { LoopDeps, TurnSetup } from './turn-context';
 
@@ -83,10 +84,10 @@ export interface TurnEndCtx {
    * `AbortSignal.any` with the internal timebox deadline.
    */
   abortSignal: AbortSignal;
-  /** The assembled system prompt for the just-finished turn — fed to the pressure
-   *  gate so first-turn/legacy paths (no measured static tokens) don't understate
-   *  pressure by treating the system+tools overhead as zero. */
+  /** The turn's assembled system prompt and tool scope (`turnToolDefinitions`):
+   *  the pressure gate counts both prompt and schemas, as the pre-LLM gate does. */
   systemPrompt: string;
+  toolScope: Pick<TurnSetup, 'toolLoading' | 'allowedTools' | 'filterOpts'>;
   /** Output reserve for the pressure gate (from RunOptions.maxCompletionTokens). */
   maxCompletionTokens?: number;
   /** THIS run's plugin context store — the flush dispatches tools, and a tool
@@ -124,6 +125,7 @@ export function buildTurnEndCtx(setup: TurnSetup, extras: TurnEndExtras): TurnEn
     serverCompaction: setup.serverCompaction,
     abortSignal: extras.abortSignal,
     systemPrompt: extras.systemPrompt,
+    toolScope: setup,
     contextStore: extras.contextStore,
     rootSessionKey: extras.rootSessionKey,
     ...(extras.maxCompletionTokens !== undefined
@@ -249,12 +251,10 @@ export async function* maybeConsolidateAtTurnEnd(
         : {}),
       ...(lastActualInputTokens !== undefined ? { lastActualInputTokens } : {}),
       ...(staticTokens !== undefined ? { staticTokens } : {}),
+      toolSchemas: JSON.stringify(turnToolDefinitions(deps.tools, ctx.toolScope)),
     },
     llmMessages,
-    // Feed the real assembled system prompt (matching the pre-LLM `maybeCompact`
-    // path) so first-turn / legacy-provider turns — which carry no measured
-    // static-token count — still account for the system+tools overhead instead
-    // of understating pressure with an empty string.
+    // Same system prompt + tool schemas as the pre-LLM gate (`maybeCompact`).
     ctx.systemPrompt,
   );
 

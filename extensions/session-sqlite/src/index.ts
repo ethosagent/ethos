@@ -261,6 +261,22 @@ export class SQLiteSessionStore implements SessionStore {
       this.db.exec('ALTER TABLE messages ADD COLUMN is_error INTEGER');
     }
 
+    // Additive migration: the provider-counted request split
+    // (`TokenUsage.requestTokens`) on assistant rows. Context assembly derives
+    // the measured static slice (system + tools) for the next turn's compaction
+    // gate from it (Phase 1c, `stages/context-assembly.ts`); without these
+    // columns every SQLite-backed turn fell back to an estimate. Nullable
+    // INTEGERs, no DEFAULT: NULL is "not measured". No `user_version` bump — an
+    // older binary opens the file (the `migrate()` guard only refuses a NEWER
+    // version), selects `*` past columns it does not know, and inserts NULL
+    // into them. Pinned by `__tests__/request-tokens.test.ts`.
+    for (const part of ['system', 'tools', 'messages'] as const) {
+      const col = `request_${part}_tokens`;
+      if (!msgCols.some((c) => c.name === col)) {
+        this.db.exec(`ALTER TABLE messages ADD COLUMN ${col} INTEGER`);
+      }
+    }
+
     // Context-compaction Phase 2: watermark boundary. The id of the first
     // stored message kept verbatim after a compaction; drives the cross-turn
     // read-back so a compaction survives past the turn it fired on. Nullable —
@@ -449,8 +465,9 @@ export class SQLiteSessionStore implements SessionStore {
         `INSERT INTO messages
          (id, session_id, role, content, tool_call_id, tool_name, tool_calls,
           content_blocks, input_tokens, output_tokens, cache_read_tokens,
-          cache_creation_tokens, estimated_cost_usd, trace_id, is_error, timestamp)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          cache_creation_tokens, estimated_cost_usd, request_system_tokens,
+          request_tools_tokens, request_messages_tokens, trace_id, is_error, timestamp)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
@@ -466,6 +483,9 @@ export class SQLiteSessionStore implements SessionStore {
         data.usage?.cacheReadTokens ?? null,
         data.usage?.cacheCreationTokens ?? null,
         data.usage?.estimatedCostUsd ?? null,
+        data.usage?.requestTokens?.system ?? null,
+        data.usage?.requestTokens?.tools ?? null,
+        data.usage?.requestTokens?.messages ?? null,
         data.traceId ?? null,
         data.isError === undefined ? null : data.isError ? 1 : 0,
         timestamp,
@@ -1033,6 +1053,9 @@ interface MessageRow {
   cache_read_tokens: number | null;
   cache_creation_tokens: number | null;
   estimated_cost_usd: number | null;
+  request_system_tokens: number | null;
+  request_tools_tokens: number | null;
+  request_messages_tokens: number | null;
   trace_id: string | null;
   is_error: number | null;
   timestamp: string;
@@ -1108,6 +1131,17 @@ function rowToMessage(r: MessageRow): StoredMessage {
             cacheReadTokens: r.cache_read_tokens ?? 0,
             cacheCreationTokens: r.cache_creation_tokens ?? 0,
             estimatedCostUsd: r.estimated_cost_usd ?? 0,
+            ...(r.request_system_tokens != null &&
+            r.request_tools_tokens != null &&
+            r.request_messages_tokens != null
+              ? {
+                  requestTokens: {
+                    system: r.request_system_tokens,
+                    tools: r.request_tools_tokens,
+                    messages: r.request_messages_tokens,
+                  },
+                }
+              : {}),
           }
         : undefined,
     traceId: r.trace_id ?? undefined,
