@@ -17,24 +17,25 @@ import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/ty
 // when patterns are added.
 //
 // Same honest scope as the terminal guard: this is regex matching against
-// the raw command string. Basic shell forms defeat it (variable indirection,
-// command substitution, base64 indirection, eval). Pattern matching is the
-// v1 floor that catches accidents and lazy attacks; production trust comes
-// from sandbox attestation, not from this catalog.
+// the raw command string, and the terminal guard's header lists what still
+// defeats it after the inline-eval wrappers became hardline (D1b). Pattern
+// matching is the v1 floor that catches accidents and lazy attacks;
+// production trust comes from sandbox attestation, not from this catalog.
 
 const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
   {
     // rm with both recursive (-r/-R) and force (-f) flags targeting / or ~
     test: (cmd) => {
-      if (!/\brm\b/.test(cmd)) return false;
-      if (!/-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR]/.test(cmd)) return false;
+      // Case-insensitive (D1b): `RM`/`Rm` resolve to rm on a case-insensitive filesystem.
+      if (!/\brm\b/i.test(cmd)) return false;
+      if (!/-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r/i.test(cmd)) return false;
       return /\s(\/[\s;|&*]|\/\*|\/\s*$|~\/?[\s;|&*]|~\/\*|~\/?\s*$)/.test(cmd);
     },
     reason: 'recursive force-delete of root or home directory',
   },
   {
     // rm targeting ~/.ssh (any variant) — SSH key destruction
-    test: (cmd) => /\brm\b[^&|;]*~\/\.ssh\b/.test(cmd),
+    test: (cmd) => /\brm\b[^&|;]*~\/\.ssh\b/i.test(cmd),
     reason: 'SSH key directory destruction',
   },
   {
@@ -101,6 +102,45 @@ const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
     // SQL: TRUNCATE TABLE
     test: (cmd) => /\btruncate\s+table\b/i.test(cmd),
     reason: 'destructive SQL DDL (TRUNCATE)',
+  },
+  // D1(b) — inline-eval wrappers (plan openclaw-2026.9.6-gaps S6). Each one
+  // hands the shell a string the patterns above never see as a command, so the
+  // wrapper itself is the hardline shape, whatever it wraps.
+  {
+    // bash/sh/zsh/dash/ksh/fish -c '<string>' (also -lc, -ec, /bin/sh -c,
+    // `xargs sh -c`). `ssh -c <cipher>` does not match: the `sh` must start a word.
+    test: (cmd) =>
+      /(?:^|[\s;&|(`/])(?:ba|z|da|k|fi)?sh\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*c\b/.test(cmd),
+    reason: 'inline shell eval (sh -c)',
+  },
+  {
+    // eval in command position (start, after an operator, or after a wrapper).
+    test: (cmd) =>
+      /(?:^|[;&|({`\n]|\b(?:sudo|exec|xargs|env|command|builtin|nohup|time)\s)\s*eval\b/.test(cmd),
+    reason: 'inline shell eval (eval)',
+  },
+  {
+    // python -c '<code>' / python3 -c
+    test: (cmd) => /\bpython[0-9.]*\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*c\b/.test(cmd),
+    reason: 'inline interpreter eval (python -c)',
+  },
+  {
+    // node -e / -p / --eval / --print
+    test: (cmd) => /\bnode\s+(?:-[-a-zA-Z]+\s+)*(?:-[a-zA-Z]*[ep]\b|--eval\b|--print\b)/.test(cmd),
+    reason: 'inline interpreter eval (node -e)',
+  },
+  {
+    // Anything piped into a shell — the form a `base64 -d` payload takes to
+    // run. Matched on the pipe's target, not on `base64`, because the decoder
+    // has many spellings (`openssl base64 -d`, `xxd -r`, `printf '\x..'`).
+    test: (cmd) => /\|\s*(?:sudo\s+)?(?:\S*\/)?(?:ba|z|da|k|fi)?sh(?:\s|$)/.test(cmd),
+    reason: 'input piped into a shell',
+  },
+  {
+    // Command substitution: $(…) and backticks. `$((…))` is arithmetic and
+    // runs nothing, so it is excluded.
+    test: (cmd) => /\$\((?!\()/.test(cmd) || /`[^`]*`/.test(cmd),
+    reason: 'command substitution',
   },
 ];
 
