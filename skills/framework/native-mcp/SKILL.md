@@ -80,14 +80,21 @@ The character sheet's `## MCP servers` section lists the servers attached to the
 
 From the agent's perspective, MCP tools look like any other tool — they show up under the name `mcp__<server>__<tool>`. The LLM calls them by that exact name. The user doesn't usually invoke them directly; the personality's prompt should reference the *capability* ("read a file") and the model picks the right tool.
 
-In a personality's `toolset.yaml`, you can opt into a specific MCP tool by name:
+`toolset.yaml` does not gate MCP tools. Its allowlist applies to built-in tools only: `DefaultToolRegistry.toDefinitions` and `executeParallel` in `packages/core/src/tool-registry.ts` skip it for any `mcp__` name. Listing `mcp__<server>__<tool>` there neither grants nor narrows anything. By default, an attached server exposes every tool it lists; the `mcp_servers:` attachment is the gate.
+
+To narrow an attached server to specific tools, or switch it off for this personality, write the personality's own `mcp.yaml` (`~/.ethos/personalities/<id>/mcp.yaml`, parsed by `parseMcpYaml` in `extensions/personalities/src/index.ts`). Use bare tool names:
 
 ```yaml
-- mcp__filesystem__read_file
-- mcp__filesystem__list_dir
+servers:
+  filesystem:
+    tools:
+      - read_file
+      - list_dir
+  slack:
+    enabled: false
 ```
 
-…or accept everything an attached server exposes by *not* listing them explicitly (the personality's `mcp_servers:` allowlist already gates access).
+The personality's definition files are operator-owned, so ask the user to make this edit. A server with no entry keeps all its tools. Pinned by `packages/core/src/__tests__/tool-registry-mcp-filter.test.ts`.
 
 ## Step 5 — debug a missing or broken MCP
 
@@ -105,7 +112,7 @@ A short checklist when an `mcp__<server>__<tool>` is unreachable:
 
 - **Configuring a server globally that one personality cares about.** Personalities have `mcp_servers:` for a reason — attach precisely.
 - **Pasting tokens into `mcp.json` in plaintext.** Pass env values with `ethos mcp add <name> --env KEY=val`. The command stores each value in the secrets store and writes a `${secrets:<ref>}` reference into `mcp.json` (`storeEnvSecrets` in `extensions/tools-mcp/src/index.ts`). The reference is resolved when the server is spawned (`resolveEnvSecretRefs`, same file). This covers stdio `env` values only. For a bearer token, use `ethos personality mcp <id> --token-stdin <server>`.
-- **Calling an MCP tool from a personality whose `toolset.yaml` doesn't allow it.** The tool registry filters by name; an unlisted tool returns "not available" at execute time.
+- **Trying to restrict MCP tools through `toolset.yaml`.** It has no effect on `mcp__` tools. Restrict with `mcp_servers:` (per server) and the personality's `mcp.yaml` `tools:` list (per tool). A call outside those gates returns "Tool … is not permitted for this personality" (`executeParallel`, `packages/core/src/tool-registry.ts`).
 - **Assuming community servers are vetted.** No Ethos command checks an MCP server's package against osv.dev. `checkOsvVulnerabilities` exists in `extensions/tools-mcp/src/osv-check.ts`, but nothing calls it. Check the package's advisories yourself before you add it.
 
 ## Hard rules
