@@ -4,7 +4,7 @@ description: Twenty-two issues surfaced by pre-launch and ongoing security revie
 kind: reference
 audience: shared
 slug: security-fixes
-updated: 2026-08-12
+updated: 2026-09-25
 ---
 
 Most agent frameworks ship the security model first and patch CVEs afterward. Ethos shipped the security model after a deliberate adversarial review — and continues to harden it with each audit pass.
@@ -73,7 +73,7 @@ The numbering below is the original review order, preserved for traceability wit
 
 **Fix.** Backends declare confinement properties (read-only root, no host mounts, egress controls, no docker socket, non-root) via a typed `SandboxAttestation` interface. Only attested-strict backends earn the classifier relaxation. An unattested backend named "docker" gets the same classifier treatment as an unsandboxed shell.
 
-- **Status:** Partial — the typed contract ships and is exported from `@ethosagent/types`. Concrete backend implementations that declare their confinement properties are still being landed; until they ship, the runtime treats every backend as unattested and the classifier runs in its strict mode for every call.
+- **Status:** Not shipped as described. The typed contract ships and backends implement `attest()`, but nothing on a running turn's path reads the result — the only caller of `isStrictAttestation` is the backend conformance suite (`packages/core/src/execution/conformance.ts`) — and there is no per-call classifier for attestation to relax: tool calls are judged by rules (`createDangerPredicate`). See [Risk classifier](./controls.md#risk-classifier).
 - Interface: `packages/types/src/sandbox.ts`
 - Tests: `packages/types/src/__tests__/sandbox.test.ts`
 
@@ -85,7 +85,7 @@ The numbering below is the original review order, preserved for traceability wit
 
 **Fix.** The fixed-threshold gate is removed. Short payloads run through a structured short-pattern check; long payloads run through budget-driven LLM sampling. Both code paths are mandatory; neither can be bypassed by length alone.
 
-- **Status:** Shipped.
+- **Status:** Partial. The regex tier runs on every untrusted tool result regardless of length. The LLM tier runs when the regex tier hit, when the content exceeds 500 characters, or when `injectionDefense.classifier.alwaysCallLLM` is set (`shouldCallLLM` in `packages/core/src/agent-loop/result-defense.ts`), with no sampling budget — so a payload of 500 characters or fewer that the regex tier misses skips the LLM tier. See [Two-tier classifier](./controls.md#two-tier-classifier).
 - Sources: `packages/safety/injection/src/pattern-check.ts`, `packages/safety/injection/src/classifier.ts`
 - Tests: `packages/safety/injection/src/__tests__/`
 
@@ -109,7 +109,7 @@ The numbering below is the original review order, preserved for traceability wit
 
 **Fix.** MCP servers spawn with a sanitized environment. `HOME` is set to a per-server temp directory. AWS / GCP / Azure credential vars are stripped. The set of vars passed through is an explicit allowlist, not an inherited tail.
 
-- **Status:** Shipped.
+- **Status:** Shipped, with one correction to the fix text: `HOME`, `TMPDIR` and `XDG_*` point at a persistent per-server directory, `~/.ethos/mcp-runtime/<serverId>/`, not a temp directory, and variables whose names contain `KEY`, `TOKEN`, `SECRET` or `PASSWORD` are dropped unless explicitly passed through. This changes what the child inherits, not what it can read by absolute path. See [MCP environment minimization](./controls.md#mcp-environment-minimization).
 - Source: `packages/safety/scanner/src/mcp-env.ts`
 
 ### 7. Pairing flow: one-time + sender-bound + nonce-bound + atomic-consume {#7-pairing-flow}
@@ -120,7 +120,7 @@ The numbering below is the original review order, preserved for traceability wit
 
 **Fix.** Pairing codes are one-time (consumed atomically; no second redemption), sender-bound (issued for a specific sender ID; another sender presenting the same code is rejected), nonce-bound (cryptographic random; never reused, never predictable), and atomic-consume (the consume is the only allowed transition; a partial-state attack returns the code to "issued" and the redemption is rejected). Plus rate-limiting on issuance and redemption to defeat brute-force.
 
-- **Status:** Shipped.
+- **Status:** Shipped, with one correction to the fix text: the code is issued to the unknown sender and redeemed by the **owner** (`consumeAndAllow`), which approves the sender id stored with the code. "Sender-bound" means the code can only ever approve that sender; the sender never presents it. See [One-time DM pairing codes](./controls.md#one-time-dm-pairing-codes).
 - Source: `packages/safety/channel/src/pairing-store.ts`
 - Tests: `packages/safety/channel/src/__tests__/pairing-store.test.ts`
 
@@ -140,7 +140,7 @@ The numbering below is the original review order, preserved for traceability wit
 
 The fix as originally written above shipped as a `realpath()` call inside the file tools. A later refactor centralised path normalisation in the reach check at the boundary, which made the per-tool `realpath()` calls redundant *for lexical traversal* — `..`, `.`, and redundant-slash escapes are all handled by `normalize(resolve())` — and they were removed on that basis. What the removal silently dropped was the **symbolic** case, which normalisation cannot see: `resolve()` is a string operation and a symlink is a filesystem fact. The documentation was not updated, so the misdirection half of this entry, and the *Shipped* status it carried in the controls catalogue, described a defense the code no longer had. Nothing failed: no test, no validator, no reviewer prompt. The symlink cases in `boundary.test.ts` had been skipped with a note saying they belonged in the layer that never received the support.
 
-The defense is re-implemented as of this release, at the boundary rather than per-tool: `checkReach` normalises lexically and then walks **every path segment** with `lstat`, refusing any segment that is a symbolic link. Per-segment, because a symlinked parent escapes behind a non-symlink leaf. Because it lives at the chokepoint, every consumer — file tools, vision, web-api, gateway, and any future one — inherits it from one place, which is what the original per-tool implementation could not offer.
+The defense is re-implemented as of this release, at the boundary rather than per-tool: `checkReach` normalises lexically and then walks **every path segment** with `lstat`, following any symbolic link and refusing the path when the link lands outside the allowlist or on the always-deny floor. Per-segment, because a symlinked parent escapes behind a non-symlink leaf. Correction (2026-09-25): the walk is not one chokepoint. It exists as four hand-maintained copies — `ScopedFsImpl.checkReach`, `ScopedStorage.check`, the backup restore's `containedPath`, and `DocumentsService.reachable` — that must change together ([Security controls](./controls.md#symlink-misdirection-handling)).
 
 The original entry above is preserved unedited. The split it describes is still correct: misdirection is closed, TOCTOU is not, and closing TOCTOU is a container-level remediation rather than a framework one.
 
@@ -154,7 +154,7 @@ The structural lesson is why this addendum exists rather than a quiet rewrite: a
 
 **Fix.** Configuration validation rejects the combination at config-load time. A personality with `bash` in its toolset and no attested-strict backend fails to start.
 
-- **Status:** Planned. Tied to fix #3 — the `SandboxAttestation` interface ships, but no concrete attested-strict backend has landed yet, and the config-load validator that wires `bash`-in-toolset to the attestation check is in flight. Until both are in, the framework treats the combination as a runtime warning rather than a config-load failure.
+- **Status:** Not shipped as described. There is no tool named `bash` (the shell tool is `terminal`), no config-load validator reads `SandboxAttestation`, and no runtime warning is emitted. What ships instead is execution-posture gating: an exec-bearing personality resolves to Docker, an honestly labelled `local` posture only with `execution.allowLocalFallback: true`, or a refusal (`resolveExecutionPosture` in `packages/wiring/src/resolve-execution-posture.ts`). See [Bash + filesystem boundary](./controls.md#bash-filesystem-boundary).
 - Interface: `packages/types/src/sandbox.ts`
 
 ### 10. Risk classifier patterns explicitly v1-floor-only {#10-classifier-v1-floor-only}
@@ -175,7 +175,7 @@ The structural lesson is why this addendum exists rather than a quiet rewrite: a
 
 **Fix.** DNS pinning specifies the transport mechanism per Node HTTP client. `undici` clients use `connect.lookup` to return the pinned IP. Native `http.request` / `https.request` clients use an agent override with a custom `lookup`. The hostname stays in the SNI; the IP is locked to the resolved value at safe-fetch time.
 
-- **Status:** Shipped for `safeFetch`'s default path. Each hop resolves once, validates every address, then connects through `pinnedFetch`: undici's own `fetch` with a per-request `Agent` whose `connect.lookup` returns only the validated addresses, so there is no second resolution to race. A host with no validated address fails to connect instead of re-resolving. Not pinned: a caller-injected `fetchImpl`, and `web_fetch` / `web_extract`, which do not route through `safeFetch` (`extensions/tools-web/src/ssrf.ts`). Both limits are stated in the module header.
+- **Status:** Shipped for `safeFetch`'s default path. Each hop resolves once, validates every address, then connects through `pinnedFetch`: undici's own `fetch` with a per-request `Agent` whose `connect.lookup` returns only the validated addresses, so there is no second resolution to race. A host with no validated address fails to connect instead of re-resolving. `web_extract` is pinned: it connects through `ctx.scopedFetch` → `safeFetch`. Not pinned: a caller-injected `fetchImpl`, and browser sessions, whose route guard validates the URL while Chromium resolves the name again.
 - Source: `packages/safety/network/src/safe-fetch.ts` (`pinnedFetch`)
 - Tests: `packages/safety/network/src/__tests__/safe-fetch.test.ts` ("connection pinning")
 

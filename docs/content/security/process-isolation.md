@@ -4,7 +4,7 @@ description: Process-level isolation for Ethos personalities — when shared-pro
 kind: explanation
 audience: shared
 slug: process-isolation
-updated: 2026-05-18
+updated: 2026-09-25
 ---
 
 Ethos runs multiple personalities inside a single gateway process by default. The gateway holds a `Map<botKey, AgentLoop>` — one loop per configured bot — and routes inbound messages to the right loop by platform, bot key, and chat ID. That design is simple, efficient, and correct for the majority of deployments.
@@ -92,7 +92,7 @@ Each pod gets:
 
 - **Its own resource limits.** Kubernetes `resources.requests` and `resources.limits` on CPU and memory give each personality a guaranteed allocation and a hard ceiling. An OOM in one pod does not cascade.
 
-- **Its own network policy.** A Kubernetes `NetworkPolicy` scoped to the pod's labels can restrict egress per personality. The `researcher` pod might be allowed to reach the public internet; the `engineer` pod might be restricted to the internal cluster network plus a specific set of API endpoints. This is the infrastructure-level counterpart to Ethos's per-personality `networkReach` configuration — the two compose, they do not replace each other.
+- **Its own network policy.** A Kubernetes `NetworkPolicy` scoped to the pod's labels can restrict egress per personality. The `researcher` pod might be allowed to reach the public internet; the `engineer` pod might be restricted to the internal cluster network plus a specific set of API endpoints. This is the infrastructure-level counterpart to Ethos's per-personality `safety.network` policy — the two compose, they do not replace each other.
 
 - **Its own IAM identity.** On AWS (via IRSA or EKS Pod Identity), GCP (via Workload Identity), or Azure (via Workload Identity Federation), each pod can assume a different service account with different permissions. The `engineer` personality's pod gets write access to the deployment pipeline; the `researcher` personality's pod gets read-only access to the data warehouse. The IAM boundary is enforced by the cloud provider, not by application code.
 
