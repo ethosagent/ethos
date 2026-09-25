@@ -17,9 +17,9 @@ import {
   runManualCompaction,
   selectActiveWatermark,
 } from './manual-compact';
-import { turnToolDefinitions } from './stages/stream-step';
 import { runTurnComplete } from './turn-complete';
 import type { LoopDeps, TurnSetup } from './turn-context';
+import { turnGateDeps } from './turn-gate';
 
 // ---------------------------------------------------------------------------
 // Phase 3 — turn-end context maintenance. Two triggers run as the FINAL stage
@@ -180,25 +180,6 @@ async function saveFlushState(
   }
 }
 
-/** Derive the previous turn's real input + static (system+tools) tokens from the
- *  freshest assistant message usage — the actuals-first gate signal (Phase 0). */
-function deriveActuals(raw: StoredMessage[]): {
-  lastActualInputTokens?: number;
-  staticTokens?: number;
-} {
-  for (let i = raw.length - 1; i >= 0; i--) {
-    const m = raw[i];
-    if (m?.role === 'assistant' && m.usage?.inputTokens) {
-      const rt = m.usage.requestTokens;
-      return {
-        lastActualInputTokens: m.usage.inputTokens,
-        ...(rt ? { staticTokens: rt.system + rt.tools } : {}),
-      };
-    }
-  }
-  return {};
-}
-
 /**
  * Turn-end context maintenance. Yields ONLY the user-visible compaction notice;
  * the memory flush yields nothing (internal-only by construction).
@@ -231,32 +212,12 @@ export async function* maybeConsolidateAtTurnEnd(
   );
   if (raw.length === 0) return;
 
-  const { lastActualInputTokens, staticTokens } = deriveActuals(raw);
   const active = selectActiveWatermark(await deps.session.listCompressions(ctx.sessionId));
   const replay = active ? reconstructFromWatermark(raw, active).history : raw;
   const llmMessages = toLLMMessages(dedupHistory(replay));
 
-  const gateEval = evaluateGate(
-    {
-      llm: deps.llm,
-      ...(ctx.maxCompletionTokens !== undefined
-        ? { reservedOutputTokens: ctx.maxCompletionTokens }
-        : {}),
-      ...(deps.compaction?.charsPerToken !== undefined
-        ? { charsPerToken: deps.compaction.charsPerToken }
-        : {}),
-      ...(deps.compaction?.gateDelta !== undefined ? { gateDelta: deps.compaction.gateDelta } : {}),
-      ...(deps.compaction?.maxSingleToolResultTokens !== undefined
-        ? { maxSingleToolResultTokens: deps.compaction.maxSingleToolResultTokens }
-        : {}),
-      ...(lastActualInputTokens !== undefined ? { lastActualInputTokens } : {}),
-      ...(staticTokens !== undefined ? { staticTokens } : {}),
-      toolSchemas: JSON.stringify(turnToolDefinitions(deps.tools, ctx.toolScope)),
-    },
-    llmMessages,
-    // Same system prompt + tool schemas as the pre-LLM gate (`maybeCompact`).
-    ctx.systemPrompt,
-  );
+  // Same inputs as the engine's `pressureRatio` (`turnGateDeps`, ./turn-gate).
+  const gateEval = evaluateGate(turnGateDeps(deps, ctx, raw), llmMessages, ctx.systemPrompt);
 
   // Item 7 — the absolute ceiling applies here too, not only at the pre-LLM
   // gate. The flush gate stays purely fractional: it is a soft consolidation

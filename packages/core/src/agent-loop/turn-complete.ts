@@ -32,9 +32,9 @@ import { dedupHistory, toLLMMessages } from './history';
 import { reconstructFromWatermark, selectActiveWatermark } from './manual-compact';
 import { advanceMicroState } from './micro-compaction';
 import { loadMicroState, saveMicroState } from './micro-state';
-import { turnToolDefinitions } from './stages/stream-step';
 import type { LoopDeps } from './turn-context';
 import type { TurnEndCtx } from './turn-end';
+import { turnGateDeps } from './turn-gate';
 
 /**
  * Resolve the engine a turn ran under. Same precedence as the pre-LLM gate
@@ -94,22 +94,10 @@ export async function runTurnComplete(
   const replay = active ? reconstructFromWatermark(raw, active).history : raw;
   const messages = toLLMMessages(dedupHistory(replay));
 
-  const gate = evaluateGate(
-    {
-      llm: deps.llm,
-      ...(ctx.maxCompletionTokens !== undefined
-        ? { reservedOutputTokens: ctx.maxCompletionTokens }
-        : {}),
-      ...(deps.compaction?.charsPerToken !== undefined
-        ? { charsPerToken: deps.compaction.charsPerToken }
-        : {}),
-      // Whole-request units, like the pre-LLM gate and the turn-end trigger:
-      // the tool schemas this turn sent count with the system prompt.
-      toolSchemas: JSON.stringify(turnToolDefinitions(deps.tools, ctx.toolScope)),
-    },
-    messages,
-    ctx.systemPrompt,
-  );
+  // The turn-end gate's inputs — measured counts when the turn has them, and
+  // the tool schemas the turn sent — so engines and micro-compaction see the
+  // same pressure the gates do (`turnGateDeps`, ./turn-gate).
+  const gate = evaluateGate(turnGateDeps(deps, ctx, raw), messages, ctx.systemPrompt);
   const ratio = gate.window > 0 ? gate.current / gate.window : 0;
 
   let nomination: ContextEngineTurnCompleteOutput | null = null;

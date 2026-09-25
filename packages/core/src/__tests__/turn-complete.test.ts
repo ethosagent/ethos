@@ -319,3 +319,73 @@ describe('Item 7 — pressureRatio uses the pre-LLM gate’s whole-request units
     expect(expected - oldRatio).toBeGreaterThan(0.15);
   });
 });
+
+// When the turn's provider reports real counts, the turn-end gate floors its
+// usage at `lastActualInputTokens + gateDelta` and takes the measured static
+// slice (`turnGateDeps` in `agent-loop/turn-gate.ts`). The engine's
+// `pressureRatio` is built from the same inputs, so it reports the measured
+// pressure, not a char/4 estimate of the stored history.
+describe('Item 7 — pressureRatio uses the turn-end gate’s measured counts', () => {
+  it('floors at the reported input tokens plus gateDelta', async () => {
+    const WINDOW = 200_000;
+    const ACTUAL_INPUT = 120_000;
+    const GATE_DELTA = 500;
+    const calls: { messages: Message[]; system: string; tools: string }[] = [];
+    const llm: LLMProvider = {
+      ...mockLLM(),
+      maxContextTokens: WINDOW,
+      async *complete(messages, toolDefs, opts) {
+        calls.push({
+          messages: messages.slice(),
+          system: opts?.system ?? '',
+          tools: JSON.stringify(toolDefs),
+        });
+        yield { type: 'text_delta', text: 'ok' };
+        yield {
+          type: 'usage',
+          usage: {
+            inputTokens: ACTUAL_INPUT,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            estimatedCostUsd: 0,
+            requestTokens: { system: 10_000, tools: 30_000, messages: 80_000 },
+          },
+        };
+        yield { type: 'done', finishReason: 'end_turn' };
+      },
+    };
+
+    const engine = recordingEngine();
+    const contextEngines = new DefaultContextEngineRegistry();
+    contextEngines.register(engine);
+    const loop = new AgentLoop({
+      llm,
+      safety: createTestSafety(),
+      personalities: personalities(engine.name),
+      contextEngines,
+      compaction: { autoCompact: false, gateDelta: GATE_DELTA, maxSingleToolResultTokens: 1_000 },
+    });
+
+    await collect(loop.run('hello'));
+
+    const call = calls[0];
+    const after: Message[] = [...(call?.messages ?? []), { role: 'assistant', content: 'ok' }];
+    const measured = evaluateGate(
+      {
+        llm: { maxContextTokens: WINDOW },
+        toolSchemas: call?.tools ?? '',
+        lastActualInputTokens: ACTUAL_INPUT,
+        staticTokens: 40_000,
+        gateDelta: GATE_DELTA,
+        maxSingleToolResultTokens: 1_000,
+      },
+      after,
+      call?.system ?? '',
+    );
+    expect(measured.current).toBe(ACTUAL_INPUT + GATE_DELTA);
+
+    const reported = engine.calls[0]?.pressureRatio ?? -1;
+    expect(reported).toBeCloseTo(measured.current / measured.window, 9);
+  });
+});
