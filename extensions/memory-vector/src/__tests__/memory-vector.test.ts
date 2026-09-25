@@ -202,6 +202,75 @@ describe('VectorMemoryProvider', () => {
     });
   });
 
+  describe('sync — two connections on one memory.db', () => {
+    // The per-key lock is per INSTANCE; the approve path (`createPendingMemoryStore`
+    // in packages/wiring) and a second process each open their own connection.
+    // Connection A reads, then parks in its embedding pass while B writes; A's
+    // write must not replace B's with a value computed from the stale read.
+    function parkedProvider(): {
+      slow: VectorMemoryProvider;
+      parked: Promise<void>;
+      release: () => void;
+    } {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      let reached: () => void = () => {};
+      const parked = new Promise<void>((r) => {
+        reached = r;
+      });
+      let first = true;
+      const slow = new VectorMemoryProvider({
+        dir: testDir,
+        storage: new FsStorage(),
+        embedFn: async (text) => {
+          if (first) {
+            first = false;
+            reached();
+            await gate;
+          }
+          return fakeEmbed(text);
+        },
+      });
+      return { slow, parked, release };
+    }
+
+    it('an add interleaved between another connection read and write both land', async () => {
+      const { slow, parked, release } = parkedProvider();
+      try {
+        await provider.sync([{ action: 'add', key: 'k', content: 'base' }], ctx);
+        const slowAdd = slow.sync([{ action: 'add', key: 'k', content: 'from A' }], ctx);
+        await parked;
+        await provider.sync([{ action: 'add', key: 'k', content: 'from B' }], ctx);
+        release();
+        await slowAdd;
+        expect((await provider.read('k', ctx))?.content.split('\n')).toEqual([
+          'base',
+          'from B',
+          'from A',
+        ]);
+      } finally {
+        slow.close();
+      }
+    });
+
+    it('a remove interleaved the same way does not drop the other append', async () => {
+      const { slow, parked, release } = parkedProvider();
+      try {
+        await provider.sync([{ action: 'add', key: 'k', content: 'keep\ndrop' }], ctx);
+        const slowRemove = slow.sync([{ action: 'remove', key: 'k', substringMatch: 'drop' }], ctx);
+        await parked;
+        await provider.sync([{ action: 'add', key: 'k', content: 'new' }], ctx);
+        release();
+        await slowRemove;
+        expect((await provider.read('k', ctx))?.content).toBe('keep\nnew');
+      } finally {
+        slow.close();
+      }
+    });
+  });
+
   describe('add()', () => {
     it('inserts an entry under an auto-generated key', async () => {
       const n = await provider.add('Quick add to memory.', 'memory');

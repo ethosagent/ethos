@@ -64,6 +64,38 @@ function cosine(a: Float32Array, b: Float32Array): number {
   return na === 0 || nb === 0 ? 0 : dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+/**
+ * What `update` makes of a row whose current content is `current` (undefined
+ * = no row): the new content, `null` to delete the row, or `undefined` when
+ * the update changes nothing.
+ */
+function nextContent(update: MemoryUpdate, current: string | undefined): string | null | undefined {
+  switch (update.action) {
+    case 'add': {
+      let combined = current !== undefined ? `${current}\n${update.content}` : update.content;
+      if (combined.length > MAX_MEMORY_BYTES) {
+        const trimmed = combined.slice(combined.length - MAX_MEMORY_BYTES);
+        const firstNewline = trimmed.indexOf('\n');
+        combined = firstNewline > 0 ? trimmed.slice(firstNewline + 1) : trimmed;
+      }
+      return combined;
+    }
+    case 'replace':
+      return update.content.trim() ? update.content : null;
+    case 'remove': {
+      const match = update.substringMatch;
+      if (!match || current === undefined) return undefined;
+      const filtered = current
+        .split('\n')
+        .filter((line) => !line.includes(match))
+        .join('\n');
+      return filtered.trim() ? filtered : null;
+    }
+    case 'delete':
+      return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -269,61 +301,52 @@ export class VectorMemoryProvider implements MemoryProvider {
     if (updates.length === 0) return;
     for (const update of updates) {
       const lockKey = `${ctx.scopeId}:${update.key}`;
-      await this.withLock(lockKey, async () => {
-        switch (update.action) {
-          case 'add': {
-            // Read existing content, append new, then upsert
-            const existing = this.db
-              .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
-              .get(ctx.scopeId, update.key) as { content: string } | undefined;
-            let combined = existing ? `${existing.content}\n${update.content}` : update.content;
-            if (combined.length > MAX_MEMORY_BYTES) {
-              const trimmed = combined.slice(combined.length - MAX_MEMORY_BYTES);
-              const firstNewline = trimmed.indexOf('\n');
-              combined = firstNewline > 0 ? trimmed.slice(firstNewline + 1) : trimmed;
-            }
-            await this.upsert(ctx.scopeId, update.key, combined);
-            break;
-          }
-          case 'replace': {
-            if (!update.content.trim()) {
-              this.db
-                .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
-                .run(ctx.scopeId, update.key);
-            } else {
-              await this.upsert(ctx.scopeId, update.key, update.content);
-            }
-            break;
-          }
-          case 'remove': {
-            const match = update.substringMatch;
-            if (!match) break;
-            const existing = this.db
-              .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
-              .get(ctx.scopeId, update.key) as { content: string } | undefined;
-            if (!existing) break;
-            const filtered = existing.content
-              .split('\n')
-              .filter((line) => !line.includes(match))
-              .join('\n');
-            if (!filtered.trim()) {
-              this.db
-                .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
-                .run(ctx.scopeId, update.key);
-            } else {
-              await this.upsert(ctx.scopeId, update.key, filtered);
-            }
-            break;
-          }
-          case 'delete': {
+      await this.withLock(lockKey, () => this.applyUpdate(ctx.scopeId, update));
+    }
+  }
+
+  /**
+   * One update as a compare-and-write, atomic ACROSS connections. The per-key
+   * lock above serialises this instance only; the wiring approve path
+   * (`createPendingMemoryStore`) and any other process open their own
+   * connection to the same memory.db. The embedding pass is async, and a
+   * write transaction held across it would block every other connection —
+   * including one in this process, whose synchronous busy wait stalls the
+   * event loop the embedding needs. So: read, compute, embed OUTSIDE any
+   * transaction, then in one synchronous `BEGIN IMMEDIATE` re-read and write
+   * only if the row is unchanged; otherwise another writer committed first and
+   * the update is recomputed from its result. Every retry follows someone
+   * else's commit, so the loop always makes progress. Pinned by the 'two
+   * connections on one memory.db' cases in `__tests__/memory-vector.test.ts`.
+   */
+  private async applyUpdate(scopeId: string, update: MemoryUpdate): Promise<void> {
+    for (;;) {
+      const before = this.readContent(scopeId, update.key);
+      const next = nextContent(update, before);
+      if (next === undefined) return;
+      const emb = next === null ? null : await this.embed(next);
+      const committed = this.db
+        .transaction(() => {
+          if (this.readContent(scopeId, update.key) !== before) return false;
+          if (next === null || emb === null) {
             this.db
               .prepare('DELETE FROM memory_entries WHERE scope_id = ? AND key = ?')
-              .run(ctx.scopeId, update.key);
-            break;
+              .run(scopeId, update.key);
+          } else {
+            this.writeRow(scopeId, update.key, next, emb);
           }
-        }
-      });
+          return true;
+        })
+        .immediate();
+      if (committed) return;
     }
+  }
+
+  private readContent(scopeId: string, key: string): string | undefined {
+    const row = this.db
+      .prepare('SELECT content FROM memory_entries WHERE scope_id = ? AND key = ?')
+      .get(scopeId, key) as { content: string } | undefined;
+    return row?.content;
   }
 
   async list(ctx: MemoryContext, opts?: ListOpts): Promise<MemoryEntryRef[]> {
@@ -459,7 +482,10 @@ export class VectorMemoryProvider implements MemoryProvider {
   }
 
   private async upsert(scopeId: string, key: string, content: string): Promise<void> {
-    const emb = await this.embed(content);
+    this.writeRow(scopeId, key, content, await this.embed(content));
+  }
+
+  private writeRow(scopeId: string, key: string, content: string, emb: Float32Array): void {
     const blob = Buffer.from(new Uint8Array(emb.buffer, emb.byteOffset, emb.byteLength));
     const now = new Date().toISOString();
     const existing = this.db
