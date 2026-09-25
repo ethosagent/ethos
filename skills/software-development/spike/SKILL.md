@@ -38,7 +38,7 @@ When the answer is already known, write real code. Do not spike.
 
 Spikes live under `.ethos-work/spikes/<slug>/` in the workspace. They never go inside the project's source tree: `.ethos-work/` is scratch space, kept out of git by adding `.ethos-work/` to `.git/info/exclude`. (Not under `~/.ethos`: the terminal guard refuses any command that names the Ethos state dir.) This is deliberate — spikes are throwaway, and putting them in the project would invite "but it works in the spike" arguments.
 
-Spikes auto-expire after 14 days unless explicitly kept (see "Outcome" below).
+Nothing expires or deletes spikes automatically: a spike directory stays until someone removes it. Clean up by hand (see "Outcome" below).
 
 ## The procedure
 
@@ -56,9 +56,9 @@ Spikes auto-expire after 14 days unless explicitly kept (see "Outcome" below).
 4. **Run / measure / report.** Whatever the question demanded — execute it, capture the output, write the result into `README.md`.
 
 5. **Outcome.** End with a one-line recommendation:
-   - **Keep** — leave it where it is, may revisit
-   - **Promote** — move it to the project (the user runs `ethos spike promote <slug>` to do this; do not move it yourself)
-   - **Discard** — delete it now
+   - **Keep** — leave it where it is, may revisit. It stays until someone deletes it.
+   - **Promote** — worth turning into real code. There is no promote command: the user decides where it belongs in the project. Do not copy spike code into the source tree yourself; say which files are worth keeping and let the user bring them over, or write the real implementation fresh once they agree.
+   - **Discard** — delete `.ethos-work/spikes/<slug>/` now (`rm -r .ethos-work/spikes/<slug>`).
 
 ## Hard rules
 
