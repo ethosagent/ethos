@@ -88,6 +88,14 @@ then hands the typed answer back to the model as a string. The typed
 guarantee is gone the moment it becomes text. Decisions are made by code at
 a call site, which also declares what happens when the provider fails.
 
+That holds for the three sites. On 2026-09-25 the decision-tool plan (D1)
+amended it for one surface: a `decide` tool the user can invoke by asking
+("ask Jev whether…"). Its input schema is the `DecisionRequest` question
+shapes, every request passes `validateDecisionRequest` before the provider
+is called, and the answer comes back as probabilities, never prose. The
+answer carries no authority: the model reads it like any other tool result,
+and nothing in the kernel acts on it (`packages/wiring/src/decision-tool.ts`).
+
 A sibling contract is the only placement that keeps the verdict typed from
 the provider to the code that acts on it.
 

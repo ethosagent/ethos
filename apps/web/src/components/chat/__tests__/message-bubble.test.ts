@@ -81,16 +81,16 @@ describe('AssistantBubble', () => {
     expect(container.querySelector('.message-assistant .trail-footer')).toBeNull();
   });
 
-  it('the trail is a block AFTER the bubble in the same row, not a column beside it', () => {
+  it('the trail is a block BEFORE the bubble in the same row, not a column beside it', () => {
     render(
       [{ kind: 'text', content: 'Done.' }],
       [{ kind: 'action', toolCallId: 'tc1', toolName: 'read_file', args: {}, status: 'ok' }],
     );
     const row = container.querySelector('.message-row-assistant');
     const children = Array.from(row?.children ?? []).map((el) => el.className);
-    // Bubble first, trail second — the stylesheet turns this order into
-    // "under" (`trail-layout-css.test.ts` pins the column direction).
-    expect(children).toEqual(['message-assistant', 'trail']);
+    // Trail first, bubble second — the stylesheet turns this order into
+    // "above" (`trail-layout-css.test.ts` pins the column direction).
+    expect(children).toEqual(['trail', 'message-assistant']);
   });
 
   it('draws no footer for a turn that only wrote', () => {

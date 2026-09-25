@@ -17,7 +17,16 @@ import { join } from 'node:path';
 import { DECISIONS_API_KEY_REF, resolveDecisionsConfig } from '@ethosagent/config';
 import { createTypesafeDecisionProvider } from '@ethosagent/decision-typesafe';
 import { createLLMClassifier } from '@ethosagent/safety-injection';
-import type { AgentSafety, InjectionClassifier, SecretsResolver } from '@ethosagent/types';
+import type {
+  AgentSafety,
+  DecisionProvider,
+  DecisionResult,
+  InjectionClassifier,
+  PersonalityConfig,
+  SecretsResolver,
+  ToolContext,
+  ToolFilterOpts,
+} from '@ethosagent/types';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDecisionInjectionClassifier } from '../decision-injection-classifier';
 import { createDecisionProviderHandle } from '../decision-provider';
@@ -179,6 +188,8 @@ describe('createAgentLoop — which injection classifier is built', () => {
     for (const [id, extra] of [
       ['judge', 'decisions.provider: typesafe\ndecisions.sites.injection: shadow\n'],
       ['plain', ''],
+      // decision-tool D6 — names a provider the operator never configures.
+      ['rogue', 'decisions.provider: othervendor\n'],
     ] as const) {
       const dir = join(dataDir, 'personalities', id);
       mkdirSync(dir, { recursive: true });
@@ -237,6 +248,9 @@ describe('createAgentLoop — which injection classifier is built', () => {
       expect(Reflect.get(result.loop, 'approverDecisionSinks')).toBeUndefined();
       expect(factory).not.toHaveBeenCalled();
       expect(get).not.toHaveBeenCalledWith(DECISIONS_API_KEY_REF);
+      // decision-tool D5 — no decision layer, no `decide` tool and no hook.
+      expect(result.toolRegistry.get('decide')).toBeUndefined();
+      expect(Reflect.get(result.loop, 'personalityToolExclude')).toBeUndefined();
     } finally {
       await result.dispose();
     }
@@ -356,4 +370,173 @@ describe('createAgentLoop — which injection classifier is built', () => {
       await result.dispose();
     }
   }, 60_000);
+
+  // plan decision-tool T5 — the `decide` tool rides the decision layer.
+  describe('the decide tool (plan decision-tool D5/D6/D13)', () => {
+    const toolCtx = (personalityId: string): ToolContext => ({
+      sessionId: 's',
+      sessionKey: 'cli:test',
+      platform: 'cli',
+      workingDir: home,
+      personalityId,
+      currentTurn: 1,
+      messageCount: 1,
+      abortSignal: new AbortController().signal,
+      emit: () => {},
+      resultBudgetChars: 80_000,
+    });
+    const DECIDE_ARGS = {
+      state: 'price 2940 above 50-DMA, RSI 61',
+      questions: { buy: { type: 'boolean', instructions: 'Is this a buy?' } },
+    };
+
+    /** What the loop's turn setup builds for this personality (turn-setup.ts). */
+    function filterFor(
+      loop: unknown,
+      person: PersonalityConfig,
+    ): { toolset: string[] | undefined; filter: ToolFilterOpts } {
+      const exclude = Reflect.get(loop as object, 'personalityToolExclude') as
+        | ((p: PersonalityConfig) => string[])
+        | undefined;
+      return { toolset: person.toolset, filter: { excludeTools: exclude?.(person) ?? [] } };
+    }
+
+    it('visible to a personality whose decision model matches, hidden (and refused) otherwise', async () => {
+      const { resolver } = secretsWith({});
+      const { result } = await build(
+        config({ secretsResolver: resolver, decisions: { provider: 'typesafe' } }),
+      );
+      try {
+        const registry = result.toolRegistry;
+        expect(registry.get('decide')?.alwaysInclude).toBe(true);
+        const names = (id: string) => {
+          const person = result.personalities.get(id);
+          if (!person) throw new Error(`no personality ${id}`);
+          const { toolset, filter } = filterFor(result.loop, person);
+          return { person, toolset, filter, defs: registry.toDefinitions(toolset, filter) };
+        };
+
+        // `judge`: decisions.provider matches, toolset.yaml has only read_file.
+        const judge = names('judge');
+        expect(judge.toolset).not.toContain('decide');
+        expect(judge.defs.map((d) => d.name)).toContain('decide');
+
+        for (const id of ['plain', 'rogue']) {
+          const other = names(id);
+          expect(other.defs.map((d) => d.name)).not.toContain('decide');
+          const [forced] = await registry.executeParallel(
+            [{ toolCallId: 'c1', name: 'decide', args: DECIDE_ARGS }],
+            toolCtx(id),
+            other.toolset,
+            other.filter,
+          );
+          expect(forced?.result).toMatchObject({ ok: false, code: 'not_available' });
+        }
+
+        // No key in the vault: the visible tool answers not_available, honestly.
+        const [noKey] = await registry.executeParallel(
+          [{ toolCallId: 'c2', name: 'decide', args: DECIDE_ARGS }],
+          toolCtx('judge'),
+          judge.toolset,
+          judge.filter,
+        );
+        expect(noKey?.result).toMatchObject({ ok: false, code: 'not_available' });
+        expect(noKey?.result.ok === false && noKey.result.error).toMatch(/^Jev failed \(no_key\)/);
+      } finally {
+        await result.dispose();
+      }
+    }, 60_000);
+
+    /** The real provider over a network that always refuses: health failures. */
+    async function failingProvider() {
+      const actual = await vi.importActual<typeof import('@ethosagent/decision-typesafe')>(
+        '@ethosagent/decision-typesafe',
+      );
+      const fetch = vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED');
+      });
+      const results: Array<Promise<DecisionResult>> = [];
+      factory.mockImplementation((o) => {
+        const real = actual.createTypesafeDecisionProvider({ ...o, fetch });
+        const provider: DecisionProvider = {
+          name: real.name,
+          calibrated: real.calibrated,
+          decide: (req) => {
+            const r = real.decide(req);
+            results.push(r);
+            return r;
+          },
+        };
+        return provider;
+      });
+      return {
+        fetch,
+        results,
+        restore: () => factory.mockImplementation(actual.createTypesafeDecisionProvider),
+      };
+    }
+
+    const routerShadow: PersonalityConfig = {
+      id: 'routed',
+      name: 'routed',
+      decisions: { provider: 'typesafe', sites: { router: 'shadow' } },
+    };
+
+    it('the tool and a site share ONE handle: one vault read, and the tool opens the breaker for the site', async () => {
+      const net = await failingProvider();
+      const { resolver, get } = KEYED();
+      const { result } = await build(
+        config({ secretsResolver: resolver, decisions: { provider: 'typesafe' } }),
+      );
+      try {
+        const decide = result.toolRegistry.get('decide');
+        if (!decide) throw new Error('decide not registered');
+        for (let i = 0; i < 3; i++) {
+          const r = await decide.execute(DECIDE_ARGS, toolCtx('judge'));
+          expect(r).toMatchObject({ ok: false, code: 'not_available' });
+        }
+        expect(net.fetch).toHaveBeenCalledTimes(3);
+        const router = Reflect.get(result.loop, 'tierRouter') as (input: {
+          message: string;
+          personality: PersonalityConfig;
+        }) => Promise<unknown>;
+        await router({ message: 'hi', personality: routerShadow });
+        await vi.waitFor(() => expect(net.results).toHaveLength(4));
+        expect(await net.results[3]).toMatchObject({ ok: false, code: 'breaker_open' });
+        expect(net.fetch).toHaveBeenCalledTimes(3);
+        expect(factory).toHaveBeenCalledTimes(1);
+        expect(get.mock.calls.filter(([ref]) => ref === DECISIONS_API_KEY_REF)).toHaveLength(1);
+      } finally {
+        net.restore();
+        await result.dispose();
+      }
+    }, 60_000);
+
+    it('a breaker opened by a site refuses the tool with breaker_open', async () => {
+      const net = await failingProvider();
+      const { resolver } = KEYED();
+      const { result } = await build(
+        config({ secretsResolver: resolver, decisions: { provider: 'typesafe' } }),
+      );
+      try {
+        const router = Reflect.get(result.loop, 'tierRouter') as (input: {
+          message: string;
+          personality: PersonalityConfig;
+        }) => Promise<unknown>;
+        for (let i = 0; i < 3; i++) {
+          await router({ message: 'hi', personality: routerShadow });
+          await vi.waitFor(() => expect(net.results).toHaveLength(i + 1));
+          await net.results[i];
+        }
+        const decide = result.toolRegistry.get('decide');
+        const r = await decide?.execute(DECIDE_ARGS, toolCtx('judge'));
+        expect(r).toMatchObject({ ok: false, code: 'not_available' });
+        expect(r?.ok === false && r.error).toMatch(/^Jev failed \(breaker_open\)/);
+        expect(net.fetch).toHaveBeenCalledTimes(3);
+      } finally {
+        net.restore();
+        await result.dispose();
+      }
+    }, 60_000);
+  });
 });

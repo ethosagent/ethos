@@ -2226,8 +2226,8 @@ body,
   justify-content: flex-end;
 }
 
-/* A column, not a row: the trail is "one collapsed footer line UNDER the
-   bubble" (DESIGN.md "Feedback & activity" rule 3). As a flex ROW the trail sat
+/* A column, not a row: the trail is "one collapsed line above the reply"
+   (DESIGN.md "Feedback & activity" rule 3). As a flex ROW the trail sat
    beside the reply and squeezed it into a narrow strip. */
 .message-row-assistant {
   flex-direction: column;
@@ -4233,11 +4233,12 @@ textarea {
   padding: 0 24px 4px;
 }
 
-/* Under a bubble the message row already supplies the column's gutter, so the
+/* Above a bubble the message row already supplies the column's gutter, so the
    slot's own 24px would indent the footer past the reply's left edge. The 8px
-   hang lets the hover tint breathe while the text lines up with the reply. */
+   hang lets the hover tint breathe while the text lines up with the reply; the
+   4px below keeps the rows off the reply's first line. */
 .message-row-assistant > .trail {
-  margin: 0 -8px;
+  margin: 0 -8px 4px;
 }
 
 .message-row-assistant > .trail .trail-footer {

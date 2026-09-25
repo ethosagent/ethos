@@ -113,7 +113,7 @@ To keep a vendor alias from moving under a measured threshold, pin the model in 
 
 Web, desktop and CLI chat show every decision the turn's personality enabled. Channel adapters (Telegram, Slack, Discord, WhatsApp, email) show none.
 
-**The trail footer** under the reply counts decisions apart from actions, with their total time:
+**The trail footer** above the reply counts decisions apart from actions, with their total time:
 
 ```
 ✓ 1 action · 2 decisions 1.3s · 5ms ▸
@@ -144,11 +144,50 @@ A turn with both modes reads `2 decisions 80 ms · 1 observed 38 ms`.
 
 Rows are saved with the session, so a reloaded chat shows the same trail.
 
+## 5. Ask Jev directly
+
+Choosing a decision model also gives the personality a `decide` tool, so you can put a question to Jev yourself. Nothing else to enable: no `toolset.yaml` line and no site. The tool appears when the personality's `decisions.provider` matches the one in `~/.ethos/config.yaml`, and every other personality never sees it.
+
+Confirm it with `ethos personality show <id>`. The `## Decisions` section carries the line:
+
+```
+- tool: decide (via decision model)
+```
+
+Then ask in chat:
+
+```
+Ask Jev: is RELIANCE a buy on this setup? state: price 2,940 above 50-DMA, RSI 61, volume 1.4x 20-day average, broke 2,900 resistance yesterday.
+```
+
+The agent calls `decide` with the state and typed questions (`boolean`, `choice` or `score`, each with criteria). The trail shows an ordinary `decide` action row whose result is one line per question plus the model:
+
+```
+buy: yes p=0.82 conf=0.71
+model=jev-1.13.0 latency=412ms calibrated=true
+```
+
+The reply quotes Jev's probability rather than inventing one.
+
+If the call fails, the row is an error that starts `Jev failed (<code>):`, for example `Jev failed (timeout)` or `Jev failed (no_key)`, and the agent tells you Jev did not answer instead of answering in Jev's place. A request with more than 8 questions or more than 24,000 characters of state is refused before anything is sent.
+
+Every call is recorded in `observability.db` under the `decision.tool` category, apart from the sites' `decision.call` rows so it never skews their calibration:
+
+```sh
+sqlite3 ~/.ethos/observability.db "select code, details from events where category='decision.tool' order by ts desc limit 1"
+```
+
+```
+ok|{"provider":"typesafe","model":"jev-1.13.0","latencyMs":412,"inputTokens":180,"questionCount":1,...}
+```
+
+The tool uses the same key, redaction and pause-after-failures as the sites: when repeated failures pause the sites, the tool answers `Jev failed (breaker_open)` too.
+
 ## What leaves this machine
 
-Nothing is sent to TypeSafe unless a personality sets a site to `shadow` or `on` and this machine has `decisions.provider` and a key. With no key, every site runs today's path.
+Nothing is sent to TypeSafe unless a personality sets a site to `shadow` or `on`, or calls `decide`, and this machine has `decisions.provider` and a key. With no key, every site runs today's path.
 
-What is sent is a digest, redacted by `@ethosagent/safety-redact` first: the tool result text (injection), the tool name, arguments and danger reason (approver), or the user's message (router). The **Test** result in Settings shows the exact redacted text it sent.
+What is sent is a digest, redacted by `@ethosagent/safety-redact` first: the tool result text (injection), the tool name, arguments and danger reason (approver), the user's message (router), or the state the agent wrote into a `decide` call. The **Test** result in Settings shows the exact redacted text it sent.
 
 ## Verify
 
@@ -167,6 +206,7 @@ Run `ethos personality show <id>`. The character sheet gains a `## Decisions` se
 ```
 ## Decisions
 - Decision model: typesafe → api.typesafe.ai · model jev-latest
+- tool: decide (via decision model)
 - injection: on
 - approver: off
 - router: on

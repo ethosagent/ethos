@@ -1584,6 +1584,7 @@ describe('renderCharacterSheet — ## Decisions', () => {
       [
         '## Decisions',
         '- Decision model: typesafe → api.typesafe.ai · model jev-latest',
+        '- tool: decide (via decision model)',
         '- injection: shadow',
         '- approver: on → running shadow: `decisions.thresholds.approver.deny` missing — inert: approvalMode is manual; the approver runs only under smart',
         '- router: off',
@@ -1638,5 +1639,11 @@ describe('renderCharacterSheet — ## Decisions', () => {
     expect(noKey).toContain(
       "no key at vault ref providers/typesafe/apiKey; every site runs today's path",
     );
+    // plan decision-tool D15 — the tool line follows `configured` alone: it
+    // prints with no key (the call then answers not_available), never when
+    // the provider is missing or unconfigured.
+    expect(noKey).toContain('- tool: decide (via decision model)');
+    expect(notConfigured).not.toContain('tool: decide');
+    expect(noProvider).not.toContain('tool: decide');
   });
 });

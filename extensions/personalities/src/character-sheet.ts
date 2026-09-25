@@ -321,6 +321,9 @@ function decisionsSection(
       line += ` — no key at vault ref ${resolved.apiKeyRef ?? '?'}; every site runs today's path`;
     }
     lines.push(line);
+    // plan decision-tool D15 — the same two inputs as the loop's gate
+    // (`decisionToolEnabled`, packages/config/src/decisions.ts).
+    lines.push('- tool: decide (via decision model)');
   }
   for (const s of resolved.sites) {
     let line = `- ${s.site}: ${s.requested}`;

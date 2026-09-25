@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 // The trail exists to show how fast the agent decided and acted, so the two
 // layout promises that keep that visible live in CSS, not markup: the trail
-// sits UNDER the reply (DESIGN.md "Feedback & activity" rule 3), and a row's
+// sits ABOVE the reply (DESIGN.md "Feedback & activity" rule 3), and a row's
 // duration survives any argument length. Asserted against the stylesheet that
 // ships — same technique as `features/voice/__tests__/call-row-css.test.ts`.
 
@@ -17,7 +17,7 @@ function block(selector: string): string {
 }
 
 describe('trail layout stylesheet', () => {
-  it('the assistant row stacks bubble then trail vertically', () => {
+  it('the assistant row stacks trail then bubble vertically', () => {
     // As a flex ROW the trail rendered beside the reply and squeezed it.
     const row = block('.message-row-assistant');
     expect(row).toContain('flex-direction: column');

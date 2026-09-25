@@ -26,6 +26,7 @@ import type {
   SpanKind,
 } from '@ethosagent/types';
 import type { DecisionCallRecord } from '../decision-site';
+import type { DecisionToolCallRecord } from '../decision-tool';
 
 // ---------------------------------------------------------------------------
 // Ethos vocabulary — the only place these literals live in the codebase.
@@ -101,6 +102,10 @@ export const ETHOS_EVENT_CATEGORIES = [
   // plan decision-provider-jev §5.5 — the provider's breaker opened / closed.
   'decision.breaker_open',
   'decision.breaker_closed',
+  // plan decision-tool D7 — one row per `decide` tool call. Its own category,
+  // never `decision.call`: model-written questions must not contaminate the
+  // per-site calibration reads. See `recordDecisionToolCall` below.
+  'decision.tool',
 ] as const;
 export type EthosEventCategory = (typeof ETHOS_EVENT_CATEGORIES)[number];
 
@@ -638,6 +643,18 @@ export class EthosObservability {
     this.emit(event.type, event.type === 'decision.breaker_open' ? 'warn' : 'info', {
       ...(event.code !== undefined ? { code: event.code } : {}),
     });
+  }
+
+  /**
+   * One `decide` tool call (plan decision-tool D7), from
+   * `createDecisionToolDecide` (`packages/wiring/src/decision-tool.ts`).
+   * `code` is the outcome (`ok`, a provider error code, or `no_key`); details
+   * carry the provider, returned model, latency, input tokens, question count,
+   * estimated cost, `personalityId` and `sessionId`. `warn` unless `ok`.
+   */
+  recordDecisionToolCall(record: DecisionToolCallRecord): void {
+    const { outcome, ...details } = record;
+    this.emit('decision.tool', outcome === 'ok' ? 'info' : 'warn', { code: outcome }, details);
   }
 
   // ── Escape hatch ────────────────────────────────────────────────────────

@@ -235,6 +235,26 @@ export function resolvePersonalityDecisionSite(
 }
 
 /**
+ * Whether a personality gets the `decide` tool (plan decision-tool D6): it
+ * picked a decision model (`decisions.provider` in its config.yaml) AND the
+ * operator configured THAT provider (global `decisions.provider` equals it) —
+ * the same two halves `resolvePersonalityDecisionSite` reads for `no-provider`
+ * / `not-configured`. No site mode and no toolset line is needed. Pure. Every
+ * caller goes through it: the loop's per-personality exclusion
+ * (`personalityToolExclude` in packages/wiring/src/build-agent-loop.ts) and
+ * the character sheet's `configured` flag (`resolveCharacterSheetDecisions`,
+ * packages/wiring/src/decision-diagnostics.ts). Pinned by
+ * `__tests__/config-decisions.test.ts`.
+ */
+export function decisionToolEnabled(
+  personalityDecisions: Pick<PersonalityDecisionsInput, 'provider'> | undefined,
+  global: Pick<ResolvedDecisionsConfig, 'provider'> | undefined,
+): boolean {
+  const provider = personalityDecisions?.provider?.trim();
+  return !!provider && global?.provider === provider;
+}
+
+/**
  * The R6 operator sentence, shared by the config warning and `ethos doctor`
  * so the two can never word it differently.
  */

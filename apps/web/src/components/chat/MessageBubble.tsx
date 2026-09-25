@@ -20,8 +20,8 @@ import { Trail } from './Trail';
 //
 // The answer is content only (feedback & activity contract §1): the bubble
 // holds text, images, HTML, PDF, cards and the delegated-run card — never a
-// tool chip, badge or status. What the agent DID goes under the bubble, in the
-// collapsed `Trail` footer.
+// tool chip, badge or status. What the agent DID goes above the bubble, in the
+// collapsed `Trail` line, so the actions read before the answer.
 
 // Both bubbles are memoized: with a long history loaded, a streamed token must
 // re-render only the live bubble. That holds only while the props they are
@@ -97,7 +97,7 @@ export const AssistantBubble = memo(function AssistantBubble({
   personalityId?: string;
   /** Live state for the delegated-run cards this turn anchors (§4.1). */
   runSurface?: RunSurface;
-  /** This turn's activity trail — the footer under the bubble. */
+  /** This turn's activity trail — the line above the bubble. */
   trail?: TrailEntry[];
   /** The user stopped this turn. */
   stopped?: boolean;
@@ -114,6 +114,7 @@ export const AssistantBubble = memo(function AssistantBubble({
   const ttsEnabled = caps?.capabilities.voice_tts ?? false;
   return (
     <div className="message-row message-row-assistant">
+      <Trail entries={trail ?? []} turnId={turn.id} {...(stopped ? { stopped } : {})} />
       <div className="message-assistant">
         {turn.blocks.map((block, idx) => (
           <BlockRenderer
@@ -129,7 +130,6 @@ export const AssistantBubble = memo(function AssistantBubble({
           <PlayButton text={fullText} {...(personalityId ? { personalityId } : {})} />
         ) : null}
       </div>
-      <Trail entries={trail ?? []} turnId={turn.id} {...(stopped ? { stopped } : {})} />
     </div>
   );
 });

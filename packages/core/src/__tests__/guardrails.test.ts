@@ -228,7 +228,12 @@ describe('Orchestrator guardrails', () => {
     // Bumped 1070 -> 1071 (tool cost persistence): the turn's rollup
     // accumulator handed to `processTools` (one pass-through line). The logic
     // lives in agent-loop/tool-cost.ts.
-    expect(lineCount).toBeLessThanOrEqual(1071);
+    // Bumped 1071 -> 1077 (decision-tool D13): the optional
+    // `personalityToolExclude` config field with its one-line doc, the
+    // `PersonalityConfig` type import, its private field, constructor
+    // assignment and deps-getter line. Pass-through only; the union with the
+    // surface's `toolsetExclude` lives in agent-loop/stages/turn-setup.ts.
+    expect(lineCount).toBeLessThanOrEqual(1077);
   });
 
   it('no stage file exceeds 700 lines', () => {

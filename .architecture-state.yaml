@@ -227,7 +227,7 @@ register_anchors:
     - { path: packages/core/src/tool-registry.ts, line: 394, contains: "!allowedTools.includes(call.name)" }
     - { path: packages/core/src/tool-registry.ts, line: 287, contains: "enforce tool access at execution time" }
     - { path: packages/core/src/agent-loop/stages/tool-rejection.ts, line: 58, contains: "export function* emitToolRejection" }
-    - { path: packages/core/src/script-safe.ts, line: 121, contains: "export function scriptCallableFor" }
+    - { path: packages/core/src/script-safe.ts, line: 130, contains: "export function scriptCallableFor" }
 
   G-CAP:
     - { path: packages/core/src/capability-validator.ts, line: 19, contains: "export function validateRegistration" }
@@ -259,7 +259,7 @@ register_anchors:
     - { path: packages/safety/injection/src/classifier.ts, line: 60, contains: "export function createLLMClassifier" }
     - { path: packages/safety/injection/src/downgrade.ts, line: 23, contains: "export function resolveDowngradedTools" }
     - { path: packages/core/src/agent-loop/stages/context-assembly.ts, line: 457, contains: "deps.safety.injection.prelude" }
-    - { path: packages/core/src/agent-loop.ts, line: 721, contains: "resolveDowngradedTools(dgConfig?.tools)" }
+    - { path: packages/core/src/agent-loop.ts, line: 727, contains: "resolveDowngradedTools(dgConfig?.tools)" }
     - { path: packages/core/src/agent-loop/stages/tool-processing.ts, line: 771, contains: "await handleUntrustedResult(" }
     - { path: packages/core/src/agent-loop/result-defense.ts, line: 31, contains: "export async function handleUntrustedResult" }
     - { path: packages/wiring/src/decision-injection-classifier.ts, line: 89, contains: "export function createDecisionInjectionClassifier" }
@@ -311,7 +311,7 @@ register_anchors:
     - { path: packages/safety/watcher/src/rules.ts, line: 110, contains: "export function compoundingErrorRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 161, contains: "export function suspiciousSequenceRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 205, contains: "export function defaultRules" }
-    - { path: packages/wiring/src/build-agent-loop.ts, line: 578, contains: "defaultRules: watcherDefaultRules" }
+    - { path: packages/wiring/src/build-agent-loop.ts, line: 582, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
     - { path: packages/safety/channel/src/channel-filter.ts, line: 111, contains: "export function checkMessage" }
@@ -324,7 +324,7 @@ register_anchors:
 
 # ---- Security tiers -------------------------------------------------------
 # Every workspace package under packages/, packages/safety/, extensions/, and
-# apps/ carries a tier. 148 packages: 11 at Tier 0, 27 at Tier 1, 110 at Tier 2.
+# apps/ carries a tier. 149 packages: 11 at Tier 0, 27 at Tier 1, 111 at Tier 2.
 #
 # The tier bounds what we promise to be CORRECT, not what we promise to LOOK
 # AT. Triage reads the guarantee register first and the tier second — a Tier 2
@@ -1046,6 +1046,11 @@ tiers:
     package: "@ethosagent/tools-debug"
     tier: 2
     assigned: 2026-08-12
+
+  extensions/tools-decision:
+    package: "@ethosagent/tools-decision"
+    tier: 2
+    assigned: 2026-09-25
 
   extensions/tools-delegation:
     package: "@ethosagent/tools-delegation"
