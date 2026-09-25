@@ -68,7 +68,8 @@ export interface DecisionProvider {
  * Where a decision site reports that it ran, for the turn's event stream (plan
  * decision-provider-personality §15.3, PD16). Core builds one per call and
  * passes it to the seam (the tier router input, the `InjectionClassifier`
- * input, the `before_tool_call` payload); the site calls `emit` from
+ * input; the approver's through core's `ApproverDecisionSinks`, never the
+ * `before_tool_call` payload, which every plugin handler sees); the site calls `emit` from
  * `runDecisionSite` (packages/wiring/src/decision-site.ts). Core stamps the
  * fields it already holds — `personalityId`, `toolCallId`, `traceId` — so a
  * site cannot misattribute a row. `emit` never throws.

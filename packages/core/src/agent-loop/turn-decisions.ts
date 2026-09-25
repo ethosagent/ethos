@@ -4,7 +4,8 @@
 // Decision sites run in wiring (`runDecisionSite`, packages/wiring/src/
 // decision-site.ts), behind three seams core already calls: the tier router,
 // the injection classifier and the `before_tool_call` hook. Core hands each
-// call a `DecisionSink` that stamps what core knows — the personality, the
+// call a `DecisionSink` (the approver's through `ApproverDecisionSinks`, never
+// the hook payload — ./approver-decision-sinks.ts) that stamps what core knows — the personality, the
 // judged `toolCallId`, the turn's `traceId` — and queues what the site emits.
 // `withDecisionEvents` yields the queue into the turn's event stream:
 //
@@ -34,6 +35,7 @@
 // (@ethosagent/config) stays the authority on whether a site runs.
 
 import type { AgentEvent, DecisionSink, PersonalityConfig } from '@ethosagent/types';
+import type { ApproverDecisionSinks } from './approver-decision-sinks';
 
 type DecisionEvent = Extract<AgentEvent, { type: 'decision' }>;
 
@@ -52,6 +54,8 @@ export class TurnDecisions {
   private wake: (() => void) | undefined;
   private signalPromise: Promise<null> | undefined;
 
+  constructor(private readonly approverSinks?: ApproverDecisionSinks) {}
+
   /** Arms the queue for this turn when the personality declares decision sites. */
   arm(personality: PersonalityConfig, traceId: string | undefined): void {
     if (!declaresDecisionSites(personality)) return;
@@ -59,6 +63,11 @@ export class TurnDecisions {
       personalityId: personality.id,
       ...(traceId !== undefined ? { traceId } : {}),
     };
+  }
+
+  /** The injected approver channel (./approver-decision-sinks.ts), if any. */
+  get approverSinkDirectory(): ApproverDecisionSinks | undefined {
+    return this.approverSinks;
   }
 
   get armed(): boolean {
@@ -141,15 +150,20 @@ export class TurnDecisions {
 }
 
 /**
- * `{ decisionSink }` for one seam call, or `{}` when the turn is not armed —
- * spread into a seam input so an unarmed turn's input carries no key at all.
+ * `{ bindApproverSink }` for one `before_tool_call` fire, or `{}` when the turn
+ * is not armed or no approver channel was injected. The binding makes this
+ * call's sink visible to the smart approver (and only through
+ * `ApproverDecisionSinks.get`) until the returned release runs.
  */
-export function decisionSinkOf(
+export function approverSinkOf(
   decisions: TurnDecisions | undefined,
-  toolCallId?: string,
-): { decisionSink?: DecisionSink } {
-  const sink = decisions?.sinkFor(toolCallId);
-  return sink ? { decisionSink: sink } : {};
+  sessionId: string,
+  toolCallId: string,
+): { bindApproverSink?: () => () => void } {
+  const directory = decisions?.approverSinkDirectory;
+  const sink = directory ? decisions?.sinkFor(toolCallId) : undefined;
+  if (!directory || !sink) return {};
+  return { bindApproverSink: () => directory.bind(sessionId, toolCallId, sink) };
 }
 
 type Settled = { r: IteratorResult<AgentEvent, unknown> } | { err: unknown };

@@ -205,7 +205,12 @@ describe('Orchestrator guardrails', () => {
     // plus the import and two pass-through lines handing the queue to
     // `setupTurn` and to the tool stage / ScriptToolBridge. The merge logic
     // lives in agent-loop/turn-decisions.ts.
-    expect(lineCount).toBeLessThanOrEqual(1059);
+    // Bumped 1059 -> 1063 (decision-provider-personality §15.3, the approver's
+    // private sink channel): one `AgentLoopConfig.approverDecisionSinks` field
+    // with its one-line doc, its private field, and its constructor assignment,
+    // handed to `new TurnDecisions(...)`. The channel itself lives in
+    // agent-loop/approver-decision-sinks.ts.
+    expect(lineCount).toBeLessThanOrEqual(1063);
   });
 
   it('no stage file exceeds 700 lines', () => {

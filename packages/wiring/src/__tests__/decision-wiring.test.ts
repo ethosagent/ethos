@@ -233,6 +233,8 @@ describe('createAgentLoop — which injection classifier is built', () => {
       expect(Object.keys(args ?? {})).toEqual(['llm']);
       expect(classifier).toBe(llmClassifierFactory.mock.results[0]?.value);
       expect(result.approverDecision).toBeUndefined();
+      // No approver sink channel either (§15.3).
+      expect(Reflect.get(result.loop, 'approverDecisionSinks')).toBeUndefined();
       expect(factory).not.toHaveBeenCalled();
       expect(get).not.toHaveBeenCalledWith(DECISIONS_API_KEY_REF);
     } finally {
@@ -255,6 +257,9 @@ describe('createAgentLoop — which injection classifier is built', () => {
       // Approver: an undeclared personality gets the LLM reviewer's verdict.
       const decision = result.approverDecision;
       expect(decision).toBeDefined();
+      // §15.3 — the approver reads its sink from the SAME channel the loop binds into.
+      expect(decision?.sinks).toBeDefined();
+      expect(Reflect.get(result.loop, 'approverDecisionSinks')).toBe(decision?.sinks);
       const plain = result.personalities.get('plain');
       expect(plain).toBeDefined();
       const reviewer = createSmartApprover({

@@ -1,6 +1,7 @@
 // Decision events in the turn stream (plan decision-provider-personality
 // §15.3, §15.8 "Core"). The three seams — tier router, injection classifier,
-// `before_tool_call` payload — receive a `DecisionSink` only for a personality
+// and the approver (through `ApproverDecisionSinks`, never the
+// `before_tool_call` payload) — receive a `DecisionSink` only for a personality
 // that declares decision sites; what a site emits is yielded in order: router
 // after `run_start`, approver before its `tool_start`, injection after its
 // `tool_end`, a late one in the post-`done` tail. PD20: an `on` site's
@@ -19,6 +20,7 @@ import type {
 import { describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
+import { ApproverDecisionSinks } from '../agent-loop/approver-decision-sinks';
 import type { TierRouter } from '../agent-loop/tier-router';
 import { DefaultHookRegistry } from '../hook-registry';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
@@ -101,9 +103,20 @@ function settled(site: DecisionBody['site'], extra: Partial<DecisionBody> = {}):
   };
 }
 
-async function runTurn(personality: Partial<PersonalityConfig>) {
-  const seams = { router: [] as unknown[], classifier: [] as unknown[], hook: [] as unknown[] };
+async function runTurn(
+  personality: Partial<PersonalityConfig>,
+  opts: { plugin?: (payload: unknown) => void } = {},
+) {
+  const seams = {
+    router: [] as unknown[],
+    classifier: [] as unknown[],
+    hook: [] as unknown[],
+    approverSink: [] as Array<DecisionSink | undefined>,
+  };
   let injectionSink: DecisionSink | undefined;
+  // The composition root's channel: the loop is constructed with it, and the
+  // "approver" handler below reads it by the payload's call key.
+  const approverSinks = new ApproverDecisionSinks();
   let approverSettled = false;
   let startedSeenBeforeSettle: boolean | undefined;
 
@@ -122,7 +135,8 @@ async function runTurn(personality: Partial<PersonalityConfig>) {
   const hooks = new DefaultHookRegistry();
   hooks.registerModifying('before_tool_call', async (payload) => {
     seams.hook.push(payload);
-    const sink = payload.decisionSink;
+    const sink = approverSinks.get(payload.sessionId, payload.toolCallId);
+    seams.approverSink.push(sink);
     sink?.emit({
       id: 'approver-1',
       phase: 'started',
@@ -135,6 +149,17 @@ async function runTurn(personality: Partial<PersonalityConfig>) {
     sink?.emit(settled('approver', { acted: true, verdict: 'approve' }));
     return {};
   });
+  if (opts.plugin) {
+    const plugin = opts.plugin;
+    hooks.registerModifying(
+      'before_tool_call',
+      async (payload) => {
+        plugin(payload);
+        return null;
+      },
+      { pluginId: 'third-party' },
+    );
+  }
   const tools = new DefaultToolRegistry();
   tools.register(untrustedTool);
 
@@ -145,6 +170,7 @@ async function runTurn(personality: Partial<PersonalityConfig>) {
     observability,
     modelResolution: { registry, routing: {} },
     tierRouter: router,
+    approverDecisionSinks: approverSinks,
     safety: createTestSafety({
       injection: {
         classifier: async (input) => {
@@ -221,7 +247,7 @@ describe('decision events in the turn stream (§15.3)', () => {
     const sinkOf = (input: unknown) => (input as { decisionSink?: DecisionSink }).decisionSink;
     expect(sinkOf(seams.router[0])?.traceId).toBe('trace-1');
     expect(sinkOf(seams.classifier[0])?.traceId).toBe('trace-1');
-    expect(sinkOf(seams.hook[0])?.traceId).toBe('trace-1');
+    expect(seams.approverSink[0]?.traceId).toBe('trace-1');
   });
 
   it('a personality without a decisions block: no sink on any seam, no decision events', async () => {
@@ -230,6 +256,47 @@ describe('decision events in the turn stream (§15.3)', () => {
     expect(seams.router[0]).not.toHaveProperty('decisionSink');
     expect(seams.classifier[0]).not.toHaveProperty('decisionSink');
     expect(seams.hook[0]).not.toHaveProperty('decisionSink');
+    expect(seams.approverSink[0]).toBeUndefined();
+  });
+
+  it('a plugin before_tool_call handler cannot reach a sink: none on the payload, none after the fire', async () => {
+    const seen: unknown[] = [];
+    // The personality enables the plugin, so its handler really runs.
+    const { events, seams } = await runTurn(
+      { ...DECLARED, plugins: ['third-party'] },
+      {
+        plugin: (payload) => {
+          seen.push(payload);
+          // Everything a handler holds is the payload; try every key on it.
+          for (const value of Object.values(payload as Record<string, unknown>)) {
+            const maybe = value as Partial<DecisionSink> | null;
+            if (maybe && typeof maybe === 'object' && typeof maybe.emit === 'function') {
+              maybe.emit(settled('approver', { id: 'forged', verdict: 'approve', acted: true }));
+            }
+          }
+        },
+      },
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toHaveProperty('decisionSink');
+    expect(Object.keys(seen[0] as object).sort()).toEqual(
+      ['args', 'personalityId', 'sessionId', 'toolCallId', 'toolName'].sort(),
+    );
+    const ids = events.filter((e) => e.type === 'decision').map((e) => e.id);
+    expect(ids).not.toContain('forged');
+    // The composition root's approver still reported, on the same fire.
+    expect(ids).toContain('approver-1');
+    expect(seams.approverSink[0]).toBeDefined();
+  });
+
+  it('the approver binding lives only for the before_tool_call fire', async () => {
+    const approverSinks = new ApproverDecisionSinks();
+    const sink: DecisionSink = { emit: () => {} };
+    const release = approverSinks.bind('s', 't1', sink);
+    expect(approverSinks.get('s', 't1')).toBe(sink);
+    expect(approverSinks.get('other-session', 't1')).toBeUndefined();
+    release();
+    expect(approverSinks.get('s', 't1')).toBeUndefined();
   });
 
   it('a decisions block with every site off, or no provider, is not armed either', async () => {

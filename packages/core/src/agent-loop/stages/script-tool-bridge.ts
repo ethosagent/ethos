@@ -16,7 +16,7 @@ import { scriptCallableFor, scriptExclusionError, scriptExclusionFor } from '../
 import { ABORTED_TOOL_RESULT } from '../../tool-registry';
 import type { checkTurnBudgets } from '../budgets';
 import type { WatcherTap } from '../turn-context';
-import { decisionSinkOf, type TurnDecisions } from '../turn-decisions';
+import { approverSinkOf, type TurnDecisions } from '../turn-decisions';
 import {
   consultWatcherHalt,
   enforceBeforeToolCall,
@@ -257,7 +257,7 @@ export class ScriptToolBridge {
         traceId: d.traceId,
         ...(callerPersonality !== undefined ? { personalityId: callerPersonality } : {}),
         denyRules: d.denyRules,
-        ...decisionSinkOf(d.decisions, toolCallId),
+        ...approverSinkOf(d.decisions, d.sessionId, toolCallId),
       },
     );
     if (!decision.allowed) {

@@ -7,6 +7,7 @@
 // answers for one that did not enable the site (K1).
 
 import { resolveDecisionsConfig } from '@ethosagent/config';
+import { ApproverDecisionSinks } from '@ethosagent/core';
 import type {
   BeforeToolCallPayload,
   CompletionChunk,
@@ -123,6 +124,7 @@ function approver(
     mode?: 'off' | 'shadow' | 'on';
     timeoutMs?: number;
     recorder?: DecisionSiteRecorder;
+    sinks?: ApproverDecisionSinks;
   } = {},
   timeoutMs?: number,
 ) {
@@ -134,6 +136,7 @@ function approver(
       provider: fixed(decisions),
       global: GLOBAL(site.timeoutMs),
       ...(site.recorder ? { recorder: site.recorder } : {}),
+      ...(site.sinks ? { sinks: site.sinks } : {}),
     },
   });
   const who = persona(site.mode ?? 'on');
@@ -439,23 +442,29 @@ describe('per personality (plan decision-provider-personality §7.3)', () => {
   });
 });
 
-// plan decision-provider-personality §15.3 / §15.8 (N7b): core puts a
-// `decisionSink` on the `before_tool_call` payload; the approver passes it to
-// its decision site — the event is emitted, and the record takes the turn's
-// traceId from it (the NULL trace_id fix).
-describe('decision sink on the payload (N7b)', () => {
+// plan decision-provider-personality §15.3 / §15.8 (N7b): core binds this
+// call's `DecisionSink` in `ApproverDecisionSinks` (never on the
+// `before_tool_call` payload) for the span of the hook fire; the approver looks
+// it up by the payload's sessionId + toolCallId and passes it to its decision
+// site — the event is emitted, and the record takes the turn's traceId from it
+// (the NULL trace_id fix).
+describe('decision sink through the private channel (N7b)', () => {
   function withSink(traceId: string) {
     const events: Array<Parameters<DecisionSink['emit']>[0]> = [];
     const decisionSink: DecisionSink = { traceId, emit: (e) => events.push(e) };
-    return { p: { ...payload(), decisionSink }, events };
+    const sinks = new ApproverDecisionSinks();
+    const p = payload();
+    const release = sinks.bind(p.sessionId, p.toolCallId, decisionSink);
+    return { p, events, sinks, release };
   }
 
   it("on: the record carries the sink's traceId; the event names the verdict", async () => {
     const records: DecisionCallRecord[] = [];
     const j = jev(ok(choice('approve', 0.95)));
-    const { p, events } = withSink('trace-9');
+    const { p, events, sinks } = withSink('trace-9');
     await approver(j.provider, llm().provider, {
       recorder: { recordDecisionCall: (r) => records.push(r) },
+      sinks,
     })(p, REASON);
     expect(records).toEqual([expect.objectContaining({ traceId: 'trace-9', personalityId: 'p' })]);
     expect(events.map((e) => e.phase)).toEqual(['started', 'settled']);
@@ -465,11 +474,16 @@ describe('decision sink on the payload (N7b)', () => {
   it("shadow: today's LLM verdict and the reading, in the approver vocabulary", async () => {
     const records: DecisionCallRecord[] = [];
     const j = jev(ok(choice('deny', 0.95)));
-    const { p, events } = withSink('trace-9');
-    await approver(j.provider, llm().provider, {
+    const { p, events, sinks, release } = withSink('trace-9');
+    const pending = approver(j.provider, llm().provider, {
       mode: 'shadow',
       recorder: { recordDecisionCall: (r) => records.push(r) },
+      sinks,
     })(p, REASON);
+    // Core releases the binding when the hook fire returns; a shadow result
+    // that settles later still reaches the sink the approver already holds.
+    release();
+    await pending;
     await vi.waitFor(() => expect(events).toHaveLength(1));
     expect(events[0]).toMatchObject({
       mode: 'shadow',
@@ -478,5 +492,20 @@ describe('decision sink on the payload (N7b)', () => {
       disagreed: true,
     });
     expect(records[0]?.traceId).toBe('trace-9');
+  });
+
+  it('a call core did not bind (another call id, or no channel) emits nothing', async () => {
+    const j = jev(ok(choice('approve', 0.95)));
+    const { events, sinks } = withSink('trace-9');
+    await approver(j.provider, llm().provider, { sinks })(
+      { ...payload(), toolCallId: 'another-call' },
+      REASON,
+    );
+    const records: DecisionCallRecord[] = [];
+    await approver(j.provider, llm().provider, {
+      recorder: { recordDecisionCall: (r) => records.push(r) },
+    })(payload(), REASON);
+    expect(events).toEqual([]);
+    expect(records[0]?.traceId).toBeUndefined();
   });
 });

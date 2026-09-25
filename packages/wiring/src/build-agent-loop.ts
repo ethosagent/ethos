@@ -4,6 +4,7 @@ import { FsContentStore } from '@ethosagent/cas-fs';
 import { backgroundDefaults, resolveDecisionsConfig } from '@ethosagent/config';
 import {
   AgentLoop,
+  ApproverDecisionSinks,
   type ClarifyOriginLane,
   DefaultJobRunnerRegistry,
   deriveFsReachPaths,
@@ -93,6 +94,19 @@ import {
 } from './static-floor';
 import type { WiringContext } from './types';
 import { buildVoiceStack } from './voice-stack';
+
+/**
+ * The approver's private decision-sink channel (plan decision-provider-personality
+ * §15.3; `ApproverDecisionSinks`, @ethosagent/core). ONE per process, not per
+ * build, because an approval surface is not always paired with the build whose
+ * loop runs the turn: the gateway hands every bot loop's predicate the SYSTEM
+ * build's `approverDecision` (apps/ethos/src/commands/gateway.ts, boot.ts), so a
+ * per-build channel would leave bot turns without approver rows. Entries are keyed
+ * by session + tool call and live only for one `before_tool_call` fire. Injected
+ * into every loop and every `approverDecision` this module builds; not exported
+ * from the package, so nothing but this composition root holds it.
+ */
+const APPROVER_DECISION_SINKS = new ApproverDecisionSinks();
 
 export interface BuildAgentLoopDeps {
   infra: InfrastructureResult;
@@ -629,6 +643,7 @@ export async function buildAgentLoop(
             global: decisions,
             ...recorder,
             tracker,
+            sinks: APPROVER_DECISION_SINKS,
           } satisfies import('./smart-approver').SmartApproverDecisionSite,
           // §8.3 — injected into the loop below; returns `null` (no routing)
           // for a personality whose router site resolves `off`.
@@ -1115,6 +1130,9 @@ export async function buildAgentLoop(
     logger: log,
     ...(toolLoading ? { toolLoading } : {}),
     ...(tierRouter ? { tierRouter } : {}),
+    // §15.3 — the approver's private sink channel; the same object is on
+    // `approverDecision.sinks` above. Absent with no `decisions.*`.
+    ...(decisionSites ? { approverDecisionSinks: APPROVER_DECISION_SINKS } : {}),
     documentExtractors,
     contextEngines,
     ...(llmHandle ? { llmHandle } : {}),

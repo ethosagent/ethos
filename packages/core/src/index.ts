@@ -6,6 +6,8 @@ export type {
   RunOptions,
 } from './agent-loop';
 export { AgentLoop, isKnownAgentEvent, KNOWN_AGENT_EVENT_TYPES } from './agent-loop';
+// plan decision-provider-personality §15.3 — the approver's private sink channel.
+export { ApproverDecisionSinks } from './agent-loop/approver-decision-sinks';
 // tools-as-code-api Lane B — the per-turn bridge (and its budget-counter
 // companions) are exported so integration tests and non-loop surfaces can
 // drive the EXACT enforcement path the loop wires, not a re-statement of it.

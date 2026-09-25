@@ -42,9 +42,11 @@
 
 import { createHash } from 'node:crypto';
 import { type ResolvedDecisionsConfig, resolvePersonalityDecisionSite } from '@ethosagent/config';
+import type { ApproverDecisionSinks } from '@ethosagent/core';
 import type {
   BeforeToolCallPayload,
   DecisionAnswer,
+  DecisionSink,
   LLMProvider,
   Message,
   PersonalityConfig,
@@ -110,6 +112,15 @@ export interface SmartApproverDecisionSite {
   recorder?: DecisionSiteRecorder;
   /** The build's shadow-record tracker, drained at dispose (R8). */
   tracker?: DecisionRecordTracker;
+  /**
+   * Where core binds this call's decision sink for the span of its
+   * `before_tool_call` fire (plan decision-provider-personality §15.3) — the
+   * SAME object the loops were constructed with (`AgentLoopConfig.
+   * approverDecisionSinks`, `build-agent-loop.ts`). Private to the composition
+   * root: the sink is not on the hook payload, so a plugin's handler cannot
+   * emit a decision row. Absent → the approver emits no rows.
+   */
+  sinks?: Pick<ApproverDecisionSinks, 'get'>;
 }
 
 /** The single question id this site asks. */
@@ -327,6 +338,7 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
     personalityId: string,
     payload: BeforeToolCallPayload,
     dangerReason: string,
+    sink: DecisionSink | undefined,
   ): Promise<Reviewed> => {
     const started = Date.now();
     let timer: NodeJS.Timeout | undefined;
@@ -354,9 +366,9 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
           questions: APPROVER_QUESTIONS,
           timeoutMs: siteTimeoutMs,
           personalityId,
-          // plan decision-provider-personality §15.3 — core put the sink on the
-          // hook payload; it carries the turn's traceId and this toolCallId.
-          ...(payload.decisionSink ? { sink: payload.decisionSink } : {}),
+          // plan decision-provider-personality §15.3 — the sink core bound for
+          // this call; it carries the turn's traceId and this toolCallId.
+          ...(sink ? { sink } : {}),
           summarize: {
             verdict: (reviewed) => reviewed.verdict.decision,
             reading: (choice) => choice,
@@ -394,6 +406,9 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
   };
 
   return async (payload, dangerReason, personality?: PersonalityConfig) => {
+    // Read before the first await: core binds the sink only while this call's
+    // `before_tool_call` fire is in progress (`ApproverDecisionSinks`).
+    const sink = decision?.sinks?.get(payload.sessionId, payload.toolCallId);
     const key = verdictKey(payload);
     const site = decision
       ? resolvePersonalityDecisionSite(personality?.decisions, 'approver', decision.global)
@@ -412,6 +427,7 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
             personality.id,
             payload,
             dangerReason,
+            sink,
           )
         : await reviewByLlm(payload, dangerReason, timeoutMs);
     if (reviewed.cacheable)

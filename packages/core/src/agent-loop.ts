@@ -217,6 +217,8 @@ export interface AgentLoopConfig {
   /** plan decision-provider-jev §8.3 — downgrade-only tier router, built in wiring;
    *  absent → no routing (`agent-loop/tier-router.ts`, pinned by tier-router.test.ts). */
   tierRouter?: import('./agent-loop/tier-router').TierRouter;
+  /** §15.3 — the approver's private sink channel (agent-loop/approver-decision-sinks.ts). */
+  approverDecisionSinks?: import('./agent-loop/approver-decision-sinks').ApproverDecisionSinks;
   options?: {
     maxIterations?: number;
     historyLimit?: number;
@@ -384,6 +386,7 @@ export class AgentLoop {
   private readonly smallWindow: boolean;
   private readonly toolLoading?: AgentLoopConfig['toolLoading'];
   private readonly tierRouter?: AgentLoopConfig['tierRouter'];
+  private readonly approverDecisionSinks?: AgentLoopConfig['approverDecisionSinks'];
   private readonly modelResolution: ModelResolutionContext;
   private readonly deviationSeen = new Map<string, true>(); // D17 `once`, per loop
   private readonly modelSampling?: AgentLoopConfig['modelSampling'];
@@ -452,6 +455,7 @@ export class AgentLoop {
     this.smallWindow = config.options?.smallWindow ?? false;
     this.toolLoading = config.toolLoading;
     this.tierRouter = config.tierRouter;
+    this.approverDecisionSinks = config.approverDecisionSinks;
     this.modelResolution = config.modelResolution ?? emptyModelResolution();
     this.modelSampling = config.modelSampling;
     if (config.compaction) this.compaction = config.compaction;
@@ -621,7 +625,7 @@ export class AgentLoop {
    *  `done` while the lane is held, so breaking on `done` skips it. */
   async *run(text: string, opts: RunOptions = {}): AsyncGenerator<AgentEvent> {
     // decision-provider-personality §15.3 — site events merge in (agent-loop/turn-decisions.ts).
-    const decisions = new TurnDecisions();
+    const decisions = new TurnDecisions(this.approverDecisionSinks);
     yield* withDecisionEvents(decisions, this.runTurn(text, opts, decisions));
   }
 
