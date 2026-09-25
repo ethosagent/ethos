@@ -416,6 +416,32 @@ function isRetryText(text: string | undefined, botHandle?: string): boolean {
 }
 
 /**
+ * `/cmd@handle` → `/cmd`, for THIS bot's own handle (`botHandle`, see
+ * `adapterHandle`), matched case-insensitively. Telegram's command menu and
+ * group members address a command to one bot this way, and the built-in and
+ * plugin command lookups match the first word exactly, so the suffixed form
+ * fell through to the LLM as ordinary text. Only the first word is rewritten;
+ * everything after it is left as it was, so argument parsing is unchanged.
+ *
+ * Returns `null` for a command addressed to ANOTHER bot (`/new@other_bot`).
+ * Telegram's convention (Bot API, "Privacy mode" / "Commands") is that a
+ * `/command@username` is meant for that bot alone, so the caller ignores it:
+ * no reply, no turn. An adapter that cannot name its handle gets the text back
+ * unchanged — nothing stripped, nothing dropped. Pinned by
+ * `__tests__/addressed-command.test.ts`.
+ */
+function commandForThisBot(text: string, botHandle?: string): string | null {
+  const handle = botHandle?.trim().replace(/^@/, '').toLowerCase();
+  if (!handle) return text;
+  const match = /^(\/[^\s@]+)@([^\s@]+)(?=\s|$)/.exec(text);
+  const command = match?.[1];
+  const addressee = match?.[2];
+  if (!match || !command || !addressee) return text;
+  if (addressee.toLowerCase() !== handle) return null;
+  return command + text.slice(match[0].length);
+}
+
+/**
  * The account an adapter speaks as (`@handle`), when it can say: the optional
  * `senderHandle` the Telegram adapter resolves at start — the same structural
  * read `apps/ethos/src/lib/outbox-wiring.ts` makes for its cards. Not on the
@@ -1518,6 +1544,8 @@ export class Gateway {
    * `GatewayConfig.botAdapters` for the ones a platform-keyed map cannot carry.
    */
   private readonly botAdapters: Map<string, PlatformAdapter>;
+  /** Adapters `removeAdapter` has stopped — see `hasStopped`. */
+  private readonly stoppedAdapters = new WeakSet<PlatformAdapter>();
   /**
    * Per-bot teardown callbacks (the `session_start` hook registration and the
    * background-completion subscription). `removeAdapter` runs them so a
@@ -2101,7 +2129,21 @@ export class Gateway {
       if (survivor) this.adapterRegistry.set(platform, survivor);
       else this.adapterRegistry.delete(platform);
     }
+    // Recorded BEFORE the call, so a `stop()` that throws is still not
+    // attempted a second time by the host's shutdown (`hasStopped`).
+    this.stoppedAdapters.add(adapter);
     await adapter.stop();
+  }
+
+  /**
+   * Whether `removeAdapter` has already called this adapter's `stop()`. A host
+   * keeps its own list of the adapters it built, and a retired one stays in
+   * it; its shutdown asks here so the adapter is not stopped a second time
+   * (`everyStartedAdapter` in apps/ethos/src/commands/gateway.ts, pinned by
+   * apps/ethos/src/__tests__/every-started-adapter.test.ts).
+   */
+  hasStopped(adapter: PlatformAdapter): boolean {
+    return this.stoppedAdapters.has(adapter);
   }
 
   /**
@@ -2854,7 +2896,21 @@ export class Gateway {
     if (restoring) await restoring;
     const lane = this.getOrCreateLane(laneKey);
     const rawText = message.text?.trim() ?? '';
-    const text = bot.piiRedaction ? redactPii(rawText) : rawText;
+    // `/cmd@this_bot` reads as `/cmd` in every lookup below; `/cmd@other_bot`
+    // is another bot's command and is dropped here, BEFORE the interrupted-row
+    // settlement, so it neither answers nor discards anything
+    // (`commandForThisBot`).
+    const text = commandForThisBot(
+      bot.piiRedaction ? redactPii(rawText) : rawText,
+      adapterHandle(adapter),
+    );
+    if (text === null) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.command_for_other_bot',
+        details: { platform: message.platform, chatId: message.chatId, botKey: bot.botKey },
+      });
+      return;
+    }
 
     // --- Interrupted-message `retry` / discard (see the lookup at the top) ---
     if (interrupted) {
