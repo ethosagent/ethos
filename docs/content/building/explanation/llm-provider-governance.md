@@ -101,7 +101,7 @@ cost of the compaction iteration arrives on the existing `usage` chunk.
 | Drift gate | `packages/types/src/__tests__/llm-provider-drift.test.ts`, checked against its own list AND the `frozen_schemas.llm_provider.frozen_variants` manifest in ARCHITECTURE.md §IX |
 | Plan | `openclaw-9.5-adoption` item 7, decision D31 |
 | Owner approval | Granted by the repository owner (Mitesh), 2026-09-24 |
-| Second maintainer | **Pending.** §VI asks for two maintainers; only the owner's approval was available when the amendment landed. The owner instructed implementation to proceed |
+| Second maintainer | **Approved** by Mitesh, sole maintainer, 2026-09-25. §VI's two-maintainer requirement cannot be met in a single-maintainer project and is satisfied by the owner's sign-off for this amendment |
 | Migration | None required. The variant is additive; consumers that ignore unknown chunk types need no change |
 
 ## See also

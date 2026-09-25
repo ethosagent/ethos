@@ -98,6 +98,10 @@ export interface CompactionDeps {
    * (gate is byte-identical to before).
    */
   staticTokens?: number;
+  /** Serialized tool schemas this turn sends: the gate counts them with the system
+   *  prompt, and estimates an unmeasured `staticTokens` (turn 1; SQLite drops
+   *  `requestTokens`) from both. Absent → the system prompt alone. */
+  toolSchemas?: string;
   /**
    * Phase 1c — configurable headroom (tokens) added to `lastActualInputTokens`
    * so the gate fires slightly BEFORE the next turn actually reaches pressure.
@@ -264,6 +268,27 @@ export function effectiveGate(g: GateEval, fraction: number, maxContextTokens?: 
 }
 
 /**
+ * `maybeCompact`'s `targetTokens` before the current turn is subtracted, in the
+ * units every engine measures (`estimate(currentSystem) + estimate(messages)`):
+ * the gate's own threshold at `fraction` (capped at `fraction` of the ceiling),
+ * less the static tokens the engine cannot see (tool schemas), so the engine's
+ * messages budget is exactly `fraction × messagesWindow`. Before, a measured
+ * static slice made this a messages-only budget the engines then shrank by the
+ * system prompt again. Pinned by `__tests__/compaction-target-units.test.ts`.
+ */
+export function compactionTarget(
+  g: GateEval,
+  fraction: number,
+  systemPrompt: string,
+  ceiling?: number,
+): number {
+  const cap = ceiling !== undefined && ceiling > 0 ? Math.floor(ceiling * fraction) : Infinity;
+  const whole = Math.min(gateThreshold(g, fraction), cap);
+  const unseenStatic = Math.max(0, g.staticTokens - estimateTokens(systemPrompt));
+  return Math.max(0, whole - unseenStatic);
+}
+
+/**
  * openclaw-9.5-adoption item 7 — the whole-context token count at which the
  * pre-LLM gate would compact a history in a `windowTokens` window, before any
  * request has measured a static slice: `evaluateGate` with no messages, then
@@ -337,15 +362,24 @@ export async function maybeCompact(
   // Phase 3 — the gate arithmetic is shared with the turn-end trigger via
   // `evaluateGate` (output reserve, static-slice subtraction, small-window
   // factor, charsPerToken, actuals-first floor all live there).
-  const g = evaluateGate(deps, messages, systemPrompt);
-  const { current, window, messagesWindow } = g;
+  const staticPrefix = `${systemPrompt}${deps.toolSchemas ?? ''}`;
+  const { lastActualInputTokens: _actual, staticTokens: _measured, ...estimator } = deps;
+  const estimated = evaluateGate(estimator, [], staticPrefix).current;
+  const staticTokens =
+    deps.staticTokens ?? (deps.toolSchemas === undefined ? undefined : estimated);
+  const g = evaluateGate(
+    { ...deps, ...(staticTokens !== undefined ? { staticTokens } : {}) },
+    messages,
+    staticPrefix,
+  );
+  const { current, window } = g;
   // Item 7 — the absolute ceiling lowers both the gate and the shrink budget.
   const ceiling =
     deps.maxContextTokens !== undefined && deps.maxContextTokens > 0
       ? deps.maxContextTokens
       : undefined;
-  const target = Math.floor(Math.min(messagesWindow, ceiling ?? messagesWindow) * targetFraction);
   const pressureGate = effectiveGate(g, pressureFraction, ceiling);
+  const target = compactionTarget(g, targetFraction, systemPrompt, ceiling);
 
   // Phase 3 — `force` skips both the pressure gate and the cooldown (used by the
   // overflow→compact-and-retry path, where the provider already rejected the

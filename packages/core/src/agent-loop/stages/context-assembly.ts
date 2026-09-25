@@ -37,6 +37,7 @@ import type { AssembledContext, LoopDeps, TurnSetup } from '../turn-context';
 import { ageVisionBlocks } from '../vision-aging';
 import { checkContextDrift } from './context-drift';
 import { emitContextEvents } from './context-emit';
+import { turnToolDefinitions } from './stream-step';
 
 // Phase 1a — aging state is persisted per session so the batched-at-crossings
 // invariant survives across turns. Best-effort: any storage error degrades to
@@ -746,6 +747,9 @@ export async function* assembleContext(
             : {}),
           ...(lastActualInputTokens !== undefined ? { lastActualInputTokens } : {}),
           ...(staticTokens !== undefined ? { staticTokens } : {}),
+          // The static prefix is system prompt AND tool schemas; the gate and
+          // the target count both, measured or not (`CompactionDeps.toolSchemas`).
+          toolSchemas: JSON.stringify(turnToolDefinitions(deps.tools, setup)),
         },
         llmMessages,
         systemPrompt ?? '',

@@ -9,7 +9,7 @@
 
 import type { ToolLoadingResolver } from '@ethosagent/core';
 import { DEFAULT_OUTPUT_RESERVE_TOKENS } from '@ethosagent/core';
-import { SMALL_WINDOW_STATIC_RATIO } from './model-catalog';
+import { SMALL_WINDOW_MAX_TOKENS, SMALL_WINDOW_STATIC_RATIO } from './model-catalog';
 
 /** The chars/4 heuristic every consumer of this module shares. */
 const CHARS_PER_TOKEN = 4;
@@ -23,6 +23,14 @@ export interface StaticFloorInputs {
   toolCount: number;
   /** Injection-defense prelude length (full or compact, caller-resolved). */
   preludeChars: number;
+  /**
+   * The project-context injection (`## Project Context` — AGENTS.md /
+   * CLAUDE.md / SOUL.md in the working directory) the first turn would send,
+   * from `projectContextAtStartup` (project-context-floor.ts). Absent → 0, so
+   * callers that have no working directory (`ethos bench context`, the
+   * character sheet) keep their numbers.
+   */
+  projectContextChars?: number;
 }
 
 export interface StaticFloorComponent {
@@ -39,6 +47,9 @@ export interface StaticFloorMeasurement {
   toolCount: number;
 }
 
+/** Component name for the project-context injection in a floor breakdown. */
+export const PROJECT_CONTEXT_COMPONENT = 'project context (AGENTS.md/CLAUDE.md)';
+
 /** Estimate the static prompt floor. Pure; same formula as the gate (chars/4). */
 export function measureStaticFloor(inputs: StaticFloorInputs): StaticFloorMeasurement {
   const est = (chars: number) => Math.ceil(chars / CHARS_PER_TOKEN);
@@ -51,7 +62,16 @@ export function measureStaticFloor(inputs: StaticFloorInputs): StaticFloorMeasur
       tokens: est(inputs.preludeChars),
     },
   ];
-  const totalChars = inputs.soulChars + inputs.toolSchemaChars + inputs.preludeChars;
+  const projectContextChars = inputs.projectContextChars ?? 0;
+  if (projectContextChars > 0) {
+    components.push({
+      name: PROJECT_CONTEXT_COMPONENT,
+      chars: projectContextChars,
+      tokens: est(projectContextChars),
+    });
+  }
+  const totalChars =
+    inputs.soulChars + inputs.toolSchemaChars + inputs.preludeChars + projectContextChars;
   return { totalChars, tokens: est(totalChars), components, toolCount: inputs.toolCount };
 }
 
@@ -105,6 +125,36 @@ export function evaluateContextFit(opts: {
       `(${n(opts.windowTokens)} tokens): static prefix ${n(opts.floor.tokens)} + ` +
       `output reserve ${n(reserve)} exceeds the window.${largestNote}`,
   };
+}
+
+/**
+ * The startup notice for a loop that runs in small-window mode: which trigger
+ * engaged it, the measured static prefix against the window, and the largest
+ * contributor, so an operator whose AGENTS.md put them there can see it. Pure;
+ * `build-agent-loop.ts` logs it when `resolveSmallWindowMode` returns true.
+ */
+export function smallWindowModeMessage(opts: {
+  personalityId: string;
+  windowTokens: number;
+  floor: StaticFloorMeasurement;
+  override?: 'auto' | 'on' | 'off';
+}): string {
+  const n = (v: number) => v.toLocaleString('en-US');
+  const share = opts.windowTokens > 0 ? opts.floor.tokens / opts.windowTokens : 0;
+  const trigger =
+    opts.override === 'on'
+      ? 'compaction.smallWindow: on'
+      : opts.windowTokens <= SMALL_WINDOW_MAX_TOKENS
+        ? `window at or below ${n(SMALL_WINDOW_MAX_TOKENS)} tokens`
+        : `static prefix above ${Math.round(SMALL_WINDOW_STATIC_RATIO * 100)}% of the window`;
+  const largest = [...opts.floor.components].sort((a, b) => b.tokens - a.tokens)[0];
+  const largestNote = largest ? ` Largest: ${largest.name} (~${n(largest.tokens)} tokens).` : '';
+  return (
+    `small-window mode on for personality \`${opts.personalityId}\` (${trigger}): static prefix ` +
+    `~${n(opts.floor.tokens)} tokens is ${Math.round(share * 100)}% of the ` +
+    `${n(opts.windowTokens)}-token window.${largestNote} The compact prelude, index-only ` +
+    `memory and skills, and a shorter history apply.`
+  );
 }
 
 // ---------------------------------------------------------------------------
