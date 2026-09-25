@@ -9,8 +9,10 @@
 // the label says docker" hole.
 //
 // **Status.** The `ExecutionBackend` abstraction shipped, and four backends
-// now implement `attest()`: `extensions/execution-docker/src/index.ts:1159`
-// (derived from the container's actual run configuration),
+// now implement `attest()`: `extensions/execution-docker/src/index.ts`
+// (`DockerExecutionBackend.attest`, read from `docker inspect` of every
+// container it ran via `attestationFromInspect`; all-false where it cannot
+// tell — pinned by `extensions/execution-docker/src/__tests__/attest.test.ts`),
 // `extensions/execution-ssh/src/index.ts:882` (one true field —
 // `noDockerSocket` — because ssh is remote-host trust, not confinement),
 // `extensions/execution-local/src/index.ts:156` and
