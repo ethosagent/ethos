@@ -110,4 +110,18 @@ describe('unknown config keys (U4)', () => {
     );
     expect(unread(warnings)).toEqual([]);
   });
+
+  it('discord.approvalRoleIds (S9) is read through the tracked discord map, not warned about', () => {
+    const warnings = warningsOf(
+      'discord.defaultChannelMode: observe',
+      'discord.approvalRoleIds: 111,222',
+    );
+    expect(unread(warnings)).toEqual([]);
+  });
+
+  it('a misspelled discord.approvalRoleIds suggests the real key', () => {
+    const warnings = unread(warningsOf('discord.approvalRoleId: 111'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("did you mean 'discord.approvalRoleIds'");
+  });
 });
