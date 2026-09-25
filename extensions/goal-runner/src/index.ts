@@ -1373,6 +1373,7 @@ export class GoalRunner {
       attempts,
       latestVerdict: lastAttempt.verdict,
       strategy,
+      planMd: goal.planMd,
     });
   }
 
