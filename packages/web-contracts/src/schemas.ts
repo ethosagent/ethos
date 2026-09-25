@@ -92,6 +92,54 @@ export const ModelTierConfigSchema = z.object({
 });
 export type ModelTierConfigWire = z.infer<typeof ModelTierConfigSchema>;
 
+/**
+ * The decision providers the layer knows. Lockstep with `DECISION_PROVIDERS`
+ * (@ethosagent/config) and with `DECISION_PROVIDER_CATALOG`
+ * (apps/web-api/src/services/decision-catalog.ts) — this package cannot import
+ * either, so the three are pinned equal by
+ * apps/web-api/src/__tests__/services/decisions.service.test.ts ("catalog").
+ * Declared here, not beside the `decisions` namespace in router.ts, because
+ * `personalities.update` validates `decisions.provider` against it.
+ */
+export const DecisionProviderIdSchema = z.enum(['typesafe']);
+
+/** `DECISION_SITES` (@ethosagent/config) / `PersonalityDecisionSiteId` (@ethosagent/types). */
+export const DecisionSiteIdSchema = z.enum(['injection', 'approver', 'router']);
+
+/** `DECISION_SITE_MODES` (@ethosagent/config) / `PersonalityDecisionSiteMode` (@ethosagent/types). */
+export const DecisionSiteModeSchema = z.enum(['off', 'shadow', 'on']);
+
+/** `PersonalityDecisionSiteReason` (@ethosagent/config). */
+export const DecisionSiteReasonSchema = z.enum([
+  'undeclared',
+  'no-provider',
+  'not-configured',
+  'threshold-missing',
+]);
+
+/**
+ * One decision site for one personality, as `resolveCharacterSheetDecisions`
+ * (@ethosagent/wiring — the `## Decisions` resolver, which calls
+ * `resolvePersonalityDecisionSite`, @ethosagent/config) resolves it against the
+ * operator's global `decisions.*`. Computed by web-api (`toDecisionSiteView`,
+ * apps/web-api/src/services/decisions.service.ts); the web never re-derives it.
+ */
+export const DecisionSiteViewSchema = z.object({
+  site: DecisionSiteIdSchema,
+  /** The personality's `decisions.sites.<site>`; `off` when unset. */
+  requested: DecisionSiteModeSchema,
+  /** What runs. */
+  effective: DecisionSiteModeSchema,
+  /** Why `effective` is not simply `requested`, or why the site is off. */
+  reason: DecisionSiteReasonSchema.optional(),
+  /** Full key names whose absence caused an R6 `on` → `shadow` downgrade. */
+  missingThresholds: z.array(z.string()),
+  /** Approver only: the personality's `safety.approvalMode` when it is not
+   *  `smart`, so the approver is never consulted (plan §4.3). */
+  inertApprovalMode: z.string().optional(),
+});
+export type DecisionSiteView = z.infer<typeof DecisionSiteViewSchema>;
+
 export const PersonalitySchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -203,6 +251,34 @@ export const PersonalitySchema = z.object({
       tier: z.enum(['pipeline', 'realtime']).optional(),
       model: z.string().optional(),
       languages: z.record(z.string(), z.string()).optional(),
+    })
+    .optional(),
+  /** Which decision model this personality uses and where
+   *  (`PersonalityConfig.decisions`, plan decision-provider-personality §9).
+   *  `provider` and `sites` are the declaration as stored — `provider` verbatim,
+   *  even when this machine has not configured it — read back so the editor can
+   *  populate its form. `resolved` is the same resolution the character
+   *  sheet's `## Decisions` section prints: whether the operator configured the
+   *  named provider, whether its key is stored (set only when configured), and
+   *  every site. Absent when the server was not given the global config.
+   *  Omitted when the personality declares no `decisions`. */
+  decisions: z
+    .object({
+      provider: z.string().optional(),
+      sites: z
+        .object({
+          injection: DecisionSiteModeSchema.optional(),
+          approver: DecisionSiteModeSchema.optional(),
+          router: DecisionSiteModeSchema.optional(),
+        })
+        .optional(),
+      resolved: z
+        .object({
+          configured: z.boolean(),
+          apiKeyPresent: z.boolean().optional(),
+          sites: z.array(DecisionSiteViewSchema),
+        })
+        .optional(),
     })
     .optional(),
   system: z.boolean(),

@@ -962,6 +962,13 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     ...(opts.readObservabilityEvents
       ? { readObservabilityEvents: opts.readObservabilityEvents }
       : {}),
+    // The operator's `decisions.*`, so each personality's decision sites are
+    // resolved server-side for the Edit → Config notes (plan
+    // decision-provider-personality §9). Same reader as `decisionsService`.
+    readDecisions: async () => {
+      const src = await storage.read(join(opts.dataDir, 'config.yaml'));
+      return src === null ? undefined : parseConfigYaml(src).decisions;
+    },
   });
   // Connected wake satellites. Constructed BEFORE `ConfigService` because the
   // Settings write path pushes to it: eng-review D5 makes a Settings save the
@@ -1165,6 +1172,12 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
     },
     config: configRepo,
     secrets,
+    // Each provider's `usedBy`: reloaded from disk first, so a personality
+    // edited in another process is counted without a restart.
+    listPersonalities: async () => {
+      await opts.personalities.loadFromDirectory(join(opts.dataDir, 'personalities'));
+      return opts.personalities.describeAll().map((d) => d.config);
+    },
   });
   const executionService = new ExecutionService({
     config: configRepo,

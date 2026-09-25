@@ -25,6 +25,9 @@ import {
   CronDeliveryTargetSchema,
   CronJobSchema,
   CronRunSchema,
+  DecisionProviderIdSchema,
+  DecisionSiteModeSchema,
+  DecisionSiteViewSchema,
   DigestLatestSchema,
   EvalRunInfoSchema,
   EvalScorerSchema,
@@ -482,6 +485,30 @@ const PersonalityVoiceInput = z
   })
   .optional();
 
+/**
+ * `decisions.*` on a personality (plan decision-provider-personality §9) — the
+ * `voice` semantics: `sites` is merged per site onto the stored block
+ * (`mergeDecisionsConfig`, extensions/personalities), so a patch naming one
+ * site keeps the others; `provider: ''` clears the reference. `provider` must
+ * name a catalog id: the editor only offers ones the operator added, and a
+ * typo here would load as a silent `off` (PD3). Both objects are strict, so an
+ * unknown site key is refused rather than stripped.
+ */
+const PersonalityDecisionsInput = z
+  .object({
+    provider: DecisionProviderIdSchema.or(z.literal('')).optional(),
+    sites: z
+      .object({
+        injection: DecisionSiteModeSchema.optional(),
+        approver: DecisionSiteModeSchema.optional(),
+        router: DecisionSiteModeSchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .optional();
+
 const PersonalityCreateInput = z.object({
   /** Lowercase id; becomes the directory name. */
   id: z.string().min(1).regex(PersonalityIdRegex),
@@ -659,6 +686,8 @@ const PersonalityUpdateInput = z.object({
   voice: PersonalityVoiceInput,
   /** `mcp_export.*` — see `PersonalityMcpExportPatchInput`. */
   mcp_export: PersonalityMcpExportPatchInput.optional(),
+  /** `decisions.*` — see `PersonalityDecisionsInput`. */
+  decisions: PersonalityDecisionsInput,
 });
 const PersonalityUpdateOutput = z.object({ personality: PersonalitySchema });
 
@@ -3904,21 +3933,14 @@ const modelRegistry = {
 // ---------------------------------------------------------------------------
 // Decisions — Settings › Models › decision models
 // (plan/phases/decision-provider-jev.md §7, §12). Where Settings sets the
-// decision provider's vault key (`providers/<id>/apiKey`); per-site modes and
-// thresholds stay in config.yaml and are shown read-only here. Served by
+// decision provider's vault key (`providers/<id>/apiKey`). Per-site modes are
+// set on each personality (`personalities.update` `decisions`, plan
+// decision-provider-personality §9); the list reports which personalities use
+// each provider (`usedBy`). Thresholds stay config.yaml lines. Served by
 // `DecisionsService` (apps/web-api), cookie-only: `decisions` is absent from
 // `SCOPE_MAP` (apps/web-api/src/middleware/dual-auth.ts), so a bearer key is
 // refused the whole namespace.
 // ---------------------------------------------------------------------------
-
-/**
- * The decision providers the layer knows. Lockstep with `DECISION_PROVIDERS`
- * (@ethosagent/config) and with `DECISION_PROVIDER_CATALOG`
- * (apps/web-api/src/services/decision-catalog.ts) — this package cannot import
- * either, so the three are pinned equal by
- * apps/web-api/src/__tests__/services/decisions.service.test.ts ("catalog").
- */
-export const DecisionProviderIdSchema = z.enum(['typesafe']);
 
 /**
  * One KIND of decision model the operator can add — an entry of
@@ -3943,18 +3965,18 @@ export const DecisionProviderTypeSchema = z.object({
 });
 export type DecisionProviderType = z.infer<typeof DecisionProviderTypeSchema>;
 
-const DecisionSiteModeSchema = z.enum(['off', 'shadow', 'on']);
-
-/** One decision site as `resolveDecisionsConfig` reads it (R6). */
-export const DecisionSiteViewSchema = z.object({
-  site: z.enum(['injection', 'approver', 'router']),
-  /** `decisions.sites.<site>`; `off` when unset. */
-  requested: DecisionSiteModeSchema,
-  /** What runs: `on` with a missing threshold runs `shadow`. */
-  effective: DecisionSiteModeSchema,
-  /** Full key names whose absence caused that downgrade. */
-  missingThresholds: z.array(z.string()),
+/**
+ * One personality that names a decision provider in `decisions.provider`.
+ * `sites` holds only the sites it enables (`requested` ≠ `off`), each resolved
+ * by `resolveCharacterSheetDecisions` (@ethosagent/wiring) — empty when it
+ * names the provider but enables no site.
+ */
+export const DecisionProviderUserSchema = z.object({
+  personalityId: z.string(),
+  name: z.string(),
+  sites: z.array(DecisionSiteViewSchema),
 });
+export type DecisionProviderUser = z.infer<typeof DecisionProviderUserSchema>;
 
 export const DecisionProviderViewSchema = z.object({
   id: DecisionProviderIdSchema,
@@ -3975,7 +3997,9 @@ export const DecisionProviderViewSchema = z.object({
   /** The host data is sent to — the host of `baseUrl`. */
   host: z.string(),
   getKeyUrl: z.string(),
-  sites: z.array(DecisionSiteViewSchema),
+  /** The personalities whose `decisions.provider` names this provider, by id.
+   *  Empty when the server was not given the personality registry. */
+  usedBy: z.array(DecisionProviderUserSchema),
 });
 export type DecisionProviderView = z.infer<typeof DecisionProviderViewSchema>;
 
@@ -4073,9 +4097,10 @@ const decisions = {
     .input(z.object({ providerId: DecisionProviderIdSchema }))
     .output(z.object({ ok: z.literal(true) })),
   /** Removes the provider from the list: deletes the vault key AND the
-   *  `decisions.provider` line when it names this provider. `decisions.sites.*`
-   *  and the other `decisions.*` lines stay (inert without a provider).
-   *  Idempotent. */
+   *  `decisions.provider` line when it names this provider. The other
+   *  `decisions.*` lines stay (inert without a provider), and so does every
+   *  personality's `decisions` block — its sites resolve `off`
+   *  (`not-configured`) until the provider is added again. Idempotent. */
   remove: oc.input(z.object({ providerId: DecisionProviderIdSchema })).output(
     z.object({
       ok: z.literal(true),

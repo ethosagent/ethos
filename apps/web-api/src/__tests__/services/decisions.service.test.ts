@@ -5,6 +5,7 @@
 import { join } from 'node:path';
 import { DECISION_PROVIDERS, DECISIONS_API_KEY_REF, parseConfigYaml } from '@ethosagent/config';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
+import type { PersonalityConfig } from '@ethosagent/types';
 import { DecisionProviderIdSchema, DecisionsListOutput } from '@ethosagent/web-contracts';
 import { ModelTestRateLimiter } from '@ethosagent/wiring';
 import { describe, expect, it } from 'vitest';
@@ -33,6 +34,7 @@ async function harness(
     key?: string;
     respond?: () => Response;
     now?: () => number;
+    personalities?: PersonalityConfig[];
   } = {},
 ) {
   const storage = new InMemoryStorage();
@@ -54,6 +56,7 @@ async function harness(
       calls.push(url);
       return (opts.respond ?? (() => jev(0.97)))();
     },
+    ...(opts.personalities ? { listPersonalities: async () => opts.personalities ?? [] } : {}),
   });
   return { service, storage, secrets, calls, file: async () => (await storage.read(PATH)) ?? '' };
 }
@@ -108,11 +111,7 @@ describe('list', () => {
         baseUrl: 'https://api.typesafe.ai',
         host: 'api.typesafe.ai',
         getKeyUrl: 'https://console.typesafe.ai',
-        sites: [
-          { site: 'injection', requested: 'off', effective: 'off', missingThresholds: [] },
-          { site: 'approver', requested: 'off', effective: 'off', missingThresholds: [] },
-          { site: 'router', requested: 'off', effective: 'off', missingThresholds: [] },
-        ],
+        usedBy: [],
       },
     ]);
   });
@@ -143,13 +142,108 @@ describe('list', () => {
     expect(JSON.stringify(p)).not.toContain(KEY);
     expect(p?.host).toBe('127.0.0.1:9999');
     expect(p?.model).toBe('jev-1.13.0');
-    expect(p?.sites[0]).toEqual({
-      site: 'injection',
-      requested: 'off',
-      effective: 'off',
-      missingThresholds: [],
+    // A global site line enables nothing: no personality names the provider.
+    expect(p?.usedBy).toEqual([]);
+  });
+});
+
+describe('usedBy', () => {
+  const GLOBAL = [
+    'decisions.provider: typesafe',
+    'decisions.thresholds.injection: 0.9',
+    'decisions.thresholds.approver.approve: 0.95',
+  ];
+
+  it('lists each personality naming the provider with the sites it enables, resolved', async () => {
+    const { service } = await harness({
+      key: KEY,
+      lines: GLOBAL,
+      personalities: [
+        {
+          id: 'researcher',
+          name: 'Researcher',
+          safety: { approvalMode: 'smart' },
+          decisions: {
+            provider: 'typesafe',
+            sites: { injection: 'on', approver: 'on', router: 'off' },
+          },
+        },
+        { id: 'coder', name: 'Coder', decisions: { provider: 'typesafe' } },
+        // Enables sites but names no provider (PD10): not a user of this one.
+        { id: 'writer', name: 'Writer', decisions: { sites: { injection: 'shadow' } } },
+        { id: 'plain', name: 'Plain' },
+      ],
     });
-    expect(p?.sites[1]?.effective).toBe('off');
+    const [p] = (await service.list()).providers;
+    expect(p?.usedBy).toEqual([
+      {
+        personalityId: 'researcher',
+        name: 'Researcher',
+        sites: [
+          { site: 'injection', requested: 'on', effective: 'on', missingThresholds: [] },
+          // R6: `deny` is missing, so `on` runs as `shadow`.
+          {
+            site: 'approver',
+            requested: 'on',
+            effective: 'shadow',
+            reason: 'threshold-missing',
+            missingThresholds: ['decisions.thresholds.approver.deny'],
+          },
+        ],
+      },
+      { personalityId: 'coder', name: 'Coder', sites: [] },
+    ]);
+    expect(DecisionsListOutput.parse({ catalog: [], providers: [p] }).providers[0]).toEqual(p);
+  });
+
+  it('resolves a user of a provider the operator has not made active as not-configured', async () => {
+    const { service } = await harness({
+      key: KEY,
+      lines: ['provider: anthropic'],
+      personalities: [
+        {
+          id: 'researcher',
+          name: 'R',
+          decisions: { provider: 'typesafe', sites: { router: 'shadow' } },
+        },
+      ],
+    });
+    const [p] = (await service.list()).providers;
+    expect(p?.configured).toBe(false);
+    expect(p?.usedBy[0]?.sites).toEqual([
+      {
+        site: 'router',
+        requested: 'shadow',
+        effective: 'off',
+        reason: 'not-configured',
+        missingThresholds: [],
+      },
+    ]);
+  });
+
+  it('annotates an approver enabled under an approval mode that never consults it', async () => {
+    const { service } = await harness({
+      key: KEY,
+      lines: GLOBAL,
+      personalities: [
+        {
+          id: 'researcher',
+          name: 'R',
+          safety: { approvalMode: 'manual' },
+          decisions: { provider: 'typesafe', sites: { approver: 'shadow' } },
+        },
+      ],
+    });
+    const [p] = (await service.list()).providers;
+    expect(p?.usedBy[0]?.sites).toEqual([
+      {
+        site: 'approver',
+        requested: 'shadow',
+        effective: 'shadow',
+        missingThresholds: [],
+        inertApprovalMode: 'manual',
+      },
+    ]);
   });
 });
 
@@ -169,7 +263,7 @@ describe('setKey', () => {
     // And the runtime reads it as a layer with every site off.
     const [p] = (await service.list()).providers;
     expect(p?.configured).toBe(true);
-    expect(p?.sites.every((s) => s.effective === 'off')).toBe(true);
+    expect(p?.usedBy).toEqual([]);
   });
 
   it('leaves an existing decisions.provider line and its sites alone', async () => {

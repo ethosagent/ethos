@@ -161,9 +161,8 @@ export function AddDecisionModelForm({
           <span style={HINT}>
             Stored in the secret store at <span style={MONO}>{type.keyRef}</span>, not in
             config.yaml. Adding writes <span style={MONO}>decisions.provider: {type.id}</span> when
-            no decision model is active. It never turns a site on; any{' '}
-            <span style={MONO}>decisions.sites.*</span> lines already in config.yaml apply as
-            written.
+            no decision model is active. It never turns a site on: sites are enabled per
+            personality, in Personalities → Edit → Config.
           </span>
         </div>
       ) : null}
