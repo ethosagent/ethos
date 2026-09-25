@@ -116,7 +116,7 @@ function wireCardBot() {
   };
   const click = (approvalId: string, decision: 'allow' | 'deny') =>
     decide({ approvalId, decision, decidedBy: 'requester' } as ApprovalDecisionEvent);
-  return { hooks, flow, nextCard, click };
+  return { hooks, flow, nextCard, click, cards };
 }
 
 describe('gateway — command substitution asks on a card surface', () => {
@@ -140,12 +140,50 @@ describe('gateway — command substitution asks on a card surface', () => {
     await flow.shutdown();
   });
 
-  it('bash -c stays hardline: the guard refuses it even when the card is allowed', async () => {
-    const { hooks, flow, nextCard, click } = wireCardBot();
+  // A hardline call can never run on a gateway loop (the terminal/process
+  // guard refuses it), so asking a human to Allow it would ask for the
+  // impossible: the card hook refuses it with the hardline reason, no card.
+  it('bash -c stays hardline: no card is posted, and the call is refused with the hardline reason', async () => {
+    const { hooks, flow, cards, click } = wireCardBot();
     const result = fire(hooks, "bash -c 'id'");
-    const card = await nextCard();
-    click(card.approvalId, 'allow');
-    expect((await result).error).toMatch(/Command blocked: inline shell eval/);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const posted = cards.length;
+    // Unblock a card the base code posted, so a failure reports cleanly.
+    for (const card of cards) click(card.approvalId, 'deny');
+    expect(posted).toBe(0);
+    expect((await result).error).toMatch(/inline shell eval/);
+    await flow.shutdown();
+  });
+
+  it('the card hook alone refuses a hardline call — no guard needed', async () => {
+    const hooks = new DefaultHookRegistry();
+    const cards: unknown[] = [];
+    const adapter = {
+      id: 'slack:test',
+      botKey: 'bot-1',
+      postApprovalCard: async (card: unknown) => {
+        cards.push(card);
+        return { messageTs: 'ts-1' };
+      },
+      updateApprovalCard: async () => ({ ok: true }),
+      onApprovalDecision: () => {},
+    } as unknown as PlatformAdapter;
+    const bots = [
+      { botKey: 'bot-1', loop: { hooks }, binding: { type: 'personality', name: 'default' } },
+    ] as unknown as GatewayBotConfig[];
+    const gateway = {
+      resolveApprovalRoute: () => ({
+        adapter,
+        chatId: 'C1',
+        requesterUserId: 'requester',
+        isDm: true,
+        platform: 'slack',
+      }),
+    } as unknown as Gateway;
+    const flow = wireApprovalFlow(gateway, bots, [adapter], { ...seams, approvalTimeoutMs: 200 });
+    const result = await fire(hooks, 'rm -rf /');
+    expect(cards).toEqual([]);
+    expect(result.error).toMatch(/recursive force-delete of root or home directory/);
     await flow.shutdown();
   });
 

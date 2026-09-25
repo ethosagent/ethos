@@ -125,6 +125,7 @@ import {
   createOutboundPolicyGate,
   createSessionStore,
   fileMemoryUnsupportedReason,
+  hardlineReason,
   IdentityMap,
   initPairingDb,
   type LiveKitBindings,
@@ -3053,7 +3054,13 @@ export function wireApprovalFlow(
   for (const bot of approvalBots) {
     bot.loop.hooks.registerModifying(
       'before_tool_call',
-      createSlackApprovalHook({ coordinator, isDangerous, resolveApprovalTarget, withoutSurface }),
+      createSlackApprovalHook({
+        coordinator,
+        isDangerous,
+        resolveApprovalTarget,
+        withoutSurface,
+        hardlineReason,
+      }),
     );
     // Approval-required commands (command substitution) now reach the card
     // instead of the loop's terminal/process guard refusing them first.
