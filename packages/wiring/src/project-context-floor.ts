@@ -18,12 +18,69 @@ import type { ContextInjector, PersonalityConfig } from '@ethosagent/types';
 const FILE_CONTEXT_INJECTOR_ID = 'file-context';
 
 /**
+ * The directory a turn for `personality` resolves as its working directory
+ * (`deriveFsReachPaths`, exactly as `stages/turn-setup.ts` does), or
+ * `undefined` for an unusable `fs_reach`, which the turn itself refuses.
+ */
+export function resolveTurnWorkdir(
+  personality: PersonalityConfig,
+  opts: { dataDir: string; cwd: string },
+): string | undefined {
+  try {
+    return deriveFsReachPaths(personality, {
+      ethosHome: opts.dataDir,
+      self: personality.id,
+      cwd: opts.cwd,
+    }).workdir;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The root project-context block the file-context injector renders for
+ * `personality` in an ALREADY-RESOLVED `workdir`, or `''` when there is none
+ * (no injector, no discovery file, `context_layering.mode: off`, or an
+ * injector that throws).
+ *
+ * The empty `sessionId` is deliberate: progressive sub-directory layers are
+ * tracked per session (`FileContextInjector.sessionLayers`), so no session
+ * means no progressive layers — this is the static root layer only. Those
+ * layers are dynamic tail content, discovered while the agent works; they are
+ * not part of the static floor and are counted per turn by the compaction
+ * gate instead (see `createSmallWindowResolver`, small-window-resolver.ts).
+ */
+export async function projectContextFor(opts: {
+  injectors: readonly ContextInjector[];
+  personality: PersonalityConfig;
+  workdir: string;
+  platform: string;
+  model: string;
+}): Promise<string> {
+  const injector = opts.injectors.find((i) => i.id === FILE_CONTEXT_INJECTOR_ID);
+  if (!injector) return '';
+  try {
+    const result = await injector.inject({
+      sessionId: '',
+      sessionKey: '',
+      platform: opts.platform,
+      model: opts.model,
+      history: [],
+      workingDir: opts.workdir,
+      isDm: true,
+      turnNumber: 0,
+      personalityId: opts.personality.id,
+    });
+    return result?.content ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * The project-context block the first turn's prompt would carry for
- * `personality` in `workingDir`, or `''` when there is none (no injector, no
- * discovery file, `context_layering.mode: off`, or an unusable `fs_reach`,
- * which the turn itself refuses). Progressive sub-directory layers are
- * discovered later, while the agent works, so they are not part of the
- * startup prefix.
+ * `personality` launched in `workingDir`: `resolveTurnWorkdir` then
+ * `projectContextFor`. `''` when there is none.
  */
 export async function projectContextAtStartup(opts: {
   injectors: readonly ContextInjector[];
@@ -33,32 +90,10 @@ export async function projectContextAtStartup(opts: {
   platform: string;
   model: string;
 }): Promise<string> {
-  const injector = opts.injectors.find((i) => i.id === FILE_CONTEXT_INJECTOR_ID);
-  if (!injector) return '';
-  let workdir: string;
-  try {
-    workdir = deriveFsReachPaths(opts.personality, {
-      ethosHome: opts.dataDir,
-      self: opts.personality.id,
-      cwd: opts.workingDir,
-    }).workdir;
-  } catch {
-    return '';
-  }
-  try {
-    const result = await injector.inject({
-      sessionId: '',
-      sessionKey: '',
-      platform: opts.platform,
-      model: opts.model,
-      history: [],
-      workingDir: workdir,
-      isDm: true,
-      turnNumber: 0,
-      personalityId: opts.personality.id,
-    });
-    return result?.content ?? '';
-  } catch {
-    return '';
-  }
+  const workdir = resolveTurnWorkdir(opts.personality, {
+    dataDir: opts.dataDir,
+    cwd: opts.workingDir,
+  });
+  if (workdir === undefined) return '';
+  return projectContextFor({ ...opts, workdir });
 }

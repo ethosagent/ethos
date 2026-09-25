@@ -352,7 +352,17 @@ export async function* setupTurn(
   // and executeParallel downstream, so a narrowed-out tool is rejected exactly
   // like a disallowed one. Static per loop + personality — never per turn —
   // so the tool payload in the request prefix stays byte-stable.
-  if (deps.smallWindow) {
+  //
+  // Whether small-window mode is on for THIS personality: a wired resolver
+  // answers per personality and workdir (memoized in wiring, so the answer is
+  // constant while its inputs are); without one the loop-level flag applies.
+  const smallWindowOverlay = deps.smallWindowResolver
+    ? await deps.smallWindowResolver(personality, workingDir)
+    : undefined;
+  const smallWindow = deps.smallWindowResolver
+    ? smallWindowOverlay !== undefined
+    : deps.smallWindow;
+  if (smallWindow) {
     const declared = parseSmallWindowToolset(
       personality.context_engine_options?.small_window_toolset,
     );
@@ -469,6 +479,7 @@ export async function* setupTurn(
       filterOpts,
       memScopeId,
       ...(toolLoading ? { toolLoading } : {}),
+      ...(smallWindowOverlay ? { smallWindowOverlay } : {}),
     },
   };
 }

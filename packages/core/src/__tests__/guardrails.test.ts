@@ -199,7 +199,14 @@ describe('Orchestrator guardrails', () => {
     // Merged 1040 + 6 -> 1046 (decision-provider-jev integration): the
     // openclaw-9.5-adoption cap (1040) plus the tier router's 6 pass-through
     // lines, each ratcheted independently; the cap is their sum.
-    expect(lineCount).toBeLessThanOrEqual(1046);
+    // Bumped 1046 -> 1052 (per-personality small-window mode): the optional
+    // `smallWindowResolver` config field (one line), its private field, the
+    // constructor assignment and deps-getter line, the import, and the one
+    // `turnDeps` line that applies the turn's decision (the three call sites
+    // that took `this.deps` now take it, no new lines). The resolver lives in
+    // packages/wiring/src/small-window-resolver.ts, the call in
+    // agent-loop/stages/turn-setup.ts, the overlay in agent-loop/small-window.ts.
+    expect(lineCount).toBeLessThanOrEqual(1052);
   });
 
   it('no stage file exceeds 700 lines', () => {

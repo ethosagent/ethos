@@ -25,6 +25,7 @@ import { budgetGuardEvents, checkTurnBudgets, updateDenialStreak } from './agent
 import { compactSession, type ManualCompactionResult } from './agent-loop/manual-compact';
 import { applyOverflowRetry, overflowErrorEvent } from './agent-loop/overflow';
 import { applySamplingDefaults, type ModelSamplingDefaults } from './agent-loop/sampling';
+import { withSmallWindow } from './agent-loop/small-window';
 import { assembleContext, type MemoryPrefetchGate } from './agent-loop/stages/context-assembly';
 import {
   createTurnBudgetCounters,
@@ -213,6 +214,7 @@ export interface AgentLoopConfig {
   logger?: Logger;
   /** Part 1 on-demand tool loading; absent → unchanged (tool-loading-loop.test.ts). */
   toolLoading?: import('./agent-loop/tool-loading').ToolLoadingResolver;
+  smallWindowResolver?: import('./agent-loop/small-window').SmallWindowResolver; // per-personality small-window mode; absent → options.smallWindow
   /** plan decision-provider-jev §8.3 — downgrade-only tier router, built in wiring;
    *  absent → no routing (`agent-loop/tier-router.ts`, pinned by tier-router.test.ts). */
   tierRouter?: import('./agent-loop/tier-router').TierRouter;
@@ -382,6 +384,7 @@ export class AgentLoop {
   private readonly streamingTimeoutMs: number;
   private readonly smallWindow: boolean;
   private readonly toolLoading?: AgentLoopConfig['toolLoading'];
+  private readonly smallWindowResolver?: AgentLoopConfig['smallWindowResolver'];
   private readonly tierRouter?: AgentLoopConfig['tierRouter'];
   private readonly modelResolution: ModelResolutionContext;
   private readonly deviationSeen = new Map<string, true>(); // D17 `once`, per loop
@@ -450,6 +453,7 @@ export class AgentLoop {
     this.streamingTimeoutMs = config.options?.streamingTimeoutMs ?? DEFAULT_STREAMING_TIMEOUT_MS;
     this.smallWindow = config.options?.smallWindow ?? false;
     this.toolLoading = config.toolLoading;
+    this.smallWindowResolver = config.smallWindowResolver;
     this.tierRouter = config.tierRouter;
     this.modelResolution = config.modelResolution ?? emptyModelResolution();
     this.modelSampling = config.modelSampling;
@@ -588,6 +592,7 @@ export class AgentLoop {
       streamingTimeoutMs: this.streamingTimeoutMs,
       smallWindow: this.smallWindow,
       toolLoading: this.toolLoading,
+      smallWindowResolver: this.smallWindowResolver,
       tierRouter: this.tierRouter,
       modelResolution: this.modelResolution,
       deviationSeen: this.deviationSeen,
@@ -623,9 +628,10 @@ export class AgentLoop {
     const setupResult = yield* setupTurn(this.deps, text, opts);
     if (setupResult.kind === 'refused') return;
     const { setup } = setupResult;
+    const turnDeps = withSmallWindow(this.deps, setup.smallWindowOverlay); // this turn's small-window decision
 
     // Stage 2: Context assembly (user msg, history, memory, system prompt, compaction)
-    const assembled = yield* assembleContext(this.deps, setup, text, opts);
+    const assembled = yield* assembleContext(turnDeps, setup, text, opts);
 
     const {
       systemPrompt,
@@ -856,7 +862,7 @@ export class AgentLoop {
         overflowRetried = true;
         const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn, serverCompaction };
         const retry = canRetry
-          ? await applyOverflowRetry(this.deps, llmMessages, systemPrompt ?? '', personality, meta)
+          ? await applyOverflowRetry(turnDeps, llmMessages, systemPrompt ?? '', personality, meta)
           : { retried: false };
         if (retry.retried) {
           cacheBreakpoints = undefined; // history reshaped — drop stale breakpoints
@@ -1021,7 +1027,7 @@ export class AgentLoop {
         ? { maxCompletionTokens: opts.maxCompletionTokens }
         : {}),
     };
-    yield* maybeConsolidateAtTurnEnd(this.deps, buildTurnEndCtx(setup, turnEndExtras));
+    yield* maybeConsolidateAtTurnEnd(turnDeps, buildTurnEndCtx(setup, turnEndExtras));
   }
 
   /**
