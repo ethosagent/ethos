@@ -637,6 +637,8 @@ export interface ComposeToolsResult {
   memoryConsult?: GroundingMemoryConsult;
   /** `ExecutionRouting.resolvePosture` — surfaced as `CreateAgentLoopResult.executionPostureFor`. */
   executionPostureFor: ExecutionRouting['resolvePosture'];
+  /** `ExecutionRouting.exec` — the route a goal's command acceptance checks run on (S1). */
+  executionRouteFor: ExecutionRouting['exec'];
 }
 
 /**
@@ -2032,5 +2034,6 @@ export async function composeAllTools(
     turnAuditors: grounding.turnAuditors,
     ...(grounding.memoryConsult ? { memoryConsult: grounding.memoryConsult } : {}),
     executionPostureFor: routing.resolvePosture,
+    executionRouteFor: routing.exec,
   };
 }

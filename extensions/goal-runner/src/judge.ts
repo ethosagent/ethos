@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process';
 import type { AcceptanceSpec, CriterionResult, Verdict } from '@ethosagent/types';
 
 export interface JudgeInput {
@@ -13,39 +12,29 @@ export interface CommandResult {
 }
 
 export interface JudgeOptions {
-  /** Override command execution (tests). Defaults to running via `sh -c`. */
+  /**
+   * Runs a check's `command`. The judge has no shell of its own (S1, plan
+   * openclaw-2026.9.6-gaps): production injects the executor
+   * `createAcceptanceCheckExecutor` builds in packages/wiring, which refuses a
+   * personality without `terminal`, applies the hardline, deny-rule and
+   * approval checks the `terminal` tool's path crosses, and runs the command on
+   * the personality's resolved execution backend. Absent → every command check
+   * fails with {@link NO_EXECUTOR_EVIDENCE}; nothing runs.
+   */
   execCommand?: (command: string) => Promise<CommandResult>;
 }
 
-const COMMAND_TIMEOUT_MS = 30_000;
-const COMMAND_MAX_BUFFER = 1024 * 1024;
 const EVIDENCE_SNIPPET_CHARS = 200;
+
+/** Why a command check failed when no executor was injected. */
+export const NO_EXECUTOR_EVIDENCE = 'no execution backend is wired for command checks';
 
 function snippet(text: string): string {
   return text.trim().slice(0, EVIDENCE_SNIPPET_CHARS);
 }
 
-/** Run a check command via `sh -c` with a 30s timeout. Rejects on timeout or spawn failure. */
-function defaultExecCommand(command: string): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'sh',
-      ['-c', command],
-      { timeout: COMMAND_TIMEOUT_MS, maxBuffer: COMMAND_MAX_BUFFER, cwd: process.cwd() },
-      (error, stdout, stderr) => {
-        if (!error) {
-          resolve({ code: 0, stdout, stderr });
-          return;
-        }
-        if (typeof error.code === 'number') {
-          resolve({ code: error.code, stdout, stderr });
-          return;
-        }
-        // Timeout (killed) or spawn failure — there is no usable exit code.
-        reject(new Error(error.killed ? `timed out after ${COMMAND_TIMEOUT_MS}ms` : error.message));
-      },
-    );
-  });
+function refuseCommand(): Promise<CommandResult> {
+  return Promise.reject(new Error(NO_EXECUTOR_EVIDENCE));
 }
 
 async function runCommandCheck(
@@ -82,14 +71,15 @@ async function runCommandCheck(
 
 /**
  * Run mechanical checks and score rubric items.
- * Checks with a `command` execute it via `sh -c` (30s timeout) and pass iff it
- * exits 0; commands run sequentially since they may touch shared state. Checks
+ * Checks with a `command` run it through `opts.execCommand` and pass iff it
+ * exits 0 (a refusal or timeout fails the check with the reason as evidence);
+ * commands run sequentially since they may touch shared state. Checks
  * without a command fall back to a substring match against the attempt output.
  * Rubric items still get placeholder scores — the eval-harness integration
  * (plan phase 2) replaces the rubric scoring.
  */
 export async function judge(input: JudgeInput, opts?: JudgeOptions): Promise<Verdict> {
-  const execCommand = opts?.execCommand ?? defaultExecCommand;
+  const execCommand = opts?.execCommand ?? refuseCommand;
   const results: CriterionResult[] = [];
 
   for (const check of input.spec.checks) {

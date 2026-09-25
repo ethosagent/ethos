@@ -13,10 +13,10 @@ import type {
   Verdict,
 } from '@ethosagent/types';
 import { answerSuffix } from '@ethosagent/types';
-import { isConverged, judge } from './judge';
+import { type CommandResult, isConverged, judge } from './judge';
 import { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
-export { isConverged, judge } from './judge';
+export { type CommandResult, isConverged, judge, NO_EXECUTOR_EVIDENCE } from './judge';
 export { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
 /** Consecutive same-tool failures before the run is treated as a compounding
@@ -177,7 +177,20 @@ export interface GoalRunnerConfig {
   /** Injectable sleep for transient-error retry backoff. Defaults to a real
    *  setTimeout delay; tests inject a recorder to skip waiting. */
   sleepFn?: (ms: number) => Promise<void>;
+  /**
+   * Runs an acceptance check's `command` for the goal's personality (S1, plan
+   * openclaw-2026.9.6-gaps). Production passes `createAcceptanceCheckExecutor`
+   * (packages/wiring/src/acceptance-check-executor.ts). Absent → the judge
+   * refuses every command check (`NO_EXECUTOR_EVIDENCE` in ./judge).
+   */
+  execAcceptanceCheck?: AcceptanceCheckExecutor;
 }
+
+/** Runs one acceptance-check command on behalf of a goal's personality. */
+export type AcceptanceCheckExecutor = (
+  command: string,
+  ctx: { personalityId: string },
+) => Promise<CommandResult>;
 
 /**
  * One run's AbortController, carrying the lease that run holds in the store.
@@ -218,6 +231,7 @@ export class GoalRunner {
   private runAttempt: GoalRunnerConfig['runAttempt'];
   private runPlan: GoalRunnerConfig['runPlan'];
   private sleep: (ms: number) => Promise<void>;
+  private execAcceptanceCheck: AcceptanceCheckExecutor | undefined;
 
   constructor(config: GoalRunnerConfig) {
     this.store = config.store;
@@ -229,6 +243,7 @@ export class GoalRunner {
     this.runAttempt = config.runAttempt;
     this.runPlan = config.runPlan;
     this.sleep = config.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.execAcceptanceCheck = config.execAcceptanceCheck;
   }
 
   /**
@@ -1254,7 +1269,13 @@ export class GoalRunner {
     }
 
     this.setStatus(run, goalId, 'judging');
-    const verdict = await judge({ output, spec });
+    const exec = this.execAcceptanceCheck;
+    const verdict = await judge(
+      { output, spec },
+      exec
+        ? { execCommand: (command) => exec(command, { personalityId: goal.personalityId }) }
+        : undefined,
+    );
 
     this.store.updateAttempt(goalId, attemptN, {
       verdict,
