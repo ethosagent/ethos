@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  configParseNotices,
   type EthosConfig,
   ethosCronDir,
   ethosDir,
@@ -535,11 +536,17 @@ describe('parseConfigYaml — storage backend', () => {
     expect(cfg.storage?.s3?.prefix).toBe('ethos');
   });
 
-  it('keeps storage.encryption: true alone yielding { encryption: true }', async () => {
+  // SEC-001 — the flag encrypted none of the files its how-to named, so it was
+  // removed rather than left claiming a protection it did not give. A config
+  // that still sets it is told so by name, not with a generic unknown-key line.
+  it('drops storage.encryption and says it was removed', async () => {
     const cfg = await loadYaml([...base, 'storage.encryption: true'].join('\n'));
-    expect(cfg.storage).toEqual({ encryption: true });
-    expect(cfg.storage?.backend).toBeUndefined();
-    expect(cfg.storage?.s3).toBeUndefined();
+    expect(cfg.storage).toBeUndefined();
+    const { warnings } = configParseNotices(cfg);
+    const notice = warnings.filter((w) => w.includes("'storage.encryption'"));
+    expect(notice).toHaveLength(1);
+    expect(notice[0]).toContain('removed');
+    expect(notice[0]).toContain('not encrypted');
   });
 
   it('omits the s3 block when backend is s3 but no bucket is set', async () => {

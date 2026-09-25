@@ -499,11 +499,9 @@ export interface WiringConfig {
   /** File-backed secrets resolver. When provided, the capability backend
    *  resolves secrets from ~/.ethos/secrets/ before falling back to env vars. */
   secretsResolver?: SecretsResolver;
-  /** Storage-layer settings. When `encryption` is true, the primary FsStorage
-   *  is wrapped in CryptoStorage using ETHOS_STORAGE_KEY. */
+  /** Storage-layer settings. */
   storage?: {
     backend?: string;
-    encryption?: boolean;
   };
   /**
    * Remote model catalog configuration. When provided with `enabled !== false`,
@@ -1731,7 +1729,7 @@ export async function createAgentLoop(
   const opts: CreateAgentLoopOptions = rawOpts.replay
     ? { ...rawOpts, disablePostTurnLearning: true }
     : rawOpts;
-  const { wiringCtx, profile, log } = buildWiringContext(config, opts);
+  const { wiringCtx, profile, log } = buildWiringContext(opts);
   // F06 — ONE stack for the whole assembly. Every stage pushes the release of
   // each resource it opens right after opening it, so a stage that throws
   // leaves the stack holding exactly what the earlier stages built — released
