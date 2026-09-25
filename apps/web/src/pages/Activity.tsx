@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { Button, Empty, Select, Spin, Tag, Typography } from 'antd';
+import { Button, Empty, Segmented, Select, Spin, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { DeliveriesPanel } from '../features/deliveries/DeliveriesPanel';
+import { UsagePanel } from '../features/usage/UsagePanel';
 import {
   type ActivityDetail,
   type ActivityGroup,
@@ -156,7 +158,53 @@ function EventDetail({ details }: { details: ActivityDetail[] }) {
   );
 }
 
+/**
+ * The bare `/activity` (every agent, Library altitude) carries two more views
+ * beside the timeline: Usage (`usage.summary`, U3) and Deliveries (the delivery
+ * ledger and dead inbound, moved from Settings → Voice by U5). Both are
+ * machine-wide facts with no per-agent filter, so the workspace twin
+ * `/p/:personalityId/activity` keeps the timeline alone rather than showing
+ * another agent's spend and replies under this one's name.
+ */
 export function Activity() {
+  const { personalityId } = useParams<{ personalityId?: string }>();
+  const [view, setView] = useState<ActivityView>('timeline');
+  if (personalityId) return <ActivityTimeline />;
+  return (
+    <div className="activity-page">
+      <header className="activity-toolbar">
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          Activity
+        </Typography.Title>
+        {/* `Segmented`, this app's control for a small mutually-exclusive
+            choice (see `VoiceModeToggle`), not a second tab strip. */}
+        <Segmented<ActivityView>
+          size="small"
+          value={view}
+          onChange={setView}
+          options={ACTIVITY_VIEWS.map((v) => ({ label: v.label, value: v.value }))}
+        />
+      </header>
+      {view === 'timeline' ? (
+        <ActivityTimeline embedded />
+      ) : view === 'usage' ? (
+        <UsagePanel />
+      ) : (
+        <DeliveriesPanel />
+      )}
+    </div>
+  );
+}
+
+type ActivityView = 'timeline' | 'usage' | 'deliveries';
+
+const ACTIVITY_VIEWS: ReadonlyArray<{ value: ActivityView; label: string }> = [
+  { value: 'timeline', label: 'Timeline' },
+  { value: 'usage', label: 'Usage' },
+  { value: 'deliveries', label: 'Deliveries' },
+];
+
+function ActivityTimeline({ embedded = false }: { embedded?: boolean }) {
   const { personalityId: routePersonalityId } = useParams<{ personalityId?: string }>();
   const personalityId = routePersonalityId ?? null;
 
@@ -306,11 +354,15 @@ export function Activity() {
   }
 
   return (
-    <div className="activity-page">
+    <div className={embedded ? undefined : 'activity-page'}>
       <header className="activity-toolbar">
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          Activity
-        </Typography.Title>
+        {embedded ? (
+          <span />
+        ) : (
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            Activity
+          </Typography.Title>
+        )}
         <Select
           allowClear
           placeholder="All sessions"

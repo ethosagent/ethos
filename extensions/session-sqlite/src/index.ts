@@ -47,6 +47,61 @@ export interface UsageAggregateRow {
   messages: number;
 }
 
+/** A window's totals over {@link UsageAggregateRow}s, plus the cache hit rate. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  estimatedCostUsd: number;
+  messages: number;
+  /** Share of billable input served from cache, 0–1. See {@link cacheHitRate}. */
+  cacheHitRate: number;
+}
+
+/**
+ * Cached share of input tokens.
+ *
+ * Denominator is every token the model read — fresh input, cache reads, and
+ * cache writes — because a cache write is input the provider still charged for.
+ * Excluding it would make the first turn of a session look like a 0% hit rate
+ * on a smaller base and flatter the number thereafter.
+ */
+export function cacheHitRate(t: {
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}): number {
+  const total = t.inputTokens + t.cacheReadTokens + t.cacheCreationTokens;
+  return total === 0 ? 0 : t.cacheReadTokens / total;
+}
+
+/**
+ * Fold aggregate rows into one window's totals — the ONE fold behind both
+ * `ethos usage` (apps/ethos/src/commands/usage.ts) and the web `usage.summary`
+ * RPC (apps/web-api/src/rpc/usage.ts), so the two cannot report different
+ * numbers for the same window. Pinned by apps/web-api's `usage-rpc.test.ts`.
+ */
+export function summarizeUsageRows(rows: UsageAggregateRow[]): UsageTotals {
+  const t = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    estimatedCostUsd: 0,
+    messages: 0,
+  };
+  for (const r of rows) {
+    t.inputTokens += r.inputTokens;
+    t.outputTokens += r.outputTokens;
+    t.cacheReadTokens += r.cacheReadTokens;
+    t.cacheCreationTokens += r.cacheCreationTokens;
+    t.estimatedCostUsd += r.estimatedCostUsd;
+    t.messages += r.messages;
+  }
+  return { ...t, cacheHitRate: cacheHitRate(t) };
+}
+
 /** Outcome of {@link SQLiteSessionStore.recomputeMessageCosts}. */
 export interface RecomputeCostsResult {
   /** Message rows carrying token counts, i.e. rows a cost can be derived for. */

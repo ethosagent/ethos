@@ -24,6 +24,7 @@ import { useConfig } from '../features/config/api/queries';
 import { useGoalCreate } from '../features/goals/api/mutations';
 import { useGoalDetection } from '../features/goals/useGoalDetection';
 import { usePersonalityGet } from '../features/personalities/api/queries';
+import { sessionKeys } from '../features/sessions/api/keys';
 import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useRecentSessions, useSessionGet } from '../features/sessions/api/queries';
 import { BranchSwitcher } from '../features/sessions/BranchSwitcher';
@@ -170,6 +171,19 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
   const sessionQuery = useSessionGet(currentSessionId);
   // undefined = no session; null = session without title; string = titled session
   const sessionTitle = currentSessionId ? (sessionQuery.data?.session.title ?? null) : undefined;
+  // U3 — the session's persisted spend, beside its title. The rollup is
+  // written when a turn's rows land, so the detail query is refreshed each
+  // time a turn stops streaming rather than re-derived from stream events.
+  const sessionCostUsd = currentSessionId
+    ? sessionQuery.data?.session.usage.estimatedCostUsd
+    : undefined;
+  const wasStreaming = useRef(false);
+  useEffect(() => {
+    if (wasStreaming.current && !state.isStreaming && currentSessionId) {
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.detail(currentSessionId) });
+    }
+    wasStreaming.current = state.isStreaming;
+  }, [state.isStreaming, currentSessionId, queryClient]);
 
   const renameMut = useSessionRenameFromChat(currentSessionId);
 
@@ -904,6 +918,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         onNewSession={handleNewSession}
         sessionTitle={sessionTitle}
         onRenameSession={handleRenameSession}
+        {...(sessionCostUsd !== undefined ? { sessionCostUsd } : {})}
         {...(teamContext ? { teamContext: { ...teamContext, coordinatorName } } : {})}
         {...(coordinatorOf ? { coordinatorOf } : {})}
         actionsSlot={

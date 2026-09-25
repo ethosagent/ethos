@@ -5155,6 +5155,57 @@ const InboundActionInput = z.object({ id: z.string().min(1) });
  *  retried or discarded). */
 const InboundActionOutput = z.object({ ok: z.boolean() });
 
+// ---------------------------------------------------------------------------
+// Usage — spend and tokens over a window (plan openclaw-2026.9.6-gaps U3)
+//
+// The web face of `ethos usage`: the same `usageAggregate` rows folded by the
+// same `summarizeUsageRows` (@ethosagent/session-sqlite), so a window reads the
+// same in the terminal and the browser. The CLI's observability-backed parts
+// (turn outcomes, `--by tool|skill`) are not here.
+// ---------------------------------------------------------------------------
+
+const UsageRowSchema = z.object({
+  /** The group: a UTC date, model, personality id, platform, or session id. */
+  key: z.string(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadTokens: z.number(),
+  cacheCreationTokens: z.number(),
+  estimatedCostUsd: z.number(),
+  messages: z.number(),
+});
+
+const UsageDimensionSchema = z.enum(['model', 'personality', 'channel', 'session']);
+
+const UsageSummaryInput = z.object({
+  /** Window length ending now, in ms. 1 minute to 366 days. */
+  windowMs: z
+    .number()
+    .int()
+    .min(60_000)
+    .max(366 * 24 * 60 * 60 * 1000),
+  /** Optional breakdown, as `ethos usage --by`. */
+  by: UsageDimensionSchema.optional(),
+});
+
+const UsageSummaryOutput = z.object({
+  /** Epoch milliseconds. */
+  since: z.number(),
+  until: z.number(),
+  totals: UsageRowSchema.omit({ key: true }).extend({
+    /** Share of billable input served from cache, 0–1. */
+    cacheHitRate: z.number(),
+  }),
+  /** One row per UTC day with spend, `key` = `YYYY-MM-DD`. */
+  daily: z.array(UsageRowSchema),
+  by: z.object({ dimension: UsageDimensionSchema, rows: z.array(UsageRowSchema) }).optional(),
+});
+
+/** @experimental */
+const usage = {
+  summary: oc.input(UsageSummaryInput).output(UsageSummaryOutput),
+};
+
 /** @experimental */
 const deliveries = {
   summary: oc.input(DeliveriesSummaryInput).output(DeliveriesSummaryOutput),
@@ -6341,6 +6392,7 @@ export const contract = {
   digest,
   voice,
   deliveries,
+  usage,
   outbox,
   learning,
   channels,

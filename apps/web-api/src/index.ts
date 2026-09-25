@@ -111,6 +111,7 @@ import { SystemEventBus } from './services/system-event-bus';
 import { TasksService } from './services/tasks.service';
 import { TeamsService } from './services/teams.service';
 import { ToolSettingsService } from './services/tool-settings.service';
+import { UsageService } from './services/usage.service';
 import { VoiceService } from './services/voice.service';
 import { VoiceLaneModeService } from './services/voice-lane-mode.service';
 import { WakeRoutesService } from './services/wake-routes.service';
@@ -2033,6 +2034,7 @@ function assembleWebApi(opts: CreateWebApiOptions, disposers: DisposerStack): Cr
       satellites: satelliteRegistry,
       wakeRoutes: wakeRoutesService,
       deliveries: deliveriesService,
+      usage: new UsageService(opts.sessionStore),
       outbox: outboxService,
       learning: learningService,
       calls: callsService,

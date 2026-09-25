@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: recover-messages-after-a-crash
 time: "10 min"
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 ## Task
@@ -92,7 +92,7 @@ A message lands here for one of two reasons:
 
 Doctor lists `interrupted` messages in a separate block below the dead letters. Those are waiting on the user's `retry`. Replaying one yourself re-runs the turn, tools included.
 
-The same list is on the web dashboard: Settings → Voice → **inbound — dead**, with Replay and Discard buttons. Its State column shows `dead` or `interrupted — awaiting retry`.
+The same list is on the web dashboard: Activity → **Deliveries** → **inbound — dead**, with Replay and Discard buttons. Its State column shows `dead` or `interrupted — awaiting retry`.
 
 ### 4. Replay or discard each one
 

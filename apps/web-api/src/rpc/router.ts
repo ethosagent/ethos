@@ -58,6 +58,7 @@ import { tasksRouter } from './tasks';
 import { teamsRouter } from './teams';
 import { toolSettingsRouter } from './tool-settings';
 import { toolsRouter } from './tools';
+import { usageRouter } from './usage';
 import { voiceRouter } from './voice';
 
 // Top-level oRPC router. Each namespace lives in its own file (one
@@ -122,6 +123,7 @@ export const apiRouter = {
   digest: digestRouter,
   voice: voiceRouter,
   deliveries: deliveriesRouter,
+  usage: usageRouter,
   outbox: outboxRouter,
   learning: learningRouter,
   channels: channelsRouter,
