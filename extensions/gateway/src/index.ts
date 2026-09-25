@@ -98,6 +98,12 @@ import {
   OUTBOUND_MEDIA_MAX_BYTES,
   type OutboundMediaCaps,
 } from './media';
+import {
+  type GatewayQuietHours,
+  inQuietHours,
+  parseMuteDuration,
+  quietWindowFor,
+} from './quiet-hours';
 import { DraftStreamer } from './streaming';
 import type { TranscodeResult, Transcoder } from './transcode';
 import type { VoiceArtifactStore } from './voice-artifacts';
@@ -129,6 +135,15 @@ export {
   type OutboundMediaCaps,
   type OutboundMediaSource,
 } from './media';
+export {
+  type GatewayQuietHours,
+  inQuietHours,
+  MAX_MUTE_MS,
+  minuteOfDay,
+  parseMuteDuration,
+  type QuietHoursWindow,
+  quietWindowFor,
+} from './quiet-hours';
 export {
   closeUnbalancedMarkup,
   DraftStreamer,
@@ -802,6 +817,35 @@ export interface PublicationResult {
   refusal?: { code: PublicationRefusalCode; message: string };
 }
 
+/**
+ * One unprompted notice held for quiet hours or a lane mute (U11). Everything
+ * `sendTracked` needs to deliver it later on the same bot, lane and thread.
+ */
+export interface HeldNotice {
+  id: number;
+  botKey: string;
+  platform: string;
+  chatId: string;
+  threadId?: string;
+  laneKey: string;
+  /** Ledger session id the release files the obligation under. */
+  sessionKey: string;
+  text: string;
+  heldAt: number;
+}
+
+/**
+ * Durable store for held notices (`GatewayConfig.heldNotices`). Structural so
+ * the gateway takes no dependency on a concrete store: production wires
+ * `SQLiteNotifyQueue` (`@ethosagent/notify-queue`, its `held_notices` table).
+ */
+export interface HeldNoticeStore {
+  hold(notice: Omit<HeldNotice, 'id' | 'heldAt'>): Promise<void>;
+  /** Every notice not yet released, oldest first. */
+  listHeld(): Promise<HeldNotice[]>;
+  markReleased(id: number): Promise<void>;
+}
+
 export interface GatewayConfig {
   /**
    * Multi-bot routing: one entry per bot. The Gateway keys its lane state
@@ -867,6 +911,20 @@ export interface GatewayConfig {
    * having its replies delivered.
    */
   deliveryLedger?: DeliveryLedger;
+  /**
+   * U11 — operator quiet hours (`notifications.*` in config.yaml, resolved by
+   * the wiring with an explicit time zone). Inside a bot's window an unprompted
+   * notice — `notifyTracked` without `answersInbound`, a background-job wake —
+   * is held in `heldNotices` and released by the delivery sweep once the window
+   * ends. Absent → nothing is held for quiet hours (`/mute` still applies).
+   */
+  quietHours?: GatewayQuietHours;
+  /**
+   * Where held notices wait (`Gateway.noticeHoldReason`). Absent → nothing is
+   * ever held: a notice inside quiet hours or a mute is sent at once rather
+   * than kept only in memory, where a restart would lose it.
+   */
+  heldNotices?: HeldNoticeStore;
   /**
    * Period of the delivery-ledger sweep {@link Gateway.startDeliverySweep}
    * arms, so an obligation left `pending` by a transient platform failure is
@@ -1277,6 +1335,7 @@ const PLATFORM_COMMANDS: Record<
   | 'queue'
   | 'background'
   | 'voice'
+  | 'mute'
   | 'compact'
   | 'fork'
   | 'branches'
@@ -1299,6 +1358,7 @@ const PLATFORM_COMMANDS: Record<
   '/queue': 'queue',
   '/background': 'background',
   '/voice': 'voice',
+  '/mute': 'mute',
 };
 
 // ---------------------------------------------------------------------------
@@ -1423,6 +1483,12 @@ export class Gateway {
   private readonly outboundDedup: MessageDedupCache;
   /** Durable delivery-obligation ledger (item 9). Absent → no durability. */
   private readonly deliveryLedger: DeliveryLedger | undefined;
+  /** See `GatewayConfig.quietHours` / `heldNotices` (U11). */
+  private readonly quietHours: GatewayQuietHours | undefined;
+  private readonly heldNotices: HeldNoticeStore | undefined;
+  /** Per-lane `/mute` expiry (epoch ms), persisted beside the lane's session
+   *  key in its lane file (`LaneSessionEntry.mutedUntil`). */
+  private readonly laneMutes = new Map<string, number>();
   /** Binding re-check for {@link deliverPublication}. Absent → it refuses. */
   private readonly publicationSpeaksFor: PublicationSpeaksFor | undefined;
   /** Accumulated host-pause duration discounted from the stale-obligation
@@ -1711,6 +1777,8 @@ export class Gateway {
       },
     });
     this.deliveryLedger = config.deliveryLedger;
+    this.quietHours = config.quietHours;
+    this.heldNotices = config.heldNotices;
     this.publicationSpeaksFor = config.publicationSpeaksFor;
     // Streaming draft edits: DMs on, groups off, unless config overrides.
     this.streamingDm = config.streamingEdits?.dm ?? true;
@@ -3028,6 +3096,7 @@ export class Gateway {
         `/usage — token and cost stats\n` +
         `/compact [focus] — compress older context now\n` +
         `/voice — set voice reply mode (off|mirror_inbound|all)\n` +
+        `/mute <30m|2h|1d|off> — hold notices in this chat for a while\n` +
         `/help — this message`;
       const pluginCmds = this.pluginLoader?.getAllSlashCommands() ?? [];
       if (pluginCmds.length > 0) {
@@ -3423,6 +3492,11 @@ export class Gateway {
           threadId,
         })
         .catch(() => {});
+      return;
+    }
+
+    if (cmdType === 'mute') {
+      await this.handleMuteCommand(text, laneKey, message, adapter, threadId);
       return;
     }
 
@@ -4026,6 +4100,7 @@ export class Gateway {
         botKey: target.botKey,
         sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
         ...(target.threadId ? { threadId: target.threadId } : {}),
+        answersInbound: true,
       },
       INTERRUPTED_RETRY_NOTICE,
     ).catch(() => false);
@@ -4051,6 +4126,7 @@ export class Gateway {
         botKey: target.botKey,
         sessionKey: this.sessionKeys.get(target.laneKey) ?? target.laneKey,
         ...(target.threadId ? { threadId: target.threadId } : {}),
+        answersInbound: true,
       },
       deadLetteredNotice(spoolId),
     ).catch(() => false);
@@ -4300,6 +4376,7 @@ export class Gateway {
           botKey: row.botKey,
           sessionKey: row.laneKey,
           ...(row.threadId ? { threadId: row.threadId } : {}),
+          answersInbound: true,
         },
         `I restarted and missed ${count} message(s) older than ${describeReplayAge(
           this.spoolMaxReplayAgeMs,
@@ -5530,6 +5607,22 @@ export class Gateway {
     const chatId = job.originChatId;
     if (!platform || !chatId) return false;
     const text = this.buildWakeNotice(job);
+    const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
+    // U11 — a wake notice is unprompted: held for quiet hours or a lane mute.
+    // `true`: the held store now owns it, so the job's delivery claim stays.
+    if (
+      await this.holdNotice({
+        botKey: bot.botKey,
+        platform,
+        chatId,
+        ...(job.originThreadId ? { threadId: job.originThreadId } : {}),
+        laneKey,
+        sessionKey,
+        text,
+      })
+    ) {
+      return true;
+    }
     if (!this.outboundDedup.shouldSend(laneKey, text)) return true;
     return this.sendTracked(
       {
@@ -5537,7 +5630,7 @@ export class Gateway {
         botKey: bot.botKey,
         platform,
         chatId,
-        sessionKey: this.sessionKeys.get(laneKey) ?? laneKey,
+        sessionKey,
       },
       { text, threadId: job.originThreadId },
     );
@@ -5982,6 +6075,12 @@ export class Gateway {
       /** Ledger session id. Defaults to `<platform>:<chatId>`. */
       sessionKey?: string;
       threadId?: string;
+      /**
+       * The notice answers the user's own message (a dead-letter, interrupted
+       * or missed-while-restarting notice). Never held for quiet hours or a
+       * mute (U11): the user is there, waiting on it.
+       */
+      answersInbound?: boolean;
     },
     text: string,
   ): Promise<boolean> {
@@ -6009,16 +6108,152 @@ export class Gateway {
       return refuse(`no adapter registered for bot "${botKey}" on platform "${target.platform}"`);
     }
 
+    const sessionKey = target.sessionKey ?? `${target.platform}:${target.chatId}`;
+    // U11 — quiet hours / a lane mute hold an unprompted notice. `false`:
+    // nothing was confirmed yet; the release goes through `sendTracked`.
+    if (!target.answersInbound) {
+      const laneKey = laneKeyOf(target.platform, botKey, target.chatId, target.threadId);
+      const held = await this.holdNotice({
+        botKey,
+        platform: target.platform,
+        chatId: target.chatId,
+        ...(target.threadId ? { threadId: target.threadId } : {}),
+        laneKey,
+        sessionKey,
+        text,
+      });
+      if (held) return false;
+    }
+
     return this.sendTracked(
       {
         adapter,
         botKey,
         platform: target.platform,
         chatId: target.chatId,
-        sessionKey: target.sessionKey ?? `${target.platform}:${target.chatId}`,
+        sessionKey,
       },
       { text, ...(target.threadId ? { threadId: target.threadId } : {}) },
     );
+  }
+
+  /**
+   * U11 — why an unprompted notice for `laneKey` must wait right now: the
+   * lane's `/mute` has not expired, or `now` is inside the bot's quiet hours
+   * (`GatewayConfig.quietHours`, evaluated in its explicit time zone). Null
+   * when it may go. The ONE decision for every held path: `notifyTracked`,
+   * `deliverCompletion` and the release in `releaseHeldNotices`.
+   */
+  private noticeHoldReason(
+    botKey: string,
+    laneKey: string,
+    now: number = Date.now(),
+  ): 'muted' | 'quiet_hours' | null {
+    const mutedUntil = this.laneMutes.get(laneKey);
+    if (mutedUntil !== undefined && mutedUntil > now) return 'muted';
+    const window = quietWindowFor(this.quietHours, botKey);
+    if (window && this.quietHours && inQuietHours(window, this.quietHours.timeZone, now)) {
+      return 'quiet_hours';
+    }
+    return null;
+  }
+
+  /**
+   * Hold `notice` when {@link noticeHoldReason} says so. Returns whether it was
+   * held. Without a `heldNotices` store nothing is held — a notice kept only in
+   * memory is lost by a restart, and "never dropped" outranks "not at night".
+   * A store write that throws also sends now, for the same reason.
+   */
+  private async holdNotice(notice: Omit<HeldNotice, 'id' | 'heldAt'>): Promise<boolean> {
+    const store = this.heldNotices;
+    if (!store) return false;
+    const reason = this.noticeHoldReason(notice.botKey, notice.laneKey);
+    if (!reason) return false;
+    try {
+      await store.hold(notice);
+    } catch (err) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.notice_hold_failed',
+        cause: err instanceof Error ? err.message : String(err),
+        details: { botKey: notice.botKey, platform: notice.platform, reason },
+      });
+      return false;
+    }
+    this.observability?.recordSafetyBlock({
+      code: 'gateway.notice_held',
+      cause: reason,
+      details: { botKey: notice.botKey, platform: notice.platform, chatId: notice.chatId },
+    });
+    return true;
+  }
+
+  /**
+   * U11 — deliver every held notice whose lane is no longer muted and whose
+   * bot is out of quiet hours, through `sendTracked` (ledger `pending` first),
+   * then drop it from the store. A crash between the two re-sends it on the
+   * next pass: at-least-once, like the ledger. A notice whose bot has no
+   * adapter here stays held. Run at the top of every delivery sweep
+   * (`sweepDeliveriesOnce`), so it follows the sweep's boot pass and 60s timer.
+   */
+  async releaseHeldNotices(): Promise<number> {
+    const store = this.heldNotices;
+    if (!store) return 0;
+    let held: HeldNotice[];
+    try {
+      held = await store.listHeld();
+    } catch {
+      return 0;
+    }
+    let released = 0;
+    for (const notice of held) {
+      if (!this.bots.has(notice.botKey)) continue;
+      if (this.noticeHoldReason(notice.botKey, notice.laneKey)) continue;
+      const adapter = this.adapterForBot(notice.botKey, notice.platform);
+      if (!adapter) continue;
+      await this.sendTracked(
+        {
+          adapter,
+          botKey: notice.botKey,
+          platform: notice.platform,
+          chatId: notice.chatId,
+          sessionKey: notice.sessionKey,
+        },
+        { text: notice.text, ...(notice.threadId ? { threadId: notice.threadId } : {}) },
+      );
+      await store.markReleased(notice.id).catch(() => {});
+      released++;
+    }
+    return released;
+  }
+
+  /** `/mute <30m|2h|1d>` holds this lane's unprompted notices; `/mute off` ends it. */
+  private async handleMuteCommand(
+    text: string,
+    laneKey: string,
+    message: InboundMessage,
+    adapter: PlatformAdapter,
+    threadId: string | undefined,
+  ): Promise<void> {
+    const arg = text.split(/\s+/).slice(1).join(' ');
+    const parsed = parseMuteDuration(arg);
+    let reply: string;
+    if (parsed === null) {
+      const until = this.laneMutes.get(laneKey);
+      reply =
+        until !== undefined && until > Date.now()
+          ? `Notices muted in this chat until ${new Date(until).toISOString()}.\nUsage: /mute <30m|2h|1d|off>`
+          : 'Usage: /mute <30m|2h|1d|off> — hold background notices in this chat.';
+    } else if (parsed === 'off') {
+      this.laneMutes.delete(laneKey);
+      await this.persistLaneSessions(laneKey);
+      reply = '✓ Unmuted. Held notices arrive within a minute.';
+    } else {
+      const until = Date.now() + parsed;
+      this.laneMutes.set(laneKey, until);
+      await this.persistLaneSessions(laneKey);
+      reply = `✓ Notices muted in this chat until ${new Date(until).toISOString()}. Replies to your messages still arrive.`;
+    }
+    await adapter.send(message.chatId, { text: reply, threadId }).catch(() => {});
   }
 
   /**
@@ -6184,6 +6419,9 @@ export class Gateway {
   private async sweepDeliveriesOnce(
     minAgeMs: number,
   ): Promise<{ redelivered: number; failed: number }> {
+    // U11 — held notices whose window has ended go out first, filing their
+    // obligations before this sweep reads the ledger.
+    await this.releaseHeldNotices().catch(() => 0);
     const ledger = this.deliveryLedger;
     if (!ledger) return { redelivered: 0, failed: 0 };
 
@@ -6994,6 +7232,7 @@ export class Gateway {
       if (laneKeyBotKey(laneKey) !== botKey || this.sessionKeys.has(laneKey)) continue;
       this.sessionKeys.set(laneKey, entry.sessionKey);
       if (entry.personalityId) this.personalityIds.set(laneKey, entry.personalityId);
+      if (entry.mutedUntil !== undefined) this.laneMutes.set(laneKey, entry.mutedUntil);
     }
   }
 
@@ -7017,6 +7256,13 @@ export class Gateway {
       if (laneKeyBotKey(key) !== botKey) continue;
       const personalityId = this.personalityIds.get(key);
       lanes[key] = { sessionKey, ...(personalityId ? { personalityId } : {}) };
+    }
+    // U11 — a lane's `/mute` rides beside its session key; a muted lane still
+    // on its default session is written with that default (the lane key).
+    const now = Date.now();
+    for (const [key, mutedUntil] of this.laneMutes) {
+      if (laneKeyBotKey(key) !== botKey || mutedUntil <= now) continue;
+      lanes[key] = { ...(lanes[key] ?? { sessionKey: key }), mutedUntil };
     }
     try {
       await files.save(botKey, lanes);

@@ -51,6 +51,7 @@ import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { IdleWatcherManager } from '@ethosagent/idle-watcher';
 import { SQLiteInboundDedupStore } from '@ethosagent/inbound-dedup';
 import { ConsoleLogger } from '@ethosagent/logger';
+import { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
 import { createMetricsTextProvider } from '@ethosagent/observability-sqlite';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import { SQLiteContextLog, SqliteApiKeyStore } from '@ethosagent/session-sqlite';
@@ -896,6 +897,8 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   }
 
   const deliveryLedger = new SQLiteDeliveryLedger(join(dir, 'delivery-ledger.db'));
+  // U11 — notices held for quiet hours or a lane /mute (`held_notices`).
+  const heldNotices = new SQLiteNotifyQueue(join(dir, 'notify-queue.db'));
   const inboundDedup = new SQLiteInboundDedupStore(join(dir, 'inbound-dedup.db'));
   // Inbound spool (plan reach-and-containment §2.2): the write-ahead record of
   // every turn this process owes, replayed after a crash. Only AFTER the
@@ -945,6 +948,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     adapters,
     deliveryLedger,
     inboundDedup,
+    heldNotices,
     inboundSpool,
     inboundSpoolOptions,
     resolveUserId,
@@ -2541,6 +2545,9 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       );
       await guard('delivery-ledger', () => {
         deliveryLedger.close();
+      });
+      await guard('notify-queue', () => {
+        heldNotices.close();
       });
       await guard('inbound-dedup', () => {
         inboundDedup.close();

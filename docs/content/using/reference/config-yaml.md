@@ -614,6 +614,32 @@ Notes:
 - **The digest turn gets no tools, no memory, no session and no plugin hooks.** It is a bare model call, not an agent turn — the one place in the system where unfiltered third-party text meets a model. See [Security controls](../../security/controls.md).
 - **Two runs on one machine cannot overlap.** A run holds `~/.ethos/channel-digest.lock` for its whole duration; a second run on the same host skips rather than waiting, names the process holding the lock in its run output, and records a `channel.digest_skipped` event. A restart overlapping its predecessor is covered. An `ethos gateway start` beside an `ethos boot` never gets that far: both take the gateway lock, and the second exits `3`. **The guarantee stops at the host boundary.** The lock identifies its holder by process id and boot id, both facts about the local machine, so a lock written by another host can read as abandoned and be taken over rather than respected — two machines sharing one `~/.ethos` over a network mount do not exclude each other. Both then send the same rooms to the model, deliver the same digest to the same owner, and the later write erases the cursors the earlier one advanced. Run one gateway per `~/.ethos`.
 
+## notifications.* {#notifications}
+
+Type: object · Default: off
+
+Quiet hours for notices the gateway sends without being asked: a finished background job's wake notice and an owner notice such as a post-call summary. Inside the window the notice is held in `~/.ethos/notify-queue.db` and delivered within a minute of the window ending, through the same delivery ledger as every other tracked send. A reply to a message the user just sent is never held, and neither is a notice about that message (a dead-lettered or interrupted turn).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `notifications.quietHours` | `HH:MM-HH:MM` | unset | The daily window, in `notifications.timezone`. A start later than the end crosses midnight. A malformed value is a warning and turns quiet hours off. |
+| `notifications.timezone` | IANA zone | the host's zone | The zone the window is read in, e.g. `Europe/London`. An unknown zone is a warning and falls back to the host's. |
+| `notifications.bots.<botKey>.quietHours` | `HH:MM-HH:MM` \| `off` | unset | A per-bot window, keyed by the bot's `botKey` (its `id:` or derived key). `off` turns quiet hours off for that bot only. |
+
+```yaml
+notifications.quietHours: 22:00-07:00
+notifications.timezone: Europe/London
+notifications.bots.work-slack.quietHours: off
+```
+
+In any chat, `/mute <30m|2h|1d>` holds that chat's notices for the given time, outside quiet hours too, and `/mute off` ends it early. A mute lasts at most 30 days, is stored beside the chat's session in `~/.ethos/gateway/lanes/<botKey>.json`, and survives a restart.
+
+Notes:
+
+- **Held, never dropped.** The hold and the release are `Gateway.noticeHoldReason` and `Gateway.releaseHeldNotices` in [`extensions/gateway/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/extensions/gateway/src/index.ts). The release runs at the top of every delivery sweep: at boot and every 60 seconds. If no held-notice store is wired, which only happens outside `ethos gateway start` and `ethos boot`, the notice is sent at once rather than kept only in memory.
+- **What is not held yet.** Cron job output, watcher wakes, the channel digest and `deliver: 'parent'` background reviews are delivered on their own schedules and ignore quiet hours.
+- **Daylight saving.** The window is read from the zone's wall clock each time it is checked, so it moves with a DST change.
+
 ## logs.rotation {#logs-rotation}
 
 Type: object · Default: `{ maxBytes: 10485760, maxFiles: 5, enabled: true }`
