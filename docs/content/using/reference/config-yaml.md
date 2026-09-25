@@ -13,6 +13,8 @@ updated: 2026-09-25
 
 The full field set lives in the `EthosConfig` interface in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts). `parseConfigYaml` reads values; `writeConfig` writes them. Fields marked `@internal` are managed by the runtime (e.g. `activeContext` by `ethos set`) — do not hand-edit them.
 
+A key the parser never reads, such as a misspelling, is kept in the file but has no effect. It produces a warning naming the key and, when one is close, the key it was probably meant to be: `config.yaml: 'personalty' has no effect — the config parser did not read it; did you mean 'personality'?`. `ethos doctor` prints these warnings, as do `ethos serve`, `ethos gateway` and `ethos boot` at startup. A warning never stops startup. Keys that only the web UI reads (`approvalMode`, `verbosity`, `debugMode`, `contextLayering`, the `display.voice_*` tuning keys) are not reported. The check lives in `ConfigKeyUse` in the same file. It does not yet cover the named rosters, `teams.*`, `webhooks.*`, `quick_commands.*`, `channel_filter.*` or `models.*`.
+
 ## Minimal example {#minimal-example}
 
 ```yaml

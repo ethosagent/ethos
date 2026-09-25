@@ -1279,11 +1279,16 @@ export function parseProviderChain(
     const provider = slot?.get('provider');
     if (!slot || !provider) {
       // A typo'd `providers.1.provder:` loses the WHOLE entry, on every
-      // surface, and this codec is the only reader — so it says which lines.
+      // surface, and this codec is the only reader — so it says which lines,
+      // and which of them was probably meant as the `provider` line (U4).
+      const fields = [...(slot?.keys() ?? [])];
+      const typo = fields.find((f) => nearestConfigKey(f, ['provider']) === 'provider');
       notices?.push(
         `config.yaml: no 'providers.${idx}.provider' line, so entry ${idx} is ignored — ` +
-          `${[...(slot?.keys() ?? [])].map((f) => `'providers.${idx}.${f}'`).join(', ')} ` +
-          'had no effect.',
+          `${fields.map((f) => `'providers.${idx}.${f}'`).join(', ')} had no effect` +
+          (typo
+            ? `; did you mean 'providers.${idx}.provider' for 'providers.${idx}.${typo}'?`
+            : '.'),
       );
       continue;
     }
@@ -1331,7 +1336,16 @@ export function parseProviderChain(
         continue;
       }
       if (isProviderChainStringField(field)) entry[field] = value;
-      else passthrough[field] = value;
+      else {
+        // Kept so a writer cannot delete it, but read by nothing at runtime
+        // (see `ProviderChainEntry.passthrough`) — so it is said out loud (U4).
+        passthrough[field] = value;
+        const near = nearestConfigKey(field, PROVIDER_CHAIN_FIELDS);
+        notices?.push(
+          `config.yaml: 'providers.${idx}.${field}' is not a provider-chain field, so it has ` +
+            `no effect${near ? `; did you mean 'providers.${idx}.${near}'?` : '.'}`,
+        );
+      }
     }
     if (Object.keys(passthrough).length > 0) entry.passthrough = passthrough;
     entries.push(entry);
@@ -4778,6 +4792,157 @@ export async function resolveConfigSecrets(
   return r;
 }
 
+/**
+ * Keys another reader of `~/.ethos/config.yaml` consumes that `parseConfigYaml`
+ * never reads, so {@link ConfigKeyUse} must not report them. `<n>` is an index.
+ * A key belongs here only when its reader is named beside it; the web-api
+ * writer's keys are pinned against this list by
+ * `apps/web-api/src/__tests__/repositories/config-unknown-keys.test.ts`.
+ */
+export const EXTERNALLY_READ_CONFIG_KEYS: readonly string[] = [
+  // apps/web-api `ConfigRepository.read`'s `known` set (written by `ConfigRepository.write`).
+  'approvalMode',
+  'verbosity',
+  'debugMode',
+  'contextLayering',
+  // apps/web-api `ConfigService.get` / `readVoiceTuning` — browser voice tuning.
+  'display.voice_chime',
+  'display.voice_endpoint_silence_ms',
+  'display.voice_barge_threshold',
+  'display.voice_barge_sustain_ms',
+  'display.voice_speech_threshold',
+  'display.voice_speech_min_ms',
+  // apps/web-api `PlatformsRepository.listTelegramBots`.
+  'telegram.bots.<n>.username',
+];
+
+const EXTERNALLY_READ_CONFIG_KEY_RES = EXTERNALLY_READ_CONFIG_KEYS.map(
+  (k) => new RegExp(`^${k.replace(/\./g, '\\.').replace(/<n>/g, '\\d+')}$`),
+);
+
+/** Optimal-string-alignment distance: Levenshtein plus adjacent transposition,
+ *  so `modle` is one edit from `model`. */
+function editDistance(a: string, b: string): number {
+  const rows: number[][] = [];
+  for (let i = 0; i <= a.length; i++) {
+    const row: number[] = [];
+    for (let j = 0; j <= b.length; j++) {
+      if (i === 0 || j === 0) {
+        row.push(i + j);
+        continue;
+      }
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const prev = rows[i - 1] ?? [];
+      let d = Math.min((prev[j] ?? 0) + 1, (row[j - 1] ?? 0) + 1, (prev[j - 1] ?? 0) + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d = Math.min(d, (rows[i - 2]?.[j - 2] ?? 0) + 1);
+      }
+      row.push(d);
+    }
+    rows.push(row);
+  }
+  return rows[a.length]?.[b.length] ?? 0;
+}
+
+/** The candidate closest to `key`, when it is close enough to be a typo of it:
+ *  at most 1 edit for a key under 5 characters, 2 up to 11, 3 beyond. */
+function nearestConfigKey(key: string, candidates: Iterable<string>): string | undefined {
+  const limit = key.length < 5 ? 1 : key.length < 12 ? 2 : 3;
+  let best: string | undefined;
+  let bestDistance = limit + 1;
+  for (const candidate of candidates) {
+    if (candidate === key) continue;
+    const d = editDistance(key, candidate);
+    if (d < bestDistance) {
+      best = candidate;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * Which `config.yaml` keys `parseConfigYaml` actually reads (plan
+ * openclaw-2026.9.6-gaps U4). The parser's own maps are wrapped by
+ * {@link ConfigKeyUse.track}, so a key counts as read only when the builder
+ * really looked its value up — there is no second list of known keys to drift
+ * from the parser. A key the file sets that nothing looked up, or a line no
+ * branch of the parser claims, becomes a notice naming the nearest key that WAS
+ * looked up. Enumerating a map (`Object.keys(m).length`) does not count as
+ * reading its keys; `Object.entries` and spreads do, so a builder that copies a
+ * whole map never has its keys reported.
+ *
+ * Notices only, never errors (plan D2): a stale key must not stop boot.
+ * Coverage limits, both silent rather than wrong: a map the parser keeps
+ * untracked (the named rosters, `teams.*`, `webhooks.*`, `quick_commands.*`,
+ * `channel_filter.*`, `models.*`) and a branch that drops an unknown field
+ * inline (`voice.filler.*`, `voice.wake.*`, `voice.realtime.*`) report nothing.
+ * `providers.<n>.*` is reported by `parseProviderChain` against
+ * `PROVIDER_CHAIN_FIELDS`. Pinned by `__tests__/unknown-keys.test.ts`.
+ */
+class ConfigKeyUse {
+  private readonly present = new Set<string>();
+  private readonly read = new Set<string>();
+
+  /** Wrap one of the parser's `field → raw value` maps whose keys, behind
+   *  `prefix`, are the config.yaml keys themselves. */
+  track<T extends object>(prefix: string, target: T): T {
+    return new Proxy(target, {
+      get: (t, prop, receiver) => {
+        if (typeof prop === 'string') this.read.add(prefix + prop);
+        return Reflect.get(t, prop, receiver);
+      },
+      has: (t, prop) => {
+        if (typeof prop === 'string') this.read.add(prefix + prop);
+        return Reflect.has(t, prop);
+      },
+      set: (t, prop, value, receiver) => {
+        if (typeof prop === 'string') this.present.add(prefix + prop);
+        return Reflect.set(t, prop, value, receiver);
+      },
+    });
+  }
+
+  /** Wrap an `index → (field → raw value)` map (`telegram.bots.<n>.<field>`):
+   *  each entry is tracked under `prefix<n>.`; the index itself is not a key. */
+  trackIndexed<T extends Record<number, Record<string, string>>>(prefix: string, target: T): T {
+    return new Proxy(target, {
+      set: (t, prop, value, receiver) => {
+        const entry =
+          typeof prop === 'string' && typeof value === 'object' && value !== null
+            ? this.track(`${prefix}${prop}.`, value)
+            : value;
+        return Reflect.set(t, prop, entry, receiver);
+      },
+    });
+  }
+
+  /** A line no branch of the parser claimed. Blank values are skipped: an
+   *  empty line loses nothing, and several keys give empty a meaning. */
+  unclaimed(line: string): void {
+    const key = configLineKey(line);
+    if (key === null) return;
+    if (parseConfigScalar(line.slice(key.length + 1)).trim() === '') return;
+    this.present.add(key);
+  }
+
+  notices(): string[] {
+    const out: string[] = [];
+    for (const key of this.present) {
+      if (this.read.has(key)) continue;
+      if (EXTERNALLY_READ_CONFIG_KEY_RES.some((re) => re.test(key))) continue;
+      const near = nearestConfigKey(key, this.read);
+      out.push(
+        `config.yaml: '${key}' has no effect — the config parser did not read it` +
+          (near
+            ? `; did you mean '${near}'?`
+            : ' (a misspelled key, or one that applies only alongside another key).'),
+      );
+    }
+    return out;
+  }
+}
+
 /** Accepted `logs.level` values, ordered by severity. Mirrors `LogLevel`. */
 const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
@@ -4790,28 +4955,31 @@ const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
  * parser for the keys it happens to care about.
  */
 export function parseConfigYaml(src: string): EthosConfig {
-  const kv: Record<string, string> = {};
+  // U4 — every map below whose keys are config.yaml keys is tracked, so the
+  // unknown-key notice is derived from what this function actually reads.
+  const keyUse = new ConfigKeyUse();
+  const kv: Record<string, string> = keyUse.track('', {});
   const modelRouting: Record<string, string> = {};
   const toolSettings: ToolSettingsMap = {};
-  const activeContextKv: Record<string, string> = {};
-  const retentionKv: Record<string, string> = {};
+  const activeContextKv: Record<string, string> = keyUse.track('activeContext.', {});
+  const retentionKv: Record<string, string> = keyUse.track('retention.', {});
   const personalitiesRetKv: Record<string, Record<string, string>> = {};
-  const displayKv: Record<string, string> = {};
-  const evolverKv: Record<string, string> = {};
-  const backgroundKv: Record<string, string> = {};
+  const displayKv: Record<string, string> = keyUse.track('display.', {});
+  const evolverKv: Record<string, string> = keyUse.track('evolver.', {});
+  const backgroundKv: Record<string, string> = keyUse.track('background.', {});
   /** `background.acp.agents.<name>.<field>` — the named ACP-agent roster (T4/I3). */
   const backgroundAcpAgentsKv: Record<string, Record<string, string>> = {};
   // The `cron:` section: `fireUrl` / `maxParallelJobs`, plus the deprecated
   // `trigger.<field>` / `arming.<field>` keys, which are stored under their
   // combined `subsection.field` name.
-  const cronKv: Record<string, string> = {};
-  const auxiliaryCompressionKv: Record<string, string> = {};
-  const auxiliaryVisionKv: Record<string, string> = {};
-  const auxiliaryWebKv: Record<string, string> = {};
-  const auxiliaryAsrKv: Record<string, string> = {};
-  const auxiliaryTtsKv: Record<string, string> = {};
-  const webKv: Record<string, string> = {};
-  const modelCatalogKv: Record<string, string> = {};
+  const cronKv: Record<string, string> = keyUse.track('cron.', {});
+  const auxiliaryCompressionKv: Record<string, string> = keyUse.track('auxiliary.compression.', {});
+  const auxiliaryVisionKv: Record<string, string> = keyUse.track('auxiliary.vision.', {});
+  const auxiliaryWebKv: Record<string, string> = keyUse.track('auxiliary.web.', {});
+  const auxiliaryAsrKv: Record<string, string> = keyUse.track('auxiliary.asr.', {});
+  const auxiliaryTtsKv: Record<string, string> = keyUse.track('auxiliary.tts.', {});
+  const webKv: Record<string, string> = keyUse.track('web.', {});
+  const modelCatalogKv: Record<string, string> = keyUse.track('modelCatalog.', {});
   const modelCatalogProvidersKv: Record<string, Record<string, string>> = {};
   // What the registry codec dropped and why — filed under `parseWarningsByConfig`
   // beside `providerNotices`, the same channel `parseProviderChain` uses.
@@ -4823,64 +4991,82 @@ export function parseConfigYaml(src: string): EthosConfig {
   // `<providerId>/<modelId>` string; field path → raw value.
   const modelsKv: Record<string, Record<string, string>> = {};
   // §5 — global compaction.<field>: <value> (pressure | target | ...flags).
-  const compactionKv: Record<string, string> = {};
+  const compactionKv: Record<string, string> = keyUse.track('compaction.', {});
   // memory.charLimits.<memory|user>: <chars> — markdown-backend per-key ceilings.
-  const memoryCharLimitsKv: Record<string, string> = {};
+  const memoryCharLimitsKv: Record<string, string> = keyUse.track('memory.charLimits.', {});
   // execution.docker.<cpu|diskMb>: <value> — container resource caps.
-  const executionDockerKv: Record<string, string> = {};
+  const executionDockerKv: Record<string, string> = keyUse.track('execution.docker.', {});
   // execution.ssh.<field>: <value> — the deployment's single remote target.
-  const executionSshKv: Record<string, string> = {};
+  const executionSshKv: Record<string, string> = keyUse.track('execution.ssh.', {});
   // kanban.<maxInProgress|maxInProgressPerProfile>: <n> — board WIP caps.
-  const kanbanKv: Record<string, string> = {};
+  const kanbanKv: Record<string, string> = keyUse.track('kanban.', {});
   // grounding.<field>: <value> — ground-truth verification policy. The nested
   // `grounding.kanban.*` keys get their own map so the two levels cannot
   // collide on a shared field name.
-  const groundingKv: Record<string, string> = {};
-  const groundingKanbanKv: Record<string, string> = {};
+  const groundingKv: Record<string, string> = keyUse.track('grounding.', {});
+  const groundingKanbanKv: Record<string, string> = keyUse.track('grounding.kanban.', {});
   // toolLoop.<field>: <n> — the loop's hard tool caps and their soft-warn tiers.
-  const toolLoopKv: Record<string, string> = {};
+  const toolLoopKv: Record<string, string> = keyUse.track('toolLoop.', {});
   // browser.<field>: <value> — Playwright budgets plus launch posture. The
   // nested keys are stored under their DOTTED sub-path (`proxy.server`,
   // `stealth.enabled`) rather than in per-level maps: no flat key contains a
   // dot, so the two levels cannot collide on one map.
-  const browserKv: Record<string, string> = {};
+  const browserKv: Record<string, string> = keyUse.track('browser.', {});
   // gateway.<field>: <value> — gateway-wide, non-credential knobs.
-  const gatewayKv: Record<string, string> = {};
+  const gatewayKv: Record<string, string> = keyUse.track('gateway.', {});
   // decisions.<field>: <value> — the decision provider, stored under the
   // dotted sub-path (`sites.injection`, `thresholds.approver.deny`).
-  const decisionsKv: Record<string, string> = {};
+  const decisionsKv: Record<string, string> = keyUse.track('decisions.', {});
   // teamSupervisor.restartLoopGuard.<field>: <n> — member auto-restart brake.
   // Unset = 5 respawns in 60s (one more than the old hardcoded four).
-  const restartLoopGuardKv: Record<string, string> = {};
+  const restartLoopGuardKv: Record<string, string> = keyUse.track(
+    'teamSupervisor.restartLoopGuard.',
+    {},
+  );
   // discord.missedMessageBackfill.<field>: <value> — channel-history backfill.
-  const discordBackfillKv: Record<string, string> = {};
+  const discordBackfillKv: Record<string, string> = keyUse.track(
+    'discord.missedMessageBackfill.',
+    {},
+  );
   // discord.<field>: <value> — non-backfill Discord knobs (defaultChannelMode).
-  const discordKv: Record<string, string> = {};
+  const discordKv: Record<string, string> = keyUse.track('discord.', {});
   // Call-capture personality binding (decision 3) — callCapture.personalityId: <id>.
-  const callCaptureKv: Record<string, string> = {};
+  const callCaptureKv: Record<string, string> = keyUse.track('callCapture.', {});
   // Phase 3 — memoryConsolidation.<field>: <value> (silent flush config).
-  const memoryConsolidationKv: Record<string, string> = {};
+  const memoryConsolidationKv: Record<string, string> = keyUse.track('memoryConsolidation.', {});
   // Scale-to-zero idle watcher — idleWatcher.<field>: <value>.
-  const idleWatcherKv: Record<string, string> = {};
+  const idleWatcherKv: Record<string, string> = keyUse.track('idleWatcher.', {});
   // Resume-side clock correction — pauseClockCorrection.<field>: <value>.
-  const pauseClockCorrectionKv: Record<string, string> = {};
+  const pauseClockCorrectionKv: Record<string, string> = keyUse.track('pauseClockCorrection.', {});
   // Pause/resume lifecycle notifications — pauseLifecycle.http.<field>: <value>.
-  const pauseLifecycleHttpKv: Record<string, string> = {};
-  const logsRotationKv: Record<string, string> = {};
-  const awsSecretsKv: Record<string, string> = {};
-  const telemetryLangfuseKv: Record<string, string> = {};
+  const pauseLifecycleHttpKv: Record<string, string> = keyUse.track('pauseLifecycle.http.', {});
+  const logsRotationKv: Record<string, string> = keyUse.track('logs.rotation.', {});
+  const awsSecretsKv: Record<string, string> = keyUse.track('aws.secrets.', {});
+  const telemetryLangfuseKv: Record<string, string> = keyUse.track(
+    'telemetry.export.langfuse.',
+    {},
+  );
   // Indexed list shapes: telegram.bots.<n>.<field> and slack.apps.<n>.<field>,
   // plus their nested `.bind.<field>` sub-keys. Per-team config keyed by name.
-  const telegramBotsKv: Record<number, Record<string, string>> = {};
-  const slackAppsKv: Record<number, Record<string, string>> = {};
-  const whatsappKv: Record<number, Record<string, string>> = {};
-  const voiceBotsKv: Record<number, Record<string, string>> = {};
-  const voiceLiveKitKv: Record<string, string> = {};
-  const voiceTrunkKv: Record<string, string> = {};
+  const telegramBotsKv: Record<number, Record<string, string>> = keyUse.trackIndexed(
+    'telegram.bots.',
+    {},
+  );
+  const slackAppsKv: Record<number, Record<string, string>> = keyUse.trackIndexed(
+    'slack.apps.',
+    {},
+  );
+  const whatsappKv: Record<number, Record<string, string>> = keyUse.trackIndexed('whatsapp.', {});
+  const voiceBotsKv: Record<number, Record<string, string>> = keyUse.trackIndexed(
+    'voice.bots.',
+    {},
+  );
+  const voiceLiveKitKv: Record<string, string> = keyUse.track('voice.livekit.', {});
+  const voiceTrunkKv: Record<string, string> = keyUse.track('voice.trunk.', {});
   /** `voice.inbound.<field>` — the scalar inbound-call policy knobs. */
-  const voiceInboundKv: Record<string, string> = {};
+  const voiceInboundKv: Record<string, string> = keyUse.track('voice.inbound.', {});
   /** `voice.inbound.owner.<field>` — the notification destination, one level down. */
-  const voiceInboundOwnerKv: Record<string, string> = {};
+  const voiceInboundOwnerKv: Record<string, string> = keyUse.track('voice.inbound.owner.', {});
   /** `voice.bargeIn.<surface>.<field>` — VAD thresholds, keyed by surface. */
   const voiceBargeInKv: Record<string, Record<string, string>> = {};
   /** `voice.filler.<field>` — the tool-call filler/tick knobs, range-checked on the way in. */
@@ -5622,7 +5808,8 @@ export function parseConfigYaml(src: string): EthosConfig {
     // execution.ssh.<field>: <value>  (the single remote execution target).
     // The field list is an alternation, so an unrecognised `execution.ssh.*`
     // key falls through to the generic `key: value` catch-all below and is
-    // then never read — dropped, not rejected, like every other stray key.
+    // then never read — dropped with a notice, not rejected, like every other
+    // stray key (`ConfigKeyUse.unclaimed`).
     const exs = line.match(
       /^execution\.ssh\.(host|user|port|identityFile|knownHostsFile|strictHostKeys|remoteWorkdir):\s*(.+)$/,
     );
@@ -5633,7 +5820,8 @@ export function parseConfigYaml(src: string): EthosConfig {
     // browser.<field>: <value>  (Playwright budgets + launch posture). The
     // alternation is an ALLOWLIST: an unlisted `browser.*` key matches nothing
     // here, and the generic `key: value` catch-all at the end of this loop is
-    // `\w+` only — so it is dropped, like every other stray dotted key.
+    // `\w+` only — so it is dropped with a notice, like every other stray
+    // dotted key (`ConfigKeyUse.unclaimed`).
     const brw = line.match(
       /^browser\.(navigationTimeoutMs|commandTimeoutMs|headed|idleTimeoutMs|stealth\.enabled|profiles\.enabled|proxy\.(?:server|username|password)):\s*(.+)$/,
     );
@@ -5650,8 +5838,9 @@ export function parseConfigYaml(src: string): EthosConfig {
       continue;
     }
     // decisions.<field>: <value>  (decision provider). An ALLOWLIST like
-    // `browser.*`: an unlisted `decisions.*` key is dropped here and kept
-    // verbatim by `writeConfig`'s `unexpressibleLines`.
+    // `browser.*`: an unlisted `decisions.*` key is dropped here with a notice
+    // (`ConfigKeyUse.unclaimed`) and kept verbatim by `writeConfig`'s
+    // `unexpressibleLines`.
     const dcs = line.match(DECISIONS_LINE_RE);
     if (dcs) {
       decisionsKv[dcs[1]] = parseConfigScalar(dcs[2]);
@@ -5706,6 +5895,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     }
     const m = line.match(/^(\w+):\s*(.+)$/);
     if (m) kv[m[1].trim()] = parseConfigScalar(m[2]);
+    else keyUse.unclaimed(line);
   }
 
   const activeContextType = activeContextKv.type;
@@ -6311,6 +6501,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...providerNotices,
     ...modelRegistryNotices,
     ...decisionsWarnings,
+    ...keyUse.notices(),
   ]);
   return config;
 }
