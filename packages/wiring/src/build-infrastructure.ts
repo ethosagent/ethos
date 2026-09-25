@@ -81,7 +81,7 @@ import { activateFirstPartyPlugins } from './activate-first-party';
 import { validateCallCaptureBinding } from './call-capture-binding';
 import type { DisposerStack } from './disposer-stack';
 import type { CreateAgentLoopOptions, WiringConfig } from './index';
-import { buildVaultBackend, composeGatedMemory } from './memory-backend';
+import { buildVaultBackend, composeGatedMemory, composeGatedVectorMemory } from './memory-backend';
 import { registerRemainingBuiltinProviders } from './register-builtin-providers';
 import type { WiringContext } from './types';
 import { createBuiltinVoiceRegistries } from './voice-registries';
@@ -328,6 +328,7 @@ export async function buildInfrastructure(
   // (history + approve-before-store gate) via composeGatedMemory — the backend
   // decides where content + history live; the pending queue and tombstones stay
   // rooted at ~/.ethos in both cases (gate machinery, not memory content).
+  // `vector` composes the same gate without history (composeGatedVectorMemory).
   //
   // Cap drops must be audible (the Curator lesson, plan §3b): the pending queue
   // signals every at-cap drop through this seam — logged, plus an observability
@@ -361,7 +362,15 @@ export async function buildInfrastructure(
     }).provider;
   });
   memoryProviders.register('vector', ({ dataDir: dir }) => {
-    return new VectorMemoryProvider({ dir, storage: wiringCtx.storage });
+    // Same approve-before-store gate, minus the history decorator (vector
+    // keeps no provenance history) — see composeGatedVectorMemory.
+    return composeGatedVectorMemory({
+      base: new VectorMemoryProvider({ dir, storage: wiringCtx.storage }),
+      ...(config.memoryApproval ? { approval: config.memoryApproval } : {}),
+      dataDir: dir,
+      storage: wiringCtx.storage,
+      observability: pendingCapObservability,
+    });
   });
   memoryProviders.register('vault', ({ dataDir: dir }) => {
     // ScopedStorage confinement + `.ethos-meta` history live in

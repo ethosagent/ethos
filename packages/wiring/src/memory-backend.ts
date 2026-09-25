@@ -4,13 +4,15 @@
 // provider lives, where its provenance history is rooted, and how the approval
 // gate composes around it. Shared by:
 //   - build-infrastructure — the runtime write path (the `markdown` and `vault`
-//     registry factories compose the same history + pending-gate stack);
+//     registry factories compose the same history + pending-gate stack;
+//     `vector` composes the gate alone, `composeGatedVectorMemory`);
 //   - build-agent-loop — proactive capture's undecorated base + history;
-//   - createMemoryProviderFromConfig — nightly consolidation/decay and other
-//     out-of-loop writers that must target the configured backend;
+//   - createMemoryProviderFromConfig — out-of-loop file-memory surfaces that
+//     must target the configured backend (CLI memory commands, MCP export);
 //   - createMemoryBundle — the editor / Timeline / restore / approve surfaces
 //     a host hands the web API (F04, plan architecture-suggestions-2026-09-10),
-//     built by build-agent-loop from the loop's own config.
+//     built by build-agent-loop from the loop's own config, and the nightly
+//     pass's gated consolidation handle (`MemoryEditing.consolidation`).
 //
 // Placement decision (deliberate, §3b): memory CONTENT and its provenance
 // history follow the backend — for a vault that means history JSONL + blobs
@@ -24,6 +26,7 @@
 import { join, resolve } from 'node:path';
 import { LastWriteWinsPolicy, LazyOnDemandPolicy } from '@ethosagent/core';
 import {
+  type PendingEntry,
   type PendingGateObservability,
   PendingMemoryStore,
   TombstoneStore,
@@ -32,6 +35,7 @@ import {
 import { type HistorySource, HistoryStore, withHistory } from '@ethosagent/memory-history';
 import { MarkdownFileMemoryProvider } from '@ethosagent/memory-markdown';
 import { VaultMemoryProvider } from '@ethosagent/memory-vault';
+import { VectorMemoryProvider } from '@ethosagent/memory-vector';
 import { defaultAlwaysDeny, ScopedStorage } from '@ethosagent/storage-fs';
 import {
   EthosError,
@@ -86,8 +90,9 @@ export interface MemoryBackendSelection {
  * `build-agent-loop`). `vector` does not: the agent reads its memory from
  * `memory.db`, so a file surface would edit bytes the agent never reads. The
  * one predicate behind the web editor's refusal (`createMemoryBundle`), the
- * CLI's (`apps/ethos/src/lib/file-memory.ts`) and approve's
- * (`createPendingMemoryStore`).
+ * CLI's (`apps/ethos/src/lib/file-memory.ts`) and the vector gate's whole-file
+ * verbs (`composeGatedVectorMemory`). The approval gate is not a file surface:
+ * it composes over `vector` too.
  */
 export function fileMemoryUnsupportedReason(selection: MemoryBackendSelection): string | null {
   const backend = selection.memory ?? 'markdown';
@@ -218,8 +223,7 @@ export function buildVaultBackend(opts: {
 
 /**
  * Resolve the undecorated provider + history for the configured backend.
- * `markdown` (and, for out-of-loop writers, `vector` — nightly consolidation
- * has always operated on the markdown store beside the vector index) root at
+ * `markdown` (and, when a caller does not refuse it first, `vector`) root at
  * `dataDir`; `vault` roots at `<vaultRoot>/<agentDir>` with `.ethos-meta`
  * history.
  */
@@ -303,6 +307,76 @@ export function composeGatedMemory(opts: ComposeGatedMemoryOptions): GatedMemory
   return { provider: withHistory(gate, opts.history, { source: 'tool' }), pending };
 }
 
+/** memory-vector's handle: the five `MemoryProvider` verbs plus the `close`
+ *  that releases its memory.db connection (`closeMemoryProvider` in
+ *  build-agent-loop calls it on dispose). */
+export type VectorBackend = MemoryProvider & { close(): void };
+
+/** The context an approved candidate replays under, outside any turn. */
+function replayContext(entry: PendingEntry): MemoryContext {
+  return {
+    scopeId: entry.scopeId,
+    sessionId: entry.sessionId ?? '',
+    sessionKey: entry.sessionKey ?? 'cli',
+    platform: 'cli',
+    workingDir: '',
+  };
+}
+
+/**
+ * The approve-before-store gate over `memory: vector` — the `vector` registry
+ * factory's counterpart of `composeGatedMemory`. Two differences, both because
+ * vector has no files:
+ *   - no history decorator: the vector write path records no provenance
+ *     history in any mode, so neither does this one, nor its approve replay;
+ *   - the gate's `GlobalMemoryStore` verbs (the whole-file MEMORY.md / USER.md
+ *     read + save, which `PendingMemoryGate` only delegates) refuse with
+ *     `fileMemoryUnsupportedReason`, as every file surface under vector does.
+ * The gate itself is the same `withPendingGate`, so `isGated` decides per
+ * source exactly as it does for markdown and vault; a gated write parks in the
+ * `~/.ethos` pending queue and never reaches memory.db. `mode: off` returns the
+ * provider untouched. Approve from the CLI / web replays through
+ * `createPendingMemoryStore`. Pinned by `__tests__/memory-approval-vector.test.ts`.
+ */
+export function composeGatedVectorMemory(opts: {
+  base: VectorBackend;
+  approval?: MemoryBackendSelection['memoryApproval'];
+  /** Gate-machinery root — ALWAYS `~/.ethos`. */
+  dataDir: string;
+  storage: Storage;
+  observability?: PendingGateObservability;
+}): VectorBackend {
+  const mode = opts.approval?.mode ?? 'off';
+  const base = opts.base;
+  if (mode === 'off') return base;
+  const refuse = async (): Promise<never> => {
+    throw new EthosError({
+      code: 'NOT_CONFIGURED',
+      cause: fileMemoryUnsupportedReason({ memory: 'vector' }) ?? 'vector has no memory files',
+      action: 'Use memory_read / memory_write, or switch `memory:` to markdown or vault.',
+    });
+  };
+  const inner: MemoryProvider & GlobalMemoryStore = {
+    prefetch: (ctx) => base.prefetch(ctx),
+    read: (key, ctx) => base.read(key, ctx),
+    search: (query, ctx, searchOpts) => base.search(query, ctx, searchOpts),
+    list: (ctx, listOpts) => base.list(ctx, listOpts),
+    sync: (updates, ctx) => base.sync(updates, ctx),
+    readGlobalEntry: refuse,
+    writeGlobalEntry: refuse,
+  };
+  const pending = new PendingMemoryStore({
+    storage: opts.storage,
+    dataDir: opts.dataDir,
+    tombstones: new TombstoneStore({ storage: opts.storage, dataDir: opts.dataDir }),
+    ...approvalLimits(opts.approval),
+    ...(opts.observability ? { observability: opts.observability } : {}),
+    apply: (entry) => base.sync([entry.update], replayContext(entry)),
+  });
+  const gate = withPendingGate(inner, { store: pending, mode, source: 'tool' });
+  return Object.assign(gate, { close: () => base.close() });
+}
+
 export interface CreateMemoryProviderFromConfigOptions {
   /** Backend selection — pass the app config (`EthosConfig` / `WiringConfig`). */
   config: MemoryBackendSelection;
@@ -330,11 +404,12 @@ export interface ConfiguredMemoryBackend {
  * Returns a history-decorated handle for the CONFIGURED backend (`memory:
  * vault` → the vault, everything else → markdown at dataDir), plus the pieces
  * out-of-loop writers need — the history store for rotation and the sidecar
- * root/storage. Used by the nightly pass so consolidation/decay target the
- * same store the agent reads from, and by the CLI/Slack file-memory surfaces
+ * root/storage. Used by the CLI/Slack file-memory surfaces
  * (`apps/ethos/src/lib/file-memory.ts`, which first refuses a backend with no
  * file memory via `fileMemoryUnsupportedReason` — this function itself maps
- * `vector` to markdown at dataDir, the store nightly has always consolidated).
+ * `vector` to markdown at dataDir). The nightly pass does NOT use it: it takes
+ * the gated `MemoryEditing.consolidation` from `createMemoryBundle`
+ * (`nightlyMemory`, apps/ethos/src/commands/nightly.ts).
  */
 export function createMemoryProviderFromConfig(
   opts: CreateMemoryProviderFromConfigOptions,
@@ -360,8 +435,8 @@ export interface CreatePendingMemoryStoreOptions {
   /**
    * Memory config slice (`memory` / `memoryVault` / `memoryApproval`). With
    * `memory: 'vault'`, approve replays through the vault provider with
-   * provenance history under `<vaultRoot>/<agentDir>/.ethos-meta`; with a
-   * backend that has no file memory (`vector`) approve is refused (see
+   * provenance history under `<vaultRoot>/<agentDir>/.ethos-meta`; with
+   * `memory: 'vector'` it replays into memory.db (see
    * `createPendingMemoryStore`). The pending queue + tombstones stay at
    * `dataDir` regardless of backend. Cap + TTL come from `memoryApproval`,
    * as the runtime gate's do. Omitted → markdown at `dataDir`, default limits.
@@ -384,23 +459,23 @@ export interface CreatePendingMemoryStoreOptions {
  * the web RPC service — the runtime write path composes the gate inline in
  * `build-infrastructure`.
  *
- * Approve matches the runtime: the gate composes only over `markdown` and
- * `vault` (`build-infrastructure`'s registry factories), so under any other
- * backend (`vector`) nothing in the running agent ever parks or replays a
- * candidate. A candidate still in the queue there was parked under an earlier
- * backend, and approving it throws NOT_CONFIGURED rather than replaying into a
- * markdown store the agent does not read. The entry stays queued (`approve`
- * removes it only after `apply` resolves); reject still works.
+ * Approve matches the runtime: the gate composes over every built-in backend
+ * (`build-infrastructure`'s registry factories — `composeGatedMemory` for
+ * `markdown` and `vault`, `composeGatedVectorMemory` for `vector`). Under
+ * `vector` approve replays the update into memory.db with no history record,
+ * as the vector write path keeps none — a candidate parked under an earlier
+ * backend lands there too, where the agent now reads. Pinned by
+ * `__tests__/memory-approval-vector.test.ts` and `memory-backend.test.ts`.
  */
 export function createPendingMemoryStore(opts: CreatePendingMemoryStoreOptions): {
   store: PendingMemoryStore;
   tombstones: TombstoneStore;
 } {
   const selection = opts.config ?? {};
-  const unsupported = fileMemoryUnsupportedReason(selection);
-  const backend = unsupported
-    ? null
-    : createUndecoratedBackend({ selection, dataDir: opts.dataDir, storage: opts.storage });
+  const backend =
+    selection.memory === 'vector'
+      ? null
+      : createUndecoratedBackend({ selection, dataDir: opts.dataDir, storage: opts.storage });
   const tombstones = new TombstoneStore({ storage: opts.storage, dataDir: opts.dataDir });
   const store = new PendingMemoryStore({
     storage: opts.storage,
@@ -418,11 +493,17 @@ export function createPendingMemoryStore(opts: CreatePendingMemoryStoreOptions):
     ...(opts.now ? { now: opts.now } : {}),
     apply: async (entry, approvedBy) => {
       if (!backend) {
-        throw new EthosError({
-          code: 'NOT_CONFIGURED',
-          cause: `Cannot approve into the "${selection.memory}" memory backend: it has no approval gate, so this candidate was queued under an earlier backend and the agent would never read it back.`,
-          action: 'Reject it, or switch `memory:` back to markdown or vault to approve it.',
-        });
+        // `memory: vector`. The runtime's vector handle lives in the loop;
+        // approve opens its own connection to the same memory.db for the one
+        // replay (WAL serialises the two writers) and releases it. No history:
+        // vector keeps none.
+        const vector = new VectorMemoryProvider({ dir: opts.dataDir, storage: opts.storage });
+        try {
+          await vector.sync([entry.update], replayContext(entry));
+        } finally {
+          vector.close();
+        }
+        return;
       }
       const { base, history } = backend;
       const handle = withHistory(base, history, {
@@ -455,6 +536,18 @@ export interface MemoryEditing {
   restore: MemoryProvider & GlobalMemoryStore;
   /** The backend's own history (vault: `.ethos-meta`; markdown: dataDir). */
   history: HistoryStore;
+  /**
+   * `consolidation`-labelled handle for the nightly pass, behind the approval
+   * gate: under `memoryApproval.mode: all` its writes park in `pending` (this
+   * bundle's queue) as `consolidation` entries (`isGated`); otherwise they
+   * write through. Pinned by
+   * `apps/ethos/src/commands/__tests__/nightly-memory-gate.test.ts`.
+   */
+  consolidation: MemoryProvider & GlobalMemoryStore;
+  /** Root for per-scope memory files + the `memory-meta.json` sidecar. */
+  memoryRoot: string;
+  /** Storage for sidecar I/O under `memoryRoot` (the vault's scope under vault). */
+  storage: Storage;
 }
 
 /** The configured backend has no file-style editing surface. */
@@ -509,7 +602,7 @@ export interface CreateMemoryBundleOptions {
  * Anything else (`vector`: the agent reads entries out of `memory.db`) gets an
  * explicit refusal instead of a markdown editor at `dataDir` that edits bytes
  * the agent never reads. The approve queue takes cap + TTL from
- * `config.memoryApproval` and refuses approve under such a backend
+ * `config.memoryApproval` and, under `vector`, approves into memory.db
  * (`createPendingMemoryStore`).
  */
 export function createMemoryBundle(opts: CreateMemoryBundleOptions): MemoryBundle {
@@ -530,11 +623,18 @@ export function createMemoryBundle(opts: CreateMemoryBundleOptions): MemoryBundl
   if (unsupported) {
     return { backend, editing: { supported: false, reason: unsupported }, pending, teamMemory };
   }
-  const { base, history } = createUndecoratedBackend({
+  const { base, history, memoryRoot, storage } = createUndecoratedBackend({
     selection: opts.config,
     dataDir: opts.dataDir,
     storage: opts.storage,
     ...(opts.logger ? { logger: opts.logger } : {}),
+  });
+  // History outside the gate, as in `composeGatedMemory`: a parked write
+  // records nothing; approve records it once, via `pending`'s replay.
+  const consolidationGate = withPendingGate(base, {
+    store: pending,
+    mode: opts.config.memoryApproval?.mode ?? 'off',
+    source: 'consolidation',
   });
   return {
     backend,
@@ -543,6 +643,9 @@ export function createMemoryBundle(opts: CreateMemoryBundleOptions): MemoryBundl
       editor: withHistory(base, history, { source: 'web-editor' }),
       restore: withHistory(base, history, { source: 'restore' }),
       history,
+      consolidation: withHistory(consolidationGate, history, { source: 'consolidation' }),
+      memoryRoot,
+      storage,
     },
     pending,
     teamMemory,

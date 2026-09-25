@@ -20,7 +20,7 @@ import { createRouterGate, PI_RUNNER_NAME, PiJobRunner } from '@ethosagent/execu
 import { GoalRunner } from '@ethosagent/goal-runner';
 import { BackgroundExecutor, ETHOS_RUNNER_NAME, EthosJobRunner } from '@ethosagent/job-runner';
 import { SQLiteJobStore } from '@ethosagent/job-store';
-import { PendingMemoryStore, TombstoneStore } from '@ethosagent/memory-approval';
+import { PendingMemoryStore, TombstoneStore, withPendingGate } from '@ethosagent/memory-approval';
 import {
   type ConsolidateFn,
   MemoryCaptureRunner,
@@ -1671,25 +1671,6 @@ export async function buildAgentLoop(
       }
     }
 
-    // Inline consolidation fallback (§3.5): only when no macro-loop is
-    // configured. Reuses the pure consolidateMemory(); the consolidation write
-    // is recorded through a history-decorated handle so it lands as
-    // `source: 'consolidation'`.
-    const nightlyConfigured = config.nightlyPass?.enabled === true;
-    const consolidationHandle = withHistory(captureBase, captureHistory, {
-      source: 'consolidation',
-    });
-    const consolidate: ConsolidateFn = async ({ ctx }) => {
-      const memBefore = (await captureBase.read('MEMORY.md', ctx))?.content ?? '';
-      const userBefore = (await captureBase.read('USER.md', ctx))?.content ?? '';
-      const result = await consolidateMemory(
-        { memory: memBefore, user: userBefore, recentContext: '' },
-        llm,
-      );
-      const updates = buildConsolidationUpdates({ memory: memBefore, user: userBefore }, result);
-      if (updates.length > 0) await consolidationHandle.sync(updates, ctx);
-    };
-
     // Approve-before-store gate (memory-lifecycle L2). When approval gates the
     // `capture` source, the runner PROPOSES each fresh fact to the pending queue
     // (with its exact fact-hash) instead of writing durably; approval replays it
@@ -1709,6 +1690,7 @@ export async function buildAgentLoop(
     const evidenceSessions = captureConfig.evidenceSessions ?? 0;
     const captureTombstones = new TombstoneStore({ storage: wiringCtx.storage, dataDir });
     let capturePropose: ProposeFn | undefined;
+    let capturePending: PendingMemoryStore | undefined;
     if (captureGated || evidenceSessions > 0) {
       const pending = new PendingMemoryStore({
         storage: wiringCtx.storage,
@@ -1751,7 +1733,40 @@ export async function buildAgentLoop(
       capturePropose = async (proposal) => {
         await pending.propose(proposal);
       };
+      capturePending = pending;
     }
+
+    // Inline consolidation fallback (§3.5): only when no macro-loop is
+    // configured. Reuses the pure consolidateMemory(); the consolidation write
+    // is recorded through a history-decorated handle so it lands as
+    // `source: 'consolidation'`. Under `memoryApproval.mode: all` it parks in
+    // the capture queue instead (`withPendingGate`, `isGated('consolidation',
+    // mode)`), history outside the gate as in `composeGatedMemory`; approve
+    // replays it through that queue's `apply` under its original source.
+    // `off`/`automated` pass straight through. Pinned by
+    // `__tests__/memory-consolidation-gate.test.ts`.
+    const nightlyConfigured = config.nightlyPass?.enabled === true;
+    const consolidationHandle = withHistory(
+      capturePending
+        ? withPendingGate(captureBase, {
+            store: capturePending,
+            mode: approvalMode,
+            source: 'consolidation',
+          })
+        : captureBase,
+      captureHistory,
+      { source: 'consolidation' },
+    );
+    const consolidate: ConsolidateFn = async ({ ctx }) => {
+      const memBefore = (await captureBase.read('MEMORY.md', ctx))?.content ?? '';
+      const userBefore = (await captureBase.read('USER.md', ctx))?.content ?? '';
+      const result = await consolidateMemory(
+        { memory: memBefore, user: userBefore, recentContext: '' },
+        llm,
+      );
+      const updates = buildConsolidationUpdates({ memory: memBefore, user: userBefore }, result);
+      if (updates.length > 0) await consolidationHandle.sync(updates, ctx);
+    };
 
     const captureRunner = new MemoryCaptureRunner({
       provider: captureBase,

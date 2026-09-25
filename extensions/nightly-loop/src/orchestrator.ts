@@ -186,6 +186,12 @@ function errMessage(err: unknown): string {
 export interface NightlyGates {
   judge?: boolean;
   expression?: boolean;
+  /**
+   * Set when the deployment has no file memory to consolidate (`memory: vector`,
+   * resolved by `nightlyMemory` in apps/ethos/src/commands/nightly.ts): the
+   * memory step is skipped with this text as its detail.
+   */
+  memorySkipReason?: string;
 }
 
 export async function runNightlyPass(
@@ -381,6 +387,8 @@ export async function runNightlyPass(
   // runs even if those failed.
   if (done('memory')) {
     steps.push({ step: 'memory', status: 'skipped', detail: 'already completed for this window' });
+  } else if (gates?.memorySkipReason) {
+    steps.push({ step: 'memory', status: 'skipped', detail: gates.memorySkipReason });
   } else {
     try {
       const cur = await deps.readMemory(personalityId);
