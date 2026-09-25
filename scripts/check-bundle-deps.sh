@@ -9,7 +9,8 @@
 # @ethosagent/cli` breaks at startup with ERR_MODULE_NOT_FOUND (dev hides
 # this via pnpm workspace hoisting). This gate walks the workspace import
 # graph from apps/ethos/src and fails on any undeclared external module.
-# Called by: scripts/run-checks.sh (blocking); local devs via `make bundle-deps`.
+# Called by: scripts/run-checks.sh (blocking), .github/workflows/release.yml
+# (before publish); local devs via `make bundle-deps`.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -36,17 +37,54 @@ const ALLOWLIST = new Set([
 
 const builtins = new Set(builtinModules.flatMap((m) => [m, m.replace(/^node:/, '')]));
 
+// Workspace package dirs, from the `packages:` globs in pnpm-workspace.yaml —
+// the same list pnpm itself links. A hard-coded one-level walk of
+// packages/ extensions/ apps/ used to miss nested packages
+// (packages/safety/*), so undici — imported only by
+// packages/safety/network/src/safe-fetch.ts — shipped undeclared in 0.8.0.
+// Supported glob shapes are the ones pnpm-workspace.yaml uses: an exact dir
+// (`docs`) and a one-level wildcard (`packages/*`). Anything else is refused
+// loudly rather than silently skipped, since a skipped package is a false
+// negative on this gate.
+const workspaceGlobs = () => {
+  const globs = [];
+  let inPackages = false;
+  for (const line of readFileSync('pnpm-workspace.yaml', 'utf8').split('\n')) {
+    if (/^\S/.test(line)) inPackages = /^packages:\s*$/.test(line);
+    else if (inPackages) {
+      const m = line.match(/^\s+-\s+["']?([^"'#]+?)["']?\s*(#.*)?$/);
+      if (m) globs.push(m[1]);
+    }
+  }
+  if (globs.length === 0) throw new Error('BUNDLE-DEPS: no packages: globs found in pnpm-workspace.yaml');
+  return globs;
+};
+
+const workspaceDirs = () => {
+  const dirs = [];
+  for (const glob of workspaceGlobs()) {
+    if (glob.startsWith('!')) throw new Error(`BUNDLE-DEPS: unsupported negated workspace glob ${glob}`);
+    if (glob.endsWith('/*') && !glob.slice(0, -2).includes('*')) {
+      const parent = glob.slice(0, -2);
+      if (!existsSync(parent)) continue;
+      for (const entry of readdirSync(parent)) dirs.push(join(parent, entry));
+    } else if (!glob.includes('*')) {
+      dirs.push(glob);
+    } else {
+      throw new Error(`BUNDLE-DEPS: unsupported workspace glob ${glob} — teach workspaceDirs() it`);
+    }
+  }
+  return dirs;
+};
+
 // Map workspace package name -> src dir.
 const srcDirs = new Map();
-for (const group of ['packages', 'extensions', 'apps']) {
-  if (!existsSync(group)) continue;
-  for (const entry of readdirSync(group)) {
-    const pkgJson = join(group, entry, 'package.json');
-    if (!existsSync(pkgJson)) continue;
-    const name = JSON.parse(readFileSync(pkgJson, 'utf8')).name;
-    const src = join(group, entry, 'src');
-    if (name && existsSync(src)) srcDirs.set(name, src);
-  }
+for (const dir of workspaceDirs()) {
+  const pkgJson = join(dir, 'package.json');
+  if (!existsSync(pkgJson)) continue;
+  const name = JSON.parse(readFileSync(pkgJson, 'utf8')).name;
+  const src = join(dir, 'src');
+  if (name && existsSync(src)) srcDirs.set(name, src);
 }
 
 const sourceFiles = (dir) => {
@@ -129,7 +167,16 @@ const specifiers = (file) => {
     .replace(/\b(?:import|export)\s+type\b[\s\S]{0,500}?from\s*["'][^"']*["']/g, '');
   const found = [];
   const patterns = [
-    /\bfrom\s+["']([^"']+)["']/g,
+    // Static `import … from` / `export … from`, anchored to statement start: the
+    // keyword begins a line (after indentation) or follows a `;`. The clause
+    // between keyword and `from` may span lines (a multi-line named import) but
+    // cannot contain `;`, parens, `=` or a backtick — no import/export clause
+    // does. An unanchored `\bfrom\s+"x"` matched code quoted inside string
+    // literals: the eval-harness fixtures in
+    // extensions/eval-harness/src/decision-seeds.ts embed
+    // `import { render } from "acme-widgets"` and `import { it } from 'vitest'`
+    // as data, and the gate reported both as undeclared runtime deps.
+    /(?:^|;)[ \t]*(?:import|export)\s+[^;()=`]*?\bfrom\s*["']([^"']+)["']/gm,
     /^\s*import\s+["']([^"']+)["']/gm,
     /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
     /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
