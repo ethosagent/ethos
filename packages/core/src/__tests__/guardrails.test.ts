@@ -206,7 +206,11 @@ describe('Orchestrator guardrails', () => {
     // that took `this.deps` now take it, no new lines). The resolver lives in
     // packages/wiring/src/small-window-resolver.ts, the call in
     // agent-loop/stages/turn-setup.ts, the overlay in agent-loop/small-window.ts.
-    expect(lineCount).toBeLessThanOrEqual(1052);
+    // Bumped 1052 -> 1053: manual `/compact` reads the session personality's
+    // own history limit — one `historyLimitFor` property in the
+    // `compactSession` call. The resolution lives in agent-loop/small-window.ts
+    // and agent-loop/manual-compact.ts.
+    expect(lineCount).toBeLessThanOrEqual(1053);
   });
 
   it('no stage file exceeds 700 lines', () => {

@@ -19,7 +19,10 @@
 // (`resolveResultBudgetGate`, packages/wiring/src/static-floor.ts), which
 // depends on that personality's static floor, so the overlay carries it too.
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { PersonalityConfig } from '@ethosagent/types';
+import { deriveFsReachPaths } from '../fs-reach';
 import type { LoopDeps } from './turn-context';
 
 /** The per-personality window decisions for one turn. */
@@ -42,7 +45,8 @@ export interface SmallWindowOverlay {
 /**
  * Decide the window overlay for one turn; `undefined` keeps the loop's own
  * options. Called once per turn by `setupTurn` (stages/turn-setup.ts) with the
- * workdir that turn resolved from the personality's `fs_reach`.
+ * workdir that turn resolved from the personality's `fs_reach`, and by a
+ * manual `/compact` through `historyLimitFor` below.
  */
 export type SmallWindowResolver = (
   personality: PersonalityConfig,
@@ -75,4 +79,31 @@ export function withSmallWindow(deps: LoopDeps, overlay: SmallWindowOverlay | un
     }
   }
   return next;
+}
+
+/**
+ * The history limit a manual `/compact` reads for `personality`: the one its
+ * turns run with (`withSmallWindow`), so a small-window personality compacts
+ * over the same scaled history its turns see. `undefined` when no resolver is
+ * wired; `compactSession` (manual-compact.ts) then uses the loop's limit, as
+ * before. An unusable `fs_reach` (which a turn refuses) keeps the loop's limit.
+ */
+export function historyLimitFor(
+  deps: Pick<LoopDeps, 'smallWindowResolver' | 'historyLimit' | 'dataDir' | 'workingDir'>,
+): ((personality: PersonalityConfig) => Promise<number>) | undefined {
+  const resolver = deps.smallWindowResolver;
+  if (!resolver) return undefined;
+  return async (personality) => {
+    let workdir: string;
+    try {
+      workdir = deriveFsReachPaths(personality, {
+        ethosHome: deps.dataDir ?? join(homedir(), '.ethos'),
+        self: personality.id,
+        cwd: deps.workingDir,
+      }).workdir;
+    } catch {
+      return deps.historyLimit;
+    }
+    return (await resolver(personality, workdir))?.historyLimit ?? deps.historyLimit;
+  };
 }

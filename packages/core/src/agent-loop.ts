@@ -25,7 +25,7 @@ import { budgetGuardEvents, checkTurnBudgets, updateDenialStreak } from './agent
 import { compactSession, type ManualCompactionResult } from './agent-loop/manual-compact';
 import { applyOverflowRetry, overflowErrorEvent } from './agent-loop/overflow';
 import { applySamplingDefaults, type ModelSamplingDefaults } from './agent-loop/sampling';
-import { withSmallWindow } from './agent-loop/small-window';
+import { historyLimitFor, withSmallWindow } from './agent-loop/small-window';
 import { assembleContext, type MemoryPrefetchGate } from './agent-loop/stages/context-assembly';
 import {
   createTurnBudgetCounters,
@@ -560,6 +560,7 @@ export class AgentLoop {
         session: this.session,
         personalities: this.personalities,
         historyLimit: this.historyLimit,
+        historyLimitFor: historyLimitFor(this.deps), // the personality's own (small-window.ts)
         minTailUserMessages: this.compaction?.minTailUserMessages,
         ...(summarizer ? { summarizer } : {}),
         ...(this.observability ? { observability: this.observability } : {}),
