@@ -106,7 +106,11 @@ import {
   unmountPlatformWebhook,
   type WebBindTarget,
 } from '../config-reload';
-import { createHealthServer } from '../health-server';
+import {
+  createEventLoopLagSampler,
+  createHealthServer,
+  createReadinessCheck,
+} from '../health-server';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { exitIfConfigInvalid } from '../lib/config-exit';
 import { type CronDeliverJob, createCronDeliver } from '../lib/cron-deliver';
@@ -173,6 +177,7 @@ import {
   everyStartedAdapter,
   type GatewayBotWiring,
   gatewayObservability,
+  gatewaySqliteStorePaths,
   idleGatewayBotLoopOpts,
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
@@ -1474,6 +1479,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // FULLY reconciled process, ACP included (§11 OQ8, argued above).
   // -------------------------------------------------------------------------
   const metricsApiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
+  const eventLoopLag = createEventLoopLagSampler();
   const healthServer = createHealthServer(
     healthPort,
     healthHost,
@@ -1491,8 +1497,19 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     },
     metricsText,
     createGatewayMetricsAuthCheck(metricsApiKeys),
+    {
+      // R6 — `/readyz`, live adapters through the 60s `cachedHealth`.
+      readiness: createReadinessCheck({
+        adapters: async () =>
+          (await buildGatewayHeartbeat(gateway.listAdapters(), heartbeatStartedAt)).adapters,
+        sqlitePaths: gatewaySqliteStorePaths(dir),
+        lagP99Ms: eventLoopLag.p99Ms,
+      }),
+      eventLoopLagP99Ms: eventLoopLag.p99Ms,
+    },
   );
   console.log(`  health:  http://${healthHost}:${healthPort}/healthz`);
+  console.log(`  ready:   http://${healthHost}:${healthPort}/readyz`);
 
   // Inbound webhooks — opt-in, unchanged gate (§11 OQ5: same defaults as today,
   // no new exposure policy for the merged profile).

@@ -135,11 +135,12 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
 ExecStart=/usr/bin/ethos gateway start
 Restart=on-failure
 RestartSec=5
 RestartPreventExitStatus=3 78
+WatchdogSec=30
 StandardOutput=append:%h/.ethos/logs/gateway.out.log
 StandardError=append:%h/.ethos/logs/gateway.err.log
 Environment=NODE_ENV=production
@@ -147,6 +148,8 @@ Environment=NODE_ENV=production
 [Install]
 WantedBy=default.target
 ```
+
+`Type=notify` holds `systemctl start` until the gateway has started its adapters and sent `READY=1` (`notifyReady` in `apps/ethos/src/sd-notify.ts`). `WatchdogSec=30` restarts a gateway whose event loop stops sending the keep-alive `startWatchdog` schedules at half that interval — the alive-but-wedged case a crash restart never sees.
 
 Alternatively, generate the unit file automatically:
 

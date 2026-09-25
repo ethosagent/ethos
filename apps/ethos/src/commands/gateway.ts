@@ -137,7 +137,12 @@ import {
   createSlackApprovalHook,
   SYSTEM_DECIDER,
 } from '../approval-coordinator';
-import { createHealthServer, type MetricsAuthCheck } from '../health-server';
+import {
+  createEventLoopLagSampler,
+  createHealthServer,
+  createReadinessCheck,
+  type MetricsAuthCheck,
+} from '../health-server';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { exitIfConfigInvalid } from '../lib/config-exit';
 import { createCronDeliver } from '../lib/cron-deliver';
@@ -223,6 +228,9 @@ export interface GatewayHeartbeat {
   startedAt: string;
   updatedAt: string;
   adapters: Array<{ name: string; ok: boolean }>;
+  /** U9 — this process's resident set size at `updatedAt`, read by
+   *  `ethos status` (`gatewayMemoryFacet`, apps/ethos/src/commands/status.ts). */
+  rssBytes: number;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -273,7 +281,16 @@ export async function buildGatewayHeartbeat(
     startedAt,
     updatedAt: new Date().toISOString(),
     adapters: adapterStatuses,
+    rssBytes: process.memoryUsage.rss(),
   };
+}
+
+/** R6 — the SQLite stores an adapter-owning process (`ethos gateway start`,
+ *  `ethos boot`) cannot serve without; `/readyz` requires each to open. */
+export function gatewaySqliteStorePaths(dataDir: string): string[] {
+  return ['sessions.db', 'delivery-ledger.db', 'inbound-dedup.db', 'inbound-spool.db'].map((file) =>
+    join(dataDir, file),
+  );
 }
 
 function gatewayHealthPath(): string {
@@ -1792,6 +1809,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // cross-process (WAL) with `ethos serve` for other purposes, so a second
   // `SqliteApiKeyStore` handle on it here is safe.
   const metricsApiKeys = new SqliteApiKeyStore(join(ethosDir(), 'sessions.db'));
+  const eventLoopLag = createEventLoopLagSampler();
   const checkMetricsAuth = createGatewayMetricsAuthCheck(metricsApiKeys);
   const healthServer = createHealthServer(
     healthPort,
@@ -1810,8 +1828,19 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     },
     gatewayMetricsText,
     checkMetricsAuth,
+    {
+      // R6 — `/readyz`. Adapter health comes through `buildGatewayHeartbeat`,
+      // i.e. the 60s `cachedHealth`, so a probe never logs in to IMAP.
+      readiness: createReadinessCheck({
+        adapters: async () => (await buildGatewayHeartbeat(adapters, heartbeatStartedAt)).adapters,
+        sqlitePaths: gatewaySqliteStorePaths(ethosDir()),
+        lagP99Ms: eventLoopLag.p99Ms,
+      }),
+      eventLoopLagP99Ms: eventLoopLag.p99Ms,
+    },
   );
   console.log(`  health: http://${healthHost}:${healthPort}/healthz`);
+  console.log(`  ready: http://${healthHost}:${healthPort}/readyz`);
   console.log(`  metrics: http://${healthHost}:${healthPort}/metrics`);
 
   // Inbound webhooks — opt-in: only listen when at least one hook is configured.
