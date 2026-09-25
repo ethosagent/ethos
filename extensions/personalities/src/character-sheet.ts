@@ -627,11 +627,17 @@ function guaranteeRows(
     };
   }
 
+  // A `*` entry matches every host (`hostnameMatches`,
+  // packages/safety/network/src/policy.ts), so a list containing one is the
+  // open policy, not an allowlist — `defaultRecipeSafety` writes exactly that.
+  const netAllow = safety?.network?.allow;
+  const hostAllowlist = netAllow && netAllow.length > 0 && !netAllow.includes('*') ? netAllow : [];
+
   // G-CAP — always enforced per call; the personality's own policy is what the
   // declaration is intersected WITH.
   const capNarrowings = [
     config.fs_reach ? 'fs_reach' : '',
-    safety?.network?.allow?.length ? 'network allowlist' : '',
+    hostAllowlist.length > 0 ? 'network allowlist' : '',
   ].filter((p) => p !== '');
   const cap: GuaranteeRow = {
     status: capNarrowings.length > 0 ? 'narrowed' : 'enforced',
@@ -677,8 +683,8 @@ function guaranteeRows(
     // Every part that is true is stated: a personality can both narrow the
     // destination set AND opt into private destinations, and hiding the second
     // behind the first is exactly the thing this section exists to prevent.
-    const allowPart = net?.allow?.length
-      ? `host allowlist: ${plural(net.allow.length, 'host')} over the always-on floor`
+    const allowPart = hostAllowlist.length
+      ? `host allowlist: ${plural(hostAllowlist.length, 'host')} over the always-on floor`
       : 'safeFetch floor: resolved-IP checks, per-hop redirect revalidation';
     const suffix = joinParts([
       net?.deny?.length ? plural(net.deny.length, 'deny rule') : '',
@@ -695,7 +701,7 @@ function guaranteeRows(
           ]),
         }
       : {
-          status: net?.allow?.length ? 'narrowed' : 'enforced',
+          status: hostAllowlist.length ? 'narrowed' : 'enforced',
           detail: joinParts([allowPart, suffix]),
         };
   }

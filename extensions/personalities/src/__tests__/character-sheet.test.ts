@@ -860,6 +860,21 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
     expect(row(sheet, 'G-APP')).toContain('2 deny rules bind first');
   });
 
+  // A bare `*` matches every host (`hostnameMatches`,
+  // packages/safety/network/src/policy.ts), so `allow: ['*']` — what every
+  // recipe-installed personality is written with (`defaultRecipeSafety`) — is
+  // the open policy, not a one-host allowlist.
+  it("does not report allow: ['*'] as a host allowlist", () => {
+    const open: PersonalityConfig = {
+      ...tight,
+      safety: { network: { allow: ['*'] } },
+    };
+    const sheet = renderCharacterSheet(open, soulMd);
+    expect(status(sheet, 'G-NET')).toBe('enforced');
+    expect(row(sheet, 'G-NET')).not.toContain('host allowlist');
+    expect(row(sheet, 'G-CAP')).not.toContain('network allowlist');
+  });
+
   it('states both the allowlist and the private-network opt-in when a personality does both', () => {
     const both: PersonalityConfig = {
       ...tight,
