@@ -16,7 +16,7 @@ import {
 } from '../../lib/trail';
 
 // The trail — feedback & activity contract §3/§5, DESIGN.md "Feedback &
-// activity". One collapsed footer line under the bubble, expanding into the
+// activity". One collapsed line above the bubble, expanding into the
 // same dense rows the drawer draws. Rows, not boxes: no card chrome, no
 // left-border stripe, no shadow ("cards earn existence").
 //

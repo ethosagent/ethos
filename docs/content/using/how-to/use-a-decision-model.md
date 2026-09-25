@@ -113,7 +113,7 @@ To keep a vendor alias from moving under a measured threshold, pin the model in 
 
 Web, desktop and CLI chat show every decision the turn's personality enabled. Channel adapters (Telegram, Slack, Discord, WhatsApp, email) show none.
 
-**The trail footer** under the reply counts decisions apart from actions, with their total time:
+**The trail footer** above the reply counts decisions apart from actions, with their total time:
 
 ```
 ✓ 1 action · 2 decisions 1.3s · 5ms ▸
