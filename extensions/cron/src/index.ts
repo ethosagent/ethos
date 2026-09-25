@@ -606,8 +606,11 @@ export class CronScheduler {
         throw new Error(`Job with id "${job.id}" already exists`);
       }
       if (job.contextFrom && job.contextFrom.length > 0) {
+        // Another personality's job is an unknown reference (S15): the same
+        // text, so this is not an existence oracle. Re-checked at fire time by
+        // `resolveContext`.
         for (const ref of job.contextFrom) {
-          if (!jobs.find((j) => j.id === ref || j.name === ref)) {
+          if (!findOwnedRef(jobs, ref, job.personalityId)) {
             throw new Error(`contextFrom references unknown job: "${ref}"`);
           }
         }
@@ -1103,9 +1106,19 @@ export class CronScheduler {
     if (!job.contextFrom || job.contextFrom.length === 0) return '';
 
     const blocks: string[] = [];
+    const jobs = await this.readJobs();
     for (const ref of job.contextFrom) {
-      const refJob = await this.findJobByIdOrName(ref);
-      if (!refJob) continue;
+      // Only the firing job's own personality's output (S15). A reference
+      // stored before `createJob` refused foreign ones resolves to nothing.
+      const refJob = findOwnedRef(jobs, ref, job.personalityId);
+      if (!refJob) {
+        this.logger.warn(`[cron] contextFrom "${ref}" skipped for job "${job.id}"`, {
+          component: 'cron',
+          jobId: job.id,
+          reason: `no job "${ref}" owned by personality "${job.personalityId}"`,
+        });
+        continue;
+      }
 
       const runs = await this.listRuns(refJob.id, 1);
       if (runs.length === 0) continue;
@@ -1123,11 +1136,6 @@ export class CronScheduler {
     }
 
     return blocks.length > 0 ? `${blocks.join('\n\n')}\n\n` : '';
-  }
-
-  private async findJobByIdOrName(ref: string): Promise<CronJob | null> {
-    const jobs = await this.readJobs();
-    return jobs.find((j) => j.id === ref || j.name === ref) ?? null;
   }
 
   // ---------------------------------------------------------------------------
@@ -1523,6 +1531,16 @@ function filenameToIso(filename: string): string {
   if (!m) return stem;
   const [, date, hh, mm, ss, ms, z] = m;
   return `${date}T${hh}:${mm}:${ss}.${ms}${z ?? ''}`;
+}
+
+/**
+ * A `contextFrom` reference (id or name) resolved among `personalityId`'s own
+ * jobs only — the single lookup behind `createJob`'s refusal and
+ * `resolveContext`'s fire-time re-check (S15). Pinned by the S15 cases in
+ * `src/__tests__/cron.test.ts` ("CronScheduler job chaining").
+ */
+function findOwnedRef(jobs: CronJob[], ref: string, personalityId: string): CronJob | undefined {
+  return jobs.find((j) => (j.id === ref || j.name === ref) && j.personalityId === personalityId);
 }
 
 function slugify(name: string): string {

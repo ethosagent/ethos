@@ -12,7 +12,7 @@ import type {
   PersonalityConfig,
   RunnerCapabilities,
 } from '@ethosagent/types';
-import { type AcpGatePolicy, createAutoApproveGate } from './acp-gate';
+import { type AcpGatePolicy, createAutoApproveGate, createPersonalityGate } from './acp-gate';
 import { ACP_PROTOCOL_VERSION } from './acp-protocol';
 import { CLAUDE_CODE_ACP_CAPABILITIES, CLAUDE_CODE_ACP_RUNNER_NAME } from './capabilities';
 import { runAcpHost } from './host';
@@ -45,7 +45,8 @@ export interface AcpJobRunnerDeps {
   /**
    * The tool-call decision. Production wires `createRouterGate` (the worker
    * router); absent, it defaults to auto-approve so a standalone construction
-   * still runs.
+   * still runs. Either way `run` wraps it in `createPersonalityGate`, so the
+   * job personality's deny rules and toolset refuse first (S12).
    */
   gate?: AcpGatePolicy;
   /**
@@ -175,7 +176,8 @@ export class AcpJobRunner implements JobRunner {
         signal: ctx.signal,
         steerSink: ctx.steerSink,
         appendLog: ctx.appendLog,
-        gate: this.gate,
+        // The personality's deny rules and toolset first, then the gate (S12).
+        gate: createPersonalityGate(this.gate, personality, this.deps.logger),
         ...(this.deps.logger ? { logger: this.deps.logger } : {}),
         onStarted: (info) => this.live.set(job.id, info),
       });

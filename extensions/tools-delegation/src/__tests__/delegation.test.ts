@@ -162,6 +162,50 @@ describe('delegate_task', () => {
     expect(seenAgentIds[1]).toBe('depth:2');
   });
 
+  // S12 (plan openclaw-2026.9.6-gaps): the child runs inside the parent turn's
+  // narrowing, never the full personality toolset.
+  it("forwards the parent turn's tool narrowing to the child run", async () => {
+    const seen: Array<{ toolsetNarrow?: string[]; toolsetExclude?: string[] }> = [];
+    const loop = {
+      run: async function* (
+        _prompt: string,
+        opts: { toolsetNarrow?: string[]; toolsetExclude?: string[] },
+      ): AsyncGenerator<AgentEvent> {
+        seen.push({ toolsetNarrow: opts.toolsetNarrow, toolsetExclude: opts.toolsetExclude });
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+      },
+    } as unknown as import('@ethosagent/core').AgentLoop;
+    const toolsetNarrowing = { narrow: ['read_file', 'delegate_task'], exclude: ['send_message'] };
+
+    await createDelegateTaskTool(loop).execute({ prompt: 'task' }, makeCtx({ toolsetNarrowing }));
+    await createMixtureOfAgentsTool(loop).execute(
+      { agents: [{ prompt: 'a' }] },
+      makeCtx({ toolsetNarrowing }),
+    );
+
+    expect(seen).toEqual([
+      { toolsetNarrow: ['read_file', 'delegate_task'], toolsetExclude: ['send_message'] },
+      { toolsetNarrow: ['read_file', 'delegate_task'], toolsetExclude: ['send_message'] },
+    ]);
+  });
+
+  it('a parent turn with no narrowing leaves the child unnarrowed', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const loop = {
+      run: async function* (
+        _prompt: string,
+        opts: Record<string, unknown>,
+      ): AsyncGenerator<AgentEvent> {
+        seen.push(opts);
+        yield { type: 'done', text: 'ok', turnCount: 1 };
+      },
+    } as unknown as import('@ethosagent/core').AgentLoop;
+    await createDelegateTaskTool(loop).execute({ prompt: 'task' }, makeCtx());
+    expect(seen[0]).not.toHaveProperty('toolsetNarrow');
+    expect(seen[0]).not.toHaveProperty('toolsetExclude');
+  });
+
   it('return_mode full (default) returns the full child output capped at 20k', async () => {
     const big = 'x'.repeat(50_000);
     const loop = makeLoop({ 'Do it.': big });

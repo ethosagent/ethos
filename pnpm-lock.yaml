@@ -2363,6 +2363,9 @@ importers:
 
   extensions/tools-watchers:
     dependencies:
+      '@ethosagent/tools-messaging':
+        specifier: workspace:*
+        version: link:../tools-messaging
       '@ethosagent/types':
         specifier: workspace:*
         version: link:../../packages/types

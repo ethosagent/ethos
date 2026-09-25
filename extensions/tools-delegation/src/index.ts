@@ -122,6 +122,13 @@ async function runSubAgent(
     sessionKey: string;
     depth: number;
     abortSignal?: AbortSignal;
+    /**
+     * The parent turn's `ToolContext.toolsetNarrowing`, applied to the child
+     * as `toolsetNarrow`/`toolsetExclude` so it never regains a tool the
+     * parent turn was narrowed out of (S12). Pinned by "forwards the parent
+     * turn's tool narrowing to the child run" in `__tests__/delegation.test.ts`.
+     */
+    narrowing?: ToolContext['toolsetNarrowing'];
   },
 ): Promise<string> {
   let output = '';
@@ -142,6 +149,8 @@ async function runSubAgent(
     personalityId: opts.personalityId,
     abortSignal: opts.abortSignal,
     agentId: childAgentId(opts.depth),
+    ...(opts.narrowing?.narrow ? { toolsetNarrow: opts.narrowing.narrow } : {}),
+    ...(opts.narrowing?.exclude ? { toolsetExclude: opts.narrowing.exclude } : {}),
   })) {
     if (terminal) continue;
     if (event.type === 'text_delta') output += event.text;
@@ -464,6 +473,13 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
       // ---- Background (detached) path -------------------------------------
       // Same up-front validation as the blocking path, then hand off to the
       // JobStore. When background deps are not wired, degrade to not_available.
+      //
+      // Limitation (S12): unlike the blocking path, a background job does NOT
+      // carry the parent turn's `ctx.toolsetNarrowing` — the job row has no
+      // field for it, so the job runs under its personality's full toolset
+      // (an ACP/Pi runner still applies that toolset and its deny rules,
+      // `createPersonalityGate`). A tool the parent turn was narrowed out of
+      // is reachable from a background child.
       if (runInBackground === true) {
         if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
 
@@ -621,6 +637,7 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
           sessionKey,
           depth: depth + 1,
           abortSignal: ctx.abortSignal,
+          narrowing: ctx.toolsetNarrowing,
         });
 
         const header = label ? `[${label}]\n\n` : '';
@@ -733,6 +750,7 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
             sessionKey,
             depth: depth + 1,
             abortSignal: ctx.abortSignal,
+            narrowing: ctx.toolsetNarrowing,
           });
           return { label, output };
         }),
@@ -774,6 +792,7 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
             sessionKey,
             depth: depth + 1,
             abortSignal: ctx.abortSignal,
+            narrowing: ctx.toolsetNarrowing,
           });
 
           return {

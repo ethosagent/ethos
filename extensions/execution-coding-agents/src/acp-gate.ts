@@ -1,4 +1,5 @@
-import type { InteractionRequest, Logger } from '@ethosagent/types';
+import { denyRuleReason, matchDenyRule } from '@ethosagent/core';
+import type { InteractionRequest, Logger, PersonalityConfig } from '@ethosagent/types';
 import { type InteractionRouter, RUN_SCOPE_ANSWER } from '@ethosagent/worker-router';
 import type { AcpPermissionOption, AcpRequestPermissionOutcome } from './acp-protocol';
 
@@ -27,6 +28,12 @@ export interface AcpGateRequest {
   kind?: string;
   /** Compact, legible digest of `toolCall.rawInput`. Never authoritative. */
   digest: string;
+  /**
+   * `toolCall.rawInput` itself, untruncated — what `createPersonalityGate`
+   * matches deny rules against (the digest is truncated, so a rule past its
+   * cap would silently miss). Absent when the agent sent none.
+   */
+  rawInput?: unknown;
   /** The options the AGENT is offering — its own optionIds, not ours to invent. */
   options: AcpPermissionOption[];
 }
@@ -188,5 +195,93 @@ export function createRouterGate(
       outcome,
     });
     return outcome;
+  };
+}
+
+/**
+ * ACP `ToolKind` → the Ethos tools that do the same thing (S12, plan
+ * openclaw-2026.9.6-gaps). ACP categorizes a tool call by what it DOES, not by
+ * name, so the mapping is a judgement, recorded here as the one table:
+ *
+ * | ACP kind      | Ethos tools                  | why                                   |
+ * |---------------|------------------------------|---------------------------------------|
+ * | `read`        | `read_file`                  |                                       |
+ * | `edit`        | `write_file`, `patch_file`   | either can change a file              |
+ * | `delete`      | `terminal`, `write_file`     | Ethos deletes through a shell or write |
+ * | `move`        | `terminal`, `write_file`     | same                                  |
+ * | `search`      | `search_files`               |                                       |
+ * | `execute`     | `terminal`                   |                                       |
+ * | `fetch`       | `web_extract`                | fetches one URL's content             |
+ * | `think`, `switch_mode`, `other`, absent | none | no Ethos analogue                  |
+ *
+ * Where a kind maps to several tools, the ambiguity fails CLOSED for deny
+ * rules — a rule matching ANY of them refuses — and open for the toolset — ANY
+ * of them in the toolset permits, since each can do the job. Enforced by
+ * `personalityRefusal` below; pinned by the `createPersonalityGate` cases in
+ * `src/__tests__/acp-gate.test.ts`.
+ */
+const ACP_KIND_TO_ETHOS_TOOLS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['read', ['read_file']],
+  ['edit', ['write_file', 'patch_file']],
+  ['delete', ['terminal', 'write_file']],
+  ['move', ['terminal', 'write_file']],
+  ['search', ['search_files']],
+  ['execute', ['terminal']],
+  ['fetch', ['web_extract']],
+]);
+
+export type AcpGatePersonality = Pick<PersonalityConfig, 'id' | 'toolset' | 'safety'>;
+
+/** Why this personality refuses the call, or `undefined` if it does not. */
+function personalityRefusal(
+  personality: AcpGatePersonality,
+  req: AcpGateRequest,
+): string | undefined {
+  const mapped = (req.kind && ACP_KIND_TO_ETHOS_TOOLS.get(req.kind)) || [];
+  // Deny rules: every Ethos name the kind maps to, plus the agent's own label,
+  // so an unmapped kind is still matched on its name and input. `''` when
+  // there is no name at all, so a rule on the input alone still matches.
+  const names = [...mapped, ...(req.toolName ? [req.toolName] : [])];
+  const rules = personality.safety?.denyRules;
+  for (const name of names.length > 0 ? names : ['']) {
+    const rule = matchDenyRule(rules, name, req.rawInput ?? {});
+    if (rule) return denyRuleReason(rule);
+  }
+  // Toolset: only a kind with an Ethos analogue can be checked; an unmapped
+  // kind goes to the inner gate (the router, or a human) as before.
+  const toolset = personality.toolset;
+  if (toolset && mapped.length > 0 && !mapped.some((t) => toolset.includes(t))) {
+    return `ACP tool kind "${req.kind}" maps to ${mapped.join(', ')}, none of which is in personality "${personality.id}"'s toolset`;
+  }
+  return undefined;
+}
+
+/**
+ * Bind a delegated ACP agent to the delegating personality's deny rules and
+ * toolset — the floor the in-process loop applies in `enforceBeforeToolCall`
+ * (`packages/core`) and the tool registry, which an out-of-process agent never
+ * crosses. Checked BEFORE `inner` (auto-approve or the router), so no answer,
+ * cached scope or human can approve past it. `AcpJobRunner` wraps its gate in
+ * this per run (`src/runner.ts`).
+ *
+ * Limitation: this sees only calls the agent asks permission for. A tool call
+ * the agent's own mode runs without `session/request_permission` never reaches
+ * any Ethos gate; the container boundary (D4) is the containment for those.
+ */
+export function createPersonalityGate(
+  inner: AcpGatePolicy,
+  personality: AcpGatePersonality,
+  logger?: Logger,
+): AcpGatePolicy {
+  return async (req) => {
+    const refusal = personalityRefusal(personality, req);
+    if (!refusal) return inner(req);
+    logger?.info('acp gate: refused by personality policy', {
+      jobId: req.jobId,
+      toolCallId: req.toolCallId,
+      personalityId: personality.id,
+      reason: refusal,
+    });
+    return toOutcome(req.options, false, false, logger, req);
   };
 }

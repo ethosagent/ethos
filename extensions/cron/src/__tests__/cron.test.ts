@@ -982,6 +982,73 @@ describe('CronScheduler job chaining', () => {
     const chainedPrompt = prompts.find((p) => p.includes('chained prompt'));
     expect(chainedPrompt).toContain('Context from "Named Source"');
   });
+
+  // S15 (plan openclaw-2026.9.6-gaps): a job reads only its own personality's
+  // run output. Another personality's job is an unknown reference.
+  it("refuses contextFrom naming another personality's job, with the unknown-job text", async () => {
+    const scheduler = makeScheduler();
+    const bJob = await scheduler.createJob({
+      name: 'B Secrets',
+      schedule: '0 8 * * *',
+      prompt: 'b prompt',
+      personalityId: 'B',
+      missedRunPolicy: 'skip',
+    });
+
+    for (const ref of [bJob.id, bJob.name]) {
+      await expect(
+        scheduler.createJob({
+          name: `A Reads ${ref}`,
+          schedule: '0 9 * * *',
+          prompt: 'a prompt',
+          personalityId: 'A',
+          missedRunPolicy: 'skip',
+          contextFrom: [ref],
+        }),
+      ).rejects.toThrow(`contextFrom references unknown job: "${ref}"`);
+    }
+  });
+
+  it('a stored cross-personality contextFrom resolves to no context at fire time', async () => {
+    const prompts: string[] = [];
+    const scheduler = makeScheduler({
+      runJob: async (job) => {
+        prompts.push(job.prompt ?? '');
+        return {
+          jobId: job.id,
+          ranAt: new Date().toISOString(),
+          output: 'B SECRET',
+          sessionKey: 'k',
+        };
+      },
+    });
+    const bJob = await scheduler.createJob({
+      name: 'B Secrets',
+      schedule: '0 8 * * *',
+      prompt: 'b prompt',
+      personalityId: 'B',
+      missedRunPolicy: 'skip',
+    });
+    await scheduler.runJobNow(bJob.id);
+    const aJob = await scheduler.createJob({
+      name: 'A Reads',
+      schedule: '0 9 * * *',
+      prompt: 'a prompt',
+      personalityId: 'A',
+      missedRunPolicy: 'skip',
+    });
+    // A row written before S15: A's job referencing B's.
+    const jobsPath = join(testDir, 'jobs.json');
+    const rows: CronJob[] = JSON.parse(await readFile(jobsPath, 'utf-8'));
+    await writeFile(
+      jobsPath,
+      JSON.stringify(rows.map((j) => (j.id === aJob.id ? { ...j, contextFrom: [bJob.id] } : j))),
+    );
+
+    await scheduler.runJobNow(aJob.id);
+
+    expect(prompts.at(-1)).toBe('a prompt');
+  });
 });
 
 // ---------------------------------------------------------------------------

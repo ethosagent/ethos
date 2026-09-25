@@ -31,6 +31,7 @@ import { recordMemoryWriteIfApplicable } from '../memory-telemetry';
 import { handleUntrustedResult } from '../result-defense';
 import { buildScopedStorage } from '../scoped-storage';
 import { recordSkillInvoked } from '../skill-telemetry';
+import { toolsetNarrowingOf } from '../toolset-narrowing';
 import type { WatcherTap } from '../turn-context';
 import { approverSinkOf, type TurnDecisions } from '../turn-decisions';
 import { consultWatcherHalt, enforceBeforeToolCall } from './per-call-enforcement';
@@ -186,6 +187,7 @@ export async function* processTools(
     // undefined for a foreground turn (D22).
     ...(ctx.opts.jobId !== undefined ? { jobId: ctx.opts.jobId } : {}),
     ...(ctx.opts.reviewOfJobId !== undefined ? { reviewOfJobId: ctx.opts.reviewOfJobId } : {}),
+    ...toolsetNarrowingOf(ctx.allowedTools, ctx.filterOpts.excludeTools),
     origin: ctx.opts.origin,
     ...(ctx.opts.a2aDelegation ? { a2aDelegation: ctx.opts.a2aDelegation } : {}),
     personalityId: ctx.personality.id,
