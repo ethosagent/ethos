@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -12,6 +12,8 @@ updated: 2026-09-24
 ## Source {#source}
 
 The full field set lives in the `EthosConfig` interface in [`packages/config/src/index.ts`](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts). `parseConfigYaml` reads values; `writeConfig` writes them. Fields marked `@internal` are managed by the runtime (e.g. `activeContext` by `ethos set`) — do not hand-edit them.
+
+A key the parser never reads, such as a misspelling, is kept in the file but has no effect. It produces a warning naming the key and, when one is close, the key it was probably meant to be: `config.yaml: 'personalty' has no effect — the config parser did not read it; did you mean 'personality'?`. `ethos doctor` prints these warnings, as do `ethos serve`, `ethos gateway` and `ethos boot` at startup. A warning never stops startup. Keys that only the web UI reads (`approvalMode`, `verbosity`, `debugMode`, `contextLayering`, the `display.voice_*` tuning keys) are not reported. The check lives in `ConfigKeyUse` in the same file. It does not yet cover the named rosters, `teams.*`, `webhooks.*`, `quick_commands.*`, `channel_filter.*` or `models.*`.
 
 ## Minimal example {#minimal-example}
 
