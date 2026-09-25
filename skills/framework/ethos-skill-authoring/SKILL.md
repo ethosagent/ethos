@@ -50,6 +50,8 @@ skills/data/<category>/<id>/SKILL.md             # first-party bundle (repo-leve
 
 The file must be named `SKILL.md` exactly. The directory name becomes the skill id (kebab-case). One skill = one directory.
 
+Under a personality's default `fs_reach`, `write_file` cannot create either `~/.ethos` location. `~/.ethos/skills/` is read-only (`deriveFsReachPaths` in `packages/core/src/fs-reach.ts`), and a personality's own `skills/` is write-denied (`PERSONALITY_DEFINITION_ENTRIES`, same file). Draft the skill in the workspace (for example `.ethos-work/skills/<id>/SKILL.md`) and ask the user to move it into place.
+
 ## Frontmatter — the required contract
 
 ```yaml
