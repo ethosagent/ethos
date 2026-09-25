@@ -293,10 +293,11 @@ touches the wire.
   Fallback belongs to the call site, which owns its fail direction; the
   provider owns only how it fails.
 - **Errors are data.** `decide` never throws. Every failure is
-  `{ ok: false, code, message }` with one of nine codes: `auth`,
+  `{ ok: false, code, message }` with one of ten codes: `auth`,
   `invalid`, `rate_limited`, `overloaded`, `timeout`, `aborted`,
-  `malformed`, `too_large`, `unavailable`. A network failure or an
-  unmapped status is `unavailable`. A missing or mistyped answer is
+  `malformed`, `too_large`, `unavailable`, `breaker_open`. A network
+  failure or an unmapped status is `unavailable`; `breaker_open` means
+  the provider's own breaker refused the call and sent nothing. A missing or mistyped answer is
   `malformed`, never a defaulted value.
 - **Question names are provider-neutral.** The contract's question types
   are `boolean`, `choice` and `score`. A vendor's wire names appear only

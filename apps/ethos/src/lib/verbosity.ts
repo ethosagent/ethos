@@ -159,6 +159,11 @@ export function projectEvent(
       // Not surfaced at any verbosity in the line projection; `context_meta` is
       // internal.
       break;
+    case 'decision':
+      // Not rendered yet: the CLI decision line is milestone N7d (plan
+      // decision-provider-personality §15.6). Listed so the consumer audit
+      // for the `decision` variant (N7a, §15.2) is visible here.
+      break;
   }
 
   if (verbosity === 'debug') {

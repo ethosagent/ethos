@@ -80,6 +80,22 @@ describe('encodeZeroEvent', () => {
     expect(encodeZeroEvent(ev({ type: 'future_event' }))).toBeNull();
   });
 
+  it('never emits a decision row — out of v1 for stream-json (decision-provider-personality §15.4)', () => {
+    const decision = (phase: 'started' | 'settled') =>
+      encodeZeroEvent({
+        type: 'decision',
+        id: 'd1',
+        phase,
+        site: 'router',
+        provider: 'typesafe',
+        mode: 'on',
+        personalityId: 'p',
+        ...(phase === 'settled' ? { outcome: 'ok' as const, acted: true, latencyMs: 41 } : {}),
+      });
+    expect(decision('started')).toBeNull();
+    expect(decision('settled')).toBeNull();
+  });
+
   it('obeys the audience gate', () => {
     const progress = (audience: string) =>
       ev({ type: 'tool_progress', toolName: 't', message: 'm', audience });

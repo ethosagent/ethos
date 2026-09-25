@@ -365,4 +365,34 @@ describe('AgentBridge.whenIdle waits for an abandoned turn to settle (F06)', () 
       expect.objectContaining({ credentialPrompt: true }),
     );
   });
+  it('forwards decision events without their type tag, including one after done (§15.2, PD17)', async () => {
+    const settled = {
+      id: 'd1',
+      phase: 'settled' as const,
+      site: 'injection' as const,
+      provider: 'typesafe',
+      mode: 'shadow' as const,
+      outcome: 'ok' as const,
+      verdict: 'clean',
+      latencyMs: 30,
+      personalityId: 'p',
+      toolCallId: 'call_1',
+    };
+    const loop = {
+      run: vi.fn(() =>
+        makeEventStream([
+          { type: 'text_delta', text: 'hi' },
+          { type: 'done', text: 'hi', turnCount: 1 },
+          { type: 'decision', ...settled },
+        ]),
+      ),
+    } as unknown as AgentLoop;
+
+    const bridge = new AgentBridge(loop);
+    const seen: unknown[] = [];
+    bridge.on('decision', (d) => seen.push(d));
+    await bridge.send('hi', {});
+
+    expect(seen).toEqual([settled]);
+  });
 });

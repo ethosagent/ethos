@@ -189,6 +189,7 @@ const ERROR_TEXT: Record<DecisionTestErrorCode, string> = {
   timeout: 'No answer within the injection site’s time budget.',
   aborted: 'The test was cancelled.',
   unavailable: 'Could not reach the provider.',
+  breaker_open: 'Paused after repeated failures — no request was sent. Try again in a minute.',
   too_large: 'The message is too large to send.',
   invalid: 'The request was refused as invalid.',
   malformed: 'The provider answered, but the answer could not be read.',

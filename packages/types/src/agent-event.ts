@@ -14,6 +14,7 @@
 // can iterate it.
 // ---------------------------------------------------------------------------
 
+import type { DecisionErrorCode } from './decision';
 import type { ModelDeviation, ModelResolutionSource } from './model-registry';
 
 export const KNOWN_AGENT_EVENT_TYPES = [
@@ -34,6 +35,7 @@ export const KNOWN_AGENT_EVENT_TYPES = [
   'evaluators_complete',
   'credential_required',
   'notification_received',
+  'decision',
 ] as const;
 
 export type KnownAgentEventType = (typeof KNOWN_AGENT_EVENT_TYPES)[number];
@@ -260,4 +262,53 @@ export type AgentEvent =
       message: string;
       startTurn: boolean;
       payload?: Record<string, unknown>;
+    }
+  /**
+   * A decision site ran for this turn (plan decision-provider-personality §15,
+   * N7). Emitted by `runDecisionSite` (packages/wiring/src/decision-site.ts)
+   * through the per-call `DecisionSink` core hands the site, and yielded by the
+   * loop at its next yield point — the post-`done` tail included, so only a
+   * consumer that drains the iterator sees a late shadow row (PD17).
+   *
+   * Audience (§15.4): web, desktop and CLI chat may render it; channel
+   * adapters, the gateway streamer, `ethos -z`, TUI, ACP, A2A and
+   * `/v1/chat/completions` do not. Like internal `tool_progress`, it is
+   * never a message to the user of a channel.
+   *
+   * Summaries only (K13): never the redacted digest, the question text or the
+   * provider's raw answer object.
+   */
+  | {
+      type: 'decision';
+      /** Stable per call; a `started` and its `settled` share it. */
+      id: string;
+      /** PD20: `started` is emitted only in `on` mode, where the loop is waiting. */
+      phase: 'started' | 'settled';
+      site: 'injection' | 'approver' | 'router';
+      /** Catalog id of the provider, e.g. `'typesafe'`. */
+      provider: string;
+      /** The model id the provider RETURNED (D8); absent on failure and on `started`. */
+      model?: string;
+      mode: 'on' | 'shadow';
+      /** `settled` only. */
+      outcome?: 'ok' | DecisionErrorCode;
+      /** `on` only: whether the provider's verdict was acted on. */
+      acted?: boolean;
+      /** Short summary: `'clean' | 'flagged' | 'approve' | 'deny' | 'ask' | 'trivial' | 'default'`. */
+      verdict?: string;
+      /** `shadow` only: today's path's verdict, same vocabulary. */
+      todayVerdict?: string;
+      confidence?: number;
+      /** `settled` only. */
+      latencyMs?: number;
+      /** `shadow` only, and only when both paths were measured on the same input. */
+      todayLatencyMs?: number;
+      /** `shadow` only: set when both a reading and today's verdict exist. */
+      disagreed?: boolean;
+      /** PD15: the personality whose `decisions.sites` enabled the call. */
+      personalityId: string;
+      /** injection / approver: the tool call it judged. */
+      toolCallId?: string;
+      /** The turn's observability trace; absent when none is wired. */
+      traceId?: string;
     };

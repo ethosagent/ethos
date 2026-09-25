@@ -113,6 +113,10 @@ interface BridgeEventMap {
   credential_required: [
     request: Omit<Extract<AgentEvent, { type: 'credential_required' }>, 'type'>,
   ];
+  /** plan decision-provider-personality §15.2 — a decision site ran for this
+   *  turn. Forwarded whole (it carries summaries only, K13); a late shadow row
+   *  can arrive after `done`, which is why `runTurn` drains to exhaustion. */
+  decision: [decision: Omit<Extract<AgentEvent, { type: 'decision' }>, 'type'>];
 }
 
 interface QueuedSend {
@@ -395,6 +399,11 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
           case 'credential_required': {
             const { type: _type, ...request } = event;
             this.emit('credential_required', request);
+            break;
+          }
+          case 'decision': {
+            const { type: _type, ...decision } = event;
+            this.emit('decision', decision);
             break;
           }
         }

@@ -183,6 +183,13 @@ export function createEventTranslator(options: EventTranslatorOptions = {}): Eve
             };
           }
           break;
+        case 'decision':
+          // Audience boundary (plan decision-provider-personality §15.4): a
+          // decision row is internal judgement, rendered by web / desktop / CLI
+          // chat only. Every channel adapter folds the turn through this
+          // translator, so it is ignored HERE, explicitly, not left to
+          // `default`. Pinned by `__tests__/event-translator.test.ts`.
+          break;
         default:
           // Forward-compat: AgentEvent may grow new variants in any release.
           // Unknown/irrelevant types are a no-op by design — do NOT add an

@@ -4026,6 +4026,7 @@ export const DecisionTestErrorCodeSchema = z.enum([
   'malformed',
   'too_large',
   'unavailable',
+  'breaker_open',
   'no_key',
 ]);
 export type DecisionTestErrorCode = z.infer<typeof DecisionTestErrorCodeSchema>;

@@ -164,6 +164,7 @@ describe('decisions.test', () => {
       'malformed',
       'too_large',
       'unavailable',
+      'breaker_open',
     ] as const satisfies readonly DecisionErrorCode[];
     expect([...DecisionTestErrorCodeSchema.options].sort()).toEqual([...codes, 'no_key'].sort());
   });

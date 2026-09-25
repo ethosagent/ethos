@@ -88,6 +88,33 @@ describe('createEventTranslator', () => {
   });
 });
 
+describe('decision events (plan decision-provider-personality §15.4)', () => {
+  it('ignores them entirely: no text, no tool state, not stopped', () => {
+    const t = createEventTranslator();
+    t.push({ type: 'text_delta', text: 'answer' });
+    t.push({
+      type: 'decision',
+      id: 'd1',
+      phase: 'settled',
+      site: 'injection',
+      provider: 'typesafe',
+      model: 'jev-1',
+      mode: 'shadow',
+      outcome: 'ok',
+      verdict: 'flagged',
+      todayVerdict: 'clean',
+      disagreed: true,
+      latencyMs: 30,
+      personalityId: 'p',
+      toolCallId: 'call_1',
+    });
+    expect(t.text).toBe('answer');
+    expect(t.tools.size).toBe(0);
+    expect(t.stopped).toBe(false);
+    expect(t.error).toBeNull();
+  });
+});
+
 describe('shouldSurfaceProgress', () => {
   it('surfaces only user-audience progress', () => {
     expect(

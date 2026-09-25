@@ -49,9 +49,10 @@ export interface DecisionProvider {
 A request carries the state and a map of named questions. Each question is
 `boolean`, `choice` or `score`. A result is either
 `{ ok: true, answers, model, usage }` or `{ ok: false, code, message }`,
-where `code` is one of nine values: `auth`, `invalid`, `rate_limited`,
+where `code` is one of ten values: `auth`, `invalid`, `rate_limited`,
 `overloaded`, `timeout`, `aborted`, `malformed`, `too_large`,
-`unavailable`. `model` is the model id the provider reports back, not the
+`unavailable`, `breaker_open` (the tenth was added in
+decision-provider-personality N7a, PD19). `model` is the model id the provider reports back, not the
 one requested, so a silent vendor upgrade shows up in the record.
 
 The amendment changes ARCHITECTURE.md in three places:

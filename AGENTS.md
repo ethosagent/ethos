@@ -137,6 +137,7 @@ type AgentEvent =
   | { type: 'halt';           kind: 'budget' | 'watcher'; rule: string; toolName?: string; count?: number; message: string }  // early safety stop; a normal done still follows
   | { type: 'error';          error: string; code: string }
   | { type: 'done';           text: string; turnCount: number }
+  | { type: 'decision';       id: string; phase: 'started' | 'settled'; site: 'injection' | 'approver' | 'router'; mode: 'on' | 'shadow'; personalityId: string; … }  // a decision site ran (decision-provider-personality §15.2); may arrive after done — web/desktop/CLI only, never a channel
 Hook registry
 Three execution models — pick based on what the hook does:
 
