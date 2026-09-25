@@ -33,7 +33,6 @@ import {
 import { createSkillProposeTool } from '@ethosagent/skill-evolver';
 import type { SkillsInjector, UniversalScanner } from '@ethosagent/skills';
 import { compose as composeSkills } from '@ethosagent/skills/compose';
-import { createCryptoStorage } from '@ethosagent/storage-crypto';
 import { FsStorage } from '@ethosagent/storage-fs';
 import { createEngineAskTool } from '@ethosagent/tools-answer-engines';
 import type { CredentialFillAuditEvent } from '@ethosagent/tools-browser';
@@ -1763,11 +1762,7 @@ export async function composeAllTools(
   // Design storage + model catalog + personality design tools
   // -------------------------------------------------------------------------
 
-  let designStorage: Storage = capabilityBackends.storage ?? new FsStorage();
-  if (config.storage?.encryption) {
-    const passphrase = process.env.ETHOS_STORAGE_KEY ?? '';
-    designStorage = createCryptoStorage(designStorage, passphrase);
-  }
+  const designStorage: Storage = capabilityBackends.storage ?? new FsStorage();
 
   let resolvedModelCatalog = MODEL_CATALOG;
   if (config.modelCatalogConfig && config.modelCatalogConfig.enabled !== false) {

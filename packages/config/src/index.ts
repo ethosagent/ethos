@@ -2810,12 +2810,11 @@ export interface EthosConfig {
   /** Public-facing URL of the web UI. Used as the OAuth redirect base.
    *  Resolution: ETHOS_PUBLIC_URL env > config.yaml webBaseUrl > localhost default. */
   webBaseUrl?: string;
-  /** Storage-layer settings. Supports at-rest encryption via
-   *  `storage.encryption: true` in config.yaml (requires ETHOS_STORAGE_KEY), and
-   *  a pluggable backend via `storage.backend` (default `fs`). Set `s3` to
-   *  target AWS S3 (or an S3-compatible endpoint) when `backend: s3`. */
+  /** Storage-layer settings: a pluggable backend via `storage.backend`
+   *  (default `fs`). Set `s3` to target AWS S3 (or an S3-compatible endpoint)
+   *  when `backend: s3`. (`storage.encryption` was removed — see
+   *  `storageEncryptionRemovedNotice`.) */
   storage?: {
-    encryption?: boolean;
     backend?: 'fs' | 's3';
     s3?: {
       bucket?: string;
@@ -6504,6 +6503,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...providerNotices,
     ...modelRegistryNotices,
     ...decisionsWarnings,
+    ...storageEncryptionRemovedNotice(kv),
     ...keyUse.notices(),
   ]);
   return config;
@@ -7543,6 +7543,24 @@ function buildCronConfig(
   return cfg;
 }
 
+/**
+ * SEC-001 — `storage.encryption` was removed: it validated ETHOS_STORAGE_KEY and
+ * then wrapped only the personality-design tool's storage, so `MEMORY.md`,
+ * `USER.md`, personality configs and team memory — what its how-to promised —
+ * stayed plaintext. A config that still sets it gets this notice instead of
+ * the generic unknown-key one. Pinned by `__tests__/config.test.ts`
+ * ('drops storage.encryption and says it was removed').
+ */
+function storageEncryptionRemovedNotice(kv: Record<string, string>): string[] {
+  if (kv['storage.encryption'] === undefined) return [];
+  return [
+    "config.yaml: 'storage.encryption' was removed and has no effect — files under " +
+      '~/.ethos/ are not encrypted by Ethos. Use full-disk or volume encryption for data ' +
+      'at rest. Files the personality-design tool wrote while the flag was on are ' +
+      'ciphertext and must be recreated.',
+  ];
+}
+
 function buildStorageConfig(kv: Record<string, string>): EthosConfig['storage'] {
   const s3: NonNullable<NonNullable<EthosConfig['storage']>['s3']> = {};
   if (kv['storage.s3.bucket']) s3.bucket = kv['storage.s3.bucket'];
@@ -7553,11 +7571,9 @@ function buildStorageConfig(kv: Record<string, string>): EthosConfig['storage'] 
   const rawBackend = kv['storage.backend'];
   const backend: 'fs' | 's3' | undefined =
     rawBackend === 'fs' || rawBackend === 's3' ? rawBackend : undefined;
-  const encryption = kv['storage.encryption'] === 'true';
   const hasS3 = s3.bucket !== undefined;
-  if (!encryption && backend === undefined && !hasS3) return undefined;
+  if (backend === undefined && !hasS3) return undefined;
   return {
-    ...(encryption ? { encryption: true } : {}),
     ...(backend ? { backend } : {}),
     ...(hasS3 ? { s3 } : {}),
   };
