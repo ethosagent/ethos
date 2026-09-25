@@ -1246,6 +1246,13 @@ importers:
       '@ethosagent/voice-text':
         specifier: workspace:*
         version: link:../../packages/voice-text
+    devDependencies:
+      '@ethosagent/memory-approval':
+        specifier: workspace:*
+        version: link:../memory-approval
+      '@ethosagent/tools-memory':
+        specifier: workspace:*
+        version: link:../tools-memory
 
   extensions/goal-runner:
     dependencies:
