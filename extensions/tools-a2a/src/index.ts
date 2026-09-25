@@ -95,7 +95,9 @@ function makeA2aSendTool(deps: A2aToolDeps): Tool {
     maxResultChars: 20_000,
     capabilities: {
       // Calls an arbitrary peer-supplied URL; the outbound client handles card
-      // verification + the auth handshake. Broad host reach mirrors web_extract.
+      // verification + the auth handshake. Broad host reach mirrors web_extract;
+      // every request still runs `safeFetch` under the personality's
+      // `ctx.networkPolicy` (packages/a2a/src/egress.ts `a2aFetch`, plan S7).
       network: { allowedHosts: ['*'] },
     },
     // The peer's reply is adversary-controlled — another agent authored it.
@@ -199,6 +201,7 @@ function makeA2aSendTool(deps: A2aToolDeps): Tool {
             // set — cheap, and the only guard at all for a first-ever call to
             // a peer_url with no prior fingerprint.
             egressCheck: (fp) => deps.allowlist.lookup(personalityId, fp).then((g) => g !== null),
+            ...(ctx.networkPolicy ? { networkPolicy: ctx.networkPolicy } : {}),
           });
           sessionCache.set(personalityId, args.peer_url, session);
         }
@@ -214,6 +217,7 @@ function makeA2aSendTool(deps: A2aToolDeps): Tool {
           message: args.message,
           ...(args.mode ? { mode: args.mode } : {}),
           ...(delegation ? { delegation } : {}),
+          ...(ctx.networkPolicy ? { networkPolicy: ctx.networkPolicy } : {}),
         });
 
         if (!result.ok) {

@@ -2,7 +2,8 @@
 //
 // This main entry carries the HTTP surface (hono): the well-known card router
 // factory and the outbound client. It depends on `@ethosagent/types` + `hono` +
-// the sibling `./crypto` entry. Importers who need ONLY the pure primitives
+// `@ethosagent/safety-network` (outbound egress, ./egress) + the sibling
+// `./crypto` entry. Importers who need ONLY the pure primitives
 // should import `@ethosagent/a2a/crypto` directly so they never pull in hono.
 //
 // Layer model (ARCHITECTURE §I): this is a `packages/*` module — it MUST NOT
@@ -47,6 +48,11 @@ export {
   type DelegationAdmission,
   signDelegation,
 } from './delegation';
+export {
+  A2A_URL_REFUSED_MESSAGE,
+  type A2aEgressOptions,
+  A2aUrlRefusedError,
+} from './egress';
 export {
   type A2aPreAuthLimiter,
   MemoryA2aLimiter,

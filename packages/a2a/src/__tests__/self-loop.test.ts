@@ -16,6 +16,7 @@ import {
   type Agent,
   countingRunner,
   HELLO_SCRIPT,
+  LOOPBACK_PEER_POLICY,
   makeAgent,
   newPeerStore,
   type SheetHolder,
@@ -74,7 +75,11 @@ describe('A2aOutboundClient — self-loop guard (plan §14)', () => {
     const clock = { t: Date.now() };
     const { app, counter } = makeServer(me, me, sheet, clock);
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     let thrown: unknown;
     try {
@@ -99,7 +104,11 @@ describe('A2aOutboundClient — self-loop guard (plan §14)', () => {
     const clock = { t: Date.now() };
     const { app, counter } = makeServer(me, me, sheet, clock);
     const fetchImpl: typeof fetch = async (input, init) => app.request(toUrl(input), init);
-    const client = new A2aOutboundClient({ fetchImpl, now: () => clock.t });
+    const client = new A2aOutboundClient({
+      networkPolicy: LOOPBACK_PEER_POLICY,
+      fetchImpl,
+      now: () => clock.t,
+    });
 
     const session = await client.connect({
       wellKnownUrl: WELL_KNOWN_URL,

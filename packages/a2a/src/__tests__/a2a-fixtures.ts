@@ -179,3 +179,11 @@ export function newPeerStore(): StorageA2aPeerStore {
 }
 
 export { A2A_METHOD_MESSAGE_SEND };
+
+/**
+ * The outbound client refuses private and loopback hosts by default (plan
+ * openclaw-2026.9.6-gaps S7, ../egress). Every test peer here lives on
+ * `localhost` / `127.0.0.1`, so the clients under test opt in exactly the way a
+ * personality with a private-network peer does.
+ */
+export const LOOPBACK_PEER_POLICY = { allow_private_urls: true };
