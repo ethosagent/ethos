@@ -1293,6 +1293,8 @@ async function runPersonalityShow(argv: string[]): Promise<void> {
     substitutionVars: { ethosHome: ethosDir(), cwd: process.cwd() },
     sshConfigured: sshCfg?.host !== undefined,
     ...(sshCfg ? { sshTarget: formatSshTarget(sshCfg) } : {}),
+    // Already validated by the config owner — an unpinned value was dropped.
+    dockerImage: cfg?.execution?.docker?.image,
   });
 
   // Which model this personality's turns ACTUALLY send. Declared and executed

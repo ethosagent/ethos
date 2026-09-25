@@ -48,7 +48,11 @@ import {
 import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
 import { REF_TO_ENV } from '@ethosagent/storage-fs';
 import type { PersonalityConfig, SecretsResolver, Skill } from '@ethosagent/types';
-import { resolveCharacterSheetDecisions } from '@ethosagent/wiring';
+import {
+  buildExecutionPosture,
+  type ContainerizedDetectionInput,
+  resolveCharacterSheetDecisions,
+} from '@ethosagent/wiring';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { type LiveKitMediaResolution, resolveLiveKitMedia } from '../livekit-media';
 import { buildVersionInfo } from '../version-info';
@@ -1131,6 +1135,74 @@ export function decisionLayerLines(report: DecisionLayerReport): string[] {
 }
 
 /**
+ * Docker sandbox readiness: which personalities resolve to the `docker`
+ * posture on this machine, and whether `execution.docker.image` gives them an
+ * image to run in. Without one every exec tool those personalities call
+ * refuses (`MissingDockerImageError`, extensions/execution-docker) — this is
+ * the command whose job is to say so before a turn finds out.
+ *
+ * The posture is `buildExecutionPosture` (packages/wiring), the same resolver
+ * the character sheet prints, fed the image the config owner kept (an
+ * unpinned value was already dropped and reported as a parse warning). A
+ * warning, not a hard failure: a deployment may carry exec-bearing built-ins
+ * it never runs, and doctor's exit code is read by CI.
+ */
+export interface DockerSandboxReport {
+  /** The pinned image, when configured. */
+  image?: string;
+  /** Ids whose posture is `docker`, sorted. */
+  dockerPersonalities: string[];
+  /** The refusal those personalities' exec tools return — set only when there is no image AND at least one docker personality. */
+  missingMessage?: string;
+}
+
+export async function checkDockerSandbox(
+  config: EthosConfig | null,
+  personalities: readonly PersonalityConfig[],
+  containerized?: ContainerizedDetectionInput,
+): Promise<DockerSandboxReport> {
+  const image = config?.execution?.docker?.image;
+  const ids: string[] = [];
+  let missingMessage: string | undefined;
+  for (const p of personalities) {
+    let posture: Awaited<ReturnType<typeof buildExecutionPosture>>;
+    try {
+      posture = await buildExecutionPosture({
+        personality: p,
+        substitutionVars: { ethosHome: ethosDir(), cwd: process.cwd() },
+        ...(containerized ? { containerized } : {}),
+        sshConfigured: config?.execution?.ssh?.host !== undefined,
+        dockerImage: image,
+      });
+    } catch {
+      // A personality whose mounts cannot be derived is reported by the
+      // character sheet; it costs this row, never the doctor run.
+      continue;
+    }
+    if (posture.backend !== 'docker') continue;
+    ids.push(p.id);
+    missingMessage ??= posture.dockerImageMissing?.message;
+  }
+  ids.sort();
+  return {
+    ...(image ? { image } : {}),
+    dockerPersonalities: ids,
+    ...(missingMessage ? { missingMessage } : {}),
+  };
+}
+
+/** The Config-section lines for {@link checkDockerSandbox}; empty when nothing runs in docker. */
+export function dockerSandboxLines(report: DockerSandboxReport): string[] {
+  if (report.dockerPersonalities.length === 0) return [];
+  const who = report.dockerPersonalities.join(', ');
+  if (report.image) return [`     docker:      ${report.image} ${c.dim}(${who})${c.reset}`];
+  return [
+    `  ${c.yellow}⚠${c.reset}  docker posture, no image configured → exec tools will fail for: ${who}`,
+    `     ${c.dim}${report.missingMessage ?? ''}${c.reset}`,
+  ];
+}
+
+/**
  * Every personality doctor can see — built-ins plus `~/.ethos/personalities/`
  * — for the decision rows. Fail-soft: an unloadable registry costs the rows,
  * never the doctor run (the "Personality data" section reports the directory).
@@ -1281,6 +1353,7 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
         await getSecretsResolver(),
         await loadDoctorPersonalities(storage),
       ),
+      dockerSandbox: await checkDockerSandbox(config, await loadDoctorPersonalities(storage)),
       callCapture: {
         configured: callCapture.configured,
         ok: callCapture.ok,
@@ -1340,6 +1413,10 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
         await getSecretsResolver(),
         await loadDoctorPersonalities(storage),
       ),
+    ))
+      console.log(line);
+    for (const line of dockerSandboxLines(
+      await checkDockerSandbox(config, await loadDoctorPersonalities(storage)),
     ))
       console.log(line);
     const notices = configParseNotices(config);

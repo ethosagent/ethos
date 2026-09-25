@@ -39,6 +39,9 @@ export function postureBadge(posture: ExecutionPostureWire): PostureBadge {
   if (posture.dockerAbsent) {
     return { icon: '▲', label: 'Docker required — not running', variant: 'error' };
   }
+  if (posture.dockerImageMissing) {
+    return { icon: '▲', label: 'Docker image not configured', variant: 'error' };
+  }
   if (posture.containerized) {
     return { icon: '▣', label: 'Sandboxed · container', variant: 'success' };
   }
@@ -64,6 +67,7 @@ export function postureWhy(posture: ExecutionPostureWire): string {
   // disagreeing, and this one would otherwise keep saying tools "run on a
   // remote ssh host" for a posture that refuses to run them at all.
   if (posture.sshRefused) return posture.sshRefused.message;
+  if (posture.dockerImageMissing) return posture.dockerImageMissing.message;
   if (posture.dockerAbsent) {
     return 'This personality is configured to run its tools in Docker, but the Docker daemon is not reachable. Tools will not run until this is resolved.';
   }

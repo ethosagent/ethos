@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import {
+  DOCKER_IMAGE_MISSING_MESSAGE,
   DockerExecutionBackend,
   resolveNetworkMode,
   scratchTmpfsFor,
@@ -463,6 +464,13 @@ export interface BuildExecutionPostureInput {
   sshConfigured: boolean;
   /** Display form of the target (`user@host:port`) for the character sheet. */
   sshTarget?: string;
+  /**
+   * `execution.docker.image` as the compose path will see it — `undefined` when
+   * unset or dropped as unpinned. REQUIRED (the value may be `undefined`) for
+   * the same reason `sshConfigured` is: a read surface that forgot it would
+   * print a working sandbox for a posture whose every exec refuses.
+   */
+  dockerImage: string | undefined;
   log?: Logger;
 }
 
@@ -504,7 +512,7 @@ export async function buildExecutionPosture(
     dockerAvailable = await input.checkDockerAvailable();
   }
 
-  return resolveExecutionPosture({
+  const posture = resolveExecutionPosture({
     personality: input.personality,
     constitution: input.constitution,
     containerized: input.containerized,
@@ -516,4 +524,9 @@ export async function buildExecutionPosture(
     ...(input.sshTarget !== undefined ? { sshTarget: input.sshTarget } : {}),
     log: input.log,
   });
+  if (posture.backend === 'docker') {
+    if (input.dockerImage) posture.dockerImage = input.dockerImage;
+    else posture.dockerImageMissing = { message: DOCKER_IMAGE_MISSING_MESSAGE };
+  }
+  return posture;
 }

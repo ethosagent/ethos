@@ -29,6 +29,17 @@ function posture(overrides: Partial<ExecutionPostureWire> = {}): ExecutionPostur
 }
 
 describe('postureBadge', () => {
+  it('flags a docker posture with no image as an error, with the refusal as the why', () => {
+    const p = posture({
+      dockerImageMissing: { message: 'Docker sandbox has no image configured' },
+    });
+    expect(postureBadge(p)).toMatchObject({
+      label: 'Docker image not configured',
+      variant: 'error',
+    });
+    expect(postureWhy(p)).toBe('Docker sandbox has no image configured');
+  });
+
   it('labels docker posture as Sandboxed · Docker (success)', () => {
     const badge = postureBadge(posture({ backend: 'docker' }));
     expect(badge.label).toBe('Sandboxed · Docker');

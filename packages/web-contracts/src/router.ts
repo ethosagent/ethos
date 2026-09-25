@@ -406,6 +406,13 @@ const ExecutionPostureSchema = z.object({
    * Nothing downstream may default a port back in.
    */
   sshTarget: z.string().optional(),
+  /** The digest-pinned image a `docker` posture runs in (`execution.docker.image`). */
+  dockerImage: z.string().optional(),
+  /**
+   * A `docker` posture with no `execution.docker.image`: every exec tool
+   * refuses. `message` is the refusal's own wording — render it verbatim.
+   */
+  dockerImageMissing: z.object({ message: z.string() }).optional(),
   /**
    * Why an `ssh` posture will not reach its target. `message` is the canonical
    * wording — render it verbatim rather than composing a second explanation of
