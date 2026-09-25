@@ -1988,6 +1988,16 @@ export interface EthosConfig {
    *   execution.docker.cpu: 4
    *   execution.docker.diskMb: 20480
    *
+   * `docker.image` is the ONE image every docker-posture exec tool runs in
+   * (`terminal`, `run_code`, `run_tests`, `lint`, `process_*`), threaded into
+   * `ExecutionBackendConfig.images.default` by `createExecutionRouting`
+   * (packages/wiring/src/compose-tools.ts). It must be digest-pinned —
+   * `<repo>@sha256:<64 hex>`, checked by {@link dockerImageRefError}; an
+   * unpinned value is a parse WARNING and is dropped, never a boot failure,
+   * so the backend then refuses with `MissingDockerImageError`
+   * (extensions/execution-docker) instead of running an unpinned image:
+   *   execution.docker.image: node@sha256:<digest>
+   *
    * `ssh` — the ONE remote target this deployment executes on. There is no
    * roster and no per-personality target: a personality declares the posture,
    * the operator declares the machine. Presence of `host` is the switch (the
@@ -2003,7 +2013,7 @@ export interface EthosConfig {
    *   execution.ssh.remoteWorkdir: /srv/work
    */
   execution?: {
-    docker?: { cpu?: number; diskMb?: number };
+    docker?: { cpu?: number; diskMb?: number; image?: string };
     ssh?: {
       /** Hostname or IP of the remote target. Non-empty; its presence is the switch. */
       host: string;
@@ -3773,6 +3783,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (config.execution.docker.diskMb !== undefined) {
       lines.push(`execution.docker.diskMb: ${config.execution.docker.diskMb}`);
     }
+    if (config.execution.docker.image) {
+      lines.push(`execution.docker.image: ${config.execution.docker.image}`);
+    }
   }
   if (config.execution?.ssh) {
     const ssh = config.execution.ssh;
@@ -4814,7 +4827,7 @@ export function parseConfigYaml(src: string): EthosConfig {
   const compactionKv: Record<string, string> = {};
   // memory.charLimits.<memory|user>: <chars> — markdown-backend per-key ceilings.
   const memoryCharLimitsKv: Record<string, string> = {};
-  // execution.docker.<cpu|diskMb>: <value> — container resource caps.
+  // execution.docker.<cpu|diskMb|image>: <value> — container caps + the sandbox image.
   const executionDockerKv: Record<string, string> = {};
   // execution.ssh.<field>: <value> — the deployment's single remote target.
   const executionSshKv: Record<string, string> = {};
@@ -5601,8 +5614,8 @@ export function parseConfigYaml(src: string): EthosConfig {
       memoryCharLimitsKv[mcl[1]] = parseConfigScalar(mcl[2]);
       continue;
     }
-    // execution.docker.<cpu|diskMb>: <value>  (container resource caps).
-    const exd = line.match(/^execution\.docker\.(cpu|diskMb):\s*(.+)$/);
+    // execution.docker.<cpu|diskMb|image>: <value>  (container caps + sandbox image).
+    const exd = line.match(/^execution\.docker\.(cpu|diskMb|image):\s*(.+)$/);
     if (exd) {
       executionDockerKv[exd[1]] = parseConfigScalar(exd[2]);
       continue;
@@ -6288,6 +6301,7 @@ export function parseConfigYaml(src: string): EthosConfig {
   // operator most needs to read, and it is already first within its own group.
   parseWarningsByConfig.set(config, [
     ...cronDeprecations,
+    ...executionResult.warnings,
     ...auxTimeoutWarnings,
     ...retentionWarnings,
     ...providerNotices,
@@ -7041,13 +7055,24 @@ function sshDestinationError(host: string, user: string | undefined): string | n
 function buildExecutionConfig(
   dockerKv: Record<string, string>,
   sshKv: Record<string, string>,
-): { execution: EthosConfig['execution'] | undefined; errors: string[] } {
+): { execution: EthosConfig['execution'] | undefined; errors: string[]; warnings: string[] } {
   const docker: NonNullable<NonNullable<EthosConfig['execution']>['docker']> = {};
   const cpu = Number(dockerKv.cpu);
   if (dockerKv.cpu !== undefined && Number.isFinite(cpu) && cpu > 0) docker.cpu = cpu;
   const diskMb = Number(dockerKv.diskMb);
   if (dockerKv.diskMb !== undefined && Number.isFinite(diskMb) && diskMb > 0) {
     docker.diskMb = Math.floor(diskMb);
+  }
+  // A warning, not an error: the gateway exits on any parse error, and a bad
+  // sandbox image must not take down chat-only personalities with it. The
+  // value is DROPPED, so the backend refuses with its own actionable message
+  // rather than ever running an unpinned image.
+  const warnings: string[] = [];
+  const rawImage = dockerKv.image;
+  if (rawImage !== undefined) {
+    const imageError = dockerImageRefError(rawImage);
+    if (imageError) warnings.push(imageError);
+    else docker.image = rawImage.trim();
   }
 
   const errors: string[] = [];
@@ -7110,7 +7135,33 @@ function buildExecutionConfig(
   const execution: NonNullable<EthosConfig['execution']> = {};
   if (Object.keys(docker).length > 0) execution.docker = docker;
   if (ssh) execution.ssh = ssh;
-  return { execution: Object.keys(execution).length > 0 ? execution : undefined, errors };
+  return {
+    execution: Object.keys(execution).length > 0 ? execution : undefined,
+    errors,
+    warnings,
+  };
+}
+
+/** `<repo>@sha256:<64 lowercase hex>` — a registry host (with port), path and
+ *  optional tag are allowed before the digest; whitespace and a leading `-`
+ *  (which docker would parse as an option) are not. */
+const DOCKER_IMAGE_REF_GRAMMAR = /^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/;
+
+/**
+ * Why an `execution.docker.image` value is refused, or `null` when it is a
+ * digest-pinned reference. The ONE check for this key: the CLI parser above
+ * and apps/web-api's settings save both call it, so the two writers cannot
+ * accept different values. The docker backend's own `@sha256:` guard
+ * (`buildDockerArgs`, extensions/execution-docker) stays as the last line.
+ */
+export function dockerImageRefError(value: string): string | null {
+  const v = value.trim();
+  if (DOCKER_IMAGE_REF_GRAMMAR.test(v)) return null;
+  return (
+    `execution.docker.image: must be digest-pinned as <image>@sha256:<64 hex digits> (got '${value}'); ` +
+    'ignored, so docker-sandboxed exec tools will refuse to run until it is fixed. ' +
+    'Get the digest with `docker buildx imagetools inspect <image>`.'
+  );
 }
 
 /**

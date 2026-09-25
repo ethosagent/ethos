@@ -794,8 +794,8 @@ export interface ExecutionRoutingInput {
   substitutionVars: { ethosHome: string; cwd: string };
   /** Docker execution disabled in this process (desktop in-process backend). */
   disableDocker: boolean;
-  /** `execution.docker.*` — container resource caps. */
-  docker?: { cpu?: number; diskMb?: number };
+  /** `execution.docker.*` — container resource caps and the digest-pinned sandbox image. */
+  docker?: { cpu?: number; diskMb?: number; image?: string };
   /** `execution.ssh.*` — the one remote target this deployment knows. */
   ssh?: NonNullable<ExecutionBackendConfig['ssh']>;
   /**
@@ -901,6 +901,10 @@ export async function createExecutionRouting(
         // Absent leaves the backend on its `--cpus 2` default with no disk quota.
         ...(input.docker?.cpu !== undefined ? { cpu: input.docker.cpu } : {}),
         ...(input.docker?.diskMb !== undefined ? { diskMb: input.docker.diskMb } : {}),
+        // `execution.docker.image` is the runtime every docker exec runs in.
+        // Absent → the backend refuses each exec with `MissingDockerImageError`
+        // (extensions/execution-docker), which names the key to set.
+        ...(input.docker?.image ? { images: { default: input.docker.image } } : {}),
         // F2 — pass the resolved constitution so the docker backend enforces
         // allowedMountRoots / deniedPathPrefixes against the ACTUAL mount set
         // (including the ownDir/skills/cwd defaults), not just declared fs_reach.
