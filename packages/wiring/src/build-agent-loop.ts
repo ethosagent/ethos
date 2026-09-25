@@ -79,6 +79,7 @@ import {
   resolveSmallWindowMode,
   scaleHistoryLimit,
 } from './model-catalog';
+import { projectContextAtStartup } from './project-context-floor';
 import { registerAcpJobRunners } from './register-acp-job-runners';
 import {
   createToolLoadingResolver,
@@ -88,6 +89,7 @@ import {
   measureStaticFloor,
   RESULT_BUDGET_CEILING_CHARS,
   resolveResultBudgetGate,
+  smallWindowModeMessage,
 } from './static-floor';
 import type { WiringContext } from './types';
 import { buildVoiceStack } from './voice-stack';
@@ -823,7 +825,8 @@ export async function buildAgentLoop(
 
   // Phase 4 — small-window mode. Resolved ONCE here (never per turn) from static
   // inputs so the prompt prefix stays byte-stable. Triggers on a small window
-  // (≤32k) OR when the measured static overhead (SOUL + prelude + tool schemas)
+  // (≤32k) OR when the measured static overhead (SOUL + prelude + tool schemas
+  // + the project-context injection for the startup working directory)
   // exceeds 40% of the window. When active, it forces the compact prelude,
   // index-not-content personality memory, index-mode skills, and a scaled
   // history limit. A config `compaction.smallWindow` (auto|on|off) overrides the
@@ -841,14 +844,25 @@ export async function buildAgentLoop(
   const toolDefinitions = tools.toDefinitions(activePerson.toolset);
   const toolSchemaChars = JSON.stringify(toolDefinitions).length;
   const preludeChars = (profilePromptBudget?.compactPrelude ? preludeCompact : prelude).length;
+  // The AGENTS.md/CLAUDE.md "Project Context" block the first turn will send,
+  // asked of the loop's own file-context injector for the directory the turn
+  // resolves — the same text, not a second discovery (project-context-floor.ts).
+  const projectContext = await projectContextAtStartup({
+    injectors,
+    personality: activePerson,
+    workingDir,
+    dataDir,
+    platform: profile,
+    model: llm.model,
+  });
   // D8 — the ONE static-floor arithmetic, shared with `ethos bench context`
-  // and the Lane 1(b) startup diagnostic below. Same number as the previous
-  // inline `ceil((soul + schemas + prelude) / 4)` estimate.
+  // and the Lane 1(b) startup diagnostic below.
   const staticFloor = measureStaticFloor({
     soulChars,
     toolSchemaChars,
     toolCount: toolDefinitions.length,
     preludeChars,
+    projectContextChars: projectContext.length,
   });
   const staticTokens = staticFloor.tokens;
   const smallWindow = resolveSmallWindowMode({
@@ -856,6 +870,16 @@ export async function buildAgentLoop(
     staticTokens,
     ...(config.compaction?.smallWindow ? { override: config.compaction.smallWindow } : {}),
   });
+  if (smallWindow) {
+    log.warn(
+      smallWindowModeMessage({
+        personalityId: activePerson.id,
+        windowTokens: llm.maxContextTokens,
+        floor: staticFloor,
+        ...(config.compaction?.smallWindow ? { override: config.compaction.smallWindow } : {}),
+      }),
+    );
+  }
   // Small-window defaults first, then let any explicit profile knobs win.
   const promptBudget = smallWindow
     ? {
