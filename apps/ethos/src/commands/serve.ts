@@ -1187,7 +1187,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     routeModules: a2aRouteModules,
     peering: a2aPeering,
     setA2aEnabled,
-  } = buildServeA2aSurface({ config, core: a2a, toolRegistry });
+  } = buildServeA2aSurface({ config, core: a2a, toolRegistry, trustProxy });
 
   // P2-counters (D2/D16) — `ethos_gateway_adapter_up{adapter}` reads the same
   // heartbeat file `/healthz` does, through the same 30s staleness gate
@@ -1898,6 +1898,9 @@ export function buildServeA2aSurface(opts: {
   /** Absent on deployments with no tool registry — `a2a_send` is then not
    *  registered, exactly as before. */
   toolRegistry: ToolRegistry | undefined;
+  /** `ETHOS_TRUST_PROXY` (WEB-006): whether the `/a2a` pre-auth limiter may
+   *  key on `X-Forwarded-For` (`remoteKeyOf`, packages/a2a/src/rpc.ts). */
+  trustProxy: boolean;
 }): {
   routeModules: RouteModule[];
   peering: ReturnType<typeof buildA2aPeeringService>;
@@ -2001,6 +2004,7 @@ export function buildServeA2aSurface(opts: {
         taskStore: a2aTaskStore,
         limiter: a2aLimiter,
         preAuthLimiter: a2aPreAuthLimiter,
+        trustProxy: opts.trustProxy,
         delegationGuard: a2aDelegationGuard,
         auditSink: a2aAuditSink,
       }),

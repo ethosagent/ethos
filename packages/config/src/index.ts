@@ -1747,8 +1747,11 @@ export interface WebhookHookConfig {
 
 /**
  * One `webhooks.<id>.rateLimit` block. The limiter it configures is
- * in-process and keyed by hookId — the gateway is a single-process model, so
- * there is no shared bucket to coordinate.
+ * in-process — the gateway is a single-process model, so there is no shared
+ * bucket to coordinate. The same knobs size two buckets: one per hookId, spent
+ * only by callers that passed the bearer check, and one per (hookId, caller
+ * address), spent only by bearer failures (`createWebhookServer`,
+ * apps/ethos/src/webhook-server.ts).
  */
 export interface WebhookRateLimitConfig {
   /** Requests allowed per minute. Also the bucket size. */

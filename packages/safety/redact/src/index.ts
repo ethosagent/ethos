@@ -12,6 +12,50 @@ const PATTERNS: ReadonlyArray<{ label: string; tag: string; regex: RegExp }> = [
     regex: /sk-(?:proj-)?[A-Za-z0-9_-]{40,}/g,
   },
   { label: 'AWS access key', tag: '[REDACTED:aws-key]', regex: /AKIA[0-9A-Z]{16}/g },
+  // S13 additions (plan openclaw-2026.9.6-gaps). Each is pinned, with a
+  // near-miss that must NOT redact, by __tests__/redact-roster-s13.test.ts.
+  // STS session credentials: same shape as AKIA, `ASIA` prefix.
+  {
+    label: 'AWS temporary access key',
+    tag: '[REDACTED:aws-key]',
+    regex: /\bASIA[0-9A-Z]{16}\b/g,
+  },
+  // GitHub OAuth (gho_), user-to-server (ghu_) and server-to-server (ghs_)
+  // tokens share ghp_'s 36-char body.
+  { label: 'GitHub token', tag: '[REDACTED:github-token]', regex: /\bgh[sou]_[A-Za-z0-9]{36}\b/g },
+  {
+    label: 'Google API key',
+    tag: '[REDACTED:google-api-key]',
+    regex: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g,
+  },
+  // `<bot id>:<35-char secret>`. The digit lookbehind keeps it from starting
+  // mid-number; the 35-char floor is what separates it from `12:30`-style text.
+  {
+    label: 'Telegram bot token',
+    tag: '[REDACTED:telegram-token]',
+    regex: /(?<!\d)\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
+  },
+  // Only the PRIVATE block is a secret; a certificate or public key is not.
+  {
+    label: 'PEM private key',
+    tag: '[REDACTED:private-key]',
+    regex:
+      /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/g,
+  },
+  // header.payload.signature, where header and payload are base64url JSON
+  // objects (`{"` encodes to `eyJ`). Runs before the Bearer pattern.
+  {
+    label: 'JWT',
+    tag: '[REDACTED:jwt]',
+    regex: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+  },
+  // Case-sensitive `Bearer` + a 20-char token floor, so prose ("the bearer of",
+  // "Bearer tokenization") does not match.
+  {
+    label: 'Bearer token',
+    tag: '[REDACTED:bearer-token]',
+    regex: /\bBearer\s+[A-Za-z0-9._~+/-]{20,}=*/g,
+  },
   {
     label: 'Slack token',
     tag: '[REDACTED:slack-token]',

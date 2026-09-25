@@ -2445,6 +2445,12 @@ importers:
 
   packages/a2a:
     dependencies:
+      '@ethosagent/safety-injection':
+        specifier: workspace:*
+        version: link:../safety/injection
+      '@ethosagent/safety-network':
+        specifier: workspace:*
+        version: link:../safety/network
       '@ethosagent/sqlite':
         specifier: workspace:*
         version: link:../sqlite
