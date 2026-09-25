@@ -166,6 +166,25 @@ async function persistInterruptedAssistant(
   });
 }
 
+/**
+ * The tool definitions an LLM call of this turn sends. With on-demand loading
+ * active (C3) that is pinned + `tool_search` + loaded; otherwise the allowlist.
+ * Shared with context assembly, whose pre-LLM compaction counts these schemas
+ * as part of the static prefix (`CompactionDeps.toolSchemas`).
+ */
+export function turnToolDefinitions(
+  tools: StreamStepDeps['tools'],
+  ctx: Pick<StreamStepContext, 'toolLoading' | 'allowedTools' | 'filterOpts'>,
+): ReturnType<StreamStepDeps['tools']['toDefinitions']> {
+  return ctx.toolLoading
+    ? composeDefinitions(
+        ctx.toolLoading.universe,
+        ctx.toolLoading.plan,
+        ctx.toolLoading.searchDefinition,
+      )
+    : tools.toDefinitions(ctx.allowedTools, ctx.filterOpts);
+}
+
 // ---------------------------------------------------------------------------
 // streamStep — one LLM streaming call
 // ---------------------------------------------------------------------------
@@ -176,15 +195,8 @@ export async function* streamStep(
   pendingTierEscalation: { value?: string },
 ): AsyncGenerator<AgentEvent, StreamStepResult> {
   // Compute tool definitions once for hooks, LLM call, and dump store — so
-  // observability measures exactly what was sent. With on-demand loading
-  // active (C3) that is pinned + `tool_search` + loaded; otherwise unchanged.
-  const toolDefs = ctx.toolLoading
-    ? composeDefinitions(
-        ctx.toolLoading.universe,
-        ctx.toolLoading.plan,
-        ctx.toolLoading.searchDefinition,
-      )
-    : deps.tools.toDefinitions(ctx.allowedTools, ctx.filterOpts);
+  // observability measures exactly what was sent.
+  const toolDefs = turnToolDefinitions(deps.tools, ctx);
 
   // Context-fit preflight, before the turn's first LLM call: when the static
   // prefix plus the user's message cannot fit the usable window, fail the turn
