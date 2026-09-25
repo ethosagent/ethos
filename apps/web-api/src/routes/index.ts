@@ -355,12 +355,25 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     authRoutes({ tokens: opts.tokens, ...(opts.secureCookie ? { secureCookie: true } : {}) }),
   );
 
-  // Codex device auth — unauthenticated (user may not be onboarded yet).
-  // The flow is safe to expose: it requires explicit user action in the browser.
+  // Codex device auth. S8: the flow ends in `CodexTokenStore.save`, which
+  // replaces this deployment's Codex credentials, so it is cookie-auth + CSRF
+  // like `/rpc` — it used to be unauthenticated, and on a `0.0.0.0` bind
+  // anyone on the network could start one. Cookie-only: `authMiddleware`
+  // never reads a bearer key. Every caller is the signed-in, same-origin SPA
+  // (`AuthStep` in apps/web/src/onboarding/steps, `add-provider-drawer` in
+  // apps/web/src/pages/settings/components); onboarding runs after the cookie
+  // exchange. Registered before the limiters so an unauthenticated request
+  // never spends a token. Pinned by the 'mount posture (S8)' cases in
+  // ../__tests__/routes/codex-auth.test.ts and the mount-posture drift gate in
+  // ../__tests__/middleware/scope-map-drift.test.ts.
+  //
   // WEB-007: rate-limit device-code strictly — it spawns background pollers /
   // outbound fetch fan-out. Status is a cheap in-memory lookup the onboarding
   // UI polls repeatedly, so it gets a poll-tolerant limiter (1 token per 4s
   // sustains the UI's polling; short lockout for genuine hammering).
+  const csrf = csrfMiddleware(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {});
+  app.use('/auth/codex/*', authMiddleware({ tokens: opts.tokens }));
+  app.use('/auth/codex/*', csrf);
   app.use('/auth/codex/device-code', rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false }));
   app.use(
     '/auth/codex/status',
@@ -395,8 +408,8 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 
   // Origin / CSRF check on state-changing methods. Localhost-default; pass an
   // explicit list when the server binds beyond localhost. Skipped for
-  // bearer-auth requests — the API key is the auth, not a cookie.
-  const csrf = csrfMiddleware(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {});
+  // bearer-auth requests — the API key is the auth, not a cookie. (`csrf` is
+  // built above, with the `/auth/codex` mount.)
   app.use('/rpc/*', async (c, next) => {
     if (c.get('authMethod') === 'bearer') return next();
     return csrf(c, next);
@@ -580,6 +593,13 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     }
     if (mod.auth === 'cookie') {
       app.use(wildcard, authMiddleware({ tokens: opts.tokens }));
+      // S8: a cookie module is a browser surface, so its writes get the same
+      // Origin check as `/rpc` — `POST /documents/upload` and the avatar
+      // routes had none, and a page on another localhost port is same-site,
+      // so the `SameSite=Strict` cookie still rides along. Pinned by the
+      // 'csrf on cookie-auth route modules (S8)' cases in
+      // ../__tests__/middleware/csrf.test.ts.
+      app.use(wildcard, csrf);
     } else if (mod.auth === 'bearer') {
       // Mirror `/rpc/*`: dual-auth (cookie OR bearer) when an api-key store is
       // wired; cookie-only otherwise. A bearer module brings the main API's
