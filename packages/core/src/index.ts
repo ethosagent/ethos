@@ -36,6 +36,8 @@ export { reconstructFromWatermark, selectActiveWatermark } from './agent-loop/ma
 export { buildScopedStorage } from './agent-loop/scoped-storage';
 // Lane 3(b) — declared small-window toolset parsing, shared with wiring's
 // startup narrowing diagnostic so both read the declaration identically.
+// Per-personality small-window mode — the seam wiring's resolver implements.
+export type { SmallWindowOverlay, SmallWindowResolver } from './agent-loop/small-window';
 export { parseSmallWindowToolset } from './agent-loop/small-window-toolset';
 export {
   type BeforeToolCallDecision,

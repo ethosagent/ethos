@@ -47,6 +47,7 @@ import type {
   LLMProvider,
   MemoryContext,
   MemoryProvider,
+  PersonalityConfig,
   RequestDumpStore,
   SessionStore,
 } from '@ethosagent/types';
@@ -79,8 +80,9 @@ import {
   resolveSmallWindowMode,
   scaleHistoryLimit,
 } from './model-catalog';
-import { projectContextAtStartup } from './project-context-floor';
+import { projectContextFor, resolveTurnWorkdir } from './project-context-floor';
 import { registerAcpJobRunners } from './register-acp-job-runners';
+import { createSmallWindowResolver } from './small-window-resolver';
 import {
   createToolLoadingResolver,
   evaluateContextFit,
@@ -898,8 +900,9 @@ export async function buildAgentLoop(
   // cap, guidance suppression). Absent → context assembly unchanged.
   const profilePromptBudget = resolvedProfile?.promptBudget;
 
-  // Phase 4 — small-window mode. Resolved ONCE here (never per turn) from static
-  // inputs so the prompt prefix stays byte-stable. Triggers on a small window
+  // Phase 4 — small-window mode, decided here for the STARTUP personality from
+  // static inputs (other personalities: the per-personality resolver below,
+  // memoized so each prompt prefix stays byte-stable). Triggers on a small window
   // (≤32k) OR when the measured static overhead (SOUL + prelude + tool schemas
   // + the project-context injection for the startup working directory)
   // exceeds 40% of the window. When active, it forces the compact prelude,
@@ -908,37 +911,43 @@ export async function buildAgentLoop(
   // triggers. NOTE: tool schemas registered AFTER loop construction (delegation,
   // goal, MCP) are not counted in the static estimate — the estimate is
   // best-effort and biases slightly low; the window trigger is exact.
-  let soulChars = 0;
-  if (activePerson.soulFile) {
-    try {
-      soulChars = (await wiringStorage.read(activePerson.soulFile))?.length ?? 0;
-    } catch {
-      soulChars = 0;
-    }
-  }
-  const toolDefinitions = tools.toDefinitions(activePerson.toolset);
-  const toolSchemaChars = JSON.stringify(toolDefinitions).length;
   const preludeChars = (profilePromptBudget?.compactPrelude ? preludeCompact : prelude).length;
+  // D8 — the ONE static-floor arithmetic, shared with `ethos bench context`,
+  // the Lane 1(b) startup diagnostic below and the per-personality resolver.
+  const measureFloor = async (person: PersonalityConfig, projectContextChars: number) => {
+    let soulChars = 0;
+    if (person.soulFile) {
+      try {
+        soulChars = (await wiringStorage.read(person.soulFile))?.length ?? 0;
+      } catch {
+        soulChars = 0;
+      }
+    }
+    const definitions = tools.toDefinitions(person.toolset);
+    return measureStaticFloor({
+      soulChars,
+      toolSchemaChars: JSON.stringify(definitions).length,
+      toolCount: definitions.length,
+      preludeChars,
+      projectContextChars,
+    });
+  };
+  const toolDefinitions = tools.toDefinitions(activePerson.toolset);
   // The AGENTS.md/CLAUDE.md "Project Context" block the first turn will send,
   // asked of the loop's own file-context injector for the directory the turn
   // resolves — the same text, not a second discovery (project-context-floor.ts).
-  const projectContext = await projectContextAtStartup({
-    injectors,
-    personality: activePerson,
-    workingDir,
-    dataDir,
-    platform: profile,
-    model: llm.model,
-  });
-  // D8 — the ONE static-floor arithmetic, shared with `ethos bench context`
-  // and the Lane 1(b) startup diagnostic below.
-  const staticFloor = measureStaticFloor({
-    soulChars,
-    toolSchemaChars,
-    toolCount: toolDefinitions.length,
-    preludeChars,
-    projectContextChars: projectContext.length,
-  });
+  const startupWorkdir = resolveTurnWorkdir(activePerson, { dataDir, cwd: workingDir });
+  const projectContextOf = (person: PersonalityConfig, workdir: string) =>
+    projectContextFor({
+      injectors,
+      personality: person,
+      workdir,
+      platform: profile,
+      model: llm.model,
+    });
+  const projectContext =
+    startupWorkdir !== undefined ? await projectContextOf(activePerson, startupWorkdir) : '';
+  const staticFloor = await measureFloor(activePerson, projectContext.length);
   const staticTokens = staticFloor.tokens;
   const smallWindow = resolveSmallWindowMode({
     contextWindow: llm.maxContextTokens,
@@ -956,17 +965,68 @@ export async function buildAgentLoop(
     );
   }
   // Small-window defaults first, then let any explicit profile knobs win.
-  const promptBudget = smallWindow
-    ? {
-        compactPrelude: true,
-        suppressMemoryGuidance: true,
-        memoryIndexMode: true,
-        skillsIndexMode: true,
-        memorySnapshotCap: 4_000,
-        ...profilePromptBudget,
-      }
-    : profilePromptBudget;
-  const historyLimit = smallWindow ? scaleHistoryLimit(llm.maxContextTokens) : undefined;
+  const smallWindowOverlay = {
+    promptBudget: {
+      compactPrelude: true,
+      suppressMemoryGuidance: true,
+      memoryIndexMode: true,
+      skillsIndexMode: true,
+      memorySnapshotCap: 4_000,
+      ...profilePromptBudget,
+    },
+    historyLimit: scaleHistoryLimit(llm.maxContextTokens),
+  };
+  // Post-review FIX 2 — ONE hardened local-runtime classification for this
+  // loop's provider endpoint, shared by the payload guard below and the
+  // FIX 1 result-budget gate. Known hosted aliases never classify as local.
+  const localRuntime = detectLocalRuntime(config.provider, config.baseUrl ?? '') !== undefined;
+  // Lane 1(c)+(e) — scale the per-turn tool-result budget DOWN with the served
+  // window; never UP (the flat 80k default is the ceiling, #111762). An
+  // explicit per-personality `context_engine_options.resultBudgetChars` may
+  // lower it further, never raise it past the ceiling. Post-review FIX 1: the
+  // scaling engages ONLY on a detected local runtime or that explicit knob —
+  // hosted providers with small catalog windows keep the flat 80k default and
+  // no gate-reserve term (the hosted-parity law). Sized from EACH personality's
+  // own static floor, per turn, by the resolver below.
+  const resultBudgetFor = (person: PersonalityConfig, staticFloorTokens: number) => {
+    const raw = person.context_engine_options?.resultBudgetChars;
+    return resolveResultBudgetGate({
+      windowTokens: llm.maxContextTokens,
+      staticFloorTokens,
+      localRuntime,
+      ...(typeof raw === 'number' && raw > 0 ? { configured: raw } : {}),
+    });
+  };
+  // Per-personality window decisions. Every personality's turns run with its
+  // OWN static prefix — its SOUL, toolset and the project context of the
+  // workdir its turns resolve — so small-window mode and the tool-result
+  // budget are asked per turn of a resolver (`createSmallWindowResolver`,
+  // small-window-resolver.ts; applied by `setupTurn`,
+  // packages/core/src/agent-loop/stages/turn-setup.ts, and `withSmallWindow`,
+  // packages/core/src/agent-loop/small-window.ts). The loop-level options
+  // below are only the baseline a resolver-less path (manual `/compact`
+  // without one, tests) sees.
+  const smallWindowResolver = createSmallWindowResolver({
+    windowTokens: llm.maxContextTokens,
+    model: config.model,
+    ...(config.compaction?.smallWindow ? { override: config.compaction.smallWindow } : {}),
+    smallWindowOverlay,
+    resultBudget: resultBudgetFor,
+    projectContext: projectContextOf,
+    measureFloor,
+    logger: log,
+    ...(startupWorkdir !== undefined
+      ? {
+          seed: {
+            personality: activePerson,
+            workdir: startupWorkdir,
+            projectContext,
+            floor: staticFloor,
+          },
+        }
+      : {}),
+  });
+  const promptBudget = profilePromptBudget;
 
   // Lane 1(b) — startup floor check, WARN-FIRST (plan risk note: some configs
   // that "work" today only work because the server silently truncates; refuse
@@ -996,18 +1056,14 @@ export async function buildAgentLoop(
       : undefined;
   if (narrowedToolset) {
     log.info(
-      `small-window mode narrows personality \`${activePerson.id}\` to its declared ` +
-        `small_window_toolset — surviving tools: ${narrowedToolset.join(', ') || '(none)'}`,
+      `startup personality \`${activePerson.id}\`: small-window mode narrows it to its declared ` +
+        `small_window_toolset — surviving tools: ${narrowedToolset.join(', ') || '(none)'} ` +
+        `(other personalities are decided per turn)`,
     );
   }
   const effectiveToolDefinitions = narrowedToolset
     ? tools.toDefinitions(narrowedToolset)
     : toolDefinitions;
-
-  // Post-review FIX 2 — ONE hardened local-runtime classification for this
-  // loop's provider endpoint, shared by the payload guard below and the
-  // FIX 1 result-budget gate. Known hosted aliases never classify as local.
-  const localRuntime = detectLocalRuntime(config.provider, config.baseUrl ?? '') !== undefined;
 
   // Lane 3(a) — total serialized tool-payload guard. On a local dialect an
   // over-limit payload FAILS startup (llamacpp-class runtimes lose tool
@@ -1057,22 +1113,11 @@ export async function buildAgentLoop(
     log.warn(schemaBudget.message + clause);
   }
 
-  // Lane 1(c)+(e) — scale the per-turn tool-result budget DOWN with the served
-  // window; never UP (the flat 80k default is the ceiling, #111762). An
-  // explicit per-personality `context_engine_options.resultBudgetChars` may
-  // lower it further, never raise it past the ceiling. Post-review FIX 1: the
-  // scaling engages ONLY on a detected local runtime or that explicit knob —
-  // hosted providers with small catalog windows keep the flat 80k default and
-  // no gate-reserve term (the hosted-parity law).
-  const rawResultBudget = activePerson.context_engine_options?.resultBudgetChars;
-  const { resultBudgetChars, maxSingleToolResultTokens } = resolveResultBudgetGate({
-    windowTokens: llm.maxContextTokens,
-    staticFloorTokens: staticFloor.tokens,
-    localRuntime,
-    ...(typeof rawResultBudget === 'number' && rawResultBudget > 0
-      ? { configured: rawResultBudget }
-      : {}),
-  });
+  // The startup personality's budget — the loop-level baseline.
+  const { resultBudgetChars, maxSingleToolResultTokens } = resultBudgetFor(
+    activePerson,
+    staticFloor.tokens,
+  );
 
   const loop = new AgentLoop({
     llm,
@@ -1114,6 +1159,7 @@ export async function buildAgentLoop(
     safety,
     logger: log,
     ...(toolLoading ? { toolLoading } : {}),
+    smallWindowResolver,
     ...(tierRouter ? { tierRouter } : {}),
     documentExtractors,
     contextEngines,
@@ -1154,13 +1200,9 @@ export async function buildAgentLoop(
     options: {
       platform: profile,
       workingDir,
-      ...(historyLimit !== undefined ? { historyLimit } : {}),
       // Lane 1(c) — only passed when scaling engaged; at the ceiling the loop
       // default (80k) applies and the config is byte-identical to today.
       ...(resultBudgetChars < RESULT_BUDGET_CEILING_CHARS ? { resultBudgetChars } : {}),
-      // Lane 3(b) — only passed when small-window mode is active, so hosted
-      // frontier-window loop options stay byte-identical to today.
-      ...(smallWindow ? { smallWindow } : {}),
       // Soft-warn tiers — only passed when configured, so an unconfigured loop
       // never produces a warn event.
       ...(config.toolLoop?.maxToolCallsWarnAt !== undefined

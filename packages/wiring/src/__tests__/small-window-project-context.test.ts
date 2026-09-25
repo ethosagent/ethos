@@ -11,7 +11,12 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentLoop, DefaultHookRegistry, DefaultToolRegistry } from '@ethosagent/core';
+import {
+  AgentLoop,
+  DefaultHookRegistry,
+  DefaultPersonalityRegistry,
+  DefaultToolRegistry,
+} from '@ethosagent/core';
 import { FileContextInjector } from '@ethosagent/skills';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type {
@@ -24,7 +29,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestSafety } from '../../../core/src/__tests__/helpers/test-safety';
 import { createAgentLoop, type WiringConfig } from '../index';
 import { resolveSmallWindowMode } from '../model-catalog';
-import { projectContextAtStartup } from '../project-context-floor';
+import {
+  createProjectContextInjector,
+  declaredWorkdirProjectContext,
+  projectContextAtStartup,
+} from '../project-context-floor';
 import {
   measureStaticFloor,
   PROJECT_CONTEXT_COMPONENT,
@@ -170,6 +179,40 @@ describe('projectContextAtStartup — the same content the prompt sends', () => 
         workingDir: project('no-injector', 6_000),
       }),
     ).toBe('');
+  });
+});
+
+describe('declaredWorkdirProjectContext — the character sheet term', () => {
+  const measure = (personality: PersonalityConfig, cwd: string) =>
+    declaredWorkdirProjectContext({
+      injectors: [
+        createProjectContextInjector({
+          storage: new FsStorage(),
+          personalities: new DefaultPersonalityRegistry(),
+        }),
+      ],
+      personality,
+      dataDir: join(root, 'state'),
+      cwd,
+    });
+
+  it('measures the block the declared workdir would send, independent of the cwd', async () => {
+    const repo = project('declared-repo', 8_000);
+    const result = await measure(
+      { id: 'p', name: 'p', fs_reach: { workdir: repo } },
+      project('unrelated-cwd', 30_000),
+    );
+    expect(result.workdir).toBe(repo);
+    expect(result.chars).toBeGreaterThan(8_000);
+    expect(result.chars).toBeLessThan(30_000);
+  });
+
+  it('depends on the working directory when no workdir, or a CWD-relative workdir, is declared', async () => {
+    const cwd = project('cwd-dependent', 8_000);
+    expect(await measure({ id: 'p', name: 'p' }, cwd)).toEqual({ chars: 0 });
+    expect(
+      await measure({ id: 'p', name: 'p', fs_reach: { workdir: '$' + '{CWD}/sub' } }, cwd),
+    ).toEqual({ chars: 0 });
   });
 });
 

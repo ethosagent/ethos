@@ -271,6 +271,34 @@ describe('resolvePersonalityModelFit — window resolution end to end', () => {
     expect(fit.windowTokens).toBeUndefined();
   });
 
+  it('counts the declared-workdir project context in the floor and carries it for the sheet', async () => {
+    const base = {
+      personality: { id: 'p', name: 'P', toolset: [] },
+      soulMd: 's'.repeat(400),
+      toolDefinitions: [],
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-5',
+      storage: new InMemoryStorage(),
+      dataDir: '/data',
+    };
+    const without = await resolvePersonalityModelFit(base);
+    const withContext = await resolvePersonalityModelFit({
+      ...base,
+      projectContext: { workdir: '/srv/repo', chars: 40_000 },
+    });
+    expect(withContext.floor.tokens).toBe(without.floor.tokens + 10_000);
+    expect(withContext.floor.projectContext).toEqual({ workdir: '/srv/repo', tokens: 10_000 });
+    expect(withContext.floor.components.at(-1)).toEqual({
+      name: 'project context (AGENTS.md/CLAUDE.md)',
+      tokens: 10_000,
+    });
+    expect(without.floor.projectContext).toBeUndefined();
+
+    const undeclared = await resolvePersonalityModelFit({ ...base, projectContext: { chars: 0 } });
+    expect(undeclared.floor.projectContext).toEqual({ tokens: 0 });
+    expect(undeclared.floor.tokens).toBe(without.floor.tokens);
+  });
+
   it('reports the declared small-window toolset narrowing as a degradation', async () => {
     const fetchImpl = (async () =>
       new Response(JSON.stringify({ data: [{ id: 'small', max_model_len: 8_192 }] }), {

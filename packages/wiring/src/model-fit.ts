@@ -28,6 +28,9 @@ export interface ComputeModelFitInputs {
   /** The personality's static floor from `measureStaticFloor()` — serialized
    *  tool-schema size, not toolset name count (D8). */
   floor: StaticFloorMeasurement;
+  /** The project-context term already counted in `floor`, and the declared
+   *  workdir it was measured in (absent → depends on the working directory). */
+  projectContext?: { workdir?: string; chars: number };
   /** Whether small-window mode is active for this window + floor. */
   smallWindow: boolean;
   /** Surviving tool names when the personality's declared
@@ -64,6 +67,16 @@ export function computeModelFit(inputs: ComputeModelFitInputs): CharacterSheetMo
     tokens: inputs.floor.tokens,
     toolCount: inputs.floor.toolCount,
     components: inputs.floor.components.map((c) => ({ name: c.name, tokens: c.tokens })),
+    ...(inputs.projectContext !== undefined
+      ? {
+          projectContext: {
+            ...(inputs.projectContext.workdir !== undefined
+              ? { workdir: inputs.projectContext.workdir }
+              : {}),
+            tokens: Math.ceil(inputs.projectContext.chars / 4),
+          },
+        }
+      : {}),
   };
 
   // D19 — an unresolved window yields `unknown`. The 128,000-token provider
