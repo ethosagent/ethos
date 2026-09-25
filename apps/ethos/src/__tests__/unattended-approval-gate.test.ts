@@ -14,6 +14,7 @@ import type {
   AgentSafety,
   CompletionChunk,
   DeliveryResult,
+  ExecutionPosture,
   LLMProvider,
   Message,
   PersonalityConfig,
@@ -119,6 +120,7 @@ async function runUnattendedTurn(opts: {
 
   // Exactly what `runGatewayStart` registers on the systemLoop.
   wireUnattendedApprovalGate(loop.hooks, {
+    executionPostureFor: () => undefined,
     personalities,
     getProvider: async () => {
       throw new Error('the smart reviewer must not be constructed');
@@ -269,6 +271,7 @@ function idleGatewayRig(opts: {
   const gateway = new Gateway({ bots: [idleGatewayBot(loop, 'idlebot', undefined)] });
   // Exactly what `runGatewayStart` registers on the systemLoop.
   wireUnattendedApprovalGate(loop.hooks, {
+    executionPostureFor: () => undefined,
     personalities,
     getProvider: async () => {
       throw new Error('the smart reviewer must not be constructed');
@@ -362,6 +365,7 @@ describe('idle gateway — channel turns on the systemLoop never get the D12 opt
       registerVoid: () => () => {},
     } as unknown as Parameters<typeof wireUnattendedApprovalGate>[0];
     wireUnattendedApprovalGate(hooks, {
+      executionPostureFor: () => undefined,
       personalities,
       getProvider: async () => {
         throw new Error('unused');
@@ -416,6 +420,33 @@ describe('boot-time cron exposure report', () => {
       },
       { personalityId: 'smartWriter', tools: ['write_file'] },
     ]);
+  });
+
+  // S6 / D1(a): under a host-local posture the shell tools are flagged too,
+  // so a cron job that reaches them is refused unattended — report it.
+  it('adds the local-posture shell tools for a host-local personality', () => {
+    const local = {
+      id: 'localShell',
+      name: 'l',
+      toolset: ['terminal', 'read_file'],
+    } as PersonalityConfig;
+    expect(
+      unattendedCronExposure({
+        jobs: [{ personalityId: 'localShell', prompt: 'p' }],
+        getPersonality: () => local,
+        allowUnattendedDangerousTools: false,
+        executionPostureFor: () => ({ backend: 'local', containerized: false }) as ExecutionPosture,
+      }),
+    ).toEqual([{ personalityId: 'localShell', tools: ['terminal'] }]);
+    expect(
+      unattendedCronExposure({
+        jobs: [{ personalityId: 'localShell', prompt: 'p' }],
+        getPersonality: () => local,
+        allowUnattendedDangerousTools: false,
+        executionPostureFor: () =>
+          ({ backend: 'docker', containerized: false }) as ExecutionPosture,
+      }),
+    ).toEqual([]);
   });
 
   it('drops approvalMode off personalities once the operator pre-authorizes', () => {

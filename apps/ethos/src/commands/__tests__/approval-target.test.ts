@@ -68,6 +68,7 @@ function wire(route: { isDm: boolean; platform: string }, owner: string | undefi
     }),
   } as unknown as Gateway;
   const flow = wireApprovalFlow(gateway, bots, [adapter], {
+    executionPostureFor: () => undefined,
     personalities: { get: () => undefined } as unknown as PersonalityRegistry,
     getProvider: async () => {
       throw new Error('no provider in this test');

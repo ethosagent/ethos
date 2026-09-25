@@ -6,7 +6,7 @@
 
 import { checkCommand as checkProcessCommand } from '@ethosagent/tools-process';
 import { checkCommand as checkTerminalCommand } from '@ethosagent/tools-terminal';
-import type { BeforeToolCallPayload, PersonalityConfig } from '@ethosagent/types';
+import type { BeforeToolCallPayload, ExecutionPosture, PersonalityConfig } from '@ethosagent/types';
 
 /** Result returned by a danger predicate. `null` = no approval needed. */
 export type DangerReason = string | null;
@@ -62,7 +62,8 @@ export type SmartApprovalCallback = (
  *
  * **Composition: union, not override.** Under `smart` the effective flag set is
  * `alwaysAsk ∪ SMART_MODE_CONSEQUENTIAL_TOOLS`; under `manual` / `off` it is
- * `alwaysAsk` alone. An explicit `alwaysAsk` therefore always takes effect, in
+ * `alwaysAsk` alone — in every mode plus {@link LOCAL_POSTURE_CONSEQUENTIAL_TOOLS}
+ * when the turn runs on a host-local posture. An explicit `alwaysAsk` therefore always takes effect, in
  * every mode — this list can only add to it, never replace or subtract from it.
  * That matches the module's law that modes only make things stricter.
  *
@@ -104,6 +105,36 @@ export const SMART_MODE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
 ];
 
 /**
+ * Tools flagged, in every mode, when the turn's personality resolves to a
+ * LOCAL execution posture that is not itself a container (S6 / D1(a) and
+ * EXE-001, plan openclaw-2026.9.6-gaps).
+ *
+ * Each of these runs a model-chosen shell string on the HOST, as the Ethos
+ * user, with nothing between it and the operator's files but the regex
+ * hardline: `terminal` and `process_start` directly, `run_tests` and `lint`
+ * through `bash -c` (`makeCommandTool`, extensions/tools-code/src/index.ts).
+ * Under a docker posture the container is the boundary and they stay
+ * unflagged in `manual`, as before; a `containerized` local posture (Ethos
+ * itself runs in a container, `detectContainerized`) is treated the same way.
+ *
+ * Composition is the same union as {@link SMART_MODE_CONSEQUENTIAL_TOOLS}: it
+ * only adds to `alwaysAsk`. Under `off` with the unattended capability
+ * (`allowAutoApproveDangerousTools`) they are still auto-approved — that
+ * operator opt-in is exactly "run these without asking".
+ *
+ * The posture comes from {@link CreateDangerPredicateOptions.getExecutionPosture};
+ * without it (CLI/TUI, which have no approval flow, and bare tests) nothing is
+ * added. The approval surfaces all supply it (`createApprovalDangerPredicate`
+ * requires it, packages/wiring/src/approval-seams.ts).
+ */
+export const LOCAL_POSTURE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
+  'terminal',
+  'process_start',
+  'run_tests',
+  'lint',
+];
+
+/**
  * Tools every entry point WITH an approval surface flags via `alwaysAsk`, in
  * every mode — not just `smart`.
  *
@@ -141,7 +172,9 @@ export interface CreateDangerPredicateOptions {
   /**
    * Tools that always require approval, in every mode. Unioned with
    * {@link SMART_MODE_CONSEQUENTIAL_TOOLS} when the resolved personality is on
-   * `approvalMode: 'smart'`; used alone under `manual` and `off`.
+   * `approvalMode: 'smart'`; used alone under `manual` and `off`. In every
+   * mode {@link LOCAL_POSTURE_CONSEQUENTIAL_TOOLS} is added on a host-local
+   * posture (see {@link CreateDangerPredicateOptions.getExecutionPosture}).
    *
    * Every entry point that has an approval surface passes at least
    * {@link APPROVAL_SURFACE_ALWAYS_ASK}.
@@ -155,6 +188,17 @@ export interface CreateDangerPredicateOptions {
   getPersonality?: (payload: BeforeToolCallPayload) => PersonalityConfig | undefined;
   /** Smart-mode callback (see SmartApprovalCallback above). */
   smartApprove?: SmartApprovalCallback;
+  /**
+   * The execution posture the turn's personality resolves to — the SAME
+   * resolution the tools run under (`ExecutionRouting.resolvePosture`,
+   * packages/wiring/src/compose-tools.ts). Drives
+   * {@link LOCAL_POSTURE_CONSEQUENTIAL_TOOLS}. Absent or `undefined` → no
+   * posture-dependent flags.
+   */
+  getExecutionPosture?: (
+    payload: BeforeToolCallPayload,
+    personality: PersonalityConfig | undefined,
+  ) => ExecutionPosture | undefined;
   /**
    * Capability gate for `approvalMode: 'off'`. Without this set to
    * true, the predicate treats `off` as `manual` — i.e. it will NOT
@@ -191,11 +235,21 @@ export interface CreateDangerPredicateOptions {
 export { canonicalizeArgs } from '@ethosagent/core';
 
 /**
+ * Tools whose `command` argument is a shell string checked by the terminal
+ * guard's `checkCommand`: `terminal` itself, and `run_tests` / `lint`, which
+ * hand their `command` to `bash -c` (EXE-001). Read by {@link hardlineReason}
+ * and by the non-web guard registration in `composeAllTools`
+ * (`createTerminalGuardHook(TERMINAL_CHECKED_TOOLS)`), so the approval path
+ * and the hard block cover the same set.
+ */
+export const TERMINAL_CHECKED_TOOLS: ReadonlyArray<string> = ['terminal', 'run_tests', 'lint'];
+
+/**
  * The hardline reason for a call, or `null` when it is not hardline.
  *
- * Hardline = a `terminal` or `process_start` `command` that the tool's own
- * blocklist refuses (`checkCommand` in `@ethosagent/tools-terminal` and
- * `@ethosagent/tools-process` respectively — the same checks
+ * Hardline = a {@link TERMINAL_CHECKED_TOOLS} or `process_start` `command`
+ * that the blocklist refuses (`checkCommand` in `@ethosagent/tools-terminal`
+ * and `@ethosagent/tools-process` respectively — the same checks
  * `createTerminalGuardHook` / `createProcessGuardHook` hard-block with on
  * every non-web profile, `compose-tools.ts`).
  *
@@ -205,12 +259,11 @@ export { canonicalizeArgs } from '@ethosagent/core';
  * stored grant or a lease decide a hardline call.
  */
 export function hardlineReason(payload: BeforeToolCallPayload): string | null {
-  const check =
-    payload.toolName === 'terminal'
-      ? checkTerminalCommand
-      : payload.toolName === 'process_start'
-        ? checkProcessCommand
-        : undefined;
+  const check = TERMINAL_CHECKED_TOOLS.includes(payload.toolName)
+    ? checkTerminalCommand
+    : payload.toolName === 'process_start'
+      ? checkProcessCommand
+      : undefined;
   if (!check) return null;
   const args = payload.args as { command?: unknown } | null | undefined;
   if (typeof args?.command !== 'string' || args.command === '') return null;
@@ -246,7 +299,9 @@ export function hardlineReason(payload: BeforeToolCallPayload): string | null {
  *          `apps/web-api/src/__tests__/services/approvals-hardline.test.ts`.
  *   2. Flagged tool / non-hardline danger → consult approvalMode. The flag set
  *      is `alwaysAsk` under manual and off, and
- *      `alwaysAsk ∪ SMART_MODE_CONSEQUENTIAL_TOOLS` under smart:
+ *      `alwaysAsk ∪ SMART_MODE_CONSEQUENTIAL_TOOLS` under smart; in every mode
+ *      it also takes {@link LOCAL_POSTURE_CONSEQUENTIAL_TOOLS} when the turn
+ *      runs on a non-containerized local posture:
  *        manual (default) → return the reason (drives the modal).
  *        off              → return null (auto-approve — hardline still
  *                           hard-blocks separately).
@@ -265,6 +320,15 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
   const alwaysAsk = new Set(opts.alwaysAsk ?? []);
   // Built once; `smart` is the only mode that sees it (see the const's docs).
   const smartAlwaysAsk = new Set([...alwaysAsk, ...SMART_MODE_CONSEQUENTIAL_TOOLS]);
+  // Resolved only for a tool on the list, so every other call pays nothing.
+  const onHostShell = (
+    payload: BeforeToolCallPayload,
+    personality: PersonalityConfig | undefined,
+  ): boolean => {
+    if (!LOCAL_POSTURE_CONSEQUENTIAL_TOOLS.includes(payload.toolName)) return false;
+    const posture = opts.getExecutionPosture?.(payload, personality);
+    return posture?.backend === 'local' && posture.containerized !== true;
+  };
   return async (payload) => {
     // Hardline first, in every mode — see the resolution order above for what
     // enforces it on each surface.
@@ -278,13 +342,14 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
 
     // Non-hardline danger. The mode is resolved first because it selects the
     // flag set: `smart` adds the built-in consequential-tool list on top of
-    // `alwaysAsk`, `manual` / `off` see `alwaysAsk` alone.
+    // `alwaysAsk`, `manual` / `off` see `alwaysAsk` alone; a host-local posture
+    // adds the shell tools in every mode (`onHostShell`).
     // Future: per-tool risk classifiers (sql_execute, kubectl, etc.)
     // would also produce non-hardline reasons that route through here.
     const mode = safety?.approvalMode ?? 'manual';
     const flagged = mode === 'smart' ? smartAlwaysAsk : alwaysAsk;
     let dangerReason: string | null = null;
-    if (flagged.has(payload.toolName)) {
+    if (flagged.has(payload.toolName) || onHostShell(payload, personality)) {
       dangerReason = `${payload.toolName} requires explicit approval`;
     }
     if (!dangerReason) return null;

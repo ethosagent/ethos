@@ -34,6 +34,7 @@ describe('gateway systemLoop — unattended approval gate wiring', () => {
     } as unknown as HookRegistry;
 
     wireUnattendedApprovalGate(hooks, {
+      executionPostureFor: () => undefined,
       personalities: new DefaultPersonalityRegistry(),
       getProvider: async () => {
         throw new Error('the smart reviewer must not be constructed');

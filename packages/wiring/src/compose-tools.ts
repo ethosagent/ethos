@@ -103,6 +103,7 @@ import type {
   TurnAuditor,
 } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
+import { TERMINAL_CHECKED_TOOLS } from './danger-predicate';
 import type { DisposerStack } from './disposer-stack';
 import { ensureFsReachDirs } from './fs-reach-dirs';
 import {
@@ -126,6 +127,7 @@ import {
   constitutionForbidsLocal,
   formatSshTarget,
   hasExecTool,
+  LOCAL_FALLBACK_REFUSAL,
   resolveExecutionPosture,
 } from './resolve-execution-posture';
 import { applySkillPassthrough, deriveSkillPassthrough } from './skill-passthrough';
@@ -632,6 +634,10 @@ export interface ComposeToolsResult {
   /** Ground-truth consult for `MemoryCaptureRunner` (R8). Absent when
    *  `grounding.enabled: false`, so capture behaves exactly as before. */
   memoryConsult?: GroundingMemoryConsult;
+  /** `ExecutionRouting.resolvePosture` — surfaced as `CreateAgentLoopResult.executionPostureFor`. */
+  executionPostureFor: ExecutionRouting['resolvePosture'];
+  /** `ExecutionRouting.exec` — the route a goal's command acceptance checks run on (S1). */
+  executionRouteFor: ExecutionRouting['exec'];
 }
 
 /**
@@ -747,7 +753,12 @@ export function resolveExecRefusal(
 ): { forbidden: boolean; message?: string } {
   if (posture.backend === 'none') return { forbidden: true, message: POSTURE_NONE_REFUSAL };
   const forbidden = (posture.backend === 'docker' || posture.backend === 'ssh') && !backendWired;
-  const message = posture.sshRefused?.message;
+  // D3 — a refused docker→local downgrade names the key that would allow it.
+  const message =
+    posture.sshRefused?.message ??
+    (posture.dockerAbsent?.consentForbiddenReason === LOCAL_FALLBACK_REFUSAL
+      ? LOCAL_FALLBACK_REFUSAL
+      : undefined);
   return message !== undefined ? { forbidden, message } : { forbidden };
 }
 
@@ -793,6 +804,11 @@ export interface ExecutionRoutingInput {
   substitutionVars: { ethosHome: string; cwd: string };
   /** Docker execution disabled in this process (desktop in-process backend). */
   disableDocker: boolean;
+  /**
+   * `execution.allowLocalFallback` — with `disableDocker`, run exec
+   * personalities on the host instead of refusing them (S6 / D3).
+   */
+  allowLocalFallback?: boolean;
   /** `execution.docker.*` — container resource caps. */
   docker?: { cpu?: number; diskMb?: number };
   /** `execution.ssh.*` — the one remote target this deployment knows. */
@@ -827,6 +843,14 @@ export interface ExecutionRouting {
   process: ExecutionRouter;
   /** The full resolution, for the injector that tells the model where its shell is. */
   resolveTurn(personalityId: string | undefined): Promise<TurnExecution | undefined>;
+  /**
+   * The posture alone — the same `postureFor` `resolveTurn` uses, without
+   * building a backend. `undefined` for an id the registry does not know. Read
+   * by the approval surfaces' danger predicate (`LOCAL_POSTURE_CONSEQUENTIAL_TOOLS`,
+   * packages/wiring/src/danger-predicate.ts) so the approval decision and the
+   * tool's execution agree on where a shell runs.
+   */
+  resolvePosture(personalityId: string | undefined): ExecutionPosture | undefined;
   /**
    * Release every execution backend instance — the ONE owner of them (F06 /
    * G6). That is the wrappers this routing built (a docker `SessionManager`,
@@ -872,6 +896,7 @@ export async function createExecutionRouting(
       ...(constitution ? { constitution } : {}),
       containerized: input.containerized ?? { env: process.env },
       dockerBuildable: !input.disableDocker,
+      ...(input.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
       // `execution.ssh.host`'s presence is the switch for the whole remote
       // posture. This is the call that decides what ACTUALLY executes, so it
       // must answer truthfully: claiming "not configured" here resolves an ssh
@@ -1025,6 +1050,12 @@ export async function createExecutionRouting(
     exec: routerFor('exec'),
     process: routerFor('process'),
     resolveTurn,
+    resolvePosture: (personalityId) => {
+      if (personalityId === undefined) return posture;
+      const person = personalities.get(personalityId);
+      if (!person) return undefined;
+      return person.id === activePerson.id ? posture : postureFor(person);
+    },
     dispose: () => {
       // Memoised: a host that calls it twice disposes nothing twice.
       disposal ??= (async () => {
@@ -1232,6 +1263,7 @@ export async function composeAllTools(
     logger: log,
     substitutionVars: { ethosHome: dataDir, cwd: wiringCtx.workingDir },
     disableDocker: opts.disableDocker === true,
+    ...(config.execution?.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
     ...(config.execution?.docker ? { docker: config.execution.docker } : {}),
     ...(config.execution?.ssh ? { ssh: config.execution.ssh } : {}),
   });
@@ -1822,7 +1854,7 @@ export async function composeAllTools(
 
   // CLI/TUI/ACP get the synchronous block-and-explain guard.
   if (profile !== 'web') {
-    hooks.registerModifying('before_tool_call', createTerminalGuardHook());
+    hooks.registerModifying('before_tool_call', createTerminalGuardHook(TERMINAL_CHECKED_TOOLS));
     hooks.registerModifying('before_tool_call', createProcessGuardHook());
   }
 
@@ -2001,5 +2033,7 @@ export async function composeAllTools(
     mcpManager,
     turnAuditors: grounding.turnAuditors,
     ...(grounding.memoryConsult ? { memoryConsult: grounding.memoryConsult } : {}),
+    executionPostureFor: routing.resolvePosture,
+    executionRouteFor: routing.exec,
   };
 }

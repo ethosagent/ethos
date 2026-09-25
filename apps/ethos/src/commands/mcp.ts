@@ -316,6 +316,7 @@ async function runServeExport(opts: {
     // The smart reviewer's decision site from THIS build (plan
     // decision-provider-jev §8.2); absent → the LLM reviewer only.
     ...(runtime.approverDecision ? { decision: runtime.approverDecision } : {}),
+    executionPostureFor: runtime.executionPostureFor,
   });
   runtime.loop.hooks.registerModifying('before_tool_call', createExportApprovalGate(danger));
 

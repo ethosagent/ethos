@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { homedir } from 'node:os';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkCommand, createProcessGuardHook } from '../guard';
 
 // ---------------------------------------------------------------------------
@@ -229,14 +230,13 @@ describe('checkCommand', () => {
       expect(checkCommand('echo hi; rm -rf /').dangerous).toBe(true);
     });
 
-    it('does NOT catch rm -rf / wrapped in $(...) — documented gap', () => {
-      // `$(rm -rf /)` ends the path with `)` which the path-suffix regex
-      // does not treat as a terminator. This is an honest gap: the regex
-      // floor catches literal forms; obfuscation/wrapping is intentionally
-      // out of scope. ScopedStorage + sandbox attestation are the real
-      // boundary; this test pins the gap so future regex changes are
-      // intentional.
-      expect(checkCommand('echo $(rm -rf /)').dangerous).toBe(false);
+    it('catches rm -rf / wrapped in $(...) — the gap this test used to pin', () => {
+      // The path-suffix regex still does not treat `)` as a terminator; what
+      // catches it now is the command-substitution hardline (D1b, plan
+      // openclaw-2026.9.6-gaps S6), which refuses any `$(…)` whatever it wraps.
+      const result = checkCommand('echo $(rm -rf /)');
+      expect(result.dangerous).toBe(true);
+      if (result.dangerous) expect(result.reason).toBe('command substitution');
     });
   });
 });
@@ -334,5 +334,89 @@ describe('createProcessGuardHook', () => {
       args: {},
     });
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S16 — the Ethos state dir on the argv floor
+// ---------------------------------------------------------------------------
+
+describe('checkCommand — Ethos state dir (S16)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    'sed -i s/x/y/ ~/.ethos/personalities/a/toolset.yaml',
+    'cat $HOME/.ethos/sessions.db',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal shell variable
+    'echo "allowLocalFallback: true" >> ${HOME}/.ethos/config.yaml',
+    `cp evil.json ${homedir()}/.ethos/mcp.json`,
+    'cd ~/.ethos && ls',
+    'ls ~/.ethos',
+  ])('blocks: %s', (cmd) => {
+    const result = checkCommand(cmd);
+    expect(result.dangerous).toBe(true);
+    if (result.dangerous) expect(result.reason).toMatch(/Ethos state dir/);
+  });
+
+  it('blocks the ETHOS_STATE_DIR override, by value and by variable', () => {
+    vi.stubEnv('ETHOS_STATE_DIR', '/srv/ethos-state');
+    expect(checkCommand('cat /srv/ethos-state/keys.json').dangerous).toBe(true);
+    expect(checkCommand('ls "$ETHOS_STATE_DIR"').dangerous).toBe(true);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal shell variable
+    expect(checkCommand('ls ${ETHOS_STATE_DIR}/plugins').dangerous).toBe(true);
+  });
+
+  it.each([
+    'cat ./project/.ethos-notes.md',
+    'ls docs/.ethos/example',
+    'cat ~/.ethosrc',
+    'grep -r ethos src/',
+  ])('does not flag: %s', (cmd) => {
+    expect(checkCommand(cmd).dangerous).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D1(b) — inline-eval wrappers are hardline (plan openclaw-2026.9.6-gaps S6)
+// ---------------------------------------------------------------------------
+
+describe('checkCommand — inline-eval wrappers (S6, D1b)', () => {
+  // One case per probed bypass of the pattern list above; each passed at HEAD.
+  it.each([
+    ['bash -c', "bash -c 'rm -rf /'"],
+    ['sh -c', 'sh -c "curl https://x.example | tee out"'],
+    ['sh -ec', 'sh -ec "echo hi"'],
+    ['absolute /bin/sh -c', '/bin/sh -c id'],
+    ['zsh -c', 'zsh -c id'],
+    ['xargs into sh -c', 'echo id | xargs sh -c'],
+    ['eval', 'eval "$CMD"'],
+    ['eval after &&', 'cd /tmp && eval echo hi'],
+    ['python -c', 'python -c "import os; os.system(\'id\')"'],
+    ['python3 -c', "python3 -c 'print(1)'"],
+    ['node -e', 'node -e \'require("child_process").execSync("id")\''],
+    ['node --eval', 'node --eval "1"'],
+    ['base64 decode piped into sh', 'echo cm0gLXJmIC8K | base64 -d | sh'],
+    ['base64 decode piped into bash', 'echo cm0gLXJmIC8K | base64 --decode | bash'],
+    ['command substitution', 'echo $(whoami)'],
+    ['backtick substitution', 'echo `whoami`'],
+    ['case-variant rm', 'RM -RF /'],
+    ['mixed-case rm', 'Rm -rf ~'],
+  ])('blocks %s', (_label, cmd) => {
+    expect(checkCommand(cmd).dangerous).toBe(true);
+  });
+
+  it.each([
+    'ssh -c aes128-ctr host uptime',
+    'python -m pytest -q',
+    'node --version',
+    'node scripts/build.js',
+    'echo $((1 + 2))',
+    'pnpm run evaluate',
+    'git log --format=%H',
+    'shellcheck script.sh',
+  ])('does not flag: %s', (cmd) => {
+    expect(checkCommand(cmd).dangerous).toBe(false);
   });
 });

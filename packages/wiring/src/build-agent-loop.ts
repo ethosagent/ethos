@@ -58,6 +58,7 @@ import {
   InteractionRouter,
   SECRET_KIND,
 } from '@ethosagent/worker-router';
+import { createAcceptanceCheckExecutor } from './acceptance-check-executor';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
 import { buildCredentialCheck } from './credential-check';
@@ -1543,6 +1544,21 @@ export async function buildAgentLoop(
   const goalRunner = new GoalRunner({
     store: goalStore,
     hooks,
+    // S1 — a goal's `command` acceptance checks run through the same gates
+    // and the same execution route as that personality's `terminal`, never a
+    // raw host shell (`createAcceptanceCheckExecutor`).
+    execAcceptanceCheck: createAcceptanceCheckExecutor({
+      personalities,
+      route: toolsResult.executionRouteFor,
+      postureFor: toolsResult.executionPostureFor,
+      hostBackend: () =>
+        infra.executionBackends.resolve('local', {
+          config: { substitutionVars: { ethosHome: dataDir, cwd: workingDir } },
+          secrets: config.secretsResolver ?? NOOP_SECRETS,
+          logger: log,
+        }),
+      workingDir,
+    }),
     runAttempt: (sessionKey, firstMessage, o) => {
       const ptoolset = o.personalityId ? personalities.get(o.personalityId)?.toolset : undefined;
       const toolsetOverride = ptoolset?.filter((t) => !GOAL_EXCLUDED_TOOLS.has(t));
@@ -1812,6 +1828,7 @@ export async function buildAgentLoop(
     },
     ...(onMemoryCapturedFn ? { onMemoryCaptured: onMemoryCapturedFn } : {}),
     ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor: toolsResult.executionPostureFor,
     ...(runCallCaptureFn ? { runCallCapture: runCallCaptureFn } : {}),
     notificationRouter,
     pluginLoader,

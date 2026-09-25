@@ -4,12 +4,13 @@ import { join } from 'node:path';
 import { denyRuleReason, matchDenyRule } from '@ethosagent/core';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { FsStorage } from '@ethosagent/storage-fs';
-import type { BeforeToolCallPayload, PersonalityConfig } from '@ethosagent/types';
+import type { BeforeToolCallPayload, ExecutionPosture, PersonalityConfig } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
   createDangerPredicate,
   hardlineReason,
+  LOCAL_POSTURE_CONSEQUENTIAL_TOOLS,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
 } from '../danger-predicate';
 
@@ -80,6 +81,16 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
         /recursive force-delete/,
       );
       expect(hardlineReason(payload('write_file', { command: 'rm -rf /' }))).toBeNull();
+    });
+
+    // EXE-001: `run_tests` / `lint` run their `command` through `bash -c`
+    // exactly as `terminal` does, and used to be outside this check.
+    it('covers run_tests and lint with the terminal rules', () => {
+      expect(hardlineReason(payload('run_tests', { command: 'rm -rf /' }))).toMatch(
+        /recursive force-delete/,
+      );
+      expect(hardlineReason(payload('lint', { command: "bash -c 'id'" }))).toMatch(/sh -c/);
+      expect(hardlineReason(payload('run_tests', { command: 'pnpm test' }))).toBeNull();
     });
 
     it('is null for an ordinary command or a missing / non-string command', () => {
@@ -415,6 +426,61 @@ describe('createDangerPredicate — Ch.4b approvalMode', () => {
       expect(await pred(payload('skills_pending_list', {}))).toBeNull();
       expect(await pred(payload('skills_pending_view', { id: 'x' }))).toBeNull();
     });
+  });
+});
+
+// S6 / D1(a) + EXE-001 (plan openclaw-2026.9.6-gaps): under a LOCAL posture the
+// shell tools run on the host as the Ethos user, so manual mode asks before
+// each one. Under docker (and a containerized local, where the container is the
+// boundary) they stay unflagged, as before.
+describe('LOCAL_POSTURE_CONSEQUENTIAL_TOOLS', () => {
+  const posture = (backend: ExecutionPosture['backend'], containerized = false): ExecutionPosture =>
+    ({ backend, containerized }) as ExecutionPosture;
+
+  it('is exactly terminal, process_start, run_tests and lint', () => {
+    expect([...LOCAL_POSTURE_CONSEQUENTIAL_TOOLS].sort()).toEqual(
+      ['lint', 'process_start', 'run_tests', 'terminal'].sort(),
+    );
+  });
+
+  it('manual + local flags terminal/process_start/run_tests/lint', async () => {
+    const pred = createDangerPredicate({
+      getPersonality: () => person('manual'),
+      getExecutionPosture: () => posture('local'),
+    });
+    for (const tool of ['terminal', 'process_start', 'run_tests', 'lint']) {
+      expect(await pred(payload(tool, { command: 'ls' }))).toBe(
+        `${tool} requires explicit approval`,
+      );
+    }
+    expect(await pred(payload('read_file', { path: 'x' }))).toBeNull();
+  });
+
+  it('manual + docker leaves them unflagged', async () => {
+    const pred = createDangerPredicate({
+      getPersonality: () => person('manual'),
+      getExecutionPosture: () => posture('docker'),
+    });
+    for (const tool of ['terminal', 'process_start', 'run_tests', 'lint']) {
+      expect(await pred(payload(tool, { command: 'ls' }))).toBeNull();
+    }
+  });
+
+  it('a containerized local posture leaves them unflagged (the container is the boundary)', async () => {
+    const pred = createDangerPredicate({
+      getPersonality: () => person('manual'),
+      getExecutionPosture: () => posture('local', true),
+    });
+    expect(await pred(payload('terminal', { command: 'ls' }))).toBeNull();
+  });
+
+  it('off + the unattended capability still auto-approves them', async () => {
+    const pred = createDangerPredicate({
+      getPersonality: () => person('off'),
+      getExecutionPosture: () => posture('local'),
+      allowAutoApproveDangerousTools: true,
+    });
+    expect(await pred(payload('terminal', { command: 'ls' }))).toBeNull();
   });
 });
 

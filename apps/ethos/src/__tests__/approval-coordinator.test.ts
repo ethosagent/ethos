@@ -666,6 +666,7 @@ describe('wireApprovalFlow', () => {
       resolveApprovalRoute: () => ({ adapter, chatId: 'C1', requesterUserId: 'U1' }),
     } as unknown as Gateway;
     const flow = wireApprovalFlow(gateway, bots, [adapter], {
+      executionPostureFor: () => undefined,
       personalities: { get: () => undefined } as unknown as PersonalityRegistry,
       getProvider: async () => {
         throw new Error('no provider in this test');
@@ -854,6 +855,7 @@ describe('wireApprovalFlow', () => {
   it('hands back a no-op shutdown handle when no adapter can present approvals', async () => {
     const gateway = { resolveApprovalRoute: () => undefined } as unknown as Gateway;
     const flow = wireApprovalFlow(gateway, [], [], {
+      executionPostureFor: () => undefined,
       personalities: { get: () => undefined } as unknown as PersonalityRegistry,
       getProvider: async () => {
         throw new Error('no provider in this test');

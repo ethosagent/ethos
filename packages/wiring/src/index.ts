@@ -23,6 +23,7 @@ import type {
   CliSubcommandContext,
   ExecutionBackendConfig,
   ExecutionBackendRegistry,
+  ExecutionPosture,
   GoalStore,
   LLMProvider,
   Logger,
@@ -168,6 +169,8 @@ export interface WiringConfig {
    * saw — a configured `remoteWorkdir` or `identityFile` silently ignored.
    */
   execution?: {
+    /** `execution.allowLocalFallback` — see `ResolveExecutionPostureInput` (S6 / D3). */
+    allowLocalFallback?: boolean;
     docker?: { cpu?: number; diskMb?: number };
     ssh?: NonNullable<ExecutionBackendConfig['ssh']>;
   };
@@ -1533,6 +1536,15 @@ export interface CreateAgentLoopResult {
    * the approver is exactly the LLM reviewer.
    */
   approverDecision?: import('./smart-approver').SmartApproverDecisionSite;
+  /**
+   * The execution posture a personality's turns resolve to in THIS build —
+   * the same resolution its exec tools run under (`ExecutionRouting.resolvePosture`,
+   * packages/wiring/src/compose-tools.ts). `undefined` id → the deployment
+   * default; an unknown id → `undefined`. Hosts forward it as
+   * `executionPostureFor` to `createApprovalDangerPredicate`, which flags the
+   * shell tools under a host-local posture (S6 / D1(a)).
+   */
+  executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
   /** The McpManager instance from tool composition. Pass to createWebApi so
    *  re-auth via the web UI hits the live manager and updates the tool registry. */
   mcpManager: McpManager;
@@ -1969,6 +1981,7 @@ export {
   type DangerPredicate,
   type DangerReason,
   hardlineReason,
+  LOCAL_POSTURE_CONSEQUENTIAL_TOOLS,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
   type SmartApprovalCallback,
   type SmartVerdict,

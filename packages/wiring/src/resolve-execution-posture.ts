@@ -30,6 +30,14 @@ import type {
 const DEFAULT_MEMORY_MB = 256;
 
 /**
+ * Why an unbuildable Docker backend did not fall back to the host (S6 / D3).
+ * Names the key an operator sets to allow it; surfaced as the exec tools'
+ * refusal by `resolveExecRefusal` (packages/wiring/src/compose-tools.ts).
+ */
+export const LOCAL_FALLBACK_REFUSAL =
+  "execution refused: Docker is disabled in this process, and running this personality's execution tools un-sandboxed on the host needs the operator opt-in `execution.allowLocalFallback: true` in ~/.ethos/config.yaml";
+
+/**
  * Render `execution.ssh` as the `user@host:port` string the character sheet
  * shows. Only what is actually CONFIGURED appears: an absent `user` or `port`
  * means ssh resolves it itself (`~/.ssh/config`, the local username, port 22),
@@ -180,11 +188,20 @@ export interface ResolveExecutionPostureInput {
    * when Docker execution is disabled in-process (e.g. the desktop in-process
    * backend sets `disableDocker: true`) — distinct from the daemon being down.
    * When false and the computed posture is `docker`, the resolver falls back to
-   * an HONEST `local` posture (un-sandboxed, runs on host) if the constitution
-   * permits, or stays a `docker` hard-fail when it forbids `local`. Defaults to
-   * `true` (read surfaces that don't gate execution leave it unset).
+   * an HONEST `local` posture (un-sandboxed, runs on host) only when the
+   * constitution permits AND the operator set `allowLocalFallback`; otherwise
+   * it stays a `docker` hard-fail. Defaults to `true` (read surfaces that don't
+   * gate execution leave it unset).
    */
   dockerBuildable?: boolean;
+  /**
+   * `execution.allowLocalFallback` from `~/.ethos/config.yaml` — the operator's
+   * opt-in to the docker→local downgrade above (S6 / D3, plan
+   * openclaw-2026.9.6-gaps). Unset, an unbuildable Docker backend is REFUSED:
+   * the posture stays `docker` with a `dockerAbsent` decision whose reason
+   * names the key, and the compose path makes exec tools `not_available`.
+   */
+  allowLocalFallback?: boolean;
   /**
    * Whether this deployment has a remote execution target — i.e. whether
    * `execution.ssh.host` is set in `~/.ethos/config.yaml`. `host`'s presence IS
@@ -304,7 +321,9 @@ export function resolveExecutionPosture(input: ResolveExecutionPostureInput): Ex
   // to ask.
   const forbidsLocal = constitutionForbidsLocal(constitution);
   const dockerUnbuildable = backend === 'docker' && dockerBuildable === false;
-  if (dockerUnbuildable && !forbidsLocal) {
+  // D3 — the downgrade is the operator's call, never a default.
+  const fallbackToLocal = dockerUnbuildable && !forbidsLocal && input.allowLocalFallback === true;
+  if (fallbackToLocal) {
     backend = 'local';
   }
 
@@ -339,7 +358,7 @@ export function resolveExecutionPosture(input: ResolveExecutionPostureInput): Ex
       : {}),
   };
 
-  if (dockerUnbuildable && !forbidsLocal) {
+  if (fallbackToLocal) {
     // Honest local fallback — un-sandboxed, runs on host. Surfaced on the
     // character sheet so the UI never claims "Sandboxed · Docker".
     posture.hostFallback = { reason: 'docker-disabled' };
@@ -361,6 +380,20 @@ export function resolveExecutionPosture(input: ResolveExecutionPostureInput): Ex
     };
     if (log) {
       log.warn('execution posture: docker disabled in-process but local forbidden (F1)', {
+        personalityId: personality.id,
+      });
+    }
+  } else if (dockerUnbuildable) {
+    // D3 — the constitution would permit the host, but the operator has not
+    // opted in. Same hard-fail shape as above; the reason names the key.
+    posture.dockerAbsent = {
+      blocked: true,
+      canInstall: true,
+      canConsentLocal: false,
+      consentForbiddenReason: LOCAL_FALLBACK_REFUSAL,
+    };
+    if (log) {
+      log.warn('execution posture: docker disabled in-process, host fallback not opted in (D3)', {
         personalityId: personality.id,
       });
     }
@@ -449,10 +482,13 @@ export interface BuildExecutionPostureInput {
   /**
    * Whether a Docker backend can be built in this process at all (F1). Pass
    * `false` from surfaces that disable Docker (e.g. the desktop in-process
-   * backend) so the resolved posture honestly falls back to `local` instead of
-   * claiming Docker. Defaults to `true`.
+   * backend) so the resolved posture honestly falls back to `local` (with
+   * `allowLocalFallback`) or is refused, instead of claiming Docker. Defaults
+   * to `true`.
    */
   dockerBuildable?: boolean;
+  /** `execution.allowLocalFallback` — see `ResolveExecutionPostureInput`. */
+  allowLocalFallback?: boolean;
   /**
    * Whether `execution.ssh.host` is set in `~/.ethos/config.yaml`. REQUIRED for
    * the same reason it is required on `ResolveExecutionPostureInput`: a read
@@ -512,6 +548,7 @@ export async function buildExecutionPosture(
     memoryMb: input.memoryMb,
     dockerAvailable,
     dockerBuildable: input.dockerBuildable,
+    ...(input.allowLocalFallback === true ? { allowLocalFallback: true } : {}),
     sshConfigured: input.sshConfigured,
     ...(input.sshTarget !== undefined ? { sshTarget: input.sshTarget } : {}),
     log: input.log,

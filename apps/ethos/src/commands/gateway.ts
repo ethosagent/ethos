@@ -95,6 +95,7 @@ import {
   type ChannelTranscriptStore,
   type ClarifyResponse,
   EthosError,
+  type ExecutionPosture,
   type GatewayMessagePayload,
   type GatewayMessageResult,
   type InboundMessage,
@@ -1042,6 +1043,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // §7.3). Absent → the LLM reviewer only (no `decisions.*`).
     approverDecision,
     dispose: disposeSystemLoop,
+    // Where each personality's shell tools run in this process — the approval
+    // predicates below flag them under a host-local posture (S6 / D1(a)).
+    executionPostureFor,
     jobStore: systemJobStore,
     backgroundExecutor: systemBackgroundExecutor,
   } = await createAgentLoop(config, {
@@ -1082,6 +1086,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     model: config.model,
     allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
     isRemoteSenderTurn: (sessionId) => gatewayRef?.resolveApprovalRoute(sessionId) !== undefined,
+    executionPostureFor,
     ...(approverDecision ? { decision: approverDecision } : {}),
   });
   // Say so at boot, once, for every personality whose cron jobs can reach a
@@ -1090,6 +1095,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     jobs: await scheduler.listJobs().catch(() => []),
     getPersonality: (id) => seamPersonalities.get(id),
     allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
+    executionPostureFor,
     recordSafetyBlock: (event) => getEthosObservability().recordSafetyBlock(event),
   });
   for (const { personalityId, tools } of cronExposure) {
@@ -1546,6 +1552,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       ? { approvalTimeoutMs: config.approvalTimeoutMs }
       : {}),
     ownerFor: (platform) => config.channelFilter?.[platform]?.ownerUserId,
+    executionPostureFor,
     ...(approverDecision ? { decision: approverDecision } : {}),
   });
 
@@ -2904,6 +2911,10 @@ export function wireApprovalFlow(
      *  forwarded to every predicate built here. Operator-level config, so one
      *  site serves every bot; absent → the LLM reviewer only. */
     decision?: SmartApproverDecisionSite;
+    /** `CreateAgentLoopResult.executionPostureFor` — required by every
+     *  predicate built here (S6 / D1(a)). Posture is operator- and
+     *  personality-level, so one build's resolver serves every bot. */
+    executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
   },
 ): { shutdown: () => Promise<void>; pendingCount: () => number } {
   const approvalAdapters = adapters.filter(isApprovalCapable);
@@ -2913,6 +2924,7 @@ export function wireApprovalFlow(
     getProvider: seams.getProvider,
     model: seams.model,
     ...(seams.decision ? { decision: seams.decision } : {}),
+    executionPostureFor: seams.executionPostureFor,
   };
   // Wire 0: a bot with no approval surface is gated here, before the
   // early return below, so a deployment with no card-capable adapter at all
@@ -3010,6 +3022,7 @@ export function wireApprovalFlow(
     model: seams.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     ...(seams.decision ? { decision: seams.decision } : {}),
+    executionPostureFor: seams.executionPostureFor,
   });
   // A turn on one of these loops that arrived through an adapter with no card
   // (an Email message that fell back to a Slack bot's loop) cannot be asked:

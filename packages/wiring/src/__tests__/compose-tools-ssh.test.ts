@@ -32,6 +32,7 @@ import {
   resolveExecRefusal,
   resolveSshExecutionBackend,
 } from '../compose-tools';
+import { LOCAL_FALLBACK_REFUSAL, resolveExecutionPosture } from '../resolve-execution-posture';
 
 const SECRETS: SecretsResolver = {
   get: async () => null,
@@ -560,6 +561,22 @@ describe('execution: none', () => {
     // A `none` personality is not waiting for a sandbox that failed to start.
     // Blaming Docker would send an operator installing one.
     expect(NONE_REFUSAL).not.toContain('Docker');
+  });
+
+  // S6 / D3: an unbuildable Docker backend without the operator opt-in is
+  // refused in words that name the key to set.
+  it('names execution.allowLocalFallback when the docker→local downgrade was refused', () => {
+    const refused = resolveExecutionPosture({
+      personality: { id: 'shell', name: 'shell', toolset: ['terminal'] } as PersonalityConfig,
+      containerized: { env: {}, fileExists: () => false, readFile: () => null },
+      sshConfigured: false,
+      dockerBuildable: false,
+    });
+    expect(resolveExecRefusal(refused, false)).toEqual({
+      forbidden: true,
+      message: LOCAL_FALLBACK_REFUSAL,
+    });
+    expect(LOCAL_FALLBACK_REFUSAL).toContain('execution.allowLocalFallback: true');
   });
 
   it('still lets a wired backend execute at the other postures', () => {

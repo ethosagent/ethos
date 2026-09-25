@@ -289,6 +289,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
                   loop,
                   personalities,
                   agentConfig,
+                  agentResult.executionPostureFor,
                   agentResult.approverDecision,
                 ),
             });
@@ -482,6 +483,9 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   // The smart approver's decision site from the build `loop` came from
   // (plan decision-provider-jev §8.2), on every branch below.
   let approverDecision: SmartApproverDecisionSite | undefined;
+  // Where each personality's shell tools run in the build `loop` came from —
+  // the web approval predicate flags them under a host-local posture (S6 / D1(a)).
+  let executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
   let mcpManager: McpManager | undefined;
   let pluginLoader: import('@ethosagent/plugin-loader').PluginLoader | undefined;
   let notificationRouter: import('@ethosagent/types').NotificationRouter | undefined;
@@ -752,6 +756,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     loop = result.loop;
     toolRegistry = result.toolRegistry;
     approverDecision = result.approverDecision;
+    executionPostureFor = result.executionPostureFor;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -786,6 +791,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
       goals: teamGoals,
       memoryBundle: teamMemoryBundle,
       dispose: teamDispose,
+      executionPostureFor: teamExecutionPostureFor,
       approverDecision: teamApproverDecision,
     } = await createTeamAgentLoop(config, teamFlag, {
       profile: loopProfile,
@@ -794,6 +800,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     loop = teamLoop;
     toolRegistry = teamToolRegistry;
     approverDecision = teamApproverDecision;
+    executionPostureFor = teamExecutionPostureFor;
     activeMeshName = teamMesh;
     activePersonality = coordinatorPersonality;
     setOnSkillProposed = teamSetOnSkillProposed;
@@ -820,6 +827,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     loop = result.loop;
     toolRegistry = result.toolRegistry;
     approverDecision = result.approverDecision;
+    executionPostureFor = result.executionPostureFor;
     mcpManager = result.mcpManager;
     pluginLoader = result.pluginLoader;
     notificationRouter = result.notificationRouter;
@@ -1259,6 +1267,7 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
     dir,
     loop,
     ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor,
     session,
     contextLog,
     personalities,
@@ -1645,6 +1654,7 @@ export function buildServeDangerPredicate(
   loop: AgentLoop,
   personalities: ServePersonalityRegistry,
   config: EthosConfig,
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'],
   decision?: SmartApproverDecisionSite,
 ): ReturnType<typeof createApprovalDangerPredicate> {
   return createApprovalDangerPredicate({
@@ -1654,6 +1664,7 @@ export function buildServeDangerPredicate(
     model: config.model,
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     ...(decision ? { decision } : {}),
+    executionPostureFor,
   });
 }
 type AcpServerOptions = ConstructorParameters<typeof AcpServer>[0];
@@ -2076,6 +2087,8 @@ export interface BuildServeWebApiOptions {
   loop: AgentLoop;
   /** `CreateAgentLoopResult.approverDecision` of the build `loop` came from. */
   approverDecision?: SmartApproverDecisionSite;
+  /** `CreateAgentLoopResult.executionPostureFor` of the build `loop` came from. */
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
   session: ReturnType<typeof createSessionStore>;
   contextLog: SQLiteContextLog;
   personalities: ServePersonalityRegistry;
@@ -2326,7 +2339,13 @@ export function buildServeWebApi(opts: BuildServeWebApiOptions): ReturnType<type
     },
     // The approval modal's danger check — built by the same function the
     // onboarding boot uses (`buildServeDangerPredicate`).
-    dangerPredicate: buildServeDangerPredicate(loop, personalities, config, opts.approverDecision),
+    dangerPredicate: buildServeDangerPredicate(
+      loop,
+      personalities,
+      config,
+      opts.executionPostureFor,
+      opts.approverDecision,
+    ),
     // Every modal decision (and every allowlist auto-allow) lands in the
     // safety audit trail behind `ethos audit decisions`.
     approvalObservability: {

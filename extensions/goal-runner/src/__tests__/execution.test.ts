@@ -796,3 +796,26 @@ describe('GoalRunner.canExecute', () => {
     ).toBe(true);
   });
 });
+
+// S1 — command checks run through the injected executor, bound to the goal's
+// own personality; the runner has no shell of its own.
+describe('GoalRunner — acceptance-check executor', () => {
+  it('hands each command check to execAcceptanceCheck with the goal personality', async () => {
+    const store = new SQLiteGoalStore(':memory:');
+    const goal = makeGoalWithSpec(store, {
+      checks: [{ id: 'c1', description: 'tests pass', command: 'pnpm test' }],
+      rubric: [],
+      threshold: 0,
+    });
+    const execAcceptanceCheck = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+    const runner = new GoalRunner({
+      store,
+      execAcceptanceCheck,
+      runAttempt: fakeRunAttempt([{ type: 'done', text: 'done', turnCount: 1 }]),
+    });
+
+    await runner.startGoal(goal.id);
+    await waitForStatus(store, goal.id, 'completed');
+    expect(execAcceptanceCheck).toHaveBeenCalledWith('pnpm test', { personalityId: 'tester' });
+  });
+});

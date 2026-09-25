@@ -112,10 +112,11 @@ function makeRouting(
     substitutionVars: SUBSTITUTION,
     // Docker disabled makes the non-remote postures deterministic on any host:
     // a `docker` posture with no buildable backend resolves to an HONEST
-    // `local` one, which is also what a containerized CI box resolves to. Both
-    // roads lead to "runs here", which is the thing a remote personality must
-    // never share.
+    // `local` one (with the operator opt-in `allowLocalFallback`, S6 / D3),
+    // which is also what a containerized CI box resolves to. Both roads lead
+    // to "runs here", which is the thing a remote personality must never share.
     disableDocker: true,
+    allowLocalFallback: true,
     // Pinned so a container-hosted test run cannot silently turn a `docker`
     // posture into `local` and quietly skip what it came to prove.
     containerized: { env: {}, fileExists: () => false, readFile: () => null },

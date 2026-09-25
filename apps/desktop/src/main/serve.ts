@@ -241,6 +241,18 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     );
   }
 
+  // S6 / D3 — Docker is disabled in this process, so an exec personality runs
+  // on the host only with the operator's `execution.allowLocalFallback: true`
+  // from the shared `~/.ethos/config.yaml`; otherwise its exec tools are
+  // refused (`resolveExecutionPosture`). An unreadable config keeps the refusal.
+  let allowLocalFallback = false;
+  try {
+    allowLocalFallback =
+      (await readConfig(new FsStorage(), secretsResolver))?.execution?.allowLocalFallback === true;
+  } catch {
+    // keep the refusal
+  }
+
   const { callCapture: sharedCallCapture, ...sharedVoiceConfig } = sharedVoiceAndCallCaptureConfig;
   const callCapturePersonalityId = store.get('callCapturePersonalityId') as string | undefined;
 
@@ -257,6 +269,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
         ? { callCapture: sharedCallCapture }
         : {}),
     ...sharedVoiceConfig,
+    ...(allowLocalFallback ? { execution: { allowLocalFallback: true } } : {}),
     secretsResolver,
   };
 
@@ -302,6 +315,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     goals,
     memoryBundle,
     approverDecision,
+    executionPostureFor,
     dispose: disposeLoop,
   } = await createAgentLoop(wiringConfig, {
     dataDir,
@@ -404,6 +418,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
       // The smart reviewer's decision site from THIS build (plan
       // decision-provider-jev §8.2); absent → the LLM reviewer only.
       ...(approverDecision ? { decision: approverDecision } : {}),
+      executionPostureFor,
     }),
     ...(onMemoryCaptured ? { onMemoryCaptured } : {}),
     // `learning.replay` — absent, the desktop refused `REPLAY_UNAVAILABLE`
