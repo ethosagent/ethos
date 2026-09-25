@@ -837,6 +837,7 @@ describe('wireApprovalFlow', () => {
         // No timeout: only the fail-closed deny can settle this call.
         approvalTimeoutMs: 0,
         ownerFor: () => undefined,
+        executionPostureFor: () => undefined,
       });
 
       const outcome = await Promise.race([
