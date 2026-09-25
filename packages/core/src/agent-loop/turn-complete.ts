@@ -32,6 +32,7 @@ import { dedupHistory, toLLMMessages } from './history';
 import { reconstructFromWatermark, selectActiveWatermark } from './manual-compact';
 import { advanceMicroState } from './micro-compaction';
 import { loadMicroState, saveMicroState } from './micro-state';
+import { turnToolDefinitions } from './stages/stream-step';
 import type { LoopDeps } from './turn-context';
 import type { TurnEndCtx } from './turn-end';
 
@@ -102,6 +103,9 @@ export async function runTurnComplete(
       ...(deps.compaction?.charsPerToken !== undefined
         ? { charsPerToken: deps.compaction.charsPerToken }
         : {}),
+      // Whole-request units, like the pre-LLM gate and the turn-end trigger:
+      // the tool schemas this turn sent count with the system prompt.
+      toolSchemas: JSON.stringify(turnToolDefinitions(deps.tools, ctx.toolScope)),
     },
     messages,
     ctx.systemPrompt,

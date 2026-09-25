@@ -15,13 +15,16 @@ import type {
   ContextEngineTurnCompleteOutput,
   LLMProvider,
   Message,
+  Tool,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../agent-loop';
 import { AgentLoop } from '../agent-loop';
+import { evaluateGate } from '../agent-loop/compaction';
 import { validateContextEngine } from '../context-engines/conformance';
 import { DefaultContextEngineRegistry } from '../context-engines/registry';
 import { DefaultPersonalityRegistry } from '../defaults/noop-personality';
+import { DefaultToolRegistry } from '../tool-registry';
 import { createTestSafety } from './helpers/test-safety';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
@@ -243,5 +246,76 @@ describe('Item 7 — conformance Scenario 6', () => {
     });
     expect(result.passed).toBe(false);
     expect(result.failures.join('\n')).toContain('not deterministic');
+  });
+});
+
+// The engine's `pressureRatio` (which also drives micro-compaction's level) is
+// computed by `runTurnComplete` in `agent-loop/turn-complete.ts`. It used to
+// leave the tool schemas out of `evaluateGate`, so with large schemas it read
+// far below what the pre-LLM gate and the turn-end trigger measure.
+describe('Item 7 — pressureRatio uses the pre-LLM gate’s whole-request units', () => {
+  it('counts the tool schemas the turn sent', async () => {
+    const WINDOW = 200_000;
+    const bigTool: Tool = {
+      name: 'big_tool',
+      description: 'd'.repeat(160_000), // ~40k tokens of schema
+      schema: { type: 'object' },
+      capabilities: {},
+      execute: async () => ({ ok: true, value: 'x' }),
+    };
+    const tools = new DefaultToolRegistry();
+    tools.register(bigTool);
+
+    const calls: { messages: Message[]; system: string; tools: string }[] = [];
+    const llm: LLMProvider = {
+      ...mockLLM(),
+      maxContextTokens: WINDOW,
+      async *complete(messages, toolDefs, opts) {
+        calls.push({
+          messages: messages.slice(),
+          system: opts?.system ?? '',
+          tools: JSON.stringify(toolDefs),
+        });
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', finishReason: 'end_turn' };
+      },
+    };
+
+    const engine = recordingEngine();
+    const contextEngines = new DefaultContextEngineRegistry();
+    contextEngines.register(engine);
+    const registry = new DefaultPersonalityRegistry();
+    vi.spyOn(registry, 'getDefault').mockReturnValue({
+      id: 'p',
+      name: 'P',
+      toolset: ['big_tool'],
+      context_engine: engine.name,
+    });
+    const loop = new AgentLoop({
+      llm,
+      safety: createTestSafety(),
+      personalities: registry,
+      contextEngines,
+      tools,
+    });
+
+    await collect(loop.run('hello'));
+
+    const call = calls[0];
+    expect(call?.tools).toContain('big_tool');
+    const after: Message[] = [...(call?.messages ?? []), { role: 'assistant', content: 'ok' }];
+    const g = evaluateGate(
+      { llm: { maxContextTokens: WINDOW }, toolSchemas: call?.tools ?? '' },
+      after,
+      call?.system ?? '',
+    );
+    const expected = g.current / g.window;
+    const old = evaluateGate({ llm: { maxContextTokens: WINDOW } }, after, call?.system ?? '');
+    const oldRatio = old.current / old.window;
+
+    const reported = engine.calls[0]?.pressureRatio ?? -1;
+    expect(reported).toBeCloseTo(expected, 6);
+    // The schemas alone are ~20% of the window; the old arithmetic saw ~0.
+    expect(expected - oldRatio).toBeGreaterThan(0.15);
   });
 });
