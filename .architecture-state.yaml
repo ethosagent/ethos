@@ -289,8 +289,8 @@ register_anchors:
     - { path: packages/wiring/src/smart-approver.ts, line: 315, contains: "reviewer gave no usable verdict" }
     - { path: packages/wiring/src/smart-approver.ts, line: 323, contains: "reviewer error (fail-closed)" }
     - { path: packages/wiring/src/smart-approver.ts, line: 150, contains: "export function approverVerdictFrom" }
-    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 66, contains: "export async function enforceBeforeToolCall" }
-    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 70, contains: "const denied = checkDenyRules(" }
+    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 75, contains: "export async function enforceBeforeToolCall" }
+    - { path: packages/core/src/agent-loop/stages/per-call-enforcement.ts, line: 79, contains: "const denied = checkDenyRules(" }
     - { path: packages/core/src/hook-registry.ts, line: 94, contains: "async fireModifying" }
     - { path: packages/wiring/src/approval-seams.ts, line: 126, contains: "export function createApprovalDangerPredicate" }
     - { path: packages/core/src/agent-loop/approval-posture.ts, line: 38, contains: "export function createApprovalPostureGuard" }
