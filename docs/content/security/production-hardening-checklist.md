@@ -5,7 +5,7 @@ kind: how-to
 audience: shared
 slug: production-hardening-checklist
 time: "30 min"
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 ## Task
@@ -88,25 +88,22 @@ ethos personality show <id>
 
 ### 4. Declare network policy per personality
 
-Personalities with web tools (`web_fetch`, `web_post`) should declare `network.allowedHosts` in their safety config. A personality without a network policy gets no egress -- the global SSRF, scheme-allowlist, and cloud-metadata controls still apply to all personalities. See [Security controls -- network](./controls.md#per-personality-network-policy).
+Personalities with web tools (`web_extract`, the browser tools) should declare `safety.network.allow` in their `config.yaml`. Without it, a tool that declares `allowedHosts: ['*']` — `web_extract` among them — reaches no host at all, and a tool that names its own hosts reaches exactly those. The list takes hosts only: an exact host or a leading `*.` pattern, no ports. A bare `*` does not mean "any host"; `safeFetch` refuses every host under it. The global SSRF, scheme-allowlist, and cloud-metadata controls apply to all personalities either way. See [Security controls -- network](./controls.md#per-personality-network-policy).
 
 ```yaml
-# In the personality's config.yaml safety block
+# In the personality's config.yaml
 safety:
-  networkReach:
-    - host: "api.github.com"
-      ports: [443]
-    - host: "*.slack.com"
-      ports: [443]
+  network:
+    allow:
+      - api.github.com
+      - "*.slack.com"
 ```
 
 **Verify:**
 
 ```bash
-ethos personality show <id>
-# Check the "Network reach" section.
+grep -A6 'network:' ~/.ethos/personalities/<id>/config.yaml
 # Confirm only the hosts this personality needs are listed.
-# Confirm no wildcard entries like "*" that would allow all egress.
 ```
 
 ### 5. Configure channel security
@@ -114,25 +111,21 @@ ethos personality show <id>
 Set up `channel_filter` in `~/.ethos/config.yaml` for every active channel adapter:
 
 - **Sender allowlist:** restrict which user IDs can reach the agent. Unknown senders are dropped before the message enters the agent loop.
-- **DM pairing codes:** require a one-time pairing code before a new sender can interact. Codes are sender-bound, nonce-bound, and atomically consumed.
-- **Context visibility:** set the mode per channel -- `allowlist` (only allowlisted senders' content visible) or `allowlist_quote` (allowlisted senders plus their quoted context). Avoid `all` in production unless the channel is fully trusted.
+- **DM pairing codes:** with `dmPolicy: pairing` (the default), an unknown sender who DMs the bot gets a one-time code, and only the owner can redeem it with `/allow <code>`. Codes are random, bound to the sender they were issued for, single-use, and expire after an hour.
+- **Context visibility:** set `contextVisibility: allowlist` to strip quoted replies to non-allowlisted senders and their lines of channel history. `allowlist_quote` is an alias with the same behaviour. Avoid the default `all` in production unless the channel is fully trusted.
 
 See [Security controls -- channel](./controls.md#channel-level-controls) for the full set of channel-layer controls.
 
 ```yaml
-channel_filter:
-  telegram:
-    allowedSenders:
-      - "123456789"   # numeric user ID
-    pairingEnabled: true
-    contextVisibility: "allowlist"
-  slack:
-    allowedSenders:
-      - "U01ABC123"
-    contextVisibility: "allowlist_quote"
+channel_filter.telegram.ownerUserId: 123456789
+channel_filter.telegram.recipientAllowlist: 234567890,345678901
+channel_filter.telegram.dmPolicy: pairing
+channel_filter.telegram.contextVisibility: allowlist
+channel_filter.slack.ownerUserId: U01ABC123
+channel_filter.slack.contextVisibility: allowlist
 ```
 
-**Verify:** Send a message from a non-allowlisted account. Confirm it is silently dropped and a `channel.deny` event appears in `observability.db`.
+**Verify:** Send a message from a non-allowlisted account. Confirm it is dropped (a DM gets a pairing code instead of an answer) and that an `audit.block` event with code `channel.allowlist.blocked` (DM) or `channel.mention_gate` (group) appears in `observability.db`.
 
 ### 6. Confirm injection defenses are active
 
@@ -140,13 +133,12 @@ The `INJECTION_DEFENSE_PRELUDE` system prompt is always-on -- it is injected int
 
 Confirm that `wrapUntrusted` covers all untrusted input surfaces:
 
-- **Channel messages** from non-owner senders are wrapped with provenance markers.
-- **Tool results** from web fetches, email reads, and skill outputs are wrapped before re-entering the LLM context.
-- **Quoted and forwarded content** is tagged as untrusted by the context-visibility filter.
+- **Channel messages:** the gateway wraps every admitted inbound message, and any channel history attached to it, with provenance markers.
+- **Tool results:** a result is wrapped only when its tool declares `outputIsUntrusted: true` — `web_extract`, `read_file`, `search_files`, `terminal`, the browser page-reading tools and MCP tools among them. A tool that does not declare it is not wrapped, and its results do not arm the post-read downgrade.
 
-The only case where action is required: if you have written **custom tools** that return external content and bypass the standard tool pipeline, those results will not be wrapped automatically. Wrap them manually with the `wrapUntrusted()` helper from `@ethosagent/safety-injection`.
+The only case where action is required: if you have written **custom tools** that return external content, set `outputIsUntrusted: true` on each of them. The agent loop then wraps the result, runs the pattern check, and arms the post-read downgrade (`handleUntrustedResult` in `packages/core/src/agent-loop/result-defense.ts`).
 
-**Verify:** No explicit verification step unless you have custom tools. If you do, confirm each custom tool's `execute()` calls `wrapUntrusted()` on any external content before returning it as a `ToolResult`.
+**Verify:** No explicit verification step unless you have custom tools. If you do, confirm each custom tool that returns external content declares `outputIsUntrusted: true`.
 
 ### 7. Set up observability and retention
 
