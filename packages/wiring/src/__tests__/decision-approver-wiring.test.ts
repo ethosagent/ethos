@@ -2,20 +2,24 @@
 // §8.2, §14 R7). Two seams:
 // - `createApprovalDangerPredicate` constructs the reviewer with exactly
 //   today's options when no `decision` is passed, and forwards it when one is;
-// - `createAgentLoop` exposes `approverDecision` only when a provider exists
-//   and the approver site is `shadow`/`on`, and that site carries the build's
-//   ONE provider instance (the one the injection classifier also uses).
+// - `createAgentLoop` exposes `approverDecision` whenever `decisions.provider`
+//   is configured, carrying the build's ONE lazy provider handle (the one the
+//   injection classifier and router also use) and the resolved global config;
+//   the MODE is the session personality's, resolved per call from the SAME
+//   personality the predicate read `approvalMode` from (plan
+//   decision-provider-personality §7.3).
 
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DECISIONS_API_KEY_REF } from '@ethosagent/config';
+import { DECISIONS_API_KEY_REF, resolveDecisionsConfig } from '@ethosagent/config';
 import { DefaultHookRegistry, DefaultPersonalityRegistry } from '@ethosagent/core';
 import { createTypesafeDecisionProvider } from '@ethosagent/decision-typesafe';
 import type {
   CompletionChunk,
   DecisionProvider,
   LLMProvider,
+  PersonalityConfig,
   SecretsResolver,
 } from '@ethosagent/types';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -61,10 +65,18 @@ function reviewer(): LLMProvider {
   };
 }
 
-async function smartPredicate(decision?: SmartApproverDecisionSite) {
+async function smartPredicate(
+  decision?: SmartApproverDecisionSite,
+  decisions?: PersonalityConfig['decisions'],
+) {
   const hooks = new DefaultHookRegistry();
   const personalities = new DefaultPersonalityRegistry();
-  personalities.define({ id: 'p', name: 'p', safety: { approvalMode: 'smart' } });
+  personalities.define({
+    id: 'p',
+    name: 'p',
+    safety: { approvalMode: 'smart' },
+    ...(decisions ? { decisions } : {}),
+  });
   const getProvider = async () => reviewer();
   const isDangerous = createApprovalDangerPredicate({
     hooks: [hooks],
@@ -111,17 +123,34 @@ describe('createApprovalDangerPredicate — the approver decision site', () => {
       model: 'jev-1.13.0',
       usage: { inputTokens: 5, outputTokens: 0 },
     }));
-    const decisions: DecisionProvider = { name: 'typesafe', calibrated: true, decide };
+    const provider: DecisionProvider = { name: 'typesafe', calibrated: true, decide };
     const site: SmartApproverDecisionSite = {
-      decisions,
-      mode: 'on',
-      thresholds: { approve: 0.9, deny: 0.9 },
-      timeoutMs: 2000,
+      provider: { get: async () => provider },
+      global: resolveDecisionsConfig({
+        provider: 'typesafe',
+        thresholds: { approver: { approve: 0.9, deny: 0.9 } },
+      }),
     };
-    const { reason } = await smartPredicate(site);
+    const { reason } = await smartPredicate(site, {
+      provider: 'typesafe',
+      sites: { approver: 'on' },
+    });
     expect(approverFactory.mock.calls[0]?.[0].decision).toBe(site);
     expect(decide).toHaveBeenCalledTimes(1);
     expect(reason).toBe('denied by reviewer: email_send requires explicit approval');
+  });
+
+  it('the session personality declares no approver site → the LLM reviewer, decide() never called', async () => {
+    const decide = vi.fn();
+    const get = vi.fn(async () => ({ name: 'typesafe', calibrated: true, decide }));
+    const site: SmartApproverDecisionSite = {
+      provider: { get },
+      global: resolveDecisionsConfig({ provider: 'typesafe' }),
+    };
+    const { reason } = await smartPredicate(site);
+    expect(reason).toBe('denied by reviewer: llm denies');
+    expect(get).not.toHaveBeenCalled();
+    expect(decide).not.toHaveBeenCalled();
   });
 });
 
@@ -183,52 +212,22 @@ describe('createAgentLoop — approverDecision', () => {
     }
   }, 60_000);
 
-  it('provider set, approver off (injection shadow) → no approverDecision', async () => {
-    const result = await build(
-      config({ decisions: { provider: 'typesafe', sites: { injection: 'shadow' } } }),
-    );
-    try {
-      expect(result.approverDecision).toBeUndefined();
-      expect(providerFactory).toHaveBeenCalledTimes(1);
-    } finally {
-      await result.dispose();
-    }
-  }, 60_000);
-
-  it('both sites shadow → ONE provider, shared by the approver site', async () => {
+  it('provider set → approverDecision carries the build handle and the resolved global config, no provider yet', async () => {
     const result = await build(
       config({
-        decisions: {
-          provider: 'typesafe',
-          sites: { injection: 'shadow', approver: 'shadow' },
-          thresholds: { approver: { approve: 0.9 } },
-        },
+        decisions: { provider: 'typesafe', thresholds: { approver: { approve: 0.9 } } },
       }),
     );
     try {
-      expect(providerFactory).toHaveBeenCalledTimes(1);
       const site = result.approverDecision;
-      expect(site?.decisions).toBe(providerFactory.mock.results[0]?.value);
-      expect(site?.mode).toBe('shadow');
-      expect(site?.timeoutMs).toBe(2000);
-      expect(site?.thresholds).toEqual({ approve: 0.9 });
-    } finally {
-      await result.dispose();
-    }
-  }, 60_000);
-
-  it('approver `on` without both thresholds runs as shadow (R6)', async () => {
-    const result = await build(
-      config({
-        decisions: {
-          provider: 'typesafe',
-          sites: { approver: 'on' },
-          thresholds: { approver: { approve: 0.9 } },
-        },
-      }),
-    );
-    try {
-      expect(result.approverDecision?.mode).toBe('shadow');
+      expect(site).toBeDefined();
+      expect(typeof site?.provider.get).toBe('function');
+      expect(site?.global.thresholds).toEqual({ approver: { approve: 0.9 } });
+      expect(site?.global.timeouts.approver).toBe(2000);
+      // Lazy (plan §7.0): nothing is built until a personality's site runs.
+      expect(providerFactory).not.toHaveBeenCalled();
+      expect(await site?.provider.get()).toBe(providerFactory.mock.results[0]?.value);
+      expect(providerFactory).toHaveBeenCalledTimes(1);
     } finally {
       await result.dispose();
     }

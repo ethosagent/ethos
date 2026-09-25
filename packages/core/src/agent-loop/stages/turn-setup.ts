@@ -233,6 +233,7 @@ export async function* setupTurn(
     : await routeTurnTier({
         router: deps.tierRouter,
         message: text,
+        personality,
         ...(opts.abortSignal ? { signal: opts.abortSignal } : {}),
         ...(traceId ? { traceId } : {}),
         resolve: (role) => {

@@ -449,9 +449,9 @@ export type PersonalityDecisionSiteMode = 'off' | 'shadow' | 'on';
  * `off | shadow | on` and keeps `provider` verbatim (a name this machine has
  * not configured is not a load failure).
  *
- * Limitation (N1): nothing reads this block yet. Until plan
- * decision-provider-personality N2/N3 land, the site modes that run are still
- * the operator's global `decisions.sites.*`.
+ * Read per call by `resolvePersonalityDecisionSite`
+ * (`packages/config/src/decisions.ts`) at each decision site in
+ * `packages/wiring` (router, injection classifier, smart approver).
  */
 export interface PersonalityDecisionsConfig {
   /** A decision provider the OPERATOR configured (`decisions.provider` in
@@ -912,11 +912,12 @@ export interface PersonalityConfig {
    * Which decision model this personality uses and where (plan
    * decision-provider-personality). Enablement only: provider, key, endpoint,
    * budgets and thresholds are the operator's (`decisions.*`,
-   * `packages/config/src/decisions.ts`). The intended rule — a site runs only
-   * when the personality enables it AND the operator configured the named
-   * provider with a key — is not enforced yet: nothing reads this field until
-   * the plan's N2/N3 land (see {@link PersonalityDecisionsConfig}).
-   * Absent = nothing declared (every site `off` for this personality once N3 lands).
+   * `packages/config/src/decisions.ts`). A site runs only when the
+   * personality enables it AND the operator configured the named provider
+   * (`resolvePersonalityDecisionSite`, same file) — and, with no key stored,
+   * the provider handle yields no provider, so the site takes today's path
+   * (`createDecisionProviderHandle`, packages/wiring/src/decision-provider.ts).
+   * Absent = nothing declared: every site `off` for this personality.
    * Counts as ONE field for the schema-freeze gate (the nested shape is a
    * leaf type — same precedent as `voice`).
    */

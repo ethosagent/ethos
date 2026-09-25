@@ -2,7 +2,12 @@
 // §8.1, D16; §14 Mapping, Fallback chain and Redaction). The shared
 // mode/shadow/failure matrix is in `decision-site.test.ts`; this file pins
 // only this site's mapping, its fallback chain and its digest.
+// Plan decision-provider-personality §7.2/§11: the mode is resolved per call
+// from the `personalityId` on the classifier input; two personalities through
+// one classifier get two modes, and a missing / unknown id is the fallback
+// exactly.
 
+import { resolveDecisionsConfig } from '@ethosagent/config';
 import { createLLMClassifier } from '@ethosagent/safety-injection';
 import type {
   CompletionChunk,
@@ -10,8 +15,10 @@ import type {
   DecisionProvider,
   DecisionRequest,
   DecisionResult,
+  InjectionClassifier,
   InjectionVerdict,
   LLMProvider,
+  PersonalityConfig,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -19,8 +26,54 @@ import {
   INJECTION_QUESTION_ID,
   injectionVerdictFrom,
 } from '../decision-injection-classifier';
+import type { DecisionProviderHandle } from '../decision-provider';
+import type { DecisionSiteRecorder } from '../decision-site';
 
 const T = 0.8;
+
+function fixed(p: DecisionProvider | undefined): DecisionProviderHandle & { gets: number } {
+  const h = {
+    gets: 0,
+    get: async () => {
+      h.gets++;
+      return p;
+    },
+  };
+  return h;
+}
+
+function registry(list: PersonalityConfig[]) {
+  const byId = new Map(list.map((x) => [x.id, x]));
+  return { get: (id: string) => byId.get(id) };
+}
+
+/**
+ * The site as one personality `p` whose `decisions.sites.injection` is `mode`
+ * sees it: global threshold `threshold`, budget `timeoutMs`.
+ */
+function classifier(opts: {
+  provider: DecisionProvider;
+  fallback: InjectionClassifier;
+  mode: 'off' | 'shadow' | 'on';
+  threshold: number | undefined;
+  timeoutMs: number;
+  observability?: DecisionSiteRecorder;
+}) {
+  const classify = createDecisionInjectionClassifier({
+    provider: fixed(opts.provider),
+    fallback: opts.fallback,
+    global: resolveDecisionsConfig({
+      provider: 'typesafe',
+      timeouts: { injection: opts.timeoutMs },
+      ...(opts.threshold !== undefined ? { thresholds: { injection: opts.threshold } } : {}),
+    }),
+    personalities: registry([
+      { id: 'p', name: 'p', decisions: { provider: 'typesafe', sites: { injection: opts.mode } } },
+    ]),
+    ...(opts.observability ? { observability: opts.observability } : {}),
+  });
+  return (input: { content: string }) => classify({ ...input, personalityId: 'p' });
+}
 
 function answers(p: number) {
   return {
@@ -103,8 +156,8 @@ describe('createDecisionInjectionClassifier — on', () => {
   it("above threshold returns the provider's verdict without calling the fallback", async () => {
     const { provider: p } = provider(() => ok(0.97));
     const fallback = vi.fn(async () => LLM_VERDICT);
-    const classify = createDecisionInjectionClassifier({
-      decisions: p,
+    const classify = classifier({
+      provider: p,
       fallback,
       mode: 'on',
       threshold: T,
@@ -121,8 +174,8 @@ describe('createDecisionInjectionClassifier — on', () => {
   it("below threshold runs today's LLM classifier", async () => {
     const { provider: p } = provider(() => ok(0.6));
     const fallback = vi.fn(async () => LLM_VERDICT);
-    const classify = createDecisionInjectionClassifier({
-      decisions: p,
+    const classify = classifier({
+      provider: p,
       fallback,
       mode: 'on',
       threshold: T,
@@ -134,8 +187,8 @@ describe('createDecisionInjectionClassifier — on', () => {
 
   it('asks one boolean question with the site budget', async () => {
     const { provider: p, requests } = provider(() => ok(0.97));
-    await createDecisionInjectionClassifier({
-      decisions: p,
+    await classifier({
+      provider: p,
       fallback: async () => LLM_VERDICT,
       mode: 'on',
       threshold: T,
@@ -166,8 +219,8 @@ describe('fallback chain — decision provider → LLM classifier → pattern ch
 
   it.each(CODES)("provider fails with %s → the LLM classifier's verdict", async (code) => {
     const { provider: p } = provider(() => ({ ok: false, code, message: 'x' }));
-    const classify = createDecisionInjectionClassifier({
-      decisions: p,
+    const classify = classifier({
+      provider: p,
       fallback: createLLMClassifier({
         llm: llmAnswering('{"containsInstructions": true, "confidence": 0.66, "reason": "r"}'),
       }),
@@ -187,8 +240,8 @@ describe('fallback chain — decision provider → LLM classifier → pattern ch
     "provider fails with %s and the LLM fails too → the pattern check's verdict",
     async (code) => {
       const { provider: p } = provider(() => ({ ok: false, code, message: 'x' }));
-      const classify = createDecisionInjectionClassifier({
-        decisions: p,
+      const classify = classifier({
+        provider: p,
         fallback: createLLMClassifier({ llm: llmThrowing() }),
         mode: 'on',
         threshold: T,
@@ -207,8 +260,8 @@ describe('shadow', () => {
   it("returns the LLM classifier's verdict and records the provider reading beside it", async () => {
     const { provider: p } = provider(() => ok(0.97));
     const records: unknown[] = [];
-    const classify = createDecisionInjectionClassifier({
-      decisions: p,
+    const classify = classifier({
+      provider: p,
       fallback: async () => LLM_VERDICT,
       mode: 'shadow',
       threshold: undefined,
@@ -232,8 +285,8 @@ describe('redaction (R2) — the injection digest', () => {
     const KEY = `sk-proj-${'Z9'.repeat(24)}`;
     for (const mode of ['on', 'shadow'] as const) {
       const { provider: p, requests } = provider(() => ok(0.97));
-      await createDecisionInjectionClassifier({
-        decisions: p,
+      await classifier({
+        provider: p,
         fallback: async () => LLM_VERDICT,
         mode,
         threshold: T,
@@ -244,5 +297,74 @@ describe('redaction (R2) — the injection digest', () => {
       expect(sent).not.toContain(KEY);
       expect(sent).toContain('[REDACTED:openai-key]');
     }
+  });
+});
+
+describe('per personality (plan decision-provider-personality §7.2)', () => {
+  const G = resolveDecisionsConfig({ provider: 'typesafe', thresholds: { injection: T } });
+
+  it('two personality ids through one classifier get two modes', async () => {
+    const { provider: p, decide } = provider(() => ok(0.97));
+    const fallback = vi.fn(async () => LLM_VERDICT);
+    const records: Array<{ personalityId?: string; mode: string }> = [];
+    const classify = createDecisionInjectionClassifier({
+      provider: fixed(p),
+      fallback,
+      global: G,
+      personalities: registry([
+        {
+          id: 'judge',
+          name: 'judge',
+          decisions: { provider: 'typesafe', sites: { injection: 'on' } },
+        },
+        { id: 'plain', name: 'plain' },
+      ]),
+      observability: { recordDecisionCall: (r) => records.push(r) },
+    });
+    expect(await classify({ content: 'x', personalityId: 'judge' })).toMatchObject({
+      containsInstructions: true,
+      source: 'llm',
+    });
+    expect(await classify({ content: 'x', personalityId: 'plain' })).toBe(LLM_VERDICT);
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(fallback).toHaveBeenCalledTimes(1);
+    expect(records).toEqual([expect.objectContaining({ mode: 'on', personalityId: 'judge' })]);
+  });
+
+  it('a missing or unknown id, or an undeclared personality → fallback({ content }) exactly, handle untouched', async () => {
+    const { provider: p, decide } = provider(() => ok(0.97));
+    const handle = fixed(p);
+    const fallback = vi.fn(async () => LLM_VERDICT);
+    const classify = createDecisionInjectionClassifier({
+      provider: handle,
+      fallback,
+      global: G,
+      personalities: registry([{ id: 'plain', name: 'plain' }]),
+    });
+    expect(await classify({ content: 'a' })).toBe(LLM_VERDICT);
+    expect(await classify({ content: 'b', personalityId: 'ghost' })).toBe(LLM_VERDICT);
+    expect(await classify({ content: 'c', personalityId: 'plain' })).toBe(LLM_VERDICT);
+    expect(fallback.mock.calls).toEqual([
+      [{ content: 'a' }],
+      [{ content: 'b' }],
+      [{ content: 'c' }],
+    ]);
+    expect(decide).not.toHaveBeenCalled();
+    expect(handle.gets).toBe(0);
+  });
+
+  it('a personality naming a provider the operator did not configure → fallback (PD3)', async () => {
+    const { provider: p, decide } = provider(() => ok(0.97));
+    const fallback = vi.fn(async () => LLM_VERDICT);
+    const classify = createDecisionInjectionClassifier({
+      provider: fixed(p),
+      fallback,
+      global: G,
+      personalities: registry([
+        { id: 'x', name: 'x', decisions: { provider: 'acme', sites: { injection: 'on' } } },
+      ]),
+    });
+    expect(await classify({ content: 'x', personalityId: 'x' })).toBe(LLM_VERDICT);
+    expect(decide).not.toHaveBeenCalled();
   });
 });

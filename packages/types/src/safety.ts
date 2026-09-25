@@ -5,7 +5,18 @@ export interface InjectionVerdict {
   source: 'llm' | 'pattern-fallback';
 }
 
-export type InjectionClassifier = (input: { content: string }) => Promise<InjectionVerdict>;
+export type InjectionClassifier = (input: {
+  content: string;
+  /**
+   * The personality whose turn produced the content, when the caller knows it
+   * (core's `handleUntrustedResult`, packages/core/src/agent-loop/result-defense.ts,
+   * always passes it). Optional and additive (plan decision-provider-personality
+   * §7.2, PD6): a classifier that is not per-personality ignores it; one that
+   * is (`createDecisionInjectionClassifier`, packages/wiring) treats a missing
+   * or unknown id as "this personality enabled nothing".
+   */
+  personalityId?: string;
+}) => Promise<InjectionVerdict>;
 
 export interface InjectionDefenseKit {
   prelude: string;

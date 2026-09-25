@@ -141,9 +141,10 @@ key, endpoint, model, budgets and thresholds stayed in
 party is still the operator's: with no `decisions.provider` or no key,
 nothing is sent. Which personality uses it, and at which sites, is the
 personality's. The field is parsed and round-tripped by
-`buildDecisionsConfig` in `extensions/personalities/src/index.ts`; until the
-per-personality resolution lands, nothing reads it, and the site modes that
-run are still the global `decisions.sites.*` lines.
+`buildDecisionsConfig` in `extensions/personalities/src/index.ts`, and every
+site resolves its mode per call with `resolvePersonalityDecisionSite` in
+`packages/config/src/decisions.ts`. A global `decisions.sites.*` line is
+warned about at load and never read.
 
 **Migration: none required.** No existing module becomes non-compliant.
 With no `decisions.*` keys, or with a site set to `off`, every site behaves

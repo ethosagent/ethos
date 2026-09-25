@@ -6,7 +6,8 @@
 //
 //                site call (injection | approver | router)
 //                                │
-//                  mode = decisions.sites.<site>   (R6: `on` with no threshold ⇒ `shadow`)
+//   mode = resolvePersonalityDecisionSite(personality.decisions, site, global)
+//          (the CALLER resolves it per call; R6: `on` with no threshold ⇒ `shadow`)
 //       ┌────────────────────────┼─────────────────────────────┐
 //      off                    shadow                           on
 //       │                        │                              │
@@ -89,6 +90,12 @@ export interface DecisionCallRecord {
   disagreed?: boolean;
   /** The turn's trace, when the site's caller knows it (today: the router). */
   traceId?: string;
+  /**
+   * The personality whose `decisions.sites.<site>` enabled this call (plan
+   * decision-provider-personality §7.0). Every production site passes it: a
+   * site resolves `off` — and never reaches `decide()` — without one.
+   */
+  personalityId?: string;
 }
 
 export interface DecisionSiteRecorder {
@@ -97,7 +104,10 @@ export interface DecisionSiteRecorder {
 
 export interface RunDecisionSiteOptions<V, J> {
   site: DecisionSiteId;
-  /** The site's EFFECTIVE mode (R6), from `resolveDecisionsConfig`. */
+  /**
+   * The site's EFFECTIVE mode for this call's personality, from
+   * `resolvePersonalityDecisionSite` (@ethosagent/config; R6 applied there).
+   */
   mode: DecisionSiteMode;
   provider: DecisionProvider | undefined;
   digest: DecisionDigest;
@@ -124,6 +134,8 @@ export interface RunDecisionSiteOptions<V, J> {
   tracker?: DecisionRecordTracker;
   /** The turn's trace id, copied onto the record so it joins the turn. */
   traceId?: string;
+  /** The personality whose declaration enabled this call, copied onto the record. */
+  personalityId?: string;
   now?: () => number;
 }
 
@@ -237,6 +249,7 @@ export async function runDecisionSite<V, J>(opts: RunDecisionSiteOptions<V, J>):
         outcome: r.ok ? 'ok' : r.code,
         estimatedCostUsd: r.ok ? estimateCost(r.model, { inputTokens, outputTokens }).costUsd : 0,
         ...(opts.traceId !== undefined ? { traceId: opts.traceId } : {}),
+        ...(opts.personalityId !== undefined ? { personalityId: opts.personalityId } : {}),
         ...extra,
       });
     } catch {

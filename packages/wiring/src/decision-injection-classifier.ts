@@ -16,16 +16,26 @@
 // the question, which it imports from ./decision-questions (the one owner).
 // Pinned by `__tests__/decision-injection-classifier.test.ts`.
 //
-// M2 switches the provider-interface import to `@ethosagent/types`; nothing
-// else here changes.
+// Per personality (plan decision-provider-personality §7.2, PD6): core passes
+// the turn's `personalityId` on the classifier input (`result-defense.ts`);
+// this classifier looks it up in the build's personality registry — the same
+// instance the loop resolves turns from (`infra.personalities`,
+// build-agent-loop.ts) — and resolves the mode with
+// `resolvePersonalityDecisionSite` (@ethosagent/config) per call. A missing
+// id, an unknown personality, or a site that resolves `off` calls
+// `fallback({ content })` — exactly today's classifier call — without
+// touching the provider handle. Known limitation (plan K4): a registry refresh
+// between two tool results of one turn can change the mode mid-turn; either
+// mode is a legal state for that personality.
 
-import type { DecisionSiteMode } from '@ethosagent/config';
+import { type ResolvedDecisionsConfig, resolvePersonalityDecisionSite } from '@ethosagent/config';
 import type {
   DecisionAnswer,
-  DecisionProvider,
   InjectionClassifier,
   InjectionVerdict,
+  PersonalityRegistry,
 } from '@ethosagent/types';
+import type { DecisionProviderHandle } from './decision-provider';
 import { DECISION_QUESTION_IDS, INJECTION_QUESTIONS } from './decision-questions';
 import {
   type DecisionRecordTracker,
@@ -38,15 +48,14 @@ import {
 export const INJECTION_QUESTION_ID = DECISION_QUESTION_IDS.injection;
 
 export interface CreateDecisionInjectionClassifierOptions {
-  decisions: DecisionProvider | undefined;
+  /** The ONE provider handle of the composition root (shared breaker, §5.5), read lazily. */
+  provider: DecisionProviderHandle;
   /** Today's path: the LLM classifier (which falls back to the pattern check). */
   fallback: InjectionClassifier;
-  /** The injection site's EFFECTIVE mode (R6). */
-  mode: DecisionSiteMode;
-  /** `decisions.thresholds.injection` (T_injection). */
-  threshold: number | undefined;
-  /** `decisions.timeouts.injection` resolved (R9). */
-  timeoutMs: number;
+  /** The operator's resolved `decisions.*`: threshold (T_injection), budget (R9). */
+  global: ResolvedDecisionsConfig;
+  /** The registry the loop resolves turns from; `personalityId` is looked up here. */
+  personalities: Pick<PersonalityRegistry, 'get'>;
   observability?: DecisionSiteRecorder;
   /** The build's shadow-record tracker, drained at dispose (R8). */
   tracker?: DecisionRecordTracker;
@@ -80,15 +89,21 @@ export function injectionVerdictFrom(
 export function createDecisionInjectionClassifier(
   opts: CreateDecisionInjectionClassifierOptions,
 ): InjectionClassifier {
-  return ({ content }) =>
-    runDecisionSite<InjectionVerdict, boolean>({
+  const threshold = opts.global.thresholds.injection;
+  return async ({ content, personalityId }) => {
+    const personality =
+      personalityId !== undefined ? opts.personalities.get(personalityId) : undefined;
+    const site = resolvePersonalityDecisionSite(personality?.decisions, 'injection', opts.global);
+    if (!personality || site.effective === 'off') return opts.fallback({ content });
+    return runDecisionSite<InjectionVerdict, boolean>({
       site: 'injection',
-      mode: opts.mode,
-      provider: opts.decisions,
+      mode: site.effective,
+      provider: await opts.provider.get(),
       digest: { kind: 'text', value: content },
       questions: INJECTION_QUESTIONS,
-      timeoutMs: opts.timeoutMs,
-      gate: (answers) => injectionVerdictFrom(answers, opts.threshold),
+      timeoutMs: site.timeoutMs,
+      personalityId: personality.id,
+      gate: (answers) => injectionVerdictFrom(answers, threshold),
       // Pre-threshold reading for shadow disagreement (plan §8): p ≥ 0.5.
       interpret: (answers) => {
         const a = booleanAnswer(answers);
@@ -99,4 +114,5 @@ export function createDecisionInjectionClassifier(
       ...(opts.observability ? { recorder: opts.observability } : {}),
       ...(opts.tracker ? { tracker: opts.tracker } : {}),
     });
+  };
 }
