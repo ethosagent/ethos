@@ -294,6 +294,19 @@ export class ConfigRepository {
         }
         continue;
       }
+      // Keys whose EMPTY value means something, distinct from the key being
+      // absent — `parseConfigYaml` (packages/config) reads both with `(.*)`:
+      // `voice.trustedPlugins:` arms the voice-egress gate trusting nothing
+      // non-local, `security.trusted_github_orgs:` trusts no org. The generic
+      // `(.+)` below drops a bare `key:` line, so a web save would silently
+      // disarm the gate / restore the default org list. Kept on passthrough
+      // as '' and written back as `key: `, which both parsers read as empty.
+      // Pinned by `__tests__/repositories/config-empty-values.test.ts`.
+      const empty = line.match(/^(voice\.trustedPlugins|security\.trusted_github_orgs):\s*(.*)$/);
+      if (empty?.[1]) {
+        config.passthrough[empty[1]] = parseConfigScalar(empty[2] ?? '');
+        continue;
+      }
       const kv = line.match(/^([\w.-]+):\s*(.+)$/);
       if (!kv) continue;
       const key = kv[1]?.trim();
