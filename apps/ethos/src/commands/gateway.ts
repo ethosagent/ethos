@@ -135,6 +135,7 @@ import {
   ApprovalCoordinator,
   type ApprovalObservability,
   createSlackApprovalHook,
+  SYSTEM_DECIDER,
 } from '../approval-coordinator';
 import { createHealthServer, type MetricsAuthCheck } from '../health-server';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
@@ -2991,7 +2992,7 @@ export function wireApprovalFlow(
   coordinator.onPending((req) => {
     const route = gateway.resolveApprovalRoute(req.sessionId);
     if (!route || !isApprovalCapable(route.adapter)) {
-      void coordinator.deny(req.approvalId, 'system');
+      void coordinator.deny(req.approvalId, SYSTEM_DECIDER);
       return;
     }
     const adapter = route.adapter;
@@ -3010,7 +3011,7 @@ export function wireApprovalFlow(
         if ('error' in result) {
           console.error('[gateway] failed to post approval card:', result.error);
           resolvedBeforePost.delete(req.approvalId);
-          void coordinator.deny(req.approvalId, 'system');
+          void coordinator.deny(req.approvalId, SYSTEM_DECIDER);
           return;
         }
         const card = {
@@ -3035,7 +3036,7 @@ export function wireApprovalFlow(
         inFlightPosts.delete(req.approvalId);
         resolvedBeforePost.delete(req.approvalId);
         console.error('[gateway] failed to post approval card:', err);
-        void coordinator.deny(req.approvalId, 'system');
+        void coordinator.deny(req.approvalId, SYSTEM_DECIDER);
       })
       .finally(() => {
         inFlightCardPosts.delete(post);
@@ -3991,6 +3992,11 @@ export async function buildAdapters(
           discordDir: join(ethosDir(), 'discord'),
           ...(config.discord?.defaultChannelMode
             ? { defaultChannelMode: config.discord.defaultChannelMode }
+            : {}),
+          // Without roles the adapter's default `role_gate` refuses every
+          // Approve/Deny click and each approval waits out its timeout.
+          ...(config.discord?.approvalRoleIds
+            ? { approvalRoleIds: config.discord.approvalRoleIds }
             : {}),
           ...(config.discord?.missedMessageBackfill
             ? { missedMessageBackfill: config.discord.missedMessageBackfill }

@@ -15,14 +15,11 @@ import {
   type ApprovalObservability,
   createSlackApprovalHook,
   type PendingApproval,
+  SYSTEM_DECIDER,
 } from '../approval-coordinator';
 import { wireApprovalFlow } from '../commands/gateway';
 
 type AuditRow = Parameters<ApprovalObservability['recordSafetyApproval']>[0];
-
-/** Mirrors the module-private `SYSTEM_DECIDER` in `../approval-coordinator`
- *  (and its twin in web-api's `approvals.service.ts`). */
-const SYSTEM_DECIDER = '__ethos_system__';
 
 /** Collecting audit sink — stands in for wiring's EthosObservability. */
 function recordingSink(): { rows: AuditRow[]; observability: ApprovalObservability } {
@@ -806,6 +803,51 @@ describe('wireApprovalFlow', () => {
     } finally {
       warn.mockRestore();
       vi.useRealTimers();
+    }
+  });
+
+  it('a card-post failure settles as denied immediately, not at the timeout (S9)', async () => {
+    // The route binds a requester ('U1'), so `ApprovalCoordinator.settle` drops
+    // any decider that is neither the requester nor `SYSTEM_DECIDER`. The
+    // fail-closed deny must use the latter, or it is dropped and the turn
+    // hangs until the timeout backstop.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const adapter = {
+        id: 'slack:test',
+        botKey: 'bot-1',
+        postApprovalCard: async () => ({ error: 'channel_not_found' }),
+        updateApprovalCard: async () => ({ ok: true }),
+        onApprovalDecision: () => {},
+      } as unknown as PlatformAdapter;
+      const hooks = new DefaultHookRegistry();
+      const bots = [
+        { botKey: 'bot-1', loop: { hooks }, binding: { type: 'personality', name: 'default' } },
+      ] as unknown as GatewayBotConfig[];
+      const gateway = {
+        resolveApprovalRoute: () => ({ adapter, chatId: 'C1', requesterUserId: 'U1' }),
+      } as unknown as Gateway;
+      const flow = wireApprovalFlow(gateway, bots, [adapter], {
+        personalities: { get: () => undefined } as unknown as PersonalityRegistry,
+        getProvider: async () => {
+          throw new Error('no provider in this test');
+        },
+        model: 'test-model',
+        // No timeout: only the fail-closed deny can settle this call.
+        approvalTimeoutMs: 0,
+        ownerFor: () => undefined,
+      });
+
+      const outcome = await Promise.race([
+        fireDangerousCall(hooks),
+        new Promise<'hung'>((resolve) => setTimeout(() => resolve('hung'), 200)),
+      ]);
+
+      expect(outcome).not.toBe('hung');
+      expect(outcome).toMatchObject({ error: expect.stringContaining('denied') });
+      expect(flow.pendingCount()).toBe(0);
+    } finally {
+      error.mockRestore();
     }
   });
 

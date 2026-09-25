@@ -2295,6 +2295,16 @@ export interface EthosConfig {
      * `regex_match`. Absent leaves the adapter on its own `mention_only`.
      */
     defaultChannelMode?: 'mention_only' | 'thread_follow' | 'all' | 'observe';
+    /**
+     * Role ids allowed to click Approve / Deny on an approval card
+     * (`discord.approvalRoleIds: 111,222`). Passed to
+     * `DiscordAdapterConfig.approvalRoleIds` by `buildAdapters`
+     * (apps/ethos/src/commands/gateway.ts). Absent leaves the adapter's
+     * default `role_gate` with no roles, which refuses every click
+     * (`DiscordAdapter.handleApprovalDecision`), so every Discord approval
+     * waits out its timeout. Pinned by `__tests__/discord-approval-roles.test.ts`.
+     */
+    approvalRoleIds?: string[];
     missedMessageBackfill?: {
       /** Read history at all. Default `true` — today's behaviour. */
       enabled?: boolean;
@@ -4510,6 +4520,9 @@ function serializeConfigLines(config: EthosConfig): string[] {
   if (config.discord?.defaultChannelMode) {
     lines.push(`discord.defaultChannelMode: ${config.discord.defaultChannelMode}`);
   }
+  if (config.discord?.approvalRoleIds && config.discord.approvalRoleIds.length > 0) {
+    lines.push(`discord.approvalRoleIds: ${config.discord.approvalRoleIds.join(',')}`);
+  }
   if (config.discord?.missedMessageBackfill) {
     const bf = config.discord.missedMessageBackfill;
     if (bf.enabled !== undefined)
@@ -5810,6 +5823,11 @@ export function parseConfigYaml(src: string): EthosConfig {
   const restartLoopGuard = buildRestartLoopGuard(restartLoopGuardKv);
   const discordBackfill = buildDiscordBackfill(discordBackfillKv);
   const discordModeResult = buildDiscordDefaultMode(discordKv);
+  const discordRoleList = (discordKv.approvalRoleIds ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const discordApprovalRoleIds = discordRoleList.length > 0 ? discordRoleList : undefined;
   const callCapture = callCaptureKv.personalityId
     ? { personalityId: callCaptureKv.personalityId }
     : undefined;
@@ -6255,9 +6273,10 @@ export function parseConfigYaml(src: string): EthosConfig {
     decisions,
     teamSupervisor: restartLoopGuard ? { restartLoopGuard } : undefined,
     discord:
-      discordBackfill || discordModeResult.mode
+      discordBackfill || discordModeResult.mode || discordApprovalRoleIds
         ? {
             ...(discordModeResult.mode ? { defaultChannelMode: discordModeResult.mode } : {}),
+            ...(discordApprovalRoleIds ? { approvalRoleIds: discordApprovalRoleIds } : {}),
             ...(discordBackfill ? { missedMessageBackfill: discordBackfill } : {}),
           }
         : undefined,

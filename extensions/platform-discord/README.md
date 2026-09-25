@@ -169,11 +169,10 @@ Two policies control who may click the buttons:
 ### Configuring approval roles
 
 ```yaml
-discord.apps.0.approvalPolicy: role_gate       # default — omit to keep role_gate
-discord.apps.0.approvalRoleIds:
-  - "1234567890123456789"                       # role ID from Server Settings → Roles
-  - "9876543210987654321"
+discord.approvalRoleIds: 1234567890123456789,9876543210987654321   # role IDs, comma-separated
 ```
+
+`buildAdapters` (apps/ethos/src/commands/gateway.ts) passes this key to `DiscordAdapterConfig.approvalRoleIds`. `approvalPolicy` has no config key: the gateway always runs the default `role_gate`, so `allow_any` is reachable only by constructing the adapter directly.
 
 To find a role ID: open **Server Settings → Roles**, right-click the role, and select **Copy Role ID**. Developer Mode must be enabled in Discord settings (User Settings → Advanced → Developer Mode).
 
@@ -210,8 +209,8 @@ If something looks wrong after Step 5, work top-to-bottom — earlier rows block
 | `/ethos` doesn't appear in the slash-command picker | `applicationId` or `registerCommandsTo` not set in config, or global commands haven't propagated yet | Set both config fields and restart; if using `registerCommandsTo: 'global'`, wait up to one hour for propagation |
 | Bot can't receive DMs | `Channel`, `Message`, or `Reaction` Partials missing — this is a code-level issue in custom forks | The adapter always initialises all three Partials; ensure you haven't stripped them from a fork |
 | Receipt reaction (👀) is not cleared after the bot replies | `GuildMessageReactions` intent not enabled, or the bot lacks **Add Reactions** permission in that channel | Verify intents in the Developer Portal; check channel permissions for the bot role |
-| Approval buttons show "You do not have permission" | User lacks the required role | Add the user's role ID to `discord.apps.<n>.approvalRoleIds`; or switch to `approvalPolicy: allow_any` |
-| Approval buttons show "Approval roles not configured. No one can approve." | `approvalPolicy` is `role_gate` but `approvalRoleIds` is empty | Set at least one role ID in `discord.apps.<n>.approvalRoleIds` |
+| Approval buttons show "You do not have permission" | User lacks the required role | Add one of the user's role IDs to `discord.approvalRoleIds` |
+| Approval buttons show "Approval roles not configured. No one can approve." | `approvalPolicy` is `role_gate` but `approvalRoleIds` is empty | Set at least one role ID in `discord.approvalRoleIds` |
 | Long agent replies look chopped into multiple messages | Working as intended — Discord's 2000-character per-message ceiling; the adapter chunks automatically | Nothing to fix; chunks land sequentially in the same channel or thread |
 | Bot replies but with garbled formatting | Markdown dialect mismatch — Discord uses its own flavour | The adapter's `toNativeMarkdown()` in `src/format.ts` converts from common markdown; open an issue if a specific pattern is broken |
 
