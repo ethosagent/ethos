@@ -1425,7 +1425,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     if (heartbeatInFlight) return;
     heartbeatInFlight = true;
     try {
-      const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+      // LIVE, like the metrics closure above: `adapters` is the boot-time
+      // snapshot, still holding a bot a reload retired (reported forever as a
+      // stopped adapter) and missing one a reload added.
+      const hb = await buildGatewayHeartbeat(gateway.listAdapters(), heartbeatStartedAt);
       await storage.writeAtomic(gatewayHealthPath(), JSON.stringify(hb));
     } catch {
       // Best-effort — the consumer treats stale data as degraded.
@@ -1444,7 +1447,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     healthPort,
     healthHost,
     async () => {
-      const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+      const hb = await buildGatewayHeartbeat(gateway.listAdapters(), heartbeatStartedAt);
       const allOk = hb.adapters.length > 0 && hb.adapters.every((a) => a.ok);
       return {
         status: allOk ? 'ok' : 'degraded',

@@ -147,6 +147,29 @@ describe('everyStartedAdapter — what a host shutdown stops', () => {
     ]);
   });
 
+  // A reload that retires a built-in bot stops its adapter in
+  // `Gateway.removeAdapter`, but the adapter stays in the host's own list
+  // (boot's `adapters`). Shutdown must not stop it again.
+  it('a built-in adapter a reload retired is stopped exactly once in total', async () => {
+    const { gateway, builtIn, plugin } = gatewayWithPlugin(async () => {});
+    await gateway.removeAdapter('sales-bot');
+    expect(builtIn.stop).toHaveBeenCalledTimes(1);
+    expect(gateway.hasStopped(builtIn)).toBe(true);
+
+    const list = everyStartedAdapter([builtIn], gateway);
+    expect(list).not.toContain(builtIn);
+    expect(list).toContain(plugin);
+    await Promise.allSettled(list.map((a) => a.stop()));
+    expect(builtIn.stop).toHaveBeenCalledTimes(1);
+    expect(plugin.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('boot reports health from the live adapter list, not the boot-time snapshot', async () => {
+    const boot = await read('apps/ethos/src/commands/boot.ts');
+    expect(boot).not.toContain('buildGatewayHeartbeat(adapters,');
+    expect(boot.match(/buildGatewayHeartbeat\(gateway\.listAdapters\(\),/g)).toHaveLength(2);
+  });
+
   it('both hosts stop everyStartedAdapter(adapters, gateway) in their bounded adapters step', async () => {
     const gw = await read('apps/ethos/src/commands/gateway.ts');
     expect(gw).toMatch(

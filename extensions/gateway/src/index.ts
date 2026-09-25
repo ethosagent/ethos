@@ -1543,6 +1543,8 @@ export class Gateway {
    * `GatewayConfig.botAdapters` for the ones a platform-keyed map cannot carry.
    */
   private readonly botAdapters: Map<string, PlatformAdapter>;
+  /** Adapters `removeAdapter` has stopped — see `hasStopped`. */
+  private readonly stoppedAdapters = new WeakSet<PlatformAdapter>();
   /**
    * Per-bot teardown callbacks (the `session_start` hook registration and the
    * background-completion subscription). `removeAdapter` runs them so a
@@ -2126,7 +2128,21 @@ export class Gateway {
       if (survivor) this.adapterRegistry.set(platform, survivor);
       else this.adapterRegistry.delete(platform);
     }
+    // Recorded BEFORE the call, so a `stop()` that throws is still not
+    // attempted a second time by the host's shutdown (`hasStopped`).
+    this.stoppedAdapters.add(adapter);
     await adapter.stop();
+  }
+
+  /**
+   * Whether `removeAdapter` has already called this adapter's `stop()`. A host
+   * keeps its own list of the adapters it built, and a retired one stays in
+   * it; its shutdown asks here so the adapter is not stopped a second time
+   * (`everyStartedAdapter` in apps/ethos/src/commands/gateway.ts, pinned by
+   * apps/ethos/src/__tests__/every-started-adapter.test.ts).
+   */
+  hasStopped(adapter: PlatformAdapter): boolean {
+    return this.stoppedAdapters.has(adapter);
   }
 
   /**
