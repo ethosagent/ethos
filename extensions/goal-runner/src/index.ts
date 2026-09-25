@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   AgentEvent,
   Goal,
+  GoalAttempt,
   GoalCompletedPayload,
   GoalExhaustedPayload,
   GoalFailedPayload,
@@ -84,6 +85,31 @@ const GOAL_PLANNING_DIRECTIVE =
   'phase is planning only. Produce a concise, actionable PLAN in markdown with ' +
   'numbered steps toward the goal, the key assumptions you are making, and the ' +
   'main risks. Output only the plan.';
+
+/** A verdict settled by the no-judge substring fallback (`method: 'substring'`,
+ *  set in ./judge). Its score is 0 almost regardless of the work done, so it
+ *  says nothing about progress. */
+function usesSubstringFallback(verdict: Verdict): boolean {
+  return verdict.perCriterion.some((c) => c.method === 'substring');
+}
+
+/**
+ * Early exhaustion: two consecutive non-improvements. True when the two
+ * attempts BEFORE `attemptN` both have a verdict scoring ≥ `verdict` (this
+ * attempt's). `attempts` is read after this attempt's verdict was persisted, so
+ * it includes the current attempt — excluded here by `n`, never compared with
+ * itself. A substring-fallback verdict among the three never counts as a
+ * plateau. Pinned by __tests__/plateau.test.ts.
+ */
+function isPlateau(attempts: GoalAttempt[], attemptN: number, verdict: Verdict): boolean {
+  if (usesSubstringFallback(verdict)) return false;
+  const prior = attempts.filter((a) => a.n < attemptN).slice(-2);
+  if (prior.length < 2) return false;
+  return prior.every(
+    (a) =>
+      a.verdict !== null && !usesSubstringFallback(a.verdict) && a.verdict.score >= verdict.score,
+  );
+}
 
 /** Minimal in-memory SteerSink — an array-backed FIFO queue. */
 class ArraySteerSink implements SteerSink {
@@ -1299,14 +1325,11 @@ export class GoalRunner {
       return false;
     }
 
-    if (attempts.length >= 2) {
-      const prevScores = attempts.slice(-2).map((a) => a.verdict?.score ?? 0);
-      if (prevScores.every((s) => s >= verdict.score)) {
-        if (this.setStatus(run, goalId, 'exhausted', { outputPartial: output })) {
-          this.fireGoalExhausted(goal, output, verdict);
-        }
-        return false;
+    if (isPlateau(attempts, attemptN, verdict)) {
+      if (this.setStatus(run, goalId, 'exhausted', { outputPartial: output })) {
+        this.fireGoalExhausted(goal, output, verdict);
       }
+      return false;
     }
 
     this.store.appendEvent(goalId, 'complete_rejected', {
