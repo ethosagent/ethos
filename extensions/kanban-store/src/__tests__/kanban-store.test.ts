@@ -2518,11 +2518,11 @@ describe('KanbanStore.bumpActiveHeartbeats', () => {
  * Hold `dbPath`'s write lock (`BEGIN IMMEDIATE`) from a WORKER for `holdMs`,
  * resolving once it is held — a stand-in for the peer process that created
  * board.db first and is still writing its schema, so the file is already in
- * WAL mode (the store's first pragma). In rollback-journal mode a held
- * RESERVED lock makes SQLite refuse the WAL switch with SQLITE_BUSY without
- * consulting the busy handler (deadlock avoidance), which no timeout fixes and
- * which the real race never reaches: whichever process opens first converts
- * the file before it writes. A worker, not a
+ * WAL mode (the store's first pragma). This pins the busy timeout, which is
+ * what the schema create needs. A peer holding the lock BEFORE the file is in
+ * WAL mode is the journal-mode switch case instead, which no busy timeout
+ * covers; the @ethosagent/sqlite shim retries that one (pinned in
+ * packages/sqlite/src/__tests__/database.test.ts). A worker, not a
  * second handle on this thread: `@ethosagent/sqlite` is synchronous, so a
  * same-thread holder could never release while the constructor blocks. Same
  * shape as extensions/session-sqlite/src/__tests__/hold-write-lock.ts.
