@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { checkCommand, createTerminalGuardHook } from '../guard';
+import { approvalRequiredReason, checkCommand, createTerminalGuardHook } from '../guard';
 
 // ---------------------------------------------------------------------------
 // checkCommand
@@ -302,8 +302,6 @@ describe('checkCommand — inline-eval wrappers (S6, D1b)', () => {
     ['node --eval', 'node --eval "1"'],
     ['base64 decode piped into sh', 'echo cm0gLXJmIC8K | base64 -d | sh'],
     ['base64 decode piped into bash', 'echo cm0gLXJmIC8K | base64 --decode | bash'],
-    ['command substitution', 'echo $(whoami)'],
-    ['backtick substitution', 'echo `whoami`'],
     ['case-variant rm', 'RM -RF /'],
     ['mixed-case rm', 'Rm -rf ~'],
   ])('blocks %s', (_label, cmd) => {
@@ -321,5 +319,63 @@ describe('checkCommand — inline-eval wrappers (S6, D1b)', () => {
     'shellcheck script.sh',
   ])('does not flag: %s', (cmd) => {
     expect(checkCommand(cmd).dangerous).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Command substitution requires approval — it is not hardline. D1(b) made it
+// hardline, which refused `kill $(lsof -t -i:3000)` and a commit message built
+// with `$(cat msg)` outright with no approval path; the wrappers above stay
+// hardline.
+// ---------------------------------------------------------------------------
+
+describe('command substitution — approval-required, not hardline', () => {
+  it.each([
+    ['$(…) in kill', 'kill $(lsof -t -i:3000)'],
+    ['$(…) in a commit message', 'git commit -m "$(cat msg)"'],
+    ['backticks in a commit message', 'git commit -m "fix `foo` handling"'],
+    ['echo $(whoami)', 'echo $(whoami)'],
+    ['echo `whoami`', 'echo `whoami`'],
+  ])('%s is not hardline but requires approval', (_label, cmd) => {
+    expect(checkCommand(cmd).dangerous).toBe(false);
+    expect(approvalRequiredReason(cmd)).toBe('command substitution');
+  });
+
+  it.each(['echo $((1 + 2))', 'git log --format=%H', 'ls -la'])('needs no approval: %s', (cmd) => {
+    expect(approvalRequiredReason(cmd)).toBeNull();
+  });
+
+  it('a hardline shape inside a substitution is still hardline', () => {
+    expect(checkCommand('echo $(bash -c id)').dangerous).toBe(true);
+    expect(checkCommand('echo $(rm -rf /)').dangerous).toBe(true);
+    expect(checkCommand('echo `rm -rf /`').dangerous).toBe(true);
+  });
+
+  const call = (command: string) => ({
+    sessionId: 's1',
+    toolCallId: 'tc_1',
+    toolName: 'terminal',
+    args: { command },
+  });
+
+  it('with no approval gate on the loop (CLI/TUI/ACP), the guard refuses it — fail closed', async () => {
+    const result = await createTerminalGuardHook(['terminal'])(call('kill $(lsof -t -i:3000)'));
+    expect(result?.error).toMatch(/command substitution requires explicit human approval/);
+    expect(result?.error).toMatch(/cannot ask for it/);
+  });
+
+  it('with a host approval gate on the loop, the guard leaves it to the gate', async () => {
+    expect(
+      await createTerminalGuardHook(['terminal'], { approvalGated: () => true })(
+        call('kill $(lsof -t -i:3000)'),
+      ),
+    ).toBeNull();
+  });
+
+  it('a host approval gate never lets a hardline command past the guard', async () => {
+    const result = await createTerminalGuardHook(['terminal'], { approvalGated: () => true })(
+      call("bash -c 'id'"),
+    );
+    expect(result?.error).toMatch(/inline shell eval/);
   });
 });

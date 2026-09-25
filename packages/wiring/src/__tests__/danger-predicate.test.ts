@@ -1,16 +1,19 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { denyRuleReason, matchDenyRule } from '@ethosagent/core';
+import { DefaultHookRegistry, denyRuleReason, matchDenyRule } from '@ethosagent/core';
 import { FilePersonalityRegistry } from '@ethosagent/personalities';
 import { FsStorage } from '@ethosagent/storage-fs';
 import type { BeforeToolCallPayload, ExecutionPosture, PersonalityConfig } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   APPROVAL_SURFACE_ALWAYS_ASK,
+  approvalRequiredReason,
   createDangerPredicate,
   hardlineReason,
+  hasHostApprovalGate,
   LOCAL_POSTURE_CONSEQUENTIAL_TOOLS,
+  markHostApprovalGate,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
 } from '../danger-predicate';
 
@@ -481,6 +484,88 @@ describe('LOCAL_POSTURE_CONSEQUENTIAL_TOOLS', () => {
       allowAutoApproveDangerousTools: true,
     });
     expect(await pred(payload('terminal', { command: 'ls' }))).toBeNull();
+  });
+});
+
+// Command substitution is approval-required, not hardline: D1(b) had made it
+// hardline, refusing `kill $(lsof -t -i:3000)` outright with no approval path.
+describe('command substitution requires approval (not hardline)', () => {
+  const KILL = 'kill $(lsof -t -i:3000)';
+
+  it('is not hardline, for any shell-string tool', () => {
+    for (const tool of ['terminal', 'run_tests', 'lint', 'process_start']) {
+      expect(hardlineReason(payload(tool, { command: KILL }))).toBeNull();
+      expect(approvalRequiredReason(payload(tool, { command: KILL }))).toBe('command substitution');
+    }
+    expect(approvalRequiredReason(payload('read_file', { command: KILL }))).toBeNull();
+    expect(approvalRequiredReason(payload('terminal', { command: 'echo $((1+2))' }))).toBeNull();
+  });
+
+  it('manual mode asks, with no posture and no alwaysAsk', async () => {
+    const pred = createDangerPredicate({ getPersonality: () => person('manual') });
+    expect(await pred(payload('terminal', { command: KILL }))).toBe(
+      'terminal requires explicit approval (command substitution)',
+    );
+    expect(await pred(payload('terminal', { command: 'echo `whoami`' }))).toBe(
+      'terminal requires explicit approval (command substitution)',
+    );
+    expect(await pred(payload('process_start', { command: KILL }))).toBe(
+      'process_start requires explicit approval (command substitution)',
+    );
+  });
+
+  it('asks with no personality resolved (the legacy manual default)', async () => {
+    expect(await createDangerPredicate()(payload('terminal', { command: KILL }))).toBe(
+      'terminal requires explicit approval (command substitution)',
+    );
+  });
+
+  it('smart consults the reviewer, which may approve it', async () => {
+    const reasons: string[] = [];
+    const pred = createDangerPredicate({
+      getPersonality: () => person('smart'),
+      smartApprove: async (_p, reason) => {
+        reasons.push(reason);
+        return { decision: 'approve', reason: 'fine' };
+      },
+    });
+    expect(await pred(payload('terminal', { command: KILL }))).toBeNull();
+    expect(reasons).toEqual(['terminal requires explicit approval (command substitution)']);
+  });
+
+  it('off asks unless the unattended capability is set', async () => {
+    const off = createDangerPredicate({ getPersonality: () => person('off') });
+    expect(await off(payload('terminal', { command: KILL }))).toMatch(/command substitution/);
+    const preAuthorized = createDangerPredicate({
+      getPersonality: () => person('off'),
+      allowAutoApproveDangerousTools: true,
+    });
+    expect(await preAuthorized(payload('terminal', { command: KILL }))).toBeNull();
+  });
+
+  it('bash -c is still hardline: off + the capability and a smart approve do not skip it', async () => {
+    expect(hardlineReason(payload('terminal', { command: "bash -c 'id'" }))).toMatch(
+      /inline shell eval/,
+    );
+    const pred = createDangerPredicate({
+      getPersonality: () => person('off'),
+      allowAutoApproveDangerousTools: true,
+    });
+    expect(await pred(payload('terminal', { command: "bash -c 'id'" }))).toMatch(
+      /inline shell eval/,
+    );
+  });
+});
+
+describe('host approval gate marker', () => {
+  it('is unset for a fresh registry, set by markHostApprovalGate, cleared by its undo', () => {
+    const hooks = new DefaultHookRegistry();
+    expect(hasHostApprovalGate(hooks)).toBe(false);
+    const undo = markHostApprovalGate(hooks);
+    expect(hasHostApprovalGate(hooks)).toBe(true);
+    expect(hasHostApprovalGate(new DefaultHookRegistry())).toBe(false);
+    undo();
+    expect(hasHostApprovalGate(hooks)).toBe(false);
   });
 });
 

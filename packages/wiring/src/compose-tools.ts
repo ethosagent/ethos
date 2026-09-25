@@ -103,7 +103,7 @@ import type {
   TurnAuditor,
 } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
-import { TERMINAL_CHECKED_TOOLS } from './danger-predicate';
+import { hasHostApprovalGate, TERMINAL_CHECKED_TOOLS } from './danger-predicate';
 import type { DisposerStack } from './disposer-stack';
 import { ensureFsReachDirs } from './fs-reach-dirs';
 import {
@@ -1862,10 +1862,18 @@ export async function composeAllTools(
   // Guard hooks
   // -------------------------------------------------------------------------
 
-  // CLI/TUI/ACP get the synchronous block-and-explain guard.
+  // CLI/TUI/ACP get the synchronous block-and-explain guard. An
+  // approval-required command (command substitution) is refused here too,
+  // unless the host later registers an approval gate on this loop and marks it
+  // (`markHostApprovalGate` — the gateway's bot loops and systemLoop), in which
+  // case the gate asks a human or refuses.
   if (profile !== 'web') {
-    hooks.registerModifying('before_tool_call', createTerminalGuardHook(TERMINAL_CHECKED_TOOLS));
-    hooks.registerModifying('before_tool_call', createProcessGuardHook());
+    const guardOpts = { approvalGated: () => hasHostApprovalGate(hooks) };
+    hooks.registerModifying(
+      'before_tool_call',
+      createTerminalGuardHook(TERMINAL_CHECKED_TOOLS, guardOpts),
+    );
+    hooks.registerModifying('before_tool_call', createProcessGuardHook(guardOpts));
   }
 
   // -------------------------------------------------------------------------

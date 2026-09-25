@@ -8,7 +8,12 @@
 // Drives a real `AgentLoop`: "refused" and "not run" are separate claims, and
 // only the loop settles the second.
 
-import { AgentLoop, DefaultPersonalityRegistry, DefaultToolRegistry } from '@ethosagent/core';
+import {
+  AgentLoop,
+  DefaultHookRegistry,
+  DefaultPersonalityRegistry,
+  DefaultToolRegistry,
+} from '@ethosagent/core';
 import { Gateway } from '@ethosagent/gateway';
 import type {
   AgentSafety,
@@ -22,7 +27,7 @@ import type {
   Storage,
   VoiceTurnOrigin,
 } from '@ethosagent/types';
-import { FAR_END_VOICE_ORIGIN, farEndRefusalReason } from '@ethosagent/wiring';
+import { FAR_END_VOICE_ORIGIN, farEndRefusalReason, hasHostApprovalGate } from '@ethosagent/wiring';
 import { describe, expect, it, vi } from 'vitest';
 import { ApprovalCoordinator } from '../approval-coordinator';
 import { idleGatewayBot } from '../commands/gateway';
@@ -199,6 +204,40 @@ describe('systemLoop unattended approval gate', () => {
     const r = await runUnattendedTurn({ toolName: 'read_file' });
     expect(r.ran).toBe(true);
     expect(r.toolEndErrors).toEqual([]);
+  });
+
+  // Command substitution is approval-required, not hardline: with nobody to
+  // ask, the gate refuses it (the systemLoop's terminal guard defers to this
+  // gate because `wireUnattendedApprovalGate` marks the registry).
+  it('refuses command substitution — no human to approve it', async () => {
+    const r = await runUnattendedTurn({
+      toolName: 'terminal',
+      args: { command: 'kill $(lsof -t -i:3000)' },
+    });
+    expect(r.ran).toBe(false);
+    expect(r.toolEndErrors).toEqual([
+      unattendedApprovalRejection(
+        'terminal',
+        'terminal requires explicit approval (command substitution)',
+      ),
+    ]);
+    expect(r.coordinatorCalls).toBe(0);
+  });
+
+  it('marks the registry as carrying a host approval gate', () => {
+    const hooks = new DefaultHookRegistry();
+    expect(hasHostApprovalGate(hooks)).toBe(false);
+    wireUnattendedApprovalGate(hooks, {
+      executionPostureFor: () => undefined,
+      personalities: new DefaultPersonalityRegistry(),
+      getProvider: async () => {
+        throw new Error('unused');
+      },
+      model: 'mock-model',
+      allowUnattendedDangerousTools: false,
+      isRemoteSenderTurn: () => false,
+    });
+    expect(hasHostApprovalGate(hooks)).toBe(true);
   });
 
   it('createUnattendedApprovalGate renders the caller’s rejection text', async () => {

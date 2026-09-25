@@ -94,6 +94,8 @@ A small set of operations is always-deny, regardless of personality, regardless 
 
 - Source: `packages/wiring/src/danger-predicate.ts` (`hardlineReason`), `packages/wiring/src/compose-tools.ts` (guard hooks, non-web), `apps/web-api/src/services/approvals.service.ts` (web: `requestApproval` and `approve`), pinned by `apps/web-api/src/__tests__/services/approvals-hardline.test.ts`
 - Audit category: `audit.block`
+- Shell-string shapes on the list include the inline-eval wrappers (`bash -c` and its siblings, `eval`, `python -c`, `node -e`, anything piped into a shell) and case-variant `rm`: `PATTERNS` in `extensions/tools-terminal/src/guard.ts`, copied in `extensions/tools-process/src/guard.ts`.
+- Command substitution (`$(…)` and backticks) is **not** on the list. It requires approval instead, so `kill $(lsof -t -i:3000)` can run once a human says yes. See [Approval modal](#approval-modal).
 
 ### Risk classifier (mode-aware, per-call) {#risk-classifier}
 
@@ -115,6 +117,7 @@ When any of the previous checks flag a call, the request is held in front of the
 - Audit category: `audit.approval`
 - Per-personality knob: `safety.approvalMode` — `manual` | `smart` | `off` (`packages/types/src/personality.ts`). Default is `manual`. `off` auto-approves only on the unattended systemLoop when the operator sets `allowUnattendedDangerousTools: true`; everywhere else it behaves as `manual`.
 - What is flagged: `createDangerPredicate` in `packages/wiring/src/danger-predicate.ts`. Every mode flags `APPROVAL_SURFACE_ALWAYS_ASK`; `smart` adds `SMART_MODE_CONSEQUENTIAL_TOOLS`; and when the personality runs on a host-local, non-containerized execution posture, every mode adds `LOCAL_POSTURE_CONSEQUENTIAL_TOOLS` (`terminal`, `process_start`, `run_tests`, `lint`).
+- Command substitution: a `terminal`, `run_tests`, `lint` or `process_start` command containing `$(…)` or backticks is flagged in every mode, on any execution posture (`approvalRequiredReason` in `packages/wiring/src/danger-predicate.ts`). The web modal and the chat approval cards ask. A surface with nobody to ask refuses it: the unattended systemLoop gate, a chat surface with no cards, the MCP export, and the CLI, TUI and ACP, whose terminal and process guards refuse it because no approval gate is registered on their loops (`hasHostApprovalGate`, pinned by `packages/wiring/src/__tests__/command-substitution-guard.test.ts` and `apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts`). `approvalMode: off` runs it without asking only where `off` already auto-approves, which is the unattended systemLoop with `allowUnattendedDangerousTools: true`.
 
 ## Filesystem controls {#filesystem-controls}
 

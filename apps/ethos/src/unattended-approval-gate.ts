@@ -58,6 +58,7 @@ import {
   createApprovalDangerPredicate,
   type DangerPredicate,
   LOCAL_POSTURE_CONSEQUENTIAL_TOOLS,
+  markHostApprovalGate,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
   type SmartApproverDecisionSite,
 } from '@ethosagent/wiring';
@@ -156,7 +157,10 @@ export function wireUnattendedApprovalGate(
   const unattended = createUnattendedApprovalGate(danger, unattendedApprovalRejection);
   const remote = createNoApprovalSurfaceGate([hooks], opts);
   const { reload, isRemoteSenderTurn } = opts;
-  return hooks.registerModifying('before_tool_call', async (payload) => {
+  // The loop's terminal/process guards leave approval-required commands to
+  // this gate from now on (`hasHostApprovalGate`, packages/wiring/src/danger-predicate.ts).
+  const unmark = markHostApprovalGate(hooks);
+  const unregister = hooks.registerModifying('before_tool_call', async (payload) => {
     if (reload) await reload().catch(() => {});
     // Fail closed: `fireModifying` swallows a throwing handler, which would let
     // the call through, so a failed origin test is answered as remote here.
@@ -168,6 +172,10 @@ export function wireUnattendedApprovalGate(
     }
     return remoteTurn ? remote(payload) : unattended(payload);
   });
+  return () => {
+    unregister();
+    unmark();
+  };
 }
 
 /** What the agent is told when a flagged call is refused on a bot turn whose
