@@ -1660,8 +1660,9 @@ const ConfigGetOutput = z.object({
   voiceLivekitApiKeyPreview: z.string().nullable(),
   /** `voice.livekit.apiSecret`, REDACTED. */
   voiceLivekitApiSecretPreview: z.string().nullable(),
-  /** `voice.inbound.allowlist` — caller numbers that reach the owner's own
-   *  personality. Null = key absent, which the consumer reads as "screen
+  /** `voice.inbound.allowlist` — caller numbers treated as known for pre-warm.
+   *  Caller ID is not identity, so a match never reaches the owner's own
+   *  personality (INB-001b, `decideInboundCall`). Null = key absent, which the consumer reads as "screen
    *  everyone through the receptionist". An explicitly EMPTY allowlist is not
    *  expressible on disk; `voiceInboundReceptionist` IS that policy. */
   voiceInboundAllowlist: z.array(z.string()).nullable(),

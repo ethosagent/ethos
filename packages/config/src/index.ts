@@ -939,8 +939,10 @@ export interface VoiceTrunkConfig {
  */
 export interface VoiceInboundConfig {
   /**
-   * Caller numbers that reach the owner's own personality with pre-warm on
-   * ring. E.164 patterns using the same `*` wildcard grammar as
+   * Caller numbers treated as known for `prewarm: 'allowlisted'`. Caller ID is
+   * set by the calling party, so a match is a hint and never reaches the
+   * owner's own personality (INB-001b, `decideInboundCall` in
+   * `@ethosagent/platform-voice`). E.164 patterns using the same `*` wildcard grammar as
    * `voice.bots[].match` (`matchesVoicePattern`), so one grammar governs every
    * number match in the system.
    *
