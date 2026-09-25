@@ -99,8 +99,8 @@ export interface CompactionDeps {
    */
   staticTokens?: number;
   /** Serialized tool schemas this turn sends: the gate counts them with the system
-   *  prompt, and estimates an unmeasured `staticTokens` (turn 1; SQLite drops
-   *  `requestTokens`) from both. Absent → the system prompt alone. */
+   *  prompt, and estimates an unmeasured `staticTokens` (turn 1; a provider that
+   *  reports no `requestTokens`) from both. Absent → the system prompt alone. */
   toolSchemas?: string;
   /**
    * Phase 1c — configurable headroom (tokens) added to `lastActualInputTokens`
