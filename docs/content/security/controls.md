@@ -99,13 +99,16 @@ A small set of operations is always-deny, regardless of personality, regardless 
 
 ### Risk classifier (mode-aware, per-call) {#risk-classifier}
 
-*Status: Shipped (engine). Partial (sandbox attestation gating).*
+*Status: Shipped (rule-based, per call). Not shipped (sandbox attestation relaxation).*
 
-Every tool call is scored against a pattern-based classifier (regex floor) and an LLM-based classifier (Tier-2). The score determines whether the call goes through, requires approval, or is blocked. Sandbox attestation can relax the classifier for execution backends that declare strict confinement properties (read-only root, no host mounts, egress controls, no docker socket, non-root) — but only attested-strict backends earn the relaxation.
+Rules decide whether a tool call runs, asks for approval, or is refused. No score is involved. `createDangerPredicate` applies them per call, for the personality's approval mode: a hardline command is refused, a call in a flag set asks (see [Approval modal](#approval-modal)), and every other call runs.
 
-- Pattern source: `packages/safety/injection/src/pattern-check.ts`
-- LLM classifier: `packages/safety/injection/src/classifier.ts`
-- Sandbox attestation contract: `packages/types/src/sandbox.ts`
+The pattern check and the LLM classifier in `packages/safety/injection/` do not judge tool calls. They check the *results* of tools that declare `outputIsUntrusted` (`handleUntrustedResult` in `packages/core/src/agent-loop/result-defense.ts`). See [Two-tier classifier](#two-tier-classifier).
+
+Sandbox attestation relaxes nothing today. Execution backends implement `attest()`, but nothing on a running turn's path reads the result. The only caller of `isStrictAttestation` is the backend conformance suite (`packages/core/src/execution/conformance.ts`), as `packages/types/src/sandbox.ts` records.
+
+- Rules: `packages/wiring/src/danger-predicate.ts` (`createDangerPredicate`, `hardlineReason`, `approvalRequiredReason`)
+- Sandbox attestation contract (no consumer on the turn path): `packages/types/src/sandbox.ts`
 
 ### Approval modal {#approval-modal}
 
