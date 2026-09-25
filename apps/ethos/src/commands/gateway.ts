@@ -1589,6 +1589,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     .catch((err) => {
       new ConsoleLogger({}, logLevel).warn(`delivery ledger boot sweep failed: ${String(err)}`);
     });
+  // Then every 60s, so a reply refused by a transient platform error is retried
+  // without a restart (plan openclaw-2026.9.6-gaps R1); `gateway.shutdown` stops it.
+  gateway.startDeliverySweep();
 
   // Inbound spool replay (plan reach-and-containment §2.4) — beside the ledger
   // sweep and for the same reason AFTER adapter.start(): a replayed turn

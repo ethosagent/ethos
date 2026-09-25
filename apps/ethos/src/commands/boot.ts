@@ -1401,6 +1401,9 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     info: (message) => console.log(`${c.dim}${message}${c.reset}`),
     warn: (message) => logger.warn(message, { component: 'boot' }),
   });
+  // The delivery ledger's periodic sweep (plan openclaw-2026.9.6-gaps R1), after
+  // reconciliation's boot sweep; `gateway.shutdown` stops it.
+  gateway.startDeliverySweep();
   // Spool retention (D2-11): once now, then hourly — see `pruneInboundSpool`.
   const pruneSpool = () =>
     pruneInboundSpool(inboundSpool, {

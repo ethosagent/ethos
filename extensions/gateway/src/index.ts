@@ -302,6 +302,22 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
 const SPOOL_DEFAULT_MAX_ATTEMPTS = 3;
 const SPOOL_DEFAULT_MAX_REPLAY_AGE_MS = 24 * 60 * 60 * 1000;
 const SPOOL_DEFAULT_REPLAY_INTERVAL_MS = 60_000;
+/** Default period of {@link Gateway.startDeliverySweep}'s timer. */
+const DELIVERY_SWEEP_DEFAULT_INTERVAL_MS = 60_000;
+/**
+ * A timer tick skips `pending` rows younger than this. Every reply path writes
+ * its obligation BEFORE the platform call (`beginDelivery`), so a young
+ * `pending` row may be a send still in flight — here or in a peer sharing the
+ * ledger — and redelivering it would double-send. The boot sweep has no live
+ * sends to collide with and takes every row.
+ */
+const DELIVERY_SWEEP_MIN_AGE_MS = 60_000;
+/**
+ * A `redelivering` claim older than this is stranded (its claimant died
+ * mid-send) and goes back to `pending` at the top of each sweep
+ * (`DeliveryLedger.reclaimStaleClaims`). A claim spans one adapter call.
+ */
+const DELIVERY_CLAIM_STALE_MS = 5 * 60_000;
 
 /**
  * What {@link Gateway.acceptInbound} decided for one inbound message: the
@@ -838,6 +854,13 @@ export interface GatewayConfig {
    */
   deliveryLedger?: DeliveryLedger;
   /**
+   * Period of the delivery-ledger sweep {@link Gateway.startDeliverySweep}
+   * arms, so an obligation left `pending` by a transient platform failure is
+   * retried on a long-running gateway rather than at the next restart.
+   * Default 60s; 0 disables the timer (the boot sweep still runs).
+   */
+  deliverySweepIntervalMs?: number;
+  /**
    * "Does bot `botKey` still speak for `personalityId`?" — the binding re-check
    * {@link Gateway.deliverPublication} runs before it publishes an approved
    * outbox item (O-T5, plan/phases/trust-before-reach.md).
@@ -1369,6 +1392,10 @@ export class Gateway {
   private replayInFlight: Promise<{ replayed: number; deferred: number; dead: number }> | undefined;
   private spoolReplayTimer: ReturnType<typeof setInterval> | undefined;
   private orphansRecovered = false;
+  private readonly deliverySweepIntervalMs: number;
+  private deliverySweepTimer: ReturnType<typeof setInterval> | undefined;
+  /** The sweep running now, shared by every caller so two never overlap. */
+  private deliverySweepInFlight: Promise<{ redelivered: number; failed: number }> | undefined;
   /** Spool bookkeeping for the turn running on each lane (steer absorption). */
   private readonly spoolTurns = new Map<string, SpoolTurnState>();
   /**
@@ -1633,6 +1660,8 @@ export class Gateway {
       config.inboundSpoolOptions?.maxReplayAgeMs ?? SPOOL_DEFAULT_MAX_REPLAY_AGE_MS;
     this.spoolReplayIntervalMs =
       config.inboundSpoolOptions?.replayIntervalMs ?? SPOOL_DEFAULT_REPLAY_INTERVAL_MS;
+    this.deliverySweepIntervalMs =
+      config.deliverySweepIntervalMs ?? DELIVERY_SWEEP_DEFAULT_INTERVAL_MS;
     this.maxChats = config.maxChats ?? 4096;
     this.channelFilter = config.channelFilter;
     this.channelToolsets = config.channelToolsets;
@@ -5628,6 +5657,10 @@ export class Gateway {
       clearInterval(this.spoolReplayTimer);
       this.spoolReplayTimer = undefined;
     }
+    if (this.deliverySweepTimer) {
+      clearInterval(this.deliverySweepTimer);
+      this.deliverySweepTimer = undefined;
+    }
     for (const undos of this.botCleanups.values()) for (const undo of undos) undo();
     this.botCleanups.clear();
     this.pendingWakes.clear();
@@ -5635,6 +5668,19 @@ export class Gateway {
       lane.abort();
     }
     await this.awaitInflightTurns(Math.max(0, deadline - Date.now()));
+    // A redelivery mid-send when the caller closes the ledger would leave its
+    // row claimed until `reclaimStaleClaims`; give it what is left of the bound.
+    const sweep = this.deliverySweepInFlight;
+    if (sweep) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        sweep.catch(() => {}),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+        }),
+      ]);
+      clearTimeout(timer);
+    }
     this.lanes.clear();
     this.sessionKeys.clear();
     this.activeTurns.clear();
@@ -6055,14 +6101,75 @@ export class Gateway {
    *
    * Must run AFTER `adapter.start()`: a sweep against a cold adapter is a
    * silent no-op that also burns the obligation.
+   *
+   * Never overlaps itself: a call made while a sweep runs (the boot call, a
+   * {@link startDeliverySweep} tick) joins that sweep instead of starting a
+   * second (`deliverySweepInFlight`). Each sweep first returns stranded
+   * `redelivering` claims to `pending` (`DeliveryLedger.reclaimStaleClaims`,
+   * older than `DELIVERY_CLAIM_STALE_MS`).
    */
   async sweepPendingDeliveries(): Promise<{ redelivered: number; failed: number }> {
+    return this.runDeliverySweep(0);
+  }
+
+  /**
+   * Arm the periodic delivery sweep (plan openclaw-2026.9.6-gaps R1): every
+   * `deliverySweepIntervalMs` (default 60s, 0 = never), unref'd. Call AFTER
+   * `adapter.start()`, beside the boot {@link sweepPendingDeliveries} — the
+   * first tick lands one interval later, and a tick that fires while the boot
+   * sweep is still running joins it. Idempotent; {@link shutdown} stops it.
+   *
+   * A tick skips `pending` rows younger than `DELIVERY_SWEEP_MIN_AGE_MS`: they
+   * may be replies still in flight, which the ledger does not claim.
+   */
+  startDeliverySweep(): void {
+    if (this.deliverySweepTimer || this.deliverySweepIntervalMs <= 0 || this.closing) return;
+    if (!this.deliveryLedger) return;
+    this.deliverySweepTimer = setInterval(() => {
+      if (this.closing) return;
+      void this.runDeliverySweep(DELIVERY_SWEEP_MIN_AGE_MS).catch(() => {});
+    }, this.deliverySweepIntervalMs);
+    this.deliverySweepTimer.unref?.();
+  }
+
+  private runDeliverySweep(minAgeMs: number): Promise<{ redelivered: number; failed: number }> {
+    if (this.deliverySweepInFlight) return this.deliverySweepInFlight;
+    const run = this.sweepDeliveriesOnce(minAgeMs).finally(() => {
+      this.deliverySweepInFlight = undefined;
+    });
+    this.deliverySweepInFlight = run;
+    return run;
+  }
+
+  private async sweepDeliveriesOnce(
+    minAgeMs: number,
+  ): Promise<{ redelivered: number; failed: number }> {
     const ledger = this.deliveryLedger;
     if (!ledger) return { redelivered: 0, failed: 0 };
 
+    try {
+      const reclaimed = await ledger.reclaimStaleClaims(Date.now() - DELIVERY_CLAIM_STALE_MS);
+      if (reclaimed > 0) {
+        this.observability?.recordSafetyBlock({
+          code: 'gateway.delivery_claims_reclaimed',
+          details: { count: reclaimed },
+        });
+      }
+    } catch (err) {
+      // A failed reclaim costs only the stranded rows; the sweep still runs.
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.delivery_sweep_failed',
+        cause: err instanceof Error ? err.message : String(err),
+        details: { stage: 'reclaimStaleClaims' },
+      });
+    }
+
     let pending: Awaited<ReturnType<DeliveryLedger['listPending']>>;
     try {
-      pending = await ledger.listPending([...this.bots.keys()]);
+      const newest = Date.now() - minAgeMs;
+      pending = (await ledger.listPending([...this.bots.keys()])).filter(
+        (row) => minAgeMs <= 0 || row.createdAt <= newest,
+      );
     } catch (err) {
       this.observability?.recordSafetyBlock({
         code: 'gateway.delivery_sweep_failed',
