@@ -9,6 +9,7 @@ import type { ChatService } from '../features/chat/service';
 import type { SessionsService } from '../features/sessions/service';
 import { authMiddleware } from '../middleware/auth';
 import { type ApiKeyAuthStore, bearerAuth } from '../middleware/bearer-auth';
+import { cspMiddleware } from '../middleware/csp';
 import { csrfMiddleware } from '../middleware/csrf';
 import { cookieOnlyGuard, dualAuth, resolveScope } from '../middleware/dual-auth';
 import { errorHandler } from '../middleware/error-envelope';
@@ -202,6 +203,20 @@ export function resolveCorsOrigin(
   return allowedOrigins.includes(origin) ? origin : null;
 }
 
+/**
+ * `JSON.stringify` for a value embedded in an inline `<script>`. Escapes the
+ * characters that can end the block or change how the HTML parser reads it
+ * (`<`, `>`, `&`) and the two line terminators JSON allows but pre-ES2019
+ * JavaScript does not (U+2028, U+2029) as `\uXXXX`, which `JSON.parse` and a
+ * JS engine both read back as the same character.
+ */
+function jsonForInlineScript(value: unknown): string {
+  return JSON.stringify(value).replace(
+    /[<>&\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
 export function createRoutes(opts: CreateRoutesOptions): Hono {
   const app = new Hono();
 
@@ -218,6 +233,12 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
   // envelope, so an unvalidated inbound value would be a header-injection
   // vector. Downstream code reads it with `c.get('requestId')`.
   app.use('*', requestId({ headerName: 'x-request-id' }));
+
+  // S2 — Content-Security-Policy on every response, registered this early for
+  // the same reason as `requestId` above. Strict (nonce-only scripts, no
+  // framing) everywhere except the static SPA files, which carry a
+  // framing-only policy; see `cspMiddleware` (../middleware/csp.ts) for why.
+  app.use('*', cspMiddleware());
 
   // Unauthenticated health-check for container probes (liveness / readiness).
   // Registered before any auth / CORS middleware so it never requires either.
@@ -334,12 +355,25 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     authRoutes({ tokens: opts.tokens, ...(opts.secureCookie ? { secureCookie: true } : {}) }),
   );
 
-  // Codex device auth — unauthenticated (user may not be onboarded yet).
-  // The flow is safe to expose: it requires explicit user action in the browser.
+  // Codex device auth. S8: the flow ends in `CodexTokenStore.save`, which
+  // replaces this deployment's Codex credentials, so it is cookie-auth + CSRF
+  // like `/rpc` — it used to be unauthenticated, and on a `0.0.0.0` bind
+  // anyone on the network could start one. Cookie-only: `authMiddleware`
+  // never reads a bearer key. Every caller is the signed-in, same-origin SPA
+  // (`AuthStep` in apps/web/src/onboarding/steps, `add-provider-drawer` in
+  // apps/web/src/pages/settings/components); onboarding runs after the cookie
+  // exchange. Registered before the limiters so an unauthenticated request
+  // never spends a token. Pinned by the 'mount posture (S8)' cases in
+  // ../__tests__/routes/codex-auth.test.ts and the mount-posture drift gate in
+  // ../__tests__/middleware/scope-map-drift.test.ts.
+  //
   // WEB-007: rate-limit device-code strictly — it spawns background pollers /
   // outbound fetch fan-out. Status is a cheap in-memory lookup the onboarding
   // UI polls repeatedly, so it gets a poll-tolerant limiter (1 token per 4s
   // sustains the UI's polling; short lockout for genuine hammering).
+  const csrf = csrfMiddleware(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {});
+  app.use('/auth/codex/*', authMiddleware({ tokens: opts.tokens }));
+  app.use('/auth/codex/*', csrf);
   app.use('/auth/codex/device-code', rateLimitMiddleware({ trustProxy: opts.trustProxy ?? false }));
   app.use(
     '/auth/codex/status',
@@ -374,8 +408,8 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
 
   // Origin / CSRF check on state-changing methods. Localhost-default; pass an
   // explicit list when the server binds beyond localhost. Skipped for
-  // bearer-auth requests — the API key is the auth, not a cookie.
-  const csrf = csrfMiddleware(opts.allowedOrigins ? { allowedOrigins: opts.allowedOrigins } : {});
+  // bearer-auth requests — the API key is the auth, not a cookie. (`csrf` is
+  // built above, with the `/auth/codex` mount.)
   app.use('/rpc/*', async (c, next) => {
     if (c.get('authMethod') === 'bearer') return next();
     return csrf(c, next);
@@ -493,10 +527,17 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
       }
     }
 
-    const msgJson = JSON.stringify(msg);
+    // S2 — `state`, `error` and `error_description` come straight from the
+    // query, so the literal must not be able to close the script block:
+    // `jsonForInlineScript` escapes `<`, `>`, `&`, U+2028 and U+2029. The
+    // script runs only because it carries this response's CSP nonce
+    // (`cspMiddleware`, ../middleware/csp.ts). Pinned by
+    // ../__tests__/routes/oauth-callback-xss.test.ts.
+    const msgJson = jsonForInlineScript(msg);
+    const nonce = c.get('cspNonce');
     const html = `<!DOCTYPE html>
 <html><head><title>Ethos Auth</title></head><body>
-<script>
+<script nonce="${nonce}">
 (function(){
   var msg = ${msgJson};
   // BroadcastChannel — works even when window.opener is null (cross-origin popup)
@@ -552,6 +593,13 @@ export function createRoutes(opts: CreateRoutesOptions): Hono {
     }
     if (mod.auth === 'cookie') {
       app.use(wildcard, authMiddleware({ tokens: opts.tokens }));
+      // S8: a cookie module is a browser surface, so its writes get the same
+      // Origin check as `/rpc` — `POST /documents/upload` and the avatar
+      // routes had none, and a page on another localhost port is same-site,
+      // so the `SameSite=Strict` cookie still rides along. Pinned by the
+      // 'csrf on cookie-auth route modules (S8)' cases in
+      // ../__tests__/middleware/csrf.test.ts.
+      app.use(wildcard, csrf);
     } else if (mod.auth === 'bearer') {
       // Mirror `/rpc/*`: dual-auth (cookie OR bearer) when an api-key store is
       // wired; cookie-only otherwise. A bearer module brings the main API's

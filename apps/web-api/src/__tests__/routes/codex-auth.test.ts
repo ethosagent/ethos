@@ -1,16 +1,30 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
+import { FsStorage } from '@ethosagent/storage-fs';
 import type { SecretsResolver } from '@ethosagent/types';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createWebApi, WebTokenRepository } from '../../index';
 import { rateLimitMiddleware } from '../../middleware/rate-limit';
+import {
+  makeStubAgentLoop,
+  makeStubMemoryBundle,
+  makeStubPersonalityRegistry,
+} from '../test-helpers';
 
-// WEB-007 — the unauthenticated codex device-auth endpoint must bound the
+// WEB-007 — the codex device-auth endpoint must bound the
 // number of concurrent pending flows so it cannot spawn unbounded background
 // pollers / grow the in-memory map without limit.
 
 // Mock the codex client so no network / real poller runs. `pollForAuthorization`
 // never resolves, so each successful request leaves its `pending` entry in
 // place (fake timers keep the cleanup timeout from firing).
-vi.mock('@ethosagent/llm-codex', () => ({
+// The rest of the package is kept real: the full-app mount below pulls in
+// wiring, which imports more of it than these four.
+vi.mock('@ethosagent/llm-codex', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   CodexTokenStore: class {
     async save() {}
   },
@@ -102,5 +116,83 @@ describe('codex device-auth rate-limit mounts', () => {
     const body = (await limited.json()) as { ok: boolean; code?: string };
     expect(body.ok).toBe(false);
     expect(body.code).toBe('rate_limited');
+  });
+});
+
+// S8 (plan openclaw-2026.9.6-gaps). The device-code flow ends in
+// `CodexTokenStore.save`, which replaces this deployment's Codex credentials,
+// and `/auth/codex` used to be mounted with rate limiting only — anyone who
+// could reach a `0.0.0.0` bind could start one. It now sits behind the cookie
+// auth and the CSRF check (the `/auth/codex/*` mount in `createRoutes`,
+// routes/index.ts). Every caller is the SPA (`AuthStep`,
+// `add-provider-drawer`), which is already signed in and same-origin.
+describe('codex device-auth mount posture (S8)', () => {
+  let dir: string;
+  let store: SQLiteSessionStore;
+  let app: ReturnType<typeof createWebApi>['app'];
+  let cookie: string;
+  const sameOrigin = { origin: 'http://localhost:3000', host: 'localhost:3000' };
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    dir = await mkdtemp(join(tmpdir(), 'ethos-codex-auth-'));
+    store = new SQLiteSessionStore(':memory:');
+    app = createWebApi({
+      dataDir: dir,
+      sessionStore: store,
+      memoryBundle: makeStubMemoryBundle(),
+      agentLoop: makeStubAgentLoop(),
+      personalities: makeStubPersonalityRegistry(),
+      chatDefaults: { model: 'm', provider: 'p' },
+    }).app;
+    const token = await new WebTokenRepository({
+      dataDir: dir,
+      storage: new FsStorage(),
+    }).getOrCreate();
+    const exchange = await app.request(`/auth/exchange?t=${token}`, { headers: sameOrigin });
+    cookie = (exchange.headers.get('set-cookie') ?? '').split(/;\s*/)[0] ?? '';
+    expect(cookie).toBeTruthy();
+  });
+
+  afterEach(async () => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('401s an unauthenticated device-code request', async () => {
+    const res = await app.request('/auth/codex/device-code', {
+      method: 'POST',
+      headers: sameOrigin,
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('401s an unauthenticated status poll', async () => {
+    const res = await app.request('/auth/codex/status?session=unknown');
+    expect(res.status).toBe(401);
+  });
+
+  it('refuses a cross-origin device-code request that carries the cookie', async () => {
+    const res = await app.request('/auth/codex/device-code', {
+      method: 'POST',
+      headers: { cookie, origin: 'http://localhost:5999', host: 'localhost:3000' },
+    });
+    expect(res.status).toBe(401);
+    expect(JSON.stringify(await res.json())).toMatch(/Cross-origin/);
+  });
+
+  it('serves the signed-in, same-origin SPA', async () => {
+    const res = await app.request('/auth/codex/device-code', {
+      method: 'POST',
+      headers: { cookie, ...sameOrigin },
+    });
+    expect(res.status).toBe(200);
+    const { sessionToken } = (await res.json()) as { sessionToken: string };
+    const status = await app.request(`/auth/codex/status?session=${sessionToken}`, {
+      headers: { cookie },
+    });
+    expect(status.status).toBe(200);
   });
 });
