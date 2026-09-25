@@ -3034,6 +3034,9 @@ importers:
         specifier: workspace:*
         version: link:../worker-router
     devDependencies:
+      '@ethosagent/tools-a2a':
+        specifier: workspace:*
+        version: link:../../extensions/tools-a2a
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@4.4.3)

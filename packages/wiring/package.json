@@ -141,6 +141,7 @@
     "@ethosagent/worker-router": "workspace:*"
   },
   "devDependencies": {
+    "@ethosagent/tools-a2a": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0"
   }
 }
