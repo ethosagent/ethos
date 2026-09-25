@@ -26,6 +26,8 @@ import {
   type CreateAgentLoopResult,
   EthosObservability,
   FunnelTracker,
+  type InstallScanInput,
+  installScanEvent,
   type LearningInbox,
   createAgentLoop as packageCreateAgentLoop,
   createLearningInbox as packageCreateLearningInbox,
@@ -157,6 +159,20 @@ export function getEthosObservability(): EthosObservability {
   }
   if (!ethosObsSingleton) throw new Error('ethos observability adapter not initialised');
   return ethosObsSingleton;
+}
+
+/**
+ * Record one `install.scan` row (`installScanEvent`, packages/wiring) for an
+ * install-scanner decision made by a CLI command — `ethos skills install`
+ * (`scanSkillDir`) and `ethos plugin install` (`installPlugin`). Fail-open: an
+ * observability store that will not open costs the row, never the install.
+ */
+export function recordInstallScan(input: InstallScanInput): void {
+  try {
+    getEthosObservability().recordSkillScan(installScanEvent(input));
+  } catch {
+    // observability unavailable — audit is fail-open
+  }
 }
 
 let funnelSingleton: FunnelTracker | undefined;
@@ -605,6 +621,7 @@ export async function createCliLearningInbox(config: EthosConfig): Promise<Learn
     defaultPersonalityId: config.personality,
     observability: {
       recordSafetyApproval: (o) => getEthosObservability().recordSafetyApproval(o),
+      recordSkillScan: (o) => getEthosObservability().recordSkillScan(o),
     },
     ...(resolveLearningReplay(config).enabled
       ? {

@@ -71,6 +71,17 @@ export interface ApprovalObservability {
     cause?: string;
     details?: Record<string, unknown>;
   }): void;
+  /**
+   * Not used by approvals: `createWebApi` hands this same sink to the learning
+   * inbox, whose promotions record their `install.scan` row through it
+   * (`learningPromoteDeps`, packages/wiring/src/learning-pipeline.ts).
+   */
+  recordSkillScan?(opts: {
+    severity?: 'info' | 'warn';
+    code?: string;
+    cause?: string;
+    details?: Record<string, unknown>;
+  }): void;
 }
 
 export interface ApprovalsServiceOptions {

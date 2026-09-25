@@ -223,6 +223,12 @@ export interface GatewayObservability {
     cause?: string;
     details?: Record<string, unknown>;
   }): void;
+  /** `channel.pairing` rows — see `Gateway.recordPairing`. */
+  recordChannelPairing?(opts: {
+    code?: string;
+    cause?: string;
+    details?: Record<string, unknown>;
+  }): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -2973,6 +2979,7 @@ export class Gateway {
       }
 
       if (filterResult.action === 'pairing_reply') {
+        this.recordPairing(message, 'issued');
         await adapter.send(message.chatId, { text: filterResult.reply ?? '' }).catch(() => {});
         return;
       }
@@ -3372,6 +3379,7 @@ export class Gateway {
       if (codeRow) {
         const codePlatformCfg = this.channelFilter[codeRow.platform];
         if (!senderIsOwner(message, codePlatformCfg?.ownerUserId)) {
+          this.recordPairing(message, 'not_owner', codeRow.platform);
           await adapter
             .send(message.chatId, { text: '✗ Only the owner may approve pairings.', threadId })
             .catch(() => {});
@@ -3380,6 +3388,7 @@ export class Gateway {
       }
 
       const result = consumeAndAllow(this.pairingDb, code, message.userId);
+      if (!result.ok) this.recordPairing(message, result.reason, codeRow?.platform);
       if (result.ok) {
         // Update in-memory cache
         const platformCfg = this.channelFilter[result.platform];
@@ -3513,6 +3522,15 @@ export class Gateway {
                 cfg.recipientAllowlist.push(result.senderId);
               }
             }
+            // Same row as a single `/allow` approval, one per approved sender.
+            this.observability?.recordChannelAllow({
+              code: 'channel.pairing.approved',
+              details: {
+                approvedUserId: result.senderId,
+                approvedPlatform: result.platform,
+                byUserId: message.userId,
+              },
+            });
             await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
           }
         }
@@ -7121,6 +7139,29 @@ export class Gateway {
    *  when the platform has no owner configured. See `senderIsOwner`. */
   private isOwner(message: InboundMessage): boolean {
     return senderIsOwner(message, this.channelFilter?.[message.platform]?.ownerUserId);
+  }
+
+  /**
+   * One `channel.pairing` audit row: `issued` when the channel filter answers an
+   * unknown DM sender with a pairing code (`checkMessage`'s `pairing_reply`), or
+   * a failed `/allow` redemption — `not_owner`, or `consumeAndAllow`'s reason
+   * (`not_found` | `consumed` | `expired` | `sender_mismatch` | `owner_paused`,
+   * the last being the brute-force pause). `senderId` is whoever sent THIS
+   * message: the requester for `issued`, the redeemer otherwise. The pairing
+   * code is never recorded — it is a bearer credential until it expires. An
+   * approval is `channel.allow` (`channel.pairing.approved`), not this.
+   */
+  private recordPairing(message: InboundMessage, outcome: string, codePlatform?: string): void {
+    this.observability?.recordChannelPairing?.({
+      code: outcome === 'issued' ? 'channel.pairing.issued' : 'channel.pairing.redeem_failed',
+      details: {
+        platform: message.platform,
+        botKey: message.botKey ?? this.defaultBotKey ?? '',
+        senderId: message.userId ?? '',
+        outcome,
+        ...(codePlatform ? { codePlatform } : {}),
+      },
+    });
   }
 
   /** The personality identifier surfaced by `/personality` (no arg) and

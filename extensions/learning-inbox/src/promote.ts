@@ -108,9 +108,13 @@ export interface PromoteDeps {
   /**
    * `vetPromotedSkill` from `@ethosagent/skills`: the bytes to write (model-owned
    * grant keys removed) or the install scanner's refusal. Runs after
-   * `checkSkillFrontmatter`.
+   * `checkSkillFrontmatter`. `candidate` names what is being vetted, for the
+   * `install.scan` audit row the wiring binding records.
    */
-  vetSkill(markdown: string): { ok: true; content: string } | { ok: false; error: string };
+  vetSkill(
+    markdown: string,
+    candidate?: { candidateId: string; personalityId: string },
+  ): { ok: true; content: string } | { ok: false; error: string };
   /** The `FilePersonalityRegistry`. */
   expressions: ExpressionRevisions;
   now?: () => number;
@@ -249,7 +253,10 @@ async function promoteSkill(
   if (!frontmatter.ok) {
     return refuse(deps, candidate, 'invalid', `invalid frontmatter: ${frontmatter.error}`, opts);
   }
-  const vetted = deps.vetSkill(candidate.content);
+  const vetted = deps.vetSkill(candidate.content, {
+    candidateId: candidate.id,
+    personalityId: candidate.personalityId,
+  });
   if (!vetted.ok) return refuse(deps, candidate, 'invalid', vetted.error, opts);
   const content = vetted.content;
 

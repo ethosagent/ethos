@@ -67,7 +67,11 @@ import {
 import { parseLivingSoul } from '@ethosagent/personalities';
 import { SQLiteSessionStore } from '@ethosagent/session-sqlite';
 import { type LearningSubmitPort, liveSkillDir, loadEvolveConfig } from '@ethosagent/skill-evolver';
-import { checkSkillFrontmatter, parseSkillFrontmatter, vetPromotedSkill } from '@ethosagent/skills';
+import {
+  checkSkillFrontmatter,
+  parseSkillFrontmatter,
+  vetPromotedSkillWithScan,
+} from '@ethosagent/skills';
 import type { PendingSkillSummary, PendingSkillsPort } from '@ethosagent/tools-skills';
 import type {
   LLMProvider,
@@ -80,6 +84,7 @@ import type {
 import type { WiringConfig } from './index';
 import { createReplayLoop, REPLAY_RUN_OPTIONS, shadowForCandidate } from './learning-replay';
 import { EthosObservability } from './observability/ethos-observability';
+import { installScanEvent } from './observability/install-scan';
 
 /** What every helper here reads. */
 export interface LearningContext {
@@ -167,7 +172,7 @@ export async function listPendingExpressionCandidates(
  * (`stale`, `invalid`) are returned, not thrown — `promote()`'s contract.
  */
 export function promoteLearningCandidate(
-  ctx: LearningContext & { personalities: PersonalityLookup; expressions: ExpressionRevisions },
+  ctx: PromoteContext,
   candidateId: string,
   opts: PromoteOptions,
 ): Promise<PromoteResult> {
@@ -187,10 +192,20 @@ export function rejectLearningCandidate(
   });
 }
 
-/** `PromoteDeps` with the real scope mapping, frontmatter gate and Expression registry. */
-export function learningPromoteDeps(
-  ctx: LearningContext & { personalities: PersonalityLookup; expressions: ExpressionRevisions },
-): PromoteDeps {
+type PromoteContext = LearningContext & {
+  personalities: PersonalityLookup;
+  expressions: ExpressionRevisions;
+  /** `recordSkillScan` receives the `install.scan` row for each skill vetted. */
+  observability?: LearningObservability;
+};
+
+/**
+ * `PromoteDeps` with the real scope mapping, frontmatter gate and Expression
+ * registry. Every skill vetted (`vetPromotedSkillWithScan`) records one `install.scan`
+ * row (`installScanEvent`) through `ctx.observability.recordSkillScan` when the
+ * host supplies one; a throwing sink never changes the promotion's outcome.
+ */
+export function learningPromoteDeps(ctx: PromoteContext): PromoteDeps {
   return {
     storage: ctx.storage,
     dataDir: ctx.dataDir,
@@ -200,7 +215,24 @@ export function learningPromoteDeps(
       const check = checkSkillFrontmatter(md);
       return check.ok ? { ok: true } : { ok: false, error: check.error };
     },
-    vetSkill: vetPromotedSkill,
+    vetSkill: (md, candidate) => {
+      const { result, scan, decision, tier } = vetPromotedSkillWithScan(md);
+      try {
+        ctx.observability?.recordSkillScan?.(
+          installScanEvent({
+            kind: 'skill',
+            source: `learning:${candidate?.candidateId ?? 'unknown'}`,
+            tier,
+            scan,
+            decision,
+            ...(candidate ? { details: { ...candidate } } : {}),
+          }),
+        );
+      } catch {
+        // Audit is fail-open: the scan's verdict, not the row, gates the promotion.
+      }
+      return result;
+    },
     expressions: ctx.expressions,
   };
 }
@@ -288,8 +320,9 @@ export function createLearningReplayer(
 ): (candidateId: string) => Promise<ReplayAndResolveResult> {
   const { storage, dataDir } = opts;
   const regressionTopUp = learningRegressionTopUp(opts, opts.sessions);
-  return async (candidateId) =>
-    replayAndResolve(
+  return async (candidateId) => {
+    const observability = opts.observability ?? (await learningAuditSink(opts));
+    return replayAndResolve(
       {
         storage,
         dataDir,
@@ -307,38 +340,41 @@ export function createLearningReplayer(
         shadowFor: (candidate) => shadowForCandidate(candidate, { storage }),
         actor: opts.actor ?? 'replay',
         regressionTopUp,
-        promote: learningPromoteDeps(opts),
+        promote: learningPromoteDeps({ ...opts, observability }),
         policyFor: learningPolicyFor(opts),
-        observability: opts.observability ?? (await learningAuditSink(opts)),
+        observability,
       },
       candidateId,
     );
+  };
 }
 
 /**
- * A `learning.auto_promote` sink on `observability.db`, for a replayer whose
- * host passed none. The database is opened only when a row is written — an
- * automatic promotion, a handful a night at most — and closed right after,
- * because `ObservabilityService.recordEvent` is a synchronous insert. The kill
- * switch is read once, when the replay starts: `Storage` has no synchronous
- * `exists`, and the sink's `recordSafetyApproval` is synchronous.
+ * A `learning.auto_promote` (and `install.scan`) sink on `observability.db`, for
+ * a replayer whose host passed none. The database is opened only when a row is
+ * written — an automatic promotion, a handful a night at most — and closed right
+ * after, because `ObservabilityService.recordEvent` is a synchronous insert. The
+ * kill switch is read once, when the replay starts: `Storage` has no synchronous
+ * `exists`, and the sink's methods are synchronous.
  */
 export async function learningAuditSink(ctx: LearningContext): Promise<LearningObservability> {
   const disabled = await ctx.storage.exists(join(ctx.dataDir, OBSERVABILITY_KILL_SWITCH_FILE));
+  const write = (fn: (obs: EthosObservability) => void): void => {
+    if (disabled) return;
+    const store = new SQLiteObservabilityStore(join(ctx.dataDir, 'observability.db'));
+    try {
+      const service = new ObservabilityService(
+        store,
+        new BlobStore(join(ctx.dataDir, 'blobs'), ctx.storage),
+      );
+      fn(new EthosObservability(service));
+    } finally {
+      store.close();
+    }
+  };
   return {
-    recordSafetyApproval: (row) => {
-      if (disabled) return;
-      const store = new SQLiteObservabilityStore(join(ctx.dataDir, 'observability.db'));
-      try {
-        const service = new ObservabilityService(
-          store,
-          new BlobStore(join(ctx.dataDir, 'blobs'), ctx.storage),
-        );
-        new EthosObservability(service).recordSafetyApproval(row);
-      } finally {
-        store.close();
-      }
-    },
+    recordSafetyApproval: (row) => write((obs) => obs.recordSafetyApproval(row)),
+    recordSkillScan: (row) => write((obs) => obs.recordSkillScan(row)),
   };
 }
 

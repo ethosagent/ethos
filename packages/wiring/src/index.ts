@@ -2117,6 +2117,12 @@ export {
   mergeFunnelState,
   readFunnelState,
 } from './observability/funnel';
+export {
+  type InstallScanEvent,
+  type InstallScanInput,
+  type InstallScanVerdict,
+  installScanEvent,
+} from './observability/install-scan';
 export { resolveExecutionBackendName } from './resolve-execution-backend';
 export {
   type BuildExecutionPostureInput,
