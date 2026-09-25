@@ -13,7 +13,8 @@ import {
   type PersonalityConfig,
 } from '@ethosagent/types';
 import { estimateMessagesTokens, estimateTokens } from '../context-engines/token-estimator';
-import { compactWithTimeout, currentTurnStart } from './compaction';
+import { currentTurnStart } from './compaction';
+import { compactWithTimeout } from './compaction-timeout';
 import type { LoopDeps } from './turn-context';
 
 // The bare phrases `too many tokens` / `too long for` are context-anchored: a

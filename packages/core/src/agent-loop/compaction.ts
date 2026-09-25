@@ -1,7 +1,4 @@
 import {
-  type ContextEngine,
-  type ContextEngineCompactInput,
-  type ContextEngineCompactOutput,
   type ContextEngineLLMHandle,
   type ContextEngineRegistry,
   type ContextEngineStore,
@@ -18,6 +15,7 @@ import {
   estimateTokens,
 } from '../context-engines/token-estimator';
 import type { AgentLoopObservability } from '../observability/agent-loop-observability';
+import { compactionFailureCode, withCompactionDeadline } from './compaction-timeout';
 
 // Phase 2 watermark helpers (selectActiveWatermark, reconstructFromWatermark,
 // computeKeptTailBoundary, runManualCompaction, compactSession) live in
@@ -125,51 +123,8 @@ export interface CompactionDeps {
    * gating on an estimate is moot. Absent/false → the normal gated path.
    */
   force?: boolean;
-  /**
-   * R10 — how long the context engine (and the summarizer LLM call inside it)
-   * may run before the compaction is abandoned. Defaults to
-   * `DEFAULT_COMPACTION_TIMEOUT_MS`. Abandoning fails open: the turn gets the
-   * un-compacted history (`maybeCompact`'s catch), never a truncated one.
-   */
+  /** R10 — engine + summarizer deadline (`withCompactionDeadline`); fails open. */
   summarizerTimeoutMs?: number;
-}
-
-/**
- * R10 — the compaction summarizer's own deadline. Without it a stalled
- * summarizer held the turn (and its gateway lane) until the provider's 20-min
- * `DEFAULT_STREAMING_TIMEOUT_MS`. Two minutes is well past a healthy summary
- * pass and far below that.
- */
-export const DEFAULT_COMPACTION_TIMEOUT_MS = 120_000;
-
-/** Thrown by {@link compactWithTimeout} when the engine outlives its deadline. */
-export class CompactionTimeoutError extends Error {
-  constructor(engineName: string, ms: number) {
-    super(`context engine "${engineName}" did not finish within ${ms}ms — compaction abandoned`);
-    this.name = 'CompactionTimeoutError';
-  }
-}
-
-/**
- * Run `engine.compact` with a deadline. At the deadline the returned promise
- * rejects with {@link CompactionTimeoutError}; the engine's eventual result is
- * discarded, so nothing it computes after that is persisted or replayed. Used
- * by `maybeCompact` and the overflow path's `emergencyCompact`.
- */
-export async function compactWithTimeout(
-  engine: ContextEngine,
-  input: ContextEngineCompactInput,
-  ms: number = DEFAULT_COMPACTION_TIMEOUT_MS,
-): Promise<ContextEngineCompactOutput> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new CompactionTimeoutError(engine.name, ms)), ms);
-  });
-  try {
-    return await Promise.race([engine.compact(input), deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /**
@@ -479,20 +434,17 @@ export async function maybeCompact(
 
   try {
     const startedAt = Date.now();
-    const result = await compactWithTimeout(
-      engine,
-      {
-        messages: history,
-        currentSystem: systemPrompt,
-        targetTokens: historyTarget,
-        personality,
-        sessionMetadata,
-        ...(deps.llmHandle ? { llm: deps.llmHandle } : {}),
-        ...(store ? { store } : {}),
-        ...(deps.countTokens ? { countTokens: deps.countTokens } : {}),
-      },
-      deps.summarizerTimeoutMs,
-    );
+    const timed = withCompactionDeadline(engine, deps.summarizerTimeoutMs);
+    const result = await timed.compact({
+      messages: history,
+      currentSystem: systemPrompt,
+      targetTokens: historyTarget,
+      personality,
+      sessionMetadata,
+      ...(deps.llmHandle ? { llm: deps.llmHandle } : {}),
+      ...(store ? { store } : {}),
+      ...(deps.countTokens ? { countTokens: deps.countTokens } : {}),
+    });
     const durationMs = Date.now() - startedAt;
     const kept = [...result.messages, ...currentTurn];
     deps.observability?.recordCompaction({
@@ -556,13 +508,9 @@ export async function maybeCompact(
   } catch (err) {
     // Fail open — better to send the un-compacted history and let the
     // provider error than to silently drop messages on engine failure.
-    // A timed-out engine (R10) takes the same exit: the turn keeps its history.
     deps.observability?.recordCompaction({
       severity: 'warn',
-      code:
-        err instanceof CompactionTimeoutError
-          ? 'context_engine_timed_out'
-          : 'context_engine_failed',
+      code: compactionFailureCode(err),
       cause: err instanceof Error ? err.message : String(err),
     });
     return { messages: flattened };
