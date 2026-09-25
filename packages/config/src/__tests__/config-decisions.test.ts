@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   configParseNotices,
   type DecisionsConfig,
+  decisionToolEnabled,
   ethosDir,
   parseConfigYaml,
   type ResolvedDecisionsConfig,
@@ -352,5 +353,25 @@ describe('decisions.* round-trip through writeConfig', () => {
     await writeConfig(storage, cfg, new InMemorySecretsResolver());
     const text = (await storage.read(join(ethosDir(), 'config.yaml'))) ?? '';
     expect(text).toContain('decisions.provider: openai');
+  });
+});
+
+describe('decisionToolEnabled (plan decision-tool D6)', () => {
+  const global = resolveDecisionsConfig({ provider: 'typesafe' });
+
+  it('no personality provider → off', () => {
+    expect(decisionToolEnabled(undefined, global)).toBe(false);
+    expect(decisionToolEnabled({}, global)).toBe(false);
+    expect(decisionToolEnabled({ provider: '  ' }, global)).toBe(false);
+  });
+
+  it('a provider the operator did not configure → off', () => {
+    expect(decisionToolEnabled({ provider: 'typesafe' }, undefined)).toBe(false);
+    expect(decisionToolEnabled({ provider: 'other' }, global)).toBe(false);
+  });
+
+  it('a matching provider → on, with no site mode declared', () => {
+    expect(decisionToolEnabled({ provider: 'typesafe' }, global)).toBe(true);
+    expect(decisionToolEnabled({ provider: ' typesafe ' }, global)).toBe(true);
   });
 });

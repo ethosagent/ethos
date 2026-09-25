@@ -293,6 +293,53 @@ describe('EthosObservability', () => {
       });
     });
 
+    it('recordDecisionToolCall emits decision.tool — info on ok, warn otherwise (decision-tool D7)', () => {
+      const { writer, events } = makeFakeWriter();
+      const obs = new EthosObservability(writer);
+      expect(ETHOS_EVENT_CATEGORIES).toContain('decision.tool');
+      obs.recordDecisionToolCall({
+        provider: 'typesafe',
+        model: 'jev-1.13.0',
+        latencyMs: 412,
+        inputTokens: 900,
+        questionCount: 2,
+        outcome: 'ok',
+        estimatedCostUsd: 0.001,
+        personalityId: 'swing-trader',
+        sessionId: 's1',
+      });
+      obs.recordDecisionToolCall({
+        provider: 'typesafe',
+        latencyMs: 2001,
+        inputTokens: 0,
+        questionCount: 1,
+        outcome: 'timeout',
+        estimatedCostUsd: 0,
+      });
+
+      expect(events).toHaveLength(2);
+      expect(events[0]).toMatchObject({
+        category: 'decision.tool',
+        severity: 'info',
+        code: 'ok',
+        details: {
+          provider: 'typesafe',
+          model: 'jev-1.13.0',
+          latencyMs: 412,
+          inputTokens: 900,
+          questionCount: 2,
+          estimatedCostUsd: 0.001,
+          personalityId: 'swing-trader',
+          sessionId: 's1',
+        },
+      });
+      expect(events[1]).toMatchObject({
+        category: 'decision.tool',
+        severity: 'warn',
+        code: 'timeout',
+      });
+    });
+
     it.each([
       ['recordChannelAllow', 'channel.allow'],
       ['recordChannelDeny', 'channel.deny'],

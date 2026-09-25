@@ -132,6 +132,26 @@ describe('§3.5 — tool-definition stability across turns', () => {
     expect(first.map((d) => d.name).sort()).toEqual(['alpha', 'gamma']);
   });
 
+  it('with a per-personality exclusion hook: byte-identical across turns (decision-tool D13)', async () => {
+    // The hook answers from the personality alone, so the list it subtracts
+    // never varies per turn — including for an alwaysInclude tool it hides.
+    const capturedTools: ToolDefinitionLite[][] = [];
+    const registry = makeRegistry();
+    registry.register({ ...makeTool('decide'), alwaysInclude: true });
+    const loop = new AgentLoop({
+      llm: capturingLLM(capturedTools),
+      tools: registry,
+      personalities: makePersonalities(),
+      safety: createTestSafety(),
+      personalityToolExclude: (p) => (p.id === 'lean' ? ['beta'] : []),
+    });
+    await collect(loop.run('hello'));
+    await collect(loop.run('hello'));
+    const [first = [], second = []] = capturedTools;
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+    expect(first.map((d) => d.name).sort()).toEqual(['alpha', 'decide', 'gamma']);
+  });
+
   it('toolsetNarrow and toolsetExclude compose without per-turn drift', async () => {
     const { first, second } = await runTwoTurns(['beta', 'gamma', 'delta'], ['gamma']);
 
