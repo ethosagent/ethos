@@ -574,6 +574,9 @@ function toTelegramInputFile(att: Attachment): InputFile {
  * when typed. Pinned by `__tests__/phase1.test.ts` ('Commands menu').
  */
 const MENU_EXCLUDED = new Set(['allow', 'deny', 'communications']);
+
+/** Bound on `TelegramAdapter.approvalDeciders` — distinct recent clickers. */
+const APPROVAL_DECIDER_CAP = 256;
 function telegramMenuCommands(): Array<{ command: string; description: string }> {
   return slashCommandsForSurface('gateway')
     .filter((c) => !c.aliasOf && !MENU_EXCLUDED.has(c.name))
@@ -643,6 +646,14 @@ export class TelegramAdapter
   private callbackQueryHandler?: (event: CallbackQueryEvent) => void;
   /** Approval-card button-click handler, wired by the approval coordinator. */
   private approvalDecisionHandler?: (event: ApprovalDecisionEvent) => void;
+  /**
+   * Display names of approval-card clickers, keyed by their numeric id.
+   * `ApprovalDecisionEvent.decidedBy` must stay the numeric id (the
+   * coordinator binds on it), so `updateApprovalCard` resolves it back to a
+   * human-readable name here. Bounded: oldest entry evicted past
+   * `APPROVAL_DECIDER_CAP`.
+   */
+  private readonly approvalDeciders = new Map<string, { username?: string; firstName?: string }>();
   /** Outbox-card button-click handler, wired by the outbox wiring. */
   private outboxDecisionHandler?: (event: OutboxDecisionEvent) => void | Promise<void>;
   /** Chunk-id ledger so editMessage can re-flow multi-chunk responses. */
@@ -1065,6 +1076,17 @@ export class TelegramAdapter
           const approvalId = data.slice(isApprove ? 8 : 5);
           if (approvalId) {
             const decision: 'allow' | 'deny' = isApprove ? 'allow' : 'deny';
+            if (event.userId !== undefined) {
+              this.approvalDeciders.delete(event.userId);
+              this.approvalDeciders.set(event.userId, {
+                username: cq.from?.username,
+                firstName: cq.from?.first_name,
+              });
+              if (this.approvalDeciders.size > APPROVAL_DECIDER_CAP) {
+                const oldest = this.approvalDeciders.keys().next().value;
+                if (oldest !== undefined) this.approvalDeciders.delete(oldest);
+              }
+            }
             const decisionEvent: ApprovalDecisionEvent = {
               approvalId,
               decision,
@@ -1642,8 +1664,42 @@ export class TelegramAdapter
     decidedBy: string;
   }): Promise<DeliveryResult> {
     const verb = input.decision === 'allow' ? 'Approved' : 'Denied';
-    const text = `Tool: ${input.toolName} — ${verb} by @${input.decidedBy}`;
-    return this.editToPlainText(input.chatId, input.messageTs, text);
+    const prefix = `Tool: ${input.toolName} — ${verb} by `;
+    // A non-numeric decider (the coordinator's system/timeout decider) is
+    // rendered as before. A numeric one is a Telegram user id — the value S9
+    // made `decidedBy` — and is shown by the name the clicker carried.
+    if (!/^\d+$/.test(input.decidedBy)) {
+      return this.editToPlainText(input.chatId, input.messageTs, `${prefix}@${input.decidedBy}`);
+    }
+    const who = this.approvalDeciders.get(input.decidedBy);
+    if (who?.username) {
+      return this.editToPlainText(input.chatId, input.messageTs, `${prefix}@${who.username}`);
+    }
+    // No @username to autolink: link the name (or the bare id) to the user so
+    // the card still names a tappable person. Offsets are UTF-16 code units,
+    // which is what JS string lengths count.
+    const label = who?.firstName || `user ${input.decidedBy}`;
+    try {
+      await this.bot.api.editMessageText(
+        Number(input.chatId),
+        Number(input.messageTs),
+        `${prefix}${label}`,
+        {
+          reply_markup: { inline_keyboard: [] },
+          entities: [
+            {
+              type: 'text_link',
+              offset: prefix.length,
+              length: label.length,
+              url: `tg://user?id=${input.decidedBy}`,
+            },
+          ],
+        },
+      );
+      return { ok: true, messageId: input.messageTs };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   /** Register the approval-card button-click handler. The coordinator wires
