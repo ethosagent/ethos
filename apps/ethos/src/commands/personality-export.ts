@@ -10,7 +10,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ethosDir } from '@ethosagent/config';
+import { ethosDir, secretRefForConfigKey } from '@ethosagent/config';
 import { declaredWorkdirs } from '@ethosagent/core';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
 import type { BundleManifest, ExportStamp, PersonalityConfig } from '@ethosagent/types';
@@ -33,59 +33,86 @@ const KNOWN_SECRET_FIELDS = new Set([
   'emailpassword',
 ]);
 
-const SECRET_FIELD_DISPLAY: Record<string, { key: string; description: string; fillWith: string }> =
-  {
-    anthropicapikey: {
-      key: 'ANTHROPIC_API_KEY',
-      description: 'Anthropic API key for LLM inference',
-      fillWith: 'ethos keys set anthropic-api-key <value>',
-    },
-    openaiapikey: {
-      key: 'OPENAI_API_KEY',
-      description: 'OpenAI API key for LLM inference',
-      fillWith: 'ethos keys set openai-api-key <value>',
-    },
-    telegramtoken: {
-      key: 'TELEGRAM_TOKEN',
-      description: 'Telegram bot token',
-      fillWith: 'ethos secrets set telegram-token <value>',
-    },
-    telegrambottoken: {
-      key: 'TELEGRAM_BOT_TOKEN',
-      description: 'Telegram bot token',
-      fillWith: 'ethos secrets set telegram-bot-token <value>',
-    },
-    discordtoken: {
-      key: 'DISCORD_TOKEN',
-      description: 'Discord bot token',
-      fillWith: 'ethos secrets set discord-token <value>',
-    },
-    discordbottoken: {
-      key: 'DISCORD_BOT_TOKEN',
-      description: 'Discord bot token',
-      fillWith: 'ethos secrets set discord-bot-token <value>',
-    },
-    slackbottoken: {
-      key: 'SLACK_BOT_TOKEN',
-      description: 'Slack bot OAuth token',
-      fillWith: 'ethos secrets set slack-bot-token <value>',
-    },
-    slackapptoken: {
-      key: 'SLACK_APP_TOKEN',
-      description: 'Slack app-level token',
-      fillWith: 'ethos secrets set slack-app-token <value>',
-    },
-    slacksigningsecret: {
-      key: 'SLACK_SIGNING_SECRET',
-      description: 'Slack signing secret for request verification',
-      fillWith: 'ethos secrets set slack-signing-secret <value>',
-    },
-    emailpassword: {
-      key: 'EMAIL_PASSWORD',
-      description: 'Email account password for IMAP/SMTP',
-      fillWith: 'ethos secrets set email-password <value>',
-    },
+/**
+ * Known secret fields → the config key (and provider) whose vault ref the
+ * runtime resolves. The paste line names the ref `secretRefForConfigKey`
+ * (packages/config) assigns — the single owner of ref naming, the same one
+ * setup/setup-from-env write through and `ethos doctor` checks — so the
+ * recipient stores the secret where Ethos will actually look. These lines used
+ * to name refs nothing reads (`ethos keys set anthropic-api-key …`).
+ */
+const SECRET_FIELD_SOURCE: Record<
+  string,
+  { key: string; description: string; configKey: string; provider?: string }
+> = {
+  anthropicapikey: {
+    key: 'ANTHROPIC_API_KEY',
+    description: 'Anthropic API key for LLM inference',
+    configKey: 'apiKey',
+    provider: 'anthropic',
+  },
+  openaiapikey: {
+    key: 'OPENAI_API_KEY',
+    description: 'OpenAI API key for LLM inference',
+    configKey: 'apiKey',
+    provider: 'openai',
+  },
+  telegramtoken: {
+    key: 'TELEGRAM_TOKEN',
+    description: 'Telegram bot token',
+    configKey: 'telegramToken',
+  },
+  telegrambottoken: {
+    key: 'TELEGRAM_BOT_TOKEN',
+    description: 'Telegram bot token',
+    configKey: 'telegramToken',
+  },
+  discordtoken: {
+    key: 'DISCORD_TOKEN',
+    description: 'Discord bot token',
+    configKey: 'discordToken',
+  },
+  discordbottoken: {
+    key: 'DISCORD_BOT_TOKEN',
+    description: 'Discord bot token',
+    configKey: 'discordToken',
+  },
+  slackbottoken: {
+    key: 'SLACK_BOT_TOKEN',
+    description: 'Slack bot OAuth token',
+    configKey: 'slackBotToken',
+  },
+  slackapptoken: {
+    key: 'SLACK_APP_TOKEN',
+    description: 'Slack app-level token',
+    configKey: 'slackAppToken',
+  },
+  slacksigningsecret: {
+    key: 'SLACK_SIGNING_SECRET',
+    description: 'Slack signing secret for request verification',
+    configKey: 'slackSigningSecret',
+  },
+  emailpassword: {
+    key: 'EMAIL_PASSWORD',
+    description: 'Email account password for IMAP/SMTP',
+    configKey: 'emailPassword',
+  },
+};
+
+/** The display row and paste line for a known secret field, or undefined. */
+function secretFieldDisplay(
+  field: string,
+): { key: string; description: string; fillWith: string } | undefined {
+  const source = SECRET_FIELD_SOURCE[field];
+  if (!source) return undefined;
+  const ref = secretRefForConfigKey(source.configKey, { provider: source.provider });
+  if (!ref) return undefined;
+  return {
+    key: source.key,
+    description: source.description,
+    fillWith: `ethos secrets set ${ref} <value>`,
   };
+}
 
 // Case-insensitive substrings that flag a config field as a secret reference
 const SECRET_FIELD_PATTERNS = ['token', 'key', 'secret'];
@@ -357,7 +384,7 @@ function buildSecretsManifest(id: string, personalityDir: string): string | null
     lines.push('');
     lines.push('secrets:');
     for (const field of secretFields) {
-      const display = SECRET_FIELD_DISPLAY[field];
+      const display = secretFieldDisplay(field);
       if (display) {
         lines.push(`  - key: ${display.key}`);
         lines.push(`    description: ${display.description}`);
