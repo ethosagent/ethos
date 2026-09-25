@@ -14,6 +14,7 @@
 // constructed only when a flagged call actually reaches `approvalMode: smart`.
 
 import type {
+  BeforeToolCallPayload,
   ExecutionPosture,
   HookRegistry,
   LLMProvider,
@@ -213,3 +214,41 @@ export function createApprovalDangerPredicate(
  */
 export const REWRITTEN_ARGS_NOTE =
   ' — asked again: a before_tool_call hook rewrote the arguments, and this approval is for the rewritten arguments shown';
+
+/**
+ * The refusal for a call outside the personality's allowlist — the same text
+ * `DefaultToolRegistry.executeParallel` refuses it with — or `null`, from
+ * `AgentLoop.isToolPermitted` (packages/core/src/agent-loop/tool-permitted.ts).
+ * Every approval surface passes it as `refusedAnyway` so no human is asked
+ * about a call that will be refused anyway: the chat cards and the terminal
+ * prompt (`createSlackApprovalHook`, apps/ethos/src/approval-coordinator.ts)
+ * and the web modal (`createWebApprovalHook`,
+ * apps/web-api/src/services/approval-hook.ts). A loop without
+ * that method, or one that throws, answers `null`: the call is then asked
+ * about as before, which is the safe direction.
+ */
+export function notPermittedRefusal(loop: {
+  isToolPermitted?: (toolName: string, personalityId?: string) => boolean;
+}): (payload: BeforeToolCallPayload) => string | null {
+  return (payload) => {
+    try {
+      if (loop.isToolPermitted?.(payload.toolName, payload.personalityId) !== false) return null;
+    } catch {
+      return null;
+    }
+    return `Tool ${payload.toolName} is not permitted for this personality`;
+  };
+}
+
+/** Combine refusal checks: the first non-null reason wins. */
+export function firstRefusal(
+  ...checks: ReadonlyArray<(payload: BeforeToolCallPayload) => string | null>
+): (payload: BeforeToolCallPayload) => string | null {
+  return (payload) => {
+    for (const check of checks) {
+      const reason = check(payload);
+      if (reason !== null) return reason;
+    }
+    return null;
+  };
+}

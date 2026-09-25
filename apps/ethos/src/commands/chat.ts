@@ -29,8 +29,8 @@ import {
   type Storage,
   toEthosError,
 } from '@ethosagent/types';
-import { createLazyProvider } from '@ethosagent/wiring';
-import { ApprovalCoordinator, firstRefusal, notPermittedRefusal } from '../approval-coordinator';
+import { createLazyProvider, firstRefusal, notPermittedRefusal } from '@ethosagent/wiring';
+import { ApprovalCoordinator } from '../approval-coordinator';
 import { cliToolsetsRefusal } from '../cli-overrides';
 import { appendErrorLog } from '../error-log';
 import { resolveAtRefs } from '../lib/at-refs';

@@ -12,7 +12,7 @@ import type { PersonalityConfig, ToolRegistry } from '@ethosagent/types';
  *
  * Exposed as `AgentLoop.isToolPermitted` for approval surfaces, so a human is
  * not asked about a call that will be refused anyway (`notPermittedRefusal`,
- * apps/ethos/src/approval-coordinator.ts). Pinned by
+ * packages/wiring/src/approval-seams.ts). Pinned by
  * `__tests__/tool-permitted.test.ts`.
  */
 export function isToolPermitted(

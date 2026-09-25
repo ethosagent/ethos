@@ -131,6 +131,7 @@ import {
   type LiveKitBindings,
   type MessagingSendFn,
   markHostApprovalGate,
+  notPermittedRefusal,
   type OutboxWiring,
   resolveKanbanDbPath,
   type SmartApproverDecisionSite,
@@ -143,7 +144,6 @@ import {
   ApprovalCoordinator,
   type ApprovalObservability,
   createSlackApprovalHook,
-  notPermittedRefusal,
   SYSTEM_DECIDER,
 } from '../approval-coordinator';
 import {

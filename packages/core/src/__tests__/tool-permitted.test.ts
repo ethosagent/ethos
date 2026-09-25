@@ -2,7 +2,7 @@
 // are executed under (`DefaultToolRegistry.executeParallel` refuses a call
 // outside it), asked BEFORE a call runs, so an approval surface can refuse a
 // call that would be refused anyway instead of asking a human about it
-// (`notPermittedRefusal`, apps/ethos/src/approval-coordinator.ts).
+// (`notPermittedRefusal`, packages/wiring/src/approval-seams.ts).
 
 import type { CompletionChunk, LLMProvider, Tool } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';

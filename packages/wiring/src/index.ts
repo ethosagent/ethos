@@ -1982,6 +1982,8 @@ export {
   type CreateApprovalDangerPredicateOptions,
   createApprovalDangerPredicate,
   createLazyProvider,
+  firstRefusal,
+  notPermittedRefusal,
 } from './approval-seams';
 export {
   APPROVAL_SURFACE_ALWAYS_ASK,

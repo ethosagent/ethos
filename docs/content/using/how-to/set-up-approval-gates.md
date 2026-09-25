@@ -154,7 +154,7 @@ The gate is `wireTerminalApprovalGate` in that file. It uses the same danger che
 - **Piped output still shows the prompt.** When stdout is not a terminal (`ethos chat | tee chat.log`) but stdin is, the question and its preview are written to stderr, so you see what you are answering.
 - **Ctrl-C refuses.** In the readline REPL, Ctrl-C refuses every waiting call and aborts the turn.
 - **A hardline command is never asked about.** It is refused at once with its hardline reason: no answer could let it run.
-- **A call that cannot run is never asked about.** A tool outside the personality's `toolset`, `mcp_servers` or `plugins`, or outside a `--toolsets` flag, is refused at once with the reason it would be refused later (`AgentLoop.isToolPermitted` through `notPermittedRefusal` in `apps/ethos/src/approval-coordinator.ts`, and `cliToolsetsRefusal` in `apps/ethos/src/cli-overrides.ts`). The Slack, Telegram and Discord cards skip it the same way.
+- **A call that cannot run is never asked about.** A tool outside the personality's `toolset`, `mcp_servers` or `plugins`, or outside a `--toolsets` flag, is refused at once with the reason it would be refused later (`AgentLoop.isToolPermitted` through `notPermittedRefusal` in `packages/wiring/src/approval-seams.ts`, and `cliToolsetsRefusal` in `apps/ethos/src/cli-overrides.ts`). The Slack, Telegram and Discord cards and the web modal skip it the same way.
 - **Command substitution can be approved.** `kill $(lsof -t -i:3000)` asks instead of being refused: the gate marks the loop (`markHostApprovalGate`), and the terminal guard then leaves such a command to the gate.
 - **There is no "allow for this session".** Each call is asked on its own. The one-hour lease exists only in the web UI.
 
