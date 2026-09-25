@@ -309,8 +309,8 @@ register_anchors:
     - { path: packages/safety/watcher/src/rules.ts, line: 20, contains: "export function rateLimitRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 79, contains: "export function tokenBudgetRule" }
     - { path: packages/safety/watcher/src/rules.ts, line: 110, contains: "export function compoundingErrorRule" }
-    - { path: packages/safety/watcher/src/rules.ts, line: 161, contains: "export function suspiciousSequenceRule" }
-    - { path: packages/safety/watcher/src/rules.ts, line: 205, contains: "export function defaultRules" }
+    - { path: packages/safety/watcher/src/rules.ts, line: 202, contains: "export function suspiciousSequenceRule" }
+    - { path: packages/safety/watcher/src/rules.ts, line: 246, contains: "export function defaultRules" }
     - { path: packages/wiring/src/build-agent-loop.ts, line: 582, contains: "defaultRules: watcherDefaultRules" }
 
   G-CHAN:
