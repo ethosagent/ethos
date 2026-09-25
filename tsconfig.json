@@ -101,6 +101,7 @@
       "@ethosagent/tools-x-search": ["./extensions/tools-x-search/src"],
       "@ethosagent/tools-reddit": ["./extensions/tools-reddit/src"],
       "@ethosagent/tools-a2a": ["./extensions/tools-a2a/src"],
+      "@ethosagent/tools-decision": ["./extensions/tools-decision/src"],
       "@ethosagent/tools-delegation": ["./extensions/tools-delegation/src"],
       "@ethosagent/tools-memory": ["./extensions/tools-memory/src"],
       "@ethosagent/tools-tier": ["./extensions/tools-tier/src"],
