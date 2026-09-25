@@ -3,11 +3,13 @@
 // a stub `fetch` behind `testDecisionProvider`; nothing leaves the process.
 
 import { join } from 'node:path';
-import { DECISIONS_API_KEY_REF, parseConfigYaml } from '@ethosagent/config';
+import { DECISION_PROVIDERS, DECISIONS_API_KEY_REF, parseConfigYaml } from '@ethosagent/config';
 import { InMemorySecretsResolver, InMemoryStorage } from '@ethosagent/storage-fs';
+import { DecisionProviderIdSchema, DecisionsListOutput } from '@ethosagent/web-contracts';
 import { ModelTestRateLimiter } from '@ethosagent/wiring';
 import { describe, expect, it } from 'vitest';
 import { ConfigRepository } from '../../repositories/config.repository';
+import { DECISION_PROVIDER_CATALOG } from '../../services/decision-catalog';
 import { DECISION_TEST_MAX_CHARS, DecisionsService } from '../../services/decisions.service';
 
 const DATA = '/data';
@@ -56,9 +58,42 @@ async function harness(
   return { service, storage, secrets, calls, file: async () => (await storage.read(PATH)) ?? '' };
 }
 
+describe('catalog', () => {
+  // The three lists of provider ids — config's, the contract enum's and the
+  // catalog's — can only drift apart together if this fails.
+  it('lists exactly the config providers, in lockstep with the contract enum', () => {
+    const ids = DECISION_PROVIDER_CATALOG.map((t) => t.id);
+    expect(ids).toEqual([...DECISION_PROVIDERS]);
+    expect([...DecisionProviderIdSchema.options]).toEqual([...DECISION_PROVIDERS]);
+  });
+
+  it('describes Jev by TypeSafe with its key ref and defaults', () => {
+    expect(DECISION_PROVIDER_CATALOG).toEqual([
+      {
+        id: 'typesafe',
+        label: 'Jev',
+        vendor: 'TypeSafe',
+        description: expect.stringContaining('probability'),
+        getKeyUrl: 'https://console.typesafe.ai',
+        keyRef: DECISIONS_API_KEY_REF,
+        defaultModel: 'jev-latest',
+        defaultBaseUrl: 'https://api.typesafe.ai',
+      },
+    ]);
+  });
+});
+
 describe('list', () => {
-  it('shows the provider unconfigured, keyless, every site off, on a config with no decisions keys', async () => {
+  it('answers the whole catalog and NO provider when none was added', async () => {
     const { service } = await harness();
+    const out = await service.list();
+    expect(out.providers).toEqual([]);
+    expect(out.catalog.map((t) => t.id)).toEqual(['typesafe']);
+    expect(DecisionsListOutput.parse(out)).toEqual(out);
+  });
+
+  it('lists a provider once its key is stored, keyless config or not', async () => {
+    const { service } = await harness({ key: KEY });
     const { providers } = await service.list();
     expect(providers).toEqual([
       {
@@ -67,8 +102,8 @@ describe('list', () => {
         vendor: 'TypeSafe',
         configured: false,
         keyRef: 'providers/typesafe/apiKey',
-        keyPresent: false,
-        keyPreview: '<unset>',
+        keyPresent: true,
+        keyPreview: '…6789',
         model: 'jev-latest',
         baseUrl: 'https://api.typesafe.ai',
         host: 'api.typesafe.ai',
@@ -80,6 +115,13 @@ describe('list', () => {
         ],
       },
     ]);
+  });
+
+  it('lists the active provider with no key, so its missing key is visible', async () => {
+    const { service } = await harness({ lines: ['decisions.provider: typesafe'] });
+    const [p] = (await service.list()).providers;
+    expect(p?.configured).toBe(true);
+    expect(p?.keyPresent).toBe(false);
   });
 
   it('masks the key and reports the R6 downgrade and the configured host', async () => {
@@ -165,6 +207,52 @@ describe('clearKey', () => {
     await expect(service.clearKey({ providerId: 'typesafe' })).resolves.toEqual({ ok: true });
     expect(await secrets.get(DECISIONS_API_KEY_REF)).toBeNull();
     await expect(service.clearKey({ providerId: 'typesafe' })).resolves.toEqual({ ok: true });
+    expect(await file()).toBe(before);
+  });
+});
+
+describe('remove', () => {
+  it('deletes the key and the decisions.provider line naming it, and keeps every site line', async () => {
+    const lines = [
+      'provider: anthropic',
+      'decisions.provider: typesafe',
+      'decisions.sites.injection: shadow',
+      'decisions.thresholds.injection: 0.9',
+    ];
+    const { service, secrets, file } = await harness({ key: KEY, lines });
+    await expect(service.remove({ providerId: 'typesafe' })).resolves.toEqual({
+      ok: true,
+      providerRemoved: true,
+    });
+    expect(await secrets.get(DECISIONS_API_KEY_REF)).toBeNull();
+    const text = await file();
+    expect(text).not.toContain('decisions.provider');
+    expect(text).toContain('decisions.sites.injection: shadow');
+    expect(text).toContain('decisions.thresholds.injection: 0.9');
+    expect(text).toContain('provider: anthropic');
+    // Inert: the runtime builds no decision layer, and the list is empty again.
+    expect(parseConfigYaml(text).decisions).toBeUndefined();
+    expect((await service.list()).providers).toEqual([]);
+  });
+
+  it('is idempotent and never creates a config.yaml', async () => {
+    const { service, storage } = await harness({ key: KEY, lines: null });
+    expect(await service.remove({ providerId: 'typesafe' })).toEqual({
+      ok: true,
+      providerRemoved: false,
+    });
+    expect(await service.remove({ providerId: 'typesafe' })).toEqual({
+      ok: true,
+      providerRemoved: false,
+    });
+    expect(await storage.read(PATH)).toBeNull();
+  });
+
+  it('leaves config.yaml byte-identical when decisions.provider is absent', async () => {
+    const { service, file } = await harness({ key: KEY });
+    const before = await file();
+    const out = await service.remove({ providerId: 'typesafe' });
+    expect(out.providerRemoved).toBe(false);
     expect(await file()).toBe(before);
   });
 });

@@ -300,7 +300,7 @@ describe('every self-saving section renders SelfSaveMarker', () => {
   describe('models — ModelsPane, checked per section', () => {
     const html = markup(ModelsPane, (queryClient) => {
       queryClient.setQueryData(modelRegistryKeys.list(), registryList());
-      queryClient.setQueryData(decisionKeys.list(), { providers: [] });
+      queryClient.setQueryData(decisionKeys.list(), { catalog: [], providers: [] });
     });
 
     it.each(['models', 'decision-models', 'per-personality-routing'])('%s', (id) => {

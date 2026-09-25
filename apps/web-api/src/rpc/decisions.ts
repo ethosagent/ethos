@@ -24,6 +24,7 @@ export const decisionsRouter = {
   clearKey: os.decisions.clearKey.handler(({ input, context }) =>
     context.decisions.clearKey(input),
   ),
+  remove: os.decisions.remove.handler(({ input, context }) => context.decisions.remove(input)),
   test: os.decisions.test.handler(({ input, context }) =>
     context.decisions.test(input, callerOf(context)),
   ),

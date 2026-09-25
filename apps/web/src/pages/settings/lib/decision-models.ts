@@ -3,6 +3,7 @@
 // state, and the sentences the section renders. No React, no RPC.
 
 import type {
+  DecisionProviderType,
   DecisionProviderView,
   DecisionsTestResult,
   DecisionTestErrorCode,
@@ -18,6 +19,82 @@ export const decisionKeys = {
   all: () => ['decisions'] as const,
   list: () => [...decisionKeys.all(), 'list'] as const,
 };
+
+/**
+ * The catalog types the Add decision model drawer offers: every type the
+ * server's catalog (`DECISION_PROVIDER_CATALOG`, apps/web-api
+ * services/decision-catalog.ts) lists that is not already in the list.
+ */
+export function addableDecisionTypes(
+  catalog: readonly DecisionProviderType[],
+  providers: readonly Pick<DecisionProviderView, 'id'>[],
+): DecisionProviderType[] {
+  const added = new Set(providers.map((p) => p.id));
+  return catalog.filter((t) => !added.has(t.id));
+}
+
+/**
+ * The Add decision model button. Unlike Add provider — a provider type can be
+ * added under many ids — a decision type is added once, so when every type is
+ * in the list the button is disabled and says why.
+ */
+export function addDecisionButtonState(
+  catalog: readonly DecisionProviderType[],
+  providers: readonly Pick<DecisionProviderView, 'id'>[],
+): { disabled: boolean; reason: string | null } {
+  if (addableDecisionTypes(catalog, providers).length > 0) {
+    return { disabled: false, reason: null };
+  }
+  return {
+    disabled: true,
+    reason:
+      catalog.length === 0
+        ? 'This build knows no decision model types.'
+        : 'Every decision model type is already added.',
+  };
+}
+
+/**
+ * What Remove does, in the confirm dialog's words — what `decisions.remove`
+ * (`DecisionsService.remove`, apps/web-api) does, pinned by its service test.
+ */
+export function removeDecisionConsequences(
+  provider: Pick<DecisionProviderView, 'id' | 'keyRef' | 'keyPresent' | 'configured'>,
+): string[] {
+  const lines: string[] = [];
+  lines.push(
+    provider.keyPresent
+      ? `Deletes the key stored at ${provider.keyRef}.`
+      : `No key is stored at ${provider.keyRef}.`,
+  );
+  if (provider.configured) {
+    lines.push(`Removes decisions.provider: ${provider.id} from config.yaml.`);
+  }
+  lines.push(
+    'Leaves any decisions.sites.* and decisions.thresholds.* lines in config.yaml. Without a provider they do nothing; add a decision model again and they apply as written.',
+  );
+  return lines;
+}
+
+/**
+ * The notice after a key is saved. `setKey` writes `decisions.provider` at
+ * most, never a site line — but site lines a Remove left behind apply again
+ * the moment the provider line is back, so the notice reads the refreshed
+ * sites rather than promising they are off.
+ */
+export function savedKeyNotice(input: {
+  providerId: string;
+  providerWritten: boolean;
+  sites: readonly DecisionProviderView['sites'][number][] | undefined;
+}): string | undefined {
+  if (!input.providerWritten) return undefined;
+  const running = (input.sites ?? []).filter((s) => s.effective !== 'off');
+  const lead = `Added decisions.provider: ${input.providerId} to config.yaml.`;
+  if (running.length === 0) return `${lead} Every site is off.`;
+  return `${lead} Site lines already in config.yaml apply: ${running
+    .map((s) => `${s.site} ${s.effective}`)
+    .join(', ')}.`;
+}
 
 /**
  * The service's cap (`DECISION_TEST_MAX_CHARS`, apps/web-api

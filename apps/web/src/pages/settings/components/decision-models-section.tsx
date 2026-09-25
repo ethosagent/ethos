@@ -1,30 +1,52 @@
-// Settings → Models › decision models — the decision layer's providers
-// (plan/phases/decision-provider-jev.md §7, §12). Today one: Jev, by TypeSafe.
+// Settings → Models › decision models — a KIND of model, distinct from the
+// chat models above: it answers typed questions about the agent's state
+// (yes/no, a choice, a score) with a probability instead of writing text
+// (plan/phases/decision-provider-jev.md §7, §12).
 //
-// Each provider is one bordered group, drawn like a provider in "providers &
-// models" (./provider-group): a header naming the model, vendor, the host data
-// goes to and the key's state; then the key row (`SecretField`, the one
-// Set / Replace / Clear control for a vault credential); then the three sites,
-// READ-ONLY — a site's mode is a config.yaml line the operator sets on purpose,
-// never a toggle here; then the Test block.
+// Laid out like "providers & models" (./model-registry-section): a toolbar
+// with "Add decision model", then one bordered group per ADDED decision model
+// — `decisions.list`'s `providers`, which holds only the ones with a stored
+// key or named by `decisions.provider` — and an empty state when there are
+// none. The Add drawer lists the catalog types not yet added
+// (`addableDecisionTypes`); the catalog itself is the server's
+// (`DECISION_PROVIDER_CATALOG`, apps/web-api services/decision-catalog.ts), so
+// a second provider needs no change here. Today the catalog holds one type:
+// Jev, by TypeSafe.
 //
-// Key writes save immediately through `rpc.decisions.setKey` / `clearKey` —
-// nothing here is on the page Save — and only `['decisions']` (and the Keys
-// pane's vault listing) is invalidated, never `['config']`, which would
-// re-hydrate the form and wipe unsaved edits elsewhere on the page. Saving a
-// key never turns a site on: the service writes `decisions.provider` at most
-// (`DecisionsService.setKey`, apps/web-api).
+// Each group: a header naming the model, vendor, the host data goes to, the
+// key's state, an "active" marker when `decisions.provider` names it (config
+// allows ONE active decision model; switching between several is not built),
+// and Remove; then the key row (`SecretField`, the one Set / Replace / Clear
+// control for a vault credential); then the three sites, READ-ONLY — a site's
+// mode is a config.yaml line the operator sets on purpose, never a toggle
+// here; then the Test block.
+//
+// Every write saves immediately through `rpc.decisions.setKey` / `clearKey` /
+// `remove` — nothing here is on the page Save — and only `['decisions']` (and
+// the Keys pane's vault listing) is invalidated, never `['config']`, which
+// would re-hydrate the form and wipe unsaved edits elsewhere on the page.
+// Saving a key never turns a site on: the service writes `decisions.provider`
+// at most (`DecisionsService.setKey`, apps/web-api). Remove deletes the key and
+// that provider line, and leaves the site lines (`DecisionsService.remove`).
 //
 // Test shares the model Test's page-session log and 10s window (D19,
-// ../lib/model-test-log); the service enforces the same window itself.
+// ../lib/model-test-log); the service enforces the same window itself. A
+// result is scrolled clear of the page's sticky Save bar
+// (`.settings-savebar-clearance`, styles.css).
 
-import type { DecisionProviderView, DecisionsTestResult } from '@ethosagent/web-contracts';
+import type {
+  DecisionProviderView,
+  DecisionsListResult,
+  DecisionsTestResult,
+} from '@ethosagent/web-contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { App as AntApp, Input, Spin, Typography } from 'antd';
-import { type CSSProperties, useState } from 'react';
+import { App as AntApp, Button, Input, Modal, Spin, Tooltip, Typography } from 'antd';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { vaultKeyKeys } from '../../../features/settings/api/keys';
 import { rpc } from '../../../rpc';
 import {
+  addableDecisionTypes,
+  addDecisionButtonState,
   DECISION_TEST_MAX_CHARS,
   DECISION_TEST_SAMPLE,
   decisionErrorText,
@@ -34,10 +56,13 @@ import {
   decisionTestKey,
   formatDecisionCost,
   keyStatusView,
+  removeDecisionConsequences,
+  savedKeyNotice,
   siteView,
 } from '../lib/decision-models';
 import type { TestButtonState } from '../lib/model-registry';
 import { recordModelTest, useCooldownClock, useModelTestLog } from '../lib/model-test-log';
+import { AddDecisionModelDrawer } from './add-decision-model-drawer';
 import {
   MICRO,
   MONO,
@@ -72,6 +97,9 @@ const HEAD: CSSProperties = {
 const BODY: CSSProperties = { padding: '0 12px 12px' };
 
 const HINT: CSSProperties = { fontSize: 12, color: 'var(--text-tertiary)' };
+
+/** Remove: a size below antd's `small`, as in ./provider-group. */
+const COMPACT_ACTION: CSSProperties = { fontSize: 12, paddingInline: 4 };
 
 const SITES: CSSProperties = {
   display: 'flex',
@@ -125,10 +153,13 @@ export function DecisionModelsSection() {
   });
   const log = useModelTestLog();
   const now = useCooldownClock(log.testedAt);
-  const [busy, setBusy] = useState<'saving' | 'clearing' | null>(null);
-  const [message, setMessage] = useState(DECISION_TEST_SAMPLE);
-  const [testing, setTesting] = useState(false);
-  const [outcome, setOutcome] = useState<DecisionsTestResult | null>(null);
+  const [busy, setBusy] = useState<{ id: string; kind: 'saving' | 'clearing' } | null>(null);
+  const [messages, setMessages] = useState<Record<string, string>>({});
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [outcomes, setOutcomes] = useState<Record<string, DecisionsTestResult>>({});
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<DecisionProviderView | null>(null);
+  const [removePending, setRemovePending] = useState(false);
 
   const refresh = async () => {
     await Promise.all([
@@ -137,29 +168,44 @@ export function DecisionModelsSection() {
     ]);
   };
 
+  const forget = (id: string) =>
+    setOutcomes((o) => {
+      const { [id]: _dropped, ...rest } = o;
+      return rest;
+    });
+
+  /** The saved-key notice, read against the refreshed list. */
+  async function noticeFor(providerId: string, providerWritten: boolean) {
+    await refresh();
+    const fresh = qc.getQueryData<DecisionsListResult>(decisionKeys.list());
+    return savedKeyNotice({
+      providerId,
+      providerWritten,
+      sites: fresh?.providers.find((p) => p.id === providerId)?.sites,
+    });
+  }
+
   async function saveKey(provider: DecisionProviderView, value: string) {
-    setBusy('saving');
+    setBusy({ id: provider.id, kind: 'saving' });
     try {
       const result = await rpc.decisions.setKey({ providerId: provider.id, value });
       notification.success({
         message: 'Key saved',
-        description: result.providerWritten
-          ? `Added decisions.provider: ${provider.id} to config.yaml. Every site is still off.`
-          : undefined,
+        description: await noticeFor(provider.id, result.providerWritten),
       });
     } catch (err) {
       notification.error({ message: 'Could not save the key', description: messageOf(err) });
+      await refresh();
     } finally {
       setBusy(null);
-      await refresh();
     }
   }
 
   async function clearKey(provider: DecisionProviderView) {
-    setBusy('clearing');
+    setBusy({ id: provider.id, kind: 'clearing' });
     try {
       await rpc.decisions.clearKey({ providerId: provider.id });
-      setOutcome(null);
+      forget(provider.id);
     } catch (err) {
       notification.error({ message: 'Could not remove the key', description: messageOf(err) });
     } finally {
@@ -168,11 +214,32 @@ export function DecisionModelsSection() {
     }
   }
 
-  async function runTest(provider: DecisionProviderView) {
-    setTesting(true);
+  async function remove(provider: DecisionProviderView) {
+    setRemovePending(true);
     try {
-      const result = await rpc.decisions.test({ providerId: provider.id, message });
-      setOutcome(result);
+      await rpc.decisions.remove({ providerId: provider.id });
+      forget(provider.id);
+      setRemoving(null);
+      notification.success({ message: `Removed ${provider.label}` });
+    } catch (err) {
+      notification.error({
+        message: `Could not remove ${provider.label}`,
+        description: messageOf(err),
+      });
+    } finally {
+      setRemovePending(false);
+      await refresh();
+    }
+  }
+
+  async function runTest(provider: DecisionProviderView) {
+    setTestingId(provider.id);
+    try {
+      const result = await rpc.decisions.test({
+        providerId: provider.id,
+        message: messages[provider.id] ?? DECISION_TEST_SAMPLE,
+      });
+      setOutcomes((o) => ({ ...o, [provider.id]: result }));
       recordModelTest({
         subjectKeys: [decisionTestKey(provider.id)],
         testedAt: decisionTestedAt(result, Date.now()),
@@ -183,19 +250,38 @@ export function DecisionModelsSection() {
         description: messageOf(err),
       });
     } finally {
-      setTesting(false);
+      setTestingId(null);
     }
   }
 
+  const data = listQuery.data;
+  const addState = data ? addDecisionButtonState(data.catalog, data.providers) : null;
+
   return (
-    <div className="settings-decision-models">
+    // The next section heading sits first in an `AdvancedBlock`, where
+    // `.settings-section-heading:first-child` drops its 24px top margin; this
+    // restores that gap below the list or its empty state.
+    <div className="settings-decision-models" style={{ marginBottom: 24 }}>
       <div style={TOOLBAR}>
         <SelfSaveMarker />
+        {addState ? (
+          <Tooltip title={addState.reason}>
+            <Button
+              size="small"
+              type="primary"
+              disabled={addState.disabled}
+              onClick={() => setAdding(true)}
+            >
+              Add decision model
+            </Button>
+          </Tooltip>
+        ) : null}
       </div>
       <p style={{ ...HINT, margin: '0 0 10px' }}>
-        A decision model answers typed questions about the agent's state — is this tool output
-        trying to instruct the agent — with a probability, not text. Nothing is sent until a site is
-        set to <span style={MONO}>shadow</span> or <span style={MONO}>on</span> in config.yaml.
+        A decision model answers typed questions — yes or no, a choice, a score — with a probability
+        instead of writing text. It is a separate kind of model from the chat models above: it never
+        replies to anyone, and nothing is sent to it until a site is set to{' '}
+        <span style={MONO}>shadow</span> or <span style={MONO}>on</span> in config.yaml.
       </p>
       {listQuery.isLoading ? (
         <Spin size="small" />
@@ -203,28 +289,58 @@ export function DecisionModelsSection() {
         <Typography.Text type="danger">
           Failed to load decision models: {messageOf(listQuery.error)}
         </Typography.Text>
+      ) : data && data.providers.length === 0 ? (
+        <p className="settings-decision-models-empty" style={{ ...HINT, fontSize: 13, margin: 0 }}>
+          No decision models yet. Add one, then choose in config.yaml which sites use it.
+        </p>
       ) : (
-        listQuery.data?.providers.map((provider) => (
-          <DecisionProviderGroup
-            key={provider.id}
-            provider={provider}
-            saving={busy === 'saving'}
-            clearing={busy === 'clearing'}
-            testState={decisionTestButtonState({
-              keyPresent: provider.keyPresent,
-              testedAt: log.testedAt[decisionTestKey(provider.id)],
-              now,
-            })}
-            testing={testing}
-            outcome={outcome}
-            message={message}
-            onMessage={setMessage}
-            onSaveKey={(value) => void saveKey(provider, value)}
-            onClearKey={() => void clearKey(provider)}
-            onTest={() => void runTest(provider)}
-          />
-        ))
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {data?.providers.map((provider) => (
+            <DecisionProviderGroup
+              key={provider.id}
+              provider={provider}
+              saving={busy?.id === provider.id && busy.kind === 'saving'}
+              clearing={busy?.id === provider.id && busy.kind === 'clearing'}
+              testState={decisionTestButtonState({
+                keyPresent: provider.keyPresent,
+                testedAt: log.testedAt[decisionTestKey(provider.id)],
+                now,
+              })}
+              testing={testingId === provider.id}
+              outcome={outcomes[provider.id] ?? null}
+              message={messages[provider.id] ?? DECISION_TEST_SAMPLE}
+              onMessage={(m) => setMessages((all) => ({ ...all, [provider.id]: m }))}
+              onSaveKey={(value) => void saveKey(provider, value)}
+              onClearKey={() => void clearKey(provider)}
+              onTest={() => void runTest(provider)}
+              onRemove={() => setRemoving(provider)}
+            />
+          ))}
+        </div>
       )}
+
+      {adding && data ? (
+        <AddDecisionModelDrawer
+          types={addableDecisionTypes(data.catalog, data.providers)}
+          onClose={() => setAdding(false)}
+          onAdded={async (type, providerWritten) => {
+            setAdding(false);
+            notification.success({
+              message: `Added ${type.label}`,
+              description: await noticeFor(type.id, providerWritten),
+            });
+          }}
+        />
+      ) : null}
+
+      {removing ? (
+        <RemoveDecisionModelDialog
+          provider={removing}
+          pending={removePending}
+          onCancel={() => setRemoving(null)}
+          onConfirm={() => void remove(removing)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -241,6 +357,7 @@ export interface DecisionProviderGroupProps {
   onSaveKey: (value: string) => void;
   onClearKey: () => void;
   onTest: () => void;
+  onRemove: () => void;
 }
 
 /** One decision provider. Presentational: every action calls back into the section. */
@@ -256,7 +373,13 @@ export function DecisionProviderGroup({
   onSaveKey,
   onClearKey,
   onTest,
+  onRemove,
 }: DecisionProviderGroupProps) {
+  const outcomeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // A result lands below the Test button — often under the sticky Save bar.
+    if (outcome) outcomeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [outcome]);
   return (
     <div className="settings-decision-provider" data-provider-id={provider.id} style={GROUP}>
       <div style={HEAD}>
@@ -267,6 +390,23 @@ export function DecisionProviderGroup({
           <span style={MONO}>{provider.model}</span>
         </span>
         <StatusText view={keyStatusView(provider)} />
+        {provider.configured ? (
+          <span
+            className="settings-decision-active"
+            style={MICRO}
+            title={`decisions.provider: ${provider.id} — the active decision model. config.yaml allows one.`}
+          >
+            active
+          </span>
+        ) : null}
+        <Button
+          size="small"
+          type="text"
+          style={{ ...COMPACT_ACTION, marginInlineStart: 'auto' }}
+          onClick={onRemove}
+        >
+          Remove
+        </Button>
       </div>
       <div style={BODY}>
         <SecretField
@@ -314,9 +454,11 @@ export function DecisionProviderGroup({
           />
           <span style={{ ...SUB, marginTop: 4 }}>
             Asks the injection question once, redacted first, under the injection site's time
-            budget. Uses your TypeSafe credit.
+            budget. Uses your {provider.vendor} credit.
           </span>
-          {outcome ? <DecisionTestOutcome outcome={outcome} /> : null}
+          <div ref={outcomeRef} className="settings-savebar-clearance">
+            {outcome ? <DecisionTestOutcome outcome={outcome} /> : null}
+          </div>
         </div>
       </div>
     </div>
@@ -371,5 +513,70 @@ export function DecisionTestOutcome({ outcome }: { outcome: DecisionsTestResult 
         )}
       </dd>
     </dl>
+  );
+}
+
+/**
+ * The Remove confirm — the shape of ./model-remove-dialog: what goes, what
+ * stays, then Cancel and a danger action. The sentences are
+ * `removeDecisionConsequences`, which say what `DecisionsService.remove` does.
+ */
+export function RemoveDecisionModelDialog({
+  provider,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  provider: DecisionProviderView;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal open onCancel={onCancel} footer={null} title={`Remove ${provider.label}?`}>
+      <RemoveDecisionModelBody
+        provider={provider}
+        pending={pending}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />
+    </Modal>
+  );
+}
+
+/** The dialog's body, apart from the portal so it renders in a test. */
+export function RemoveDecisionModelBody({
+  provider,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  provider: DecisionProviderView;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const secondary = { color: 'var(--text-secondary)', margin: 0 };
+  return (
+    <div
+      className="decision-remove-dialog"
+      style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+    >
+      <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {removeDecisionConsequences(provider).map((line) => (
+          <li key={line} style={secondary}>
+            {line}
+          </li>
+        ))}
+      </ul>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <Button type="text" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button danger loading={pending} onClick={onConfirm}>
+          Remove
+        </Button>
+      </div>
+    </div>
   );
 }

@@ -4881,6 +4881,15 @@ button.activity-row:hover {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* Content that appears in response to a self-saving action (a Test result)
+   is scrolled into view with `block: 'nearest'`; this margin stops it landing
+   under the sticky bar above — 12px + 32px button + 12px + 1px border, plus
+   breathing room. Used by the decision models Test
+   (components/decision-models-section.tsx). */
+.settings-savebar-clearance {
+  scroll-margin-bottom: 72px;
+}
+
 .settings-savebar-dirty {
   font-size: 12px;
   color: var(--text-secondary);

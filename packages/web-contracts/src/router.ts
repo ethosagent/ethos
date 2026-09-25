@@ -3909,8 +3909,37 @@ const modelRegistry = {
 // refused the whole namespace.
 // ---------------------------------------------------------------------------
 
-/** The decision providers the layer knows (`DECISION_PROVIDERS`, @ethosagent/config). */
+/**
+ * The decision providers the layer knows. Lockstep with `DECISION_PROVIDERS`
+ * (@ethosagent/config) and with `DECISION_PROVIDER_CATALOG`
+ * (apps/web-api/src/services/decision-catalog.ts) — this package cannot import
+ * either, so the three are pinned equal by
+ * apps/web-api/src/__tests__/services/decisions.service.test.ts ("catalog").
+ */
 export const DecisionProviderIdSchema = z.enum(['typesafe']);
+
+/**
+ * One KIND of decision model the operator can add — an entry of
+ * `DECISION_PROVIDER_CATALOG`. The Add decision model drawer lists these; a
+ * new provider is a new catalog entry, not a new pane.
+ */
+export const DecisionProviderTypeSchema = z.object({
+  id: DecisionProviderIdSchema,
+  /** The model family, e.g. `Jev`. */
+  label: z.string(),
+  /** Who runs it, e.g. `TypeSafe`. */
+  vendor: z.string(),
+  /** One or two sentences for the Add drawer. */
+  description: z.string(),
+  getKeyUrl: z.string(),
+  /** The vault ref its key is stored at. */
+  keyRef: z.string(),
+  /** The model used when `decisions.model` is unset. */
+  defaultModel: z.string(),
+  /** The endpoint used when `decisions.baseUrl` is unset. */
+  defaultBaseUrl: z.string(),
+});
+export type DecisionProviderType = z.infer<typeof DecisionProviderTypeSchema>;
 
 const DecisionSiteModeSchema = z.enum(['off', 'shadow', 'on']);
 
@@ -3931,7 +3960,7 @@ export const DecisionProviderViewSchema = z.object({
   label: z.string(),
   /** Who runs it, e.g. `TypeSafe`. */
   vendor: z.string(),
-  /** `decisions.provider` names this provider. */
+  /** `decisions.provider` names this provider — the ACTIVE one (config allows one). */
   configured: z.boolean(),
   /** The vault ref the key is read from. */
   keyRef: z.string(),
@@ -3948,7 +3977,12 @@ export const DecisionProviderViewSchema = z.object({
 });
 export type DecisionProviderView = z.infer<typeof DecisionProviderViewSchema>;
 
-export const DecisionsListOutput = z.object({ providers: z.array(DecisionProviderViewSchema) });
+export const DecisionsListOutput = z.object({
+  /** Every kind of decision model this build knows, added or not. */
+  catalog: z.array(DecisionProviderTypeSchema),
+  /** Only the ADDED ones: a key is stored, or `decisions.provider` names it. */
+  providers: z.array(DecisionProviderViewSchema),
+});
 export type DecisionsListResult = z.infer<typeof DecisionsListOutput>;
 
 /**
@@ -4036,6 +4070,17 @@ const decisions = {
   clearKey: oc
     .input(z.object({ providerId: DecisionProviderIdSchema }))
     .output(z.object({ ok: z.literal(true) })),
+  /** Removes the provider from the list: deletes the vault key AND the
+   *  `decisions.provider` line when it names this provider. `decisions.sites.*`
+   *  and the other `decisions.*` lines stay (inert without a provider).
+   *  Idempotent. */
+  remove: oc.input(z.object({ providerId: DecisionProviderIdSchema })).output(
+    z.object({
+      ok: z.literal(true),
+      /** `decisions.provider` named this provider and this call removed it. */
+      providerRemoved: z.boolean(),
+    }),
+  ),
   test: oc.input(DecisionsTestInput).output(DecisionsTestOutput),
 };
 
