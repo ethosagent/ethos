@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -362,6 +362,21 @@ Notes:
 - Read once at gateway startup. Restart the gateway after editing.
 - Unlike Slack and Telegram, Discord needs no extra platform-side switch for messages nobody addressed to the bot. The **Message Content Intent** the adapter already requires for mentions covers them too — see [Confirm intents](../../platforms/discord.md#3-confirm-intents).
 - **Per-channel overrides cannot be set on Discord.** The adapter reads a per-channel override store (`ChannelOverrideStore`, JSONL under `~/.ethos/discord/<botKey>/`) and a stored entry wins over this key, but no command or API writes one — Slack's `/ethos channel-mode` has no Discord equivalent. This key is the only way to put a Discord channel into `observe` today, and it applies to every channel the bot can see. `/ethos help` prints the channel's effective mode.
+
+## discord.approvalRoleIds {#discord-approval-role-ids}
+
+Type: comma-separated list of Discord role ids · Default: unset
+
+Roles whose members may click **Approve** / **Deny** on a Discord approval card. Unset, the adapter refuses every click with "Approval roles not configured. No one can approve." (`DiscordAdapter.handleApprovalDecision` in [extensions/platform-discord/src/index.ts](https://github.com/ethosagent/ethos/blob/main/extensions/platform-discord/src/index.ts)), and each approval is denied when its timeout expires.
+
+```yaml
+discord.approvalRoleIds: 1234567890123456789,9876543210987654321
+```
+
+Notes:
+
+- A role check comes first. The approval coordinator then accepts only the bound decider: the requester in a DM, the platform owner in a group.
+- Read once at gateway startup. Restart the gateway after editing.
 
 ## slackBotToken {#slack-bot-token}
 

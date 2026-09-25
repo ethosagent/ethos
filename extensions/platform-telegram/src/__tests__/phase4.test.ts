@@ -510,7 +510,10 @@ describe('4.2 — onApprovalDecision callback routing', () => {
 
     expect(decisions[0].approvalId).toBe('myApproval123');
     expect(decisions[0].decision).toBe('allow');
-    expect(decisions[0].decidedBy).toBe('alice');
+    // The numeric sender id, never the @username: the gateway binds the
+    // approval to `InboundMessage.userId` (`String(ctx.from.id)`), and
+    // `ApprovalCoordinator.settle` drops any other decider (S9).
+    expect(decisions[0].decidedBy).toBe('200');
     expect(decisions[0].channelId).toBe('100');
     expect(decisions[0].messageTs).toBe('55');
   });
@@ -540,7 +543,7 @@ describe('4.2 — onApprovalDecision callback routing', () => {
 
     expect(decisions[0].approvalId).toBe('myApproval456');
     expect(decisions[0].decision).toBe('deny');
-    expect(decisions[0].decidedBy).toBe('bob');
+    expect(decisions[0].decidedBy).toBe('201');
   });
 
   it('routes clr: callbacks to clarify handler (not approval)', async () => {

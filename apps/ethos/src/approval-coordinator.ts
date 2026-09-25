@@ -63,9 +63,14 @@ export interface RequestApprovalInput {
   timeoutMs?: number;
 }
 
-/** Decider id used for non-user resolutions (timeout, session cancel). It is
- *  the one value that bypasses the `requesterUserId` binding check. */
-const SYSTEM_DECIDER = '__ethos_system__';
+/** Decider id used for non-user resolutions (timeout, session cancel, the
+ *  gateway's fail-closed deny in `wireApprovalFlow`). It is the one value that
+ *  bypasses the `requesterUserId` binding check (`ApprovalCoordinator.settle`),
+ *  so a caller settling on nobody's behalf must pass this constant, never an
+ *  ad-hoc string — a string like `'system'` is dropped as a bystander click.
+ *  Pinned by `__tests__/approval-coordinator.test.ts` ('a card-post failure
+ *  settles as denied immediately'). */
+export const SYSTEM_DECIDER = '__ethos_system__';
 
 interface PendingEntry {
   resolve: (d: ApprovalDecision) => void;

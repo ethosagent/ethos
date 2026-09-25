@@ -1059,7 +1059,11 @@ export class TelegramAdapter
             const decisionEvent: ApprovalDecisionEvent = {
               approvalId,
               decision,
-              decidedBy: event.username ?? event.userId ?? 'unknown',
+              // The numeric id, the same value `InboundMessage.userId` carries:
+              // `ApprovalCoordinator.settle` (apps/ethos) compares it to the
+              // bound requester/owner and drops any other decider, so a
+              // @username here left every approval hanging to its timeout.
+              decidedBy: event.userId ?? 'unknown',
               channelId: event.chatId,
               messageTs: event.messageId,
             };
