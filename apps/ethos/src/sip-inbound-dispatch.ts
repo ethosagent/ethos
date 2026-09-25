@@ -9,6 +9,7 @@ import {
   type VoiceBotIdentity,
   type VoiceChannelAdapter,
 } from '@ethosagent/platform-voice';
+import { fenceFarEndSpeech } from '@ethosagent/tools-voice';
 import type { AgentEvent, PersonalityConfig, VoiceTurnOrigin } from '@ethosagent/types';
 import { FAR_END_VOICE_ORIGIN, type VoiceInboundGates } from '@ethosagent/wiring';
 
@@ -162,7 +163,14 @@ function describeReason(reason: string): string {
  *    fix, so "we could not route it" is still news.
  * 2. **The hardening gate** (`decideInboundCall`) — budget, rate limit,
  *    concurrency, allowlist. A refusal releases whatever it took, so a wall of
- *    refused calls leaves `concurrency.active()` at zero.
+ *    refused calls leaves `concurrency.active()` at zero. This is the voice
+ *    lane's admission filter; the gateway's `checkMessage` is deliberately NOT
+ *    applied (INB-002): its only sender input here would be caller ID, which is
+ *    not identity (INB-001b), and its pairing reply is a text send a phone call
+ *    cannot receive. Each turn's transcript is fenced with `fenceFarEndSpeech`
+ *    (see the runner below). LIMITATION: the gateway's tier-1
+ *    `shortPatternCheck` observability flag (`channel.injection_detected`) is
+ *    not recorded for call transcripts; the fence is.
  * 3. **Personality selection** — `restricted` (always, INB-001b) pins the
  *    receptionist, whose `personality:<id>` memory scope and `toolset` ARE the
  *    restriction.
@@ -307,7 +315,10 @@ export function createSipInboundHandler(
     const runner = {
       run: (text: string, opts?: { abortSignal?: AbortSignal }): AsyncGenerator<AgentEvent> =>
         meterSpend(
-          deps.loop.run(text, {
+          // INB-002: this lane bypasses the gateway, so the transcript is
+          // fenced here (`fenceFarEndSpeech`, @ethosagent/tools-voice) rather
+          // than by the gateway's `wrapUntrusted`.
+          deps.loop.run(fenceFarEndSpeech(text, FAR_END_VOICE_ORIGIN), {
             sessionKey: laneKey,
             ...(personalityId ? { personalityId } : {}),
             voiceOrigin: FAR_END_VOICE_ORIGIN,

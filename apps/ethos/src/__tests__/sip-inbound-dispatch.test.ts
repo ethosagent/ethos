@@ -313,6 +313,16 @@ describe('createSipInboundHandler — accepted calls', () => {
     expect(h.turns).toHaveLength(0);
   });
 
+  // INB-002: the SIP lane calls the loop directly, not through the gateway, so
+  // the transcript must be fenced here as the gateway fences a channel message.
+  it('INB-002: fences the caller transcript as untrusted before the loop sees it', async () => {
+    const h = harness();
+    await h.handle(call, {});
+    expect(h.turns[0]?.text).toBe(
+      '<untrusted source="sip" tool="voice_call">\nhello?\n</untrusted>',
+    );
+  });
+
   it('pins every call turn to the far-end origin and the call lane', async () => {
     // `speaker: 'far_end'` is the whole security property: the spoken-confirmation
     // gate refuses a far-end request BEFORE consulting any recorded confirmation,
