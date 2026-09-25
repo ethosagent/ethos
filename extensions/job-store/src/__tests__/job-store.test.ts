@@ -586,7 +586,7 @@ describe('SQLiteJobStore', () => {
     // Bump user_version beyond the code's supported version out-of-band.
     const Database = (await import('@ethosagent/sqlite')).default;
     const raw = new Database(path);
-    raw.pragma('user_version = 9');
+    raw.pragma('user_version = 10');
     raw.close();
 
     expect(() => new SQLiteJobStore(path)).toThrow(/newer than code/);
@@ -771,7 +771,7 @@ describe('SQLiteJobStore', () => {
     procB.close();
   });
 
-  it('migrates a v1 database (remote columns + delivered_at + runner + blocked + notices + deliver + origin user) to v8, preserving rows', async () => {
+  it('migrates a v1 database (remote columns + delivered_at + runner + blocked + notices + deliver + origin user + narrowing) to v9, preserving rows', async () => {
     const path = join(tmpdir(), `jobstore-${randomUUID()}.db`);
     tmpFiles.push(path);
     // Build a v1 jobs table out-of-band: the full v1 shape minus the remote
@@ -831,7 +831,7 @@ describe('SQLiteJobStore', () => {
       .run();
     rawSeed.close();
 
-    // Opening with current code migrates v1 -> v8.
+    // Opening with current code migrates v1 -> v9.
     const store = new SQLiteJobStore(path);
     const legacy = await store.get('legacy-1');
     expect(legacy?.summary).toBe('legacy summary');
@@ -845,6 +845,7 @@ describe('SQLiteJobStore', () => {
     expect(legacy?.deliver).toBe('user');
     // Old rows name no originator — the honest state before the column.
     expect(legacy?.originUserId).toBeUndefined();
+    expect(legacy?.toolsetNarrowing).toBeUndefined();
 
     const created = await store.create(
       baseInput({ remotePeer: 'host:9000', remoteJobId: 'peer-1' }),
@@ -862,13 +863,26 @@ describe('SQLiteJobStore', () => {
       raw2.prepare(`UPDATE jobs SET delivered_at = 'not-a-number' WHERE id = 'legacy-1'`).run(),
     ).toThrow();
     raw2.close();
-    expect(version).toBe(8);
+    expect(version).toBe(9);
   });
 
   it('round-trips originUserId, absent when the spawn had no originating user', async () => {
     const store = new SQLiteJobStore(':memory:');
     expect((await store.create(baseInput({ originUserId: 'u-7' }))).originUserId).toBe('u-7');
     expect((await store.create(baseInput())).originUserId).toBeUndefined();
+    store.close();
+  });
+
+  it('round-trips toolsetNarrowing, absent when the parent turn had none (S12)', async () => {
+    const store = new SQLiteJobStore(':memory:');
+    const narrowing = { narrow: ['read_file'], exclude: ['send_message'] };
+    expect(
+      (await store.create(baseInput({ toolsetNarrowing: narrowing }))).toolsetNarrowing,
+    ).toEqual(narrowing);
+    expect(
+      (await store.create(baseInput({ toolsetNarrowing: { narrow: [] } }))).toolsetNarrowing,
+    ).toEqual({ narrow: [] });
+    expect((await store.create(baseInput())).toolsetNarrowing).toBeUndefined();
     store.close();
   });
 

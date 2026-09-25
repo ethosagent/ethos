@@ -65,6 +65,7 @@ class FakeJobStore implements JobStore {
       originChatId: input.originChatId,
       originThreadId: input.originThreadId,
       originUserId: input.originUserId,
+      toolsetNarrowing: input.toolsetNarrowing,
       remotePeer: input.remotePeer,
       remoteJobId: input.remoteJobId,
       runner: input.runner,
@@ -532,6 +533,24 @@ describe('delegate_task background path', () => {
     const local = await tool.execute({ prompt: 'p', background: true }, makeCtx());
     if (!local.ok) throw new Error('expected ok');
     expect(store.jobs.get(JSON.parse(local.value).jobId)?.originUserId).toBeUndefined();
+  });
+
+  it("persists the parent turn's tool narrowing on the job (S12)", async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store);
+    const tool = createDelegateTaskTool(loop, deps);
+    const narrowing = { narrow: ['read_file', 'delegate_task'], exclude: ['send_message'] };
+
+    const narrowed = await tool.execute(
+      { prompt: 'p', background: true },
+      makeCtx({ toolsetNarrowing: narrowing }),
+    );
+    if (!narrowed.ok) throw new Error('expected ok');
+    expect(store.jobs.get(JSON.parse(narrowed.value).jobId)?.toolsetNarrowing).toEqual(narrowing);
+
+    const plain = await tool.execute({ prompt: 'p', background: true }, makeCtx());
+    if (!plain.ok) throw new Error('expected ok');
+    expect(store.jobs.get(JSON.parse(plain.value).jobId)?.toolsetNarrowing).toBeUndefined();
   });
 
   it('resolves the cost cap: null=uncapped, number=value, omitted=default', async () => {
