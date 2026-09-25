@@ -71,6 +71,7 @@ const sidebars: SidebarsConfig = {
             'using/how-to/use-admin-panel',
             'using/how-to/audit-user-identity',
             'using/how-to/set-up-approval-gates',
+            'using/how-to/use-a-decision-model',
             'using/how-to/approve-posts-before-sending',
             'using/how-to/peer-two-ethos-agents',
             'using/how-to/run-a-team-with-kanban',
