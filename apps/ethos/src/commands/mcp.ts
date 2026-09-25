@@ -47,6 +47,7 @@ import {
   resolveMcpExportScope,
 } from '@ethosagent/wiring';
 import { writeJson } from '../json-output';
+import { gateNonInteractiveLoop } from '../lib/non-interactive-approval';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
 import {
   createAgentLoop,
@@ -184,6 +185,7 @@ async function runServe(argv: string[]): Promise<void> {
     process.exit(1);
   }
   const runtime = await createAgentLoop(config);
+  gateNonInteractiveLoop(runtime, config, 'an MCP client cannot show an approval prompt');
   const sessionStore = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
   // The memory tools read and write through the SAME backend the agent does
   // (`createMemoryProviderFromConfig`, packages/wiring/src/memory-backend.ts);

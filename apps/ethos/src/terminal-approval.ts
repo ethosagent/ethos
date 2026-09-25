@@ -1,5 +1,8 @@
 // The approval gate for the operator's own terminal: `ethos chat` (readline and
-// TUI), `ethos chat -q`, and `ethos acp`. Before this, these loops carried only
+// TUI), `ethos chat -q`, and every other CLI command that runs turns with
+// nobody at a prompt (`gateNonInteractiveLoop`, ./lib/non-interactive-approval.ts:
+// `ethos -z`, `batch`, `eval`, `cron`, the judge, `bench`, the MCP console,
+// `acp`). Before this, these loops carried only
 // the terminal/process guards `composeAllTools` registers on a non-web profile,
 // so a call the danger predicate flags either ran unasked (a host-local shell
 // tool, `APPROVAL_SURFACE_ALWAYS_ASK`) or was refused with no way to approve it
@@ -26,7 +29,8 @@
 // command-substitution call, which the guards refused outright before, is
 // asked rather than waved through (`offModeCommandReason` below).
 //
-// A run nobody can answer (`coordinator: null` — `ethos chat -q`, a readline
+// A run nobody can answer (`coordinator: null` — `ethos chat -q`, the commands
+// above, a readline
 // session on piped stdin, ACP) refuses every flagged call with a reason that
 // says so. There is no "allow for this session": the card path the prompt
 // reuses has no lease (only the web modal's `ApprovalsService` does), and a

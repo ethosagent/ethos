@@ -161,7 +161,9 @@ export const LOCAL_POSTURE_CONSEQUENTIAL_TOOLS: ReadonlyArray<string> = [
  * serve.ts` and `apps/desktop/src/main/serve.ts` (web modal),
  * `apps/ethos/src/commands/gateway.ts` (Slack card), and
  * `wireTerminalApprovalGate` (apps/ethos/src/terminal-approval.ts — the CLI
- * prompt, the TUI modal, and the fail-closed `ethos chat -q` / ACP gate).
+ * prompt, the TUI modal, and the fail-closed gate on `ethos chat -q`, ACP and
+ * the other non-interactive CLI commands, `gateNonInteractiveLoop` in
+ * apps/ethos/src/lib/non-interactive-approval.ts).
  *
  * `call` (outbound telephony) is listed for a different reason: the gate
  * PREDATES the capability, deliberately. The tool self-reports unavailable
@@ -225,8 +227,9 @@ export interface CreateDangerPredicateOptions {
    * `allowUnattendedDangerousTools: true` in `config.yaml`. That loop runs
    * cron, dreams and watcher wakes — trusted local automation with nobody
    * to ask. And the operator's own terminal (`wireTerminalApprovalGate` in
-   * `apps/ethos/src/terminal-approval.ts`: `ethos chat`, `ethos chat -q`,
-   * `ethos acp`), always: `off` there keeps meaning what it meant before
+   * `apps/ethos/src/terminal-approval.ts`: `ethos chat`, and every CLI
+   * command `gateNonInteractiveLoop` gates — `-q`, `-z`, `batch`, `eval`,
+   * `cron`, the judge, `bench`, the MCP console, `acp`), always: `off` there keeps meaning what it meant before
    * those loops had a gate — flagged calls run unasked — except that a
    * command-substitution call is still asked (or refused where nobody can
    * be asked). Every surface a remote sender or a browser can reach — the
@@ -315,7 +318,8 @@ function shellCommand(payload: BeforeToolCallPayload): string | null {
  * no-surface gate, for every bot), `wireUnattendedApprovalGate`
  * (apps/ethos/src/unattended-approval-gate.ts, the systemLoop) and
  * `wireTerminalApprovalGate` (apps/ethos/src/terminal-approval.ts: `ethos
- * chat`, `ethos chat -q`, `ethos acp`). Read per call by the terminal and
+ * chat` and the non-interactive CLI commands, `gateNonInteractiveLoop` in
+ * apps/ethos/src/lib/non-interactive-approval.ts). Read per call by the terminal and
  * process guards `composeAllTools` registers (`approvalGated`), which leave an
  * approval-required command to the gate on a marked loop and refuse it on any
  * other, since nobody could approve it there. An unmarked loop is the

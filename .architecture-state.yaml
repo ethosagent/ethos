@@ -284,8 +284,8 @@ register_anchors:
     - { path: extensions/platform-discord/src/blocks/approval.ts, line: 77, contains: "function formatArgs" }
 
   G-APP:
-    - { path: packages/wiring/src/danger-predicate.ts, line: 430, contains: "mode === 'smart' && opts.smartApprove" }
-    - { path: packages/wiring/src/danger-predicate.ts, line: 389, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
+    - { path: packages/wiring/src/danger-predicate.ts, line: 434, contains: "mode === 'smart' && opts.smartApprove" }
+    - { path: packages/wiring/src/danger-predicate.ts, line: 393, contains: "SMART_MODE_CONSEQUENTIAL_TOOLS" }
     - { path: packages/wiring/src/smart-approver.ts, line: 315, contains: "reviewer gave no usable verdict" }
     - { path: packages/wiring/src/smart-approver.ts, line: 323, contains: "reviewer error (fail-closed)" }
     - { path: packages/wiring/src/smart-approver.ts, line: 150, contains: "export function approverVerdictFrom" }

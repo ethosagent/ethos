@@ -274,6 +274,6 @@ describe('terminal approval gate — wiring', () => {
 
   it('acp gates its loop with no one to ask', async () => {
     const src = await readFile(join(import.meta.dirname, '..', 'commands', 'acp.ts'), 'utf-8');
-    expect(src).toMatch(/wireTerminalApprovalGate\(loop\.hooks, \{[\s\S]*?coordinator: null,/);
+    expect(src).toMatch(/gateNonInteractiveLoop\(\s*runtime,/);
   });
 });
