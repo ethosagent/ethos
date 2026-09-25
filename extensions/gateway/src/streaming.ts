@@ -1,6 +1,6 @@
 import type { DeliveryResult, OutboundMessage } from '@ethosagent/types';
 import type { MessageDedupCache } from './dedup';
-import { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
+import { beginDelivery, confirmDelivery, type DeliveryBinding, endDelivery } from './delivery';
 
 // ---------------------------------------------------------------------------
 // Streaming draft edits (W3.1)
@@ -218,30 +218,36 @@ export class DraftStreamer {
         threadId: this.threadId,
         content: finalText,
       });
-      let attempts = 0;
-      // Try the final edit; honor a single flood-wait so the true final lands.
-      while (attempts < 2) {
-        // `final: true` tells the adapter no further text is coming, so a
-        // terminal-only presentation is safe to apply. Intermediate flushes in
-        // `doFlush` deliberately pass nothing.
-        const res = await this.adapter.editMessage(this.chatId, this.messageId, finalText, {
-          final: true,
-        });
-        if (res.ok) {
-          this.lastRenderedBody = finalText;
-          finalRendered = true;
-          break;
+      // The flood-wait sleep below can outlast the sweep's age grace, so the
+      // obligation stays registered in flight until the edit settles.
+      try {
+        let attempts = 0;
+        // Try the final edit; honor a single flood-wait so the true final lands.
+        while (attempts < 2) {
+          // `final: true` tells the adapter no further text is coming, so a
+          // terminal-only presentation is safe to apply. Intermediate flushes in
+          // `doFlush` deliberately pass nothing.
+          const res = await this.adapter.editMessage(this.chatId, this.messageId, finalText, {
+            final: true,
+          });
+          if (res.ok) {
+            this.lastRenderedBody = finalText;
+            finalRendered = true;
+            break;
+          }
+          const retry = parseRetryAfterSeconds(res.error);
+          if (retry === null) break;
+          attempts++;
+          if (attempts >= 2) break;
+          await this.sleep(retry * 1000);
         }
-        const retry = parseRetryAfterSeconds(res.error);
-        if (retry === null) break;
-        attempts++;
-        if (attempts >= 2) break;
-        await this.sleep(retry * 1000);
+        // Confirm ONLY when the edit actually landed. A failed final edit leaves
+        // the obligation `pending`, so the next sweep redelivers it — as a
+        // fresh `send()`, since the draft message id does not survive a restart.
+        if (finalRendered) await confirmDelivery(this.delivery, obligationId);
+      } finally {
+        endDelivery(this.delivery, obligationId);
       }
-      // Confirm ONLY when the edit actually landed. A failed final edit leaves
-      // the obligation `pending`, so the next boot sweep redelivers it — as a
-      // fresh `send()`, since the draft message id does not survive a restart.
-      if (finalRendered) await confirmDelivery(this.delivery, obligationId);
     }
     // Register the final content so a later duplicate send() is suppressed —
     // but only when the user actually saw it. Stamping the cache on a failed

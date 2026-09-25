@@ -8,7 +8,7 @@ import type {
   PlatformAdapter,
 } from '@ethosagent/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Gateway } from '../index';
+import { Gateway, relayToTargets } from '../index';
 
 // ---------------------------------------------------------------------------
 // Item 9 — durable delivery obligations.
@@ -713,6 +713,103 @@ describe('Gateway — periodic delivery sweep (startDeliverySweep)', () => {
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect((await store.get(id))?.status).toBe('delivered');
     expect(adapter.sent).toHaveLength(1);
+  });
+
+  // A live send that outlasts DELIVERY_SWEEP_MIN_AGE_MS (a Telegram flood-wait
+  // backoff, a large voice upload) is still in flight in THIS process: a tick
+  // must not redeliver it alongside the original.
+  it('a tick never redelivers a send still in flight in this process', async () => {
+    const store = ledger();
+    const adapter = stubAdapter();
+    let finish: (r: DeliveryResult) => void = () => {};
+    vi.mocked(adapter.send).mockImplementationOnce(
+      () =>
+        new Promise<DeliveryResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    vi.useFakeTimers();
+    const live = gw.notifyTracked(
+      { platform: 'telegram', chatId: 'chat-1', botKey: 'bot-a', answersInbound: true },
+      'slow reply',
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const [row] = await store.listPending(['bot-a']);
+    expect(row?.content).toBe('slow reply');
+
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(adapter.send).toHaveBeenCalledTimes(1);
+
+    finish({ ok: true, messageId: 'late' });
+    await expect(live).resolves.toBe(true);
+    expect((await store.get(row?.id ?? ''))?.status).toBe('delivered');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(adapter.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('a live send that ends unconfirmed is swept on the next tick', async () => {
+    const store = ledger();
+    const adapter = stubAdapter();
+    let finish: (r: DeliveryResult) => void = () => {};
+    vi.mocked(adapter.send).mockImplementationOnce(
+      () =>
+        new Promise<DeliveryResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    vi.useFakeTimers();
+    const live = gw.notifyTracked(
+      { platform: 'telegram', chatId: 'chat-1', botKey: 'bot-a', answersInbound: true },
+      'slow reply',
+    );
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    finish({ ok: false, error: 'flood wait' });
+    await expect(live).resolves.toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(adapter.send).toHaveBeenCalledTimes(2);
+    expect((await store.listPending(['bot-a'])).length).toBe(0);
+  });
+
+  it('a webhook relay send in flight on the shared ledger is not redelivered', async () => {
+    const store = ledger();
+    const adapter = stubAdapter();
+    let finish: (r: DeliveryResult) => void = () => {};
+    vi.mocked(adapter.send).mockImplementationOnce(
+      () =>
+        new Promise<DeliveryResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const gw = gatewayWith(loopYielding(plainTurn), store, {
+      adapters: new Map([['telegram', adapter]]),
+    });
+    vi.useFakeTimers();
+    // The relay files under the target's adapterId; name the bot after it so
+    // this gateway owns (and would sweep) the row.
+    const relay = relayToTargets(
+      [{ type: 'platform', adapterId: 'bot-a', chatId: 'chat-1' }],
+      'relayed',
+      {
+        hookId: 'h1',
+        sessionKey: 'webhook:h1',
+        adaptersById: new Map([['bot-a', adapter]]),
+        ledger: store,
+        log: () => {},
+      },
+    );
+    gw.startDeliverySweep();
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(adapter.send).toHaveBeenCalledTimes(1);
+    finish({ ok: true, messageId: 'late' });
+    expect((await relay)[0]?.ok).toBe(true);
   });
 
   it('shutdown stops the timer', async () => {

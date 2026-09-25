@@ -92,7 +92,13 @@ import {
 } from './channel-digest';
 import { credentialRequiredReply } from './credential-reply';
 import { MessageDedupCache } from './dedup';
-import { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
+import {
+  beginDelivery,
+  confirmDelivery,
+  type DeliveryBinding,
+  endDelivery,
+  isDeliveryInFlight,
+} from './delivery';
 import { type LaneSessionEntry, LaneSessionFiles } from './lane-sessions';
 import {
   attachmentsFromStructured,
@@ -126,7 +132,7 @@ export {
   summarizeChannelDigest,
 } from './channel-digest';
 export { MessageDedupCache } from './dedup';
-export { beginDelivery, confirmDelivery, type DeliveryBinding } from './delivery';
+export { beginDelivery, confirmDelivery, type DeliveryBinding, endDelivery } from './delivery';
 export { DreamExecutor } from './dream-executor';
 export {
   attachmentsFromStructured,
@@ -352,6 +358,14 @@ const DELIVERY_SWEEP_DEFAULT_INTERVAL_MS = 60_000;
  * `pending` row may be a send still in flight — here or in a peer sharing the
  * ledger — and redelivering it would double-send. The boot sweep has no live
  * sends to collide with and takes every row.
+ *
+ * Age is only the PEER guard. A send in THIS process is skipped for as long as
+ * it runs, however long that is (`isDeliveryInFlight` in `./delivery`, checked
+ * in `sweepDeliveriesOnce`). Limitation: a peer process sharing the ledger file
+ * whose send outlasts this grace can still be redelivered here — live sends do
+ * not claim their row, so nothing in the ledger says "in flight". One gateway
+ * per state dir (`acquireGatewayLock`, packages/wiring/src/gateway-lock.ts)
+ * makes such a peer an unusual deployment, not the default one.
  */
 const DELIVERY_SWEEP_MIN_AGE_MS = 60_000;
 /**
@@ -5453,27 +5467,34 @@ export class Gateway {
     });
 
     // 11. Send. A throw folds into `{ ok: false }` exactly as in `sendTracked`.
-    const result = await sink
-      .sendVoiceNote(input.chatId, bytes, {
-        format: finalFormat,
-        mimeType: voiceAudioMimeType(finalFormat),
-        filename: `reply.${voiceAudioExtension(finalFormat)}`,
-        ...(input.threadId ? { threadId: input.threadId } : {}),
-      })
-      .catch(
-        (err: unknown): DeliveryResult => ({
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      );
+    //     A large upload can outlast the sweep's age grace; the obligation stays
+    //     registered in flight (`endDelivery`) until the send settles.
+    let result: DeliveryResult;
+    try {
+      result = await sink
+        .sendVoiceNote(input.chatId, bytes, {
+          format: finalFormat,
+          mimeType: voiceAudioMimeType(finalFormat),
+          filename: `reply.${voiceAudioExtension(finalFormat)}`,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+        })
+        .catch(
+          (err: unknown): DeliveryResult => ({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
 
-    // 12. Confirmed → the obligation is discharged and its artifact is released
-    //     (retention D9: delivering deletes). Otherwise the row stays `pending`
-    //     and the artifact stays on disk for the sweep to re-send.
-    if (result?.ok === true) {
-      await confirmDelivery(binding, obligationId);
-      if (ref) await this.voiceArtifacts?.remove(ref);
-      return;
+      // 12. Confirmed → the obligation is discharged and its artifact is released
+      //     (retention D9: delivering deletes). Otherwise the row stays `pending`
+      //     and the artifact stays on disk for the sweep to re-send.
+      if (result?.ok === true) {
+        await confirmDelivery(binding, obligationId);
+        if (ref) await this.voiceArtifacts?.remove(ref);
+        return;
+      }
+    } finally {
+      endDelivery(binding, obligationId);
     }
     event(
       'gateway.delivery_unconfirmed',
@@ -6145,15 +6166,22 @@ export class Gateway {
       threadId: message.threadId,
       content: message.text,
     });
-    const result = await target.adapter.send(target.chatId, message).catch(
-      (err: unknown): DeliveryResult => ({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-    if (result?.ok === true) {
-      await confirmDelivery(binding, obligationId);
-      return { confirmed: true, obligationId };
+    // Registered in flight by `beginDelivery` until the send settles, so the
+    // sweep does not redeliver a send that outlasts its age grace.
+    let result: DeliveryResult;
+    try {
+      result = await target.adapter.send(target.chatId, message).catch(
+        (err: unknown): DeliveryResult => ({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      if (result?.ok === true) {
+        await confirmDelivery(binding, obligationId);
+        return { confirmed: true, obligationId };
+      }
+    } finally {
+      endDelivery(binding, obligationId);
     }
     // Leave the row `pending` — the next boot sweep redelivers it. Surface the
     // failure too: before this, a failed send was completely invisible.
@@ -6529,7 +6557,9 @@ export class Gateway {
    * sweep is still running joins it. Idempotent; {@link shutdown} stops it.
    *
    * A tick skips `pending` rows younger than `DELIVERY_SWEEP_MIN_AGE_MS`: they
-   * may be replies still in flight, which the ledger does not claim.
+   * may be replies still in flight, which the ledger does not claim. Every
+   * sweep also skips a row whose live send is still running in this process
+   * (`isDeliveryInFlight`), whatever its age.
    */
   startDeliverySweep(): void {
     if (this.deliverySweepTimer || this.deliverySweepIntervalMs <= 0 || this.closing) return;
@@ -6598,6 +6628,11 @@ export class Gateway {
       // Resolved BEFORE the claim, so a row this process cannot deliver is left
       // exactly as it was — still `pending`, never burned, never held in
       // `redelivering` where a peer that does own the adapter would skip it.
+      // A live reply path in THIS process is still sending it (registered by
+      // `beginDelivery` until `endDelivery`): redelivering now would send it
+      // twice. It is neither a redelivery nor a failure; a later sweep takes it
+      // if that send ends unconfirmed.
+      if (isDeliveryInFlight(ledger, row.id)) continue;
       const adapter = this.adapterForBot(row.botKey, row.platform);
       if (!adapter) {
         failed++;
