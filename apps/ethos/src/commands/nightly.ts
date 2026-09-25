@@ -34,6 +34,7 @@ import {
 } from '@ethosagent/personality-judge';
 import { draftExpressionUpdate, proposeSkillFromEvidence } from '@ethosagent/skill-evolver';
 import {
+  EthosError,
   formatError,
   type LLMProvider,
   type MemoryProvider,
@@ -230,7 +231,13 @@ function buildDeps(args: {
 }): NightlyPassDeps {
   const { config, ethosDir, reg, llm } = args;
   const fileMemory = (): Exclude<typeof args.memory, { skipReason: string }> => {
-    if ('skipReason' in args.memory) throw new Error(args.memory.skipReason);
+    if ('skipReason' in args.memory) {
+      throw new EthosError({
+        code: 'NOT_CONFIGURED',
+        cause: args.memory.skipReason,
+        action: 'The nightly memory step runs only under memory: markdown or vault.',
+      });
+    }
     return args.memory;
   };
   const learningCtx = { storage: getStorage(), dataDir: ethosDir, personalities: reg };
