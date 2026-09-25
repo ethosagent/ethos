@@ -3,7 +3,7 @@ import { AgentBridge } from '@ethosagent/agent-bridge';
 import type { AgentLoop } from '@ethosagent/core';
 import { render } from 'ink';
 import { createElement } from 'react';
-import { App, type ExternalSlashCommands } from './components/App';
+import { App, type AppProps, type ExternalSlashCommands } from './components/App';
 import type { SplashInventory } from './components/Splash';
 import type { RebuiltLoop } from './loop-switch';
 
@@ -41,6 +41,14 @@ export interface TUIOptions {
   onSkillProposed?: (cb: (text: string) => void) => () => void;
   /** `/memory` reader over the configured backend's file memory (see `AppProps.readMemory`). */
   readMemory: (scope: { personalityId: string; sessionKey: string }) => Promise<string | null>;
+  /** `/fork`, `/branches`, `/branch <n>` over the host's session store (see `AppProps.branches`). */
+  branches?: AppProps['branches'];
+  /**
+   * Stores a plugin credential typed into the masked `credential_required`
+   * modal — pass `PluginLoader.setCredential`, the one writer. Without it the
+   * TUI does not opt its sends in to credential requests.
+   */
+  setPluginCredential?: (pluginId: string, key: string, value: string) => Promise<void>;
 }
 
 export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
@@ -63,6 +71,8 @@ export async function runTUI(loop: AgentLoop, opts: TUIOptions): Promise<void> {
       onNotification: opts.onNotification,
       onSkillProposed: opts.onSkillProposed,
       readMemory: opts.readMemory,
+      ...(opts.branches ? { branches: opts.branches } : {}),
+      setPluginCredential: opts.setPluginCredential,
     }),
   );
 

@@ -118,7 +118,7 @@ describe('ethos gateway status --json', () => {
       state: 'running',
       pid: process.pid,
       lockPath: join(dir, 'gateway.lock'),
-      spool: { received: 1, processing: 0, done: 0, dead: 0 },
+      spool: { received: 1, processing: 0, done: 0, dead: 0, interrupted: 0 },
       // No ledger file here — and a status read must not create one.
       ledger: null,
     });
@@ -153,6 +153,34 @@ describe('ethos gateway spool replay|discard', () => {
     spool.close();
     // Not dead any more → refused.
     expect(runGatewaySpool(['discard', a], dir)).toBe(1);
+  });
+
+  it('replay and discard take an interrupted row (plan openclaw-9.5-adoption D5)', () => {
+    const spool = new SQLiteInboundSpool(join(dir, 'inbound-spool.db'));
+    const ids = ['i1', 'i2'].map((messageId) => {
+      const { id } = spool.accept({
+        platform: 'telegram',
+        botKey: 'b',
+        chatId: 'c',
+        messageId,
+        laneKey: 'l',
+        payload: '{}',
+      });
+      spool.markProcessing(id, 'p');
+      spool.markToolStarted(id);
+      spool.markInterrupted(id, 'crash');
+      return id;
+    });
+    spool.close();
+    const [a = '', b = ''] = ids;
+    expect(runGatewaySpool(['replay', a], dir)).toBe(0);
+    expect(runGatewaySpool(['discard', b], dir)).toBe(0);
+    const after = new SQLiteInboundSpool(join(dir, 'inbound-spool.db'));
+    // Requeued with the tool start cleared, so the replay does not bounce it back.
+    expect(after.get(a)).toMatchObject({ status: 'received', attempts: 0 });
+    expect(after.get(a)?.toolStartedAt).toBeUndefined();
+    expect(after.get(b)).toMatchObject({ status: 'done', lastError: 'discarded' });
+    after.close();
   });
 
   it('refuses an unknown id, a missing spool, and bad usage', () => {

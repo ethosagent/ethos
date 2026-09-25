@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto';
-import type { Message, MessageContent, StoredMessage } from '@ethosagent/types';
+import {
+  compactionFromStoredRow,
+  encodeCompactionEnvelope,
+  flattenCompactionEnvelopes,
+  type Message,
+  type MessageContent,
+  type StoredMessage,
+} from '@ethosagent/types';
 import { ghostSkillMarker, skillCallsFromHistory } from './ghost-skills';
 
 /**
@@ -112,10 +119,26 @@ function toolResultBatch(msg: Message | undefined): MessageContent[] | undefined
   return blocks[blocks.length - 1]?.type === 'tool_result' ? blocks : undefined;
 }
 
+/** Options for {@link toLLMMessages}. */
+export interface ToLLMMessagesOptions {
+  /**
+   * The request goes to a provider that compacts server-side
+   * (`servesServerCompaction`, providers/chained-provider.ts — the turn's
+   * `TurnSetup.serverCompaction.active`). Only then is a stored compaction row
+   * replayed as the in-memory envelope that provider sends back byte-exact.
+   * Otherwise — the default, so every side path (the compaction summarizer,
+   * the turn-end gate, a context engine) is covered without opting in — it is
+   * flattened to its readable summary (`flattenCompactionEnvelopes`): a
+   * provider that does not know the envelope, a plugin provider above all,
+   * must never receive the nonce or `encrypted_content` as assistant text.
+   */
+  serverCompaction?: boolean;
+}
+
 // Reconstruct LLM-ready messages from stored history.
 // Assistant messages with tool calls produce proper tool_use content blocks.
 // Consecutive tool_result rows are grouped into a single user message.
-export function toLLMMessages(stored: StoredMessage[]): Message[] {
+export function toLLMMessages(stored: StoredMessage[], opts: ToLLMMessagesOptions = {}): Message[] {
   // History truncation invariant: `getMessages({ limit })` returns the newest
   // N rows, so the window head can slice between an assistant row carrying
   // `toolCalls` and its tool_result rows. Replaying such an orphaned
@@ -147,7 +170,12 @@ export function toLLMMessages(stored: StoredMessage[]): Message[] {
         messages.push({ role: 'user', content: msg.content });
       }
     } else if (msg.role === 'assistant') {
-      if (msg.toolCalls && msg.toolCalls.length > 0) {
+      // Item 7 — only a structurally-marked row replays as a compaction block;
+      // a row whose TEXT merely looks like one stays text (llm.ts envelope notes).
+      const compaction = compactionFromStoredRow(msg);
+      if (compaction) {
+        messages.push({ role: 'assistant', content: encodeCompactionEnvelope(compaction) });
+      } else if (msg.toolCalls && msg.toolCalls.length > 0) {
         const content: MessageContent[] = [];
         // Blank text is never a block (see EMPTY_ASSISTANT_TEXT); tool_use follows.
         if (msg.content.trim()) content.push({ type: 'text', text: msg.content });
@@ -225,5 +253,5 @@ export function toLLMMessages(stored: StoredMessage[]): Message[] {
     }
   }
 
-  return messages;
+  return opts.serverCompaction ? messages : flattenCompactionEnvelopes(messages);
 }

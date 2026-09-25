@@ -1,7 +1,7 @@
 import { fstatSync } from 'node:fs';
 import { format as formatArgs } from 'node:util';
 import { readConfig } from '@ethosagent/config';
-import { createEventTranslator } from '@ethosagent/surface-kit';
+import { createEventTranslator, credentialInstruction } from '@ethosagent/surface-kit';
 import { answerSuffix, EthosError, toEthosError } from '@ethosagent/types';
 import { applyCliOverrides, parseCliOverrideFlags } from '../cli-overrides';
 import { releaseCommandRuntime } from '../lib/release-command-runtime';
@@ -190,7 +190,14 @@ async function runZeroText(argv: string[], args: ZeroArgs): Promise<void> {
     for await (const event of loop.run(fullPrompt, {
       sessionKey,
       personalityId,
+      // No masked input on a one-shot pipe: a missing plugin credential ends
+      // the turn with the one-line CLI instruction instead.
+      credentialPrompt: true,
     })) {
+      if (event.type === 'credential_required') {
+        process.stderr.write(`${credentialInstruction(event)}\n`);
+        process.exitCode = 1;
+      }
       if (event.type === 'text_delta') {
         streamed += event.text;
         if (!noStream) process.stdout.write(event.text);
@@ -291,8 +298,17 @@ async function runZeroStructured(argv: string[], args: ZeroArgs): Promise<void> 
         ethosVersion: buildVersionInfo().version,
       });
     }
-    for await (const event of loop.run(fullPrompt, { sessionKey, personalityId })) {
+    // `credentialPrompt` — a refusal lands in `result.error` (`buildResultLine`).
+    for await (const event of loop.run(fullPrompt, {
+      sessionKey,
+      personalityId,
+      credentialPrompt: true,
+    })) {
       translator.push(event);
+      if (event.type === 'credential_required') {
+        process.stderr.write(`ethos -z: ${credentialInstruction(event)}\n`);
+        process.exitCode = 1;
+      }
       if (event.type === 'run_start' && event.traceId !== undefined) traceId ??= event.traceId;
       if (event.type === 'done' && event.traceId !== undefined) traceId = event.traceId;
       if (event.type === 'error') process.exitCode = 1;

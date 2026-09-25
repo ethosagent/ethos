@@ -13,7 +13,12 @@ import type {
   DryRunToolPlan,
   RunOptions,
 } from '@ethosagent/core';
-import type { ClarifySurfaceType, ModelDeviation, ModelResolutionSource } from '@ethosagent/types';
+import type {
+  AgentEvent,
+  ClarifySurfaceType,
+  ModelDeviation,
+  ModelResolutionSource,
+} from '@ethosagent/types';
 import { InMemorySteerSink } from './in-memory-steer-sink';
 
 export type BridgeOpts = Omit<RunOptions, 'abortSignal'>;
@@ -100,6 +105,14 @@ interface BridgeEventMap {
   ];
   /** Emitted when dryRun is active — carries the planned tool calls. */
   dry_run_summary: [plan: DryRunToolPlan[], capped: number];
+  /** openclaw-9.5 item 1 — the turn was refused pre-turn for a missing plugin
+   *  credential (only when the send passed `credentialPrompt: true`). The
+   *  surface collects the value masked, stores it with
+   *  `PluginLoader.setCredential`, and resends `pendingUserMessage`. A `done`
+   *  with empty text follows, as for any refused turn. */
+  credential_required: [
+    request: Omit<Extract<AgentEvent, { type: 'credential_required' }>, 'type'>,
+  ];
 }
 
 interface QueuedSend {
@@ -379,6 +392,11 @@ export class AgentBridge extends EventEmitter<BridgeEventMap> {
           case 'dry_run_summary':
             this.emit('dry_run_summary', event.plan, event.capped);
             break;
+          case 'credential_required': {
+            const { type: _type, ...request } = event;
+            this.emit('credential_required', request);
+            break;
+          }
         }
       }
     } catch (err) {

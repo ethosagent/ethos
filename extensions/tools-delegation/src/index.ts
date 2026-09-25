@@ -398,6 +398,13 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
             "Which worker runs the job. Only valid with background: true. Defaults to 'ethos' (an ordinary Ethos sub-agent). " +
             'Any other name must be registered in this deployment — an unregistered name is refused, never silently downgraded.',
         },
+        deliver: {
+          type: 'string',
+          enum: ['user', 'parent'],
+          description:
+            "Who sees the result first. Only valid with background: true. 'user' (default) sends the result to the chat as-is. " +
+            "'parent' lets you review the result in one follow-up turn on a channel chat first, and the user sees your reply instead.",
+        },
       },
       required: ['prompt'],
     },
@@ -410,6 +417,7 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
         return_mode = 'full',
         background: runInBackground,
         runner,
+        deliver,
       } = args as {
         prompt: string;
         personality?: string;
@@ -417,7 +425,30 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
         return_mode?: 'full' | 'summary';
         background?: boolean;
         runner?: string;
+        deliver?: 'user' | 'parent';
       };
+
+      // `deliver` routes a background result; a blocking call returns its
+      // result to this turn already. Refused like `runner` rather than ignored.
+      if (deliver !== undefined && runInBackground !== true) {
+        return {
+          ok: false,
+          code: 'input_invalid',
+          error: 'deliver is only valid with background: true',
+        };
+      }
+      if (deliver !== undefined && deliver !== 'user' && deliver !== 'parent') {
+        return { ok: false, code: 'input_invalid', error: "deliver must be 'user' or 'parent'" };
+      }
+      // One review hop, never a chain (plan openclaw-9.5-adoption D10/D30): a
+      // parent-review turn carries `reviewOfJobId` (RunOptions → ToolContext).
+      if (deliver === 'parent' && ctx.reviewOfJobId !== undefined) {
+        return {
+          ok: false,
+          code: 'input_invalid',
+          error: 'a review turn cannot request another parent review',
+        };
+      }
 
       // `runner` selects a background worker; there is nothing to select on the
       // blocking path. Refusing beats ignoring — a silently dropped runner runs
@@ -530,6 +561,7 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
           label: jobLabel,
           prompt,
           runner: jobRunner,
+          ...(deliver === 'parent' ? { deliver } : {}),
           ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
           ...(originPlatform ? { originPlatform } : {}),
           ...(originBotKey ? { originBotKey } : {}),

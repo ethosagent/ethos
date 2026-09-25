@@ -179,6 +179,8 @@ function harness(
     typing?: boolean;
     gateway?: Partial<GatewayConfig>;
     bot?: Partial<GatewayBotConfig>;
+    /** Share one transcript across two harnesses — a process restart. */
+    session?: InMemorySessionStore;
   } = {},
 ) {
   const gate = gatedEngine();
@@ -226,7 +228,7 @@ function harness(
   const loop = new AgentLoop({
     llm: scripted.llm,
     tools,
-    session: new InMemorySessionStore(),
+    session: opts.session ?? new InMemorySessionStore(),
     personalities,
     contextEngines,
     safety: createTestSafety(),
@@ -242,6 +244,12 @@ function harness(
     clarifySweepIntervalMs: 0,
     clarifyEscalationDelayMs: 0,
     streamingEditIntervalMs: 0,
+    // A replay resolves its adapter from the registry (`adapterForBot`), and
+    // `acceptInbound` spools only a message a replay could resolve one for —
+    // so a spool-wired harness registers its adapter, as production wiring does.
+    ...(opts.session || opts.gateway?.inboundSpool
+      ? { adapters: new Map([['telegram', out.adapter]]) }
+      : {}),
     ...opts.gateway,
   });
   return { gw, gate, scripted, out };
@@ -365,6 +373,36 @@ describe('F07 — a gateway turn drains AgentLoop past `done`', () => {
     h.gate.releaseAll();
     await turn;
     expect(spool.stats()).toMatchObject({ processing: 0, done: 1 });
+  });
+
+  // Plan openclaw-9.5-adoption D20 — a KNOWN, accepted behaviour, pinned so it
+  // stays a decision: the crashed turn had already appended the user message
+  // (AgentLoop persists it before the first LLM call), and `SessionStore` has
+  // no delete-message method, so the replayed turn appends it a second time.
+  // The model sees the same text twice with no reply between — harmless.
+  it('a replay may duplicate the user message in the session transcript', async () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const session = new InMemorySessionStore();
+    const gateway = { inboundSpool: spool, inboundSpoolOptions: { replayIntervalMs: 0 } };
+    const first = harness({ session, gateway });
+    void first.gw.handleMessage(msg('HOLD what is two plus two'), first.out.adapter);
+    // The user message is in the transcript and the LLM call is parked: kill -9.
+    await waitUntil(() => first.scripted.state.calls === 1);
+
+    const second = harness({ session, gateway });
+    second.scripted.releaseHold();
+    await second.gw.replayInboundSpool();
+    await waitUntil(() => second.gate.parked() === 1);
+    second.gate.releaseAll();
+    await waitUntil(() => spool.stats().done === 1);
+
+    const [s] = await session.listSessions();
+    const history = await session.getMessages(s?.id ?? '');
+    const asked = history.filter(
+      (m) => m.role === 'user' && m.content.includes('what is two plus two'),
+    );
+    expect(asked).toHaveLength(2);
+    expect(second.out.sends.map((x) => x.text)).toEqual(['answer 1']);
   });
 
   it('keeps the tool-progress audience boundary: internal progress is never surfaced', async () => {
@@ -840,6 +878,43 @@ describe('Gateway.shutdown waits for the turns it aborted', () => {
     expect(elapsed).toBeGreaterThanOrEqual(90);
     expect(elapsed).toBeLessThan(2_000);
     expect(l.state.finished).toBe(0);
+    l.release();
+    await turn;
+  });
+
+  // `drainTimeoutMs` bounds the whole call: a notice send that never settles
+  // is left behind at the bound, and the drain does not get a fresh budget on
+  // top of it.
+  it('a hung notice send: shutdown still returns within one drain bound, and records it', async () => {
+    const l = abortableLoop('ignore');
+    const blocks: Array<{ code?: string; details?: Record<string, unknown> }> = [];
+    const gw = new Gateway({
+      bots: [{ botKey: 'bot-a', loop: l.loop, binding: { type: 'personality', name: 'default' } }],
+      clarifySweepIntervalMs: 0,
+      clarifyEscalationDelayMs: 0,
+      observability: {
+        recordSafetyBlock: (o) => blocks.push(o),
+        recordChannelAllow: () => {},
+        recordChannelDeny: () => {},
+      },
+    });
+    const out = recordingAdapter();
+    out.adapter.send = vi.fn(() => new Promise<DeliveryResult>(() => {}));
+    const turn = gw.handleMessage(msg('hi'), out.adapter).catch(() => {});
+    await waitUntil(() => l.state.started === 1);
+
+    const t0 = Date.now();
+    await gw.shutdown({ notify: 'INTERRUPTED', drainTimeoutMs: 150 });
+    const elapsed = Date.now() - t0;
+
+    expect(elapsed).toBeGreaterThanOrEqual(140);
+    expect(elapsed).toBeLessThan(1_000);
+    expect(blocks.find((b) => b.code === 'gateway.shutdown_notify_timeout')?.details).toEqual({
+      stillPending: 1,
+      timeoutMs: 150,
+    });
+    // The turn ignoring the abort is recorded too — with no time left to wait.
+    expect(blocks.some((b) => b.code === 'gateway.shutdown_drain_timeout')).toBe(true);
     l.release();
     await turn;
   });

@@ -634,7 +634,11 @@ export async function* assembleContext(
   // Q1 — collapse exact-duplicate tool results before building the
   // LLM-facing history, so re-reads of the same file don't burn tokens.
   // `replayHistory` carries any active compaction watermark (summary + tail).
-  let llmMessages = toLLMMessages(dedupHistory(replayHistory, ghostOpts));
+  // Item 7 — the compaction envelope only for a provider that compacts
+  // server-side; every other provider gets the readable summary (history.ts).
+  let llmMessages = toLLMMessages(dedupHistory(replayHistory, ghostOpts), {
+    serverCompaction: setup.serverCompaction.active,
+  });
   // C3 — age out image/document blocks past the recency window. Runs on the
   // unconditional path, ahead of the pressure-gated aging below, because this
   // one is about RECENCY: a session that never nears its context window would
@@ -704,50 +708,58 @@ export async function* assembleContext(
     COMPACTION_TAIL_KEEP,
     deps.compaction?.minTailUserMessages,
   );
-  const compacted = await maybeCompact(
-    {
-      llm: deps.llm,
-      contextEngines: deps.contextEngines,
-      session: deps.session,
-      observability: deps.observability,
-      llmHandle: deps.llmHandle,
-      storage: deps.storage,
-      dataDir: deps.dataDir,
-      countTokens: deps.llm.countTokens.bind(deps.llm),
-      ...(opts.maxCompletionTokens !== undefined
-        ? { reservedOutputTokens: opts.maxCompletionTokens }
-        : {}),
-      ...(deps.compaction?.pressure !== undefined ? { pressure: deps.compaction.pressure } : {}),
-      ...(deps.compaction?.target !== undefined ? { target: deps.compaction.target } : {}),
-      ...(deps.compaction?.charsPerToken !== undefined
-        ? { charsPerToken: deps.compaction.charsPerToken }
-        : {}),
-      ...(deps.compaction?.gateDelta !== undefined ? { gateDelta: deps.compaction.gateDelta } : {}),
-      ...(deps.compaction?.maxContextTokens !== undefined
-        ? { maxContextTokens: deps.compaction.maxContextTokens }
-        : {}),
-      ...(deps.compaction?.maxSingleToolResultTokens !== undefined
-        ? { maxSingleToolResultTokens: deps.compaction.maxSingleToolResultTokens }
-        : {}),
-      ...(deps.compaction?.defaultEngine !== undefined
-        ? { defaultEngine: deps.compaction.defaultEngine }
-        : {}),
-      ...(lastActualInputTokens !== undefined ? { lastActualInputTokens } : {}),
-      ...(staticTokens !== undefined ? { staticTokens } : {}),
-    },
-    llmMessages,
-    systemPrompt ?? '',
-    personality,
-    {
-      sessionId,
-      sessionKey,
-      turnNumber,
-      lastCompactionTurn,
-      ...(autoBoundary.index > 0 && autoBoundary.keptFromMessageId
-        ? { keptFromMessageId: autoBoundary.keptFromMessageId }
-        : {}),
-    },
-  );
+  // Item 7 (D32) — exactly one compactor: when this turn's provider compacts
+  // server-side, the local pre-LLM gate does not run (`TurnSetup.serverCompaction`).
+  const compacted: Awaited<ReturnType<typeof maybeCompact>> = setup.serverCompaction.active
+    ? { messages: llmMessages }
+    : await maybeCompact(
+        {
+          llm: deps.llm,
+          contextEngines: deps.contextEngines,
+          session: deps.session,
+          observability: deps.observability,
+          llmHandle: deps.llmHandle,
+          storage: deps.storage,
+          dataDir: deps.dataDir,
+          countTokens: deps.llm.countTokens.bind(deps.llm),
+          ...(opts.maxCompletionTokens !== undefined
+            ? { reservedOutputTokens: opts.maxCompletionTokens }
+            : {}),
+          ...(deps.compaction?.pressure !== undefined
+            ? { pressure: deps.compaction.pressure }
+            : {}),
+          ...(deps.compaction?.target !== undefined ? { target: deps.compaction.target } : {}),
+          ...(deps.compaction?.charsPerToken !== undefined
+            ? { charsPerToken: deps.compaction.charsPerToken }
+            : {}),
+          ...(deps.compaction?.gateDelta !== undefined
+            ? { gateDelta: deps.compaction.gateDelta }
+            : {}),
+          ...(deps.compaction?.maxContextTokens !== undefined
+            ? { maxContextTokens: deps.compaction.maxContextTokens }
+            : {}),
+          ...(deps.compaction?.maxSingleToolResultTokens !== undefined
+            ? { maxSingleToolResultTokens: deps.compaction.maxSingleToolResultTokens }
+            : {}),
+          ...(deps.compaction?.defaultEngine !== undefined
+            ? { defaultEngine: deps.compaction.defaultEngine }
+            : {}),
+          ...(lastActualInputTokens !== undefined ? { lastActualInputTokens } : {}),
+          ...(staticTokens !== undefined ? { staticTokens } : {}),
+        },
+        llmMessages,
+        systemPrompt ?? '',
+        personality,
+        {
+          sessionId,
+          sessionKey,
+          turnNumber,
+          lastCompactionTurn,
+          ...(autoBoundary.index > 0 && autoBoundary.keptFromMessageId
+            ? { keptFromMessageId: autoBoundary.keptFromMessageId }
+            : {}),
+        },
+      );
   llmMessages = compacted.messages;
   // F2 — cache breakpoints from the compaction, forwarded to every provider
   // call this turn so the prompt cache survives the compacted prefix. When no

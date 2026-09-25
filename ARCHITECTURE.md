@@ -420,6 +420,18 @@ field rename, a field removal, or a *required*-field addition does. Adding a
 `EthosPluginApi.registerContextEngine`, so it drags in the Plugin contract row
 above and its contract-major bump.
 
+Adding a **variant** to the `CompletionChunk` union is also a §VI
+**Substantive** change under the LLM provider contract row. The `compaction`
+variant (openclaw-9.5-adoption item 7, D31) was added that way: owner-approved,
+the drift gate (`llm-provider-drift.test.ts`) moved from 8 to 9 in the same
+commit and now checks the union against the `frozen_variants` manifest in §IX
+as well as its own list, and a CHANGELOG entry names the class. A new variant
+is additive for consumers that ignore unknown chunk types, but a consumer that
+validates types against a fixed set (`checkChunkVariants` in
+`packages/wiring/src/conformance/index.ts`) must learn it in the same change.
+[LLM provider governance](docs/content/building/explanation/llm-provider-governance.md)
+records the amendment and its sign-off state.
+
 ### Bump obligations
 
 Every schema bump requires, in the same commit:
@@ -699,6 +711,12 @@ frozen_schemas:
   llm_provider:
     owner_class: llm_platform_maintainers
     drift_gate: variant_enumeration_test
+    # §VI Substantive amendment, openclaw-9.5-adoption item 7 (D31): the
+    # `compaction` variant carries a provider-side compaction block out of the
+    # provider so it can be round-tripped. `llm-provider-drift.test.ts` checks
+    # the CompletionChunk union against BOTH its own list and this manifest.
+    frozen_variant_count: 9
+    frozen_variants: [text_delta, thinking_delta, tool_use_start, tool_use_delta, tool_use_end, usage, done, warning, compaction]
 
   hook_models:
     owner_class: maintainers_unanimous

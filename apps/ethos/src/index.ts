@@ -815,7 +815,7 @@ try {
     }
 
     case 'upgrade': {
-      await runUpgrade();
+      process.exitCode = await runUpgrade(args.slice(1));
       break;
     }
 

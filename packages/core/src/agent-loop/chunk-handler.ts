@@ -93,5 +93,19 @@ export function* handleChunk(
     case 'done':
       // finishReason available here for future context-compaction (Phase 3)
       break;
+
+    case 'warning':
+    case 'compaction':
+      // No AgentEvent: `streamStep` (./stages/stream-step.ts) reads both
+      // directly — a compaction block is persisted and replayed, and the
+      // server-compaction rejection warning clears the turn's flag.
+      break;
+
+    default: {
+      // A new CompletionChunk variant must be decided here, not dropped
+      // silently (the union is frozen: llm-provider-drift.test.ts).
+      const _exhaustive: never = chunk;
+      return _exhaustive;
+    }
   }
 }

@@ -19,6 +19,9 @@ const EXCLUDED: SseEventType[] = [
   'context_meta',
   'stream_meta',
   'protocol.upgrade_required',
+  // An interactive prompt answered in the requesting chat pane; it carries
+  // the user's pending message text, which has no business fanning out.
+  'credential_required',
 ];
 
 describe('ACTIVITY_EVENT_TYPES', () => {

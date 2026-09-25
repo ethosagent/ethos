@@ -16,7 +16,7 @@ Platform adapters (Slack, Telegram, Discord, etc.) all emit the same `InboundMes
 
 **Lane derivation.** Every inbound message is keyed `${platform}:${chatId}` (e.g. `telegram:-1001234`, `slack:C9XYZ`). Each lane gets its own `SessionLane`. Turns within a lane execute strictly in order; different lanes run concurrently. The session key passed into `AgentLoop` defaults to the lane key but can be replaced with `${laneKey}:${Date.now()}` after `/new` to start a fresh history (`src/index.ts:169`).
 
-**Dedup.** Before any work, `isDuplicate(message)` checks a bounded `Set<string>` of recent `(platform, chatId, messageId)` triples. The window defaults to 1024 and is FIFO-evicted (`src/index.ts:130`). Adapters that don't populate `messageId` skip dedup — there's no key. This protects against billing duplication from polling reconnects and webhook retries (OpenClaw #71761).
+**Dedup.** Before any work, `acceptInbound(message)` checks a bounded `Set<string>` of recent `(platform, chatId, messageId)` triples. The window defaults to 1024 and is FIFO-evicted (`src/index.ts:130`). Adapters that don't populate `messageId` skip dedup — there's no key. This protects against billing duplication from polling reconnects and webhook retries (OpenClaw #71761).
 
 **Slash commands.** Handled by Gateway *before* the `AgentLoop` sees the text. The set is fixed: `/new` and `/reset` (fork session, clear usage, reset personality), `/stop` (abort current turn + drop queued), `/usage` (per-lane token / cost totals), `/personality` (show / list / switch — switching also forks a new session so identity takes effect immediately, `src/index.ts:215`), `/help`. Recognition is case-insensitive on the first whitespace-separated token (`src/index.ts:158`).
 

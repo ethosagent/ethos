@@ -45,7 +45,7 @@ import type { SecretsResolver, Skill } from '@ethosagent/types';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { type LiveKitMediaResolution, resolveLiveKitMedia } from '../livekit-media';
 import { buildVersionInfo } from '../version-info';
-import { createLLM, getFunnelTracker, getSecretsResolver, getStorage } from '../wiring';
+import { createLLM, getSecretsResolver, getStorage } from '../wiring';
 
 const c = {
   reset: '\x1b[0m',
@@ -356,7 +356,7 @@ export function computeDoctorExit(f: DoctorFailFlags): number {
 
 type Storage = ReturnType<typeof getStorage>;
 
-interface DbCheckResult {
+export interface DbCheckResult {
   /** false only when the DB exists but cannot be opened/queried. */
   ok: boolean;
   /** true when the file has not been created yet — a healthy fresh-install state. */
@@ -364,23 +364,28 @@ interface DbCheckResult {
   error?: string;
 }
 
-async function checkSessionsDb(storage: Storage): Promise<DbCheckResult> {
+export async function checkSessionsDb(storage: Storage): Promise<DbCheckResult> {
   const dbPath = join(ethosDir(), 'sessions.db');
   if (!(await storage.exists(dbPath))) {
     return { ok: true, absent: true };
   }
+  const { default: Database } = await import('@ethosagent/sqlite');
+  let db: InstanceType<typeof Database> | undefined;
   try {
-    const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
-    const store = new SQLiteSessionStore(dbPath);
-    try {
-      // Trivial query — exercises open + read path; surfaces WAL/corruption.
-      await store.getMessages('__doctor_probe__', { limit: 1 });
-      return { ok: true, absent: false };
-    } finally {
-      store.close();
-    }
+    // A raw open, never `SQLiteSessionStore`: that constructor runs `migrate()`,
+    // and a NEWER binary's doctor migrating sessions.db is what leaves the
+    // rolled-back binary unable to open it (`ethos upgrade`'s health gate runs
+    // exactly that doctor — plan openclaw-9.5-adoption D24). Read-write for the
+    // same reason as `checkDatabaseIntegrity` below; a SELECT writes nothing.
+    // Pinned by __tests__/diagnostics-never-migrate.test.ts.
+    db = new Database(dbPath);
+    // Trivial query — exercises open + read path; surfaces WAL/corruption.
+    db.prepare('SELECT 1 FROM sessions LIMIT 1').all();
+    return { ok: true, absent: false };
   } catch (err) {
     return { ok: false, absent: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    db?.close();
   }
 }
 
@@ -506,7 +511,13 @@ export interface InboundSpoolReport {
   /** `absent` — no spool file yet (no gateway has run), not a failure. */
   status: 'absent' | 'ok' | 'failed';
   error?: string;
-  counts?: { received: number; processing: number; done: number; dead: number };
+  counts?: {
+    received: number;
+    processing: number;
+    done: number;
+    dead: number;
+    interrupted: number;
+  };
   /** Age of the oldest owed (`received`) row, ms. */
   oldestReceivedAgeMs?: number;
   /** `received` rows for a botKey the config no longer names. `null` when the
@@ -517,6 +528,14 @@ export interface InboundSpoolReport {
     platform: string;
     chatId: string;
     attempts: number;
+    lastError: string | null;
+  }>;
+  /** Cut after a tool had started, so never replayed (plan openclaw-9.5-adoption
+   *  D5): waiting on the user's `retry`, or an operator's replay/discard. */
+  interrupted?: Array<{
+    id: string;
+    platform: string;
+    chatId: string;
     lastError: string | null;
   }>;
 }
@@ -541,7 +560,11 @@ export async function configuredGatewayBotKeys(config: EthosConfig): Promise<str
 
 /**
  * Open the spool (only if it exists — a doctor run must not create one) and
- * report counts, the oldest owed row, orphans and dead letters.
+ * report counts, the oldest owed row, orphans, dead letters and interrupted rows.
+ *
+ * A raw open plus the package's read helpers, never `SQLiteInboundSpool`,
+ * whose constructor migrates (plan openclaw-9.5-adoption D24). Pinned by
+ * __tests__/diagnostics-never-migrate.test.ts.
  */
 export async function checkInboundSpool(
   dataDir: string,
@@ -550,36 +573,49 @@ export async function checkInboundSpool(
 ): Promise<InboundSpoolReport> {
   const path = join(dataDir, 'inbound-spool.db');
   if (!existsSync(path)) return { status: 'absent' };
-  const { SQLiteInboundSpool } = await import('@ethosagent/inbound-spool');
-  let spool: InstanceType<typeof SQLiteInboundSpool> | undefined;
+  const { default: Database } = await import('@ethosagent/sqlite');
+  const {
+    readSpoolDead,
+    readSpoolInterrupted,
+    readSpoolOldestReceivedAt,
+    readSpoolOrphaned,
+    readSpoolStats,
+  } = await import('@ethosagent/inbound-spool');
+  let db: InstanceType<typeof Database> | undefined;
   try {
-    spool = new SQLiteInboundSpool(path);
-    const oldest = spool.oldestReceivedAt();
+    db = new Database(path);
+    const oldest = readSpoolOldestReceivedAt(db);
     return {
       status: 'ok',
-      counts: spool.stats(),
+      counts: readSpoolStats(db),
       ...(oldest !== null ? { oldestReceivedAgeMs: Math.max(0, now - oldest) } : {}),
       orphaned:
         botKeys === null
           ? null
-          : spool.listOrphaned(botKeys).map((r) => ({
+          : readSpoolOrphaned(db, botKeys).map((r) => ({
               id: r.id,
               platform: r.platform,
               botKey: r.botKey,
               chatId: r.chatId,
             })),
-      dead: spool.listDead(500).map((r) => ({
+      dead: readSpoolDead(db, 500).map((r) => ({
         id: r.id,
         platform: r.platform,
         chatId: r.chatId,
         attempts: r.attempts,
         lastError: r.lastError ?? null,
       })),
+      interrupted: readSpoolInterrupted(db, 500).map((r) => ({
+        id: r.id,
+        platform: r.platform,
+        chatId: r.chatId,
+        lastError: r.lastError ?? null,
+      })),
     };
   } catch (err) {
     return { status: 'failed', error: err instanceof Error ? err.message : String(err) };
   } finally {
-    spool?.close();
+    db?.close();
   }
 }
 
@@ -589,9 +625,9 @@ export function describeInboundSpool(report: InboundSpoolReport): string[] {
   if (report.status === 'absent')
     return ['–  No inbound spool yet (created by ethos gateway start).'];
   if (report.status === 'failed') return [`✗  inbound-spool.db failed to open: ${report.error}`];
-  const n = report.counts ?? { received: 0, processing: 0, done: 0, dead: 0 };
+  const n = report.counts ?? { received: 0, processing: 0, done: 0, dead: 0, interrupted: 0 };
   const lines = [
-    `✓  ${n.received} owed · ${n.processing} in progress · ${n.done} done · ${n.dead} dead`,
+    `✓  ${n.received} owed · ${n.processing} in progress · ${n.done} done · ${n.dead} dead · ${n.interrupted} interrupted`,
   ];
   if (report.oldestReceivedAgeMs !== undefined) {
     lines.push(
@@ -619,6 +655,19 @@ export function describeInboundSpool(report: InboundSpoolReport): string[] {
     if (dead.length > 10) lines.push(`   … and ${dead.length - 10} more`);
     lines.push(
       '   Replay with: ethos gateway spool replay <id>   Drop with: ethos gateway spool discard <id>',
+    );
+  }
+  const interrupted = report.interrupted ?? [];
+  if (interrupted.length > 0) {
+    lines.push(
+      `⚠  ${interrupted.length} interrupted message(s) — cut after an action started, so not replayed; each chat was asked to reply \`retry\`:`,
+    );
+    for (const r of interrupted.slice(0, 10)) {
+      lines.push(`   ${r.id}  ${r.platform}:${r.chatId}  ${r.lastError ?? ''}`);
+    }
+    if (interrupted.length > 10) lines.push(`   … and ${interrupted.length - 10} more`);
+    lines.push(
+      '   Re-run anyway with: ethos gateway spool replay <id>   Drop with: ethos gateway spool discard <id>',
     );
   }
   return lines;
@@ -1690,7 +1739,11 @@ export async function runFunnelReport(jsonMode: boolean): Promise<void> {
     ? { reset: '', dim: '', bold: '', green: '' }
     : { reset: c.reset, dim: c.dim, bold: c.bold, green: c.green };
 
-  const state = await getFunnelTracker().readState();
+  // `readFunnelState`, not `getFunnelTracker().readState()`: the tracker's
+  // constructor opens the observability store, whose constructor migrates
+  // observability.db (plan openclaw-9.5-adoption D24).
+  const { readFunnelState } = await import('@ethosagent/wiring');
+  const state = await readFunnelState(getStorage(), ethosDir());
 
   if (jsonMode) {
     process.stdout.write(`${JSON.stringify(state ?? {})}\n`);

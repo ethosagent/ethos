@@ -13,10 +13,16 @@ import {
   stripAnsiEscapes,
 } from '@ethosagent/core';
 import { FsAttachmentCache, FsStorage } from '@ethosagent/storage-fs';
-import { parseSlashCommand, shouldSurfaceProgress } from '@ethosagent/surface-kit';
+import {
+  credentialInstruction,
+  type EventTranslatorCredentialRequired,
+  parseSlashCommand,
+  shouldSurfaceProgress,
+} from '@ethosagent/surface-kit';
 import type { SplashInventory } from '@ethosagent/tui';
 import {
   type Attachment,
+  type BackgroundJob,
   type JobStore,
   type NotificationAdapter,
   type SteerSink,
@@ -32,6 +38,11 @@ import {
   refreshCommandIfStale,
   scanCommandsIntoRegistry,
 } from '../lib/command-loader';
+import {
+  collectPluginCredential,
+  createMutableOutput,
+  readMaskedLine,
+} from '../lib/credential-prompt';
 import { readFileMemorySnapshot } from '../lib/file-memory';
 import { type LoopGoals, runGoalSlash, runGoalsSlash } from '../lib/goal-slash';
 import { createLoopRebuilder } from '../lib/loop-rebuilder';
@@ -40,6 +51,7 @@ import { formatQuickCommandOutput, runQuickCommand } from '../lib/quick-command-
 import { formatRecap } from '../lib/recap';
 import { type ReleasableRuntime, releaseCommandRuntime } from '../lib/release-command-runtime';
 import { formatResumeHint } from '../lib/resume-hint';
+import { runBranchCommand } from '../lib/session-branches';
 import { refreshSkillIfStale, type SkillMeta, scanSkillsIntoRegistry } from '../lib/skill-slash';
 import { buildBaseRegistry, type SlashCommandRegistry } from '../lib/slash-commands';
 import { SpinnerState } from '../lib/spinner';
@@ -170,6 +182,13 @@ interface ChatState {
   awaitingConsent: boolean;
   /** True while a `clarify` tool prompt owns the readline loop. */
   awaitingClarify: boolean;
+  /** openclaw-9.5 item 1 — true while a masked plugin-credential read owns the
+   *  readline loop (`readMaskedLine`, lib/credential-prompt.ts). */
+  awaitingSecret: boolean;
+  /** Collect a missing plugin credential masked and store it; `true` → the
+   *  pending message is resubmitted. Absent → turns do not opt in to the
+   *  pre-turn check (`RunOptions.credentialPrompt`). */
+  collectCredential?: (req: EventTranslatorCredentialRequired) => Promise<boolean>;
   /** Attachments queued via /attach, drained on the next turn. */
   pendingAttachments: Attachment[];
   /** Pending tier override for the next turn (from /tier command). Consumed once. */
@@ -318,6 +337,9 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     const onSkillProposed = setOnSkillProposed
       ? makeTuiSkillProposalSubscriber(setOnSkillProposed)
       : undefined;
+    // The writer for the TUI's masked credential modal follows `/model`
+    // switches, since the replaced runtime's dispose unloads its plugins.
+    let activePluginLoader = pluginLoader;
     const rebuild = createLoopRebuilder({ drain, dispose }, (modelId: string) =>
       resolveActiveLoop({ ...config, model: modelId }),
     );
@@ -334,6 +356,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
         const next = await rebuild(modelId);
         liveRuntime = next.runtime;
         slashCommands.rebind(next.runtime.pluginLoader);
+        activePluginLoader = next.runtime.pluginLoader;
         onNotification.rebind(next.runtime.notificationRouter);
         // The replaced loop may still propose while it drains; its slot lets
         // go of the TUI's callback only once that runtime is retired.
@@ -356,7 +379,21 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       onNotification,
       // `/memory` on the configured backend (the vault under `memory: vault`).
       readMemory: (scope) => readFileMemorySnapshot(config, scope),
+      // `/fork`, `/branches`, `/branch <n>` — the same handler the readline
+      // fallback uses (lib/session-branches.ts), over this state dir's sessions.db.
+      branches: async (command, arg, sessionKey) => {
+        const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+        const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+        try {
+          return await runBranchCommand(store, command, arg, sessionKey);
+        } finally {
+          store.close();
+        }
+      },
       ...(onSkillProposed ? { onSkillProposed } : {}),
+      // openclaw-9.5 item 1 (D15) — the one writer for a masked credential.
+      setPluginCredential: (pluginId, key, value) =>
+        activePluginLoader.setCredential(pluginId, key, value),
     });
     // The TUI has exited: release whichever runtime is current (a `/model`
     // switch retires the one it replaced, not this one).
@@ -365,12 +402,28 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   }
 
   const completer = makeCompleter(registry);
+  // Muted while a plugin credential is typed (lib/credential-prompt.ts).
+  const rlOutput = createMutableOutput(process.stdout);
   const rl = createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output: rlOutput.stream,
     terminal: true,
     ...(completer ? { completer } : {}),
   });
+
+  // Once the interface closes (`/exit`, Ctrl-D, piped stdin reaching EOF),
+  // `rl.prompt()` throws ERR_USE_AFTER_CLOSE ("readline was closed"), and the
+  // async continuations that re-prompt (a slash handler's `.then`, a finished
+  // turn, a clarify teardown, a background notice) can all land after it, while
+  // the `close` handler below is still releasing the runtime. Every prompt goes
+  // through here. Pinned by apps/ethos/src/__tests__/chat-piped-exit.test.ts.
+  let rlClosed = false;
+  rl.once('close', () => {
+    rlClosed = true;
+  });
+  const reprompt = (): void => {
+    if (!rlClosed) rl.prompt();
+  };
 
   // Wire skill-evolution notifications into the interactive readline session.
   setOnSkillProposed?.((skillId, _personalityId) => {
@@ -425,8 +478,22 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     ...(backgroundExecutor ? { backgroundExecutor } : {}),
     awaitingConsent: false,
     awaitingClarify: false,
+    awaitingSecret: false,
     pendingAttachments: [],
     dryRun: opts.dryRun ?? false,
+    collectCredential: async (req: EventTranslatorCredentialRequired) => {
+      state.awaitingSecret = true;
+      try {
+        return await collectPluginCredential(req, {
+          readSecret: (question) => readMaskedLine(rl, rlOutput, process.stdout, question),
+          write: (line) => out(`${c.dim}${line}${c.reset}\n`),
+          // D15 — the one writer; never SecretsResolver.set from here.
+          setCredential: (pluginId, key, value) => pluginLoader.setCredential(pluginId, key, value),
+        });
+      } finally {
+        state.awaitingSecret = false;
+      }
+    },
   };
 
   // Clarify surface — when the agent calls the `clarify` tool, pause the
@@ -436,7 +503,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     state.awaitingClarify = true;
     out(`\n${c.dim}${formatClarifyPrompt(req)}${c.reset}`);
     rl.setPrompt(`${c.cyan}?${c.reset}> `);
-    rl.prompt();
+    reprompt();
 
     let done = false;
     const finish = () => {
@@ -446,7 +513,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       unsubscribe();
       state.awaitingClarify = false;
       rl.setPrompt(promptString(state));
-      if (!state.abort) rl.prompt();
+      if (!state.abort) reprompt();
     };
     const onLine = (raw: string) => {
       const answer = parseClarifyAnswer(raw, req.options);
@@ -469,7 +536,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
           out(
             `\n${c.dim}That answer did not land: ${clarifyUnresolvedMessage(outcome.reason)}.${c.reset}\n`,
           );
-          if (!state.abort) rl.prompt();
+          if (!state.abort) reprompt();
         });
     };
     // Teardown if the request resolves another way first (timeout / abort-cancel).
@@ -484,23 +551,12 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // a turn while the user is mid-thought is hostile, so we only print and re-prompt.
   // Only `done`/`failed` are surfaced; `aborted` is user-requested and stays silent.
   backgroundExecutor?.onComplete((job) => {
-    if (job.status !== 'done' && job.status !== 'failed') return;
-    const header = `bg:${job.id.slice(0, 8)}`;
-    const statusLine = job.status === 'done' ? 'done' : `error: ${job.error ?? 'unknown'}`;
-    const body = job.status === 'done' ? job.summary : undefined;
-    out(`\n${c.dim}╭─ background [${header}] ${statusLine}${c.reset}\n`);
-    if (body) {
-      const lines = body.split('\n').slice(0, 10);
-      for (const line of lines) {
-        out(`${c.dim}│ ${line}${c.reset}\n`);
-      }
-      if (body.split('\n').length > 10) {
-        out(`${c.dim}│ ... (truncated)${c.reset}\n`);
-      }
-    }
-    out(`${c.dim}╰─${c.reset}\n`);
+    const lines = backgroundCompletionLines(job);
+    if (!lines) return;
+    out('\n');
+    for (const line of lines) out(`${c.dim}${line}${c.reset}\n`);
     if (config.displayBellOnComplete) out('\x07');
-    rl.prompt();
+    reprompt();
   });
 
   rl.on('SIGINT', () => {
@@ -613,17 +669,19 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
   // input can be dispatched on busyMode.
   rl.setPrompt(promptString(state));
-  rl.prompt();
+  reprompt();
 
   rl.on('line', (raw) => {
     // FW-16 — block all input while the consent prompt is active.
     if (state.awaitingConsent) return;
     // A clarify prompt owns the loop via its own one-shot `line` listener.
     if (state.awaitingClarify) return;
+    // So does a masked credential read — and that line is a secret.
+    if (state.awaitingSecret) return;
 
     const input = raw.trim();
     if (!input) {
-      rl.prompt();
+      reprompt();
       return;
     }
 
@@ -651,26 +709,26 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
                 state.draining = false;
                 if (state.verbosity !== 'quiet') renderStatusBarLine(state);
                 rl.setPrompt(promptString(state));
-                rl.prompt();
+                reprompt();
               })
               .catch((err) => {
                 state.draining = false;
                 out(
                   `${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`,
                 );
-                rl.prompt();
+                reprompt();
               });
             return;
           }
           // Only re-prompt when idle; a running turn will prompt on completion.
           if (!state.draining && !state.abort) {
             rl.setPrompt(promptString(state));
-            rl.prompt();
+            reprompt();
           }
         })
         .catch((err) => {
           out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
-          if (!state.draining && !state.abort) rl.prompt();
+          if (!state.draining && !state.abort) reprompt();
         });
       return;
     }
@@ -692,7 +750,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
             state.draining = false;
             if (state.verbosity !== 'quiet') renderStatusBarLine(state);
             rl.setPrompt(promptString(state));
-            rl.prompt();
+            reprompt();
             return;
           }
           out(`${c.dim}[draining queue → ${next}]${c.reset}\n`);
@@ -701,7 +759,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
             .catch((err) => {
               state.draining = false;
               out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
-              rl.prompt();
+              reprompt();
             });
         };
         drainNext();
@@ -709,7 +767,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       .catch((err) => {
         state.draining = false;
         out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
-        rl.prompt();
+        reprompt();
       });
   });
 }
@@ -835,6 +893,8 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
   let hasText = false;
   // Every `text_delta` this turn — what a `returnDirect` answer is checked against.
   let streamedText = '';
+  // openclaw-9.5 item 1 — a pre-turn refusal for a missing plugin credential.
+  let credentialReq: EventTranslatorCredentialRequired | null = null;
   // B3 — the turn's single identity, learned from the first event of the turn.
   // Used to stamp any error this turn writes to `errors.jsonl`, so the log line
   // and the trace in `observability.db` name the same turn.
@@ -858,7 +918,12 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       ...(tierOverride ? { tierOverride } : {}),
       ...(toolsetNarrow ? { toolsetNarrow } : {}),
       ...(state.dryRun ? { dryRun: true } : {}),
+      ...(state.collectCredential ? { credentialPrompt: true } : {}),
     })) {
+      if (event.type === 'credential_required' && credentialReq === null) {
+        const { type: _type, ...req } = event;
+        credentialReq = req;
+      }
       // Lane E (tools-as-code-api) — in-script inner calls carry
       // `audience: 'internal'`. They must not drive turn-level UI state
       // (iteration proxy, spinner, duration stats); rendering is gated in
@@ -964,6 +1029,13 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
       );
     }
     if (state.verbosity !== 'quiet') out('\n\n');
+  }
+
+  // The refused turn has drained (its `done` closed it). Ask for the value
+  // masked, then resubmit the same message as a fresh turn.
+  if (credentialReq && state.collectCredential) {
+    const resubmit = await state.collectCredential(credentialReq);
+    if (resubmit) await runTurn(credentialReq.pendingUserMessage, state, loop);
   }
 }
 
@@ -1109,7 +1181,11 @@ async function runSingleQuery(
   for await (const event of loop.run(input.query, {
     sessionKey: input.sessionKey,
     personalityId: input.personalityId,
+    // One-shot: no masked input here, so a missing plugin credential is
+    // reported as the CLI command that sets it.
+    credentialPrompt: true,
   })) {
+    if (event.type === 'credential_required') out(`${credentialInstruction(event)}\n`);
     if (event.type === 'text_delta') {
       if (firstTextDeltaAt === null) firstTextDeltaAt = Date.now();
       streamedText += event.text;
@@ -1164,6 +1240,28 @@ interface SlashHandlerContext {
 }
 
 /**
+ * The idle-prompt completion notice for a finished background job, as plain
+ * lines (the caller dims them), or `null` for a status that stays silent —
+ * only `done`/`failed` are surfaced; `aborted` is user-requested. Deliberately
+ * blind to `job.deliver` (plan openclaw-9.5-adoption D29): here the user is
+ * already in the parent session, so a `'parent'` job shows the same notice.
+ * Pinned by `__tests__/chat-background-completion.test.ts`.
+ */
+export function backgroundCompletionLines(job: BackgroundJob): string[] | null {
+  if (job.status !== 'done' && job.status !== 'failed') return null;
+  const header = `bg:${job.id.slice(0, 8)}`;
+  const statusLine = job.status === 'done' ? 'done' : `error: ${job.error ?? 'unknown'}`;
+  const body = job.status === 'done' ? job.summary : undefined;
+  const lines = [`╭─ background [${header}] ${statusLine}`];
+  if (body) {
+    for (const line of body.split('\n').slice(0, 10)) lines.push(`│ ${line}`);
+    if (body.split('\n').length > 10) lines.push('│ ... (truncated)');
+  }
+  lines.push('╰─');
+  return lines;
+}
+
+/**
  * Build the /help body. Static built-in commands first, then any
  * plugin-registered slash commands with a `[plugin]` suffix. Exported for
  * unit testing the merge.
@@ -1175,6 +1273,9 @@ export function buildChatHelpText(
     `  /title <name>         set a name for this session\n` +
     `  /title                show current session title\n` +
     `  /new                  start a fresh session\n` +
+    `  /fork                 branch this session (same history, new session)\n` +
+    `  /branches             list this session's branches\n` +
+    `  /branch <n>           switch to branch <n>\n` +
     `  /personality          show current personality\n` +
     `  /personality list     list all personalities\n` +
     `  /personality <id>     start a new session bound to <id>\n` +
@@ -1237,6 +1338,33 @@ async function handleSlashCommand(
       state.startedAt = Date.now();
       out(`${c.dim}[new session started]${c.reset}\n`);
       break;
+
+    case 'fork':
+    case 'branches':
+    case 'branch': {
+      const { SQLiteSessionStore } = await import('@ethosagent/session-sqlite');
+      const store = new SQLiteSessionStore(join(ethosDir(), 'sessions.db'));
+      try {
+        const outcome = await runBranchCommand(store, name, arg, state.sessionKey);
+        if (outcome.switchTo) {
+          // Re-key the REPL onto the branch, resetting what `/new` resets.
+          loop.resetSessionCost(state.sessionKey);
+          ctx.notificationRouter.deregister(state.sessionKey);
+          state.sessionKey = outcome.switchTo.sessionKey;
+          if (outcome.switchTo.personalityId) state.personalityId = outcome.switchTo.personalityId;
+          ctx.notificationRouter.register(state.sessionKey, ctx.cliAdapter);
+          state.contextTokens = 0;
+          state.contextInputTokens = 0;
+          state.startedAt = Date.now();
+        }
+        out(`${c.dim}${outcome.message}${c.reset}\n`);
+      } catch (err) {
+        out(`${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
+      } finally {
+        store.close();
+      }
+      break;
+    }
 
     case 'personality': {
       if (!arg) {

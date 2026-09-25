@@ -326,4 +326,43 @@ describe('AgentBridge.whenIdle waits for an abandoned turn to settle (F06)', () 
     const overridden = new AgentBridge(loop, { turnTimeoutMs: 1_000 });
     expect((overridden as unknown as { turnTimeoutMs: number }).turnTimeoutMs).toBe(1_000);
   });
+
+  it('forwards credential_required without its type tag (openclaw-9.5 item 1)', async () => {
+    const loop = {
+      run: vi.fn(() =>
+        makeEventStream([
+          {
+            type: 'credential_required',
+            pluginId: 'weather',
+            credentialKey: 'API_KEY',
+            kind: 'api_key',
+            label: 'Weather API key',
+            sessionKey: 'tui:x',
+            pendingUserMessage: 'forecast?',
+          },
+          { type: 'done', text: '', turnCount: 0 },
+        ]),
+      ),
+    } as unknown as AgentLoop;
+
+    const bridge = new AgentBridge(loop);
+    const seen: unknown[] = [];
+    bridge.on('credential_required', (req) => seen.push(req));
+    await bridge.send('forecast?', { credentialPrompt: true });
+
+    expect(seen).toEqual([
+      {
+        pluginId: 'weather',
+        credentialKey: 'API_KEY',
+        kind: 'api_key',
+        label: 'Weather API key',
+        sessionKey: 'tui:x',
+        pendingUserMessage: 'forecast?',
+      },
+    ]);
+    expect(loop.run).toHaveBeenCalledWith(
+      'forecast?',
+      expect.objectContaining({ credentialPrompt: true }),
+    );
+  });
 });

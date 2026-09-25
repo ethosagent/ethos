@@ -57,6 +57,24 @@ describe('doctor — inbound spool block', () => {
     expect(text).toContain('oldest owed message: 5 min old');
   });
 
+  it('renders interrupted rows (plan openclaw-9.5-adoption D5) apart from dead ones', async () => {
+    const cut = seed('bot-a', 'paid-half');
+    cut.spool.markProcessing(cut.id, 'p');
+    cut.spool.markToolStarted(cut.id);
+    cut.spool.markInterrupted(cut.id, 'interrupted after a tool started');
+    cut.spool.close();
+
+    const report = await checkInboundSpool(dir, ['bot-a']);
+    expect(report.counts).toMatchObject({ interrupted: 1, dead: 0 });
+    expect(report.interrupted?.map((r) => r.id)).toEqual([cut.id]);
+    const text = describeInboundSpool(report).join('\n');
+    expect(text).toContain('0 dead · 1 interrupted');
+    expect(text).toContain('1 interrupted message(s)');
+    expect(text).toContain(`${cut.id}  telegram:chat-9  interrupted after a tool started`);
+    expect(text).toContain('Re-run anyway with: ethos gateway spool replay <id>');
+    expect(text).not.toContain('dead letter(s)');
+  });
+
   it('lists up to 10 dead rows, then a count', async () => {
     for (let i = 0; i < 12; i++) {
       const r = seed('bot-a', `m-${i}`);

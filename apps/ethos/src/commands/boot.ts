@@ -107,6 +107,7 @@ import {
   type WebBindTarget,
 } from '../config-reload';
 import { createHealthServer } from '../health-server';
+import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { type CronDeliverJob, createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import {
@@ -166,8 +167,10 @@ import {
   createGatewayMetricsAuthCheck,
   createTelegramGreetingProvider,
   createTelegramPersonalityCardReader,
+  everyStartedAdapter,
   type GatewayBotWiring,
   gatewayObservability,
+  idleGatewayBotLoopOpts,
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
   validateBindings,
@@ -587,29 +590,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     logger,
   });
 
-  const shared = await createAgentLoop(cfg, {
-    profile: 'web',
-    meshRegistryPath: meshRegistryPath(meshName),
-    cronScheduler: scheduler,
-    watcherManager,
-    // Cron, watcher wakes and every web/ACP turn run here, and a gated
-    // personality's `send_message` must queue from this loop exactly as it
-    // does from a bot's.
-    outbox: outbox.wiring,
-  });
-  sharedLoop = shared.loop;
-  // Deliberately NOT given `wireUnattendedApprovalGate` (which `runGatewayStart`
-  // registers on its systemLoop): here cron and watcher wakes share the web
-  // loop, and `buildServeWebApi` registers the web approval hook on it, so a
-  // flagged call posts a modal card a human can answer (denied at the approval
-  // timeout) — the same shape as `ethos serve`. The unattended gate would
-  // refuse every flagged web-chat call too. Boot runs no dreams and no SIP.
-  const systemLoop = shared.loop;
-
   // Per-bot routing table. Each personality-bound bot gets its own loop, the
   // same shape `ethos gateway start` builds today — this is NOT the
   // double-construction §3c warns about, which is about the two ROLES each
-  // building a system loop.
+  // building a system loop. Built BEFORE the system loop only so that loop
+  // knows whether it is also the idle gateway bot's (below); neither build
+  // reads the other.
   const coldBuilt = await buildGatewayBots(
     cfg,
     scheduler,
@@ -619,6 +605,35 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     outbox.wiring,
   );
   const bots = coldBuilt.bots;
+
+  const shared = await createAgentLoop(cfg, {
+    profile: 'web',
+    meshRegistryPath: meshRegistryPath(meshName),
+    cronScheduler: scheduler,
+    watcherManager,
+    // Cron, watcher wakes and every web/ACP turn run here, and a gated
+    // personality's `send_message` must queue from this loop exactly as it
+    // does from a bot's.
+    outbox: outbox.wiring,
+    // No bot configured: this loop is also the idle gateway bot's
+    // (`idleGatewayBotLoopOpts`, ./gateway).
+    ...(bots.length === 0
+      ? idleGatewayBotLoopOpts((sessionKey) => gatewayRef?.originThreadIdFor(sessionKey))
+      : {}),
+  });
+  sharedLoop = shared.loop;
+  // Deliberately NOT given `wireUnattendedApprovalGate` (which `runGatewayStart`
+  // registers on its systemLoop): here cron and watcher wakes share the web
+  // loop, and `buildServeWebApi` registers the web approval hook on it, so a
+  // flagged call posts a modal card a human can answer (denied at the approval
+  // timeout) — the same shape as `ethos serve`. The unattended gate would
+  // refuse every flagged web-chat call too. Boot runs no dreams and no SIP.
+  // That web hook's predicate (`buildServeDangerPredicate`, ./serve) never
+  // takes the D12 opt-in, so with no bot configured the idle gateway bot's
+  // channel turns (remote senders) on this loop cannot be auto-approved by
+  // `allowUnattendedDangerousTools` either. Pinned by
+  // `./__tests__/gateway-unattended-gate-wiring.test.ts` ('ethos boot').
+  const systemLoop = shared.loop;
 
   // Personality-directory seam for hot-reload, shared by the Gateway and by
   // every loop registry in the process.
@@ -919,6 +934,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     config: cfg,
     bots,
     systemLoop,
+    idleBotJobs: { jobStore: shared.jobStore, backgroundExecutor: shared.backgroundExecutor },
     adapters,
     deliveryLedger,
     inboundDedup,
@@ -964,6 +980,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     observability: gatewayObservability(),
   });
   gatewayRef = gateway;
+  // The durable lane → session map (plan openclaw-9.5-adoption D28), loaded
+  // BEFORE any adapter is wired or started and before `startInboundSpoolReplay`
+  // below (§3b): a replayed row, an interrupted `retry` and a `wake_review` turn all
+  // resolve `sessionKeys`, and an empty map would run them in the lane's
+  // default session instead of the one `/new` / `/fork` / `/branch` left it on.
+  await gateway.restoreLaneSessions();
 
   // Wire the send paths now that the Gateway exists.
   //
@@ -1417,7 +1439,10 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     if (heartbeatInFlight) return;
     heartbeatInFlight = true;
     try {
-      const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+      // LIVE, like the metrics closure above: `adapters` is the boot-time
+      // snapshot, still holding a bot a reload retired (reported forever as a
+      // stopped adapter) and missing one a reload added.
+      const hb = await buildGatewayHeartbeat(gateway.listAdapters(), heartbeatStartedAt);
       await storage.writeAtomic(gatewayHealthPath(), JSON.stringify(hb));
     } catch {
       // Best-effort — the consumer treats stale data as degraded.
@@ -1436,7 +1461,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     healthPort,
     healthHost,
     async () => {
-      const hb = await buildGatewayHeartbeat(adapters, heartbeatStartedAt);
+      const hb = await buildGatewayHeartbeat(gateway.listAdapters(), heartbeatStartedAt);
       const allOk = hb.adapters.length > 0 && hb.adapters.every((a) => a.ok);
       return {
         status: allOk ? 'ok' : 'degraded',
@@ -2392,6 +2417,15 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         },
       );
 
+  // `step` is `guard` with a deadline (`boundedShutdownStep`,
+  // lib/bounded-shutdown-step.ts): for a step whose await has none of its own.
+  const stepReporting = {
+    sink: gatewayObservability,
+    warn: (message: string) => logger.warn(message, { component: 'boot' }),
+  };
+  const step = (label: string, fn: () => unknown): Promise<void> =>
+    boundedShutdownStep(label, fn, stepReporting);
+
   let shuttingDown: Promise<void> | undefined;
   const shutdown = async () => {
     // Reentrancy: this is registered on BOTH SIGINT and SIGTERM, and a second
@@ -2423,7 +2457,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       // Stopped BEFORE the gateway drains: a tick that started now would claim
       // a row this process is about to stop being able to deliver, and leave it
       // `sending` for the ten minutes the stale reconciler waits.
-      await guard('outbox-dispatcher', async () => {
+      await step('outbox-dispatcher', async () => {
         outboxDispatcher.stop();
         // Reviews and card round trips start from a fire-and-forget hook, so
         // they are drained BEFORE the adapters stop — otherwise the transport
@@ -2469,22 +2503,26 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         cronTriggers.local?.stop();
         pauseLifecycle.stop?.();
       });
-      await guard('call-capture-ownership', async () => {
+      await step('call-capture-ownership', async () => {
         await callCaptureOwnershipManager?.stop();
       });
-      await guard('mesh-unregister', async () => {
+      await step('mesh-unregister', async () => {
         await mesh.unregister(agentId);
       });
-      await guard('gateway-health-file', async () => {
+      await step('gateway-health-file', async () => {
         await storage.remove(gatewayHealthPath());
       });
+      // Bounded by its own `drainTimeoutMs`, notice sends included.
       await guard('gateway', async () => {
         await gateway.shutdown({
           notify:
             '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
         });
       });
-      await guard('adapters', () => Promise.allSettled(adapters.map((a) => a.stop())));
+      // Plugin-registered and hot-added adapters too — `everyStartedAdapter`.
+      await step('adapters', () =>
+        Promise.allSettled(everyStartedAdapter(adapters, gateway).map((a) => a.stop())),
+      );
       await guard('delivery-ledger', () => {
         deliveryLedger.close();
       });
@@ -2510,7 +2548,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         // The App Home / unfurl readers' lazily opened `sessions.db` handles.
         closeSlackSessionStores();
       });
-      await guard('sockets', () =>
+      await step('sockets', () =>
         Promise.allSettled([
           created.voiceSocket.close(),
           created.satelliteSocket.close(),
@@ -2530,7 +2568,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
         acpHttpServer.closeAllConnections();
         acpHttpServer.close();
       });
-      await guard(
+      await step(
         'web-server',
         // `webServer`, not a captured `server`: a Phase D rebind replaces the
         // listener, and closing the one this process started on would leave

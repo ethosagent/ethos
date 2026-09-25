@@ -25,6 +25,17 @@ jobs:
       - uses: ./.github/actions/setup
       - run: bash scripts/check-tests.sh
 
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    # The tier runs in ~20s locally; three real gateway boots under tsx on a
+    # cold runner are the long pole, so leave generous headroom.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - run: bash scripts/check-integration.sh
+
   docs:
     name: docs
     runs-on: ubuntu-latest

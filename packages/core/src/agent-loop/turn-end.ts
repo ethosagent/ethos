@@ -73,6 +73,8 @@ export interface TurnEndCtx {
   filterOpts: ToolFilterOpts;
   /** A compaction already fired during this turn's assembly. */
   compactedThisTurn: boolean;
+  /** Item 7 (D32) — `TurnSetup.serverCompaction`; active → no turn-end auto-compaction. */
+  serverCompaction?: { active: boolean };
   /**
    * The run's abort signal (from `RunOptions.abortSignal`). The SAME signal that
    * aborts the main turn also aborts an in-flight memory flush — in the CLI it is
@@ -119,6 +121,7 @@ export function buildTurnEndCtx(setup: TurnSetup, extras: TurnEndExtras): TurnEn
     filterOpts: setup.filterOpts,
     userScopeId: extras.userScopeId,
     compactedThisTurn: extras.compactedThisTurn,
+    serverCompaction: setup.serverCompaction,
     abortSignal: extras.abortSignal,
     systemPrompt: extras.systemPrompt,
     contextStore: extras.contextStore,
@@ -270,7 +273,7 @@ export async function* maybeConsolidateAtTurnEnd(
 
   // Auto-compaction (80%) takes precedence — once we're that high, dropping
   // history matters more than one more memory pass.
-  if (autoCompact && gateEval.current > compactGate) {
+  if (autoCompact && !ctx.serverCompaction?.active && gateEval.current > compactGate) {
     yield* compactAtTurnEnd(deps, ctx, replay);
     return;
   }

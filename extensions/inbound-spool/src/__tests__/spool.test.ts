@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type SpoolAccept, SQLiteInboundSpool } from '../index';
+import { INBOUND_SPOOL_SCHEMA_VERSION, type SpoolAccept, SQLiteInboundSpool } from '../index';
 
 function row(overrides: Partial<SpoolAccept> = {}): SpoolAccept {
   return {
@@ -107,6 +108,106 @@ describe('SQLiteInboundSpool — state transitions', () => {
   });
 });
 
+// Plan openclaw-9.5-adoption D5: a turn that started a tool is never replayed.
+describe('SQLiteInboundSpool — tool started / interrupted', () => {
+  let t: number;
+  let spool: SQLiteInboundSpool;
+  beforeEach(() => {
+    t = 1_000;
+    spool = new SQLiteInboundSpool(':memory:', { now: () => t });
+  });
+
+  it('markToolStarted stamps a processing row once, and nothing else', () => {
+    const { id } = spool.accept(row());
+    spool.markToolStarted(id);
+    expect(spool.get(id)?.toolStartedAt).toBeUndefined();
+    spool.markProcessing(id, 'p1');
+    spool.markToolStarted(id);
+    t = 2_000;
+    spool.markToolStarted(id);
+    expect(spool.get(id)?.toolStartedAt).toBe(1_000);
+  });
+
+  it('markFailed on a tool-started row → interrupted with the claim released; at the cap → dead', () => {
+    const a = spool.accept(row({ messageId: 'a' })).id;
+    spool.markProcessing(a, 'p1');
+    spool.markToolStarted(a);
+    expect(spool.markFailed(a, 'boom', 3)).toBe('interrupted');
+    expect(spool.get(a)).toMatchObject({ status: 'interrupted', lastError: 'boom' });
+    expect(spool.get(a)?.claimedBy).toBeUndefined();
+    expect(spool.listReplayable(['bot-a'])).toHaveLength(0);
+
+    const b = spool.accept(row({ messageId: 'b' })).id;
+    spool.markProcessing(b, 'p1');
+    spool.markToolStarted(b);
+    expect(spool.markFailed(b, 'boom', 1)).toBe('dead');
+  });
+
+  it('markInterrupted, findInterrupted inside the window, listInterrupted and stats', () => {
+    const { id } = spool.accept(row());
+    spool.markProcessing(id, 'p1');
+    expect(spool.markInterrupted(id, 'shutdown')).toBe(true);
+    expect(spool.markInterrupted(id, 'again')).toBe(false);
+    expect(spool.findInterrupted('telegram:bot-a:chat-1', 500)?.id).toBe(id);
+    expect(spool.findInterrupted('telegram:bot-a:chat-1', 1_001)).toBeNull();
+    expect(spool.findInterrupted('telegram:bot-a:other', 0)).toBeNull();
+    expect(spool.listInterrupted().map((r) => r.id)).toEqual([id]);
+    expect(spool.stats()).toMatchObject({ interrupted: 1, processing: 0 });
+  });
+
+  it('retryInterrupted closes the row and spools its payload fresh, exactly once', () => {
+    const { id } = spool.accept(row({ payload: '{"text":"pay the invoice"}' }));
+    spool.markProcessing(id, 'p1');
+    spool.markToolStarted(id);
+    spool.markInterrupted(id, 'crash');
+    const fresh = spool.retryInterrupted(id, 'p2');
+    expect(fresh).toBeTypeOf('string');
+    expect(spool.get(id)).toMatchObject({ status: 'done', payload: '{}', lastError: 'retried' });
+    const next = spool.get(fresh ?? '');
+    expect(next).toMatchObject({
+      status: 'received',
+      attempts: 0,
+      claimedBy: 'p2',
+      laneKey: 'telegram:bot-a:chat-1',
+      messageId: `retry:${id}`,
+      payload: '{"text":"pay the invoice"}',
+    });
+    expect(next?.toolStartedAt).toBeUndefined();
+    expect(spool.retryInterrupted(id, 'p3')).toBeNull();
+  });
+
+  it('requeue and discard take an interrupted row; requeue clears the tool start', () => {
+    const a = spool.accept(row({ messageId: 'a' })).id;
+    const b = spool.accept(row({ messageId: 'b' })).id;
+    for (const id of [a, b]) {
+      spool.markProcessing(id, 'p1');
+      spool.markToolStarted(id);
+      spool.markInterrupted(id, 'crash');
+    }
+    expect(spool.requeue(a)).toBe(true);
+    expect(spool.get(a)).toMatchObject({ status: 'received', attempts: 0 });
+    expect(spool.get(a)?.toolStartedAt).toBeUndefined();
+    expect(spool.discard(b)).toBe(true);
+    expect(spool.get(b)).toMatchObject({ status: 'done', lastError: 'discarded' });
+  });
+
+  it('pruneDead removes interrupted rows past the cutoff too', () => {
+    const { id } = spool.accept(row());
+    spool.markInterrupted(id, 'crash');
+    t = 9_000;
+    expect(spool.pruneDead(5_000)).toBe(1);
+    expect(spool.get(id)).toBeNull();
+  });
+
+  it('accept records the kind and the reviewed job', () => {
+    const { id } = spool.accept(
+      row({ messageId: 'wake:job-1', kind: 'wake_review', reviewJobId: 'job-1' }),
+    );
+    expect(spool.get(id)).toMatchObject({ kind: 'wake_review', reviewJobId: 'job-1' });
+    expect(spool.get(spool.accept(row({ messageId: 'plain' })).id)?.kind).toBe('inbound');
+  });
+});
+
 describe('SQLiteInboundSpool — listReplayable', () => {
   it('filters by botKey and orders by lane, received_at, then rowid', () => {
     // A frozen clock: every row shares one received_at, so only the rowid
@@ -168,6 +269,74 @@ describe('SQLiteInboundSpool — on disk', () => {
     } finally {
       one.close();
       two.close();
+    }
+  });
+
+  it('migrates a v1 file to the current schema: rows kept, read as inbound with no tool start', () => {
+    const path = join(dir, 'inbound-spool.db');
+    const v1 = new Database(path);
+    v1.exec(`CREATE TABLE inbound_spool (
+      id TEXT PRIMARY KEY, platform TEXT NOT NULL, bot_key TEXT NOT NULL, chat_id TEXT NOT NULL,
+      thread_id TEXT, message_id TEXT NOT NULL, lane_key TEXT NOT NULL, payload TEXT NOT NULL,
+      status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+      received_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, claimed_by TEXT,
+      UNIQUE (platform, bot_key, chat_id, message_id)) STRICT`);
+    v1.prepare(
+      `INSERT INTO inbound_spool VALUES ('old', 'telegram', 'bot-a', 'chat-1', NULL, 'm-old',
+       'telegram:bot-a:chat-1', '{"text":"hi"}', 'received', 0, NULL, 1, 1, NULL)`,
+    ).run();
+    v1.pragma('user_version = 1');
+    v1.close();
+
+    const spool = new SQLiteInboundSpool(path);
+    try {
+      expect(spool.get('old')).toMatchObject({ status: 'received', kind: 'inbound' });
+      expect(spool.get('old')?.toolStartedAt).toBeUndefined();
+      const version = (
+        spool as unknown as { db: { pragma(s: string): Array<{ user_version: number }> } }
+      ).db.pragma('user_version');
+      expect(version[0]?.user_version).toBe(INBOUND_SPOOL_SCHEMA_VERSION);
+      // The v2 columns are writable on the migrated table.
+      spool.markProcessing('old', 'p1');
+      spool.markToolStarted('old');
+      expect(spool.get('old')?.toolStartedAt).toBeTypeOf('number');
+    } finally {
+      spool.close();
+    }
+  });
+
+  it('migrates a v2 file to v3: rows kept unlinked, absorbed_into writable', () => {
+    const path = join(dir, 'inbound-spool.db');
+    const v2 = new Database(path);
+    v2.exec(`CREATE TABLE inbound_spool (
+      id TEXT PRIMARY KEY, platform TEXT NOT NULL, bot_key TEXT NOT NULL, chat_id TEXT NOT NULL,
+      thread_id TEXT, message_id TEXT NOT NULL, lane_key TEXT NOT NULL, payload TEXT NOT NULL,
+      status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+      received_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, claimed_by TEXT,
+      tool_started_at INTEGER, kind TEXT NOT NULL DEFAULT 'inbound', review_job_id TEXT,
+      UNIQUE (platform, bot_key, chat_id, message_id)) STRICT`);
+    v2.prepare(
+      `INSERT INTO inbound_spool (id, platform, bot_key, chat_id, message_id, lane_key, payload,
+       status, received_at, updated_at)
+       VALUES ('p', 'telegram', 'bot-a', 'chat-1', 'm-p', 'telegram:bot-a:chat-1',
+       '{"text":"hi"}', 'processing', 1, 1),
+       ('s', 'telegram', 'bot-a', 'chat-1', 'm-s', 'telegram:bot-a:chat-1',
+       '{"text":"steer"}', 'received', 2, 2)`,
+    ).run();
+    v2.pragma('user_version = 2');
+    v2.close();
+
+    const spool = new SQLiteInboundSpool(path);
+    try {
+      expect(spool.get('s')?.absorbedInto).toBeUndefined();
+      const version = (
+        spool as unknown as { db: { pragma(s: string): Array<{ user_version: number }> } }
+      ).db.pragma('user_version');
+      expect(version[0]?.user_version).toBe(3);
+      expect(spool.markAbsorbed('s', 'p')).toBe(true);
+      expect(spool.get('s')?.absorbedInto).toBe('p');
+    } finally {
+      spool.close();
     }
   });
 
@@ -263,5 +432,110 @@ describe('SQLiteInboundSpool — durability posture', () => {
       'busy_timeout',
     ) as Array<Record<string, number>>;
     expect(Object.values(rows[0] ?? {})[0]).toBe(5000);
+  });
+});
+
+// Schema v3: a steer row folded into a running turn shares that turn's fate.
+describe('SQLiteInboundSpool — absorbed steer rows', () => {
+  function primaryAndSteer(spool: SQLiteInboundSpool): { primary: string; steer: string } {
+    const primary = spool.accept(row({ messageId: 'm-p', claimedBy: 'p1' })).id;
+    spool.markProcessing(primary, 'p1');
+    const steer = spool.accept(
+      row({ messageId: 'm-s', claimedBy: 'p1', payload: '{"text":"steer"}' }),
+    ).id;
+    expect(spool.markAbsorbed(steer, primary)).toBe(true);
+    return { primary, steer };
+  }
+
+  it('links only a received row into an owed primary', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const { primary, steer } = primaryAndSteer(spool);
+    expect(spool.get(steer)?.absorbedInto).toBe(primary);
+    const late = spool.accept(row({ messageId: 'm-late' })).id;
+    spool.markDone(primary);
+    // A primary that already finished cannot carry anything any more.
+    expect(spool.markAbsorbed(late, primary)).toBe(false);
+    expect(spool.markAbsorbed(late, late)).toBe(false);
+  });
+
+  it('done, interrupted, dead and discard are written to the absorbed row too', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const a = primaryAndSteer(spool);
+    spool.markDone(a.primary);
+    expect(spool.get(a.steer)).toMatchObject({ status: 'done', payload: '{}' });
+
+    const b = new SQLiteInboundSpool(':memory:');
+    const x = primaryAndSteer(b);
+    b.markToolStarted(x.primary);
+    expect(b.markInterrupted(x.primary, 'crash')).toBe(true);
+    expect(b.get(x.steer)).toMatchObject({ status: 'interrupted' });
+    expect(b.get(x.steer)?.claimedBy).toBeUndefined();
+    expect(b.discard(x.primary)).toBe(true);
+    expect(b.get(x.steer)).toMatchObject({ status: 'done', lastError: 'discarded' });
+
+    const c = new SQLiteInboundSpool(':memory:');
+    const y = primaryAndSteer(c);
+    expect(c.markFailed(y.primary, 'boom', 1)).toBe('dead');
+    expect(c.get(y.steer)?.status).toBe('dead');
+  });
+
+  it('a failure that returns the primary to received leaves the steer linked and owed', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const { primary, steer } = primaryAndSteer(spool);
+    expect(spool.markFailed(primary, 'boom', 3)).toBe('received');
+    expect(spool.get(steer)).toMatchObject({ status: 'received', absorbedInto: primary });
+    spool.recoverOrphans('p2');
+    // Never replayed on its own while the primary is owed; listed under it.
+    expect(spool.listReplayable(['bot-a']).map((r) => r.id)).toEqual([primary]);
+    expect(spool.listAbsorbed(primary).map((r) => r.id)).toEqual([steer]);
+  });
+
+  it('an absorbed row whose primary is gone replays as itself', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const { primary, steer } = primaryAndSteer(spool);
+    const db = (spool as unknown as { db: { prepare(s: string): { run(...a: unknown[]): void } } })
+      .db;
+    db.prepare('DELETE FROM inbound_spool WHERE id = ?').run(primary);
+    spool.recoverOrphans('p2');
+    expect(spool.listReplayable(['bot-a']).map((r) => r.id)).toEqual([steer]);
+  });
+
+  it('retry closes the absorbed rows and runs the folded payload under one fresh row', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const { primary, steer } = primaryAndSteer(spool);
+    spool.markToolStarted(primary);
+    spool.markInterrupted(primary, 'crash');
+    // The absorbed row is not a `retry` target of its own.
+    expect(spool.findInterrupted('telegram:bot-a:chat-1', 0)?.id).toBe(primary);
+    const fresh = spool.retryInterrupted(primary, 'p2', '{"text":"hello\\n\\nsteer"}');
+    expect(fresh).not.toBeNull();
+    expect(spool.get(steer)).toMatchObject({ status: 'done', lastError: 'retried' });
+    expect(spool.get(fresh ?? '')?.payload).toBe('{"text":"hello\\n\\nsteer"}');
+  });
+
+  it('a replayed primary absorbed into another turn hands its absorbed rows over', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const q = spool.accept(row({ messageId: 'm-q', claimedBy: 'p1' })).id;
+    spool.markProcessing(q, 'p1');
+    const { primary, steer } = primaryAndSteer(spool);
+    spool.releaseOnShutdown(primary);
+    expect(spool.markAbsorbed(primary, q)).toBe(true);
+    expect(spool.get(steer)?.absorbedInto).toBe(q);
+    expect(spool.listAbsorbed(q).map((r) => r.id)).toEqual([primary, steer]);
+  });
+
+  it('requeue brings a primary back with its absorbed rows; an absorbed row alone is unlinked', () => {
+    const spool = new SQLiteInboundSpool(':memory:');
+    const { primary, steer } = primaryAndSteer(spool);
+    spool.markFailed(primary, 'boom', 1);
+    expect(spool.requeue(primary)).toBe(true);
+    expect(spool.get(steer)).toMatchObject({ status: 'received', absorbedInto: primary });
+
+    const other = new SQLiteInboundSpool(':memory:');
+    const z = primaryAndSteer(other);
+    other.markFailed(z.primary, 'boom', 1);
+    expect(other.requeue(z.steer)).toBe(true);
+    expect(other.get(z.steer)?.absorbedInto).toBeUndefined();
+    expect(other.get(z.primary)?.status).toBe('dead');
   });
 });

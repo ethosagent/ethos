@@ -136,6 +136,7 @@ import {
   createSlackApprovalHook,
 } from '../approval-coordinator';
 import { createHealthServer, type MetricsAuthCheck } from '../health-server';
+import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import { openFileMemory } from '../lib/file-memory';
@@ -994,6 +995,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // an equivalent closure. Absent on every other deployment.
     runCallCapture: runCallCaptureFromLoop,
     dispose: disposeSystemLoop,
+    jobStore: systemJobStore,
+    backgroundExecutor: systemBackgroundExecutor,
   } = await createAgentLoop(config, {
     cronScheduler: scheduler,
     watcherManager,
@@ -1002,6 +1005,11 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // Cron, dreams and watcher wakes run here, and a gated personality's
     // `send_message` must queue from this loop exactly as it does from a bot's.
     outbox: outbox.wiring,
+    // No bot configured: this loop is also the idle gateway bot's
+    // (`idleGatewayBotLoopOpts`).
+    ...(bots.length === 0
+      ? idleGatewayBotLoopOpts((sessionKey) => gatewayRef?.originThreadIdFor(sessionKey))
+      : {}),
   });
   systemLoop = systemLoopReady;
 
@@ -1012,12 +1020,21 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // operator set `allowUnattendedDangerousTools: true`. The same predicate's
   // spoken-confirmation wrapper refuses a SIP far-end caller's consequential
   // request. Pinned by `../__tests__/unattended-approval-gate.test.ts`.
+  //
+  // With no bot configured this loop is also the idle gateway bot's, so plugin
+  // channel turns (remote senders) run here too. Those never get the opt-in:
+  // `isRemoteSenderTurn` is true exactly while the gateway holds an approval
+  // route for the session — set by `Gateway.runTurn` for its own channel turns
+  // only — and the gate then refuses with the bot loops' no-surface text
+  // (`createNoApprovalSurfaceGate`). `gatewayRef` is null only before the
+  // gateway exists, when no channel turn can be running.
   wireUnattendedApprovalGate(systemLoopReady.hooks, {
     personalities: seamPersonalities,
     reload: () => seamPersonalities.loadFromDirectory(personalitiesDir),
     getProvider: createLazyProvider(() => createLLM(config)),
     model: config.model,
     allowUnattendedDangerousTools: config.allowUnattendedDangerousTools === true,
+    isRemoteSenderTurn: (sessionId) => gatewayRef?.resolveApprovalRoute(sessionId) !== undefined,
   });
   // Say so at boot, once, for every personality whose cron jobs can reach a
   // tool that gate refuses — before the first job fails.
@@ -1315,6 +1332,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     config,
     bots,
     systemLoop,
+    idleBotJobs: { jobStore: systemJobStore, backgroundExecutor: systemBackgroundExecutor },
     adapters,
     deliveryLedger,
     inboundDedup,
@@ -1460,6 +1478,12 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // `webhookCallback`, Bolt's `HTTPReceiver`), so the row is on disk before
   // that handler returns and the framework acknowledges the webhook — the
   // platform retries only what was never spooled (plan §2.5, D2-10).
+  // The durable lane → session map (plan openclaw-9.5-adoption D28), loaded
+  // BEFORE any adapter is wired or started and before `startInboundSpoolReplay`
+  // below: a replayed row, an interrupted `retry` and a `wake_review` turn all
+  // resolve `sessionKeys`, and an empty map would run them in the lane's
+  // default session instead of the one `/new` / `/fork` / `/branch` left it on.
+  await gateway.restoreLaneSessions();
   for (const adapter of adapters) wireAdapterInbound(gateway, adapter);
 
   // Wire the tool-approval gate on every bot loop. A bot with a card-capable
@@ -2122,7 +2146,15 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // Reentrancy: registered on BOTH SIGINT and SIGTERM, and a second signal
   // during the drain would otherwise re-run the whole teardown. One promise,
   // memoised; every caller awaits that same one (the shape `serve`/`boot` use).
+  //
+  // Bounded: every await below has a deadline — its own (`approvalFlow`,
+  // `gateway.shutdown`, `disposeBeforeExit`) or `boundedShutdownStep`'s — so the
+  // ledger/spool closes, the lock release and `process.exit` always run.
+  // `ethos run-all` sizes its SIGKILL grace from exactly these bounds
+  // (commands/run-all.ts `CHILD_PRE_DISPOSE_DRAIN_MS`, pinned by
+  // commands/__tests__/run-all.test.ts).
   let shuttingDown: Promise<void> | undefined;
+  const stepReporting = { sink: gatewayObservability, warn: (m: string) => console.warn(m) };
   const shutdown = async (): Promise<void> => {
     shuttingDown ??= (async () => {
       console.log(`\n${c.dim}Shutting down...${c.reset}`);
@@ -2156,18 +2188,32 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
       // so they are drained explicitly BEFORE the adapters stop — otherwise the
       // transport is torn out from under a card mid-update and an approved
       // publication is left showing live buttons.
-      await outboxSurface.drain();
-      await storage.remove(gatewayHealthPath()).catch(() => {});
+      await boundedShutdownStep('outbox drain', () => outboxSurface.drain(), stepReporting);
+      await boundedShutdownStep(
+        'gateway health file',
+        () => storage.remove(gatewayHealthPath()),
+        stepReporting,
+      );
       // Stops the daemon + heartbeat (if this process ever won the ownership
       // claim, including via a later retry tick — see
       // `CallCaptureOwnershipManager`) and releases the lock so a restarted
       // process, or the other host command, can take it.
-      await callCaptureOwnershipManager?.stop();
+      await boundedShutdownStep(
+        'call-capture ownership',
+        () => callCaptureOwnershipManager?.stop(),
+        stepReporting,
+      );
+      // Bounded by its own `drainTimeoutMs`, notice sends included
+      // (`Gateway.shutdown`, extensions/gateway/src/index.ts).
       await gateway.shutdown({
         notify:
           '⚠ Ethos was interrupted while answering. Please resend your last message — your session history is preserved.',
       });
-      await Promise.allSettled(adapters.map((a) => a.stop()));
+      await boundedShutdownStep(
+        'adapters stop',
+        () => Promise.allSettled(everyStartedAdapter(adapters, gateway).map((a) => a.stop())),
+        stepReporting,
+      );
       // F06 — every loop's runtime (background executors, reconcilers, stores,
       // MCP, plugins), once the gateway has drained and nothing routes to them.
       // Before the call log closes: a loop's `call` tool writes through it.
@@ -2720,7 +2766,12 @@ const APPROVAL_SHUTDOWN_DRAIN_MS = 5_000;
  *      so the systemLoop's D12 opt-in (`approvalMode: off` +
  *      `allowUnattendedDangerousTools`) is never honoured here. This includes
  *      the case where no adapter at all is approval-capable, which returns
- *      right after.
+ *      right after. The idle gateway bot (no bot configured) is not in
+ *      `bots` and is not gated here: its turns run on the systemLoop, where
+ *      `wireUnattendedApprovalGate`'s `isRemoteSenderTurn` split hands them to
+ *      this same no-surface gate, so the rule is identical — a remote-sender
+ *      turn never gets the opt-in (pinned by
+ *      `../__tests__/unattended-approval-gate.test.ts`, 'idle gateway').
  *   1. `before_tool_call` hook on every approval-capable bot loop →
  *      `ApprovalCoordinator` suspends dangerous calls. A turn on such a loop
  *      that arrived through an adapter that cannot post a card is handed to
@@ -3363,11 +3414,29 @@ const SLACK_RECENT_SESSION_LIMIT = 10;
  */
 const slackSessionStores = new Set<{ close(): void }>();
 
-/** Close what `createSlackSessionReaders` opened. A no-op when no App Home
- *  read ever happened. Called by `ethos gateway`'s and `ethos boot`'s shutdown. */
+/** Close what `createSlackSessionReaders` and `openBranchSessionStore` opened.
+ *  A no-op when neither ever ran. Called by `ethos gateway`'s and `ethos boot`'s
+ *  shutdown. */
 export function closeSlackSessionStores(): void {
   for (const store of slackSessionStores) store.close();
   slackSessionStores.clear();
+  branchSessionStore = undefined;
+}
+
+let branchSessionStore: SessionStore | undefined;
+
+/**
+ * The `sessions.db` handle the gateway's `/fork`, `/branches` and `/branch <n>`
+ * use (`GatewayConfig.sessionStore`). Opened once, on the first branch command,
+ * and registered in `slackSessionStores` so the same shutdown closes it.
+ */
+function openBranchSessionStore(): SessionStore {
+  if (!branchSessionStore) {
+    const opened = createSessionStore({ dataDir: ethosDir() });
+    slackSessionStores.add(opened);
+    branchSessionStore = opened;
+  }
+  return branchSessionStore;
 }
 
 function createSlackSessionReaders(botKey: string) {
@@ -4460,6 +4529,54 @@ export async function registerGatewayClarifySurfaces(opts: {
 }
 
 /**
+ * The botKey of the one bot an idle gateway (no platform bot configured) runs
+ * on — the same `'default'` the Gateway's legacy `loop` shorthand synthesized.
+ * Plugin adapters and the like reach it through the single-bot fallback
+ * (`Gateway.routedBotKey`).
+ */
+export const IDLE_GATEWAY_BOT_KEY = 'default';
+
+/**
+ * `createAgentLoop` options that make a host's system loop the idle bot's
+ * loop, the way `assembleGatewayBots` gives every configured bot its own:
+ * `originBotKey` so a `delegate_task(background: true)` job started from one
+ * of its turns records WHICH bot announces it (without it the job has no
+ * origin bot, nothing subscribes to its completion and the restart sweep
+ * `Gateway.sweepUndeliveredJobs` never lists it), and the thread resolver so
+ * the notice returns to the sub-conversation. Only gateway turns carry a
+ * `platform:chatId` origin, so cron, web and ACP turns on the same loop still
+ * record no origin bot (`splitFirstColon` in extensions/tools-delegation).
+ * Both `ethos gateway start` and `ethos boot` pass these when no bot is
+ * configured; pinned by apps/ethos/src/__tests__/idle-gateway-bot.test.ts.
+ */
+export function idleGatewayBotLoopOpts(
+  resolveOriginThreadId: (sessionKey: string) => string | undefined,
+): { originBotKey: string; resolveOriginThreadId: (sessionKey: string) => string | undefined } {
+  return { originBotKey: IDLE_GATEWAY_BOT_KEY, resolveOriginThreadId };
+}
+
+/**
+ * The idle gateway's one bot: the host's system loop, bound to the default
+ * personality with `/personality` switching allowed (what the legacy `loop`
+ * shorthand gave it), plus that loop's job store and background executor so
+ * its background jobs announce through the normal tracked path
+ * (`Gateway.deliverCompletion` / `claimWake`, resolved by `adapterForBot`).
+ */
+export function idleGatewayBot(
+  loop: AgentLoop,
+  personality: string | undefined,
+  jobs: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor'> | undefined,
+): GatewayBotConfig {
+  return {
+    botKey: IDLE_GATEWAY_BOT_KEY,
+    loop,
+    binding: { type: 'personality', name: personality ?? 'default', allowSlashSwitch: true },
+    ...(jobs?.jobStore ? { jobStore: jobs.jobStore } : {}),
+    ...(jobs?.backgroundExecutor ? { backgroundExecutor: jobs.backgroundExecutor } : {}),
+  };
+}
+
+/**
  * Construct the `Gateway` for the gateway role.
  *
  * Extracted verbatim from `runGatewayStart` (plan §3b step 5, "`Gateway` class
@@ -4471,8 +4588,11 @@ export async function registerGatewayClarifySurfaces(opts: {
 export interface BuildGatewayOptions {
   config: EthosConfig;
   bots: GatewayBotConfig[];
-  /** Used only on the no-bot idle path (`GatewayConfig.loop`). */
+  /** Used only on the no-bot idle path, as the idle bot's loop (`idleGatewayBot`). */
   systemLoop: AgentLoop;
+  /** `systemLoop`'s job store and background executor — the idle bot's, as a
+   *  configured bot gets its own loop's. Ignored when `bots` is non-empty. */
+  idleBotJobs?: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor'>;
   /**
    * EVERY adapter this process runs. Both registries the Gateway takes are
    * derived from it by `adapterRegistries` (@ethosagent/gateway): the
@@ -4581,6 +4701,28 @@ export function warnEmailSenderAuthUnconfigured(
     `${c.yellow}⚠ ${cause}.${c.reset} ${c.dim}Set emailTrustedAuthservId to the first token of the Authentication-Results header on any mail this account received.${c.reset}`,
   );
   return true;
+}
+
+/**
+ * Every adapter this process started, each exactly once — what a host's
+ * shutdown `stop()`s. The host's own list (`buildGatewayAdapters`) holds only
+ * the built-in adapters; the Gateway holds the rest live: the plugin-registered
+ * ones (`GatewayConfig.pluginAdapters`, constructed AND started inside the
+ * `Gateway` constructor, so no host list ever saw them) and any a live reload
+ * added (`Gateway.addAdapter`). A bot a reload retired is gone from
+ * `listAdapters()` and was already stopped by `Gateway.removeAdapter`, so it is
+ * left out even though a built-in one is still in the host's list
+ * (`Gateway.hasStopped`). An adapter in both lists appears once (identity).
+ * Used by `ethos gateway start` and `ethos boot`; pinned by
+ * apps/ethos/src/__tests__/every-started-adapter.test.ts.
+ */
+export function everyStartedAdapter(
+  builtIn: readonly PlatformAdapter[],
+  gateway: Pick<Gateway, 'listAdapters' | 'hasStopped'>,
+): PlatformAdapter[] {
+  return [...new Set([...builtIn, ...gateway.listAdapters()])].filter(
+    (a) => !gateway.hasStopped(a),
+  );
 }
 
 /**
@@ -4737,6 +4879,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     config,
     bots,
     systemLoop,
+    idleBotJobs,
     adapters,
     deliveryLedger,
     inboundDedup,
@@ -4780,8 +4923,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
       // (including Discord/Email) now registers a bot in `buildGatewayBots`,
       // so this single-loop path is reached only when nothing is wired up.
       new Gateway({
-        loop: systemLoop,
-        defaultPersonality: config.personality,
+        bots: [idleGatewayBot(systemLoop, config.personality, idleBotJobs)],
         adapters: adapterMap,
         botAdapters,
         deliveryLedger,
@@ -4830,6 +4972,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         observeModePlatforms: observedPlatforms,
         publicationSpeaksFor,
         observability,
+        // openclaw-9.5 item 1 — the plugin-credential link a refused lane gets.
+        ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
       })
     : new Gateway({
         bots,
@@ -4843,8 +4987,12 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         // does not root relative paths, so this is what keeps those files in
         // `~/.ethos/` rather than in the cwd — which for a daemon is wherever
         // it happened to be started, and would put two processes' locks in two
-        // different directories.
+        // different directories. Also where the per-bot lane files live
+        // (`gateway/lanes/<botKey>.json`, D28).
         dataDir: ethosDir(),
+        // `/fork`, `/branches`, `/branch <n>` — opened on first use and closed
+        // with the Slack readers by `closeSlackSessionStores()` at shutdown.
+        sessionStore: openBranchSessionStore,
         adapters: adapterMap,
         deliveryLedger,
         inboundDedup,
@@ -4895,5 +5043,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         observeModePlatforms: observedPlatforms,
         publicationSpeaksFor,
         observability,
+        // openclaw-9.5 item 1 — the plugin-credential link a refused lane gets.
+        ...(config.webBaseUrl ? { webBaseUrl: config.webBaseUrl } : {}),
       });
 }

@@ -40,6 +40,22 @@ export interface EventTranslatorHalt {
   message: string;
 }
 
+/**
+ * A pre-turn `credential_required` refusal (openclaw-9.5 item 1). Carries only
+ * what the surface needs to ask for the value and resubmit — never a
+ * credential value; the event has no field for one.
+ */
+export interface EventTranslatorCredentialRequired {
+  pluginId: string;
+  credentialKey: string;
+  kind: 'oauth' | 'api_key' | 'text';
+  label: string;
+  description?: string;
+  authUrl?: string;
+  sessionKey: string;
+  pendingUserMessage: string;
+}
+
 /** Per-call lifecycle state accumulated across `tool_start` → `tool_end`. */
 export interface ToolCallState {
   toolCallId: string;
@@ -67,6 +83,10 @@ export interface EventTranslator {
   readonly done: EventTranslatorDone | null;
   /** Latched on the most recent `halt` event; `null` until then. */
   readonly halt: EventTranslatorHalt | null;
+  /** Latched on the first `credential_required` event; `null` until then.
+   *  The turn was refused before the model ran — the surface collects the
+   *  value out of band and resubmits `pendingUserMessage` as a new turn. */
+  readonly credentialRequired: EventTranslatorCredentialRequired | null;
   /** `true` once a terminal `error` or `done` has been seen — surfaces that
    *  break out of the run loop test this. */
   readonly stopped: boolean;
@@ -92,6 +112,7 @@ export function createEventTranslator(options: EventTranslatorOptions = {}): Eve
   let error: EventTranslatorError | null = null;
   let done: EventTranslatorDone | null = null;
   let halt: EventTranslatorHalt | null = null;
+  let credentialRequired: EventTranslatorCredentialRequired | null = null;
   const tools = new Map<string, ToolCallState>();
 
   return {
@@ -148,6 +169,20 @@ export function createEventTranslator(options: EventTranslatorOptions = {}): Eve
             ...(event.count !== undefined ? { count: event.count } : {}),
           };
           break;
+        case 'credential_required':
+          if (credentialRequired === null) {
+            credentialRequired = {
+              pluginId: event.pluginId,
+              credentialKey: event.credentialKey,
+              kind: event.kind,
+              label: event.label,
+              sessionKey: event.sessionKey,
+              pendingUserMessage: event.pendingUserMessage,
+              ...(event.description !== undefined ? { description: event.description } : {}),
+              ...(event.authUrl !== undefined ? { authUrl: event.authUrl } : {}),
+            };
+          }
+          break;
         default:
           // Forward-compat: AgentEvent may grow new variants in any release.
           // Unknown/irrelevant types are a no-op by design — do NOT add an
@@ -170,6 +205,9 @@ export function createEventTranslator(options: EventTranslatorOptions = {}): Eve
     get halt() {
       return halt;
     },
+    get credentialRequired() {
+      return credentialRequired;
+    },
     get stopped() {
       return error !== null || done !== null;
     },
@@ -189,4 +227,28 @@ export function shouldSurfaceProgress(
   event: Extract<AgentEvent, { type: 'tool_progress' }>,
 ): boolean {
   return event.audience === 'user';
+}
+
+/**
+ * The CLI command that stores a plugin credential with a masked prompt
+ * (`runCredentials` → `promptSecret` in apps/ethos/src/commands/plugin.ts,
+ * when `--set` is given a bare KEY with no `=VALUE`). The one spelling every
+ * non-interactive surface prints — ACP, `ethos -z`, and a gateway lane with no
+ * `webBaseUrl` — so they cannot drift.
+ */
+export function credentialSetCommand(pluginId: string, credentialKey: string): string {
+  return `ethos plugin credentials ${pluginId} --set ${credentialKey}`;
+}
+
+/**
+ * One-line instruction for a surface that cannot take masked input itself.
+ * Names the credential and the command; never contains a credential value.
+ */
+export function credentialInstruction(
+  req: Pick<EventTranslatorCredentialRequired, 'pluginId' | 'credentialKey' | 'label'>,
+): string {
+  return (
+    `Plugin "${req.pluginId}" needs ${req.label} (${req.credentialKey}) before I can answer. ` +
+    `Set it with \`${credentialSetCommand(req.pluginId, req.credentialKey)}\`, then send your message again.`
+  );
 }

@@ -80,7 +80,7 @@ describe('gateway.ts — call-capture daemon wiring', () => {
 
   it('stops via the ownership manager on shutdown (daemon, heartbeat, health file, and lock release all handled there)', async () => {
     const src = await readGatewaySource();
-    expect(src).toMatch(/await callCaptureOwnershipManager\?\.stop\(\);/);
+    expect(src).toMatch(/\(\) => callCaptureOwnershipManager\?\.stop\(\),/);
     expect(src).not.toMatch(/callCaptureOwnershipRelease/);
   });
 

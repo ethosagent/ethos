@@ -172,6 +172,8 @@ These have no approval card to post, so nobody can be asked. A call that would n
 
 No setting lets these bots run a flagged tool. `approvalMode: off` and `allowUnattendedDangerousTools: true` apply only to the gateway's cron/dream loop, because a remote sender drives every turn on a chat bot. To use a flagged tool from chat, talk to the agent through Slack, Telegram, Discord or the web UI, where you are asked first.
 
+This also holds with no bot configured. `ethos gateway start` then runs channel-plugin chats on the cron/dream loop itself, and `wireUnattendedApprovalGate` in [apps/ethos/src/unattended-approval-gate.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/unattended-approval-gate.ts) tells them apart per call. A chat turn gets the chat-bot refusal above, and cron jobs on the same loop keep the opt-in. It is pinned by `apps/ethos/src/__tests__/unattended-approval-gate.test.ts`.
+
 ## Verify
 
 - `ethos personality show <id> --json | jq .config.safety` — prints `{"approvalMode": "<mode>"}`.

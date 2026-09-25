@@ -65,7 +65,9 @@ export interface UseChatResult {
   sendMessage: (
     text: string,
     attachments?: AttachmentPreview[],
-    opts?: { origin?: 'text' | 'voice' },
+    /** `replacesRefused` — a credential resend replaces the refused turn's
+     *  bubble (`ChatState.credentialRefusedMessageId`) instead of adding one. */
+    opts?: { origin?: 'text' | 'voice'; replacesRefused?: true },
   ) => Promise<void>;
   /** Steer the running turn. Returns true if accepted, false if the turn
    *  already ended or the RPC failed. */
@@ -106,6 +108,8 @@ export interface UseChatResult {
    * only a source, never the answer.
    */
   noteClarifyAnswer: (requestId: string, answer: string) => void;
+  /** Close the masked credential prompt (`state.pendingCredential`) unanswered. */
+  dismissCredential: () => void;
   /**
    * Fetch the next-older page of history and prepend it. A no-op while a page
    * is in flight or when nothing is older; a page that lands after the session
@@ -412,7 +416,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     async (
       text: string,
       attachments?: AttachmentPreview[],
-      opts?: { origin?: 'text' | 'voice' },
+      opts?: { origin?: 'text' | 'voice'; replacesRefused?: true },
     ): Promise<void> => {
       const trimmed = text.trim();
       if (!trimmed && !attachments?.length) return;
@@ -430,6 +434,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
           // server is told below — the transcript is shown BESIDE the marker,
           // never instead of it.
           ...(opts?.origin === 'voice' ? { origin: 'voice' as const } : {}),
+          ...(opts?.replacesRefused ? { replacesRefused: true as const } : {}),
         },
       });
       // A question asked over a live turn ends that turn — the reducer closes
@@ -597,6 +602,10 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     });
   }, []);
 
+  const dismissCredential = useCallback(() => {
+    dispatch({ kind: 'action', action: { type: 'dismiss-credential' } });
+  }, []);
+
   return {
     state,
     currentSessionId,
@@ -608,6 +617,7 @@ export function useChat(opts: UseChatOptions): UseChatResult {
     undoTurns,
     compact,
     noteClarifyAnswer,
+    dismissCredential,
     loadOlder,
     hasOlder,
     olderStatus,

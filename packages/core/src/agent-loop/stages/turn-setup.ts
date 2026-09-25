@@ -10,6 +10,7 @@ import type {
   ToolFilterOpts,
 } from '@ethosagent/types';
 import { deriveFsReachPaths, EmptySubstitutionError } from '../../fs-reach';
+import { servesServerCompaction } from '../../providers/chained-provider';
 import { routeTurnModel } from '../model-route';
 import { parseSmallWindowToolset } from '../small-window-toolset';
 import { resolveToolLoading } from '../tool-loading';
@@ -78,6 +79,7 @@ export async function* setupTurn(
     toolsetOverride?: string[];
     toolsetNarrow?: string[];
     toolsetExclude?: string[];
+    credentialPrompt?: boolean;
   },
 ): AsyncGenerator<AgentEvent, TurnSetupResult> {
   const sessionKey = opts.sessionKey ?? `${deps.platform}:default`;
@@ -373,9 +375,18 @@ export async function* setupTurn(
   );
 
   // v2.2: Pre-turn credential check — surface a credential_required event
-  // before the LLM call so the host can prompt the user for auth.
-  if (deps.credentialCheck) {
-    const missing = await deps.credentialCheck(sessionKey, text);
+  // before the LLM call so the host can prompt the user for auth. Runs only
+  // when the caller says its surface consumes the event
+  // (`RunOptions.credentialPrompt`): every other consumer of this loop —
+  // delegation, background jobs, cron, goals, MCP export — would see a turn
+  // refused with empty text and no explanation, which is worse than letting
+  // the plugin's own call fail with its normal error. Pinned by
+  // `packages/core/src/__tests__/credential-check-gate.test.ts`.
+  if (deps.credentialCheck && opts.credentialPrompt === true) {
+    const missing = await deps.credentialCheck(sessionKey, text, {
+      personalityId: personality.id,
+      allowedPlugins,
+    });
     if (missing) {
       if (traceId) deps.observability?.endTrace(traceId, 'error');
       deps.observability?.flush();
@@ -413,6 +424,7 @@ export async function* setupTurn(
       effectiveModel,
       modelOverride,
       providerEntry,
+      serverCompaction: { active: servesServerCompaction(deps.llm, providerEntry) },
       allowedTools,
       allowedPlugins,
       filterOpts,

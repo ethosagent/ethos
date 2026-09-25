@@ -8,8 +8,10 @@ import type { Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import type { AgentMesh, MeshEntry } from '@ethosagent/agent-mesh';
+import { forkSession } from '@ethosagent/core';
 import type { PendingNotifyQueue } from '@ethosagent/notify-queue';
 import { SessionLane } from '@ethosagent/session-lane';
+import { credentialInstruction } from '@ethosagent/surface-kit';
 import type { McpServerConfig, McpSessionView } from '@ethosagent/tools-mcp';
 import type { JobStore, Logger, SessionStore } from '@ethosagent/types';
 import { answerSuffix } from '@ethosagent/types';
@@ -19,7 +21,8 @@ import { type WebSocket, WebSocketServer } from 'ws';
 const MAX_ACP_SESSIONS = 100;
 
 // ---------------------------------------------------------------------------
-// Local types — avoids depending on @ethosagent/core
+// Local types — the runner is structural, not core's AgentLoop (core is a
+// dependency only for the shared `forkSession`)
 // ---------------------------------------------------------------------------
 
 const noopLogger: Logger = {
@@ -34,10 +37,32 @@ const noopLogger: Logger = {
 
 type AgentEvent = { type: string } & Record<string, unknown>;
 
+/**
+ * openclaw-9.5 item 1 — ACP has no masked input, so a turn refused pre-turn
+ * for a missing plugin credential answers with the one-line instruction that
+ * names `ethos plugin credentials <id> --set <KEY>` (`credentialInstruction`
+ * in @ethosagent/surface-kit), and the turn ends there; the editor resends
+ * once the operator has set it. The event carries no value, so neither does
+ * the answer. `null` for every other event. Pinned by
+ * `__tests__/credential-required.test.ts`.
+ */
+function credentialRefusalText(event: AgentEvent): string | null {
+  if (event.type !== 'credential_required') return null;
+  const { pluginId, credentialKey, label } = event;
+  if (typeof pluginId !== 'string' || typeof credentialKey !== 'string') return null;
+  return credentialInstruction({
+    pluginId,
+    credentialKey,
+    label: typeof label === 'string' ? label : credentialKey,
+  });
+}
+
 interface RunOptions {
   sessionKey?: string;
   personalityId?: string;
   abortSignal?: AbortSignal;
+  /** openclaw-9.5 item 1 — always true here: see `credentialRefusalText`. */
+  credentialPrompt?: boolean;
 }
 
 export interface AgentRunner {
@@ -686,8 +711,11 @@ export class AcpServer {
               sessionKey: p.sessionKey,
               personalityId: p.personalityId,
               abortSignal: ac.signal,
+              credentialPrompt: true,
             })) {
               if (answered) continue;
+              const refusal = credentialRefusalText(event);
+              if (refusal !== null) fullText = refusal;
               if (event.type === 'done') {
                 turnCount = event.turnCount as number;
                 // A `returnDirect` tool result arrives only as `done.text`,
@@ -955,37 +983,10 @@ export class AcpServer {
       return;
     }
 
-    const messages = await this.session.getMessages(source.id, { limit: 10_000 });
+    // The shared fork (packages/core/src/session-fork.ts): full history, every
+    // message field, title/metadata, and `parentSessionId` pointing at the source.
     const newKey = `acp:fork:${randomUUID()}`;
-
-    const forked = await this.session.createSession({
-      key: newKey,
-      platform: source.platform,
-      model: source.model,
-      provider: source.provider,
-      personalityId: source.personalityId,
-      workingDir: source.workingDir,
-      usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
-        estimatedCostUsd: 0,
-        apiCallCount: 0,
-        compactionCount: 0,
-      },
-    });
-
-    for (const msg of messages) {
-      await this.session.appendMessage({
-        sessionId: forked.id,
-        role: msg.role,
-        content: msg.content,
-        toolCallId: msg.toolCallId,
-        toolName: msg.toolName,
-        toolCalls: msg.toolCalls,
-      });
-    }
+    await forkSession(this.session, source.id, { key: newKey });
 
     sendResult({ sessionKey: newKey });
   }
@@ -1001,7 +1002,8 @@ export class AcpServer {
       sendResult({ exists: false, messageCount: 0 });
       return;
     }
-    const messages = await this.session.getMessages(s.id, { limit: 10_000 });
+    // No limit: the count is of the whole session, not its newest 10k rows.
+    const messages = await this.session.getMessages(s.id);
     sendResult({ exists: true, messageCount: messages.length });
   }
 
@@ -1017,7 +1019,13 @@ export class AcpServer {
     let fullText = '';
     let turnCount = 0;
     let failure: string | undefined;
-    for await (const event of this.runner.run(text, { sessionKey, personalityId })) {
+    for await (const event of this.runner.run(text, {
+      sessionKey,
+      personalityId,
+      credentialPrompt: true,
+    })) {
+      const refusal = credentialRefusalText(event);
+      if (refusal !== null) fullText = refusal;
       if (event.type === 'text_delta') fullText += event.text as string;
       if (event.type === 'done') {
         turnCount = event.turnCount as number;

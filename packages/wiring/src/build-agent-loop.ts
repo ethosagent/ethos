@@ -58,6 +58,7 @@ import {
 } from '@ethosagent/worker-router';
 import type { InfrastructureResult } from './build-infrastructure';
 import type { ComposeToolsResult, GatewaySendRef } from './compose-tools';
+import { buildCredentialCheck } from './credential-check';
 import type { DisposerStack } from './disposer-stack';
 import type {
   CreateAgentLoopOptions,
@@ -1025,6 +1026,16 @@ export async function buildAgentLoop(
     ...(toolsResult.turnAuditors.length > 0 ? { turnAuditors: toolsResult.turnAuditors } : {}),
     ...(requestDumpStore ? { requestDumpStore } : {}),
     ...(activeMcpPolicy ? { mcpPolicy: activeMcpPolicy } : {}),
+    // openclaw-9.5 item 1 — set for EVERY host (all of them assemble through
+    // here), but it only runs for a turn whose surface passes
+    // `RunOptions.credentialPrompt` (`stages/turn-setup.ts`). Plugin
+    // credentials only: browser logins (`credentials/<name>/`) stay a
+    // `browser_fill_credential` refusal — see `buildCredentialCheck`.
+    credentialCheck: buildCredentialCheck({
+      pluginLoader,
+      ...(opts.observability ? { observability: opts.observability } : {}),
+      logger: log,
+    }),
     onToolMetric: (metric) => {
       pluginDiagnostics.pushEvent({
         pluginId: metric.pluginId,
@@ -1505,11 +1516,20 @@ export async function buildAgentLoop(
     // through the history-recording path. The tombstone store is passed
     // unconditionally so a fact rejected while gating was on stays skipped even
     // if approval is later disabled.
+    //
+    // Evidence-gated promotion (plan openclaw-9.5-adoption item 3, D22):
+    // `memoryCapture.evidenceSessions: N > 0` routes capture through the queue
+    // even with approval `off`, as a capture-only queue that promotes an entry
+    // once N distinct sessions have extracted it (`PendingMemoryStore.propose`,
+    // `autoPromote`). Under `automated`/`all` evidence only orders the queue —
+    // a human still approves. Pinned by
+    // `__tests__/memory-evidence-wiring.test.ts`.
     const approvalMode = config.memoryApproval?.mode ?? 'off';
     const captureGated = approvalMode === 'automated' || approvalMode === 'all';
+    const evidenceSessions = captureConfig.evidenceSessions ?? 0;
     const captureTombstones = new TombstoneStore({ storage: wiringCtx.storage, dataDir });
     let capturePropose: ProposeFn | undefined;
-    if (captureGated) {
+    if (captureGated || evidenceSessions > 0) {
       const pending = new PendingMemoryStore({
         storage: wiringCtx.storage,
         dataDir,
@@ -1517,6 +1537,7 @@ export async function buildAgentLoop(
         // One derivation of cap + TTL, shared with the runtime gate and every
         // out-of-loop queue (`approvalLimits`).
         ...approvalLimits(config.memoryApproval),
+        ...(evidenceSessions > 0 ? { evidenceSessions, autoPromote: !captureGated } : {}),
         // Cap drops must be audible (Curator lesson, plan §3b) — same seam as
         // the build-infrastructure write path.
         observability: {
@@ -1531,6 +1552,11 @@ export async function buildAgentLoop(
           const handle = withHistory(captureBase, captureHistory, {
             source: entry.source,
             approvedBy,
+            // A promoted evidence entry records its hash like a direct capture
+            // write does, so dedup keeps it from being queued a second time.
+            ...(entry.evidenceSessions && entry.factHash
+              ? { captureHashes: [entry.factHash] }
+              : {}),
           });
           const ctx: MemoryContext = {
             scopeId: entry.scopeId,

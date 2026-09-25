@@ -5,8 +5,16 @@
 //     `runGatewayStart` (apps/ethos/src/commands/gateway.ts) on the gateway's
 //     systemLoop (cron, dreams, watcher wakes, call capture, SIP-inbound).
 //     This is the ONLY gate that honours the D12 opt-in (`approvalMode: off`
-//     + `allowUnattendedDangerousTools`): the loop runs trusted local
-//     automation. `ethos mcp serve` (M-D10) builds the same shape through
+//     + `allowUnattendedDangerousTools`), and only for trusted local work.
+//     With no bot configured the systemLoop is ALSO the idle gateway bot's
+//     loop, so channel turns from plugin adapters (remote senders) run on it
+//     too; for those the gate hands the call to `createNoApprovalSurfaceGate`
+//     instead, so they never get the opt-in. The per-call test is the
+//     caller's `isRemoteSenderTurn` — in `runGatewayStart`,
+//     `Gateway.resolveApprovalRoute(sessionId) !== undefined`, a route the
+//     gateway sets for its own channel turns only (`runTurn` in
+//     extensions/gateway/src/index.ts). A test that throws counts as remote.
+//     `ethos mcp serve` (M-D10) builds the same shape through
 //     `createUnattendedApprovalGate` with its own rejection text.
 //   - `createNoApprovalSurfaceGate` — a REMOTE SENDER drives it, on a chat
 //     surface that cannot show an approval card. Registered by
@@ -16,14 +24,20 @@
 //     on every bot loop with no approval-capable adapter (WhatsApp, Email, a
 //     `webhooks.<hookId>` route bot), and as `createSlackApprovalHook`'s
 //     `withoutSurface` for a card-less turn on a card-capable bot's loop.
-//     It never takes the D12 opt-in: auto-approving a call a remote sender
-//     asked for is what `createDangerPredicate`'s capability gate forbids,
+//     Also used by `wireUnattendedApprovalGate` for the idle gateway bot's
+//     channel turns on the systemLoop (above). It never takes the D12
+//     opt-in: auto-approving a call a remote sender asked for is what `createDangerPredicate`'s capability gate forbids,
 //     and `validateUnsafeCombinations` (extensions/personalities) cannot see a
 //     personality with no `platform:` bound to such a bot in gateway config.
 //
-// Pinned by `__tests__/unattended-approval-gate.test.ts`,
+// Pinned by `__tests__/unattended-approval-gate.test.ts` (including the idle
+// gateway's channel-vs-cron split, driven through a real `Gateway`),
 // `commands/__tests__/approval-flow-unattended.test.ts` and
 // `commands/__tests__/gateway-unattended-gate-wiring.test.ts`.
+//
+// `ethos boot` does not register this gate at all: its idle bot shares the web
+// loop, whose web approval hook never takes the D12 opt-in (see the comment
+// beside `const systemLoop = shared.loop;` in apps/ethos/src/commands/boot.ts).
 //
 // Every other approval surface has somebody to ask — the web modal, the Slack,
 // Telegram or Discord card. Here there is no way to ask, and both
@@ -86,8 +100,18 @@ export interface WireUnattendedApprovalGateOptions {
   model: string;
   /** `EthosConfig.allowUnattendedDangerousTools` — the operator's opt-in that
    *  lets a personality's `approvalMode: 'off'` auto-approve flagged tools on
-   *  this loop. Unset → `off` is treated as `manual`, so flagged calls refuse. */
+   *  this loop's TRUSTED turns. Unset → `off` is treated as `manual`, so
+   *  flagged calls refuse. Never applies to a remote-sender turn. */
   allowUnattendedDangerousTools: boolean;
+  /**
+   * Whether the turn that issued this call (by `sessionId`) was sent by a
+   * remote sender — a gateway channel turn. `true` → the call is judged by
+   * `createNoApprovalSurfaceGate` (no D12 opt-in, the no-surface text);
+   * `false` → the unattended gate with the opt-in. Required, so no caller can
+   * forget the split; a caller whose loop carries no remote turns passes
+   * `() => false`. A throw counts as `true`.
+   */
+  isRemoteSenderTurn: (sessionId: string) => boolean;
 }
 
 /**
@@ -98,7 +122,11 @@ export interface WireUnattendedApprovalGateOptions {
  * refuses a `voiceOrigin: far_end` request for a consequential tool) all
  * apply. Deny rules and hardline commands are not this gate's job: core's
  * `enforceBeforeToolCall` and `createTerminalGuardHook` refuse those first.
- * Pinned by `__tests__/unattended-approval-gate.test.ts`.
+ *
+ * A call from a remote-sender turn (`isRemoteSenderTurn`) is judged by
+ * `createNoApprovalSurfaceGate` instead — the bot loops' gate — so it is
+ * refused whatever `allowUnattendedDangerousTools` says, with the no-surface
+ * text. Pinned by `__tests__/unattended-approval-gate.test.ts`.
  */
 export function wireUnattendedApprovalGate(
   hooks: HookRegistry,
@@ -112,17 +140,21 @@ export function wireUnattendedApprovalGate(
     alwaysAsk: APPROVAL_SURFACE_ALWAYS_ASK,
     allowAutoApproveDangerousTools: opts.allowUnattendedDangerousTools,
   });
-  const { reload } = opts;
-  const judged: DangerPredicate = reload
-    ? async (payload) => {
-        await reload().catch(() => {});
-        return danger(payload);
-      }
-    : danger;
-  return hooks.registerModifying(
-    'before_tool_call',
-    createUnattendedApprovalGate(judged, unattendedApprovalRejection),
-  );
+  const unattended = createUnattendedApprovalGate(danger, unattendedApprovalRejection);
+  const remote = createNoApprovalSurfaceGate([hooks], opts);
+  const { reload, isRemoteSenderTurn } = opts;
+  return hooks.registerModifying('before_tool_call', async (payload) => {
+    if (reload) await reload().catch(() => {});
+    // Fail closed: `fireModifying` swallows a throwing handler, which would let
+    // the call through, so a failed origin test is answered as remote here.
+    let remoteTurn = true;
+    try {
+      remoteTurn = isRemoteSenderTurn(payload.sessionId);
+    } catch {
+      // keep the refusing branch
+    }
+    return remoteTurn ? remote(payload) : unattended(payload);
+  });
 }
 
 /** What the agent is told when a flagged call is refused on a bot turn whose
@@ -143,8 +175,8 @@ export interface NoApprovalSurfaceGateOptions {
 }
 
 /**
- * The `before_tool_call` handler for bot-loop turns with no approval surface
- * (see the file header for its two callers). `hooks` are the registries of
+ * The `before_tool_call` handler for remote-sender turns with no approval
+ * surface (see the file header for its callers). `hooks` are the registries of
  * the loops it guards — their `session_start` tells the predicate which
  * personality a turn runs.
  *

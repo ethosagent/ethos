@@ -277,6 +277,12 @@ export class SQLiteSessionStore implements SessionStore {
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT',
     );
+
+    // Additive migration: `listSessions({ parentSessionId })` backs the branch
+    // switchers (web sibling list, `/branches`), so it is an index seek, not a
+    // table scan. Idempotent; kept out of the v1 baseline for the same reason
+    // as store_meta above.
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)');
   }
 
   // ---------------------------------------------------------------------------
@@ -403,6 +409,10 @@ export class SQLiteSessionStore implements SessionStore {
     if (filter?.workingDir) {
       conditions.push('working_dir = ?');
       values.push(filter.workingDir);
+    }
+    if (filter?.parentSessionId) {
+      conditions.push('parent_session_id = ?');
+      values.push(filter.parentSessionId);
     }
     if (filter?.since) {
       conditions.push('created_at >= ?');

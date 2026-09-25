@@ -78,9 +78,13 @@ export async function runMemoryPending(args: string[]): Promise<void> {
 function printEntry(e: PendingEntry): void {
   const when = new Date(e.proposedAt).toISOString().slice(0, 16).replace('T', ' ');
   const key = 'key' in e.update ? e.update.key : '';
+  // Recurrence evidence (`memoryCapture.evidenceSessions`); absent when it is off.
+  const evidence = e.evidenceSessions
+    ? ` ${c.dim}· seen in ${e.evidenceSessions.length} session${e.evidenceSessions.length === 1 ? '' : 's'}${c.reset}`
+    : '';
   console.log(
     `${c.bold}${e.id}${c.reset} ${c.dim}${when}${c.reset} ${c.cyan}${e.source}${c.reset} ` +
-      `${c.bold}${key}${c.reset} ${c.dim}[${e.update.action}]${c.reset}`,
+      `${c.bold}${key}${c.reset} ${c.dim}[${e.update.action}]${c.reset}${evidence}`,
   );
   const preview = summarizeUpdate(e);
   if (preview) console.log(`  ${preview}`);

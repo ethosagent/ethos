@@ -8,6 +8,9 @@ export interface SlashCommand {
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'help', desc: 'Show all commands' },
   { name: 'new', desc: 'Start a fresh session' },
+  { name: 'fork', desc: 'Branch this session' },
+  { name: 'branches', desc: "List this session's branches" },
+  { name: 'branch', desc: 'Switch to branch <n>' },
   { name: 'personality', desc: 'List or switch personality' },
   { name: 'model', desc: 'Open model picker' },
   { name: 'sessions', desc: 'Open session picker' },

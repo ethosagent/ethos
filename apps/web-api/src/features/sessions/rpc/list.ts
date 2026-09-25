@@ -7,5 +7,6 @@ export const sessionsList = os.sessions.list.handler(({ input, context }) =>
     ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
     ...(input.personalityId ? { personalityId: input.personalityId } : {}),
     ...(input.platform ? { platform: input.platform } : {}),
+    ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
   }),
 );

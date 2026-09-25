@@ -1,10 +1,16 @@
-import { unstreamedAnswer, VOICE_ORIGIN_TAG } from '@ethosagent/types';
+import {
+  COMPACTION_MARKER,
+  COMPACTION_ROW_TOOL_NAME,
+  unstreamedAnswer,
+  VOICE_ORIGIN_TAG,
+} from '@ethosagent/types';
 import {
   type ApprovalRequest,
   type BackgroundJobStatusWire,
   type CardEnvelope,
   CardEnvelopeSchema,
   type ClarifyRequestEvent,
+  type CredentialRequiredEvent,
   type SessionCard,
   type SseEvent,
   type SseEventType,
@@ -147,6 +153,23 @@ export interface ChatState {
    * `clarify.resolved` SSE event (so every tab collapses the card together).
    */
   pendingClarifies: ClarifyRequestEvent[];
+  /**
+   * openclaw-9.5 item 1 — the last turn was refused pre-turn because a plugin
+   * is missing a credential. The chat pane draws a masked prompt for it. This
+   * holds only WHICH credential is missing and the message to resend — the
+   * value the user types lives in `CredentialCard`'s local state and never
+   * enters this store. Cleared by the next submission (the resend included),
+   * by `dismiss-credential`, and by `reset`.
+   */
+  pendingCredential: CredentialRequiredEvent | null;
+  /**
+   * The optimistic user bubble of the turn `pendingCredential` refused. The
+   * resend (`submit-user-message` with `replacesRefused`) takes its place
+   * instead of appending a second bubble with the same text; a store that
+   * fails resends nothing, so the bubble simply stays. Cleared with
+   * `pendingCredential`.
+   */
+  credentialRefusedMessageId: string | null;
   isStreaming: boolean;
   error: string | null;
   /** Wall-clock ms of the most recent streaming event (text_delta, tool_start, tool_end).
@@ -223,6 +246,8 @@ export const initialChatState: ChatState = {
   currentTurn: null,
   pendingApprovals: [],
   pendingClarifies: [],
+  pendingCredential: null,
+  credentialRefusedMessageId: null,
   isStreaming: false,
   error: null,
   lastStreamEventAt: null,
@@ -251,6 +276,9 @@ export type ChatAction =
       attachments?: MessageAttachment[];
       /** `'voice'` when the turn was spoken. Typed sends omit it. */
       origin?: 'voice';
+      /** The resend after a credential was stored: replace the refused
+       *  turn's bubble (`credentialRefusedMessageId`) rather than add one. */
+      replacesRefused?: true;
     }
   | { type: 'steer-user-message'; id: string; text: string; timestamp: number }
   | { type: 'history-loaded'; messages: StoredMessage[]; cards?: SessionCard[] }
@@ -279,6 +307,8 @@ export type ChatAction =
    */
   | { type: 'reset' }
   | { type: 'undo-turns'; count: number }
+  /** The user closed the masked credential prompt without storing a value. */
+  | { type: 'dismiss-credential' }
   /**
    * Remember the answer this tab just sent for a run's question. `clarify.resolved`
    * carries only the source, so without this the resolved card could say a
@@ -591,6 +621,17 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       };
     }
 
+    case 'credential_required':
+      // The turn was refused before it ran; the `done` that follows closes it.
+      // Only the latest refusal matters — the resend re-checks every
+      // credential, so an older prompt is never still owed.
+      return {
+        ...state,
+        pendingCredential: event,
+        credentialRefusedMessageId:
+          [...state.messages].reverse().find((m) => m.role === 'user')?.id ?? null,
+      };
+
     case 'run_start':
       // The clock starts when the user pressed Send, not when the server got
       // round to us — `submit-user-message` already set it.
@@ -646,9 +687,14 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
       };
       const hasTrail = (state.trail[state.currentTurn?.id ?? '']?.length ?? 0) > 0;
       const interrupted = state.currentTurn;
+      // A credential resend is the refused turn asked again: its bubble is
+      // dropped so the new one is the only copy (the refused turn persisted
+      // no user message — core refuses before appending it).
+      const refusedId = action.replacesRefused ? state.credentialRefusedMessageId : null;
+      const kept = keepInterruptedTurn(state.messages, interrupted, hasTrail);
       return {
         ...state,
-        messages: [...keepInterruptedTurn(state.messages, interrupted, hasTrail), message],
+        messages: [...(refusedId ? kept.filter((m) => m.id !== refusedId) : kept), message],
         // A turn cut off by the next question ENDED, exactly as Stop ends one.
         // Without this its actions stay `running` for ever and its footer leads
         // with a ✓ it never earned.
@@ -666,7 +712,14 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
         abortedTurn: false,
         // We are the client that asked for this turn, so we see all of it.
         streamAnchored: true,
+        // A new turn re-runs the credential check, so an open prompt is stale.
+        pendingCredential: null,
+        credentialRefusedMessageId: null,
       };
+    }
+
+    case 'dismiss-credential': {
+      return { ...state, pendingCredential: null, credentialRefusedMessageId: null };
     }
 
     case 'steer-user-message': {
@@ -1274,6 +1327,12 @@ function parseHistory(
         };
       }
       const turn = current;
+      // Item 7 — a provider-side compaction row renders as its one-line
+      // marker; the summary under it is context for the model, not the chat.
+      if (m.toolName === COMPACTION_ROW_TOOL_NAME) {
+        turn.blocks.push({ kind: 'text', content: COMPACTION_MARKER });
+        continue;
+      }
       const text = m.content.trim();
       if (text !== '') {
         turn.blocks.push({ kind: 'text', content: m.content });

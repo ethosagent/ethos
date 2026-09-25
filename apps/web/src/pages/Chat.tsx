@@ -10,6 +10,7 @@ import { takeoverStageFits } from '../components/browser/useTakeoverSocket';
 import { ApprovalModal } from '../components/chat/ApprovalModal';
 import { ClarifyCard } from '../components/chat/ClarifyCard';
 import { Composer } from '../components/chat/Composer';
+import { CredentialCard } from '../components/chat/CredentialCard';
 import { GoalIntakeModal } from '../components/chat/GoalIntakeModal';
 import { MessageList } from '../components/chat/MessageList';
 import {
@@ -25,6 +26,7 @@ import { useGoalDetection } from '../features/goals/useGoalDetection';
 import { usePersonalityGet } from '../features/personalities/api/queries';
 import { useSessionRenameFromChat } from '../features/sessions/api/mutations';
 import { useRecentSessions, useSessionGet } from '../features/sessions/api/queries';
+import { BranchSwitcher } from '../features/sessions/BranchSwitcher';
 import { useTeam } from '../features/teams/api/queries';
 import { teamAccents } from '../features/teams/lib/membership';
 import { CallStage } from '../features/voice/CallStage';
@@ -146,6 +148,7 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
     resetSession,
     compact,
     noteClarifyAnswer,
+    dismissCredential,
     loadOlder,
     hasOlder,
     olderStatus,
@@ -905,6 +908,12 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         {...(coordinatorOf ? { coordinatorOf } : {})}
         actionsSlot={
           <>
+            {/* Only drawn once this conversation has been forked. Picking a
+                  branch is a navigation, so Back returns to the one left. */}
+            <BranchSwitcher
+              session={currentSessionId ? sessionQuery.data?.session : undefined}
+              onSelect={(id) => setSearchParams({ session: id })}
+            />
             {/* Whether replies are SPOKEN in this conversation, and whether
                   the phone is up, are two different questions — so they are two
                   controls, side by side, not one overloaded affordance. */}
@@ -1025,6 +1034,14 @@ export function Chat({ personalityId: personalityIdProp, teamContext }: ChatProp
         stalled={isStalled}
       />
       <div>
+        {state.pendingCredential ? (
+          <CredentialCard
+            key={`${state.pendingCredential.pluginId}:${state.pendingCredential.credentialKey}`}
+            request={state.pendingCredential}
+            resend={(text) => sendMessage(text, undefined, { replacesRefused: true })}
+            onDismiss={dismissCredential}
+          />
+        ) : null}
         {state.error ? (
           <div className="chat-error" role="alert">
             {state.error}

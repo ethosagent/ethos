@@ -184,13 +184,13 @@ export interface AgentLoopConfig {
     sessionId: string;
     turnId: string;
   }) => void;
-  /** v2.2 — Pre-turn credential check. Returns the first missing credential,
-   *  or null if all required credentials are present. Opt-in: when undefined,
-   *  the check is skipped. Wiring provides this when plugins declare required
-   *  credentials. */
+  /** v2.2 — Pre-turn credential check (first missing credential, or null). Runs only when
+   *  set AND the run passes `credentialPrompt`; `scope` = the turn's personality + allowed
+   *  plugins. Must not throw. Built by `buildCredentialCheck` (packages/wiring). */
   credentialCheck?: (
     sessionKey: string,
     pendingUserMessage: string,
+    scope: { personalityId: string; allowedPlugins: readonly string[] },
   ) => Promise<{
     pluginId: string;
     credentialKey: string;
@@ -276,6 +276,10 @@ export interface RunOptions extends MemoryPrefetchGate {
    * `BackgroundExecutor.runOne`; absent for foreground turns.
    */
   jobId?: string;
+  /** openclaw-9.5 D30 — a parent-review turn's job id → `ToolContext.reviewOfJobId`, verbatim. */
+  reviewOfJobId?: string;
+  /** openclaw-9.5 item 1 — the surface answers `credential_required`; see stages/turn-setup.ts. */
+  credentialPrompt?: boolean;
   /** Origin of this run (`platform:chatId` for channel turns). Threaded to `ToolContext.origin`. Generic — not goal-specific. */
   origin?: string;
   a2aDelegation?: { traceId: string; depth: number; reserveOutbound: () => boolean }; // A2A runner sets this servicing an inbound task → `ToolContext.a2aDelegation` (plan §P8).
@@ -690,6 +694,7 @@ export class AgentLoop {
     const dgRemainingRef = { value: 0 };
 
     const tierEscalationRef: { value?: string } = {};
+    const { serverCompaction } = setup; // item 7 (D32) — one compactor per turn
 
     // Watcher tap. Dangerous mode neutralizes halts for this run (consumer-side).
     const watcherTap = createWatcherTap(this.safety);
@@ -779,6 +784,7 @@ export class AgentLoop {
         effectiveModel,
         modelOverride,
         providerEntry,
+        serverCompaction,
         allowedPlugins,
         allowedTools,
         filterOpts,
@@ -842,7 +848,7 @@ export class AgentLoop {
       if (stepResult.outcome === 'overflow') {
         const canRetry = !overflowRetried && this.compaction?.retryOnOverflow !== false;
         overflowRetried = true;
-        const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn };
+        const meta = { sessionId, sessionKey, turnNumber, lastCompactionTurn, serverCompaction };
         const retry = canRetry
           ? await applyOverflowRetry(this.deps, llmMessages, systemPrompt ?? '', personality, meta)
           : { retried: false };
@@ -954,6 +960,7 @@ export class AgentLoop {
             agentId: opts.agentId,
             rootSessionKey: opts.rootSessionKey,
             jobId: opts.jobId,
+            ...(opts.reviewOfJobId !== undefined ? { reviewOfJobId: opts.reviewOfJobId } : {}),
             origin: opts.origin,
             attachments: opts.attachments,
             dryRun: opts.dryRun,

@@ -21,7 +21,7 @@ export {
 // Lane 1(b/c) — the gate's output-reserve constant, shared with wiring's
 // startup floor diagnostic and window-scaled result budget so there is ONE
 // reserve arithmetic, not a drifting copy.
-export { DEFAULT_OUTPUT_RESERVE_TOKENS } from './agent-loop/compaction';
+export { DEFAULT_OUTPUT_RESERVE_TOKENS, pressureGateTokens } from './agent-loop/compaction';
 // Personality deny rules — enforced in `enforceBeforeToolCall`; exported so the
 // smart reviewer's verdict cache keys off the same canonical args form.
 export { canonicalizeArgs, denyRuleReason, matchDenyRule } from './agent-loop/deny-rules';
@@ -113,7 +113,7 @@ export {
   clarifyUnresolvedMessage,
 } from './clarify/respond-outcome';
 export { isClarifyAnswerableOn } from './clarify/takeover-handback';
-export { clarifyPromptText } from './clarify/takeover-prompt';
+export { clarifyPromptText, webPageUrlFor } from './clarify/takeover-prompt';
 export { type ConformanceResult, validateContextEngine } from './context-engines/conformance';
 export { DropOldestEngine } from './context-engines/drop-oldest';
 export { ReferencePreservingEngine } from './context-engines/reference-preserving';
@@ -193,7 +193,9 @@ export type {
 } from './providers/chained-provider';
 export {
   ChainedProvider,
+  markServerCompaction,
   providerEntriesOf,
+  servesServerCompaction,
   tagProviderEntry,
 } from './providers/chained-provider';
 export { DefaultDocumentExtractorRegistry } from './providers/document-extractor-registry';
@@ -257,6 +259,13 @@ export type { SafeFetchFn, SecretsBackend } from './scoped';
 export { ScopedFetchImpl, ScopedFsImpl, ScopedProcessImpl, ScopedSecretsImpl } from './scoped';
 export type { ScriptExclusionCategory, ScriptSafeToolMeta } from './script-safe';
 export { scriptCallableFor, scriptExclusionError, scriptExclusionFor } from './script-safe';
+export {
+  type ForkSessionOptions,
+  type ForkSessionResult,
+  forkSession,
+  forkSessionKey,
+  listBranches,
+} from './session-fork';
 export { SimpleCompletionImpl } from './simple-completion';
 export type { SpokenStyleInjectorOptions } from './spoken-style-injector';
 export { createSpokenStyleInjector, SPOKEN_STYLE_BLOCK } from './spoken-style-injector';

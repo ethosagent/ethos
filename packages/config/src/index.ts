@@ -1089,6 +1089,22 @@ export interface ProviderChainEntry {
    */
   failover?: boolean;
   /**
+   * openclaw-9.5-adoption item 7 (D32) — let the provider compact the
+   * conversation server-side instead of the local context engine. Absent
+   * means off. Honoured only on a `provider: anthropic` entry (wiring,
+   * `createLLMFromRegistry`, warns and ignores it anywhere else).
+   */
+  serverCompaction?: boolean;
+  /**
+   * The input-token count at which the server compacts. Absent → the local
+   * compaction gate's own threshold for this model (`pressureGateTokens` in
+   * packages/core), so turning the switch on does not move WHEN compaction
+   * happens. A positive integer. Anthropic's API documentation puts the
+   * minimum at 50,000; a lower value is raised to it, not rejected
+   * (`SERVER_COMPACTION_MIN_TRIGGER_TOKENS`, extensions/llm-anthropic).
+   */
+  serverCompactionTriggerTokens?: number;
+  /**
    * Every other `providers.<n>.<field>` line, keyed by `<field>`. It belongs to
    * THIS entry: `renderProviderChain` re-emits it under whatever index the
    * entry has at write time, so it moves with the entry on reorder and is gone
@@ -1124,14 +1140,28 @@ const PROVIDER_CHAIN_FIELDS = [
   'region',
   'awsProfile',
   'failover',
+  'serverCompaction',
+  'serverCompactionTriggerTokens',
 ] as const;
 type ProviderChainField = (typeof PROVIDER_CHAIN_FIELDS)[number];
-/** The modelled fields whose value is a string — every one but `failover`, the
- *  namespace's only boolean, which parse and render handle by hand. */
-type ProviderChainStringField = Exclude<ProviderChainField, 'failover'>;
+/** The modelled fields whose value is NOT a string — the booleans `failover`
+ *  and `serverCompaction` and the integer `serverCompactionTriggerTokens`,
+ *  which parse and render handle by hand. */
+const PROVIDER_CHAIN_TYPED_FIELDS = [
+  'failover',
+  'serverCompaction',
+  'serverCompactionTriggerTokens',
+] as const;
+type ProviderChainStringField = Exclude<
+  ProviderChainField,
+  (typeof PROVIDER_CHAIN_TYPED_FIELDS)[number]
+>;
 
 const PROVIDER_CHAIN_STRING_FIELDS: readonly ProviderChainStringField[] =
-  PROVIDER_CHAIN_FIELDS.filter((f): f is ProviderChainStringField => f !== 'failover');
+  PROVIDER_CHAIN_FIELDS.filter(
+    (f): f is ProviderChainStringField =>
+      !(PROVIDER_CHAIN_TYPED_FIELDS as readonly string[]).includes(f),
+  );
 
 function isProviderChainField(field: string): field is ProviderChainField {
   return (PROVIDER_CHAIN_FIELDS as readonly string[]).includes(field);
@@ -1242,6 +1272,31 @@ export function parseProviderChain(
         }
         continue;
       }
+      if (field === 'serverCompaction') {
+        // Absent means off, so an unreadable value is refused out loud rather
+        // than read as either answer — the same trade `failover` makes.
+        if (value === 'true' || value === 'false') entry.serverCompaction = value === 'true';
+        else {
+          notices?.push(
+            `config.yaml: 'providers.${idx}.serverCompaction' must be true or false, so ` +
+              `'${value}' was ignored — this entry compacts locally.`,
+          );
+        }
+        continue;
+      }
+      if (field === 'serverCompactionTriggerTokens') {
+        const n = Number(value);
+        if (/^\d+$/.test(value) && Number.isSafeInteger(n) && n > 0) {
+          entry.serverCompactionTriggerTokens = n;
+        } else {
+          notices?.push(
+            `config.yaml: 'providers.${idx}.serverCompactionTriggerTokens' must be a positive ` +
+              `whole number of tokens, so '${value}' was ignored — the trigger defaults to the ` +
+              'local compaction threshold.',
+          );
+        }
+        continue;
+      }
       if (isProviderChainStringField(field)) entry[field] = value;
       else passthrough[field] = value;
     }
@@ -1269,10 +1324,14 @@ export function renderProviderChain(
   const out: Array<[string, string]> = [];
   for (const [i, entry] of entries.entries()) {
     for (const field of PROVIDER_CHAIN_FIELDS) {
-      if (field === 'failover') {
-        if (entry.failover !== undefined) {
-          out.push([`providers.${i}.failover`, String(entry.failover)]);
-        }
+      if (field === 'failover' || field === 'serverCompaction') {
+        const flag = entry[field];
+        if (flag !== undefined) out.push([`providers.${i}.${field}`, String(flag)]);
+        continue;
+      }
+      if (field === 'serverCompactionTriggerTokens') {
+        const n = entry.serverCompactionTriggerTokens;
+        if (n !== undefined) out.push([`providers.${i}.${field}`, String(n)]);
         continue;
       }
       const value = entry[field];
@@ -1404,6 +1463,7 @@ export interface AuxiliaryCompressionConfig {
  *   memoryCapture.model: claude-haiku-4-5-20251001
  *   memoryCapture.maxPerHour: 6
  *   memoryCapture.maxPerDay: 30
+ *   memoryCapture.evidenceSessions: 3
  */
 export interface MemoryCaptureConfig {
   enabled?: boolean;
@@ -1413,6 +1473,17 @@ export interface MemoryCaptureConfig {
   baseUrl?: string;
   maxPerHour?: number;
   maxPerDay?: number;
+  /**
+   * Recurrence-evidence threshold (plan openclaw-9.5-adoption item 3, D22):
+   * the number of distinct sessions that must extract the same fact before it
+   * is promoted. `0` or absent = off (capture behaves as before). With
+   * `memoryApproval.mode: off` a fact is held in the pending queue until it
+   * reaches N and is then approved as `evidence`; with `automated`/`all` the
+   * count only orders the queue for a human. An integer in 0..16 —
+   * `buildMemoryCaptureConfig` refuses anything else (16 is
+   * `MAX_EVIDENCE_SESSIONS` in `@ethosagent/memory-approval`).
+   */
+  evidenceSessions?: number;
 }
 
 /**
@@ -4238,6 +4309,8 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (mc.baseUrl) lines.push(`memoryCapture.baseUrl: ${mc.baseUrl}`);
     if (mc.maxPerHour !== undefined) lines.push(`memoryCapture.maxPerHour: ${mc.maxPerHour}`);
     if (mc.maxPerDay !== undefined) lines.push(`memoryCapture.maxPerDay: ${mc.maxPerDay}`);
+    if (mc.evidenceSessions !== undefined)
+      lines.push(`memoryCapture.evidenceSessions: ${mc.evidenceSessions}`);
   }
   if (config.memoryVault) {
     const mv = config.memoryVault;
@@ -7398,6 +7471,15 @@ function buildMemoryCaptureConfig(kv: Record<string, string>): MemoryCaptureConf
   if (!present) return undefined;
   const maxPerHour = Number.parseInt(kv['memoryCapture.maxPerHour'] ?? '', 10);
   const maxPerDay = Number.parseInt(kv['memoryCapture.maxPerDay'] ?? '', 10);
+  const evidenceRaw = kv['memoryCapture.evidenceSessions'];
+  // Whole-string match, not parseInt: `3.5` or `3x` must be refused, not
+  // silently read as 3. The ceiling is memory-approval's MAX_EVIDENCE_SESSIONS
+  // (an entry records at most 16 sessions, so a higher threshold never fires).
+  if (evidenceRaw !== undefined && (!/^\d+$/.test(evidenceRaw) || Number(evidenceRaw) > 16)) {
+    throw new Error(
+      `Invalid memoryCapture.evidenceSessions "${evidenceRaw}". Expected an integer from 0 to 16.`,
+    );
+  }
   return {
     ...(kv['memoryCapture.enabled'] !== undefined
       ? { enabled: kv['memoryCapture.enabled'] === 'true' }
@@ -7408,6 +7490,7 @@ function buildMemoryCaptureConfig(kv: Record<string, string>): MemoryCaptureConf
     ...(kv['memoryCapture.baseUrl'] ? { baseUrl: kv['memoryCapture.baseUrl'] } : {}),
     ...(Number.isFinite(maxPerHour) ? { maxPerHour } : {}),
     ...(Number.isFinite(maxPerDay) ? { maxPerDay } : {}),
+    ...(evidenceRaw !== undefined ? { evidenceSessions: Number(evidenceRaw) } : {}),
   };
 }
 

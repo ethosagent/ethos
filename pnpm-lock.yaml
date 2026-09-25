@@ -64,12 +64,18 @@ importers:
       '@ethosagent/agent-mesh':
         specifier: workspace:*
         version: link:../../extensions/agent-mesh
+      '@ethosagent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@ethosagent/notify-queue':
         specifier: workspace:*
         version: link:../../extensions/notify-queue
       '@ethosagent/session-lane':
         specifier: workspace:*
         version: link:../../packages/session-lane
+      '@ethosagent/surface-kit':
+        specifier: workspace:*
+        version: link:../../packages/surface-kit
       '@ethosagent/tools-mcp':
         specifier: workspace:*
         version: link:../../extensions/tools-mcp

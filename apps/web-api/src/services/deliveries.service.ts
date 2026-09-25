@@ -55,6 +55,10 @@ export interface DeliveriesSummary {
 
 export interface DeadInboundRow {
   id: string;
+  /** `dead` — given up on. `interrupted` — cut after a tool had started, so
+   *  never replayed (plan openclaw-9.5-adoption D5); the chat was asked to
+   *  reply `retry`. Both take Replay / Discard. */
+  status: 'dead' | 'interrupted';
   platform: string;
   chatId: string;
   threadId: string | null;
@@ -102,14 +106,19 @@ export class DeliveriesService {
     this.spoolPath = join(opts.dataDir, 'inbound-spool.db');
   }
 
-  /** Dead-lettered inbound messages, newest first. Empty — and no file
-   *  created — while no gateway has ever opened the spool. */
+  /** Dead-lettered and interrupted inbound messages, newest first, `limit` in
+   *  all. Empty — and no file created — while no gateway has ever opened the
+   *  spool. */
   async listDeadInbound(limit = 50): Promise<{ rows: DeadInboundRow[] }> {
     const spool = await this.openSpool();
     if (!spool) return { rows: [] };
+    const merged = [...spool.listDead(limit), ...spool.listInterrupted(limit)]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit);
     return {
-      rows: spool.listDead(limit).map((r) => ({
+      rows: merged.map((r) => ({
         id: r.id,
+        status: r.status === 'interrupted' ? 'interrupted' : 'dead',
         platform: r.platform,
         chatId: r.chatId,
         threadId: r.threadId ?? null,
@@ -122,14 +131,15 @@ export class DeliveriesService {
     };
   }
 
-  /** A dead row back to `received` (attempts reset). The running gateway's
-   *  replay tick picks it up (`Gateway.replayInboundSpool`, every 60s). */
+  /** A dead or interrupted row back to `received` (attempts reset, tool start
+   *  cleared). The running gateway's replay tick picks it up
+   *  (`Gateway.replayInboundSpool`, every 60s). */
   async requeueInbound(id: string): Promise<{ ok: boolean }> {
     const spool = await this.openSpool();
     return { ok: spool ? spool.requeue(id) : false };
   }
 
-  /** A dead row closed without a turn. */
+  /** A dead or interrupted row closed without a turn. */
   async discardInbound(id: string): Promise<{ ok: boolean }> {
     const spool = await this.openSpool();
     return { ok: spool ? spool.discard(id) : false };

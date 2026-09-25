@@ -1,11 +1,12 @@
-import type {
-  CompletionChunk,
-  CompletionOptions,
-  FailoverReason,
-  LLMProvider,
-  Message,
-  ProviderCapabilities,
-  ToolDefinitionLite,
+import {
+  type CompletionChunk,
+  type CompletionOptions,
+  type FailoverReason,
+  flattenCompactionEnvelopes,
+  type LLMProvider,
+  type Message,
+  type ProviderCapabilities,
+  type ToolDefinitionLite,
 } from '@ethosagent/types';
 
 // ---------------------------------------------------------------------------
@@ -217,6 +218,34 @@ export function tagProviderEntry<P extends LLMProvider>(provider: P, key: string
   return provider;
 }
 
+const SERVER_COMPACTION = new WeakSet<LLMProvider>();
+
+/**
+ * openclaw-9.5-adoption item 7 (D32) — record that this instance compacts the
+ * conversation SERVER-side (`providers.<n>.serverCompaction: true` on an
+ * `anthropic` entry). Wiring marks the instance it built with the flag
+ * (`createLLMFromRegistry` in packages/wiring/src/index.ts), so the provider
+ * that sends the compaction edit and the loop that skips its own compaction
+ * read the same fact. A deployment fact, like the entry key above: nothing on
+ * the frozen `LLMProvider` contract carries it.
+ */
+export function markServerCompaction<P extends LLMProvider>(provider: P): P {
+  SERVER_COMPACTION.add(provider);
+  return provider;
+}
+
+/**
+ * Whether the provider a call is about to reach compacts server-side. On a
+ * chain that is the entry `providerEntry` scopes the call to, else the first
+ * entry not cooling down (the one the chain tries first). A failover in the
+ * middle of the call cannot be seen from here; the next turn resolves against
+ * the chain's new active entry.
+ */
+export function servesServerCompaction(llm: LLMProvider, providerEntry?: { key: string }): boolean {
+  const target = llm instanceof ChainedProvider ? llm.entryProvider(providerEntry?.key) : llm;
+  return target !== undefined && SERVER_COMPACTION.has(target);
+}
+
 /** One provider entry a loop's LLM can reach, with the model it is configured to run. */
 export interface ReachableProviderEntry {
   key: string;
@@ -370,6 +399,12 @@ export class ChainedProvider implements LLMProvider {
     return this.entries.map((e) => ({ key: e.key, model: e.provider.model }));
   }
 
+  /** The hop named `key`, or the first hop not cooling down when `key` is absent. */
+  entryProvider(key?: string): LLMProvider | undefined {
+    if (key !== undefined) return this.entries.find((e) => e.key === key)?.provider;
+    return this.activeEntry()?.provider;
+  }
+
   async *complete(
     messages: Message[],
     tools: ToolDefinitionLite[],
@@ -471,9 +506,19 @@ export class ChainedProvider implements LLMProvider {
     options: CompletionOptions,
   ): AsyncGenerator<CompletionChunk, AttemptFailure | null> {
     const entryOptions = this.optionsFor(entry, options);
+    // Item 7 (D33) — the loop emits the compaction envelope only when the entry
+    // it resolved compacts server-side (`toLLMMessages`, agent-loop/history.ts),
+    // but a failover mid-call reaches an entry it did not resolve. An entry
+    // not marked by `markServerCompaction` — a plugin provider above all, which
+    // does not know the envelope — gets the readable summary instead, never
+    // the per-process nonce or `encrypted_content`. Pinned by
+    // `__tests__/server-compaction.test.ts` ('envelope reaches only a marked provider').
+    const sent = SERVER_COMPACTION.has(entry.provider)
+      ? messages
+      : flattenCompactionEnvelopes(messages);
     let yieldedAny = false;
     try {
-      for await (const chunk of entry.provider.complete(messages, tools, entryOptions)) {
+      for await (const chunk of entry.provider.complete(sent, tools, entryOptions)) {
         yieldedAny = true;
         yield chunk;
       }

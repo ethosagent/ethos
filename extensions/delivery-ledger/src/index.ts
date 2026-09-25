@@ -558,26 +558,7 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
   }
 
   async stats(): Promise<DeliveryStats> {
-    // One GROUP BY over (status, kind) rather than eight COUNT(*) round trips.
-    // `kind IS NULL` is a pre-v3 row, which was a text reply — the same
-    // normalization `rowToObligation` applies.
-    const rows = this.db
-      .prepare(
-        `SELECT status, COALESCE(kind, 'text') AS kind, COUNT(*) AS n
-         FROM delivery_obligations
-         GROUP BY status, COALESCE(kind, 'text')`,
-      )
-      .all() as Array<{ status: string; kind: string; n: number }>;
-    const out: DeliveryStats = {
-      ...emptyCounts(),
-      voice: emptyCounts(),
-    };
-    for (const row of rows) {
-      if (!isDeliveryStatus(row.status)) continue;
-      out[row.status] += row.n;
-      if (row.kind === 'voice') out.voice[row.status] += row.n;
-    }
-    return out;
+    return readDeliveryStats(this.db);
   }
 
   async listRecent(limit: number): Promise<DeliveryObligation[]> {
@@ -596,4 +577,37 @@ export class SQLiteDeliveryLedger implements DeliveryLedger {
   close(): void {
     this.db.close();
   }
+}
+
+/**
+ * Ledger counts over an already-open handle, for surfaces that must not
+ * migrate: `ethos gateway status` opens `delivery-ledger.db` raw with
+ * `@ethosagent/sqlite` and calls this, because the class constructor runs
+ * `migrate()` and a newer binary migrating the file ahead of its gateway is
+ * what makes `ethos upgrade`'s rollback unsafe (plan openclaw-9.5-adoption
+ * D24). `SQLiteDeliveryLedger.stats` delegates here, so there is one copy of
+ * the query. Pinned by
+ * apps/ethos/src/commands/__tests__/diagnostics-never-migrate.test.ts.
+ */
+export function readDeliveryStats(db: Database.Database): DeliveryStats {
+  // One GROUP BY over (status, kind) rather than eight COUNT(*) round trips.
+  // `kind IS NULL` is a pre-v3 row, which was a text reply — the same
+  // normalization `rowToObligation` applies.
+  const rows = db
+    .prepare(
+      `SELECT status, COALESCE(kind, 'text') AS kind, COUNT(*) AS n
+       FROM delivery_obligations
+       GROUP BY status, COALESCE(kind, 'text')`,
+    )
+    .all() as Array<{ status: string; kind: string; n: number }>;
+  const out: DeliveryStats = {
+    ...emptyCounts(),
+    voice: emptyCounts(),
+  };
+  for (const row of rows) {
+    if (!isDeliveryStatus(row.status)) continue;
+    out[row.status] += row.n;
+    if (row.kind === 'voice') out.voice[row.status] += row.n;
+  }
+  return out;
 }

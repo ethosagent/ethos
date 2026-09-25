@@ -165,14 +165,31 @@ describe('run-all — pure helpers', () => {
         'apps/ethos/src/lib/dispose-before-exit.ts',
         'DISPOSE_BEFORE_EXIT_GRACE_MS',
       );
+      const step = await constant(
+        'apps/ethos/src/lib/bounded-shutdown-step.ts',
+        'SHUTDOWN_STEP_TIMEOUT_MS',
+      );
+      // Every `boundedShutdownStep(` call site on a child's path counts one
+      // step bound — a new bounded await raises the budget or fails here.
+      const steps = async (path: string): Promise<number> =>
+        ((await readFile(join(root, path), 'utf8')).match(/boundedShutdownStep\(/g) ?? []).length;
+      const gatewaySteps = await steps('apps/ethos/src/commands/gateway.ts');
+      expect(gatewaySteps).toBe(4);
       const gateway =
         (await constant('apps/ethos/src/commands/gateway.ts', 'APPROVAL_SHUTDOWN_DRAIN_MS')) +
+        gatewaySteps * step +
+        // `Gateway.shutdown`: notice sends and the turn drain share this one bound.
         (await constant('extensions/gateway/src/index.ts', 'SHUTDOWN_DRAIN_TIMEOUT_MS')) +
         dispose;
+      // serve.ts has five call sites across its two branches (onboarding: one;
+      // full: four); the longer branch is four steps. Its listener step
+      // includes `LISTENER_FLUSH_MS`, so the flush adds nothing on top.
+      expect(await steps('apps/ethos/src/commands/serve.ts')).toBe(5);
       const serve =
         (await constant('apps/web-api/src/features/chat/service.ts', 'CLOSE_GRACE_MS')) +
-        (await constant('apps/ethos/src/commands/serve-listen.ts', 'LISTENER_FLUSH_MS')) +
+        4 * step +
         dispose;
+      expect(__testing__.CHILD_SHUTDOWN_BUDGET_MS).toBe(gateway);
       expect(__testing__.CHILD_SHUTDOWN_BUDGET_MS).toBeGreaterThanOrEqual(Math.max(gateway, serve));
       expect(__testing__.SHUTDOWN_GRACE_MS).toBeGreaterThan(__testing__.CHILD_SHUTDOWN_BUDGET_MS);
     });

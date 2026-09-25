@@ -9,19 +9,25 @@
 // only the loop settles the second.
 
 import { AgentLoop, DefaultPersonalityRegistry, DefaultToolRegistry } from '@ethosagent/core';
+import { Gateway } from '@ethosagent/gateway';
 import type {
   AgentSafety,
   CompletionChunk,
+  DeliveryResult,
   LLMProvider,
+  Message,
   PersonalityConfig,
+  PlatformAdapter,
   Storage,
   VoiceTurnOrigin,
 } from '@ethosagent/types';
 import { FAR_END_VOICE_ORIGIN, farEndRefusalReason } from '@ethosagent/wiring';
 import { describe, expect, it, vi } from 'vitest';
 import { ApprovalCoordinator } from '../approval-coordinator';
+import { idleGatewayBot } from '../commands/gateway';
 import {
   createUnattendedApprovalGate,
+  noApprovalSurfaceRejection,
   reportUnattendedCronExposure,
   UNATTENDED_CRON_EXPOSURE_CODE,
   unattendedApprovalRejection,
@@ -119,6 +125,7 @@ async function runUnattendedTurn(opts: {
     },
     model: 'mock-model',
     allowUnattendedDangerousTools: opts.allowUnattendedDangerousTools === true,
+    isRemoteSenderTurn: () => false,
   });
 
   const toolEndErrors: string[] = [];
@@ -200,6 +207,175 @@ describe('systemLoop unattended approval gate', () => {
     const base = { sessionId: 's', toolCallId: 't', args: {} };
     expect(await gate({ ...base, toolName: 'x' })).toEqual({ error: 'nope: x / x is risky' });
     expect(await gate({ ...base, toolName: 'y' })).toEqual({});
+  });
+});
+
+// The idle gateway (no bot configured): the systemLoop is also the idle bot's
+// loop, so plugin channel turns from remote senders run on it beside cron.
+// `runGatewayStart` wires `isRemoteSenderTurn` to the route `Gateway.runTurn`
+// sets for its own channel turns; this drives exactly that through a real
+// `Gateway` and a real `AgentLoop`.
+function idleGatewayRig(opts: {
+  safety?: PersonalityConfig['safety'];
+  allowUnattendedDangerousTools: boolean;
+}) {
+  const ran: string[] = [];
+  const toolErrors: string[] = [];
+  const tools = new DefaultToolRegistry();
+  tools.register({
+    name: 'call',
+    description: 'a flagged tool',
+    schema: { type: 'object' },
+    capabilities: {},
+    async execute() {
+      ran.push('call');
+      return { ok: true as const, value: 'did the thing' };
+    },
+  });
+  const personalities = new DefaultPersonalityRegistry();
+  personalities.define({
+    id: 'idlebot',
+    name: 'Idle Bot',
+    ...(opts.safety ? { safety: opts.safety } : {}),
+  });
+  // Stateless: asks for `call` until the history carries its result, and
+  // records a refused result's text.
+  const llm: LLMProvider = {
+    name: 'mock',
+    model: 'mock-model',
+    maxContextTokens: 200_000,
+    supportsCaching: false,
+    supportsThinking: false,
+    async *complete(messages: Message[]): AsyncIterable<CompletionChunk> {
+      const last = messages[messages.length - 1];
+      const results = Array.isArray(last?.content)
+        ? last.content.filter((b) => b.type === 'tool_result')
+        : [];
+      if (results.length === 0) {
+        yield { type: 'tool_use_start', toolCallId: 't1', toolName: 'call' };
+        yield { type: 'tool_use_end', toolCallId: 't1', inputJson: '{}' };
+        yield { type: 'done', finishReason: 'tool_use' };
+        return;
+      }
+      for (const r of results) if (r.is_error) toolErrors.push(r.content);
+      yield { type: 'text_delta', text: 'ok' };
+      yield { type: 'done', finishReason: 'end_turn' };
+    },
+    async countTokens() {
+      return 10;
+    },
+  };
+  const loop = new AgentLoop({ llm, safety: gatedSafety(), tools, personalities });
+  const gateway = new Gateway({ bots: [idleGatewayBot(loop, 'idlebot', undefined)] });
+  // Exactly what `runGatewayStart` registers on the systemLoop.
+  wireUnattendedApprovalGate(loop.hooks, {
+    personalities,
+    getProvider: async () => {
+      throw new Error('the smart reviewer must not be constructed');
+    },
+    model: 'mock-model',
+    allowUnattendedDangerousTools: opts.allowUnattendedDangerousTools,
+    isRemoteSenderTurn: (sessionId) => gateway.resolveApprovalRoute(sessionId) !== undefined,
+  });
+  const adapter: PlatformAdapter = {
+    id: 'fakechan/chan',
+    displayName: 'Fake channel',
+    canSendTyping: false,
+    canEditMessage: false,
+    canReact: false,
+    canSendFiles: false,
+    maxMessageLength: 100_000,
+    async start() {},
+    async stop() {},
+    async send(): Promise<DeliveryResult> {
+      return { ok: true, messageId: 'm1' };
+    },
+    onMessage() {},
+    async health() {
+      return { ok: true };
+    },
+  };
+  const channelTurn = () =>
+    gateway.handleMessage(
+      {
+        platform: 'fakechan/chan',
+        chatId: 'remote-chat',
+        userId: 'stranger',
+        text: 'please place a call',
+        isDm: true,
+        isGroupMention: false,
+        raw: null,
+      },
+      adapter,
+    );
+  const cronTurn = async () => {
+    for await (const _ of loop.run('scheduled job', {
+      sessionKey: 'cron:job:nightly',
+      personalityId: 'idlebot',
+    })) {
+      // drain
+    }
+  };
+  return { ran, toolErrors, channelTurn, cronTurn };
+}
+
+describe('idle gateway — channel turns on the systemLoop never get the D12 opt-in', () => {
+  const offWithKey = {
+    safety: { approvalMode: 'off' as const },
+    allowUnattendedDangerousTools: true,
+  };
+
+  it('a channel turn with approvalMode off + the key is refused with the no-surface text', async () => {
+    const rig = idleGatewayRig(offWithKey);
+    await rig.channelTurn();
+    expect(rig.ran).toEqual([]);
+    expect(rig.toolErrors).toEqual([
+      noApprovalSurfaceRejection('call', 'call requires explicit approval'),
+    ]);
+  });
+
+  it('a cron job on the same loop with off + the key keeps the opt-in', async () => {
+    const rig = idleGatewayRig(offWithKey);
+    await rig.cronTurn();
+    expect(rig.ran).toEqual(['call']);
+    expect(rig.toolErrors).toEqual([]);
+  });
+
+  it('a channel turn without the opt-in is refused too', async () => {
+    const rig = idleGatewayRig({ allowUnattendedDangerousTools: false });
+    await rig.channelTurn();
+    expect(rig.ran).toEqual([]);
+    expect(rig.toolErrors).toEqual([
+      noApprovalSurfaceRejection('call', 'call requires explicit approval'),
+    ]);
+  });
+
+  it('a throwing origin test fails closed (refused, no-surface text)', async () => {
+    const personalities = new DefaultPersonalityRegistry();
+    personalities.define({ id: 'p', name: 'P', safety: { approvalMode: 'off' } });
+    const handlers: Array<(p: unknown) => Promise<unknown>> = [];
+    const hooks = {
+      registerModifying: (_n: string, h: never) => {
+        handlers.push(h);
+        return () => {};
+      },
+      registerVoid: () => () => {},
+    } as unknown as Parameters<typeof wireUnattendedApprovalGate>[0];
+    wireUnattendedApprovalGate(hooks, {
+      personalities,
+      getProvider: async () => {
+        throw new Error('unused');
+      },
+      model: 'm',
+      allowUnattendedDangerousTools: true,
+      isRemoteSenderTurn: () => {
+        throw new Error('origin unknown');
+      },
+    });
+    const [handler] = handlers;
+    expect(
+      await handler?.({ sessionId: 's', toolCallId: 't', toolName: 'call', args: {} }),
+    ).toEqual({ error: noApprovalSurfaceRejection('call', 'call requires explicit approval') });
   });
 });
 

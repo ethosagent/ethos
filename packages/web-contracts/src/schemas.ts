@@ -1097,6 +1097,11 @@ export const PendingMemorySchema = z.object({
   sessionKey: z.string().optional(),
   /** epoch-ms the candidate was queued. */
   proposedAt: z.number(),
+  /** Distinct sessions that extracted this fact (`memoryCapture.evidenceSessions`
+   *  on). The queue orders by its length; absent when evidence is off. */
+  evidenceSessions: z.array(z.string()).optional(),
+  /** epoch-ms of the latest re-extraction merged into this candidate. */
+  lastSeenAt: z.number().optional(),
 });
 export type PendingMemory = z.infer<typeof PendingMemorySchema>;
 

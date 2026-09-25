@@ -165,11 +165,12 @@ describe('ethos boot — §3b construction order', () => {
     expect(exit).toBeGreaterThan(start);
     const body = src.slice(start, exit);
     // Six spaces = the teardown's own statements; deeper indents are inside a
-    // `guard(...)` callback and are already covered by it.
-    const unguarded = body.split('\n').filter((l) => /^ {6}await (?!guard\()/.test(l));
+    // `guard(...)` callback and are already covered by it. `step(...)` is
+    // `guard` with a deadline (`boundedShutdownStep`), equally non-throwing.
+    const unguarded = body.split('\n').filter((l) => /^ {6}await (?!guard\(|step\()/.test(l));
     expect(
       unguarded,
-      `Unguarded awaits in boot shutdown — wrap each in guard(...):\n${unguarded.join('\n')}`,
+      `Unguarded awaits in boot shutdown — wrap each in guard(...) or step(...):\n${unguarded.join('\n')}`,
     ).toEqual([]);
   });
 });
