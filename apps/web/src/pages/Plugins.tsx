@@ -573,6 +573,12 @@ function PluginsTable({
           ),
         },
         {
+          title: 'Trust',
+          key: 'trust',
+          width: 110,
+          render: (_: unknown, p: PluginInfo) => <PluginTrustTier plugin={p} />,
+        },
+        {
           title: 'Used by',
           key: 'usedBy',
           width: 100,
@@ -611,6 +617,21 @@ function PluginsTable({
         },
       ]}
     />
+  );
+}
+
+// U10 — the trust tier recorded in the plugin's install grant (the value
+// `ethos plugin grants` prints; `PluginsService.list` reads it). Mono, like the
+// id beside it: it is a recorded fact, not a status. No grant → an em dash.
+function PluginTrustTier({ plugin }: { plugin: PluginInfo }) {
+  return (
+    <Typography.Text
+      data-testid="plugin-trust-tier"
+      style={{ fontFamily: 'Geist Mono, monospace', fontSize: 12 }}
+      type="secondary"
+    >
+      {plugin.trustTier ?? '—'}
+    </Typography.Text>
   );
 }
 
@@ -691,6 +712,12 @@ function PluginsAccordion({
         children: (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <PluginStatusNote plugin={plugin} />
+            <div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Trust{' '}
+              </Typography.Text>
+              <PluginTrustTier plugin={plugin} />
+            </div>
             {personalities.map((pers) => (
               <div key={pers.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <AttachCell plugin={plugin} personality={pers} />

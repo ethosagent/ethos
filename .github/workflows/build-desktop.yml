@@ -7,8 +7,9 @@ name: build-desktop
 #      `release` workflow first if needed).
 #   2. GitHub → Actions → build-desktop → Run workflow → enter version (e.g. 0.0.1)
 #
-# The workflow builds on macOS and Windows in parallel. Only if BOTH succeed
-# does it create the git tag, publish the GitHub Release, and upload artifacts.
+# The workflow builds on macOS, Windows and Linux in parallel. Only if ALL
+# succeed does it create the git tag, publish the GitHub Release, and upload
+# artifacts.
 
 on:
   workflow_dispatch:
@@ -37,6 +38,12 @@ jobs:
           - os: windows-2022
             artifact-name: desktop-win
             eb-flags: --win --x64
+          # AppImage, per apps/desktop/electron-builder.yml `linux.target`.
+          # 24.04, not 22.04: the setuptools step below passes
+          # --break-system-packages, which 22.04's pip 22 does not know.
+          - os: ubuntu-24.04
+            artifact-name: desktop-linux-x64
+            eb-flags: --linux --x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:

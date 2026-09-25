@@ -13,8 +13,14 @@
 import { type AgentLoop, DefaultHookRegistry } from '@ethosagent/core';
 import { SQLiteDeliveryLedger } from '@ethosagent/delivery-ledger';
 import type { DeliveryResult, OutboundMessage, PlatformAdapter } from '@ethosagent/types';
-import { describe, expect, it, vi } from 'vitest';
-import { Gateway } from '../index';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  Gateway,
+  type GatewayBotConfig,
+  type GatewayConfig,
+  type HeldNotice,
+  type HeldNoticeStore,
+} from '../index';
 
 function stubAdapter(opts: { ok?: boolean } = {}) {
   const sent: Array<{ chatId: string; message: OutboundMessage }> = [];
@@ -56,8 +62,10 @@ function gatewayWith(opts: {
   adapters?: Map<string, PlatformAdapter>;
   botKeys?: string[];
   observability?: { recordSafetyBlock: (e: { code: string; cause: string }) => void };
+  extra?: Partial<GatewayConfig>;
 }) {
   return new Gateway({
+    ...opts.extra,
     bots: (opts.botKeys ?? ['bot-a']).map((botKey) => ({
       botKey,
       loop: stubLoop(),
@@ -176,5 +184,198 @@ describe('Gateway.notifyTracked', () => {
     const gw = gatewayWith({ adapters: new Map([['telegram', adapter]]) });
     await expect(gw.notifyTracked(TARGET, 'call summary')).resolves.toBe(true);
     expect(adapter.sent).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U11 (openclaw-9.6-gaps) — quiet hours and per-lane /mute. A notice nobody
+// asked for is HELD inside the window (in the held-notice store, notify-queue in
+// production) and released through the ledger-backed path once the window ends.
+// Never dropped; a reply to the user's own message is never held.
+// ---------------------------------------------------------------------------
+
+class MemoryHeldNotices implements HeldNoticeStore {
+  rows: HeldNotice[] = [];
+  private seq = 0;
+  async hold(notice: Omit<HeldNotice, 'id' | 'heldAt'>): Promise<void> {
+    this.rows.push({ ...notice, id: ++this.seq, heldAt: Date.now() });
+  }
+  async listHeld(): Promise<HeldNotice[]> {
+    return [...this.rows];
+  }
+  async markReleased(id: number): Promise<void> {
+    this.rows = this.rows.filter((r) => r.id !== id);
+  }
+}
+
+// 22:00–07:00 in UTC, so the test does not depend on the host's zone.
+const QUIET = {
+  timeZone: 'UTC',
+  window: { startMinute: 22 * 60, endMinute: 7 * 60 },
+};
+
+describe('Gateway.notifyTracked — quiet hours (U11)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('holds a notice inside quiet hours and delivers it through the ledger once the window ends', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-25T23:30:00Z'));
+    const ledger = new SQLiteDeliveryLedger(':memory:');
+    const held = new MemoryHeldNotices();
+    const adapter = stubAdapter();
+    const gw = gatewayWith({
+      ledger,
+      adapters: new Map([['telegram', adapter]]),
+      extra: { quietHours: QUIET, heldNotices: held },
+    });
+
+    await expect(gw.notifyTracked(TARGET, 'call summary')).resolves.toBe(false);
+    expect(adapter.sent).toHaveLength(0);
+    expect(held.rows.map((r) => r.text)).toEqual(['call summary']);
+    expect(await ledger.listPending(['bot-a'])).toHaveLength(0);
+
+    // Still inside the window: the sweep leaves it held.
+    await gw.sweepPendingDeliveries();
+    expect(adapter.sent).toHaveLength(0);
+
+    vi.setSystemTime(new Date('2026-09-26T07:01:00Z'));
+    await gw.sweepPendingDeliveries();
+    expect(adapter.sent.map((s) => s.message.text)).toEqual(['call summary']);
+    expect(held.rows).toHaveLength(0);
+    expect(await ledger.listPending(['bot-a'])).toHaveLength(0);
+  });
+
+  it('never holds a notice that answers the user’s own message', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-25T23:30:00Z'));
+    const held = new MemoryHeldNotices();
+    const adapter = stubAdapter();
+    const gw = gatewayWith({
+      adapters: new Map([['telegram', adapter]]),
+      extra: { quietHours: QUIET, heldNotices: held },
+    });
+
+    await expect(
+      gw.notifyTracked({ ...TARGET, answersInbound: true }, 'please resend'),
+    ).resolves.toBe(true);
+    expect(adapter.sent).toHaveLength(1);
+    expect(held.rows).toHaveLength(0);
+  });
+
+  it('sends immediately when no held-notice store is wired — never dropped', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-25T23:30:00Z'));
+    const adapter = stubAdapter();
+    const gw = gatewayWith({
+      adapters: new Map([['telegram', adapter]]),
+      extra: { quietHours: QUIET },
+    });
+
+    await expect(gw.notifyTracked(TARGET, 'call summary')).resolves.toBe(true);
+    expect(adapter.sent).toHaveLength(1);
+  });
+
+  it('a per-bot override of null turns quiet hours off for that bot', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-25T23:30:00Z'));
+    const held = new MemoryHeldNotices();
+    const adapter = stubAdapter();
+    const gw = gatewayWith({
+      adapters: new Map([['telegram', adapter]]),
+      extra: { quietHours: { ...QUIET, byBot: { 'bot-a': null } }, heldNotices: held },
+    });
+
+    await expect(gw.notifyTracked(TARGET, 'call summary')).resolves.toBe(true);
+    expect(held.rows).toHaveLength(0);
+  });
+
+  it('/mute <duration> holds this lane’s notices outside quiet hours; /mute off releases them', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-25T12:00:00Z'));
+    const held = new MemoryHeldNotices();
+    const adapter = stubAdapter();
+    const gw = gatewayWith({
+      ledger: new SQLiteDeliveryLedger(':memory:'),
+      adapters: new Map([['telegram', adapter]]),
+      extra: { heldNotices: held },
+    });
+    const inbound = (text: string, messageId: string) => ({
+      platform: 'telegram',
+      chatId: 'C1',
+      userId: 'u1',
+      botKey: 'bot-a',
+      text,
+      isDm: true,
+      isGroupMention: false,
+      messageId,
+      raw: {},
+    });
+
+    await gw.handleMessage(inbound('/mute 2h', 'm1'), adapter);
+    expect(adapter.sent.at(-1)?.message.text).toMatch(/muted/i);
+    const acks = adapter.sent.length;
+
+    await expect(gw.notifyTracked(TARGET, 'job finished')).resolves.toBe(false);
+    expect(held.rows.map((r) => r.text)).toEqual(['job finished']);
+
+    await gw.handleMessage(inbound('/mute off', 'm2'), adapter);
+    await gw.sweepPendingDeliveries();
+    expect(adapter.sent.slice(acks).map((s) => s.message.text)).toContain('job finished');
+    expect(held.rows).toHaveLength(0);
+  });
+
+  it('holds a background-job wake notice inside quiet hours', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-25T23:30:00Z'));
+    const held = new MemoryHeldNotices();
+    const adapter = stubAdapter();
+    const job = {
+      id: 'job-quiet-1',
+      owner: 'p',
+      parentSessionKey: 'parent',
+      rootSessionKey: 'root',
+      childSessionKey: 'child',
+      depth: 1,
+      status: 'done' as const,
+      prompt: 'p',
+      summary: 'did it',
+      spendUsd: 0,
+      createdAt: Date.now(),
+      originPlatform: 'telegram',
+      originBotKey: 'bot-a',
+      originChatId: 'C1',
+    };
+    let delivered = false;
+    const jobStore = {
+      listUndelivered: async () => (delivered ? [] : [job]),
+      claimDelivery: async () => {
+        delivered = true;
+        return true;
+      },
+      releaseDelivery: async () => {
+        delivered = false;
+      },
+    };
+    const gw = new Gateway({
+      bots: [
+        {
+          botKey: 'bot-a',
+          loop: stubLoop(),
+          binding: { type: 'personality' as const, name: 'default' },
+          jobStore: jobStore as unknown as NonNullable<GatewayBotConfig['jobStore']>,
+        },
+      ],
+      adapters: new Map([['telegram', adapter]]),
+      quietHours: QUIET,
+      heldNotices: held,
+      clarifySweepIntervalMs: 0,
+    });
+
+    await gw.sweepUndeliveredJobs();
+    expect(adapter.sent).toHaveLength(0);
+    expect(held.rows).toHaveLength(1);
+    expect(held.rows[0]?.text).toContain('did it');
   });
 });

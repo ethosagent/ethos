@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: run-in-docker
 time: 10 min
-updated: 2026-08-29
+updated: 2026-09-25
 ---
 
 Run Ethos via Docker Compose. Set one provider API key, run one command, and get a web UI you can talk to. Config is provisioned by the CLI (`ethos setup --from-env`), which validates your key before writing it — no interactive setup, no hand-edited YAML.
@@ -116,7 +116,25 @@ The gateway service connects to each configured channel bot and routes inbound m
 
 ## Persisting data
 
-The Compose file declares a named volume `ethos-data`, mounted at `/home/ethos/.ethos`. This volume holds `config.yaml`, the session database, personality data, and memory files.
+Both Compose files declare a named volume `ethos-data`, mounted at `/home/ethos/.ethos`. This volume holds `config.yaml`, the session database, personality data, and memory files.
+
+:::warning Keep state off Docker Desktop bind mounts
+On Docker Desktop (macOS and Windows), a host directory mounted into the container is a virtiofs or gRPC-FUSE mount (macOS) or a 9p mount (Windows). SQLite's file locking is not reliable on those filesystems, and the databases in the state directory can corrupt. Keep the default named volume there. `ethos doctor` inside the container warns under **Data directory** when the state directory sits on FUSE, 9p, NFS or SMB (`checkStateDirFilesystem` in [`apps/ethos/src/commands/doctor.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/doctor.ts)).
+:::
+
+If you run native Docker on Linux and want the state in a host directory, set `ETHOS_DATA_DIR` in `docker/.env` to its path. Compose then bind-mounts that path instead of the volume.
+
+### Move an existing `ethos-data/` folder into the volume
+
+Before this release both Compose files bind-mounted a host folder (`../ethos-data` for `docker-compose.yml`, `docker/ethos-data` for the single-service file). If you have one and have not set `ETHOS_DATA_DIR`, copy it into the volume once. From the `docker/` folder, with the stack stopped:
+
+```bash
+docker compose -f docker-compose.single.yml run --rm --no-deps --user root \
+  -v "$(pwd)/ethos-data:/from:ro" --entrypoint sh ethos \
+  -c 'cp -a /from/. /home/ethos/.ethos/ && chown -R 1000:1000 /home/ethos/.ethos'
+```
+
+For `docker-compose.yml`, run the same command against the `init` service with `-f docker-compose.yml` and `-v "$(pwd)/../ethos-data:/from:ro"`. To keep the bind mount instead, set `ETHOS_DATA_DIR=../ethos-data` (or `./ethos-data`) in `docker/.env`.
 
 The volume survives `docker compose down`. To back it up:
 
@@ -163,7 +181,7 @@ docker run -d --name ethos \
   -e ETHOS_WEB_HOST=0.0.0.0 \
   -e ETHOS_SERVE_HOST=0.0.0.0 \
   -e ANTHROPIC_API_KEY=sk-ant-… \
-  -v ~/ethos-data:/home/ethos/.ethos \
+  -v ethos-data:/home/ethos/.ethos \
   -p 3000:3000 \
   ethosagent/ethos:latest
 ```
@@ -185,7 +203,7 @@ docker run -d --name ethos \
   -e ETHOS_WEB_HOST=0.0.0.0 \
   -e ETHOS_SERVE_HOST=0.0.0.0 \
   -e ANTHROPIC_API_KEY=sk-ant-… \
-  -v ~/ethos-data:/home/ethos/.ethos \
+  -v ethos-data:/home/ethos/.ethos \
   -p 3000:3000 \
   ethos:local
 ```
@@ -265,13 +283,15 @@ To wrap this as a Helm chart, move the per-environment values (provider, model, 
 
 ## Troubleshoot
 
-**Container exits with code 2.** `config.yaml` is missing from the mounted volume. Confirm the bind mount target is `/home/ethos/.ethos` and `config.yaml` is at the root of that directory.
+**Container exits with code 2.** `config.yaml` is missing from the mounted volume. Confirm the mount target is `/home/ethos/.ethos` and `config.yaml` is at the root of that directory.
 
 **Healthcheck fails but logs show "gateway started".** The web API failed to bind. Check whether port 3000 is in use, or set `ETHOS_MODE=gateway` to skip the web API entirely.
 
 **Telegram bot is silent.** Inspect `docker logs ethos` for adapter errors. The most common cause is a malformed token in `.env` — the value should have the form `<digits>:<base64-ish>` and the `botKey` suffix (if any) must match the one used in `config.yaml`.
 
-**Permission denied writing to the volume.** The mounted host directory must be owned by uid 1000. `sudo chown -R 1000:1000 ~/ethos-data` fixes this.
+**Permission denied writing to the volume.** If you bind-mount a host directory (`ETHOS_DATA_DIR`), it must be owned by uid 1000. `sudo chown -R 1000:1000 ~/ethos-data` fixes this.
+
+**`ethos doctor` warns the state directory is on fuse, 9p, nfs or smb.** The state directory is a bind mount on a filesystem where SQLite locking is unsafe. Unset `ETHOS_DATA_DIR` to use the `ethos-data` named volume, and move the data with the command in [Move an existing `ethos-data/` folder into the volume](#move-an-existing-ethos-data-folder-into-the-volume).
 
 **Web UI loads but API calls return 401 Unauthorized.** You opened the bare `http://localhost:3000` before ever visiting the `open: .../auth/exchange?t=<token>` URL from the boot output. Open that exact URL once — it sets the auth cookie — then the bare URL works normally on subsequent visits.
 

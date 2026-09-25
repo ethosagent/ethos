@@ -197,6 +197,38 @@ describe('gateway lane → session map survives a restart (D28)', () => {
     expect(s.turns[0]?.sessionKey).toBe(LANE);
   });
 
+  // U11 — a lane's /mute is stored beside its session key, so it outlives a restart.
+  it('/mute survives a restart and leaves the lane on its default session', async () => {
+    const storage = new InMemoryStorage();
+    const out = recordingAdapter();
+    await gateway(keyedLoop().loop, out.adapter, storage).handleMessage(
+      msg('/mute 2h'),
+      out.adapter,
+    );
+    const entry = (await new LaneSessionFiles(storage, DATA_DIR).load('bot-a')).get(LANE);
+    expect(entry?.sessionKey).toBe(LANE);
+    expect(entry?.mutedUntil).toBeGreaterThan(Date.now());
+
+    const held: string[] = [];
+    const second = keyedLoop();
+    const gw2 = gateway(second.loop, out.adapter, storage, {
+      heldNotices: {
+        hold: async (n) => {
+          held.push(n.text);
+        },
+        listHeld: async () => [],
+        markReleased: async () => {},
+      },
+    });
+    await gw2.restoreLaneSessions();
+    await expect(
+      gw2.notifyTracked({ platform: 'telegram', chatId: 'chat-1' }, 'job finished'),
+    ).resolves.toBe(false);
+    expect(held).toEqual(['job finished']);
+    await gw2.handleMessage(msg('hi'), out.adapter);
+    expect(second.turns[0]?.sessionKey).toBe(LANE);
+  });
+
   it('writes one file per bot under gateway/lanes/', async () => {
     const storage = new InMemoryStorage();
     const out = recordingAdapter();

@@ -17,8 +17,11 @@ import {
   ethosCronDir,
   ethosDir,
   ethosScriptsDir,
+  hostTimeZone,
   loadConfigStrict,
+  type NotificationsConfig,
   observeModePlatforms,
+  parseQuietHoursSpec,
   readRawConfig,
   type SlackAppConfig,
   type TelegramBotConfig,
@@ -52,6 +55,7 @@ import {
   type GatewayBotConfig,
   type GatewayConfig,
   type GatewayObservability,
+  type GatewayQuietHours,
   relayToTargets,
   summarizeChannelDigest,
 } from '@ethosagent/gateway';
@@ -60,6 +64,7 @@ import { type BusySource, IdleWatcherManager } from '@ethosagent/idle-watcher';
 import { SQLiteInboundDedupStore } from '@ethosagent/inbound-dedup';
 import { KanbanStore } from '@ethosagent/kanban-store';
 import { ConsoleLogger } from '@ethosagent/logger';
+import { SQLiteNotifyQueue } from '@ethosagent/notify-queue';
 import { createMetricsTextProvider } from '@ethosagent/observability-sqlite';
 import {
   createPersonalityRegistry,
@@ -757,6 +762,9 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     cronDir: ethosCronDir(),
     scriptsDir: ethosScriptsDir(),
     logger: new ConsoleLogger({}, logLevel),
+    ...(config.cron?.defaultMaxRunMs !== undefined
+      ? { defaultMaxRunMs: config.cron.defaultMaxRunMs }
+      : {}),
     ...(config.cron?.maxParallelJobs !== undefined
       ? { maxParallelJobs: config.cron.maxParallelJobs }
       : {}),
@@ -793,7 +801,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     deliver: async (job, output) => {
       if (cronDeliverFn) await cronDeliverFn(job, output);
     },
-    runJob: async (job) => {
+    runJob: async (job, runOpts) => {
       if (!systemLoop) {
         throw new EthosError({
           code: 'INTERNAL',
@@ -825,6 +833,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
         sessionKey,
         personalityId: pid,
         toolsetOverride,
+        // R10 — the scheduler aborts this at the job's `maxRunMs`.
+        abortSignal: runOpts?.abortSignal,
       })) {
         if (event.type === 'text_delta') output += event.text;
         // A `returnDirect` tool's answer arrives only as `done.text`, after
@@ -1311,6 +1321,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
   // rest of the ethos state; umask default, same posture as jobs.db /
   // sessions.db, which hold the same class of content.
   const deliveryLedger = new SQLiteDeliveryLedger(join(ethosDir(), 'delivery-ledger.db'));
+  // U11 — notices held for quiet hours or a lane /mute (`held_notices`).
+  const heldNotices = new SQLiteNotifyQueue(join(ethosDir(), 'notify-queue.db'));
 
   // Durable inbound dedup (plan/phases/telegram-slack-webhook-mode.md §5). The
   // Gateway's in-memory `Set` stays the fast path; this is the backstop it
@@ -1390,6 +1402,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     adapters,
     deliveryLedger,
     inboundDedup,
+    heldNotices,
     inboundSpool,
     inboundSpoolOptions,
     resolveUserId,
@@ -2319,6 +2332,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
         (message) => console.warn(message),
       );
       deliveryLedger.close();
+      heldNotices.close();
       inboundDedup.close();
       inboundSpool.close();
       // Last of the gateway-owned state: from here a new gateway may start.
@@ -4716,6 +4730,8 @@ export interface BuildGatewayOptions {
    */
   adapters: readonly PlatformAdapter[];
   deliveryLedger: GatewayConfig['deliveryLedger'];
+  /** U11 — where notices wait out quiet hours / a `/mute`. Absent → none held. */
+  heldNotices?: GatewayConfig['heldNotices'];
   inboundDedup: GatewayConfig['inboundDedup'];
   /** Opened by `ethos gateway start` and `ethos boot` — the two commands that
    *  hold the gateway lock (`openInboundSpool`, ../lib/gateway-inbound-durability).
@@ -4986,6 +5002,36 @@ export function wireAdapterInbound(gateway: Gateway, adapter: PlatformAdapter): 
   });
 }
 
+/**
+ * U11 — `notifications.*` → the gateway's quiet hours, with the time zone made
+ * explicit (`notifications.timezone`, else the host's zone). A per-bot `off`
+ * becomes `null`, which turns the window off for that bot. Undefined when no
+ * window is configured anywhere.
+ */
+export function resolveGatewayQuietHours(
+  notifications: NotificationsConfig | undefined,
+): GatewayQuietHours | undefined {
+  if (!notifications) return undefined;
+  const window = notifications.quietHours
+    ? (parseQuietHoursSpec(notifications.quietHours) ?? undefined)
+    : undefined;
+  const byBot: NonNullable<GatewayQuietHours['byBot']> = {};
+  for (const [botKey, entry] of Object.entries(notifications.bots ?? {})) {
+    if (entry.quietHours === 'off') byBot[botKey] = null;
+    else {
+      const parsed = parseQuietHoursSpec(entry.quietHours);
+      if (parsed) byBot[botKey] = parsed;
+    }
+  }
+  const hasByBot = Object.keys(byBot).length > 0;
+  if (!window && !hasByBot) return undefined;
+  return {
+    timeZone: notifications.timezone ?? hostTimeZone(),
+    ...(window ? { window } : {}),
+    ...(hasByBot ? { byBot } : {}),
+  };
+}
+
 export function buildGateway(opts: BuildGatewayOptions): Gateway {
   const {
     config,
@@ -4995,6 +5041,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     adapters,
     deliveryLedger,
     inboundDedup,
+    heldNotices,
     inboundSpool,
     inboundSpoolOptions,
     resolveUserId,
@@ -5029,6 +5076,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
   // deployment that assembles its own Gateway and forgets the sink. See
   // `GatewayConfig.observeModePlatforms`.
   const observedPlatforms = observeModePlatforms(config);
+  const quietHours = resolveGatewayQuietHours(config.notifications);
   const { adapters: adapterMap, botAdapters } = adapterRegistries(adapters);
   return bots.length === 0
     ? // No platform configured — idle gateway. Every configured platform
@@ -5040,6 +5088,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         botAdapters,
         deliveryLedger,
         inboundDedup,
+        ...(heldNotices ? { heldNotices } : {}),
+        ...(quietHours ? { quietHours } : {}),
         ...(inboundSpool ? { inboundSpool } : {}),
         ...(inboundSpoolOptions ? { inboundSpoolOptions } : {}),
         resolveUserId,
@@ -5108,6 +5158,8 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
         adapters: adapterMap,
         deliveryLedger,
         inboundDedup,
+        ...(heldNotices ? { heldNotices } : {}),
+        ...(quietHours ? { quietHours } : {}),
         ...(inboundSpool ? { inboundSpool } : {}),
         ...(inboundSpoolOptions ? { inboundSpoolOptions } : {}),
         resolveUserId,

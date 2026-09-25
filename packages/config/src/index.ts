@@ -1971,6 +1971,92 @@ export interface CronTopLevelConfig {
    *   cron.maxParallelJobs: 2
    */
   maxParallelJobs?: number;
+  /**
+   * Wall-clock cap, in ms, on a cron prompt job's agent turn when the job sets
+   * no `maxRunMs` of its own. Positive integer; absent = the scheduler's
+   * `DEFAULT_CRON_MAX_RUN_MS` (30 min). Enforced by `CronScheduler.runTurnCapped`
+   * in `@ethosagent/cron`. Config key:
+   *   cron.defaultMaxRunMs: 600000
+   */
+  defaultMaxRunMs?: number;
+}
+
+/** `notifications.*` (U11). Raw strings, validated at parse. */
+export interface NotificationsConfig {
+  /** `HH:MM-HH:MM` in `timezone`. */
+  quietHours?: string;
+  /** IANA zone name. Absent = the host's zone (`hostTimeZone`). */
+  timezone?: string;
+  /** Per-botKey override: a window, or `off`. */
+  bots?: Record<string, { quietHours: string }>;
+}
+
+/**
+ * `HH:MM-HH:MM` → minutes after local midnight, or null when malformed. A start
+ * later than the end crosses midnight (`22:00-07:00`). The ONE parser for the
+ * `notifications.quietHours` grammar: the config parser validates with it and
+ * the gateway wiring resolves with it.
+ */
+export function parseQuietHoursSpec(
+  spec: string,
+): { startMinute: number; endMinute: number } | null {
+  const m = spec.trim().match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const [h1, m1, h2, m2] = [m[1], m[2], m[3], m[4]].map(Number);
+  if (h1 === undefined || m1 === undefined || h2 === undefined || m2 === undefined) return null;
+  if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) return null;
+  return { startMinute: h1 * 60 + m1, endMinute: h2 * 60 + m2 };
+}
+
+/** Whether `timeZone` is an IANA zone this runtime knows. */
+export function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The host's IANA zone — the `notifications.timezone` default. */
+export function hostTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+function buildNotificationsConfig(
+  kv: Record<string, string>,
+  botsKv: Record<string, Record<string, string>>,
+  warnings: string[],
+): NotificationsConfig | undefined {
+  const out: NotificationsConfig = {};
+  const quiet = kv.quietHours;
+  if (quiet !== undefined) {
+    if (parseQuietHoursSpec(quiet)) out.quietHours = quiet;
+    else
+      warnings.push(
+        `config.yaml: notifications.quietHours '${quiet}' is not HH:MM-HH:MM — quiet hours are off.`,
+      );
+  }
+  const tz = kv.timezone;
+  if (tz !== undefined) {
+    if (isValidTimeZone(tz)) out.timezone = tz;
+    else
+      warnings.push(
+        `config.yaml: notifications.timezone '${tz}' is not a known IANA time zone — using the host's zone.`,
+      );
+  }
+  const bots: Record<string, { quietHours: string }> = {};
+  for (const [botKey, entry] of Object.entries(botsKv)) {
+    const spec = entry.quietHours;
+    if (spec === undefined) continue;
+    if (spec === 'off' || parseQuietHoursSpec(spec)) bots[botKey] = { quietHours: spec };
+    else
+      warnings.push(
+        `config.yaml: notifications.bots.${botKey}.quietHours '${spec}' is not HH:MM-HH:MM or off — ignored.`,
+      );
+  }
+  if (Object.keys(bots).length > 0) out.bots = bots;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export interface EthosConfig {
@@ -2654,6 +2740,17 @@ export interface EthosConfig {
    * no `cron:` section at all runs only the local interval trigger, unchanged.
    */
   cron?: CronTopLevelConfig;
+  /**
+   * U11 — operator quiet hours for unprompted channel notices (`notifications.*`).
+   * A setting, not identity: it never lives on a personality. The gateway holds
+   * a background-job wake or an owner notice inside the window and delivers it
+   * when the window ends (`Gateway.noticeHoldReason`); a reply to the user's
+   * own message is never held. Config keys:
+   *   notifications.quietHours: 22:00-07:00      (HH:MM-HH:MM, may cross midnight)
+   *   notifications.timezone: Europe/London      (IANA; absent = the host's zone)
+   *   notifications.bots.<botKey>.quietHours: off  (per-bot window, or off)
+   */
+  notifications?: NotificationsConfig;
   displayBellOnComplete?: boolean;
   displayDebugPanel?: boolean;
   displayDebugPanelModel?: string;
@@ -4483,6 +4580,17 @@ function serializeConfigLines(config: EthosConfig): string[] {
     if (config.cron.maxParallelJobs !== undefined) {
       lines.push(`cron.maxParallelJobs: ${config.cron.maxParallelJobs}`);
     }
+    if (config.cron.defaultMaxRunMs !== undefined) {
+      lines.push(`cron.defaultMaxRunMs: ${config.cron.defaultMaxRunMs}`);
+    }
+  }
+  if (config.notifications) {
+    const n = config.notifications;
+    if (n.quietHours !== undefined) lines.push(`notifications.quietHours: ${n.quietHours}`);
+    if (n.timezone !== undefined) lines.push(`notifications.timezone: ${n.timezone}`);
+    for (const [botKey, entry] of Object.entries(n.bots ?? {})) {
+      lines.push(`notifications.bots.${botKey}.quietHours: ${entry.quietHours}`);
+    }
   }
   if (config.kanban) {
     if (config.kanban.maxInProgress !== undefined)
@@ -4989,6 +5097,12 @@ export function parseConfigYaml(src: string): EthosConfig {
   // `trigger.<field>` / `arming.<field>` keys, which are stored under their
   // combined `subsection.field` name.
   const cronKv: Record<string, string> = keyUse.track('cron.', {});
+  // U11 — `notifications.quietHours` / `.timezone`, and the per-bot overrides.
+  const notificationsKv: Record<string, string> = keyUse.track('notifications.', {});
+  const notificationBotsKv: Record<string, Record<string, string>> = keyUse.trackIndexed(
+    'notifications.bots.',
+    {},
+  );
   const auxiliaryCompressionKv: Record<string, string> = keyUse.track('auxiliary.compression.', {});
   const auxiliaryVisionKv: Record<string, string> = keyUse.track('auxiliary.vision.', {});
   const auxiliaryWebKv: Record<string, string> = keyUse.track('auxiliary.web.', {});
@@ -5497,6 +5611,26 @@ export function parseConfigYaml(src: string): EthosConfig {
     const cronMax = line.match(/^cron\.maxParallelJobs:\s*(.+)$/);
     if (cronMax) {
       cronKv.maxParallelJobs = parseConfigScalar(cronMax[1]);
+      continue;
+    }
+    // notifications.bots.<botKey>.<field>: <value>  (U11 — per-bot override)
+    const notifBot = line.match(/^notifications\.bots\.([A-Za-z0-9_-]+)\.(\w+):\s*(.+)$/);
+    if (notifBot) {
+      notificationBotsKv[notifBot[1]] ??= {};
+      const entry = notificationBotsKv[notifBot[1]];
+      if (entry) entry[notifBot[2]] = parseConfigScalar(notifBot[3]);
+      continue;
+    }
+    // notifications.<field>: <value>  (U11 — quietHours, timezone)
+    const notif = line.match(/^notifications\.(\w+):\s*(.+)$/);
+    if (notif) {
+      notificationsKv[notif[1]] = parseConfigScalar(notif[2]);
+      continue;
+    }
+    // cron.defaultMaxRunMs: <ms>  (R10 — per-run wall-clock default)
+    const cronMaxRun = line.match(/^cron\.defaultMaxRunMs:\s*(.+)$/);
+    if (cronMaxRun) {
+      cronKv.defaultMaxRunMs = parseConfigScalar(cronMaxRun[1]);
       continue;
     }
     // auxiliary.compression.<field>: <value>
@@ -6075,6 +6209,12 @@ export function parseConfigYaml(src: string): EthosConfig {
   // process's address", this answers "should this process stop running its own
   // clock", and plenty of deployments want the first without the second.
   const cronDeprecations: string[] = [];
+  const notificationWarnings: string[] = [];
+  const notifications = buildNotificationsConfig(
+    notificationsKv,
+    notificationBotsKv,
+    notificationWarnings,
+  );
   const cronBuilt = buildCronConfig(cronKv, cronDeprecations);
   const cronFireUrl = process.env.ETHOS_CRON_FIRE_URL ?? cronBuilt?.fireUrl;
   const cron =
@@ -6388,6 +6528,7 @@ export function parseConfigYaml(src: string): EthosConfig {
       : undefined,
     background: buildBackgroundConfig(backgroundKv, backgroundAcpAgentsKv),
     cron,
+    ...(notifications ? { notifications } : {}),
     displayBellOnComplete: displayKv.bell_on_complete === 'true' ? true : undefined,
     displayMemoryNotices:
       displayKv.memory_notices === 'true'
@@ -6531,6 +6672,7 @@ export function parseConfigYaml(src: string): EthosConfig {
     ...modelRegistryNotices,
     ...decisionsWarnings,
     ...storageEncryptionRemovedNotice(kv),
+    ...notificationWarnings,
     ...keyUse.notices(),
   ]);
   return config;
@@ -7568,6 +7710,10 @@ function buildCronConfig(
   const maxParallel = Number(kv.maxParallelJobs);
   if (kv.maxParallelJobs !== undefined && Number.isFinite(maxParallel) && maxParallel > 0) {
     cfg.maxParallelJobs = Math.floor(maxParallel);
+  }
+  const maxRunMs = Number(kv.defaultMaxRunMs);
+  if (kv.defaultMaxRunMs !== undefined && Number.isFinite(maxRunMs) && maxRunMs >= 1) {
+    cfg.defaultMaxRunMs = Math.floor(maxRunMs);
   }
   if (Object.keys(cfg).length === 0) return undefined;
   return cfg;

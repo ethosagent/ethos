@@ -1,6 +1,6 @@
 ---
 title: "Run Ethos as a daemon"
-description: "Run ethos gateway start (or any long-running ethos command) under systemd, launchd, or pm2 as a persistent process."
+description: "Run ethos gateway start (or any long-running ethos command) under systemd, launchd, Windows Task Scheduler, or pm2 as a persistent process."
 kind: how-to
 audience: user
 slug: run-as-daemon
@@ -12,7 +12,7 @@ updated: 2026-09-25
 
 ## Task
 
-Run `ethos gateway start` (or another long-running `ethos` subcommand) as a persistent background process under systemd, launchd, or pm2, surviving logout and restarting on crash. The [gateway](../../getting-started/glossary.md#gateway) is the long-running process that routes platform messages into the agent loop.
+Run `ethos gateway start` (or another long-running `ethos` subcommand) as a persistent background process under systemd, launchd, Windows Task Scheduler, or pm2, surviving logout and restarting on crash. The [gateway](../../getting-started/glossary.md#gateway) is the long-running process that routes platform messages into the agent loop.
 
 ## Result
 
@@ -73,9 +73,9 @@ You'll paste it into the unit file in the next step.
 
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/ethos</string>
-    <string>gateway</string>
-    <string>start</string>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>/usr/local/bin/ethos gateway start; c=$?; if [ $c -eq 3 ] || [ $c -eq 78 ]; then exit 0; fi; exit $c</string>
   </array>
 
   <key>EnvironmentVariables</key>
@@ -93,7 +93,13 @@ You'll paste it into the unit file in the next step.
   <true/>
 
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
 
   <key>StandardOutPath</key>
   <string>/Users/YOUR_USERNAME/.ethos/logs/gateway.out.log</string>
@@ -120,7 +126,11 @@ launchctl stop   ai.ethosagent.gateway
 launchctl unload ~/Library/LaunchAgents/ai.ethosagent.gateway.plist
 ```
 
-`RunAtLoad` plus the `~/Library/LaunchAgents/` location starts the agent at login. `KeepAlive` restarts it on crash.
+`RunAtLoad` plus the `~/Library/LaunchAgents/` location starts the agent at login. `KeepAlive` with `SuccessfulExit` set to `false` restarts it after a non-zero exit (a crash) and leaves it stopped after a clean exit.
+
+launchd has no equivalent of systemd's `RestartPreventExitStatus`, so the `/bin/sh -c` wrapper does that job. The gateway exits `78` when `config.yaml` is invalid and `3` when another gateway already holds the state directory. Both are refusals that a restart cannot fix. The wrapper turns them into exit `0`, so launchd leaves the job stopped instead of respawning it forever. The reason stays in `gateway.err.log`.
+
+`ThrottleInterval` is the minimum gap, in seconds, between two launches of the job. launchd's default is 10. A value of 30 caps a crash loop at two starts a minute, which keeps a failing provider or platform from being hammered.
 
 ### 2B. Linux — systemd user unit
 
@@ -214,6 +224,50 @@ Running gateway + serve together as one supervised unit? Don't list them as sepa
 
 The pm2-app-per-ethos-command shape *is* still right when you want to daemonise just one long-running command (e.g. only `ethos cron run` for a scheduled-job worker without the gateway), which is what this page is about.
 
+### 2D. Windows — Task Scheduler
+
+Task Scheduler ships with Windows and needs no admin rights for a task that runs as you at logon. A small PowerShell supervisor restarts the gateway after a crash and stops on the two refusal exits (`3`, `78`), the same rule as the systemd unit's `RestartPreventExitStatus`. Task Scheduler starts that supervisor at logon.
+
+Save this as `%USERPROFILE%\.ethos\gateway-supervisor.ps1`:
+
+```powershell
+$ethos = "$env:LOCALAPPDATA\ethos\bin\ethos.cmd"
+$log = "$env:USERPROFILE\.ethos\logs\gateway.log"
+New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
+while ($true) {
+  & $ethos gateway start *>> $log
+  $code = $LASTEXITCODE
+  # 0 = clean stop; 3 = another gateway holds the state dir; 78 = invalid config.
+  if ($code -eq 0 -or $code -eq 3 -or $code -eq 78) { exit $code }
+  Start-Sleep -Seconds 30
+}
+```
+
+If you did not use the Windows installer, replace `$ethos` with the output of `(Get-Command ethos).Source`. Register and start the task from PowerShell:
+
+```powershell
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+  -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$env:USERPROFILE\.ethos\gateway-supervisor.ps1`""
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
+  -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+  -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName 'Ethos gateway' -Action $action -Trigger $trigger -Settings $settings
+Start-ScheduledTask -TaskName 'Ethos gateway'
+```
+
+`-ExecutionTimeLimit ([TimeSpan]::Zero)` matters: without it, Task Scheduler stops the task after its default limit of three days. `-RestartCount` and `-RestartInterval` are Task Scheduler's own restart-on-failure, which retries the supervisor if the task itself fails. Crash restarts of the gateway are the supervisor loop's job, because it can tell a crash from a refusal by exit code.
+
+Stop, start, or remove:
+
+```powershell
+Stop-ScheduledTask       -TaskName 'Ethos gateway'
+Start-ScheduledTask      -TaskName 'Ethos gateway'
+Unregister-ScheduledTask -TaskName 'Ethos gateway' -Confirm:$false
+```
+
+pm2 ([2C](#2c-cross-platform--pm2)) also runs on Windows. It needs a third-party package such as `pm2-windows-startup` to survive a reboot, because `pm2 startup` does not support Windows.
+
 ### 3. Update the daemon after `ethos upgrade`
 
 The running process keeps the old binary in memory. Always restart after upgrading:
@@ -225,6 +279,8 @@ systemctl --user restart ethos-gateway                                          
 pm2 restart ethos-gateway                                                       # pm2
 ```
 
+On Windows, run `Stop-ScheduledTask -TaskName 'Ethos gateway'` then `Start-ScheduledTask -TaskName 'Ethos gateway'`.
+
 ## Verify
 
 The bot replies to a fresh message within ten seconds, and the appropriate liveness check passes:
@@ -234,6 +290,8 @@ launchctl list | grep ai.ethosagent       # macOS — non-empty line
 systemctl --user is-active ethos-gateway  # Linux — prints "active", exit 0
 pm2 jlist | jq '.[] | .name'              # pm2 — includes "ethos-gateway"
 ```
+
+On Windows, `(Get-ScheduledTask -TaskName 'Ethos gateway').State` prints `Running`.
 
 Tail the structured logs Ethos writes alongside whatever stdout your service manager captures:
 
@@ -306,6 +364,10 @@ lsof +D ~/.ethos/ 2>/dev/null | grep -v ethos
 **`Run ethos setup first` on boot.** — `HOME` does not point at your user account. systemd user units inherit it correctly; launchd sometimes does not. Set `HOME` in the plist `EnvironmentVariables` block as shown above.
 
 **The unit is `failed` and systemd stopped restarting it.** — The gateway exits `78` when `~/.ethos/config.yaml` cannot be parsed or a bot binding points at nothing, and `3` when another gateway already holds this state directory. Both are refusals, not crashes, so `RestartPreventExitStatus=3 78` stops systemd retrying them. Run `ethos doctor` for a config error, or `ethos gateway status` for a held lock. Fix the cause, then run `systemctl --user restart ethos-gateway`. `StartLimitBurst=5` in `StartLimitIntervalSec=300` likewise gives up after five crashes in five minutes; `systemctl --user reset-failed ethos-gateway` clears it. A unit generated before these directives existed does not have them — regenerate it with `ethos systemd-unit ethos-gateway`.
+
+**launchd keeps the job stopped after a config fix.** — The wrapper mapped exit `78` or `3` to `0`, so launchd treats the job as done. Run `ethos doctor` (exit `78`) or `ethos gateway status` (exit `3`), fix the cause, then `launchctl start ai.ethosagent.gateway`.
+
+**The Windows task shows `Ready`, not `Running`.** — The supervisor exited. Read the last lines of `%USERPROFILE%\.ethos\logs\gateway.log`: exit `78` is a config error (`ethos doctor`), exit `3` is another gateway holding the state directory (`ethos gateway status`). Fix it, then run `Start-ScheduledTask -TaskName 'Ethos gateway'`. If the gateway keeps running after `Stop-ScheduledTask`, stop it by command line: `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -like '*gateway start*' | ForEach-Object { Stop-Process -Id $_.ProcessId }`.
 
 **Telegram returns HTTP 429.** — Two gateway processes are polling the same bot token. Check for a duplicate launchd plist, a stale pm2 entry, or a forgotten `tmux` session. One process per bot token.
 

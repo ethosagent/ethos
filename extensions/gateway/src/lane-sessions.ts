@@ -27,6 +27,8 @@ export interface LaneSessionEntry {
    * bound to another, which turn-setup refuses (`personality_locked`).
    */
   personalityId?: string;
+  /** U11 — the lane's `/mute` expiry (epoch ms), when one is set. */
+  mutedUntil?: number;
 }
 
 const FILE_VERSION = 1;
@@ -66,6 +68,7 @@ export class LaneSessionFiles {
       lanes.set(laneKey, {
         sessionKey: value.sessionKey,
         ...(typeof value.personalityId === 'string' ? { personalityId: value.personalityId } : {}),
+        ...(typeof value.mutedUntil === 'number' ? { mutedUntil: value.mutedUntil } : {}),
       });
     }
     return lanes;
