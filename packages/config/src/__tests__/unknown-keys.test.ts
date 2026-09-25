@@ -124,4 +124,26 @@ describe('unknown config keys (U4)', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("did you mean 'discord.approvalRoleIds'");
   });
+
+  it('execution.allowLocalFallback (S6 / D3) is read, not warned about', () => {
+    const { warnings } = noticesOf('execution.allowLocalFallback: true');
+    expect(unread(warnings)).toEqual([]);
+    expect(
+      parseConfigYaml([...base, 'execution.allowLocalFallback: true'].join('\n')).execution,
+    ).toEqual({ allowLocalFallback: true });
+  });
+
+  it('a misspelled execution.allowLocalFallback suggests the real key', () => {
+    const warnings = unread(warningsOf('execution.allowLocalFalback: true'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("did you mean 'execution.allowLocalFallback'");
+  });
+
+  it('storage.encryption (SEC-001) yields only its removal notice, not a generic unknown-key one', () => {
+    const warnings = warningsOf('storage.encryption: aes-256-gcm').filter((w) =>
+      w.includes('storage.encryption'),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("'storage.encryption' was removed");
+  });
 });
