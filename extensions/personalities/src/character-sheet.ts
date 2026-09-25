@@ -741,22 +741,26 @@ function guaranteeRows(
   // G-RED — redaction runs on the observability write path unconditionally.
   // The personality's observability policy changes WHAT is written, which is
   // the honest thing to show next to it.
+  // `storeToolBodies` is reserved: nothing stores a tool result body (the
+  // tool_call span closes with `result_size_bytes` only — `processTools` in
+  // packages/core/src/agent-loop/stages/tool-processing.ts, pinned by
+  // packages/core/src/__tests__/tool-body-not-stored.test.ts), so it is named
+  // but never counted as a change to what is written.
   const obs = safety?.observability;
   const obsParts = [
     obs?.storeToolArgs ? `tool args ${obs.storeToolArgs}` : '',
-    obs?.storeToolBodies ? `tool bodies ${obs.storeToolBodies}` : '',
     obs?.storeLlmPayloads ? `LLM payloads ${obs.storeLlmPayloads}` : '',
     obs?.redactPatterns?.length ? `+${plural(obs.redactPatterns.length, 'pattern')}` : '',
   ].filter((p) => p !== '');
-  const storesFull =
-    obs?.storeToolArgs === 'full' ||
-    obs?.storeToolBodies === 'full' ||
-    obs?.storeLlmPayloads === 'full';
+  const storesFull = obs?.storeToolArgs === 'full' || obs?.storeLlmPayloads === 'full';
   const red: GuaranteeRow = {
     status: obsParts.length === 0 ? 'enforced' : storesFull ? 'relaxed' : 'narrowed',
     detail: joinParts([
       'known credential shapes redacted before observability.db',
       obsParts.join(', '),
+      obs?.storeToolBodies
+        ? `storeToolBodies ${obs.storeToolBodies} is reserved (tool results are never stored)`
+        : '',
     ]),
   };
 

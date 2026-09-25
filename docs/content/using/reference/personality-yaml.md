@@ -363,7 +363,6 @@ safety:
   approvalMode: manual
   observability:
     storeToolArgs: redacted
-    storeToolBodies: redacted
     storeLlmPayloads: metadata
     redactPatterns:
       - sk-ant-
@@ -393,7 +392,7 @@ Controls what the observability store persists for this personality.
 | Field | Values | Description |
 |---|---|---|
 | `safety.observability.storeToolArgs` | `none` \| `redacted` \| `full` | Tool-call arguments. |
-| `safety.observability.storeToolBodies` | `none` \| `redacted` \| `full` | Tool-call result bodies. |
+| `safety.observability.storeToolBodies` | `none` \| `redacted` \| `full` | Reserved. Accepted and validated, but tool-call result bodies are never stored at any setting; only the result size is recorded. |
 | `safety.observability.storeLlmPayloads` | `none` \| `metadata` \| `full` | LLM request and response payloads. |
 | `safety.observability.redactPatterns` | string[] | Substrings redacted from anything stored. |
 

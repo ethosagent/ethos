@@ -775,7 +775,7 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
       approvalMode: 'off',
       network: { allow_private_urls: true },
       injectionDefense: { postReadDowngrade: { enabled: false } },
-      observability: { storeToolBodies: 'full' },
+      observability: { storeToolArgs: 'full' },
     },
   };
 
@@ -829,7 +829,23 @@ describe('renderCharacterSheet — ## Boundary section (§4.7)', () => {
     expect(status(sheet, 'G-APP')).toBe('relaxed');
     expect(row(sheet, 'G-APP')).toContain('approvalMode off');
     expect(status(sheet, 'G-RED')).toBe('relaxed');
-    expect(row(sheet, 'G-RED')).toContain('tool bodies full');
+    expect(row(sheet, 'G-RED')).toContain('tool args full');
+  });
+
+  // Nothing stores a tool's result body: the tool_call span is closed with
+  // `result_size_bytes` only (`processTools`,
+  // packages/core/src/agent-loop/stages/tool-processing.ts). So
+  // `storeToolBodies` changes nothing written to observability.db, and the
+  // sheet must not report it as a relaxation.
+  it('reports storeToolBodies as reserved, not as a change to what is written', () => {
+    const bodiesOnly: PersonalityConfig = {
+      id: 'bodies',
+      name: 'Bodies',
+      safety: { observability: { storeToolBodies: 'full' } },
+    };
+    const sheet = renderCharacterSheet(bodiesOnly, soulMd);
+    expect(status(sheet, 'G-RED')).toBe('enforced');
+    expect(row(sheet, 'G-RED')).toContain('storeToolBodies full is reserved');
   });
 
   it('reports a narrowed injection pipeline as relaxed-but-never-off (no opt-out)', () => {
