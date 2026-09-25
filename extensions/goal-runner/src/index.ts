@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   AgentEvent,
   Goal,
+  GoalAttempt,
   GoalCompletedPayload,
   GoalExhaustedPayload,
   GoalFailedPayload,
@@ -13,10 +14,17 @@ import type {
   Verdict,
 } from '@ethosagent/types';
 import { answerSuffix } from '@ethosagent/types';
-import { isConverged, judge } from './judge';
+import { type CheckJudge, isConverged, judge } from './judge';
 import { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
-export { isConverged, judge } from './judge';
+export {
+  type CheckJudge,
+  type CheckJudgeInput,
+  type CheckJudgeResult,
+  isConverged,
+  judge,
+} from './judge';
+export { createLLMCheckJudge, type LLMCheckJudgeOptions } from './llm-check-judge';
 export { buildRetryContext, classifyFailure, type RetryStrategy } from './retry-context';
 
 /** Consecutive same-tool failures before the run is treated as a compounding
@@ -77,6 +85,31 @@ const GOAL_PLANNING_DIRECTIVE =
   'phase is planning only. Produce a concise, actionable PLAN in markdown with ' +
   'numbered steps toward the goal, the key assumptions you are making, and the ' +
   'main risks. Output only the plan.';
+
+/** A verdict settled by the no-judge substring fallback (`method: 'substring'`,
+ *  set in ./judge). Its score is 0 almost regardless of the work done, so it
+ *  says nothing about progress. */
+function usesSubstringFallback(verdict: Verdict): boolean {
+  return verdict.perCriterion.some((c) => c.method === 'substring');
+}
+
+/**
+ * Early exhaustion: two consecutive non-improvements. True when the two
+ * attempts BEFORE `attemptN` both have a verdict scoring ≥ `verdict` (this
+ * attempt's). `attempts` is read after this attempt's verdict was persisted, so
+ * it includes the current attempt — excluded here by `n`, never compared with
+ * itself. A substring-fallback verdict among the three never counts as a
+ * plateau. Pinned by __tests__/plateau.test.ts.
+ */
+function isPlateau(attempts: GoalAttempt[], attemptN: number, verdict: Verdict): boolean {
+  if (usesSubstringFallback(verdict)) return false;
+  const prior = attempts.filter((a) => a.n < attemptN).slice(-2);
+  if (prior.length < 2) return false;
+  return prior.every(
+    (a) =>
+      a.verdict !== null && !usesSubstringFallback(a.verdict) && a.verdict.score >= verdict.score,
+  );
+}
 
 /** Minimal in-memory SteerSink — an array-backed FIFO queue. */
 class ArraySteerSink implements SteerSink {
@@ -174,6 +207,11 @@ export interface GoalRunnerConfig {
       userId?: string;
     },
   ) => AsyncGenerator<AgentEvent>;
+  /** Judge for acceptance checks that carry no `command`. Production wiring
+   *  binds `createLLMCheckJudge` to the deployment's LLM. When ABSENT (tests,
+   *  standalone) such a check falls back to a verbatim substring match of its
+   *  description — which almost never passes — marked `method: 'substring'`. */
+  judgeCheck?: CheckJudge;
   /** Injectable sleep for transient-error retry backoff. Defaults to a real
    *  setTimeout delay; tests inject a recorder to skip waiting. */
   sleepFn?: (ms: number) => Promise<void>;
@@ -217,6 +255,7 @@ export class GoalRunner {
   private hooks: HookRegistry | undefined;
   private runAttempt: GoalRunnerConfig['runAttempt'];
   private runPlan: GoalRunnerConfig['runPlan'];
+  private judgeCheck: CheckJudge | undefined;
   private sleep: (ms: number) => Promise<void>;
 
   constructor(config: GoalRunnerConfig) {
@@ -228,6 +267,7 @@ export class GoalRunner {
     this.hooks = config.hooks;
     this.runAttempt = config.runAttempt;
     this.runPlan = config.runPlan;
+    this.judgeCheck = config.judgeCheck;
     this.sleep = config.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
@@ -1254,7 +1294,10 @@ export class GoalRunner {
     }
 
     this.setStatus(run, goalId, 'judging');
-    const verdict = await judge({ output, spec });
+    const verdict = await judge(
+      { output, spec, goalText: goal.goalText },
+      this.judgeCheck ? { judgeCheck: this.judgeCheck } : undefined,
+    );
 
     this.store.updateAttempt(goalId, attemptN, {
       verdict,
@@ -1282,14 +1325,11 @@ export class GoalRunner {
       return false;
     }
 
-    if (attempts.length >= 2) {
-      const prevScores = attempts.slice(-2).map((a) => a.verdict?.score ?? 0);
-      if (prevScores.every((s) => s >= verdict.score)) {
-        if (this.setStatus(run, goalId, 'exhausted', { outputPartial: output })) {
-          this.fireGoalExhausted(goal, output, verdict);
-        }
-        return false;
+    if (isPlateau(attempts, attemptN, verdict)) {
+      if (this.setStatus(run, goalId, 'exhausted', { outputPartial: output })) {
+        this.fireGoalExhausted(goal, output, verdict);
       }
+      return false;
     }
 
     this.store.appendEvent(goalId, 'complete_rejected', {
@@ -1333,6 +1373,7 @@ export class GoalRunner {
       attempts,
       latestVerdict: lastAttempt.verdict,
       strategy,
+      planMd: goal.planMd,
     });
   }
 

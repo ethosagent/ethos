@@ -20,6 +20,9 @@ export function buildRetryContext(opts: {
   attempts: GoalAttempt[];
   latestVerdict: Verdict;
   strategy: RetryStrategy;
+  /** The planning phase's plan (`Goal.planMd`). Carried into every retry's
+   *  first message so the retry works the plan, not just the gaps. */
+  planMd?: string | null;
 }): string {
   const parts: string[] = [];
 
@@ -30,6 +33,10 @@ export function buildRetryContext(opts: {
   }
   for (const rubric of opts.spec.rubric) {
     parts.push(`- [RUBRIC w=${rubric.weight}] ${rubric.description}`);
+  }
+
+  if (opts.planMd) {
+    parts.push(`\n## Plan\n${opts.planMd}`);
   }
 
   parts.push('\n## Gap Report');

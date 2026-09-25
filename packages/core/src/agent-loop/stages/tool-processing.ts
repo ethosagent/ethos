@@ -294,8 +294,11 @@ export async function* processTools(
     }
 
     // Ch.3d — refuse downgraded tools while the post-untrusted-read
-    // counter is positive. The user's next message clears the counter
-    // (run() is invoked fresh; dgRemaining resets to 0).
+    // counter is positive. The counter expires by itself: the
+    // decrement-then-rearm at the end of each iteration (below, after the
+    // tool_result loop) counts it down over `dgTurns` iterations and re-arms
+    // it only on another untrusted read. A fresh run() also resets it to 0
+    // (`dgRemainingRef` in packages/core/src/agent-loop.ts).
     if (ctx.dgEnabled && ctx.dgRemaining.value > 0 && ctx.dgTools.has(tc.toolName)) {
       deps.observability?.recordSafetyBlock({
         traceId: ctx.traceId,

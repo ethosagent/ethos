@@ -21,7 +21,7 @@ import {
 import { registerBuiltinExtractors } from '@ethosagent/document-extractors';
 import { createRouterGate as createAcpRouterGate } from '@ethosagent/execution-coding-agents';
 import { createRouterGate, PI_RUNNER_NAME, PiJobRunner } from '@ethosagent/execution-pi';
-import { GoalRunner } from '@ethosagent/goal-runner';
+import { createLLMCheckJudge, GoalRunner } from '@ethosagent/goal-runner';
 import { BackgroundExecutor, ETHOS_RUNNER_NAME, EthosJobRunner } from '@ethosagent/job-runner';
 import { SQLiteJobStore } from '@ethosagent/job-store';
 import { PendingMemoryStore, TombstoneStore } from '@ethosagent/memory-approval';
@@ -1582,6 +1582,10 @@ export async function buildAgentLoop(
   const goalRunner = new GoalRunner({
     store: goalStore,
     hooks,
+    // Command-less acceptance checks are judged by the deployment's LLM,
+    // fail-closed and time-bounded (createLLMCheckJudge). Not a Jev site yet:
+    // goal-judge is deferred in plan/phases/decision-provider-jev.md §16.
+    judgeCheck: createLLMCheckJudge({ llm }),
     runAttempt: (sessionKey, firstMessage, o) => {
       const ptoolset = o.personalityId ? personalities.get(o.personalityId)?.toolset : undefined;
       const toolsetOverride = ptoolset?.filter((t) => !GOAL_EXCLUDED_TOOLS.has(t));
