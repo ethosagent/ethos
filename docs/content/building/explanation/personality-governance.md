@@ -4,7 +4,7 @@ description: "A personality is a frozen schema plus a character sheet — every 
 kind: explanation
 audience: developer
 slug: personality-governance
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 ## Context
@@ -59,6 +59,8 @@ Neither is a top-level field, and that is the amendment's first limit: presentat
 VAD tuning, endpointing, barge thresholds, provider rosters, credentials, and per-channel affordances all fail the second question — a machine that cannot run a local transcriber has a real reason to disagree, and a personality that renders differently on Slack than on Telegram is not expressing identity, it is expressing a channel. They stay out.
 
 Wake routing is the clearest worked example of the second question doing its job. Which spoken phrase reaches which personality looks like identity — it is, after all, the agent's *name* — and it still belongs to the operator. Two households running the same `engineer` would reasonably disagree about whether the kitchen microphone answers to "hey engineer" or "hey work", because the answer depends on the room, the other agents in it, and who else is within earshot. So [wake routes](../../getting-started/glossary.md#wake-route) live in `voice.wake.routes.<id>` in `~/.ethos/config.yaml` and in `WakeRouteConfig` in `packages/config`, not on `PersonalityConfig` — and the personality is not left nameless by that, because the server synthesizes a default route from the name the personality already declares — the bare name, with a greeting in front of it optional. Identity supplies the name; deployment decides what the house answers to.
+
+Decision-layer enablement is the mirror case. Whether a personality's approvals, injection checks and model routing go through a calibrated decision model looks like a machine setting, and half of it is: the provider's credential, endpoint, model pin, budgets and measured thresholds stay in `decisions.*` in `~/.ethos/config.yaml`, where a machine with no key can always veto. The other half passes the first question. The same agent with and without a judgement layer on its approvals is a different agent, so *which* decision model it uses and *at which sites* is `PersonalityConfig.decisions` (`decisions.provider`, `decisions.sites.<site>: off | shadow | on`). Identity chooses among what the operator allowed; the operator keeps the credential and the calibration.
 
 `skin`, `verbosity` and `busyInputMode` stay removed. The amendment does not restore them, and it is not a general licence for per-personality display overrides: each presentation key is argued and added on its own, on an identity block, or it is not added.
 

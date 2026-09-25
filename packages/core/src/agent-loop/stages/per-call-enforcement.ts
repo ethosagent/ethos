@@ -1,4 +1,4 @@
-import type { HookRegistry, VoiceTurnOrigin } from '@ethosagent/types';
+import type { BeforeToolCallResult, HookRegistry, VoiceTurnOrigin } from '@ethosagent/types';
 import type { AgentLoopObservability } from '../../observability/agent-loop-observability';
 import { type IdenticalStreak, updateIdenticalStreak } from '../budgets';
 import { denyRuleReason, matchDenyRule } from '../deny-rules';
@@ -38,6 +38,12 @@ export interface BeforeToolCallInput {
   /** The turn personality's `safety.denyRules`. A match refuses the call
    *  before any `before_tool_call` hook runs (see `enforceBeforeToolCall`). */
   denyRules?: ReadonlyArray<string>;
+  /** Binds this call's approver decision sink (plan decision-provider-personality
+   *  §15.3) in `ApproverDecisionSinks` for the span of the hook fire, and returns
+   *  its release. NOT on the hook payload — a plugin handler must not be able to
+   *  emit a decision row (../approver-decision-sinks.ts). Absent unless the
+   *  personality declares decision sites and an approver channel was injected. */
+  bindApproverSink?: () => () => void;
 }
 
 export type BeforeToolCallDecision =
@@ -64,18 +70,24 @@ export async function enforceBeforeToolCall(
   const denied = checkDenyRules(deps, input, input.args);
   if (denied) return denied;
 
-  const beforeResult = await deps.hooks.fireModifying(
-    'before_tool_call',
-    {
-      sessionId: input.sessionId,
-      toolCallId: input.toolCallId,
-      toolName: input.toolName,
-      args: input.args,
-      ...(input.voiceOrigin ? { voiceOrigin: input.voiceOrigin } : {}),
-      ...(input.personalityId !== undefined ? { personalityId: input.personalityId } : {}),
-    },
-    input.allowedPlugins,
-  );
+  const releaseApproverSink = input.bindApproverSink?.();
+  let beforeResult: BeforeToolCallResult;
+  try {
+    beforeResult = await deps.hooks.fireModifying(
+      'before_tool_call',
+      {
+        sessionId: input.sessionId,
+        toolCallId: input.toolCallId,
+        toolName: input.toolName,
+        args: input.args,
+        ...(input.voiceOrigin ? { voiceOrigin: input.voiceOrigin } : {}),
+        ...(input.personalityId !== undefined ? { personalityId: input.personalityId } : {}),
+      },
+      input.allowedPlugins,
+    );
+  } finally {
+    releaseApproverSink?.();
+  }
 
   if (beforeResult.error) {
     deps.observability?.recordSafetyBlock({

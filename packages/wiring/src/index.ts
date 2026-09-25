@@ -490,7 +490,10 @@ export interface WiringConfig {
    * The operator's `decisions.*` keys (mapped from `EthosConfig.decisions`,
    * carried by the `...config` spread in apps/ethos/src/wiring.ts). Absent →
    * no decision layer: every decision site runs today's path and no provider
-   * is constructed (`buildDecisionProvider`, ./decision-provider).
+   * handle is created (`createDecisionProviderHandle`, ./decision-provider).
+   * Present, WHICH sites run is still each personality's
+   * (`PersonalityConfig.decisions`, resolved per call by
+   * `resolvePersonalityDecisionSite`).
    */
   decisions?: import('@ethosagent/config').DecisionsConfig;
   /** File-backed secrets resolver. When provided, the capability backend
@@ -1523,11 +1526,13 @@ export interface CreateAgentLoopResult {
   contextWindow: number;
   /**
    * The smart approver's decision site (plan decision-provider-jev §8.2),
-   * carrying THIS build's one decision provider so the approver and the
-   * injection classifier share a breaker. Present only when `decisions.provider`
-   * is configured with a stored key and `decisions.sites.approver` is `shadow`
-   * or `on`. Hosts forward it as `decision` to `createApprovalDangerPredicate`;
-   * absent, the approver is exactly the LLM reviewer.
+   * carrying THIS build's one lazy decision-provider handle so the approver
+   * and the injection classifier share a breaker. Present whenever
+   * `decisions.provider` is configured; the site's mode is resolved per call
+   * from the turn's personality (plan decision-provider-personality §7.3), so
+   * a personality that enables no approver site gets exactly the LLM reviewer.
+   * Hosts forward it as `decision` to `createApprovalDangerPredicate`; absent,
+   * the approver is exactly the LLM reviewer.
    */
   approverDecision?: import('./smart-approver').SmartApproverDecisionSite;
   /** The McpManager instance from tool composition. Pass to createWebApi so
@@ -2067,6 +2072,9 @@ export {
 // Ethos observability adapter
 // ---------------------------------------------------------------------------
 
+// `## Decisions` on the character sheet and the per-personality lines of
+// `ethos doctor` (plan decision-provider-personality §4.5, §8).
+export { resolveCharacterSheetDecisions } from './decision-diagnostics';
 export { IdentityMap, type IdentityMapEntry, type IdentityMapOptions } from './identity-map';
 export {
   ETHOS_EVENT_CATEGORIES,

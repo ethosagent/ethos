@@ -20,6 +20,7 @@ import type {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { AddDecisionModelForm } from '../components/add-decision-model-drawer';
 import {
@@ -40,7 +41,7 @@ import {
   formatDecisionCost,
   removeDecisionConsequences,
   savedKeyNotice,
-  siteView,
+  usedBySiteText,
 } from '../lib/decision-models';
 import { filterSettings } from '../lib/settings-index';
 
@@ -68,11 +69,7 @@ function provider(over: Partial<DecisionProviderView> = {}): DecisionProviderVie
     baseUrl: 'https://api.typesafe.ai',
     host: 'api.typesafe.ai',
     getKeyUrl: 'https://console.typesafe.ai',
-    sites: [
-      { site: 'injection', requested: 'off', effective: 'off', missingThresholds: [] },
-      { site: 'approver', requested: 'off', effective: 'off', missingThresholds: [] },
-      { site: 'router', requested: 'off', effective: 'off', missingThresholds: [] },
-    ],
+    usedBy: [],
     ...over,
   };
 }
@@ -93,7 +90,9 @@ function render(p: DecisionProviderView, over: Partial<DecisionProviderGroupProp
     onRemove: () => {},
     ...over,
   };
-  return renderToStaticMarkup(createElement(DecisionProviderGroup, props));
+  return renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(DecisionProviderGroup, props)),
+  );
 }
 
 /** Visible text, tags stripped. */
@@ -178,25 +177,71 @@ describe('with a key', () => {
   });
 });
 
-describe('sites', () => {
-  it('shows each mode read-only, and the R6 note when on runs as shadow', () => {
+const RESEARCHER = {
+  personalityId: 'researcher',
+  name: 'Researcher',
+  sites: [
+    {
+      site: 'injection' as const,
+      requested: 'shadow' as const,
+      effective: 'shadow' as const,
+      missingThresholds: [],
+    },
+    {
+      site: 'approver' as const,
+      requested: 'on' as const,
+      effective: 'shadow' as const,
+      reason: 'threshold-missing' as const,
+      missingThresholds: ['decisions.thresholds.approver.deny'],
+    },
+  ],
+};
+
+describe('used by', () => {
+  it('lists each personality with the sites it enables and what runs, read-only', () => {
     const p = provider({
-      sites: [
-        {
-          site: 'injection',
-          requested: 'on',
-          effective: 'shadow',
-          missingThresholds: ['decisions.thresholds.injection'],
-        },
-        { site: 'approver', requested: 'shadow', effective: 'shadow', missingThresholds: [] },
-        { site: 'router', requested: 'off', effective: 'off', missingThresholds: [] },
-      ],
+      configured: true,
+      usedBy: [RESEARCHER, { personalityId: 'coder', name: 'Coder', sites: [] }],
     });
-    const t = text(render(p));
-    expect(t).toContain('on requested, running shadow: decisions.thresholds.injection missing');
-    expect(siteView(p.sites[1] ?? p.sites[0]).note).toBeNull();
-    // No control writes a site: there is no Switch or Select in the group.
-    expect(render(p)).not.toMatch(/ant-switch|ant-select/);
+    const html = render(p);
+    const t = text(html);
+    expect(t).toContain('Used by');
+    expect(t).toContain('researcher — injection shadow · approver on (running shadow)');
+    expect(t).toContain('coder — selected, no site enabled');
+    expect(html).toContain('href="/p/researcher/identity"');
+    // Where sites are set, said on the row.
+    expect(t).toContain('Sites are enabled per personality, in Personalities → Edit → Config');
+    // No control writes a site: there is no Switch, Select or Segmented in the group.
+    expect(html).not.toMatch(/ant-switch|ant-select|ant-segmented/);
+    // The stale config.yaml wording is gone.
+    expect(t).not.toContain('decisions.sites');
+  });
+
+  it('says no personality uses it yet, and where to enable it', () => {
+    const t = text(render(provider()));
+    expect(t).toContain(
+      'No personality uses this decision model yet. Enable it on a personality: Personalities → Edit → Config.',
+    );
+  });
+
+  it('names why an enabled site does not run', () => {
+    expect(
+      usedBySiteText({
+        site: 'router',
+        requested: 'shadow',
+        effective: 'off',
+        reason: 'not-configured',
+        missingThresholds: [],
+      }),
+    ).toBe('router shadow (off: not configured on this machine)');
+    expect(
+      usedBySiteText({
+        site: 'injection',
+        requested: 'on',
+        effective: 'on',
+        missingThresholds: [],
+      }),
+    ).toBe('injection on');
   });
 });
 
@@ -285,7 +330,11 @@ function renderSection(list: DecisionsListResult): string {
   const client = new QueryClient();
   client.setQueryData(decisionKeys.list(), list);
   return renderToStaticMarkup(
-    createElement(QueryClientProvider, { client }, createElement(DecisionModelsSection)),
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(QueryClientProvider, { client }, createElement(DecisionModelsSection)),
+    ),
   );
 }
 
@@ -368,31 +417,24 @@ describe('add drawer', () => {
     expect(text(html)).toContain('Every decision model type is already added.');
   });
 
-  it('the saved-key notice reports sites a Remove left behind instead of promising off', () => {
-    const off = provider().sites;
-    expect(savedKeyNotice({ providerId: 'typesafe', providerWritten: true, sites: off })).toBe(
-      'Added decisions.provider: typesafe to config.yaml. Every site is off.',
+  it('the saved-key notice names personalities that start using it instead of promising off', () => {
+    expect(savedKeyNotice({ providerId: 'typesafe', providerWritten: true, usedBy: [] })).toBe(
+      'Added decisions.provider: typesafe to config.yaml. No site runs until a personality enables one in Personalities → Edit → Config.',
     );
-    const lingering = [
-      {
-        site: 'injection' as const,
-        requested: 'shadow' as const,
-        effective: 'shadow' as const,
-        missingThresholds: [],
-      },
-    ];
     expect(
-      savedKeyNotice({ providerId: 'typesafe', providerWritten: true, sites: lingering }),
-    ).toContain('Site lines already in config.yaml apply: injection shadow.');
+      savedKeyNotice({ providerId: 'typesafe', providerWritten: true, usedBy: [RESEARCHER] }),
+    ).toContain(
+      'Personalities already set to use it start now: researcher (injection shadow · approver on (running shadow)).',
+    );
     expect(
-      savedKeyNotice({ providerId: 'typesafe', providerWritten: false, sites: off }),
+      savedKeyNotice({ providerId: 'typesafe', providerWritten: false, usedBy: [RESEARCHER] }),
     ).toBeUndefined();
   });
 });
 
 describe('remove confirm', () => {
-  it('names the key, the provider line when active, and that site lines stay inert', () => {
-    const p = provider({ keyPresent: true, configured: true });
+  it('names the key, the provider line when active, and the personalities that stop using it', () => {
+    const p = provider({ keyPresent: true, configured: true, usedBy: [RESEARCHER] });
     const t = text(
       renderToStaticMarkup(
         createElement(RemoveDecisionModelBody, {
@@ -405,7 +447,10 @@ describe('remove confirm', () => {
     );
     expect(t).toContain('Deletes the key stored at providers/typesafe/apiKey.');
     expect(t).toContain('Removes decisions.provider: typesafe from config.yaml.');
+    expect(t).toContain('researcher stops using it');
+    expect(t).toContain('Their personality files are not changed.');
     expect(t).toContain('Without a provider they do nothing');
+    expect(t).not.toContain('decisions.sites');
     expect(t).toContain('Cancel');
     expect(t).toContain('Remove');
   });

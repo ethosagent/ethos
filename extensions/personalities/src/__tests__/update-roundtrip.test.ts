@@ -822,6 +822,10 @@ describe('lossless update — full config round-trip', () => {
     'nightly.judge.enabled: false',
     'nightly.judge.minInteractions: 30',
     'nightly.expression: false',
+    'decisions.provider: typesafe',
+    'decisions.sites.injection: shadow',
+    'decisions.sites.approver: on',
+    'decisions.sites.router: off',
     'safety:',
     '  approvalMode: smart',
     '  observability:',
@@ -1652,6 +1656,125 @@ describe('mcp_export round-trip', () => {
     expect(fresh.get('me-unrelated')?.outbound_policy).toMatchObject({
       approve_before_send: true,
       channels: ['telegram', 'slack'],
+    });
+  });
+});
+
+// `PersonalityConfig.decisions` — plan decision-provider-personality §4.2/§4.3.
+// Dotted keys like `voice.*`; an invalid mode is dropped (PD12), the provider
+// is kept verbatim (PD3 — resolved at call time, never validated at load).
+describe('decisions round-trip', () => {
+  const ALL_DECISIONS = [
+    'decisions.provider: typesafe',
+    'decisions.sites.injection: shadow',
+    'decisions.sites.approver: on',
+    'decisions.sites.router: off',
+  ];
+
+  it('parses the dotted decisions.* keys, renders them back in order, and re-parses equal', async () => {
+    await seedPersonality('dec-rt', `${['name: DecRt', ...ALL_DECISIONS].join('\n')}\n`);
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    const expected = {
+      provider: 'typesafe',
+      sites: { injection: 'shadow', approver: 'on', router: 'off' },
+    };
+    expect(registry.get('dec-rt')?.decisions).toEqual(expected);
+
+    await registry.update('dec-rt', { description: 'unrelated edit' });
+    const raw = await readFile(join(testDir, 'personalities', 'dec-rt', 'config.yaml'), 'utf-8');
+    expect(raw).toContain(ALL_DECISIONS.join('\n'));
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('dec-rt')?.decisions).toEqual(expected);
+  });
+
+  it('writes no decisions lines and no decisions field when none are declared', async () => {
+    await seedPersonality('dec-none', 'name: DecNone\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('dec-none')).not.toHaveProperty('decisions');
+
+    await registry.update('dec-none', { description: 'x' });
+    const raw = await readFile(join(testDir, 'personalities', 'dec-none', 'config.yaml'), 'utf-8');
+    expect(raw).not.toContain('decisions.');
+  });
+
+  it('drops an invalid site mode, ignores an unknown site, and drops a blank provider', async () => {
+    await seedPersonality(
+      'dec-bad',
+      `${[
+        'name: DecBad',
+        'decisions.provider: ',
+        'decisions.sites.injection: always',
+        'decisions.sites.approver: shadow',
+        'decisions.sites.memory: on',
+      ].join('\n')}\n`,
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('dec-bad')?.decisions).toEqual({ sites: { approver: 'shadow' } });
+  });
+
+  it('keeps a provider this machine has not configured verbatim (not a load failure)', async () => {
+    await seedPersonality(
+      'dec-unknown',
+      'name: DecUnknown\ndecisions.provider: acme-judge\ndecisions.sites.router: on\n',
+    );
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+    expect(registry.get('dec-unknown')?.decisions).toEqual({
+      provider: 'acme-judge',
+      sites: { router: 'on' },
+    });
+  });
+
+  it('shallow-merges a sites patch and leaves the provider alone', async () => {
+    await seedPersonality('dec-merge', `${['name: DecMerge', ...ALL_DECISIONS].join('\n')}\n`);
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('dec-merge', { decisions: { sites: { router: 'shadow' } } });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('dec-merge')?.decisions).toEqual({
+      provider: 'typesafe',
+      sites: { injection: 'shadow', approver: 'on', router: 'shadow' },
+    });
+  });
+
+  it("clears the provider on provider: '' and keeps the sites", async () => {
+    await seedPersonality('dec-clear', `${['name: DecClear', ...ALL_DECISIONS].join('\n')}\n`);
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('dec-clear', { decisions: { provider: '' } });
+
+    const raw = await readFile(join(testDir, 'personalities', 'dec-clear', 'config.yaml'), 'utf-8');
+    expect(raw).not.toContain('decisions.provider');
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('dec-clear')?.decisions).toEqual({
+      sites: { injection: 'shadow', approver: 'on', router: 'off' },
+    });
+  });
+
+  it('adds a decisions block to a personality that had none', async () => {
+    await seedPersonality('dec-add', 'name: DecAdd\n');
+    const registry = makeRegistry();
+    await registry.loadFromDirectory(join(testDir, 'personalities'));
+
+    await registry.update('dec-add', {
+      decisions: { provider: 'typesafe', sites: { injection: 'shadow' } },
+    });
+
+    const fresh = makeRegistry();
+    await fresh.loadFromDirectory(join(testDir, 'personalities'));
+    expect(fresh.get('dec-add')?.decisions).toEqual({
+      provider: 'typesafe',
+      sites: { injection: 'shadow' },
     });
   });
 });

@@ -38,6 +38,14 @@ export interface SmartVerdict {
 export type SmartApprovalCallback = (
   payload: BeforeToolCallPayload,
   reason: string,
+  /**
+   * The personality `createDangerPredicate` read `approvalMode` from — the
+   * SAME resolution, so the approver's decision-site mode and the approval
+   * mode can never come from two different personalities (plan
+   * decision-provider-personality §7.3). `undefined` when no personality
+   * resolved; a per-personality reviewer treats that as "nothing enabled".
+   */
+  personality?: PersonalityConfig,
 ) => Promise<SmartVerdict>;
 
 /**
@@ -263,7 +271,10 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
     const hardline = hardlineReason(payload);
     if (hardline) return hardline;
 
-    const safety = opts.getPersonality?.(payload)?.safety;
+    // Resolved ONCE: the approval mode below and the smart reviewer's
+    // per-personality decision site both read this object.
+    const personality = opts.getPersonality?.(payload);
+    const safety = personality?.safety;
 
     // Non-hardline danger. The mode is resolved first because it selects the
     // flag set: `smart` adds the built-in consequential-tool list on top of
@@ -280,7 +291,7 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
 
     if (mode === 'off' && opts.allowAutoApproveDangerousTools === true) return null;
     if (mode === 'smart' && opts.smartApprove) {
-      const verdict = await opts.smartApprove(payload, dangerReason);
+      const verdict = await opts.smartApprove(payload, dangerReason, personality);
       if (verdict.decision === 'approve') return null;
       // A reviewer `deny` carries a concrete, actionable reason — surface it
       // so the agent can course-correct. `ask` is undecided, so it keeps the

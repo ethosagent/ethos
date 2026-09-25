@@ -21,18 +21,39 @@
 // path is exactly the LLM path below. Pinned by
 // `__tests__/smart-approver-decision.test.ts`; the no-decision behaviour by
 // the unchanged `__tests__/smart-approver.test.ts` (R7).
+//
+// Per personality (plan decision-provider-personality §7.3): the danger
+// predicate passes the personality it read `approvalMode` from as the third
+// callback argument, and the approver site's mode is
+// `resolvePersonalityDecisionSite(personality.decisions, 'approver', global)`
+// (@ethosagent/config), per call. `off` — including no personality — is the
+// LLM review exactly, with no provider handle touched.
+//
+// Verdict cache (plan §7.3, K1). ONE approver instance serves every
+// personality on a surface, so the cache is namespaced by what PRODUCED the
+// verdict: `on:` for a verdict the decision provider decided (the gate
+// passed, only possible in `on`), `llm:` for the LLM reviewer's. An `on`
+// lookup reads `on:` then `llm:` (a cached LLM verdict still wins before the
+// provider runs — C5 as before); an `off` / `shadow` lookup reads `llm:` only,
+// so a provider `approve` cached for an `on` personality can never answer
+// for a personality that did not enable the site. Thresholds are global, so
+// an `on:` entry is valid for every `on` personality. Pinned by
+// `__tests__/smart-approver-decision.test.ts` ("cache namespace").
 
 import { createHash } from 'node:crypto';
-import type { DecisionSiteMode } from '@ethosagent/config';
+import { type ResolvedDecisionsConfig, resolvePersonalityDecisionSite } from '@ethosagent/config';
+import type { ApproverDecisionSinks } from '@ethosagent/core';
 import type {
   BeforeToolCallPayload,
   DecisionAnswer,
-  DecisionProvider,
+  DecisionSink,
   LLMProvider,
   Message,
+  PersonalityConfig,
 } from '@ethosagent/types';
 import type { SmartApprovalCallback, SmartVerdict } from './danger-predicate';
 import { canonicalizeArgs } from './danger-predicate';
+import type { DecisionProviderHandle } from './decision-provider';
 import {
   APPROVER_CHOICES,
   APPROVER_QUESTIONS,
@@ -78,19 +99,28 @@ export interface CreateSmartApproverOptions {
   decision?: SmartApproverDecisionSite;
 }
 
-/** What the composition root resolved for the `approver` decision site. */
+/**
+ * What the composition root supplies for the `approver` decision site. The
+ * MODE is not here: it is resolved per call from the personality the danger
+ * predicate passes (plan decision-provider-personality §7.3).
+ */
 export interface SmartApproverDecisionSite {
-  /** The ONE provider instance of the composition root (shared breaker, §5.5). */
-  decisions: DecisionProvider | undefined;
-  /** `decisions.sites.approver`, EFFECTIVE (R6: `on` without both thresholds is `shadow`). */
-  mode: DecisionSiteMode;
-  /** `decisions.thresholds.approver.approve` / `.deny` (T_approve, T_deny). */
-  thresholds: { approve?: number; deny?: number };
-  /** `decisions.timeouts.approver` resolved (R9, default 2000). */
-  timeoutMs: number;
+  /** The ONE provider handle of the composition root (shared breaker, §5.5), read lazily. */
+  provider: DecisionProviderHandle;
+  /** The operator's resolved `decisions.*`: thresholds (T_approve, T_deny), budget (R9). */
+  global: ResolvedDecisionsConfig;
   recorder?: DecisionSiteRecorder;
   /** The build's shadow-record tracker, drained at dispose (R8). */
   tracker?: DecisionRecordTracker;
+  /**
+   * Where core binds this call's decision sink for the span of its
+   * `before_tool_call` fire (plan decision-provider-personality §15.3) — the
+   * SAME object the loops were constructed with (`AgentLoopConfig.
+   * approverDecisionSinks`, `build-agent-loop.ts`). Private to the composition
+   * root: the sink is not on the hook payload, so a plugin's handler cannot
+   * emit a decision row. Absent → the approver emits no rows.
+   */
+  sinks?: Pick<ApproverDecisionSinks, 'get'>;
 }
 
 /** The single question id this site asks. */
@@ -146,6 +176,8 @@ export function approverVerdictFrom(
 interface Reviewed {
   verdict: SmartVerdict;
   cacheable: boolean;
+  /** The decision provider's gate produced it (cache namespace `on:`), else the LLM (`llm:`). */
+  decided?: true;
 }
 
 function isReviewed(value: unknown): value is Reviewed {
@@ -170,7 +202,8 @@ function bareVerdictRecorder(recorder: DecisionSiteRecorder): DecisionSiteRecord
 
 /**
  * Cache key. Scoped to the exact call, NOT the tool name: an approval for
- * `rm -rf ./build` must never short-circuit `rm -rf ./src`.
+ * `rm -rf ./build` must never short-circuit `rm -rf ./src`. The caller
+ * prefixes the namespace (`on:` / `llm:`, see the file header).
  */
 function verdictKey(payload: BeforeToolCallPayload): string {
   return createHash('sha256')
@@ -300,8 +333,12 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
   // The decision site in front of today's path, all under the one outer bound.
   const reviewWithDecision = async (
     site: SmartApproverDecisionSite,
+    mode: 'shadow' | 'on',
+    siteTimeoutMs: number,
+    personalityId: string,
     payload: BeforeToolCallPayload,
     dangerReason: string,
+    sink: DecisionSink | undefined,
   ): Promise<Reviewed> => {
     const started = Date.now();
     let timer: NodeJS.Timeout | undefined;
@@ -320,17 +357,29 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
       return await Promise.race([
         runDecisionSite<Reviewed, ApproverChoice>({
           site: 'approver',
-          mode: site.mode,
-          provider: site.decisions,
+          mode,
+          provider: await site.provider.get(),
           digest: {
             kind: 'json',
             value: approverDigest({ toolName: payload.toolName, args: payload.args, dangerReason }),
           },
           questions: APPROVER_QUESTIONS,
-          timeoutMs: site.timeoutMs,
+          timeoutMs: siteTimeoutMs,
+          personalityId,
+          // plan decision-provider-personality §15.3 — the sink core bound for
+          // this call; it carries the turn's traceId and this toolCallId.
+          ...(sink ? { sink } : {}),
+          summarize: {
+            verdict: (reviewed) => reviewed.verdict.decision,
+            reading: (choice) => choice,
+          },
           gate: (answers) => {
-            const verdict = approverVerdictFrom(answers, site.thresholds, dangerReason);
-            return verdict ? { verdict, cacheable: true } : null;
+            const verdict = approverVerdictFrom(
+              answers,
+              site.global.thresholds.approver ?? {},
+              dangerReason,
+            );
+            return verdict ? { verdict, cacheable: true, decided: true } : null;
           },
           // Shadow reading (plan §8): the argmax choice, before any threshold.
           interpret: (answers) => approverChoice(answers)?.choice ?? null,
@@ -356,15 +405,33 @@ export function createSmartApprover(opts: CreateSmartApproverOptions): SmartAppr
     }
   };
 
-  return async (payload, dangerReason) => {
+  return async (payload, dangerReason, personality?: PersonalityConfig) => {
+    // Read before the first await: core binds the sink only while this call's
+    // `before_tool_call` fire is in progress (`ApproverDecisionSinks`).
+    const sink = decision?.sinks?.get(payload.sessionId, payload.toolCallId);
     const key = verdictKey(payload);
-    const cached = cache.get(key);
+    const site = decision
+      ? resolvePersonalityDecisionSite(personality?.decisions, 'approver', decision.global)
+      : undefined;
+    const mode = personality ? (site?.effective ?? 'off') : 'off';
+    // K1: only an `on` lookup may read a provider-decided verdict.
+    const cached = (mode === 'on' ? cache.get(`on:${key}`) : undefined) ?? cache.get(`llm:${key}`);
     if (cached) return cached;
 
-    const reviewed = decision
-      ? await reviewWithDecision(decision, payload, dangerReason)
-      : await reviewByLlm(payload, dangerReason, timeoutMs);
-    if (reviewed.cacheable) cache.set(key, reviewed.verdict);
+    const reviewed =
+      decision && site && personality && mode !== 'off'
+        ? await reviewWithDecision(
+            decision,
+            mode,
+            site.timeoutMs,
+            personality.id,
+            payload,
+            dangerReason,
+            sink,
+          )
+        : await reviewByLlm(payload, dangerReason, timeoutMs);
+    if (reviewed.cacheable)
+      cache.set(`${reviewed.decided ? 'on' : 'llm'}:${key}`, reviewed.verdict);
     return reviewed.verdict;
   };
 }

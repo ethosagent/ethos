@@ -1,10 +1,12 @@
 // The smart approver's decision site reaches the gateway's and boot's shared
 // approval predicates (plan/phases/decision-provider-jev.md §8.2, M4). Those
-// hosts build one loop per bot but share one approval predicate, and
-// `decisions.*` is operator-level, so the predicate takes ONE build's
-// `approverDecision` — the default-config build (`ethos gateway`'s systemLoop,
-// `ethos boot`'s shared loop) — the same way it already takes the operator's
-// `createLLM(config)` / `config.model` for the LLM reviewer.
+// hosts build one loop per bot but share one approval predicate, and the
+// provider half of `decisions.*` is operator-level, so the predicate takes ONE
+// build's `approverDecision` — the default-config build (`ethos gateway`'s
+// systemLoop, `ethos boot`'s shared loop) — the same way it already takes the
+// operator's `createLLM(config)` / `config.model` for the LLM reviewer. The
+// site's mode is resolved per call from the session personality (plan
+// decision-provider-personality §7.3), so sharing the site shares no mode.
 //
 // Two halves, the idiom of `approval-flow-unattended.test.ts`:
 //  - runtime: `wireApprovalFlow`, `wireUnattendedApprovalGate` and
@@ -17,6 +19,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resolveDecisionsConfig } from '@ethosagent/config';
 import { DefaultHookRegistry } from '@ethosagent/core';
 import type { Gateway, GatewayBotConfig } from '@ethosagent/gateway';
 import type { PersonalityRegistry, PlatformAdapter } from '@ethosagent/types';
@@ -61,10 +64,8 @@ beforeEach(() => {
 });
 
 const SITE: SmartApproverDecisionSite = {
-  decisions: { name: 'typesafe', calibrated: true, decide: vi.fn() },
-  mode: 'shadow',
-  thresholds: {},
-  timeoutMs: 2000,
+  provider: { get: async () => ({ name: 'typesafe', calibrated: true, decide: vi.fn() }) },
+  global: resolveDecisionsConfig({ provider: 'typesafe' }),
 };
 
 const personalities = { get: () => undefined } as unknown as PersonalityRegistry;

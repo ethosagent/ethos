@@ -4,6 +4,7 @@ import { FsContentStore } from '@ethosagent/cas-fs';
 import { backgroundDefaults, resolveDecisionsConfig } from '@ethosagent/config';
 import {
   AgentLoop,
+  ApproverDecisionSinks,
   type ClarifyOriginLane,
   DefaultJobRunnerRegistry,
   deriveFsReachPaths,
@@ -95,6 +96,19 @@ import {
 } from './static-floor';
 import type { WiringContext } from './types';
 import { buildVoiceStack } from './voice-stack';
+
+/**
+ * The approver's private decision-sink channel (plan decision-provider-personality
+ * §15.3; `ApproverDecisionSinks`, @ethosagent/core). ONE per process, not per
+ * build, because an approval surface is not always paired with the build whose
+ * loop runs the turn: the gateway hands every bot loop's predicate the SYSTEM
+ * build's `approverDecision` (apps/ethos/src/commands/gateway.ts, boot.ts), so a
+ * per-build channel would leave bot turns without approver rows. Entries are keyed
+ * by session + tool call and live only for one `before_tool_call` fire. Injected
+ * into every loop and every `approverDecision` this module builds; not exported
+ * from the package, so nothing but this composition root holds it.
+ */
+const APPROVER_DECISION_SINKS = new ApproverDecisionSinks();
 
 export interface BuildAgentLoopDeps {
   infra: InfrastructureResult;
@@ -571,81 +585,82 @@ export async function buildAgentLoop(
 
   const { createLLMClassifier } = await import('@ethosagent/safety-injection');
   const llmInjectionClassifier = createLLMClassifier({ llm });
-  // plan decision-provider-jev §8.1 — with no `decisions.*` keys, or the
-  // injection site `off`, or no key in `providers/typesafe/apiKey`, the LLM
-  // classifier above is used exactly as before (R7, pinned by
+  // plan decision-provider-jev §8.1 — with no `decisions.*` keys the LLM
+  // classifier above is used exactly as before, and no provider handle,
+  // router or `approverDecision` exists (R7, pinned by
   // `__tests__/decision-wiring.test.ts`).
   //
-  // ONE provider per build, shared by every decision site this build wires —
-  // the injection classifier here, the smart approver (§8.2), which the
-  // approval surfaces construct from `approverDecision` on the result, and the
-  // tier router (§8.3) — so all three see the same breaker (§5.5).
+  // plan decision-provider-personality §7 — with `decisions.*` configured, the
+  // three sites below exist, and each resolves ITS mode per call from the
+  // turn's personality (`resolvePersonalityDecisionSite`, @ethosagent/config).
+  // A personality that declares nothing resolves `off` everywhere: the site
+  // calls today's function directly, `decide()` is never called and the vault
+  // is never read. ONE lazy provider handle per build (PD8), shared by every
+  // site this build wires — the injection classifier here, the smart approver
+  // (§8.2), which the approval surfaces construct from `approverDecision` on
+  // the result, and the tier router (§8.3) — so all three see the same
+  // breaker (§5.5).
   const decisions = config.decisions ? resolveDecisionsConfig(config.decisions) : undefined;
-  const { buildDecisionProvider } = await import('./decision-provider');
-  const { createDecisionInjectionClassifier } = await import('./decision-injection-classifier');
-  const decisionProvider = await buildDecisionProvider({
-    decisions,
-    sites: ['injection', 'approver', 'router'],
-    secrets: config.secretsResolver,
-    ...(opts.observability ? { observability: opts.observability } : {}),
-  });
-  // R8 — a `shadow` site never waits for the provider, so its recording can
-  // still be in flight when a one-shot command (`ethos -z`) finishes its turn
-  // and exits. Every site of this build registers it here, and `dispose()`
-  // waits for them — at most the longest site budget, which the provider
-  // already enforces per call. No provider → no tracker, nothing to wait for.
-  const decisionRecords =
-    decisions && decisionProvider
-      ? new (await import('./decision-site')).DecisionRecordTracker(
-          Math.max(
-            decisions.sites.injection.timeoutMs,
-            decisions.sites.approver.timeoutMs,
-            decisions.sites.router.timeoutMs,
-          ),
-        )
-      : undefined;
-  if (decisionRecords) {
-    disposers.push('decision shadow records', () => decisionRecords.drain());
-  }
-  const injectionClassifier =
-    decisions && decisionProvider && decisions.sites.injection.effective !== 'off'
-      ? createDecisionInjectionClassifier({
-          decisions: decisionProvider,
-          fallback: llmInjectionClassifier,
-          mode: decisions.sites.injection.effective,
-          threshold: decisions.thresholds.injection,
-          timeoutMs: decisions.sites.injection.timeoutMs,
+  const decisionSites = decisions
+    ? await (async () => {
+        const { createDecisionProviderHandle } = await import('./decision-provider');
+        const { createDecisionInjectionClassifier } = await import(
+          './decision-injection-classifier'
+        );
+        const { createDecisionTierRouter } = await import('./decision-router');
+        const { DecisionRecordTracker } = await import('./decision-site');
+        const provider = createDecisionProviderHandle({
+          decisions,
+          secrets: config.secretsResolver,
           ...(opts.observability ? { observability: opts.observability } : {}),
-          ...(decisionRecords ? { tracker: decisionRecords } : {}),
-        })
-      : llmInjectionClassifier;
-  // §8.2 — absent unless a provider exists AND the approver site is `shadow`
-  // or `on`; absent means every approval surface builds today's LLM reviewer.
-  const approverDecision: import('./smart-approver').SmartApproverDecisionSite | undefined =
-    decisions && decisionProvider && decisions.sites.approver.effective !== 'off'
-      ? {
-          decisions: decisionProvider,
-          mode: decisions.sites.approver.effective,
-          thresholds: decisions.thresholds.approver ?? {},
-          timeoutMs: decisions.sites.approver.timeoutMs,
-          ...(opts.observability ? { recorder: opts.observability } : {}),
-          ...(decisionRecords ? { tracker: decisionRecords } : {}),
-        }
-      : undefined;
-  // §8.3 — the tier router, injected into the loop below. Absent unless a
-  // provider exists AND the router site is `shadow` or `on`; absent means no
-  // routing, `turnTierOverride ?? 'default'` exactly (R7(c)).
-  const tierRouter =
-    decisions && decisionProvider && decisions.sites.router.effective !== 'off'
-      ? (await import('./decision-router')).createDecisionTierRouter({
-          decisions: decisionProvider,
-          mode: decisions.sites.router.effective,
-          threshold: decisions.thresholds.router,
-          timeoutMs: decisions.sites.router.timeoutMs,
-          ...(opts.observability ? { recorder: opts.observability } : {}),
-          ...(decisionRecords ? { tracker: decisionRecords } : {}),
-        })
-      : undefined;
+        });
+        // R8 — a `shadow` site never waits for the provider, so its recording
+        // can still be in flight when a one-shot command (`ethos -z`) finishes
+        // its turn and exits. Every site of this build registers it here, and
+        // `dispose()` waits for them — at most the longest site budget, which
+        // the provider already enforces per call. Empty → `drain` is a no-op.
+        const tracker = new DecisionRecordTracker(
+          Math.max(
+            decisions.timeouts.injection,
+            decisions.timeouts.approver,
+            decisions.timeouts.router,
+          ),
+        );
+        disposers.push('decision shadow records', () => tracker.drain());
+        const recorder = opts.observability ? { recorder: opts.observability } : {};
+        return {
+          injectionClassifier: createDecisionInjectionClassifier({
+            provider,
+            fallback: llmInjectionClassifier,
+            global: decisions,
+            // The registry this build's loop resolves turns from (§7.2).
+            personalities,
+            ...(opts.observability ? { observability: opts.observability } : {}),
+            tracker,
+          }),
+          // §8.2 — the approval surfaces build their reviewer from this; the
+          // mode is resolved per call from the predicate's personality.
+          approverDecision: {
+            provider,
+            global: decisions,
+            ...recorder,
+            tracker,
+            sinks: APPROVER_DECISION_SINKS,
+          } satisfies import('./smart-approver').SmartApproverDecisionSite,
+          // §8.3 — injected into the loop below; returns `null` (no routing)
+          // for a personality whose router site resolves `off`.
+          tierRouter: createDecisionTierRouter({
+            provider,
+            global: decisions,
+            ...recorder,
+            tracker,
+          }),
+        };
+      })()
+    : undefined;
+  const injectionClassifier = decisionSites?.injectionClassifier ?? llmInjectionClassifier;
+  const approverDecision = decisionSites?.approverDecision;
+  const tierRouter = decisionSites?.tierRouter;
 
   // -------------------------------------------------------------------------
   // Phase 2 — Build the AgentSafety bundle for core's injected safety path.
@@ -1161,6 +1176,9 @@ export async function buildAgentLoop(
     ...(toolLoading ? { toolLoading } : {}),
     smallWindowResolver,
     ...(tierRouter ? { tierRouter } : {}),
+    // §15.3 — the approver's private sink channel; the same object is on
+    // `approverDecision.sinks` above. Absent with no `decisions.*`.
+    ...(decisionSites ? { approverDecisionSinks: APPROVER_DECISION_SINKS } : {}),
     documentExtractors,
     contextEngines,
     ...(llmHandle ? { llmHandle } : {}),

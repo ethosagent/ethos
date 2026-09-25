@@ -213,4 +213,57 @@ describe('forkSession', () => {
     expect(await store.getSessionByKey('cli:proj:fork:x')).toBeNull();
     expect(await store.listSessions({ parentSessionId: source.id })).toEqual([]);
   });
+
+  // plan decision-provider-personality N7d — a fork's reload shows the same
+  // decision rows, as web-api copies a fork's cards.
+  describe('decision rows', () => {
+    type DecisionEvent = Parameters<NonNullable<SessionStore['appendDecision']>>[1];
+    const decision = (over: Partial<DecisionEvent>): DecisionEvent => ({
+      type: 'decision',
+      id: 'd',
+      phase: 'settled',
+      site: 'injection',
+      provider: 'typesafe',
+      mode: 'on',
+      outcome: 'ok',
+      acted: true,
+      verdict: 'clean',
+      latencyMs: 30,
+      personalityId: 'researcher',
+      ...over,
+    });
+
+    it('copies the rows the copied history anchors, in order, by call and by trace', async () => {
+      const store = new InMemorySessionStore();
+      const source = await seedSource(store);
+      await append(store, source.id, TOOL_TURN);
+      await store.appendDecision?.(
+        source.id,
+        decision({ id: 'router', site: 'router', traceId: 'trace-1', verdict: 'trivial' }),
+      );
+      await store.appendDecision?.(source.id, decision({ id: 'inj-1', toolCallId: 't1' }));
+      await store.appendDecision?.(source.id, decision({ id: 'inj-2', toolCallId: 't2' }));
+      // Anchored to nothing in the history: not copied.
+      await store.appendDecision?.(source.id, decision({ id: 'stray', toolCallId: 'zz' }));
+
+      const { session } = await forkSession(store, source.id, { key: 'k' });
+      const rows = (await store.getDecisions?.(session.id)) ?? [];
+      expect(rows.map((r) => r.event.id)).toEqual(['router', 'inj-1', 'inj-2']);
+      expect(rows.map((r) => r.seq)).toEqual([1, 2, 3]);
+      // The source keeps its own rows.
+      expect((await store.getDecisions?.(source.id))?.length).toBe(4);
+    });
+
+    it('leaves behind the rows of the turns a cut fork drops', async () => {
+      const store = new InMemorySessionStore();
+      const source = await seedSource(store);
+      const first = await append(store, source.id, [{ role: 'user', content: 'hi' }]);
+      await append(store, source.id, TOOL_TURN);
+      await store.appendDecision?.(source.id, decision({ id: 'inj-1', toolCallId: 't1' }));
+      const cut = first[0];
+      if (!cut) throw new Error('seed failed');
+      const { session } = await forkSession(store, source.id, { key: 'k', upToMessageId: cut.id });
+      expect(await store.getDecisions?.(session.id)).toEqual([]);
+    });
+  });
 });

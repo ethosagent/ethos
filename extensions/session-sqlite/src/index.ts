@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { estimateCost } from '@ethosagent/pricing';
 import Database, { migrate } from '@ethosagent/sqlite';
 import type {
+  AgentEvent,
   CompressionEvent,
   KeyValueStore,
   MessagePage,
@@ -11,8 +12,10 @@ import type {
   SessionFilter,
   SessionStore,
   SessionUsage,
+  StoredDecision,
   StoredMessage,
 } from '@ethosagent/types';
+import { appendDecisionRow, readDecisionRows, SESSION_DECISIONS_SCHEMA } from './decisions';
 import { SqliteKeyValueStore } from './kv-store';
 import { readMessagePage } from './message-page';
 
@@ -299,6 +302,10 @@ export class SQLiteSessionStore implements SessionStore {
     // table scan. Idempotent; kept out of the v1 baseline for the same reason
     // as store_meta above.
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)');
+
+    // Additive migration (decision-provider-personality §15.5): settled
+    // decision rows, cascaded with their session. See ./decisions.ts.
+    this.db.exec(SESSION_DECISIONS_SCHEMA);
   }
 
   // ---------------------------------------------------------------------------
@@ -529,6 +536,24 @@ export class SQLiteSessionStore implements SessionStore {
     options: MessagePageOptions,
   ): Promise<MessagePage | null> {
     return readMessagePage<MessageRow>(this.db, sessionId, options, rowToMessage);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Decision rows (decision-provider-personality §15.5) — see ./decisions.ts
+  // ---------------------------------------------------------------------------
+
+  async appendDecision(
+    sessionId: string,
+    event: Extract<AgentEvent, { type: 'decision' }>,
+  ): Promise<StoredDecision> {
+    return appendDecisionRow(this.db, sessionId, event);
+  }
+
+  async getDecisions(
+    sessionId: string,
+    filter?: { toolCallIds?: readonly string[]; traceIds?: readonly string[] },
+  ): Promise<StoredDecision[]> {
+    return readDecisionRows(this.db, sessionId, filter);
   }
 
   async updateUsage(sessionId: string, delta: Partial<SessionUsage>): Promise<void> {

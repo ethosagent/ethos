@@ -210,7 +210,22 @@ describe('Orchestrator guardrails', () => {
     // own history limit — one `historyLimitFor` property in the
     // `compactSession` call. The resolution lives in agent-loop/small-window.ts
     // and agent-loop/manual-compact.ts.
-    expect(lineCount).toBeLessThanOrEqual(1053);
+    // Bumped 1046 -> 1059 (decision-provider-personality N7b, §15.3): `run()`
+    // becomes a three-line shell that builds the turn's `TurnDecisions` and
+    // wraps the (renamed, private) `runTurn` generator in `withDecisionEvents`,
+    // plus the import and two pass-through lines handing the queue to
+    // `setupTurn` and to the tool stage / ScriptToolBridge. The merge logic
+    // lives in agent-loop/turn-decisions.ts.
+    // Bumped 1059 -> 1063 (decision-provider-personality §15.3, the approver's
+    // private sink channel): one `AgentLoopConfig.approverDecisionSinks` field
+    // with its one-line doc, its private field, and its constructor assignment,
+    // handed to `new TurnDecisions(...)`. The channel itself lives in
+    // agent-loop/approver-decision-sinks.ts.
+    // Merged 1053 + 17 -> 1070 (decision-provider-personality integration):
+    // main's small-window/compact increases (+7 over 1046) plus this branch's
+    // decision-event increases (+17 over 1046), each ratcheted independently;
+    // the cap is their sum.
+    expect(lineCount).toBeLessThanOrEqual(1070);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -326,7 +341,12 @@ describe('Orchestrator guardrails', () => {
       // hands the turn personality's `safety.denyRules` to
       // `enforceBeforeToolCall`. One pass-through line; the check lives in
       // stages/per-call-enforcement.ts.
-      if (lineCount > 861) {
+      // Bumped 861 -> 864 (decision-provider-personality N7b, §15.3): the
+      // turn's decision queue on the stage context (one line), its import, and
+      // its per-call sink handed to `enforceBeforeToolCall` and
+      // `handleUntrustedResult` (one line each). Measured at 864. The sink
+      // logic lives in agent-loop/turn-decisions.ts.
+      if (lineCount > 864) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

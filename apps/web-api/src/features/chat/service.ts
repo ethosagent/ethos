@@ -726,6 +726,11 @@ export class ChatService {
         ...(traceId ? { traceId } : {}),
       }),
     );
+    // plan decision-provider-personality §15.2/§15.4 — decision rows are for
+    // the web and desktop chat (rendered in N7d). Forwarded as the event came:
+    // it carries summaries only (K13). A late shadow row can arrive after
+    // `done`; the bridge drains the loop to exhaustion, so it still lands here.
+    bridge.on('decision', (decision) => this.append(sessionId, { type: 'decision', ...decision }));
     bridge.on('error', (error, code) => this.append(sessionId, { type: 'error', error, code }));
     bridge.on('done', (text, turnCount, traceId) => {
       this.append(sessionId, { type: 'done', text, turnCount, ...(traceId ? { traceId } : {}) });

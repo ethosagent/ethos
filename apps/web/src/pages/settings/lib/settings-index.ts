@@ -140,8 +140,9 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
   ]),
   // Decision models (plan decision-provider-jev §7, §12): a list of added
   // decision models, each saving on its own through `decisions.setKey` /
-  // `clearKey` / `remove`; a site's mode is listed read-only, and Test sends
-  // one call. None is on the page Save.
+  // `clearKey` / `remove`; which personalities use each one is listed
+  // read-only (sites are set per personality), and Test sends one call. None
+  // is on the page Save.
   ...group('models', 'decision-models', [
     {
       key: null,
@@ -149,7 +150,7 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
       saves: 'self',
       stateBacked: true,
       keyUnresolved:
-        'Add: rpc.decisions.setKey (writes decisions.provider when absent). Remove: rpc.decisions.remove (deletes the key and that decisions.provider line; site lines stay).',
+        'Add: rpc.decisions.setKey (writes decisions.provider when absent). Remove: rpc.decisions.remove (deletes the key and that decisions.provider line; personality files are not changed).',
     },
     {
       key: null,
@@ -160,10 +161,12 @@ export const SETTINGS_INDEX: readonly SettingEntry[] = [
         'Secrets vault ref providers/typesafe/apiKey (rpc.decisions.setKey); also writes decisions.provider when absent.',
     },
     {
-      key: 'decisions.sites.injection | .approver | .router',
-      label: 'Decision sites (read-only)',
+      key: null,
+      label: 'Decision model used by (read-only)',
       saves: 'self',
       stateBacked: true,
+      keyUnresolved:
+        'rpc.decisions.list usedBy: personalities whose decisions.provider names it. Sites are set per personality in Personalities → Edit → Config (personality config.yaml decisions.sites.*).',
     },
     {
       key: null,

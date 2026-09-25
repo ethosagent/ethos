@@ -24,7 +24,6 @@ import { join } from 'node:path';
 import {
   configParseNotices,
   DECISIONS_API_KEY_REF,
-  type DecisionSiteMode,
   deriveBotKey,
   describeDecisionSiteDowngrade,
   type EthosConfig,
@@ -40,12 +39,14 @@ import {
   type ModelDiscovery,
   unsupportedModelMessage,
 } from '@ethosagent/llm-codex';
+import type { CharacterSheetDecisionSite } from '@ethosagent/personalities';
 import {
   type CallCaptureDependencyCheckResult,
   callCaptureHealthPath,
 } from '@ethosagent/platform-callcapture';
 import { bundledSkillsSource, UniversalScanner } from '@ethosagent/skills';
-import type { SecretsResolver, Skill } from '@ethosagent/types';
+import type { PersonalityConfig, SecretsResolver, Skill } from '@ethosagent/types';
+import { resolveCharacterSheetDecisions } from '@ethosagent/wiring';
 import { errorLogExists, errorLogPath, readRecentErrors } from '../error-log';
 import { type LiveKitMediaResolution, resolveLiveKitMedia } from '../livekit-media';
 import { buildVersionInfo } from '../version-info';
@@ -946,11 +947,28 @@ export function providerChainLines(config: EthosConfig): string[] {
 
 /**
  * The decision layer as `ethos doctor` reports it (plan decision-provider-jev
- * §7 / D7 / C4): which provider, which HOST data is sent to, and which sites
- * send it. `configured: false` when there is no `decisions.provider`, and the
- * text form then prints nothing. Only `shadow`/`on` sites are listed — an `off`
- * site sends nothing — and an R6-downgraded site carries the threshold keys
- * whose absence downgraded it (`resolveDecisionSiteMode` in packages/config).
+ * §7 / D7 / C4; plan decision-provider-personality §8): which provider and
+ * which HOST data is sent to, then — per personality that declares a
+ * `decisions` block — which sites run and why a site runs less than it asked
+ * for. Each personality row is `resolveCharacterSheetDecisions`
+ * (packages/wiring/src/decision-diagnostics.ts), the function the character
+ * sheet renders `## Decisions` from, so doctor and the sheet cannot disagree.
+ *
+ * Personalities with no `decisions` block are not listed. With no
+ * `decisions.provider` and no personality declaring one, the text form prints
+ * nothing (today's behaviour).
+ *
+ * Known limitations, stated rather than implied:
+ * - A global `decisions.sites.*` line is warned about by the config-notice
+ *   warnings doctor prints right below these lines
+ *   (`describeLegacyDecisionSite`, packages/config/src/decisions.ts) — not
+ *   repeated here. `legacySites` in the JSON is read from
+ *   `DecisionsConfig.legacySites`, which `buildDecisionsConfig` only keeps
+ *   when `decisions.provider` is set; without one the notice is the only trace.
+ * - An invalid site mode in a personality's config.yaml (PD12) is NOT
+ *   reported: the personality loader (`buildDecisionsConfig` in
+ *   extensions/personalities/src/index.ts) drops it silently, so the site
+ *   reads as undeclared (`off`) here and on the character sheet.
  */
 export interface DecisionLayerReport {
   configured: boolean;
@@ -958,63 +976,145 @@ export interface DecisionLayerReport {
   /** `new URL(decisions.baseUrl).host` — where request bodies go. */
   host?: string;
   model?: string;
-  sites?: Array<{
-    site: string;
-    requested: DecisionSiteMode;
-    effective: DecisionSiteMode;
-    missingThresholds?: string[];
-  }>;
   /** The vault ref the API key is read from, and whether a value is stored there. */
   apiKeyRef?: string;
   apiKeyPresent?: boolean;
+  /** One row per personality that declares a `decisions` block, sorted by id. */
+  personalities: DecisionPersonalityReport[];
+  /** Global `decisions.sites.<site>` lines, no longer read (PD5). */
+  legacySites: Array<{ site: string; value: string }>;
+  /** The ⚠ lines, uncoloured, in the order the text form prints them. */
+  warnings: string[];
+}
+
+export interface DecisionPersonalityReport {
+  id: string;
+  /** The personality's `decisions.provider`, verbatim. */
+  provider?: string;
+  /** The operator configured that provider on this machine. */
+  configured: boolean;
+  sites: CharacterSheetDecisionSite[];
+}
+
+/** One site as a doctor row shows it: `injection shadow`, R6's sentence, or `x shadow → off`. */
+function decisionSiteText(s: CharacterSheetDecisionSite): string {
+  if (s.reason === 'threshold-missing') {
+    return `${s.site} ${describeDecisionSiteDowngrade(s.missingThresholds)}`;
+  }
+  if (s.effective !== s.requested) return `${s.site} ${s.requested} → ${s.effective}`;
+  return `${s.site} ${s.requested}`;
 }
 
 export async function checkDecisionLayer(
   config: EthosConfig | null,
   secrets: Pick<SecretsResolver, 'get'>,
+  personalities: readonly PersonalityConfig[] = [],
 ): Promise<DecisionLayerReport> {
-  if (!config?.decisions) return { configured: false };
+  const legacySites = Object.entries(config?.decisions?.legacySites ?? {}).map(([site, value]) => ({
+    site,
+    value: String(value),
+  }));
+  const warnings: string[] = [];
+  const rows: DecisionPersonalityReport[] = [];
+  const globalProvider = config?.decisions?.provider;
+  for (const p of [...personalities].sort((a, b) => a.id.localeCompare(b.id))) {
+    const d = await resolveCharacterSheetDecisions(p, config, secrets);
+    if (!d) continue;
+    const sites = [...d.sites];
+    rows.push({
+      id: p.id,
+      ...(d.provider !== undefined ? { provider: d.provider } : {}),
+      configured: d.configured,
+      sites,
+    });
+    const enabled = sites.filter((s) => s.requested !== 'off').map((s) => s.site);
+    if (d.provider !== undefined && !d.configured) {
+      warnings.push(
+        `decisions: ${p.id} names decision model "${d.provider}", but ~/.ethos/config.yaml ` +
+          (globalProvider ? `configures "${globalProvider}"` : 'has no decisions.provider') +
+          ' — its sites run off.',
+      );
+    } else if (d.provider === undefined && enabled.length > 0) {
+      warnings.push(
+        `decisions: ${p.id} enables ${enabled.join(', ')} but names no decisions.provider — ` +
+          'its sites run off. Add decisions.provider to its config.yaml.',
+      );
+    }
+    const approver = sites.find((s) => s.site === 'approver');
+    if (approver?.inertApprovalMode !== undefined) {
+      warnings.push(
+        `decisions: ${p.id} enables the approver site, but approvalMode is ` +
+          `${approver.inertApprovalMode} — the approver runs only under smart.`,
+      );
+    }
+  }
+
+  if (!config?.decisions) {
+    return { configured: false, personalities: rows, legacySites, warnings };
+  }
   const r = resolveDecisionsConfig(config.decisions);
   const key = await secrets.get(DECISIONS_API_KEY_REF).catch(() => null);
+  const apiKeyPresent = key !== null && key.trim().length > 0;
+  // plan §7: with no key stored every site runs today's path — say which ref.
+  if (!apiKeyPresent) {
+    warnings.push(
+      `decisions: no key at vault ref ${DECISIONS_API_KEY_REF} — every site runs today's path.`,
+    );
+  }
   return {
     configured: true,
     provider: r.provider,
     // `buildDecisionsConfig` only keeps a baseUrl `new URL` accepts.
     host: new URL(r.baseUrl).host,
     model: r.model,
-    sites: Object.entries(r.sites)
-      .filter(([, s]) => s.effective !== 'off')
-      .map(([site, s]) => ({
-        site,
-        requested: s.requested,
-        effective: s.effective,
-        ...(s.missingThresholds.length > 0 ? { missingThresholds: s.missingThresholds } : {}),
-      })),
     apiKeyRef: DECISIONS_API_KEY_REF,
-    apiKeyPresent: key !== null && key.trim().length > 0,
+    apiKeyPresent,
+    personalities: rows,
+    legacySites,
+    warnings,
   };
 }
 
-/** The Config-section lines for {@link checkDecisionLayer}; empty when not configured. */
+/** The Config-section lines for {@link checkDecisionLayer}; empty when there is nothing to say. */
 export function decisionLayerLines(report: DecisionLayerReport): string[] {
-  if (!report.configured) return [];
-  const sites = (report.sites ?? []).map((s) =>
-    s.missingThresholds
-      ? `${s.site} ${c.yellow}${describeDecisionSiteDowngrade(s.missingThresholds)}${c.reset}`
-      : `${s.site} ${s.effective}`,
-  );
+  if (!report.configured && report.personalities.length === 0) return [];
   const lines = [
-    `     decisions:   ${report.provider} → ${report.host}` +
-      ` · ${sites.length > 0 ? sites.join(' · ') : 'every site off'}`,
+    report.configured
+      ? `     decisions:   ${report.provider} → ${report.host} · model ${report.model}`
+      : '     decisions:   no decisions.provider in config.yaml',
   ];
-  // plan §7: with no key stored every site runs today's path — say which ref.
-  if (!report.apiKeyPresent) {
-    lines.push(
-      `  ${c.yellow}⚠${c.reset}  decisions: no key at vault ref ${report.apiKeyRef} — every site runs today's path. ` +
-        `${c.dim}ethos secrets set ${report.apiKeyRef} <value>${c.reset}`,
-    );
+  const width = Math.max(...report.personalities.map((p) => p.id.length)) + 1;
+  for (const p of report.personalities) {
+    const enabled = p.sites.filter((s) => s.requested !== 'off');
+    const text =
+      enabled.length > 0 ? enabled.map(decisionSiteText).join(' · ') : 'no sites enabled';
+    lines.push(`                  ${`${p.id}:`.padEnd(width)} ${text}`);
+  }
+  for (const w of report.warnings) {
+    const fix = w.startsWith('decisions: no key at vault ref')
+      ? ` ${c.dim}ethos secrets set ${report.apiKeyRef} <value>${c.reset}`
+      : '';
+    lines.push(`  ${c.yellow}⚠${c.reset}  ${w}${fix}`);
   }
   return lines;
+}
+
+/**
+ * Every personality doctor can see — built-ins plus `~/.ethos/personalities/`
+ * — for the decision rows. Fail-soft: an unloadable registry costs the rows,
+ * never the doctor run (the "Personality data" section reports the directory).
+ */
+async function loadDoctorPersonalities(
+  storage: ReturnType<typeof getStorage>,
+): Promise<PersonalityConfig[]> {
+  try {
+    const { createPersonalityRegistry } = await import('@ethosagent/personalities');
+    const reg = await createPersonalityRegistry({ storage, userPersonalitiesDir: ethosDir() });
+    await reg.loadFromDirectory(join(ethosDir(), 'personalities'));
+    return reg.list();
+  } catch {
+    return [];
+  }
 }
 
 export async function runDoctor(args: string[] = [], options?: DoctorOptions): Promise<void> {
@@ -1145,7 +1245,11 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
         ...(c.reason ? { reason: c.reason } : {}),
         ...(c.label ? { label: c.label } : {}),
       })),
-      decisions: await checkDecisionLayer(config, await getSecretsResolver()),
+      decisions: await checkDecisionLayer(
+        config,
+        await getSecretsResolver(),
+        await loadDoctorPersonalities(storage),
+      ),
       callCapture: {
         configured: callCapture.configured,
         ok: callCapture.ok,
@@ -1200,7 +1304,11 @@ export async function runDoctor(args: string[] = [], options?: DoctorOptions): P
     // them, and this is the command whose job is "what is wrong with my config".
     for (const line of providerChainLines(config)) console.log(line);
     for (const line of decisionLayerLines(
-      await checkDecisionLayer(config, await getSecretsResolver()),
+      await checkDecisionLayer(
+        config,
+        await getSecretsResolver(),
+        await loadDoctorPersonalities(storage),
+      ),
     ))
       console.log(line);
     const notices = configParseNotices(config);

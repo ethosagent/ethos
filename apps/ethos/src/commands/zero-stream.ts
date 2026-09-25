@@ -175,6 +175,11 @@ export function encodeZeroEvent(event: AgentEvent): ZeroStreamLine | null {
       };
     case 'error':
       return { v: 1, type: 'error', code: event.code, error: redactString(event.error) };
+    case 'decision':
+      // Out of v1 for `ethos -z` (plan decision-provider-personality §15.4):
+      // stream-json is a public format and a decision row is internal
+      // judgement. Explicit so the allow-list's intent is visible here.
+      return null;
     default:
       return null;
   }

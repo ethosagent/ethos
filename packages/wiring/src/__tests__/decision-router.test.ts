@@ -4,6 +4,9 @@
 // file pins this site's mapping, its budget, its digest and its wiring. The
 // turn-setup half (R1, user override, downgrade-only in core) is
 // packages/core/src/__tests__/tier-router.test.ts.
+// Plan decision-provider-personality §7.1/§11: the mode is the turn
+// personality's `decisions.sites.router`, resolved per call; `off` (declared
+// or undeclared) returns `null` without touching the provider handle.
 
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,10 +21,12 @@ import type {
   DecisionProvider,
   DecisionRequest,
   DecisionResult,
+  DecisionSink,
+  PersonalityConfig,
   SecretsResolver,
 } from '@ethosagent/types';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildDecisionProvider } from '../decision-provider';
+import { createDecisionProviderHandle, type DecisionProviderHandle } from '../decision-provider';
 import {
   createDecisionTierRouter,
   ROUTER_QUESTION_ID,
@@ -45,6 +50,30 @@ beforeEach(() => {
 });
 
 const T = 0.8;
+
+/** The operator's global config: provider configured, router threshold set. */
+const G = resolveDecisionsConfig({ provider: 'typesafe', thresholds: { router: T } });
+
+/** A handle that answers a fixed provider, counting `get()` calls. */
+function fixed(p: DecisionProvider | undefined): DecisionProviderHandle & { gets: number } {
+  const h = {
+    gets: 0,
+    get: async () => {
+      h.gets++;
+      return p;
+    },
+  };
+  return h;
+}
+
+/** A personality whose router site is `mode`; no mode → declares nothing. */
+function persona(mode?: 'off' | 'shadow' | 'on', id = 'p'): PersonalityConfig {
+  return {
+    id,
+    name: id,
+    ...(mode ? { decisions: { provider: 'typesafe', sites: { router: mode } } } : {}),
+  };
+}
 
 function answers(choice: string, confidence: number) {
   return {
@@ -110,19 +139,21 @@ describe('createDecisionTierRouter — on', () => {
     const { provider: p, requests } = provider(() => ok('trivial', 0.9));
     const { recorder: r, records } = recorder();
     const signal = new AbortController().signal;
-    const router = createDecisionTierRouter({
-      decisions: p,
-      mode: 'on',
-      threshold: T,
-      timeoutMs: 500,
-      recorder: r,
-    });
-    expect(await router({ message: 'thanks!', signal })).toBe('trivial');
+    const router = createDecisionTierRouter({ provider: fixed(p), global: G, recorder: r });
+    expect(await router({ message: 'thanks!', personality: persona('on'), signal })).toBe(
+      'trivial',
+    );
     expect(requests[0]?.timeoutMs).toBe(500);
     expect(requests[0]?.signal).toBe(signal);
     expect(requests[0]?.state).toBe('thanks!');
     // Router latency per turn is visible (M4 acceptance): the per-call record.
-    expect(records[0]).toMatchObject({ site: 'router', mode: 'on', acted: true, outcome: 'ok' });
+    expect(records[0]).toMatchObject({
+      site: 'router',
+      mode: 'on',
+      acted: true,
+      outcome: 'ok',
+      personalityId: 'p',
+    });
     expect(typeof records[0]?.latencyMs).toBe('number');
   });
 
@@ -143,28 +174,41 @@ describe('createDecisionTierRouter — on', () => {
       ],
     ];
     for (const [p, label] of cases) {
-      const router = createDecisionTierRouter({
-        decisions: p,
-        mode: 'on',
-        threshold: T,
-        timeoutMs: 500,
-      });
-      expect(await router({ message: 'hi' }), label).toBeNull();
+      const router = createDecisionTierRouter({ provider: fixed(p), global: G });
+      expect(await router({ message: 'hi', personality: persona('on') }), label).toBeNull();
     }
+  });
+
+  it('R6: `on` without the global threshold runs as shadow (never acts)', async () => {
+    const { provider: p } = provider(() => ok('trivial', 0.99));
+    const { recorder: r, records } = recorder();
+    const router = createDecisionTierRouter({
+      provider: fixed(p),
+      global: resolveDecisionsConfig({ provider: 'typesafe' }),
+      recorder: r,
+    });
+    expect(await router({ message: 'hi', personality: persona('on') })).toBeNull();
+    await vi.waitFor(() => expect(records).toHaveLength(1));
+    expect(records[0]?.mode).toBe('shadow');
   });
 });
 
-describe('createDecisionTierRouter — off and shadow', () => {
-  it('R7(b): router `off` with a provider configured never calls decide()', async () => {
+describe('createDecisionTierRouter — off and shadow, per personality', () => {
+  it('R7(b): an undeclared, `off`, provider-less or unconfigured personality never touches the handle', async () => {
     const { provider: p, decide } = provider(() => ok('trivial', 0.99));
-    const router = createDecisionTierRouter({
-      decisions: p,
-      mode: 'off',
-      threshold: T,
-      timeoutMs: 500,
-    });
-    expect(await router({ message: 'thanks!' })).toBeNull();
+    const handle = fixed(p);
+    const router = createDecisionTierRouter({ provider: handle, global: G });
+    const personalities: PersonalityConfig[] = [
+      persona(),
+      persona('off'),
+      { id: 'np', name: 'np', decisions: { sites: { router: 'on' } } },
+      { id: 'nc', name: 'nc', decisions: { provider: 'acme', sites: { router: 'on' } } },
+    ];
+    for (const personality of personalities) {
+      expect(await router({ message: 'thanks!', personality })).toBeNull();
+    }
     expect(decide).not.toHaveBeenCalled();
+    expect(handle.gets).toBe(0);
   });
 
   it('shadow returns null without waiting for the provider, and records its reading later', async () => {
@@ -176,14 +220,8 @@ describe('createDecisionTierRouter — off and shadow', () => {
         }),
     );
     const { recorder: r, records } = recorder();
-    const router = createDecisionTierRouter({
-      decisions: p,
-      mode: 'shadow',
-      threshold: T,
-      timeoutMs: 500,
-      recorder: r,
-    });
-    expect(await router({ message: 'thanks!' })).toBeNull();
+    const router = createDecisionTierRouter({ provider: fixed(p), global: G, recorder: r });
+    expect(await router({ message: 'thanks!', personality: persona('shadow') })).toBeNull();
     expect(records).toHaveLength(0);
     settle(ok('trivial', 0.97));
     await vi.waitFor(() => expect(records).toHaveLength(1));
@@ -193,46 +231,43 @@ describe('createDecisionTierRouter — off and shadow', () => {
       jevVerdict: 'trivial',
       todayVerdict: null,
       disagreed: true,
+      personalityId: 'p',
     });
   });
 
   it("shadow carries the turn's traceId onto the record", async () => {
     const { provider: p } = provider(() => ok('trivial', 0.97));
     const { recorder: r, records } = recorder();
-    const router = createDecisionTierRouter({
-      decisions: p,
-      mode: 'shadow',
-      threshold: T,
-      timeoutMs: 500,
-      recorder: r,
-    });
-    await router({ message: 'thanks!', traceId: 'trace-9' });
+    const router = createDecisionTierRouter({ provider: fixed(p), global: G, recorder: r });
+    await router({ message: 'thanks!', personality: persona('shadow'), traceId: 'trace-9' });
     await vi.waitFor(() => expect(records).toHaveLength(1));
     expect(records[0]?.traceId).toBe('trace-9');
+  });
+
+  it('two personalities through one router get their own modes', async () => {
+    const { provider: p, decide } = provider(() => ok('trivial', 0.97));
+    const { recorder: r, records } = recorder();
+    const router = createDecisionTierRouter({ provider: fixed(p), global: G, recorder: r });
+    expect(await router({ message: 'a', personality: persona('on', 'fast') })).toBe('trivial');
+    expect(await router({ message: 'b', personality: persona(undefined, 'plain') })).toBeNull();
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(records.map((x) => x.personalityId)).toEqual(['fast']);
   });
 });
 
 describe('the router budget (R9)', () => {
   it('the default budget is 500 ms, and decisions.timeouts.router overrides it', () => {
-    const base: DecisionsConfig = { provider: 'typesafe', sites: { router: 'shadow' } };
-    expect(resolveDecisionsConfig(base).sites.router.timeoutMs).toBe(500);
-    expect(
-      resolveDecisionsConfig({ ...base, timeouts: { router: 40 } }).sites.router.timeoutMs,
-    ).toBe(40);
+    const base: DecisionsConfig = { provider: 'typesafe' };
+    expect(resolveDecisionsConfig(base).timeouts.router).toBe(500);
+    expect(resolveDecisionsConfig({ ...base, timeouts: { router: 40 } }).timeouts.router).toBe(40);
   });
 
   it('a provider that never answers is abandoned at the 500 ms budget → no routing', async () => {
     const hanging = createTypesafeDecisionProvider({ apiKey: 'k', fetch: hang });
     const { recorder: r, records } = recorder();
-    const router = createDecisionTierRouter({
-      decisions: hanging,
-      mode: 'on',
-      threshold: T,
-      timeoutMs: resolveDecisionsConfig({ provider: 'typesafe' }).sites.router.timeoutMs,
-      recorder: r,
-    });
+    const router = createDecisionTierRouter({ provider: fixed(hanging), global: G, recorder: r });
     const started = Date.now();
-    expect(await router({ message: 'thanks!' })).toBeNull();
+    expect(await router({ message: 'thanks!', personality: persona('on') })).toBeNull();
     const elapsed = Date.now() - started;
     expect(elapsed).toBeGreaterThanOrEqual(450);
     expect(elapsed).toBeLessThan(1500);
@@ -242,18 +277,19 @@ describe('the router budget (R9)', () => {
   it('an overridden budget is the one the call is abandoned at', async () => {
     const hanging = createTypesafeDecisionProvider({ apiKey: 'k', fetch: hang });
     const router = createDecisionTierRouter({
-      decisions: hanging,
-      mode: 'on',
-      threshold: T,
-      timeoutMs: resolveDecisionsConfig({ provider: 'typesafe', timeouts: { router: 30 } }).sites
-        .router.timeoutMs,
+      provider: fixed(hanging),
+      global: resolveDecisionsConfig({
+        provider: 'typesafe',
+        thresholds: { router: T },
+        timeouts: { router: 30 },
+      }),
     });
     const started = Date.now();
-    expect(await router({ message: 'thanks!' })).toBeNull();
+    expect(await router({ message: 'thanks!', personality: persona('on') })).toBeNull();
     expect(Date.now() - started).toBeLessThan(400);
   });
 
-  it('router timeouts never advance the breaker built by buildDecisionProvider', async () => {
+  it('router timeouts never advance the breaker of the provider handle', async () => {
     const actual = await vi.importActual<typeof import('@ethosagent/decision-typesafe')>(
       '@ethosagent/decision-typesafe',
     );
@@ -269,29 +305,24 @@ describe('the router budget (R9)', () => {
     );
     const decisions = resolveDecisionsConfig({
       provider: 'typesafe',
-      sites: { router: 'on' },
       thresholds: { router: T },
       timeouts: { router: 20 },
     });
     const breakerEvents: unknown[] = [];
-    const built = await buildDecisionProvider({
+    const handle = createDecisionProviderHandle({
       decisions,
-      sites: ['router'],
       secrets: keyed(),
       observability: { recordDecisionBreaker: (e) => breakerEvents.push(e) },
     });
-    // The provider's timeout-counting yardstick is `decisions.timeoutMs` (2000).
-    expect(factory.mock.calls[0]?.[0].timeoutMs).toBe(2000);
     const { recorder: r, records } = recorder();
-    const router = createDecisionTierRouter({
-      decisions: built,
-      mode: decisions.sites.router.effective,
-      threshold: decisions.thresholds.router,
-      timeoutMs: decisions.sites.router.timeoutMs,
-      recorder: r,
-    });
+    const router = createDecisionTierRouter({ provider: handle, global: decisions, recorder: r });
     // Three counted timeouts would open the breaker; five router timeouts do not.
-    for (let i = 0; i < 5; i++) expect(await router({ message: 'thanks!' })).toBeNull();
+    for (let i = 0; i < 5; i++) {
+      expect(await router({ message: 'thanks!', personality: persona('on') })).toBeNull();
+    }
+    // The provider's timeout-counting yardstick is `decisions.timeoutMs` (2000).
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(factory.mock.calls[0]?.[0].timeoutMs).toBe(2000);
     expect(requests).toBe(5);
     expect(records.map((x) => x.outcome)).toEqual(Array(5).fill('timeout'));
     expect(breakerEvents).toEqual([]);
@@ -303,12 +334,10 @@ describe('redaction (R2) — the router digest', () => {
     const KEY = `sk-proj-${'Z9'.repeat(24)}`;
     for (const mode of ['on', 'shadow'] as const) {
       const { provider: p, requests } = provider(() => ok('trivial', 0.97));
-      await createDecisionTierRouter({
-        decisions: p,
-        mode,
-        threshold: T,
-        timeoutMs: 500,
-      })({ message: `here is my key ${KEY}, is that ok?` });
+      await createDecisionTierRouter({ provider: fixed(p), global: G })({
+        message: `here is my key ${KEY}, is that ok?`,
+        personality: persona(mode),
+      });
       await vi.waitFor(() => expect(requests).toHaveLength(1));
       const sent = JSON.stringify(requests[0]);
       expect(sent).not.toContain(KEY);
@@ -355,9 +384,14 @@ describe('createAgentLoop — the tier router', () => {
     return createAgentLoop(cfg, { dataDir, workingDir: home, profile: 'cli', disableDocker: true });
   }
 
-  function tierRouterOf(loop: unknown): unknown {
+  type Router = (input: {
+    message: string;
+    personality: PersonalityConfig;
+  }) => Promise<'trivial' | null>;
+
+  function tierRouterOf(loop: unknown): Router | undefined {
     // biome-ignore lint/complexity/useLiteralKeys: `tierRouter` is private; bracket-string is the TS escape hatch for test access
-    return (loop as Record<string, unknown>)['tierRouter'];
+    return (loop as Record<string, unknown>)['tierRouter'] as Router | undefined;
   }
 
   it('no decisions.* keys → no tierRouter and no provider (R7)', async () => {
@@ -370,13 +404,14 @@ describe('createAgentLoop — the tier router', () => {
     }
   }, 60_000);
 
-  it('provider set, router off (approver shadow) → no tierRouter', async () => {
-    const result = await build(
-      config({ decisions: { provider: 'typesafe', sites: { approver: 'shadow' } } }),
-    );
+  it('provider set → a tierRouter; an undeclared personality builds no provider and gets null', async () => {
+    const result = await build(config({ decisions: { provider: 'typesafe' } }));
     try {
-      expect(tierRouterOf(result.loop)).toBeUndefined();
-      expect(factory).toHaveBeenCalledTimes(1);
+      const router = tierRouterOf(result.loop);
+      expect(typeof router).toBe('function');
+      expect(factory).not.toHaveBeenCalled();
+      expect(await router?.({ message: 'thanks!', personality: persona() })).toBeNull();
+      expect(factory).not.toHaveBeenCalled();
     } finally {
       await result.dispose();
     }
@@ -391,13 +426,9 @@ describe('createAgentLoop — the tier router', () => {
         }),
     );
     factory.mockImplementationOnce(() => ({ name: 'typesafe', calibrated: true, decide }));
-    const result = await build(
-      config({ decisions: { provider: 'typesafe', sites: { router: 'shadow' } } }),
-    );
-    const router = tierRouterOf(result.loop) as (input: {
-      message: string;
-    }) => Promise<'trivial' | null>;
-    expect(await router({ message: 'thanks!' })).toBeNull();
+    const result = await build(config({ decisions: { provider: 'typesafe' } }));
+    const router = tierRouterOf(result.loop);
+    expect(await router?.({ message: 'thanks!', personality: persona('shadow') })).toBeNull();
     expect(decide).toHaveBeenCalledTimes(1);
 
     let disposed = false;
@@ -411,13 +442,14 @@ describe('createAgentLoop — the tier router', () => {
     expect(disposed).toBe(true);
   }, 60_000);
 
-  it('router shadow alone → ONE provider and a tierRouter on the loop', async () => {
-    const result = await build(
-      config({ decisions: { provider: 'typesafe', sites: { router: 'shadow' } } }),
-    );
+  it('a shadow personality → ONE provider, built on its first call', async () => {
+    const result = await build(config({ decisions: { provider: 'typesafe' } }));
     try {
+      const router = tierRouterOf(result.loop);
+      expect(factory).not.toHaveBeenCalled();
+      await router?.({ message: 'a', personality: persona('shadow') });
+      await router?.({ message: 'b', personality: persona('shadow') });
       expect(factory).toHaveBeenCalledTimes(1);
-      expect(typeof tierRouterOf(result.loop)).toBe('function');
     } finally {
       await result.dispose();
     }
@@ -443,3 +475,48 @@ function hang(_url: string, init: RequestInit): Promise<Response> {
     signal?.addEventListener('abort', fail, { once: true });
   });
 }
+
+// plan decision-provider-personality §15.3 / §15.8 (N7b): the router input's
+// `decisionSink` reaches the site; the event uses the router vocabulary and,
+// in shadow, never a today-vs comparison (today's router path does no work).
+describe('decision sink (N7b)', () => {
+  function sink() {
+    const events: Array<Parameters<DecisionSink['emit']>[0]> = [];
+    const decisionSink: DecisionSink = { traceId: 'trace-r', emit: (e) => events.push(e) };
+    return { decisionSink, events };
+  }
+
+  it('on, acted: started + settled with verdict trivial', async () => {
+    const { decisionSink, events } = sink();
+    const route = createDecisionTierRouter({
+      provider: fixed(provider(() => ok('trivial', 0.95)).provider),
+      global: G,
+    });
+    expect(await route({ message: 'thanks', personality: persona('on'), decisionSink })).toBe(
+      'trivial',
+    );
+    expect(events.map((e) => e.phase)).toEqual(['started', 'settled']);
+    expect(events[1]).toMatchObject({ site: 'router', acted: true, verdict: 'trivial' });
+  });
+
+  it("shadow: reading and today's 'default', no todayLatencyMs", async () => {
+    const { decisionSink, events } = sink();
+    const { recorder: rec, records } = recorder();
+    const route = createDecisionTierRouter({
+      provider: fixed(provider(() => ok('trivial', 0.95)).provider),
+      global: G,
+      recorder: rec,
+    });
+    expect(
+      await route({ message: 'thanks', personality: persona('shadow'), decisionSink }),
+    ).toBeNull();
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    expect(events[0]).toMatchObject({
+      verdict: 'trivial',
+      todayVerdict: 'default',
+      disagreed: true,
+    });
+    expect(events[0]?.todayLatencyMs).toBeUndefined();
+    expect(records[0]?.traceId).toBe('trace-r');
+  });
+});

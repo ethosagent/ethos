@@ -4,7 +4,9 @@
 
 import type {
   DecisionProviderType,
+  DecisionProviderUser,
   DecisionProviderView,
+  DecisionSiteView,
   DecisionsTestResult,
   DecisionTestErrorCode,
 } from '@ethosagent/web-contracts';
@@ -59,7 +61,7 @@ export function addDecisionButtonState(
  * (`DecisionsService.remove`, apps/web-api) does, pinned by its service test.
  */
 export function removeDecisionConsequences(
-  provider: Pick<DecisionProviderView, 'id' | 'keyRef' | 'keyPresent' | 'configured'>,
+  provider: Pick<DecisionProviderView, 'id' | 'keyRef' | 'keyPresent' | 'configured' | 'usedBy'>,
 ): string[] {
   const lines: string[] = [];
   lines.push(
@@ -70,30 +72,63 @@ export function removeDecisionConsequences(
   if (provider.configured) {
     lines.push(`Removes decisions.provider: ${provider.id} from config.yaml.`);
   }
+  const running = provider.usedBy.filter((u) => u.sites.some((s) => s.effective !== 'off'));
+  if (running.length > 0) {
+    lines.push(
+      `${running.map((u) => u.personalityId).join(', ')} stop${running.length === 1 ? 's' : ''} using it: their sites run off until a decision model is added again. Their personality files are not changed.`,
+    );
+  }
   lines.push(
-    'Leaves any decisions.sites.* and decisions.thresholds.* lines in config.yaml. Without a provider they do nothing; add a decision model again and they apply as written.',
+    'Leaves any decisions.thresholds.* lines in config.yaml. Without a provider they do nothing.',
   );
   return lines;
 }
 
 /**
  * The notice after a key is saved. `setKey` writes `decisions.provider` at
- * most, never a site line — but site lines a Remove left behind apply again
- * the moment the provider line is back, so the notice reads the refreshed
- * sites rather than promising they are off.
+ * most and never enables a site — but a personality that already names this
+ * provider (its `decisions` block outlives a Remove) starts running the moment
+ * the provider line is back, so the notice reads the refreshed `usedBy`
+ * rather than promising nothing runs.
  */
 export function savedKeyNotice(input: {
   providerId: string;
   providerWritten: boolean;
-  sites: readonly DecisionProviderView['sites'][number][] | undefined;
+  usedBy: readonly DecisionProviderUser[] | undefined;
 }): string | undefined {
   if (!input.providerWritten) return undefined;
-  const running = (input.sites ?? []).filter((s) => s.effective !== 'off');
   const lead = `Added decisions.provider: ${input.providerId} to config.yaml.`;
-  if (running.length === 0) return `${lead} Every site is off.`;
-  return `${lead} Site lines already in config.yaml apply: ${running
-    .map((s) => `${s.site} ${s.effective}`)
+  const running = (input.usedBy ?? []).filter((u) => u.sites.some((s) => s.effective !== 'off'));
+  if (running.length === 0) {
+    return `${lead} No site runs until a personality enables one in Personalities → Edit → Config.`;
+  }
+  return `${lead} Personalities already set to use it start now: ${running
+    .map((u) => `${u.personalityId} (${usedBySitesText(u)})`)
     .join(', ')}.`;
+}
+
+/** Why a site's effective mode is not its requested one, in words. */
+const SITE_REASON_TEXT: Partial<Record<NonNullable<DecisionSiteView['reason']>, string>> = {
+  'not-configured': 'off: not configured on this machine',
+  'no-provider': 'off: no decision model selected',
+};
+
+/**
+ * One enabled site as the Used by row prints it: `injection shadow`, or with
+ * what actually runs when that differs — `approver on (running shadow)`,
+ * `router shadow (off: not configured on this machine)`.
+ */
+export function usedBySiteText(site: DecisionSiteView): string {
+  const base = `${site.site} ${site.requested}`;
+  if (site.effective === site.requested) return base;
+  const why = site.reason ? SITE_REASON_TEXT[site.reason] : undefined;
+  return `${base} (${why ?? `running ${site.effective}`})`;
+}
+
+/** A personality's enabled sites, joined; says so when it enables none. */
+export function usedBySitesText(user: DecisionProviderUser): string {
+  if (user.sites.length === 0) return 'selected, no site enabled';
+  return user.sites.map(usedBySiteText).join(' · ');
 }
 
 /**
@@ -154,6 +189,7 @@ const ERROR_TEXT: Record<DecisionTestErrorCode, string> = {
   timeout: 'No answer within the injection site’s time budget.',
   aborted: 'The test was cancelled.',
   unavailable: 'Could not reach the provider.',
+  breaker_open: 'Paused after repeated failures — no request was sent. Try again in a minute.',
   too_large: 'The message is too large to send.',
   invalid: 'The request was refused as invalid.',
   malformed: 'The provider answered, but the answer could not be read.',
@@ -169,21 +205,6 @@ export function keyStatusView(provider: Pick<DecisionProviderView, 'keyPresent'>
   return provider.keyPresent
     ? { tone: 'ok', text: '✓ key stored', title: null }
     : { tone: 'muted', text: '– no key', title: null };
-}
-
-/** A site's mode, and the R6 note when `on` was asked for but `shadow` runs. */
-export function siteView(site: DecisionProviderView['sites'][number]): {
-  mode: string;
-  tone: StatusView['tone'];
-  note: string | null;
-} {
-  const tone: StatusView['tone'] =
-    site.effective === 'on' ? 'ok' : site.effective === 'shadow' ? 'warn' : 'muted';
-  const note =
-    site.requested !== site.effective
-      ? `on requested, running shadow: ${site.missingThresholds.join(', ')} missing`
-      : null;
-  return { mode: site.effective, tone, note };
 }
 
 /** Two significant digits, never exponent notation: `1.6e-6` → `$0.0000016`. */

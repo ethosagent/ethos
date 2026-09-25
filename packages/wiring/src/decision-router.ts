@@ -10,6 +10,13 @@
 // (./decision-questions, the one owner — calibration measures the same
 // question) offers `trivial` / `default` only.
 //
+// Per personality (plan decision-provider-personality §7.1): core hands the
+// router the turn's resolved `personality`; the mode is
+// `resolvePersonalityDecisionSite(personality.decisions, 'router', global)`
+// (@ethosagent/config), read per call. `off` returns `null` at once — no
+// provider handle touched, no vault read, no record — which is exactly the
+// "no routing" answer core's R1 path already gets with no router at all.
+//
 // Mode, redaction of the user message (`redactString`, R2), the calibrated
 // check, shadow (R8: today's `null` returns at once; Jev's reading is recorded
 // when it settles) and the per-call record carrying `latencyMs` (D13 — the
@@ -27,9 +34,10 @@
 //
 // Pinned by `__tests__/decision-router.test.ts`.
 
-import type { DecisionSiteMode } from '@ethosagent/config';
+import { type ResolvedDecisionsConfig, resolvePersonalityDecisionSite } from '@ethosagent/config';
 import type { TierRouter } from '@ethosagent/core';
-import type { DecisionAnswer, DecisionProvider } from '@ethosagent/types';
+import type { DecisionAnswer } from '@ethosagent/types';
+import type { DecisionProviderHandle } from './decision-provider';
 import {
   DECISION_QUESTION_IDS,
   ROUTER_CHOICES,
@@ -47,14 +55,10 @@ import {
 export const ROUTER_QUESTION_ID = DECISION_QUESTION_IDS.router;
 
 export interface CreateDecisionTierRouterOptions {
-  /** The ONE provider instance of the composition root (shared breaker, §5.5). */
-  decisions: DecisionProvider | undefined;
-  /** `decisions.sites.router`, EFFECTIVE (R6: `on` without a threshold is `shadow`). */
-  mode: DecisionSiteMode;
-  /** `decisions.thresholds.router` (T_trivial). */
-  threshold: number | undefined;
-  /** `decisions.timeouts.router` resolved (R9, default 500). */
-  timeoutMs: number;
+  /** The ONE provider handle of the composition root (shared breaker, §5.5), read lazily. */
+  provider: DecisionProviderHandle;
+  /** The operator's resolved `decisions.*`: threshold (T_trivial), budget (R9). */
+  global: ResolvedDecisionsConfig;
   recorder?: DecisionSiteRecorder;
   /** The build's shadow-record tracker, drained at dispose (R8). */
   tracker?: DecisionRecordTracker;
@@ -90,17 +94,24 @@ export function routerVerdictFrom(
 export function createDecisionTierRouter(opts: CreateDecisionTierRouterOptions): TierRouter {
   // Today's path is `null`, so every outcome but an acted-on `trivial` is
   // "no routing".
-  return ({ message, signal, traceId }) =>
-    runDecisionSite<'trivial' | null, RouterChoice>({
+  const threshold = opts.global.thresholds.router;
+  return async ({ message, personality, signal, traceId, decisionSink }) => {
+    const site = resolvePersonalityDecisionSite(personality.decisions, 'router', opts.global);
+    if (site.effective === 'off') return null;
+    return runDecisionSite<'trivial' | null, RouterChoice>({
       site: 'router',
-      mode: opts.mode,
-      provider: opts.decisions,
+      mode: site.effective,
+      provider: await opts.provider.get(),
       digest: { kind: 'text', value: message },
       questions: ROUTER_QUESTIONS,
-      timeoutMs: opts.timeoutMs,
+      timeoutMs: site.timeoutMs,
+      personalityId: personality.id,
       ...(signal ? { signal } : {}),
       ...(traceId !== undefined ? { traceId } : {}),
-      gate: (answers) => routerVerdictFrom(answers, opts.threshold),
+      ...(decisionSink ? { sink: decisionSink } : {}),
+      // §15.2 vocabulary: today's "no routing" is `default`.
+      summarize: { verdict: (v) => v ?? 'default', reading: (choice) => choice },
+      gate: (answers) => routerVerdictFrom(answers, threshold),
       // Shadow reading (plan §8): the argmax choice, before any threshold.
       interpret: (answers) => routerChoice(answers)?.choice ?? null,
       disagrees: (jev, today) => jev !== (today ?? 'default'),
@@ -108,4 +119,5 @@ export function createDecisionTierRouter(opts: CreateDecisionTierRouterOptions):
       ...(opts.recorder ? { recorder: opts.recorder } : {}),
       ...(opts.tracker ? { tracker: opts.tracker } : {}),
     });
+  };
 }

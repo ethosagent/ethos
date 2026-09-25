@@ -4,7 +4,7 @@ description: "RFC for the Structural amendment adding DecisionProvider: a typed-
 kind: explanation
 audience: developer
 slug: decision-provider-governance
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 ## Context
@@ -49,9 +49,10 @@ export interface DecisionProvider {
 A request carries the state and a map of named questions. Each question is
 `boolean`, `choice` or `score`. A result is either
 `{ ok: true, answers, model, usage }` or `{ ok: false, code, message }`,
-where `code` is one of nine values: `auth`, `invalid`, `rate_limited`,
+where `code` is one of ten values: `auth`, `invalid`, `rate_limited`,
 `overloaded`, `timeout`, `aborted`, `malformed`, `too_large`,
-`unavailable`. `model` is the model id the provider reports back, not the
+`unavailable`, `breaker_open` (the tenth was added in
+decision-provider-personality N7a, PD19). `model` is the model id the provider reports back, not the
 one requested, so a silent vendor upgrade shows up in the record.
 
 The amendment changes ARCHITECTURE.md in three places:
@@ -116,7 +117,7 @@ provider:
 | An answer is acted on only at or above the site's confidence threshold; shadow mode records without acting; a failure takes today's path. | `runDecisionSite` in `packages/wiring/src/decision-site.ts` (Tier 0 wiring). Lands in M1. |
 | State is redacted before it leaves the machine. | `runDecisionSite`, using `@ethosagent/safety-redact`. Lands in M1. |
 | An approver timeout or error yields `ask`. | `packages/wiring/src/smart-approver.ts` (Tier 0 wiring). Exists today; M4 adds the decision path inside it. |
-| A failing provider only loses influence. | The breaker in `extensions/decision-typesafe/`: while open, `decide` returns `unavailable` without a network call. Lands in M1. |
+| A failing provider only loses influence. | The breaker in `extensions/decision-typesafe/`: while open, `decide` returns `breaker_open` (it returned `unavailable` until decision-provider-personality N7b) without a network call. Lands in M1. |
 
 `extensions/decision-typesafe/` is Tier 2, like every other extension that
 calls a third party. M1 adds its tier entry to `.architecture-state.yaml`
@@ -130,11 +131,21 @@ The contract sits in `packages/types`, the provider in `extensions`, and all
 call-site composition in `packages/wiring`. Apps never import the provider
 (Law 5).
 
-`PersonalityConfig` does not change. Whether data goes to a third-party
-decision service is a setting two deployments of the same
+*Amended (decision-provider-personality).* Enablement moved onto
+`PersonalityConfig.decisions`: which decision model a
 [personality](../../getting-started/glossary.md#personality) (a directory
-of files that decides an agent's tools, memory and model) can disagree
-about, so it lives in `~/.ethos/config.yaml` under `decisions.*`.
+of files that decides an agent's tools, memory and model) uses
+(`decisions.provider`) and whether each site runs for it
+(`decisions.sites.injection|approver|router: off|shadow|on`). The provider,
+key, endpoint, model, budgets and thresholds stayed in
+`~/.ethos/config.yaml` under `decisions.*`. Whether data CAN go to a third
+party is still the operator's: with no `decisions.provider` or no key,
+nothing is sent. Which personality uses it, and at which sites, is the
+personality's. The field is parsed and round-tripped by
+`buildDecisionsConfig` in `extensions/personalities/src/index.ts`, and every
+site resolves its mode per call with `resolvePersonalityDecisionSite` in
+`packages/config/src/decisions.ts`. A global `decisions.sites.*` line is
+warned about at load and never read.
 
 **Migration: none required.** No existing module becomes non-compliant.
 With no `decisions.*` keys, or with a site set to `off`, every site behaves

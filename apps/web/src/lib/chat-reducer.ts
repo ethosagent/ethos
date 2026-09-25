@@ -12,6 +12,7 @@ import {
   type ClarifyRequestEvent,
   type CredentialRequiredEvent,
   type SessionCard,
+  type SessionDecision,
   type SseEvent,
   type SseEventType,
   type StoredMessage,
@@ -28,6 +29,7 @@ import { applyRunEvent, emptyRunsState, type RunsState, seedRun } from './pi-run
 import {
   applyTrailEvent,
   closeTrail,
+  decisionStatusLabel,
   type TrailAction,
   type TrailEntry,
   type TrailState,
@@ -237,9 +239,11 @@ export interface ChatState {
 
 /**
  * Status-line phases (feedback-activity-contract §2). `received` is set on send,
- * BEFORE any event, so every request is visibly acknowledged.
+ * BEFORE any event, so every request is visibly acknowledged. `decision` is an
+ * `on` decision site holding the loop (plan decision-provider-personality
+ * §15.1, PD20); shadow never blocks, so it never sets it.
  */
-export type TurnPhase = 'received' | 'thinking' | 'tool' | 'writing';
+export type TurnPhase = 'received' | 'thinking' | 'tool' | 'decision' | 'writing';
 
 export const initialChatState: ChatState = {
   messages: [],
@@ -281,14 +285,24 @@ export type ChatAction =
       replacesRefused?: true;
     }
   | { type: 'steer-user-message'; id: string; text: string; timestamp: number }
-  | { type: 'history-loaded'; messages: StoredMessage[]; cards?: SessionCard[] }
+  | {
+      type: 'history-loaded';
+      messages: StoredMessage[];
+      cards?: SessionCard[];
+      decisions?: SessionDecision[];
+    }
   /**
    * One next-older page of paged history (`sessions.messages` with a cursor),
    * prepended ahead of what is already loaded. Unlike `history-loaded` it
    * REPLACES nothing: the turn in flight, streaming, runs and clarify state are
    * left exactly as they are.
    */
-  | { type: 'history-older-loaded'; messages: StoredMessage[]; cards?: SessionCard[] }
+  | {
+      type: 'history-older-loaded';
+      messages: StoredMessage[];
+      cards?: SessionCard[];
+      decisions?: SessionDecision[];
+    }
   /**
    * The newest page of history, fetched again because the session grew outside
    * this tab's stream (a `cron.fired` turn). MERGED: when the page starts inside
@@ -297,7 +311,12 @@ export type ChatAction =
    * history. The turn in flight, streaming, phase, runs and clarify state are
    * left exactly as they are.
    */
-  | { type: 'history-newest-merged'; messages: StoredMessage[]; cards?: SessionCard[] }
+  | {
+      type: 'history-newest-merged';
+      messages: StoredMessage[];
+      cards?: SessionCard[];
+      decisions?: SessionDecision[];
+    }
   | { type: 'send-failed'; userMessageId: string; error: string }
   | { type: 'clear-error' }
   /**
@@ -391,6 +410,7 @@ const TURN_ADVANCING_EVENTS = new Set<SseEventType>([
   'tool_end',
   'tool_progress',
   'tool.approval_required',
+  'decision',
   'done',
 ]);
 
@@ -661,6 +681,36 @@ export function applyEvent(state: ChatState, event: SseEvent, now: number): Chat
       return { ...state, currentOp: event.message, phase: 'tool', lastStreamEventAt: now };
     }
 
+    case 'decision': {
+      // plan decision-provider-personality §15.1. A decision in a turn in
+      // flight joins that turn (the router's arrives before any other event
+      // could mint it). One that settles after `done` (a late shadow reading,
+      // PD17) finds its turn by its call or trace (`applyTrailEvent`), else
+      // the newest assistant turn — never a fresh one.
+      const inFlight = state.phase !== null;
+      const turn = inFlight ? ensureTurn(state.currentTurn, now) : null;
+      const target = turn?.id ?? lastAssistantId(state.messages) ?? '';
+      const trail = applyTrailEvent(state.trail, target, event) ?? state.trail;
+      if (!turn) return trail === state.trail ? state : { ...state, trail };
+      // The status line names an `on` decision while the loop waits on it, and
+      // hands back to `thinking` once none is left open.
+      const label = decisionStatusLabel(trail[turn.id] ?? []);
+      const status =
+        label !== null
+          ? { phase: 'decision' as const, currentOp: label }
+          : state.phase === 'decision'
+            ? { phase: 'thinking' as const, currentOp: null }
+            : {};
+      return {
+        ...state,
+        currentTurn: turn,
+        trail,
+        isStreaming: true,
+        lastStreamEventAt: now,
+        ...status,
+      };
+    }
+
     case 'thinking_delta':
     case 'context_meta':
     case 'message_persisted':
@@ -739,7 +789,7 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
     case 'history-loaded': {
       // One walk builds both — durations and results live on the stored rows,
       // which the parsed `ChatMessage[]` no longer carries (see trail.ts).
-      const parsed = parseHistory(action.messages, action.cards ?? []);
+      const parsed = parseHistory(action.messages, action.cards ?? [], action.decisions ?? []);
       return {
         ...state,
         messages: parsed.messages,
@@ -753,7 +803,7 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
       // `sessions.messages`), and `parseHistory` flushes at every user and steer
       // row — so the page parses on its own, cards included, with no state from
       // the page after it.
-      const parsed = parseHistory(action.messages, action.cards ?? []);
+      const parsed = parseHistory(action.messages, action.cards ?? [], action.decisions ?? []);
       const known = new Set(state.messages.map((m) => m.id));
       const older = parsed.messages.filter((m) => !known.has(m.id));
       if (older.length === 0) return state;
@@ -767,7 +817,7 @@ export function applyAction(state: ChatState, action: ChatAction): ChatState {
     }
 
     case 'history-newest-merged': {
-      const parsed = parseHistory(action.messages, action.cards ?? []);
+      const parsed = parseHistory(action.messages, action.cards ?? [], action.decisions ?? []);
       const first = parsed.messages[0];
       if (!first) return state;
       // Contiguous: rows older than the page's first stay as loaded, earlier
@@ -918,6 +968,14 @@ function ensureTurn(turn: AssistantTurn | null, now: number): AssistantTurn {
   return turn ?? { id: `asst-${now}`, role: 'assistant', blocks: [], timestamp: now };
 }
 
+function lastAssistantId(messages: ChatMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message?.role === 'assistant') return message.id;
+  }
+  return undefined;
+}
+
 /**
  * The one terminal transition for an in-flight turn. `done`, `abort-turn` and
  * `error` all end here, so the three endings cannot disagree about what "the
@@ -1057,6 +1115,13 @@ function closeTurn(
 /**
  * Move a live turn's trail onto the history turn the replay defense kept, and
  * carry the stopped marker with it. Returns only the keys it changes.
+ *
+ * The history turn's decision rows survive the move. A replayed `decision`
+ * event resolves the row that carries its id WHEREVER it lives
+ * (`applyTrailEvent`), so on a replay over loaded history it updates the
+ * history turn's row in place and never joins the live turn — replacing the
+ * history trail wholesale would drop every decision of the turn. Each one the
+ * live trail lacks is placed back by the one placement rule.
  */
 function rekeyTrail(
   state: ChatState,
@@ -1069,7 +1134,13 @@ function rekeyTrail(
   const stoppedTurnIds = state.stoppedTurnIds.includes(fromTurnId)
     ? [...state.stoppedTurnIds.filter((id) => id !== fromTurnId), toTurnId]
     : state.stoppedTurnIds;
-  return { trail: { ...rest, [toTurnId]: live }, stoppedTurnIds };
+  let moved: TrailState = { [toTurnId]: live };
+  for (const entry of rest[toTurnId] ?? []) {
+    if (entry.kind !== 'decision') continue;
+    if (live.some((e) => e.kind === 'decision' && e.id === entry.id)) continue;
+    moved = applyTrailEvent(moved, toTurnId, entry.event) ?? moved;
+  }
+  return { trail: { ...rest, ...moved }, stoppedTurnIds };
 }
 
 /**
@@ -1263,10 +1334,16 @@ export function parseUserContent(content: string): { text: string; origin?: 'voi
  *
  * `cards` are the envelopes the session replayed alongside the messages; each
  * one is placed where the tool call that emitted it sat.
+ *
+ * `decisions` are the persisted decision rows (plan decision-provider-personality
+ * §15.5). Each is replayed through `applyTrailEvent` — the same transition the
+ * live event takes — into the turn it anchors to: its call (approver /
+ * injection) or, for the router, the turn whose messages carry its `traceId`.
  */
 function parseHistory(
   stored: StoredMessage[],
   cards: SessionCard[] = [],
+  decisions: SessionDecision[] = [],
 ): { messages: ChatMessage[]; trail: TrailState } {
   const ui: ChatMessage[] = [];
   const trail: TrailState = {};
@@ -1275,6 +1352,10 @@ function parseHistory(
   // passes it and kept correct as cards are spliced in.
   const anchors = new Map<string, CardAnchor>();
   const actionsById = new Map<string, TrailAction>();
+  // Which assistant turn each trace's messages landed in — the router
+  // decision's only anchor. A user row's trace carries to the turn it opens.
+  const turnByTrace = new Map<string, string>();
+  let pendingTrace: string | undefined;
   let current: AssistantTurn | null = null;
   let entries: TrailEntry[] = [];
 
@@ -1292,6 +1373,7 @@ function parseHistory(
   for (const m of stored) {
     if (m.role === 'user') {
       flush();
+      pendingTrace = m.traceId;
       const { text, origin } = parseUserContent(m.content);
       ui.push({
         id: m.id,
@@ -1325,8 +1407,13 @@ function parseHistory(
           blocks: [],
           timestamp: new Date(m.timestamp).getTime(),
         };
+        if (pendingTrace !== undefined) turnByTrace.set(pendingTrace, m.id);
+        pendingTrace = undefined;
       }
       const turn = current;
+      if (m.traceId !== undefined && !turnByTrace.has(m.traceId)) {
+        turnByTrace.set(m.traceId, turn.id);
+      }
       // Item 7 — a provider-side compaction row renders as its one-line
       // marker; the summary under it is context for the model, not the chat.
       if (m.toolName === COMPACTION_ROW_TOOL_NAME) {
@@ -1378,7 +1465,31 @@ function parseHistory(
   }
   flush();
   insertReplayedCards(ui, cards, anchors);
-  return { messages: ui, trail };
+  return { messages: ui, trail: replayDecisions(trail, decisions, turnByTrace) };
+}
+
+/**
+ * Place persisted decision rows, oldest first, through the live transition.
+ *
+ * A row anchored by its call finds its turn inside `applyTrailEvent`. A router
+ * row (no call) goes to the turn whose messages carry its trace. A router row
+ * with no trace, or whose trace no loaded message carries, is DROPPED: that is
+ * the known limit in plan decision-provider-personality §15.5 (an untraced
+ * turn's router row has no anchor on reload), and appending it to some other
+ * turn would put a decision under an answer it did not shape.
+ */
+function replayDecisions(
+  trail: TrailState,
+  decisions: SessionDecision[],
+  turnByTrace: Map<string, string>,
+): TrailState {
+  let next = trail;
+  for (const row of [...decisions].sort((a, b) => a.seq - b.seq)) {
+    const trace = row.event.traceId;
+    const turnId = trace !== undefined ? (turnByTrace.get(trace) ?? '') : '';
+    next = applyTrailEvent(next, turnId, row.event) ?? next;
+  }
+  return next;
 }
 
 /**

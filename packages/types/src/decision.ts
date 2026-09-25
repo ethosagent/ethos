@@ -7,6 +7,8 @@
 // which enforces `DECISION_LIMITS`, lives in `extensions/decision-typesafe/`
 // until a second provider exists.
 
+import type { AgentEvent } from './agent-event';
+
 export const DECISION_LIMITS = {
   choiceMaxOptions: 255,
   scoreMinLevels: 2,
@@ -39,7 +41,13 @@ export type DecisionErrorCode =
   | 'aborted'
   | 'malformed'
   | 'too_large'
-  | 'unavailable';
+  | 'unavailable'
+  /**
+   * PD19 (plan decision-provider-personality §15.1): the provider's breaker is
+   * open, so no request was sent. Distinct from `unavailable` so a surface can
+   * say "skipped" rather than "failed". A breaker never counts it as a failure.
+   */
+  | 'breaker_open';
 
 export type DecisionResult =
   | {
@@ -54,4 +62,25 @@ export interface DecisionProvider {
   readonly name: string;
   readonly calibrated: boolean;
   decide(request: DecisionRequest): Promise<DecisionResult>;
+}
+
+/**
+ * Where a decision site reports that it ran, for the turn's event stream (plan
+ * decision-provider-personality §15.3, PD16). Core builds one per call and
+ * passes it to the seam (the tier router input, the `InjectionClassifier`
+ * input; the approver's through core's `ApproverDecisionSinks`, never the
+ * `before_tool_call` payload, which every plugin handler sees); the site calls `emit` from
+ * `runDecisionSite` (packages/wiring/src/decision-site.ts). Core stamps the
+ * fields it already holds — `personalityId`, `toolCallId`, `traceId` — so a
+ * site cannot misattribute a row. `emit` never throws.
+ */
+export interface DecisionSink {
+  /** The turn's observability trace, copied onto the site's record. */
+  traceId?: string;
+  emit(
+    event: Omit<
+      Extract<AgentEvent, { type: 'decision' }>,
+      'type' | 'personalityId' | 'toolCallId' | 'traceId'
+    >,
+  ): void;
 }

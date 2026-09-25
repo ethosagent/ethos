@@ -1,7 +1,13 @@
 // The smart approver's decision site (plan/phases/decision-provider-jev.md
 // §8.2, D17, C5, §14 Mapping / Redaction / R7 (b)). The no-decision behaviour
 // is pinned, unedited, by ./smart-approver.test.ts.
+// Plan decision-provider-personality §7.3/§11: the mode is the personality's
+// (third callback argument), resolved per call; the verdict cache is
+// namespaced so a provider verdict cached for an `on` personality never
+// answers for one that did not enable the site (K1).
 
+import { resolveDecisionsConfig } from '@ethosagent/config';
+import { ApproverDecisionSinks } from '@ethosagent/core';
 import type {
   BeforeToolCallPayload,
   CompletionChunk,
@@ -9,17 +15,15 @@ import type {
   DecisionProvider,
   DecisionRequest,
   DecisionResult,
+  DecisionSink,
   LLMProvider,
+  PersonalityConfig,
 } from '@ethosagent/types';
 import { describe, expect, it, vi } from 'vitest';
+import type { DecisionProviderHandle } from '../decision-provider';
 import { APPROVER_QUESTIONS } from '../decision-questions';
-import type { DecisionCallRecord } from '../decision-site';
-import {
-  APPROVER_QUESTION_ID,
-  approverVerdictFrom,
-  createSmartApprover,
-  type SmartApproverDecisionSite,
-} from '../smart-approver';
+import type { DecisionCallRecord, DecisionSiteRecorder } from '../decision-site';
+import { APPROVER_QUESTION_ID, approverVerdictFrom, createSmartApprover } from '../smart-approver';
 
 const REASON = 'terminal requires explicit approval';
 const T = { approve: 0.9, deny: 0.8 };
@@ -81,18 +85,62 @@ function jev(
   return { provider, decide, requests };
 }
 
+function fixed(p: DecisionProvider | undefined): DecisionProviderHandle & { gets: number } {
+  const h = {
+    gets: 0,
+    get: async () => {
+      h.gets++;
+      return p;
+    },
+  };
+  return h;
+}
+
+const GLOBAL = (approverBudget = 2000) =>
+  resolveDecisionsConfig({
+    provider: 'typesafe',
+    thresholds: { approver: T },
+    timeouts: { approver: approverBudget },
+  });
+
+/** A personality whose approver site is `mode`; no mode → declares nothing. */
+function persona(mode?: 'off' | 'shadow' | 'on', id = 'p'): PersonalityConfig {
+  return {
+    id,
+    name: id,
+    safety: { approvalMode: 'smart' },
+    ...(mode ? { decisions: { provider: 'typesafe', sites: { approver: mode } } } : {}),
+  };
+}
+
+/**
+ * The approver as ONE personality `p` whose approver site is `site.mode`
+ * (default `on`) sees it: global thresholds `T`, budget `site.timeoutMs`.
+ */
 function approver(
   decisions: DecisionProvider,
   llmProvider: LLMProvider,
-  site: Partial<SmartApproverDecisionSite> = {},
+  site: {
+    mode?: 'off' | 'shadow' | 'on';
+    timeoutMs?: number;
+    recorder?: DecisionSiteRecorder;
+    sinks?: ApproverDecisionSinks;
+  } = {},
   timeoutMs?: number,
 ) {
-  return createSmartApprover({
+  const approve = createSmartApprover({
     getProvider: async () => llmProvider,
     model: 'm',
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    decision: { decisions, mode: 'on', thresholds: T, timeoutMs: 2000, ...site },
+    decision: {
+      provider: fixed(decisions),
+      global: GLOBAL(site.timeoutMs),
+      ...(site.recorder ? { recorder: site.recorder } : {}),
+      ...(site.sinks ? { sinks: site.sinks } : {}),
+    },
   });
+  const who = persona(site.mode ?? 'on');
+  return (p: BeforeToolCallPayload, reason: string) => approve(p, reason, who);
 }
 
 describe('D17 — the approver thresholds', () => {
@@ -310,5 +358,154 @@ describe('R7 (b) — the approver site `off` with a provider configured', () => 
     const verdict = await approver(j.provider, l.provider, { mode: 'off' })(payload(), REASON);
     expect(verdict).toEqual({ decision: 'approve', reason: 'llm says fine' });
     expect(j.decide).not.toHaveBeenCalled();
+  });
+});
+
+describe('per personality (plan decision-provider-personality §7.3)', () => {
+  function shared(
+    decisions: DecisionProvider,
+    llmProvider: LLMProvider,
+    records?: DecisionCallRecord[],
+  ) {
+    const handle = fixed(decisions);
+    const approve = createSmartApprover({
+      getProvider: async () => llmProvider,
+      model: 'm',
+      decision: {
+        provider: handle,
+        global: GLOBAL(),
+        ...(records ? { recorder: { recordDecisionCall: (r) => records.push(r) } } : {}),
+      },
+    });
+    return { approve, handle };
+  }
+
+  it('undeclared, `off`, or no personality at all → the LLM reviewer, handle untouched', async () => {
+    const j = jev(ok(choice('deny', 1)));
+    const l = llm();
+    const { approve, handle } = shared(j.provider, l.provider);
+    for (const who of [undefined, persona(), persona('off')]) {
+      const verdict = await approve(payload({ command: `echo ${who?.id ?? 'none'}` }), REASON, who);
+      expect(verdict).toEqual({ decision: 'approve', reason: 'llm says fine' });
+    }
+    expect(j.decide).not.toHaveBeenCalled();
+    expect(handle.gets).toBe(0);
+  });
+
+  it('records carry the personality whose declaration enabled the site', async () => {
+    const records: DecisionCallRecord[] = [];
+    const j = jev(ok(choice('deny', 0.99)));
+    const { approve } = shared(j.provider, llm().provider, records);
+    await approve(payload(), REASON, persona('on', 'guard'));
+    expect(records[0]).toMatchObject({ site: 'approver', mode: 'on', personalityId: 'guard' });
+  });
+
+  it('K1 cache namespace: a provider `approve` cached for an `on` personality is NOT returned to an `off` one', async () => {
+    const j = jev(ok(choice('approve', 0.99)));
+    const l = llm('{"decision":"deny","reason":"llm denies"}');
+    const { approve } = shared(j.provider, l.provider);
+    expect(await approve(payload(), REASON, persona('on', 'a'))).toEqual({
+      decision: 'approve',
+      reason: REASON,
+    });
+    // Same call, personality B declares nothing: its own (LLM) review runs.
+    expect(await approve(payload(), REASON, persona(undefined, 'b'))).toEqual({
+      decision: 'deny',
+      reason: 'llm denies',
+    });
+    // …and a shadow personality never reads the `on:` entry either.
+    const shadow = await approve(payload(), REASON, persona('shadow', 'c'));
+    expect(shadow).toEqual({ decision: 'deny', reason: 'llm denies' });
+    expect(l.complete).toHaveBeenCalledTimes(1); // B's verdict was cached under llm:, C hit it
+    // An `on` personality still hits the provider-decided entry.
+    expect(await approve(payload(), REASON, persona('on', 'd'))).toEqual({
+      decision: 'approve',
+      reason: REASON,
+    });
+    expect(j.decide).toHaveBeenCalledTimes(1);
+  });
+
+  it('C5: an `on` lookup still hits a cached LLM verdict before the provider runs', async () => {
+    const j = jev(ok(choice('deny', 0.99)));
+    const l = llm();
+    const { approve } = shared(j.provider, l.provider);
+    expect(await approve(payload(), REASON, persona())).toEqual({
+      decision: 'approve',
+      reason: 'llm says fine',
+    });
+    expect(await approve(payload(), REASON, persona('on'))).toEqual({
+      decision: 'approve',
+      reason: 'llm says fine',
+    });
+    expect(j.decide).not.toHaveBeenCalled();
+    expect(l.complete).toHaveBeenCalledTimes(1);
+  });
+});
+
+// plan decision-provider-personality §15.3 / §15.8 (N7b): core binds this
+// call's `DecisionSink` in `ApproverDecisionSinks` (never on the
+// `before_tool_call` payload) for the span of the hook fire; the approver looks
+// it up by the payload's sessionId + toolCallId and passes it to its decision
+// site — the event is emitted, and the record takes the turn's traceId from it
+// (the NULL trace_id fix).
+describe('decision sink through the private channel (N7b)', () => {
+  function withSink(traceId: string) {
+    const events: Array<Parameters<DecisionSink['emit']>[0]> = [];
+    const decisionSink: DecisionSink = { traceId, emit: (e) => events.push(e) };
+    const sinks = new ApproverDecisionSinks();
+    const p = payload();
+    const release = sinks.bind(p.sessionId, p.toolCallId, decisionSink);
+    return { p, events, sinks, release };
+  }
+
+  it("on: the record carries the sink's traceId; the event names the verdict", async () => {
+    const records: DecisionCallRecord[] = [];
+    const j = jev(ok(choice('approve', 0.95)));
+    const { p, events, sinks } = withSink('trace-9');
+    await approver(j.provider, llm().provider, {
+      recorder: { recordDecisionCall: (r) => records.push(r) },
+      sinks,
+    })(p, REASON);
+    expect(records).toEqual([expect.objectContaining({ traceId: 'trace-9', personalityId: 'p' })]);
+    expect(events.map((e) => e.phase)).toEqual(['started', 'settled']);
+    expect(events[1]).toMatchObject({ site: 'approver', acted: true, verdict: 'approve' });
+  });
+
+  it("shadow: today's LLM verdict and the reading, in the approver vocabulary", async () => {
+    const records: DecisionCallRecord[] = [];
+    const j = jev(ok(choice('deny', 0.95)));
+    const { p, events, sinks, release } = withSink('trace-9');
+    const pending = approver(j.provider, llm().provider, {
+      mode: 'shadow',
+      recorder: { recordDecisionCall: (r) => records.push(r) },
+      sinks,
+    })(p, REASON);
+    // Core releases the binding when the hook fire returns; a shadow result
+    // that settles later still reaches the sink the approver already holds.
+    release();
+    await pending;
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    expect(events[0]).toMatchObject({
+      mode: 'shadow',
+      verdict: 'deny',
+      todayVerdict: 'approve',
+      disagreed: true,
+    });
+    expect(records[0]?.traceId).toBe('trace-9');
+  });
+
+  it('a call core did not bind (another call id, or no channel) emits nothing', async () => {
+    const j = jev(ok(choice('approve', 0.95)));
+    const { events, sinks } = withSink('trace-9');
+    await approver(j.provider, llm().provider, { sinks })(
+      { ...payload(), toolCallId: 'another-call' },
+      REASON,
+    );
+    const records: DecisionCallRecord[] = [];
+    await approver(j.provider, llm().provider, {
+      recorder: { recordDecisionCall: (r) => records.push(r) },
+    })(payload(), REASON);
+    expect(events).toEqual([]);
+    expect(records[0]?.traceId).toBeUndefined();
   });
 });

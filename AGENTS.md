@@ -137,6 +137,7 @@ type AgentEvent =
   | { type: 'halt';           kind: 'budget' | 'watcher'; rule: string; toolName?: string; count?: number; message: string }  // early safety stop; a normal done still follows
   | { type: 'error';          error: string; code: string }
   | { type: 'done';           text: string; turnCount: number }
+  | { type: 'decision';       id: string; phase: 'started' | 'settled'; site: 'injection' | 'approver' | 'router'; mode: 'on' | 'shadow'; personalityId: string; … }  // a decision site ran (decision-provider-personality §15.2); may arrive after done — web/desktop/CLI only, never a channel
 Hook registry
 Three execution models — pick based on what the hook does:
 
@@ -296,6 +297,8 @@ per-channel UI affordances (one personality rendering differently on Slack than 
 operator and deployment concerns — transport, credentials, provider rosters, endpoints, anything an operator sets once for the machine
 untyped metadata passthroughs — a typed contract does not get an escape hatch meaning "anything"
 The test: could two deployments of the SAME personality reasonably disagree about it? Then it is a setting and belongs to the operator. Would changing it make this feel like a different agent? Then it is identity.
+
+Decision-layer enablement is identity (decision-provider-personality amendment). Which decision model a personality uses (`decisions.provider`) and whether each decision site runs for it (`decisions.sites.injection|approver|router: off|shadow|on`) belong to the personality: the same agent with and without a calibrated judgement layer on its approvals is a different agent. The decision provider itself — its credentials, endpoint, model pin, per-site budgets and measured thresholds — stays a setting in `decisions.*` in `~/.ethos/config.yaml`: a machine with no key can always veto, and a threshold is a measurement, not a preference. The field is `PersonalityConfig.decisions` (packages/types/src/personality.ts), parsed by `buildDecisionsConfig` (extensions/personalities/src/index.ts). A site runs only when both halves say so (`resolvePersonalityDecisionSite`, packages/config/src/decisions.ts), resolved per call at each site: the router in `createDecisionTierRouter` (packages/wiring/src/decision-router.ts), the injection classifier in `createDecisionInjectionClassifier` (packages/wiring/src/decision-injection-classifier.ts), the approver in `createSmartApprover` (packages/wiring/src/smart-approver.ts). A global `decisions.sites.*` line in `~/.ethos/config.yaml` is warned about and never read (`describeLegacyDecisionSite`, same config file).
 
 skin, verbosity and busy-input mode stay removed. This amendment does not re-add them; per-personality display overrides return only as specific, argued keys on an identity block, not as a general licence. Adding a top-level field to PersonalityConfig still requires the personality-schema-change label, two-maintainer approval, and bumping .personality-field-count in the same commit. The mechanical CI gate (packages/types/src/__tests__/personality-field-count.test.ts) fails if the count drifts — a presentation sub-key must not move it. See CONTRIBUTING.md for the full rule, and docs/content/building/explanation/personality-governance.md for why.
 

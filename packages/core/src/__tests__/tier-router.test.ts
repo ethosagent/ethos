@@ -4,6 +4,8 @@
 // Asserts what the PROVIDER was asked to serve (`modelOverride ?? llm.model`),
 // like model-tier.test.ts, plus whether the router was called at all — R1's
 // whole point is that no call is made when the answer cannot change the model.
+// Plan decision-provider-personality §7.1: the router also receives the turn's
+// resolved personality.
 
 import type {
   CompletionChunk,
@@ -122,7 +124,14 @@ describe('tier router — regression contract (c): no router configured', () => 
 
   it('routeTurnTier with no router never resolves anything', async () => {
     const resolve = vi.fn(() => ({ provider: 'a', model: 'b' }));
-    expect(await routeTurnTier({ router: undefined, message: 'hi', resolve })).toBeUndefined();
+    expect(
+      await routeTurnTier({
+        router: undefined,
+        message: 'hi',
+        personality: { id: 'p', name: 'P' },
+        resolve,
+      }),
+    ).toBeUndefined();
     expect(resolve).not.toHaveBeenCalled();
   });
 });
@@ -148,6 +157,20 @@ describe('tier router — routing', () => {
     await turn({ router, text: 'hello there', abortSignal: controller.signal });
     expect(router.mock.calls[0]?.[0].message).toBe('hello there');
     expect(router.mock.calls[0]?.[0].signal).toBe(controller.signal);
+  });
+
+  it("the router receives the turn's resolved personality (the object model resolution reads)", async () => {
+    const router = vi.fn<TierRouter>(async () => null);
+    await turn({
+      router,
+      personality: { decisions: { provider: 'typesafe', sites: { router: 'shadow' } } },
+    });
+    const personality = router.mock.calls[0]?.[0].personality;
+    expect(personality?.id).toBe('p');
+    expect(personality?.decisions).toEqual({
+      provider: 'typesafe',
+      sites: { router: 'shadow' },
+    });
   });
 
   it("the router receives the turn's traceId, so its record joins the turn", async () => {
@@ -225,7 +248,9 @@ describe('tier router — when it is NOT called', () => {
     const router = vi.fn();
     const resolve = (role: 'trivial' | 'default') =>
       role === 'trivial' ? null : { provider: 'anthropic', model: 'claude-sonnet-5' };
-    expect(await routeTurnTier({ router, message: 'hi', resolve })).toBeUndefined();
+    expect(
+      await routeTurnTier({ router, message: 'hi', personality: { id: 'p', name: 'P' }, resolve }),
+    ).toBeUndefined();
     expect(router).not.toHaveBeenCalled();
   });
 
@@ -235,6 +260,8 @@ describe('tier router — when it is NOT called', () => {
       provider: role === 'trivial' ? 'local' : 'anthropic',
       model: 'm',
     });
-    expect(await routeTurnTier({ router, message: 'hi', resolve })).toBe('trivial');
+    expect(
+      await routeTurnTier({ router, message: 'hi', personality: { id: 'p', name: 'P' }, resolve }),
+    ).toBe('trivial');
   });
 });

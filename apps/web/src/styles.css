@@ -2216,8 +2216,12 @@ body,
   justify-content: flex-end;
 }
 
+/* A column, not a row: the trail is "one collapsed footer line UNDER the
+   bubble" (DESIGN.md "Feedback & activity" rule 3). As a flex ROW the trail sat
+   beside the reply and squeezed it into a narrow strip. */
 .message-row-assistant {
-  justify-content: flex-start;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .message-user {
@@ -4146,6 +4150,12 @@ textarea {
   margin-right: 0;
 }
 
+/* An `on` decision holding the loop: a steady dot in the decision hue — it is
+   not the personality's accent (DESIGN.md "Decision accent"). */
+.status-line-dot--decision {
+  background: var(--decision, var(--ethos-info));
+}
+
 .status-line-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4170,6 +4180,7 @@ textarea {
 .trail {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .trail-footer {
@@ -4209,6 +4220,21 @@ textarea {
   display: flex;
   flex-direction: column;
   padding: 0 24px 4px;
+}
+
+/* Under a bubble the message row already supplies the column's gutter, so the
+   slot's own 24px would indent the footer past the reply's left edge. The 8px
+   hang lets the hover tint breathe while the text lines up with the reply. */
+.message-row-assistant > .trail {
+  margin: 0 -8px;
+}
+
+.message-row-assistant > .trail .trail-footer {
+  padding: 0 8px;
+}
+
+.message-row-assistant > .trail .trail-rows {
+  padding: 0 0 4px;
 }
 
 /* THE row. Shared by the trail's expansion, the drawer, and FeedbackRow. */
@@ -4345,6 +4371,49 @@ button.activity-row:hover {
 
 .trail-row-pending {
   color: var(--text-tertiary);
+}
+
+/* Decision rows and the footer's decision segment (plan
+   decision-provider-personality §15.1). The hue is DESIGN.md's `--decision`
+   token, stamped on :root by main.tsx from `lib/decision-providers.ts` — never
+   a literal here. A warning or failure takes the semantic colour; glyph + word
+   carry the state either way, so colour is never the only signal. */
+.trail-footer-decisions {
+  color: var(--decision, var(--text-secondary));
+}
+
+.trail-decision-tag {
+  flex-shrink: 0;
+  color: var(--decision, var(--text-secondary));
+}
+
+.trail-decision--ok .activity-row-state,
+.trail-decision--running .activity-row-state {
+  color: var(--decision, var(--text-secondary));
+}
+
+.trail-decision--warning .activity-row-state {
+  color: var(--warning);
+}
+
+.trail-decision--failed .activity-row-state {
+  color: var(--error);
+}
+
+.trail-decision--neutral .activity-row-state {
+  color: var(--text-secondary);
+}
+
+/* The detail line sits under the subject, aligned past the state column. */
+.trail-decision-detail {
+  padding: 0 8px 4px 94px;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 760px) {

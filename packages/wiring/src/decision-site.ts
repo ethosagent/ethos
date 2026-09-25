@@ -6,7 +6,8 @@
 //
 //                site call (injection | approver | router)
 //                                │
-//                  mode = decisions.sites.<site>   (R6: `on` with no threshold ⇒ `shadow`)
+//   mode = resolvePersonalityDecisionSite(personality.decisions, site, global)
+//          (the CALLER resolves it per call; R6: `on` with no threshold ⇒ `shadow`)
 //       ┌────────────────────────┼─────────────────────────────┐
 //      off                    shadow                           on
 //       │                        │                              │
@@ -38,6 +39,16 @@
 //   `ethos -z` records a shadow answer that lands after the turn finished.
 // - The provider can never make a site throw. A throwing `today()` propagates
 //   exactly as it would without this helper.
+// - With a `sink` (plan decision-provider-personality §15.3, N7b), every call
+//   that consults the provider emits ONE `settled` decision event — in `on`
+//   preceded by a `started` (PD20; the loop is waiting) — carrying summaries
+//   only (K13): the verdict vocabulary from `summarize`, confidence, latency.
+//   `todayLatencyMs` is set only in `shadow`, only when today's path returned
+//   AND the provider answered, and never for the router (today's router path
+//   does no work). A shadow result is emitted when it settles, however late;
+//   core decides whether the turn's stream is still open (PD17). The record's
+//   `traceId` falls back to `sink.traceId`, which is how injection and approver
+//   rows carry the turn's trace. A throwing sink is ignored.
 //
 // Cost accounting (D13) — KNOWN LIMITATION. The plan asks for decision usage to
 // flow "through the same accounting as LLM usage". No such path exists from a
@@ -51,6 +62,7 @@
 // `decision.shadow` observability event, where it is queryable but NOT seen by
 // budget watchers.
 
+import { randomUUID } from 'node:crypto';
 import type { DecisionSiteId, DecisionSiteMode } from '@ethosagent/config';
 import { estimateCost } from '@ethosagent/pricing';
 import { redactJson, redactString } from '@ethosagent/safety-redact';
@@ -60,6 +72,7 @@ import type {
   DecisionProvider,
   DecisionQuestion,
   DecisionResult,
+  DecisionSink,
 } from '@ethosagent/types';
 
 /** What leaves the machine. `text` is redacted with `redactString`, `json` with `redactJson`. */
@@ -87,8 +100,24 @@ export interface DecisionCallRecord {
   todayVerdict?: unknown;
   /** `shadow` only: set when both a reading and today's verdict exist. */
   disagreed?: boolean;
-  /** The turn's trace, when the site's caller knows it (today: the router). */
+  /**
+   * `shadow` only: how long today's path took on the same input — set only
+   * when today's path returned and the provider answered, never for the router
+   * (plan decision-provider-personality §15.1).
+   */
+  todayLatencyMs?: number;
+  /**
+   * The turn's trace: the caller's `traceId`, else the sink's (plan
+   * decision-provider-personality §15.3) — so every site's rows join the turn
+   * when core wired one.
+   */
   traceId?: string;
+  /**
+   * The personality whose `decisions.sites.<site>` enabled this call (plan
+   * decision-provider-personality §7.0). Every production site passes it: a
+   * site resolves `off` — and never reaches `decide()` — without one.
+   */
+  personalityId?: string;
 }
 
 export interface DecisionSiteRecorder {
@@ -97,7 +126,10 @@ export interface DecisionSiteRecorder {
 
 export interface RunDecisionSiteOptions<V, J> {
   site: DecisionSiteId;
-  /** The site's EFFECTIVE mode (R6), from `resolveDecisionsConfig`. */
+  /**
+   * The site's EFFECTIVE mode for this call's personality, from
+   * `resolvePersonalityDecisionSite` (@ethosagent/config; R6 applied there).
+   */
   mode: DecisionSiteMode;
   provider: DecisionProvider | undefined;
   digest: DecisionDigest;
@@ -124,6 +156,20 @@ export interface RunDecisionSiteOptions<V, J> {
   tracker?: DecisionRecordTracker;
   /** The turn's trace id, copied onto the record so it joins the turn. */
   traceId?: string;
+  /** The personality whose declaration enabled this call, copied onto the record. */
+  personalityId?: string;
+  /**
+   * Where this call reports itself to the turn's event stream (plan
+   * decision-provider-personality §15.3, PD16); core builds it per call.
+   * Absent → no event.
+   */
+  sink?: DecisionSink;
+  /**
+   * The short verdict vocabulary a decision event carries (§15.2): `verdict`
+   * for today's / an acted-on verdict, `reading` for the provider's
+   * pre-threshold reading. Absent → the event carries no verdict strings.
+   */
+  summarize?: { verdict: (v: V) => string; reading: (j: J) => string };
   now?: () => number;
 }
 
@@ -182,12 +228,56 @@ interface Consultation {
   latencyMs: number;
 }
 
+type DecisionEventBody = Parameters<DecisionSink['emit']>[0];
+
+/** The confidence of a single-question answer set (every site asks one), else `undefined`. */
+function soleConfidence(answers: Record<string, DecisionAnswer>): number | undefined {
+  const values = Object.values(answers);
+  return values.length === 1 ? values[0]?.confidence : undefined;
+}
+
 export async function runDecisionSite<V, J>(opts: RunDecisionSiteOptions<V, J>): Promise<V> {
   const provider = opts.provider;
   if (opts.mode === 'off' || provider === undefined) return opts.today();
 
   const now = opts.now ?? Date.now;
   const questionCount = Object.keys(opts.questions).length;
+  const traceId = opts.traceId ?? opts.sink?.traceId;
+  const eventId = opts.sink ? randomUUID() : '';
+
+  const safely = <T>(fn: () => T): T | null => {
+    try {
+      return fn();
+    } catch {
+      return null;
+    }
+  };
+
+  const emit = (event: Omit<DecisionEventBody, 'id' | 'site' | 'provider'>): void => {
+    if (!opts.sink) return;
+    try {
+      opts.sink.emit({ id: eventId, site: opts.site, provider: provider.name, ...event });
+    } catch {
+      // The event stream is fail-open: a broken sink must not change a verdict.
+    }
+  };
+
+  const summary = <T>(fn: ((value: T) => string) | undefined, value: T): string | undefined =>
+    fn ? (safely(() => fn(value)) ?? undefined) : undefined;
+
+  /** The `settled` fields every mode shares. */
+  const settledBase = (mode: 'on' | 'shadow', c: Consultation) => {
+    const r = c.result;
+    const confidence = r.ok ? safely(() => soleConfidence(r.answers)) : undefined;
+    return {
+      phase: 'settled' as const,
+      mode,
+      ...(r.ok ? { model: r.model } : {}),
+      outcome: r.ok ? ('ok' as const) : r.code,
+      ...(typeof confidence === 'number' ? { confidence } : {}),
+      latencyMs: c.latencyMs,
+    };
+  };
 
   // Never rejects: every failure — redaction included — becomes an error result.
   const consult = async (): Promise<Consultation> => {
@@ -236,7 +326,8 @@ export async function runDecisionSite<V, J>(opts: RunDecisionSiteOptions<V, J>):
         questionCount,
         outcome: r.ok ? 'ok' : r.code,
         estimatedCostUsd: r.ok ? estimateCost(r.model, { inputTokens, outputTokens }).costUsd : 0,
-        ...(opts.traceId !== undefined ? { traceId: opts.traceId } : {}),
+        ...(traceId !== undefined ? { traceId } : {}),
+        ...(opts.personalityId !== undefined ? { personalityId: opts.personalityId } : {}),
         ...extra,
       });
     } catch {
@@ -244,46 +335,75 @@ export async function runDecisionSite<V, J>(opts: RunDecisionSiteOptions<V, J>):
     }
   };
 
-  const safely = <T>(fn: () => T): T | null => {
-    try {
-      return fn();
-    } catch {
-      return null;
-    }
-  };
-
   if (opts.mode === 'on') {
+    // PD20: the loop waits on this call, so the stream can say so.
+    emit({ phase: 'started', mode: 'on' });
     const c = await consult();
     const r = c.result;
     const verdict = r.ok && provider.calibrated ? safely(() => opts.gate(r.answers)) : null;
     record('on', c, { acted: verdict !== null });
+    const acted = verdict !== null ? summary(opts.summarize?.verdict, verdict) : undefined;
+    emit({
+      ...settledBase('on', c),
+      acted: verdict !== null,
+      ...(acted !== undefined ? { verdict: acted } : {}),
+    });
     if (verdict !== null) return verdict;
     return opts.today();
   }
 
   // shadow (R8): start the provider, await only today's path.
   const pending = consult();
+  const todayStarted = now();
   let todayVerdict: V;
   try {
     todayVerdict = await opts.today();
   } catch (err) {
-    track(pending.then((c) => record('shadow', c, readingOf(c))));
+    track(
+      pending.then((c) => {
+        const reading = readingOf(c);
+        record('shadow', c, reading);
+        emit({ ...settledBase('shadow', c), ...readingSummary(reading) });
+      }),
+    );
     throw err;
   }
+  const todayLatencyMs = now() - todayStarted;
   track(
     pending.then((c) => {
       const reading = readingOf(c);
       const jev = reading.jevVerdict;
       const disagreed =
         jev === undefined ? undefined : safely(() => opts.disagrees(jev, todayVerdict));
+      // §15.1: a comparison only when both were measured on the same input —
+      // never for the router, whose today's path does no work.
+      const timing =
+        c.result.ok && opts.site !== 'router'
+          ? { todayLatencyMs }
+          : ({} as { todayLatencyMs?: number });
+      const todaySummary = summary(opts.summarize?.verdict, todayVerdict);
       record('shadow', c, {
         ...reading,
         todayVerdict,
         ...(typeof disagreed === 'boolean' ? { disagreed } : {}),
+        ...timing,
+      });
+      emit({
+        ...settledBase('shadow', c),
+        ...readingSummary(reading),
+        ...(todaySummary !== undefined ? { todayVerdict: todaySummary } : {}),
+        ...(typeof disagreed === 'boolean' ? { disagreed } : {}),
+        ...timing,
       });
     }),
   );
   return todayVerdict;
+
+  function readingSummary(reading: { jevVerdict?: J }): { verdict?: string } {
+    if (reading.jevVerdict === undefined) return {};
+    const text = summary(opts.summarize?.reading, reading.jevVerdict);
+    return text === undefined ? {} : { verdict: text };
+  }
 
   // Not awaited here (R8): only a teardown drain waits for it.
   function track(recording: Promise<void>): void {

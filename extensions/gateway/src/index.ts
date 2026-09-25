@@ -4913,6 +4913,11 @@ export class Gateway {
           // (plan openclaw-9.5-adoption D5). `internal` tool_starts count too:
           // an inner script call is still an action taken on the user's behalf.
           if (event.type === 'tool_start' && spoolTurn) this.markSpoolToolStarted(spoolTurn);
+          // Audience boundary (plan decision-provider-personality §15.4): a
+          // `decision` row is internal judgement and never reaches a channel —
+          // not the draft, not the final. Explicit, not left to the
+          // translator's `default`. Pinned by `__tests__/streaming-integration.test.ts`.
+          if (event.type === 'decision') continue;
           // Past the terminal event: the tail is drained, not rendered. The
           // answer is already on its way, and anything the tail yields (a
           // turn-end compaction notice) would land after the final.

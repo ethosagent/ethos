@@ -43,6 +43,7 @@ import {
   createMutableOutput,
   readMaskedLine,
 } from '../lib/credential-prompt';
+import { decisionLine } from '../lib/decision-line';
 import { readFileMemorySnapshot } from '../lib/file-memory';
 import { type LoopGoals, runGoalSlash, runGoalsSlash } from '../lib/goal-slash';
 import { createLoopRebuilder } from '../lib/loop-rebuilder';
@@ -959,6 +960,11 @@ async function runTurn(input: string, state: ChatState, loop: AgentLoop): Promis
         clearSpinner();
         if (state.verbosity !== 'quiet') out('\n');
       }
+      // A settled decision prints a line (§15.6), so the spinner's line must
+      // be wiped first or the two would share it.
+      if (event.type === 'decision' && event.phase === 'settled' && state.verbosity !== 'quiet') {
+        clearSpinner();
+      }
       if (event.type === 'tool_end' && !internalToolEvent) {
         toolDurations.push(event.durationMs);
       }
@@ -1138,6 +1144,27 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       // streamed text already is the answer.
       const answer = lines.find((line) => line.kind === 'text');
       if (answer) out(stripAnsiEscapes(answer.text));
+      break;
+    }
+
+    case 'decision': {
+      // plan decision-provider-personality §15.6 — the decision hue is the
+      // terminal's cyan; a warning or failure takes yellow / red. Glyph + word
+      // carry the state whatever the terminal does with colour.
+      const line = decisionLine(event);
+      if (!line) break;
+      if (ctx.hasText) out('\n');
+      const tone =
+        line.tone === 'failed'
+          ? c.red
+          : line.tone === 'warning'
+            ? c.yellow
+            : line.tone === 'ok'
+              ? c.cyan
+              : c.dim;
+      out(
+        `  ${tone}${line.state}${c.reset} ${c.cyan}${line.tag}${c.reset} ${c.dim}${line.rest}${c.reset}\n`,
+      );
       break;
     }
 

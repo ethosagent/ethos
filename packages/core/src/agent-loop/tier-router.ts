@@ -13,9 +13,17 @@
 //       trivial and default resolve ok to DIFFERENT models? ── no ──► 'default' (no call, R1)
 //                     │ yes
 //                     ▼
-//       router(message, signal) ─► 'trivial' → 'trivial'; anything else → 'default'
+//       router(message, personality, signal) ─► 'trivial' → 'trivial'; anything else → 'default'
+//
+// The router receives the turn's resolved `personality` — the same object
+// `resolveTurnModel` reads — because whether it runs at all is that
+// personality's choice (`PersonalityConfig.decisions.sites.router`, plan
+// decision-provider-personality §7.1). A router that resolves `off` for it
+// returns `null` without consulting anything.
 //
 // Pinned by `__tests__/tier-router.test.ts`.
+
+import type { DecisionSink, PersonalityConfig } from '@ethosagent/types';
 
 /**
  * `'trivial'` routes this turn down; `null` leaves it on `default`. The type
@@ -25,10 +33,18 @@
 export type TierRouter = (input: {
   /** The user's message for this turn, as `AgentLoop.run` received it. */
   message: string;
+  /** The personality this turn runs as (turn setup's resolution). */
+  personality: PersonalityConfig;
   /** The turn's abort signal; a router must stop when it fires. */
   signal?: AbortSignal;
   /** The turn's observability trace, so what the router records joins the turn. */
   traceId?: string;
+  /**
+   * Where the router's decision site reports that it ran (plan
+   * decision-provider-personality §15.3). Absent unless the personality
+   * declares decision sites.
+   */
+  decisionSink?: DecisionSink;
 }) => Promise<'trivial' | null>;
 
 /** What a role resolves to for the R1 comparison: the provider entry and the model id. */
@@ -54,8 +70,10 @@ export interface ResolvedRoleModel {
 export async function routeTurnTier(input: {
   router: TierRouter | undefined;
   message: string;
+  personality: PersonalityConfig;
   signal?: AbortSignal;
   traceId?: string;
+  decisionSink?: DecisionSink;
   resolve: (role: 'trivial' | 'default') => ResolvedRoleModel | null;
 }): Promise<'trivial' | undefined> {
   const { router } = input;
@@ -67,8 +85,10 @@ export async function routeTurnTier(input: {
   try {
     const answer: unknown = await router({
       message: input.message,
+      personality: input.personality,
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.traceId !== undefined ? { traceId: input.traceId } : {}),
+      ...(input.decisionSink ? { decisionSink: input.decisionSink } : {}),
     });
     return answer === 'trivial' ? 'trivial' : undefined;
   } catch {

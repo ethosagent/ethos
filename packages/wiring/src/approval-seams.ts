@@ -106,8 +106,11 @@ export interface CreateApprovalDangerPredicateOptions {
   /**
    * The smart reviewer's decision site (plan decision-provider-jev §8.2) —
    * `CreateAgentLoopResult.approverDecision` of the build whose loops these
-   * are, so the approver shares that build's one provider. Absent → the
-   * reviewer is exactly the LLM path.
+   * are, so the approver shares that build's one provider handle. Absent → the
+   * reviewer is exactly the LLM path. Present, the mode is still resolved per
+   * call from the personality `getPersonality` below returned (plan
+   * decision-provider-personality §7.3), so a personality that enables no
+   * approver site gets exactly the LLM path too.
    */
   decision?: SmartApproverDecisionSite;
 }
@@ -160,13 +163,13 @@ export function createApprovalDangerPredicate(
         // could apply another personality's `approvalMode: 'off'`.
         return id === undefined ? undefined : opts.personalities.get(id);
       },
-      smartApprove: (payload, reason) => {
+      smartApprove: (payload, reason, personality) => {
         approver ??= createSmartApprover({
           getProvider: opts.getProvider,
           model: opts.model,
           ...(opts.decision ? { decision: opts.decision } : {}),
         });
-        return approver(payload, reason);
+        return approver(payload, reason, personality);
       },
     }),
     opts.spokenConfirmations ? { confirmations: opts.spokenConfirmations } : {},

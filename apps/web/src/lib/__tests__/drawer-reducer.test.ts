@@ -464,12 +464,14 @@ describe('drawer-reducer', () => {
       return entries.map((e) =>
         e.kind === 'action'
           ? { kind: e.kind, toolName: e.toolName, status: e.status, durationMs: e.durationMs }
-          : {
-              kind: e.kind,
-              claim: e.claim,
-              evidence: e.evidence,
-              citesToolCallId: e.citesToolCallId,
-            },
+          : e.kind === 'decision'
+            ? { kind: e.kind, event: e.event }
+            : {
+                kind: e.kind,
+                claim: e.claim,
+                evidence: e.evidence,
+                citesToolCallId: e.citesToolCallId,
+              },
       );
     }
 

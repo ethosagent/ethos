@@ -7,6 +7,7 @@ import {
   DecisionsTestInput,
   DecisionsTestOutput,
   DecisionTestErrorCodeSchema,
+  PersonalitySchema,
 } from '../index';
 
 // The `decisions` namespace — Settings › Models › decision models
@@ -15,7 +16,7 @@ import {
 // dropped from a schema fails here instead of vanishing on the way to the page.
 
 describe('decisions.list', () => {
-  it('round-trips the catalog and a provider row with an R6-downgraded site', () => {
+  it('round-trips the catalog and a provider row whose usedBy carries an R6-downgraded site', () => {
     const value = {
       catalog: [
         {
@@ -42,9 +43,27 @@ describe('decisions.list', () => {
           baseUrl: 'https://api.typesafe.ai',
           host: 'api.typesafe.ai',
           getKeyUrl: 'https://console.typesafe.ai',
-          sites: [
-            { site: 'injection', requested: 'on', effective: 'shadow', missingThresholds: ['x'] },
-            { site: 'approver', requested: 'off', effective: 'off', missingThresholds: [] },
+          usedBy: [
+            {
+              personalityId: 'researcher',
+              name: 'Researcher',
+              sites: [
+                {
+                  site: 'approver',
+                  requested: 'on',
+                  effective: 'shadow',
+                  reason: 'threshold-missing',
+                  missingThresholds: ['decisions.thresholds.approver.deny'],
+                },
+                {
+                  site: 'injection',
+                  requested: 'shadow',
+                  effective: 'shadow',
+                  missingThresholds: [],
+                },
+              ],
+            },
+            { personalityId: 'coder', name: 'Coder', sites: [] },
           ],
         },
       ],
@@ -55,6 +74,32 @@ describe('decisions.list', () => {
   it('round-trips the empty state: a catalog and no added provider', () => {
     const value = { catalog: [], providers: [] };
     expect(DecisionsListOutput.parse(value)).toEqual(value);
+  });
+
+  it('requires usedBy, and refuses a site reason it does not know', () => {
+    const row = {
+      id: 'typesafe',
+      label: 'Jev',
+      vendor: 'TypeSafe',
+      configured: true,
+      keyRef: 'providers/typesafe/apiKey',
+      keyPresent: true,
+      keyPreview: '…6789',
+      model: 'jev-latest',
+      baseUrl: 'https://api.typesafe.ai',
+      host: 'api.typesafe.ai',
+      getKeyUrl: 'https://console.typesafe.ai',
+    };
+    expect(DecisionsListOutput.safeParse({ catalog: [], providers: [row] }).success).toBe(false);
+    const site = { site: 'router', requested: 'on', effective: 'off', missingThresholds: [] };
+    const withReason = (reason: string) => ({
+      catalog: [],
+      providers: [
+        { ...row, usedBy: [{ personalityId: 'r', name: 'R', sites: [{ ...site, reason }] }] },
+      ],
+    });
+    expect(DecisionsListOutput.safeParse(withReason('not-configured')).success).toBe(true);
+    expect(DecisionsListOutput.safeParse(withReason('no-key')).success).toBe(false);
   });
 
   it('refuses a provider it does not know', () => {
@@ -119,6 +164,7 @@ describe('decisions.test', () => {
       'malformed',
       'too_large',
       'unavailable',
+      'breaker_open',
     ] as const satisfies readonly DecisionErrorCode[];
     expect([...DecisionTestErrorCodeSchema.options].sort()).toEqual([...codes, 'no_key'].sort());
   });
@@ -130,5 +176,64 @@ describe('decisions.test', () => {
     expect(
       DecisionsTestInput.safeParse({ providerId: 'typesafe', message: 'x'.repeat(70_000) }).success,
     ).toBe(false);
+  });
+});
+
+// `PersonalityConfig.decisions` on the personality wire and in
+// `personalities.update` (plan decision-provider-personality §9).
+describe('personalities.decisions', () => {
+  function schemaOf(procedure: unknown, field: 'inputSchema' | 'outputSchema'): z.ZodType {
+    const def = (procedure as { '~orpc'?: Record<string, unknown> })['~orpc'];
+    const schema = def?.[field];
+    if (!(schema instanceof z.ZodType)) throw new Error(`no ${field}`);
+    return schema;
+  }
+
+  it('the personality wire round-trips the declaration and the resolved sites', () => {
+    const decisions = {
+      provider: 'somewhere-else',
+      sites: { injection: 'shadow', approver: 'on' },
+      resolved: {
+        configured: false,
+        sites: [
+          {
+            site: 'injection',
+            requested: 'shadow',
+            effective: 'off',
+            reason: 'not-configured',
+            missingThresholds: [],
+          },
+          {
+            site: 'approver',
+            requested: 'on',
+            effective: 'off',
+            reason: 'not-configured',
+            missingThresholds: [],
+            inertApprovalMode: 'manual',
+          },
+        ],
+      },
+    };
+    // A stored provider this machine does not know is carried verbatim.
+    expect(PersonalitySchema.shape.decisions.parse(decisions)).toEqual(decisions);
+    expect(PersonalitySchema.shape.decisions.parse(undefined)).toBeUndefined();
+  });
+
+  it('update accepts a catalog provider or "" and per-site modes', () => {
+    const input = schemaOf(contract.personalities.update, 'inputSchema');
+    const ok = (decisions: unknown) => input.safeParse({ id: 'agent', decisions }).success;
+    expect(ok({ provider: 'typesafe', sites: { injection: 'on', approver: 'shadow' } })).toBe(true);
+    expect(ok({ provider: '' })).toBe(true);
+    expect(ok({ sites: { router: 'off' } })).toBe(true);
+    expect(ok(undefined)).toBe(true);
+  });
+
+  it('update refuses an unknown provider, mode, site or key', () => {
+    const input = schemaOf(contract.personalities.update, 'inputSchema');
+    const ok = (decisions: unknown) => input.safeParse({ id: 'agent', decisions }).success;
+    expect(ok({ provider: 'openai' })).toBe(false);
+    expect(ok({ sites: { injection: 'always' } })).toBe(false);
+    expect(ok({ sites: { summarizer: 'on' } })).toBe(false);
+    expect(ok({ provider: 'typesafe', model: 'jev-latest' })).toBe(false);
   });
 });

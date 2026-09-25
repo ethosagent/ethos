@@ -2,7 +2,7 @@ import './styles.css';
 import './styles/team-panes.css';
 import './styles/team-structure.css';
 import './styles/team-chat.css';
-import { tokensToAntd, tokensToCssVariables } from '@ethosagent/design-tokens/antd';
+import { isLightSurface, tokensToAntd, tokensToCssVariables } from '@ethosagent/design-tokens/antd';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider, type ThemeConfig } from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -11,6 +11,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import { useConfigRetryFalse } from './features/config/api/queries';
 import { NewSessionModalProvider } from './hooks/useNewSessionModal';
+import { decisionAccentCss } from './lib/decision-providers';
 import {
   applyReducedMotion,
   REDUCED_MOTION_STYLESHEET,
@@ -77,7 +78,10 @@ function Root() {
       el.id = id;
       document.head.appendChild(el);
     }
-    el.textContent = tokensToCssVariables(resolvedTokens);
+    // `--decision` (DESIGN.md "Decision accent") is not a skin token: it takes
+    // the runner-teal pair, picked by the skin's lightness like the runner
+    // accent is, from the one identity map that holds it.
+    el.textContent = `${tokensToCssVariables(resolvedTokens)}\n:root { --decision: ${decisionAccentCss(isLightSurface(resolvedTokens))}; }`;
   }, [resolvedTokens]);
 
   // Global reduce-motion stylesheet — covers CSS-driven animations

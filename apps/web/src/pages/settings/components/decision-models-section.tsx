@@ -17,9 +17,11 @@
 // key's state, an "active" marker when `decisions.provider` names it (config
 // allows ONE active decision model; switching between several is not built),
 // and Remove; then the key row (`SecretField`, the one Set / Replace / Clear
-// control for a vault credential); then the three sites, READ-ONLY — a site's
-// mode is a config.yaml line the operator sets on purpose, never a toggle
-// here; then the Test block.
+// control for a vault credential); then Used by — READ-ONLY: which
+// personalities name this decision model and the sites each enables
+// (`usedBy`, resolved server-side by `personalityDecisionSites`, apps/web-api).
+// Sites are enabled per personality in Personalities → Edit → Config
+// (`DecisionModelField`), never here; then the Test block.
 //
 // Every write saves immediately through `rpc.decisions.setKey` / `clearKey` /
 // `remove` — nothing here is on the page Save — and only `['decisions']` (and
@@ -27,7 +29,8 @@
 // would re-hydrate the form and wipe unsaved edits elsewhere on the page.
 // Saving a key never turns a site on: the service writes `decisions.provider`
 // at most (`DecisionsService.setKey`, apps/web-api). Remove deletes the key and
-// that provider line, and leaves the site lines (`DecisionsService.remove`).
+// that provider line, and leaves every personality's `decisions` block
+// (`DecisionsService.remove`).
 //
 // Test shares the model Test's page-session log and 10s window (D19,
 // ../lib/model-test-log); the service enforces the same window itself. A
@@ -42,6 +45,7 @@ import type {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntApp, Button, Input, Modal, Spin, Tooltip, Typography } from 'antd';
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { vaultKeyKeys } from '../../../features/settings/api/keys';
 import { rpc } from '../../../rpc';
 import {
@@ -58,7 +62,7 @@ import {
   keyStatusView,
   removeDecisionConsequences,
   savedKeyNotice,
-  siteView,
+  usedBySitesText,
 } from '../lib/decision-models';
 import type { TestButtonState } from '../lib/model-registry';
 import { recordModelTest, useCooldownClock, useModelTestLog } from '../lib/model-test-log';
@@ -101,7 +105,7 @@ const HINT: CSSProperties = { fontSize: 12, color: 'var(--text-tertiary)' };
 /** Remove: a size below antd's `small`, as in ./provider-group. */
 const COMPACT_ACTION: CSSProperties = { fontSize: 12, paddingInline: 4 };
 
-const SITES: CSSProperties = {
+const USED_BY: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'flex-end',
@@ -181,7 +185,7 @@ export function DecisionModelsSection() {
     return savedKeyNotice({
       providerId,
       providerWritten,
-      sites: fresh?.providers.find((p) => p.id === providerId)?.sites,
+      usedBy: fresh?.providers.find((p) => p.id === providerId)?.usedBy,
     });
   }
 
@@ -280,8 +284,9 @@ export function DecisionModelsSection() {
       <p style={{ ...HINT, margin: '0 0 10px' }}>
         A decision model answers typed questions — yes or no, a choice, a score — with a probability
         instead of writing text. It is a separate kind of model from the chat models above: it never
-        replies to anyone, and nothing is sent to it until a site is set to{' '}
-        <span style={MONO}>shadow</span> or <span style={MONO}>on</span> in config.yaml.
+        replies to anyone, and nothing is sent to it until a personality sets a site to{' '}
+        <span style={MONO}>shadow</span> or <span style={MONO}>on</span> in Personalities → Edit →
+        Config.
       </p>
       {listQuery.isLoading ? (
         <Spin size="small" />
@@ -291,7 +296,7 @@ export function DecisionModelsSection() {
         </Typography.Text>
       ) : data && data.providers.length === 0 ? (
         <p className="settings-decision-models-empty" style={{ ...HINT, fontSize: 13, margin: 0 }}>
-          No decision models yet. Add one, then choose in config.yaml which sites use it.
+          No decision models yet. Add one, then enable it on a personality.
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -420,22 +425,29 @@ export function DecisionProviderGroup({
           clearing={clearing}
         />
         <SettingRow
-          label="Sites"
-          help="Set per site in config.yaml (decisions.sites.<site>: off | shadow | on). Read-only here."
+          label="Used by"
+          help="Sites are enabled per personality, in Personalities → Edit → Config. Read-only here."
         >
-          <div style={SITES}>
-            {provider.sites.map((site) => {
-              const view = siteView(site);
-              return (
-                <div key={site.site} data-site={site.site} style={{ textAlign: 'right' }}>
-                  <span style={MONO}>{site.site}</span>{' '}
-                  <StatusText view={{ tone: view.tone, text: view.mode, title: null }} />
-                  {view.note ? (
-                    <span style={{ ...SUB, color: 'var(--warning)' }}>⚠ {view.note}</span>
-                  ) : null}
+          <div className="settings-decision-used-by" style={USED_BY}>
+            {provider.usedBy.length === 0 ? (
+              <span style={HINT}>
+                No personality uses this decision model yet. Enable it on a personality:
+                Personalities → Edit → Config.
+              </span>
+            ) : (
+              provider.usedBy.map((user) => (
+                <div
+                  key={user.personalityId}
+                  data-personality-id={user.personalityId}
+                  style={{ textAlign: 'right' }}
+                >
+                  <Link to={`/p/${encodeURIComponent(user.personalityId)}/identity`} style={MONO}>
+                    {user.personalityId}
+                  </Link>{' '}
+                  <span style={{ ...HINT, ...MONO }}>— {usedBySitesText(user)}</span>
                 </div>
-              );
-            })}
+              ))
+            )}
           </div>
         </SettingRow>
 

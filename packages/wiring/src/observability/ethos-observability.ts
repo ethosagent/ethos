@@ -618,8 +618,10 @@ export class EthosObservability {
    * (`packages/wiring/src/decision-site.ts`). `code` is the outcome (`ok` or
    * the error code); details carry the site, provider, returned model,
    * latency, input tokens, question count and estimated cost, plus both
-   * verdicts and the disagreement flag in `shadow`. `traceId`, when the site
-   * knew it, becomes the event's trace so the row joins its turn.
+   * verdicts and the disagreement flag in `shadow`, and the `personalityId`
+   * whose declaration enabled the site (plan decision-provider-personality
+   * §7.0). `traceId`, when the site knew it, becomes the event's trace so the
+   * row joins its turn.
    */
   recordDecisionCall(record: DecisionCallRecord): void {
     const { mode, outcome, traceId, ...details } = record;

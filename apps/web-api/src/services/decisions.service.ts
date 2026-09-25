@@ -12,9 +12,14 @@
 // `keyRef`; today `providers/typesafe/apiKey`, `DECISIONS_API_KEY_REF`,
 // @ethosagent/config) — the only place that can MINT it. Once stored, the Keys pane's `custom` row
 // can also replace or delete it (the limitation keys-catalog.ts records).
-// Per-site modes and thresholds are NOT written here: they stay config.yaml
-// lines the operator sets deliberately, and `list` reports them read-only as
-// `resolveDecisionsConfig` resolves them (R6).
+// Per-site modes are set on each personality (`PersonalityConfig.decisions`,
+// written through `personalities.update`, plan decision-provider-personality
+// §3, §9); a global `decisions.sites.*` line is never read (PD5). `list`
+// reports, per provider, which personalities name it and the sites each
+// enables (`usedBy`), resolved by `resolveCharacterSheetDecisions`
+// (@ethosagent/wiring) — the resolver the character sheet, `ethos doctor` and
+// the Edit → Config notes (`PersonalitiesService`) use. Thresholds are NOT
+// written here: they stay config.yaml lines the operator sets deliberately.
 //
 // What each call guarantees, pinned by `__tests__/services/decisions.service.test.ts`:
 // - `setKey` never echoes the value: the answer carries `redactSecretValue`'s
@@ -23,14 +28,14 @@
 // - `setKey` writes `decisions.provider: typesafe` when the line is absent —
 //   through `ConfigRepository.transform`, the single config.yaml writer, with
 //   the absence checked inside its lock — and writes NO `decisions.sites.*`
-//   line, so this call enables nothing. Site lines an earlier `remove` left
-//   behind apply as written once the provider line is back — the Add drawer
-//   and the saved-key notice say so (apps/web settings/lib/decision-models.ts). A missing config.yaml is not created (that would read
-//   as a finished onboarding).
+//   line, so this call enables nothing: a site runs only when a personality
+//   enables it (`resolvePersonalityDecisionSite`, @ethosagent/config). A
+//   missing config.yaml is not created (that would read as a finished
+//   onboarding).
 // - `clearKey` deletes the ref and leaves config.yaml alone. Idempotent.
 // - `remove` deletes the ref AND, through the same `transform`, the
 //   `decisions.provider` line when it names this provider — only that line:
-//   `decisions.sites.*` and the rest stay, inert, because
+//   `decisions.thresholds.*` and the rest stay, inert, because
 //   `buildDecisionsConfig` builds no layer without a provider. Idempotent.
 // - `test` asks nothing of the provider without a stored key (`no_key`), a
 //   blank message or one over `DECISION_TEST_MAX_CHARS` (`invalid`); then one
@@ -39,18 +44,29 @@
 //   the button, because a test spends the operator's credit.
 
 import {
-  DECISION_SITES,
   type DecisionProviderName,
   type EthosConfig,
   resolveDecisionsConfig,
 } from '@ethosagent/config';
-import { EthosError, redactSecretValue, type SecretsResolver } from '@ethosagent/types';
+import type { CharacterSheetDecisionSite } from '@ethosagent/personalities';
+import {
+  EthosError,
+  type PersonalityConfig,
+  redactSecretValue,
+  type SecretsResolver,
+} from '@ethosagent/types';
 import type {
+  DecisionProviderUser,
   DecisionProviderView,
+  DecisionSiteView,
   DecisionsListResult,
   DecisionsTestResult,
 } from '@ethosagent/web-contracts';
-import { ModelTestRateLimiter, testDecisionProvider } from '@ethosagent/wiring';
+import {
+  ModelTestRateLimiter,
+  resolveCharacterSheetDecisions,
+  testDecisionProvider,
+} from '@ethosagent/wiring';
 import type { ConfigRepository } from '../repositories/config.repository';
 import { DECISION_PROVIDER_CATALOG, decisionProviderType } from './decision-catalog';
 
@@ -70,6 +86,23 @@ export interface DecisionsServiceOptions {
   limiter?: ModelTestRateLimiter;
   /** Test seam, forwarded to `testDecisionProvider`. */
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
+  /**
+   * Every personality's config, read fresh from disk — fills each provider's
+   * `usedBy`. Absent → `usedBy` is empty.
+   */
+  listPersonalities?: () => Promise<PersonalityConfig[]>;
+}
+
+/** One resolved `## Decisions` site on the wire. */
+export function toDecisionSiteView(site: CharacterSheetDecisionSite): DecisionSiteView {
+  return {
+    site: site.site,
+    requested: site.requested,
+    effective: site.effective,
+    ...(site.reason ? { reason: site.reason } : {}),
+    missingThresholds: [...site.missingThresholds],
+    ...(site.inertApprovalMode ? { inertApprovalMode: site.inertApprovalMode } : {}),
+  };
 }
 
 export class DecisionsService {
@@ -80,7 +113,9 @@ export class DecisionsService {
   }
 
   async list(): Promise<DecisionsListResult> {
-    const decisions = (await this.opts.readConfig())?.decisions;
+    const config = await this.opts.readConfig();
+    const decisions = config?.decisions;
+    const users = await this.usersOf(config);
     const providers: DecisionProviderView[] = [];
     for (const type of DECISION_PROVIDER_CATALOG) {
       const key = await this.readKey(type.id);
@@ -103,15 +138,7 @@ export class DecisionsService {
         model: resolved.model,
         baseUrl: resolved.baseUrl,
         host: hostOf(resolved.baseUrl),
-        sites: DECISION_SITES.map((site) => {
-          const s = resolved.sites[site];
-          return {
-            site,
-            requested: s.requested,
-            effective: s.effective,
-            missingThresholds: s.missingThresholds,
-          };
-        }),
+        usedBy: users.filter((u) => u.providerId === type.id).map((u) => u.user),
       });
     }
     return { catalog: [...DECISION_PROVIDER_CATALOG], providers };
@@ -210,6 +237,27 @@ export class DecisionsService {
       message: input.message,
       ...(this.opts.fetch ? { fetch: this.opts.fetch } : {}),
     });
+  }
+
+  /** Every personality naming a provider, with the sites it enables, resolved. */
+  private async usersOf(
+    config: EthosConfig | null,
+  ): Promise<Array<{ providerId: string; user: DecisionProviderUser }>> {
+    const personalities = (await this.opts.listPersonalities?.()) ?? [];
+    const out: Array<{ providerId: string; user: DecisionProviderUser }> = [];
+    for (const p of personalities) {
+      const resolved = await resolveCharacterSheetDecisions(p, config, this.opts.secrets);
+      if (resolved?.provider === undefined) continue;
+      out.push({
+        providerId: resolved.provider,
+        user: {
+          personalityId: p.id,
+          name: p.name,
+          sites: resolved.sites.filter((s) => s.requested !== 'off').map(toDecisionSiteView),
+        },
+      });
+    }
+    return out;
   }
 
   /** The same presence rule as `buildDecisionProvider`: a read failure or a blank value is no key. */

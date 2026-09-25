@@ -996,12 +996,15 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // an equivalent closure. Absent on every other deployment.
     runCallCapture: runCallCaptureFromLoop,
     // The smart approver's decision site (plan decision-provider-jev §8.2).
-    // `decisions.*` is operator-level — identical for every loop this process
-    // builds — so the process's shared approval predicates (the unattended
-    // gate below and `wireApprovalFlow`'s) take THIS build's, the one built
-    // from the default config, exactly as they already take the operator's
-    // `createLLM(config)` / `config.model` for the LLM reviewer. Absent → the
-    // LLM reviewer only (no `decisions.*`, or the approver site `off`).
+    // The PROVIDER half of `decisions.*` (provider, key, budgets, thresholds)
+    // is operator-level — identical for every loop this process builds — so
+    // the process's shared approval predicates (the unattended gate below and
+    // `wireApprovalFlow`'s) take THIS build's, the one built from the default
+    // config, exactly as they already take the operator's `createLLM(config)`
+    // / `config.model` for the LLM reviewer. The MODE is not shared: it is
+    // resolved per call inside the approver from the personality the
+    // predicate resolved for that session (plan decision-provider-personality
+    // §7.3). Absent → the LLM reviewer only (no `decisions.*`).
     approverDecision,
     dispose: disposeSystemLoop,
     jobStore: systemJobStore,
