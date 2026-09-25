@@ -108,6 +108,7 @@ import {
 } from '../config-reload';
 import { createHealthServer } from '../health-server';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
+import { exitIfConfigInvalid } from '../lib/config-exit';
 import { type CronDeliverJob, createCronDeliver } from '../lib/cron-deliver';
 import { disposeBeforeExit } from '../lib/dispose-before-exit';
 import {
@@ -132,6 +133,7 @@ import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
 import { createPlatformWebhookServer } from '../platform-webhook-server';
+import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import { createWebhookServer, type PrefilterRunner } from '../webhook-server';
 import {
@@ -310,11 +312,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     console.error('Run ethos setup first.');
     process.exit(1);
   }
-  if (loaded.parseErrors.length > 0) {
-    console.log(`${c.red}Config parse errors:${c.reset}`);
-    for (const err of loaded.parseErrors) console.log(`  • ${err}`);
-    process.exit(1);
-  }
+  exitIfConfigInvalid('Config parse errors', loaded.parseErrors);
   for (const note of loaded.deprecations) {
     console.log(`${c.yellow}⚠ deprecation${c.reset} ${c.dim}${note}${c.reset}`);
   }
@@ -331,11 +329,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   const releaseGatewayLock = await takeGatewayLockOrExit(dir);
 
   const bindErrors = await validateBindings(cfg);
-  if (bindErrors.length > 0) {
-    console.log(`${c.red}Bot binding errors:${c.reset}`);
-    for (const err of bindErrors) console.log(`  • ${err}`);
-    process.exit(1);
-  }
+  exitIfConfigInvalid('Bot binding errors', bindErrors);
 
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webPort = resolveWebPort(args, process.env, cfg);
@@ -2409,7 +2403,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
   // -------------------------------------------------------------------------
   //
   // Every step below runs through `guard`. The handlers are invoked as
-  // `void shutdown()`, so a single rejection would both skip `process.exit(0)`
+  // `void shutdown()`, so a single rejection would both skip `process.exit`
   // and surface as an unhandled rejection — leaving the process alive with its
   // adapters half-stopped and still registered in the mesh. `guard` is the
   // sync-throw-safe form of the `.catch(() => {})` this closure already used on
@@ -2439,7 +2433,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     boundedShutdownStep(label, fn, stepReporting);
 
   let shuttingDown: Promise<void> | undefined;
-  const shutdown = async () => {
+  const shutdown = async (exitCode = 0) => {
     // Reentrancy: this is registered on BOTH SIGINT and SIGTERM, and a second
     // signal — plausibly during the approval drain, which can take up to 5s —
     // would otherwise start a CONCURRENT teardown of the same mesh
@@ -2574,7 +2568,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       // the process call itself idle while it is still accepting connections.
       // NOT awaited on the close callback: `/ws` sockets are upgraded out of
       // the server's request cycle, so that callback can wait on a live client
-      // forever — and a shutdown that never reaches `process.exit(0)` is worse
+      // forever — and a shutdown that never reaches `process.exit` is worse
       // than a listener the exit tears down a moment later anyway.
       await guard('acp-server', () => {
         acpHttpServer.closeAllConnections();
@@ -2621,12 +2615,19 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
           (message) => logger.warn(message, { component: 'boot' }),
         ),
       );
-      process.exit(0);
+      process.exit(exitCode);
     })();
     await shuttingDown;
   };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
+  // A stray rejection is logged and survived; an uncaught exception runs this
+  // same bounded shutdown and exits 1 (plan openclaw-2026.9.6-gaps R2).
+  installProcessGuards({
+    command: 'boot',
+    observability: getEthosObservability,
+    shutdown: (exitCode) => shutdown(exitCode),
+  });
 
   // -------------------------------------------------------------------------
   // Idle watcher (plan/phases/idle-watcher.md §5) — CONSTRUCTED LAST, after

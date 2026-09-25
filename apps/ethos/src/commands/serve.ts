@@ -97,7 +97,6 @@ import {
   systemJobProblem,
   wrapUntrusted,
 } from '@ethosagent/wiring';
-import { appendErrorLog } from '../error-log';
 import { createAcpMcpWiring } from '../lib/acp-mcp-wiring';
 import { boundedShutdownStep } from '../lib/bounded-shutdown-step';
 import { DeferredToolRegistry } from '../lib/deferred-tool-registry';
@@ -110,6 +109,7 @@ import { resolveSkillsCatalogDir } from '../lib/resolve-skills-catalog-dir';
 import { emitReady } from '../logger';
 import { applyPauseCorrections, hasHeartbeatBump } from '../pause-corrections';
 import { createPauseLifecycle } from '../pause-lifecycle';
+import { installProcessGuards } from '../process-guards';
 import { notifyReady, startWatchdog } from '../sd-notify';
 import {
   buildServeBusySources,
@@ -155,10 +155,6 @@ import {
 const ACP_PORT_DEFAULT = 3001;
 const WEB_PORT_FALLBACK_ATTEMPTS = 5;
 
-// Resilience guard is installed once per process — runServe can be reached
-// twice (onboarding mode then real mode), so guard against double-registration.
-let resilienceGuardInstalled = false;
-
 /** Where a timed-out or failed `boundedShutdownStep` on `cleanup` is reported. */
 const shutdownStepReporting = {
   sink: () => getEthosObservability(),
@@ -182,7 +178,11 @@ type ServeVoiceConfig = {
 };
 
 export async function runServe(args: string[], config: EthosConfig | null): Promise<void> {
-  installServeResilienceGuard();
+  // A stray rejected SSE write (e.g. to a stream the browser aborted on
+  // tab-switch) must not take down the server and every other live stream:
+  // both handlers log and keep running here — no `shutdown` is passed.
+  // Idempotent, so reaching runServe twice (onboarding, then real) is safe.
+  installProcessGuards({ command: 'serve', observability: getEthosObservability });
   const acpPort = parsePort(parseFlagValue(args, ['--port']), ACP_PORT_DEFAULT);
   const webPort = resolveWebPort(args, process.env, config);
   const webHost = resolveWebHost(args, process.env, config);
@@ -1530,44 +1530,6 @@ export async function runServe(args: string[], config: EthosConfig | null): Prom
   }
 
   await new Promise(() => {});
-}
-
-/**
- * Install process-level resilience handlers for the long-running web/ACP
- * server. A stray rejected SSE write (e.g. writing to a stream the browser
- * aborted on tab-switch) must NOT take down the server and drop every other
- * live stream. We log-and-continue here rather than exit — this is scoped to
- * the serve path only; one-shot CLI commands still fail loudly via the
- * top-level handler. Idempotent via `resilienceGuardInstalled`.
- */
-function installServeResilienceGuard(): void {
-  if (resilienceGuardInstalled) return;
-  resilienceGuardInstalled = true;
-  process.on('unhandledRejection', (reason) => {
-    const cause = reason instanceof Error ? reason.message : String(reason);
-    appendErrorLog(
-      new EthosError({
-        code: 'INTERNAL',
-        cause: `Unhandled promise rejection: ${cause}`,
-        action: 'A background promise rejected and was not awaited. The server kept running.',
-      }),
-      { command: 'serve' },
-    );
-    console.error(`[serve] unhandled rejection (kept alive): ${cause}`);
-  });
-  process.on('uncaughtException', (err) => {
-    const cause = err instanceof Error ? err.message : String(err);
-    appendErrorLog(
-      new EthosError({
-        code: 'INTERNAL',
-        cause: `Uncaught exception: ${cause}`,
-        action:
-          'An uncaught exception was trapped by the serve resilience guard. The server kept running.',
-      }),
-      { command: 'serve' },
-    );
-    console.error(`[serve] uncaught exception (kept alive): ${cause}`);
-  });
 }
 
 /**

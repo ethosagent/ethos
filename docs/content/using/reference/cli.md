@@ -136,7 +136,7 @@ Configure and run the multi-platform message [gateway](../../getting-started/glo
 
 Synopsis: `ethos gateway [setup | start | status [--json] | spool <replay|discard> <id>]`
 
-`setup` opens the setup wizard at the messaging step (alias for `ethos setup messaging`). `start` spins up every platform whose credentials are present in [`config.yaml`](./config-yaml.md) and is long-running; exits non-zero if `~/.ethos/config.yaml` is absent.
+`setup` opens the setup wizard at the messaging step (alias for `ethos setup messaging`). `start` spins up every platform whose credentials are present in [`config.yaml`](./config-yaml.md) and is long-running; exits non-zero if `~/.ethos/config.yaml` is absent. If the config has parse errors or a bot binding that resolves to no personality or team, `start` (and `ethos boot`) prints them, suggests `ethos doctor`, and exits `78` (`CONFIG_INVALID_EXIT_CODE`), which the generated systemd unit does not restart. Source: [`apps/ethos/src/lib/config-exit.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/lib/config-exit.ts).
 
 `start` takes the gateway lock, `<ethos home>/gateway.lock`, before it opens any store: one gateway per Ethos home (`ETHOS_STATE_DIR` scopes it, so two homes on one machine run two gateways). `ethos boot` owns channel adapters too and takes the same lock, so a `start` and a `boot` exclude each other. A second `start` or `boot` against a home whose gateway is alive prints the refusal and exits `3`. A lock left by a process that is gone is taken over. Source: [`packages/wiring/src/gateway-lock.ts`](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/gateway-lock.ts).
 

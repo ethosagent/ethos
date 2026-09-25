@@ -33,6 +33,15 @@ import {
  *  run-all` and the desktop app key on it: held is final, not a crash. */
 export const GATEWAY_LOCK_EXIT_CODE = 3;
 
+/** The exit code `ethos gateway start` and `ethos boot` use when their config cannot be
+ *  started from — missing, unparseable, or a bot binding that resolves to nothing
+ *  (`exitIfConfigInvalid`, apps/ethos/src/lib/config-exit.ts). `EX_CONFIG` from
+ *  sysexits.h. Like {@link GATEWAY_LOCK_EXIT_CODE} it is final, not a crash: the
+ *  systemd template lists both in `RestartPreventExitStatus`
+ *  (apps/ethos/templates/systemd/ethos-gateway.service.tmpl, pinned by
+ *  apps/ethos/src/__tests__/systemd-unit.test.ts). */
+export const CONFIG_INVALID_EXIT_CODE = 78;
+
 /** A body with no readable pid (truncated write, foreign file) is stale past this. */
 const UNREADABLE_STALE_MS = 60_000;
 
