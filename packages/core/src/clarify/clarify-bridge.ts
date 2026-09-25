@@ -51,7 +51,16 @@ export interface ClarifyRequestInput {
   options?: string[];
   default?: string;
   timeoutMs: number;
-  answerableBy: ClarifyAnswerableBy;
+  /**
+   * Who may answer. Omitted means the default `request()` resolves once the
+   * route is known: 'originator', except for a background clarify (`jobId`)
+   * whose resolved route names no `originatorUserId` — the job recorded no
+   * originating user (`BackgroundJob.originUserId`) or the question routed to
+   * a presence surface — which gets 'anyone', since an originator-only row
+   * with nobody to bind could only time out. Pinned by the "omitted
+   * answerableBy" cases in `packages/core/src/__tests__/clarify.test.ts`.
+   */
+  answerableBy?: ClarifyAnswerableBy;
   sessionId: string;
   /**
    * D22 — the background job issuing this clarify, when it's a background
@@ -436,7 +445,11 @@ export class ClarifyBridge {
       question: input.question,
       ...(input.options !== undefined ? { options: input.options } : {}),
       ...(input.default !== undefined ? { default: input.default } : {}),
-      answerableBy: input.answerableBy,
+      answerableBy:
+        input.answerableBy ??
+        (input.jobId === undefined || typeof routing.surfaceContext.originatorUserId === 'string'
+          ? 'originator'
+          : 'anyone'),
       createdAt: createdAt.toISOString(),
       defaultDeadlineAt: null,
       presentedAt: null,

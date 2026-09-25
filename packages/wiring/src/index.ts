@@ -760,6 +760,14 @@ export interface CreateAgentLoopOptions {
    */
   resolveOriginThreadId?: (sessionKey: string) => string | undefined;
   /**
+   * Resolve the platform user whose message started the live turn on
+   * `sessionKey`, for stamping `origin_user_id` on background jobs (so their
+   * clarify defaults to that user). Supplied by the gateway
+   * (`Gateway.originUserIdFor`); omitted elsewhere, in which case a job
+   * records no originator.
+   */
+  resolveOriginUserId?: (sessionKey: string) => string | undefined;
+  /**
    * Lane 0 (eng review D16) — force a LIVE served-window probe (bypassing the
    * 15-minute disk cache) and rewrite the cache. Set by the command paths
    * whose numbers the operator tunes against (`ethos doctor`, `ethos bench

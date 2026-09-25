@@ -48,7 +48,8 @@ const SCHEMA = `
     runner             TEXT,
     blocked_since      INTEGER,
     blocked_request_id TEXT,
-    deliver            TEXT NOT NULL DEFAULT 'user'
+    deliver            TEXT NOT NULL DEFAULT 'user',
+    origin_user_id     TEXT
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS job_events (
@@ -88,11 +89,11 @@ const SCHEMA = `
 const DELIVERY_INDEX =
   'CREATE INDEX IF NOT EXISTS jobs_undelivered ON jobs(origin_bot_key, status, delivered_at)';
 
-const JOB_STORE_SCHEMA_VERSION = 7;
+const JOB_STORE_SCHEMA_VERSION = 8;
 
 /**
  * Forward-only DDL steps. Each brings a `(N-1)` database to `N`; the baseline
- * above already describes v7, so a FRESH database never runs one. The
+ * above already describes v8, so a FRESH database never runs one. The
  * `table_info` guards keep each ALTER idempotent even if a database was
  * hand-repaired to the newer shape without its `user_version` being bumped.
  */
@@ -126,6 +127,9 @@ const JOB_STORE_MIGRATIONS: Record<number, (db: Database.Database) => void> = {
   // The DEFAULT makes every existing row read `'user'` — the only behaviour
   // that existed before the column.
   7: (db) => addColumnIfMissing(db, 'deliver', `TEXT NOT NULL DEFAULT 'user'`),
+  // v7 -> v8: who started the job (`BackgroundJob.originUserId`). NULL on
+  // every existing row — no originator was ever recorded for them.
+  8: (db) => addColumnIfMissing(db, 'origin_user_id', 'TEXT'),
 };
 
 function addColumnIfMissing(db: Database.Database, column: string, type: string): void {
@@ -170,6 +174,7 @@ interface JobRow {
   blocked_since: number | null;
   blocked_request_id: string | null;
   deliver: string;
+  origin_user_id: string | null;
 }
 
 interface JobEventRow {
@@ -211,6 +216,7 @@ function rowToJob(r: JobRow): BackgroundJob {
     originBotKey: r.origin_bot_key ?? undefined,
     originChatId: r.origin_chat_id ?? undefined,
     originThreadId: r.origin_thread_id ?? undefined,
+    originUserId: r.origin_user_id ?? undefined,
     remotePeer: r.remote_peer ?? undefined,
     remoteJobId: r.remote_job_id ?? undefined,
     runner: r.runner ?? undefined,
@@ -281,8 +287,8 @@ export class SQLiteJobStore implements JobStore {
           personality_id, depth, status, label, prompt, spend_usd,
           max_cost_usd, cancel_requested, created_at,
           origin_platform, origin_bot_key, origin_chat_id, origin_thread_id,
-          remote_peer, remote_job_id, runner, deliver)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          remote_peer, remote_job_id, runner, deliver, origin_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -307,6 +313,7 @@ export class SQLiteJobStore implements JobStore {
         input.remoteJobId ?? null,
         input.runner ?? null,
         input.deliver ?? 'user',
+        input.originUserId ?? null,
       );
 
     this.appendEventSync(id, 'queued', {});

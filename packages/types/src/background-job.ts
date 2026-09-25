@@ -115,6 +115,15 @@ export interface BackgroundJob {
   originChatId?: string;
   originThreadId?: string;
   /**
+   * Platform user id of whoever's channel turn spawned the job (the gateway's
+   * `SessionRouting.requesterUserId`). Absent when no user is known — cron,
+   * web, CLI, rows written before the column. `resolveJobClarifyOrigin`
+   * (packages/wiring/src/build-agent-loop.ts) stamps it as the clarify
+   * origin's `originatorUserId`, which is what lets a background clarify
+   * default to `answerableBy: 'originator'` (`ClarifyBridge.request`).
+   */
+  originUserId?: string;
+  /**
    * Which runner executed this row (`JobRunner.name`, e.g. `ethos`). Absent on
    * rows written before the seam existed, and on rows that ran on the default
    * runner. Persisted because the badge renders from the row, not from a live
@@ -215,6 +224,8 @@ export interface CreateBackgroundJobInput {
   originBotKey?: string;
   originChatId?: string;
   originThreadId?: string;
+  /** See `BackgroundJob.originUserId`. */
+  originUserId?: string;
   remotePeer?: string;
   remoteJobId?: string;
 }

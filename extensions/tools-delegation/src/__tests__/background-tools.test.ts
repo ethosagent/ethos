@@ -64,6 +64,7 @@ class FakeJobStore implements JobStore {
       originBotKey: input.originBotKey,
       originChatId: input.originChatId,
       originThreadId: input.originThreadId,
+      originUserId: input.originUserId,
       remotePeer: input.remotePeer,
       remoteJobId: input.remoteJobId,
       runner: input.runner,
@@ -510,6 +511,27 @@ describe('delegate_task background path', () => {
     // No channel origin → no lane at all, not a half-populated one.
     expect(noOriginJob?.originBotKey).toBeUndefined();
     expect(noOriginJob?.originThreadId).toBeUndefined();
+  });
+
+  it('records the originating user from the gateway, only on a channel turn', async () => {
+    const store = new FakeJobStore();
+    const { deps } = makeDeps(store, {
+      originBotKey: 'bot-1',
+      resolveOriginUserId: (sessionKey) => (sessionKey === 'cli:test' ? 'u-42' : undefined),
+    });
+    const tool = createDelegateTaskTool(loop, deps);
+
+    const channel = await tool.execute(
+      { prompt: 'p', background: true },
+      makeCtx({ origin: 'telegram:chat-9' }),
+    );
+    if (!channel.ok) throw new Error('expected ok');
+    expect(store.jobs.get(JSON.parse(channel.value).jobId)?.originUserId).toBe('u-42');
+
+    // No channel origin (cron, web, CLI) → no originator, even if one resolves.
+    const local = await tool.execute({ prompt: 'p', background: true }, makeCtx());
+    if (!local.ok) throw new Error('expected ok');
+    expect(store.jobs.get(JSON.parse(local.value).jobId)?.originUserId).toBeUndefined();
   });
 
   it('resolves the cost cap: null=uncapped, number=value, omitted=default', async () => {

@@ -203,6 +203,14 @@ export interface BackgroundToolDeps {
    */
   resolveOriginThreadId?: (sessionKey: string) => string | undefined;
   /**
+   * Resolve the platform user whose message started the live turn — a per-turn
+   * lookup for the same reason as `resolveOriginThreadId` (`ToolContext`
+   * carries no sender; the gateway answers it, `Gateway.originUserIdFor`).
+   * Stamped as `originUserId` so the job's clarify defaults to that user.
+   * Absent outside the gateway; the job then records no originator.
+   */
+  resolveOriginUserId?: (sessionKey: string) => string | undefined;
+  /**
    * Runners this deployment can execute a job on, beyond the default. Used only
    * to VALIDATE the `runner` arg at the tool boundary — the executor does its
    * own lookup. Absent means only the default runner exists here.
@@ -567,6 +575,9 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
         const originThreadId = originPlatform
           ? background.resolveOriginThreadId?.(ctx.sessionKey)
           : undefined;
+        const originUserId = originPlatform
+          ? background.resolveOriginUserId?.(ctx.sessionKey)
+          : undefined;
         const job = await background.store.create({
           owner: background.owner,
           parentSessionKey: ctx.sessionKey,
@@ -583,6 +594,7 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
           ...(originBotKey ? { originBotKey } : {}),
           ...(originChatId ? { originChatId } : {}),
           ...(originThreadId ? { originThreadId } : {}),
+          ...(originUserId ? { originUserId } : {}),
         });
 
         background.nudge();
