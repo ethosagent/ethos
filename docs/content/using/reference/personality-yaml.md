@@ -4,7 +4,7 @@ description: "Every field in a personality's config.yaml and toolset.yaml — mo
 kind: reference
 audience: user
 slug: personality-yaml
-updated: 2026-09-17
+updated: 2026-09-25
 ---
 
 A [personality](../../getting-started/glossary.md#personality) is a directory at `~/.ethos/personalities/<id>/` with three files:
@@ -378,7 +378,7 @@ Decides what happens when a tool call is classified `dangerous`.
 
 | Value | Behaviour |
 |---|---|
-| `manual` | Every `dangerous` classification surfaces the approval modal; `safe` auto-fires; `blocked` errors out. |
+| `manual` | Every `dangerous` classification surfaces the approval prompt (the web UI modal, or a Slack / Telegram / Discord card); `safe` auto-fires; `blocked` errors out. The CLI, TUI and ACP have no prompt: there only the hardline floor and command substitution are refused, and other `dangerous` calls run. See [Set up approval gates](../how-to/set-up-approval-gates.md). |
 | `smart` | An auxiliary fast-model call reviews each `dangerous` classification and either auto-approves, auto-denies, or escalates to `manual`. Trades latency and dollars for reduced approval fatigue. |
 | `off` | `dangerous` classifications auto-fire without prompting; the hardline `blocked` floor still applies. |
 

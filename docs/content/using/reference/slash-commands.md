@@ -119,7 +119,7 @@ Synopsis: `/skills`
 
 ## /allow {#slash-allow}
 
-Approve a pending channel sender by pairing code. Readline CLI only — the TUI uses the approval modal.
+Approve a pending channel sender by pairing code. Readline CLI and chat channels only (`surfaces: ['cli', 'gateway']` in `packages/surface-kit/src/slash-commands.ts`). The TUI has no pairing command and no approval modal.
 
 Synopsis: `/allow <code>`
 

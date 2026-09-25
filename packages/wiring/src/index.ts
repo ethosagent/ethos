@@ -1985,13 +1985,16 @@ export {
 } from './approval-seams';
 export {
   APPROVAL_SURFACE_ALWAYS_ASK,
+  approvalRequiredReason,
   type CreateDangerPredicateOptions,
   canonicalizeArgs,
   createDangerPredicate,
   type DangerPredicate,
   type DangerReason,
   hardlineReason,
+  hasHostApprovalGate,
   LOCAL_POSTURE_CONSEQUENTIAL_TOOLS,
+  markHostApprovalGate,
   SMART_MODE_CONSEQUENTIAL_TOOLS,
   type SmartApprovalCallback,
   type SmartVerdict,

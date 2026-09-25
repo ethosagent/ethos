@@ -13,8 +13,9 @@ import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/ty
 // blocklist via `@ethosagent/tools-terminal/src/guard.ts`; this file is the
 // analog for `process_start`. The pattern list is intentionally a verbatim
 // copy of the terminal guard's: the dangerous shapes are universally
-// dangerous and apply equally to either entry point. Keep the two in sync
-// when patterns are added.
+// dangerous and apply equally to either entry point. The same goes for
+// APPROVAL_PATTERNS (command substitution, which asks rather than refuses).
+// Keep the two files in sync when patterns are added.
 //
 // Same honest scope as the terminal guard: this is regex matching against
 // the raw command string, and the terminal guard's header lists what still
@@ -29,7 +30,9 @@ const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
       // Case-insensitive (D1b): `RM`/`Rm` resolve to rm on a case-insensitive filesystem.
       if (!/\brm\b/i.test(cmd)) return false;
       if (!/-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r/i.test(cmd)) return false;
-      return /\s(\/[\s;|&*]|\/\*|\/\s*$|~\/?[\s;|&*]|~\/\*|~\/?\s*$)/.test(cmd);
+      // `)` and a backtick end the path too: `echo $(rm -rf /)` is still this
+      // shape now that the substitution around it only asks (see APPROVAL_PATTERNS).
+      return /\s(\/[\s;|&*)`]|\/\*|\/\s*$|~\/?[\s;|&*)`]|~\/\*|~\/?\s*$)/.test(cmd);
     },
     reason: 'recursive force-delete of root or home directory',
   },
@@ -136,6 +139,22 @@ const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
     test: (cmd) => /\|\s*(?:sudo\s+)?(?:\S*\/)?(?:ba|z|da|k|fi)?sh(?:\s|$)/.test(cmd),
     reason: 'input piped into a shell',
   },
+];
+
+// Approval-required, NOT hardline: shapes a human may reasonably want to run
+// (`kill $(lsof -t -i:3000)`, a commit message built with `$(cat msg)`) but
+// that hide what actually executes from every pattern above. `checkCommand`
+// does not refuse them; `approvalRequiredReason` names them, and
+// - the danger predicate (`createDangerPredicate`,
+//   packages/wiring/src/danger-predicate.ts) flags them in every approval
+//   mode, so a surface with a human asks and a surface without one refuses;
+// - the guard hook below refuses them on a loop no approval gate covers
+//   (CLI, TUI, ACP) — fail closed — and leaves them to the gate on a loop
+//   that has one (`approvalGated`, wired by `composeAllTools` from
+//   `hasHostApprovalGate`).
+// Command substitution was hardline under D1(b) of plan
+// openclaw-2026.9.6-gaps; it moved here because hardline has no approval path.
+const APPROVAL_PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
   {
     // Command substitution: $(…) and backticks. `$((…))` is arithmetic and
     // runs nothing, so it is excluded.
@@ -233,9 +252,45 @@ export function checkCommand(command: string): DangerResult {
   return { dangerous: false };
 }
 
-export function createProcessGuardHook(): (
-  payload: BeforeToolCallPayload,
-) => Promise<Partial<BeforeToolCallResult> | null> {
+/**
+ * Why `command` needs a human's approval, or `null`. Not a refusal: the caller
+ * checks `checkCommand` first — a hardline command is refused whatever this
+ * says. See APPROVAL_PATTERNS for who acts on it.
+ */
+export function approvalRequiredReason(command: string): string | null {
+  for (const { test, reason } of APPROVAL_PATTERNS) {
+    if (test(command)) return reason;
+  }
+  return null;
+}
+
+export interface GuardHookOptions {
+  /**
+   * True when the loop this hook guards also carries a host approval gate — a
+   * `before_tool_call` hook built on the danger predicate that asks a human or
+   * refuses. The guard then leaves approval-required commands to that gate.
+   * Absent or false → the guard refuses them itself (no one could approve).
+   * Read per call. Hardline commands are refused either way.
+   */
+  approvalGated?: () => boolean;
+}
+
+function approvalRefusal(reason: string): string {
+  return (
+    `Command blocked: ${reason} requires explicit human approval, and this surface cannot ask for it. ` +
+    'Rewrite the command without it, or run it from a surface with approval prompts ' +
+    '(the web UI, or a chat platform with approval cards).'
+  );
+}
+
+/**
+ * The hard-blocking `before_tool_call` guard for `process_start`. An
+ * approval-required command (`approvalRequiredReason`) is refused too unless
+ * `opts.approvalGated` says a host approval gate covers this loop.
+ */
+export function createProcessGuardHook(
+  opts: GuardHookOptions = {},
+): (payload: BeforeToolCallPayload) => Promise<Partial<BeforeToolCallResult> | null> {
   return async (payload) => {
     if (payload.toolName !== 'process_start') return null;
     const args = payload.args as { command?: string };
@@ -246,6 +301,8 @@ export function createProcessGuardHook(): (
         error: `Command blocked: ${result.reason}. This operation requires explicit human approval before proceeding.`,
       };
     }
+    const approval = approvalRequiredReason(args.command);
+    if (approval && opts.approvalGated?.() !== true) return { error: approvalRefusal(approval) };
     return null;
   };
 }

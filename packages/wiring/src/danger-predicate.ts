@@ -4,9 +4,20 @@
 // the full createAgentLoop wiring (which depends on plugin-loader,
 // sandbox-docker, etc. and chokes outside the monorepo install).
 
-import { checkCommand as checkProcessCommand } from '@ethosagent/tools-process';
-import { checkCommand as checkTerminalCommand } from '@ethosagent/tools-terminal';
-import type { BeforeToolCallPayload, ExecutionPosture, PersonalityConfig } from '@ethosagent/types';
+import {
+  checkCommand as checkProcessCommand,
+  approvalRequiredReason as processApprovalReason,
+} from '@ethosagent/tools-process';
+import {
+  checkCommand as checkTerminalCommand,
+  approvalRequiredReason as terminalApprovalReason,
+} from '@ethosagent/tools-terminal';
+import type {
+  BeforeToolCallPayload,
+  ExecutionPosture,
+  HookRegistry,
+  PersonalityConfig,
+} from '@ethosagent/types';
 
 /** Result returned by a danger predicate. `null` = no approval needed. */
 export type DangerReason = string | null;
@@ -265,10 +276,61 @@ export function hardlineReason(payload: BeforeToolCallPayload): string | null {
       ? checkProcessCommand
       : undefined;
   if (!check) return null;
-  const args = payload.args as { command?: unknown } | null | undefined;
-  if (typeof args?.command !== 'string' || args.command === '') return null;
-  const result = check(args.command);
+  const command = shellCommand(payload);
+  if (command === null) return null;
+  const result = check(command);
   return result.dangerous ? result.reason : null;
+}
+
+/**
+ * Why a {@link TERMINAL_CHECKED_TOOLS} or `process_start` `command` needs a
+ * human's approval though it is not hardline, or `null` — today, command
+ * substitution (`approvalRequiredReason` in `@ethosagent/tools-terminal` and
+ * `@ethosagent/tools-process`). {@link createDangerPredicate} flags such a call
+ * in every approval mode; callers check {@link hardlineReason} first.
+ */
+export function approvalRequiredReason(payload: BeforeToolCallPayload): string | null {
+  const reason = TERMINAL_CHECKED_TOOLS.includes(payload.toolName)
+    ? terminalApprovalReason
+    : payload.toolName === 'process_start'
+      ? processApprovalReason
+      : undefined;
+  if (!reason) return null;
+  const command = shellCommand(payload);
+  return command === null ? null : reason(command);
+}
+
+function shellCommand(payload: BeforeToolCallPayload): string | null {
+  const args = payload.args as { command?: unknown } | null | undefined;
+  return typeof args?.command === 'string' && args.command !== '' ? args.command : null;
+}
+
+/**
+ * Loops whose `before_tool_call` carries a HOST APPROVAL GATE: a hook built on
+ * this module's predicate that, for every call the predicate flags, either
+ * asks a human or refuses. Marked by the code that registers the gate —
+ * `wireApprovalFlow` (apps/ethos/src/commands/gateway.ts: the card hook or the
+ * no-surface gate, for every bot) and `wireUnattendedApprovalGate`
+ * (apps/ethos/src/unattended-approval-gate.ts, the systemLoop). Read per call
+ * by the terminal and process guards `composeAllTools` registers
+ * (`approvalGated`), which leave an approval-required command to the gate on a
+ * marked loop and refuse it on any other — CLI, TUI and ACP have no gate, so
+ * nobody could approve it there. An unmarked loop is the fail-closed default.
+ * A mark on a registry that is garbage-collected goes with it (WeakSet).
+ */
+const hostApprovalGated = new WeakSet<HookRegistry>();
+
+/** Record that `hooks` carries a host approval gate. Returns the undo. */
+export function markHostApprovalGate(hooks: HookRegistry): () => void {
+  hostApprovalGated.add(hooks);
+  return () => {
+    hostApprovalGated.delete(hooks);
+  };
+}
+
+/** Whether `hooks` carries a host approval gate ({@link markHostApprovalGate}). */
+export function hasHostApprovalGate(hooks: HookRegistry): boolean {
+  return hostApprovalGated.has(hooks);
 }
 
 /**
@@ -301,7 +363,8 @@ export function hardlineReason(payload: BeforeToolCallPayload): string | null {
  *      is `alwaysAsk` under manual and off, and
  *      `alwaysAsk ∪ SMART_MODE_CONSEQUENTIAL_TOOLS` under smart; in every mode
  *      it also takes {@link LOCAL_POSTURE_CONSEQUENTIAL_TOOLS} when the turn
- *      runs on a non-containerized local posture:
+ *      runs on a non-containerized local posture, and any call with an
+ *      {@link approvalRequiredReason} (command substitution), on any posture:
  *        manual (default) → return the reason (drives the modal).
  *        off              → return null (auto-approve — hardline still
  *                           hard-blocks separately).
@@ -348,8 +411,13 @@ export function createDangerPredicate(opts: CreateDangerPredicateOptions = {}): 
     // would also produce non-hardline reasons that route through here.
     const mode = safety?.approvalMode ?? 'manual';
     const flagged = mode === 'smart' ? smartAlwaysAsk : alwaysAsk;
+    // An approval-required command (command substitution) is flagged in every
+    // mode, whatever the tool's own flag status, and its reason is named.
+    const commandReason = approvalRequiredReason(payload);
     let dangerReason: string | null = null;
-    if (flagged.has(payload.toolName) || onHostShell(payload, personality)) {
+    if (commandReason) {
+      dangerReason = `${payload.toolName} requires explicit approval (${commandReason})`;
+    } else if (flagged.has(payload.toolName) || onHostShell(payload, personality)) {
       dangerReason = `${payload.toolName} requires explicit approval`;
     }
     if (!dangerReason) return null;

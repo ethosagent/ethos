@@ -3,10 +3,14 @@
 // openclaw-2026.9.6-gaps and each broke bundled skills that predated them:
 //   - S16: any command naming the Ethos state dir (`stateDirReference`), which
 //     is why scratch/work dirs moved to the workspace's `./.ethos-work/`;
-//   - D1(b): inline-eval wrappers (`node -e`, `sh -c`, `$(…)`, …).
+//   - D1(b): inline-eval wrappers (`node -e`, `sh -c`, `eval`, …).
 // This scans every fenced ```bash / ```sh / ```shell / ```zsh block in
 // skills/**/SKILL.md, one command per line (backslash continuations joined),
-// through `checkCommand` — the same check `createTerminalGuardHook` applies.
+// through `checkCommand` — the hardline check `createTerminalGuardHook` applies.
+// Command substitution (`$(…)`, backticks) is deliberately NOT asserted here:
+// it is approval-required, not hardline (`approvalRequiredReason`), so a skill
+// may use it — the call asks for approval where a human can give it and is
+// refused where none can.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';

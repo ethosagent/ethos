@@ -32,7 +32,7 @@ function toolCall(overrides: Partial<BeforeToolCallPayload> = {}): BeforeToolCal
     sessionId: 'sid-1',
     toolCallId: 'tc-1',
     toolName: 'terminal',
-    args: { command: 'rm -rf /' },
+    args: { command: 'kill $(lsof -t -i:3000)' },
     ...overrides,
   };
 }
@@ -359,6 +359,7 @@ describe('createSlackApprovalHook', () => {
     const coordinator = new ApprovalCoordinator();
     const requestSpy = vi.spyOn(coordinator, 'requestApproval');
     const hook = createSlackApprovalHook({
+      hardlineReason: () => null,
       coordinator,
       isDangerous: async () => null,
       resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
@@ -380,6 +381,7 @@ describe('createSlackApprovalHook', () => {
     const isDangerous = vi.fn(async () => 'recursive force-delete');
     const withoutSurface = vi.fn(async () => ({ error: 'no human is present' }));
     const hook = createSlackApprovalHook({
+      hardlineReason: () => null,
       coordinator,
       isDangerous,
       resolveApprovalTarget: () => undefined,
@@ -399,6 +401,7 @@ describe('createSlackApprovalHook', () => {
     const pending: PendingApproval[] = [];
     coordinator.onPending((p) => pending.push(p));
     const hook = createSlackApprovalHook({
+      hardlineReason: () => null,
       coordinator,
       isDangerous: async () => 'recursive force-delete',
       resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
@@ -418,6 +421,7 @@ describe('createSlackApprovalHook', () => {
     const pending: PendingApproval[] = [];
     coordinator.onPending((p) => pending.push(p));
     const hook = createSlackApprovalHook({
+      hardlineReason: () => null,
       coordinator,
       isDangerous: async () => 'recursive force-delete',
       resolveApprovalTarget: () => ({ requesterUserId: 'U1' }),
@@ -683,7 +687,7 @@ describe('wireApprovalFlow', () => {
       sessionId: 'sid-1',
       toolCallId: 'tc-1',
       toolName: 'terminal',
-      args: { command: 'rm -rf /' },
+      args: { command: 'kill $(lsof -t -i:3000)' },
     } satisfies BeforeToolCallPayload);
   }
 

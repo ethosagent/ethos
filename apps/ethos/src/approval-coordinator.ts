@@ -344,6 +344,17 @@ export interface CreateSlackApprovalHookOptions {
    * apps/ethos/src/commands/__tests__/approval-flow-unattended.test.ts.
    */
   withoutSurface: (payload: BeforeToolCallPayload) => Promise<{ error?: string }>;
+  /**
+   * The hardline reason for a call, or `null` — `hardlineReason` from
+   * `@ethosagent/wiring` (packages/wiring/src/danger-predicate.ts) in
+   * production. A hardline call is refused here with that reason and NO card
+   * is posted: on every gateway loop the terminal/process guard
+   * (`composeAllTools`, non-web profile) refuses it whatever the card says, so
+   * a card would ask a human to Allow something that can never run. Required
+   * so no caller can forget it. Pinned by
+   * apps/ethos/src/commands/__tests__/command-substitution-approval.test.ts.
+   */
+  hardlineReason: (payload: BeforeToolCallPayload) => string | null;
 }
 
 /**
@@ -362,6 +373,10 @@ export function createSlackApprovalHook(opts: CreateSlackApprovalHookOptions) {
     // predicate. Resolved first so a flagged call is judged once, not twice.
     const target = opts.resolveApprovalTarget(payload.sessionId);
     if (target === undefined) return opts.withoutSurface(payload);
+
+    // Refused before any card: nobody can approve a hardline call here.
+    const hardline = opts.hardlineReason(payload);
+    if (hardline) return { error: `Command blocked: ${hardline}. No approval can allow it.` };
 
     const reason = await opts.isDangerous(payload);
     if (reason === null) return null;

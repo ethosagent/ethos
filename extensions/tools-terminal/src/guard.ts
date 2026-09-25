@@ -15,10 +15,12 @@ import type { BeforeToolCallPayload, BeforeToolCallResult } from '@ethosagent/ty
 //
 // **Honest scope.** This is regex matching against the raw command
 // string. The inline-eval wrappers (`sh -c` and its siblings, `eval`,
-// `python -c`, `node -e`, anything piped into a shell, `$(…)` and
-// backticks, case-variant `rm`) are hardline since D1(b) of plan
-// openclaw-2026.9.6-gaps — the entries at the end of PATTERNS. What STILL
-// defeats it, and is not caught:
+// `python -c`, `node -e`, anything piped into a shell, case-variant `rm`)
+// are hardline since D1(b) of plan openclaw-2026.9.6-gaps — the entries at
+// the end of PATTERNS. Command substitution (`$(…)` and backticks) is NOT
+// hardline: it requires approval (APPROVAL_PATTERNS below), so a surface
+// with a human asks and a surface without one refuses. What STILL defeats
+// the hardline, and is not caught:
 //   - variable indirection: `a=rm; b=-rf; c=/; $a $b $c`
 //   - other interpreters' eval flags: `perl -e`, `ruby -e`, `php -r`,
 //     `awk 'BEGIN{system(…)}'`, `find -exec`, `xargs rm`
@@ -43,7 +45,9 @@ const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
       // Case-insensitive (D1b): `RM`/`Rm` resolve to rm on a case-insensitive filesystem.
       if (!/\brm\b/i.test(cmd)) return false;
       if (!/-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r/i.test(cmd)) return false;
-      return /\s(\/[\s;|&*]|\/\*|\/\s*$|~\/?[\s;|&*]|~\/\*|~\/?\s*$)/.test(cmd);
+      // `)` and a backtick end the path too: `echo $(rm -rf /)` is still this
+      // shape now that the substitution around it only asks (see APPROVAL_PATTERNS).
+      return /\s(\/[\s;|&*)`]|\/\*|\/\s*$|~\/?[\s;|&*)`]|~\/\*|~\/?\s*$)/.test(cmd);
     },
     reason: 'recursive force-delete of root or home directory',
   },
@@ -150,6 +154,22 @@ const PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
     test: (cmd) => /\|\s*(?:sudo\s+)?(?:\S*\/)?(?:ba|z|da|k|fi)?sh(?:\s|$)/.test(cmd),
     reason: 'input piped into a shell',
   },
+];
+
+// Approval-required, NOT hardline: shapes a human may reasonably want to run
+// (`kill $(lsof -t -i:3000)`, a commit message built with `$(cat msg)`) but
+// that hide what actually executes from every pattern above. `checkCommand`
+// does not refuse them; `approvalRequiredReason` names them, and
+// - the danger predicate (`createDangerPredicate`,
+//   packages/wiring/src/danger-predicate.ts) flags them in every approval
+//   mode, so a surface with a human asks and a surface without one refuses;
+// - the guard hook below refuses them on a loop no approval gate covers
+//   (CLI, TUI, ACP) — fail closed — and leaves them to the gate on a loop
+//   that has one (`approvalGated`, wired by `composeAllTools` from
+//   `hasHostApprovalGate`).
+// Command substitution was hardline under D1(b) of plan
+// openclaw-2026.9.6-gaps; it moved here because hardline has no approval path.
+const APPROVAL_PATTERNS: Array<{ test: (cmd: string) => boolean; reason: string }> = [
   {
     // Command substitution: $(…) and backticks. `$((…))` is arithmetic and
     // runs nothing, so it is excluded.
@@ -252,14 +272,48 @@ export function checkCommand(command: string): DangerResult {
 }
 
 /**
+ * Why `command` needs a human's approval, or `null`. Not a refusal: the caller
+ * checks `checkCommand` first — a hardline command is refused whatever this
+ * says. See APPROVAL_PATTERNS for who acts on it.
+ */
+export function approvalRequiredReason(command: string): string | null {
+  for (const { test, reason } of APPROVAL_PATTERNS) {
+    if (test(command)) return reason;
+  }
+  return null;
+}
+
+export interface GuardHookOptions {
+  /**
+   * True when the loop this hook guards also carries a host approval gate — a
+   * `before_tool_call` hook built on the danger predicate that asks a human or
+   * refuses. The guard then leaves approval-required commands to that gate.
+   * Absent or false → the guard refuses them itself (no one could approve).
+   * Read per call. Hardline commands are refused either way.
+   */
+  approvalGated?: () => boolean;
+}
+
+function approvalRefusal(reason: string): string {
+  return (
+    `Command blocked: ${reason} requires explicit human approval, and this surface cannot ask for it. ` +
+    'Rewrite the command without it, or run it from a surface with approval prompts ' +
+    '(the web UI, or a chat platform with approval cards).'
+  );
+}
+
+/**
  * The hard-blocking `before_tool_call` guard. Checks `args.command` of every
  * tool named in `toolNames` (default: `terminal` only). Wiring passes
  * `TERMINAL_CHECKED_TOOLS` (packages/wiring/src/danger-predicate.ts) so
  * `run_tests` / `lint`, whose `command` also reaches `bash -c`, are blocked by
- * the same rules (EXE-001).
+ * the same rules (EXE-001). An approval-required command
+ * (`approvalRequiredReason`) is refused too unless `opts.approvalGated` says a
+ * host approval gate covers this loop.
  */
 export function createTerminalGuardHook(
   toolNames: ReadonlyArray<string> = ['terminal'],
+  opts: GuardHookOptions = {},
 ): (payload: BeforeToolCallPayload) => Promise<Partial<BeforeToolCallResult> | null> {
   return async (payload) => {
     if (!toolNames.includes(payload.toolName)) return null;
@@ -271,6 +325,8 @@ export function createTerminalGuardHook(
         error: `Command blocked: ${result.reason}. This operation requires explicit human approval before proceeding.`,
       };
     }
+    const approval = approvalRequiredReason(args.command);
+    if (approval && opts.approvalGated?.() !== true) return { error: approvalRefusal(approval) };
     return null;
   };
 }

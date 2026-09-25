@@ -125,10 +125,12 @@ import {
   createOutboundPolicyGate,
   createSessionStore,
   fileMemoryUnsupportedReason,
+  hardlineReason,
   IdentityMap,
   initPairingDb,
   type LiveKitBindings,
   type MessagingSendFn,
+  markHostApprovalGate,
   type OutboxWiring,
   resolveKanbanDbPath,
   type SmartApproverDecisionSite,
@@ -2950,6 +2952,9 @@ export function wireApprovalFlow(
       'before_tool_call',
       createNoApprovalSurfaceGate([bot.loop.hooks], noSurfaceOpts),
     );
+    // The loop's terminal/process guards now leave approval-required commands
+    // (command substitution) to this gate, which refuses them here.
+    markHostApprovalGate(bot.loop.hooks);
   }
   // No approval surface — hand back a no-op handle so the caller needs no
   // null check in its shutdown closure. Nothing can ever be pending here.
@@ -3049,8 +3054,17 @@ export function wireApprovalFlow(
   for (const bot of approvalBots) {
     bot.loop.hooks.registerModifying(
       'before_tool_call',
-      createSlackApprovalHook({ coordinator, isDangerous, resolveApprovalTarget, withoutSurface }),
+      createSlackApprovalHook({
+        coordinator,
+        isDangerous,
+        resolveApprovalTarget,
+        withoutSurface,
+        hardlineReason,
+      }),
     );
+    // Approval-required commands (command substitution) now reach the card
+    // instead of the loop's terminal/process guard refusing them first.
+    markHostApprovalGate(bot.loop.hooks);
   }
 
   // Update a posted card to its resolved state. Shared by the normal

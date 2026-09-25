@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: set-up-approval-gates
 time: 10 min
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 Some tool calls write files, run shell commands, or hit the network. You do not want them firing unsupervised. Approval gates make the agent pause and ask before the dangerous call runs — or refuse it outright.
@@ -31,7 +31,7 @@ Ethos's safety classifier sorts every tool call into one of three buckets. `safe
 
 | Mode | What happens on `dangerous` | When to pick it |
 |---|---|---|
-| `manual` *(default)* | Surface an approval prompt; wait for Allow / Deny. | Personal CLI sessions. Web UI personalities. Any time you are sitting at the terminal and can answer in seconds. |
+| `manual` *(default)* | Surface an approval prompt; wait for Allow / Deny. | Web UI personalities and Slack / Telegram / Discord bots. Any time you can answer a prompt in seconds. The CLI and TUI have no approval prompt, so the mode changes nothing there (see step 5). |
 | `smart` | An LLM reviewer judges the call first. `approve` → runs with no prompt. `deny` and `ask` → the approval prompt still fires, carrying the reviewer's reason. | Long-running agent sessions where approval fatigue is the failure mode. Trades latency and reviewer tokens for fewer interruptions. |
 | `off` | Auto-fire. `blocked` calls still refuse. | Trusted local automation only — cron, batch runs, headless test rigs. Refused at config load when combined with any channel ingress. On the gateway's cron/dream loop it takes effect only when the operator also sets `allowUnattendedDangerousTools: true` in `config.yaml`; otherwise flagged calls there are refused, because nobody is present to approve them. It never takes effect on a WhatsApp, email or webhook bot: flagged calls there are always refused. |
 
@@ -61,7 +61,13 @@ safety:
 
 Under `smart` — and only under `smart` — four built-in tools are flagged as consequential and routed to the reviewer: `terminal`, `write_file`, `patch_file`, and `process_start` (`SMART_MODE_CONSEQUENTIAL_TOOLS` in [packages/wiring/src/danger-predicate.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/danger-predicate.ts)). Read-only tools such as `read_file`, `search_files`, and `web_search` are deliberately excluded: flagging a lookup would buy a reviewer round-trip per read and no safety. `run_code` is excluded too, because it already executes inside an isolated container.
 
-`manual` and `off` see an unchanged flag set: hardline terminal commands, plus whatever the deployment marked `alwaysAsk`. Switching a personality to `smart` therefore widens what gets gated, it does not narrow it.
+`manual` and `off` flag three things, all from `createDangerPredicate` in [packages/wiring/src/danger-predicate.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/danger-predicate.ts):
+
+- The tools the surface passes as `alwaysAsk`. Every approval surface passes `APPROVAL_SURFACE_ALWAYS_ASK`: `skills_pending_approve`, `skills_pending_reject` and `call`.
+- `terminal`, `process_start`, `run_tests` and `lint` when the personality runs on a host-local posture that is not itself a container (`LOCAL_POSTURE_CONSEQUENTIAL_TOOLS`).
+- A `terminal`, `process_start`, `run_tests` or `lint` command that uses command substitution, `$(…)` or backticks, on any posture (`approvalRequiredReason`).
+
+`smart` flags all of these plus its four tools. Switching a personality to `smart` therefore widens what gets gated, it does not narrow it. Hardline commands sit outside this set: they are refused before any mode applies.
 
 Four things worth knowing before you rely on it:
 
@@ -131,14 +137,14 @@ The mode is the same across surfaces. The *prompt* differs by what the surface c
 
 ### CLI (`ethos chat`)
 
-The CLI does not have an interactive approval flow. `dangerous` terminal commands that hit the hardline blocklist surface as a tool error in the transcript:
+The CLI has no approval prompt, and neither do the TUI and the ACP server. Their only gate is the pair of guards that `composeAllTools` ([packages/wiring/src/compose-tools.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/compose-tools.ts)) registers on every non-web profile: `createTerminalGuardHook` and `createProcessGuardHook`. They refuse a hardline command, and a command that requires approval (command substitution: `$(…)` or backticks), because nobody on these surfaces can approve it. The refusal surfaces as a tool error in the transcript:
 
 ```
 Command blocked: recursive force-delete of root or home directory.
 This operation requires explicit human approval before proceeding.
 ```
 
-The agent gets the error back as a tool result and continues the turn — usually by trying a less destructive approach or asking you what to do. `manual` mode on the CLI today only affects the hardline floor; non-hardline `dangerous` calls auto-fire because the CLI has no modal to surface. If you need interactive approval, run `ethos serve` and use the web UI.
+The agent gets the error back as a tool result and continues the turn — usually by trying a less destructive approach or asking you what to do. `approvalMode` changes nothing on these surfaces. The guards refuse the same commands in every mode. Every other `dangerous` call runs without asking, because no approval gate is registered on these loops (`hasHostApprovalGate` in [packages/wiring/src/danger-predicate.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/danger-predicate.ts) is false for them). If you need interactive approval, run `ethos serve` and use the web UI.
 
 ### Web UI (`ethos serve`)
 
@@ -188,17 +194,17 @@ This also holds with no bot configured. `ethos gateway start` then runs channel-
 |---|---|---|
 | `Invalid approvalMode: "X". Expected one of: manual, smart, off` | A typo in `config.yaml` — only the three literal values are accepted. | Pick `manual`, `smart`, or `off`. |
 | `personality "X" has approvalMode: off but is bound to channel "telegram"` | `off` on a personality with `platform: telegram \| discord \| slack \| whatsapp \| email`. | Move to `smart` or `manual`, or remove the `platform` binding so the personality is CLI/cron only. |
-| `dangerous` calls in CLI fire without prompting | The CLI does not render approval modals. Only the hardline `blocked` floor blocks; the rest auto-fire. | Run via `ethos serve` for the interactive flow, or switch the surface to Slack / Telegram. |
-| Slack / Telegram / Discord card never appears for a `dangerous` call | The adapter is wired but the personality is not bound to that bot, or the `dangerous` classification did not fire. | Confirm the bot binding in `~/.ethos/config.yaml`. Under `manual` and `off` the band fires only for terminal hardlines and for tools the deployment marks `alwaysAsk`; switch to `approvalMode: smart` to add the four consequential tools. |
+| `dangerous` calls in CLI fire without prompting | The CLI, TUI and ACP have no approval prompt. The terminal and process guards refuse hardline commands and command substitution; every other flagged call runs. | Run via `ethos serve` for the interactive flow, or switch the surface to Slack / Telegram. |
+| Slack / Telegram / Discord card never appears for a `dangerous` call | The adapter is wired but the personality is not bound to that bot, or the `dangerous` classification did not fire. | Confirm the bot binding in `~/.ethos/config.yaml`. Under `manual` and `off` a card is posted only for `skills_pending_approve`, `skills_pending_reject` and `call` (`APPROVAL_SURFACE_ALWAYS_ASK`), for `terminal`, `process_start`, `run_tests` and `lint` on a host-local posture (`LOCAL_POSTURE_CONSEQUENTIAL_TOOLS`), and for shell commands using `$(…)` or backticks (`approvalRequiredReason`). A hardline command never gets a card: it is refused at once with its hardline reason (`createSlackApprovalHook` in `apps/ethos/src/approval-coordinator.ts`), because the terminal and process guards would refuse it whatever the card said. Switch to `approvalMode: smart` to add the four consequential tools. |
 | `smart` mode prompts for everything anyway | The reviewer is failing closed — provider error, a round-trip over 15s, or a response that wasn't the expected JSON. Every one resolves to `ask`. | Check that the `model` and provider credentials in `~/.ethos/config.yaml` work; the reviewer runs on the primary model, so a broken primary breaks the reviewer. |
 
 ## Caveats
 
 **Teams.** Each personality on a team applies its own `safety.approvalMode` independently. A `manual` engineer and an `off` (cron-only) batch member can coexist on the same board — the gate runs per `before_tool_call`, scoped to the loop that owns the turn. There is no team-level approval setting; the personality is the unit.
 
-**Long-running tools.** Approval suspends the `before_tool_call` hook. The turn sits idle until you decide. There is no timeout on the prompt today — if you walk away from the web UI mid-turn, the suspended hook waits indefinitely. Close the session (`/new`) to release it.
+**Long-running tools.** Approval suspends the `before_tool_call` hook. The turn sits idle until you decide, or until the approval times out. After 10 minutes with no decision the call is denied with the reason `approval timed out`. The web modal enforces this in `ApprovalsService.requestApproval` (`apps/web-api/src/services/approvals.service.ts`). The chat cards enforce it in `ApprovalCoordinator.requestApproval` (`apps/ethos/src/approval-coordinator.ts`). To change the window for both, set `approvalTimeoutMs` in `~/.ethos/config.yaml`. With `approvalTimeoutMs: 0` there is no timeout, and the call waits until someone decides or the process shuts down. Starting a new session with `/new` does not release a pending approval.
 
-**`approvalMode: off` is documentation-only today.** The danger predicate gates `off` behind an internal `allowAutoApproveDangerousTools` capability flag that no production caller currently sets — see the contract in [packages/wiring/src/danger-predicate.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/danger-predicate.ts). Practically: `off` and `manual` produce the same runtime behaviour right now (everything except the hardline floor auto-fires). Configuring `off` is still meaningful because it records intent and is the load-time signal that rejects the unsafe channel combination. When the cron / batch runner grows an approval surface, `off` will start auto-approving as documented.
+**`approvalMode: off` auto-approves in one place only.** The danger predicate honours `off` only behind its `allowAutoApproveDangerousTools` capability (see the contract in [packages/wiring/src/danger-predicate.ts](https://github.com/ethosagent/ethos/blob/main/packages/wiring/src/danger-predicate.ts)). Exactly one caller passes it: the gateway's cron/dream loop gate, `wireUnattendedApprovalGate` in [apps/ethos/src/unattended-approval-gate.ts](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/unattended-approval-gate.ts), and only when `allowUnattendedDangerousTools: true` is set in `config.yaml`. Everywhere else `off` behaves exactly like `manual`. Configuring `off` still records intent, and it is the load-time signal that rejects the unsafe channel combination.
 
 **Reviewer spend is not billed to the turn.** Smart-mode reviews consume tokens, and none of it lands in the turn's cost accounting or in `estimatedCostUsd` on the `usage` event. There is no path from a `before_tool_call` hook into `sessionCosts` — closing it means a contract change under `packages/types/`. The kanban completion verifier and the eval-harness scorers discard usage the same way. Volume is bounded rather than measured: the reviewer fires only for calls that already reached the danger band, and repeats are served from the verdict cache. Attribution is a follow-up.
 
