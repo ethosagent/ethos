@@ -241,4 +241,14 @@ describe('migrateSessionKeys (SQLite integration)', () => {
     expect(readAllKeys()).toEqual(['telegram:t1key:42']);
     await holder.terminate();
   }, 30_000);
+
+  // First boot under `ethos run-all`: serve's SQLiteSessionStore has created
+  // the file but not yet its tables when the gateway's boot migration runs.
+  it('treats a sessions.db with no sessions table as nothing to migrate', () => {
+    new Database(dbPath).close(); // the file exists, the schema does not
+    // Pre-fix this threw "no such table: sessions".
+    expect(
+      migrateSessionKeys({ dbPath, knownByPlatform: known, primaryByPlatform: primary }),
+    ).toEqual({ migrated: 0, alreadyMigrated: 0, skippedNoBot: 0, quarantinedStale: 0 });
+  });
 });
