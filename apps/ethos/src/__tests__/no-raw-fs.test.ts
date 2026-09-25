@@ -64,9 +64,11 @@
 //                                 and idempotency key survive an `ethos serve`
 //                                 restart.
 //
-//   extensions/cron/src/index.ts  File lock via fs.open(..., 'wx'): exclusive
-//                                 create is a POSIX-level primitive with no
-//                                 equivalent in the Storage interface.
+//   extensions/cron/src/          jobs.json lock via fs.open(..., 'wx'): exclusive
+//   jobs-lock.ts                  create is a POSIX-level primitive with no
+//                                 equivalent in the Storage interface; stale
+//                                 detection reads the holder body, stats its
+//                                 mtime and unlinks a provably dead lock.
 //
 //   extensions/claw-migrate/     copyFile preserves byte-for-byte content including
 //   src/index.ts                 file metadata. Storage models text (utf-8 strings);
@@ -320,7 +322,7 @@ const ALLOWED_PREFIXES = [
 // Specific files (relative to ROOT) that are permitted to import node:fs.
 const ALLOWED_FILES = new Set([
   'packages/core/src/scoped/scoped-fs.ts',
-  'extensions/cron/src/index.ts',
+  'extensions/cron/src/jobs-lock.ts',
   'extensions/claw-migrate/src/index.ts',
   'extensions/skills/src/skill-compat.ts',
   'extensions/skills/src/file-context-injector.ts',

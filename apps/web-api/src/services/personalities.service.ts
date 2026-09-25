@@ -435,6 +435,15 @@ export class PersonalitiesService {
     const sshPort =
       sshPortRaw !== undefined && /^\d+$/.test(sshPortRaw) ? Number(sshPortRaw) : undefined;
 
+    // `execution.docker.image`, through the config owner's own check so this
+    // surface drops exactly the unpinned values the compose path drops.
+    const { dockerImageRefError } = await import('@ethosagent/config');
+    const rawImage = passthrough['execution.docker.image'];
+    const dockerImage =
+      rawImage !== undefined && dockerImageRefError(rawImage) === null
+        ? rawImage.trim()
+        : undefined;
+
     // Same posture resolver + renderer the CLI `personality show` uses — one
     // artifact, no second renderer (Phase 2a, lane E1).
     const { buildExecutionPosture, formatSshTarget } = await import('@ethosagent/wiring');
@@ -452,6 +461,7 @@ export class PersonalitiesService {
             }),
           }
         : {}),
+      dockerImage,
     });
     return {
       markdown: renderCharacterSheet(

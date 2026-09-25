@@ -168,7 +168,8 @@ export interface WiringConfig {
    * saw — a configured `remoteWorkdir` or `identityFile` silently ignored.
    */
   execution?: {
-    docker?: { cpu?: number; diskMb?: number };
+    /** `image` — the digest-pinned sandbox image (`execution.docker.image`). */
+    docker?: { cpu?: number; diskMb?: number; image?: string };
     ssh?: NonNullable<ExecutionBackendConfig['ssh']>;
   };
   /**

@@ -436,6 +436,14 @@ function executionSection(config: PersonalityConfig, exec: CharacterSheetExecuti
         rwRoots.length > 0 ? rwRoots.join(', ') : '(none — read-only mounts)'
       }`,
     );
+    // The image, or the refusal every exec tool will return without one — the
+    // resolver's own words, so the sheet cannot drift from the tool error.
+    if (posture.dockerImage) {
+      lines.push(`- Image:      ${posture.dockerImage}`);
+    } else if (posture.dockerImageMissing) {
+      lines.push('- Image:      NOT CONFIGURED — exec tools will fail.');
+      lines.push(`    ${posture.dockerImageMissing.message}`);
+    }
   }
 
   // Containerized note (mirrors the honest trade in the plan).
@@ -812,6 +820,9 @@ function guaranteeRows(
           ? `host fallback: ${execution.posture.hostFallback.reason}`
           : '',
         execution.posture.dockerAbsent ? 'Docker required but not running (A1)' : '',
+        execution.posture.dockerImageMissing
+          ? 'no execution.docker.image configured — exec tools unavailable'
+          : '',
       ]),
     };
   }

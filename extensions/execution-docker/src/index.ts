@@ -69,6 +69,46 @@ export class InvalidImageRefError extends Error {
   }
 }
 
+/**
+ * The image this document recommends operators pin for `execution.docker.image`
+ * when they have no project-specific one. Named here so the refusal below, the
+ * doctor line and docs/content/using/reference/config-yaml.md say the same
+ * thing. NEVER used as a default: an unpinned tag is not a sandbox image, and a
+ * baked-in digest would silently age. The operator pins the digest they pulled.
+ */
+export const RECOMMENDED_DOCKER_IMAGE = 'node:24-bookworm';
+
+/** Where the `execution.docker.*` keys are documented. */
+export const DOCKER_IMAGE_DOCS_URL =
+  'https://ethosagent.ai/docs/using/reference/config-yaml#execution-docker';
+
+/**
+ * The refusal every docker-posture exec tool returns when no
+ * `execution.docker.image` is configured. One sentence source, shared by the
+ * backend error, `ethos doctor` and the character sheet (via the posture's
+ * `dockerImageMissing`), so the three cannot drift apart.
+ */
+export const DOCKER_IMAGE_MISSING_MESSAGE =
+  'Docker sandbox has no image configured, so exec tools (terminal, run_code, run_tests, lint, process_*) cannot run. ' +
+  'Set execution.docker.image: <image>@sha256:<digest> in ~/.ethos/config.yaml. ' +
+  `Recommended: ${RECOMMENDED_DOCKER_IMAGE} (bash, node, python3, git) — pin it with ` +
+  `\`docker pull ${RECOMMENDED_DOCKER_IMAGE} && docker inspect --format '{{index .RepoDigests 0}}' ${RECOMMENDED_DOCKER_IMAGE}\`. ` +
+  `Docs: ${DOCKER_IMAGE_DOCS_URL}`;
+
+/**
+ * No `execution.docker.image` — thrown before any `docker` process is spawned.
+ * Distinct from {@link InvalidImageRefError}, which reports a value that IS set
+ * but is not digest-pinned; an empty ref there read as a malformed value when
+ * the actual problem was a key nobody had set.
+ */
+export class MissingDockerImageError extends Error {
+  readonly code = 'DOCKER_IMAGE_MISSING';
+  constructor() {
+    super(DOCKER_IMAGE_MISSING_MESSAGE);
+    this.name = 'MissingDockerImageError';
+  }
+}
+
 export class DockerUnavailableError extends Error {
   readonly code = 'DOCKER_UNAVAILABLE';
   constructor() {
@@ -758,9 +798,9 @@ class DockerPersistentSession implements ExecSession {
     if (this.started) return;
     if (this.starting) return this.starting;
     this.starting = (async () => {
-      if (!(await this.backend.isAvailable())) throw new DockerUnavailableError();
       const image = this.config.images?.default ?? '';
-      if (!image) throw new InvalidImageRefError(image);
+      if (!image) throw new MissingDockerImageError();
+      if (!(await this.backend.isAvailable())) throw new DockerUnavailableError();
       const memoryMb = this.config.memoryMb ?? 256;
       const diskMb = await this.backend.resolveDiskQuotaMb();
       const containerName = `ethos-sandbox-sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1066,11 +1106,14 @@ export class DockerExecutionBackend implements ExecutionBackend {
     return this.checkAvailable();
   }
 
-  // Image convention: resolve from config.images[runtime]; runtime defaults to 'default'.
+  // Image convention: resolve from config.images[runtime]; runtime defaults to
+  // 'default', which `execution.docker.image` sets (createExecutionRouting).
+  // The image is checked BEFORE the daemon: a missing key is a config fact the
+  // operator can fix, and it must not hide behind "Docker is not available".
   async *exec(cmd: string, opts: ExecOpts): AsyncIterable<ExecChunk> {
-    if (!(await this.checkAvailable())) throw new DockerUnavailableError();
     const image = this.config.images?.default ?? '';
-    if (!image) throw new InvalidImageRefError(image);
+    if (!image) throw new MissingDockerImageError();
+    if (!(await this.checkAvailable())) throw new DockerUnavailableError();
 
     const memoryMb = this.config.memoryMb ?? 256;
     const diskMb = await this.resolveDiskQuotaMb();

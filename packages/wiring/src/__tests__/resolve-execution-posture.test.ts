@@ -1,6 +1,7 @@
 import type { Constitution, PersonalityConfig } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
 import {
+  buildExecutionPosture,
   type ContainerizedDetectionInput,
   constitutionForbidsLocal,
   detectContainerized,
@@ -577,5 +578,41 @@ describe('constitutionForbidsLocal', () => {
   it('is true when forbidLocal or requireSandbox is set', () => {
     expect(constitutionForbidsLocal({ execution: { forbidLocal: true } })).toBe(true);
     expect(constitutionForbidsLocal({ execution: { requireSandbox: true } })).toBe(true);
+  });
+});
+
+describe('buildExecutionPosture — execution.docker.image', () => {
+  const trader = p({ toolset: ['terminal'] });
+  const base = {
+    personality: trader,
+    containerized: NOT_CONTAINERIZED,
+    substitutionVars: { ethosHome: '/home/t/.ethos', cwd: '/work' },
+    sshConfigured: false,
+  };
+
+  it('marks a docker posture with no image as missing, in the backend refusal wording', async () => {
+    const posture = await buildExecutionPosture({ ...base, dockerImage: undefined });
+    expect(posture.backend).toBe('docker');
+    expect(posture.dockerImage).toBeUndefined();
+    expect(posture.dockerImageMissing?.message).toMatch(
+      /^Docker sandbox has no image configured.*execution\.docker\.image: <image>@sha256:<digest>/,
+    );
+  });
+
+  it('carries the configured image and no missing flag', async () => {
+    const image = `node@sha256:${'e'.repeat(64)}`;
+    const posture = await buildExecutionPosture({ ...base, dockerImage: image });
+    expect(posture.dockerImage).toBe(image);
+    expect(posture.dockerImageMissing).toBeUndefined();
+  });
+
+  it('never flags a non-docker posture', async () => {
+    const posture = await buildExecutionPosture({
+      ...base,
+      personality: p({ toolset: ['read_file'] }),
+      dockerImage: undefined,
+    });
+    expect(posture.backend).toBe('none');
+    expect(posture.dockerImageMissing).toBeUndefined();
   });
 });

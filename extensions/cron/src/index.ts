@@ -1,4 +1,3 @@
-import { open, unlink } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { LocalExecutionBackend } from '@ethosagent/execution-local';
 import { noopLogger } from '@ethosagent/logger';
@@ -6,6 +5,7 @@ import { sanitize, wrapUntrusted } from '@ethosagent/safety-injection';
 import { redactString } from '@ethosagent/safety-redact';
 import type { ExecutionBackend, Logger, SecretsResolver, Storage } from '@ethosagent/types';
 import { decideEscalation, type HeartbeatAction } from './heartbeat';
+import { withJobsFileLock } from './jobs-lock';
 import {
   type CronRunProgress,
   PROGRESS_SUFFIX,
@@ -234,35 +234,6 @@ export interface CronDecision {
   action: CronDecisionAction;
   /** The run output (delivered verbatim when action === 'escalate'). */
   output: string;
-}
-
-// ---------------------------------------------------------------------------
-// File lock — uses raw `node:fs/promises` because exclusive create (`wx`)
-// is a multi-process synchronization primitive that does not fit the data
-// layer; same carve-out as SQLite/error-log per plan/storage_abstraction.md.
-// ---------------------------------------------------------------------------
-
-async function withLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
-  let lockFd: Awaited<ReturnType<typeof open>> | null = null;
-  const start = Date.now();
-
-  while (Date.now() - start < 5_000) {
-    try {
-      lockFd = await open(lockPath, 'wx'); // exclusive create — atomic
-      break;
-    } catch {
-      await new Promise((r) => setTimeout(r, 100)); // wait and retry
-    }
-  }
-
-  if (!lockFd) throw new Error(`Could not acquire lock: ${lockPath}`);
-
-  try {
-    return await fn();
-  } finally {
-    await lockFd.close();
-    await unlink(lockPath).catch(() => {});
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1388,14 +1359,17 @@ export class CronScheduler {
 
   private async writeJobs(jobs: CronJob[]): Promise<void> {
     await this.storage.mkdir(this.cronDir);
-    await this.storage.write(this.jobsPath, JSON.stringify(jobs, null, 2));
+    // Atomic: a process killed mid-write must leave the previous jobs.json,
+    // not a truncated one (a torn write reads back as `[]` — every job gone).
+    await this.storage.writeAtomic(this.jobsPath, JSON.stringify(jobs, null, 2));
   }
 
   private async withJobsLock(fn: (jobs: CronJob[]) => Promise<CronJob[]>): Promise<void> {
     // The lock file lives next to jobs.json; the directory must exist
     // before the lock can be acquired the first time.
     await this.storage.mkdir(this.cronDir);
-    await withLock(this.lockPath, async () => {
+    // Stale-aware: a lock left by a killed process is reclaimed (jobs-lock.ts).
+    await withJobsFileLock(this.lockPath, async () => {
       const jobs = await this.readJobs();
       const updated = await fn(jobs);
       await this.writeJobs(updated);

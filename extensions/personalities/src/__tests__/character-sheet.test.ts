@@ -204,6 +204,27 @@ describe('renderCharacterSheet — ## Execution section', () => {
     expect(sheet).toMatch(/enforced app-layer only/);
   });
 
+  it('flags a docker posture with no image: exec tools will fail, in the refusal wording', () => {
+    const message = 'Docker sandbox has no image configured, so exec tools cannot run.';
+    const sheet = renderCharacterSheet(fullConfig, soulMd, {
+      posture: dockerPosture({ dockerImageMissing: { message } }),
+      platform: 'linux',
+    });
+    expect(sheet).toContain('- Image:      NOT CONFIGURED — exec tools will fail.');
+    expect(sheet).toContain(message);
+    expect(sheet).toContain('no execution.docker.image configured — exec tools unavailable');
+  });
+
+  it('prints the configured image on a docker posture', () => {
+    const image = `node@sha256:${'d'.repeat(64)}`;
+    const sheet = renderCharacterSheet(fullConfig, soulMd, {
+      posture: dockerPosture({ dockerImage: image }),
+      platform: 'linux',
+    });
+    expect(sheet).toContain(`- Image:      ${image}`);
+    expect(sheet).not.toContain('NOT CONFIGURED');
+  });
+
   it('renders the #7 macOS caveat for docker on darwin', () => {
     const sheet = renderCharacterSheet(fullConfig, soulMd, {
       posture: dockerPosture(),

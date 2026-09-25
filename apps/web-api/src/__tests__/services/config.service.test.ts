@@ -855,6 +855,19 @@ describe('ConfigService — settings passthrough groups', () => {
     });
   });
 
+  // `execution.docker.image` has no settings field; it rides the repository's
+  // passthrough. A save of the docker caps from the web pane must leave it on
+  // disk and loadable, or every docker-posture exec tool starts refusing.
+  it('keeps execution.docker.image through a web save of the docker caps', async () => {
+    const image = `node@sha256:${'c'.repeat(64)}`;
+    await writeBase(['execution.docker.cpu: 2', `execution.docker.image: ${image}`]);
+    await service.update({ executionDocker: { cpu: 3, diskMb: null } });
+    const written = await storage.read(join(DATA, 'config.yaml'));
+    expect(written).toContain('execution.docker.cpu: 3');
+    const loaded = await loadFromDataDir(false);
+    expect(loaded?.config.execution?.docker).toEqual({ cpu: 3, image });
+  });
+
   it('round-trips every parity leaf under its dotted config key', async () => {
     await writeBase();
     await service.update({

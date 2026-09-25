@@ -175,6 +175,19 @@ export interface ExecutionPosture {
     reason: 'docker-disabled' | 'docker-unavailable' | 'ssh-unavailable';
   };
   /**
+   * The digest-pinned image a `docker` posture runs in (`execution.docker.image`).
+   * Display only. Set by `buildExecutionPosture` (packages/wiring) on the read
+   * surfaces; absent on any other posture.
+   */
+  dockerImage?: string;
+  /**
+   * A `docker` posture with NO `execution.docker.image`: every exec tool
+   * refuses with `MissingDockerImageError` (extensions/execution-docker), whose
+   * text is `message`. Set by `buildExecutionPosture` so the character sheet and
+   * `ethos doctor` say so before a turn finds out.
+   */
+  dockerImageMissing?: { message: string };
+  /**
    * The deployment's remote execution target (`execution.ssh`), rendered as
    * `user@host:port`, when the posture is `ssh`. Display only — the resolver
    * never dials it. Absent when no `execution.ssh.host` is configured, or when

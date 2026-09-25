@@ -4,7 +4,7 @@ description: "Every field in ~/.ethos/config.yaml — provider, model, channel t
 kind: reference
 audience: user
 slug: config-yaml
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 `~/.ethos/config.yaml` is a flat `key: value` file. Dotted keys (e.g. `retention.messages`, `providers.0.provider`) are how nested structures appear on disk — there is no indentation-based nesting. Inside double quotes exactly two escapes exist: `\\` is a backslash and `\"` is a quote. Every other backslash is literal, so `"C:\tmp"` and `"C:\Users\me"` read as written. Any other value, single-quoted included, is read with one quote stripped from each end. Ethos quotes a value only when it would not read back unchanged. Ethos refuses to write a value containing a newline, tab or other control character, and the error names the key — the file is line-based, so such a value could not be read back.
@@ -491,6 +491,44 @@ web.corsOrigins: "https://chat.example.com"
 Notes:
 
 - See [Serve Ethos as an OpenAI-compatible backend](../../building/how-to/openai-server-chat.md#1-boot-the-server) for these keys in practice, including the CORS caveat for server-side clients.
+
+## execution.docker.\* {#execution-docker}
+
+Type: dotted group · Default: per-field below
+
+The container every docker-sandboxed tool call runs in. A personality whose toolset includes `terminal`, `run_code`, `run_tests`, `lint` or a `process_*` tool, and which declares no `execution:` requirement, resolves to the `docker` posture (unless Ethos itself runs in a container). Those tools run inside `execution.docker.image` and nothing else.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `execution.docker.image` | string | unset | The sandbox image, **digest-pinned**: `<image>@sha256:<64 hex digits>`. Required for the docker posture to execute anything. Unset → every exec tool returns `Docker sandbox has no image configured…` naming this key. An unpinned value (`node:24-bookworm`) is a config warning and is ignored — it never blocks boot. |
+| `execution.docker.cpu` | number > 0 | `2` | Docker `--cpus` quota. Fractional values are allowed. |
+| `execution.docker.diskMb` | integer ≥ 1 | unset (no quota) | Best-effort `--storage-opt size=<N>m`. Enforced only on btrfs, zfs, devicemapper, or overlay2 over xfs with `pquota`; elsewhere Ethos warns once and runs without the quota. |
+
+Recommended image (verified 2026-09-25): `node:24-bookworm` — official Debian 12 image with `bash`, `node` 24, `python3` 3.11, `git` and `curl`. That covers the shell `terminal` uses (`bash -lc`) and both `run_code` runtimes with their tool shims (`python3`, `node`). A smaller image works when you need less: `node:24-bookworm-slim` has no `python3` or `git`, so `run_code` with `runtime: python` fails in it.
+
+Pin the digest you pulled. Containers start with `--pull=never`, so the image must already be on the machine, under the same repository name as the ref:
+
+```bash
+docker pull node:24-bookworm
+docker inspect --format '{{index .RepoDigests 0}}' node:24-bookworm
+```
+
+```text
+node@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
+```
+
+```yaml
+execution.docker.image: node@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
+execution.docker.cpu: 2
+```
+
+Notes:
+
+- `docker buildx imagetools inspect node:24-bookworm` prints the same index digest without pulling. It does not put the image on the machine — run `docker pull` before the first tool call.
+- If you pulled through a mirror (`docker pull mirror.gcr.io/library/node:24-bookworm`), use the `RepoDigests` value it reports (`mirror.gcr.io/library/node@sha256:…`). A `node@sha256:…` ref does not resolve locally under `--pull=never` when only the mirror name exists.
+- The container runs as your host uid with all capabilities dropped, no network unless the personality's `safety.network` allows it, and only the personality's `fs_reach` paths mounted. The image needs no user account for that uid.
+- Check the result: `ethos doctor` lists every docker-posture personality and flags a missing image; `ethos personality show <id>` prints the image (or `NOT CONFIGURED`) under `## Execution`.
+- Source: `dockerImageRefError` in [packages/config/src/index.ts](https://github.com/ethosagent/ethos/blob/main/packages/config/src/index.ts); `MissingDockerImageError` in [extensions/execution-docker/src/index.ts](https://github.com/ethosagent/ethos/blob/main/extensions/execution-docker/src/index.ts).
 
 ## verbose {#verbose}
 
