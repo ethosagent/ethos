@@ -269,8 +269,8 @@ register_anchors:
 
   G-SEC:
     - { path: packages/types/src/secrets.ts, line: 18, contains: "export interface SecretsResolver" }
-    - { path: packages/wiring/src/skill-passthrough.ts, line: 31, contains: "export function applySkillPassthrough" }
-    - { path: packages/wiring/src/skill-passthrough.ts, line: 9, contains: "export function deriveSkillPassthrough" }
+    - { path: packages/wiring/src/skill-passthrough.ts, line: 40, contains: "export function applySkillPassthrough" }
+    - { path: packages/wiring/src/skill-passthrough.ts, line: 16, contains: "export function deriveSkillPassthrough" }
 
   G-RED:
     - { path: packages/safety/redact/src/index.ts, line: 89, contains: "export function detectSecrets" }
