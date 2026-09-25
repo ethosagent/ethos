@@ -28,11 +28,11 @@ async function seeded() {
 }
 
 describe('runBranchCommand (CLI/TUI /fork, /branches, /branch)', () => {
-  it('/fork re-keys onto a cli:<cwd>:fork:<ts> child carrying the history', async () => {
+  it('/fork re-keys onto a cli:<cwd>:fork:<ts>-<suffix> child carrying the history', async () => {
     const { store, root } = await seeded();
     const out = await runBranchCommand(store, 'fork', '', 'cli:proj', '/work/proj');
     const key = out.switchTo?.sessionKey ?? '';
-    expect(key).toMatch(/^cli:proj:fork:\d+$/);
+    expect(key).toMatch(/^cli:proj:fork:\d+-[0-9a-f]{8}$/);
     expect(out.switchTo?.personalityId).toBe('researcher');
     const fork = await store.getSessionByKey(key);
     expect(fork?.parentSessionId).toBe(root.id);

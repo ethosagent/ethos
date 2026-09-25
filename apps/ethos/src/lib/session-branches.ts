@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import { formatBranchList, pickBranch } from '@ethosagent/surface-kit';
 import type { SessionStore } from '@ethosagent/types';
-import { forkSession, listBranches } from '@ethosagent/wiring';
+import { forkSession, forkSessionKey, listBranches } from '@ethosagent/wiring';
 
 export type BranchCommand = 'fork' | 'branches' | 'branch';
 
@@ -16,7 +16,7 @@ export interface BranchOutcome {
  * `/fork`, `/branches`, `/branch <n>` for the CLI readline REPL and the TUI —
  * one implementation so both number branches identically. Forking goes through
  * `forkSession` and listing through `listBranches` (packages/core/src/session-fork.ts);
- * the fork key follows the CLI convention `cli:<cwd>:fork:<ts>`.
+ * the fork key follows the CLI convention `cli:<cwd>:fork:<ts>-<suffix>` (`forkSessionKey`).
  */
 export async function runBranchCommand(
   store: SessionStore,
@@ -30,7 +30,7 @@ export async function runBranchCommand(
 
   if (command === 'fork') {
     const { session } = await forkSession(store, current.id, {
-      key: `cli:${basename(cwd)}:fork:${Date.now()}`,
+      key: forkSessionKey(`cli:${basename(cwd)}`),
     });
     return {
       message: 'Forked — now on a new branch. /branches lists them, /branch <n> switches.',

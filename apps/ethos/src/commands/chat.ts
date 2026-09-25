@@ -411,6 +411,20 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     ...(completer ? { completer } : {}),
   });
 
+  // Once the interface closes (`/exit`, Ctrl-D, piped stdin reaching EOF),
+  // `rl.prompt()` throws ERR_USE_AFTER_CLOSE ("readline was closed"), and the
+  // async continuations that re-prompt (a slash handler's `.then`, a finished
+  // turn, a clarify teardown, a background notice) can all land after it, while
+  // the `close` handler below is still releasing the runtime. Every prompt goes
+  // through here. Pinned by apps/ethos/src/__tests__/chat-piped-exit.test.ts.
+  let rlClosed = false;
+  rl.once('close', () => {
+    rlClosed = true;
+  });
+  const reprompt = (): void => {
+    if (!rlClosed) rl.prompt();
+  };
+
   // Wire skill-evolution notifications into the interactive readline session.
   setOnSkillProposed?.((skillId, _personalityId) => {
     clearLine(process.stdout, 0);
@@ -489,7 +503,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     state.awaitingClarify = true;
     out(`\n${c.dim}${formatClarifyPrompt(req)}${c.reset}`);
     rl.setPrompt(`${c.cyan}?${c.reset}> `);
-    rl.prompt();
+    reprompt();
 
     let done = false;
     const finish = () => {
@@ -499,7 +513,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       unsubscribe();
       state.awaitingClarify = false;
       rl.setPrompt(promptString(state));
-      if (!state.abort) rl.prompt();
+      if (!state.abort) reprompt();
     };
     const onLine = (raw: string) => {
       const answer = parseClarifyAnswer(raw, req.options);
@@ -522,7 +536,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
           out(
             `\n${c.dim}That answer did not land: ${clarifyUnresolvedMessage(outcome.reason)}.${c.reset}\n`,
           );
-          if (!state.abort) rl.prompt();
+          if (!state.abort) reprompt();
         });
     };
     // Teardown if the request resolves another way first (timeout / abort-cancel).
@@ -542,7 +556,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
     out('\n');
     for (const line of lines) out(`${c.dim}${line}${c.reset}\n`);
     if (config.displayBellOnComplete) out('\x07');
-    rl.prompt();
+    reprompt();
   });
 
   rl.on('SIGINT', () => {
@@ -655,7 +669,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
   // Switch from blocking rl.question to event-driven rl.on('line') so mid-turn
   // input can be dispatched on busyMode.
   rl.setPrompt(promptString(state));
-  rl.prompt();
+  reprompt();
 
   rl.on('line', (raw) => {
     // FW-16 — block all input while the consent prompt is active.
@@ -667,7 +681,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
 
     const input = raw.trim();
     if (!input) {
-      rl.prompt();
+      reprompt();
       return;
     }
 
@@ -695,26 +709,26 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
                 state.draining = false;
                 if (state.verbosity !== 'quiet') renderStatusBarLine(state);
                 rl.setPrompt(promptString(state));
-                rl.prompt();
+                reprompt();
               })
               .catch((err) => {
                 state.draining = false;
                 out(
                   `${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`,
                 );
-                rl.prompt();
+                reprompt();
               });
             return;
           }
           // Only re-prompt when idle; a running turn will prompt on completion.
           if (!state.draining && !state.abort) {
             rl.setPrompt(promptString(state));
-            rl.prompt();
+            reprompt();
           }
         })
         .catch((err) => {
           out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
-          if (!state.draining && !state.abort) rl.prompt();
+          if (!state.draining && !state.abort) reprompt();
         });
       return;
     }
@@ -736,7 +750,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
             state.draining = false;
             if (state.verbosity !== 'quiet') renderStatusBarLine(state);
             rl.setPrompt(promptString(state));
-            rl.prompt();
+            reprompt();
             return;
           }
           out(`${c.dim}[draining queue → ${next}]${c.reset}\n`);
@@ -745,7 +759,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
             .catch((err) => {
               state.draining = false;
               out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
-              rl.prompt();
+              reprompt();
             });
         };
         drainNext();
@@ -753,7 +767,7 @@ export async function runChat(config: EthosConfig, opts: RunChatOptions = {}): P
       .catch((err) => {
         state.draining = false;
         out(`${c.red}Error: ${err instanceof Error ? err.message : String(err)}${c.reset}\n`);
-        rl.prompt();
+        reprompt();
       });
   });
 }

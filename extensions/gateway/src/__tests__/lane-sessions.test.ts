@@ -218,7 +218,7 @@ describe('gateway /fork, /branches, /branch', () => {
     expect(out.sends.at(-1)).toMatch(/^✓ Forked/);
     await gw1.handleMessage(msg('on the branch'), out.adapter);
     const forkKey = first.turns[0]?.sessionKey ?? '';
-    expect(forkKey).toMatch(new RegExp(`^${LANE}:fork:\\d+$`));
+    expect(forkKey).toMatch(new RegExp(`^${LANE}:fork:\\d+-[0-9a-f]{8}$`));
 
     const root = await store.getSessionByKey(LANE);
     const fork = await store.getSessionByKey(forkKey);
@@ -245,7 +245,7 @@ describe('gateway /fork, /branches, /branch', () => {
     await gw.handleMessage(msg('/branches'), out.adapter);
     const listing = out.sends.at(-1) ?? '';
     expect(listing).toContain(`  1. origin — ${LANE}`);
-    expect(listing).toMatch(new RegExp(`\\* 2\\. fork — ${LANE}:fork:\\d+`));
+    expect(listing).toMatch(new RegExp(`\\* 2\\. fork — ${LANE}:fork:\\d+-[0-9a-f]{8}`));
 
     await gw.handleMessage(msg('/branch 1'), out.adapter);
     expect(out.sends.at(-1)).toBe('✓ Switched to branch 1.');
