@@ -708,7 +708,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     routeModules: a2aRouteModules,
     peering: a2aPeering,
     setA2aEnabled,
-  } = buildServeA2aSurface({ config: cfg, core: a2a, toolRegistry: shared.toolRegistry });
+  } = buildServeA2aSurface({
+    config: cfg,
+    core: a2a,
+    toolRegistry: shared.toolRegistry,
+    trustProxy,
+  });
 
   const apiKeys = new SqliteApiKeyStore(join(dir, 'sessions.db'));
   const idempotencyStore = new IdempotencyStore(join(dir, 'sessions.db'));

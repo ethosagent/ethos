@@ -296,6 +296,14 @@ export interface A2aRpcServiceOptions {
    */
   preAuthLimiter?: A2aPreAuthLimiter;
   /**
+   * Key the pre-auth limiter on `X-Forwarded-For` / `X-Real-IP` instead of the
+   * TCP peer (see `remoteKeyOf`). Only for a deployment behind a reverse proxy
+   * the operator trusts — anywhere else those headers are whatever the caller
+   * wrote. Default false. `ethos serve` / `ethos boot` pass `ETHOS_TRUST_PROXY`,
+   * the same switch web-api's rate limiter reads (WEB-006).
+   */
+  trustProxy?: boolean;
+  /**
    * Max JSON-RPC request body size in bytes (plan T1.4 — "rate limit ≠ 200MB
    * body"). Checked by the router before `JSON.parse`. Default 1_000_000 (1MB).
    */
@@ -793,7 +801,7 @@ export function createA2aRpcRouter(opts: A2aRpcServiceOptions): Hono {
 
   router.post('/:personalityId', async (c) => {
     const personalityId = c.req.param('personalityId');
-    const creds = readCredentials(c);
+    const creds = readCredentials(c, opts.trustProxy === true);
 
     // Body-size cap (plan T1.4 — "rate limit ≠ 200MB body"), checked BEFORE
     // `JSON.parse`. `Content-Length` is a fast pre-check for the honest common
@@ -843,7 +851,7 @@ export function createA2aRpcRouter(opts: A2aRpcServiceOptions): Hono {
       return c.json({ error: 'NOT_SUPPORTED', message: 'async tasks are not enabled' }, 404);
     }
 
-    const creds = readCredentials(c);
+    const creds = readCredentials(c, opts.trustProxy === true);
 
     // Pre-auth gate (plan T1.4) — same rationale as the RPC POST route: reject
     // BEFORE `authenticate()` runs any crypto.
@@ -956,9 +964,10 @@ async function readCappedBody(raw: Request, capBytes: number): Promise<CappedBod
 }
 
 /** Pull the token + PoP + SIGNED delegation off an inbound HTTP request. */
-function readCredentials(c: {
-  req: { header(name: string): string | undefined };
-}): A2aRequestCredentials {
+function readCredentials(
+  c: { req: { header(name: string): string | undefined }; env?: unknown },
+  trustProxy: boolean,
+): A2aRequestCredentials {
   const authz = c.req.header('authorization');
   const token = authz?.startsWith('Bearer ') ? authz.slice('Bearer '.length).trim() : null;
   const proofSignature = c.req.header('x-a2a-pop') ?? null;
@@ -975,7 +984,7 @@ function readCredentials(c: {
     proofSignature,
     proofTimestamp,
     delegation: { traceId, depth, signature: delegationSig },
-    remoteKey: remoteKeyOf(c),
+    remoteKey: remoteKeyOf(c, trustProxy),
     ...(c.req.header('x-a2a-claimed-fingerprint')
       ? { claimedFingerprint: c.req.header('x-a2a-claimed-fingerprint') }
       : {}),
@@ -983,23 +992,50 @@ function readCredentials(c: {
 }
 
 /**
- * Best-effort caller key for the pre-auth limiter (plan T1.4). `packages/a2a`
- * stays hono-core-only (no `@hono/node-server` dependency, unlike the apps/*
- * layer — see `apps/web-api/src/middleware/rate-limit.ts`'s `getConnInfo`
- * pattern for the socket-level equivalent), so this reads only forwarded
- * headers. TRUSTED-PROXY ASSUMPTION: `x-forwarded-for` / `x-real-ip` are
- * client-spoofable — deploying `/a2a` directly exposed (no reverse proxy in
- * front) lets a caller mint a fresh bucket per request by varying the header,
- * defeating the cap. `'unknown'` when neither header is present (e.g. direct
- * `app.request()` in tests) shares one bucket, which the default no-op
- * limiter never rejects anyway.
+ * Caller key for the pre-auth limiter (plan T1.4): the TCP peer address.
+ * `packages/a2a` stays hono-core-only (no `@hono/node-server` dependency), so
+ * the socket is read structurally from `c.env.incoming` — the binding
+ * `@hono/node-server` hands every route, and what its own `getConnInfo` reads.
+ *
+ * `X-Forwarded-For` / `X-Real-IP` are honoured ONLY under `trustProxy`. They
+ * used to be read unconditionally, with one shared `'unknown'` bucket when
+ * absent: a direct caller rotated the header to dodge the cap, and with no
+ * header every caller shared ONE bucket, so an anonymous flood refused every
+ * peer — authenticated ones included (plan openclaw-2026.9.6-gaps S14; pinned
+ * by "pre-auth limiter key" in __tests__/pre-auth-limiter.test.ts).
+ *
+ * Limitation: behind a proxy WITHOUT `trustProxy`, every caller is the proxy
+ * and shares its bucket. `'unknown'` remains only for a request with no socket
+ * (direct `app.request()` in tests). The POST-auth limiter is unaffected either
+ * way: it is keyed on the authenticated `(personalityId, peerFingerprint)`
+ * (`MemoryA2aLimiter.acquire`, called after `authenticate()`).
  */
-function remoteKeyOf(c: { req: { header(name: string): string | undefined } }): string {
-  const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  if (forwarded) return forwarded;
-  const realIp = c.req.header('x-real-ip');
-  if (realIp) return realIp;
-  return 'unknown';
+function remoteKeyOf(
+  c: { req: { header(name: string): string | undefined }; env?: unknown },
+  trustProxy: boolean,
+): string {
+  if (trustProxy) {
+    const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+    if (forwarded) return forwarded;
+    const realIp = c.req.header('x-real-ip');
+    if (realIp) return realIp;
+  }
+  return socketAddressOf(c.env) ?? 'unknown';
+}
+
+/** `env.incoming.socket.remoteAddress`, read without trusting the shape. */
+function socketAddressOf(env: unknown): string | undefined {
+  if (env === null || typeof env !== 'object' || !('incoming' in env)) return undefined;
+  const incoming = env.incoming;
+  if (incoming === null || typeof incoming !== 'object' || !('socket' in incoming)) {
+    return undefined;
+  }
+  const socket = incoming.socket;
+  if (socket === null || typeof socket !== 'object' || !('remoteAddress' in socket)) {
+    return undefined;
+  }
+  const address = socket.remoteAddress;
+  return typeof address === 'string' && address.length > 0 ? address : undefined;
 }
 
 function errorResponse(id: JsonRpcId, code: number, message: string): JsonRpcErrorResponse {
