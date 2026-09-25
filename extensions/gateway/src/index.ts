@@ -3108,7 +3108,7 @@ export class Gateway {
 
     if (cmdType === 'stop') {
       lane.abort();
-      await adapter.send(message.chatId, { text: '✓ Stopped.' }).catch(() => {});
+      await adapter.send(message.chatId, { text: '✓ Stopped.', threadId }).catch(() => {});
       return;
     }
 
@@ -3127,12 +3127,14 @@ export class Gateway {
       // recognise. `lastInboundHadAudio` IS per-turn state and still clears.
       this.lastInboundHadAudio.delete(laneKey);
       await this.persistLaneSessions(laneKey);
-      await adapter.send(message.chatId, { text: '✓ New session started.' }).catch(() => {});
+      await adapter
+        .send(message.chatId, { text: '✓ New session started.', threadId })
+        .catch(() => {});
       return;
     }
 
     if (cmdType === 'fork' || cmdType === 'branches' || cmdType === 'branch') {
-      await this.handleBranchCommand(cmdType, text, laneKey, lane, bot, message, adapter);
+      await this.handleBranchCommand(cmdType, text, laneKey, lane, bot, message, adapter, threadId);
       return;
     }
 
@@ -3168,6 +3170,7 @@ export class Gateway {
       await adapter
         .send(message.chatId, {
           text: helpText,
+          threadId,
         })
         .catch(() => {});
       return;
@@ -3178,13 +3181,14 @@ export class Gateway {
       if (this.greetingProvider) {
         const greeting = await this.greetingProvider.greet(personalityId).catch(() => null);
         if (greeting) {
-          await adapter.send(message.chatId, { text: greeting }).catch(() => {});
+          await adapter.send(message.chatId, { text: greeting, threadId }).catch(() => {});
           return;
         }
       }
       await adapter
         .send(message.chatId, {
           text: `Hello! I'm running as *${personalityId}*. Send a message to get started, or try /help for available commands.`,
+          threadId,
         })
         .catch(() => {});
       return;
@@ -3202,7 +3206,7 @@ export class Gateway {
 
       if (!arg) {
         await adapter
-          .send(message.chatId, { text: `Current personality: ${current}` })
+          .send(message.chatId, { text: `Current personality: ${current}`, threadId })
           .catch(() => {});
         return;
       }
@@ -3217,7 +3221,7 @@ export class Gateway {
       ) {
         const card = await this.personalityCardReader.read(current).catch(() => null);
         if (card) {
-          await adapter.send(message.chatId, { text: card.text }).catch(() => {});
+          await adapter.send(message.chatId, { text: card.text, threadId }).catch(() => {});
           return;
         }
       }
@@ -3234,6 +3238,7 @@ export class Gateway {
               `This bot is bound to ${bot.binding.type} '${bot.binding.name}'. ` +
               `Switching personalities is disabled for identity-bound bots. ` +
               `To talk to a different agent, message that agent's bot.`,
+            threadId,
           })
           .catch(() => {});
         return;
@@ -3247,7 +3252,7 @@ export class Gateway {
               .map((p) => `${p.id} — ${p.name}${p.isDefault ? ' (default)' : ''}`)
               .join('\n')}\n\nUse /personality <id> to switch.`
           : 'Built-in personalities: researcher · engineer · reviewer · coach · operator\n\nUse /personality <id> to switch.';
-        await adapter.send(message.chatId, { text: listText }).catch(() => {});
+        await adapter.send(message.chatId, { text: listText, threadId }).catch(() => {});
         return;
       }
 
@@ -3263,7 +3268,7 @@ export class Gateway {
             ? `Switching personalities in a group needs an owner. ` +
               `Set channel_filter.${message.platform}.ownerUserId in config.yaml.`
             : `Only the bot owner can switch personalities in a group.`;
-        await adapter.send(message.chatId, { text }).catch(() => {});
+        await adapter.send(message.chatId, { text, threadId }).catch(() => {});
         return;
       }
 
@@ -3283,6 +3288,7 @@ export class Gateway {
         await adapter
           .send(message.chatId, {
             text: `Personality '${arg}' not found — /personality list to see what's available.`,
+            threadId,
           })
           .catch(() => {});
         return;
@@ -3297,7 +3303,10 @@ export class Gateway {
       this.sessionKeys.set(laneKey, fresh);
       await this.persistLaneSessions(laneKey);
       await adapter
-        .send(message.chatId, { text: `✓ Switched to ${arg} personality. New session started.` })
+        .send(message.chatId, {
+          text: `✓ Switched to ${arg} personality. New session started.`,
+          threadId,
+        })
         .catch(() => {});
       return;
     }
@@ -3307,13 +3316,14 @@ export class Gateway {
       await adapter
         .send(message.chatId, {
           text: `Tokens: ${u.inputTokens.toLocaleString()} in / ${u.outputTokens.toLocaleString()} out\nCost: $${u.costUsd.toFixed(5)}`,
+          threadId,
         })
         .catch(() => {});
       return;
     }
 
     if (cmdType === 'budget') {
-      await this.handleBudgetCommand(text, laneKey, bot, message, adapter);
+      await this.handleBudgetCommand(text, laneKey, bot, message, adapter, threadId);
       return;
     }
 
@@ -3321,7 +3331,7 @@ export class Gateway {
       const code = text.split(/\s+/)[1]?.toUpperCase() ?? '';
       if (!code || !this.pairingDb || !this.channelFilter) {
         await adapter
-          .send(message.chatId, { text: '✗ Pairing not configured or no code given.' })
+          .send(message.chatId, { text: '✗ Pairing not configured or no code given.', threadId })
           .catch(() => {});
         return;
       }
@@ -3338,7 +3348,7 @@ export class Gateway {
           codePlatformCfg?.ownerUserId && message.userId === codePlatformCfg.ownerUserId;
         if (!isOwner) {
           await adapter
-            .send(message.chatId, { text: '✗ Only the owner may approve pairings.' })
+            .send(message.chatId, { text: '✗ Only the owner may approve pairings.', threadId })
             .catch(() => {});
           return;
         }
@@ -3364,14 +3374,19 @@ export class Gateway {
         });
         await this.onAllowlistChange?.(result.platform, result.senderId, 'add');
         await adapter
-          .send(message.chatId, { text: `✓ ${result.senderId} approved.` })
+          .send(message.chatId, { text: `✓ ${result.senderId} approved.`, threadId })
           .catch(() => {});
       } else if (result.reason === 'owner_paused') {
         await adapter
-          .send(message.chatId, { text: '✗ Too many invalid attempts. Pairing paused for 24h.' })
+          .send(message.chatId, {
+            text: '✗ Too many invalid attempts. Pairing paused for 24h.',
+            threadId,
+          })
           .catch(() => {});
       } else {
-        await adapter.send(message.chatId, { text: '✗ Invalid or expired code.' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: '✗ Invalid or expired code.', threadId })
+          .catch(() => {});
       }
       return;
     }
@@ -3380,7 +3395,9 @@ export class Gateway {
       const targetUserId = text.split(/\s+/)[1] ?? '';
       const cleanTarget = targetUserId.replace(/^@/, '');
       if (!cleanTarget || !this.channelFilter) {
-        await adapter.send(message.chatId, { text: '✗ Usage: /deny <userId>' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: '✗ Usage: /deny <userId>', threadId })
+          .catch(() => {});
         return;
       }
 
@@ -3418,10 +3435,12 @@ export class Gateway {
       }
 
       if (removed) {
-        await adapter.send(message.chatId, { text: `✓ ${cleanTarget} removed.` }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: `✓ ${cleanTarget} removed.`, threadId })
+          .catch(() => {});
       } else {
         await adapter
-          .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.` })
+          .send(message.chatId, { text: `✗ ${cleanTarget} not found in any allowlist.`, threadId })
           .catch(() => {});
       }
       return;
@@ -3429,7 +3448,9 @@ export class Gateway {
 
     if (cmdType === 'communications') {
       if (!this.pairingDb || !this.channelFilter) {
-        await adapter.send(message.chatId, { text: 'Pairing not configured.' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: 'Pairing not configured.', threadId })
+          .catch(() => {});
         return;
       }
 
@@ -3437,7 +3458,7 @@ export class Gateway {
       const isOwner = platformCfg?.ownerUserId && message.userId === platformCfg.ownerUserId;
       if (!isOwner) {
         await adapter
-          .send(message.chatId, { text: '✗ Only the owner may use /communications.' })
+          .send(message.chatId, { text: '✗ Only the owner may use /communications.', threadId })
           .catch(() => {});
         return;
       }
@@ -3474,7 +3495,7 @@ export class Gateway {
         }
 
         await adapter
-          .send(message.chatId, { text: `✓ Approved ${approvedCount} sender(s).` })
+          .send(message.chatId, { text: `✓ Approved ${approvedCount} sender(s).`, threadId })
           .catch(() => {});
         return;
       }
@@ -3486,14 +3507,14 @@ export class Gateway {
 
       if (pending.length === 0) {
         await adapter
-          .send(message.chatId, { text: 'No pending pairing requests.' })
+          .send(message.chatId, { text: 'No pending pairing requests.', threadId })
           .catch(() => {});
         return;
       }
 
       const lines = pending.map((r) => `${r.sender_id} (${r.platform}) — /allow ${r.code}`);
       const reply = `${pending.length} pending pairing request(s):\n${lines.join('\n')}`;
-      await adapter.send(message.chatId, { text: reply }).catch(() => {});
+      await adapter.send(message.chatId, { text: reply, threadId }).catch(() => {});
       return;
     }
 
@@ -3502,7 +3523,7 @@ export class Gateway {
       const bgText = text.slice('/background '.length).trim();
       if (!bgText) {
         await adapter
-          .send(message.chatId, { text: '✗ Usage: /background <prompt>' })
+          .send(message.chatId, { text: '✗ Usage: /background <prompt>', threadId })
           .catch(() => {});
         return;
       }
@@ -3633,7 +3654,9 @@ export class Gateway {
     if (cmdType === 'queue') {
       const queueText = text.slice('/queue '.length).trim();
       if (!queueText) {
-        await adapter.send(message.chatId, { text: '✗ Usage: /queue <message>' }).catch(() => {});
+        await adapter
+          .send(message.chatId, { text: '✗ Usage: /queue <message>', threadId })
+          .catch(() => {});
         return;
       }
       if (this.activeSinks.has(laneKey)) {
@@ -7469,8 +7492,10 @@ export class Gateway {
     bot: GatewayBotConfig,
     message: InboundMessage,
     adapter: PlatformAdapter,
+    threadId: string | undefined,
   ): Promise<void> {
-    const reply = (body: string) => adapter.send(message.chatId, { text: body }).catch(() => {});
+    const reply = (body: string) =>
+      adapter.send(message.chatId, { text: body, threadId }).catch(() => {});
     const sessionKey = this.sessionKeys.get(laneKey) ?? laneKey;
     const arg = text.split(/\s+/)[1]?.toLowerCase() ?? '';
 
@@ -7522,9 +7547,10 @@ export class Gateway {
     bot: GatewayBotConfig,
     message: InboundMessage,
     adapter: PlatformAdapter,
+    threadId: string | undefined,
   ): Promise<void> {
     const reply = async (body: string): Promise<void> => {
-      await adapter.send(message.chatId, { text: body }).catch(() => {});
+      await adapter.send(message.chatId, { text: body, threadId }).catch(() => {});
     };
     const store = this.sessionStoreFor?.();
     if (!store) {
