@@ -18,7 +18,6 @@ import {
   credentialInstruction,
   type EventTranslatorCredentialRequired,
   parseSlashCommand,
-  shouldSurfaceProgress,
 } from '@ethosagent/surface-kit';
 import type { SplashInventory } from '@ethosagent/tui';
 import {
@@ -1076,7 +1075,8 @@ function renderEventForVerbosity(event: AgentEvent, state: ChatState, ctx: Rende
       break;
 
     case 'tool_progress':
-      if (state.verbosity === 'default' && !shouldSurfaceProgress(event)) break;
+      // The audience gate and the budget-chip rule live in `projectEvent`.
+      if (!lines.some((line) => line.kind === 'tool_progress')) break;
       if (event.toolName === '_watcher') {
         out(`${c.yellow}  ${stripAnsiEscapes(event.message)}${c.reset}\n`);
       } else {

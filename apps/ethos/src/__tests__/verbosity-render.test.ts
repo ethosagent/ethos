@@ -192,6 +192,22 @@ describe('FW-10 verbosity projection', () => {
       }
     });
 
+    // The loop yields the stop twice — a user-audience `_budget` chip, then the
+    // `halt` (`budgetGuardEvents`, packages/core/src/agent-loop/budgets.ts).
+    // The halt line already carries the message, so the chip must not repeat it.
+    it('the budget stop renders once, not as a progress chip and a halt line', () => {
+      const chip: AgentEvent = {
+        type: 'tool_progress',
+        toolName: '_budget',
+        message: halt.type === 'halt' ? halt.message : '',
+        audience: 'user',
+      };
+      for (const level of ['quiet', 'default', 'verbose'] as const) {
+        const lines = [...projectEvent(chip, level), ...projectEvent(halt, level)];
+        expect(lines.filter((l) => l.text.includes('$1.00 budget cap'))).toHaveLength(1);
+      }
+    });
+
     it('a watcher halt renders no halt line — its pause ends with a reply', () => {
       const watcher: AgentEvent = { type: 'halt', kind: 'watcher', rule: 'r', message: 'm' };
       expect(projectEvent(watcher, 'default').filter((l) => l.kind === 'halt')).toEqual([]);

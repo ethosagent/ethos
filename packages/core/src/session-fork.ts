@@ -54,8 +54,13 @@ export interface ForkSessionResult {
  * metadata`, points `parentSessionId` at the source, and starts with zero
  * usage. History is replayed in order with no limit, and every `StoredMessage`
  * field is carried over except the three the store owns (`id`, `sessionId`,
- * `timestamp`) — copied generically, so a field added to `StoredMessage` later
- * is not silently dropped. The decision rows the copied history anchors come
+ * `timestamp`) and `usage` — copied generically, so a field added to
+ * `StoredMessage` later is not silently dropped. `usage` is dropped because
+ * the copies get fresh timestamps: spend is aggregated from message rows by
+ * timestamp (`SQLiteSessionStore.usageAggregate`, behind `ethos usage`, the
+ * per-bot daily cap and web Usage), so a copied cost would bill the source's
+ * turns a second time. The fork's session rollup starts at zero to match.
+ * Pinned by extensions/session-sqlite/src/__tests__/usage-aggregate.test.ts. The decision rows the copied history anchors come
  * along (`copyDecisions`), as web-api copies a fork's cards. Pinned by
  * packages/core/src/__tests__/session-fork.test.ts.
  *
@@ -105,7 +110,13 @@ export async function forkSession(
   const idMap = new Map<string, StoredMessage>();
   try {
     for (const message of history) {
-      const { id, sessionId: _sessionId, timestamp: _timestamp, ...fields } = message;
+      const {
+        id,
+        sessionId: _sessionId,
+        timestamp: _timestamp,
+        usage: _usage,
+        ...fields
+      } = message;
       idMap.set(id, await store.appendMessage({ ...fields, sessionId: session.id }));
     }
     await copyDecisions(store, source.id, session.id, history);

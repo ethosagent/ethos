@@ -225,7 +225,10 @@ describe('Orchestrator guardrails', () => {
     // main's small-window/compact increases (+7 over 1046) plus this branch's
     // decision-event increases (+17 over 1046), each ratcheted independently;
     // the cap is their sum.
-    expect(lineCount).toBeLessThanOrEqual(1070);
+    // Bumped 1070 -> 1071 (tool cost persistence): the turn's rollup
+    // accumulator handed to `processTools` (one pass-through line). The logic
+    // lives in agent-loop/tool-cost.ts.
+    expect(lineCount).toBeLessThanOrEqual(1071);
   });
 
   it('no stage file exceeds 700 lines', () => {
@@ -350,7 +353,11 @@ describe('Orchestrator guardrails', () => {
       // spreads the turn's `toolsetNarrowing` into the ToolContext (one line)
       // and imports its builder (one line). No logic — the builder lives in
       // agent-loop/toolset-narrowing.ts.
-      if (lineCount > 866) {
+      // Bumped 866 -> 870 (tool cost persistence): the rollup accumulator on
+      // the stage deps (one line), its type import and the helper's import (one
+      // line each), and one spread onto the tool_result row. The logic lives
+      // in agent-loop/tool-cost.ts.
+      if (lineCount > 870) {
         violations.push(`${file}: ${lineCount} lines`);
       }
     }

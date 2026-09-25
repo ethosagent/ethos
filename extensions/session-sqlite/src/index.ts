@@ -104,7 +104,7 @@ export function summarizeUsageRows(rows: UsageAggregateRow[]): UsageTotals {
 
 /** Outcome of {@link SQLiteSessionStore.recomputeMessageCosts}. */
 export interface RecomputeCostsResult {
-  /** Message rows carrying token counts, i.e. rows a cost can be derived for. */
+  /** Non-`tool_result` message rows carrying token counts, i.e. rows a cost can be derived for. */
   messagesScanned: number;
   /** Rows whose stored cost differed from the recomputed one and were rewritten. */
   messagesUpdated: number;
@@ -871,6 +871,12 @@ export class SQLiteSessionStore implements SessionStore {
    * derived cache of the live `messages` rows. Rewriting message costs without
    * rebuilding it would leave the cache stale — the exact invariant A1's
    * consistency test pins — so both land in one transaction.
+   *
+   * `tool_result` rows are skipped: their cost is a tool-reported `cost_usd`
+   * (zero tokens, written by `processTools` in
+   * packages/core/src/agent-loop/stages/tool-processing.ts), not a function of
+   * tokens, so re-deriving it would erase real spend. They still count in the
+   * rollup sum. Pinned by `__tests__/recompute-costs.test.ts`.
    */
   async recomputeMessageCosts(): Promise<RecomputeCostsResult> {
     const rows = this.db
@@ -879,7 +885,7 @@ export class SQLiteSessionStore implements SessionStore {
                 m.cache_creation_tokens, m.estimated_cost_usd, s.model
          FROM messages m
          JOIN sessions s ON s.id = m.session_id
-         WHERE m.input_tokens IS NOT NULL`,
+         WHERE m.input_tokens IS NOT NULL AND m.role != 'tool_result'`,
       )
       .all() as Array<{
       id: string;

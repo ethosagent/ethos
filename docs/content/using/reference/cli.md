@@ -633,20 +633,31 @@ systemctl --user enable --now ethos-gateway
 
 ## ethos usage {#ethos-usage}
 
-Aggregate token usage and estimated cost over a time window. Reads from `~/.ethos/sessions.db`.
+Aggregate token usage and estimated cost over a time window. Tokens and cost come from `~/.ethos/sessions.db`; turn outcomes and the `tool`/`skill` breakdowns come from `~/.ethos/observability.db` (zeros when it is absent).
 
-Synopsis: `ethos usage --since <duration> [--json]`
+Synopsis: `ethos usage --since <duration> [--by <dimension>] [--json]`
 
 | Flag | Required | Description |
 |---|---|---|
-| `--since <duration>` | yes | Time window. Format: `Nh` (hours), `Nd` (days), `Nm` (minutes). Example: `24h`, `7d`, `30m`. |
-| `--json` | no | Emit machine-readable JSON instead of a human-readable summary. |
+| `--since <duration>` | yes | Time window ending now. Format: `Nh` (hours), `Nd` (days), `Nm` (minutes). Example: `24h`, `7d`, `30m`. A missing or malformed value exits `2`. |
+| `--by <dimension>` | no | Add a breakdown: `day`, `model`, `personality`, `channel`, `session`, `tool`, or `skill`. An unknown dimension exits `2`. |
+| `--json` | no | Emit one JSON object instead of a human-readable summary. |
 
-The JSON output includes `totals`, `byProvider`, `byPersonality`, and a `truncated` flag (true when results exceed the 10,000-session cap — narrow the `--since` window for complete data).
+Cost is the sum of the stored message rows in the window: LLM usage on assistant rows plus any cost a tool reported (`cost_usd`) on its tool-result row. A forked session's copied history carries no usage, so a fork does not count its source's spend twice.
+
+`--json` fields (`UsageResult` in [`apps/ethos/src/commands/usage.ts`](../../../../apps/ethos/src/commands/usage.ts)):
+
+| Field | Type | Description |
+|---|---|---|
+| `since`, `until` | ISO-8601 string | The window, half-open `[since, until)`. |
+| `totals` | object | `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheCreationTokens`, `estimatedCostUsd`, `messages` (rows carrying usage), and `cacheHitRate` (0–1: cache reads over input + cache reads + cache writes). |
+| `daily` | array | One row per UTC day: `key` (`YYYY-MM-DD`) plus the same token, cost and `messages` fields as `totals`, without `cacheHitRate`. |
+| `outcomes` | object | Turn counts from observability: `completed`, `errored`, `halted`, `running`. |
+| `by` | object, only with `--by` | `{ dimension, rows }`. For `day`/`model`/`personality`/`channel`/`session`, rows have the `daily` row shape keyed by that dimension. For `tool`: `{ tool, calls, errors }`. For `skill`: `{ skill, invoked, exposed }`. |
 
 ```bash
 ethos usage --since 7d
-ethos usage --since 24h --json
+ethos usage --since 24h --by model --json
 ```
 
 The web dashboard shows the same totals under Activity → **Usage**. Both fold the rows with `summarizeUsageRows` in `extensions/session-sqlite/src/index.ts`. Turn outcomes and `--by tool|skill` are CLI-only.
