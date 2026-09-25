@@ -79,7 +79,7 @@ export function createClarifyTool(bridge: ClarifyBridge): Tool<ClarifyArgs> {
           type: 'string',
           enum: ['anyone', 'originator'],
           description:
-            "Group chats: who may answer. 'anyone' (default) or 'originator' to restrict to the user who triggered the turn.",
+            "Group chats: who may answer. 'originator' (default) restricts it to the user who triggered the turn; 'anyone' lets any member of the chat answer. A background task defaults to 'anyone'.",
         },
       },
     },
@@ -98,7 +98,20 @@ export function createClarifyTool(bridge: ClarifyBridge): Tool<ClarifyArgs> {
           ? args.timeout_s
           : DEFAULT_TIMEOUT_S;
       const timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(MIN_TIMEOUT_S, Math.round(timeoutRaw)));
-      const answerableBy = args.answerable_by === 'originator' ? 'originator' : 'anyone';
+      // Default 'originator' (S11): an omitted value must not let any group
+      // member answer. Enforced per surface by each `clarify-surface.ts`'s
+      // `gateAnswerer` against `surfaceContext.originatorUserId`. A background
+      // turn (`ctx.jobId`) defaults to 'anyone' — a known limitation, not a
+      // guarantee: `BackgroundJob` records no originating user
+      // (`resolveJobClarifyOrigin`, packages/wiring/src/build-agent-loop.ts),
+      // so no originator is ever stamped and an 'originator' row there could
+      // only time out. Pinned by `__tests__/clarify-tool.test.ts` (S11).
+      const answerableBy =
+        args.answerable_by === 'anyone' || args.answerable_by === 'originator'
+          ? args.answerable_by
+          : ctx.jobId !== undefined
+            ? 'anyone'
+            : 'originator';
 
       const startedAt = Date.now();
       try {

@@ -58,3 +58,33 @@ describe('createClarifyTool — jobId threading (D22)', () => {
     expect(first !== undefined && 'jobId' in first).toBe(false);
   });
 });
+
+// S11 (plan openclaw-2026.9.6-gaps) — an omitted `answerable_by` must not let
+// any group member answer the agent's paused question. Background turns are
+// the documented exception: `BackgroundJob` records no originating user, so
+// no surface could ever stamp `originatorUserId` on their rows.
+describe('createClarifyTool — answerable_by default (S11)', () => {
+  it("defaults to 'originator' on a foreground turn", async () => {
+    const { bridge, captured } = makeFakeBridge();
+    await createClarifyTool(bridge).execute({ question: 'Which database?' }, makeCtx());
+    expect(captured[0]?.answerableBy).toBe('originator');
+  });
+
+  it("keeps an explicit 'anyone'", async () => {
+    const { bridge, captured } = makeFakeBridge();
+    await createClarifyTool(bridge).execute(
+      { question: 'Which database?', answerable_by: 'anyone' },
+      makeCtx(),
+    );
+    expect(captured[0]?.answerableBy).toBe('anyone');
+  });
+
+  it("defaults to 'anyone' on a background turn, which has no originator to bind", async () => {
+    const { bridge, captured } = makeFakeBridge();
+    await createClarifyTool(bridge).execute(
+      { question: 'Which database?' },
+      makeCtx({ jobId: 'job-1' }),
+    );
+    expect(captured[0]?.answerableBy).toBe('anyone');
+  });
+});
