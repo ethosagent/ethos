@@ -665,12 +665,13 @@ Synopsis: `ethos doctor [--json]`
 
 ## ethos upgrade {#ethos-upgrade}
 
-Install the newest published `@ethosagent/cli` and keep it only if it passes `ethos doctor`. A source clone gets the `git pull` / `pnpm install` / `pnpm build` steps instead, and nothing is installed.
+Install the newest published `@ethosagent/cli` (or the version `--version` names) and keep it only if it passes `ethos doctor`. A source clone gets the `git pull` / `pnpm install` / `pnpm build` steps instead, and nothing is installed.
 
-Synopsis: `ethos upgrade [--no-rollback]`
+Synopsis: `ethos upgrade [--version <version-or-tag>] [--no-rollback]`
 
 | Flag | Required | Description |
 |---|---|---|
+| `--version <version-or-tag>` | no | Install this exact version (`0.7.3`) or dist-tag (`next`) instead of `latest`. The registry resolves it to one exact version, which the health gate checks for. A range (`^0.7`) is refused before the registry is contacted. |
 | `--no-rollback` | no | Keep the new version even if its health check fails. The failed checks and the way back are still printed. |
 
 The registry is `npm_config_registry` when set, otherwise `https://registry.npmjs.org`. An npm-global upgrade runs these steps in order. Source: [`apps/ethos/src/commands/upgrade.ts`](https://github.com/ethosagent/ethos/blob/main/apps/ethos/src/commands/upgrade.ts).
@@ -679,8 +680,8 @@ The registry is `npm_config_registry` when set, otherwise `https://registry.npmj
 |---|---|---|
 | Baseline | The running binary's `ethos doctor --json`. | Stops. Nothing is installed. |
 | Backup | `ethos backup` into the backup directory. The archive path is printed. | Stops. Nothing is installed. |
-| Install | `npm install -g @ethosagent/cli@<latest>`. | Exits with npm's exit code. |
-| Health gate | The new binary's `ethos doctor --json`, run from `$(npm root -g)/@ethosagent/cli` with the current Node, never from `PATH`. | Rolls back, unless `--no-rollback`. |
+| Install | `npm install -g @ethosagent/cli@<resolved-version>`. | Exits with npm's exit code. |
+| Health gate | The new binary's `ethos doctor --json`, run from `$(npm root -g)/@ethosagent/cli` with the current Node, never from `PATH`. On success, prints `What changed:` with the [changelog](../../changelog.md) entry for the new version. | Rolls back, unless `--no-rollback`. |
 | Rollback | `npm install -g @ethosagent/cli@<previous>`, then the old binary's doctor, which must match the baseline. | Prints the archive path and the `ethos import <archive>` command. |
 
 The health gate rolls back on any of these:
@@ -700,13 +701,14 @@ These are printed and never roll back: a check that already failed in the baseli
 
 | Exit code | Meaning |
 |---|---|
-| `0` | Upgraded, already on the latest version, or a source clone. |
-| `1` | Registry unreachable, baseline or backup failed, the new version failed its health gate (rolled back, or kept with `--no-rollback`), or the rollback failed. |
+| `0` | Upgraded, already on the target version, or a source clone. |
+| `1` | `--version` missing its value or not a version or dist-tag, registry unreachable or the version unpublished, baseline or backup failed, the new version failed its health gate (rolled back, or kept with `--no-rollback`), or the rollback failed. |
 | npm's exit code | `npm install -g` of the new version failed. Nothing was changed. |
 
 ```bash
 ethos upgrade
 ethos upgrade --no-rollback
+ethos upgrade --version 0.7.3
 npm_config_registry=http://localhost:4873 ethos upgrade
 ```
 

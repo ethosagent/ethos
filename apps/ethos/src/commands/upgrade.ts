@@ -4,7 +4,9 @@
 // right git/pnpm instructions instead.
 //
 // Per Phase 29.5; the health gate is plan openclaw-9.5-adoption item 4
-// (D8, D24–D26):
+// (D8, D24–D26). `--version <spec>` (plan openclaw-2026.9.6-gaps U7) targets an
+// exact version or a dist-tag instead of `latest`; the registry resolves it to
+// the exact version the gate then checks for (`resolveVersion`).
 //
 //   1. Baseline — the CURRENT binary's `ethos doctor --json`.
 //   2. Backup — `ethos backup --json`. A failure aborts before anything is
@@ -44,6 +46,11 @@ const c = {
 
 const PACKAGE = '@ethosagent/cli';
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
+/** The public changelog; each release has a `#v<major>-<minor>-<patch>` anchor. */
+const CHANGELOG_URL = 'https://ethosagent.ai/docs/changelog';
+/** An exact version (`0.7.3`, `0.8.0-rc.1`) or a dist-tag (`latest`, `next`).
+ *  Not a range: the gate compares the installed version to one exact string. */
+const VERSION_SPEC = /^[0-9A-Za-z][0-9A-Za-z.+-]*$/;
 /** A doctor run probes channels over the network; give it room, not forever. */
 const CHILD_TIMEOUT_MS = 180_000;
 
@@ -263,7 +270,8 @@ export interface UpgradeDeps {
   currentVersion: string;
   /** The running binary's entry script (`process.argv[1]`). */
   currentEntry: string;
-  fetchLatest(): Promise<string>;
+  /** Resolve an exact version or dist-tag to the exact version it names. */
+  resolveVersion(spec: string): Promise<string>;
   /** Run `node <entry> ...args` and capture stdout. */
   runEthos(entry: string, args: string[]): Promise<ChildResult>;
   /** `npm install -g <spec>`, output inherited. Returns the exit code. */
@@ -287,6 +295,14 @@ export async function runUpgrade(
 ): Promise<number> {
   const { log, error } = deps;
   const noRollback = args.includes('--no-rollback');
+  const versionAt = args.indexOf('--version');
+  const requested = versionAt === -1 ? 'latest' : args[versionAt + 1];
+  if (requested === undefined || !VERSION_SPEC.test(requested)) {
+    error(
+      `${c.red}✗${c.reset} --version needs an exact version or a dist-tag, e.g. ${c.cyan}ethos upgrade --version 0.7.3${c.reset}.`,
+    );
+    return 1;
+  }
 
   // Source-mode users update via git, not npm — no need to hit the registry.
   // (Also avoids confusing "registry 404" errors when running from a private
@@ -301,20 +317,23 @@ export async function runUpgrade(
   log(`${c.dim}Checking npm registry...${c.reset}`);
   let target: string;
   try {
-    target = await deps.fetchLatest();
+    target = await deps.resolveVersion(requested);
   } catch (err) {
     error(`${c.red}✗${c.reset} Couldn't reach the npm registry: ${errMsg(err)}`);
     error(
-      `${c.dim}  Check your network and try again, or install manually: npm install -g ${PACKAGE}@latest${c.reset}`,
+      `${c.dim}  Check your network and try again, or install manually: npm install -g ${PACKAGE}@${requested}${c.reset}`,
     );
     return 1;
   }
 
   const previous = deps.currentVersion;
   log(`\n  ${c.dim}Current:${c.reset} ${c.bold}${previous}${c.reset}`);
-  log(`  ${c.dim}Latest: ${c.reset} ${c.bold}${target}${c.reset}\n`);
+  const label = requested === 'latest' ? 'Latest: ' : 'Target: ';
+  log(`  ${c.dim}${label}${c.reset} ${c.bold}${target}${c.reset}\n`);
   if (previous === target) {
-    log(`${c.green}✓${c.reset} Already on the latest version.`);
+    log(
+      `${c.green}✓${c.reset} Already on ${requested === 'latest' ? 'the latest version' : target}.`,
+    );
     return 0;
   }
 
@@ -359,6 +378,7 @@ export async function runUpgrade(
 
   if (verdict.triggers.length === 0) {
     log(`\n${c.green}✓${c.reset} Upgraded to ${c.bold}${spec}${c.reset}.`);
+    log(`${c.dim}  What changed: ${changelogUrl(target)}${c.reset}`);
     await printGatewayHint(deps);
     return 0;
   }
@@ -476,7 +496,7 @@ function defaultDeps(): UpgradeDeps {
     installMethod: detectInstallMethod(),
     currentVersion: CURRENT_VERSION,
     currentEntry: process.argv[1] ?? '',
-    fetchLatest: fetchLatestVersion,
+    resolveVersion: fetchVersion,
     runEthos: (entry, args) => runChild(process.execPath, [entry, ...args]),
     npmInstall: (spec) =>
       new Promise((resolve) => {
@@ -589,10 +609,15 @@ interface RegistryResponse {
   [key: string]: unknown;
 }
 
-async function fetchLatestVersion(): Promise<string> {
-  // Hit the registry's <pkg>/latest endpoint — returns the dist-tagged latest
-  // without pulling the full package metadata blob.
-  const url = `${registryUrl()}/${PACKAGE}/latest`;
+/** The changelog entry for `version`, e.g. `…/changelog#v0-7-3`. */
+export function changelogUrl(version: string): string {
+  return `${CHANGELOG_URL}#v${version.replace(/[^0-9A-Za-z]+/g, '-')}`;
+}
+
+async function fetchVersion(spec: string): Promise<string> {
+  // Hit the registry's <pkg>/<version-or-tag> endpoint — returns that one
+  // version's manifest without pulling the full package metadata blob.
+  const url = `${registryUrl()}/${PACKAGE}/${encodeURIComponent(spec)}`;
   const res = await fetch(url, {
     headers: { Accept: 'application/json' },
     // Don't sit on a slow registry forever. 10s is generous.
@@ -602,7 +627,7 @@ async function fetchLatestVersion(): Promise<string> {
     throw new EthosError({
       code: 'REGISTRY_FETCH_FAILED',
       cause: `registry returned ${res.status} ${res.statusText}`,
-      action: `Check your network and try again, or install manually: npm install -g ${PACKAGE}@latest`,
+      action: `Check that ${spec} is a published version or dist-tag of ${PACKAGE}, or install manually: npm install -g ${PACKAGE}@${spec}`,
     });
   }
   const body = (await res.json()) as RegistryResponse;
