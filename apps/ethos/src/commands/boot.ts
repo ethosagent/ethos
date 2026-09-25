@@ -170,6 +170,7 @@ import {
   everyStartedAdapter,
   type GatewayBotWiring,
   gatewayObservability,
+  idleGatewayBotLoopOpts,
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
   validateBindings,
@@ -589,29 +590,12 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     logger,
   });
 
-  const shared = await createAgentLoop(cfg, {
-    profile: 'web',
-    meshRegistryPath: meshRegistryPath(meshName),
-    cronScheduler: scheduler,
-    watcherManager,
-    // Cron, watcher wakes and every web/ACP turn run here, and a gated
-    // personality's `send_message` must queue from this loop exactly as it
-    // does from a bot's.
-    outbox: outbox.wiring,
-  });
-  sharedLoop = shared.loop;
-  // Deliberately NOT given `wireUnattendedApprovalGate` (which `runGatewayStart`
-  // registers on its systemLoop): here cron and watcher wakes share the web
-  // loop, and `buildServeWebApi` registers the web approval hook on it, so a
-  // flagged call posts a modal card a human can answer (denied at the approval
-  // timeout) — the same shape as `ethos serve`. The unattended gate would
-  // refuse every flagged web-chat call too. Boot runs no dreams and no SIP.
-  const systemLoop = shared.loop;
-
   // Per-bot routing table. Each personality-bound bot gets its own loop, the
   // same shape `ethos gateway start` builds today — this is NOT the
   // double-construction §3c warns about, which is about the two ROLES each
-  // building a system loop.
+  // building a system loop. Built BEFORE the system loop only so that loop
+  // knows whether it is also the idle gateway bot's (below); neither build
+  // reads the other.
   const coldBuilt = await buildGatewayBots(
     cfg,
     scheduler,
@@ -621,6 +605,30 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     outbox.wiring,
   );
   const bots = coldBuilt.bots;
+
+  const shared = await createAgentLoop(cfg, {
+    profile: 'web',
+    meshRegistryPath: meshRegistryPath(meshName),
+    cronScheduler: scheduler,
+    watcherManager,
+    // Cron, watcher wakes and every web/ACP turn run here, and a gated
+    // personality's `send_message` must queue from this loop exactly as it
+    // does from a bot's.
+    outbox: outbox.wiring,
+    // No bot configured: this loop is also the idle gateway bot's
+    // (`idleGatewayBotLoopOpts`, ./gateway).
+    ...(bots.length === 0
+      ? idleGatewayBotLoopOpts((sessionKey) => gatewayRef?.originThreadIdFor(sessionKey))
+      : {}),
+  });
+  sharedLoop = shared.loop;
+  // Deliberately NOT given `wireUnattendedApprovalGate` (which `runGatewayStart`
+  // registers on its systemLoop): here cron and watcher wakes share the web
+  // loop, and `buildServeWebApi` registers the web approval hook on it, so a
+  // flagged call posts a modal card a human can answer (denied at the approval
+  // timeout) — the same shape as `ethos serve`. The unattended gate would
+  // refuse every flagged web-chat call too. Boot runs no dreams and no SIP.
+  const systemLoop = shared.loop;
 
   // Personality-directory seam for hot-reload, shared by the Gateway and by
   // every loop registry in the process.
@@ -921,6 +929,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     config: cfg,
     bots,
     systemLoop,
+    idleBotJobs: { jobStore: shared.jobStore, backgroundExecutor: shared.backgroundExecutor },
     adapters,
     deliveryLedger,
     inboundDedup,

@@ -995,6 +995,8 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // an equivalent closure. Absent on every other deployment.
     runCallCapture: runCallCaptureFromLoop,
     dispose: disposeSystemLoop,
+    jobStore: systemJobStore,
+    backgroundExecutor: systemBackgroundExecutor,
   } = await createAgentLoop(config, {
     cronScheduler: scheduler,
     watcherManager,
@@ -1003,6 +1005,11 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     // Cron, dreams and watcher wakes run here, and a gated personality's
     // `send_message` must queue from this loop exactly as it does from a bot's.
     outbox: outbox.wiring,
+    // No bot configured: this loop is also the idle gateway bot's
+    // (`idleGatewayBotLoopOpts`).
+    ...(bots.length === 0
+      ? idleGatewayBotLoopOpts((sessionKey) => gatewayRef?.originThreadIdFor(sessionKey))
+      : {}),
   });
   systemLoop = systemLoopReady;
 
@@ -1316,6 +1323,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     config,
     bots,
     systemLoop,
+    idleBotJobs: { jobStore: systemJobStore, backgroundExecutor: systemBackgroundExecutor },
     adapters,
     deliveryLedger,
     inboundDedup,
@@ -4507,6 +4515,54 @@ export async function registerGatewayClarifySurfaces(opts: {
 }
 
 /**
+ * The botKey of the one bot an idle gateway (no platform bot configured) runs
+ * on — the same `'default'` the Gateway's legacy `loop` shorthand synthesized.
+ * Plugin adapters and the like reach it through the single-bot fallback
+ * (`Gateway.routedBotKey`).
+ */
+export const IDLE_GATEWAY_BOT_KEY = 'default';
+
+/**
+ * `createAgentLoop` options that make a host's system loop the idle bot's
+ * loop, the way `assembleGatewayBots` gives every configured bot its own:
+ * `originBotKey` so a `delegate_task(background: true)` job started from one
+ * of its turns records WHICH bot announces it (without it the job has no
+ * origin bot, nothing subscribes to its completion and the restart sweep
+ * `Gateway.sweepUndeliveredJobs` never lists it), and the thread resolver so
+ * the notice returns to the sub-conversation. Only gateway turns carry a
+ * `platform:chatId` origin, so cron, web and ACP turns on the same loop still
+ * record no origin bot (`splitFirstColon` in extensions/tools-delegation).
+ * Both `ethos gateway start` and `ethos boot` pass these when no bot is
+ * configured; pinned by apps/ethos/src/__tests__/idle-gateway-bot.test.ts.
+ */
+export function idleGatewayBotLoopOpts(
+  resolveOriginThreadId: (sessionKey: string) => string | undefined,
+): { originBotKey: string; resolveOriginThreadId: (sessionKey: string) => string | undefined } {
+  return { originBotKey: IDLE_GATEWAY_BOT_KEY, resolveOriginThreadId };
+}
+
+/**
+ * The idle gateway's one bot: the host's system loop, bound to the default
+ * personality with `/personality` switching allowed (what the legacy `loop`
+ * shorthand gave it), plus that loop's job store and background executor so
+ * its background jobs announce through the normal tracked path
+ * (`Gateway.deliverCompletion` / `claimWake`, resolved by `adapterForBot`).
+ */
+export function idleGatewayBot(
+  loop: AgentLoop,
+  personality: string | undefined,
+  jobs: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor'> | undefined,
+): GatewayBotConfig {
+  return {
+    botKey: IDLE_GATEWAY_BOT_KEY,
+    loop,
+    binding: { type: 'personality', name: personality ?? 'default', allowSlashSwitch: true },
+    ...(jobs?.jobStore ? { jobStore: jobs.jobStore } : {}),
+    ...(jobs?.backgroundExecutor ? { backgroundExecutor: jobs.backgroundExecutor } : {}),
+  };
+}
+
+/**
  * Construct the `Gateway` for the gateway role.
  *
  * Extracted verbatim from `runGatewayStart` (plan §3b step 5, "`Gateway` class
@@ -4518,8 +4574,11 @@ export async function registerGatewayClarifySurfaces(opts: {
 export interface BuildGatewayOptions {
   config: EthosConfig;
   bots: GatewayBotConfig[];
-  /** Used only on the no-bot idle path (`GatewayConfig.loop`). */
+  /** Used only on the no-bot idle path, as the idle bot's loop (`idleGatewayBot`). */
   systemLoop: AgentLoop;
+  /** `systemLoop`'s job store and background executor — the idle bot's, as a
+   *  configured bot gets its own loop's. Ignored when `bots` is non-empty. */
+  idleBotJobs?: Pick<GatewayBotConfig, 'jobStore' | 'backgroundExecutor'>;
   /**
    * EVERY adapter this process runs. Both registries the Gateway takes are
    * derived from it by `adapterRegistries` (@ethosagent/gateway): the
@@ -4806,6 +4865,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
     config,
     bots,
     systemLoop,
+    idleBotJobs,
     adapters,
     deliveryLedger,
     inboundDedup,
@@ -4849,8 +4909,7 @@ export function buildGateway(opts: BuildGatewayOptions): Gateway {
       // (including Discord/Email) now registers a bot in `buildGatewayBots`,
       // so this single-loop path is reached only when nothing is wired up.
       new Gateway({
-        loop: systemLoop,
-        defaultPersonality: config.personality,
+        bots: [idleGatewayBot(systemLoop, config.personality, idleBotJobs)],
         adapters: adapterMap,
         botAdapters,
         deliveryLedger,
