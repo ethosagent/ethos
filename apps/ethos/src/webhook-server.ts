@@ -55,8 +55,11 @@ export interface WebhookConfig {
    *  Absent → identical to today. */
   hmac?: WebhookHmacConfig;
   /** Per-hook request throttle. Absent → unlimited, today's behavior exactly
-   *  (the bucket path never runs). The limiter is IN-PROCESS and keyed by
-   *  hookId — never shared or distributed. The gateway is a single-process
+   *  (the bucket path never runs). Two IN-PROCESS buckets share these knobs:
+   *  the per-hookId bucket, spent only by callers that passed the bearer
+   *  check, and a per-source pre-auth bucket spent only by bearer failures
+   *  (plan openclaw-2026.9.6-gaps S14; see the request handler). Never shared
+   *  or distributed. The gateway is a single-process
    *  model, so a distributed limiter would solve a problem this deployment
    *  shape does not have; a second process would be a second gateway, which is
    *  not a supported deployment. */
@@ -253,6 +256,37 @@ function consumeRateLimitToken(
   return undefined;
 }
 
+/** Pre-auth buckets are keyed by caller address, which an attacker with many
+ *  addresses (an IPv6 prefix) can mint freely; past this many entries the idle
+ *  ones are dropped so the map cannot grow without bound. A LOCKED entry is
+ *  never dropped — that would hand a guessing source a fresh budget. */
+const MAX_PRE_AUTH_BUCKETS = 10_000;
+
+function prunePreAuthBuckets(buckets: Map<string, TokenBucket>, now: number): void {
+  if (buckets.size <= MAX_PRE_AUTH_BUCKETS) return;
+  for (const [key, bucket] of buckets) {
+    if (now >= bucket.lockedUntil) buckets.delete(key);
+  }
+}
+
+/**
+ * The caller address the pre-auth bucket is keyed on: the TCP peer, never
+ * `X-Forwarded-For`. That header is whatever the caller wrote, so trusting it
+ * would let a guessing client name a fresh bucket per request and switch the
+ * throttle off (pinned by "keys the pre-auth bucket on the socket" in
+ * __tests__/webhook-server.test.ts).
+ *
+ * Limitation, stated rather than implied: behind a reverse proxy every caller
+ * arrives from the proxy's address, so they share one pre-auth bucket per hook,
+ * and an unauthenticated flood through the proxy can hold that shared bucket
+ * locked — refusing the real sender's proxied requests for `lockoutSeconds`.
+ * Rate-limit at the proxy in that deployment, or leave `rateLimit` unset.
+ * The per-hook bucket is not affected: only authenticated callers spend it.
+ */
+function preAuthSource(req: IncomingMessage): string {
+  return req.socket.remoteAddress ?? 'unknown';
+}
+
 /**
  * Sanitize a hookId that came from the request URL for logging.
  *
@@ -388,6 +422,9 @@ export function createWebhookServer(
   /** Rate-limit state, one bucket per hookId. Same closure as `inFlightSync`:
    *  per-process, per-server, gone when the listener is. */
   const rateBuckets = new Map<string, TokenBucket>();
+  /** Pre-auth state, one bucket per (hookId, caller address) — see
+   *  `preAuthSource`. Spent only by bearer failures. */
+  const preAuthBuckets = new Map<string, TokenBucket>();
   const clock = opts?.now ?? (() => Date.now());
   const onRejected = opts?.onRejected;
 
@@ -423,14 +460,59 @@ export function createWebhookServer(
       return;
     }
 
-    // Rate limiting runs BEFORE the bearer check on purpose: `timingSafeEqual`
-    // cycles spent on traffic that is getting refused anyway are cycles an
-    // attacker gets to choose. An absent `rateLimit` (or a non-positive
-    // `maxPerMinute`) skips the bucket entirely — unlimited, exactly as before.
+    // Two buckets (plan openclaw-2026.9.6-gaps S14), sharing `rateLimit`'s
+    // knobs. An absent `rateLimit` (or a non-positive `maxPerMinute`) skips
+    // both — unlimited, exactly as before.
+    //
+    //   1. Pre-auth, per (hookId, caller address): checked BEFORE the bearer so
+    //      a locked source is refused without its guess being evaluated, but
+    //      SPENT only when the bearer check fails. A sender holding the secret
+    //      never touches it.
+    //   2. Per hookId: spent only AFTER the bearer check succeeds, so no amount
+    //      of unauthenticated traffic can lock the real sender out. It used to
+    //      run before the bearer; an anonymous flood then emptied it and the
+    //      hook refused its owner for `lockoutSeconds`.
+    //
+    // Pinned by 'two buckets (S14)' in __tests__/webhook-server.test.ts.
     const maxPerMinute = hook.rateLimit?.maxPerMinute;
-    if (maxPerMinute !== undefined && maxPerMinute > 0) {
-      const lockoutMs =
-        (hook.rateLimit?.lockoutSeconds ?? DEFAULT_RATE_LIMIT_LOCKOUT_SECONDS) * 1000;
+    const limited = maxPerMinute !== undefined && maxPerMinute > 0;
+    const lockoutMs = (hook.rateLimit?.lockoutSeconds ?? DEFAULT_RATE_LIMIT_LOCKOUT_SECONDS) * 1000;
+    const refuseRateLimited = (retryAfter: number): void => {
+      reject(hookId, 'rate_limited');
+      sendJson(res, 429, { error: 'rate limited' }, { 'Retry-After': String(retryAfter) });
+    };
+    const preAuthKey = `${hookId}\u0000${preAuthSource(req)}`;
+    if (limited) {
+      const lockedUntil = preAuthBuckets.get(preAuthKey)?.lockedUntil ?? 0;
+      const now = clock();
+      if (now < lockedUntil) {
+        refuseRateLimited(Math.ceil((lockedUntil - now) / 1000));
+        return;
+      }
+    }
+
+    if (!authorized(req.headers.authorization, hook.secret)) {
+      if (limited) {
+        const now = clock();
+        prunePreAuthBuckets(preAuthBuckets, now);
+        const retryAfter = consumeRateLimitToken(
+          preAuthBuckets,
+          preAuthKey,
+          maxPerMinute,
+          lockoutMs,
+          now,
+        );
+        if (retryAfter !== undefined) {
+          refuseRateLimited(retryAfter);
+          return;
+        }
+      }
+      reject(hookId, 'unauthorized');
+      sendJson(res, 401, { error: 'unauthorized' });
+      return;
+    }
+
+    if (limited) {
       const retryAfter = consumeRateLimitToken(
         rateBuckets,
         hookId,
@@ -439,16 +521,9 @@ export function createWebhookServer(
         clock(),
       );
       if (retryAfter !== undefined) {
-        reject(hookId, 'rate_limited');
-        sendJson(res, 429, { error: 'rate limited' }, { 'Retry-After': String(retryAfter) });
+        refuseRateLimited(retryAfter);
         return;
       }
-    }
-
-    if (!authorized(req.headers.authorization, hook.secret)) {
-      reject(hookId, 'unauthorized');
-      sendJson(res, 401, { error: 'unauthorized' });
-      return;
     }
 
     let rawBody: string;
