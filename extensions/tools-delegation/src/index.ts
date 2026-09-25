@@ -203,6 +203,14 @@ export interface BackgroundToolDeps {
    */
   resolveOriginThreadId?: (sessionKey: string) => string | undefined;
   /**
+   * Resolve the platform user whose message started the live turn — a per-turn
+   * lookup for the same reason as `resolveOriginThreadId` (`ToolContext`
+   * carries no sender; the gateway answers it, `Gateway.originUserIdFor`).
+   * Stamped as `originUserId` so the job's clarify defaults to that user.
+   * Absent outside the gateway; the job then records no originator.
+   */
+  resolveOriginUserId?: (sessionKey: string) => string | undefined;
+  /**
    * Runners this deployment can execute a job on, beyond the default. Used only
    * to VALIDATE the `runner` arg at the tool boundary — the executor does its
    * own lookup. Absent means only the default runner exists here.
@@ -474,12 +482,11 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
       // Same up-front validation as the blocking path, then hand off to the
       // JobStore. When background deps are not wired, degrade to not_available.
       //
-      // Limitation (S12): unlike the blocking path, a background job does NOT
-      // carry the parent turn's `ctx.toolsetNarrowing` — the job row has no
-      // field for it, so the job runs under its personality's full toolset
-      // (an ACP/Pi runner still applies that toolset and its deny rules,
-      // `createPersonalityGate`). A tool the parent turn was narrowed out of
-      // is reachable from a background child.
+      // Like the blocking path, a background job carries the parent turn's
+      // `ctx.toolsetNarrowing` (S12): it is persisted on the row
+      // (`BackgroundJob.toolsetNarrowing`) and re-applied when the child runs
+      // (`EthosJobRunner.run`; the ACP/Pi runners via `narrowedToolset`).
+      // Pinned by extensions/job-runner/src/__tests__/toolset-narrowing.test.ts.
       if (runInBackground === true) {
         if (!prompt) return { ok: false, error: 'prompt is required', code: 'input_invalid' };
 
@@ -567,6 +574,9 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
         const originThreadId = originPlatform
           ? background.resolveOriginThreadId?.(ctx.sessionKey)
           : undefined;
+        const originUserId = originPlatform
+          ? background.resolveOriginUserId?.(ctx.sessionKey)
+          : undefined;
         const job = await background.store.create({
           owner: background.owner,
           parentSessionKey: ctx.sessionKey,
@@ -583,6 +593,8 @@ export function createDelegateTaskTool(loop: AgentLoop, background?: BackgroundT
           ...(originBotKey ? { originBotKey } : {}),
           ...(originChatId ? { originChatId } : {}),
           ...(originThreadId ? { originThreadId } : {}),
+          ...(originUserId ? { originUserId } : {}),
+          ...(ctx.toolsetNarrowing ? { toolsetNarrowing: ctx.toolsetNarrowing } : {}),
         });
 
         background.nudge();
@@ -789,6 +801,10 @@ export function createMixtureOfAgentsTool(loop: AgentLoop): Tool {
 
         try {
           const synthesis = await runSubAgent(loop, synthesisInput, {
+            // The caller's personality, so its toolset, deny rules and memory
+            // scope bound the synthesis turn too. Pinned by "runs the synthesis
+            // pass as the caller's personality" in __tests__/delegation.test.ts.
+            personalityId: ctx.personalityId,
             sessionKey,
             depth: depth + 1,
             abortSignal: ctx.abortSignal,

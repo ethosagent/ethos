@@ -471,6 +471,77 @@ describe('4.2 — updateApprovalCard', () => {
     expect(text).toContain('Denied');
     expect(text).toContain('@bob');
   });
+
+  // S9 made `decidedBy` the clicker's numeric id (the coordinator binds on
+  // it), so the card must resolve that id back to something a human reads —
+  // never "Approved by @200".
+  async function clickThenUpdate(from: Record<string, unknown>): Promise<{
+    text: string;
+    opts: Record<string, unknown>;
+  }> {
+    const adapter = mk({ token: '1:fake-token', cache });
+    await adapter.start();
+    const decisions: ApprovalDecisionEvent[] = [];
+    adapter.onApprovalDecision((evt) => decisions.push(evt));
+    registeredHandlers['callback_query:data']?.[0]({
+      callbackQuery: {
+        id: 'q9',
+        data: 'approve:card1',
+        message: { message_id: 55, chat: { id: 100 } },
+        from,
+      },
+      answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+    });
+    await vi.waitFor(() => expect(decisions).toHaveLength(1));
+    await adapter.updateApprovalCard({
+      chatId: '100',
+      messageTs: '55',
+      toolName: 'bash',
+      decision: 'allow',
+      decidedBy: decisions[0]?.decidedBy ?? '',
+    });
+    return {
+      text: mockApi.editMessageText.mock.calls[0][2] as string,
+      opts: mockApi.editMessageText.mock.calls[0][3] as Record<string, unknown>,
+    };
+  }
+
+  it('renders the clicker by @username, not the numeric decidedBy', async () => {
+    const { text } = await clickThenUpdate({
+      id: 200,
+      is_bot: false,
+      first_name: 'Al',
+      username: 'alice',
+    });
+    expect(text).toBe('Tool: bash — Approved by @alice');
+  });
+
+  it('falls back to the first name, linked as a mention, when there is no username', async () => {
+    const { text, opts } = await clickThenUpdate({ id: 202, is_bot: false, first_name: 'Carol' });
+    expect(text).toBe('Tool: bash — Approved by Carol');
+    expect(opts.entities).toEqual([
+      { type: 'text_link', offset: text.indexOf('Carol'), length: 5, url: 'tg://user?id=202' },
+    ]);
+  });
+
+  it('links a numeric decider it never saw click as a tg://user mention', async () => {
+    const adapter = mk({ token: '1:fake-token', cache });
+    await adapter.start();
+    await adapter.updateApprovalCard({
+      chatId: '100',
+      messageTs: '55',
+      toolName: 'bash',
+      decision: 'deny',
+      decidedBy: '300',
+    });
+    const text = mockApi.editMessageText.mock.calls[0][2] as string;
+    const opts = mockApi.editMessageText.mock.calls[0][3] as Record<string, unknown>;
+    expect(text).not.toContain('@300');
+    expect(text).toBe('Tool: bash — Denied by user 300');
+    expect(opts.entities).toEqual([
+      { type: 'text_link', offset: text.indexOf('user 300'), length: 8, url: 'tg://user?id=300' },
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

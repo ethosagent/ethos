@@ -495,6 +495,41 @@ describe('ClarifyBridge', () => {
       await pending;
     });
 
+    // S11 follow-up — an omitted `answerableBy` on a background clarify
+    // defaults to 'originator' when the job recorded who started it (the
+    // origin lane carries `originatorUserId`), and to 'anyone' only when it
+    // did not — an originator-only row with nobody to bind could only time out.
+    it("an omitted answerableBy on a job clarify defaults to 'originator' when the origin names one", async () => {
+      const { bridge } = makeBridge();
+      bridge.setOriginResolver(() => ({
+        surfaceType: 'telegram',
+        surfaceContext: { chatId: 'c1', originatorUserId: 'u1' },
+      }));
+      const queue = makePresentedQueue(bridge, 'telegram');
+      const { answerableBy: _omit, ...input } = baseInput;
+      const pending = bridge.request({ ...input, jobId: 'job-1', surfaceType: 'cli' });
+      const row = await queue.next();
+      expect(row.answerableBy).toBe('originator');
+      expect(row.surfaceContext.originatorUserId).toBe('u1');
+      await bridge.respond({ requestId: row.requestId, answer: 'x', source: 'user' });
+      await pending;
+    });
+
+    it("an omitted answerableBy on a job clarify with no known originator defaults to 'anyone'", async () => {
+      const { bridge } = makeBridge();
+      bridge.setOriginResolver(() => ({
+        surfaceType: 'telegram',
+        surfaceContext: { chatId: 'c1' },
+      }));
+      const queue = makePresentedQueue(bridge, 'telegram');
+      const { answerableBy: _omit, ...input } = baseInput;
+      const pending = bridge.request({ ...input, jobId: 'job-1', surfaceType: 'cli' });
+      const row = await queue.next();
+      expect(row.answerableBy).toBe('anyone');
+      await bridge.respond({ requestId: row.requestId, answer: 'x', source: 'user' });
+      await pending;
+    });
+
     it('falls back to the input surfaceType when the job has no recorded origin', async () => {
       const { bridge } = makeBridge();
       bridge.setOriginResolver(() => null);

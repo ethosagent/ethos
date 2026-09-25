@@ -185,9 +185,9 @@ function isClarifySurfaceType(platform: string): platform is ClarifySurfaceType 
  * when the job has no recorded origin platform, or that platform has no
  * clarify surface — the bridge's `resolveRouting()` then falls back to the
  * request's own `surfaceType` (today's behaviour). `surfaceContext` reuses
- * the same `chatId`/`botKey`/`threadId` keys the per-platform
- * `clarify-surface.ts` files (Telegram/Slack/Discord/WhatsApp) write onto a
- * presented row's `surfaceContext`.
+ * the same `chatId`/`botKey`/`threadId`/`originatorUserId` keys the
+ * per-platform `clarify-surface.ts` files (Telegram/Slack/Discord/WhatsApp)
+ * write onto a presented row's `surfaceContext`.
  *
  * Extracted as a pure function for the same testability reason
  * `isCallCaptureToolsEnabled` above is — `buildAgentLoop` is a full
@@ -196,7 +196,7 @@ function isClarifySurfaceType(platform: string): platform is ClarifySurfaceType 
 export function resolveJobClarifyOrigin(
   job: Pick<
     BackgroundJob,
-    'originPlatform' | 'originBotKey' | 'originChatId' | 'originThreadId'
+    'originPlatform' | 'originBotKey' | 'originChatId' | 'originThreadId' | 'originUserId'
   > | null,
 ): ClarifyOriginLane | null {
   const platform = job?.originPlatform;
@@ -207,6 +207,9 @@ export function resolveJobClarifyOrigin(
       ...(job?.originChatId ? { chatId: job.originChatId } : {}),
       ...(job?.originBotKey ? { botKey: job.originBotKey } : {}),
       ...(job?.originThreadId ? { threadId: job.originThreadId } : {}),
+      // The same key each surface's `gateAnswerer` reads, so an
+      // 'originator' clarify from this job binds to whoever started it.
+      ...(job?.originUserId ? { originatorUserId: job.originUserId } : {}),
     },
   };
 }
@@ -1464,6 +1467,7 @@ export async function buildAgentLoop(
       staleMs: bg.staleMs,
       ...(opts.originBotKey ? { originBotKey: opts.originBotKey } : {}),
       ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
+      ...(opts.resolveOriginUserId ? { resolveOriginUserId: opts.resolveOriginUserId } : {}),
     };
 
     // Mesh proxy reconciler — polls peers for background jobs spawned via

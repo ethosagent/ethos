@@ -60,9 +60,9 @@ describe('createClarifyTool — jobId threading (D22)', () => {
 });
 
 // S11 (plan openclaw-2026.9.6-gaps) — an omitted `answerable_by` must not let
-// any group member answer the agent's paused question. Background turns are
-// the documented exception: `BackgroundJob` records no originating user, so
-// no surface could ever stamp `originatorUserId` on their rows.
+// any group member answer the agent's paused question. A background turn
+// leaves the default to `ClarifyBridge.request`, which alone knows (from the
+// job's origin lane) whether an originator was recorded.
 describe('createClarifyTool — answerable_by default (S11)', () => {
   it("defaults to 'originator' on a foreground turn", async () => {
     const { bridge, captured } = makeFakeBridge();
@@ -79,12 +79,22 @@ describe('createClarifyTool — answerable_by default (S11)', () => {
     expect(captured[0]?.answerableBy).toBe('anyone');
   });
 
-  it("defaults to 'anyone' on a background turn, which has no originator to bind", async () => {
+  it('leaves the default to the bridge on a background turn (omits answerableBy)', async () => {
     const { bridge, captured } = makeFakeBridge();
     await createClarifyTool(bridge).execute(
       { question: 'Which database?' },
       makeCtx({ jobId: 'job-1' }),
     );
-    expect(captured[0]?.answerableBy).toBe('anyone');
+    const first = captured[0];
+    expect(first !== undefined && 'answerableBy' in first).toBe(false);
+  });
+
+  it("keeps an explicit 'originator' on a background turn", async () => {
+    const { bridge, captured } = makeFakeBridge();
+    await createClarifyTool(bridge).execute(
+      { question: 'Which database?', answerable_by: 'originator' },
+      makeCtx({ jobId: 'job-1' }),
+    );
+    expect(captured[0]?.answerableBy).toBe('originator');
   });
 });

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { deriveFsReachPaths } from '@ethosagent/core';
 import { resolveNetworkMode } from '@ethosagent/execution-docker';
-import { SUMMARY_INSTRUCTION } from '@ethosagent/job-runner';
+import { narrowedToolset, SUMMARY_INSTRUCTION } from '@ethosagent/job-runner';
 import type {
   AgentEvent,
   BackgroundJob,
@@ -167,8 +167,13 @@ export class PiJobRunner implements JobRunner {
         signal: ctx.signal,
         steerSink: ctx.steerSink,
         appendLog: ctx.appendLog,
-        // The personality's deny rules and toolset first, then the gate (S12).
-        gate: createPersonalityGate(this.gate, personality, this.deps.logger),
+        // The personality's deny rules and toolset first, then the gate (S12);
+        // the toolset narrowed as the spawning turn was (`narrowedToolset`).
+        gate: createPersonalityGate(
+          this.gate,
+          { ...personality, toolset: narrowedToolset(personality.toolset, job.toolsetNarrowing) },
+          this.deps.logger,
+        ),
         ...(this.deps.logger ? { logger: this.deps.logger } : {}),
         onStarted: (info) => this.live.set(job.id, info),
       });

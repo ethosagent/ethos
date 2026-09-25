@@ -661,6 +661,8 @@ export async function createAgentLoop(
      * Gateway only — it is the one component that knows the mapping.
      */
     resolveOriginThreadId?: (sessionKey: string) => string | undefined;
+    /** Resolve who started a live turn, for the same reason. Gateway only. */
+    resolveOriginUserId?: (sessionKey: string) => string | undefined;
     /**
      * Lane 0 (D16) — force a LIVE served-window probe (bypassing the disk
      * cache) and rewrite the cache. Set by `ethos bench context`; chat and
@@ -722,6 +724,7 @@ export async function createAgentLoop(
     ...(opts.slashRegistry ? { slashRegistry: opts.slashRegistry } : {}),
     ...(opts.originBotKey ? { originBotKey: opts.originBotKey } : {}),
     ...(opts.resolveOriginThreadId ? { resolveOriginThreadId: opts.resolveOriginThreadId } : {}),
+    ...(opts.resolveOriginUserId ? { resolveOriginUserId: opts.resolveOriginUserId } : {}),
     ...(opts.probeWindowRefresh === true ? { probeWindowRefresh: true } : {}),
     ...(opts.livekit ? { livekit: opts.livekit } : {}),
     ...(opts.outbox ? { outbox: opts.outbox } : {}),

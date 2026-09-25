@@ -179,6 +179,7 @@ import {
   type GatewayBotWiring,
   gatewayObservability,
   gatewaySqliteStorePaths,
+  gatewayTurnOrigin,
   idleGatewayBotLoopOpts,
   openChannelTranscriptStore,
   registerGatewayClarifySurfaces,
@@ -606,7 +607,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     cfg,
     scheduler,
     watcherManager,
-    (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
+    gatewayTurnOrigin(() => gatewayRef),
     undefined,
     outbox.wiring,
   );
@@ -623,9 +624,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     outbox: outbox.wiring,
     // No bot configured: this loop is also the idle gateway bot's
     // (`idleGatewayBotLoopOpts`, ./gateway).
-    ...(bots.length === 0
-      ? idleGatewayBotLoopOpts((sessionKey) => gatewayRef?.originThreadIdFor(sessionKey))
-      : {}),
+    ...(bots.length === 0 ? idleGatewayBotLoopOpts(gatewayTurnOrigin(() => gatewayRef)) : {}),
   });
   sharedLoop = shared.loop;
   // Deliberately NOT given `wireUnattendedApprovalGate` (which `runGatewayStart`
@@ -1872,7 +1871,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       slice,
       scheduler,
       watcherManager,
-      (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
+      gatewayTurnOrigin(() => gatewayRef),
       undefined,
       // A bot added without a restart is gated exactly like a cold-booted one.
       // This is the drift O-D8 warns about, one call site down: miss it and a
@@ -2108,7 +2107,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
       slice,
       scheduler,
       watcherManager,
-      (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
+      gatewayTurnOrigin(() => gatewayRef),
       undefined,
       // A bot added without a restart is gated exactly like a cold-booted one.
       // This is the drift O-D8 warns about, one call site down: miss it and a

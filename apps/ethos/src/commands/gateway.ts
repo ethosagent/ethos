@@ -979,7 +979,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     config,
     scheduler,
     watcherManager,
-    (sessionKey) => gatewayRef?.originThreadIdFor(sessionKey),
+    gatewayTurnOrigin(() => gatewayRef),
     callLog,
     outbox.wiring,
   );
@@ -1068,9 +1068,7 @@ export async function runGatewayStart(opts: GatewayStartOptions = {}): Promise<v
     outbox: outbox.wiring,
     // No bot configured: this loop is also the idle gateway bot's
     // (`idleGatewayBotLoopOpts`).
-    ...(bots.length === 0
-      ? idleGatewayBotLoopOpts((sessionKey) => gatewayRef?.originThreadIdFor(sessionKey))
-      : {}),
+    ...(bots.length === 0 ? idleGatewayBotLoopOpts(gatewayTurnOrigin(() => gatewayRef)) : {}),
   });
   systemLoop = systemLoopReady;
 
@@ -2508,7 +2506,7 @@ export async function buildGatewayBots(
   config: EthosConfig,
   scheduler: CronScheduler,
   watcherManager: WatcherManager,
-  resolveOriginThreadId: (sessionKey: string) => string | undefined,
+  origin: GatewayTurnOrigin,
   callLog?: CallLog,
   /** The approval outbox (`createOutboxRuntime(...).wiring`). Omitted and a
    *  gated personality's `send_message` sends as it always did — which is why
@@ -2523,7 +2521,7 @@ export async function buildGatewayBots(
       config,
       scheduler,
       watcherManager,
-      resolveOriginThreadId,
+      origin,
       disposers,
       callLog,
       outbox,
@@ -2538,20 +2536,20 @@ async function assembleGatewayBots(
   config: EthosConfig,
   scheduler: CronScheduler,
   watcherManager: WatcherManager,
-  resolveOriginThreadId: (sessionKey: string) => string | undefined,
+  origin: GatewayTurnOrigin,
   disposers: Array<() => Promise<void>>,
   callLog?: CallLog,
   outbox?: OutboxWiring,
 ): Promise<BuildGatewayBotsResult> {
   // Every personality loop gets the same scheduler + watcher manager so
   // agent-callable cron/watcher tools land in the shared stores. The thread
-  // resolver rides along so background jobs record their full origin lane, and
-  // the call log so a phone call one of these bots PLACES is recorded beside
+  // and sender resolvers ride along so background jobs record their full
+  // origin lane and who started them, and the call log so a phone call one of these bots PLACES is recorded beside
   // the inbound ones rather than vanishing.
   const loopOpts = {
     cronScheduler: scheduler,
     watcherManager,
-    resolveOriginThreadId,
+    ...origin,
     ...(callLog ? { callLog } : {}),
     // Every bot's loop gets the same outbox, so which bot a gated personality
     // was speaking as makes no difference to whether its publication is queued.
@@ -4715,9 +4713,29 @@ export const IDLE_GATEWAY_BOT_KEY = 'default';
  * configured; pinned by apps/ethos/src/__tests__/idle-gateway-bot.test.ts.
  */
 export function idleGatewayBotLoopOpts(
-  resolveOriginThreadId: (sessionKey: string) => string | undefined,
-): { originBotKey: string; resolveOriginThreadId: (sessionKey: string) => string | undefined } {
-  return { originBotKey: IDLE_GATEWAY_BOT_KEY, resolveOriginThreadId };
+  origin: GatewayTurnOrigin,
+): { originBotKey: string } & GatewayTurnOrigin {
+  return { originBotKey: IDLE_GATEWAY_BOT_KEY, ...origin };
+}
+
+/**
+ * The per-turn origin lookups only the gateway can answer (`ToolContext`
+ * carries neither a thread nor a sender), handed to every loop a gateway host
+ * builds so a `delegate_task(background: true)` job records the thread its
+ * completion returns to and the user its clarify binds to
+ * (`BackgroundToolDeps` in extensions/tools-delegation). Late-bound: the
+ * gateway is constructed after its loops.
+ */
+export interface GatewayTurnOrigin {
+  resolveOriginThreadId: (sessionKey: string) => string | undefined;
+  resolveOriginUserId: (sessionKey: string) => string | undefined;
+}
+
+export function gatewayTurnOrigin(gateway: () => Gateway | null): GatewayTurnOrigin {
+  return {
+    resolveOriginThreadId: (sessionKey) => gateway()?.originThreadIdFor(sessionKey),
+    resolveOriginUserId: (sessionKey) => gateway()?.originUserIdFor(sessionKey),
+  };
 }
 
 /**

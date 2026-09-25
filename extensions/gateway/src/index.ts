@@ -3546,6 +3546,7 @@ export class Gateway {
         originBotKey: bot.botKey,
         originChatId: message.chatId,
         ...(threadId ? { originThreadId: threadId } : {}),
+        ...(message.userId ? { originUserId: message.userId } : {}),
       });
       executor.nudge();
       // The id is the whole point of the ack: without it the user has nothing to
@@ -7006,6 +7007,16 @@ export class Gateway {
    */
   originThreadIdFor(sessionKey: string): string | undefined {
     return this.sessionRouting.get(sessionKey)?.threadId;
+  }
+
+  /**
+   * The platform user whose message started the live turn on `sessionKey`
+   * (`SessionRouting.requesterUserId`), for the same reason as
+   * `originThreadIdFor`: a `delegate_task` job stamps it as `origin_user_id`
+   * so the job's clarify binds to that user. `undefined` once the turn ends.
+   */
+  originUserIdFor(sessionKey: string): string | undefined {
+    return this.sessionRouting.get(sessionKey)?.requesterUserId;
   }
 
   // ---------------------------------------------------------------------------
