@@ -4956,6 +4956,7 @@ export function gatewayObservability(
     recordInjectionFlag: (opts) => record((sink) => sink.recordInjectionFlag?.(opts)),
     recordChannelAllow: (opts) => record((sink) => sink.recordChannelAllow(opts)),
     recordChannelDeny: (opts) => record((sink) => sink.recordChannelDeny(opts)),
+    recordChannelPairing: (opts) => record((sink) => sink.recordChannelPairing?.(opts)),
   };
 }
 
