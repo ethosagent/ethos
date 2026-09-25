@@ -415,6 +415,32 @@ function isRetryText(text: string | undefined, botHandle?: string): boolean {
 }
 
 /**
+ * `/cmd@handle` → `/cmd`, for THIS bot's own handle (`botHandle`, see
+ * `adapterHandle`), matched case-insensitively. Telegram's command menu and
+ * group members address a command to one bot this way, and the built-in and
+ * plugin command lookups match the first word exactly, so the suffixed form
+ * fell through to the LLM as ordinary text. Only the first word is rewritten;
+ * everything after it is left as it was, so argument parsing is unchanged.
+ *
+ * Returns `null` for a command addressed to ANOTHER bot (`/new@other_bot`).
+ * Telegram's convention (Bot API, "Privacy mode" / "Commands") is that a
+ * `/command@username` is meant for that bot alone, so the caller ignores it:
+ * no reply, no turn. An adapter that cannot name its handle gets the text back
+ * unchanged — nothing stripped, nothing dropped. Pinned by
+ * `__tests__/addressed-command.test.ts`.
+ */
+function commandForThisBot(text: string, botHandle?: string): string | null {
+  const handle = botHandle?.trim().replace(/^@/, '').toLowerCase();
+  if (!handle) return text;
+  const match = /^(\/[^\s@]+)@([^\s@]+)(?=\s|$)/.exec(text);
+  const command = match?.[1];
+  const addressee = match?.[2];
+  if (!match || !command || !addressee) return text;
+  if (addressee.toLowerCase() !== handle) return null;
+  return command + text.slice(match[0].length);
+}
+
+/**
  * The account an adapter speaks as (`@handle`), when it can say: the optional
  * `senderHandle` the Telegram adapter resolves at start — the same structural
  * read `apps/ethos/src/lib/outbox-wiring.ts` makes for its cards. Not on the
@@ -2853,7 +2879,21 @@ export class Gateway {
     if (restoring) await restoring;
     const lane = this.getOrCreateLane(laneKey);
     const rawText = message.text?.trim() ?? '';
-    const text = bot.piiRedaction ? redactPii(rawText) : rawText;
+    // `/cmd@this_bot` reads as `/cmd` in every lookup below; `/cmd@other_bot`
+    // is another bot's command and is dropped here, BEFORE the interrupted-row
+    // settlement, so it neither answers nor discards anything
+    // (`commandForThisBot`).
+    const text = commandForThisBot(
+      bot.piiRedaction ? redactPii(rawText) : rawText,
+      adapterHandle(adapter),
+    );
+    if (text === null) {
+      this.observability?.recordSafetyBlock({
+        code: 'gateway.command_for_other_bot',
+        details: { platform: message.platform, chatId: message.chatId, botKey: bot.botKey },
+      });
+      return;
+    }
 
     // --- Interrupted-message `retry` / discard (see the lookup at the top) ---
     if (interrupted) {
