@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import Database from '@ethosagent/sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KanbanStore } from '../index';
@@ -2510,5 +2511,62 @@ describe('KanbanStore.bumpActiveHeartbeats', () => {
 
     expect(store.findStaleRunningTasks(CUTOFF_MS, resumeNow)).toEqual([]);
     expect(store.getTask(spared.id)?.retryCount).toBe(0);
+  });
+});
+
+/**
+ * Hold `dbPath`'s write lock (`BEGIN IMMEDIATE`) from a WORKER for `holdMs`,
+ * resolving once it is held — a stand-in for the peer process that created
+ * board.db first and is still writing its schema, so the file is already in
+ * WAL mode (the store's first pragma). In rollback-journal mode a held
+ * RESERVED lock makes SQLite refuse the WAL switch with SQLITE_BUSY without
+ * consulting the busy handler (deadlock avoidance), which no timeout fixes and
+ * which the real race never reaches: whichever process opens first converts
+ * the file before it writes. A worker, not a
+ * second handle on this thread: `@ethosagent/sqlite` is synchronous, so a
+ * same-thread holder could never release while the constructor blocks. Same
+ * shape as extensions/session-sqlite/src/__tests__/hold-write-lock.ts.
+ */
+async function holdWriteLock(dbPath: string, holdMs = 300): Promise<Worker> {
+  const holder = new Worker(
+    `const { DatabaseSync } = require('node:sqlite');
+     const { workerData, parentPort } = require('node:worker_threads');
+     const db = new DatabaseSync(workerData.dbPath);
+     db.exec('PRAGMA busy_timeout = 5000');
+     db.exec('PRAGMA journal_mode = WAL');
+     db.exec('BEGIN IMMEDIATE');
+     parentPort.postMessage('held');
+     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, workerData.holdMs);
+     db.exec('COMMIT');
+     db.close();`,
+    { eval: true, workerData: { dbPath, holdMs } },
+  );
+  await new Promise<void>((resolve, reject) => {
+    holder.once('message', () => resolve());
+    holder.once('error', reject);
+  });
+  return holder;
+}
+
+describe('KanbanStore — a peer process holding the write lock', () => {
+  it('opens a fresh board.db by waiting, not by throwing "database is locked"', async () => {
+    // `ethos run-all` starts gateway and serve together and both open board.db
+    // in composeAllTools on first boot. With the @ethosagent/sqlite default
+    // busy_timeout of 0 the loser threw from the constructor.
+    const dir = mkdtempSync(join(tmpdir(), 'kanban-busy-'));
+    try {
+      const dbPath = join(dir, 'board.db');
+      const holder = await holdWriteLock(dbPath);
+      const store = new KanbanStore(dbPath);
+      expect(store.listTasks()).toEqual([]);
+      const rows = (store as unknown as { db: Database.Database }).db.pragma(
+        'busy_timeout',
+      ) as Array<{ timeout: number }>;
+      expect(rows[0]?.timeout).toBe(5000);
+      store.close();
+      await holder.terminate();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

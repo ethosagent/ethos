@@ -159,6 +159,12 @@ export class VectorMemoryProvider implements MemoryProvider {
     this.embedFn = config.embedFn;
     this.storage = config.storage;
     this.db = new Database(join(this.dir, 'memory.db'));
+    // memory.db is opened by every process that builds an agent loop under
+    // `memory: vector` (gateway and serve start together under `ethos run-all`).
+    // An explicit busy timeout makes concurrent opens/writes wait instead of
+    // throwing SQLITE_BUSY. Pinned by __tests__/memory-vector.test.ts
+    // ("busy_timeout").
+    this.db.pragma('busy_timeout = 5000');
     this.db.pragma('journal_mode = WAL');
     this.migrate();
   }
