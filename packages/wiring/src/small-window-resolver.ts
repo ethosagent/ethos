@@ -8,7 +8,10 @@
 // AGENTS.md all run a different static prefix, so the decision is re-made per
 // (personality id, workdir, project-context fingerprint) — measured with the
 // same `measureStaticFloor` arithmetic and the same file-context injector the
-// startup decision uses, then memoized.
+// startup decision uses, then memoized. The same floor sizes that
+// personality's window-scaled tool-result budget (`resolveResultBudgetGate`,
+// static-floor.ts), so a personality with a big prefix gets a smaller budget
+// and the others keep theirs.
 //
 // What is NOT in the floor, by design: progressive sub-directory context
 // layers. They are dynamic tail content (CLAUDE.md "prompt ordering is
@@ -35,8 +38,18 @@ export interface SmallWindowResolverOptions {
   windowTokens: number;
   /** Model named in the fit diagnostic. */
   model: string;
-  /** Applied to a turn whose personality engages small-window mode. */
-  overlay: SmallWindowOverlay;
+  /** `compaction.smallWindow` from config; `on`/`off` decide for every
+   *  personality, `auto` (default) applies the window and ratio triggers. */
+  override?: 'auto' | 'on' | 'off';
+  /** What small-window mode changes for a personality that engages it. */
+  smallWindowOverlay: Pick<SmallWindowOverlay, 'promptBudget' | 'historyLimit'>;
+  /** The personality's per-turn tool-result budget for its static floor
+   *  (`resolveResultBudgetGate`, static-floor.ts, with its own
+   *  `context_engine_options.resultBudgetChars`). */
+  resultBudget: (
+    personality: PersonalityConfig,
+    staticFloorTokens: number,
+  ) => { resultBudgetChars: number; maxSingleToolResultTokens?: number };
   /** The root project-context block for `personality` in a resolved `workdir`
    *  (`projectContextFor`, project-context-floor.ts). Called every turn; the
    *  file-context injector's mtime cache makes an unchanged file a stat, not a
@@ -50,19 +63,23 @@ export interface SmallWindowResolverOptions {
     projectContextChars: number,
   ) => Promise<StaticFloorMeasurement>;
   logger?: { warn(message: string): void };
-  /** The startup decision, already measured and already announced by
-   *  build-agent-loop.ts — seeded so the first turn neither re-measures it nor
-   *  repeats its warning. */
-  seed?: { personalityId: string; workdir: string; projectContext: string; engaged: boolean };
+  /** The startup personality, already measured and already announced by
+   *  build-agent-loop.ts — seeded so its first turn neither re-measures nor
+   *  repeats the warning. */
+  seed?: {
+    personality: PersonalityConfig;
+    workdir: string;
+    projectContext: string;
+    floor: StaticFloorMeasurement;
+  };
 }
 
 const fingerprint = (text: string): string => createHash('sha256').update(text).digest('hex');
 
 /**
- * Build the per-turn small-window resolver for `compaction.smallWindow: auto`
- * on a window above `SMALL_WINDOW_MAX_TOKENS` — the only configuration where
- * the answer depends on the personality (at or below it the window trigger is
- * unconditional; `on`/`off` are constants).
+ * Build the per-turn window resolver: for each personality, whether
+ * small-window mode is on and what tool-result budget its turns get, both
+ * derived from THAT personality's static floor.
  *
  * Memoized per (personality id, workdir) holding the project-context
  * fingerprint it was measured against: an unchanged AGENTS.md reuses the
@@ -78,37 +95,51 @@ const fingerprint = (text: string): string => createHash('sha256').update(text).
  * Pinned by packages/wiring/src/__tests__/small-window-resolver.test.ts.
  */
 export function createSmallWindowResolver(opts: SmallWindowResolverOptions): SmallWindowResolver {
-  const memo = new Map<string, { fingerprint: string; engaged: boolean }>();
+  const memo = new Map<string, { fingerprint: string; overlay: SmallWindowOverlay }>();
   const lastEngaged = new Map<string, boolean>();
   const keyOf = (personalityId: string, workdir: string) => `${personalityId}\u0000${workdir}`;
-  if (opts.seed) {
-    memo.set(keyOf(opts.seed.personalityId, opts.seed.workdir), {
-      fingerprint: fingerprint(opts.seed.projectContext),
-      engaged: opts.seed.engaged,
+
+  const overlayFor = (personality: PersonalityConfig, floor: StaticFloorMeasurement) => {
+    const smallWindow = resolveSmallWindowMode({
+      contextWindow: opts.windowTokens,
+      staticTokens: floor.tokens,
+      ...(opts.override ? { override: opts.override } : {}),
     });
-    lastEngaged.set(opts.seed.personalityId, opts.seed.engaged);
+    const overlay: SmallWindowOverlay = {
+      smallWindow,
+      ...(smallWindow ? opts.smallWindowOverlay : {}),
+      ...opts.resultBudget(personality, floor.tokens),
+    };
+    return overlay;
+  };
+
+  if (opts.seed) {
+    const overlay = overlayFor(opts.seed.personality, opts.seed.floor);
+    memo.set(keyOf(opts.seed.personality.id, opts.seed.workdir), {
+      fingerprint: fingerprint(opts.seed.projectContext),
+      overlay,
+    });
+    lastEngaged.set(opts.seed.personality.id, overlay.smallWindow);
   }
 
   // One measurement per (key, fingerprint) even when two turns for the same
   // personality start together (gateway lanes run concurrently).
-  const inflight = new Map<string, Promise<boolean>>();
+  const inflight = new Map<string, Promise<SmallWindowOverlay>>();
 
   const measure = async (personality: PersonalityConfig, projectContextChars: number) => {
     const floor = await opts.measureFloor(personality, projectContextChars);
-    const engaged = resolveSmallWindowMode({
-      contextWindow: opts.windowTokens,
-      staticTokens: floor.tokens,
-    });
-    if (engaged && lastEngaged.get(personality.id) !== true) {
+    const overlay = overlayFor(personality, floor);
+    if (overlay.smallWindow && lastEngaged.get(personality.id) !== true) {
       opts.logger?.warn(
         smallWindowModeMessage({
           personalityId: personality.id,
           windowTokens: opts.windowTokens,
           floor,
+          ...(opts.override ? { override: opts.override } : {}),
         }),
       );
     }
-    lastEngaged.set(personality.id, engaged);
+    lastEngaged.set(personality.id, overlay.smallWindow);
     const fit = evaluateContextFit({
       personalityId: personality.id,
       model: opts.model,
@@ -116,7 +147,7 @@ export function createSmallWindowResolver(opts: SmallWindowResolverOptions): Sma
       floor,
     });
     if (fit.message) opts.logger?.warn(fit.message);
-    return engaged;
+    return overlay;
   };
 
   return async (personality, workdir) => {
@@ -124,7 +155,7 @@ export function createSmallWindowResolver(opts: SmallWindowResolverOptions): Sma
     const key = keyOf(personality.id, workdir);
     const print = fingerprint(projectContext);
     const cached = memo.get(key);
-    if (cached && cached.fingerprint === print) return cached.engaged ? opts.overlay : undefined;
+    if (cached && cached.fingerprint === print) return cached.overlay;
 
     const flightKey = `${key}\u0000${print}`;
     let pending = inflight.get(flightKey);
@@ -134,8 +165,8 @@ export function createSmallWindowResolver(opts: SmallWindowResolverOptions): Sma
       );
       inflight.set(flightKey, pending);
     }
-    const engaged = await pending;
-    memo.set(key, { fingerprint: print, engaged });
-    return engaged ? opts.overlay : undefined;
+    const overlay = await pending;
+    memo.set(key, { fingerprint: print, overlay });
+    return overlay;
   };
 }

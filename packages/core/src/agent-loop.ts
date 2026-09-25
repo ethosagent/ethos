@@ -929,7 +929,7 @@ export class AgentLoop {
           storage: this.storage,
           dataDir: this.dataDir,
           platform: this.platform,
-          resultBudgetChars: this.resultBudgetChars,
+          resultBudgetChars: turnDeps.resultBudgetChars,
           teamId: this.teamId,
           sessionReadMtimes: this.sessionReadMtimes,
           llm: this.llm,

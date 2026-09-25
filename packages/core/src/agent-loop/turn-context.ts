@@ -228,8 +228,9 @@ export interface TurnSetup {
   /** Set only when on-demand tool loading is active for this turn
    *  (`resolveToolLoading`); undefined → every downstream path is unchanged. */
   toolLoading?: ToolLoadingState;
-  /** Set only when `LoopDeps.smallWindowResolver` engaged small-window mode
-   *  for this turn; `AgentLoop.run` applies it (`withSmallWindow`). */
+  /** Set when `LoopDeps.smallWindowResolver` answered for this turn's
+   *  personality (small-window flag, budgets, history limit); `AgentLoop.run`
+   *  applies it (`withSmallWindow`). */
   smallWindowOverlay?: SmallWindowOverlay;
 }
 

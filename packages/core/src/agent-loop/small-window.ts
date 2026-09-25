@@ -12,23 +12,36 @@
 // real static prefix and memoizes the verdict, so the answer is constant while
 // the inputs are, and the prompt prefix stays byte-stable across turns. Core
 // only applies the answer. No resolver → the loop-level `options.smallWindow`
-// / `promptBudget` / `historyLimit` apply to every turn, exactly as before.
+// / `promptBudget` / `historyLimit` / `resultBudgetChars` apply to every turn,
+// exactly as before.
+//
+// The same measurement sizes the window-scaled tool-result budget
+// (`resolveResultBudgetGate`, packages/wiring/src/static-floor.ts), which
+// depends on that personality's static floor, so the overlay carries it too.
 
 import type { PersonalityConfig } from '@ethosagent/types';
 import type { LoopDeps } from './turn-context';
 
-/** What small-window mode changes for a turn when it engages. */
+/** The per-personality window decisions for one turn. */
 export interface SmallWindowOverlay {
+  /** Whether small-window mode is on for the turn (gates the declared
+   *  `small_window_toolset` narrowing in `setupTurn`). */
+  smallWindow: boolean;
   /** Replaces the loop's `promptBudget` for the turn (compact prelude, index memory/skills). */
   promptBudget?: LoopDeps['promptBudget'];
   /** Replaces the loop's `historyLimit` for the turn. */
   historyLimit?: number;
+  /** Replaces the loop's per-turn tool-result budget for the turn. */
+  resultBudgetChars?: number;
+  /** The compaction gate's largest-single-result reserve derived from
+   *  `resultBudgetChars`. Read only when `resultBudgetChars` is set; absent
+   *  then means NO reserve for this personality, even if the loop has one. */
+  maxSingleToolResultTokens?: number;
 }
 
 /**
- * Decide small-window mode for one turn: the overlay when the mode engages
- * for this personality in this working directory, `undefined` when it does
- * not. Called once per turn by `setupTurn` (stages/turn-setup.ts), with the
+ * Decide the window overlay for one turn; `undefined` keeps the loop's own
+ * options. Called once per turn by `setupTurn` (stages/turn-setup.ts) with the
  * workdir that turn resolved from the personality's `fs_reach`.
  */
 export type SmallWindowResolver = (
@@ -37,17 +50,29 @@ export type SmallWindowResolver = (
 ) => Promise<SmallWindowOverlay | undefined>;
 
 /**
- * The loop deps one turn runs with: the loop's own when no overlay engaged,
- * otherwise with small-window mode on and the overlay's budget and history
- * limit. Used by `AgentLoop.run` for context assembly, the overflow retry and
- * the turn-end maintenance, so all three see the turn's decision.
+ * The loop deps one turn runs with: the loop's own when there is no overlay,
+ * otherwise with the overlay's small-window flag, prompt budget, history limit
+ * and tool-result budget. `AgentLoop.run` uses it for context assembly, tool
+ * processing, the overflow retry and the turn-end maintenance, so all of them
+ * see the turn's decision. Pinned by
+ * packages/wiring/src/__tests__/small-window-resolver.test.ts.
  */
 export function withSmallWindow(deps: LoopDeps, overlay: SmallWindowOverlay | undefined): LoopDeps {
   if (!overlay) return deps;
-  return {
-    ...deps,
-    smallWindow: true,
-    ...(overlay.promptBudget ? { promptBudget: overlay.promptBudget } : {}),
-    ...(overlay.historyLimit !== undefined ? { historyLimit: overlay.historyLimit } : {}),
-  };
+  const next: LoopDeps = { ...deps, smallWindow: overlay.smallWindow };
+  if (overlay.promptBudget) next.promptBudget = overlay.promptBudget;
+  if (overlay.historyLimit !== undefined) next.historyLimit = overlay.historyLimit;
+  if (overlay.resultBudgetChars !== undefined) {
+    next.resultBudgetChars = overlay.resultBudgetChars;
+    const { maxSingleToolResultTokens: _loopReserve, ...compaction } = deps.compaction ?? {};
+    if (overlay.maxSingleToolResultTokens !== undefined) {
+      next.compaction = {
+        ...compaction,
+        maxSingleToolResultTokens: overlay.maxSingleToolResultTokens,
+      };
+    } else if (deps.compaction) {
+      next.compaction = compaction;
+    }
+  }
+  return next;
 }

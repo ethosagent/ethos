@@ -359,9 +359,7 @@ export async function* setupTurn(
   const smallWindowOverlay = deps.smallWindowResolver
     ? await deps.smallWindowResolver(personality, workingDir)
     : undefined;
-  const smallWindow = deps.smallWindowResolver
-    ? smallWindowOverlay !== undefined
-    : deps.smallWindow;
+  const smallWindow = smallWindowOverlay ? smallWindowOverlay.smallWindow : deps.smallWindow;
   if (smallWindow) {
     const declared = parseSmallWindowToolset(
       personality.context_engine_options?.small_window_toolset,

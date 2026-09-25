@@ -34,7 +34,7 @@ import { createTestSafety } from '../../../core/src/__tests__/helpers/test-safet
 import { createAgentLoop, type WiringConfig } from '../index';
 import { projectContextFor } from '../project-context-floor';
 import { createSmallWindowResolver } from '../small-window-resolver';
-import { measureStaticFloor } from '../static-floor';
+import { measureStaticFloor, resolveResultBudgetGate } from '../static-floor';
 
 const WINDOW = 64_000;
 
@@ -98,7 +98,7 @@ function countingStorage(): { storage: Storage; reads: Map<string, number> } {
 }
 
 describe('per-personality small-window mode in one process', () => {
-  function harness(opts: { dirA: string; dirB: string }) {
+  function harness(opts: { dirA: string; dirB: string; callTool?: boolean }) {
     const { storage, reads } = countingStorage();
     const personalities = new DefaultPersonalityRegistry();
     const narrow = { small_window_toolset: 'read_file' };
@@ -112,7 +112,15 @@ describe('per-personality small-window mode in one process', () => {
     personalities.define(a);
     personalities.define(b);
     const tools = new DefaultToolRegistry();
-    tools.register(makeTool('read_file'));
+    // Records the per-turn tool-result budget each call is handed.
+    const budgets: number[] = [];
+    tools.register({
+      ...makeTool('read_file'),
+      execute: async (_args, ctx) => {
+        budgets.push(ctx.resultBudgetChars);
+        return { ok: true, value: 'read' };
+      },
+    });
     tools.register(makeTool('write_file'));
     const injector = new FileContextInjector({ storage, personalities });
 
@@ -121,7 +129,10 @@ describe('per-personality small-window mode in one process', () => {
     const resolver = createSmallWindowResolver({
       windowTokens: WINDOW,
       model: 'm',
-      overlay: { promptBudget: { compactPrelude: true }, historyLimit: 40 },
+      smallWindowOverlay: { promptBudget: { compactPrelude: true }, historyLimit: 40 },
+      // A local runtime: the window-scaled budget engages for every personality.
+      resultBudget: (_p, staticFloorTokens) =>
+        resolveResultBudgetGate({ windowTokens: WINDOW, staticFloorTokens, localRuntime: true }),
       projectContext: (personality, workdir) =>
         projectContextFor({
           injectors: [injector],
@@ -151,12 +162,22 @@ describe('per-personality small-window mode in one process', () => {
       maxContextTokens: WINDOW,
       supportsCaching: false,
       supportsThinking: false,
-      async *complete(_m, defs: ToolDefinitionLite[], o?: CompletionOptions) {
+      async *complete(messages, defs: ToolDefinitionLite[], o?: CompletionOptions) {
         calls.push({ system: o?.system ?? '', tools: defs.map((d) => d.name) });
-        const chunks: CompletionChunk[] = [
-          { type: 'text_delta', text: 'ok' },
-          { type: 'done', finishReason: 'end_turn' },
-        ];
+        const last = messages.at(-1);
+        const answeringTool =
+          Array.isArray(last?.content) && last.content.some((b) => b.type === 'tool_result');
+        const chunks: CompletionChunk[] =
+          opts.callTool && !answeringTool
+            ? [
+                { type: 'tool_use_start', toolCallId: `t${calls.length}`, toolName: 'read_file' },
+                { type: 'tool_use_end', toolCallId: `t${calls.length}`, inputJson: '{}' },
+                { type: 'done', finishReason: 'tool_use' },
+              ]
+            : [
+                { type: 'text_delta', text: 'ok' },
+                { type: 'done', finishReason: 'end_turn' },
+              ];
         for (const c of chunks) yield c;
       },
       async countTokens() {
@@ -183,7 +204,7 @@ describe('per-personality small-window mode in one process', () => {
       if (!last) throw new Error('no LLM call');
       return last;
     };
-    return { turn, warnings, reads, measurements: () => floorMeasurements };
+    return { turn, warnings, reads, budgets, measurements: () => floorMeasurements };
   }
 
   it("B's large-AGENTS.md workdir engages small-window mode for B's turns only", async () => {
@@ -240,16 +261,36 @@ describe('per-personality small-window mode in one process', () => {
     expect(notices).toHaveLength(1);
     expect(notices[0]).toContain('personality `a`');
   });
+
+  it("each personality's turns get the budget its own static floor leaves room for", async () => {
+    const h = harness({
+      dirA: project('budget-a', 600),
+      dirB: project('budget-b', 120_000),
+      callTool: true,
+    });
+    await h.turn('a');
+    await h.turn('b');
+    await h.turn('a');
+    const [a, b, a2] = h.budgets;
+    expect(h.budgets).toHaveLength(3);
+    // B's big prefix leaves a smaller compactible region, so a smaller budget.
+    expect(b).toBeLessThan(a ?? 0);
+    // Back on A in the same process: A's own budget, not B's.
+    expect(a2).toBe(a);
+    expect(a).toBeLessThanOrEqual(80_000);
+  });
 });
 
 describe('createSmallWindowResolver — seed', () => {
   it('the startup decision is seeded: no re-measure, no second notice', async () => {
+    const personality = { id: 'a', name: 'A' } as PersonalityConfig;
     let measured = 0;
     const warnings: string[] = [];
     const resolver = createSmallWindowResolver({
       windowTokens: WINDOW,
       model: 'm',
-      overlay: { historyLimit: 40 },
+      smallWindowOverlay: { historyLimit: 40 },
+      resultBudget: () => ({ resultBudgetChars: 80_000 }),
       projectContext: async () => 'X'.repeat(120_000),
       measureFloor: async (_p, chars) => {
         measured++;
@@ -263,14 +304,23 @@ describe('createSmallWindowResolver — seed', () => {
       },
       logger: { warn: (m) => warnings.push(m) },
       seed: {
-        personalityId: 'a',
+        personality,
         workdir: '/w',
         projectContext: 'X'.repeat(120_000),
-        engaged: true,
+        floor: measureStaticFloor({
+          soulChars: 0,
+          toolSchemaChars: 0,
+          toolCount: 0,
+          preludeChars: 0,
+          projectContextChars: 120_000,
+        }),
       },
     });
-    const personality = { id: 'a', name: 'A' } as PersonalityConfig;
-    expect(await resolver(personality, '/w')).toEqual({ historyLimit: 40 });
+    expect(await resolver(personality, '/w')).toEqual({
+      smallWindow: true,
+      historyLimit: 40,
+      resultBudgetChars: 80_000,
+    });
     expect(measured).toBe(0);
     expect(warnings).toEqual([]);
   });
@@ -328,6 +378,58 @@ describe('createAgentLoop — a switched-to personality with a big-context workd
       const notice = warnings.find((w) => w.startsWith('small-window mode on'));
       expect(notice).toContain('personality `bigctx`');
       expect(notice).toContain('project context (AGENTS.md/CLAUDE.md)');
+    } finally {
+      await runtime.dispose();
+    }
+  });
+});
+
+describe('createAgentLoop — the startup narrowing line', () => {
+  it('names the startup personality as the one it describes', async () => {
+    const home = join(root, 'home-narrow');
+    const dataDir = join(home, '.ethos');
+    const pDir = join(dataDir, 'personalities', 'narrowed');
+    mkdirSync(pDir, { recursive: true });
+    writeFileSync(
+      join(pDir, 'config.yaml'),
+      'name: Narrowed\ndescription: test\ncontext_engine_options.small_window_toolset: read_file\n',
+    );
+    writeFileSync(join(pDir, 'SOUL.md'), 'I am narrowed.\n');
+    writeFileSync(join(pDir, 'toolset.yaml'), '- read_file\n- write_file\n');
+    process.env.HOME = home;
+    process.env.ETHOS_STATE_DIR = dataDir;
+    const infos: string[] = [];
+    const logger = {
+      info: (msg: string) => infos.push(msg),
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+      // biome-ignore lint/suspicious/noExplicitAny: recursive logger mock
+      child: () => logger as any,
+    };
+    const runtime = await createAgentLoop(
+      {
+        provider: 'ollama',
+        model: 'offline-test',
+        baseUrl: 'http://127.0.0.1:9',
+        apiKey: 'sk-dummy',
+        // At or below 32k small-window mode is on for every personality.
+        contextWindow: 16_000,
+        personality: 'narrowed',
+      },
+      {
+        dataDir,
+        workingDir: project('narrow-cwd', 0),
+        profile: 'cli',
+        disableDocker: true,
+        logger,
+      },
+    );
+    try {
+      const line = infos.find((m) => m.includes('small_window_toolset'));
+      expect(line).toContain('startup personality `narrowed`');
+      expect(line).toContain('surviving tools: read_file');
+      expect(line).toContain('other personalities are decided per turn');
     } finally {
       await runtime.dispose();
     }
