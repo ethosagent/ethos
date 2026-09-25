@@ -19,6 +19,7 @@
     "build": "tsup src/index.ts src/crypto.ts --format esm --dts"
   },
   "dependencies": {
+    "@ethosagent/safety-injection": "workspace:*",
     "@ethosagent/safety-network": "workspace:*",
     "@ethosagent/sqlite": "workspace:*",
     "@ethosagent/types": "workspace:*",

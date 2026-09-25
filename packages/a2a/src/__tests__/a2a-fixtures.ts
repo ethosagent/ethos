@@ -123,11 +123,12 @@ export function hangingRunner(counter: { runs: number }): A2aTaskRunner {
 /** A runner that records the `opts` it was invoked with (plan T0.2). */
 export function capturingRunner(
   script: AgentEvent[],
-  captured: { opts?: Parameters<A2aTaskRunner['run']>[2] },
+  captured: { opts?: Parameters<A2aTaskRunner['run']>[2]; text?: string },
 ): A2aTaskRunner {
   return {
-    async *run(_personalityId, _text, opts) {
+    async *run(_personalityId, text, opts) {
       captured.opts = opts;
+      captured.text = text;
       for (const e of script) yield e;
     },
   };

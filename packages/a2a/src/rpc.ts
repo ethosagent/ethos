@@ -28,10 +28,12 @@
 // A2aAsyncManager (working→completed/failed).
 //
 // Layer-clean: imports only `@ethosagent/types` (the AgentEvent TYPE + the
-// identity contract), `hono`, `jose`, and sibling `./` modules (which bottom out
+// identity contract), `@ethosagent/safety-injection` (security kernel — the
+// untrusted fence), `hono`, `jose`, and sibling `./` modules (which bottom out
 // at `node:crypto`). No core, no extensions, no apps — the runner is injected.
 
 import { randomUUID } from 'node:crypto';
+import { wrapUntrusted } from '@ethosagent/safety-injection';
 import { type A2aIdentityProvider, type AgentEvent, EthosError } from '@ethosagent/types';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -583,6 +585,17 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
 
     const sessionKey = params.sessionKey ?? `a2a:${personalityId}:${peerFingerprint}`;
 
+    // A peer's message is another agent's text, not the operator's: it reaches
+    // the turn inside the untrusted fence, on BOTH the sync and the async path
+    // (plan openclaw-2026.9.6-gaps S13; pinned by "untrusted fence" in
+    // rpc.test.ts and rpc-async.test.ts). The source names the authenticated
+    // peer, so the model can attribute it.
+    const fencedMessage = wrapUntrusted({
+      content: params.message,
+      toolName: 'a2a_message',
+      source: `a2a-peer:${peerFingerprint}`,
+    }).content;
+
     // Record the ACCEPTED dispatch once the last gate — the limiter — also grants
     // a lease (a throttled request is a `rate-limited` denial, not an accept).
     const auditAccepted = () => {
@@ -632,7 +645,7 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
         task = await asyncManager.submit({
           personalityId,
           peerFingerprint,
-          message: params.message,
+          message: fencedMessage,
           sessionKey,
           skill,
           traceId,
@@ -687,7 +700,7 @@ export function createA2aRpcService(opts: A2aRpcServiceOptions): A2aRpcService {
       const result = await runSyncTask(
         opts.runner,
         personalityId,
-        params.message,
+        fencedMessage,
         sessionKey,
         skill,
         { traceId, depth },
