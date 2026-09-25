@@ -1011,12 +1011,12 @@ Notes:
 
 Type: dotted group · Default: no policy — the consumer's own defaults apply
 
-A phone number is the one surface strangers reach without being invited. This block is the answering policy: who gets through, what a call may cost, and where the summary lands. Callers outside `allowlist` are answered by `receptionist` in a restricted scope — no owner memory, no privileged tools — and are refused outright when no `receptionist` is set.
+A phone number is the one surface strangers reach without being invited. This block is the answering policy: who gets through, what a call may cost, and where the summary lands. Every caller is answered by `receptionist` in a restricted scope — no owner memory, no privileged tools — and is refused outright when no `receptionist` is set. Caller ID is not identity: the calling party sets it, so an `allowlist` match only decides pre-warm (`decideInboundCall`, `extensions/platform-voice/src/sip/inbound-gate.ts`).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `allowlist` | comma-separated list | unset | Caller numbers that reach the owner's own personality. E.164 patterns using the same `*` wildcard grammar as [`voice.bots[].match`](#voice-bots), matched against the whole number. Entries are trimmed and empties dropped. Unset means nobody is allowlisted — every caller goes to `receptionist`, or is refused if there is none. |
-| `receptionist` | string | unset | Personality id answering callers that are not on the allowlist. Its own memory (scope `personality:<id>`, fixed by turn setup — there is no scope setting) and its `toolset` *are* the restriction, and a call turn carries no user id, so no caller's or owner's `USER.md` is read; there is no second restriction system. Unset makes a non-allowlisted call a refusal (`screened`, reason `not_allowlisted`) rather than a screened conversation. |
+| `allowlist` | comma-separated list | unset | Caller numbers treated as known for `prewarm: allowlisted`. E.164 patterns using the same `*` wildcard grammar as [`voice.bots[].match`](#voice-bots), matched against the whole number. Entries are trimmed and empties dropped. A match does **not** reach the owner's own personality: caller ID is spoofable and no verification step exists, so every caller goes to `receptionist`, or is refused if there is none. |
+| `receptionist` | string | unset | Personality id answering every inbound caller. Its own memory (scope `personality:<id>`, fixed by turn setup — there is no scope setting) and its `toolset` *are* the restriction, and a call turn carries no user id, so no caller's or owner's `USER.md` is read; there is no second restriction system. Unset makes every call a refusal (`screened`, reason `not_allowlisted`, or `caller_unverified` when the caller ID matched `allowlist`) rather than a screened conversation. |
 | `concurrencyCap` | integer | `2` | Ceiling on concurrent inbound calls; callers over the cap get busy handling and the owner is notified. Must be a positive integer — `0` and fractions are parse errors, not "no cap". |
 | `perCallerPerHour` | integer | unset | Per-caller call ceiling inside a rolling hour, evaluated over a sliding window. Positive integer. |
 | `dailyBudgetUsd` | number | unset | Spend ceiling in USD per day across all inbound calls, reset on the UTC day boundary. Must be greater than zero. Counts **LLM token spend only**, at the provider's own estimate — STT, TTS, LiveKit media and PSTN minutes are not in the total, so the cap trips on real spend but trips late relative to a day's true cost. Browser talk-mode and channel voice notes do not route through the call dispatcher and never count against it. |
@@ -1046,9 +1046,8 @@ Notes:
 
 - **Malformed values are parse errors, not ignored.** Unlike the `voice.wake.*` knobs, a bad value here drops the whole `voice.inbound` block and reports the offending key. A silently-dropped budget or concurrency cap costs real money on a surface strangers can dial.
 - `owner.platform` and `owner.chatId` are required together. One without the other is a parse error naming the missing key, rather than a half-built destination that quietly drops the notification this block exists to deliver.
-- **An explicitly empty allowlist is not expressible.** A flat `key: value` line with no value does not parse, so `voice.inbound.allowlist:` and an absent key are the same file. Set `voice.inbound.receptionist` and leave `allowlist` out — that *is* the screen-everyone policy.
 - An unrecognised field name under `voice.inbound.` is a parse error, so a typo cannot look configured while doing nothing.
-- Gates run cheapest-refusal-first: daily budget → per-caller rate → concurrency → allowlist. A refusal releases whatever it took, so a wall of refused calls leaves the concurrency counter at zero rather than wedging the line.
+- Gates run cheapest-refusal-first: daily budget → per-caller rate → concurrency → receptionist. A refusal releases whatever it took, so a wall of refused calls leaves the concurrency counter at zero rather than wedging the line.
 - The end-to-end behaviour of every key here is in [Give an agent a phone number](../how-to/answer-phone-calls.md).
 
 ## voice.bargeIn.\<surface\>.\<field\> {#voice-barge-in}

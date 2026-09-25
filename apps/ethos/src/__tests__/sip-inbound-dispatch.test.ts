@@ -289,17 +289,28 @@ describe('createSipInboundHandler — accepted calls', () => {
     expect(h.inbound.concurrency.active()).toBe(1);
   });
 
-  it('answers an allowlisted caller as the bound personality, with pre-warm', async () => {
+  // INB-001b: caller ID is set by whoever places the call. A match against the
+  // allowlist is a pre-warm hint only; it never selects the owner personality.
+  it('INB-001b: answers an allowlisted caller ID as the receptionist, with pre-warm', async () => {
     const h = harness();
     const outcome = await h.handle(knownCall, {});
 
     expect(outcome).toMatchObject({
       dispatched: true,
-      restricted: false,
+      restricted: true,
       prewarm: true,
-      personalityId: 'assistant',
+      personalityId: 'receptionist',
     });
-    expect(h.adapterOptions[0]?.personality).toBe(ownerPersonality);
+    expect(h.adapterOptions[0]?.personality).toBe(receptionistPersonality);
+    expect(h.turns[0]?.personalityId).toBe('receptionist');
+  });
+
+  it('INB-001b: refuses an allowlisted caller ID when no receptionist is configured', async () => {
+    const h = harness({ inbound: gates({ receptionist: undefined }) });
+    const outcome = await h.handle(knownCall, {});
+
+    expect(outcome).toEqual({ dispatched: false, status: 'screened', reason: 'caller_unverified' });
+    expect(h.turns).toHaveLength(0);
   });
 
   it('pins every call turn to the far-end origin and the call lane', async () => {

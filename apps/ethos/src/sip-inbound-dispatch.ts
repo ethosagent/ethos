@@ -131,13 +131,15 @@ async function* meterSpend(
 
 /** A refusal the caller chose (who they are) vs. one our capacity forced. */
 function statusForReason(reason: string): Extract<CallStatus, 'screened' | 'refused'> {
-  return reason === 'not_allowlisted' ? 'screened' : 'refused';
+  return reason === 'not_allowlisted' || reason === 'caller_unverified' ? 'screened' : 'refused';
 }
 
 function describeReason(reason: string): string {
   switch (reason) {
     case 'not_allowlisted':
       return 'the caller is not on the inbound allowlist and no receptionist personality is configured';
+    case 'caller_unverified':
+      return 'caller ID matched the inbound allowlist, but caller ID is not verified identity and no receptionist personality is configured';
     case 'over_concurrency':
       return 'the concurrent-call cap was already reached';
     case 'rate_limited':
@@ -161,7 +163,7 @@ function describeReason(reason: string): string {
  * 2. **The hardening gate** (`decideInboundCall`) — budget, rate limit,
  *    concurrency, allowlist. A refusal releases whatever it took, so a wall of
  *    refused calls leaves `concurrency.active()` at zero.
- * 3. **Personality selection** — `restricted` (not allowlisted) pins the
+ * 3. **Personality selection** — `restricted` (always, INB-001b) pins the
  *    receptionist, whose `personality:<id>` memory scope and `toolset` ARE the
  *    restriction.
  * 4. **The call-log row** — `ringing` at dispatch, `live` on answer,
@@ -269,7 +271,8 @@ export function createSipInboundHandler(
       return { dispatched: false, status, reason: decision.reason };
     }
 
-    // Restricted = not allowlisted = the receptionist answers. Nothing else
+    // Restricted = the receptionist answers — for EVERY accepted call, since
+    // caller ID is not identity (INB-001b, `decideInboundCall`). Nothing else
     // changes: its `personality:<id>` memory scope denies owner memory and its
     // own `toolset` denies privileged tools, both by construction in the turn
     // setup. There is no second restriction system to keep in step.
