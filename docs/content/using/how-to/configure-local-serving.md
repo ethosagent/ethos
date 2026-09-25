@@ -5,7 +5,7 @@ kind: how-to
 audience: user
 slug: configure-local-serving
 time: "15 min"
-updated: 2026-08-06
+updated: 2026-09-25
 ---
 
 ## Task
@@ -148,6 +148,7 @@ The character sheet ([`ethos personality`](../reference/cli#ethos-personality) i
 - **Model replies but never calls tools (vLLM).** Wrong `--tool-call-parser`, or `--enable-auto-tool-choice` missing. The tool call is in the response *text* — check the raw completion. Match the parser to the model family per the table above.
 - **Every turn is slow, even short ones (llama.cpp).** `--cache-reuse` is unset (defaults to 0) or turns are shorter than `--checkpoint-min-step` (defaults to 8192). Set both.
 - **`ollama ps` shows `CONTEXT 4096` after configuring 64000.** The env var was set in the client shell, not the server's. Stop the server, `export OLLAMA_CONTEXT_LENGTH=64000`, start `ollama serve` in that shell (or set it in the service unit).
+- **`[context_window_too_small] context window too small: … The message was NOT sent.`** The system prompt and tool schemas, plus your message, do not fit the window Ethos is using for this model, so the turn stopped before any request went out. Ethos sizes an Ollama model from `ollama ps` when the model is loaded. When the model is not loaded, or `ollama ps` shows no context, Ethos falls back to the model's catalog window, capped at 32,768 tokens, and the startup log says so. If the server really serves more, set `OLLAMA_CONTEXT_LENGTH` as in step 2, then either load the model before starting Ethos or set `contextWindow: <tokens>` in `~/.ethos/config.yaml` to match. If the window really is that small, shrink the static prefix instead: `tool_loading: on` in `config.yaml`, a `small_window_toolset` in the personality's `context_engine_options`, or a smaller `AGENTS.md`/`CLAUDE.md` in the working directory. `ethos bench context` prints the static size to compare.
 - **Garbage output after enabling KV quantization.** You quantized K below q8 (`-ctk q4_0`). Keep K at `q8_0` or above; push V down instead.
 - **Model answers degrade on long sessions despite a 131k window.** You are past the model's *native* window (step 1). Reduce the configured context to the native value, or pick a model whose native window fits your workload.
 

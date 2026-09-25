@@ -13,6 +13,7 @@ import {
   type PersonalityConfig,
 } from '@ethosagent/types';
 import { estimateMessagesTokens, estimateTokens } from '../context-engines/token-estimator';
+import { currentTurnStart } from './compaction';
 import type { LoopDeps } from './turn-context';
 
 // The bare phrases `too many tokens` / `too long for` are context-anchored: a
@@ -57,7 +58,8 @@ export function isContextOverflowError(err: unknown): boolean {
  * retry path. An overflow means the pressure estimate UNDERSHOT the real token
  * count, so the target is derived from the CURRENT estimate (halved), not a
  * window fraction — guaranteeing the engine actually drops when there is more
- * than one message. Falls back to keeping the last message so the retry never
+ * than one message. The current turn is kept verbatim (see below); with no
+ * current turn it falls back to keeping the last message so the retry never
  * ships an empty history. Returns the original messages on engine failure, with
  * `summaryError` set — the caller distinguishes "the engine threw" from "the
  * engine ran but could not shrink", which `compaction.abortOnSummaryFailure`
@@ -77,10 +79,22 @@ export async function emergencyCompact(
   extra?: { llm?: ContextEngineLLMHandle; countTokens?: (m: Message[]) => Promise<number> },
 ): Promise<{ messages: Message[]; summaryError?: string }> {
   const currentEstimate = estimateTokens(systemPrompt) + estimateMessagesTokens(messages);
-  const targetTokens = Math.max(1, Math.floor(currentEstimate / 2));
+  // The current turn — the user's question and the tool round-trips it has
+  // produced so far — is never handed to the engine (`currentTurnStart`), so a
+  // retry cannot drop the question or orphan a tool_result from its tool_use.
+  // Only older history shrinks; with none, nothing can be trimmed and the
+  // caller surfaces the provider's overflow error.
+  const split = currentTurnStart(messages);
+  const history = messages.slice(0, split);
+  const currentTurn = messages.slice(split);
+  if (currentTurn.length > 0 && history.length === 0) return { messages };
+  const targetTokens = Math.max(
+    1,
+    Math.floor(currentEstimate / 2) - estimateMessagesTokens(currentTurn),
+  );
   try {
     const result = await engine.compact({
-      messages,
+      messages: history,
       currentSystem: systemPrompt,
       targetTokens,
       personality,
@@ -88,11 +102,12 @@ export async function emergencyCompact(
       ...(extra?.llm ? { llm: extra.llm } : {}),
       ...(extra?.countTokens ? { countTokens: extra.countTokens } : {}),
     });
-    if (result.messages.length === 0 && messages.length > 0) {
+    const kept = [...result.messages, ...currentTurn];
+    if (kept.length === 0 && messages.length > 0) {
       const last = messages[messages.length - 1];
       return { messages: last ? [last] : messages };
     }
-    return { messages: result.messages };
+    return { messages: kept };
   } catch (err) {
     return { messages, summaryError: err instanceof Error ? err.message : String(err) };
   }
