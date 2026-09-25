@@ -1812,6 +1812,7 @@ export async function buildAgentLoop(
     },
     ...(onMemoryCapturedFn ? { onMemoryCaptured: onMemoryCapturedFn } : {}),
     ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor: toolsResult.executionPostureFor,
     ...(runCallCaptureFn ? { runCallCapture: runCallCaptureFn } : {}),
     notificationRouter,
     pluginLoader,

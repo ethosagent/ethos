@@ -219,6 +219,25 @@ describe('createTerminalGuardHook', () => {
     });
     expect(result).toBeNull();
   });
+
+  // EXE-001: `run_tests` / `lint` hand `command` to `bash -c`; wiring registers
+  // the guard for them too (`TERMINAL_CHECKED_TOOLS`, packages/wiring).
+  it('checks every tool name it is built for, and only those', async () => {
+    const wide = createTerminalGuardHook(['terminal', 'run_tests', 'lint']);
+    const call = (toolName: string) =>
+      wide({ sessionId: 's1', toolCallId: 'tc_1', toolName, args: { command: 'rm -rf /' } });
+    expect((await call('run_tests'))?.error).toMatch(/recursive force-delete/);
+    expect((await call('lint'))?.error).toMatch(/recursive force-delete/);
+    expect(await call('web_search')).toBeNull();
+    expect(
+      await hook({
+        sessionId: 's1',
+        toolCallId: 'tc_1',
+        toolName: 'run_tests',
+        args: { command: 'rm -rf /' },
+      }),
+    ).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -767,6 +767,7 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // The smart approver's decision site from the build `systemLoop` came from
     // (plan decision-provider-jev §8.2), as `ethos serve` passes its own.
     ...(shared.approverDecision ? { approverDecision: shared.approverDecision } : {}),
+    executionPostureFor: shared.executionPostureFor,
     session,
     contextLog,
     personalities,
@@ -1063,6 +1064,9 @@ export async function runBoot(args: string[], config: EthosConfig | null): Promi
     // construction-time; see `prepareBotLive`), so the owner deciding group
     // approvals is the same owner the gateway's `/personality` check reads.
     ownerFor: (platform: string) => cfg.channelFilter?.[platform]?.ownerUserId,
+    // Where each personality's shell tools run (S6 / D1(a)) — the shared
+    // build's, for the same reason as the decision site below.
+    executionPostureFor: shared.executionPostureFor,
     // The provider half of `decisions.*` is operator-level, so every bot's
     // approval predicate takes the shared build's decision site (plan
     // decision-provider-jev §8.2), as it takes that config's `createLLM(cfg)`

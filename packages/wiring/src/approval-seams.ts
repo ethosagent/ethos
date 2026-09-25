@@ -14,6 +14,7 @@
 // constructed only when a flagged call actually reaches `approvalMode: smart`.
 
 import type {
+  ExecutionPosture,
   HookRegistry,
   LLMProvider,
   PersonalityConfig,
@@ -82,7 +83,8 @@ export interface CreateApprovalDangerPredicateOptions {
    * deployment-specific tools to gate unions them in here. Under
    * `approvalMode: 'smart'` the predicate unions this with
    * `SMART_MODE_CONSEQUENTIAL_TOOLS` — under `manual` and `off` this is the
-   * only non-hardline danger source.
+   * only non-hardline danger source apart from `LOCAL_POSTURE_CONSEQUENTIAL_TOOLS`
+   * on a host-local posture (see `executionPostureFor`).
    */
   alwaysAsk?: ReadonlyArray<string>;
   /**
@@ -113,6 +115,17 @@ export interface CreateApprovalDangerPredicateOptions {
    * approver site gets exactly the LLM path too.
    */
   decision?: SmartApproverDecisionSite;
+  /**
+   * `CreateAgentLoopResult.executionPostureFor` of the build whose loops these
+   * are — where each personality's shell tools actually run. Drives
+   * `LOCAL_POSTURE_CONSEQUENTIAL_TOOLS` (S6 / D1(a)): under a host-local
+   * posture `terminal`, `process_start`, `run_tests` and `lint` ask first.
+   *
+   * REQUIRED, deliberately, like `sshConfigured` on the posture resolver: an
+   * optional field would let a surface forget it and silently leave a local
+   * shell un-gated, with nothing failing. `tsc` names every call site instead.
+   */
+  executionPostureFor: (personalityId: string | undefined) => ExecutionPosture | undefined;
 }
 
 /**
@@ -163,6 +176,10 @@ export function createApprovalDangerPredicate(
         // could apply another personality's `approvalMode: 'off'`.
         return id === undefined ? undefined : opts.personalities.get(id);
       },
+      // The personality `getPersonality` resolved, so posture and approval
+      // mode come from one personality. None resolved → the deployment
+      // default's posture, which is what such a turn runs under.
+      getExecutionPosture: (_payload, personality) => opts.executionPostureFor(personality?.id),
       smartApprove: (payload, reason, personality) => {
         approver ??= createSmartApprover({
           getProvider: opts.getProvider,

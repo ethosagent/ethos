@@ -141,6 +141,7 @@ describe('createApprovalDangerPredicate — the gate is applied by default', () 
 
   function predicate(spokenConfirmations?: { has(id: string): boolean }) {
     return createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
       hooks: [new DefaultHookRegistry()],
       personalities: registry,
       getProvider: async () => {

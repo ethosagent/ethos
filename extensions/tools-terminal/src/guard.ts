@@ -251,11 +251,18 @@ export function checkCommand(command: string): DangerResult {
   return { dangerous: false };
 }
 
-export function createTerminalGuardHook(): (
-  payload: BeforeToolCallPayload,
-) => Promise<Partial<BeforeToolCallResult> | null> {
+/**
+ * The hard-blocking `before_tool_call` guard. Checks `args.command` of every
+ * tool named in `toolNames` (default: `terminal` only). Wiring passes
+ * `TERMINAL_CHECKED_TOOLS` (packages/wiring/src/danger-predicate.ts) so
+ * `run_tests` / `lint`, whose `command` also reaches `bash -c`, are blocked by
+ * the same rules (EXE-001).
+ */
+export function createTerminalGuardHook(
+  toolNames: ReadonlyArray<string> = ['terminal'],
+): (payload: BeforeToolCallPayload) => Promise<Partial<BeforeToolCallResult> | null> {
   return async (payload) => {
-    if (payload.toolName !== 'terminal') return null;
+    if (!toolNames.includes(payload.toolName)) return null;
     const args = payload.args as { command?: string };
     if (!args.command) return null;
     const result = checkCommand(args.command);

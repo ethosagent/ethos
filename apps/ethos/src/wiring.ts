@@ -778,6 +778,8 @@ export interface TeamLoopInfo {
   /** `CreateAgentLoopResult.approverDecision` of the coordinator's build (plan
    *  decision-provider-jev §8.2) — absent unless the approver site is on. */
   approverDecision?: import('@ethosagent/wiring').CreateAgentLoopResult['approverDecision'];
+  /** `CreateAgentLoopResult.executionPostureFor` of the coordinator's build (S6 / D1(a)). */
+  executionPostureFor: import('@ethosagent/wiring').CreateAgentLoopResult['executionPostureFor'];
 }
 
 /** Resolve a team manifest by name (local ./team.yaml or ~/.ethos/teams/<n>.yaml). */
@@ -845,6 +847,7 @@ export async function createTeamAgentLoop(
     dispose,
     drain,
     approverDecision,
+    executionPostureFor,
   } = await createAgentLoop(
     {
       ...coordinatorConfig,
@@ -886,6 +889,7 @@ export async function createTeamAgentLoop(
     dispose,
     drain,
     ...(approverDecision ? { approverDecision } : {}),
+    executionPostureFor,
   };
 }
 

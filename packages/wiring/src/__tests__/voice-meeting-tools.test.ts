@@ -113,6 +113,7 @@ describe('call tool availability tracks the configured trunk', () => {
     expect(SPOKEN_CONFIRMATION_TOOLS).toContain('call');
 
     const predicate = createApprovalDangerPredicate({
+      executionPostureFor: () => undefined,
       hooks: [new DefaultHookRegistry()],
       personalities: new DefaultPersonalityRegistry(),
       getProvider: async () => {

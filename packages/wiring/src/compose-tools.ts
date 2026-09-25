@@ -104,6 +104,7 @@ import type {
   TurnAuditor,
 } from '@ethosagent/types';
 import type { InfrastructureResult } from './build-infrastructure';
+import { TERMINAL_CHECKED_TOOLS } from './danger-predicate';
 import type { DisposerStack } from './disposer-stack';
 import { ensureFsReachDirs } from './fs-reach-dirs';
 import {
@@ -633,6 +634,8 @@ export interface ComposeToolsResult {
   /** Ground-truth consult for `MemoryCaptureRunner` (R8). Absent when
    *  `grounding.enabled: false`, so capture behaves exactly as before. */
   memoryConsult?: GroundingMemoryConsult;
+  /** `ExecutionRouting.resolvePosture` — surfaced as `CreateAgentLoopResult.executionPostureFor`. */
+  executionPostureFor: ExecutionRouting['resolvePosture'];
 }
 
 /**
@@ -828,6 +831,14 @@ export interface ExecutionRouting {
   process: ExecutionRouter;
   /** The full resolution, for the injector that tells the model where its shell is. */
   resolveTurn(personalityId: string | undefined): Promise<TurnExecution | undefined>;
+  /**
+   * The posture alone — the same `postureFor` `resolveTurn` uses, without
+   * building a backend. `undefined` for an id the registry does not know. Read
+   * by the approval surfaces' danger predicate (`LOCAL_POSTURE_CONSEQUENTIAL_TOOLS`,
+   * packages/wiring/src/danger-predicate.ts) so the approval decision and the
+   * tool's execution agree on where a shell runs.
+   */
+  resolvePosture(personalityId: string | undefined): ExecutionPosture | undefined;
   /**
    * Release every execution backend instance — the ONE owner of them (F06 /
    * G6). That is the wrappers this routing built (a docker `SessionManager`,
@@ -1026,6 +1037,12 @@ export async function createExecutionRouting(
     exec: routerFor('exec'),
     process: routerFor('process'),
     resolveTurn,
+    resolvePosture: (personalityId) => {
+      if (personalityId === undefined) return posture;
+      const person = personalities.get(personalityId);
+      if (!person) return undefined;
+      return person.id === activePerson.id ? posture : postureFor(person);
+    },
     dispose: () => {
       // Memoised: a host that calls it twice disposes nothing twice.
       disposal ??= (async () => {
@@ -1822,7 +1839,7 @@ export async function composeAllTools(
 
   // CLI/TUI/ACP get the synchronous block-and-explain guard.
   if (profile !== 'web') {
-    hooks.registerModifying('before_tool_call', createTerminalGuardHook());
+    hooks.registerModifying('before_tool_call', createTerminalGuardHook(TERMINAL_CHECKED_TOOLS));
     hooks.registerModifying('before_tool_call', createProcessGuardHook());
   }
 
@@ -2001,5 +2018,6 @@ export async function composeAllTools(
     mcpManager,
     turnAuditors: grounding.turnAuditors,
     ...(grounding.memoryConsult ? { memoryConsult: grounding.memoryConsult } : {}),
+    executionPostureFor: routing.resolvePosture,
   };
 }

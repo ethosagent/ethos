@@ -302,6 +302,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
     goals,
     memoryBundle,
     approverDecision,
+    executionPostureFor,
     dispose: disposeLoop,
   } = await createAgentLoop(wiringConfig, {
     dataDir,
@@ -404,6 +405,7 @@ async function bootRuntime(port: number, rt: DesktopRuntime): Promise<number> {
       // The smart reviewer's decision site from THIS build (plan
       // decision-provider-jev §8.2); absent → the LLM reviewer only.
       ...(approverDecision ? { decision: approverDecision } : {}),
+      executionPostureFor,
     }),
     ...(onMemoryCaptured ? { onMemoryCaptured } : {}),
     // `learning.replay` — absent, the desktop refused `REPLAY_UNAVAILABLE`

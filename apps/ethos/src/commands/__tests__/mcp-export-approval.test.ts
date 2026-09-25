@@ -100,6 +100,7 @@ async function runExportedTurn(toolName: string): Promise<{
 
   // Exactly what `runServeExport` wires (apps/ethos/src/commands/mcp.ts).
   const danger = createApprovalDangerPredicate({
+    executionPostureFor: () => undefined,
     hooks: [loop.hooks],
     personalities: { get: () => undefined } as unknown as PersonalityRegistry,
     getProvider: async () => {
