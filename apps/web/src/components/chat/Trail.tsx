@@ -159,9 +159,11 @@ export function TrailRow({ entry, rowId, citedRowId }: TrailRowProps) {
         <RowState status="unverified" />
         {/* The claim is the model's own words, so it is quoted — the quotes the
             wire format carried are stripped on the way in and drawn here. */}
-        <span className="activity-row-subject">{`"${entry.claim}"`}</span>
+        <span className="activity-row-subject" title={entry.claim}>{`"${entry.claim}"`}</span>
         {entry.evidence ? (
-          <span className="activity-row-result">{`— ${entry.evidence}`}</span>
+          <span className="activity-row-result" title={entry.evidence}>
+            {`— ${entry.evidence}`}
+          </span>
         ) : null}
       </button>
     );
@@ -209,10 +211,19 @@ function DecisionRow({ entry, rowId }: { entry: TrailDecision; rowId: string }) 
           <span aria-hidden="true">{view.glyph}</span> {view.word}
         </span>
         <span className="trail-decision-tag">{view.tag}</span>
-        <span className="activity-row-result">{view.subject}</span>
+        {/* One line, ellipsised; a decision row has no expansion, so the full
+            text rides in `title`. The duration never shrinks (styles.css
+            `.activity-row-meta`). */}
+        <span className="activity-row-result" title={view.subject}>
+          {view.subject}
+        </span>
         <span className="activity-row-meta">{view.duration}</span>
       </div>
-      {view.detail ? <div className="trail-decision-detail">{view.detail}</div> : null}
+      {view.detail ? (
+        <div className="trail-decision-detail" title={view.detail}>
+          {view.detail}
+        </div>
+      ) : null}
     </div>
   );
 }
