@@ -13,6 +13,14 @@
 //   - Invalid frontmatter is refused and the candidate becomes `invalid`, before
 //     anything is written (`promoteSkill`, via the injected
 //     `checkSkillFrontmatter`). A bad file in the live dir is a boot failure.
+//   - EVO-001: the model authors the whole file, frontmatter included, so the
+//     injected `vetSkill` (`vetPromotedSkill`, extensions/skills/src/promotion-vet.ts)
+//     strips the model-owned grant key `ethos.permissions.mcp_env_passthrough`
+//     and runs the install scanner (`scanSkillMd` + `canInstall`, `community`
+//     tier) on the stripped bytes. A refusal makes the candidate `invalid` and
+//     writes nothing. What is written, hashed and rolled back is the STRIPPED
+//     content, not `candidate.content`. Pinned by the 'EVO-001' cases in
+//     `__tests__/promote.test.ts`.
 //   - The destination is re-resolved with the injected `liveSkillDir` and the
 //     personality's CURRENT `skill_evolution.scope`; a rewrite's filename comes
 //     from the content's `target_file` (`skillFilename`). When that is not the
@@ -56,7 +64,7 @@
 //     the revision is still in the Learning Log and `.expression-history/`, and
 //     a retry sees the new bytes and marks the candidate `stale`.
 //
-// `liveSkillDir`, the scope lookup, `checkSkillFrontmatter` and the Expression
+// `liveSkillDir`, the scope lookup, `checkSkillFrontmatter`, `vetSkill` and the Expression
 // registry are injected rather than imported. This package sits below
 // `@ethosagent/skill-evolver`, `@ethosagent/skills` and
 // `@ethosagent/personalities` (see `index.ts`), and L-T6/L-T8 make those call
@@ -97,6 +105,12 @@ export interface PromoteDeps {
   skillScope(personalityId: string): SkillScope | undefined | Promise<SkillScope | undefined>;
   /** `checkSkillFrontmatter` from `@ethosagent/skills`. */
   checkSkillFrontmatter(markdown: string): { ok: true } | { ok: false; error: string };
+  /**
+   * `vetPromotedSkill` from `@ethosagent/skills`: the bytes to write (model-owned
+   * grant keys removed) or the install scanner's refusal. Runs after
+   * `checkSkillFrontmatter`.
+   */
+  vetSkill(markdown: string): { ok: true; content: string } | { ok: false; error: string };
   /** The `FilePersonalityRegistry`. */
   expressions: ExpressionRevisions;
   now?: () => number;
@@ -235,6 +249,9 @@ async function promoteSkill(
   if (!frontmatter.ok) {
     return refuse(deps, candidate, 'invalid', `invalid frontmatter: ${frontmatter.error}`, opts);
   }
+  const vetted = deps.vetSkill(candidate.content);
+  if (!vetted.ok) return refuse(deps, candidate, 'invalid', vetted.error, opts);
+  const content = vetted.content;
 
   const filename = skillFilename(candidate);
   if (!filename.ok) return refuse(deps, candidate, 'invalid', filename.reason, opts);
@@ -252,7 +269,7 @@ async function promoteSkill(
     );
   }
 
-  const promotedHash = sha256Hex(candidate.content);
+  const promotedHash = sha256Hex(content);
   const live = await storage.read(destination);
   const liveHash = live === null ? null : sha256Hex(live);
   const existing = await readPromotionRecord(storage, dataDir, candidate.id);
@@ -298,7 +315,7 @@ async function promoteSkill(
     await writeRecord(storage, dataDir, candidate.id, record);
 
     await storage.mkdir(dir);
-    await storage.writeAtomic(destination, candidate.content);
+    await storage.writeAtomic(destination, content);
   }
 
   const updated = await updateCandidate(

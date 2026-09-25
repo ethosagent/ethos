@@ -28,6 +28,7 @@ export {
 } from './ingest-filter';
 export { MemoryGuidanceInjector } from './memory-guidance-injector';
 export { PlatformFormattingInjector } from './platform-formatting-injector';
+export { stripModelOwnedSkillKeys, vetPromotedSkill } from './promotion-vet';
 export { sanitize } from './prompt-injection-guard';
 export {
   applySubstitutions,
