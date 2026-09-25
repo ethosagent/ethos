@@ -1573,13 +1573,17 @@ export async function composeAllTools(
       })
     : undefined;
 
+  // One allowlist for both tools that can send to a channel: `send_message`
+  // and `watcher_create`'s `deliver` (S5).
+  const getAllowedTargets = (personalityId?: string): string[] => {
+    if (!personalityId) return [];
+    return messagingAllowlist.get(personalityId) ?? [];
+  };
+
   for (const tool of composeMessaging(wiringCtx, {
     send: async (platform, target, body, botKey) =>
       gatewaySendRef.fn(platform, target, body, botKey),
-    getAllowedTargets: (personalityId) => {
-      if (!personalityId) return [];
-      return messagingAllowlist.get(personalityId) ?? [];
-    },
+    getAllowedTargets,
     outbox: outboxGate,
   }).tools)
     tools.register(tool);
@@ -1595,6 +1599,7 @@ export async function composeAllTools(
     for (const tool of composeWatchers(wiringCtx, {
       manager: opts.watcherManager,
       outbox: outboxGate,
+      getAllowedTargets,
     }).tools)
       tools.register(tool);
   }
