@@ -88,16 +88,15 @@ ethos personality show <id>
 
 ### 4. Declare network policy per personality
 
-Personalities with web tools (`web_fetch`, `web_post`) should declare `network.allowedHosts` in their safety config. A personality without a network policy gets no egress -- the global SSRF, scheme-allowlist, and cloud-metadata controls still apply to all personalities. See [Security controls -- network](./controls.md#per-personality-network-policy).
+Personalities with web tools (`web_extract`, `browse_url`, `browser_navigate`) should declare `safety.network.allow` in their config. A personality without an allow list (absent, `[]`, or `['*']`) can reach any public host -- the global SSRF, scheme-allowlist, and cloud-metadata controls still apply to all personalities. See [Security controls -- network](./controls.md#per-personality-network-policy).
 
 ```yaml
 # In the personality's config.yaml safety block
 safety:
-  networkReach:
-    - host: "api.github.com"
-      ports: [443]
-    - host: "*.slack.com"
-      ports: [443]
+  network:
+    allow:
+      - api.github.com
+      - "*.slack.com"
 ```
 
 **Verify:**

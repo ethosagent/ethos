@@ -8,8 +8,9 @@
 // snapshot outlived the edit. These tests pin the resolver behaviour that
 // replaced it, mirroring personality-fs-reach.test.ts.
 
-import { resolveCapabilities, ScopedFetchImpl } from '@ethosagent/core';
+import { resolveCapabilities, type SafeFetchFn, ScopedFetchImpl } from '@ethosagent/core';
 import { createPersonalityRegistry } from '@ethosagent/personalities';
+import { safeFetch as realSafeFetch } from '@ethosagent/safety-network';
 import { InMemoryStorage } from '@ethosagent/storage-fs';
 import type { Logger, ToolCapabilities } from '@ethosagent/types';
 import { describe, expect, it } from 'vitest';
@@ -24,13 +25,15 @@ const logStub: Logger = {
   child: () => logStub,
 };
 
+// The REAL `safeFetch`, with only DNS and the socket injected, so a policy
+// that `checkAllowDeny` (packages/safety/network/src/policy.ts) would refuse is
+// refused here too. A stub that always answered `ok` is what hid that
+// `allow: ['*']` refused every host.
 const response = new Response('ok');
-const safeFetch = async (url: string) => ({
-  ok: true as const,
-  response,
-  finalUrl: url,
-  hops: 0,
-});
+const fetchImpl = (async () => response) as unknown as typeof fetch;
+const resolveHost = async () => ['93.184.216.34'];
+const safeFetch: SafeFetchFn = (url, opts) =>
+  realSafeFetch(url, { ...opts, fetchImpl, resolveHost });
 
 // `engineer` is the deployment default and declares no safety block — the
 // shape that made every other personality's policy invisible.
