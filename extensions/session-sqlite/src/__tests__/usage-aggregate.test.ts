@@ -147,6 +147,28 @@ describe('usageAggregate', () => {
     expect(after).toEqual(before);
   });
 
+  // A tool-reported `cost_usd` is stored on its tool_result row with zero
+  // tokens (packages/core/src/agent-loop/tool-cost.ts `toolCostFields`).
+  it("counts a tool_result row's tool-reported cost", async () => {
+    const s = await store.createSession({ ...base, key: 'k4' } as never);
+    await store.appendMessage({
+      sessionId: s.id,
+      role: 'tool_result',
+      content: 'painted',
+      toolCallId: 'c1',
+      toolName: 'paint',
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCostUsd: 0.25,
+      },
+    });
+    const [row] = await store.usageAggregate({ ...window, dimension: 'day' });
+    expect(row).toMatchObject({ estimatedCostUsd: 0.25, inputTokens: 0, messages: 1 });
+  });
+
   it('ignores rows with no token counts', async () => {
     const s = await store.createSession({ ...base, key: 'k3' } as never);
     // A user message has no usage — it is not a billable row.
